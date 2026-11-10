@@ -112,12 +112,8 @@ fun term_heads tm =
     walk tm []
   end
 
-fun check_goal_operator_availability_unless ignore {solver, version}
-    (assumptions, conclusion) =
+fun check_operator_availability_unless ignore occurs {solver, version} =
   let
-    val heads = List.concat (List.map term_heads (conclusion :: assumptions))
-    fun occurs head = List.exists (fn tm =>
-      Term.same_const tm head handle Feedback.HOL_ERR _ => false) heads
     fun available ({solver = registered_solver, versions, ...}
                    : operator_availability) =
       solver = registered_solver andalso
@@ -134,7 +130,8 @@ fun check_goal_operator_availability_unless ignore {solver, version}
          not (List.exists available (List.filter
            (fn ({hol_head = candidate, operator = candidate_name, ...}
                 : operator_availability) =>
-             Term.same_const hol_head candidate andalso operator = candidate_name)
+             Term.same_const hol_head candidate andalso
+             operator = candidate_name)
            (!operator_availabilities))) then
         raise Feedback.mk_HOL_ERR "SmtLib" "check_goal_operator_availability"
           ("SMT-LIB operator '" ^ operator ^ "' is unavailable for solver '" ^
@@ -145,6 +142,14 @@ fun check_goal_operator_availability_unless ignore {solver, version}
   in
     List.app check (!operator_availabilities)
   end
+
+fun check_goal_operator_availability_unless ignore target
+    (assumptions, conclusion) =
+  let
+    val heads = List.concat (List.map term_heads (conclusion :: assumptions))
+    fun occurs head = List.exists (fn tm =>
+      Term.same_const tm head handle Feedback.HOL_ERR _ => false) heads
+  in check_operator_availability_unless ignore occurs target end
 
 fun check_goal_operator_availability target =
   check_goal_operator_availability_unless (Lib.K false) target
@@ -231,7 +236,7 @@ local
         (fcpSyntax.dest_numeric_type (wordsSyntax.dest_word_type ty)) ^ ")")
    ]
 
-  val apfst_K = Lib.apfst o Lib.K
+  fun apfst_K value input = Lib.apfst (Lib.K value) input
   val int_emod_tm = Term.prim_mk_const {Thy="integer", Name="emod"}
   val str_inj_tm = smtstring_const "str_inj"
   val smtfp_intro_tm =
@@ -371,113 +376,385 @@ local
      term's shape is known, an error in its body is the real diagnostic. *)
   exception NestedTranslation of exn
 
-  fun numeral_string function_name tm =
-    Arbnum.toString (numSyntax.dest_numeral tm)
-    handle Feedback.HOL_ERR _ =>
-      raise ERR function_name "expected a numeral index"
+  type 'term builtin_operations =
+    {type_of : 'term -> Type.hol_type,
+     dest_list : 'term -> 'term list * Type.hol_type,
+     dest_numeral : 'term -> Arbnum.num,
+     is_int_literal : 'term -> bool,
+     is_int_negated : 'term -> bool,
+     int_of_term : 'term -> Arbint.int,
+     is_real_literal : 'term -> bool,
+     is_real_negated : 'term -> bool,
+     real_int_of_term : 'term -> Arbint.int,
+     is_word_literal : 'term -> bool,
+     dest_word_literal : 'term -> Arbnum.num,
+     dim_of : 'term -> Type.hol_type,
+     constant : Term.term -> 'term,
+     mk_comb : 'term * 'term -> 'term,
+     list_mk_comb : 'term * 'term list -> 'term,
+     mk_integer : Arbint.int -> 'term,
+     is_syntax_error : exn -> bool,
+     syntax_error : string -> string -> exn,
+     library_syntax_error : exn -> exn}
 
-  fun hexadecimal_string function_name tm =
+  val term_builtin_operations : Term.term builtin_operations =
+    {type_of=Term.type_of,dest_list=listSyntax.dest_list,
+     dest_numeral=numSyntax.dest_numeral,
+     is_int_literal=intSyntax.is_int_literal,
+     is_int_negated=intSyntax.is_negated,int_of_term=intSyntax.int_of_term,
+     is_real_literal=realSyntax.is_real_literal,
+     is_real_negated=realSyntax.is_negated,
+     real_int_of_term=realSyntax.int_of_term,
+     is_word_literal=wordsSyntax.is_word_literal,
+     dest_word_literal=wordsSyntax.dest_word_literal,dim_of=wordsSyntax.dim_of,
+     constant=fn term => term,mk_comb=Term.mk_comb,
+     list_mk_comb=Term.list_mk_comb,
+     mk_integer=intSyntax.term_of_int,
+     is_syntax_error=fn Feedback.HOL_ERR _ => true | _ => false,
+     syntax_error=ERR,library_syntax_error=fn primary => primary}
+
+  (* Adapt only the known helper-generated wrong-arity decline. The callback
+     runs on the successful shape branch, outside this exception handler. *)
+  fun builtin_one_arg_with (operations : 'term builtin_operations) f values =
+    case values of [argument] => f argument
+    | _ => (SmtLib_Theories.one_arg f values
+        handle primary as SmtLib_Theories.ParseDecline _ =>
+          raise (#library_syntax_error operations) primary)
+  fun builtin_two_args_with (operations : 'term builtin_operations) f values =
+    case values of [left,right] => f (left,right)
+    | _ => (SmtLib_Theories.two_args f values
+        handle primary as SmtLib_Theories.ParseDecline _ =>
+          raise (#library_syntax_error operations) primary)
+  fun builtin_three_args_with (operations : 'term builtin_operations)
+      f values =
+    case values of [first,second,third] => f (first,second,third)
+    | _ => (SmtLib_Theories.three_args f values
+        handle primary as SmtLib_Theories.ParseDecline _ =>
+          raise (#library_syntax_error operations) primary)
+
+  (* The carrier observation returns before this pure Type inspection.
+     A carrier's own admission or lifetime error is never caught. *)
+  fun builtin_type_with (operations : 'term builtin_operations) inspect
+      (ty : Type.hol_type) =
+    inspect ty handle primary as Feedback.HOL_ERR _ =>
+      raise (#library_syntax_error operations) primary
+
+  fun numeral_string_with (operations : 'term builtin_operations)
+      function_name tm =
+    Arbnum.toString ((#dest_numeral operations) tm)
+    handle primary =>
+      if (#is_syntax_error operations) primary then
+        raise (#syntax_error operations) function_name
+          "expected a numeral index"
+      else raise primary
+
+  fun hexadecimal_string_with (operations : 'term builtin_operations)
+      function_name tm =
     let
       val value =
-        numSyntax.dest_numeral tm
-        handle Feedback.HOL_ERR _ =>
-          raise ERR function_name "expected a numeral character index"
+        (#dest_numeral operations) tm
+        handle primary =>
+          if (#is_syntax_error operations) primary then
+            raise (#syntax_error operations) function_name
+              "expected a numeral character index"
+          else raise primary
     in
       SmtLib_String_Literal.hex_num
         (SmtLib_String_Literal.check_code_point "character index" value)
       handle SmtLib_String_Literal.InvalidCodePoint detail =>
-        raise ERR function_name detail
+        raise (#syntax_error operations) function_name detail
     end
 
-  fun indexed_char_encoding (_, args) =
-    (SmtLib_Theories.one_arg
+  val numeral_string = numeral_string_with term_builtin_operations
+
+  fun indexed_char_encoding_with (operations : 'term builtin_operations)
+      (_, args) =
+    builtin_one_arg_with operations
        (fn code =>
          ("(_ char #x" ^
-          hexadecimal_string "<builtin_symbols.smtstr_char>" code ^ ")",
-          []))
-       args)
-    handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
+          hexadecimal_string_with operations
+            "<builtin_symbols.smtstr_char>" code ^ ")", [])
+         handle primary =>
+           if (#is_syntax_error operations) primary then
+             raise NestedTranslation primary
+           else raise primary)
+       args
 
-  fun indexed_power_encoding (_, args) =
-    SmtLib_Theories.two_args
+  fun indexed_power_encoding_with (operations : 'term builtin_operations)
+      (_, args) =
+    builtin_two_args_with operations
       (fn (regex, power) =>
         ("(_ re.^ " ^
-         numeral_string "<builtin_symbols.reglan_power>" power ^ ")",
-         [regex]))
-      args
+         numeral_string_with operations "<builtin_symbols.reglan_power>"
+           power ^ ")", [regex])) args
 
-  fun indexed_loop_encoding (_, args) =
-    SmtLib_Theories.three_args
+  fun indexed_loop_encoding_with (operations : 'term builtin_operations)
+      (_, args) =
+    builtin_three_args_with operations
       (fn (regex, lower, upper) =>
         ("(_ re.loop " ^
-         numeral_string "<builtin_symbols.reglan_loop>" lower ^ " " ^
-         numeral_string "<builtin_symbols.reglan_loop>" upper ^ ")",
-         [regex]))
-      args
+         numeral_string_with operations "<builtin_symbols.reglan_loop>"
+           lower ^ " " ^
+         numeral_string_with operations "<builtin_symbols.reglan_loop>"
+           upper ^ ")", [regex])) args
 
-  fun dest_injected_string tm =
-    let
-      val (inject, string) = Term.dest_comb tm
-      val _ =
-        if Term.same_const inject str_inj_tm then ()
-        else raise ERR "dest_injected_string" "not str_inj"
-    in
-      string
-    end
+  (* One literal grammar serves the Term and graph carriers. Optional
+     probes classify only the caller's expected mismatch exceptions.
+     memo_string_expression owns no state here: a graph callback must guard
+     its exact scoped node and fixed borrow context before cache hits and
+     after the thunk, and publish only a returned boolean (including false).
+     Exceptions must never be cached. The Term callback calls the thunk. *)
+  type 'term literal_recognition_operations = {
+    builtin : 'term builtin_operations,
+    dest_comb : 'term -> 'term * 'term,
+    dest_abs : 'term -> 'term * 'term,
+    strip_comb : 'term -> 'term * 'term list,
+    term_same_const : 'term -> Term.term -> bool,
+    same_const : 'term -> Term.term -> bool,
+    known_same_const : Term.term -> 'term -> bool,
+    aconv : 'term -> 'term -> bool,
+    aconv_known : 'term -> Term.term -> bool,
+    free_in : 'term -> 'term -> bool,
+    is_Num : 'term -> bool,
+    dest_Num : 'term -> 'term,
+    dest_leq : 'term -> 'term * 'term,
+    is_numeral : 'term -> bool,
+    apply_constant : Term.term * 'term -> 'term,
+    optional_error : exn -> bool,
+    memo_string_expression : 'term -> (unit -> bool) -> bool
+  }
 
-  fun is_injected_string tm = Lib.can dest_injected_string tm
+  type 'term literal_recognizers = {
+    dest_injected_string : 'term -> 'term,
+    is_injected_string : 'term -> bool,
+    dest_injected_float : 'term -> 'term,
+    is_injected_float : 'term -> bool,
+    injected_string_operator : 'term -> string,
+    dest_injected_string_operation : 'term -> string * 'term list,
+    is_injected_string_expression : 'term -> bool,
+    is_injected_string_operation : 'term -> bool,
+    dest_parsed_bag_literal : 'term -> 'term * 'term,
+    is_parsed_bag_literal : 'term -> bool,
+    native_string_literal : 'term -> string,
+    hexadecimal_string : string -> 'term -> string
+  }
 
-  fun dest_injected_float tm =
-    let
-      val (inject, float) = Term.dest_comb tm
-      val _ =
-        if Term.same_const inject smtfp_intro_tm then ()
-        else raise ERR "dest_injected_float" "not smtfp_intro"
-    in
-      float
-    end
+  fun carrier_literal_recognizers_with
+      (operations : 'term literal_recognition_operations)
+      : 'term literal_recognizers =
+  let
+    val {builtin, dest_comb, dest_abs, strip_comb, term_same_const,
+         same_const, known_same_const, aconv, aconv_known, free_in,
+         is_Num, dest_Num, dest_leq, is_numeral, apply_constant,
+         optional_error, memo_string_expression} = operations
+    val ERR = #syntax_error builtin
+    fun total f x =
+      SOME (f x) handle primary =>
+        if optional_error primary then NONE else raise primary
+    fun can f x = Option.isSome (total f x)
+    fun dest_injected_string tm =
+      let
+        val (inject, string) = dest_comb tm
+        val _ =
+          if term_same_const inject str_inj_tm then ()
+          else raise ERR "dest_injected_string" "not str_inj"
+      in
+        string
+      end
 
-  fun is_injected_float tm = Lib.can dest_injected_float tm
+    fun is_injected_string tm = can dest_injected_string tm
 
-  fun injected_string_operator tm =
-    if Term.same_const tm smtstr_concat_tm then "str.++"
-    else if Term.same_const tm smtstr_prefixof_tm then "str.prefixof"
-    else if Term.same_const tm smtstr_lt_tm then "str.<"
-    else if Term.same_const tm smtstr_le_tm then "str.<="
-    else raise ERR "injected_string_operator" "not an injection operator"
+    fun dest_injected_float tm =
+      let
+        val (inject, float) = dest_comb tm
+        val _ =
+          if term_same_const inject smtfp_intro_tm then ()
+          else raise ERR "dest_injected_float" "not smtfp_intro"
+      in
+        float
+      end
 
-  fun dest_injected_string_operation tm =
-    let
-      val (rator, rands) = boolSyntax.strip_comb tm
-      val name = injected_string_operator rator
-      val _ =
-        if List.length rands = 2 then ()
-        else raise ERR "dest_injected_string_operation" "wrong arity"
-    in
-      (name, rands)
-    end
+    fun is_injected_float tm = can dest_injected_float tm
 
-  fun is_injected_string_expression tm =
-    is_injected_string tm orelse
-    (case Lib.total dest_injected_string_operation tm of
-       SOME ("str.++", rands) =>
-         List.all is_injected_string_expression rands
-     | _ => false)
+    fun injected_string_operator tm =
+      if term_same_const tm smtstr_concat_tm then "str.++"
+      else if term_same_const tm smtstr_prefixof_tm then "str.prefixof"
+      else if term_same_const tm smtstr_lt_tm then "str.<"
+      else if term_same_const tm smtstr_le_tm then "str.<="
+      else raise ERR "injected_string_operator" "not an injection operator"
 
-  fun is_injected_string_operation tm =
-    case Lib.total dest_injected_string_operation tm of
-      SOME (_, rands) => List.all is_injected_string_expression rands
-    | NONE => false
+    fun dest_injected_string_operation tm =
+      let
+        val (rator, rands) = strip_comb tm
+        val name = injected_string_operator rator
+        val _ =
+          if List.length rands = 2 then ()
+          else raise ERR "dest_injected_string_operation" "wrong arity"
+      in
+        (name, rands)
+      end
 
-  fun mk_int_emod (dividend, divisor) =
-    Term.list_mk_comb (int_emod_tm, [dividend, divisor])
+    fun is_injected_string_expression tm =
+      memo_string_expression tm (fn () =>
+        is_injected_string tm orelse
+        (case total dest_injected_string_operation tm of
+           SOME ("str.++", rands) =>
+             List.all is_injected_string_expression rands
+         | _ => false))
 
-  fun literal_int_divides_mod_eq (divisor, dividend) =
-    if intSyntax.is_int_literal divisor andalso
-       Arbint.> (intSyntax.int_of_term divisor, Arbint.zero) then
-      [mk_int_emod (dividend, divisor), intSyntax.term_of_int Arbint.zero]
+    fun is_injected_string_operation tm =
+      case total dest_injected_string_operation tm of
+        SOME (_, rands) => List.all is_injected_string_expression rands
+      | NONE => false
+
+    fun dest_parsed_bag_literal tm =
+      let
+        val (bound, body) = dest_abs tm
+        val (cond_head, cond_args) = strip_comb body
+        val (test, count, otherwise) =
+          if same_const cond_head boolSyntax.conditional then
+            case cond_args of
+              [test, count, otherwise] => (test, count, otherwise)
+            | _ => raise ERR "dest_parsed_bag_literal"
+              "wrong conditional arity"
+          else
+            raise ERR "dest_parsed_bag_literal" "not a conditional"
+        val (eq_head, eq_args) = strip_comb test
+        val (left, element) =
+          if same_const eq_head boolSyntax.equality then
+            case eq_args of [left, element] => (left, element)
+            | _ => raise ERR "dest_parsed_bag_literal" "wrong equality arity"
+          else
+            raise ERR "dest_parsed_bag_literal" "not an equality"
+        val _ = if aconv bound left then ()
+                else raise ERR "dest_parsed_bag_literal" "wrong binder"
+        val (count_head, count_args) = strip_comb count
+        val integer_count =
+          if same_const count_head boolSyntax.conditional then
+            (case count_args of
+               [nonnegative, nat_count, zero] =>
+                 let
+                   val _ = if is_Num nat_count then ()
+                           else raise ERR "dest_parsed_bag_literal"
+                             "not an integer count"
+                   val integer_count = dest_Num nat_count
+                   val (lower, upper) = dest_leq nonnegative
+                   val _ =
+                     if aconv_known lower intSyntax.zero_tm andalso
+                        aconv upper integer_count andalso
+                        aconv_known zero numSyntax.zero_tm then ()
+                     else raise ERR "dest_parsed_bag_literal"
+                       "wrong count clamp"
+                 in integer_count end
+             | _ => raise ERR "dest_parsed_bag_literal" "wrong count arity")
+          else if is_numeral count then
+            apply_constant (intSyntax.int_injection, count)
+          else
+            raise ERR "dest_parsed_bag_literal" "not a count"
+        val _ =
+          if free_in bound element orelse
+             free_in bound integer_count orelse
+             not (aconv_known otherwise numSyntax.zero_tm) then
+            raise ERR "dest_parsed_bag_literal"
+              "literal element or count depends on binder"
+          else ()
+      in
+        (element, integer_count)
+      end
+
+    fun is_parsed_bag_literal tm =
+      can dest_parsed_bag_literal tm
+
+    fun native_string_literal tm =
+      let
+        val (constructor, representation) = dest_comb tm
+        val _ =
+          if known_same_const
+              (smtstring_const "SmtStr") constructor then ()
+          else raise ERR "native_string_literal" "not an SMT String"
+        val (elements, element_ty) = (#dest_list builtin) representation
+        val _ =
+          if Type.compare (element_ty, numSyntax.num) = EQUAL then ()
+          else raise ERR "native_string_literal"
+            "String representation is not a num list"
+        fun code_point element =
+          let val numeral = (#dest_numeral builtin) element in
+            Arbnum.toInt
+              (SmtLib_String_Literal.check_code_point "code point" numeral)
+            handle SmtLib_String_Literal.InvalidCodePoint detail =>
+              raise ERR "native_string_literal" detail
+          end
+        val code_points = List.map code_point elements
+      in
+        "\"" ^ SmtLib_String_Literal.encode_string_literal code_points ^ "\""
+      end
+  in
+    {dest_injected_string = dest_injected_string,
+     is_injected_string = is_injected_string,
+     dest_injected_float = dest_injected_float,
+     is_injected_float = is_injected_float,
+     injected_string_operator = injected_string_operator,
+     dest_injected_string_operation = dest_injected_string_operation,
+     is_injected_string_expression = is_injected_string_expression,
+     is_injected_string_operation = is_injected_string_operation,
+     dest_parsed_bag_literal = dest_parsed_bag_literal,
+     is_parsed_bag_literal = is_parsed_bag_literal,
+     native_string_literal = native_string_literal,
+     hexadecimal_string = hexadecimal_string_with builtin}
+  end
+
+  val term_literal_recognition_operations :
+      Term.term literal_recognition_operations = {
+    builtin = (term_builtin_operations),
+    dest_comb = (Term.dest_comb),
+    dest_abs = (Term.dest_abs),
+    strip_comb = (boolSyntax.strip_comb),
+    term_same_const = (Term.same_const),
+    same_const = (Library.same_const),
+    known_same_const = (Library.same_const),
+    aconv = (Term.aconv),
+    aconv_known = (Term.aconv),
+    free_in = (Term.free_in),
+    is_Num = (intSyntax.is_Num),
+    dest_Num = (intSyntax.dest_Num),
+    dest_leq = (intSyntax.dest_leq),
+    is_numeral = (numSyntax.is_numeral),
+    apply_constant = (Term.mk_comb),
+    optional_error = (fn Portable.Interrupt => false | _ => true),
+    memo_string_expression = (fn _ => fn thunk => thunk ())
+  }
+
+  val term_literal_recognizers =
+    carrier_literal_recognizers_with term_literal_recognition_operations
+
+  val dest_injected_string = #dest_injected_string term_literal_recognizers
+  val is_injected_string = #is_injected_string term_literal_recognizers
+  val dest_injected_float = #dest_injected_float term_literal_recognizers
+  val is_injected_float = #is_injected_float term_literal_recognizers
+  val injected_string_operator = #injected_string_operator
+    term_literal_recognizers
+  val dest_injected_string_operation = #dest_injected_string_operation
+    term_literal_recognizers
+  val is_injected_string_expression = #is_injected_string_expression
+    term_literal_recognizers
+  val is_injected_string_operation = #is_injected_string_operation
+    term_literal_recognizers
+  val hexadecimal_string = #hexadecimal_string term_literal_recognizers
+
+  fun mk_int_emod_with (operations : 'term builtin_operations)
+      (dividend, divisor) =
+    (#list_mk_comb operations)
+      ((#constant operations) int_emod_tm, [dividend, divisor])
+
+  fun literal_int_divides_mod_eq_with (operations : 'term builtin_operations)
+      (divisor, dividend) =
+    if (#is_int_literal operations) divisor andalso
+       Arbint.> ((#int_of_term operations) divisor, Arbint.zero) then
+      [mk_int_emod_with operations (dividend, divisor),
+       (#mk_integer operations) Arbint.zero]
     else
-      raise ERR "<builtin_symbols.int_divides>" "not a positive literal divisor"
+      raise (#syntax_error operations) "<builtin_symbols.int_divides>"
+        "not a positive literal divisor"
 
   (* returns true iff 'ty' is a word type that is not fixed-width *)
   fun is_non_numeric_word_type ty =
@@ -485,13 +762,15 @@ local
       handle Feedback.HOL_ERR _ => false
 
   (* make sure that all word types in 't' are of fixed width; return 's' *)
-  fun apfst_fixed_width s =
+  fun apfst_fixed_width_with (operations : 'term builtin_operations) s =
     Lib.apfst (fn t =>
       let
-        val (domtys, rngty) = boolSyntax.strip_fun (Term.type_of t)
+        val ty = (#type_of operations) t
+        val (domtys, rngty) =
+          builtin_type_with operations boolSyntax.strip_fun ty
       in
         if List.exists is_non_numeric_word_type (rngty :: domtys) then
-          raise ERR ("<builtin_symbols." ^ s ^ ">")
+          raise (#syntax_error operations) ("<builtin_symbols." ^ s ^ ">")
             "not a fixed-width word type"
         else
           s
@@ -500,350 +779,398 @@ local
   (* (HOL term, a function that maps a pair (rator, rands) to an
      SMT-LIB symbol and a list of remaining (still-to-be-encoded)
      argument terms) *)
-  type builtin_encoding =
-    (Term.term * Term.term list) -> (string * Term.term list)
+  type 'term carrier_builtin_encoding =
+    ('term * 'term list) -> (string * 'term list)
+  type builtin_encoding = Term.term carrier_builtin_encoding
 
-  (* Native smtstringTheory UnicodeStrings and RegLan surface, derived from
-     'native_string_infos' so that the SMT name of an operator is recorded
-     in one table only. *)
-  val native_string_encodings : (Term.term * builtin_encoding) list =
-    List.map
-      (fn {hol_name, smt_name} : native_string_info =>
-        (smtstring_const hol_name,
-         case hol_name of
-           "smtstr_char" => indexed_char_encoding
-         | "reglan_power" => indexed_power_encoding
-         | "reglan_loop" => indexed_loop_encoding
-         | _ => apfst_K smt_name))
-      native_string_infos
+  (* One ordered registry supplies both the ordinary Term encoding and
+     carrier encodings. Pattern keys remain the original bounded schemas;
+     all operand observation and synthetic construction use this algebra. *)
+  fun builtin_symbol_encodings_with (operations : 'term builtin_operations) =
+  let
+    fun one_arg f values = builtin_one_arg_with operations f values
+    fun two_args f values = builtin_two_args_with operations f values
+    fun three_args f values = builtin_three_args_with operations f values
+    val indexed_char_encoding = indexed_char_encoding_with operations
+    val indexed_power_encoding = indexed_power_encoding_with operations
+    val indexed_loop_encoding = indexed_loop_encoding_with operations
+    val literal_int_divides_mod_eq =
+      literal_int_divides_mod_eq_with operations
+    fun apfst_fixed_width name input =
+      apfst_fixed_width_with operations name input
+    (* Native smtstringTheory UnicodeStrings and RegLan surface, derived from
+       'native_string_infos' so that the SMT name of an operator is recorded
+       in one table only. *)
+    val native_string_encodings :
+        (Term.term * 'term carrier_builtin_encoding) list =
+      List.map
+        (fn {hol_name, smt_name} : native_string_info =>
+          (smtstring_const hol_name,
+           case hol_name of
+             "smtstr_char" => indexed_char_encoding
+           | "reglan_power" => indexed_power_encoding
+           | "reglan_loop" => indexed_loop_encoding
+           | _ => apfst_K smt_name))
+        native_string_infos
 
-  fun instantiated_result_type tm =
-    Lib.snd (boolSyntax.strip_fun (Term.type_of tm))
+    fun instantiated_result_type tm =
+      let val ty = (#type_of operations) tm
+      in builtin_type_with operations
+        (Lib.snd o boolSyntax.strip_fun) ty end
 
-  fun indexed_fp_name operator tm =
-    let val (eb, sb) = smtfp_format (instantiated_result_type tm) in
-      "(_ " ^ operator ^ " " ^ Arbnum.toString eb ^ " " ^
-      Arbnum.toString sb ^ ")"
-    end
+    fun numeric_word_dimension tm =
+      let val dimension = (#dim_of operations) tm
+      in builtin_type_with operations fcpSyntax.dest_numeric_type
+        dimension end
 
-  fun fp_special_encoding name (tm, args) =
-    if List.null args then
-      (indexed_fp_name name tm, [])
-    else
-      raise ERR "fp_special_encoding"
-        "floating-point special takes no arguments"
+    fun numeric_word_type_width ty =
+      builtin_type_with operations
+        (numeric_type_width o wordsSyntax.dest_word_type) ty
 
-  fun fp_target_encoding operator (tm, args) =
-    (indexed_fp_name operator tm, args)
+    fun indexed_fp_name operator tm =
+      let val ty = instantiated_result_type tm
+          val (eb, sb) = builtin_type_with operations smtfp_format ty
+      in
+        "(_ " ^ operator ^ " " ^ Arbnum.toString eb ^ " " ^
+        Arbnum.toString sb ^ ")"
+      end
 
-  fun fp_to_bv_encoding operator (tm, args) =
-    let
-      val result_ty = instantiated_result_type tm
-      val width = numeric_type_width (wordsSyntax.dest_word_type result_ty)
-    in
-      ("(_ " ^ operator ^ " " ^ Arbnum.toString width ^ ")", args)
-    end
-
-  val native_fp_encodings : (Term.term * builtin_encoding) list =
-    List.map
-      (fn {hol_name, smt_name} : native_fp_info =>
-        (smtfloat_const hol_name, apfst_K smt_name))
-      native_fp_infos @
-    List.map
-      (fn {hol_name, smt_name} : native_fp_info =>
-        (smtfloat_const hol_name, fp_special_encoding smt_name))
-      native_fp_special_infos @ [
-    (smtfloat_const "smtfp_from_ieee_bv", fp_target_encoding "to_fp"),
-    (smtfloat_const "smtfp_to_fp", fp_target_encoding "to_fp"),
-    (smtfloat_const "smtfp_from_real", fp_target_encoding "to_fp"),
-    (smtfloat_const "smtfp_from_sbv", fp_target_encoding "to_fp"),
-    (smtfloat_const "smtfp_from_ubv",
-      fp_target_encoding "to_fp_unsigned"),
-    (smtfloat_const "smtfp_to_ubv", fp_to_bv_encoding "fp.to_ubv"),
-    (smtfloat_const "smtfp_to_sbv", fp_to_bv_encoding "fp.to_sbv")
-  ]
-
-  val builtin_symbol_encodings = [
-    (* Core *)
-    (boolSyntax.T, apfst_K "true"),
-    (boolSyntax.F, apfst_K "false"),
-    (boolSyntax.negation, apfst_K "not"),
-    (boolSyntax.implication, apfst_K "=>"),
-    (boolSyntax.conjunction, apfst_K "and"),
-    (boolSyntax.disjunction, apfst_K "or"),
-    (Term.prim_mk_const {Thy="HolSmt", Name="xor"}, apfst_K "xor"),
-    (boolSyntax.equality, apfst_K "="),
-    (* The parser represents SMT-LIB Core.distinct as ALL_DISTINCT over a
-       HOL list.  The list is only an internal n-ary encoding: emit its
-       elements as the direct SMT-LIB arguments rather than translating the
-       wrapper as a datatype value.  SMT-LIB requires at least two arguments;
-       the corresponding shorter HOL lists are vacuously distinct. *)
-    (listSyntax.all_distinct_tm, fn (_, ts) =>
-      SmtLib_Theories.one_arg (fn list_tm =>
-        case Lib.fst (listSyntax.dest_list list_tm) of
-          elements as _ :: _ :: _ => ("distinct", elements)
-        | _ => ("true", [])) ts),
-    (boolSyntax.conditional, apfst_K "ite"),
-    (* UnicodeStrings symbols are reached only through the smtstr operators
-       appended from 'native_string_encodings'.  Encoding HOL's STRCAT and
-       friends directly would emit str.* applied to arguments whose sort is
-       no longer String (see 'builtin_types'). *)
-    (* Reals_Ints *)
-    (* numerals (excluding 'intSyntax.negate_tm') *)
-    (Term.mk_var ("x", intSyntax.int_ty), Lib.apfst (fn tm =>
-      if intSyntax.is_int_literal tm andalso not (intSyntax.is_negated tm) then
-        let
-          val i = intSyntax.int_of_term tm
-          val s = Arbint.toString (Arbint.abs i)
-          val s = String.substring (s, 0, String.size s - 1)
-        in
-          if Arbint.< (i, Arbint.zero) then
-            "(- " ^ s ^ ")"
-          else
-            s
-        end
+    fun fp_special_encoding name (tm, args) =
+      if List.null args then
+        (indexed_fp_name name tm, [])
       else
-        raise ERR "<builtin_symbols.x:int>" "not a numeral (negated?)")),
-    (intSyntax.negate_tm, apfst_K "-"),
-    (intSyntax.Num_tm, apfst_K "abs"),
-    (intSyntax.minus_tm, apfst_K "-"),
-    (intSyntax.plus_tm, apfst_K "+"),
-    (intSyntax.mult_tm, apfst_K "*"),
-    (Term.prim_mk_const {Thy="integer", Name="ediv"}, apfst_K "div"),
-    (Term.prim_mk_const {Thy="integer", Name="emod"}, apfst_K "mod"),
-    (intSyntax.absval_tm, apfst_K "abs"),
-    (intSyntax.divides_tm, fn (_, ts) =>
-      SmtLib_Theories.two_args (fn (divisor, dividend) =>
-        ("=", literal_int_divides_mod_eq (divisor, dividend))) ts),
-    (intSyntax.leq_tm, apfst_K "<="),
-    (intSyntax.less_tm, apfst_K "<"),
-    (intSyntax.geq_tm, apfst_K ">="),
-    (intSyntax.greater_tm, apfst_K ">"),
-    (* decimals (excluding 'realSyntax.negate_tm') *)
-    (Term.mk_var ("x", realSyntax.real_ty), Lib.apfst (fn tm =>
-      if realSyntax.is_real_literal tm andalso not (realSyntax.is_negated tm)
-          then
-        let
-          val i = realSyntax.int_of_term tm
-          val s = Arbint.toString (Arbint.abs i)
-          val s = String.substring (s, 0, String.size s - 1)
-          val s = s ^ ".0"
-        in
-          if Arbint.< (i, Arbint.zero) then
-            "(- " ^ s ^ ")"
-          else
-            s
-        end
-      else
-        raise ERR "<builtin_symbols.x:real>" "not a decimal (negated?)")),
-    (realSyntax.negate_tm, apfst_K "-"),
-    (realSyntax.minus_tm, apfst_K "-"),
-    (realSyntax.plus_tm, apfst_K "+"),
-    (realSyntax.mult_tm, apfst_K "*"),
-    (Term.prim_mk_const {Thy="HolSmt", Name="smt_rdiv"}, apfst_K "/"),
-    (realSyntax.leq_tm, apfst_K "<="),
-    (realSyntax.less_tm, apfst_K "<"),
-    (realSyntax.geq_tm, apfst_K ">="),
-    (realSyntax.greater_tm, apfst_K ">"),
-    (intrealSyntax.real_of_int_tm, apfst_K "to_real"),
-    (intrealSyntax.INT_FLOOR_tm, apfst_K "to_int"),
-    (* SMT-LIB has no ceiling operator, but HOL's integer ceiling has the
-       closed-form definition ceil r = -floor (-r).  Encode that expression
-       directly instead of introducing a quantified defining axiom. *)
-    (intrealSyntax.INT_CEILING_tm, fn (_, ts) =>
-      SmtLib_Theories.one_arg (fn r =>
-        ("-", [Term.mk_comb (intrealSyntax.INT_FLOOR_tm,
-          Term.mk_comb (realSyntax.negate_tm, r))])) ts),
-    (intrealSyntax.is_int_tm, apfst_K "is_int"),
-    (* bit-vector constants *)
-    (Term.mk_var ("x", wordsSyntax.mk_word_type Type.alpha), Lib.apfst (fn tm =>
-      if wordsSyntax.is_word_literal tm then
-        let
-          val value = wordsSyntax.dest_word_literal tm
-          val width = fcpSyntax.dest_numeric_type (wordsSyntax.dim_of tm)
-        in
-          "(_ bv" ^ Arbnum.toString value ^ " " ^ Arbnum.toString width ^ ")"
-        end
-      else
-        raise ERR "<builtin_symbols.x:'a word>" "not a word literal")),
-    (wordsSyntax.word_concat_tm, fn (t, ts) =>
-      SmtLib_Theories.two_args (fn (w1, w2) =>
-        let
-          (* make sure that the result in HOL has the expected width *)
-          val dim1 = fcpSyntax.dest_numeric_type (wordsSyntax.dim_of w1)
-          val dim2 = fcpSyntax.dest_numeric_type (wordsSyntax.dim_of w2)
-          val rngty = Lib.snd (boolSyntax.strip_fun (Term.type_of t))
-          val rngdim = fcpSyntax.dest_numeric_type
-            (wordsSyntax.dest_word_type rngty)
-          val _ = if rngdim = Arbnum.+ (dim1, dim2) then
-              ()
-            else (
-              if !Library.trace > 0 then
-                WARNING "translate_term" "word_concat: wrong result type"
-              else
-                ();
-              raise ERR "<builtin_symbols.word_concat_tm>" "wrong result type"
-            )
-        in
-          ("concat", ts)
-        end) ts),
-    (wordsSyntax.word_extract_tm, fn (t, ts) =>
-      SmtLib_Theories.three_args (fn (i, j, w) =>
-        let
-          (* make sure that j <= i < dim(w) *)
-          val i = numSyntax.dest_numeral i
-          val j = numSyntax.dest_numeral j
-          val dim = fcpSyntax.dest_numeric_type (wordsSyntax.dim_of w)
-          val _ = if Arbnum.<= (j, i) then
-              ()
-            else (
-              if !Library.trace > 0 then
-                WARNING "translate_term"
-                  "word_extract: second index larger than first"
-              else
-                ();
-              raise ERR "<builtin_symbols.word_extract_tm>"
-                "second index larger than first"
-            )
-          val _ = if Arbnum.< (i, dim) then
-              ()
-            else (
-              if !Library.trace > 0 then
-                WARNING "translate_term" "word_extract: first index too large"
-              else
-                ();
-              raise ERR "<builtin_symbols.word_extract_tm>"
-                "first index too large"
-            )
-          (* make sure that the result in HOL has the expected width *)
-          val rngty = Lib.snd (boolSyntax.strip_fun (Term.type_of t))
-          val rngdim = fcpSyntax.dest_numeric_type
-            (wordsSyntax.dest_word_type rngty)
-          val _ = if rngdim = Arbnum.+ (Arbnum.- (i, j), Arbnum.one) then
-              ()
-            else (
-              if !Library.trace > 0 then
-                WARNING "translate_term" "word_extract: wrong result type"
-              else
-                ();
-              raise ERR "<builtin_symbols.word_extract_tm>" "wrong result type"
-            )
-        in
-          ("(_ extract " ^ Arbnum.toString i ^ " " ^ Arbnum.toString j ^ ")",
-            [w])
-        end) ts),
-    (wordsSyntax.word_1comp_tm, apfst_fixed_width "bvnot"),
-    (wordsSyntax.word_and_tm, apfst_fixed_width "bvand"),
-    (wordsSyntax.word_or_tm, apfst_fixed_width "bvor"),
-    (wordsSyntax.word_nand_tm, apfst_fixed_width "bvnand"),
-    (wordsSyntax.word_nor_tm, apfst_fixed_width "bvnor"),
-    (wordsSyntax.word_xor_tm, apfst_fixed_width "bvxor"),
-    (wordsSyntax.word_xnor_tm, apfst_fixed_width "bvxnor"),
-    (wordsSyntax.word_2comp_tm, apfst_fixed_width "bvneg"),
-    (wordsSyntax.word_compare_tm, apfst_fixed_width "bvcomp"),
-    (wordsSyntax.word_add_tm, apfst_fixed_width "bvadd"),
-    (wordsSyntax.word_sub_tm, apfst_fixed_width "bvsub"),
-    (wordsSyntax.word_mul_tm, apfst_fixed_width "bvmul"),
-    (wordsSyntax.word_quot_tm, apfst_fixed_width "bvsdiv"),
-    (wordsSyntax.word_rem_tm, apfst_fixed_width "bvsrem"),
-    (integer_wordSyntax.word_smod_tm, apfst_fixed_width "bvsmod"),
-    (wordsSyntax.word_div_tm, apfst_fixed_width "bvudiv"),
-    (wordsSyntax.word_mod_tm, apfst_fixed_width "bvurem"),
-    (* shift operations with two bit-vector arguments; the corresponding HOL
-       shift operations that take a numeral as their second argument are not
-       supported in SMT-LIB *)
-    (wordsSyntax.word_lsl_bv_tm, apfst_fixed_width "bvshl"),
-    (wordsSyntax.word_lsr_bv_tm, apfst_fixed_width "bvlshr"),
-    (wordsSyntax.word_asr_bv_tm, apfst_fixed_width "bvashr"),
-    (wordsSyntax.word_replicate_tm, fn (t, ts) =>
-      SmtLib_Theories.two_args (fn (n, w) =>
-        let
-          val n = numSyntax.dest_numeral n
-          (* make sure that the result in HOL has the expected width *)
-          val dim = fcpSyntax.dest_numeric_type (wordsSyntax.dim_of w)
-          val rngty = Lib.snd (boolSyntax.strip_fun (Term.type_of t))
-          val rngdim = fcpSyntax.dest_numeric_type
-            (wordsSyntax.dest_word_type rngty)
-          val _ = if rngdim = Arbnum.* (n, dim) then
-              ()
-            else (
-              if !Library.trace > 0 then
-                WARNING "translate_term" "word_replicate: wrong result type"
-              else
-                ();
-              raise ERR "<builtin_symbols.word_replicate_tm>"
-                "wrong result type"
-            )
-        in
-          ("(_ repeat " ^ Arbnum.toString n ^ ")", [w])
-        end) ts),
-    (wordsSyntax.w2w_tm, fn (t, ts) =>
-      SmtLib_Theories.one_arg (fn w =>
-        let
-          (* make sure that the result in HOL is at least as long as 'w' *)
-          val dim = fcpSyntax.dest_numeric_type (wordsSyntax.dim_of w)
-          val rngty = Lib.snd (boolSyntax.strip_fun (Term.type_of t))
-          val rngdim = fcpSyntax.dest_numeric_type
-            (wordsSyntax.dest_word_type rngty)
-          val _ = if Arbnum.>= (rngdim, dim) then
-              ()
-            else (
-              if !Library.trace > 0 then
-                WARNING "translate_term" "w2w: result type too short"
-              else
-                ();
-              raise ERR "<builtin_symbols.w2w_tm>" "result type too short"
-            )
-          val n = Arbnum.- (rngdim, dim)
-        in
-          ("(_ zero_extend " ^ Arbnum.toString n ^ ")", [w])
-        end) ts),
-    (wordsSyntax.sw2sw_tm, fn (t, ts) =>
-      SmtLib_Theories.one_arg (fn w =>
-        let
-          (* make sure that the result in HOL is at least as long as 'w' *)
-          val dim = fcpSyntax.dest_numeric_type (wordsSyntax.dim_of w)
-          val rngty = Lib.snd (boolSyntax.strip_fun (Term.type_of t))
-          val rngdim = fcpSyntax.dest_numeric_type
-            (wordsSyntax.dest_word_type rngty)
-          val _ = if Arbnum.>= (rngdim, dim) then
-              ()
-            else (
-              if !Library.trace > 0 then
-                WARNING "translate_term" "sw2sw: result type too short"
-              else
-                ();
-              raise ERR "<builtin_symbols.sw2sw_tm>" "result type too short"
-            )
-          val n = Arbnum.- (rngdim, dim)
-        in
-          ("(_ sign_extend " ^ Arbnum.toString n ^ ")", [w])
-        end) ts),
-    (* rotation by a numeral; the corresponding HOL rotation operations that
-       take two bit-vector arguments are not supported in SMT-LIB *)
-    (wordsSyntax.word_rol_tm, fn (t, ts) =>
-      (
-        apfst_fixed_width "rotate_left" (t, ());
-        SmtLib_Theories.two_args (fn (w, n) =>
-          ("(_ rotate_left " ^ Arbnum.toString (numSyntax.dest_numeral n)
-            ^ ")", [w])) ts
-      )),
-    (wordsSyntax.word_ror_tm, fn (t, ts) =>
-      (
-        apfst_fixed_width "rotate_right" (t, ());
-        SmtLib_Theories.two_args (fn (w, n) =>
-          ("(_ rotate_right " ^ Arbnum.toString (numSyntax.dest_numeral n)
-            ^ ")", [w])) ts
-      )),
-    (wordsSyntax.word_lo_tm, apfst_fixed_width "bvult"),
-    (wordsSyntax.word_ls_tm, apfst_fixed_width "bvule"),
-    (wordsSyntax.word_hi_tm, apfst_fixed_width "bvugt"),
-    (wordsSyntax.word_hs_tm, apfst_fixed_width "bvuge"),
-    (wordsSyntax.word_lt_tm, apfst_fixed_width "bvslt"),
-    (wordsSyntax.word_le_tm, apfst_fixed_width "bvsle"),
-    (wordsSyntax.word_gt_tm, apfst_fixed_width "bvsgt"),
-    (wordsSyntax.word_ge_tm, apfst_fixed_width "bvsge")
-  ] @ native_fp_encodings @ native_string_encodings
+        raise (#syntax_error operations) "fp_special_encoding"
+          "floating-point special takes no arguments"
+
+    fun fp_target_encoding operator (tm, args) =
+      (indexed_fp_name operator tm, args)
+
+    fun fp_to_bv_encoding operator (tm, args) =
+      let
+        val result_ty = instantiated_result_type tm
+        val width = numeric_word_type_width result_ty
+      in
+        ("(_ " ^ operator ^ " " ^ Arbnum.toString width ^ ")", args)
+      end
+
+    val native_fp_encodings :
+        (Term.term * 'term carrier_builtin_encoding) list =
+      List.map
+        (fn {hol_name, smt_name} : native_fp_info =>
+          (smtfloat_const hol_name, apfst_K smt_name))
+        native_fp_infos @
+      List.map
+        (fn {hol_name, smt_name} : native_fp_info =>
+          (smtfloat_const hol_name, fp_special_encoding smt_name))
+        native_fp_special_infos @ [
+      (smtfloat_const "smtfp_from_ieee_bv", fp_target_encoding "to_fp"),
+      (smtfloat_const "smtfp_to_fp", fp_target_encoding "to_fp"),
+      (smtfloat_const "smtfp_from_real", fp_target_encoding "to_fp"),
+      (smtfloat_const "smtfp_from_sbv", fp_target_encoding "to_fp"),
+      (smtfloat_const "smtfp_from_ubv",
+        fp_target_encoding "to_fp_unsigned"),
+      (smtfloat_const "smtfp_to_ubv", fp_to_bv_encoding "fp.to_ubv"),
+      (smtfloat_const "smtfp_to_sbv", fp_to_bv_encoding "fp.to_sbv")
+    ]
+
+    val builtin_symbol_encodings = [
+      (* Core *)
+      (boolSyntax.T, apfst_K "true"),
+      (boolSyntax.F, apfst_K "false"),
+      (boolSyntax.negation, apfst_K "not"),
+      (boolSyntax.implication, apfst_K "=>"),
+      (boolSyntax.conjunction, apfst_K "and"),
+      (boolSyntax.disjunction, apfst_K "or"),
+      (Term.prim_mk_const {Thy="HolSmt", Name="xor"}, apfst_K "xor"),
+      (boolSyntax.equality, apfst_K "="),
+      (* The parser represents SMT-LIB Core.distinct as ALL_DISTINCT over a
+         HOL list.  The list is only an internal n-ary encoding: emit its
+         elements as the direct SMT-LIB arguments rather than translating the
+         wrapper as a datatype value.  SMT-LIB requires at least two arguments;
+         the corresponding shorter HOL lists are vacuously distinct. *)
+      (listSyntax.all_distinct_tm, fn (_, ts) =>
+        one_arg (fn list_tm =>
+          case Lib.fst ((#dest_list operations) list_tm) of
+            elements as _ :: _ :: _ => ("distinct", elements)
+          | _ => ("true", [])) ts),
+      (boolSyntax.conditional, apfst_K "ite"),
+      (* UnicodeStrings symbols are reached only through the smtstr operators
+         appended from 'native_string_encodings'.  Encoding HOL's STRCAT and
+         friends directly would emit str.* applied to arguments whose sort is
+         no longer String (see 'builtin_types'). *)
+      (* Reals_Ints *)
+      (* numerals (excluding 'intSyntax.negate_tm') *)
+      (Term.mk_var ("x", intSyntax.int_ty), Lib.apfst (fn tm =>
+        if (#is_int_literal operations) tm andalso
+           not ((#is_int_negated operations) tm) then
+          let
+            val i = (#int_of_term operations) tm
+            val s = Arbint.toString (Arbint.abs i)
+            val s = String.substring (s, 0, String.size s - 1)
+          in
+            if Arbint.< (i, Arbint.zero) then
+              "(- " ^ s ^ ")"
+            else
+              s
+          end
+        else
+          raise (#syntax_error operations) "<builtin_symbols.x:int>"
+            "not a numeral (negated?)")),
+      (intSyntax.negate_tm, apfst_K "-"),
+      (intSyntax.Num_tm, apfst_K "abs"),
+      (intSyntax.minus_tm, apfst_K "-"),
+      (intSyntax.plus_tm, apfst_K "+"),
+      (intSyntax.mult_tm, apfst_K "*"),
+      (Term.prim_mk_const {Thy="integer", Name="ediv"}, apfst_K "div"),
+      (Term.prim_mk_const {Thy="integer", Name="emod"}, apfst_K "mod"),
+      (intSyntax.absval_tm, apfst_K "abs"),
+      (intSyntax.divides_tm, fn (_, ts) =>
+        two_args (fn (divisor, dividend) =>
+          ("=", literal_int_divides_mod_eq (divisor, dividend))) ts),
+      (intSyntax.leq_tm, apfst_K "<="),
+      (intSyntax.less_tm, apfst_K "<"),
+      (intSyntax.geq_tm, apfst_K ">="),
+      (intSyntax.greater_tm, apfst_K ">"),
+      (* decimals (excluding 'realSyntax.negate_tm') *)
+      (Term.mk_var ("x", realSyntax.real_ty), Lib.apfst (fn tm =>
+        if (#is_real_literal operations) tm andalso
+           not ((#is_real_negated operations) tm)
+            then
+          let
+            val i = (#real_int_of_term operations) tm
+            val s = Arbint.toString (Arbint.abs i)
+            val s = String.substring (s, 0, String.size s - 1)
+            val s = s ^ ".0"
+          in
+            if Arbint.< (i, Arbint.zero) then
+              "(- " ^ s ^ ")"
+            else
+              s
+          end
+        else
+          raise (#syntax_error operations) "<builtin_symbols.x:real>"
+            "not a decimal (negated?)")),
+      (realSyntax.negate_tm, apfst_K "-"),
+      (realSyntax.minus_tm, apfst_K "-"),
+      (realSyntax.plus_tm, apfst_K "+"),
+      (realSyntax.mult_tm, apfst_K "*"),
+      (Term.prim_mk_const {Thy="HolSmt", Name="smt_rdiv"}, apfst_K "/"),
+      (realSyntax.leq_tm, apfst_K "<="),
+      (realSyntax.less_tm, apfst_K "<"),
+      (realSyntax.geq_tm, apfst_K ">="),
+      (realSyntax.greater_tm, apfst_K ">"),
+      (intrealSyntax.real_of_int_tm, apfst_K "to_real"),
+      (intrealSyntax.INT_FLOOR_tm, apfst_K "to_int"),
+      (* SMT-LIB has no ceiling operator, but HOL's integer ceiling has the
+         closed-form definition ceil r = -floor (-r).  Encode that expression
+         directly instead of introducing a quantified defining axiom. *)
+      (intrealSyntax.INT_CEILING_tm, fn (_, ts) =>
+        one_arg (fn r =>
+          ("-", [(#mk_comb operations)
+            ((#constant operations) intrealSyntax.INT_FLOOR_tm,
+             (#mk_comb operations)
+               ((#constant operations) realSyntax.negate_tm, r))])) ts),
+      (intrealSyntax.is_int_tm, apfst_K "is_int"),
+      (* bit-vector constants *)
+      (Term.mk_var ("x", wordsSyntax.mk_word_type Type.alpha),
+       Lib.apfst (fn tm =>
+        if (#is_word_literal operations) tm then
+          let
+            val value = (#dest_word_literal operations) tm
+            val width = numeric_word_dimension tm
+          in
+            "(_ bv" ^ Arbnum.toString value ^ " " ^ Arbnum.toString width ^ ")"
+          end
+        else
+          raise (#syntax_error operations) "<builtin_symbols.x:'a word>"
+            "not a word literal")),
+      (wordsSyntax.word_concat_tm, fn (t, ts) =>
+        two_args (fn (w1, w2) =>
+          let
+            (* make sure that the result in HOL has the expected width *)
+            val dim1 = numeric_word_dimension w1
+            val dim2 = numeric_word_dimension w2
+            val rngty = instantiated_result_type t
+            val rngdim = numeric_word_type_width rngty
+            val _ = if rngdim = Arbnum.+ (dim1, dim2) then
+                ()
+              else (
+                if !Library.trace > 0 then
+                  WARNING "translate_term" "word_concat: wrong result type"
+                else
+                  ();
+                raise (#syntax_error operations)
+                  "<builtin_symbols.word_concat_tm>" "wrong result type"
+              )
+          in
+            ("concat", ts)
+          end) ts),
+      (wordsSyntax.word_extract_tm, fn (t, ts) =>
+        three_args (fn (i, j, w) =>
+          let
+            (* make sure that j <= i < dim(w) *)
+            val i = (#dest_numeral operations) i
+            val j = (#dest_numeral operations) j
+            val dim = numeric_word_dimension w
+            val _ = if Arbnum.<= (j, i) then
+                ()
+              else (
+                if !Library.trace > 0 then
+                  WARNING "translate_term"
+                    "word_extract: second index larger than first"
+                else
+                  ();
+                raise (#syntax_error operations)
+                  "<builtin_symbols.word_extract_tm>"
+                  "second index larger than first"
+              )
+            val _ = if Arbnum.< (i, dim) then
+                ()
+              else (
+                if !Library.trace > 0 then
+                  WARNING "translate_term"
+                    "word_extract: first index too large"
+                else
+                  ();
+                raise (#syntax_error operations)
+                  "<builtin_symbols.word_extract_tm>"
+                  "first index too large"
+              )
+            (* make sure that the result in HOL has the expected width *)
+            val rngty = instantiated_result_type t
+            val rngdim = numeric_word_type_width rngty
+            val _ = if rngdim = Arbnum.+ (Arbnum.- (i, j), Arbnum.one) then
+                ()
+              else (
+                if !Library.trace > 0 then
+                  WARNING "translate_term" "word_extract: wrong result type"
+                else
+                  ();
+                raise (#syntax_error operations)
+                  "<builtin_symbols.word_extract_tm>" "wrong result type"
+              )
+          in
+            ("(_ extract " ^ Arbnum.toString i ^ " " ^ Arbnum.toString j ^ ")",
+              [w])
+          end) ts),
+      (wordsSyntax.word_1comp_tm, apfst_fixed_width "bvnot"),
+      (wordsSyntax.word_and_tm, apfst_fixed_width "bvand"),
+      (wordsSyntax.word_or_tm, apfst_fixed_width "bvor"),
+      (wordsSyntax.word_nand_tm, apfst_fixed_width "bvnand"),
+      (wordsSyntax.word_nor_tm, apfst_fixed_width "bvnor"),
+      (wordsSyntax.word_xor_tm, apfst_fixed_width "bvxor"),
+      (wordsSyntax.word_xnor_tm, apfst_fixed_width "bvxnor"),
+      (wordsSyntax.word_2comp_tm, apfst_fixed_width "bvneg"),
+      (wordsSyntax.word_compare_tm, apfst_fixed_width "bvcomp"),
+      (wordsSyntax.word_add_tm, apfst_fixed_width "bvadd"),
+      (wordsSyntax.word_sub_tm, apfst_fixed_width "bvsub"),
+      (wordsSyntax.word_mul_tm, apfst_fixed_width "bvmul"),
+      (wordsSyntax.word_quot_tm, apfst_fixed_width "bvsdiv"),
+      (wordsSyntax.word_rem_tm, apfst_fixed_width "bvsrem"),
+      (integer_wordSyntax.word_smod_tm, apfst_fixed_width "bvsmod"),
+      (wordsSyntax.word_div_tm, apfst_fixed_width "bvudiv"),
+      (wordsSyntax.word_mod_tm, apfst_fixed_width "bvurem"),
+      (* shift operations with two bit-vector arguments; the corresponding HOL
+         shift operations that take a numeral as their second argument are not
+         supported in SMT-LIB *)
+      (wordsSyntax.word_lsl_bv_tm, apfst_fixed_width "bvshl"),
+      (wordsSyntax.word_lsr_bv_tm, apfst_fixed_width "bvlshr"),
+      (wordsSyntax.word_asr_bv_tm, apfst_fixed_width "bvashr"),
+      (wordsSyntax.word_replicate_tm, fn (t, ts) =>
+        two_args (fn (n, w) =>
+          let
+            val n = (#dest_numeral operations) n
+            (* make sure that the result in HOL has the expected width *)
+            val dim = numeric_word_dimension w
+            val rngty = instantiated_result_type t
+            val rngdim = numeric_word_type_width rngty
+            val _ = if rngdim = Arbnum.* (n, dim) then
+                ()
+              else (
+                if !Library.trace > 0 then
+                  WARNING "translate_term" "word_replicate: wrong result type"
+                else
+                  ();
+                raise (#syntax_error operations)
+                  "<builtin_symbols.word_replicate_tm>"
+                  "wrong result type"
+              )
+          in
+            ("(_ repeat " ^ Arbnum.toString n ^ ")", [w])
+          end) ts),
+      (wordsSyntax.w2w_tm, fn (t, ts) =>
+        one_arg (fn w =>
+          let
+            (* make sure that the result in HOL is at least as long as 'w' *)
+            val dim = numeric_word_dimension w
+            val rngty = instantiated_result_type t
+            val rngdim = numeric_word_type_width rngty
+            val _ = if Arbnum.>= (rngdim, dim) then
+                ()
+              else (
+                if !Library.trace > 0 then
+                  WARNING "translate_term" "w2w: result type too short"
+                else
+                  ();
+                raise (#syntax_error operations)
+                  "<builtin_symbols.w2w_tm>" "result type too short"
+              )
+            val n = Arbnum.- (rngdim, dim)
+          in
+            ("(_ zero_extend " ^ Arbnum.toString n ^ ")", [w])
+          end) ts),
+      (wordsSyntax.sw2sw_tm, fn (t, ts) =>
+        one_arg (fn w =>
+          let
+            (* make sure that the result in HOL is at least as long as 'w' *)
+            val dim = numeric_word_dimension w
+            val rngty = instantiated_result_type t
+            val rngdim = numeric_word_type_width rngty
+            val _ = if Arbnum.>= (rngdim, dim) then
+                ()
+              else (
+                if !Library.trace > 0 then
+                  WARNING "translate_term" "sw2sw: result type too short"
+                else
+                  ();
+                raise (#syntax_error operations)
+                  "<builtin_symbols.sw2sw_tm>" "result type too short"
+              )
+            val n = Arbnum.- (rngdim, dim)
+          in
+            ("(_ sign_extend " ^ Arbnum.toString n ^ ")", [w])
+          end) ts),
+      (* rotation by a numeral; the corresponding HOL rotation operations that
+         take two bit-vector arguments are not supported in SMT-LIB *)
+      (wordsSyntax.word_rol_tm, fn (t, ts) =>
+        (
+          apfst_fixed_width "rotate_left" (t, ());
+          two_args (fn (w, n) =>
+            ("(_ rotate_left " ^ Arbnum.toString ((#dest_numeral operations) n)
+              ^ ")", [w])) ts
+        )),
+      (wordsSyntax.word_ror_tm, fn (t, ts) =>
+        (
+          apfst_fixed_width "rotate_right" (t, ());
+          two_args (fn (w, n) =>
+            ("(_ rotate_right " ^
+           Arbnum.toString ((#dest_numeral operations) n)
+              ^ ")", [w])) ts
+        )),
+      (wordsSyntax.word_lo_tm, apfst_fixed_width "bvult"),
+      (wordsSyntax.word_ls_tm, apfst_fixed_width "bvule"),
+      (wordsSyntax.word_hi_tm, apfst_fixed_width "bvugt"),
+      (wordsSyntax.word_hs_tm, apfst_fixed_width "bvuge"),
+      (wordsSyntax.word_lt_tm, apfst_fixed_width "bvslt"),
+      (wordsSyntax.word_le_tm, apfst_fixed_width "bvsle"),
+      (wordsSyntax.word_gt_tm, apfst_fixed_width "bvsgt"),
+      (wordsSyntax.word_ge_tm, apfst_fixed_width "bvsge")
+    ] @ native_fp_encodings @ native_string_encodings
+
+  in builtin_symbol_encodings end
+
+  val builtin_symbol_encodings =
+    builtin_symbol_encodings_with term_builtin_operations
 
   val builtin_symbols =
     List.foldl (Lib.uncurry Net.insert) Net.empty builtin_symbol_encodings
@@ -921,11 +1248,33 @@ local
      through this helper, so logic selection and solver command policy observe
      the syntax that was actually emitted. *)
   val current_generated_forall_emissions = ref 0
+  val current_backend_installation = ref (NONE:unit ref option)
 
-  fun generated_forall declarations body =
+  (* Output constructors are pure: they preserve byte order and do not
+     render child documents. Sorts and symbol names remain plain strings. *)
+  type 'doc output_operations = {
+    text : string -> 'doc,
+    concat : 'doc list -> 'doc,
+    join : string -> 'doc list -> 'doc
+  }
+
+  val string_output_operations : string output_operations = {
+    text = Lib.I,
+    concat = String.concat,
+    join = String.concatWith
+  }
+
+  fun generated_forall_with (output : 'doc output_operations)
+      declarations body =
     (current_generated_forall_emissions :=
        !current_generated_forall_emissions + 1;
-     "(forall (" ^ String.concatWith " " declarations ^ ") " ^ body ^ ")")
+     (#concat output)
+       [(#text output)
+          ("(forall (" ^ String.concatWith " " declarations ^ ") "),
+        body, (#text output) ")"])
+
+  fun generated_forall declarations body =
+    generated_forall_with string_output_operations declarations body
 
   (* Snapshot a translation-context cell now; the returned thunk puts it
      back.  Each cell then costs one list entry rather than a declaration,
@@ -996,6 +1345,22 @@ local
 
   val same_const = Library.same_const
 
+  (* Use the same let grammar for Term and graph carriers. The Term
+     callbacks retain the stock paired-abstraction and error policies. *)
+  val let_binding_operations :
+      Term.term SmtLib_CarrierLetBindings.operations =
+    {dest_abs = Term.dest_abs,
+     dest_let = boolSyntax.dest_let,
+     dest_plet = pairSyntax.dest_plet,
+     strip_pabs = pairSyntax.strip_pabs,
+     list_mk_comb = Term.list_mk_comb,
+     is_let = boolSyntax.is_let,
+     is_syntax_error = fn Feedback.HOL_ERR _ => true | _ => false,
+     not_a_let = fn () => Feedback.mk_HOL_ERR "pairSyntax" "dest_anylet"
+       "not a \"let\"-term"}
+  val dest_carrier_let =
+    SmtLib_CarrierLetBindings.dest_anylet let_binding_operations
+
   (* HOL represents a set as an ordinary predicate, so the outbound boundary
      records set *terms*, rather than treating every `a -> bool` as a Set.
      The context is installed for one translation only (see
@@ -1037,12 +1402,16 @@ local
   fun is_native_set_head tm =
     List.exists (fn head => same_const head tm) native_set_heads
 
-  fun is_set_type tm =
+  fun is_set_result_type ty =
     let
-      val (_, result_ty) = Type.dom_rng (Term.type_of tm)
+      val (_, result_ty) = Type.dom_rng ty
     in
       Type.compare (result_ty, Type.bool) = EQUAL
     end
+    handle Feedback.HOL_ERR _ => false
+
+  fun is_set_type tm =
+    is_set_result_type (Term.type_of tm)
     handle Feedback.HOL_ERR _ => false
 
   fun set_element_type tm =
@@ -1055,106 +1424,52 @@ local
     if is_set_type tm andalso not (mem_aconv tm terms) then tm :: terms
     else terms
 
-  (* A set expression is native precisely when the printer has a direct
-     representation for every constructor in it.  In particular, GSPEC and
-     IMAGE retain the old predicate expansion before outbound translation. *)
-  fun native_set_term tm =
-    Term.is_var tm orelse pred_setSyntax.is_empty tm orelse
-    pred_setSyntax.is_univ tm orelse
-    (case Lib.total pred_setSyntax.dest_insert tm of
-       SOME (_, set) => native_set_term set
-     | NONE =>
-       (case Lib.total pred_setSyntax.dest_delete tm of
-          SOME (set, _) => native_set_term set
-        | NONE =>
-          (case Lib.total pred_setSyntax.dest_union tm of
-             SOME (left, right) =>
-               native_set_term left andalso native_set_term right
-           | NONE =>
-             (case Lib.total pred_setSyntax.dest_inter tm of
-                SOME (left, right) =>
-                  native_set_term left andalso native_set_term right
-              | NONE =>
-                (case Lib.total pred_setSyntax.dest_diff tm of
-                   SOME (left, right) =>
-                     native_set_term left andalso native_set_term right
-                 | NONE =>
-                   (case Lib.total pred_setSyntax.dest_compl tm of
-                      SOME set => native_set_term set
-                    | NONE => false))))))
-
   (* Record only terms at set-typed positions.  Recording all arguments of
      INSERT, for example, incorrectly declares its element as a Set. *)
-  fun collect_native_set_terms tm terms =
-  let
-    fun collect_set set terms =
-      case Lib.total boolSyntax.dest_cond set of
-        SOME (_, then_set, else_set) =>
-          collect_set else_set (collect_set then_set (add_set_term set terms))
-      | NONE => add_set_term set terms
-    val (rator, rands) = boolSyntax.strip_comb tm
-    val terms =
-      (let
-         val (_, body) = Term.dest_abs tm
-       in
-         collect_native_set_terms body terms
-       end
-       handle Feedback.HOL_ERR _ =>
-         List.foldl (fn (arg, acc) => collect_native_set_terms arg acc)
-           terms rands)
-    (* A let-local which is used as a native Set must give its value the same
-       representation.  The body is visited above, so propagate its marker
-       back to the corresponding binding value. *)
-    val terms =
-      (let
-         val (bindings, _) = pairSyntax.dest_anylet tm
-       in
-         List.foldl (fn ((variable, value), acc) =>
-           if mem_aconv variable acc then collect_set value acc else acc)
-           terms bindings
-       end
-       handle Feedback.HOL_ERR _ => terms)
-  in
-    if same_const rator pred_setSyntax.in_tm then
-      (case rands of [_, set] => collect_set set terms | _ => terms)
-    else if same_const rator pred_setSyntax.card_tm orelse
-            same_const rator pred_setSyntax.finite_tm then
-      (case rands of [set] => collect_set set terms | _ => terms)
-    else if same_const rator pred_setSyntax.insert_tm then
-      (case rands of [_, set] => collect_set tm (collect_set set terms)
-       | _ => terms)
-    else if same_const rator pred_setSyntax.delete_tm then
-      (case rands of [set, _] => collect_set tm (collect_set set terms)
-       | _ => terms)
-    else if same_const rator pred_setSyntax.union_tm orelse
-            same_const rator pred_setSyntax.inter_tm orelse
-            same_const rator pred_setSyntax.diff_tm then
-      (case rands of [left, right] =>
-         collect_set tm (collect_set left (collect_set right terms))
-       | _ => terms)
-    else if same_const rator pred_setSyntax.compl_tm then
-      (case rands of [set] => collect_set tm (collect_set set terms)
-       | _ => terms)
-    else if same_const rator pred_setSyntax.subset_tm then
-      (case rands of [left, right] =>
-         collect_set left (collect_set right terms)
-       | _ => terms)
-    else if pred_setSyntax.is_empty tm orelse pred_setSyntax.is_univ tm then
-      add_set_term tm terms
-    else if same_const rator boolSyntax.equality then
-      (case rands of [left, right] =>
-         if is_set_type left andalso is_set_type right then
-           collect_set left (collect_set right terms)
-         else terms
-       | _ => terms)
-    else
-      terms
-  end
+  fun classify_set_marker_with same_head is_empty is_univ tm =
+    if same_head pred_setSyntax.in_tm then
+      SmtLib_CollectionMarkers.Membership
+    else if same_head pred_setSyntax.card_tm orelse
+            same_head pred_setSyntax.finite_tm then
+      SmtLib_CollectionMarkers.UnaryObservation
+    else if same_head pred_setSyntax.insert_tm then
+      SmtLib_CollectionMarkers.Insert
+    else if same_head pred_setSyntax.delete_tm then
+      SmtLib_CollectionMarkers.Delete
+    else if same_head pred_setSyntax.union_tm orelse
+            same_head pred_setSyntax.inter_tm orelse
+            same_head pred_setSyntax.diff_tm then
+      SmtLib_CollectionMarkers.BinaryConstruction
+    else if same_head pred_setSyntax.compl_tm then
+      SmtLib_CollectionMarkers.UnaryConstruction
+    else if same_head pred_setSyntax.subset_tm then
+      SmtLib_CollectionMarkers.Inclusion
+    else if is_empty tm orelse is_univ tm then
+      SmtLib_CollectionMarkers.Empty
+    else if same_head boolSyntax.equality then
+      SmtLib_CollectionMarkers.Equality
+    else SmtLib_CollectionMarkers.Other
+
+  fun classify_set_marker (tm, rator) =
+    classify_set_marker_with (same_const rator)
+      pred_setSyntax.is_empty pred_setSyntax.is_univ tm
+
+  val set_marker_operations :
+      Term.term SmtLib_CollectionMarkers.operations =
+    {strip_comb = boolSyntax.strip_comb,
+     dest_abs = Term.dest_abs,
+     dest_comb = Term.dest_comb,
+     condition = Lib.total boolSyntax.dest_cond,
+     bindings = fn tm => #1 (dest_carrier_let tm),
+     add = add_set_term,
+     member = mem_aconv,
+     is_collection_type = is_set_type,
+     classify = classify_set_marker}
+  val collect_native_set_terms =
+    SmtLib_CollectionMarkers.collect set_marker_operations
+      {propagate_bindings = true, visit_prefix = false}
 
   fun is_marked_set_term tm = mem_aconv tm (!current_set_terms)
-
-  fun finite_set_hypothesis tm =
-    SOME (pred_setSyntax.dest_finite tm) handle Feedback.HOL_ERR _ => NONE
 
   (* Bool and fixed-width word types have finite SMT-LIB domains.  A
      polymorphic word remains unsupported until its width is instantiated. *)
@@ -1163,119 +1478,10 @@ local
     (Lib.can wordsSyntax.dest_word_type ty andalso
      Lib.can fcpSyntax.dest_numeric_type (wordsSyntax.dest_word_type ty))
 
-  fun finite_set_term finite_terms tm =
-    finite_element_type (set_element_type tm) orelse
-    mem_aconv tm finite_terms orelse
-    pred_setSyntax.is_empty tm orelse
-    (pred_setSyntax.is_univ tm andalso
-     finite_element_type (set_element_type tm)) orelse
-    (case Lib.total pred_setSyntax.dest_insert tm of
-       SOME (_, set) => finite_set_term finite_terms set
-     | NONE =>
-       (case Lib.total pred_setSyntax.dest_delete tm of
-          SOME (set, _) => finite_set_term finite_terms set
-        | NONE =>
-          (case Lib.total pred_setSyntax.dest_union tm of
-             SOME (left, right) =>
-               finite_set_term finite_terms left andalso
-               finite_set_term finite_terms right
-           | NONE =>
-             (case Lib.total pred_setSyntax.dest_inter tm of
-                SOME (left, right) =>
-                  finite_set_term finite_terms left orelse
-                  finite_set_term finite_terms right
-              | NONE =>
-                (case Lib.total pred_setSyntax.dest_diff tm of
-                   SOME (left, _) => finite_set_term finite_terms left
-                 | NONE =>
-                   (case Lib.total pred_setSyntax.dest_compl tm of
-                      SOME _ => finite_element_type (set_element_type tm)
-                    | NONE => false))))))
-
-  (* A finite-evidence term is meaningful only in the scope in which it was
-     assumed.  In particular, alpha conversion alone cannot distinguish a
-     free variable in an assumption from an identically named variable bound
-     beneath an abstraction.  Do not select cvc5's finite Set model when an
-     evidence-dependent collection occurrence is shadowed in this way. *)
-  fun shadowed_finite_collection is_collection native finite_terms terms =
-  let
-    fun evidence_uses_bound bound evidence =
-      List.exists (fn free => List.exists (fn variable =>
-        Term.aconv free variable) bound) (Term.free_vars evidence)
-    fun visit bound tm =
-      (is_collection tm andalso native tm andalso
-       List.exists (fn evidence => mem_aconv tm finite_terms andalso
-         evidence_uses_bound bound evidence) finite_terms) orelse
-      ((let
-          val (variable, body) = Term.dest_abs tm
-        in visit (variable :: bound) body end)
-       handle Feedback.HOL_ERR _ =>
-         ((let
-             val (rator, rand) = Term.dest_comb tm
-           in visit bound rator orelse visit bound rand end)
-          handle Feedback.HOL_ERR _ => false))
-  in
-    List.exists (visit []) terms
-  end
-
   fun is_set_hol_type ty =
     case Lib.total Type.dom_rng ty of
       SOME (_, range) => Type.compare (range, Type.bool) = EQUAL
     | NONE => false
-
-  (* cvc5's native Set and Bag sorts cannot be used as the element sort of a
-     Seq or in a datatype field.  The HOL collection is a function there, so
-     use the Array encoding consistently throughout the translation. *)
-  fun collection_nested_in_container is_collection goal =
-    let
-      fun type_contains ty =
-        is_collection ty orelse
-        (List.exists type_contains (Lib.snd (Type.dest_type ty))
-         handle Feedback.HOL_ERR _ => false)
-      fun type_is_nested ty =
-        (type_contains (listSyntax.dest_list_type ty)
-         handle Feedback.HOL_ERR _ => false) orelse
-        (case TypeBase.fetch ty of
-           SOME tyinfo =>
-             List.exists (fn constructor =>
-               List.exists type_contains
-                 (Lib.fst (boolSyntax.strip_fun (Term.type_of constructor))))
-               (TypeBasePure.constructors_of tyinfo)
-         | NONE => false)
-        handle Feedback.HOL_ERR _ => false
-      fun visit tm =
-        type_is_nested (Term.type_of tm) orelse
-        ((let val (rator, rand) = Term.dest_comb tm in
-            visit rator orelse visit rand
-          end)
-         handle Feedback.HOL_ERR _ =>
-           ((let val (_, body) = Term.dest_abs tm in visit body end)
-            handle Feedback.HOL_ERR _ => false))
-    in
-      List.exists visit (Lib.fst goal @ [Lib.snd goal])
-    end
-
-  fun cvc5_native_sets goal set_terms =
-  let
-    val finite_terms = List.mapPartial finite_set_hypothesis (Lib.fst goal)
-  in
-    not (List.null set_terms) andalso
-    not (collection_nested_in_container is_set_hol_type goal) andalso
-    not (List.exists pred_setSyntax.is_compl set_terms) andalso
-    not (shadowed_finite_collection is_set_type native_set_term finite_terms
-      (Lib.fst goal @ [Lib.snd goal])) andalso
-    not (List.exists (fn set =>
-      pred_setSyntax.is_set_type (set_element_type set)) set_terms) andalso
-    List.all (fn set => native_set_term set andalso
-      finite_set_term finite_terms set) set_terms
-  end
-
-  fun backend_for_target target goal set_terms =
-    case target of
-      SOME {solver = "cvc5", ...} =>
-        if cvc5_native_sets goal set_terms then CVC5NativeSet
-        else CVC5ArraySet
-    | _ => Z3Set
 
   (* Bags are likewise functions in HOL, but their integer-valued array
      representation must remain distinct from arbitrary functions. *)
@@ -1310,16 +1516,6 @@ local
     if is_bag_type tm then bagSyntax.base_type tm
     else raise ERR "bag_element_type" "not a bag-valued term"
 
-  fun collection_nested_in_collection set_terms bag_terms =
-    List.exists (fn set =>
-      let val ty = set_element_type set in
-        is_set_hol_type ty orelse bagSyntax.is_bag_ty ty
-      end) set_terms orelse
-    List.exists (fn bag =>
-      let val ty = bag_element_type bag in
-        is_set_hol_type ty orelse bagSyntax.is_bag_ty ty
-      end) bag_terms
-
   fun add_bag_term tm terms =
     if is_bag_type tm andalso not (mem_aconv tm terms) then tm :: terms
     else terms
@@ -1336,202 +1532,397 @@ local
   (* cvc5 bag literals are parsed as their extensional HOL function.  Retain
      this exact shape so a checked proof can be sent back as a Bag literal,
      rather than as an unrelated higher-order lambda. *)
-  fun dest_parsed_bag_literal tm =
-    let
-      val (bound, body) = Term.dest_abs tm
-      val (cond_head, cond_args) = boolSyntax.strip_comb body
-      val (test, count, otherwise) =
-        if same_const cond_head boolSyntax.conditional then
-          case cond_args of
-            [test, count, otherwise] => (test, count, otherwise)
-          | _ => raise ERR "dest_parsed_bag_literal" "wrong conditional arity"
-        else
-          raise ERR "dest_parsed_bag_literal" "not a conditional"
-      val (eq_head, eq_args) = boolSyntax.strip_comb test
-      val (left, element) =
-        if same_const eq_head boolSyntax.equality then
-          case eq_args of [left, element] => (left, element)
-          | _ => raise ERR "dest_parsed_bag_literal" "wrong equality arity"
-        else
-          raise ERR "dest_parsed_bag_literal" "not an equality"
-      val _ = if Term.aconv bound left then ()
-              else raise ERR "dest_parsed_bag_literal" "wrong binder"
-      val (count_head, count_args) = boolSyntax.strip_comb count
-      val integer_count =
-        if same_const count_head boolSyntax.conditional then
-          (case count_args of
-             [nonnegative, nat_count, zero] =>
-               let
-                 val _ = if intSyntax.is_Num nat_count then ()
-                         else raise ERR "dest_parsed_bag_literal"
-                           "not an integer count"
-                 val integer_count = intSyntax.dest_Num nat_count
-                 val (lower, upper) = intSyntax.dest_leq nonnegative
-                 val _ =
-                   if Term.aconv lower intSyntax.zero_tm andalso
-                      Term.aconv upper integer_count andalso
-                      Term.aconv zero numSyntax.zero_tm then ()
-                   else raise ERR "dest_parsed_bag_literal" "wrong count clamp"
-               in integer_count end
-           | _ => raise ERR "dest_parsed_bag_literal" "wrong count arity")
-        else if numSyntax.is_numeral count then
-          Term.mk_comb (intSyntax.int_injection, count)
-        else
-          raise ERR "dest_parsed_bag_literal" "not a count"
-      val _ =
-        if Term.free_in bound element orelse
-           Term.free_in bound integer_count orelse
-           not (Term.aconv otherwise numSyntax.zero_tm) then
-          raise ERR "dest_parsed_bag_literal"
-            "literal element or count depends on binder"
-        else ()
-    in
-      (element, integer_count)
-    end
+  val dest_parsed_bag_literal = #dest_parsed_bag_literal
+    term_literal_recognizers
+  val is_parsed_bag_literal = #is_parsed_bag_literal term_literal_recognizers
 
-  fun is_parsed_bag_literal tm =
-    Lib.can dest_parsed_bag_literal tm
+  fun classify_bag_marker_with same_head is_empty tm =
+    if same_head bag_in_tm then
+      SmtLib_CollectionMarkers.Membership
+    else if same_head bagSyntax.BAG_CARD_tm orelse
+            same_head finite_bag_tm then
+      SmtLib_CollectionMarkers.UnaryObservation
+    else if same_head bagSyntax.BAG_INSERT_tm then
+      SmtLib_CollectionMarkers.Insert
+    else if same_head bagSyntax.BAG_UNION_tm orelse
+            same_head bagSyntax.BAG_DIFF_tm orelse
+            same_head bag_merge_tm orelse same_head bag_inter_tm
+    then SmtLib_CollectionMarkers.BinaryConstruction
+    else if same_head bagSyntax.SUB_BAG_tm then
+      SmtLib_CollectionMarkers.Inclusion
+    else if is_empty tm then SmtLib_CollectionMarkers.Empty
+    else if same_head boolSyntax.equality then
+      SmtLib_CollectionMarkers.Equality
+    else SmtLib_CollectionMarkers.Other
 
-  fun native_bag_term tm =
-    Term.is_var tm orelse bagSyntax.is_empty tm orelse
-    is_parsed_bag_literal tm orelse
-    (case Lib.total bagSyntax.dest_insert tm of
-       SOME (_, bag) => native_bag_term bag
-     | NONE =>
-       (case Lib.total bagSyntax.dest_union tm of
-          SOME (left, right) =>
-            native_bag_term left andalso native_bag_term right
-        | NONE =>
-          (case Lib.total bagSyntax.dest_diff tm of
-             SOME (left, right) =>
-               native_bag_term left andalso native_bag_term right
-           | NONE =>
-             (case Lib.total (dest_bag_binary bag_merge_tm) tm of
-                SOME (left, right) =>
-                  native_bag_term left andalso native_bag_term right
-              | NONE =>
-                (case Lib.total (dest_bag_binary bag_inter_tm) tm of
-                   SOME (left, right) =>
-                     native_bag_term left andalso native_bag_term right
-                 | NONE => false)))))
+  fun classify_bag_marker (tm, rator) =
+    classify_bag_marker_with (same_const rator) bagSyntax.is_empty tm
 
-  fun collect_native_bag_terms tm terms =
-  let
-    fun collect_bag bag terms =
-      case Lib.total boolSyntax.dest_cond bag of
-        SOME (_, then_bag, else_bag) =>
-          collect_bag else_bag (collect_bag then_bag (add_bag_term bag terms))
-      | NONE => add_bag_term bag terms
-    val (rator, rands) = boolSyntax.strip_comb tm
-    val terms =
-      (let val (_, body) = Term.dest_abs tm in
-         collect_native_bag_terms body terms
-       end
-       handle Feedback.HOL_ERR _ =>
-         List.foldl (fn (arg, acc) => collect_native_bag_terms arg acc)
-           terms rands)
-    (* [strip_comb] flattens a partially applied bag operation into its head
-       and all arguments.  Retain the immediate rator too: in [(b + c) x],
-       it is the bag-valued prefix that must be marked for [bag.count]. *)
-    val terms =
-      (let val (immediate_rator, _) = Term.dest_comb tm in
-         collect_native_bag_terms immediate_rator terms
-       end
-       handle Feedback.HOL_ERR _ => terms)
-    fun binary () =
-      case rands of [left, right] =>
-        collect_bag tm (collect_bag left (collect_bag right terms))
-      | _ => terms
-  in
-    if same_const rator bag_in_tm then
-      (case rands of [_, bag] => collect_bag bag terms | _ => terms)
-    else if same_const rator bagSyntax.BAG_CARD_tm orelse
-            same_const rator finite_bag_tm then
-      (case rands of [bag] => collect_bag bag terms | _ => terms)
-    else if same_const rator bagSyntax.BAG_INSERT_tm then
-      (case rands of [_, bag] => collect_bag tm (collect_bag bag terms)
-       | _ => terms)
-    else if same_const rator bagSyntax.BAG_UNION_tm orelse
-            same_const rator bagSyntax.BAG_DIFF_tm orelse
-            same_const rator bag_merge_tm orelse same_const rator bag_inter_tm
-    then binary ()
-    else if same_const rator bagSyntax.SUB_BAG_tm then
-      (case rands of [left, right] =>
-         collect_bag left (collect_bag right terms)
-       | _ => terms)
-    else if bagSyntax.is_empty tm then add_bag_term tm terms
-    else if same_const rator boolSyntax.equality then
-      (case rands of [left, right] =>
-         if is_bag_type left andalso is_bag_type right then
-           collect_bag left (collect_bag right terms)
-         else terms
-       | _ => terms)
-    else terms
-  end
+  val bag_marker_operations :
+      Term.term SmtLib_CollectionMarkers.operations =
+    {strip_comb = boolSyntax.strip_comb,
+     dest_abs = Term.dest_abs,
+     dest_comb = Term.dest_comb,
+     condition = Lib.total boolSyntax.dest_cond,
+     bindings = fn tm => #1 (dest_carrier_let tm),
+     add = add_bag_term,
+     member = mem_aconv,
+     is_collection_type = is_bag_type,
+     classify = classify_bag_marker}
+  val collect_native_bag_terms =
+    SmtLib_CollectionMarkers.collect bag_marker_operations
+      {propagate_bindings = false, visit_prefix = true}
 
   fun is_marked_bag_term tm = mem_aconv tm (!current_bag_terms)
 
-  fun finite_bag_term finite_terms tm =
-    mem_aconv tm finite_terms orelse bagSyntax.is_empty tm orelse
-    is_parsed_bag_literal tm orelse
-    finite_element_type (bag_element_type tm) orelse
-    (case Lib.total bagSyntax.dest_insert tm of
-       SOME (_, bag) => finite_bag_term finite_terms bag
-     | NONE =>
-       (case Lib.total bagSyntax.dest_union tm of
-          SOME (left, right) =>
-            finite_bag_term finite_terms left andalso
-            finite_bag_term finite_terms right
-        | NONE =>
-          (case Lib.total bagSyntax.dest_diff tm of
-             SOME (left, _) => finite_bag_term finite_terms left
-           | NONE =>
-             let val (rator, rands) = boolSyntax.strip_comb tm in
-               if same_const rator bag_merge_tm then
-                 (case rands of [left, right] =>
-                    finite_bag_term finite_terms left andalso
-                    finite_bag_term finite_terms right
-                  | _ => false)
-               else if same_const rator bag_inter_tm then
-                 (case rands of [left, right] =>
-                    finite_bag_term finite_terms left orelse
-                    finite_bag_term finite_terms right
-                  | _ => false)
-               else false
-             end)))
+  fun collect_query_collection_markers roots =
+    let
+      val sets = List.foldl (fn (term, acc) =>
+        collect_native_set_terms term acc) [] roots
+      val bags = List.foldl (fn (term, acc) =>
+        collect_native_bag_terms term acc) [] roots
+    in {sets = sets, bags = bags} end
 
-  fun finite_bag_hypothesis tm =
-    let val (rator, rands) = boolSyntax.strip_comb tm in
-      if same_const rator finite_bag_tm then
-        case rands of [bag] => SOME bag | _ => NONE
-      else NONE
+  datatype 'term backend_view =
+      BackendVariable | BackendConstant
+    | BackendApplication of 'term * 'term
+    | BackendAbstraction of 'term * 'term
+  type 'term backend_selection_operations =
+    {view:'term -> 'term backend_view,type_of:'term -> Type.hol_type,
+     strip_comb:'term -> 'term * 'term list,
+     same:'term * 'term -> bool,shadow_same:'term * 'term -> bool,
+     free_variables:'term -> 'term list,
+     same_const:'term -> Term.term -> bool,
+     is_empty_set:'term -> bool,is_univ_set:'term -> bool,
+     is_empty_bag:'term -> bool,is_parsed_bag_literal:'term -> bool,
+     set_element_type:'term -> Type.hol_type,
+     bag_element_type:'term -> Type.hol_type,
+     memoize:string -> 'term list list -> 'term ->
+       (unit -> bool) -> bool}
+
+  datatype finite_family = FiniteSet | FiniteBag
+  datatype 'term finite_branch =
+      Domain of Type.hol_type
+    | Evidence of {saved:'term,index:IntInf.int}
+    | Empty
+    | UniverseDomain of Type.hol_type
+    | Insert of 'term * 'term
+    | Delete of 'term * 'term
+    | Union of 'term * 'term
+    | InterLeft of 'term * 'term
+    | InterRight of 'term * 'term
+    | Difference of 'term * 'term
+    | Merge of 'term * 'term
+    | ComplementDomain of {operand:'term,element_type:Type.hol_type}
+    | ParsedLiteral
+  type 'term finite_report =
+    {family:finite_family,evidence:'term list,subject:'term,
+     branch:'term finite_branch}
+
+  (* One registry and one decision programme serve native and graph syntax.
+     shadow_same is restricted to the old lexical evidence-shadow check;
+     all actual finite-evidence membership uses the carrier's own equality.
+     Memo contexts include every evidence list and lexical bound stack. *)
+  fun backend_selection_with_finite_trace
+      (operations:'term backend_selection_operations)
+      (report:'term finite_report -> unit) =
+    let
+      val {view,type_of,strip_comb,same,shadow_same,free_variables,
+           same_const,is_empty_set,is_univ_set,is_empty_bag,
+           is_parsed_bag_literal,set_element_type,bag_element_type,
+           memoize} = operations
+      fun member equal current =
+        List.exists (fn saved => equal (current,saved))
+      fun first_evidence current evidence =
+        let fun seek _ [] = NONE
+              | seek index (saved::rest) =
+                  if same (current,saved) then SOME {saved=saved,index=index}
+                  else seek (index+1) rest
+        in seek (0:IntInf.int) evidence end
+      fun accepted family evidence subject branch =
+        (report {family=family,evidence=evidence,subject=subject,
+          branch=branch};true)
+      fun dest head count current =
+        let fun peel 0 current arguments =
+                  if same_const current head then SOME arguments else NONE
+              | peel count current arguments = case view current of
+                  BackendApplication (function,argument) =>
+                    peel (count-1) function (argument::arguments)
+                | _ => NONE
+        in peel count current [] end
+      fun unary head current = case dest head 1 current of
+          SOME [argument] => SOME argument | _ => NONE
+      fun binary head current = case dest head 2 current of
+          SOME [left,right] => SOME (left,right) | _ => NONE
+      fun is_variable current = case view current of
+          BackendVariable => true | _ => false
+      fun native_set current = memoize "native-set" [] current (fn () =>
+        is_variable current orelse is_empty_set current orelse
+        is_univ_set current orelse
+        (case binary pred_setSyntax.insert_tm current of
+           SOME (_,set) => native_set set
+         | NONE => (case binary pred_setSyntax.delete_tm current of
+             SOME (set,_) => native_set set
+           | NONE => (case binary pred_setSyntax.union_tm current of
+               SOME (left,right) => native_set left andalso native_set right
+             | NONE => (case binary pred_setSyntax.inter_tm current of
+                 SOME (left,right) => native_set left andalso native_set right
+               | NONE => (case binary pred_setSyntax.diff_tm current of
+                   SOME (left,right) =>
+                     native_set left andalso native_set right
+                 | NONE => (case unary pred_setSyntax.compl_tm current of
+                     SOME set => native_set set | NONE => false)))))))
+      fun finite_set evidence current =
+        memoize "finite-set" [evidence] current (fn () =>
+          let
+            val accept = accepted FiniteSet evidence current
+            fun domain reason =
+              let val ty = set_element_type current
+              in finite_element_type ty andalso accept (reason ty) end
+          in
+            domain Domain orelse
+            (case first_evidence current evidence of
+               SOME found => accept (Evidence found) | NONE => false) orelse
+            (is_empty_set current andalso accept Empty) orelse
+            (is_univ_set current andalso domain UniverseDomain) orelse
+            (case binary pred_setSyntax.insert_tm current of
+               SOME (element,set) => finite_set evidence set andalso
+                 accept (Insert (element,set))
+             | NONE => (case binary pred_setSyntax.delete_tm current of
+                 SOME (set,element) => finite_set evidence set andalso
+                   accept (Delete (set,element))
+               | NONE => (case binary pred_setSyntax.union_tm current of
+                   SOME (left,right) => finite_set evidence left andalso
+                     finite_set evidence right andalso
+                     accept (Union (left,right))
+                 | NONE => (case binary pred_setSyntax.inter_tm current of
+                     SOME (left,right) =>
+                       if finite_set evidence left then
+                         accept (InterLeft (left,right))
+                       else finite_set evidence right andalso
+                         accept (InterRight (left,right))
+                   | NONE => (case binary pred_setSyntax.diff_tm current of
+                       SOME (left,right) => finite_set evidence left andalso
+                         accept (Difference (left,right))
+                     | NONE => (case unary pred_setSyntax.compl_tm current of
+                         SOME operand => domain (fn ty => ComplementDomain
+                           {operand=operand,element_type=ty})
+                       | NONE => false))))))
+          end)
+      fun native_bag current = memoize "native-bag" [] current (fn () =>
+        is_variable current orelse is_empty_bag current orelse
+        is_parsed_bag_literal current orelse
+        (case binary bagSyntax.BAG_INSERT_tm current of
+           SOME (_,bag) => native_bag bag
+         | NONE => (case binary bagSyntax.BAG_UNION_tm current of
+             SOME (left,right) => native_bag left andalso native_bag right
+           | NONE => (case binary bagSyntax.BAG_DIFF_tm current of
+               SOME (left,right) => native_bag left andalso native_bag right
+             | NONE => (case binary bag_merge_tm current of
+                 SOME (left,right) => native_bag left andalso native_bag right
+               | NONE => (case binary bag_inter_tm current of
+                   SOME (left,right) =>
+                     native_bag left andalso native_bag right
+                 | NONE => false))))))
+      fun finite_bag evidence current =
+        memoize "finite-bag" [evidence] current (fn () =>
+          let
+            val accept = accepted FiniteBag evidence current
+            fun domain () =
+              let val ty = bag_element_type current
+              in finite_element_type ty andalso accept (Domain ty) end
+          in
+            (case first_evidence current evidence of
+               SOME found => accept (Evidence found) | NONE => false) orelse
+            (is_empty_bag current andalso accept Empty) orelse
+            (is_parsed_bag_literal current andalso accept ParsedLiteral) orelse
+            domain () orelse
+            (case binary bagSyntax.BAG_INSERT_tm current of
+               SOME (element,bag) => finite_bag evidence bag andalso
+                 accept (Insert (element,bag))
+             | NONE => (case binary bagSyntax.BAG_UNION_tm current of
+                 SOME (left,right) => finite_bag evidence left andalso
+                   finite_bag evidence right andalso
+                   accept (Union (left,right))
+               | NONE => (case binary bagSyntax.BAG_DIFF_tm current of
+                   SOME (left,right) => finite_bag evidence left andalso
+                     accept (Difference (left,right))
+                 | NONE =>
+                     let val (head,arguments) = strip_comb current in
+                       if same_const head bag_merge_tm then
+                         (case arguments of [left,right] =>
+                            finite_bag evidence left andalso
+                            finite_bag evidence right andalso
+                            accept (Merge (left,right)) | _ => false)
+                       else if same_const head bag_inter_tm then
+                         (case arguments of [left,right] =>
+                            if finite_bag evidence left then
+                              accept (InterLeft (left,right))
+                            else finite_bag evidence right andalso
+                              accept (InterRight (left,right)) | _ => false)
+                       else false end)))
+          end)
+      fun shadowed tag is_collection native evidence roots =
+        let
+          fun uses_bound bound item = List.exists (fn free =>
+            List.exists (fn variable => shadow_same (free,variable)) bound)
+            (free_variables item)
+          fun visit bound current =
+            memoize tag [evidence,bound] current (fn () =>
+              (is_collection (type_of current) andalso native current andalso
+               List.exists (fn item => member shadow_same current evidence
+                 andalso uses_bound bound item) evidence) orelse
+              (case view current of
+                 BackendAbstraction (binder,body) => visit (binder::bound) body
+               | BackendApplication (left,right) =>
+                   visit bound left orelse visit bound right
+               | _ => false))
+        in List.exists (visit []) roots end
+      (* Only native type metadata enters these totalized type helpers. *)
+      fun nested_type is_collection ty =
+        let
+          fun contains ty = is_collection ty orelse
+            (List.exists contains (#2 (Type.dest_type ty))
+             handle Feedback.HOL_ERR _ => false)
+        in
+          ((contains (listSyntax.dest_list_type ty)
+            handle Feedback.HOL_ERR _ => false) orelse
+           (case TypeBase.fetch ty of
+              SOME info => List.exists (fn constructor =>
+                List.exists contains
+                  (#1 (boolSyntax.strip_fun (Term.type_of constructor))))
+                (TypeBasePure.constructors_of info)
+            | NONE => false)) handle Feedback.HOL_ERR _ => false
+        end
+      fun nested_container tag is_collection roots =
+        let fun visit current = memoize tag [] current (fn () =>
+              nested_type is_collection (type_of current) orelse
+              (case view current of
+                 BackendApplication (left,right) =>
+                   visit left orelse visit right
+               | BackendAbstraction (_,body) => visit body | _ => false))
+        in List.exists visit roots end
+      fun finite_sets assumptions =
+        List.mapPartial (unary pred_setSyntax.finite_tm) assumptions
+      fun finite_bags assumptions =
+        List.mapPartial (unary finite_bag_tm) assumptions
+      fun native_sets (assumptions,goal) sets =
+        let val evidence = finite_sets assumptions
+            val roots = assumptions @ [goal]
+        in not (null sets) andalso
+          not (nested_container "nested-set" is_set_hol_type roots) andalso
+          not (List.exists
+            (Option.isSome o unary pred_setSyntax.compl_tm) sets)
+          andalso not (shadowed "shadow-set" is_set_hol_type native_set
+            evidence roots) andalso
+          not (List.exists
+            (pred_setSyntax.is_set_type o set_element_type) sets)
+          andalso List.all (fn set => native_set set andalso
+            finite_set evidence set) sets end
+      fun native_bags (assumptions,goal) bags =
+        let val evidence = finite_bags assumptions
+            val roots = assumptions @ [goal]
+        in not (null bags) andalso
+          not (nested_container "nested-bag" bagSyntax.is_bag_ty roots) andalso
+          not (shadowed "shadow-bag" bagSyntax.is_bag_ty native_bag
+            evidence roots) andalso
+          not (List.exists
+            (bagSyntax.is_bag_ty o bag_element_type) bags) andalso
+          List.all (fn bag => native_bag bag andalso
+            finite_bag evidence bag) bags end
+      fun nested_collections sets bags =
+        List.exists (fn set => let val ty = set_element_type set in
+          is_set_hol_type ty orelse bagSyntax.is_bag_ty ty end) sets orelse
+        List.exists (fn bag => let val ty = bag_element_type bag in
+          is_set_hol_type ty orelse bagSyntax.is_bag_ty ty end) bags
+      fun contains tag head current = memoize tag [] current (fn () =>
+        Option.isSome (unary head current) orelse
+        (case view current of
+           BackendApplication (left,right) =>
+             contains tag head left orelse contains tag head right
+         | BackendAbstraction (_,body) => contains tag head body | _ => false))
+      fun select (target:{solver:string,version:string option} option)
+          {goal,sets,bags,computed_set,computed_bag,bound_set,bound_bag,
+           mixed_set,mixed_bag} =
+        let
+          val cvc5 = case target of
+              SOME {solver="cvc5",...} => true | _ => false
+          val _ = if cvc5 andalso (bound_set () orelse bound_bag ()) then
+              raise ERR "goal_to_SmtLib_aux_inner"
+                "higher-order cvc5 functions over Sets or Bags are unsupported"
+            else ()
+          val initial_set = if cvc5 then
+              (if native_sets goal sets then CVC5NativeSet else CVC5ArraySet)
+            else Z3Set
+          val initial_bag = if cvc5 then
+              (if native_bags goal bags then CVC5NativeBag else CVC5ArrayBag)
+            else Z3ArrayBag
+          val (set,bag) = if cvc5 then
+              if nested_collections sets bags then (CVC5ArraySet,CVC5ArrayBag)
+              else (if computed_set then CVC5ArraySet else initial_set,
+                    if computed_bag then CVC5ArrayBag else initial_bag)
+            else (initial_set,initial_bag)
+          val _ = if cvc5 andalso
+              ((set <> CVC5ArraySet andalso mixed_set ()) orelse
+               (bag = CVC5NativeBag andalso mixed_bag ())) then
+              raise ERR "goal_to_SmtLib_aux_inner"
+                "native collection passed to an ambiguously typed HOL function"
+            else ()
+          val roots = #2 goal :: #1 goal
+          val _ = if cvc5 then
+              if set = CVC5ArraySet andalso
+                  List.exists
+                    (contains "set-card" pred_setSyntax.card_tm) roots
+              then raise ERR "goal_to_SmtLib_aux_inner"
+                "set.card requires a finiteness-entailing cvc5 goal"
+              else if bag = CVC5ArrayBag andalso
+                  List.exists (contains "bag-card" bagSyntax.BAG_CARD_tm) roots
+              then raise ERR "goal_to_SmtLib_aux_inner"
+                "bag.card requires a finiteness-entailing cvc5 goal"
+              else ()
+            else ()
+        in {set_backend=set,bag_backend=bag} end
+    in
+      {select=select,native_set_term=native_set,cvc5_native_bags=native_bags,
+       finite_sets=finite_sets,finite_bags=finite_bags,
+       finite_set_term=finite_set,finite_bag_term=finite_bag}
     end
 
-  fun cvc5_native_bags goal bag_terms =
-  let val finite_terms = List.mapPartial finite_bag_hypothesis (Lib.fst goal)
-  in
-    not (List.null bag_terms) andalso
-    not (collection_nested_in_container bagSyntax.is_bag_ty goal) andalso
-    not (shadowed_finite_collection is_bag_type native_bag_term finite_terms
-      (Lib.fst goal @ [Lib.snd goal])) andalso
-    not (List.exists (fn bag =>
-      bagSyntax.is_bag_ty (bag_element_type bag)) bag_terms) andalso
-    List.all (fn bag => native_bag_term bag andalso
-      finite_bag_term finite_terms bag) bag_terms
-  end
+  (* Reports describe successful finite branches only, inside the existing
+     memo thunk, after all selected child decisions. They are syntax DATA,
+     not checked finiteness facts or permission to erase a hypothesis. A
+     traced caller must keep its report cache and bool memo in the SAME
+     fresh lifetime: a prior bool hit does not repeat its report callback. *)
+  fun backend_selection_with operations =
+    backend_selection_with_finite_trace operations (fn _ => ())
 
-  fun bag_backend_for_target target goal bag_terms =
-    case target of
-      SOME {solver = "cvc5", ...} =>
-        if cvc5_native_bags goal bag_terms then CVC5NativeBag
-        else CVC5ArrayBag
-    | _ => Z3ArrayBag
-
-  fun contains_bag_card tm =
-    Lib.can (HolKernel.find_term bagSyntax.is_card) tm
-
-  fun contains_set_card tm =
-    Lib.can (HolKernel.find_term pred_setSyntax.is_card) tm
+  val term_backend_selection_operations :
+      Term.term backend_selection_operations =
+    {view=fn current => case Term.dest_term current of
+         Term.VAR _ => BackendVariable | Term.CONST _ => BackendConstant
+       | Term.COMB pair => BackendApplication pair
+       | Term.LAMB pair => BackendAbstraction pair,
+     type_of=Term.type_of,strip_comb=boolSyntax.strip_comb,
+     same=fn (left,right) => Term.aconv left right,
+     shadow_same=fn (left,right) => Term.aconv left right,
+     free_variables=Term.free_vars,same_const=same_const,
+     is_empty_set=pred_setSyntax.is_empty,is_univ_set=pred_setSyntax.is_univ,
+     is_empty_bag=bagSyntax.is_empty,
+     is_parsed_bag_literal=is_parsed_bag_literal,
+     set_element_type=set_element_type,bag_element_type=bag_element_type,
+     memoize=fn _ => fn _ => fn _ => fn compute => compute ()}
+  val term_backend_selection =
+    backend_selection_with term_backend_selection_operations
+  val native_set_term = #native_set_term term_backend_selection
+  val cvc5_native_bags = #cvc5_native_bags term_backend_selection
+  val finite_set_term = #finite_set_term term_backend_selection
+  val finite_bag_term = #finite_bag_term term_backend_selection
+  fun finite_set_hypothesis current =
+    case (#finite_sets term_backend_selection) [current] of
+      [term] => SOME term | _ => NONE
+  fun finite_bag_hypothesis current =
+    case (#finite_bags term_backend_selection) [current] of
+      [term] => SOME term | _ => NONE
 
   (* The shared first-order Seq surface is represented directly by stock list
      terms.  MAP and FOLDL below are the Z3-only higher-order extension. *)
@@ -1561,65 +1952,353 @@ local
   val smtstr_rev_tm = smtstring_const "smtstr_rev"
   val z3_seq_nth_i_tm =
     Term.prim_mk_const {Thy = "smtstringz3", Name = "seq_nth_i"}
+  val int_of_num_tm = Term.prim_mk_const {Thy="integer", Name="int_of_num"}
 
-  (* The parser represents String [seq.nth] with an explicit negative-index
-     branch, since its out-of-range value is unspecified.  Recover the
-     original surface operation before re-emission: translating the ARB
-     branch separately loses sharing between repeated accesses. *)
-  fun dest_string_nth_shape tm =
+  (* One grammar serves the ordinary emitter and authenticated graph
+     carriers. Primitive syntax callbacks retain the Term adapter's exact
+     destructor/constructor diagnostics. Only optional_error classifies a
+     failed shape probe: graph ownership/native failures must escape. *)
+  type 'term collection_recognition_operations =
+    {type_of : 'term -> Type.hol_type,
+     same_const : 'term -> Term.term -> bool,
+     is_native_set_head : 'term -> bool,
+     same : 'term -> 'term -> bool,
+     strip_comb : 'term -> 'term * 'term list,
+     dest_comb : 'term -> 'term * 'term,
+     dest_cond : 'term -> 'term * 'term * 'term,
+     dest_take : 'term -> 'term * 'term,
+     dest_drop : 'term -> 'term * 'term,
+     dest_Num : 'term -> 'term,
+     dest_cons : 'term -> 'term * 'term,
+     dest_el : 'term -> 'term * 'term,
+     is_nil : 'term -> bool,
+     dest_nil : 'term -> Type.hol_type,
+     sequence_element_type : 'term -> Type.hol_type,
+     int_less : 'term * 'term -> 'term,
+     int_leq : 'term * 'term -> 'term,
+     num_leq : 'term * 'term -> 'term,
+     length : 'term -> 'term,
+     disjunction : 'term * 'term -> 'term,
+     disjunctions : 'term list -> 'term,
+     int_zero : unit -> 'term,
+     mk_comb : 'term * 'term -> 'term,
+     list_mk_comb : 'term * 'term list -> 'term,
+     set_card : 'term -> bool,
+     bag_card : 'term -> bool,
+     optional_error : exn -> bool,
+     syntax_error : string -> string -> exn}
+
+  type 'term collection_recognizers =
+    {string_nth_shape : 'term -> 'term * 'term,
+     seq_extract_shape : 'term -> 'term * 'term * 'term,
+     seq_at_shape : 'term -> 'term * 'term,
+     sequence_symbol : 'term -> 'term -> 'term list -> bool,
+     set_symbol : 'term -> 'term list -> bool,
+     bag_symbol : 'term -> 'term list -> bool,
+     bag_count_application : 'term -> 'term list -> ('term * 'term) option}
+
+  fun collection_recognizers_with
+      (operations : 'term collection_recognition_operations)
+      {sequence_emission,is_raw_number} : 'term collection_recognizers =
     let
-      val (negative, _, in_range) = boolSyntax.dest_cond tm
-      val (nth, index_num) = Term.dest_comb in_range
-      val (head, string) = Term.dest_comb nth
-      val index = intSyntax.dest_Num index_num
-      val _ =
-        if same_const head z3_seq_nth_i_tm andalso
-           Term.aconv negative
-             (intSyntax.mk_less (index, intSyntax.zero_tm)) then ()
-        else raise ERR "dest_string_nth_shape" "not a String seq.nth"
+      val {type_of,same_const,is_native_set_head,same,strip_comb,dest_comb,
+           dest_cond,dest_take,dest_drop,dest_Num,dest_cons,dest_el,is_nil,
+           dest_nil,sequence_element_type,int_less,int_leq,num_leq,length,
+           disjunction,disjunctions,int_zero,mk_comb,list_mk_comb,set_card,
+           bag_card,optional_error,syntax_error} = operations
+      fun optional function current = SOME (function current)
+        handle primary => if optional_error primary then NONE
+          else raise primary
+      (* The parser represents String [seq.nth] with an explicit negative-index
+         branch, since its out-of-range value is unspecified.  Recover the
+         original surface operation before re-emission: translating the ARB
+         branch separately loses sharing between repeated accesses. *)
+      fun dest_string_nth_shape tm =
+        let
+          val (negative, _, in_range) = dest_cond tm
+          val (nth, index_num) = dest_comb in_range
+          val (head, string) = dest_comb nth
+          val index = dest_Num index_num
+          val _ =
+            if same_const head z3_seq_nth_i_tm andalso
+               same negative
+                 (int_less (index, (int_zero ()))) then ()
+            else raise syntax_error "dest_string_nth_shape"
+              "not a String seq.nth"
+        in
+          (string, index)
+        end
+
+      fun dest_seq_extract_shape tm =
+        let
+          val (invalid, empty, body) = dest_cond tm
+          val (count, drop) = dest_take body
+          val (start, sequence) = dest_drop drop
+          val index = dest_Num start
+          val size = dest_Num count
+          val expected_invalid = disjunctions [
+            int_less (index, (int_zero ())),
+            int_leq (size, (int_zero ())),
+            num_leq (length sequence, start)]
+          val _ =
+            if is_nil empty andalso
+               Type.compare (dest_nil empty,
+                 sequence_element_type sequence) = EQUAL andalso
+               same invalid expected_invalid then ()
+            else raise syntax_error "dest_seq_extract_shape"
+              "not a sequence extract"
+        in
+          (sequence, index, size)
+        end
+
+      fun dest_seq_at_shape tm =
+        let
+          val (invalid, empty, body) = dest_cond tm
+          val (element, body_empty) = dest_cons body
+          val (index_num, sequence) = dest_el element
+          val index = dest_Num index_num
+          val expected_invalid = disjunction
+            (int_less (index, (int_zero ())),
+             num_leq (length sequence, index_num))
+          val _ =
+            if is_nil empty andalso is_nil body_empty andalso
+               Type.compare (dest_nil empty,
+                 sequence_element_type sequence) = EQUAL andalso
+               same invalid expected_invalid then ()
+            else raise syntax_error "dest_seq_at_shape" "not a sequence at"
+        in
+          (sequence, index)
+        end
+
+        fun native_sequence_symbol tm rator rands =
+          sequence_emission () andalso
+          List.all (fn part =>
+            not (listSyntax.is_list_type (type_of part)) orelse
+            is_native_sequence_type (type_of part)) (tm :: rands) andalso
+          (is_nil tm orelse
+          ((same_const rator intSyntax.int_injection orelse
+            same_const rator int_of_num_tm) andalso
+           (case rands of
+              [arg] => same_const (Lib.fst (strip_comb arg))
+                seq_length_tm
+            | _ => false)) orelse
+          Option.isSome (optional dest_string_nth_shape tm) orelse
+          Option.isSome (optional dest_seq_extract_shape tm) orelse
+          Option.isSome (optional dest_seq_at_shape tm) orelse
+          List.exists (fn head => same_const rator head) [
+            seq_append_tm, seq_cons_tm, seq_reverse_tm,
+            seq_prefix_tm, seq_lupdate_tm, seq_map_tm, seq_foldl_tm,
+            seq_contains_tm, seq_suffix_tm,
+            smt_seq_nth_tm,
+            smt_seq_extract_tm, smt_seq_at_tm, smt_seq_indexof_tm,
+            smt_seq_replace_tm, smt_seq_replace_all_tm, smt_seq_update_tm])
+        fun native_set_symbol rator rands =
+          same_const rator pred_setSyntax.in_tm orelse
+          is_native_set_head rator orelse
+          ((same_const rator intSyntax.int_injection orelse
+            same_const rator int_of_num_tm) andalso
+           (case rands of [arg] => set_card arg | _ => false))
+        fun native_bag_count_application rator rands =
+          case rands of
+            [left, right, element] =>
+              if same_const rator bagSyntax.BAG_INSERT_tm orelse
+                 same_const rator bagSyntax.BAG_UNION_tm orelse
+                 same_const rator bagSyntax.BAG_DIFF_tm orelse
+                 same_const rator bag_merge_tm orelse
+                 same_const rator bag_inter_tm then
+                SOME (list_mk_comb (rator, [left, right]), element)
+              else NONE
+          | [element] =>
+              if same_const rator bagSyntax.EMPTY_BAG_tm then
+                SOME (rator, element)
+              else NONE
+          | _ => NONE
+        fun native_bag_symbol rator rands =
+          ((case rands of
+              [_, _] => same_const rator bag_in_tm orelse
+                        same_const rator bagSyntax.BAG_INSERT_tm orelse
+                        same_const rator bagSyntax.BAG_UNION_tm orelse
+                        same_const rator bagSyntax.BAG_DIFF_tm orelse
+                        same_const rator bag_merge_tm orelse
+                        same_const rator bag_inter_tm orelse
+                        same_const rator bagSyntax.SUB_BAG_tm
+            | [arg] =>
+                (same_const rator bagSyntax.BAG_CARD_tm andalso
+                 not (is_raw_number (mk_comb (rator, arg))))
+            | [] => same_const rator bagSyntax.EMPTY_BAG_tm
+            | _ => false) orelse
+           ((same_const rator intSyntax.int_injection orelse
+             same_const rator int_of_num_tm) andalso
+            (case rands of
+               [arg] =>
+                 bag_card arg orelse
+                 Option.isSome
+                   (native_bag_count_application (Lib.fst (strip_comb arg))
+                     (Lib.snd (strip_comb arg)))
+             | _ => false)))
     in
-      (string, index)
+      {string_nth_shape=dest_string_nth_shape,
+       seq_extract_shape=dest_seq_extract_shape,seq_at_shape=dest_seq_at_shape,
+       sequence_symbol=native_sequence_symbol,set_symbol=native_set_symbol,
+       bag_symbol=native_bag_symbol,
+       bag_count_application=native_bag_count_application}
     end
 
-  fun dest_seq_extract_shape tm =
+  val term_collection_recognition_operations :
+      Term.term collection_recognition_operations =
+    {type_of=Term.type_of,same_const=same_const,
+     is_native_set_head=is_native_set_head,same=Term.aconv,
+     strip_comb=boolSyntax.strip_comb,dest_comb=Term.dest_comb,
+     dest_cond=boolSyntax.dest_cond,dest_take=listSyntax.dest_take,
+     dest_drop=listSyntax.dest_drop,dest_Num=intSyntax.dest_Num,
+     dest_cons=listSyntax.dest_cons,dest_el=listSyntax.dest_el,
+     is_nil=listSyntax.is_nil,dest_nil=listSyntax.dest_nil,
+     sequence_element_type=sequence_element_type,
+     int_less=intSyntax.mk_less,int_leq=intSyntax.mk_leq,
+     num_leq=numSyntax.mk_leq,length=listSyntax.mk_length,
+     disjunction=boolSyntax.mk_disj,disjunctions=boolSyntax.list_mk_disj,
+     int_zero=fn () => intSyntax.zero_tm,mk_comb=Term.mk_comb,
+     list_mk_comb=Term.list_mk_comb,
+     set_card=pred_setSyntax.is_card,bag_card=bagSyntax.is_card,
+     optional_error=fn Portable.Interrupt => false | _ => true,
+     syntax_error=ERR}
+  val term_collection_recognizers = collection_recognizers_with
+    term_collection_recognition_operations
+    {sequence_emission=fn () => !current_native_sequence_emission,
+     is_raw_number=fn current => mem_aconv current (!current_raw_num_terms)}
+  val dest_string_nth_shape = #string_nth_shape term_collection_recognizers
+  val dest_seq_extract_shape = #seq_extract_shape term_collection_recognizers
+  val dest_seq_at_shape = #seq_at_shape term_collection_recognizers
+
+  datatype 'term native_candidate =
+      NativeSequence of 'term * 'term list
+    | NativeSet of 'term * 'term list
+    | NativeBag of 'term * 'term list
+    | NativeBuiltin of 'term * 'term list
+    | NativeEquality of 'term * 'term list
+    | NativeBagCount of 'term * 'term
+
+  type 'term native_dispatch_operations =
+    {same_const : 'term -> Term.term -> bool,
+     is_constant : 'term -> bool,declared_arity : 'term -> int,
+     type_of : 'term -> Type.hol_type,is_raw_number : 'term -> bool,
+     syntax_error : string -> string -> exn}
+
+  (* Selection does not emit or recursively translate operands. Keep whole
+     and decomposed attempts separate: a failed whole literal attempt must
+     finish before the application recognizers or ranked checks execute.
+     The caller supplies its already computed base-type observation. *)
+  fun native_dispatch_with
+      (operations : 'term native_dispatch_operations)
+      (recognizers : 'term collection_recognizers) regime =
     let
-      val (invalid, empty, body) = boolSyntax.dest_cond tm
-      val (count, drop) = listSyntax.dest_take body
-      val (start, sequence) = listSyntax.dest_drop drop
-      val index = intSyntax.dest_Num start
-      val size = intSyntax.dest_Num count
-      val expected_invalid = boolSyntax.list_mk_disj [
-        intSyntax.mk_less (index, intSyntax.zero_tm),
-        intSyntax.mk_leq (size, intSyntax.zero_tm),
-        numSyntax.mk_leq (listSyntax.mk_length sequence, start)]
-      val _ =
-        if listSyntax.is_nil empty andalso
-           Type.compare (listSyntax.dest_nil empty,
-             sequence_element_type sequence) = EQUAL andalso
-           Term.aconv invalid expected_invalid then ()
-        else raise ERR "dest_seq_extract_shape" "not a sequence extract"
+      val {same_const,is_constant,declared_arity,type_of,is_raw_number,
+           syntax_error} = operations
+      val {sequence_symbol,set_symbol,bag_symbol,bag_count_application,...} =
+        recognizers
+      fun ordinary current head arguments =
+        if sequence_symbol current head arguments then
+          NativeSequence (head,arguments)
+        else if set_symbol head arguments then NativeSet (head,arguments)
+        else if bag_symbol head arguments then NativeBag (head,arguments)
+        else NativeBuiltin (head,arguments)
+      fun whole_candidate base_type current =
+        if base_type then ordinary current current []
+        else raise syntax_error "translate_term" "not first-order"
+      fun application_candidate base_type current head arguments =
+        case bag_count_application head arguments of
+          SOME operands => NativeBagCount operands
+        | NONE =>
+            if same_const head boolSyntax.equality then
+              NativeEquality (head,arguments)
+            else if sequence_symbol current head arguments orelse
+                set_symbol head arguments orelse
+                bag_symbol head arguments orelse
+                (case regime of FirstOrder => base_type
+                 | HigherOrder _ => is_constant head andalso
+                     List.length arguments = declared_arity head)
+            then ordinary current head arguments
+            else raise syntax_error "translate_term" "not first-order"
+      fun guard_builtin current head =
+        if same_const head intSyntax.Num_tm andalso is_raw_number current then
+          raise syntax_error "builtin_symbol"
+            "Num retains its opaque result sort"
+        else ()
+      fun equality_operands head arguments =
+        if same_const head boolSyntax.equality then
+          case arguments of [left,right] =>
+            if Type.compare (type_of left,reglan_ty) = EQUAL then
+              raise syntax_error "builtin_equality"
+                ("HOL equality on smtstring$reglan is intensional; " ^
+                 "SMT-LIB RegLan equality is language equivalence")
+            else (left,right)
+          | _ => raise syntax_error "builtin_equality" "wrong equality arity"
+        else raise syntax_error "builtin_equality" "not equality"
     in
-      (sequence, index, size)
+      {whole_candidate=whole_candidate,
+       application_candidate=application_candidate,
+       guard_builtin=guard_builtin,equality_operands=equality_operands}
     end
 
-  fun dest_seq_at_shape tm =
+  type 'term sequence_eligibility_operations = {
+    constant_name : 'term -> (string * string) option,
+    type_of : 'term -> Type.hol_type,
+    is_extract : 'term -> bool,
+    is_at : 'term -> bool,
+    is_word_num : 'term -> bool
+  }
+
+  fun sequence_eligibility_with
+      (operations : 'term sequence_eligibility_operations) =
     let
-      val (invalid, empty, body) = boolSyntax.dest_cond tm
-      val (element, body_empty) = listSyntax.dest_cons body
-      val (index_num, sequence) = listSyntax.dest_el element
-      val index = intSyntax.dest_Num index_num
-      val expected_invalid = boolSyntax.mk_disj
-        (intSyntax.mk_less (index, intSyntax.zero_tm),
-         numSyntax.mk_leq (listSyntax.mk_length sequence, index_num))
-      val _ =
-        if listSyntax.is_nil empty andalso listSyntax.is_nil body_empty andalso
-           Type.compare (listSyntax.dest_nil empty,
-             sequence_element_type sequence) = EQUAL andalso
-           Term.aconv invalid expected_invalid then ()
-        else raise ERR "dest_seq_at_shape" "not a sequence at"
+      val {constant_name, type_of, is_extract, is_at, is_word_num} = operations
+      fun totalized tm = is_extract tm orelse is_at tm
+      fun named theory names tm =
+        case constant_name tm of
+          SOME (thy, name) =>
+            thy = theory andalso List.exists (fn expected =>
+              expected = name) names
+        | NONE => false
+      val direct_list_heads =
+        ["APPEND", "LENGTH", "CONS", "NIL", "REVERSE", "isPREFIX",
+         "LUPDATE", "MAP", "FOLDL"]
+      val totalized_list_heads = ["TAKE", "DROP", "EL"]
+      val rich_list_heads = ["IS_SUBLIST", "IS_SUFFIX"]
+      val holsmt_heads =
+        ["smt_seq_nth", "smt_seq_extract", "smt_seq_at", "smt_seq_indexof",
+         "smt_seq_replace", "smt_seq_replace_all", "smt_seq_update"]
+      fun supported is_totalized_part tm =
+        case constant_name tm of
+          SOME ("list", _) =>
+            named "list" direct_list_heads tm orelse
+            (named "list" totalized_list_heads tm andalso
+             is_totalized_part tm)
+        | SOME ("rich_list", _) =>
+            named "rich_list" rich_list_heads tm
+        | _ => true
+      fun native_part tm =
+        not (listSyntax.is_list_type (type_of tm)) orelse
+        is_native_sequence_type (type_of tm)
+      fun selects_seq {native_parts, is_totalized_whole} tm =
+        ((named "list" direct_list_heads tm orelse
+          named "rich_list" rich_list_heads tm orelse
+          named "HolSmt" holsmt_heads tm) andalso native_parts tm) orelse
+        is_totalized_whole tm
     in
-      (sequence, index)
+      {totalized=totalized, supported=supported, native_part=native_part,
+       selects_seq=selects_seq, is_word_num=is_word_num}
     end
+
+  val term_sequence_eligibility = sequence_eligibility_with {
+    constant_name = fn tm =>
+      case Lib.total Term.dest_thy_const tm of
+        SOME {Thy, Name, ...} => SOME (Thy, Name)
+      | NONE => NONE,
+    type_of = Term.type_of,
+    is_extract = fn tm => Option.isSome (Lib.total dest_seq_extract_shape tm),
+    is_at = fn tm => Option.isSome (Lib.total dest_seq_at_shape tm),
+    is_word_num = Lib.can wordsSyntax.dest_w2n
+  }
 
   (* List types alone remain ordinary HOL datatypes: only a supported stock
      list operation (or one of TASK_16's exact totalized-access shapes)
@@ -1630,47 +2309,23 @@ local
     let
       val terms = conclusion :: assumptions
       val subterms = List.concat (List.map Library.subterms terms)
-      val totalized = List.filter (fn tm =>
-        Option.isSome (Lib.total dest_seq_extract_shape tm) orelse
-        Option.isSome (Lib.total dest_seq_at_shape tm)) subterms
+      val totalized =
+        List.filter (#totalized term_sequence_eligibility) subterms
       val totalized_subterms =
         List.concat (List.map Library.subterms totalized)
       fun is_totalized_part tm =
         List.exists (fn part => Term.aconv tm part) totalized_subterms
-      fun named theory names tm =
-        case Lib.total Term.dest_thy_const tm of
-          SOME {Thy, Name, ...} =>
-            Thy = theory andalso List.exists (fn name => name = Name) names
-        | NONE => false
-      val direct_list_heads =
-        ["APPEND", "LENGTH", "CONS", "NIL", "REVERSE", "isPREFIX",
-         "LUPDATE", "MAP", "FOLDL"]
-      val totalized_list_heads = ["TAKE", "DROP", "EL"]
-      val rich_list_heads = ["IS_SUBLIST", "IS_SUFFIX"]
-      val holsmt_heads =
-        ["smt_seq_nth", "smt_seq_extract", "smt_seq_at", "smt_seq_indexof",
-         "smt_seq_replace", "smt_seq_replace_all", "smt_seq_update"]
-      fun supported tm =
-        case Lib.total Term.dest_thy_const tm of
-          SOME {Thy = "list", ...} =>
-            named "list" direct_list_heads tm orelse
-            (named "list" totalized_list_heads tm andalso
-             is_totalized_part tm)
-        | SOME {Thy = "rich_list", ...} =>
-            named "rich_list" rich_list_heads tm
-        | _ => true
+      val supported =
+        (#supported term_sequence_eligibility) is_totalized_part
       fun native_sequence_parts tm =
-        List.all (fn sub =>
-          not (listSyntax.is_list_type (Term.type_of sub)) orelse
-          is_native_sequence_type (Term.type_of sub)) (Library.subterms tm)
-      fun selects_seq tm =
-        ((named "list" direct_list_heads tm orelse
-          named "rich_list" rich_list_heads tm orelse
-          named "HolSmt" holsmt_heads tm) andalso
-         native_sequence_parts tm) orelse
+        List.all (#native_part term_sequence_eligibility)
+          (Library.subterms tm)
+      fun is_totalized_whole tm =
         List.exists (fn whole => Term.aconv tm whole) totalized
-      fun has_unconverted_word_num tm =
-        Lib.can wordsSyntax.dest_w2n tm
+      val selects_seq = (#selects_seq term_sequence_eligibility)
+        {native_parts=native_sequence_parts,
+         is_totalized_whole=is_totalized_whole}
+      val has_unconverted_word_num = #is_word_num term_sequence_eligibility
     in
       List.all supported subterms andalso
       not (List.exists has_unconverted_word_num subterms) andalso
@@ -1678,7 +2333,23 @@ local
     end
 
   val smt_rdiv_tm = Term.prim_mk_const {Thy="HolSmt", Name="smt_rdiv"}
-  val int_of_num_tm = Term.prim_mk_const {Thy="integer", Name="int_of_num"}
+
+  val raw_num_operations :
+      Term.term SmtLib_RawNumAnalysis.operations =
+    {same = fn (left, right) => Term.aconv left right,
+     type_of = Term.type_of,
+     is_abstraction = Term.is_abs,
+     dest_abs = Term.dest_abs,
+     is_combination = Term.is_comb,
+     dest_comb = Term.dest_comb,
+     strip_comb = boolSyntax.strip_comb,
+     is_integer_coercion = fn rator =>
+       same_const rator intSyntax.int_injection orelse
+       same_const rator int_of_num_tm,
+     is_num_head = fn rator => same_const rator intSyntax.Num_tm,
+     is_bag_card_head = fn rator =>
+       same_const rator bagSyntax.BAG_CARD_tm,
+     number_type = numSyntax.num}
   val num_of_int_tm = Term.prim_mk_const {Thy="integer", Name="Num"}
   val int_ediv_tm = Term.prim_mk_const {Thy="integer", Name="ediv"}
   val int_emod_tm = Term.prim_mk_const {Thy="integer", Name="emod"}
@@ -1740,28 +2411,7 @@ local
     else
       false
 
-  fun native_string_literal tm =
-    let
-      val (constructor, representation) = Term.dest_comb tm
-      val _ =
-        if same_const
-            (smtstring_const "SmtStr") constructor then ()
-        else raise ERR "native_string_literal" "not an SMT String"
-      val (elements, element_ty) = listSyntax.dest_list representation
-      val _ =
-        if Type.compare (element_ty, numSyntax.num) = EQUAL then ()
-        else raise ERR "native_string_literal"
-          "String representation is not a num list"
-      fun code_point element =
-        Arbnum.toInt
-          (SmtLib_String_Literal.check_code_point "code point"
-            (numSyntax.dest_numeral element))
-        handle SmtLib_String_Literal.InvalidCodePoint detail =>
-          raise ERR "native_string_literal" detail
-      val code_points = List.map code_point elements
-    in
-      "\"" ^ SmtLib_String_Literal.encode_string_literal code_points ^ "\""
-    end
+  val native_string_literal = #native_string_literal term_literal_recognizers
 
   val subterms = Library.subterms
 
@@ -2019,25 +2669,58 @@ local
         SOME (_, sorts) => SOME sorts
       | NONE => NONE
 
-  fun term_decl_for_tmdict regime tydict ((tm, arity), name) =
+  type 'term term_declaration_operations = {
+    type_of : 'term -> Type.hol_type,
+    is_injected_string : 'term -> bool,
+    is_injected_float : 'term -> bool,
+    recorded_sorts : 'term * int -> (string list * string) option,
+    sort_of_type : Type.hol_type -> string
+  }
+
+  (* Observe the carrier outside pure type operations. Callbacks preserve
+     their primary exceptions; recorded sorts are read after type splitting,
+     as on the native path, even when they override the emitted sorts. *)
+  fun term_declaration_metadata_with
+      (operations : 'term term_declaration_operations)
+      regime ((tm, arity), name) =
     let
       fun doms_rng acc 0 ty = (List.rev acc, ty)
         | doms_rng acc n ty =
           let val (dom, rng) = Type.dom_rng ty
           in doms_rng (dom :: acc) (n - 1) rng end
-      val injected_string = arity = 0 andalso is_injected_string tm
-      val injected_float = arity = 0 andalso is_injected_float tm
-      val (domtys, rngty) = doms_rng [] arity (Term.type_of tm)
+      val injected_string =
+        arity = 0 andalso (#is_injected_string operations) tm
+      val injected_float =
+        arity = 0 andalso (#is_injected_float operations) tm
+      val (domtys, rngty) = doms_rng [] arity ((#type_of operations) tm)
       val (domain_sorts, range_sort) =
-        case emitted_term_sorts_for (tm, arity) of
+        case (#recorded_sorts operations) (tm, arity) of
           SOME sorts => sorts
         | NONE =>
-            (List.map (smt_sort_of_type regime tydict) domtys,
+            (List.map (#sort_of_type operations) domtys,
              if injected_string then "String"
              else if injected_float then smtfp_sort rngty
-             else smt_sort_of_type regime tydict rngty)
+             else (#sort_of_type operations) rngty)
       val declaration =
         term_declaration_text regime name domain_sorts range_sort
+    in
+      {domain_sorts = domain_sorts, range_sort = range_sort,
+       declaration = declaration}
+    end
+
+  fun term_declaration_operations regime tydict :
+      Term.term term_declaration_operations =
+    {type_of=Term.type_of,is_injected_string=is_injected_string,
+     is_injected_float=is_injected_float,
+     recorded_sorts=emitted_term_sorts_for,
+     sort_of_type=smt_sort_of_type regime tydict}
+
+  fun term_decl_for_tmdict regime tydict ((tm, arity), name) =
+    let
+      val {domain_sorts,range_sort,declaration} =
+        term_declaration_metadata_with
+          (term_declaration_operations regime tydict) regime
+          ((tm,arity),name)
     in
       TermDeclaration {hol_term = tm, arity = arity, smt_name = name,
         domain_sorts = domain_sorts, range_sort = range_sort,
@@ -2260,11 +2943,35 @@ local
       head
     end
 
+  (* Upstream list metadata does not register HD/TL.  Supply their proved
+     laws only in our translation view; never update TypeBase, even
+     temporarily.  Explicit caller registrations remain authoritative, as
+     for every other datatype.  These laws guide checked case proofs, not
+     semantic rewrites justified by metadata alone. *)
+  val list_destructor_laws = [listTheory.HD, listTheory.TL_DEF]
+  fun datatype_destructor_theorems tyinfo =
+    let val registered = TypeBasePure.destructors_of tyinfo in
+      if List.null registered andalso
+         TypeBasePure.ty_name_of tyinfo = ("list", "list") then
+        list_destructor_laws
+      else registered
+    end
+
+  fun datatype_destructor_theorem_with metadata_error same_const
+      tyinfo destructor =
+    let
+      fun metadata thunk = thunk () handle primary as Feedback.HOL_ERR _ =>
+        raise metadata_error primary
+    in
+      List.find
+        (fn theorem =>
+          let val head = metadata (fn () => datatype_destructor_head theorem)
+          in same_const destructor head end)
+        (metadata (fn () => datatype_destructor_theorems tyinfo))
+    end
+
   fun datatype_destructor_theorem tyinfo destructor =
-    List.find
-      (fn theorem =>
-        Term.same_const destructor (datatype_destructor_head theorem))
-      (TypeBasePure.destructors_of tyinfo)
+    datatype_destructor_theorem_with Lib.I Term.same_const tyinfo destructor
 
   (* This predicate follows the actual type emitter: ordinary native lists
      are datatypes, but a selected Seq backend emits them as `(Seq ...)` and
@@ -2286,19 +2993,75 @@ local
     emits_native_datatype_sort ty orelse
     (!current_native_sequence_emission andalso is_native_sequence_type ty)
 
-  fun uninterpreted_native_destructor_domain rator domain_types =
-    if Term.is_const rator then
-      List.find (fn domain => emitted_native_sort domain andalso
-        registered_destructor_for_domain rator domain) domain_types
-    else
-      NONE
+  (* The domain policy observes only types and genuine atomic declarations.
+     Query authentication and diagnostic formatting stay outside the pure
+     metadata exception boundary. The caller supplies its existing shape
+     error policy; this factory grants no Source or equality permission. *)
+  type 'term native_datatype_policy_operations =
+    {constant_leaf : 'term -> Term.term option,
+     term_to_string : 'term -> string,
+     syntax_error : string -> string -> exn,metadata_error : exn -> exn}
 
-  fun raise_uninterpreted_native_destructor rator domain =
-    raise ERR "translate_term"
-      (uninterpreted_native_datatype_destructor_diagnostic ^
-       ": refusing an uninterpreted TypeBase destructor over a native " ^
-       "sort; destructor=" ^ Hol_pp.term_to_string rator ^
-       "; domain=" ^ Hol_pp.type_to_string domain)
+  type 'term native_datatype_policy =
+    {destructor_domain : 'term -> Type.hol_type list -> Type.hol_type option,
+     raise_destructor : 'term -> Type.hol_type -> unit,
+     reject_invented : 'term -> Type.hol_type list -> unit}
+
+  fun native_datatype_policy_with
+      (operations : 'term native_datatype_policy_operations)
+      : 'term native_datatype_policy =
+    let
+      fun metadata thunk = thunk () handle primary as Feedback.HOL_ERR _ =>
+        raise (#metadata_error operations) primary
+      fun destructor_domain rator domain_types =
+        case (#constant_leaf operations) rator of
+          SOME atom => metadata (fn () =>
+            List.find (fn domain => emitted_native_sort domain andalso
+              registered_destructor_for_domain atom domain) domain_types)
+        | NONE => NONE
+      fun raise_destructor rator domain =
+        raise (#syntax_error operations) "translate_term"
+          (uninterpreted_native_datatype_destructor_diagnostic ^
+           ": refusing an uninterpreted TypeBase destructor over a native " ^
+           "sort; destructor=" ^ (#term_to_string operations) rator ^
+           "; domain=" ^ Hol_pp.type_to_string domain)
+      fun reject_invented rator domain_types =
+        let val domain = destructor_domain rator domain_types in
+          case domain of
+            SOME domain => raise_destructor rator domain
+          | NONE =>
+              (case metadata (fn () =>
+                  List.find emits_native_datatype_sort domain_types) of
+                NONE => ()
+              | SOME domain =>
+                  raise (#syntax_error operations) "translate_term"
+                    (invented_uf_native_datatype_domain_diagnostic ^
+                     ": refusing an invented function whose domain was " ^
+                     "emitted as a native datatype sort; the query is " ^
+                     "under-specified and its sat/unknown verdict is not " ^
+                     "a countermodel; function=" ^
+                     (#term_to_string operations) rator ^ "; domain=" ^
+                     Hol_pp.type_to_string domain))
+        end
+    in
+      {destructor_domain=destructor_domain,raise_destructor=raise_destructor,
+       reject_invented=reject_invented}
+    end
+
+  val term_native_datatype_policy_operations :
+      Term.term native_datatype_policy_operations =
+    {constant_leaf=fn rator =>
+       if Term.is_const rator then SOME rator else NONE,
+     term_to_string=Hol_pp.term_to_string,
+     syntax_error=ERR,metadata_error=Lib.I}
+  val term_native_datatype_policy =
+    native_datatype_policy_with term_native_datatype_policy_operations
+  val uninterpreted_native_destructor_domain =
+    #destructor_domain term_native_datatype_policy
+  val raise_uninterpreted_native_destructor =
+    #raise_destructor term_native_datatype_policy
+  val reject_invented_native_datatype_domain =
+    #reject_invented term_native_datatype_policy
 
   fun theorem_reduces_exact_application theorem tm =
     let
@@ -2320,29 +3083,68 @@ local
      reduce the exact application must be used by preprocessing, never hidden
      behind this residual boundary.  Any free/symbolic scrutinee remains behind
      the hard diagnostic. *)
-  fun closed_constructor_destructor_residual tm =
-    if not (Term.is_comb tm) then false
-    else
-        let
-          val (destructor, scrutinee) = Term.dest_comb tm
-          val domain = Term.type_of scrutinee
-          val (constructor, _) = boolSyntax.strip_comb scrutinee
-          val registered =
-            case TypeBase.fetch domain of
-              NONE => NONE
-            | SOME tyinfo =>
-                Option.map (fn theorem => (tyinfo, theorem))
-                  (datatype_destructor_theorem tyinfo destructor)
-        in
-          case registered of
-            NONE => false
-          | SOME (_, theorem) =>
-              emitted_native_sort domain andalso
-              Term.is_const constructor andalso
-              TypeBase.is_constructor constructor andalso
-              List.null (Term.free_vars tm) andalso
-              not (theorem_reduces_exact_application theorem tm)
-        end
+  type 'term carrier_residual_operations =
+    {is_comb : 'term -> bool,dest_comb : 'term -> 'term * 'term,
+     type_of : 'term -> Type.hol_type,
+     strip_comb : 'term -> 'term * 'term list,
+     same_const : 'term -> Term.term -> bool,
+     constant_leaf : 'term -> Term.term option,
+     free_vars : 'term -> 'term list,
+     theorem_reduces_exact_application : Thm.thm -> 'term -> bool,
+     metadata_error : exn -> exn}
+
+  (* The reducer must observe the exact registered theorem's complete
+     pure_ss simplification of this application. In particular, absence of
+     an outer constructor rule is not evidence that descendants are normal.
+     Only declaration/type observations enter the metadata error boundary;
+     carrier authentication and the required reducer remain outside it. *)
+  fun closed_constructor_destructor_residual_with
+      (operations : 'term carrier_residual_operations) =
+    let
+      val {is_comb,dest_comb,type_of,strip_comb,same_const,constant_leaf,
+           free_vars,theorem_reduces_exact_application,metadata_error} =
+        operations
+      fun metadata thunk = thunk () handle primary as Feedback.HOL_ERR _ =>
+        raise metadata_error primary
+      fun residual tm =
+        if not (is_comb tm) then false
+        else
+          let
+            val (destructor, scrutinee) = dest_comb tm
+            val domain = type_of scrutinee
+            val (constructor, _) = strip_comb scrutinee
+            val registered =
+              case metadata (fn () => TypeBase.fetch domain) of
+                NONE => NONE
+              | SOME tyinfo =>
+                  Option.map (fn theorem => (tyinfo, theorem))
+                    (datatype_destructor_theorem_with metadata_error
+                      same_const tyinfo destructor)
+          in
+            case registered of
+              NONE => false
+            | SOME (_, theorem) =>
+                metadata (fn () => emitted_native_sort domain) andalso
+                (case constant_leaf constructor of
+                   NONE => false
+                 | SOME atom =>
+                     metadata (fn () => TypeBase.is_constructor atom))
+                andalso List.null (free_vars tm) andalso
+                not (theorem_reduces_exact_application theorem tm)
+          end
+    in residual end
+
+  val term_carrier_residual_operations :
+      Term.term carrier_residual_operations =
+    {is_comb=Term.is_comb,dest_comb=Term.dest_comb,type_of=Term.type_of,
+     strip_comb=boolSyntax.strip_comb,same_const=Term.same_const,
+     constant_leaf=fn term => if Term.is_const term then SOME term else NONE,
+     free_vars=Term.free_vars,
+     theorem_reduces_exact_application=theorem_reduces_exact_application,
+     metadata_error=Lib.I}
+  val closed_constructor_destructor_residual =
+    closed_constructor_destructor_residual_with
+      term_carrier_residual_operations
 
   fun reject_uninterpreted_native_destructors terms =
   let
@@ -2359,27 +3161,6 @@ local
         end
   in
     List.app reject (List.concat (List.map Library.subterms terms))
-  end
-
-
-  fun reject_invented_native_datatype_domain rator domain_types =
-  let
-    val destructor_domain =
-      uninterpreted_native_destructor_domain rator domain_types
-  in
-    case destructor_domain of
-      SOME domain => raise_uninterpreted_native_destructor rator domain
-    | NONE =>
-        (case List.find emits_native_datatype_sort domain_types of
-          NONE => ()
-        | SOME domain =>
-            raise ERR "translate_term"
-              (invented_uf_native_datatype_domain_diagnostic ^
-               ": refusing an invented function whose domain was emitted " ^
-               "as a native datatype sort; the query is under-specified " ^
-               "and its sat/unknown verdict is not a countermodel; " ^
-               "function=" ^ Hol_pp.term_to_string rator ^ "; domain=" ^
-               Hol_pp.type_to_string domain))
   end
 
 
@@ -2516,240 +3297,373 @@ local
       handle Redblackmap.NotFound => NONE
            | Feedback.HOL_ERR _ => NONE
 
-  fun infer_features regime terms tydict tmdict =
+  (* The same feature grammar serves native terms and borrowed graph DATA.
+     State observations are thunks to preserve the native scan's read order.
+     Graph callers supply immutable snapshots of the actual emission state. *)
+  type feature_state = {
+    generated_forall : unit -> bool,
+    sequence_emission : unit -> bool,
+    has_set_terms : unit -> bool,
+    native_set_backend : unit -> bool,
+    has_bag_terms : unit -> bool,
+    native_bag_backend : unit -> bool
+  }
+
+  (* Graph test_constant may inspect only authenticated constant leaves.
+     Memo hooks belong to one fixed query/context and cache returned bools,
+     never exceptions; authenticate before hits and before publication.
+     Graph shape/optional predicates must exclude native callback primaries.
+     The native instance retains its original broader exception policies. *)
+  type 'term feature_operations = {
+    type_of : 'term -> Type.hol_type,
+    is_var : 'term -> bool,
+    is_comb : 'term -> bool,
+    is_abs : 'term -> bool,
+    dest_comb : 'term -> 'term * 'term,
+    dest_abs : 'term -> 'term * 'term,
+    strip_comb : 'term -> 'term * 'term list,
+    is_all_distinct : 'term -> bool,
+    dest_all_distinct : 'term -> 'term,
+    dest_list : 'term -> 'term list * Type.hol_type,
+    constant_name : 'term -> string * string,
+    test_constant : (Term.term -> bool) -> 'term -> bool,
+    term_same_const : 'term -> Term.term -> bool,
+    is_forall : 'term -> bool,
+    is_exists : 'term -> bool,
+    is_update_comb : 'term -> bool,
+    is_injected_string : 'term -> bool,
+    is_injected_float : 'term -> bool,
+    is_word_literal : 'term -> bool,
+    is_shape_error : exn -> bool,
+    is_optional_error : exn -> bool,
+    metadata_error : exn -> exn,
+    syntax_error : string -> string -> exn,
+    memo_quantifier : 'term -> (unit -> bool) -> bool,
+    memo_bitvector : 'term -> (unit -> bool) -> bool
+  }
+
+  fun feature_analysis_with (operations : 'term feature_operations) =
     let
+      val {type_of,is_var,is_comb,is_abs,dest_comb,dest_abs,strip_comb,
+           is_all_distinct,dest_all_distinct,dest_list,constant_name,
+           test_constant,term_same_const,is_forall,is_exists,is_update_comb,
+           is_injected_string,is_injected_float,is_word_literal,
+           is_shape_error,is_optional_error,metadata_error,syntax_error,
+           memo_quantifier,memo_bitvector} = operations
+      fun shape thunk fallback = thunk () handle primary =>
+        if is_shape_error primary then fallback () else raise primary
+      fun optional observe current = SOME (observe current)
+        handle primary =>
+          if is_optional_error primary then NONE else raise primary
+      fun metadata thunk = thunk ()
+        handle primary as Feedback.HOL_ERR _ => raise metadata_error primary
+      fun distinct_elements tm = dest_list (dest_all_distinct tm)
       fun encoding_subterms tm =
         let
           fun walk (tm, acc) =
             tm ::
-            (if listSyntax.is_all_distinct tm then
-               let
-                 val (elements, _) =
-                   listSyntax.dest_list (listSyntax.dest_all_distinct tm)
-               in
+            (if is_all_distinct tm then
+               let val (elements, _) = distinct_elements tm in
                  List.foldl (fn (element, rest) => walk (element, rest))
                    acc elements
                end
-             else
-               (let val (rator, rand) = Term.dest_comb tm
-                in walk (rator, walk (rand, acc)) end
-                handle Feedback.HOL_ERR _ =>
-                  (let val (_, body) = Term.dest_abs tm
-                   in walk (body, acc) end
-                   handle Feedback.HOL_ERR _ => acc)))
-        in
-          walk (tm, [])
-        end
-      val all_subterms = List.concat (List.map encoding_subterms terms)
-      fun subterm_types p =
-        List.exists (fn tm => p (Term.type_of tm)) all_subterms
-      fun is_smtfp_bits_application tm =
-        let
-          val (head, args) = boolSyntax.strip_comb tm
-          val {Thy, Name, ...} = Term.dest_thy_const head
-        in
-          Thy = "smtfloat" andalso Name = "smtfp_bits" andalso
-          List.length args = 3
-        end
-        handle Feedback.HOL_ERR _ => false
-      (* The three bit-vector fields of the SMT [fp] constructor are part of
-         every FP logic's core syntax; they do not independently require a BV
-         logic packet.  Other word-valued terms, including FP/BV conversions,
-         still select the mixed packet. *)
-      fun has_nonconstructor_bitvector tm =
+             else shape
+               (fn () => let val (rator, rand) = dest_comb tm
+                 in walk (rator, walk (rand, acc)) end)
+               (fn () => shape
+                 (fn () => let val (_, body) = dest_abs tm
+                   in walk (body, acc) end)
+                 (fn () => acc)))
+        in walk (tm, []) end
+      (* The graph inventory uses this single-step form and a scoped visited
+         set. ALL_DISTINCT visits current plus reversed explicit elements;
+         list constructors and abstraction binder leaves are excluded. *)
+      fun encoding_children tm =
+        if is_all_distinct tm then List.rev (#1 (distinct_elements tm))
+        else shape (fn () => let val (left,right) = dest_comb tm
+            in [left,right] end)
+          (fn () => shape (fn () => [#2 (dest_abs tm)]) (fn () => []))
+      fun has_quantifier tm = memo_quantifier tm (fn () =>
+        is_forall tm orelse is_exists tm orelse shape
+          (fn () => let val (rator,rand) = dest_comb tm
+            in has_quantifier rator orelse has_quantifier rand end)
+          (fn () => shape (fn () => has_quantifier (#2 (dest_abs tm)))
+            (fn () => false)))
+      fun is_smtfp_bits_application tm = shape
+        (fn () =>
+          let val (head,args) = strip_comb tm
+              val (theory,name) = constant_name head
+          in theory = "smtfloat" andalso name = "smtfp_bits" andalso
+            List.length args = 3 end)
+        (fn () => false)
+      (* FP constructor literal fields do not independently require BV. *)
+      fun has_nonconstructor_bitvector tm = memo_bitvector tm (fn () =>
         if is_smtfp_bits_application tm then
-          let val (_, fields) = boolSyntax.strip_comb tm
-          in not (List.all wordsSyntax.is_word_literal fields) end
-        else if type_contains_word (Term.type_of tm) orelse
-                is_bv_const (Lib.fst (boolSyntax.strip_comb tm)) then true
-        else if Term.is_comb tm then
-          let val (rator, rand) = Term.dest_comb tm
-          in
-            has_nonconstructor_bitvector rator orelse
-            has_nonconstructor_bitvector rand
-          end
-        else if Term.is_abs tm then
-          has_nonconstructor_bitvector (Lib.snd (Term.dest_abs tm))
-        else false
-      val quantifiers = !current_generated_forall_emissions > 0 orelse
-        List.exists has_quantifier terms
-      val bitvectors = List.exists has_nonconstructor_bitvector terms
-      val integers =
-        subterm_types type_contains_int orelse
-        List.exists (fn tm => is_int_arith_const
-          (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
-      val reals =
-        subterm_types type_contains_real orelse
-        List.exists (fn tm => is_real_arith_const
-          (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
-      val floating_point =
-        subterm_types type_contains_fp orelse
-        List.exists (fn tm => is_fp_const
-          (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
-      val strings =
-        subterm_types type_contains_string orelse
-        subterm_types
-          (Library.type_contains
-            (fn ty => Type.compare (ty, reglan_ty) = EQUAL)) orelse
-        List.exists (fn tm => is_string_const
-          (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
-      fun thy_const_named theory names tm =
-        case Lib.total Term.dest_thy_const tm of
-          SOME {Thy, Name, ...} =>
-            Thy = theory andalso List.exists (fn name => name = Name) names
-        | NONE => false
-      val sequence_names =
-        ["APPEND", "LENGTH", "CONS", "NIL", "TAKE", "DROP", "EL",
-         "MAP", "FOLDL", "REVERSE", "isPREFIX", "LUPDATE"]
-      val rich_sequence_names = ["IS_SUBLIST", "IS_SUFFIX"]
-      val holsmt_sequence_names =
-        ["smt_seq_nth", "smt_seq_extract", "smt_seq_at", "smt_seq_indexof",
-         "smt_seq_replace", "smt_seq_replace_all", "smt_seq_update"]
-      val set_names =
-        ["INSERT", "DELETE", "UNION", "INTER", "DIFF", "COMPL", "SUBSET",
-         "EMPTY", "UNIV", "SING", "CARD"]
-      val bag_names =
-        ["BAG_IN", "BAG_INSERT", "BAG_UNION", "BAG_MERGE", "BAG_INTER",
-         "BAG_DIFF", "BAG_CARD", "EMPTY_BAG", "SUB_BAG"]
-      fun is_native_sequence_const tm =
-        thy_const_named "list" sequence_names tm orelse
-        thy_const_named "rich_list" rich_sequence_names tm orelse
-        thy_const_named "HolSmt" holsmt_sequence_names tm
-      fun is_native_set_const tm =
-        thy_const_named "pred_set" set_names tm orelse
-        thy_const_named "bool" ["IN"] tm
-      fun is_native_bag_const tm = thy_const_named "bag" bag_names tm
-      val sequences = !current_native_sequence_emission andalso
-        (subterm_types is_native_sequence_type orelse
-         List.exists (fn tm => is_native_sequence_const
-           (Lib.fst (boolSyntax.strip_comb tm))) all_subterms)
-      (* Finite-set hypotheses select cvc5's native Set sort and are removed
-         before this scan, so backend selection itself is also a Set feature. *)
-      val sets = not (List.null (!current_set_terms)) orelse
-        !current_set_backend = CVC5NativeSet orelse
-        List.exists (fn tm => is_native_set_const
-          (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
-      (* Checked preprocessing can lower native bag operations to count
-         applications.  The native cvc5 backend still emits Bag sorts. *)
-      val bags = not (List.null (!current_bag_terms)) orelse
-        !current_bag_backend = CVC5NativeBag orelse
-        List.exists (fn tm => is_native_bag_const
-          (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
-      fun term_is_native_string_surface tm =
-        let val (rator, _) = boolSyntax.strip_comb tm
-        in
-          is_native_string_const rator orelse
-          type_contains_string (Term.type_of tm) orelse
-          Library.type_contains
-            (fn ty => Type.compare (ty, reglan_ty) = EQUAL)
-            (Term.type_of tm)
-        end
-      fun type_is_datatype ty =
-        not (has_type_builtin ty) andalso Option.isSome (datatype_family ty)
-      fun type_contains_datatype ty =
-        type_contains type_is_datatype ty
-      val has_injected_strings =
-        List.exists is_injected_string all_subterms
-      fun term_contains_datatype tm =
+          let val (_,fields) = strip_comb tm
+          in not (List.all is_word_literal fields) end
+        else if type_contains_word (type_of tm) orelse
+          test_constant is_bv_const (#1 (strip_comb tm)) then true
+        else if is_comb tm then
+          let val (rator,rand) = dest_comb tm
+          in has_nonconstructor_bitvector rator orelse
+            has_nonconstructor_bitvector rand end
+        else if is_abs tm then has_nonconstructor_bitvector (#2 (dest_abs tm))
+        else false)
+      fun infer (state : feature_state) regime all_subterms terms
+          type_exists term_exists =
         let
-          val (rator, _) = boolSyntax.strip_comb tm
+          fun subterm_types predicate =
+            List.exists (fn tm => predicate (type_of tm)) all_subterms
+          val quantifiers = (#generated_forall state) () orelse
+            List.exists has_quantifier terms
+          val bitvectors = List.exists has_nonconstructor_bitvector terms
+          val integers =
+            subterm_types type_contains_int orelse
+            List.exists (fn tm => (test_constant is_int_arith_const)
+              (Lib.fst (strip_comb tm))) all_subterms
+          val reals =
+            subterm_types type_contains_real orelse
+            List.exists (fn tm => (test_constant is_real_arith_const)
+              (Lib.fst (strip_comb tm))) all_subterms
+          val floating_point =
+            subterm_types type_contains_fp orelse
+            List.exists (fn tm => (test_constant is_fp_const)
+              (Lib.fst (strip_comb tm))) all_subterms
+          val strings =
+            subterm_types type_contains_string orelse
+            subterm_types
+              (Library.type_contains
+                (fn ty => Type.compare (ty, reglan_ty) = EQUAL)) orelse
+            List.exists (fn tm => (test_constant is_string_const)
+              (Lib.fst (strip_comb tm))) all_subterms
+          fun thy_const_named theory names tm =
+            case optional constant_name tm of
+              SOME (Thy, Name) =>
+                Thy = theory andalso List.exists (fn name => name = Name) names
+            | NONE => false
+          val sequence_names =
+            ["APPEND", "LENGTH", "CONS", "NIL", "TAKE", "DROP", "EL",
+             "MAP", "FOLDL", "REVERSE", "isPREFIX", "LUPDATE"]
+          val rich_sequence_names = ["IS_SUBLIST", "IS_SUFFIX"]
+          val holsmt_sequence_names =
+            ["smt_seq_nth", "smt_seq_extract", "smt_seq_at", "smt_seq_indexof",
+             "smt_seq_replace", "smt_seq_replace_all", "smt_seq_update"]
+          val set_names =
+            ["INSERT", "DELETE", "UNION", "INTER", "DIFF", "COMPL", "SUBSET",
+             "EMPTY", "UNIV", "SING", "CARD"]
+          val bag_names =
+            ["BAG_IN", "BAG_INSERT", "BAG_UNION", "BAG_MERGE", "BAG_INTER",
+             "BAG_DIFF", "BAG_CARD", "EMPTY_BAG", "SUB_BAG"]
+          fun is_native_sequence_const tm =
+            thy_const_named "list" sequence_names tm orelse
+            thy_const_named "rich_list" rich_sequence_names tm orelse
+            thy_const_named "HolSmt" holsmt_sequence_names tm
+          fun is_native_set_const tm =
+            thy_const_named "pred_set" set_names tm orelse
+            thy_const_named "bool" ["IN"] tm
+          fun is_native_bag_const tm = thy_const_named "bag" bag_names tm
+          val sequences = (#sequence_emission state) () andalso
+            (subterm_types is_native_sequence_type orelse
+             List.exists (fn tm => is_native_sequence_const
+               (Lib.fst (strip_comb tm))) all_subterms)
+          (* Finite-set hypotheses select cvc5's native Set sort and are
+             removed before this scan. Backend selection is a Set feature. *)
+          val sets = (#has_set_terms state) () orelse
+            (#native_set_backend state) () orelse
+            List.exists (fn tm => is_native_set_const
+              (Lib.fst (strip_comb tm))) all_subterms
+          (* Checked preprocessing can lower native bag operations to count
+             applications.  The native cvc5 backend still emits Bag sorts. *)
+          val bags = (#has_bag_terms state) () orelse
+            (#native_bag_backend state) () orelse
+            List.exists (fn tm => is_native_bag_const
+              (Lib.fst (strip_comb tm))) all_subterms
+          fun term_is_native_string_surface tm =
+            let val (rator, _) = strip_comb tm
+            in
+              (test_constant is_native_string_const) rator orelse
+              type_contains_string (type_of tm) orelse
+              Library.type_contains
+                (fn ty => Type.compare (ty, reglan_ty) = EQUAL)
+                (type_of tm)
+            end
+          fun type_is_datatype ty =
+            not (has_type_builtin ty) andalso
+            Option.isSome (datatype_family ty)
+          fun type_contains_datatype ty =
+            type_contains type_is_datatype ty
+          val has_injected_strings =
+            List.exists is_injected_string all_subterms
+          fun term_contains_datatype tm =
+            let
+              val (rator, _) = strip_comb tm
+            in
+              not (term_is_native_string_surface tm) andalso
+              not (strings andalso
+                test_constant (same_const boolSyntax.equality) rator) andalso
+              not (has_injected_strings andalso
+                ((test_constant is_string_const) rator orelse
+                  test_constant (Lib.can injected_string_operator) rator))
+              andalso
+              type_contains_datatype (type_of tm)
+            end
+          fun term_is_datatype_constructor tm =
+            test_constant TypeBase.is_constructor tm
+          fun term_is_datatype_record_selector tm =
+            let
+              val ty = type_of tm
+              val (dom, _) = metadata (fn () => Type.dom_rng ty)
+              val tyinfo =
+                case metadata (fn () => TypeBase.fetch dom) of
+                  SOME info => info
+                | NONE => raise syntax_error "infer_features"
+                    "not a datatype selector"
+              val fields = metadata (fn () => TypeBasePure.fields_of tyinfo)
+            in
+              List.exists
+                (fn (_, {accessor, ...} : TypeBasePure.rcd_fieldinfo) =>
+                   term_same_const tm accessor)
+                fields
+            end
+          fun term_is_datatype_native ((tm, arity), _) =
+            (arity = 0 andalso
+             type_contains_datatype (type_of tm)) orelse
+            term_is_datatype_constructor tm orelse
+            (case optional term_is_datatype_record_selector tm of
+               SOME result => result
+             | NONE => false)
+          val datatypes =
+            List.exists term_contains_datatype all_subterms orelse
+            type_exists type_contains_datatype orelse
+            term_exists (fn (tm, arity) =>
+              not (is_injected_string tm) andalso
+              not (is_injected_float tm) andalso
+              type_contains_datatype (type_of tm))
+          val nonlinear =
+            List.exists (fn tm => (test_constant is_nonlinear_arith_const)
+              (Lib.fst (strip_comb tm))) all_subterms
+          val has_uninterpreted_type =
+            type_exists (fn ty => not (type_contains_datatype ty))
+          fun range_after 0 ty = ty
+            | range_after n ty =
+                range_after (n - 1) (Lib.snd (Type.dom_rng ty))
+          fun term_needs_uf ((tm, arity), _) =
+            if term_is_datatype_native ((tm, arity), "") then
+              false
+            else if arity = 0 andalso
+                    (is_injected_string tm orelse is_injected_float tm) then
+              false
+            else
+              arity > 0 orelse
+              (arity = 0 andalso
+               not (has_type_builtin (range_after arity (type_of tm))) andalso
+               not (is_function_type (range_after arity (type_of tm))))
+          val uninterpreted =
+            has_uninterpreted_type orelse
+            term_exists (fn key => term_needs_uf (key, ""))
+          val higher_order =
+            case regime of FirstOrder => false | HigherOrder _ => true
+          val function_arrays =
+            case regime of
+              FirstOrder =>
+                List.exists (fn tm =>
+                  is_var tm andalso
+                  type_contains_function (type_of tm)) all_subterms orelse
+                term_exists (fn (tm, arity) => arity = 0 andalso
+                  type_contains_function (type_of tm))
+            | HigherOrder _ => false
+          val arrays =
+            function_arrays orelse
+            List.exists is_update_comb all_subterms
         in
-          not (term_is_native_string_surface tm) andalso
-          not (strings andalso same_const boolSyntax.equality rator) andalso
-          not (has_injected_strings andalso
-            (is_string_const rator orelse
-              Lib.can injected_string_operator rator)) andalso
-          type_contains_datatype (Term.type_of tm)
+          LogicFeatures {quantifiers = quantifiers,
+            uninterpreted = uninterpreted,
+            arrays = arrays, bitvectors = bitvectors, integers = integers,
+            reals = reals, floating_point = floating_point, strings = strings,
+            sequences = sequences, sets = sets, bags = bags,
+            datatypes = datatypes, nonlinear = nonlinear,
+            higher_order = higher_order}
         end
-      fun term_is_datatype_constructor tm =
-        TypeBase.is_constructor tm
-      fun term_is_datatype_record_selector tm =
-        let
-          val (dom, _) = Type.dom_rng (Term.type_of tm)
-          val tyinfo =
-            case TypeBase.fetch dom of
-              SOME info => info
-            | NONE => raise ERR "infer_features" "not a datatype selector"
-          val fields = TypeBasePure.fields_of tyinfo
-        in
-          List.exists
-            (fn (_, {accessor, ...} : TypeBasePure.rcd_fieldinfo) =>
-               Term.same_const tm accessor)
-            fields
-        end
-      fun term_is_datatype_native ((tm, arity), _) =
-        (arity = 0 andalso
-         type_contains_datatype (Term.type_of tm)) orelse
-        term_is_datatype_constructor tm orelse
-        (case Lib.total term_is_datatype_record_selector tm of
-           SOME result => result
-         | NONE => false)
-      val datatypes =
-        List.exists term_contains_datatype all_subterms orelse
-        Redblackmap.foldl (fn (ty, _, b) =>
-          b orelse type_contains_datatype ty) false tydict orelse
-        Redblackmap.foldl (fn ((tm, arity), _, b) =>
-          b orelse
-          (not (is_injected_string tm) andalso
-           not (is_injected_float tm) andalso
-           type_contains_datatype (Term.type_of tm))) false tmdict
-      val nonlinear =
-        List.exists (fn tm => is_nonlinear_arith_const
-          (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
-      val has_uninterpreted_type =
-        Redblackmap.foldl (fn (ty, _, b) =>
-          b orelse not (type_contains_datatype ty)) false tydict
-      fun range_after 0 ty = ty
-        | range_after n ty = range_after (n - 1) (Lib.snd (Type.dom_rng ty))
-      fun term_needs_uf ((tm, arity), _) =
-        if term_is_datatype_native ((tm, arity), "") then
-          false
-        else if arity = 0 andalso
-                (is_injected_string tm orelse is_injected_float tm) then
-          false
-        else
-          arity > 0 orelse
-          (arity = 0 andalso
-           not (has_type_builtin (range_after arity (Term.type_of tm))) andalso
-           not (is_function_type (range_after arity (Term.type_of tm))))
-      val uninterpreted =
-        has_uninterpreted_type orelse
-        Redblackmap.foldl (fn (key, value, b) =>
-          b orelse term_needs_uf (key, value)) false tmdict
-      val higher_order =
-        case regime of FirstOrder => false | HigherOrder _ => true
-      val function_arrays =
-        case regime of
-          FirstOrder =>
-            List.exists (fn tm =>
-              Term.is_var tm andalso
-              type_contains_function (Term.type_of tm)) all_subterms orelse
-            Redblackmap.foldl (fn ((tm, arity), _, b) =>
-              b orelse (arity = 0 andalso
-                type_contains_function (Term.type_of tm))) false tmdict
-        | HigherOrder _ => false
-      val arrays =
-        function_arrays orelse
-        List.exists combinSyntax.is_update_comb all_subterms
     in
-      LogicFeatures {quantifiers = quantifiers, uninterpreted = uninterpreted,
-        arrays = arrays, bitvectors = bitvectors, integers = integers,
-        reals = reals, floating_point = floating_point, strings = strings,
-        sequences = sequences, sets = sets, bags = bags,
-        datatypes = datatypes, nonlinear = nonlinear,
-        higher_order = higher_order}
+      {encoding_subterms=encoding_subterms,
+       encoding_children=encoding_children,
+       has_quantifier=has_quantifier,
+       has_nonconstructor_bitvector=has_nonconstructor_bitvector,
+       infer=infer}
     end
 
-  fun advanced_encoding_records regime terms
+  val term_feature_operations : Term.term feature_operations =
+    {type_of=Term.type_of,is_var=Term.is_var,is_comb=Term.is_comb,
+     is_abs=Term.is_abs,dest_comb=Term.dest_comb,dest_abs=Term.dest_abs,
+     strip_comb=boolSyntax.strip_comb,
+     is_all_distinct=listSyntax.is_all_distinct,
+     dest_all_distinct=listSyntax.dest_all_distinct,
+     dest_list=listSyntax.dest_list,
+     constant_name=fn tm =>
+       let val {Thy,Name,...} = Term.dest_thy_const tm in (Thy,Name) end,
+     test_constant=fn predicate => predicate,term_same_const=Term.same_const,
+     is_forall=boolSyntax.is_forall,is_exists=boolSyntax.is_exists,
+     is_update_comb=combinSyntax.is_update_comb,
+     is_injected_string=is_injected_string,is_injected_float=is_injected_float,
+     is_word_literal=wordsSyntax.is_word_literal,
+     is_shape_error=fn Feedback.HOL_ERR _ => true | _ => false,
+     is_optional_error=fn Portable.Interrupt => false | _ => true,
+     metadata_error=fn primary => primary,syntax_error=ERR,
+     memo_quantifier=fn _ => fn compute => compute (),
+     memo_bitvector=fn _ => fn compute => compute ()}
+  val term_feature_analysis = feature_analysis_with term_feature_operations
+  val current_feature_state : feature_state =
+    {generated_forall=fn () => !current_generated_forall_emissions > 0,
+     sequence_emission=fn () => !current_native_sequence_emission,
+     has_set_terms=fn () => not (List.null (!current_set_terms)),
+     native_set_backend=fn () => !current_set_backend = CVC5NativeSet,
+     has_bag_terms=fn () => not (List.null (!current_bag_terms)),
+     native_bag_backend=fn () => !current_bag_backend = CVC5NativeBag}
+
+  fun infer_features_with_state state regime terms tydict tmdict =
+    let val all_subterms = List.concat (List.map
+          (#encoding_subterms term_feature_analysis) terms)
+    in (#infer term_feature_analysis) state regime
+      all_subterms terms
+      (fn predicate => Redblackmap.foldl
+        (fn (ty,_,found) => found orelse predicate ty) false tydict)
+      (fn predicate => Redblackmap.foldl
+        (fn (key,_,found) => found orelse predicate key) false tmdict)
+    end
+
+  fun infer_features regime terms tydict tmdict =
+    infer_features_with_state current_feature_state regime terms tydict tmdict
+
+  type 'term string_presence_operations = {
+    type_of : 'term -> Type.hol_type,
+    head_of : 'term -> 'term,
+    test_constant : (Term.term -> bool) -> 'term -> bool
+  }
+
+  (* The ordered type pass precedes every head observation. Unlike the
+     feature inventory, this consumes all raw subterms, including the list
+     syntax hidden by an ALL_DISTINCT encoding. No callback error is caught. *)
+  fun string_presence_with
+      ({type_of,head_of,test_constant} : 'term string_presence_operations)
+      all_subterms =
+    List.exists (fn tm => type_contains_string (type_of tm)) all_subterms
+    orelse List.exists
+      (fn tm => test_constant is_string_const (head_of tm)) all_subterms
+
+  val term_string_presence_operations :
+      Term.term string_presence_operations =
+    {type_of=Term.type_of,head_of=Lib.fst o boolSyntax.strip_comb,
+     test_constant=fn predicate => predicate}
+
+  fun native_string_presence terms = string_presence_with
+    term_string_presence_operations (List.concat (List.map subterms terms))
+
+  (* This presence flag retains the legacy string type/operator scan,
+     including str_inj and native string operators. LogicFeatures.strings
+     also includes RegLan alone, so cannot replace that observation. *)
+  fun advanced_encoding_records_with_presence regime {has_hol_strings}
       (LogicFeatures {sequences, sets, bags, ...}) =
     let
-      val all_subterms = List.concat (List.map subterms terms)
-      fun subterm_types p =
-        List.exists (fn tm => p (Term.type_of tm)) all_subterms
-      val has_strings =
-        subterm_types type_contains_string orelse
-        List.exists (fn tm => is_string_const
-          (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
       val string_record =
         HOLTheoryEncoding {
           feature =
@@ -2900,19 +3814,25 @@ local
             "oracles before replay support is claimed."
         }
     in
-      (if has_strings then [string_record] else []) @
+      (if has_hol_strings then [string_record] else []) @
       [datatype_record, fp_record] @
       (if sequences orelse sets orelse bags then [z3_ext_record] else []) @
       [regex_record, ho_core_record]
     end
 
-  fun build_translation_records regime regime_reason terms logic reason
-      features tydict tmdict =
+  fun advanced_encoding_records regime terms features =
     let
-      val regime_record =
-        RegimeSelection {regime = regime, reason = regime_reason}
-      val logic_record = LogicSelection {logic = logic, reason = reason,
-        features = features}
+      val has_strings = native_string_presence terms
+    in
+      advanced_encoding_records_with_presence regime
+        {has_hol_strings = has_strings} features
+    end
+
+  (* Preserve the native dictionary fold and datatype-family suppression.
+     These records contain only type/declaration metadata, never a query
+     carrier or a borrowed graph closure. *)
+  fun type_declaration_records regime tydict =
+    let
       fun add_type_record (ty, name, (seen, acc)) =
         if member_type ty seen then
           (seen, acc)
@@ -2924,13 +3844,25 @@ local
           | NONE =>
               (add_type ty seen, type_decl_record (ty, name) :: acc)
       val (_, type_records) = Redblackmap.foldl add_type_record ([], []) tydict
+    in
+      List.rev type_records
+    end
+
+  fun build_translation_records regime regime_reason terms logic reason
+      features tydict tmdict =
+    let
+      val regime_record =
+        RegimeSelection {regime = regime, reason = regime_reason}
+      val logic_record = LogicSelection {logic = logic, reason = reason,
+        features = features}
+      val type_records = type_declaration_records regime tydict
       val term_records = Redblackmap.foldl (fn (key, name, acc) =>
         term_decl_for_tmdict regime tydict (key, name) :: acc)
         [] tmdict
       val builtin_records = encoded_symbol_records terms
       val advanced_records = advanced_encoding_records regime terms features
     in
-      regime_record :: logic_record :: List.rev type_records @
+      regime_record :: logic_record :: type_records @
       List.rev term_records @ List.rev builtin_records @ advanced_records
     end
 
@@ -3146,6 +4078,12 @@ local
       List.foldl add_constructor dict infos
     end
 
+  fun parser_datatype_term_dictionary_from_types types initial =
+    Redblackmap.foldl (fn (ty, name, dict) =>
+      case datatype_family ty of
+        SOME _ => add_datatype_parser_entries (ty, name, dict)
+      | NONE => dict) initial types
+
   fun parser_dicts_for_translation_aux solver
       ({logic, regime, tydict, tmdict, ...} : translation) =
     let
@@ -3189,10 +4127,7 @@ local
                   "wrong number of arguments"))])
         end)
         (Redblackmap.mkDict String.compare) tmdict
-      val tm_dict = Redblackmap.foldl (fn (ty, name, dict) =>
-        case datatype_family ty of
-          SOME _ => add_datatype_parser_entries (ty, name, dict)
-        | NONE => dict) tm_dict tydict
+      val tm_dict = parser_datatype_term_dictionary_from_types tydict tm_dict
       val (logic_tydict, logic_tmdict) = parsedicts_for_logic logic
     in
       (Library.union_dict logic_tydict ty_dict,
@@ -3345,14 +4280,471 @@ local
      nested Array/select.  Both dialects eta-expand partially applied ranked
      constants when omission would lose their built-in semantics. *)
 
+  (* Keep ordered lexical names and declaration keys separate from
+     semantic dispatch. Fallback keys need not manufacture syntax.
+     Find callbacks signal absence with Redblackmap.NotFound, as expected
+     by the existing fallback handlers. Callbacks preserve other primary
+     exceptions without reclassifying them as absence. Ordinary and fallback
+     keys identify cache entries; they do not establish theorem equality.
+     Dependency arguments retain bound_items order. The legacy store uses
+     Term.compare order here, rather than binder insertion order.
+     Sort recording returns the term store so graph declaration metadata
+     rolls back with the same persistent accumulator as its symbols.
+     Encoding observations commit only after the encoder, rewritten operands
+     and expression document succeed. input is the original encoder rator
+     (possibly a whole literal); arity counts its ORIGINAL operand list. *)
+  type ('term, 'bounds, 'terms, 'key) carrier_term_store_operations = {
+    bound_find : 'bounds * 'term -> string,
+    bound_peek : 'bounds * 'term -> string option,
+    bound_insert : 'bounds * 'term * string -> 'bounds,
+    bound_items : 'bounds -> ('term * string) list,
+    bound_count : 'bounds -> int,
+    ordinary_key : 'term * int -> 'key,
+    fallback_key : 'term list * 'term -> 'key,
+    term_find : 'terms * 'key -> string,
+    term_peek : 'terms * 'key -> string option,
+    term_insert : 'terms * 'key * string -> 'terms,
+    term_count : 'terms -> int,
+    record_sorts : 'terms * 'key * (string list * string) -> 'terms,
+    record_encoding : 'terms *
+      {input:'term,smt_symbol:string,arity:int} -> 'terms,
+    reserve_helper : 'terms * string -> 'terms * bool
+  }
+
+
+  type ('bounds, 'terms, 'key) term_store_operations =
+    (Term.term, 'bounds, 'terms, 'key) carrier_term_store_operations
+  val legacy_term_store_operations :
+      ((Term.term, string) Redblackmap.dict,
+       (Term.term * int, string) Redblackmap.dict,
+       Term.term * int) term_store_operations = {
+    bound_find = Redblackmap.find,
+    bound_peek = Redblackmap.peek,
+    bound_insert = Redblackmap.insert,
+    bound_items = Redblackmap.listItems,
+    bound_count = Redblackmap.numItems,
+    ordinary_key = Lib.I,
+    fallback_key = fn (vars, expression) =>
+      (Term.list_mk_abs (vars, expression), List.length vars),
+    term_find = Redblackmap.find,
+    term_peek = Redblackmap.peek,
+    term_insert = Redblackmap.insert,
+    term_count = Redblackmap.numItems,
+    record_sorts = fn (terms, key, sorts) =>
+      (record_emitted_term_sorts key sorts; terms),
+    record_encoding = fn (terms,_) => terms,
+    reserve_helper = fn (terms,name) =>
+      if List.exists (fn saved => saved=name) (!current_bag_helpers)
+      then (terms,false) else
+        (current_bag_helpers := name :: !current_bag_helpers;(terms,true))
+  }
+
+  datatype 'term carrier_parser_case =
+      CarrierSelector of {constructor : Term.term, selector_index : int,
+                          scrutinee : 'term}
+    | CarrierTester of {constructor : Term.term, scrutinee : 'term}
+
+  (* The carrier is opaque throughout the shared dispatcher. Atomic HOL
+     constants and types describe schemas, constructors, and declarations;
+     every observation or construction of query syntax uses this record.
+     Error predicates must classify only ordinary shape failures. In
+     particular authentication, budget, and other primary failures must
+     escape optional probes and fallback. metadata_error adapts only the
+     isolated carrier-free library observations below. commit_error preserves
+     its original payload and must not be classified as a fallback error. *)
+  type 'term term_translation_operations = {
+    type_of : 'term -> Type.hol_type,
+    is_var : 'term -> bool,
+    is_const : 'term -> bool,
+    dest_comb : 'term -> 'term * 'term,
+    dest_abs : 'term -> 'term * 'term,
+    strip_abs : 'term -> 'term list * 'term,
+    strip_comb : 'term -> 'term * 'term list,
+    list_mk_abs : 'term list * 'term -> 'term,
+    list_mk_comb : 'term * 'term list -> 'term,
+    mk_comb : 'term * 'term -> 'term,
+    apply_constant : Term.term * 'term -> 'term,
+    free_vars : 'term -> 'term list,
+    aconv : 'term -> 'term -> bool,
+    genvar : Type.hol_type -> 'term,
+    same_const : 'term -> Term.term -> bool,
+    known_const_matches : Term.term -> 'term -> bool,
+    declared_const_arity : 'term -> int,
+    term_to_string : 'term -> string,
+    is_forall : 'term -> bool,
+    is_exists : 'term -> bool,
+    strip_forall : 'term -> 'term list * 'term,
+    strip_exists : 'term -> 'term list * 'term,
+    dest_let : 'term -> ('term * 'term) list * 'term,
+    beta_reduce : 'term -> 'term,
+    is_marked_set_term : 'term -> bool,
+    is_marked_bag_term : 'term -> bool,
+    is_raw_number : 'term -> bool,
+    set_element_type : 'term -> Type.hol_type,
+    bag_element_type : 'term -> Type.hol_type,
+    sequence_element_type : 'term -> Type.hol_type,
+    contextual_collection_argument : 'term -> int -> 'term option,
+    has_contextual_collection_argument : 'term -> bool,
+    is_empty_set : 'term -> bool,
+    is_univ_set : 'term -> bool,
+    dest_set_card : 'term -> 'term,
+    is_empty_bag : 'term -> bool,
+    dest_bag_card : 'term -> 'term,
+    is_nil : 'term -> bool,
+    mk_cons : 'term * 'term -> 'term,
+    mk_nil : Type.hol_type -> 'term,
+    is_parsed_bag_literal : 'term -> bool,
+    dest_parsed_bag_literal : 'term -> 'term * 'term,
+    native_string_literal : 'term -> string,
+    is_injected_string : 'term -> bool,
+    dest_injected_string : 'term -> 'term,
+    is_injected_float : 'term -> bool,
+    dest_injected_float : 'term -> 'term,
+    is_injected_string_operation : 'term -> bool,
+    dest_injected_string_operation : 'term -> string * 'term list,
+    hexadecimal_string : string -> 'term -> string,
+    encode_builtin : 'term * 'term list -> string * 'term list,
+    builtin_encoding : 'term -> (string * int) option,
+    is_constructor : 'term -> bool,
+    parser_case : 'term -> 'term carrier_parser_case option,
+    datatype_selector_term : Type.hol_type -> Term.term -> int -> 'term ->
+      'term,
+    closed_constructor_destructor_residual : 'term -> bool,
+    has_ranked_semantics : 'term -> bool,
+    is_case : 'term -> bool,
+    is_update_comb : 'term -> bool,
+    dest_update_comb : 'term -> ('term * 'term) * 'term,
+    reject_unsupported_smtfloat_constant : 'term -> unit,
+    reject_invented_native_datatype_domain : 'term -> Type.hol_type list ->
+      unit,
+    collection_recognizers : 'term collection_recognizers,
+    syntax_error : string -> string -> exn,
+    is_fallback_error : exn -> bool,
+    is_optional_error : exn -> bool,
+    metadata_error : exn -> exn,
+    commit_error : exn -> exn
+  }
+
+  val term_translation_operations : Term.term term_translation_operations = {
+    type_of = (Term.type_of),
+    is_var = (Term.is_var),
+    is_const = (Term.is_const),
+    dest_comb = (Term.dest_comb),
+    dest_abs = (Term.dest_abs),
+    strip_abs = (Term.strip_abs),
+    strip_comb = (boolSyntax.strip_comb),
+    list_mk_abs = (Term.list_mk_abs),
+    list_mk_comb = (Term.list_mk_comb),
+    mk_comb = (Term.mk_comb),
+    apply_constant = (Term.mk_comb),
+    free_vars = (Term.free_vars),
+    aconv = (Term.aconv),
+    genvar = (Term.genvar),
+    same_const = (same_const),
+    known_const_matches = (same_const),
+    declared_const_arity = (declared_const_arity),
+    term_to_string = (Hol_pp.term_to_string),
+    is_forall = (boolSyntax.is_forall),
+    is_exists = (boolSyntax.is_exists),
+    strip_forall = (boolSyntax.strip_forall),
+    strip_exists = (boolSyntax.strip_exists),
+    dest_let = (dest_carrier_let),
+    beta_reduce = (fn t => boolSyntax.rhs (Thm.concl (Drule.LIST_BETA_CONV t))
+      handle Feedback.HOL_ERR _ => t),
+    is_marked_set_term = (is_marked_set_term),
+    is_marked_bag_term = (is_marked_bag_term),
+    is_raw_number = (fn t => mem_aconv t (!current_raw_num_terms)),
+    set_element_type = (set_element_type),
+    bag_element_type = (bag_element_type),
+    sequence_element_type = (sequence_element_type),
+    contextual_collection_argument = (contextual_collection_argument),
+    has_contextual_collection_argument = (has_contextual_collection_argument),
+    is_empty_set = (pred_setSyntax.is_empty),
+    is_univ_set = (pred_setSyntax.is_univ),
+    dest_set_card = (pred_setSyntax.dest_card),
+    is_empty_bag = (bagSyntax.is_empty),
+    dest_bag_card = (bagSyntax.dest_card),
+    is_nil = (listSyntax.is_nil),
+    mk_cons = (listSyntax.mk_cons),
+    mk_nil = (listSyntax.mk_nil),
+    is_parsed_bag_literal = (is_parsed_bag_literal),
+    dest_parsed_bag_literal = (dest_parsed_bag_literal),
+    native_string_literal = (native_string_literal),
+    is_injected_string = (is_injected_string),
+    dest_injected_string = (dest_injected_string),
+    is_injected_float = (is_injected_float),
+    dest_injected_float = (dest_injected_float),
+    is_injected_string_operation = (is_injected_string_operation),
+    dest_injected_string_operation = (dest_injected_string_operation),
+    hexadecimal_string = (hexadecimal_string),
+    encode_builtin = (fn input as (rator, _) =>
+      Lib.tryfind (fn parsefn => parsefn input)
+        (Net.match rator builtin_symbols)),
+    builtin_encoding = (builtin_encoding),
+    is_constructor = (TypeBase.is_constructor),
+    parser_case = (fn t =>
+      case parser_datatype_case t of
+        SOME (ParserSelector fields) => SOME (CarrierSelector fields)
+      | SOME (ParserTester fields) => SOME (CarrierTester fields)
+      | NONE => NONE),
+    datatype_selector_term = (datatype_selector_term),
+    closed_constructor_destructor_residual =
+      (closed_constructor_destructor_residual),
+    has_ranked_semantics = (fn c => TypeBase.is_constructor c orelse
+      (Term.is_const c andalso
+        let val {Thy, Name, ...} = Term.dest_thy_const c
+        in Redblackset.member (builtin_const_names, (Thy, Name)) end)),
+    is_case = (Lib.can TypeBase.dest_case),
+    is_update_comb = (combinSyntax.is_update_comb),
+    dest_update_comb = (combinSyntax.dest_update_comb),
+    reject_unsupported_smtfloat_constant =
+      (reject_unsupported_smtfloat_constant),
+    reject_invented_native_datatype_domain =
+      (reject_invented_native_datatype_domain),
+    collection_recognizers = term_collection_recognizers,
+    syntax_error = ERR,
+    is_fallback_error = (fn Feedback.HOL_ERR _ => true | _ => false),
+    is_optional_error = (fn Portable.Interrupt => false | _ => true),
+    metadata_error = Lib.I,
+    commit_error = NestedTranslation
+  }
+
   (* returns an updated accumulator, a (possibly empty) list of
      SMT-LIB (type and term) declarations, and the SMT-LIB
      representation of the given term *)
-  fun translate_term regime apply_operator
+  (* Keep semantic dispatch in one place. The recursive continuation
+     carries the same declaration accumulator and lexical bounds,
+     including terms synthesized by native encodings. A graph
+     scheduler can reuse this step without a second operator table. *)
+  fun translate_term_step_with_lexical_output
+      (output : 'doc output_operations)
+      (seal : 'terms * 'doc -> 'doc)
+      (operations : 'term term_translation_operations)
+      (store : ('term, 'bounds, 'terms, 'key) carrier_term_store_operations)
+      translate translate_body regime apply_operator
       (acc as (tydict, tmdict), (bounds, tm)) =
   let
-    fun sexpr x [] = x
-      | sexpr x xs = "(" ^ x ^ " " ^ String.concatWith " " xs ^ ")"
+    val {text = output_text, concat = output_concat,
+         join = output_join} = output
+    exception DispatchFailure of exn
+    fun expected thunk =
+      thunk () handle primary =>
+        if (#is_fallback_error operations) primary then
+          raise DispatchFailure primary
+        else raise primary
+    fun optional f x =
+      SOME (f x)
+      handle DispatchFailure primary =>
+        if (#is_optional_error operations) primary then NONE
+        else raise DispatchFailure primary
+      | primary =>
+          if (#is_optional_error operations) primary then NONE
+          else raise primary
+    fun ERR function_name message =
+      DispatchFailure ((#syntax_error operations) function_name message)
+    (* Only these isolated, carrier-free metadata observations normalize
+       library shape errors. Carrier callbacks execute outside this catch. *)
+    fun metadata thunk = expected (fn () =>
+      thunk () handle primary as Feedback.HOL_ERR _ =>
+        raise (#metadata_error operations) primary)
+    fun metadata_dom_rng ty = metadata (fn () => Type.dom_rng ty)
+    fun metadata_translate_type regime input =
+      let val (dict, (declarations, sort)) =
+        metadata (fn () => translate_type regime input)
+      in (dict, (List.map output_text declarations, sort)) end
+    fun output_term_declaration regime name domains range =
+      output_text (term_declaration_text regime name domains range)
+    val output_generated_forall = generated_forall_with output
+    fun metadata_constructor_infos ty name =
+      metadata (fn () => datatype_constructor_infos ty name)
+    fun metadata_smtfp_sort ty = metadata (fn () => smtfp_sort ty)
+    fun metadata_datatype_excluded ty =
+      metadata (fn () => datatype_translation_excluded ty)
+    fun metadata_strip_fun ty = metadata (fn () => boolSyntax.strip_fun ty)
+    fun metadata_fetch ty = metadata (fn () => TypeBase.fetch ty)
+    fun metadata_case_const info =
+      metadata (fn () => TypeBasePure.case_const_of info)
+    fun metadata_constructors info =
+      metadata (fn () => TypeBasePure.constructors_of info)
+    fun carrier_type_of x =
+      expected (fn () => (#type_of operations) x)
+    fun carrier_is_var x =
+      expected (fn () => (#is_var operations) x)
+    fun carrier_is_const x =
+      expected (fn () => (#is_const operations) x)
+    fun carrier_dest_comb x =
+      expected (fn () => (#dest_comb operations) x)
+    fun carrier_dest_abs x =
+      expected (fn () => (#dest_abs operations) x)
+    fun carrier_strip_abs x =
+      expected (fn () => (#strip_abs operations) x)
+    fun carrier_strip_comb x =
+      expected (fn () => (#strip_comb operations) x)
+    fun carrier_list_mk_abs x =
+      expected (fn () => (#list_mk_abs operations) x)
+    fun carrier_list_mk_comb x =
+      expected (fn () => (#list_mk_comb operations) x)
+    fun carrier_mk_comb x =
+      expected (fn () => (#mk_comb operations) x)
+    fun carrier_apply_constant x =
+      expected (fn () => (#apply_constant operations) x)
+    fun carrier_free_vars x =
+      expected (fn () => (#free_vars operations) x)
+    fun carrier_aconv x y =
+      expected (fn () => (#aconv operations) x y)
+    fun carrier_genvar x =
+      expected (fn () => (#genvar operations) x)
+    fun carrier_same_const x y =
+      expected (fn () => (#same_const operations) x y)
+    fun carrier_known_const_matches x y =
+      expected (fn () => (#known_const_matches operations) x y)
+    fun carrier_declared_const_arity x =
+      expected (fn () => (#declared_const_arity operations) x)
+    fun carrier_term_to_string x =
+      expected (fn () => (#term_to_string operations) x)
+    fun carrier_is_forall x =
+      expected (fn () => (#is_forall operations) x)
+    fun carrier_is_exists x =
+      expected (fn () => (#is_exists operations) x)
+    fun carrier_strip_forall x =
+      expected (fn () => (#strip_forall operations) x)
+    fun carrier_strip_exists x =
+      expected (fn () => (#strip_exists operations) x)
+    fun carrier_dest_let x =
+      expected (fn () => (#dest_let operations) x)
+    fun carrier_beta_reduce x =
+      expected (fn () => (#beta_reduce operations) x)
+    fun carrier_is_marked_set_term x =
+      expected (fn () => (#is_marked_set_term operations) x)
+    fun carrier_is_marked_bag_term x =
+      expected (fn () => (#is_marked_bag_term operations) x)
+    fun carrier_is_raw_number x =
+      expected (fn () => (#is_raw_number operations) x)
+    fun carrier_set_element_type x =
+      expected (fn () => (#set_element_type operations) x)
+    fun carrier_bag_element_type x =
+      expected (fn () => (#bag_element_type operations) x)
+    fun carrier_sequence_element_type x =
+      expected (fn () => (#sequence_element_type operations) x)
+    fun carrier_contextual_collection_argument x y =
+      expected (fn () => (#contextual_collection_argument operations) x y)
+    fun carrier_has_contextual_collection_argument x =
+      expected (fn () => (#has_contextual_collection_argument operations) x)
+    fun carrier_is_empty_set x =
+      expected (fn () => (#is_empty_set operations) x)
+    fun carrier_is_univ_set x =
+      expected (fn () => (#is_univ_set operations) x)
+    fun carrier_dest_set_card x =
+      expected (fn () => (#dest_set_card operations) x)
+    fun carrier_is_empty_bag x =
+      expected (fn () => (#is_empty_bag operations) x)
+    fun carrier_dest_bag_card x =
+      expected (fn () => (#dest_bag_card operations) x)
+    fun carrier_is_nil x =
+      expected (fn () => (#is_nil operations) x)
+    fun carrier_mk_cons x =
+      expected (fn () => (#mk_cons operations) x)
+    fun carrier_mk_nil x =
+      expected (fn () => (#mk_nil operations) x)
+    fun carrier_is_parsed_bag_literal x =
+      expected (fn () => (#is_parsed_bag_literal operations) x)
+    fun carrier_dest_parsed_bag_literal x =
+      expected (fn () => (#dest_parsed_bag_literal operations) x)
+    fun carrier_native_string_literal x =
+      expected (fn () => (#native_string_literal operations) x)
+    fun carrier_is_injected_string x =
+      expected (fn () => (#is_injected_string operations) x)
+    fun carrier_dest_injected_string x =
+      expected (fn () => (#dest_injected_string operations) x)
+    fun carrier_is_injected_float x =
+      expected (fn () => (#is_injected_float operations) x)
+    fun carrier_dest_injected_float x =
+      expected (fn () => (#dest_injected_float operations) x)
+    fun carrier_is_injected_string_operation x =
+      expected (fn () => (#is_injected_string_operation operations) x)
+    fun carrier_dest_injected_string_operation x =
+      expected (fn () => (#dest_injected_string_operation operations) x)
+    fun carrier_hexadecimal_string x y =
+      expected (fn () => (#hexadecimal_string operations) x y)
+    fun carrier_encode_builtin x =
+      expected (fn () => (#encode_builtin operations) x)
+    fun carrier_builtin_encoding x =
+      expected (fn () => (#builtin_encoding operations) x)
+    fun carrier_is_constructor x =
+      expected (fn () => (#is_constructor operations) x)
+    fun carrier_parser_case x =
+      expected (fn () => (#parser_case operations) x)
+    fun carrier_datatype_selector_term x y z u =
+      expected (fn () => (#datatype_selector_term operations) x y z u)
+    fun carrier_closed_constructor_destructor_residual x =
+      expected (fn () => (#closed_constructor_destructor_residual
+        operations) x)
+    fun carrier_has_ranked_semantics x =
+      expected (fn () => (#has_ranked_semantics operations) x)
+    fun carrier_is_case x =
+      expected (fn () => (#is_case operations) x)
+    fun carrier_is_update_comb x =
+      expected (fn () => (#is_update_comb operations) x)
+    fun carrier_dest_update_comb x =
+      expected (fn () => (#dest_update_comb operations) x)
+    fun carrier_reject_unsupported_smtfloat_constant x =
+      expected (fn () => (#reject_unsupported_smtfloat_constant operations) x)
+    fun carrier_reject_invented_native_datatype_domain x y =
+      expected (fn () => (#reject_invented_native_datatype_domain
+        operations) x y)
+    fun carrier_string_nth_shape current = expected (fn () =>
+      (#string_nth_shape (#collection_recognizers operations)) current)
+    fun carrier_seq_extract_shape current = expected (fn () =>
+      (#seq_extract_shape (#collection_recognizers operations)) current)
+    fun carrier_seq_at_shape current = expected (fn () =>
+      (#seq_at_shape (#collection_recognizers operations)) current)
+    val translate = fn input => expected (fn () => translate input)
+    val translate_body =
+      fn input => expected (fn () => translate_body input)
+  in
+  let
+    val {bound_find, bound_peek, bound_insert, bound_items, bound_count,
+         ordinary_key, fallback_key, term_find, term_peek, term_insert,
+         term_count, record_sorts, record_encoding, reserve_helper} = store
+    val bound_find = fn input => expected (fn () => bound_find input)
+    val bound_peek = fn input => expected (fn () => bound_peek input)
+    val bound_insert = fn input => expected (fn () => bound_insert input)
+    val bound_items = fn input => expected (fn () => bound_items input)
+    val bound_count = fn input => expected (fn () => bound_count input)
+    val ordinary_key = fn input => expected (fn () => ordinary_key input)
+    val fallback_key = fn input => expected (fn () => fallback_key input)
+    val term_find = fn input => expected (fn () => term_find input)
+    val term_peek = fn input => expected (fn () => term_peek input)
+    val term_insert = fn input => expected (fn () => term_insert input)
+    val term_count = fn input => expected (fn () => term_count input)
+    val record_sorts = fn input => expected (fn () => record_sorts input)
+    val record_encoding = fn input => expected (fn () => record_encoding input)
+    val reserve_helper = fn input => expected (fn () => reserve_helper input)
+    val recognizers = #collection_recognizers operations
+    val dispatch = native_dispatch_with
+      {same_const=carrier_same_const,is_constant=carrier_is_const,
+       declared_arity=carrier_declared_const_arity,type_of=carrier_type_of,
+       is_raw_number=carrier_is_raw_number,
+       syntax_error= #syntax_error operations} recognizers regime
+    val native_dispatch = {
+      whole_candidate = fn base => fn current =>
+        expected (fn () => (#whole_candidate dispatch) base current),
+      application_candidate = fn base => fn current => fn head => fn args =>
+        expected (fn () =>
+          (#application_candidate dispatch) base current head args),
+      guard_builtin = fn current => fn head =>
+        expected (fn () => (#guard_builtin dispatch) current head),
+      equality_operands = fn head => fn args =>
+        expected (fn () => (#equality_operands dispatch) head args)
+    }
+    fun sexpr x [] = output_text x
+      | sexpr x xs =
+          output_concat [output_text ("(" ^ x ^ " "),
+            output_join " " xs, output_text ")"]
+    fun expression_application function [] = function
+      | expression_application function arguments =
+          output_concat [output_text "(", function, output_text " ",
+            output_join " " arguments, output_text ")"]
     fun explicit_apply function argument =
       case regime of
         HigherOrder Standard27 =>
@@ -3360,35 +4752,32 @@ local
               ApplyUnderscore => "_"
             | ApplyAt => "@") [function, argument]
       | _ => sexpr "select" [function, argument]
-    fun beta_reduce t =
-      boolSyntax.rhs (Thm.concl (Drule.LIST_BETA_CONV t))
-      handle Feedback.HOL_ERR _ => t
     (* Create a mapping from bound variables to their SMT-LIB names; if a
        variable is already mapped, return its existing SMT-LIB name. *)
     fun create_bound_name (bounds, v) =
-      (bounds, Redblackmap.find (bounds, v))
+      (bounds, bound_find (bounds, v))
       handle Redblackmap.NotFound =>
         let
-          val name = bv_prefix ^ Int.toString (Redblackmap.numItems bounds)
+          val name = bv_prefix ^ Int.toString (bound_count bounds)
         in
-          (Redblackmap.insert (bounds, v, name), name)
+          (bound_insert (bounds, v, name), name)
         end
-    fun builtin_symbol (rator, rands) =
+    fun builtin_symbol (rator, original_rands) =
       let
-        val _ =
-          if same_const rator intSyntax.Num_tm andalso
-             mem_aconv tm (!current_raw_num_terms) then
-            raise ERR "builtin_symbol" "Num retains its opaque result sort"
-          else ()
-        val (name, rands) = Lib.tryfind (fn parsefn => parsefn (rator, rands))
-          (Net.match rator builtin_symbols)  (* may fail *)
+        val _ = (#guard_builtin native_dispatch) tm rator
+        val original_arity = List.length original_rands
+        val (name, rands) = carrier_encode_builtin (rator, original_rands)
         val (acc, declnames) = Lib.foldl_map
           (fn (a, t) =>
-            translate_term regime apply_operator (a, (bounds, t)))
+            translate (a, (bounds, t)))
           (acc, rands)
         val (declss, names) = Lib.split declnames
+        val expression = sexpr name names
+        val (tydict,terms) = acc
+        val terms = record_encoding (terms,
+          {input=rator,smt_symbol=name,arity=original_arity})
       in
-        (acc, (List.concat declss, sexpr name names))
+        ((tydict,terms), (List.concat declss, expression))
       end
     (* Equality is a fully ranked Core operator at every HOL instantiation.
        Once its exact head and arity have been admitted, an operand failure
@@ -3396,43 +4785,33 @@ local
        polymorphic equality itself, and can obscure the actual unsupported
        operand (notably a residual function over a native datatype). *)
     fun builtin_equality (rator, rands) =
-      if same_const rator boolSyntax.equality then
-        case rands of
-          [left, right] =>
             let
-              val _ =
-                if same_type (Term.type_of left, reglan_ty) then
-                  raise ERR "builtin_equality"
-                    ("HOL equality on smtstring$reglan is intensional; " ^
-                     "SMT-LIB RegLan equality is language equivalence")
-                else ()
+              val (left,right) =
+                (#equality_operands native_dispatch) rator rands
               fun translate_argument (a, argument) =
-                translate_term regime apply_operator
+                translate
                   (a, (bounds, argument))
-                handle e as Feedback.HOL_ERR _ =>
-                  raise NestedTranslation e
+                handle DispatchFailure e =>
+                  raise (#commit_error operations) e
               val (acc, declnames) =
                 Lib.foldl_map translate_argument (acc, [left, right])
               val (declss, names) = Lib.split declnames
             in
               (acc, (List.concat declss, sexpr "=" names))
             end
-        | _ => raise ERR "builtin_equality" "wrong equality arity"
-      else
-        raise ERR "builtin_equality" "not equality"
     fun set_sort tydict set =
       let
-        val element_ty = set_element_type set
+        val element_ty = carrier_set_element_type set
         val (tydict, (decls, element_sort)) =
-          translate_type regime (tydict, element_ty)
+          metadata_translate_type regime (tydict, element_ty)
       in
         (tydict, (decls, "(Set " ^ element_sort ^ ")"))
       end
     fun set_array_sort tydict set =
       let
-        val element_ty = set_element_type set
+        val element_ty = carrier_set_element_type set
         val (tydict, (decls, element_sort)) =
-          translate_type regime (tydict, element_ty)
+          metadata_translate_type regime (tydict, element_ty)
       in
         (tydict, (decls, "(Array " ^ element_sort ^ " Bool)"))
       end
@@ -3442,9 +4821,9 @@ local
       | _ => set_sort tydict set
     fun set_constant tydict set value =
       let
-        val element_ty = set_element_type set
+        val element_ty = carrier_set_element_type set
         val (tydict, (decls, element_sort)) =
-          translate_type regime (tydict, element_ty)
+          metadata_translate_type regime (tydict, element_ty)
         val sort = "(Set " ^ element_sort ^ ")"
         val text =
           case !current_set_backend of
@@ -3455,21 +4834,21 @@ local
           | CVC5ArraySet => "((as const (Array " ^ element_sort ^
               " Bool)) " ^ value ^ ")"
       in
-        (tydict, (decls, text))
+        (tydict, (decls, output_text text))
       end
     fun bag_sort tydict bag =
       let
-        val element_ty = bag_element_type bag
+        val element_ty = carrier_bag_element_type bag
         val (tydict, (decls, element_sort)) =
-          translate_type regime (tydict, element_ty)
+          metadata_translate_type regime (tydict, element_ty)
       in
         (tydict, (decls, "(Bag " ^ element_sort ^ ")"))
       end
     fun bag_array_sort tydict bag =
       let
-        val element_ty = bag_element_type bag
+        val element_ty = carrier_bag_element_type bag
         val (tydict, (decls, element_sort)) =
-          translate_type regime (tydict, element_ty)
+          metadata_translate_type regime (tydict, element_ty)
       in
         (tydict, (decls, "(Array " ^ element_sort ^ " Int)"))
       end
@@ -3478,12 +4857,12 @@ local
         CVC5NativeBag => bag_sort tydict bag
       | _ => bag_array_sort tydict bag
     fun bound_variable_sort tydict var =
-      if is_marked_set_term var then
+      if carrier_is_marked_set_term var then
         selected_set_sort tydict var
-      else if is_marked_bag_term var then
+      else if carrier_is_marked_bag_term var then
         selected_bag_sort tydict var
       else
-        translate_type regime (tydict, Term.type_of var)
+        metadata_translate_type regime (tydict, carrier_type_of var)
     (* Emit [(head ((v0 T0) ...) body)].  [nest_errors] re-raises a body
        failure as NestedTranslation, which stops an enclosing
        [handle Feedback.HOL_ERR _] fallback from swallowing it silently. *)
@@ -3499,46 +4878,48 @@ local
           (fn (smtvar, ty) => "(" ^ smtvar ^ " " ^ ty ^ ")")
           (smtvars, vartys)
         val (acc, (bodydecls, bodyname)) =
-          translate_term regime apply_operator
+          translate_body
             ((tydict, tmdict), (binder_bounds, body))
-          handle e as Feedback.HOL_ERR _ =>
-            if nest_errors then raise NestedTranslation e else raise e
+          handle DispatchFailure e =>
+            if nest_errors then raise (#commit_error operations) e
+            else raise DispatchFailure e
       in
         (acc, (List.concat vardeclss @ bodydecls,
-          "(" ^ head ^ " (" ^ String.concatWith " " binders ^ ") " ^
-          bodyname ^ ")"))
+          output_concat
+            [output_text ("(" ^ head ^ " (" ^
+               String.concatWith " " binders ^ ") "),
+             bodyname, output_text ")"]))
       end
     fun fallback_dependencies expression =
       let
-        val free_vars = Term.free_vars expression
+        val free_vars = carrier_free_vars expression
       in
         List.filter
-          (fn (var, _) => List.exists (Term.aconv var) free_vars)
-          (Redblackmap.listItems bounds)
+          (fn (var, _) => List.exists (carrier_aconv var) free_vars)
+          (bound_items bounds)
       end
     fun fallback_application name dependencies =
-      sexpr name (List.map Lib.snd dependencies)
+      sexpr name (List.map (output_text o Lib.snd) dependencies)
     fun fallback_array_definition prefix range_sort element_type
         acc expression args body =
       let
         val dependencies = fallback_dependencies expression
         val dependency_vars = List.map Lib.fst dependencies
         val cache_key =
-          (Term.list_mk_abs (dependency_vars, expression),
-           List.length dependency_vars)
+          fallback_key (dependency_vars, expression)
       in
-        case Redblackmap.peek (Lib.snd acc, cache_key) of
+        case term_peek (Lib.snd acc, cache_key) of
           SOME name =>
             (acc, ([], fallback_application name dependencies))
         | NONE =>
           let
             val (tydict, (typedecls, element_sort)) =
-              translate_type regime (Lib.fst acc, element_type)
+              metadata_translate_type regime (Lib.fst acc, element_type)
             val tmdict = Lib.snd acc
-            val name = prefix ^ Int.toString (Redblackmap.numItems tmdict)
-            val tmdict = Redblackmap.insert (tmdict, cache_key, name)
+            val name = prefix ^ Int.toString (term_count tmdict)
+            val tmdict = term_insert (tmdict, cache_key, name)
             val binder = prefix ^ "_x" ^
-              Int.toString (Redblackmap.numItems tmdict)
+              Int.toString (term_count tmdict)
             val (tydict, dependency_declsorts) =
               Lib.foldl_map
                 (fn (dict, (var, dependency_name)) =>
@@ -3556,8 +4937,8 @@ local
               Lib.split dependency_data
             val array_sort = "(Array " ^ element_sort ^ " " ^
               range_sort ^ ")"
-            val _ = record_emitted_term_sorts cache_key
-              (dependency_sorts, array_sort)
+            val tmdict = record_sorts
+              (tmdict, cache_key, (dependency_sorts, array_sort))
             val declaration =
               if List.null dependency_sorts then
                 "(declare-const " ^ name ^ " " ^ array_sort ^ ")\n"
@@ -3568,14 +4949,18 @@ local
             val application = fallback_application name dependencies
             val quantified_decls = dependency_decls @
               ["(" ^ binder ^ " " ^ element_sort ^ ")"]
-            val definition = "(assert " ^
-              generated_forall quantified_decls
-                ("(= (select " ^ application ^ " " ^ binder ^ ") " ^
-                 body binder args ^ ")") ^ ")\n"
+            val definition = output_concat
+              [output_text "(assert ",
+               output_generated_forall quantified_decls
+                 (seal (tmdict, output_concat
+                   [output_text "(= (select ", application,
+                    output_text (" " ^ binder ^ ") "),
+                    body (output_text binder) args, output_text ")"])),
+               output_text ")\n"]
           in
             ((tydict, tmdict),
              (typedecls @ List.concat dependency_typedecls @
-                [declaration, definition],
+                [output_text declaration, definition],
               application))
           end
       end
@@ -3583,37 +4968,15 @@ local
        model.  Pointwise set operations are named arrays constrained by a
        quantified definition, rather than cvc5's finite set operators. *)
     fun fallback_set_definition acc set args body =
-      fallback_array_definition "set" "Bool" (set_element_type set)
+      fallback_array_definition "set" "Bool" (carrier_set_element_type set)
         acc set args body
-    fun native_sequence_symbol rator rands =
-      !current_native_sequence_emission andalso
-      List.all (fn part =>
-        not (listSyntax.is_list_type (Term.type_of part)) orelse
-        is_native_sequence_type (Term.type_of part)) (tm :: rands) andalso
-      (listSyntax.is_nil tm orelse
-      ((same_const rator intSyntax.int_injection orelse
-        same_const rator int_of_num_tm) andalso
-       (case rands of
-          [arg] => same_const (Lib.fst (boolSyntax.strip_comb arg))
-            seq_length_tm
-        | _ => false)) orelse
-      Option.isSome (Lib.total dest_string_nth_shape tm) orelse
-      Option.isSome (Lib.total dest_seq_extract_shape tm) orelse
-      Option.isSome (Lib.total dest_seq_at_shape tm) orelse
-      List.exists (fn head => same_const rator head) [
-        seq_append_tm, seq_cons_tm, seq_reverse_tm,
-        seq_prefix_tm, seq_lupdate_tm, seq_map_tm, seq_foldl_tm,
-        seq_contains_tm, seq_suffix_tm,
-        smt_seq_nth_tm,
-        smt_seq_extract_tm, smt_seq_at_tm, smt_seq_indexof_tm,
-        smt_seq_replace_tm, smt_seq_replace_all_tm, smt_seq_update_tm])
     fun native_sequence_builtin (rator, rands) =
       let
         fun translate_args_from start args =
           let
             val (acc, declnames) = Lib.foldl_map
               (fn (a, arg) =>
-                translate_term regime apply_operator (a, (bounds, arg)))
+                translate (a, (bounds, arg)))
               (start, args)
             val (declss, names) = Lib.split declnames
           in
@@ -3627,12 +4990,12 @@ local
            HOL_ERR, so the enclosing fallback chain still gets to try the
            uninterpreted lowering. *)
         fun translate_fold_function function =
-          case Term.strip_abs function of
+          case carrier_strip_abs function of
             (element :: accumulator :: rest, body) =>
               emit_binder {head = "lambda", nest_errors = false} acc
-                [element, accumulator] (Term.list_mk_abs (rest, body))
+                [element, accumulator] (carrier_list_mk_abs (rest, body))
           | _ =>
-              translate_term regime apply_operator (acc, (bounds, function))
+              translate (acc, (bounds, function))
         fun emit name args =
           let val (acc, (decls, names)) = translate_args args
           in (acc, (decls, sexpr name names)) end
@@ -3653,42 +5016,46 @@ local
           emit "seq.extract" [sequence, index, size]
         fun emit_at (sequence, index) = emit "seq.at" [sequence, index]
       in
-        if same_const rator intSyntax.int_injection orelse
-           same_const rator int_of_num_tm then
+        if carrier_same_const rator intSyntax.int_injection orelse
+           carrier_same_const rator int_of_num_tm then
           (case rands of
              [length] =>
-               let val (head, args) = boolSyntax.strip_comb length in
-                 if same_const head seq_length_tm then emit "seq.len" args
+               let val (head, args) = carrier_strip_comb length in
+                 if carrier_same_const head seq_length_tm then emit
+                   "seq.len" args
                  else raise ERR "native_sequence_builtin" "wrong length"
                end
            | _ => raise ERR "native_sequence_builtin" "wrong coercion")
         else
-          (case Lib.total dest_string_nth_shape tm of
+          (case optional carrier_string_nth_shape tm of
              SOME (string, index) => emit "seq.nth" [string, index]
            | NONE =>
-          (case Lib.total dest_seq_extract_shape tm of
+          (case optional carrier_seq_extract_shape tm of
           SOME shape => emit_extract shape
         | NONE =>
-          (case Lib.total dest_seq_at_shape tm of
+          (case optional carrier_seq_at_shape tm of
              SOME shape => emit_at shape
            | NONE =>
-             if listSyntax.is_nil tm then
+             if carrier_is_nil tm then
                let
                  val (tydict, (decls, element_sort)) =
-                   translate_type regime
-                     (Lib.fst acc, sequence_element_type tm)
+                   metadata_translate_type regime
+                     (Lib.fst acc, carrier_sequence_element_type tm)
                in
                  ((tydict, Lib.snd acc), (decls,
-                   "(as seq.empty (Seq " ^ element_sort ^ "))"))
+                   output_text
+                     ("(as seq.empty (Seq " ^ element_sort ^ "))")))
                end
-             else if same_const rator seq_append_tm then emit "seq.++" rands
-             else if same_const rator seq_length_tm then emit "seq.len" rands
-             else if same_const rator seq_cons_tm then
+             else if carrier_same_const rator seq_append_tm then emit
+               "seq.++" rands
+             else if carrier_same_const rator seq_length_tm then emit
+               "seq.len" rands
+             else if carrier_same_const rator seq_cons_tm then
                (case rands of
                   [element, tail] =>
                     let val (acc, (decls, names)) = translate_args rands in
                       case names of [element_name, tail_name] =>
-                        if listSyntax.is_nil tail then
+                        if carrier_is_nil tail then
                           (acc, (decls, sexpr "seq.unit" [element_name]))
                         else
                           (acc, (decls, sexpr "seq.++"
@@ -3697,56 +5064,55 @@ local
                         "wrong cons arity"
                     end
                 | _ => raise ERR "native_sequence_builtin" "wrong cons arity")
-             else if same_const rator seq_reverse_tm then emit "seq.rev" rands
-             else if same_const rator seq_prefix_tm then
+             else if carrier_same_const rator seq_reverse_tm then emit
+               "seq.rev" rands
+             else if carrier_same_const rator seq_prefix_tm then
                emit "seq.prefixof" rands
-             else if same_const rator seq_suffix_tm then
+             else if carrier_same_const rator seq_suffix_tm then
                (case rands of
                   [sequence, suffix] =>
                     emit "seq.suffixof" [suffix, sequence]
                 | _ => raise ERR "native_sequence_builtin"
                     "wrong suffix arity")
-             else if same_const rator seq_lupdate_tm then
+             else if carrier_same_const rator seq_lupdate_tm then
                (case rands of [element, index, sequence] =>
                   emit "seq.update"
-                    [sequence, Term.mk_comb (int_of_num_tm, index),
-                     listSyntax.mk_cons (element,
-                       listSyntax.mk_nil (Term.type_of element))]
+                    [sequence, carrier_apply_constant (int_of_num_tm, index),
+                     carrier_mk_cons (element,
+                       carrier_mk_nil (carrier_type_of element))]
                 | _ => raise ERR "native_sequence_builtin"
                     "wrong LUPDATE arity")
-             else if same_const rator seq_map_tm then emit "seq.map" rands
-             else if same_const rator seq_foldl_tm then emit_foldl rands
-             else if same_const rator seq_contains_tm then
+             else if carrier_same_const rator seq_map_tm then emit "seq.map"
+               rands
+             else if carrier_same_const rator seq_foldl_tm then emit_foldl
+               rands
+             else if carrier_same_const rator seq_contains_tm then
                emit "seq.contains" rands
-             else if same_const rator smt_seq_nth_tm then emit "seq.nth" rands
-             else if same_const rator smt_seq_extract_tm then
+             else if carrier_same_const rator smt_seq_nth_tm then emit
+               "seq.nth" rands
+             else if carrier_same_const rator smt_seq_extract_tm then
                emit "seq.extract" rands
-             else if same_const rator smt_seq_at_tm then emit "seq.at" rands
-             else if same_const rator smt_seq_indexof_tm then
+             else if carrier_same_const rator smt_seq_at_tm then emit
+               "seq.at" rands
+             else if carrier_same_const rator smt_seq_indexof_tm then
                emit "seq.indexof" rands
-             else if same_const rator smt_seq_replace_tm then
+             else if carrier_same_const rator smt_seq_replace_tm then
                emit "seq.replace" rands
-             else if same_const rator smt_seq_replace_all_tm then
+             else if carrier_same_const rator smt_seq_replace_all_tm then
                emit "seq.replace_all" rands
-             else if same_const rator smt_seq_update_tm then
+             else if carrier_same_const rator smt_seq_update_tm then
                emit "seq.update" rands
              else raise ERR "native_sequence_builtin"
                "unsupported native sequence term")))
       end
-    fun native_set_symbol rator rands =
-      same_const rator pred_setSyntax.in_tm orelse
-      is_native_set_head rator orelse
-      ((same_const rator intSyntax.int_injection orelse
-        same_const rator int_of_num_tm) andalso
-       (case rands of [arg] => pred_setSyntax.is_card arg | _ => false))
     fun native_set_builtin (rator, rands) =
-      if same_const rator intSyntax.int_injection orelse
-         same_const rator int_of_num_tm then
+      if carrier_same_const rator intSyntax.int_injection orelse
+         carrier_same_const rator int_of_num_tm then
         (case rands of [card] =>
            let
-             val set = pred_setSyntax.dest_card card
+             val set = carrier_dest_set_card card
              val (acc, (decls, name)) =
-               translate_term regime apply_operator (acc, (bounds, set))
+               translate (acc, (bounds, set))
            in
              case !current_set_backend of
                CVC5NativeSet => (acc, (decls, sexpr "set.card" [name]))
@@ -3759,7 +5125,7 @@ local
       else
       let
         val (acc, declnames) = Lib.foldl_map
-          (fn (a, t) => translate_term regime apply_operator (a, (bounds, t)))
+          (fn (a, t) => translate (a, (bounds, t)))
           (acc, rands)
         val (declss, names) = Lib.split declnames
         val decls = List.concat declss
@@ -3790,44 +5156,48 @@ local
                  in (acc, (decls @ defs, name)) end)
           | _ => raise ERR "native_set_builtin" "wrong unary set arity"
       in
-        if same_const rator pred_setSyntax.in_tm then
+        if carrier_same_const rator pred_setSyntax.in_tm then
           (case names of [element, set] =>
              (acc, (decls,
                case !current_set_backend of
                  CVC5NativeSet => sexpr "set.member" [element, set]
                | _ => sexpr "select" [set, element]))
            | _ => raise ERR "native_set_builtin" "wrong membership arity")
-        else if same_const rator pred_setSyntax.insert_tm then
+        else if carrier_same_const rator pred_setSyntax.insert_tm then
           (case (rands, names) of
              ([element, set], [element_name, set_name]) =>
                let
-                 val singleton = pred_setSyntax.is_empty set
+                 val singleton = carrier_is_empty_set set
                  val text =
                    case !current_set_backend of
-                     Z3Set => sexpr "store" [set_name, element_name, "true"]
+                     Z3Set => sexpr "store" [set_name, element_name,
+                       output_text "true"]
                    | CVC5NativeSet =>
                        if singleton then sexpr "set.singleton" [element_name]
                        else sexpr "set.insert" [element_name, set_name]
                    | CVC5ArraySet =>
-                       sexpr "store" [set_name, element_name, "true"]
+                       sexpr "store" [set_name, element_name, output_text
+                         "true"]
                in (acc, (decls, text)) end
            | _ => raise ERR "native_set_builtin" "wrong insert arity")
-        else if same_const rator pred_setSyntax.delete_tm then
+        else if carrier_same_const rator pred_setSyntax.delete_tm then
           (case names of [set, element] =>
              (case !current_set_backend of
                 CVC5NativeSet => (acc, (decls,
                   sexpr "set.minus" [set, sexpr "set.singleton" [element]]))
-              | _ => (acc, (decls, sexpr "store" [set, element, "false"])))
+              | _ => (acc, (decls, sexpr "store" [set, element, output_text
+                "false"])))
            | _ => raise ERR "native_set_builtin" "wrong delete arity")
-        else if same_const rator pred_setSyntax.union_tm then
+        else if carrier_same_const rator pred_setSyntax.union_tm then
           binary "union" "set.union"
             (fn x => fn left => fn right =>
               sexpr "or" [sexpr "select" [left, x], sexpr "select" [right, x]])
-        else if same_const rator pred_setSyntax.inter_tm then
+        else if carrier_same_const rator pred_setSyntax.inter_tm then
           binary "intersection" "set.inter"
             (fn x => fn left => fn right =>
-              sexpr "and" [sexpr "select" [left, x], sexpr "select" [right, x]])
-        else if same_const rator pred_setSyntax.diff_tm then
+              sexpr "and" [sexpr "select" [left, x], sexpr "select" [right,
+                x]])
+        else if carrier_same_const rator pred_setSyntax.diff_tm then
           binary "setminus" "set.minus"
             (fn x => fn left => fn right =>
               let
@@ -3836,34 +5206,37 @@ local
               in
                 sexpr "and" [in_left, sexpr "not" [in_right]]
               end)
-        else if same_const rator pred_setSyntax.compl_tm then
+        else if carrier_same_const rator pred_setSyntax.compl_tm then
           unary "complement" "set.complement"
-        else if same_const rator pred_setSyntax.subset_tm then
+        else if carrier_same_const rator pred_setSyntax.subset_tm then
           (case names of [left, right] =>
              (case !current_set_backend of
                 Z3Set => (acc, (decls, sexpr "subset" [left, right]))
-              | CVC5NativeSet => (acc, (decls, sexpr "set.subset" [left, right]))
+              | CVC5NativeSet => (acc, (decls, sexpr "set.subset" [left,
+                right]))
               | CVC5ArraySet =>
                   let
-                    val element_ty = set_element_type (List.hd rands)
+                    val element_ty = carrier_set_element_type (List.hd rands)
                     val (tydict, (typedecls, element_sort)) =
-                      translate_type regime (Lib.fst acc, element_ty)
+                      metadata_translate_type regime (Lib.fst acc, element_ty)
                     val tmdict = Lib.snd acc
                     val binder = "set_x" ^ Int.toString
-                      (Redblackmap.numItems tmdict)
+                      (term_count tmdict)
                   in
                     ((tydict, tmdict), (decls @ typedecls,
-                      generated_forall
+                      output_generated_forall
                         ["(" ^ binder ^ " " ^ element_sort ^ ")"]
-                        ("(=> (select " ^ left ^ " " ^ binder ^ ") " ^
-                         "(select " ^ right ^ " " ^ binder ^ "))")))
+                        (output_concat
+                          [output_text "(=> (select ", left,
+                           output_text (" " ^ binder ^ ") (select "), right,
+                           output_text (" " ^ binder ^ "))")])))
                   end)
            | _ => raise ERR "native_set_builtin" "wrong subset arity")
-        else if pred_setSyntax.is_empty tm then
+        else if carrier_is_empty_set tm then
           let val (tydict, (constant_decls, text)) =
             set_constant (Lib.fst acc) tm "false"
           in ((tydict, Lib.snd acc), (constant_decls, text)) end
-        else if pred_setSyntax.is_univ tm then
+        else if carrier_is_univ_set tm then
           let val (tydict, (constant_decls, text)) =
             set_constant (Lib.fst acc) tm "true"
           in ((tydict, Lib.snd acc), (constant_decls, text)) end
@@ -3872,25 +5245,25 @@ local
       end
     fun bag_constant tydict bag =
       let
-        val element_ty = bag_element_type bag
+        val element_ty = carrier_bag_element_type bag
         val (tydict, (decls, element_sort)) =
-          translate_type regime (tydict, element_ty)
+          metadata_translate_type regime (tydict, element_ty)
         val text =
           case !current_bag_backend of
             CVC5NativeBag => "(as bag.empty (Bag " ^ element_sort ^ "))"
           | _ => "((as const (Array " ^ element_sort ^ " Int)) 0)"
       in
-        (tydict, (decls, text))
+        (tydict, (decls, output_text text))
       end
     fun translate_parsed_bag_literal acc =
       let
-        val (element, count) = dest_parsed_bag_literal tm
+        val (element, count) = carrier_dest_parsed_bag_literal tm
         val (acc, (element_decls, element_name)) =
-          translate_term regime apply_operator (acc, (bounds, element))
+          translate (acc, (bounds, element))
         val (acc, (count_decls, count_name)) =
-          translate_term regime apply_operator (acc, (bounds, count))
+          translate (acc, (bounds, count))
         val (tydict, (type_decls, element_sort)) =
-          translate_type regime (Lib.fst acc, Term.type_of element)
+          metadata_translate_type regime (Lib.fst acc, carrier_type_of element)
         val text =
           case !current_bag_backend of
             CVC5NativeBag => sexpr "bag" [element_name, count_name]
@@ -3898,10 +5271,12 @@ local
               let
                 val array_count =
                   sexpr "ite"
-                    [sexpr "<=" ["0", count_name], count_name, "0"]
+                    [sexpr "<=" [output_text "0", count_name],
+                     count_name, output_text "0"]
               in
                 sexpr "store"
-                  ["((as const (Array " ^ element_sort ^ " Int)) 0)",
+                  [output_text ("((as const (Array " ^ element_sort ^
+                    " Int)) 0)"),
                    element_name, array_count]
               end
       in
@@ -3909,64 +5284,27 @@ local
          (element_decls @ count_decls @ type_decls, text))
       end
     fun fallback_bag_definition acc bag args body =
-      fallback_array_definition "bag" "Int" (bag_element_type bag)
+      fallback_array_definition "bag" "Int" (carrier_bag_element_type bag)
         acc bag args body
-    fun z3_bag_helper name definition =
-      if List.exists (fn known => known = name) (!current_bag_helpers) then []
-      else
-        (current_bag_helpers := name :: !current_bag_helpers; [definition])
-    fun native_bag_count_application rator rands =
-      case rands of
-        [left, right, element] =>
-          if same_const rator bagSyntax.BAG_INSERT_tm orelse
-             same_const rator bagSyntax.BAG_UNION_tm orelse
-             same_const rator bagSyntax.BAG_DIFF_tm orelse
-             same_const rator bag_merge_tm orelse
-             same_const rator bag_inter_tm then
-            SOME (Term.list_mk_comb (rator, [left, right]), element)
-          else NONE
-      | [element] =>
-          if same_const rator bagSyntax.EMPTY_BAG_tm then
-            SOME (rator, element)
-          else NONE
-      | _ => NONE
-    fun native_bag_symbol rator rands =
-      ((case rands of
-          [_, _] => same_const rator bag_in_tm orelse
-                    same_const rator bagSyntax.BAG_INSERT_tm orelse
-                    same_const rator bagSyntax.BAG_UNION_tm orelse
-                    same_const rator bagSyntax.BAG_DIFF_tm orelse
-                    same_const rator bag_merge_tm orelse
-                    same_const rator bag_inter_tm orelse
-                    same_const rator bagSyntax.SUB_BAG_tm
-        | [arg] =>
-            (same_const rator bagSyntax.BAG_CARD_tm andalso
-             not (mem_aconv (Term.mk_comb (rator, arg))
-               (!current_raw_num_terms)))
-        | [] => same_const rator bagSyntax.EMPTY_BAG_tm
-        | _ => false) orelse
-       ((same_const rator intSyntax.int_injection orelse
-         same_const rator int_of_num_tm) andalso
-        (case rands of
-           [arg] =>
-             bagSyntax.is_card arg orelse
-             Option.isSome
-               (native_bag_count_application (Lib.fst (boolSyntax.strip_comb arg))
-                 (Lib.snd (boolSyntax.strip_comb arg)))
-         | _ => false)))
+    fun z3_bag_helper terms name definition =
+      let val (terms,fresh) = reserve_helper (terms,name)
+      in (terms,if fresh then [output_text definition] else []) end
+    val native_bag_count_application =
+      fn head => fn args => expected (fn () =>
+        (#bag_count_application recognizers) head args)
     fun native_bag_builtin (rator, rands) =
-      if same_const rator intSyntax.int_injection orelse
-         same_const rator int_of_num_tm then
+      if carrier_same_const rator intSyntax.int_injection orelse
+         carrier_same_const rator int_of_num_tm then
         (case rands of [card] =>
            (case native_bag_count_application
-               (Lib.fst (boolSyntax.strip_comb card))
-               (Lib.snd (boolSyntax.strip_comb card)) of
+               (Lib.fst (carrier_strip_comb card))
+               (Lib.snd (carrier_strip_comb card)) of
               SOME (bag, element) =>
                 let
                   val (acc, (bag_decls, bag_name)) =
-                    translate_term regime apply_operator (acc, (bounds, bag))
+                    translate (acc, (bounds, bag))
                   val (acc, (element_decls, element_name)) =
-                    translate_term regime apply_operator
+                    translate
                       (acc, (bounds, element))
                   val count =
                     case !current_bag_backend of
@@ -3978,9 +5316,9 @@ local
                 end
             | NONE =>
                 let
-                  val bag = bagSyntax.dest_card card
+                  val bag = carrier_dest_bag_card card
                   val (acc, (decls, name)) =
-                    translate_term regime apply_operator (acc, (bounds, bag))
+                    translate (acc, (bounds, bag))
                 in
                   case !current_bag_backend of
                     CVC5NativeBag => (acc, (decls, sexpr "bag.card" [name]))
@@ -3990,11 +5328,11 @@ local
                       "bag.card requires a finiteness-entailing cvc5 goal"
                 end)
          | _ => raise ERR "native_bag_builtin" "wrong card arity")
-      else if same_const rator bagSyntax.BAG_CARD_tm then
+      else if carrier_same_const rator bagSyntax.BAG_CARD_tm then
         (case rands of [bag] =>
            let
              val (acc, (decls, name)) =
-               translate_term regime apply_operator (acc, (bounds, bag))
+               translate (acc, (bounds, bag))
            in
              case !current_bag_backend of
                CVC5NativeBag => (acc, (decls, sexpr "bag.card" [name]))
@@ -4007,7 +5345,7 @@ local
       else
       let
         fun translate_bag_arg (a, t) =
-          translate_term regime apply_operator (a, (bounds, t))
+          translate (a, (bounds, t))
         val (acc, declnames) = Lib.foldl_map translate_bag_arg (acc, rands)
         val (declss, names) = Lib.split declnames
         val decls = List.concat declss
@@ -4021,88 +5359,100 @@ local
             (case !current_bag_backend of
                CVC5NativeBag => (acc, (decls, sexpr native [left, right]))
              | Z3ArrayBag =>
-                 let val (map_decls, map_name) = z3 () in
-                   (acc, (decls @ map_decls,
-                     "((_ map " ^ map_name ^ ") " ^ left ^ " " ^ right ^ ")"))
+                 let val (terms,map_decls,map_name) = z3 (Lib.snd acc) in
+                   ((Lib.fst acc,terms), (decls @ map_decls,
+                     output_concat
+                       [output_text ("((_ map " ^ map_name ^ ") "), left,
+                        output_text " ", right, output_text ")"]))
                  end
              | CVC5ArrayBag => fallback fallback_body)
           | _ => raise ERR "native_bag_builtin" "wrong binary bag arity"
       in
-        if same_const rator bag_in_tm then
+        if carrier_same_const rator bag_in_tm then
           (case names of [element, bag] =>
              (acc, (decls,
                case !current_bag_backend of
                  CVC5NativeBag => sexpr "bag.member" [element, bag]
-               | _ => sexpr "<" ["0", sexpr "select" [bag, element]]))
+               | _ => sexpr "<" [output_text "0", sexpr "select" [bag,
+                 element]]))
            | _ => raise ERR "native_bag_builtin" "wrong membership arity")
-        else if same_const rator bagSyntax.BAG_INSERT_tm then
+        else if carrier_same_const rator bagSyntax.BAG_INSERT_tm then
           (case names of [element, bag] =>
              (acc, (decls,
                case !current_bag_backend of
                  CVC5NativeBag => sexpr "bag.union_disjoint"
-                   [sexpr "bag" [element, "1"], bag]
+                   [sexpr "bag" [element, output_text "1"], bag]
                | _ => sexpr "store" [bag, element,
-                   sexpr "+" [sexpr "select" [bag, element], "1"]]))
+                   sexpr "+" [sexpr "select" [bag, element], output_text
+                     "1"]]))
            | _ => raise ERR "native_bag_builtin" "wrong insert arity")
-        else if same_const rator bagSyntax.BAG_UNION_tm then
+        else if carrier_same_const rator bagSyntax.BAG_UNION_tm then
           binary "bag.union_disjoint"
-            (fn () => ([], "(+ (Int Int) Int)"))
+            (fn terms => (terms,[], "(+ (Int Int) Int)"))
             (fn x => fn [left, right] =>
               sexpr "+" [sexpr "select" [left, x],
                 sexpr "select" [right, x]]
               | _ => raise ERR "native_bag_builtin" "wrong fallback arity")
-        else if same_const rator bagSyntax.BAG_DIFF_tm then
+        else if carrier_same_const rator bagSyntax.BAG_DIFF_tm then
           binary "bag.difference_subtract"
-            (fn () => (z3_bag_helper "holsmt_bag_nat_sub"
+            (fn terms => let val (terms,declarations) =
+              z3_bag_helper terms "holsmt_bag_nat_sub"
               ("(define-fun holsmt_bag_nat_sub ((x Int) (y Int)) Int " ^
-               "(ite (< x y) 0 (- x y)))\n"), "holsmt_bag_nat_sub"))
+               "(ite (< x y) 0 (- x y)))\n")
+              in (terms,declarations,"holsmt_bag_nat_sub") end)
             (fn x => fn [left, right] =>
               sexpr "ite" [sexpr "<" [sexpr "select" [left, x],
-                sexpr "select" [right, x]], "0",
+                sexpr "select" [right, x]], output_text "0",
                 sexpr "-" [sexpr "select" [left, x],
                   sexpr "select" [right, x]]]
               | _ => raise ERR "native_bag_builtin" "wrong fallback arity")
-        else if same_const rator bag_merge_tm then
+        else if carrier_same_const rator bag_merge_tm then
           binary "bag.union_max"
-            (fn () => (z3_bag_helper "holsmt_bag_max"
+            (fn terms => let val (terms,declarations) =
+              z3_bag_helper terms "holsmt_bag_max"
               ("(define-fun holsmt_bag_max ((x Int) (y Int)) Int " ^
-               "(ite (< x y) y x))\n"), "holsmt_bag_max"))
+               "(ite (< x y) y x))\n")
+              in (terms,declarations,"holsmt_bag_max") end)
             (fn x => fn [left, right] =>
               sexpr "ite" [sexpr "<" [sexpr "select" [left, x],
                 sexpr "select" [right, x]], sexpr "select" [right, x],
                 sexpr "select" [left, x]]
               | _ => raise ERR "native_bag_builtin" "wrong fallback arity")
-        else if same_const rator bag_inter_tm then
+        else if carrier_same_const rator bag_inter_tm then
           binary "bag.inter_min"
-            (fn () => (z3_bag_helper "holsmt_bag_min"
+            (fn terms => let val (terms,declarations) =
+              z3_bag_helper terms "holsmt_bag_min"
               ("(define-fun holsmt_bag_min ((x Int) (y Int)) Int " ^
-               "(ite (< x y) x y))\n"), "holsmt_bag_min"))
+               "(ite (< x y) x y))\n")
+              in (terms,declarations,"holsmt_bag_min") end)
             (fn x => fn [left, right] =>
               sexpr "ite" [sexpr "<" [sexpr "select" [left, x],
                 sexpr "select" [right, x]], sexpr "select" [left, x],
                 sexpr "select" [right, x]]
               | _ => raise ERR "native_bag_builtin" "wrong fallback arity")
-        else if same_const rator bagSyntax.SUB_BAG_tm then
+        else if carrier_same_const rator bagSyntax.SUB_BAG_tm then
           (case names of [left, right] =>
              (case !current_bag_backend of
                 CVC5NativeBag =>
                   (acc, (decls, sexpr "bag.subbag" [left, right]))
               | _ =>
                   let
-                    val element_ty = bag_element_type (List.hd rands)
+                    val element_ty = carrier_bag_element_type (List.hd rands)
                     val (tydict, (typedecls, element_sort)) =
-                      translate_type regime (Lib.fst acc, element_ty)
+                      metadata_translate_type regime (Lib.fst acc, element_ty)
                     val binder = "bag_x" ^ Int.toString
-                      (Redblackmap.numItems (Lib.snd acc))
+                      (term_count (Lib.snd acc))
                   in
                     ((tydict, Lib.snd acc), (decls @ typedecls,
-                      generated_forall
+                      output_generated_forall
                         ["(" ^ binder ^ " " ^ element_sort ^ ")"]
-                        ("(<= (select " ^ left ^ " " ^ binder ^ ") " ^
-                         "(select " ^ right ^ " " ^ binder ^ "))")))
+                        (output_concat
+                          [output_text "(<= (select ", left,
+                           output_text (" " ^ binder ^ ") (select "), right,
+                           output_text (" " ^ binder ^ "))")])))
                   end)
            | _ => raise ERR "native_bag_builtin" "wrong subbag arity")
-        else if bagSyntax.is_empty tm then
+        else if carrier_is_empty_bag tm then
           let val (tydict, (constant_decls, text)) =
             bag_constant (Lib.fst acc) tm
           in ((tydict, Lib.snd acc), (constant_decls, text)) end
@@ -4110,41 +5460,43 @@ local
           raise ERR "native_bag_builtin" "unsupported native bag term"
       end
     fun ensure_type ((tydict, tmdict), ty) =
-      let val (tydict, (decls, name)) = translate_type regime (tydict, ty)
+      let val (tydict, (decls, name)) = metadata_translate_type regime
+        (tydict, ty)
       in (((tydict, tmdict), decls), name) end
     fun translate_closed_destructor_residual acc =
       let
-        val _ = closed_constructor_destructor_residual tm orelse
+        val _ = carrier_closed_constructor_destructor_residual tm orelse
           raise ERR "translate_closed_destructor_residual"
             "not a closed constructor-headed destructor residue"
         val (((tydict, tmdict), typedecls), sort) =
-          ensure_type (acc, Term.type_of tm)
+          ensure_type (acc, carrier_type_of tm)
       in
-        case Redblackmap.peek (tmdict, (tm, 0)) of
-          SOME name => ((tydict, tmdict), (typedecls, name))
+        case term_peek (tmdict, (ordinary_key (tm, 0))) of
+          SOME name => ((tydict, tmdict), (typedecls, output_text name))
         | NONE =>
             let
               val name = tm_prefix ^
-                Int.toString (Redblackmap.numItems tmdict)
-              val tmdict = Redblackmap.insert (tmdict, (tm, 0), name)
-              val declaration = term_declaration_text regime name [] sort
-              val _ = record_emitted_term_sorts (tm, 0) ([], sort)
+                Int.toString (term_count tmdict)
+              val tmdict = term_insert (tmdict, (ordinary_key (tm, 0)), name)
+              val declaration = output_term_declaration regime name [] sort
+              val tmdict = record_sorts
+                (tmdict, ordinary_key (tm, 0), ([], sort))
             in
-              ((tydict, tmdict), (typedecls @ [declaration], name))
+              ((tydict, tmdict), (typedecls @ [declaration], output_text name))
             end
       end
     fun translate_injected_string acc =
       let
-        val string = dest_injected_string tm
+        val string = carrier_dest_injected_string tm
       in
-        case Redblackmap.peek (bounds, string) of
-          SOME name => (acc, ([], name))
+        case bound_peek (bounds, string) of
+          SOME name => (acc, ([], output_text name))
         | NONE =>
           let
             val depends_on_bound =
               List.exists
-                (fn v => Option.isSome (Redblackmap.peek (bounds, v)))
-                (Term.free_vars string)
+                (fn v => Option.isSome (bound_peek (bounds, v)))
+                (carrier_free_vars string)
             val _ =
               if depends_on_bound then
                 raise ERR "translate_injected_string"
@@ -4152,26 +5504,26 @@ local
               else
                 ()
           in
-            case Redblackmap.peek (tmdict, (tm, 0)) of
-              SOME name => (acc, ([], name))
+            case term_peek (tmdict, (ordinary_key (tm, 0))) of
+              SOME name => (acc, ([], output_text name))
             | NONE =>
               let
                 val name =
-                  tm_prefix ^ Int.toString (Redblackmap.numItems tmdict)
-                val tmdict = Redblackmap.insert (tmdict, (tm, 0), name)
+                  tm_prefix ^ Int.toString (term_count tmdict)
+                val tmdict = term_insert (tmdict, (ordinary_key (tm, 0)), name)
                 val declaration =
-                  term_declaration_text regime name [] "String"
+                  output_term_declaration regime name [] "String"
               in
-                ((tydict, tmdict), ([declaration], name))
+                ((tydict, tmdict), ([declaration], output_text name))
               end
           end
       end
     fun translate_injected_float acc =
       let
-        val float = dest_injected_float tm
-        val sort = smtfp_sort (Term.type_of tm)
+        val float = carrier_dest_injected_float tm
+        val sort = metadata_smtfp_sort (carrier_type_of tm)
       in
-        case Redblackmap.peek (bounds, float) of
+        case bound_peek (bounds, float) of
           SOME _ =>
             raise ERR "translate_injected_float"
               "injected float binder was not transferred"
@@ -4179,8 +5531,8 @@ local
           let
             val depends_on_bound =
               List.exists
-                (fn v => Option.isSome (Redblackmap.peek (bounds, v)))
-                (Term.free_vars float)
+                (fn v => Option.isSome (bound_peek (bounds, v)))
+                (carrier_free_vars float)
             val _ =
               if depends_on_bound then
                 raise ERR "translate_injected_float"
@@ -4188,57 +5540,52 @@ local
               else
                 ()
           in
-            case Redblackmap.peek (tmdict, (tm, 0)) of
-              SOME name => (acc, ([], name))
+            case term_peek (tmdict, (ordinary_key (tm, 0))) of
+              SOME name => (acc, ([], output_text name))
             | NONE =>
               let
                 val name =
-                  tm_prefix ^ Int.toString (Redblackmap.numItems tmdict)
-                val tmdict = Redblackmap.insert (tmdict, (tm, 0), name)
+                  tm_prefix ^ Int.toString (term_count tmdict)
+                val tmdict = term_insert (tmdict, (ordinary_key (tm, 0)), name)
                 val declaration =
-                  term_declaration_text regime name [] sort
+                  output_term_declaration regime name [] sort
               in
-                ((tydict, tmdict), ([declaration], name))
+                ((tydict, tmdict), ([declaration], output_text name))
               end
           end
       end
     fun translate_injected_string_operation acc =
       let
-        val (name, rands) = dest_injected_string_operation tm
+        val (name, rands) = carrier_dest_injected_string_operation tm
         val (acc, declnames) = Lib.foldl_map
           (fn (a, t) =>
-            translate_term regime apply_operator (a, (bounds, t)))
+            translate (a, (bounds, t)))
           (acc, rands)
         val (declss, names) = Lib.split declnames
       in
         (acc, (List.concat declss, sexpr name names))
       end
-    fun has_ranked_semantics c =
-      TypeBase.is_constructor c orelse
-      (Term.is_const c andalso
-        let val {Thy, Name, ...} = Term.dest_thy_const c
-        in Redblackset.member (builtin_const_names, (Thy, Name)) end)
     fun translate_lambda acc =
-      let val (v, body) = Term.dest_abs tm in
+      let val (v, body) = carrier_dest_abs tm in
         emit_binder {head = "lambda", nest_errors = true} acc [v] body
       end
     fun eta_expand_ranked_constant acc applied rator rank rands_count =
       let
         fun drop 0 ty = ty
-          | drop n ty = drop (n - 1) (Lib.snd (Type.dom_rng ty))
+          | drop n ty = drop (n - 1) (Lib.snd (metadata_dom_rng ty))
         fun take_doms 0 _ acc = List.rev acc
           | take_doms n ty acc =
-              let val (dom, rng) = Type.dom_rng ty
+              let val (dom, rng) = metadata_dom_rng ty
               in take_doms (n - 1) rng (dom :: acc) end
-        val residual_ty = drop rands_count (Term.type_of rator)
+        val residual_ty = drop rands_count (carrier_type_of rator)
         val missing_doms =
           take_doms (rank - rands_count) residual_ty []
-        val vars = List.map Term.genvar missing_doms
-        val expanded = Term.list_mk_abs
-          (vars, Term.list_mk_comb (applied, vars))
+        val vars = List.map carrier_genvar missing_doms
+        val expanded = carrier_list_mk_abs
+          (vars, carrier_list_mk_comb (applied, vars))
       in
-        translate_term regime apply_operator (acc, (bounds, expanded))
-        handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
+        translate (acc, (bounds, expanded))
+        handle DispatchFailure e => raise (#commit_error operations) e
       end
     fun constructor_info_for tydict ty constructor =
       let
@@ -4246,18 +5593,18 @@ local
           case Redblackmap.peek (tydict, ty) of
             SOME name => name
           | NONE => raise ERR "translate_term" "datatype type not registered"
-        val infos = datatype_constructor_infos ty type_name
+        val infos = metadata_constructor_infos ty type_name
       in
         case List.find (fn (constructor', _, _) =>
-            Term.same_const constructor constructor') infos of
+            carrier_same_const constructor constructor') infos of
           SOME info => info
         | NONE => raise ERR "translate_term" "constructor name not found"
       end
     fun translate_constructor_application acc rator rands =
       let
-        val _ = TypeBase.is_constructor rator
-        val (doms, data_ty) = boolSyntax.strip_fun (Term.type_of rator)
-        val _ = not (datatype_translation_excluded data_ty) orelse
+        val _ = carrier_is_constructor rator
+        val (doms, data_ty) = metadata_strip_fun (carrier_type_of rator)
+        val _ = not (metadata_datatype_excluded data_ty) orelse
           raise ERR "translate_term" "excluded datatype constructor"
         val arity = List.length doms
         val _ =
@@ -4265,11 +5612,11 @@ local
           else raise ERR "translate_term" "partial constructor application"
         val (((tydict, tmdict), typedecls), _) = ensure_type (acc, data_ty)
         val (_, cname, _) = constructor_info_for tydict data_ty rator
-        val tmdict = Redblackmap.insert (tmdict, (rator, arity), cname)
+        val tmdict = term_insert (tmdict, (ordinary_key (rator, arity)), cname)
         val acc = (tydict, tmdict)
         val (acc, declnames) = Lib.foldl_map
           (fn (a, t) =>
-            translate_term regime apply_operator (a, (bounds, t)))
+            translate (a, (bounds, t)))
           (acc, rands)
         val (declss, names) = Lib.split declnames
       in
@@ -4278,14 +5625,14 @@ local
     fun translate_selector_case acc =
       let
         val {constructor, selector_index, scrutinee} =
-          case parser_datatype_case tm of
-            SOME (ParserSelector fields) => fields
+          case carrier_parser_case tm of
+            SOME (CarrierSelector fields) => fields
           | _ => raise ERR "translate_term" "not a selector case"
-        val data_ty = Term.type_of scrutinee
+        val data_ty = carrier_type_of scrutinee
         val (((tydict, tmdict), typedecls), _) =
           ensure_type (acc, data_ty)
         val type_name = Redblackmap.find (tydict, data_ty)
-        val infos = datatype_constructor_infos data_ty type_name
+        val infos = metadata_constructor_infos data_ty type_name
         val selector_name =
           case List.find
               (fn (constructor', _, _) =>
@@ -4295,20 +5642,20 @@ local
           | NONE => raise ERR "translate_term" "selector constructor missing"
         val acc = (tydict, tmdict)
         val (acc, (elemdecls, elemname)) =
-          translate_term regime apply_operator (acc, (bounds, scrutinee))
+          translate (acc, (bounds, scrutinee))
       in
         (acc, (typedecls @ elemdecls, sexpr selector_name [elemname]))
       end
     fun translate_tester_case acc =
       let
         val {constructor, scrutinee} =
-          case parser_datatype_case tm of
-            SOME (ParserTester fields) => fields
+          case carrier_parser_case tm of
+            SOME (CarrierTester fields) => fields
           | _ => raise ERR "translate_term" "not a tester case"
-        val data_ty = Term.type_of scrutinee
+        val data_ty = carrier_type_of scrutinee
         val (((tydict, tmdict), typedecls), _) = ensure_type (acc, data_ty)
         val type_name = Redblackmap.find (tydict, data_ty)
-        val infos = datatype_constructor_infos data_ty type_name
+        val infos = metadata_constructor_infos data_ty type_name
         val constructor_name =
           case List.find
               (fn (constructor', _, _) =>
@@ -4317,7 +5664,7 @@ local
           | NONE => raise ERR "translate_term" "tester constructor missing"
         val acc = (tydict, tmdict)
         val (acc, (elemdecls, elemname)) =
-          translate_term regime apply_operator (acc, (bounds, scrutinee))
+          translate (acc, (bounds, scrutinee))
       in
         (acc, (typedecls @ elemdecls,
           sexpr ("(_ is " ^ constructor_name ^ ")") [elemname]))
@@ -4328,33 +5675,35 @@ local
           case rands of
             elem :: cases => (elem, cases)
           | [] => raise ERR "translate_term" "case constant without scrutinee"
-        val data_ty = Term.type_of elem
+        val data_ty = carrier_type_of elem
         val tyinfo =
-          case TypeBase.fetch data_ty of
+          case metadata_fetch data_ty of
             SOME info => info
           | NONE => raise ERR "translate_term" "case scrutinee not datatype"
         val _ =
-          if Term.same_const rator (TypeBasePure.case_const_of tyinfo) then ()
+          if carrier_same_const rator (metadata_case_const tyinfo) then ()
           else raise ERR "translate_term" "not datatype case constant"
         val _ =
-          if List.length cases = List.length (TypeBasePure.constructors_of tyinfo)
+          if List.length cases = List.length (metadata_constructors tyinfo)
           then ()
           else raise ERR "translate_term" "wrong number of case branches"
         val (((tydict, tmdict), typedecls), _) = ensure_type (acc, data_ty)
         val type_name = Redblackmap.find (tydict, data_ty)
-        val infos = datatype_constructor_infos data_ty type_name
+        val infos = metadata_constructor_infos data_ty type_name
         fun selector_terms (constructor, _, selectors) =
-          List.map (fn n => datatype_selector_term data_ty constructor n elem)
+          List.map (fn n => carrier_datatype_selector_term data_ty
+            constructor n elem)
             (List.tabulate (List.length selectors, fn n => n))
         fun branch_term (casefn, info) =
-          beta_reduce (Term.list_mk_comb (casefn, selector_terms info))
+          carrier_beta_reduce (carrier_list_mk_comb (casefn, selector_terms
+            info))
         val branch_terms = ListPair.mapEq branch_term (cases, infos)
         val acc = (tydict, tmdict)
         val (acc, (elemdecls, elemname)) =
-          translate_term regime apply_operator (acc, (bounds, elem))
+          translate (acc, (bounds, elem))
         val (acc, declbranches) = Lib.foldl_map
           (fn (a, t) =>
-            translate_term regime apply_operator (a, (bounds, t)))
+            translate (a, (bounds, t)))
           (acc, branch_terms)
         val (branchdeclss, branchnames) = Lib.split declbranches
         fun tester (_, cname, _) = sexpr ("(_ is " ^ cname ^ ")") [elemname]
@@ -4367,282 +5716,270 @@ local
         (acc, (typedecls @ elemdecls @ List.concat branchdeclss,
           cascaded infos branchnames))
       end
+    fun emit_native_candidate candidate =
+      case candidate of
+        NativeSequence input => native_sequence_builtin input
+      | NativeSet input => native_set_builtin input
+      | NativeBag input => native_bag_builtin input
+      | NativeBuiltin input => builtin_symbol input
+      | NativeEquality input => builtin_equality input
+      | NativeBagCount (bag,element) =>
+          let
+            val (acc, (bag_decls, bag_name)) =
+              translate (acc, (bounds, bag))
+            val (acc, (element_decls, element_name)) =
+              translate (acc, (bounds, element))
+            val count = case !current_bag_backend of
+                CVC5NativeBag => sexpr "bag.count" [element_name, bag_name]
+              | _ => sexpr "select" [bag_name, element_name]
+          in (acc, (bag_decls @ element_decls, count)) end
     fun has_semantic_function_prefix head rands =
       let
         fun loop _ [] = false
           | loop applied (rand :: rands) =
-              let val applied = Term.mk_comb (applied, rand)
+              let val applied = carrier_mk_comb (applied, rand)
               in
-                (is_function_type (Term.type_of applied) andalso
-                 (Lib.can TypeBase.dest_case applied orelse
-                  combinSyntax.is_update_comb applied orelse
-                  Option.isSome (builtin_encoding applied))) orelse
+                (is_function_type (carrier_type_of applied) andalso
+                 (carrier_is_case applied orelse
+                  carrier_is_update_comb applied orelse
+                  Option.isSome (carrier_builtin_encoding applied))) orelse
                 loop applied rands
               end
       in
         loop head rands
       end
-      handle Feedback.HOL_ERR _ => false
-    val tm_has_base_type = not (Lib.can Type.dom_rng (Term.type_of tm))
+      handle DispatchFailure _ => false
+    val tm_has_base_type = not (Lib.can Type.dom_rng (carrier_type_of tm))
     val _ =
-      (case Lib.total Term.dest_comb tm of
+      (case optional carrier_dest_comb tm of
          SOME (head, code) =>
-           if same_const smtstr_char_tm head then
+           if carrier_known_const_matches smtstr_char_tm head then
              ignore
-               (hexadecimal_string
+               (carrier_hexadecimal_string
                  "<builtin_symbols.smtstr_char>" code)
            else ()
        | NONE => ())
-      handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
-    val literal = Lib.total native_string_literal tm
+      handle DispatchFailure e => raise (#commit_error operations) e
+    val literal = optional carrier_native_string_literal tm
   in
     case literal of
-      SOME text => (acc, ([], text))
+      SOME text => (acc, ([], output_text text))
     | NONE =>
     (* binders *)
     let
       val (binder, vars, body) =
-        if boolSyntax.is_forall tm then
-          let val (vars, body) = boolSyntax.strip_forall tm
+        if carrier_is_forall tm then
+          let val (vars, body) = carrier_strip_forall tm
           in ("forall", vars, body) end
-        else if boolSyntax.is_exists tm then
-          let val (vars, body) = boolSyntax.strip_exists tm
+        else if carrier_is_exists tm then
+          let val (vars, body) = carrier_strip_exists tm
           in ("exists", vars, body) end
         else
           raise ERR "translate_term" "not a binder"
     in
       emit_binder {head = binder, nest_errors = true} acc vars body
     end
-    handle Feedback.HOL_ERR _ =>
+    handle DispatchFailure _ =>
 
     (* let binder - somewhat similar to quantifiers *)
     let
-      val (bindings, body) = pairSyntax.dest_anylet tm
+      val (bindings, body) = carrier_dest_let tm
       val (vars, bodies) = ListPair.unzip bindings
-      (* we should translate the bodies without first creating the bound names *)
+      (* we should translate the bodies without first creating the bound
+        names *)
       val bounds_bodies = List.map (fn body => (bounds, body)) bodies
       val (acc, decls_bodies) =
         Lib.foldl_map
           (fn (a, bound_body) =>
-            translate_term regime apply_operator (a, bound_body))
+            translate (a, bound_body))
           (acc, bounds_bodies)
       (* now we can create the bound names *)
       val (bounds, smtvars) = Lib.foldl_map create_bound_name (bounds, vars)
       val decls_bodies_smtvars = ListPair.zipEq (decls_bodies, smtvars)
-      val (decls, smtbinds) = List.foldl (fn (((d, b), v), (decls, smtbinds)) =>
-        (d @ decls, "(" ^ v ^ " " ^ b ^ ")" :: smtbinds)) ([], [])
+      val (decls, smtbinds) = List.foldl (fn (((d, b), v), (decls,
+        smtbinds)) =>
+        (d @ decls,
+         output_concat [output_text ("(" ^ v ^ " "), b, output_text ")"] ::
+           smtbinds)) ([], [])
           decls_bodies_smtvars
-      val bindings_str = String.concatWith " " (List.rev smtbinds)
+      val bindings = output_join " " (List.rev smtbinds)
       val (acc, (bodydecls, body)) =
-        translate_term regime apply_operator (acc, (bounds, body))
+        translate_body (acc, (bounds, body))
     in
       (acc, (decls @ bodydecls,
-        "(let (" ^ bindings_str ^ ") " ^ body ^ ")"))
+        output_concat
+          [output_text "(let (", bindings, output_text ") ", body,
+           output_text ")"]))
     end
-    handle Feedback.HOL_ERR _ =>
+    handle DispatchFailure _ =>
 
     (* bound variables may shadow built-in symbols etc. *)
-    (acc, ([], Redblackmap.find (bounds, tm)))
+    (acc, ([], output_text (bound_find (bounds, tm))))
     handle Redblackmap.NotFound =>
 
     (* Each str_inj image is generalized to an SMT String value.  Proving the
        strengthened SMT formula over every Unicode string and then using the
        tactic validation at this image is the sound direction. *)
-    (if is_injected_string tm then
+    (if carrier_is_injected_string tm then
        translate_injected_string acc
-       handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
+       handle DispatchFailure e => raise (#commit_error operations) e
      else
        raise ERR "translate_term" "not an injected string")
     handle e as NestedTranslation _ => raise e
-         | Feedback.HOL_ERR _ =>
+         | DispatchFailure _ =>
 
     (* Each smtfp_intro image is generalized to an SMT FloatingPoint value.
        The carrier theorem proves surjectivity, while the preprocessing
        homomorphisms ensure that only intro-invariant native operations reach
        this branch. *)
-    (if is_injected_float tm then
+    (if carrier_is_injected_float tm then
        translate_injected_float acc
-       handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
+       handle DispatchFailure e => raise (#commit_error operations) e
      else
        raise ERR "translate_term" "not an injected float")
     handle e as NestedTranslation _ => raise e
-         | Feedback.HOL_ERR _ =>
+         | DispatchFailure _ =>
 
     (* Terms produced by HOL_STRING_TO_SMT_CONV use this transfer-specific
        path.  Dedicated smtstr terms use the ordinary builtin table above. *)
-    (if is_injected_string_operation tm then
+    (if carrier_is_injected_string_operation tm then
        translate_injected_string_operation acc
-       handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
+       handle DispatchFailure e => raise (#commit_error operations) e
      else
        raise ERR "translate_term" "not an injected string operation")
     handle e as NestedTranslation _ => raise e
-         | Feedback.HOL_ERR _ =>
+         | DispatchFailure _ =>
 
     (* A closed partial-destructor residue is one fixed HOL value.  Emit the
        whole residual as a reusable zero-arity symbol; never decompose it into
        a function whose domain is the native datatype/sequence sort. *)
-    (if closed_constructor_destructor_residual tm then
+    (if carrier_closed_constructor_destructor_residual tm then
        translate_closed_destructor_residual acc
-       handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
+       handle DispatchFailure e => raise (#commit_error operations) e
      else
        raise ERR "translate_term" "not a closed destructor residue")
     handle e as NestedTranslation _ => raise e
-         | Feedback.HOL_ERR _ =>
+         | DispatchFailure _ =>
 
     (* cvc5 parses a bag literal as a lambda, but retransmission must retain
        the Bag operation rather than send that lambda to Array consumers. *)
-    (if is_parsed_bag_literal tm then translate_parsed_bag_literal acc
+    (if carrier_is_parsed_bag_literal tm then translate_parsed_bag_literal acc
      else
        case regime of
          FirstOrder => raise ERR "translate_term" "not first-order"
        | HigherOrder _ => translate_lambda acc)
-    handle Feedback.HOL_ERR _ =>
+    handle DispatchFailure _ =>
 
     (* translate the entire term (e.g., for numerals), using the dictionary of
        built-in symbols; however, only do this if 'tm' has base type *)
-    (if tm_has_base_type then
-      if native_sequence_symbol tm [] then native_sequence_builtin (tm, [])
-      else if native_set_symbol tm [] then native_set_builtin (tm, [])
-      else if native_bag_symbol tm [] then native_bag_builtin (tm, [])
-      else builtin_symbol (tm, [])
-    else
-      raise ERR "translate_term" "not first-order")  (* handled below *)
-    handle Feedback.HOL_ERR _ =>
+    emit_native_candidate
+      ((#whole_candidate native_dispatch) tm_has_base_type tm)
+    handle DispatchFailure _ =>
 
     (* split the term into rator and rands *)
     let
-      val (rator, rands) = boolSyntax.strip_comb tm
+      val (rator, rands) = carrier_strip_comb tm
     in
       (* In an HO regime a fully ranked built-in may itself return a map.
          Translate that ranked prefix before any remaining map applications. *)
-      (case native_bag_count_application rator rands of
-         SOME (bag, element) =>
-           let
-             val (acc, (bag_decls, bag_name)) =
-               translate_term regime apply_operator (acc, (bounds, bag))
-             val (acc, (element_decls, element_name)) =
-               translate_term regime apply_operator (acc, (bounds, element))
-             val count =
-               case !current_bag_backend of
-                 CVC5NativeBag => sexpr "bag.count" [element_name, bag_name]
-               | _ => sexpr "select" [bag_name, element_name]
-           in
-             (acc, (bag_decls @ element_decls, count))
-           end
-       | NONE =>
-           if same_const rator boolSyntax.equality then
-             builtin_equality (rator, rands)
-           else if native_sequence_symbol rator rands orelse
-              native_set_symbol rator rands orelse
-              native_bag_symbol rator rands orelse
-              (case regime of
-                 FirstOrder => tm_has_base_type
-               | HigherOrder _ =>
-                   Term.is_const rator andalso
-                   List.length rands = declared_const_arity rator)
-           then
-             if native_sequence_symbol rator rands then
-               native_sequence_builtin (rator, rands)
-             else if native_set_symbol rator rands then
-               native_set_builtin (rator, rands)
-             else if native_bag_symbol rator rands then
-               native_bag_builtin (rator, rands)
-             else builtin_symbol (rator, rands)
-           else
-             raise ERR "translate_term" "not first-order")  (* handled below *)
-    handle Feedback.HOL_ERR _ =>
+      emit_native_candidate ((#application_candidate native_dispatch)
+        tm_has_base_type tm rator rands)
+    handle DispatchFailure _ =>
 
       translate_constructor_application acc rator rands
-    handle Feedback.HOL_ERR _ =>
+    handle DispatchFailure _ =>
 
       translate_selector_case acc
-    handle Feedback.HOL_ERR _ =>
+    handle DispatchFailure _ =>
 
       translate_tester_case acc
-    handle Feedback.HOL_ERR _ =>
+    handle DispatchFailure _ =>
 
       translate_case_constant acc rator rands
-    handle Feedback.HOL_ERR _ =>
+    handle DispatchFailure _ =>
 
       (* FO functions and the Z3 dialect are arrays.  Standard 2.7 maps have
          no store operator, so preserve HOL UPDATE with a native lambda. *)
       let
-        val ((index, value), array) = combinSyntax.dest_update_comb tm
+        val ((index, value), array) = carrier_dest_update_comb tm
       in
         case regime of
           HigherOrder Standard27 =>
             let
-              val v = Term.genvar (Term.type_of index)
+              val v = carrier_genvar (carrier_type_of index)
               val (lambda_bounds, smtvar) = create_bound_name (bounds, v)
               val (((tydict, tmdict), typedecls), tyname) =
-                ensure_type (acc, Term.type_of v)
-              val old_value = Term.mk_comb (array, v)
+                ensure_type (acc, carrier_type_of v)
+              val old_value = carrier_mk_comb (array, v)
               val (acc, (arraydecls, oldname)) =
-                translate_term regime apply_operator
+                translate_body
                   ((tydict, tmdict), (lambda_bounds, old_value))
               val (acc, (indexdecls, indexname)) =
-                translate_term regime apply_operator (acc, (bounds, index))
+                translate (acc, (bounds, index))
               val (acc, (valuedecls, valuename)) =
-                translate_term regime apply_operator (acc, (bounds, value))
+                translate (acc, (bounds, value))
               val body = sexpr "ite"
-                [sexpr "=" [smtvar, indexname], valuename, oldname]
+                [sexpr "=" [output_text smtvar, indexname], valuename, oldname]
             in
               (acc, (typedecls @ arraydecls @ indexdecls @ valuedecls,
-                "(lambda ((" ^ smtvar ^ " " ^ tyname ^ ")) " ^ body ^ ")"))
+                output_concat
+                  [output_text ("(lambda ((" ^ smtvar ^ " " ^ tyname ^ ")) "),
+                   body, output_text ")"]))
             end
         | _ =>
             let
               val (acc, (arraydecls, arrayname)) =
-                translate_term regime apply_operator (acc, (bounds, array))
+                translate (acc, (bounds, array))
               val (acc, (indexdecls, indexname)) =
-                translate_term regime apply_operator (acc, (bounds, index))
+                translate (acc, (bounds, index))
               val (acc, (valuedecls, valuename)) =
-                translate_term regime apply_operator (acc, (bounds, value))
+                translate (acc, (bounds, value))
             in
               (acc, (arraydecls @ indexdecls @ valuedecls,
                 sexpr "store" [arrayname, indexname, valuename]))
             end
       end
-    handle Feedback.HOL_ERR _ =>
+    handle DispatchFailure _ =>
 
       let
-        val (function, argument) = Term.dest_comb tm
+        val (function, argument) = carrier_dest_comb tm
         (* Defer curried applications with native collection arguments to the
            full-application path, which retains every declaration sort. *)
         val _ =
-          if Term.is_var rator andalso List.length rands > 1 andalso
+          if carrier_is_var rator andalso List.length rands > 1 andalso
              ((!current_set_backend = CVC5NativeSet andalso
-               List.exists is_marked_set_term rands) orelse
+               List.exists carrier_is_marked_set_term rands) orelse
               (!current_bag_backend = CVC5NativeBag andalso
-               List.exists is_marked_bag_term rands))
+               List.exists carrier_is_marked_bag_term rands))
           then raise ERR "translate_term" "native collection application"
           else ()
-        val _ = Type.dom_rng (Term.type_of function)
+        val _ = metadata_dom_rng (carrier_type_of function)
         val native_set_argument =
           !current_set_backend = CVC5NativeSet andalso
-          is_marked_set_term argument
+          carrier_is_marked_set_term argument
         val native_bag_argument =
           !current_bag_backend = CVC5NativeBag andalso
-          is_marked_bag_term argument
+          carrier_is_marked_bag_term argument
         val native_collection_argument =
-          Term.is_var function andalso
+          carrier_is_var function andalso
           (native_set_argument orelse native_bag_argument)
         val _ =
           if !current_bag_backend = CVC5NativeBag andalso
-             is_marked_bag_term function andalso
-             mem_aconv tm (!current_raw_num_terms) then
-            raise NestedTranslation (ERR "translate_term"
+             carrier_is_marked_bag_term function andalso
+             carrier_is_raw_number tm then
+            raise (#commit_error operations)
+              ((#syntax_error operations) "translate_term"
               "native cvc5 bag.count requires an Int coercion")
           else ()
         val semantically_ranked_partial =
-          Term.is_const rator andalso
-          let val rank = declared_const_arity rator
+          carrier_is_const rator andalso
+          let val rank = carrier_declared_const_arity rator
           in
             List.length rands < rank andalso
-            has_ranked_semantics rator
+            carrier_has_ranked_semantics rator
           end
         val symbol_head =
-          (Term.is_const rator orelse Term.is_var rator) andalso
+          (carrier_is_const rator orelse carrier_is_var rator) andalso
           (semantically_ranked_partial orelse
            not (has_semantic_function_prefix rator rands))
         val _ =
@@ -4653,15 +5990,15 @@ local
               else
                 ()
           | _ =>
-              if Term.is_const rator andalso
-                 not (combinSyntax.is_update_comb function) then
+              if carrier_is_const rator andalso
+                 not (carrier_is_update_comb function) then
                 (case regime of
                    FirstOrder =>
                      raise ERR "translate_term"
                        "HOL constants are emitted as functions"
                  | HigherOrder _ =>
                      if List.length rands >
-                          declared_const_arity rator orelse
+                          carrier_declared_const_arity rator orelse
                         has_semantic_function_prefix rator rands then
                        ()
                      else
@@ -4671,78 +6008,82 @@ local
                 ()
         val (acc, (functiondecls, functionname)) =
           if native_collection_argument then
-            (case Redblackmap.peek (tmdict, (function, 1)) of
-               SOME name => (acc, ([], name))
+            (case term_peek (tmdict, (ordinary_key (function, 1))) of
+               SOME name => (acc, ([], output_text name))
              | NONE =>
                  let
-                   val (_, range) = Type.dom_rng (Term.type_of function)
+                   val (_, range) = metadata_dom_rng (carrier_type_of function)
                    val (tydict, (domdecls, domain_sort)) =
-                     if native_set_argument then selected_set_sort tydict argument
+                     if native_set_argument then selected_set_sort tydict
+                       argument
                      else selected_bag_sort tydict argument
                    val (tydict, (rngdecls, range_sort)) =
-                     translate_type regime (tydict, range)
+                     metadata_translate_type regime (tydict, range)
                    val name = tm_prefix ^
-                     Int.toString (Redblackmap.numItems tmdict)
-                   val tmdict = Redblackmap.insert
-                     (tmdict, (function, 1), name)
-                   val declaration = term_declaration_text regime name
+                     Int.toString (term_count tmdict)
+                   val tmdict = term_insert
+                     (tmdict, (ordinary_key (function, 1)), name)
+                   val declaration = output_term_declaration regime name
                      [domain_sort] range_sort
-                   val _ = record_emitted_term_sorts (function, 1)
-                     ([domain_sort], range_sort)
+                   val tmdict = record_sorts
+                     (tmdict, ordinary_key (function, 1),
+                      ([domain_sort], range_sort))
                  in
                    ((tydict, tmdict),
-                    (domdecls @ rngdecls @ [declaration], name))
+                    (domdecls @ rngdecls @ [declaration], output_text name))
                  end)
           else
-            translate_term regime apply_operator (acc, (bounds, function))
-            handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
+            translate (acc, (bounds, function))
+            handle DispatchFailure e => raise (#commit_error operations) e
         val (acc, (argumentdecls, argumentname)) =
-          translate_term regime apply_operator (acc, (bounds, argument))
-          handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
+          translate (acc, (bounds, argument))
+          handle DispatchFailure e => raise (#commit_error operations) e
       in
         (acc, (functiondecls @ argumentdecls,
-          if native_collection_argument then sexpr functionname [argumentname]
+          if native_collection_argument then
+            expression_application functionname [argumentname]
           else if !current_set_backend = CVC5ArraySet andalso
-                  is_marked_set_term function then
+                  carrier_is_marked_set_term function then
             sexpr "select" [functionname, argumentname]
           else if !current_bag_backend = CVC5ArrayBag andalso
-                  is_marked_bag_term function then
+                  carrier_is_marked_bag_term function then
             sexpr "select" [functionname, argumentname]
           else
             case !current_set_backend of
               CVC5NativeSet =>
-                if is_marked_set_term function then
+                if carrier_is_marked_set_term function then
                   sexpr "set.member" [argumentname, functionname]
                 else if !current_bag_backend = CVC5NativeBag andalso
-                        is_marked_bag_term function then
+                        carrier_is_marked_bag_term function then
                   sexpr "bag.count" [argumentname, functionname]
                 else explicit_apply functionname argumentname
             | _ =>
                 if !current_bag_backend = CVC5NativeBag andalso
-                   is_marked_bag_term function then
+                   carrier_is_marked_bag_term function then
                   sexpr "bag.count" [argumentname, functionname]
                 else explicit_apply functionname argumentname))
       end
-    handle Feedback.HOL_ERR _ =>
+    handle DispatchFailure _ =>
 
       let
         val rands_count = List.length rands
         val _ =
-          if Term.is_const rator orelse Term.is_var rator then ()
+          if carrier_is_const rator orelse carrier_is_var rator then ()
           else
             raise ERR "translate_term"
               ("unsupported higher-order rator expression: " ^
-               Hol_pp.term_to_string rator)
+               carrier_term_to_string rator)
         val declaration_arity =
           case regime of
             FirstOrder => rands_count
           | HigherOrder _ =>
-              if Term.is_const rator then declared_const_arity rator else 0
+              if carrier_is_const rator then carrier_declared_const_arity
+                rator else 0
       in
         if declaration_arity > rands_count andalso
            (regime = HigherOrder Z3LambdaArray orelse
             regime = HigherOrder Standard27 andalso
-              has_ranked_semantics rator) then
+              carrier_has_ranked_semantics rator) then
           eta_expand_ranked_constant acc tm rator declaration_arity
             rands_count
         else
@@ -4750,14 +6091,14 @@ local
             (* All preceding rungs preserve official SMT operators,
                constructors, carrier injections, and ranked eta expansion.
                Only the generic invented-symbol boundary is closed here. *)
-            val _ = reject_unsupported_smtfloat_constant rator
+            val _ = carrier_reject_unsupported_smtfloat_constant rator
             val (acc, (decls, name)) =
               (* A function-valued binder is a symbol head too. *)
-              (acc, ([], Redblackmap.find (bounds, rator)))
+              (acc, ([], bound_find (bounds, rator)))
               handle Redblackmap.NotFound =>
               (* translate the rator as a previously defined symbol *)
-              (acc, ([], Redblackmap.find
-                (tmdict, (rator, declaration_arity))))
+              (acc, ([], term_find
+                (tmdict, (ordinary_key (rator, declaration_arity)))))
               handle Redblackmap.NotFound =>
 
               (* translate the rator as a new (i.e., uninterpreted) symbol *)
@@ -4768,7 +6109,7 @@ local
                   (List.rev acc, ty)
                   | doms_rng acc n ty =
                   let
-                    val (dom, rng) = Type.dom_rng ty
+                    val (dom, rng) = metadata_dom_rng ty
                   in
                     doms_rng (dom :: acc) (n - 1) rng
                   end
@@ -4776,7 +6117,7 @@ local
                    their occurrence arity.  This canonical key prevents
                    partial and full applications from splitting one symbol. *)
                 val (domtys, rngty) = doms_rng [] declaration_arity
-                  (Term.type_of rator)
+                  (carrier_type_of rator)
                 (* A native collection argument determines the corresponding
                    declaration position.  Translating its HOL function type
                    alone would otherwise erase the selected Set/Bag sort. *)
@@ -4785,31 +6126,32 @@ local
                     val argument =
                       if index < List.length rands then
                         SOME (List.nth (rands, index))
-                      else contextual_collection_argument rator index
+                      else carrier_contextual_collection_argument rator index
                   in
                     case argument of
                       SOME arg =>
-                        if is_marked_set_term arg then
+                        if carrier_is_marked_set_term arg then
                           selected_set_sort tydict arg
-                        else if is_marked_bag_term arg then
+                        else if carrier_is_marked_bag_term arg then
                           selected_bag_sort tydict arg
                         else
-                          translate_type regime (tydict, ty)
-                    | NONE => translate_type regime (tydict, ty)
+                          metadata_translate_type regime (tydict, ty)
+                    | NONE => metadata_translate_type regime (tydict, ty)
                   end
                 val (tydict, domdecltys) =
                   Lib.foldl_map translate_domain (tydict,
                     ListPair.zip (List.tabulate (List.length domtys, Lib.I),
                       domtys))
-                val _ = reject_invented_native_datatype_domain rator domtys
+                val _ = carrier_reject_invented_native_datatype_domain rator
+                  domtys
                 val (domdeclss, domtys) = Lib.split domdecltys
                 val domdecls = List.concat domdeclss
                 fun translate_variable_function_type (tydict, index, ty) =
-                  if Type.compare (ty, Term.type_of tm) = EQUAL andalso
-                     is_marked_set_term tm then
+                  if Type.compare (ty, carrier_type_of tm) = EQUAL andalso
+                     carrier_is_marked_set_term tm then
                     selected_set_sort tydict tm
-                  else if Type.compare (ty, Term.type_of tm) = EQUAL andalso
-                          is_marked_bag_term tm then
+                  else if Type.compare (ty, carrier_type_of tm) = EQUAL andalso
+                          carrier_is_marked_bag_term tm then
                     selected_bag_sort tydict tm
                   else
                     case Lib.total Type.dom_rng ty of
@@ -4824,49 +6166,52 @@ local
                           (tydict, (ddecls @ rdecls,
                             "(-> " ^ dsort ^ " " ^ rsort ^ ")"))
                         end
-                    | NONE => translate_type regime (tydict, ty)
+                    | NONE => metadata_translate_type regime (tydict, ty)
                 val (tydict, (rngdecls, rngty)) =
                   if declaration_arity = 0 andalso
                      (case regime of
                         HigherOrder Standard27 =>
-                          Term.is_var rator andalso
-                          (is_marked_set_term tm orelse
-                           is_marked_bag_term tm orelse
-                           has_contextual_collection_argument rator orelse
+                          carrier_is_var rator andalso
+                          (carrier_is_marked_set_term tm orelse
+                           carrier_is_marked_bag_term tm orelse
+                           carrier_has_contextual_collection_argument rator
+                             orelse
                            List.exists (fn argument =>
-                             is_marked_set_term argument orelse
-                             is_marked_bag_term argument) rands)
+                             carrier_is_marked_set_term argument orelse
+                             carrier_is_marked_bag_term argument) rands)
                       | _ => false) then
                     translate_variable_function_type
-                      (tydict, 0, Term.type_of rator)
-                  else if is_marked_set_term tm then
+                      (tydict, 0, carrier_type_of rator)
+                  else if carrier_is_marked_set_term tm then
                     selected_set_sort tydict tm
-                  else if is_marked_bag_term tm then
+                  else if carrier_is_marked_bag_term tm then
                     selected_bag_sort tydict tm
                   else
-                    translate_type regime (tydict, rngty)
+                    metadata_translate_type regime (tydict, rngty)
                 (* invent new name for 'rator' *)
                 val name = tm_prefix ^
-                  Int.toString (Redblackmap.numItems tmdict)
-                val _ = if !Library.trace > 0 andalso Term.is_const rator then
+                  Int.toString (term_count tmdict)
+                val _ = if !Library.trace > 0 andalso carrier_is_const rator
+                  then
                   WARNING "translate_term"
-                    ("uninterpreted constant " ^ Hol_pp.term_to_string rator)
+                    ("uninterpreted constant " ^ carrier_term_to_string rator)
                   else
                     ();
                 val _ = if !Library.trace > 2 then
                     Feedback.HOL_MESG
                       ("HolSmtLib (SmtLib): inventing name '" ^ name ^
-                       "' for HOL term '" ^ Hol_pp.term_to_string rator ^
+                       "' for HOL term '" ^ carrier_term_to_string rator ^
                        "' (declared at rank " ^
                        Int.toString declaration_arity ^ ")")
                   else
                     ()
-                val tmdict = Redblackmap.insert
-                  (tmdict, (rator, declaration_arity), name)
+                val tmdict = term_insert
+                  (tmdict, (ordinary_key (rator, declaration_arity)), name)
                 val decl =
-                  term_declaration_text regime name domtys rngty
-                val _ = record_emitted_term_sorts
-                  (rator, declaration_arity) (domtys, rngty)
+                  output_term_declaration regime name domtys rngty
+                val tmdict = record_sorts
+                  (tmdict, ordinary_key (rator, declaration_arity),
+                   (domtys, rngty))
               in
                 ((tydict, tmdict),
                  (domdecls @ rngdecls @ [decl], name))
@@ -4874,29 +6219,69 @@ local
             (* translate 'rands' *)
             val (acc, declnames) = Lib.foldl_map
               (fn (a, t) =>
-                translate_term regime apply_operator (a, (bounds, t)))
+                translate (a, (bounds, t)))
               (acc, rands)
             val (declss, names) = Lib.split declnames
           in
             (acc, (decls @ List.concat declss,
               case regime of
                 HigherOrder Standard27 =>
-                  if Term.is_var rator andalso
-                     (is_marked_set_term tm orelse
-                      is_marked_bag_term tm orelse
+                  if carrier_is_var rator andalso
+                     (carrier_is_marked_set_term tm orelse
+                      carrier_is_marked_bag_term tm orelse
                       List.exists (fn argument =>
-                        is_marked_set_term argument orelse
-                        is_marked_bag_term argument) rands) andalso
+                        carrier_is_marked_set_term argument orelse
+                        carrier_is_marked_bag_term argument) rands) andalso
                      not (Option.isSome
-                       (Redblackmap.peek (bounds, rator))) then
+                       (bound_peek (bounds, rator))) then
                     List.foldl (fn (argument, function) =>
-                      explicit_apply function argument) name names
+                      explicit_apply function argument)
+                      (output_text name) names
                   else sexpr name names
               | _ => sexpr name names))
           end
       end
     end
   end
+  handle DispatchFailure primary => raise primary
+  end
+
+  (* Lexical BODY entry is explicit even when the body reuses the same
+     bound variable IDs and names. Ordinary children, including LET RHS,
+     remain in the incoming lexical region. The legacy continuation is
+     identical at both kinds of recursive call. *)
+  fun translate_term_step_with_scoped_output output seal operations store
+      translate regime apply_operator input =
+    translate_term_step_with_lexical_output output seal operations store
+      translate translate regime apply_operator input
+
+  (* Generated definitions are global commands. A graph instance closes
+     their expression references INSIDE their own quantified dependencies;
+     unrelated definitions or enclosing lexical names must not escape.
+     The string instance has no local reference graph to close. *)
+  fun translate_term_step_with_output output operations store translate
+      regime apply_operator input =
+    translate_term_step_with_scoped_output output
+      (fn (_,document) => document) operations store translate
+      regime apply_operator input
+
+  fun translate_term_step_with_carrier operations store translate regime
+      apply_operator input =
+    translate_term_step_with_output string_output_operations operations
+      store translate regime apply_operator input
+
+  fun translate_term_step_with_store store translate regime
+      apply_operator input =
+    translate_term_step_with_carrier term_translation_operations store
+      translate regime apply_operator input
+
+  fun translate_term_step translate regime apply_operator input =
+    translate_term_step_with_store legacy_term_store_operations translate
+      regime apply_operator input
+
+  fun translate_term regime apply_operator input =
+    translate_term_step (translate_term regime apply_operator)
+      regime apply_operator input
 
   datatype datatype_case_scan =
       NotDatatypeCase
@@ -4912,134 +6297,142 @@ local
      would encode without preserving a built-in's semantics.  Binder, let,
      datatype-case, and update abstractions are encoding scaffolding rather
      than first-class function values. *)
-  fun goal_ho_reason (assumptions, conclusion) =
+  type 'term regime_operations =
+    {syntax:'term term_translation_operations,
+     is_abstraction:'term -> bool,
+     constant_name:'term -> string * string,
+     datatype_case:'term ->
+       {scrutinee:'term,clauses:((unit -> 'term list) * 'term) list} option,
+     is_syntax_error:exn -> bool,
+     is_optional_error:exn -> bool,
+     memoize:'term list -> 'term -> (unit -> string option) -> string option}
+
+  fun goal_ho_reason_with (algebra:'term regime_operations) =
     let
-      fun is_function_valued_conditional tm =
+      val {syntax,is_abstraction,constant_name,datatype_case,
+           is_syntax_error,is_optional_error,memoize} = algebra
+      val {type_of,is_var,is_const,dest_comb,dest_abs,strip_comb,list_mk_comb,
+           same_const,declared_const_arity,aconv,is_forall,is_exists,dest_let,
+           dest_update_comb,metadata_error,...} = syntax
+      fun optional thunk = SOME (thunk ()) handle primary =>
+        if is_optional_error primary then NONE else raise primary
+      (* Native Lib.total probes and HOL_ERR-only shape probes have distinct
+         exception policies; graph probes admit only private mismatches. *)
+      fun syntax_optional thunk = SOME (thunk ()) handle primary =>
+        if is_syntax_error primary then NONE else raise primary
+      fun metadata thunk = thunk ()
+        handle primary as Feedback.HOL_ERR _ => raise metadata_error primary
+      fun function_valued_conditional current =
+        case syntax_optional (fn () =>
+          let
+            val (head,arguments) = strip_comb current
+            val conditional = case arguments of test::left::right::_ =>
+                list_mk_comb (head,[test,left,right])
+              | _ => raise (#syntax_error syntax) "goal_ho_reason"
+                  "partial conditional"
+          in same_const head boolSyntax.conditional andalso
+            is_function_type (type_of conditional) end) of
+          SOME result => result | NONE => false
+      fun case_reason scan inherited current =
+        (case datatype_case current of
+           NONE => NotDatatypeCase
+         | SOME {scrutinee,clauses} =>
+             let fun clause (variables,body) =
+                   let val selectors = List.filter
+                         (is_function_type o type_of) (variables ())
+                   in scan (selectors @ inherited) body end
+             in DatatypeCase (case scan inherited scrutinee of
+                  SOME reason => SOME reason
+                | NONE => Lib.get_first clause clauses) end)
+        handle primary =>
+          if is_syntax_error primary then NotDatatypeCase else raise primary
+      fun record_update current = syntax_optional (fn () =>
         let
-          val (rator, rands) = boolSyntax.strip_comb tm
-          val conditional =
-            case rands of
-              test :: then_tm :: else_tm :: _ =>
-                Term.list_mk_comb (rator, [test, then_tm, else_tm])
-            | _ => raise ERR "goal_ho_reason" "partial conditional"
-        in
-          Term.same_const rator boolSyntax.conditional andalso
-          is_function_type (Term.type_of conditional)
-        end
-        handle Feedback.HOL_ERR _ => false
-      fun datatype_case_reason scan inherited tm =
-        let
-          val (_, elem, clauses) = TypeBase.dest_case tm
-          fun clause_reason (pattern, rhs) =
-            let
-              val (_, pattern_args) = boolSyntax.strip_comb pattern
-              val selector_vars = List.filter
-                (is_function_type o Term.type_of) pattern_args
-            in
-              scan (selector_vars @ inherited) rhs
+          val (prefix,record) = dest_comb current
+          val (update,updater) = dest_comb prefix
+          fun dest_k term =
+            let val (head,value) = dest_comb term in
+              if same_const head combinSyntax.K_tm then value else
+                raise (#syntax_error syntax) "goal_ho_reason"
+                  "not record update"
             end
-        in
-          DatatypeCase
-            (case scan inherited elem of
-               SOME reason => SOME reason
-             | NONE => Lib.get_first clause_reason clauses)
-        end
-        handle Feedback.HOL_ERR _ => NotDatatypeCase
-      fun record_update_operands tm =
-        let
-          val (update_f, record) = Term.dest_comb tm
-          val (update, updater) = Term.dest_comb update_f
-          val new_value =
-            combinSyntax.dest_K_1 updater
-            handle Feedback.HOL_ERR _ =>
-              let
-                val (var1, body) = Term.dest_abs updater
-                val (k_tm, var2) = Term.dest_comb body
-                val _ = if Term.aconv var1 var2 then ()
-                        else raise ERR "goal_ho_reason" "not record update"
-              in
-                combinSyntax.dest_K_1 k_tm
-              end
-          val record_ty = Term.type_of record
-          val value_ty = Term.type_of new_value
-          val fields = TypeBase.fields_of record_ty
-          val _ =
-            case List.find
-              (fn (_, {ty = field_ty, fupd, ...} :
-                       TypeBasePure.rcd_fieldinfo) =>
-                Term.same_const update fupd andalso
-                Lib.can (Type.match_type field_ty) value_ty) fields of
-              SOME _ => ()
-            | NONE => raise ERR "goal_ho_reason" "not record update"
-        in
-          SOME [record, new_value]
-        end
-        handle Feedback.HOL_ERR _ => NONE
-      fun is_seq_ho_combinator tm =
-        case Lib.total boolSyntax.strip_comb tm of
-          SOME (rator, _) =>
-            same_const rator seq_map_tm orelse same_const rator seq_foldl_tm
+          val value = case syntax_optional (fn () => dest_k updater) of
+              SOME value => value
+            | NONE =>
+                let val (variable,body) = dest_abs updater
+                    val (function,argument) = dest_comb body
+                    val _ = if aconv variable argument then () else
+                      raise (#syntax_error syntax) "goal_ho_reason"
+                        "not record update"
+                in dest_k function end
+          val record_ty = type_of record val value_ty = type_of value
+          val fields = metadata (fn () => TypeBase.fields_of record_ty)
+          fun matches (_, {ty,fupd,...}:TypeBasePure.rcd_fieldinfo) =
+            same_const update fupd andalso
+            metadata (fn () => Lib.can (Type.match_type ty) value_ty)
+          val _ = case List.find matches fields of SOME _ => ()
+            | NONE => raise (#syntax_error syntax) "goal_ho_reason"
+                "not record update"
+        in [record,value] end)
+      fun sequence_ho current =
+        case optional (fn () => strip_comb current) of
+          SOME (head,_) => same_const head seq_map_tm orelse
+            same_const head seq_foldl_tm
         | NONE => false
-      fun partial_ranked_builtin rator rands =
-        Term.is_const rator andalso
-        let
-          val {Thy, Name, ...} = Term.dest_thy_const rator
-        in
-          List.length rands < declared_const_arity rator andalso
-          Redblackset.member (builtin_const_names, (Thy, Name))
-        end
-      fun scan inherited tm =
-        if is_seq_ho_combinator tm then
-          SOME "automatic:seq-ho-combinator"
-        else if boolSyntax.is_forall tm then
-          scan inherited (Lib.snd (boolSyntax.dest_forall tm))
-        else if boolSyntax.is_exists tm then
-          scan inherited (Lib.snd (boolSyntax.dest_exists tm))
-        else
-          case Lib.total pairSyntax.dest_anylet tm of
-            SOME (bindings, body) =>
-              first_reason (scan inherited)
-                (List.map Lib.snd bindings @ [body])
-          | NONE =>
-            if is_function_valued_conditional tm then
-              (* The FO datatype-case path treats a function-valued
-                 conditional as abstraction scaffolding, then emits its
-                 branches without preserving ite semantics.  Select HO before
-                 datatype-case normalization so the native function-valued
-                 result is retained. *)
+      fun partial_ranked head arguments = is_const head andalso
+        let val (theory,name) = constant_name head in
+          length arguments < declared_const_arity head andalso
+          Redblackset.member (builtin_const_names,(theory,name)) end
+      fun scan inherited current = memoize inherited current (fn () =>
+        if sequence_ho current then SOME "automatic:seq-ho-combinator"
+        else if is_forall current then
+          scan inherited (#2 (dest_abs (#2 (dest_comb current))))
+        else if is_exists current then
+          scan inherited (#2 (dest_abs (#2 (dest_comb current))))
+        else case optional (fn () => dest_let current) of
+          SOME (bindings,body) => first_reason (scan inherited)
+            (List.map #2 bindings @ [body])
+        | NONE =>
+            if function_valued_conditional current then
               SOME "automatic:function-valued-conditional"
-            else
-              (case datatype_case_reason scan inherited tm of
-                 DatatypeCase reason => reason
-               | NotDatatypeCase =>
-                 (case Lib.total combinSyntax.dest_update_comb tm of
-                  SOME ((index, value), array) =>
-                    first_reason (scan inherited) [array, index, value]
-                | NONE =>
-                  (case record_update_operands tm of
-                     SOME operands =>
-                       first_reason (scan inherited) operands
+            else case case_reason scan inherited current of
+              DatatypeCase reason => reason
+            | NotDatatypeCase =>
+                (case optional (fn () => dest_update_comb current) of
+                   SOME ((index,value),array) =>
+                     first_reason (scan inherited) [array,index,value]
+                 | NONE => (case record_update current of
+                     SOME operands => first_reason (scan inherited) operands
                    | NONE =>
-                     if Term.is_abs tm then
-                       SOME "automatic:surviving-abstraction"
-                     else
-                       case Lib.total boolSyntax.strip_comb tm of
-                         SOME (rator, rands) =>
-                           if List.exists (Term.aconv rator) inherited then
+                       if is_abstraction current then
+                         SOME "automatic:surviving-abstraction"
+                       else case optional (fn () => strip_comb current) of
+                         SOME (head,arguments) =>
+                           if List.exists (aconv head) inherited then
                              SOME
                                "automatic:non-constant/non-variable-rator"
-                           else if partial_ranked_builtin rator rands then
+                           else if partial_ranked head arguments then
                              SOME "automatic:partial-ranked-builtin"
-                           else if Term.is_const rator orelse
-                                   Term.is_var rator then
-                             first_reason (scan inherited) rands
-                           else
-                             SOME
-                               "automatic:non-constant/non-variable-rator"
+                           else if is_const head orelse is_var head then
+                             first_reason (scan inherited) arguments
+                           else SOME
+                             "automatic:non-constant/non-variable-rator"
                        | NONE => NONE)))
-    in
-      first_reason (scan []) (assumptions @ [conclusion])
-    end
+    in fn (assumptions,goal) =>
+      first_reason (scan []) (assumptions @ [goal]) end
+
+  val term_regime_operations : Term.term regime_operations =
+    {syntax=term_translation_operations,is_abstraction=Term.is_abs,
+     constant_name=fn current =>
+       let val {Thy,Name,...} = Term.dest_thy_const current in (Thy,Name) end,
+     datatype_case=fn current =>
+       let val (_,scrutinee,clauses) = TypeBase.dest_case current in
+         SOME {scrutinee=scrutinee,clauses=List.map (fn (pattern,body) =>
+           (fn () => #2 (boolSyntax.strip_comb pattern),body)) clauses} end,
+     is_syntax_error=fn Feedback.HOL_ERR _ => true | _ => false,
+     is_optional_error=fn Portable.Interrupt => false | _ => true,
+     memoize=fn _ => fn _ => fn compute => compute ()}
+  val goal_ho_reason = goal_ho_reason_with term_regime_operations
 
   fun goal_requires_ho_aux goal = Option.isSome (goal_ho_reason goal)
 
@@ -5047,19 +6440,64 @@ local
       AutomaticRegime of ho_dialect
     | RegimeOverride of regime
 
-  fun select_regime request goal =
+  fun select_regime_with algebra request goal =
     case request of
       RegimeOverride regime => (regime, "explicit override")
     | AutomaticRegime dialect =>
-        (case goal_ho_reason goal of
+        (case goal_ho_reason_with algebra goal of
            NONE => (FirstOrder, "automatic:no-ho-trigger")
          | SOME reason => (HigherOrder dialect, reason))
+  val select_regime = select_regime_with term_regime_operations
 
   (* Returns the selected translation and SMT-LIB text for the input goal;
      the conclusion is negated before emission.  A term-dictionary integer is
      the occurrence arity in FirstOrder.  HigherOrder uses a constant's
      declared rank, or zero for a function-valued variable, so partial and
      full applications share one symbol. *)
+  (* Native and graph query boundaries use the same final logic policy. *)
+  fun outbound_select_logic regime (policy:logic_selection_policy) features =
+    let
+      val (feature_logic, feature_reason) =
+        infer_logic_from_features_for_regime regime features
+      (* Z3's array-lambda extension is accepted uniformly under ALL, while
+       narrower FO array logics reject lambda as quantified syntax on some
+       supported Z3 versions.  The C1 replay corpus also uses ALL, so keeping
+       that logic in the translation record gives proof parsing the same broad
+       dictionaries as the solver.  Caller overrides still take precedence. *)
+      val (inferred_logic, reason) =
+        case regime of
+          HigherOrder Z3LambdaArray =>
+            ("ALL", "Z3 array-lambda lowering requires logic ALL; " ^
+              feature_reason)
+        | _ => (feature_logic, feature_reason)
+      val (selected_logic, reason) =
+        case policy {features = features, inferred_logic = inferred_logic,
+                     reason = reason} of
+          NONE => (inferred_logic, reason)
+        | SOME {logic, reason} => (logic, reason)
+    in {logic=selected_logic,reason=reason} end
+
+  (* Only command assembly is parameterized. Semantic translation remains
+     the existing shared dispatcher; declarations stay interleaved with
+     their assertion, with identical native chunk and byte order. *)
+  fun outbound_query_script (output:'doc output_operations)
+      {logic,assertions:('doc list * 'doc) list} =
+    let val text = #text output val concat = #concat output
+        fun assertion (declarations,expression) = declarations @
+          [concat [text "(assert ",expression,text ")\n"]]
+    in [text ("(set-logic " ^ logic ^ ")\n"),
+      text ("(set-info :source |Automatically generated from HOL4 by " ^
+        "SmtLib.goal_to_SmtLib.\n"),
+      text "Copyright (c) 2011 Tjark Weber. All rights reserved.|)\n",
+      text "(set-info :smt-lib-version 2.7)\n"] @
+      List.concat (List.map assertion assertions) @ [text "(check-sat)\n"]
+    end
+
+  fun outbound_query_tail (output:'doc output_operations) get_proof =
+    let val text = #text output in
+      if get_proof then [text "(get-proof)\n",text "(exit)\n"]
+      else [text "(exit)\n"] end
+
   fun goal_to_SmtLib_aux_inner request apply_operator
       (policy : logic_selection_policy) target emit_sequences
       (goal as (original_ts, t)) : translation * string list =
@@ -5067,202 +6505,50 @@ local
     val _ = current_native_sequence_emission := emit_sequences
     val _ = current_generated_forall_emissions := 0
     val _ = emitted_term_sorts := []
-    val set_terms = List.foldl (fn (term, acc) =>
-      collect_native_set_terms term acc) [] (t :: original_ts)
-    val bag_terms = List.foldl (fn (term, acc) =>
-      collect_native_bag_terms term acc) [] (t :: original_ts)
+    val {sets = set_terms, bags = bag_terms} =
+      collect_query_collection_markers (t :: original_ts)
     (* Num is an Int-valued SMT abs only beneath its integer coercion.  In an
        opaque HOL-num position it must remain an uninterpreted function. *)
-    fun raw_num_terms term =
-      let
-        fun insert tm terms =
-          if mem_aconv tm terms then terms else tm :: terms
-        fun visit expected tm acc =
-          if Term.is_abs tm then
-            let
-              val (_, body) = Term.dest_abs tm
-              val (_, range) = Type.dom_rng (Term.type_of tm)
-              val expected_body =
-                if mem_aconv tm bag_terms then NONE else SOME range
-            in
-              visit expected_body body acc
-            end
-          else if Term.is_comb tm then
-            let
-              val (rator, rand) = Term.dest_comb tm
-              val domain = Lib.fst (Type.dom_rng (Term.type_of rator))
-              val expected_arg =
-                if same_const rator intSyntax.int_injection orelse
-                   same_const rator int_of_num_tm then NONE else SOME domain
-              val acc = visit NONE rator acc
-              val acc = visit expected_arg rand acc
-            in
-              if (same_const rator intSyntax.Num_tm orelse
-                  same_const rator bagSyntax.BAG_CARD_tm orelse
-                  (case boolSyntax.strip_comb tm of
-                     (bag, [_]) => mem_aconv bag bag_terms
-                   | _ => false)) andalso
-                 Option.isSome expected andalso
-                 Type.compare (Option.valOf expected, numSyntax.num) = EQUAL
-              then insert tm acc else acc
-            end
-          else acc
-      in
-        visit NONE term []
-      end
-    val raw_num_terms = List.foldl (fn (term, acc) =>
-      List.foldl (fn (num_tm, nums) =>
-        if mem_aconv num_tm nums then nums else num_tm :: nums)
-        acc (raw_num_terms term)) [] (t :: original_ts)
+    val raw_num_terms = SmtLib_RawNumAnalysis.collect
+      raw_num_operations bag_terms (t :: original_ts)
     (* A symbol has one fixed SMT domain sort.  A collection argument is
        ambiguous only if that same function position is also used as an
        ordinary array argument. *)
     val subterms = List.concat (List.map Library.subterms (t :: original_ts))
-    fun ordinary_symbol_application function =
-      let val (head, applied) = boolSyntax.strip_comb function in
-        Term.is_var head orelse
-        (Term.is_const head andalso
-         List.length applied < declared_const_arity head)
-      end
-    fun collection_parameter_index function argument variable =
-      let
-        val residual_type = Term.type_of function
-        val argument_type = Term.type_of argument
-        fun find index ty =
-          if Type.compare (ty, residual_type) = EQUAL then
-            case Lib.total Type.dom_rng ty of
-              SOME (domain, _) =>
-                if Type.compare (domain, argument_type) = EQUAL then
-                  SOME index
-                else
-                  NONE
-            | NONE => NONE
-          else
-            case Lib.total Type.dom_rng ty of
-              SOME (_, range) => find (index + 1) range
-            | NONE => NONE
-      in
-        find 0 (Term.type_of variable)
-      end
-    (* The (variable, parameter index, argument) triples by which [tm]
-       applies a computed function to a native collection. *)
-    fun computed_collection_pairs collection_terms tm =
-      case Lib.total Term.dest_comb tm of
-        SOME (function, argument) =>
-          if mem_aconv argument collection_terms andalso
-             not (ordinary_symbol_application function) then
-            List.mapPartial (fn variable =>
-              Option.map (fn index => (variable, index, argument))
-                (collection_parameter_index function argument variable))
-              (Term.free_vars function)
-          else []
-      | NONE => []
-    fun computed_collection_applications collection_terms =
-      if List.null collection_terms then []
-      else List.concat
-        (List.map (computed_collection_pairs collection_terms) subterms)
+    val collection_operations :
+        Term.term SmtLib_CollectionApplicationAnalysis.operations =
+      {same = fn (left, right) => Term.aconv left right,
+       type_of = Term.type_of,
+       is_variable = Term.is_var,
+       is_constant = Term.is_const,
+       declared_const_arity = declared_const_arity,
+       strip_comb = boolSyntax.strip_comb,
+       dest_comb = Term.dest_comb,
+       is_abstraction = Term.is_abs,
+       dest_abs = Term.dest_abs,
+       free_variables = Term.free_vars}
     val computed_set_applications =
-      computed_collection_applications set_terms
+      SmtLib_CollectionApplicationAnalysis.computed_applications
+        collection_operations set_terms subterms
     val computed_bag_applications =
-      computed_collection_applications bag_terms
+      SmtLib_CollectionApplicationAnalysis.computed_applications
+        collection_operations bag_terms subterms
     fun has_mixed_collection_argument collection_terms =
-      let
-        fun positions function [] _ = []
-          | positions function (argument :: arguments) index =
-              (function, index, argument) ::
-              positions function arguments (index + 1)
-        fun application_positions subterm =
-          let val (function, arguments) = boolSyntax.strip_comb subterm in
-            if Term.is_var function orelse Term.is_const function then
-              positions function arguments 0
-            else []
-          end
-        val applications = List.concat (List.map application_positions subterms)
-      in
-        List.exists (fn (function, index, argument) =>
-          mem_aconv argument collection_terms andalso
-          List.exists (fn (other_function, other_index, other_argument) =>
-            Term.aconv function other_function andalso index = other_index andalso
-            not (mem_aconv other_argument collection_terms)) applications)
-          applications
-      end
-    (* A bound predicate/count function applied to a native collection needs a
-       collection domain in its binder declaration.  Bound-variable names are
-       not globally unique, so the term dictionary cannot safely give it that
-       declaration.  Use the array representation for this scoped shape. *)
+      SmtLib_CollectionApplicationAnalysis.has_mixed_argument
+        collection_operations collection_terms subterms
+    (* Keep lexical binder context separate from the supplied inventory. *)
     fun bound_collection_application collection_terms =
-      let
-        fun visit bound tm =
-          if Term.is_abs tm then
-            let val (var, body) = Term.dest_abs tm in visit (var :: bound) body end
-          else
-            let
-              val (function, arguments) = boolSyntax.strip_comb tm
-              val applies_bound =
-                List.exists (fn var => Term.aconv function var) bound
-              val has_collection_argument =
-                List.exists (fn argument => mem_aconv argument collection_terms)
-                  arguments
-              fun computed_applies_bound () =
-                List.exists (fn (variable, _, _) => mem_aconv variable bound)
-                  (computed_collection_pairs collection_terms tm)
-            in
-              (applies_bound andalso has_collection_argument) orelse
-              computed_applies_bound () orelse
-              List.exists (visit bound) arguments
-            end
-      in
-        List.exists (visit []) (t :: original_ts)
-      end
-    val _ =
-      case target of
-        SOME {solver = "cvc5", ...} =>
-          if bound_collection_application set_terms orelse
-             bound_collection_application bag_terms then
-            raise ERR "goal_to_SmtLib_aux_inner"
-              "higher-order cvc5 functions over Sets or Bags are unsupported"
-          else ()
-      | _ => ()
-    val initial_backend = backend_for_target target goal set_terms
-    val initial_bag_backend =
-      bag_backend_for_target target goal bag_terms
-    val (backend, bag_backend) =
-      case target of
-        SOME {solver = "cvc5", ...} =>
-          if collection_nested_in_collection set_terms bag_terms then
-            (CVC5ArraySet, CVC5ArrayBag)
-          else
-            (if not (List.null computed_set_applications) then
-               CVC5ArraySet
-             else initial_backend,
-             if not (List.null computed_bag_applications) then
-               CVC5ArrayBag
-             else initial_bag_backend)
-      | _ => (initial_backend, initial_bag_backend)
-    val _ =
-      case target of
-        SOME {solver = "cvc5", ...} =>
-          if (backend <> CVC5ArraySet andalso
-              has_mixed_collection_argument set_terms) orelse
-             (bag_backend = CVC5NativeBag andalso
-              has_mixed_collection_argument bag_terms) then
-            raise ERR "goal_to_SmtLib_aux_inner"
-              "native collection passed to an ambiguously typed HOL function"
-          else ()
-      | _ => ()
-    val _ =
-      case target of
-        SOME {solver = "cvc5", ...} =>
-          if backend = CVC5ArraySet andalso
-             List.exists contains_set_card (t :: original_ts) then
-            raise ERR "goal_to_SmtLib_aux_inner"
-              "set.card requires a finiteness-entailing cvc5 goal"
-          else if bag_backend = CVC5ArrayBag andalso
-             List.exists contains_bag_card (t :: original_ts) then
-            raise ERR "goal_to_SmtLib_aux_inner"
-              "bag.card requires a finiteness-entailing cvc5 goal"
-          else ()
-      | _ => ()
+      SmtLib_CollectionApplicationAnalysis.has_bound_application
+        collection_operations collection_terms (t :: original_ts)
+    val {set_backend=backend,bag_backend} =
+      (#select term_backend_selection) target
+        {goal=goal,sets=set_terms,bags=bag_terms,
+         computed_set=not (List.null computed_set_applications),
+         computed_bag=not (List.null computed_bag_applications),
+         bound_set=fn () => bound_collection_application set_terms,
+         bound_bag=fn () => bound_collection_application bag_terms,
+         mixed_set=fn () => has_mixed_collection_argument set_terms,
+         mixed_bag=fn () => has_mixed_collection_argument bag_terms}
     val _ = current_set_backend := backend
     val _ = current_set_terms := set_terms
     val _ = current_raw_num_terms := raw_num_terms
@@ -5319,24 +6605,8 @@ local
     val (tydict, tmdict) = acc
     val features =
       infer_features regime terms tydict tmdict
-    val (feature_logic, feature_reason) =
-      infer_logic_from_features_for_regime regime features
-    (* Z3's array-lambda extension is accepted uniformly under ALL, while
-       narrower FO array logics reject lambda as quantified syntax on some
-       supported Z3 versions.  The C1 replay corpus also uses ALL, so keeping
-       that logic in the translation record gives proof parsing the same broad
-       dictionaries as the solver.  Caller overrides still take precedence. *)
-    val (inferred_logic, reason) =
-      case regime of
-        HigherOrder Z3LambdaArray =>
-          ("ALL", "Z3 array-lambda lowering requires logic ALL; " ^
-            feature_reason)
-      | _ => (feature_logic, feature_reason)
-    val (selected_logic, reason) =
-      case policy {features = features, inferred_logic = inferred_logic,
-                   reason = reason} of
-        NONE => (inferred_logic, reason)
-      | SOME {logic, reason} => (logic, reason)
+    val {logic=selected_logic,reason} =
+      outbound_select_logic regime policy features
     (* Metadata is public lazily, so retain the query's collection state for
        its eventual construction instead of consulting the restored ambient
        state. *)
@@ -5349,6 +6619,7 @@ local
     fun records () =
       let
         val restorers = [
+          save_cell current_backend_installation,
           save_cell current_native_sequence_emission,
           save_cell current_generated_forall_emissions,
           save_cell current_set_backend,
@@ -5356,7 +6627,8 @@ local
           save_cell emitted_term_sorts
         ]
         fun work () =
-          (current_native_sequence_emission := record_sequence_emission;
+          (current_backend_installation := NONE;
+           current_native_sequence_emission := record_sequence_emission;
            current_generated_forall_emissions :=
              record_generated_forall_emissions;
            current_set_backend := record_set_backend;
@@ -5370,40 +6642,15 @@ local
       end
     val translation = {logic = selected_logic, regime = regime,
       tydict = tydict, tmdict = tmdict, records = records}
-    (* we choose to intertwine declarations and assertions (for no
-       particular reason; an alternative would be to emit all
-       declarations before all assertions) *)
-    val smtlibs = List.foldl
-      (fn ((xs, s), acc) => acc @ xs @ ["(assert " ^ s ^ ")\n"]) [] smtlibs
   in
-    (* A `(set-logic ...)` is always emitted, including on the implicit
-       (no caller override) Z3/CVC path.  Older revisions emitted none for
-       `NONE`, letting the solver default to accept-anything; relying on
-       that default is fragile.  Emitting unconditionally is safe because
-       `infer_logic_from_features` is a sound over-approximation of the
-       goal's theory needs: every theory Phase 1 can translate contributes
-       a feature, any multiplication is treated as nonlinear, and any
-       un-modelled feature combination falls back to `ALL`.  So the
-       declared fragment never excludes a term the goal actually contains
-       (a too-narrow fragment would make the solver reject a goal it could
-       otherwise prove), and the emitted name is always a recognised logic
-       (see `infer_logic_from_features` and `parsedicts_of_logic`).  Any
-       future widening of what Phase >1 can translate must preserve this
-       invariant — add the feature and its logic mapping together, or keep
-       the `ALL` fallback. *)
-    (translation, ["(set-logic " ^ selected_logic ^ ")\n"] @ [
-      "(set-info :source |Automatically generated from HOL4 by SmtLib.goal_to_SmtLib.\n",
-      "Copyright (c) 2011 Tjark Weber. All rights reserved.|)\n",
-      "(set-info :smt-lib-version 2.7)\n"
-    ] @ smtlibs @ [
-      "(check-sat)\n"
-    ])
+    (translation,outbound_query_script string_output_operations
+      {logic=selected_logic,assertions=smtlibs})
   end
 
-  fun goal_to_SmtLib_aux request apply_operator policy target
-      emit_sequences goal =
+  fun with_saved_translation_context work =
   let
     val restorers = [
+      save_cell current_backend_installation,
       save_cell current_native_sequence_emission,
       save_cell current_generated_forall_emissions,
       save_cell emitted_term_sorts,
@@ -5415,13 +6662,88 @@ local
       save_cell current_bag_helpers,
       save_cell current_collection_function_arguments
     ]
-    fun work () =
-      goal_to_SmtLib_aux_inner request apply_operator policy target
-        (emit_sequences andalso native_sequence_goal goal) goal
     fun restore () = restore_cells restorers
   in
-    Portable.finally restore work ()
+    Portable.finally restore
+      (fn () => (current_backend_installation := NONE;work ())) ()
   end
+
+  type backend_context_options =
+    {sequence_emission:bool,set_backend:set_backend,bag_backend:bag_backend,
+     has_set_terms:bool,has_bag_terms:bool}
+  type backend_snapshot =
+    {sequence_emission:bool,set_backend:set_backend,bag_backend:bag_backend,
+     generated_forall:bool,has_set_terms:bool,has_bag_terms:bool}
+  type backend_context =
+    {state:feature_state,snapshot:unit -> backend_snapshot,
+     translate_type:regime ->
+       (Type.hol_type,string) Redblackmap.dict * Type.hol_type ->
+       (Type.hol_type,string) Redblackmap.dict * (string list * string),
+     sort_of_type:regime -> (Type.hol_type,string) Redblackmap.dict ->
+       Type.hol_type -> string}
+
+  (* The store, dispatcher and metadata producer run inside one fixed
+     installation. No raw marker Terms are fabricated for graph syntax.
+     Returned scalar snapshots are DATA; guarded operations cannot escape
+     this installation or consult a later query's restored ambient state. *)
+  fun with_backend_context (options:backend_context_options)
+      (action:backend_context -> 'a) =
+    with_saved_translation_context (fn () =>
+      let
+        val {sequence_emission,set_backend,bag_backend,has_set_terms,
+             has_bag_terms} = options
+        val identity = ref ()
+        val _ = current_backend_installation := SOME identity
+        val _ = current_native_sequence_emission := sequence_emission
+        val _ = current_generated_forall_emissions := 0
+        val _ = emitted_term_sorts := []
+        val _ = current_set_backend := set_backend
+        val _ = current_set_terms := []
+        val _ = current_raw_num_terms := []
+        val _ = current_bag_backend := bag_backend
+        val _ = current_bag_terms := []
+        val _ = current_bag_helpers := []
+        val _ = current_collection_function_arguments := []
+        val active = ref true
+        fun live () =
+          if not (!active) then
+            raise ERR "backend_context" "backend installation expired"
+          else case !current_backend_installation of
+              SOME current => if Portable.pointer_eq (current,identity)
+                then () else raise ERR "backend_context"
+                  "backend installation suspended"
+            | NONE => raise ERR "backend_context"
+                "backend installation suspended"
+        fun observe thunk = (live ();thunk ())
+        val state : feature_state =
+          {generated_forall=fn () => observe
+             (fn () => !current_generated_forall_emissions > 0),
+           sequence_emission=fn () => observe (fn () => sequence_emission),
+           has_set_terms=fn () => observe (fn () => has_set_terms),
+           native_set_backend=fn () => observe
+             (fn () => set_backend=CVC5NativeSet),
+           has_bag_terms=fn () => observe (fn () => has_bag_terms),
+           native_bag_backend=fn () => observe
+             (fn () => bag_backend=CVC5NativeBag)}
+        fun snapshot () = observe (fn () =>
+          {sequence_emission=sequence_emission,set_backend=set_backend,
+           bag_backend=bag_backend,
+           generated_forall= !current_generated_forall_emissions > 0,
+           has_set_terms=has_set_terms,has_bag_terms=has_bag_terms})
+        val outcome = Exn.capture action
+          {state=state,snapshot=snapshot,
+           translate_type=fn regime => fn input =>
+             observe (fn () => translate_type regime input),
+           sort_of_type=fn regime => fn dictionary => fn ty =>
+             observe (fn () => smt_sort_of_type regime dictionary ty)}
+        val _ = active := false
+      in Exn.release outcome end)
+
+  fun goal_to_SmtLib_aux request apply_operator policy target
+      emit_sequences goal =
+    with_saved_translation_context (fn () =>
+      goal_to_SmtLib_aux_inner request apply_operator policy target
+        (emit_sequences andalso native_sequence_goal goal) goal)
 
   fun num_binder_to_int_once_conv tm =
   let
@@ -5463,62 +6785,11 @@ local
        Conv.TOP_DEPTH_CONV Thm.BETA_CONV) tm
     handle Conv.UNCHANGED => Thm.REFL tm
 
-  val exp_one_rewrites =
-  let
-    val th = Drule.SPEC_ALL arithmeticTheory.EXP_1
-  in
-    List.map Drule.GEN_ALL [Thm.CONJUNCT1 th, Thm.CONJUNCT2 th]
-  end
-
-  val INT_EXP_1 =
-  let
-    val i = Term.mk_var ("i", intSyntax.int_ty)
-    val th =
-      Thm.SPEC numSyntax.zero_tm
-        (Thm.SPEC i (Thm.CONJUNCT2 integerTheory.int_exp))
-  in
-    Drule.GEN_ALL
-      (simpLib.SIMP_RULE pureSimps.pure_ss
-        [Thm.CONJUNCT1 integerTheory.int_exp, integerTheory.INT_MUL_RID,
-         Conv.GSYM arithmeticTheory.ONE]
-        th)
-  end
-
-  val INT_EXP_BASE_1 =
-  let
-    val n = Term.mk_var ("n", numSyntax.num)
-    val one = numSyntax.mk_numeral Arbnum.one
-    val th = Thm.SPEC n (Thm.SPEC one integerTheory.INT_EXP)
-  in
-    Drule.GEN_ALL
-      (simpLib.SIMP_RULE pureSimps.pure_ss
-        [List.hd exp_one_rewrites, integerTheory.INT] th)
-  end
-
-  val INT_EXP_2 =
-  let
-    val i = Term.mk_var ("i", intSyntax.int_ty)
-    val one = numSyntax.mk_numeral Arbnum.one
-    val th =
-      Thm.SPEC one (Thm.SPEC i (Thm.CONJUNCT2 integerTheory.int_exp))
-  in
-    Drule.GEN_ALL
-      (simpLib.SIMP_RULE pureSimps.pure_ss
-         [INT_EXP_1, Conv.GSYM arithmeticTheory.TWO] th)
-  end
-
-  val INT_EXP_3 =
-  let
-    val i = Term.mk_var ("i", intSyntax.int_ty)
-    val two = numSyntax.mk_numeral (Arbnum.fromInt 2)
-    val th =
-      numLib.REDUCE_RULE
-        (Thm.SPEC two (Thm.SPEC i (Thm.CONJUNCT2 integerTheory.int_exp)))
-  in
-    Drule.GEN_ALL
-      (simpLib.SIMP_RULE pureSimps.pure_ss
-        [INT_EXP_2, integerTheory.INT_MUL_ASSOC] th)
-  end
+  val exp_one_rewrites = SmtLib_GraphNumericStock.exp_one_rewrites
+  val INT_EXP_1 = SmtLib_GraphNumericStock.INT_EXP_1
+  val INT_EXP_BASE_1 = SmtLib_GraphNumericStock.INT_EXP_BASE_1
+  val INT_EXP_2 = SmtLib_GraphNumericStock.INT_EXP_2
+  val INT_EXP_3 = SmtLib_GraphNumericStock.INT_EXP_3
 
   val REAL_POW_3 =
   let
@@ -5629,69 +6900,7 @@ local
        ]) tm
   end
 
-  val num_transfer_rewrites = [
-    HolSmtTheory.int_num_floor_total,
-    HolSmtTheory.int_num_ceiling_total,
-    HolSmtTheory.num_floor_to_int_eq,
-    HolSmtTheory.num_ceiling_to_int_eq,
-    HolSmtTheory.num_floor_nonpos,
-    HolSmtTheory.num_sub_assoc,
-    integerTheory.NUM_OF_INT,
-    integerTheory.Num_EQ_ABS,
-    integerTheory.INT_ABS,
-    (* Prefer the guarded cancellation when a transferred natural has its
-       standard non-negativity hypothesis; Num_EQ_ABS remains the total
-       fallback for genuinely unguarded integer-to-natural conversions. *)
-    HolSmtTheory.NUM_TO_INT_GUARDED,
-    intrealTheory.INT_NUM_FLOOR,
-    intrealTheory.INT_NUM_CEILING,
-    realTheory.NUM_CEILING_BASE,
-    (* Eliminate symbolic natural exponents whenever their real base makes
-       the result independent of the exponent or establishes its sign. *)
-    realTheory.POW_ONE,
-    realTheory.REAL_POW_LT,
-    (* These definitions can be introduced by ADD_THEOREMS_TAC after the
-       first transfer pass.  Keep the final pass in the SMT-LIB fragment
-       rather than serializing their quantified HOL definitions. *)
-    integerTheory.INT_MAX,
-    integerTheory.INT_MIN,
-    HolSmtTheory.real_div_smt_rdiv,
-    integerTheory.INT_POS,
-    Conv.GSYM integerTheory.INT_INJ,
-    Conv.GSYM integerTheory.INT_LE,
-    Conv.GSYM integerTheory.INT_LT,
-    Conv.GSYM integerTheory.INT_ADD,
-    Conv.GSYM integerTheory.INT_MUL
-  ] @ exp_one_rewrites @
-    (* These equations only match syntactic numerals.  Keeping both base and
-       step equations lets SIMP unfold every literal exponent, rather than
-       the historical 1/2/3 subset, while leaving symbolic exponents alone. *)
-    [Thm.CONJUNCT1 arithmeticTheory.EXP,
-     Thm.CONJUNCT2 arithmeticTheory.EXP,
-     Thm.CONJUNCT1 integerTheory.int_exp,
-     Thm.CONJUNCT2 integerTheory.int_exp] @ [
-    arithmeticTheory.ZERO_LT_EXP,
-    Conv.GSYM integerTheory.INT_EXP,
-    INT_EXP_1,
-    INT_EXP_BASE_1,
-    INT_EXP_2,
-    INT_EXP_3,
-    integerTheory.INT,
-    int_arithTheory.INT_NUM_SUB,
-    HolSmtTheory.INT_NUM_EDIV,
-    HolSmtTheory.INT_NUM_EMOD,
-    Conv.GSYM int_arithTheory.INT_NUM_DIVIDES,
-    int_arithTheory.INT_NUM_COND,
-    arithmeticTheory.GREATER_DEF,
-    arithmeticTheory.GREATER_EQ,
-    (* Rewrite inequalities against MAX before num-to-int transfer.  This
-       keeps tautological bounds such as [y <= MAX x y] out of the much more
-       expensive integer/absolute-value encoding. *)
-    Thm.CONJUNCT1 (Drule.SPEC_ALL arithmeticTheory.MAX_LE),
-    arithmeticTheory.MAX_DEF,
-    arithmeticTheory.MIN_DEF,
-    Drule.GEN_ALL (Thm.SYM intrealTheory.real_of_int_num)
-  ]
+  val num_transfer_rewrites = SmtLib_GraphNumericStock.rewrites
 
   fun NUM_TO_INT_CONV tm =
     Conv.THENC
@@ -6692,78 +7901,7 @@ local
   val SPEC_NUM_FREE_VARS_TAC =
     SPEC_NUM_FREE_VARS_TAC_EXCEPT (fn _ => false)
 
-  local
-    structure A = arithmeticTheory
-    structure I = integerTheory
-    structure IR = intrealTheory
-    structure R = realTheory
-    structure RA = realaxTheory
-  in
-    fun thms_per_const const =
-    let
-      val { Thy, Name, Ty } = Term.dest_thy_const const
-      val bool = Type.bool
-      val num = numSyntax.num
-      val op--> = Type.-->
-      infixr 3 -->
-    in
-      (* NOTE: when adding a theorem to the list below, make sure that it
-         doesn't have any free var -- otherwise, ASSUME_TAC will specialize
-         the theorem to any free var in the goal that happens to have the same
-         name, which very often is not what is desired. As an example,
-         integerTheory's `INT_POW` should not be added -- instead, add
-         `int_exp`. If no appropriate quantified theorem is available,
-         `Drule.GEN_ALL` can be used to quantify all free vars in a theorem.
-
-         Also, make sure the theorem is really needed -- some theorems seem to
-         cause an explosion in the time needed to solve some goals, often
-         making Z3 unable to solve them -- and it's not always easy to tell a
-         priori which ones do. As an example, arithmeticTheory.EXP_1 doesn't
-         seem to cause issues, but EXP_2 prevents Z3 from solving
-         ``x DIV 42 <= x``. *)
-      case (Thy, Name) of
-        ("arithmetic", "*") => []
-      | ("arithmetic", "+") => []
-      | ("arithmetic", "-") => []
-      | ("arithmetic", "<=") => []
-      | ("arithmetic", ">") => []
-      | ("arithmetic", ">=") => []
-      | ("arithmetic", "DIV") => []
-      | ("arithmetic", "EXP") => []
-      | ("arithmetic", "MAX") => []
-      | ("arithmetic", "MIN") => []
-      | ("arithmetic", "MOD") => []
-      | ("integer", "Num") => []
-      | ("integer", "int_div") => [ I.INT_DIV_EDIV ]
-      | ("integer", "int_exp") => [ I.int_exp ]
-      | ("integer", "int_max") => [ I.INT_MAX ]
-      | ("integer", "int_min") => [ I.INT_MIN ]
-      | ("integer", "int_mod") => [ I.INT_MOD_EMOD ]
-      | ("integer", "int_of_num") => []
-      | ("integer", "int_quot") => [ I.INT_QUOT_EDIV ]
-      | ("integer", "int_rem") => [ I.INT_REM_EMOD ]
-      | ("intreal", "INT_CEILING") => []
-      | ("marker", "Abbrev") => [ markerTheory.Abbrev_def ]
-      | ("min", "=") =>
-          if Type.compare (Ty, num --> num --> bool) = EQUAL then
-            []
-          else
-            []
-      | ("num", "SUC") => []
-      | ("prim_rec", "<") => []
-      | ("realax", "/") => [ HolSmtTheory.real_div_smt_rdiv ]
-      | ("realax", "NUM_CEILING") => [ IR.INT_NUM_CEILING, R.NUM_CEILING_BASE ]
-      | ("realax", "NUM_FLOOR") => [ IR.INT_NUM_FLOOR, R.NUM_FLOOR_BASE ]
-      | ("realax", "abs") => [ R.abs ]
-      | ("realax", "inv") => [ R.REAL_INV_1OVER ]
-      | ("realax", "max") => [ RA.real_max ]
-      | ("realax", "min") => [ RA.real_min ]
-      | ("realax", "pow") => [ R.POW_2, R.POW_ONE, R.REAL_POW_LT, RA.real_pow ]
-      | ("realax", "real_of_num") =>
-          [ Drule.GEN_ALL (Thm.SYM IR.real_of_int_num) ]
-      | _ => []
-    end
-  end
+  val thms_per_const = SmtLib_GraphNumericStock.for_head
 
   (* Prepends the conclusion of a theorem to the list of its hypothesis and
      returns the resulting list of terms *)
@@ -6836,6 +7974,154 @@ in
   fun translation_logic ({logic, ...} : translation) = logic
   fun translation_regime ({regime, ...} : translation) = regime
   fun translation_records ({records, ...} : translation) = records ()
+
+  (* The immutable Task06 view, also used by bounded checked adapters. *)
+  val replay_datatype_destructor_theorems = datatype_destructor_theorems
+
+  val outbound_type_declaration_records = type_declaration_records
+  val outbound_term_declaration_text = term_declaration_text
+  type 'term outbound_term_declaration_operations =
+    'term term_declaration_operations
+  val outbound_term_declaration_metadata = term_declaration_metadata_with
+  val outbound_term_declaration_operations = term_declaration_operations
+  val outbound_advanced_encoding_records =
+    advanced_encoding_records_with_presence
+  type 'term outbound_string_presence_operations =
+    'term string_presence_operations
+  val outbound_string_presence = string_presence_with
+  val outbound_term_string_presence_operations =
+    term_string_presence_operations
+  val outbound_native_string_presence = native_string_presence
+
+  (* Graph query analysis supplies an actual constant leaf here. Use the
+     same generic declaration rank as emission: an instantiated result type
+     can itself be a function without increasing that constant's rank. *)
+  val outbound_constant_arity = declared_const_arity
+
+  datatype outbound_regime_request = datatype regime_request
+  type 'term outbound_regime_operations = 'term regime_operations
+  val outbound_goal_ho_reason = goal_ho_reason_with
+  val outbound_select_regime = select_regime_with
+  val outbound_term_regime_operations = term_regime_operations
+
+  datatype outbound_set_backend = datatype set_backend
+  datatype outbound_bag_backend = datatype bag_backend
+  datatype outbound_backend_view = datatype backend_view
+  type 'term outbound_backend_selection_operations =
+    'term backend_selection_operations
+  datatype outbound_finite_family = datatype finite_family
+  datatype outbound_finite_branch = datatype finite_branch
+  type 'term outbound_finite_report = 'term finite_report
+  val outbound_backend_selection_with_finite_trace =
+    backend_selection_with_finite_trace
+  val outbound_backend_selection = backend_selection_with
+  val outbound_term_backend_selection_operations =
+    term_backend_selection_operations
+  type outbound_backend_context_options = backend_context_options
+  type outbound_backend_snapshot = backend_snapshot
+  type outbound_backend_context = backend_context
+  val outbound_with_backend_context = with_backend_context
+
+  exception NestedTranslation = NestedTranslation
+
+  datatype outbound_carrier_parser_case = datatype carrier_parser_case
+  type 'term outbound_term_translation_operations =
+    'term term_translation_operations
+  type ('term, 'bounds, 'terms, 'key) outbound_term_store_operations =
+    ('term, 'bounds, 'terms, 'key) carrier_term_store_operations
+  val outbound_term_translation_operations = term_translation_operations
+  val outbound_term_store_operations = legacy_term_store_operations
+  type 'doc outbound_output_operations = 'doc output_operations
+  val outbound_string_output_operations = string_output_operations
+  val outbound_select_logic = outbound_select_logic
+  val outbound_query_script = outbound_query_script
+  val outbound_query_tail = outbound_query_tail
+  val outbound_translate_term_step_with_output =
+    translate_term_step_with_output
+  val outbound_translate_term_step_with_scoped_output =
+    translate_term_step_with_scoped_output
+  val outbound_translate_term_step_with_lexical_output =
+    translate_term_step_with_lexical_output
+  val outbound_translate_term_step = translate_term_step_with_carrier
+
+  type 'term outbound_carrier_literal_operations =
+    'term literal_recognition_operations
+  type 'term outbound_carrier_literal_recognizers = 'term literal_recognizers
+  val outbound_carrier_literal_recognizers = carrier_literal_recognizers_with
+  val outbound_term_carrier_literal_operations =
+    term_literal_recognition_operations
+
+  val outbound_term_carrier_literal_recognizers = term_literal_recognizers
+
+  type 'term outbound_native_datatype_policy_operations =
+    'term native_datatype_policy_operations
+  type 'term outbound_native_datatype_policy = 'term native_datatype_policy
+  val outbound_native_datatype_policy = native_datatype_policy_with
+  val outbound_term_native_datatype_policy_operations =
+    term_native_datatype_policy_operations
+
+  type 'term outbound_carrier_residual_operations =
+    'term carrier_residual_operations
+  val outbound_carrier_residual =
+    closed_constructor_destructor_residual_with
+  val outbound_term_carrier_residual_operations =
+    term_carrier_residual_operations
+  val outbound_term_carrier_residual =
+    closed_constructor_destructor_residual
+
+  type 'term outbound_builtin_operations = 'term builtin_operations
+  val outbound_term_builtin_operations = term_builtin_operations
+  val outbound_builtin_symbol_encodings = builtin_symbol_encodings_with
+
+  type 'term outbound_collection_recognition_operations =
+    'term collection_recognition_operations
+  type 'term outbound_collection_recognizers = 'term collection_recognizers
+  val outbound_collection_recognizers = collection_recognizers_with
+  type outbound_feature_state = feature_state
+  type 'term outbound_feature_operations = 'term feature_operations
+  val outbound_feature_analysis = feature_analysis_with
+  val outbound_term_feature_operations = term_feature_operations
+  val outbound_infer_features = infer_features
+  val outbound_infer_features_with_state = infer_features_with_state
+
+  type 'term outbound_sequence_eligibility_operations =
+    'term sequence_eligibility_operations
+  val outbound_sequence_eligibility = sequence_eligibility_with
+  val outbound_native_sequence_goal = native_sequence_goal
+  val outbound_term_collection_recognition_operations =
+    term_collection_recognition_operations
+  val outbound_is_native_set_head = is_native_set_head
+  val outbound_is_native_sequence_type = is_native_sequence_type
+
+  datatype outbound_native_candidate = datatype native_candidate
+  type 'term outbound_native_dispatch_operations =
+    'term native_dispatch_operations
+  val outbound_native_dispatch = native_dispatch_with
+
+  (* Carrier callbacks preserve the existing ordered native head registry.
+     Only the caller's syntax and type observations vary with the carrier. *)
+  val outbound_set_marker_role = classify_set_marker_with
+  val outbound_bag_marker_role = classify_bag_marker_with
+  val outbound_is_set_type = is_set_result_type
+  val outbound_is_bag_type = bagSyntax.is_bag_ty
+
+  fun outbound_collection_markers (assumptions, goal) =
+    collect_query_collection_markers (goal :: assumptions)
+
+  val outbound_is_integer_coercion = #is_integer_coercion raw_num_operations
+  val outbound_is_num_head = #is_num_head raw_num_operations
+  val outbound_is_bag_card_head = #is_bag_card_head raw_num_operations
+  val outbound_number_type = #number_type raw_num_operations
+
+  fun outbound_raw_number_markers (assumptions, goal) =
+    let
+      val roots = goal :: assumptions
+      val {bags, ...} = collect_query_collection_markers roots
+    in SmtLib_RawNumAnalysis.collect raw_num_operations bags roots end
+
+  fun outbound_pair_constant (left, right) =
+    Term.inst [{redex = Type.alpha, residue = left},
+               {redex = Type.beta, residue = right}] pairSyntax.comma_tm
 
   (* Solver command policies consume the feature scan recorded for this exact
      HOL translation, rather than trying to recognize syntax in printed
@@ -6922,6 +8208,33 @@ in
 
   fun translation_dicts ({tydict, tmdict, ...} : translation) = (tydict, tmdict)
   val parser_dicts_for_translation = parser_dicts_for_translation_aux NONE
+  val parser_datatype_term_dictionary_from_types =
+    parser_datatype_term_dictionary_from_types
+
+  (* Graph parsers retain these exact TypeBase declarations and emitted
+     spellings. Testers/selectors may only be called with admitted schematic
+     operands by a graph adapter; their case branches contain local binders. *)
+  type parser_datatype_constructor =
+    {constructor : Term.term, token : string,
+     selectors : (string * Type.hol_type) list}
+  type parser_datatype_declaration =
+    {hol_type : Type.hol_type,
+     constructors : parser_datatype_constructor list}
+  fun parser_datatype_declarations_from_types tydict
+      : parser_datatype_declaration list =
+    Redblackmap.foldl (fn (ty, name, declarations) =>
+      case datatype_family ty of NONE => declarations
+      | SOME _ =>
+          {hol_type = ty, constructors = List.map
+            (fn (constructor, token, selectors) =>
+              {constructor = constructor, token = token,
+               selectors = selectors})
+            (datatype_constructor_infos ty name)} :: declarations)
+      [] tydict
+  fun parser_datatype_declarations ({tydict,...}:translation) =
+    parser_datatype_declarations_from_types tydict
+  val parser_datatype_tester_template = datatype_tester_term
+  val parser_datatype_selector_template = datatype_selector_term
   fun parser_dicts_for_solver_translation solver =
     parser_dicts_for_translation_aux (SOME solver)
   fun infer_logic_from_features features =
@@ -6931,6 +8244,25 @@ in
   val goal_requires_ho = goal_requires_ho_aux
   fun regime_for_goal dialect goal =
     select_regime (AutomaticRegime dialect) goal
+
+  local
+    fun ignore sequence_emission head = not sequence_emission andalso
+      List.exists (fn sequence_head => Term.same_const head sequence_head
+        handle Feedback.HOL_ERR _ => false)
+        [smt_seq_update_tm,smt_seq_replace_all_tm,seq_lupdate_tm,
+         seq_reverse_tm,seq_map_tm,seq_foldl_tm]
+  in
+    (* The fixed Seq decision belongs to the caller's emission context.
+       The registry, version matching and diagnostic order remain shared. *)
+    fun outbound_check_operator_availability {sequence_emission} target
+        occurs =
+      check_operator_availability_unless (ignore sequence_emission)
+        occurs target
+    fun check_goal_operator_availability_for_sequence sequence_emission
+        target goal =
+      check_goal_operator_availability_unless (ignore sequence_emission)
+        target goal
+  end
 
   fun option_logic_policy logic
       ({features, inferred_logic, reason} : {
@@ -6948,6 +8280,21 @@ in
     target : {solver : string, version : string option} option
   }
 
+  (* The same head/first-argument grammar rejects intensional RegLan
+     equality before either native or graph serialization. *)
+  fun outbound_check_reglan_equality {strip_comb,known_const_matches,type_of}
+      current =
+    let val (head,arguments) = strip_comb current in
+      case arguments of left::_ =>
+        if known_const_matches boolSyntax.equality head andalso
+            same_type (type_of left,reglan_ty) then
+          raise ERR "reject_reglan_hol_equalities"
+            ("HOL equality on smtstring$reglan is intensional; " ^
+             "SMT-LIB RegLan equality is language equivalence")
+        else ()
+      | [] => ()
+    end
+
   fun reject_reglan_hol_equalities (assumptions, conclusion) =
     let
       fun children term pending =
@@ -6963,17 +8310,10 @@ in
             else
               let
                 val seen = HOLset.add (seen, term)
-                val (head, arguments) = boolSyntax.strip_comb term
-                val _ =
-                  case arguments of
-                    left :: _ =>
-                      if same_const head boolSyntax.equality andalso
-                         same_type (Term.type_of left, reglan_ty) then
-                        raise ERR "reject_reglan_hol_equalities"
-                          ("HOL equality on smtstring$reglan is intensional; " ^
-                           "SMT-LIB RegLan equality is language equivalence")
-                      else ()
-                  | [] => ()
+                val _ = outbound_check_reglan_equality
+                  {strip_comb=boolSyntax.strip_comb,type_of=Term.type_of,
+                   known_const_matches=fn expected => fn actual =>
+                     same_const actual expected} term
               in
                 visit seen (children term pending)
               end
@@ -6986,8 +8326,7 @@ in
       goal =
     let
       val _ = reject_reglan_hol_equalities goal
-      val tail =
-        if get_proof then ["(get-proof)\n", "(exit)\n"] else ["(exit)\n"]
+      val tail = outbound_query_tail string_output_operations get_proof
     in
       Lib.apsnd (fn xs => xs @ tail)
         (goal_to_SmtLib_aux request apply_operator policy target
@@ -7054,16 +8393,8 @@ in
           case target of
             NONE => ()
           | SOME solver_target =>
-              if native_sequence_goal goal then
-                check_goal_operator_availability solver_target goal
-              else
-                check_goal_operator_availability_unless
-                  (fn head => List.exists (fn sequence_head =>
-                    Term.same_const head sequence_head
-                    handle Feedback.HOL_ERR _ => false)
-                    [smt_seq_update_tm, smt_seq_replace_all_tm, seq_lupdate_tm,
-                     seq_reverse_tm, seq_map_tm, seq_foldl_tm])
-                  solver_target goal
+              check_goal_operator_availability_for_sequence
+                (native_sequence_goal goal) solver_target goal
       in
         goal_to_SmtLib_translation_gen
           (emit_options [with_request (AutomaticRegime dialect),
@@ -7194,7 +8525,7 @@ in
     reject_unsupported_smtfloat_constant
   fun datatype_destructor_theorems_for_test ty =
     case TypeBase.fetch ty of
-      SOME tyinfo => TypeBasePure.destructors_of tyinfo
+      SOME tyinfo => datatype_destructor_theorems tyinfo
     | NONE => []
   val datatype_destructor_head_for_test = datatype_destructor_head
   val datatype_destructor_case_for_test = datatype_destructor_case
@@ -7359,6 +8690,24 @@ in
     Tactical.THEN
       (Tactic.RULE_ASSUM_TAC (Conv.CONV_RULE DATATYPE_TO_SMT_CONV),
        Tactic.CONV_TAC DATATYPE_TO_SMT_CONV)
+
+  (* Exact stock theorem selector for checked graph preprocessing. Unlike
+     get_thms this does not run a recursive expanded CONV_RULE pipeline.
+     The caller must admit original constructor/type and each returned law;
+     selector-internal fixed theorem operations remain explicit prerequisites. *)
+  val graph_preprocessing_theorems_for_head = thms_per_const
+
+  (* Ordered ordinary stages, including the unlabelled conversion passes.
+     This is an inventory, not an implementation or a completion flag. *)
+  fun graph_preprocessing_stage_inventory z3 =
+    ["hol-string","native-float","real-pow-positive","num-algebra",
+     "num-to-int-1","let-simp","real-pow-numeral","polymorphic-simp",
+     "real-div-simp","refl-simp","function-equality","word-simp",
+     "set-simp","int-divides-assumptions","int-divides-goal","beta",
+     "num-to-int-2","add-theorems","cleanup-assumptions-1",
+     "num-to-int-3","cleanup-assumptions-2","datatype-to-smt"] @
+    (if z3 then ["z3-assertion-roundtrip-assumptions",
+                 "z3-assertion-roundtrip-goal"] else [])
 
   (* This tactic calls ASSUME_TAC on theorems that are deemed necessary for SMT
      solvers to solve the goal (but only if `include_theorems` is true) *)
