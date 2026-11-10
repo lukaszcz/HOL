@@ -383,7 +383,7 @@ val graph_expect_thm = expect_thm
        ladder; cvc5 supplies the native checked Bag certificate. *)
     (``BAG_IN (x : bool) (BAG_INSERT y EMPTY_BAG) <=> x = y``, [thm_CVCp]),
     (``(smt_set_of (a : 'a) = (s : 'b set)) /\ (a = b) ==>
-        (s = smt_set_of b)``, [thm_Z3p, thm_CVCp]),
+        (s = smt_set_of b)``, [thm_Z3p_v4, thm_CVCp]),
 
     (``F``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
     (``p = (p:bool)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
