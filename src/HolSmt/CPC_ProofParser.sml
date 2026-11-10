@@ -1803,7 +1803,8 @@ local
                   if List.null arguments then
                     raise ERR "parse_term"
                       "CPC `_` application expects an argument"
-                  else Term.list_mk_comb (function, arguments)
+                  else SmtLib_Parser.apply_term (Lib.snd (!dicts_ref))
+                    "@" [] (function :: arguments)
               | [] => raise ERR "parse_term"
                   "CPC `_` application expects a function"
             end
@@ -4833,7 +4834,8 @@ in
       fun marker frame token indices args =
         let
           val ty = case (token, indices, args) of
-              ("BitVec", [bits], []) =>
+              ("Int", [], []) => intSyntax.int_ty
+            | ("BitVec", [bits], []) =>
                 wordsSyntax.mk_word_type (fcpLib.index_type (index bits))
             | ("FloatingPoint", [eb, sb], []) =>
                 SmtLib_Theories.smtfp_type (index eb, index sb)
@@ -4896,7 +4898,7 @@ in
         (#add_constructor_parser terms) (name, arithmetic)) totals
       val _ = List.app (fn name =>
         (#add_constructor_parser terms) (name, marker))
-        ["BitVec", "FloatingPoint", "->"]
+        ["Int", "BitVec", "FloatingPoint", "->"]
       val _ = List.app (fn name =>
         (#add_constructor_parser terms) (name, private_fp))
         ["@fp.SIGN", "@fp.EXPONENT", "@fp.SIGNIFICAND", "@fp.ZERO",
@@ -5885,7 +5887,8 @@ in
       fun marker frame token indices args =
         let
           val ty = case (token, indices, args) of
-              ("BitVec", [bits], []) =>
+              ("Int", [], []) => intSyntax.int_ty
+            | ("BitVec", [bits], []) =>
                 wordsSyntax.mk_word_type (fcpLib.index_type (index bits))
             | ("FloatingPoint", [eb, sb], []) =>
                 SmtLib_Theories.smtfp_type (index eb, index sb)
@@ -5948,7 +5951,7 @@ in
         (#add_constructor_parser terms) (name, arithmetic)) totals
       val _ = List.app (fn name =>
         (#add_constructor_parser terms) (name, marker))
-        ["BitVec", "FloatingPoint", "->"]
+        ["Int", "BitVec", "FloatingPoint", "->"]
       val _ = List.app (fn name =>
         (#add_constructor_parser terms) (name, private_fp))
         ["@fp.SIGN", "@fp.EXPONENT", "@fp.SIGNIFICAND", "@fp.ZERO",
