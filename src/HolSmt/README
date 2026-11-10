@@ -174,6 +174,11 @@ finite `set.*`/`bag.*` and its cvc5-only sequence operations.  In particular,
 `seq.fold_left` is unavailable on Z3 4.11.2 and available from 4.12.4 (it is
 a parser-side alias only: the printer always emits `seq.foldl`).
 
+In cvc5's Array fallback, collection carriers propagate through conditionals,
+let bindings, and shared function arguments and results. Array-valued datatype
+selectors use unary uninterpreted functions, and constructors with Array-valued
+arguments use the UF abstraction. Checked replay reconstructs the HOL selectors.
+
 Z3 4.14.1 rejects `Array` under seven non-QF logic names that HolSmt can infer:
 `ALIRA`, `ANIA`, `ANIRA`, `AUFDTLIA`, `AUFDTLIRA`, `AUFDTNIRA`, and
 `AUFBVDT`.  For every discovered 4.14.* patch version, HolSmt therefore widens

@@ -7405,12 +7405,34 @@ let
     let
       val (simplified, _) =
         SolverSpec.simplify (SmtLib.CVC_SIMP_TAC checked) goal
-      val text = String.concat
-        (Lib.snd (CVC.goal_to_SmtLib_translation simplified))
+      val (translation, strings) =
+        CVC.goal_to_SmtLib_translation simplified
+      val text = String.concat strings
     in
       ignore (SmtLib_Parser.typecheck_script_string_with_options
         {dict_logic = NONE, solver = SOME "cvc5",
-         elaborate_datatypes = false} text)
+         elaborate_datatypes = false} text);
+      if String.isPrefix "conditional " name then
+        let
+          val selectors = HolKernel.find_terms (fn tm =>
+            TypeBase.is_case tm andalso not (boolSyntax.is_cond tm) andalso
+            Type.compare (Term.type_of tm,
+              Type.--> (intSyntax.int_ty, Type.bool)) = EQUAL)
+            (Lib.snd simplified)
+          val dicts = SmtLib.parser_dicts_for_solver_translation
+            "cvc5" translation
+          val parsed = List.map (fn text =>
+            parse_roundtrip_term name text dicts)
+            (List.mapPartial assert_body strings)
+        in
+          assert (not (List.null selectors),
+            name ^ ": normalized selector was not exercised");
+          List.app (fn selector =>
+            assert (List.exists
+              (term_has_subterm (Term.aconv selector)) parsed,
+              name ^ ": parser lost the normalized selector")) selectors
+        end
+      else ()
       handle Feedback.HOL_ERR holerr =>
         die (name ^ ": cvc5 sorts are inconsistent:\n" ^ text ^ "\n" ^
           Feedback.message_of holerr)
@@ -7423,11 +7445,27 @@ let
   val selector =
     ([``(a:int) IN r.smt_set``, ``(r:smt_set_rec) = q``],
      ``(a:int) IN q.smt_set``)
+  val conditional_selector =
+    ([], ``(if p then r.smt_set else {}) = (s:int -> bool)``)
+  val conditional_consumer =
+    ([``(P:(int -> bool) -> bool) r.smt_set``],
+     ``(P:(int -> bool) -> bool) (if p then r.smt_set else {})``)
+  val shared_result =
+    ([``(P:(int -> bool) -> bool) ((f:int -> int -> bool) x)``,
+      ``(R:(int -> bool) -> bool) ((f:int -> int -> bool) y)``],
+     ``(P:(int -> bool) -> bool) {}``)
 in
   List.app (typechecks true)
     [("singleton", singleton), ("conditional", conditional),
-     ("selector", selector)];
-  typechecks false ("selector", selector)
+     ("selector", selector),
+     ("conditional selector", conditional_selector),
+     ("conditional consumer", conditional_consumer),
+     ("shared result", shared_result)];
+  List.app (typechecks false)
+    [("selector", selector),
+     ("conditional selector", conditional_selector),
+     ("conditional consumer", conditional_consumer),
+     ("shared result", shared_result)]
 end
 
 fun smtlib_native_set_translation_success () =

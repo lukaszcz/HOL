@@ -1111,13 +1111,25 @@ local
        back to the corresponding binding value. *)
     val terms =
       (let
-         val (bindings, _) = pairSyntax.dest_anylet tm
+         val (bindings, body) = pairSyntax.dest_anylet tm
+         val terms =
+           if mem_aconv tm terms orelse mem_aconv body terms then
+             collect_set tm (collect_set body terms)
+           else terms
        in
          List.foldl (fn ((variable, value), acc) =>
-           if mem_aconv variable acc then collect_set value acc else acc)
+           if mem_aconv variable acc orelse mem_aconv value acc then
+             collect_set variable (collect_set value acc)
+           else acc)
            terms bindings
        end
        handle Feedback.HOL_ERR _ => terms)
+    val terms =
+      case Lib.total boolSyntax.dest_cond tm of
+        SOME (_, left, right) =>
+          if List.exists (fn t => mem_aconv t terms) [tm, left, right]
+          then collect_set tm terms else terms
+      | NONE => terms
   in
     if same_const rator pred_setSyntax.in_tm then
       (case rands of [_, set] => collect_set set terms | _ => terms)
@@ -1442,6 +1454,26 @@ local
          collect_native_bag_terms immediate_rator terms
        end
        handle Feedback.HOL_ERR _ => terms)
+    val terms =
+      (let
+         val (bindings, body) = pairSyntax.dest_anylet tm
+         val terms =
+           if mem_aconv tm terms orelse mem_aconv body terms then
+             collect_bag tm (collect_bag body terms)
+           else terms
+       in
+         List.foldl (fn ((variable, value), acc) =>
+           if mem_aconv variable acc orelse mem_aconv value acc then
+             collect_bag variable (collect_bag value acc)
+           else acc) terms bindings
+       end
+       handle Feedback.HOL_ERR _ => terms)
+    val terms =
+      case Lib.total boolSyntax.dest_cond tm of
+        SOME (_, left, right) =>
+          if List.exists (fn t => mem_aconv t terms) [tm, left, right]
+          then collect_bag tm terms else terms
+      | NONE => terms
     fun binary () =
       case rands of [left, right] =>
         collect_bag tm (collect_bag left (collect_bag right terms))
@@ -1565,6 +1597,80 @@ local
   val smtstr_rev_tm = smtstring_const "smtstr_rev"
   val z3_seq_nth_i_tm =
     Term.prim_mk_const {Thy = "smtstringz3", Name = "seq_nth_i"}
+
+  val native_sequence_heads = [
+    seq_append_tm, seq_cons_tm, seq_reverse_tm, seq_prefix_tm,
+    seq_lupdate_tm, seq_map_tm, seq_foldl_tm, seq_contains_tm,
+    seq_suffix_tm, smt_seq_nth_tm, smt_seq_extract_tm, smt_seq_at_tm,
+    smt_seq_indexof_tm, smt_seq_replace_tm, smt_seq_replace_all_tm,
+    smt_seq_update_tm]
+
+  (* One symbol has one domain and range sort at every call site. A branch
+     or a shared argument can expose another conditional or let binding. *)
+  fun close_collection_terms collect add roots =
+    let
+      fun insert key tm groups =
+        let
+          val previous =
+            case Redblackmap.peek (groups, key) of
+              SOME previous => previous
+            | NONE => []
+        in Redblackmap.insert (groups, key, tm :: previous) end
+      fun case_head head =
+        let
+          val (domain, _) = Type.dom_rng (Term.type_of head)
+        in
+          case TypeBase.fetch domain of
+            SOME info => same_const head (TypeBasePure.case_const_of info)
+          | NONE => false
+        end
+        handle Feedback.HOL_ERR _ => false
+      fun applications (tm, (arguments, results)) =
+        let
+          val (head, args) = boolSyntax.strip_comb tm
+          fun argument (arg, (index, groups)) =
+            (index + 1, insert (head, index) arg groups)
+          val builtin = Term.is_const head andalso
+            let val {Thy, Name, ...} = Term.dest_thy_const head in
+              Redblackset.member (builtin_const_names, (Thy, Name))
+            end
+        in
+          if (Term.is_var head orelse Term.is_const head) andalso
+             not (builtin orelse case_head head orelse
+                  List.exists (same_const head)
+                    (seq_length_tm :: native_sequence_heads) orelse
+                  same_const head boolSyntax.conditional orelse
+                  same_const head boolSyntax.equality orelse
+                  same_const head boolSyntax.let_tm orelse
+                  is_native_set_head head orelse is_native_bag_head head)
+          then (Lib.snd (List.foldl argument (0, arguments) args),
+                insert (head, List.length args) tm results)
+          else (arguments, results)
+        end
+      fun empty () =
+        Redblackmap.mkDict (Lib.pair_compare (Term.compare, Int.compare))
+      val (arguments, results) = List.foldl applications (empty (), empty ())
+        (List.concat (List.map Library.subterms roots))
+      fun spread groups terms = Redblackmap.foldl (fn (_, args, acc) =>
+        if List.exists (fn arg => mem_aconv arg acc) args then
+          List.foldl (fn (arg, acc) => add arg acc) acc args
+        else acc) terms groups
+      fun close terms =
+        let
+          val next = List.foldl
+            (fn (tm, acc) => collect tm acc) terms roots
+          val next = spread results (spread arguments next)
+        in
+          if List.length next = List.length terms then next else close next
+        end
+      val terms = close []
+      val parameters = Redblackmap.foldl (fn ((head, index), args, acc) =>
+        case List.find (fn arg => mem_aconv arg terms) args of
+          SOME arg => (head, index, arg) :: acc
+        | NONE => acc) [] arguments
+    in
+      (terms, parameters)
+    end
 
   (* The parser represents String [seq.nth] with an explicit negative-index
      branch, since its out-of-range value is unspecified.  Recover the
@@ -3076,7 +3182,10 @@ local
           Redblackmap.insert (dict, s, [Lib.K (SmtLib_Theories.zero_args
             (fn args =>
               if accepted_arity args then
-                Term.list_mk_comb (tm, args)
+                List.foldl (fn (arg, function) =>
+                  if Term.is_abs function then
+                    Term.beta_conv (Term.mk_comb (function, arg))
+                  else Term.mk_comb (function, arg)) tm args
               else
                 SmtLib_Theories.decline ("<" ^ s ^ ">")
                   "wrong number of arguments"))])
@@ -3498,13 +3607,7 @@ local
       Option.isSome (Lib.total dest_string_nth_shape tm) orelse
       Option.isSome (Lib.total dest_seq_extract_shape tm) orelse
       Option.isSome (Lib.total dest_seq_at_shape tm) orelse
-      List.exists (fn head => same_const rator head) [
-        seq_append_tm, seq_cons_tm, seq_reverse_tm,
-        seq_prefix_tm, seq_lupdate_tm, seq_map_tm, seq_foldl_tm,
-        seq_contains_tm, seq_suffix_tm,
-        smt_seq_nth_tm,
-        smt_seq_extract_tm, smt_seq_at_tm, smt_seq_indexof_tm,
-        smt_seq_replace_tm, smt_seq_replace_all_tm, smt_seq_update_tm])
+      List.exists (same_const rator) native_sequence_heads)
     fun native_sequence_builtin (rator, rands) =
       let
         fun translate_args_from start args =
@@ -4167,6 +4270,8 @@ local
     fun translate_constructor_application acc rator rands =
       let
         val _ = TypeBase.is_constructor rator
+        val _ = not (List.exists array_collection rands) orelse
+          raise ERR "translate_term" "Array-valued constructor argument"
         val (doms, data_ty) = boolSyntax.strip_fun (Term.type_of rator)
         val _ = not (datatype_translation_excluded data_ty) orelse
           raise ERR "translate_term" "excluded datatype constructor"
@@ -4204,11 +4309,37 @@ local
             SOME (_, _, selectors) =>
               Lib.fst (List.nth (selectors, selector_index))
           | NONE => raise ERR "translate_term" "selector constructor missing"
+        val (tydict, (sortdecls, result_sort)) =
+          if array_collection tm then
+            if is_marked_set_term tm then selected_set_sort tydict tm
+            else selected_bag_sort tydict tm
+          else (tydict, ([], ""))
+        val variable = Term.genvar data_ty
+        val selector = Term.mk_abs (variable,
+          datatype_selector_term data_ty constructor selector_index variable)
+        val key = (selector, 1)
+        val (tmdict, selector_decls, selector_name) =
+          if array_collection tm then
+            case Redblackmap.peek (tmdict, key) of
+              SOME name => (tmdict, [], name)
+            | NONE =>
+                let
+                  val name = tm_prefix ^
+                    Int.toString (Redblackmap.numItems tmdict)
+                  val _ = record_emitted_term_sorts key
+                    ([type_name], result_sort)
+                in
+                  (Redblackmap.insert (tmdict, key, name),
+                   [term_declaration_text regime name [type_name] result_sort],
+                   name)
+                end
+          else (tmdict, [], selector_name)
         val acc = (tydict, tmdict)
         val (acc, (elemdecls, elemname)) =
           translate_term regime apply_operator (acc, (bounds, scrutinee))
       in
-        (acc, (typedecls @ elemdecls, sexpr selector_name [elemname]))
+        (acc, (typedecls @ sortdecls @ selector_decls @ elemdecls,
+          sexpr selector_name [elemname]))
       end
     fun translate_tester_case acc =
       let
@@ -4976,10 +5107,10 @@ local
     val _ = current_native_sequence_emission := emit_sequences
     val _ = current_generated_forall_emissions := 0
     val _ = emitted_term_sorts := []
-    val set_terms = List.foldl (fn (term, acc) =>
-      collect_native_set_terms term acc) [] (t :: original_ts)
-    val bag_terms = List.foldl (fn (term, acc) =>
-      collect_native_bag_terms term acc) [] (t :: original_ts)
+    val (set_terms, set_parameters) = close_collection_terms
+      collect_native_set_terms add_set_term (t :: original_ts)
+    val (bag_terms, bag_parameters) = close_collection_terms
+      collect_native_bag_terms add_bag_term (t :: original_ts)
     (* Num is an Int-valued SMT abs only beneath its integer coercion.  In an
        opaque HOL-num position it must remain an uninterpreted function. *)
     fun raw_num_terms term =
@@ -5178,6 +5309,7 @@ local
     val _ = current_bag_backend := bag_backend
     val _ = current_bag_terms := bag_terms
     val _ = current_collection_function_arguments :=
+      set_parameters @ bag_parameters @
       computed_set_applications @ computed_bag_applications
     val _ = current_bag_helpers := []
     (* FINITE hypotheses are the evidence selecting cvc5's finite Set/Bag
