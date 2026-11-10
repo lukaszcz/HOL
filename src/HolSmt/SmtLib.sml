@@ -7337,7 +7337,8 @@ in
   fun NUM_TO_INT_TAC_EXCEPT exclude g =
   let
     open Tactic Tactical
-    val undisch_assums = MAP_EVERY UNDISCH_TAC (#1 g)
+    val undisch_assums =
+      MAP_EVERY UNDISCH_TAC (Lib.op_mk_set Term.term_eq (#1 g))
   in
     if goal_mentions_num g andalso not (goal_entangles_num_and_word g) then
       (undisch_assums THEN

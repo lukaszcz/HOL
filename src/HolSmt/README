@@ -286,6 +286,10 @@ Definitions for translator-emitted operators are selected from the exact
 `EncodedSymbol` records of the current translation, never from constant
 names.  In particular, `bvcomp` replay unfolds its recorded definition and
 then uses the general word decision procedures.
+CPC word replay also checks whole extraction, extraction through a binary
+concatenation, constant logical shifts, and bitwise slicing. Slicing and
+identity-mask steps keep arithmetic operands schematic. Quantified word
+complement elimination is re-proved from complement involution.
 
 Unicode-string and regular-expression replay covers goals stated over the
 native `smtstr` carrier.  A goal stated over HOL's `:string` reaches the
@@ -672,6 +676,16 @@ Z3 th-lemma replay coverage:
   fp          not observed on any supported  defensive route through the
               Z3 version; observed fpa2bv     checked SmtFpProve ladder;
               ground/atom/bit shapes          no occurrence is claimed
+
+Nonlinear integer replay substitutes numeral equalities proved from opposing
+bounds before SOS certificate search. CPC arithmetic rewrites include both
+maximum lower bounds, arith-max-geq1 and arith-max-geq2.
+Integer polynomial normalization removes negative zero introduced by
+subtraction aliases; transitivity normalizes integer relation spellings
+before searching for an equality bridge. Shared antecedents use the same
+DAG normalization for modus ponens. Numeric conditionals remain opaque
+through linear and nonlinear arithmetic before branch expansion; congruence
+preserves immediate child positions, including reflexive premises.
 
 Indexed th-lemma failures include theory, subkind, remaining proof indices and
 the parsed HOL conclusion in the replay error.

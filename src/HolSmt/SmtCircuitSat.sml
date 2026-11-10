@@ -6,13 +6,24 @@ struct
 
   val ERR = Feedback.mk_HOL_ERR "SmtCircuitSat"
 
-  val atom_cnf = Library.prove
-    (``(p : bool) = q <=> (p \/ ~q) /\ (~p \/ q)``,
-     tautLib.TAUT_TAC)
-  val true_cnf = Library.prove
-    (``((p : bool) = T) <=> p``, tautLib.TAUT_TAC)
-  val false_cnf = Library.prove
-    (``((p : bool) = F) <=> ~p``, tautLib.TAUT_TAC)
+  (* The clause shapes are built, not parsed: a constant a client theory
+     exports must not capture the proposition variables. *)
+  local
+    open boolSyntax
+    val p = Term.mk_var ("p", Type.bool)
+    val q = Term.mk_var ("q", Type.bool)
+  in
+    (* (p = q) <=> (p \/ ~q) /\ (~p \/ q) *)
+    val atom_cnf = Library.prove
+      (mk_eq (mk_eq (p, q),
+         mk_conj (mk_disj (p, mk_neg q), mk_disj (mk_neg p, q))),
+       tautLib.TAUT_TAC)
+    (* (p = T) <=> p *)
+    val true_cnf = Library.prove (mk_eq (mk_eq (p, T), p), tautLib.TAUT_TAC)
+    (* (p = F) <=> ~p *)
+    val false_cnf = Library.prove
+      (mk_eq (mk_eq (p, F), mk_neg p), tautLib.TAUT_TAC)
+  end
 
   (* Each result is a kernel theorem equating a gate definition with its
      CNF clauses.  Non-connective right sides remain propositional atoms. *)

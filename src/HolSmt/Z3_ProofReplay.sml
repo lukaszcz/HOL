@@ -896,37 +896,59 @@ local
     handle Feedback.HOL_ERR _ =>
       profile "nnf[metis-fallback]" metis_prove (thms, t)
 
+  (* The terms the proofs below name are built, not parsed: a constant a
+     client theory exports must not capture them. *)
+  local
+    val a = Term.mk_var ("a", intSyntax.int_ty)
+    val b = Term.mk_var ("b", intSyntax.int_ty)
+    val n = Term.mk_var ("n", intSyntax.int_ty)
+  in
   val INT_LE_RMUL_EXP = Library.prove(
     ``!a b n:int. 0 <= n ==> a <= b ==> a * n <= b * n``,
+    (* GEN_TAC renames a bound variable away from a constant of its name,
+       so fix the names before the steps that use them. *)
+    MAP_EVERY X_GEN_TAC [a, b, n] THEN
     REPEAT STRIP_TAC THEN
-    bossLib.Cases_on `n = 0` THENL [
+    bossLib.tmCases_on (boolSyntax.mk_eq (n, intSyntax.zero_tm)) [] THENL [
       bossLib.ASM_SIMP_TAC intLib.int_ss [],
-      SUBGOAL_THEN ``0i < n`` ASSUME_TAC THENL [intLib.ARITH_TAC, ALL_TAC] THEN
-      bossLib.Cases_on `a = b` THENL [
+      SUBGOAL_THEN (intSyntax.mk_less (intSyntax.zero_tm, n)) ASSUME_TAC THENL
+        [intLib.ARITH_TAC, ALL_TAC] THEN
+      bossLib.tmCases_on (boolSyntax.mk_eq (a, b)) [] THENL [
         bossLib.ASM_SIMP_TAC intLib.int_ss [],
-        SUBGOAL_THEN ``a < b:int`` ASSUME_TAC THENL
+        SUBGOAL_THEN (intSyntax.mk_less (a, b)) ASSUME_TAC THENL
           [intLib.ARITH_TAC, ALL_TAC] THEN
-        Tactic.MP_TAC (Q.SPECL [`a:int`, `b:int`, `n:int`]
+        Tactic.MP_TAC (Drule.SPECL [a, b, n]
           intExtensionTheory.INT_LT_RMUL_EXP) THEN
         intLib.ARITH_TAC
       ]
     ])
+  end
 
   val INT_LE_LMUL_EXP = Library.prove(
     ``!a b n:int. 0 <= n ==> a <= b ==> n * a <= n * b``,
     metisLib.METIS_TAC [INT_LE_RMUL_EXP, integerTheory.INT_MUL_COMM])
 
+  local
+    val x1 = Term.mk_var ("x1", intSyntax.int_ty)
+    val x2 = Term.mk_var ("x2", intSyntax.int_ty)
+    val y1 = Term.mk_var ("y1", intSyntax.int_ty)
+    val y2 = Term.mk_var ("y2", intSyntax.int_ty)
+    fun product_le ((p, q), (r, s)) =
+      intSyntax.mk_leq (intSyntax.mk_mult (p, q), intSyntax.mk_mult (r, s))
+  in
   val INT_LE_MUL2 = Library.prove(
     ``!x1 x2 y1 y2:int.
         0 <= x1 /\ 0 <= y1 /\ x1 <= x2 /\ y1 <= y2 ==>
         x1 * y1 <= x2 * y2``,
+    MAP_EVERY X_GEN_TAC [x1, x2, y1, y2] THEN
     REPEAT STRIP_TAC THEN
-    SUBGOAL_THEN ``x1 * y1 <= x2 * y1:int`` ASSUME_TAC THENL
+    SUBGOAL_THEN (product_le ((x1, y1), (x2, y1))) ASSUME_TAC THENL
       [metisLib.METIS_TAC [INT_LE_RMUL_EXP], ALL_TAC] THEN
-    SUBGOAL_THEN ``x2 * y1 <= x2 * y2:int`` ASSUME_TAC THENL
+    SUBGOAL_THEN (product_le ((x2, y1), (x2, y2))) ASSUME_TAC THENL
       [metisLib.METIS_TAC [INT_LE_LMUL_EXP, integerTheory.INT_LE_TRANS],
        ALL_TAC] THEN
     metisLib.METIS_TAC [integerTheory.INT_LE_TRANS])
+  end
 
   fun int_product_bound_tac (asl, w) =
   let
@@ -971,15 +993,26 @@ local
        ORELSE
        REPEAT STRIP_TAC THEN int_product_bound_tac))
 
+  local
+    val x = Term.mk_var ("x", realSyntax.real_ty)
+    val y = Term.mk_var ("y", realSyntax.real_ty)
+    val zero = realSyntax.zero_tm
+  in
   val REAL_ZERO_FACTOR_NONNEG = Library.prove(
     ``!x:real. !y:real. x <= 0 ==> x >= 0 ==> 0 <= x * y``,
+    MAP_EVERY X_GEN_TAC [x, y] THEN
     Tactical.REPEAT STRIP_TAC THEN
+    (* x >= 0 ==> x <= 0 ==> x = 0 *)
     Tactic.MP_TAC
-      (RealField.REAL_ARITH ``x >= 0:real ==> x <= 0 ==> x = 0``) THEN
+      (RealField.REAL_ARITH
+        (boolSyntax.mk_imp (realSyntax.mk_geq (x, zero),
+           boolSyntax.mk_imp (realSyntax.mk_leq (x, zero),
+                              boolSyntax.mk_eq (x, zero))))) THEN
     ASM_REWRITE_TAC [] THEN
     DISCH_TAC THEN
     ASM_REWRITE_TAC
       [realTheory.REAL_MUL_LZERO, realTheory.REAL_LE_REFL])
+  end
 
   val REAL_ZERO_FACTOR_NONNEG_CLAUSE = Library.prove(
     ``!x:real. !y:real. 0 <= x * y \/ ~(x <= 0) \/ ~(x >= 0)``,
@@ -1092,18 +1125,33 @@ local
         (List.mapPartial divisor (Library.subterms target))
     end
 
+  (* Built, not parsed: a constant a client theory exports must not
+     capture x, y or k. *)
+  local
+    open boolSyntax
+    val x = Term.mk_var ("x", realSyntax.real_ty)
+    val y = Term.mk_var ("y", realSyntax.real_ty)
+    val k = Term.mk_var ("k", realSyntax.real_ty)
+    val y_is_zero = mk_eq (y, realSyntax.zero_tm)
+    val x_rdiv_y =
+      Term.list_mk_comb
+        (Term.prim_mk_const {Thy = "HolSmt", Name = "smt_rdiv"}, [x, y])
+  in
+  (* y = 0 \/ x = y * smt_rdiv x y *)
   val SMT_RDIV_CANCEL_CLAUSE = Library.prove(
-    ``(y:real) = 0 \/ x = y * HolSmt$smt_rdiv x y``,
-    Tactic.ASM_CASES_TAC ``(y:real) = 0`` THENL [
+    mk_disj (y_is_zero, mk_eq (x, realSyntax.mk_mult (y, x_rdiv_y))),
+    Tactic.ASM_CASES_TAC y_is_zero THENL [
       ASM_REWRITE_TAC [],
       bossLib.ASM_SIMP_TAC (bossLib.srw_ss())
         [HolSmtTheory.smt_rdiv_eq_div, realTheory.REAL_DIV_LMUL]
     ])
 
+  (* smt_rdiv x y = k ==> y = 0 \/ y * k = x *)
   val SMT_RDIV_INTRO_CANCEL_CLAUSE = Library.prove(
-    ``HolSmt$smt_rdiv (x:real) y = k ==>
-      y = 0 \/ y * k = x``,
+    mk_imp (mk_eq (x_rdiv_y, k),
+            mk_disj (y_is_zero, mk_eq (realSyntax.mk_mult (y, k), x))),
     bossLib.METIS_TAC [SMT_RDIV_CANCEL_CLAUSE])
+  end
 
   val ground_subterm_eval_max_nodes = 4096
   val ground_subterm_eval_max_calls = 8

@@ -4,6 +4,7 @@
 structure SmtRegLanProve =
 struct
   val ERR = Feedback.mk_HOL_ERR "SmtRegLanProve"
+
   val reglan_ty =
     Type.mk_thy_type {Thy = "smtstring", Tyop = "reglan", Args = []}
   val equiv_tm = Term.prim_mk_const
@@ -103,29 +104,47 @@ struct
     end
 
   (* These are denotational identities, not constructor equalities.  Each
-     rule applies at all operands and loop bounds supported by its theorem. *)
+     rule applies at all operands and loop bounds supported by its theorem.
+     The statements are built, not parsed: a constant a client theory
+     exports must not capture r, s or t. *)
+  local
+    fun reglan_const name =
+      Term.prim_mk_const {Thy = "smtstring", Name = name}
+    val r = Term.mk_var ("r", reglan_ty)
+    val s = Term.mk_var ("s", reglan_ty)
+    val t = Term.mk_var ("t", reglan_ty)
+    fun binary name (x, y) = Term.list_mk_comb (reglan_const name, [x, y])
+    val equiv = binary "reglan_equiv"
+    val union = binary "reglan_union"
+    val inter = binary "reglan_inter"
+  in
+  (* reglan_equiv (reglan_union r s) (reglan_union s r) *)
   val union_comm = Library.prove
-    (``reglan_equiv (reglan_union r s) (reglan_union s r)``,
+    (equiv (union (r, s), union (s, r)),
      bossLib.SIMP_TAC bossLib.bool_ss
        [smtstringTheory.reglan_equiv_def, smtstringTheory.re_lang_def,
         boolTheory.DISJ_COMM, boolTheory.REFL_CLAUSE])
+  (* reglan_equiv (reglan_union (reglan_union r s) t)
+                  (reglan_union r (reglan_union s t)) *)
   val union_assoc = Library.prove
-    (``reglan_equiv (reglan_union (reglan_union r s) t)
-        (reglan_union r (reglan_union s t))``,
+    (equiv (union (union (r, s), t), union (r, union (s, t))),
      bossLib.SIMP_TAC bossLib.bool_ss
        [smtstringTheory.reglan_equiv_def, smtstringTheory.re_lang_def,
         boolTheory.DISJ_ASSOC, boolTheory.REFL_CLAUSE])
+  (* reglan_equiv (reglan_inter r s) (reglan_inter s r) *)
   val inter_comm = Library.prove
-    (``reglan_equiv (reglan_inter r s) (reglan_inter s r)``,
+    (equiv (inter (r, s), inter (s, r)),
      bossLib.SIMP_TAC bossLib.bool_ss
        [smtstringTheory.reglan_equiv_def, smtstringTheory.re_lang_def,
         boolTheory.CONJ_COMM, boolTheory.REFL_CLAUSE])
+  (* reglan_equiv (reglan_inter (reglan_inter r s) t)
+                  (reglan_inter r (reglan_inter s t)) *)
   val inter_assoc = Library.prove
-    (``reglan_equiv (reglan_inter (reglan_inter r s) t)
-        (reglan_inter r (reglan_inter s t))``,
+    (equiv (inter (inter (r, s), t), inter (r, inter (s, t))),
      bossLib.SIMP_TAC bossLib.bool_ss
        [smtstringTheory.reglan_equiv_def, smtstringTheory.re_lang_def,
         boolTheory.CONJ_ASSOC, boolTheory.REFL_CLAUSE])
+  end
 
   val rewrite_theorems =
     [smtstringTheory.reglan_equiv_refl,

@@ -275,6 +275,9 @@ val thm_CVCp_ho =
   mk_test_fun (CVC.is_configured ()) (expect_thm true)
     "cvc5 (higher-order proofs)"
     (REPEAT STRIP_TAC THEN HolSmtLib.CVC_TAC)
+val thm_CVCp_arith =
+  mk_test_fun (CVC.is_configured ()) (expect_thm true)
+    "cvc5 (arithmetic proofs)" HolSmtLib.CVC_TAC
 val sat_CVCp = mk_CVCp expect_sat
 
 (*****************************************************************************)
@@ -323,6 +326,12 @@ in
   val tests = [
 
     (* propositional logic *)
+    (``!w:word16. w && 0xFFF8w = word_lsl (word_lsr w 3) 3``,
+      [thm_CVCp_arith]),
+    (``!w:word16. word_1comp w = 0w ==> w = -1w``,
+      [thm_CVCp_arith]),
+    (``LENGTH (xs:word8 list) <= 19 ==> 4 * LENGTH xs < 65536``,
+      [thm_CVCp_arith]),
     (``T``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
 
     (* Seq/Set/Bag checked-replay smoke tests.  `bool` has finite carrier,
@@ -478,19 +487,20 @@ in
     (``!n:num. v <= n + v``, [thm_Z3p, thm_CVC, thm_CVCp]),
     (``(v:num) - (w + 1) <= v``, [thm_Z3p, thm_CVC, thm_CVCp]),
 
+    (* Rational-bound normalization can eliminate every integer-to-real
+       cast before the arithmetic replay step abstracts its atoms. *)
+    (``LENGTH (xs:bool list) < 10 ==> 7 * LENGTH xs < 100``,
+      [thm_CVCp_arith]),
+
     (``(x:num) - 0 = x``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (``(x:num) - y = y - x``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
     (``(x:num) - y - z = x - (y + z)``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (``(x:num) <= y ==> (x - y = 0)``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp_arith]),
     (``((x:num) - y = 0) \/ (y - x = 0)``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
-
-    (* thm_CVCp omitted: CPC parsing fails on
-       ``(x:num) <= y ==> (x - y = 0)`` and
-       ``((x:num) - y = 0) \/ (y - x = 0)`` (unknown arith-max-geq2). *)
+      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp_arith]),
 
     (``(x:num) * 0 = 0``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
@@ -1175,6 +1185,8 @@ in
       [thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (* NIA: square nonneg *)
     (``(x:int) * x >= 0``, [thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (``(x:int) >= 4 /\ x <= 4 ==> 37 * x - 6 * (x * x) >= -37``,
+      [thm_Z3p_v4]),
     (* NIA: bounded product *)
     (``(x:int) >= 5 /\ (y:int) >= 5 ==> x * y >= 25``,
       [thm_Z3, thm_CVCp
