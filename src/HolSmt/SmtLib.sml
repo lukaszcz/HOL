@@ -5776,13 +5776,13 @@ local
       translate_case_constant acc rator rands
     handle DispatchFailure _ =>
 
-      (* FO functions and the Z3 dialect are arrays.  Standard 2.7 maps have
-         no store operator, so preserve HOL UPDATE with a native lambda. *)
+      (* Array collections use store in every regime.  Unmarked Standard
+         2.7 maps have no store operator, so preserve UPDATE with a lambda. *)
       let
         val ((index, value), array) = carrier_dest_update_comb tm
       in
-        case regime of
-          HigherOrder Standard27 =>
+        case (regime, array_collection tm) of
+          (HigherOrder Standard27, false) =>
             let
               val v = carrier_genvar (carrier_type_of index)
               val (lambda_bounds, smtvar) = create_bound_name (bounds, v)

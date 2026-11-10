@@ -7450,22 +7450,33 @@ let
   val conditional_consumer =
     ([``(P:(int -> bool) -> bool) r.smt_set``],
      ``(P:(int -> bool) -> bool) (if p then r.smt_set else {})``)
+  val shared_update =
+    ([], ``f (s:bool set) /\ T IN s /\ f (\x:bool. x) ==>
+       f ((T =+ T) s)``)
   val shared_result =
     ([``(P:(int -> bool) -> bool) ((f:int -> int -> bool) x)``,
       ``(R:(int -> bool) -> bool) ((f:int -> int -> bool) y)``],
      ``(P:(int -> bool) -> bool) {}``)
+  val (_, shared_update_strings) =
+    CVC.goal_to_SmtLib_translation shared_update
+  val shared_update_text = String.concat shared_update_strings
 in
+  assert (String.isSubstring "(store " shared_update_text,
+    "marked shared UPDATE did not emit an Array store");
+  ignore (SmtLib_Parser.typecheck_script_string_with_options
+    {dict_logic=NONE,solver=SOME "cvc5",elaborate_datatypes=false}
+    shared_update_text);
   List.app (typechecks true)
     [("singleton", singleton), ("conditional", conditional),
      ("selector", selector),
      ("conditional selector", conditional_selector),
      ("conditional consumer", conditional_consumer),
-     ("shared result", shared_result)];
+     ("shared result", shared_result), ("shared update", shared_update)];
   List.app (typechecks false)
     [("selector", selector),
      ("conditional selector", conditional_selector),
      ("conditional consumer", conditional_consumer),
-     ("shared result", shared_result)]
+     ("shared result", shared_result), ("shared update", shared_update)]
 end
 
 fun smtlib_native_set_translation_success () =
@@ -14842,9 +14853,11 @@ in
   assert (Thm.concl coerced ~~
       boolSyntax.mk_eq (coerced_source, coerced_source),
     "explicit CPC application lost integer-to-real coercion");
+  check_oracle_tags "CPC integer-to-real application coercion" coerced;
   assert (Thm.concl named_literal ~~
       boolSyntax.mk_eq (named_literal_source, named_literal_source),
     "declared CPC function was mistaken for an indexed literal");
+  check_oracle_tags "CPC declared function application" named_literal;
   reflexive "(+ (_ (ite c f g) x) 1)"
     ``(if c then (f:int->int) else g) x + 1``;
   reflexive "(_ (lambda (@list (@var x Int)) x) 1)"
