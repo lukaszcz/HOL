@@ -2393,8 +2393,9 @@ struct
       val _ = List.app (fn argument => positive
         ("declared indexed-literal name " ^ argument)
         ("((declare-const bv5 (-> Int Int)) (declare-const x Int) " ^
-         "(step @p :rule refl :args ((= (_ bv5 " ^ argument ^
-         ") (_ bv5 " ^ argument ^ ")))))")) ["x", "1"]
+         "(step @p :rule refl :args ((forall " ^
+         "((bv5 (-> Int Int)) (x Int)) (= (_ bv5 " ^ argument ^
+         ") (_ bv5 " ^ argument ^ "))))))")) ["x", "1"]
       val _ = positive "nested typed private higher-order application"
         "((step @p :rule refl :args ((_ (@const 0 (-> Int Bool)) 1))))"
       val _ = List.app (fn (label,term) =>
