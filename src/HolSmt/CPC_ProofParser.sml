@@ -18,6 +18,21 @@ local
   val term_intern_bucket_count = 4093
   val cpc_term_intern = ref
     (Array.array (term_intern_bucket_count, [] : Term.term list))
+  val cpc_shell_parents = ref ([] : Term.term list Array.array list)
+
+  (* Replay alternatives can share the caller's parsed shells without
+     publishing their own temporary terms into that longer-lived table. *)
+  fun with_cpc_shell_scope action input =
+    let
+      val parent = !cpc_term_intern
+      val parents = !cpc_shell_parents
+      fun restore () =
+        (cpc_term_intern := parent; cpc_shell_parents := parents)
+      fun run () =
+        (cpc_term_intern := Array.array (term_intern_bucket_count, []);
+         cpc_shell_parents := parent :: parents;
+         action input)
+    in Portable.finally restore run () end
 
   fun term_intern_hash term =
     let
@@ -152,12 +167,21 @@ local
           else false
         val bucket = term_intern_hash candidate
         val entries = Array.sub (!cpc_term_intern, bucket)
+        fun parent [] = NONE
+          | parent (table :: rest) =
+              (case List.find same_candidate (Array.sub (table,bucket)) of
+                 SOME saved => SOME saved
+               | NONE => parent rest)
       in
         case List.find same_candidate entries of
           SOME saved => saved
         | NONE =>
-            (Array.update (!cpc_term_intern, bucket, candidate :: entries);
-             candidate)
+            (case parent (!cpc_shell_parents) of
+               SOME saved => saved
+             | NONE =>
+                 (Array.update (!cpc_term_intern, bucket,
+                    candidate :: entries);
+                  candidate))
       end
 
   fun intern_located ({term, provenance} : located_term) =
@@ -3984,6 +4008,7 @@ in
   val validate_raw_term = validate_raw_term
   val intern_cpc_term = intern_cpc_term
   val intern_cpc_shell = intern_cpc_shell
+  val with_cpc_shell_scope = with_cpc_shell_scope
   val cpc_indexed_term_registry = cpc_indexed_term_registry
   val with_cpc_deindexed_entries = with_cpc_deindexed_entries
   val cpc_parameterized_skolem_names = cpc_parameterized_skolem_names

@@ -526,6 +526,42 @@ struct
       check_term_size_for category case_id (term_nodes_up_to limit goal)
     end
 
+  (* Unmetered, owner-local metadata only: exact keys stay in red-black trees
+     so collisions retain logarithmic bounds. Splitting private mutable roots
+     avoids copying a large persistent path for each insertion. Callers must
+     supply an equality-preserving constant-work hash and retain their own
+     admission/lifetime policy. No Work or theorem admission comes from this
+     index. Empty backing blocks are allocated only when first written. *)
+  fun new_key_map compare hash =
+    let
+      val count = 4093
+      val block_size = 32
+      val empty = Redblackmap.mkDict compare
+      val blocks = Array.array ((count+block_size-1) div block_size,NONE)
+      fun bucket key = Word.toInt (Word.mod (hash key,Word.fromInt count))
+      fun peek key =
+        let val slot = bucket key in
+          case Array.sub (blocks,slot div block_size) of NONE => NONE
+          | SOME block =>
+              Redblackmap.peek (Array.sub (block,slot mod block_size),key)
+        end
+      fun insert (key,value) =
+        let
+          val slot = bucket key
+          val index = slot div block_size
+          val offset = slot mod block_size
+          val block = case Array.sub (blocks,index) of SOME block => block
+            | NONE =>
+                let val block = Array.array
+                      (Int.min (block_size,count-index*block_size),empty)
+                in Array.update (blocks,index,SOME block);block end
+        in Array.update (block,offset,Redblackmap.insert
+          (Array.sub (block,offset),key,value)) end
+    in {peek=peek,insert=insert} end
+
+  fun integer_pair_hash (left,right) =
+    Word.+ (Word.* (Word.fromInt left,0w37),Word.fromInt right)
+
   (* Exact structural keys for bounded replay caches.  Compound keys compare
      canonical child IDs instead of repeatedly comparing entire term DAGs.
      Types and declaration identities are part of leaf keys; abstractions
@@ -548,7 +584,11 @@ struct
         | compare (_, Constant _) = GREATER
         | compare (Application fields, Application fields') =
             Lib.pair_compare (Int.compare, Int.compare) (fields, fields')
-      val nodes = ref (Redblackmap.mkDict compare)
+      fun hash (Variable (_,ty)) = Word.fromInt ty
+        | hash (Constant (id,ty)) =
+            integer_pair_hash (KernelSig.epoch_of id,ty)
+        | hash (Application children) = integer_pair_hash children
+      val nodes = new_key_map compare hash
       val abstractions = ref (Redblackmap.mkDict Term.compare)
       val types = ref (Redblackmap.mkDict Type.compare)
       val next = ref 0
@@ -566,11 +606,11 @@ struct
                  in types := Redblackmap.insert (!types, ty, id); id end)
       fun fresh () = let val id = !next in next := id + 1; id end
       fun intern key =
-        case Redblackmap.peek (!nodes, key) of
+        case #peek nodes key of
           SOME id => id
         | NONE =>
             let val id = fresh ()
-            in nodes := Redblackmap.insert (!nodes, key, id); id end
+            in #insert nodes (key,id); id end
       fun visit term =
         let
           val bucket = pointer_bucket count term
@@ -702,25 +742,40 @@ struct
       : bounded_structure =
     let
       val bucket_count = 4093
-      val seen_buckets =
-        Array.array (bucket_count, [] : Term.term list)
+      (* Retain the fixed routes; small scans allocate only used blocks. *)
+      val block_size = 256
+      val seen_buckets = Array.array
+        ((bucket_count+block_size-1) div block_size,
+         NONE : Term.term list Array.array option)
       val pointer_hash = pointer_bucket bucket_count
       fun seen term =
         let
           val index = pointer_hash term
-          val bucket = Array.sub (seen_buckets, index)
+          val block_index = index div block_size
+          val offset = index mod block_size
         in
-          if List.exists
-               (fn seen_term => Portable.pointer_eq (term, seen_term)) bucket
-          then true
-          else
-            (Array.update (seen_buckets, index, term :: bucket); false)
+          case Array.sub (seen_buckets,block_index) of
+            NONE =>
+              let
+                val block = Array.array
+                  (Int.min (block_size,
+                     bucket_count-block_index*block_size),[])
+                val _ = Array.update (block,offset,[term])
+                val _ = Array.update (seen_buckets,block_index,SOME block)
+              in false end
+          | SOME block =>
+              let val bucket = Array.sub (block,offset) in
+                if List.exists
+                  (fn saved => Portable.pointer_eq (term,saved)) bucket
+                then true
+                else (Array.update (block,offset,term::bucket);false)
+              end
         end
       fun identifier_bytes term =
-        String.size (Lib.fst (Term.dest_var term))
-        handle Feedback.HOL_ERR _ =>
+        if Term.is_var term then String.size (#1 (Term.dest_var term))
+        else if Term.is_const term then
           String.size (#Name (Term.dest_thy_const term))
-          handle Feedback.HOL_ERR _ => 0
+        else 0
       fun loop ([], nodes, edges, depth, identifier) =
             {dag_nodes = nodes, edges = edges, max_binder_depth = depth,
              max_identifier_bytes = identifier, complete = true}
@@ -808,7 +863,10 @@ struct
        nodes = !next_id}
     end
 
-  fun term_measure term =
+  (* Inspect each physical miss before any leaf Type comparison or binder
+     opening. Ordinary callers retain the same metric through the no-op
+     wrapper below; owned callers can fuse their conservative preflight. *)
+  fun term_measure_with_inspector inspect term =
     let
       datatype key = Variable of string * int
         | Constant of KernelSig.kernelid * int
@@ -825,7 +883,11 @@ struct
         | key_compare (_, Constant _) = GREATER
         | key_compare (Application children, Application children') =
             Lib.pair_compare (Int.compare, Int.compare) (children, children')
-      val nodes = ref (Redblackmap.mkDict key_compare)
+      fun hash (Variable (_,ty)) = Word.fromInt ty
+        | hash (Constant (id,ty)) =
+            integer_pair_hash (KernelSig.epoch_of id,ty)
+        | hash (Application children) = integer_pair_hash children
+      val nodes = new_key_map key_compare hash
       val abstractions = ref (Redblackmap.mkDict Term.compare)
       val types = ref (Redblackmap.mkDict Type.compare)
       val next = ref 0
@@ -840,11 +902,11 @@ struct
       fun fresh size =
         let val id = !next in next := id + 1; (id, size) end
       fun intern key size =
-        case Redblackmap.peek (!nodes, key) of
+        case #peek nodes key of
           SOME result => result
         | NONE =>
             let val result = fresh size
-            in nodes := Redblackmap.insert (!nodes, key, result); result end
+            in #insert nodes (key,result); result end
       fun visit term =
         let
           val bucket = pointer_bucket buckets term
@@ -854,6 +916,7 @@ struct
             SOME (_, result) => result
           | NONE =>
               let
+                val _ = inspect term
                 val result =
                   if Term.is_var term then intern
                     (Variable (#1 (Term.dest_var term),
@@ -888,6 +951,8 @@ struct
     in
       {tree_nodes = #2 (visit term), dag_nodes = !next}
     end
+
+  val term_measure = term_measure_with_inspector (fn _ => ())
 
   fun tree_nodes term = #tree_nodes (term_measure term)
 

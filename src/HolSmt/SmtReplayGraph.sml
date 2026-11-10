@@ -130,6 +130,7 @@ struct
   type legacy_index_state =
     {types:(type_key,int) Redblackmap.dict ref,
      keys:(key,node) Redblackmap.dict ref,
+     entries:(int * entry) option array,
      recent:(Type.hol_type * int) list ref}
   type paid_index_state =
     {owner:unit ref,root:scope,meter:R.scope_meter,epoch:int,symbols:int,
@@ -233,7 +234,8 @@ struct
        root_active = root_active,
        indices = LegacyIndices
          {keys=ref (Redblackmap.mkDict key_compare),
-          types=ref (Redblackmap.mkDict type_compare),recent=ref []},
+          types=ref (Redblackmap.mkDict type_compare),
+          entries=Array.array (256,NONE),recent=ref []},
        imports = Array.array (4093, []),
        native_raw_geometry = ref [],
        binders = ref (Redblackmap.mkDict Int.compare),
@@ -525,12 +527,28 @@ struct
        #active frame := false;#scope_retirements g := next end
   fun entry (g : graph) (Node {owner,id}) : entry =
     case #indices g of
-        LegacyIndices _ =>
+        LegacyIndices state =>
           if owner <> #owner g then
             raise ERR "node" "node belongs to a different graph"
-          else (case R.peek_int (!(#nodes g), id) of
-              SOME result => (observe_node g #accesses;result)
-            | NONE => raise ERR "node" "unknown node")
+          else
+            let
+              (* Legacy nodes only append. Keep 256 direct-mapped hints,
+                 with both owner and complete ID checked on every hit. No
+                 lookup grows/copies a backing table. The persistent map
+                 remains authoritative; paid programmes stay unchanged. *)
+              val slot = id mod Array.length (#entries state)
+              val found = if id < 0 then NONE
+                else case Array.sub (#entries state,slot) of
+                    SOME (saved,result) => if saved=id then SOME result
+                      else NONE
+                  | NONE => NONE
+              val result = case found of SOME result => result
+                | NONE => case R.peek_int (!(#nodes g),id) of
+                    SOME result =>
+                      (Array.update (#entries state,slot,SOME (id,result));
+                       result)
+                  | NONE => raise ERR "node" "unknown node"
+            in observe_node g #accesses;result end
       | PaidIndices p =>
           let val meter= #meter p
               val _=R.scope_meter_charge meter 64
@@ -622,7 +640,8 @@ struct
     let fun seek _ [] = NONE
           | seek previous ((item as (saved,id))::rest) =
               if Portable.pointer_eq (saved,ty) then
-                (#recent state := item :: List.revAppend (previous,rest);
+                (if List.null previous then () else
+                   #recent state := item :: List.revAppend (previous,rest);
                  SOME id)
               else seek (item::previous) rest
     in seek [] (!(#recent state)) end
@@ -659,8 +678,9 @@ struct
            | NONE =>
              let val key=if Type.is_vartype ty then
                    TypeVariable (Type.dest_vartype ty)
-                 else TypeOperator (#Tyop (Type.dest_thy_typeid ty),
-                   List.map (intern_type g) (#2 (Type.dest_type ty)))
+                 else
+                   let val {Tyop,Args,...}=Type.dest_thy_typeid ty
+                   in TypeOperator (Tyop,List.map (intern_type g) Args) end
                  val id=case Redblackmap.peek (!(#types state),key) of
                      SOME id => id
                    | NONE =>
@@ -988,6 +1008,38 @@ struct
        exact_raw=ref (ApplicationRaw (#exact_raw left,#exact_raw right))}
     end
 
+  (* Reuse an existing source application when its decoded children are
+     already the canonical representatives. Retain the same constructor and
+     Type checks; paid callers use the original application path verbatim. *)
+  fun source_application (g:graph) scope
+      {original,children=(source_left,source_right),nodes=(operator,operand)} =
+    case #indices g of PaidIndices _ => application g scope (operator,operand)
+    | LegacyIndices _ =>
+      let
+        val _ = check_scope g scope
+        val _ = semantic_entry_charge g 128
+        val _ = usable g scope operator
+        val _ = usable g scope operand
+        val left = entry g operator
+        val right = entry g operand
+        val (domain,range) = Type.dom_rng (#ty left)
+        val _ = if intern_type g domain = #type_id right then () else
+          raise ERR "application" "application operand type mismatch"
+        val tid = intern_type g range
+        val constructed = SmtReplayLeafProof.application
+          (semantic_entry_charge g) (#term left) (#term right)
+        val term = if Portable.pointer_eq (source_left,#term left) andalso
+            Portable.pointer_eq (source_right,#term right) then original
+          else constructed
+      in intern g
+        (ApplicationKey (scope_id scope,node_id operator,node_id operand))
+        {scope=scope,ty=range,type_id=tid,term=term,
+         view=Application (operator,operand),
+         raw=sum (#raw left) (#raw right),
+         inclusive=sum (#inclusive left) (#inclusive right),source=ref NONE,
+         exact_raw=ref (ApplicationRaw (#exact_raw left,#exact_raw right))}
+      end
+
   (* A deliberately fixed Boolean grammar: general constructors may contain
      arbitrarily large Types/strings and cannot use this quotation. Each
      constructor below interns at most seven fixed Boolean Type incidences
@@ -1203,9 +1255,16 @@ struct
                 let
                   val (left,right) = Term.dest_comb term
                   val l = visit left and r = visit right
-                  val node = application g scope (#node l,#node r)
-                in (node,align_application term (#bridge l) (#bridge r)
-                      (representative g node)) end
+                  val node = source_application g scope
+                    {original=term,children=(left,right),
+                     nodes=(#node l,#node r)}
+                  val result = representative g node
+                  val identical = case #indices g of
+                      LegacyIndices _ => Portable.pointer_eq (term,result)
+                    | PaidIndices _ => false
+                  val theorem = if identical then Thm.REFL term else
+                    align_application term (#bridge l) (#bridge r) result
+                in (node,theorem) end
               else if Term.is_var term orelse Term.is_const term then
                 import_atom g scope term
               else if Term.is_abs term then

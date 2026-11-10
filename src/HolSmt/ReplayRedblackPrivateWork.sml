@@ -453,9 +453,175 @@ struct
                 | GREATER => walk right
                 | EQUAL => true)
     in walk tree end
-  fun put_int (base,key,value) =
-    finish_int(base,plan_batch NONE (base,[key]),value)
-  fun add_string (base,key) = finish_string(base,plan_string NONE (base,key))
+  (* Ordinary updates expose no cost or plan and have no coupled meter.
+     Use the SAME constructor/rotation programme directly, avoiding a
+     temporary ledger, Future tree and replay. Metered/planned operations
+     above remain literal. Exact tree shape matters to their later costs. *)
+  fun direct_map_insert compare root key value =
+    let
+      val fresh = ref false
+      fun make args = T args
+      fun ins s =
+        case s of
+          E => (fresh := true;make(R,E,key,value,E))
+        | T(color,a,yk,y,b) =>
+          (
+           case compare(key,yk) of
+             EQUAL => make(color,a,key,value,b)
+           | LESS =>
+             (case a of
+                T(R,c,zk,z,d) =>
+                  (
+                   case compare(key,zk) of
+                     EQUAL => make(color,make(R,c,key,value,d),yk,y,b)
+                   | LESS =>
+                       let val next = ins c in
+                         case next of
+                           T(R,e,wk,w,f) =>
+                             make(R,make(B,e,wk,w,f),zk,z,make(B,d,yk,y,b))
+                         | _ => make(B,make(R,next,zk,z,d),yk,y,b)
+                       end
+                   | GREATER =>
+                       let val next = ins d in
+                         case next of
+                           T(R,e,wk,w,f) =>
+                             make(R,make(B,c,zk,z,e),wk,w,make(B,f,yk,y,b))
+                         | _ => make(B,make(R,c,zk,z,next),yk,y,b)
+                       end)
+              | _ => make(B,ins a,yk,y,b))
+           | GREATER =>
+             (case b of
+                T(R,c,zk,z,d) =>
+                  (
+                   case compare(key,zk) of
+                     EQUAL => make(color,a,yk,y,make(R,c,key,value,d))
+                   | LESS =>
+                       let val next = ins c in
+                         case next of
+                           T(R,e,wk,w,f) =>
+                             make(R,make(B,a,yk,y,e),wk,w,make(B,f,zk,z,d))
+                         | _ => make(B,a,yk,y,make(R,next,zk,z,d))
+                       end
+                   | GREATER =>
+                       let val next = ins d in
+                         case next of
+                           T(R,e,wk,w,f) =>
+                             make(R,make(B,a,yk,y,c),zk,z,make(B,e,wk,w,f))
+                         | _ => make(B,a,yk,y,make(R,c,zk,z,next))
+                       end)
+              | _ => make(B,a,yk,y,ins b)))
+    in
+      ((
+        case root of
+          E => (fresh := true;make(B,E,key,value,E))
+        | T(color,a,yk,y,b) =>
+          (
+           case compare(key,yk) of
+             EQUAL => make(B,a,key,value,b)
+           | LESS =>
+             (case a of
+                T(R,c,zk,z,d) =>
+                  (
+                   case compare(key,zk) of
+                     EQUAL => make(B,make(R,c,key,value,d),yk,y,b)
+                   | LESS =>
+                       let val next = ins c in
+                         case next of
+                           T(R,e,wk,w,f) =>
+                             make(B,make(B,e,wk,w,f),zk,z,make(B,d,yk,y,b))
+                         | _ => make(B,make(R,next,zk,z,d),yk,y,b)
+                       end
+                   | GREATER =>
+                       let val next = ins d in
+                         case next of
+                           T(R,e,wk,w,f) =>
+                             make(B,make(B,c,zk,z,e),wk,w,make(B,f,yk,y,b))
+                         | _ => make(B,make(R,c,zk,z,next),yk,y,b)
+                       end)
+              | _ => make(B,ins a,yk,y,b))
+           | GREATER =>
+             (case b of
+                T(R,c,zk,z,d) =>
+                  (
+                   case compare(key,zk) of
+                     EQUAL => make(B,a,yk,y,make(R,c,key,value,d))
+                   | LESS =>
+                       let val next = ins c in
+                         case next of
+                           T(R,e,wk,w,f) =>
+                             make(B,make(B,a,yk,y,e),wk,w,make(B,f,zk,z,d))
+                         | _ => make(B,a,yk,y,make(R,next,zk,z,d))
+                       end
+                   | GREATER =>
+                       let val next = ins d in
+                         case next of
+                           T(R,e,wk,w,f) =>
+                             make(B,make(B,a,yk,y,c),zk,z,make(B,e,wk,w,f))
+                         | _ => make(B,a,yk,y,make(R,c,zk,z,next))
+                       end)
+              | _ => make(B,a,yk,y,ins b)))
+       ),!fresh)
+    end
+
+  fun direct_set_insert compare root key =
+    let
+      val fresh = ref false
+      fun make args = T args
+      fun lbalance z left right =
+        case left of
+          T(R,y,b,_,c) =>
+            (case y of
+               T(R,a,x,_,d) =>
+                 make(R,make(B,a,x,(),d),b,(),
+                      make(B,c,z,(),right))
+             | _ =>
+                (case c of
+                   T(R,d,k,_,e) =>
+                     make(R,make(B,y,b,(),d),k,(),
+                          make(B,e,z,(),right))
+                 | _ => make(B,left,z,(),right)))
+        | _ => make(B,left,z,(),right)
+      fun rbalance x left right =
+        case right of
+          T(R,b,y,_,c) =>
+            (case c of
+               T(R,d,z,_,e) =>
+                 make(R,make(B,left,x,(),b),y,(),
+                      make(B,d,z,(),e))
+             | _ =>
+                (case b of
+                   T(R,d,k,_,e) =>
+                     make(R,make(B,left,x,(),d),k,(),
+                          make(B,e,y,(),c))
+                 | _ => make(B,left,x,(),right)))
+        | _ => make(B,left,x,(),right)
+      fun ins tree =
+        case tree of
+          E => (fresh := true;make(R,E,key,(),E))
+        | T(color,left,x,_,right) =>
+          (
+           case compare(key,x) of
+             EQUAL => make(color,left,key,(),right)
+           | LESS => let val next=ins left in
+                (
+                 if color=B then lbalance x next right
+                else make(R,next,x,(),right)) end
+           | GREATER => let val next=ins right in
+                (
+                 if color=B then rbalance x left next
+                else make(R,left,x,(),next)) end)
+      val next=ins root
+      val answer=case next of
+          T(R,left,x,v,right) => make(B,left,x,v,right)
+        | _ => next
+    in (answer,!fresh) end
+
+  fun put_int (IntMap(count,tree),key,value) =
+    let val (next,fresh) = direct_map_insert Int.compare tree key value
+    in IntMap(if fresh then count+1 else count,next) end
+  fun add_string (StringSet(count,tree),key) =
+    let val (next,fresh) = direct_set_insert String.compare tree key
+    in StringSet(if fresh then count+1 else count,next) end
   fun list_int (IntMap(_,tree)) =
     let fun walk E rest = rest
           | walk (T(_,a,k,v,b)) rest = walk a ((k,v)::walk b rest)

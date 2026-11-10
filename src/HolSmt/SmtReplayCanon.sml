@@ -586,13 +586,40 @@ struct
     let val (left,right) = boolSyntax.dest_eq tm
     in new_term_order () (left,right) = EQUAL end
 
+  (* Only these arithmetic heads and negated conditional guards can change
+     the difference normal form. The primary pass has already admitted the
+     source. An incomplete scan or any binder retains all original passes. *)
+  fun secondary_rewrite_needed root =
+    let
+      exception Relevant
+      val heads = [intSyntax.plus_tm,intSyntax.less_tm,intSyntax.leq_tm,
+        intSyntax.greater_tm,intSyntax.geq_tm,realSyntax.plus_tm,
+        realSyntax.less_tm,realSyntax.leq_tm,realSyntax.greater_tm,
+        realSyntax.geq_tm]
+      fun inspect term =
+        if Term.is_abs term orelse
+            (Term.is_const term andalso
+             List.exists (Term.same_const term) heads) orelse
+            (boolSyntax.is_cond term andalso
+             boolSyntax.is_neg (#1 (boolSyntax.dest_cond term))) then
+          raise Relevant
+        else ()
+      fun children term = if Term.is_comb term then
+          [Term.rator term,Term.rand term] else []
+      fun scan () =
+        let val {complete,...} = SmtResource.bounded_structure_with_children
+          children inspect SmtResource.max_skeleton_replay_dag_nodes root
+        in not complete end
+    in scan () handle Relevant => true end
+
   fun z3_rewrite_canon_conv tm =
     let
       val primary = z3_primary_rewrite_canon_conv tm
       val primary_target = boolSyntax.rhs (Thm.concl primary)
     in
       if not (boolSyntax.is_eq primary_target) orelse
-         equality_operands_alpha_equal primary_target then
+         equality_operands_alpha_equal primary_target orelse
+         not (secondary_rewrite_needed primary_target) then
         primary
       else
         let

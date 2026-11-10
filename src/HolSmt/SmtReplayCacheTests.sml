@@ -7,6 +7,10 @@ struct
   structure W = SmtWordGraph
   structure G = SmtReplayGraph
   fun check true _ = () | check false message = raise Fail message
+  fun shared_type 0 = Type.bool
+    | shared_type n =
+        let val child = shared_type (n-1)
+        in Type.mk_type ("fun",[child,child]) end
   val x = Term.mk_var ("task49_context_x", numSyntax.num)
   val atom = boolSyntax.mk_eq (x,x)
   val target = boolSyntax.mk_disj (atom,boolSyntax.mk_neg atom)
@@ -235,6 +239,37 @@ struct
       Library.check_oracle_tags "Task49ContextTests" "shared" theorem
     end)
 
+  (* A small source can generate a much larger bit view. Invalidate only
+     after that view has populated local hints, then compare a cold result. *)
+  fun generated_callback () = with_symbol false (fn allocate => fn retire =>
+    let
+      val _ = allocate ()
+      val input = ``(late_x:word32) + late_y = late_z``
+      val calls = ref 0
+      fun callback term =
+        (calls := !calls+1;
+         if !calls=16 then retire () else ();
+         blastLib.BIT_BLAST_CONV term)
+      val (theorem,metrics) =
+        W.normalize_using_with_metrics
+          {word_conversion=blastLib.WORD_SIMP_CONV,
+           bit_conversion=callback,
+           node_conversion=fn _ => raise Conv.UNCHANGED} input
+      val cold = W.normalize input
+    in
+      check (!calls>=16 andalso #generated_nodes metrics>64)
+        ("late invalidation did not exercise generated syntax: " ^
+         Int.toString (!calls) ^ "/" ^
+         Int.toString (#generated_nodes metrics));
+      check (Portable.pointer_eq
+        (boolSyntax.lhs (Thm.concl theorem),input)) "lost late endpoint";
+      check (Term.aconv (boolSyntax.rhs (Thm.concl theorem))
+        (boolSyntax.rhs (Thm.concl cold)))
+        "late invalidation changed generated normalization";
+      check (null (Thm.hyp theorem)) "late normalization retained hypotheses";
+      Library.check_oracle_tags "Task49ContextTests" "generated" theorem
+    end)
+
   (* A->B->A restores the same signature but not a reset index's IDs. *)
   fun reset_restore () =
     let
@@ -251,11 +286,15 @@ struct
          expansion)
       val context = S.new_context [{name="reset",expand=expand}]
       val _ = context_ref := SOME context
+      fun checked_run () =
+        let val result = prove context (owners "reset")
+        in checked (#theorem result) target;
+           check (#skeleton_dag_nodes (#metrics result)=3)
+             "cache reset changed the obligation's semantic node count" end
       fun run () =
-        (checked (#theorem (prove context (owners "reset"))) target;
+        (checked_run ();
          check (S.cache_size context=0) "reset generation published old IDs";
-         checked (#theorem (prove context (owners "reset"))) target;
-         checked (#theorem (prove context (owners "reset"))) target)
+         checked_run (); checked_run ())
     in Portable.finally (fn () => Context.restore saved) run () end
 
   fun retired_publication () = with_symbol false (fn allocate => fn retire =>
@@ -313,10 +352,6 @@ struct
      not just the final name-preserving destructor. *)
   fun binder_publication () =
     let
-      fun shared_type 0 = Type.bool
-        | shared_type n =
-            let val child = shared_type (n - 1)
-            in Type.mk_type ("fun", [child,child]) end
       val variable = Term.mk_var ("task49_publication_b", Type.bool)
       val body = Term.mk_var ("task49_publication_y", shared_type 38)
       val huge = Term.mk_abs (variable,body)
@@ -352,12 +387,130 @@ struct
         end
     in trial huge false; trial nested false; trial small true end
 
+  fun frontier_laws () =
+    let
+      val context = S.new_sat_context ()
+      val source_context = S.new_context []
+      fun hits () = case List.find (fn (name,_) =>
+          name = "E0(skeleton/schematic-certificate-hit)_OK")
+          (Profile.results ()) of NONE => 0 | SOME (_,info) => #n info
+      fun target name =
+        let
+          val p = Term.mk_var (name ^ "_p",Type.bool)
+          val q = Term.mk_var (name ^ "_q",Type.bool)
+        in boolSyntax.mk_disj
+          (boolSyntax.mk_neg (boolSyntax.mk_conj (p,q)),p) end
+      fun prove goal = checked
+        (S.clause_frontier_prove_indexed context source_context 512 goal) goal
+      val first = target "frontier_first"
+      (* Include a source variable spelled just like a schematic hole.
+         Reuse must still instantiate the current source, not the old one. *)
+      val p = Term.mk_var ("clause_frontier_atom_0",Type.bool)
+      val q = Term.mk_var ("frontier_second_q",Type.bool)
+      val second = boolSyntax.mk_disj
+        (boolSyntax.mk_neg (boolSyntax.mk_conj (p,q)),p)
+      val _ = prove first
+      val prior_hits = hits ()
+      val _ = prove second
+      val _ = check (hits () = prior_hits+1)
+        "closed frontier law was not reused"
+      (* A complete positive disjunction must survive clause flattening
+         when a negative literal names it, including independent copies. *)
+      val disjunction = boolSyntax.mk_disj (p,q)
+      val rebuilt = boolSyntax.mk_disj
+        (Term.mk_var ("clause_frontier_atom_0",Type.bool),
+         Term.mk_var ("frontier_second_q",Type.bool))
+      val _ = prove (boolSyntax.mk_disj
+        (disjunction,boolSyntax.mk_neg rebuilt))
+      val _ = prove (boolSyntax.mk_disj
+        (boolSyntax.mk_disj (disjunction,p),boolSyntax.mk_neg rebuilt))
+      val invalid = boolSyntax.mk_disj
+        (boolSyntax.mk_neg (boolSyntax.mk_conj (p,q)),
+         Term.mk_var ("frontier_unrelated",Type.bool))
+      val _ = check ((ignore
+          (S.clause_frontier_prove_indexed context source_context 512 invalid);
+          false) handle Feedback.HOL_ERR _ => true)
+        "frontier reuse proved an invalid clause"
+      val _ = check ((ignore (S.clause_frontier_prove_indexed
+          context source_context 512 (boolSyntax.mk_disj
+            (disjunction,boolSyntax.mk_neg (boolSyntax.mk_disj
+              (p,Term.mk_var ("frontier_unrelated",Type.bool))))));
+          false) handle Feedback.HOL_ERR _ => true)
+        "composite frontier confused different disjunctions"
+    in () end
+
+  (* Public callers can share a SAT context with generated Boolean laws.
+     Comparing such a law must not unfold the old polymorphic annotation. *)
+  fun mixed_frontier_cache () =
+    let
+      val ty = shared_type 18
+      val _ = SmtReplayTermBridge.admit_type ty
+      val theorem = Thm.REFL (Term.mk_var ("mixed_cache_large",ty))
+      val context = S.new_sat_context ()
+      val _ = S.cached_sat_proof context (Thm.concl theorem) 16
+        (fn () => theorem)
+      val _ = check (not (null (!(#proofs context))))
+        "generic certificate was not retained"
+      val p = Term.mk_var ("mixed_cache_bool",Type.bool)
+      val goal = boolSyntax.mk_eq (p,p)
+      val _ = Timeout.apply (Time.fromSeconds 2)
+        (fn () => checked (S.clause_frontier_prove_in context 512 goal)
+          goal) ()
+    in () end
+
+  (* The optional index must not add a Type gate to a tiny Boolean law whose
+     source atom contains an otherwise unadmittable ground annotation. *)
+  fun indexed_frontier_fallback () =
+    let
+      val x = Term.mk_var ("frontier_fallback_x",Type.bool)
+      val body = Term.mk_var ("frontier_fallback_y",shared_type 38)
+      val binder = Term.mk_abs (x,body)
+      val predicate = Term.mk_var ("frontier_fallback_p",
+        Type.--> (Term.type_of binder,Type.bool))
+      val atom = Term.mk_comb (predicate,binder)
+      val goal = boolSyntax.mk_disj (atom,boolSyntax.mk_neg atom)
+      fun run (source_context as S.Context {atom_index,...}) =
+        Timeout.apply (Time.fromSeconds 2) (fn () =>
+          (check (atom_index goal=NONE)
+             "optional index did not decline the fallback fixture";
+           checked (S.clause_frontier_prove_indexed (S.new_sat_context ())
+             source_context 512 goal) goal)) ()
+    in run (S.new_context []);
+       run (S.new_context_with_index_limit 0 []) end
+
+  fun semantic_node_counts () =
+    let
+      val context = S.new_context []
+      val p = Term.mk_var ("metric_count_p",Type.bool)
+      val q = Term.mk_var ("metric_count_q",Type.bool)
+      fun run (goal,count) =
+        let val result = S.prove_with_owners context no_owners
+              (S.term_measure goal) goal
+        in checked (#theorem result) goal;
+           check (#skeleton_dag_nodes (#metrics result)=count)
+             "indexed skeleton count changed semantic classes" end
+      val a = Term.mk_var ("metric_bound_a",Type.bool)
+      val b = Term.mk_var ("metric_bound_b",Type.bool)
+      val f = Term.mk_var ("metric_count_f",
+        Type.--> (Type.--> (Type.bool,Type.bool),numSyntax.num))
+      fun atom variable = boolSyntax.mk_eq
+        (Term.mk_comb (f,Term.mk_abs (variable,variable)),numSyntax.zero_tm)
+    in List.app run
+      [(boolSyntax.mk_imp (boolSyntax.mk_disj (p,p),p),3),
+       (boolSyntax.mk_imp
+          (boolSyntax.mk_disj (p,q),boolSyntax.mk_disj (q,p)),5),
+       (boolSyntax.mk_disj (atom a,boolSyntax.mk_neg (atom b)),3)] end
+
   fun run () =
-    (owner_keys (); optional_miss (); binder_publication (); reset_restore ();
+    (owner_keys (); optional_miss (); binder_publication (); frontier_laws ();
+     mixed_frontier_cache (); indexed_frontier_fallback ();
+     semantic_node_counts ();
+     reset_restore ();
      retired_publication (); attempt_reset_restore ();
      List.app retained [false,true];
      List.app restored [false,true];
-     List.app publication [false,true]; shared_callback ())
+     List.app publication [false,true]; shared_callback ();
+     generated_callback ())
 end
 
 
@@ -658,6 +811,41 @@ struct
       fun inner () = assert (not (retained ()), "legacy memos not isolated")
       val _ = boundary 8 inner ()
       val _ = assert (retained (), "legacy memos lost on normal exit")
+      (* A complete child replay releases command hints before closure.
+         Both successful closure and an invalid final theorem must preserve
+         the enclosing session's warm word hint and all five legacy cells. *)
+      val _ = boundary 8 (fn () =>
+        let
+          fun proof term : CPC_Proof.proof =
+            {commands = [CPC_Proof.ASSUME ("@task59_phase",
+               {term=term,provenance=CPC_Proof.AtomicProvenance})],
+             cvc_version="1.3.4"}
+          val _ = checked first
+          val workers = !calls
+          val theorem = CPC_ProofReplay.check_proof
+            ([boolSyntax.F],boolSyntax.T,proof boolSyntax.F)
+          val _ = assert
+            (Term.aconv (Thm.concl theorem) boolSyntax.F andalso
+             HOLset.equal (Thm.hypset theorem,
+               HOLset.fromList Term.compare [boolSyntax.F]),
+             "complete child replay changed its exact sequent")
+          val _ = Library.check_oracle_tags "Task49" "phase child" theorem
+          val _ = assert
+            (case CPC_ProofReplay.replay_step_provenance_for_test
+                (proof boolSyntax.F) "@task59_phase" of
+               CPC_Proof.AtomicProvenance => true | _ => false,
+             "closure retirement changed diagnostic command provenance")
+          val failed = Exn.capture CPC_ProofReplay.check_proof
+            ([boolSyntax.T],boolSyntax.T,proof boolSyntax.T)
+          val _ = assert
+            (case failed of Exn.Exn (Feedback.HOL_ERR detail) =>
+               Feedback.top_function_of detail = "check_proof" andalso
+               Feedback.message_of detail = "final CPC conclusion is not F"
+             | _ => false, "child replay changed the first final error")
+          val _ = checked first
+        in assert (!calls = workers + (if disabled then 1 else 0),
+             "complete child replay discarded the caller's warm hint") end) ()
+      val _ = assert (retained (), "complete child lost legacy memos")
       fun check raised =
         (assert (propagated raised (fn () => boundary 8
            (fn () => (inner (); raise raised)) ()), "legacy exception lost");

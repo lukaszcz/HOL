@@ -112,11 +112,81 @@ struct
       (#tree_nodes measure = SmtResource.max_metric andalso
        #dag_nodes measure = 162) end
 
+  fun type_retention () =
+    let
+      val context = SmtSkeletonProve.new_type_admission_context ()
+      val types = List.tabulate (32,fn i =>
+        Type.mk_vartype ("'measure_retained_" ^ Int.toString i))
+      val expected = List.map (#type_id context) types
+      val _ = List.app (fn _ => require "small Type IDs changed on eviction"
+        (List.map (#type_id context) types = expected)) [1,2,3]
+      val _ = require "retired Type hints changed observation metrics"
+        (!(#nodes context) = 32 andalso !(#edges context) = 0 andalso
+         !(#observations context) = 128)
+      val _ = require "small Type misses retain unbounded annotations"
+        (List.length (!(#physical context)) <= 8 andalso
+         List.null (!(#large_physical context)))
+      val large = shared_type 6
+      val identity = #type_id context large
+      val _ = List.app (ignore o #type_id context) types
+      val observations = !(#observations context)
+      val _ = require "large Type lost its complete physical cache"
+        (#type_id context large = identity andalso
+         !(#observations context) = observations)
+      val _ = require "large Type hints inflated the recent window"
+        (List.length (!(#physical context)) <= 8 andalso
+         List.length (!(#large_physical context)) = 3)
+    in () end
+
+  fun type_key_order () =
+    let
+      val variables = List.tabulate (32,fn i =>
+        Type.mk_vartype ("'measure_key_" ^ Int.toString i))
+      val types = variables @ List.map listSyntax.mk_list_type variables @
+        List.map (fn ty => ty --> Type.bool) variables
+      fun node_id (SmtSkeletonProve.AdmissionTypeNode {id,...}) = id
+      val required = SmtSkeletonProve.new_type_admission_context ()
+      val expected = List.map (#type_id required) types
+      val _ = require "metered lookup changed required Type IDs"
+        (List.map (node_id o #metadata required) types = expected)
+      val metered = SmtSkeletonProve.new_type_admission_context ()
+      val expected = List.map (node_id o #metadata metered) types
+      val _ = require "required lookup changed metered Type IDs"
+        (List.map (#type_id metered) types = expected)
+    in () end
+
   fun diagnostic action =
     (action (); raise Fail "expected original binder-opening diagnostic")
     handle Feedback.HOL_ERR detail =>
       (Feedback.top_structure_of detail,Feedback.top_function_of detail,
        Feedback.message_of detail)
+
+  fun raw_reflexivity () =
+    let
+      val suffix = shared_type 38
+      fun goal ty =
+        let val argument = Term.mk_var ("raw_argument",ty)
+            val head = Term.mk_var ("raw_predicate",ty --> Type.bool)
+            val atom = Term.mk_comb (head,argument)
+        in boolSyntax.mk_disj (atom,boolSyntax.mk_neg atom) end
+      val small_prefix = Type.mk_type ("fun",[Type.alpha,suffix])
+      val target = goal small_prefix
+      val theorem = Timeout.apply (Time.fromSeconds 2)
+        SmtSkeletonProve.propositional_prove target
+      val _ = require "lazy reflexivity lost its actual source or Hyp"
+        (Portable.pointer_eq (Thm.concl theorem,target) andalso
+         List.null (Thm.hyp theorem))
+      val _ = Library.check_oracle_tags
+        "SmtSkeletonMeasureTests" "lazy raw reflexivity" theorem
+      val ground = goal suffix
+      val admission = SmtSkeletonProve.new_type_admission_context ()
+      val expected = diagnostic (fn () =>
+        #intern admission (suffix --> Type.bool))
+      val actual = Timeout.apply (Time.fromSeconds 2)
+        (fn () => diagnostic (fn () => ignore
+          (SmtSkeletonProve.propositional_prove ground))) ()
+    in require "unused raw proofs bypassed the original Type admission"
+      (actual = expected) end
 
   fun binders () =
     let
@@ -160,7 +230,12 @@ struct
        type_boundaries;
      test "Skeleton metrics handle many fresh small annotations"
        fresh_annotations;
+     test "Type hint retirement preserves IDs, metrics and large hits"
+       type_retention;
+     test "Required and metered Type dictionaries preserve one ordering"
+       type_key_order;
      test "Skeleton tree saturation preserves exact DAG counts" saturation;
+     test "Lazy raw reflexivity preserves eager Type guards" raw_reflexivity;
      test "Skeleton fallback preserves the original binder first error"
        binders)
 end

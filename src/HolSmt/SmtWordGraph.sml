@@ -27,6 +27,9 @@ struct
 
   type proof_cache = (term, thm) Redblackmap.dict ref
   type indexed_proof_cache = (int, thm) Redblackmap.dict ref
+  type frontier_cache =
+    (term,((thm * metrics) option * (int * hol_type) list) option)
+      Redblackmap.dict ref
   type context =
     {normalized : indexed_proof_cache, expanded : indexed_proof_cache,
      proof_normalized : indexed_proof_cache,
@@ -34,9 +37,8 @@ struct
      index : term -> int option, entries : int ref,
      word_schemas : proof_cache, bit_schemas : proof_cache,
      proof_schemas : proof_cache,
-     frontier_programs :
-       (term,((thm * metrics) option * (int * hol_type) list) option)
-         Redblackmap.dict ref,
+     frontier_programs : frontier_cache,
+     proof_frontier_programs : frontier_cache,
      schema_entries : int ref, local_law_reuse : bool,
      sat_context : SmtSkeletonProve.sat_context,
      cache_generation : unit ref ref,
@@ -57,6 +59,7 @@ struct
       val bit_schemas = ref (Redblackmap.mkDict Term.compare)
       val proof_schemas = ref (Redblackmap.mkDict Term.compare)
       val frontier_programs = ref (Redblackmap.mkDict Term.compare)
+      val proof_frontier_programs = ref (Redblackmap.mkDict Term.compare)
       val entries = ref 0 and schema_entries = ref 0
       val sat_context = SmtSkeletonProve.new_sat_context ()
       fun refresh_caches () =
@@ -73,6 +76,7 @@ struct
            bit_schemas := Redblackmap.mkDict Term.compare;
            proof_schemas := Redblackmap.mkDict Term.compare;
            frontier_programs := Redblackmap.mkDict Term.compare;
+           proof_frontier_programs := Redblackmap.mkDict Term.compare;
            entries := 0; schema_entries := 0;
            #refresh_caches sat_context ();
            signature_witness := SmtSkeletonProve.cache_signature ())
@@ -91,6 +95,7 @@ struct
        word_schemas = word_schemas, bit_schemas = bit_schemas,
        proof_schemas = proof_schemas, schema_entries = schema_entries,
        frontier_programs = frontier_programs,
+       proof_frontier_programs = proof_frontier_programs,
        local_law_reuse = local_law_reuse, sat_context = sat_context,
        cache_generation = cache_generation,
        cache_live_check = cache_live_check, refresh_caches = refresh_caches}
@@ -108,7 +113,8 @@ struct
      entries= #entries context,word_schemas= #word_schemas context,
      bit_schemas= #bit_schemas context,proof_schemas= #proof_schemas context,
      schema_entries= #schema_entries context,
-     frontier_programs= #frontier_programs context,
+     frontier_programs= #proof_frontier_programs context,
+     proof_frontier_programs= #proof_frontier_programs context,
      local_law_reuse= #local_law_reuse context,
      sat_context= #sat_context context,
      cache_generation= #cache_generation context,
@@ -506,6 +512,12 @@ struct
 
   fun unchanged_node _ = raise Conv.UNCHANGED
 
+  (* A stable identity lets the native template worker avoid preparing
+     callbacks whose own first test would decline without a primitive. *)
+  fun reflexive_node term =
+    if boolSyntax.is_eq term then SmtReplayCanon.reflexive_equality_conv term
+    else raise Conv.UNCHANGED
+
   (* Native matching/simplification can inspect annotations as well as
      terms. Bound their syntax WITHOUT evaluating word dimensions: a
      projection may discard an inadmissibly wide, unused producer. *)
@@ -614,7 +626,20 @@ struct
             local_generation := !(#cache_generation context));
          generation_witness = !(#cache_generation context) andalso
          SmtSkeletonProve.cache_signature_matches signature_witness)
-      val input_nodes = SmtResource.dag_nodes_up_to maximum root
+      (* Keep the admitted construction view for freshness and generation
+         bookkeeping. Reopening its binders in a second walk reconstructs
+         their bodies. An oversized input still runs the original complete
+         metric and diagnostic, but never retains more than an admitted
+         input's worth of extra pointers. *)
+      val input_terms = ref ([] : term list)
+      val saved_input_terms = ref 0
+      fun remember_input term =
+        if !saved_input_terms < SmtResource.max_skeleton_replay_dag_nodes then
+          (input_terms := term :: !input_terms;
+           saved_input_terms := !saved_input_terms + 1)
+        else ()
+      val input_nodes = SmtResource.dag_nodes_up_to_with_inspector
+        remember_input maximum root
       val _ = SmtResource.check_dag_size_for
         "Skeleton" "word-graph-input" input_nodes
       val generated = ref 0
@@ -625,26 +650,50 @@ struct
       val projection_states = ref 0
       val boolean_nodes = ref 0
       val bucket_count = 8191
-      fun new_pointer_set () =
-        Array.array (bucket_count, [] : term list)
-      val pointer_hash = SmtResource.pointer_bucket bucket_count
-      fun mark_pointer table term =
+      (* Operator templates are usually tiny.  Allocate their physical
+         indexes to match the admitted input, growing only when generated
+         syntax needs it.  Keep the old maximum bucket count and exact
+         pointer keys; storage layout supplies no equality or proof fact. *)
+      val initial_buckets = Int.max (17, Int.min (bucket_count, input_nodes))
+      type 'a pointer_table =
+        {buckets : (term * 'a) list Array.array ref, entries : int ref}
+      fun new_pointer_table () : 'a pointer_table =
+        {buckets = ref (Array.array (initial_buckets, [])), entries = ref 0}
+      fun pointer_lookup ({buckets, ...} : 'a pointer_table) term =
+        let val table = !buckets in
+          pointer_peek (Array.sub
+            (table, SmtResource.pointer_bucket (Array.length table) term)) term
+        end
+      fun pointer_insert ({buckets, entries} : 'a pointer_table) term value =
         let
-          val index = pointer_hash term
-          val bucket = Array.sub (table, index)
-        in
-          if List.exists (fn saved => Portable.pointer_eq (saved, term))
-              bucket then false
-          else
-            (Array.update (table, index, term :: bucket); true)
-        end
-      fun pointer_lookup table term =
-        pointer_peek (Array.sub (table, pointer_hash term)) term
-      fun pointer_insert table term value =
-        let val index = pointer_hash term in
-          Array.update
+          val table = !buckets
+          val size = Array.length table
+          val index = SmtResource.pointer_bucket size term
+          val _ = Array.update
             (table, index, (term, value) :: Array.sub (table, index))
+          val _ = entries := !entries + 1
+        in
+          if size < bucket_count andalso !entries > 2 * size then
+            let
+              val size = Int.min (bucket_count, 2 * size + 1)
+              val grown = Array.array (size, [])
+              fun insert (entry as (term, _)) =
+                let val index = SmtResource.pointer_bucket size term in
+                  Array.update
+                    (grown, index, entry :: Array.sub (grown, index))
+                end
+              (* Preserve newest-first lookup even for repeated keys. *)
+              val _ = Array.app (List.app insert o List.rev) table
+            in buckets := grown end
+          else ()
         end
+      fun clear_pointer_table ({buckets, entries} : 'a pointer_table) =
+        (Array.modify (fn _ => []) (!buckets); entries := 0)
+      fun new_pointer_set () =
+        new_pointer_table () : unit pointer_table
+      fun mark_pointer table term =
+        case pointer_lookup table term of SOME () => false
+          | NONE => (pointer_insert table term (); true)
       val generated_seen = new_pointer_set ()
       val reserved = ref (HOLset.empty String.compare)
       fun mark_generated term = mark_pointer generated_seen term
@@ -653,8 +702,7 @@ struct
           (if Term.is_var term then
              reserved := HOLset.add
                (!reserved, Lib.fst (Term.dest_var term))
-           else ();
-           List.app seed_source (SmtResource.term_children term))
+           else ())
         else ()
       fun count_nodes root =
         let
@@ -673,7 +721,8 @@ struct
          variables: schema freshness needs a conservative occupied-name set,
          not an independent free-variable oracle. Binder opening already has
          SmtResource's standing bounded-body contract. *)
-      val _ = seed_source root
+      val _ = List.app seed_source (!input_terms)
+      val _ = input_terms := []
       val serial = ref 0
 
       fun fresh ty =
@@ -716,8 +765,7 @@ struct
         in int_list_compare (fields left, fields right) end
 
       val next_node_id = ref 0
-      val node_pointer_cache = Array.array
-        (bucket_count, [] : (term * int) list)
+      val node_pointer_cache : int pointer_table = new_pointer_table ()
       val node_keys = ref (Redblackmap.mkDict node_key_compare)
       val node_representatives = ref (Redblackmap.mkDict Int.compare)
       val constant_identities = ref ([] : (term * int) list)
@@ -947,13 +995,37 @@ struct
           in instantiate_changed term schematic substitutions reduced end
         handle Conv.UNCHANGED => (Thm.REFL term, false)
 
+      (* NONE records exact reflexivity without allocating a kernel theorem.
+         Realize it only at a changed congruence boundary, and share that
+         theorem if another boundary needs the same physical source. *)
+      val reflexive : thm pointer_table = new_pointer_table ()
+      fun proof term (SOME theorem) = theorem
+        | proof term NONE =
+            (case pointer_lookup reflexive term of
+               SOME theorem => theorem
+             | NONE => let val theorem = Thm.REFL term
+                       in pointer_insert reflexive term theorem; theorem end)
+      fun right term NONE = term
+        | right _ (SOME theorem) = boolSyntax.rhs (Thm.concl theorem)
+      fun changed (theorem, true) = SOME theorem
+        | changed (_, false) = NONE
+      fun compose NONE second = second
+        | compose first NONE = first
+        | compose (SOME first) (SOME second) =
+            SOME (Thm.TRANS first second)
+      fun save_result cache term NONE = ()
+        | save_result cache term (SOME theorem) =
+            if reuse andalso reusable () then
+              context_save context cache term (theorem, true)
+            else ()
+
       val normalize_index = ref
         (SmtResource.new_bounded_term_index maximum)
       val normalize_cache = ref
         (Redblackmap.mkDict Int.compare :
-          (int, thm * bool) Redblackmap.dict)
-      val normalize_physical = Array.array
-        (bucket_count, [] : (term * (thm * bool)) list)
+          (int, thm option) Redblackmap.dict)
+      val normalize_physical : thm option pointer_table =
+        new_pointer_table ()
 
       fun stopped term = case stop of
           NONE => false
@@ -973,113 +1045,102 @@ struct
                 (fn id => Redblackmap.peek (!normalize_cache, id))
                 (normalization_id term) of
                NONE => if reuse andalso reusable () then
-                   context_lookup context (#normalized context) term
+                   Option.map changed
+                     (context_lookup context (#normalized context) term)
                  else NONE
-             | SOME (theorem, changed) => SOME
-                 (if changed then
-                    (SmtSkeletonProve.anchor_left term theorem, true)
-                  else (Thm.REFL term, false)))
+             | SOME result => SOME (Option.map
+                 (SmtSkeletonProve.anchor_left term) result))
         end
 
       fun external_conversion source =
-        let
+        if Portable.pointer_eq (node_conversion, unchanged_node) orelse
+            (Portable.pointer_eq (node_conversion,reflexive_node) andalso
+             not (boolSyntax.is_eq source)) then
+          (reusable (); NONE)
+        else let
           val _ = if protect_callbacks andalso not
               (Portable.pointer_eq (node_conversion,unchanged_node)) then
               admit_callback_template type_admission source else ()
-          val theorem = Conv.QCONV node_conversion source
-            handle Conv.UNCHANGED => Thm.REFL source
+          val result = SOME (node_conversion source)
+            handle Conv.UNCHANGED => NONE
           val _ = reusable ()
-          val _ = if List.null (Thm.hyp theorem) then () else
-            raise ERR "external_conversion" "operator schema has hypotheses"
-          val _ = Library.check_oracle_tags "SmtWordGraph"
-            "node schema" theorem
-          val theorem = SmtSkeletonProve.anchor_left source theorem
-          val right = boolSyntax.rhs (Thm.concl theorem)
-        in (theorem, not (Term.aconv source right)) end
+        in case result of NONE => NONE
+         | SOME theorem =>
+            let
+              val _ = if List.null (Thm.hyp theorem) then () else
+                raise ERR "external_conversion"
+                  "operator schema has hypotheses"
+              val _ = Library.check_oracle_tags "SmtWordGraph"
+                "node schema" theorem
+              val theorem = SmtSkeletonProve.anchor_left source theorem
+              val right = boolSyntax.rhs (Thm.concl theorem)
+            in if Term.aconv source right then NONE else SOME theorem end
+        end
 
       fun normalize_source term =
-        if stopped term then (Thm.REFL term, false)
+        if stopped term then NONE
         else case cached_normalization term of
           SOME result => (memo_hits := !memo_hits + 1; result)
         | NONE =>
             let
               val _ = normalized_nodes := !normalized_nodes + 1
-              val (pre, pre_changed) = external_conversion term
+              val pre = external_conversion term
               val result =
-                if pre_changed then
+                case pre of SOME theorem =>
                   let
                     (* A projection callback gets first refusal so it can
                        consume one field without normalizing the complete
                        tuple producer. *)
-                    val right = boolSyntax.rhs (Thm.concl pre)
-                    val (tail, _) = normalize_source right
-                  in (Thm.TRANS pre tail, true) end
-                else
+                    val tail = normalize_source (right term pre)
+                  in compose pre tail end
+                | NONE =>
                   let
-                    val (children, children_changed) =
+                    val children =
                       if Term.is_comb term andalso not (literal term) then
                         let
                           val (operator, operand) = Term.dest_comb term
-                          val (operator_theorem, operator_changed) =
-                            normalize_source operator
-                          val (operand_theorem, operand_changed) =
-                            normalize_source operand
+                          val operator_result = normalize_source operator
+                          val operand_result = normalize_source operand
                         in
-                          if operator_changed orelse operand_changed then
-                            (SmtSkeletonProve.anchor_left term
-                               (Thm.MK_COMB
-                                 (operator_theorem, operand_theorem)), true)
-                          else (Thm.REFL term, false)
+                          if isSome operator_result orelse
+                              isSome operand_result then
+                            SOME (SmtSkeletonProve.anchor_left term
+                              (Thm.MK_COMB
+                                (proof operator operator_result,
+                                 proof operand operand_result)))
+                          else NONE
                         end
                       else if Term.is_abs term then
                         let
                           val (binder, body) = Term.dest_abs term
-                          val (body_theorem, body_changed) =
-                            normalize_source body
+                          val body_result = normalize_source body
                         in
-                          if body_changed then
+                          case body_result of NONE => NONE
+                          | SOME theorem =>
                             let
                               val _ = SmtResource.check_resource_goal
                                 "BitVector" "word-graph-binder-body" body
                               val _ = SmtResource.check_resource_goal
                                 "BitVector" "word-graph-binder-result"
-                                (boolSyntax.rhs (Thm.concl body_theorem))
-                            in
-                              (SmtSkeletonProve.anchor_left term
-                                 (Thm.ABS binder body_theorem), true)
-                            end
-                          else (Thm.REFL term, false)
+                                (right body body_result)
+                            in SOME (SmtSkeletonProve.anchor_left term
+                                 (Thm.ABS binder theorem)) end
                         end
-                      else (Thm.REFL term, false)
-                    val residue = boolSyntax.rhs (Thm.concl children)
-                    val (external, external_changed) =
-                      external_conversion residue
-                    val external_right =
-                      boolSyntax.rhs (Thm.concl external)
-                    val (local_theorem, local_changed) =
-                      if external_changed then
-                        (Thm.REFL external_right, false)
-                      else operator_conversion residue
-                    val first = if external_changed then external
-                      else local_theorem
-                    val first_changed = external_changed orelse local_changed
-                    val (tail, tail_changed) =
-                      if external_changed then normalize_source external_right
-                      else
-                        (Thm.REFL (boolSyntax.rhs (Thm.concl first)), false)
-                  in
-                    if first_changed orelse tail_changed then
-                      (Thm.TRANS children (Thm.TRANS first tail), true)
-                    else (children, children_changed)
-                  end
+                      else NONE
+                    val residue = right term children
+                    val external = external_conversion residue
+                    val first = case external of SOME _ => external
+                      | NONE => if full_words_operator residue then
+                          changed (operator_conversion residue) else NONE
+                    val tail = case external of NONE => NONE
+                      | SOME _ => normalize_source (right residue external)
+                  in compose children (compose first tail) end
               val _ = reusable ()
               val _ = case normalization_id term of NONE => ()
                 | SOME id => normalize_cache :=
                     Redblackmap.insert (!normalize_cache, id, result)
               val _ = pointer_insert normalize_physical term result
-              val _ = if reuse andalso reusable () then
-                  context_save context (#normalized context) term result
-                else ()
+              val _ = save_result (#normalized context) term result
             in result end
 
       fun projection_closed schematic theorem =
@@ -1174,8 +1235,8 @@ struct
         end
         handle Conv.UNCHANGED => (Thm.REFL term, false)
 
-      val expand_cache = Array.array
-        (bucket_count, [] : (term * (thm * bool * int)) list)
+      val expand_cache : (thm option * int) pointer_table =
+        new_pointer_table ()
       val bit_cache = ref
         (Redblackmap.mkDict (pair_compare (Int.compare, Arbnum.compare)))
 
@@ -1188,67 +1249,66 @@ struct
             | NONE =>
                 let
                   val _ = boolean_nodes := !boolean_nodes + 1
-                  val (initial, initial_changed) =
+                  val initial =
                     if is_word_projection term andalso
                             numSyntax.is_numeral
                               (Lib.snd (wordsSyntax.dest_index term)) then
                       (projection_states := !projection_states + 1;
-                       projection_conversion term)
-                    else relation_conversion term
-                  val initial_right = boolSyntax.rhs (Thm.concl initial)
-                  val (result, changed, identity) =
-                    if initial_changed then
+                       changed (projection_conversion term))
+                    else if word_relation term then
+                      changed (relation_conversion term) else NONE
+                  val (result, identity) =
+                    case initial of SOME _ =>
                       let
-                        val (right_theorem, _, right_id) = expand initial_right
-                        val combined = Thm.TRANS initial right_theorem
-                      in (combined, true, right_id) end
-                    else if Term.is_comb term andalso not (literal term) then
+                        val (tail, right_id) = expand (right term initial)
+                      in (compose initial tail, right_id) end
+                    | NONE =>
+                    if Term.is_comb term andalso not (literal term) then
                       let
                         val (operator, operand) = Term.dest_comb term
-                        val (operator_theorem, operator_changed, operator_id) =
-                          expand operator
-                        val (operand_theorem, operand_changed, operand_id) =
-                          expand operand
+                        val (operator_result, operator_id) = expand operator
+                        val (operand_result, operand_id) = expand operand
                       in
-                        if operator_changed orelse operand_changed then
+                        if isSome operator_result orelse
+                            isSome operand_result then
                           let
                             val rebuilt = SmtSkeletonProve.anchor_left term
                               (Thm.MK_COMB
-                                (operator_theorem, operand_theorem))
+                                (proof operator operator_result,
+                                 proof operand operand_result))
                             val tyid = #identity
                               (type_info (Term.type_of term))
                             val (canonical, identity) = canonicalize_key
                               (ApplicationKey
                                 (operator_id, operand_id, tyid)) rebuilt
-                          in (canonical, true, identity) end
-                        else (Thm.REFL term, false, node_id term)
+                          in (SOME canonical, identity) end
+                        else (NONE, node_id term)
                       end
                     else if Term.is_abs term then
                       let
                         val (binder, body) = Term.dest_abs term
-                        val (body_theorem, body_changed, body_id) = expand body
+                        val (body_result, body_id) = expand body
                       in
-                        if body_changed then
+                        case body_result of NONE => (NONE, node_id term)
+                        | SOME theorem =>
                           let
                             val _ = SmtResource.check_resource_goal "BitVector"
                               "word-graph-binder-body" body
                             val _ = SmtResource.check_resource_goal "BitVector"
                               "word-graph-binder-result"
-                              (boolSyntax.rhs (Thm.concl body_theorem))
+                              (right body body_result)
                             val rebuilt = SmtSkeletonProve.anchor_left term
-                              (Thm.ABS binder body_theorem)
+                              (Thm.ABS binder theorem)
                             val tyid = #identity
                               (type_info (Term.type_of term))
                             val (canonical, identity) = canonicalize_key
                               (AbstractionKey
                                 (node_id binder, body_id, tyid)) rebuilt
-                          in (canonical, true, identity) end
-                        else (Thm.REFL term, false, node_id term)
+                          in (SOME canonical, identity) end
                       end
-                    else (Thm.REFL term, false, node_id term)
-                  val _ = pointer_insert expand_cache term
-                    (result, changed, identity)
-                in (result, changed, identity) end
+                    else (NONE, node_id term)
+                  val _ = pointer_insert expand_cache term (result, identity)
+                in (result, identity) end
         in
           if is_word_projection term andalso
              numSyntax.is_numeral (Lib.snd (wordsSyntax.dest_index term)) then
@@ -1258,13 +1318,13 @@ struct
               val numeric_index = numSyntax.dest_numeral index
             in
               case Redblackmap.peek (!bit_cache, (word_id, numeric_index)) of
-                SOME (theorem, changed, identity) =>
+                SOME (result, identity) =>
                   (memo_hits := !memo_hits + 1;
-                   (SmtSkeletonProve.anchor_left term theorem,
-                    changed, identity))
+                   (Option.map (SmtSkeletonProve.anchor_left term) result,
+                    identity))
               | NONE =>
                   let
-                    val result as (theorem, changed, identity) = ordinary ()
+                    val result = ordinary ()
                     val _ = bit_cache := Redblackmap.insert
                       (!bit_cache, (word_id, numeric_index), result)
                   in result end
@@ -1273,7 +1333,7 @@ struct
         end
 
       and expand term =
-        if stopped term then (Thm.REFL term, false, node_id term)
+        if stopped term then (NONE, node_id term)
         else let val _ = reusable () in
         case pointer_lookup expand_cache term of
           SOME result => (memo_hits := !memo_hits + 1; result)
@@ -1281,43 +1341,41 @@ struct
             (case (if reuse andalso reusable () then
                      context_lookup context (#expanded context) term
                    else NONE) of
-               SOME (theorem, changed) =>
-                 let val result = (theorem, changed,
+               SOME (theorem, _) =>
+                 let val result = (SOME theorem,
                    node_id (boolSyntax.rhs (Thm.concl theorem)))
                  in memo_hits := !memo_hits + 1;
                     pointer_insert expand_cache term result; result end
              | NONE =>
                  let
-                   val result as (theorem, changed, _) = expand_uncached term
-                   val _ = if reuse andalso reusable () then
-                       context_save context (#expanded context) term
-                         (theorem, changed)
-                     else ()
+                   val result as (equality, _) = expand_uncached term
+                   val _ = save_result (#expanded context) term equality
                  in result end)
         end
 
       val _ = reset_local := (fn () =>
         (normalize_index := SmtResource.new_bounded_term_index maximum;
          normalize_cache := Redblackmap.mkDict Int.compare;
-         List.app (fn index =>
-           (Array.update (normalize_physical, index, []);
-            Array.update (expand_cache, index, [])))
-           (List.tabulate (bucket_count, fn index => index));
+         clear_pointer_table reflexive;
+         clear_pointer_table normalize_physical;
+         clear_pointer_table expand_cache;
          bit_cache := Redblackmap.mkDict
            (pair_compare (Int.compare, Arbnum.compare))))
 
-      val (normalized, normalization_changed) =
-        SmtResource.profile_phase "word-graph-normalize"
-          normalize_source root
-      val normalized_right = boolSyntax.rhs (Thm.concl normalized)
+      val normalized = SmtResource.profile_phase "word-graph-normalize"
+        normalize_source root
+      val normalized_right = right root normalized
       val normalized_dag_nodes = SmtResource.profile_phase
         "word-graph-normalized-dag-count"
         count_nodes normalized_right
-      val (expanded, expansion_changed, _) =
-        SmtResource.profile_phase "word-graph-expand" expand normalized_right
+      val (expanded, _) = SmtResource.profile_phase "word-graph-expand"
+        expand normalized_right
+      val changed = isSome normalized orelse isSome expanded
+      val combined = compose normalized expanded
+      val combined = case combined of SOME theorem => theorem
+        | NONE => raise Conv.UNCHANGED
       val theorem = SmtSkeletonProve.anchor_left root
-        (Thm.TRANS normalized expanded)
-      val changed = normalization_changed orelse expansion_changed
+        combined
       val final_dag_nodes = SmtResource.profile_phase
         "word-graph-final-dag-count" count_nodes
         (boolSyntax.rhs (Thm.concl theorem))
@@ -1492,8 +1550,40 @@ struct
           Option.isSome (SmtReplayImport.bounded_raw_size 32 term) andalso
           (admit_callback_template admission term;
            List.null (Term.free_vars term)) end
-      fun propose node =
+      (* The built-in proof callback only changes an equality. Fixed
+         Boolean connectives and atomic nodes also have no word/projection
+         conversion. Certify those misses before allocating a schematic
+         frontier; custom callback routes retain their original visits. *)
+      val equality_id = #Name (Term.dest_thy_constid boolSyntax.equality)
+      val boolean_ids = List.map (fn term =>
+          #Name (Term.dest_thy_constid term))
+        [Term.rator (boolSyntax.mk_neg boolSyntax.T),
+         Term.rator (Term.rator (boolSyntax.mk_conj (boolSyntax.T,boolSyntax.T))),
+         Term.rator (Term.rator (boolSyntax.mk_disj (boolSyntax.T,boolSyntax.T))),
+         Term.rator (Term.rator (boolSyntax.mk_imp (boolSyntax.T,boolSyntax.T)))]
+      fun equality_node node = case G.view graph node of
+          G.Application (partial,_) =>
+            (case G.view graph partial of G.Application (head,_) =>
+               (case G.view graph head of G.Constant id =>
+                  KernelSig.id_compare (id,equality_id)=EQUAL | _ => false)
+             | _ => false)
+        | _ => false
+      fun fixed_boolean_node node =
         let
+          fun head 0 _ = NONE
+            | head fuel node = case G.view graph node of
+                G.Constant id => SOME id
+              | G.Application (operator,_) => head (fuel-1) operator
+              | _ => NONE
+        in case G.view graph node of
+            G.Variable _ => true | G.Constant _ => true
+          | _ => case head 3 node of NONE => false
+            | SOME id => List.exists (fn expected =>
+                KernelSig.id_compare (id,expected)=EQUAL) boolean_ids
+        end
+      fun propose node =
+        if canonical_frontiers andalso fixed_boolean_node node then NONE
+        else let
           val holes = ref (Redblackmap.mkDict Int.compare)
           fun hole node =
             case Redblackmap.peek (!holes,G.node_id node) of
@@ -1607,7 +1697,8 @@ struct
               in SOME schema end
         end
       fun pre_propose node =
-        if Portable.pointer_eq (node_callback,unchanged_node)
+        if Portable.pointer_eq (node_callback,unchanged_node) orelse
+            (canonical_frontiers andalso not (equality_node node))
         then NONE else let
           val holes = ref (Redblackmap.mkDict Int.compare)
           fun hole node = case Redblackmap.peek (!holes,G.node_id node) of
@@ -2040,12 +2131,21 @@ struct
          bit_conversion=blastLib.BIT_BLAST_CONV,
          node_conversion=node_conversion}
       fun reflexive admission =
-        let val callback = #node_conversion conversions admission
+        if Portable.pointer_eq (node_conversion,unchanged_node) andalso
+            not (Library.no_fastpath ()) then reflexive_node
+        else let val callback = #node_conversion conversions admission
         in fn term => if boolSyntax.is_eq term then
             (SmtReplayCanon.reflexive_equality_conv term
              handle Conv.UNCHANGED => callback term)
           else callback term end
-      val (plan,_) = discover_using_in false context true admission
+      (* The built-in reflexivity callback is pure. Reuse its admitted
+         frontier programmes just as graph_normalize_in does, in the
+         separate proof normal form. Custom callbacks retain fresh holes
+         and their original invocation behaviour. *)
+      val canonical_frontiers =
+        Portable.pointer_eq (node_conversion,unchanged_node) andalso
+        not (Library.no_fastpath ())
+      val (plan,_) = discover_using_in canonical_frontiers context true admission
         {callback_failed= #callback_failed conversions,
          word_conversion= #word_conversion conversions,
          bit_conversion= #bit_conversion conversions,node_conversion=reflexive}
@@ -2104,7 +2204,10 @@ struct
                     {callback_failed=ref false,
                      word_conversion=Library.replay_word_simp_conv,
                      bit_conversion=blastLib.BIT_BLAST_CONV,
-                     node_conversion=fn _ => reflexive} template)
+                     node_conversion=fn _ =>
+                       if Portable.pointer_eq (node_conversion,unchanged_node)
+                           andalso not (Library.no_fastpath ()) then
+                         reflexive_node else reflexive} template)
                     handle Conv.UNCHANGED => Thm.REFL template
                   val residue = boolSyntax.rhs (Thm.concl normalized)
                   val law = SmtSkeletonProve.propositional_prove_in
@@ -2139,6 +2242,7 @@ struct
              | WidePrefix => NONE
     in case root_schema () of SOME theorem => theorem
       | NONE => prove_graph_using_in context node_conversion target end
+
 
   (* Normalize a shared finite-word circuit once, retaining shared operator
      projection proofs, then replay a checked SAT certificate for its Boolean

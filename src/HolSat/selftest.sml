@@ -443,6 +443,48 @@ local
        roots @ [1,2,1,0], roots @ [5,2,0,0], roots @ [5,1,1,0]]
       andalso bad_trace (roots @ forward) ``p /\ q``)
 
+  val _ = control "binary cache: future uses and final result survive"
+    (fn () =>
+      let
+        val saved_profile = !minisatResolve.sat_profile
+        val result = Exn.capture (fn () =>
+          let
+            val _ = minisatResolve.sat_profile := true
+            (* Exercise both streaming small files and buffered large
+               files. Deletions neither consume IDs nor revoke facts. *)
+            val padding = List.concat
+              (List.tabulate (32768,fn _ => [128,129,0]))
+            fun retained suffix =
+              let
+                val _ = minisatResolve.reset_replay_counts ()
+                val valid = trace_proves
+                  (roots @ [3,0] @ forward @ [7,2,2,0] @ suffix) cnf
+                val released = List.exists
+                  (fn (name,n) => name="last-use-releases" andalso n>0)
+                  (minisatResolve.get_replay_counts ())
+              in valid andalso released end
+          in List.all retained [[],padding] end) ()
+        val _ = minisatResolve.sat_profile := saved_profile
+      in Exn.release result end)
+
+  val _ = control "binary metadata preserves the first replay exception"
+    (fn () =>
+      let
+        fun failure bytes = with_trace bytes (fn conf =>
+          case Exn.capture GEN_SAT_PROVE_ONLY conf of
+            Exn.Exn (HOL_ERR error) => SOME
+              (Feedback.top_structure_of error,
+               Feedback.top_function_of error,Feedback.message_of error)
+          | _ => NONE)
+        val early = [6,0,0]
+        val padding = List.concat
+          (List.tabulate (32768,fn _ => [128,129,0]))
+      in
+        case (failure early,failure (early @ padding @ [128])) of
+          (SOME short,SOME long) => short=long
+        | _ => false
+      end)
+
   val _ = control "ordinary malformed traces retain checked failures"
     (fn () => List.all (fn bytes => with_trace bytes (fn conf =>
       ((GEN_SAT conf; false) handle HOL_ERR _ => true

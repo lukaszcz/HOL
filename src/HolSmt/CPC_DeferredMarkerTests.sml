@@ -1180,10 +1180,112 @@ struct
       val _ = exact boolSyntax.F [boolSyntax.F, b0, b1] raw
     in ignore (CPC_Proof.proof_commands unrelated) end
 
+  fun assignment_memos () =
+    R.with_seeded_replay_memos_for_test (fn retained =>
+      let
+        val _ = false_bridge ()
+        val _ = require "rejected assignment erased its parent's FP hints"
+          (retained ())
+        val _ = two_markers ()
+        val _ = require "successful assignment replaced its parent's FP hints"
+          (retained ())
+      in () end)
+
+  fun shell_scopes () =
+    let
+      val p = P.intern_cpc_shell
+        (Term.mk_var ("task59_shell_parent",Type.bool))
+      val q = P.intern_cpc_shell
+        (Term.mk_var ("task59_shell_child",Type.bool))
+      val r = P.intern_cpc_shell
+        (Term.mk_var ("task59_shell_nested",Type.bool))
+      val seed = P.intern_cpc_shell (boolSyntax.mk_neg p)
+      val head = Term.rator seed
+      fun copy operand = Term.mk_comb (head,operand)
+      fun parent () = require "shell scope replaced a parent hint"
+        (Portable.pointer_eq (seed,P.intern_cpc_shell (copy p)))
+      val child = P.with_cpc_shell_scope (fn () =>
+        let
+          val _ = parent ()
+          val child = P.intern_cpc_shell (copy q)
+          val _ = require "shell scope lost local sharing"
+            (Portable.pointer_eq (child,P.intern_cpc_shell (copy q)))
+          val nested = P.with_cpc_shell_scope (fn () =>
+            (require "nested shell scope lost its parent's new hint"
+               (Portable.pointer_eq (child,P.intern_cpc_shell (copy q)));
+             P.intern_cpc_shell (copy r))) ()
+          val _ = require "nested shell entries escaped to their parent"
+            (not (Portable.pointer_eq
+              (nested,P.intern_cpc_shell (copy r))))
+        in child end) ()
+      val _ = parent ()
+      val _ = require "shell entries escaped a completed scope"
+        (not (Portable.pointer_eq (child,P.intern_cpc_shell (copy q))))
+      exception ScopeFailure of unit ref
+      val marker = ref ()
+      val _ = (P.with_cpc_shell_scope (fn () => raise ScopeFailure marker) ()
+        handle ScopeFailure saved => require "shell scope changed its error"
+          (Portable.pointer_eq (marker,saved)))
+    in parent () end
+
+  fun source_alpha () =
+    let
+      val left_var = Term.mk_var ("source_alpha_left",Type.bool)
+      val right_var = Term.mk_var ("source_alpha_right",Type.bool)
+      val free = Term.mk_var ("source_alpha_free",Type.bool)
+      fun shared 0 = free
+        | shared n = let val child = shared (n-1)
+                     in boolSyntax.mk_conj (child,child) end
+      val body = shared 8
+      val left = Term.mk_abs (left_var,
+        boolSyntax.mk_eq (left_var,body))
+      val right = Term.mk_abs (right_var,
+        boolSyntax.mk_eq (right_var,body))
+      val convert = R.admitted_source_alpha_for_test
+      val theorem = valOf (convert (fn _ => true) left right)
+      val _ = exact (boolSyntax.mk_eq (left,right)) [] theorem
+      val _ = require "source ALPHA accepted unequal abstractions"
+        (not (Option.isSome (convert (fn _ => true) left
+          (Term.mk_abs (right_var,boolSyntax.T)))))
+      val calls = ref ([] : term list)
+      fun admit term = (calls := term :: !calls;
+        not (Portable.pointer_eq (term,left)))
+      val _ = require "source ALPHA changed admission short circuit"
+        (not (Option.isSome (convert admit left right)) andalso
+         length (!calls) = 1 andalso
+         Portable.pointer_eq (hd (!calls),left))
+      val _ = calls := []
+      val _ = convert (fn term => (calls := term :: !calls; true))
+        left right
+      val _ = require "source ALPHA changed operand admission order"
+        (length (!calls) = 2 andalso
+         Portable.pointer_eq (hd (!calls),right) andalso
+         Portable.pointer_eq (hd (tl (!calls)),left))
+      val payload = Feedback.mk_HOL_ERR "Thm" "ALPHA"
+        "Terms not alpha-convertible"
+      val _ = require "source ALPHA swallowed an admission error"
+        ((convert (fn _ => raise payload) left right; false)
+         handle Feedback.HOL_ERR detail =>
+           Feedback.top_structure_of detail = "Thm" andalso
+           Feedback.top_function_of detail = "ALPHA" andalso
+           Feedback.message_of detail = "Terms not alpha-convertible")
+      exception AdmissionFailure of unit ref
+      val token = ref ()
+      val _ = require "source ALPHA changed an admission exception"
+        ((convert (fn _ => raise AdmissionFailure token) left right; false)
+         handle AdmissionFailure saved => Portable.pointer_eq (token,saved))
+    in () end
+
   fun run () =
     (test "CPC real two-marker checked FP infinity bridges" two_markers;
      test "CPC false private FP bridge rejects checked assignment"
        false_bridge;
+     test "CPC FP assignments restore parent hints on success and rejection"
+       assignment_memos;
+     test "CPC shell scopes read parents and retire only their own hints"
+       shell_scopes;
+     test "CPC source ALPHA preserves checked proof and admission errors"
+       source_alpha;
      test "CPC unanchored private component cannot close" unanchored_leak;
      test "CPC checked private bridge cannot erase a foreign Hyp"
        foreign_hypothesis;

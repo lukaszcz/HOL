@@ -14,6 +14,7 @@ struct
   structure NC = SmtReplayNativeContract
   structure RP = SmtReplayResourcePolicy
   structure O = SmtReplayRuleObservation
+  structure R = ReplayRedblackPrivateWork
 
   fun require text yes = if yes then () else raise Fail text
   fun test label action =
@@ -23,6 +24,66 @@ struct
     {input_limit=RP.Uncapped,output_limit=RP.Uncapped,
      template_limit=RP.Uncapped}
   val allowance : IntInf.int = 100000000
+
+  (* Tree shape is observable through subsequent authentic plan costs.
+     Compare ordinary updates with the literal planned programme across
+     rotations, replacement, shared prefixes and persistent snapshots. *)
+  fun ordinary_tables () =
+    let
+      fun integers key value (direct,planned) =
+        let
+          val dp = R.insert_int (direct,key,allowance)
+          val pp = R.insert_int (planned,key,allowance)
+          val _ = require "ordinary map changed insertion geometry"
+            (R.int_insertion_cost dp = R.int_insertion_cost pp)
+          val next = R.put_int (direct,key,value)
+          val expected = R.finish_int (planned,pp,value)
+          val _ = require "ordinary map changed persistent contents"
+            (R.list_int next = R.list_int expected)
+          fun lookup k =
+            let val a = R.lookup_int (next,k,allowance)
+                val b = R.lookup_int (expected,k,allowance)
+            in require "ordinary map changed lookup geometry/value"
+              (R.int_lookup_cost a = R.int_lookup_cost b andalso
+               R.int_lookup_value (next,a) =
+                 R.int_lookup_value (expected,b)) end
+          val _ = List.app lookup [key,~key,key+1,0,127,257]
+        in (next,expected) end
+      fun strings key (direct,planned) =
+        let
+          val dp = R.insert_string (direct,key,allowance)
+          val pp = R.insert_string (planned,key,allowance)
+          val _ = require "ordinary set changed insertion geometry"
+            (R.string_insertion_cost dp = R.string_insertion_cost pp)
+          val next = R.add_string (direct,key)
+          val expected = R.finish_string (planned,pp)
+          fun lookup k =
+            let val a = R.lookup_string (next,k,allowance)
+                val b = R.lookup_string (expected,k,allowance)
+            in require "ordinary set changed lookup geometry/value"
+              (R.string_lookup_cost a = R.string_lookup_cost b andalso
+               R.string_lookup_value (next,a) =
+                 R.string_lookup_value (expected,b)) end
+          val _ = List.app lookup [key,"",key ^ "x","shared_prefix"]
+        in (next,expected) end
+      val ascending = List.tabulate (127,fn n => n)
+      val keys = ascending @ List.rev ascending @
+        List.tabulate (509,fn n => (n*53) mod 257)
+      fun step (key,(maps,sets,saved)) =
+        let
+          val maps = integers key (List.length saved) maps
+          val name = "shared_prefix_" ^ Int.toString key
+          val sets = strings name sets
+        in (maps,sets,(maps,sets)::saved) end
+      val (_,_,saved) = List.foldl step
+        ((R.empty_int (),R.empty_int ()),
+         (R.empty_string (),R.empty_string ()),[]) keys
+    in List.app (fn ((a,b),(c,d)) =>
+      (require "ordinary update mutated a map snapshot"
+         (R.list_int a = R.list_int b);
+       require "ordinary update mutated a set snapshot"
+         (R.member_string (c,"shared_prefix_5") =
+          R.member_string (d,"shared_prefix_5")))) saved end
 
   (* Run BOTH cleanups even when the test, setup, or first cleanup raises;
      never mask the original exception with a cleanup failure. *)
@@ -227,6 +288,8 @@ struct
     let
       val outcome = Exn.capture (fn () =>
         (Count.counting_thms true;
+         test "Ordinary fixed tables retain exact later plan costs"
+           ordinary_tables;
          test "Prepared named REFL funds its complete native extent"
            (fn () => (check false ReflexiveName; check true ReflexiveName));
          test "Prepared named AP_THM funds its complete native extent"

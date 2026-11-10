@@ -5704,6 +5704,16 @@ local
           mod boolean_dag_bucket_count
         else boolean_dag_term_hash 0 term
 
+  (* Physical memo keys need no binder view. Keep the old routes for
+     binder-free terms, leaving potentially shared abstraction bodies opaque. *)
+  fun boolean_dag_opaque_hash 0 term = boolean_dag_term_hash 0 term
+    | boolean_dag_opaque_hash depth term =
+        if Term.is_comb term then
+          (41 * boolean_dag_opaque_hash (depth-1) (Term.rator term) +
+           67 * boolean_dag_opaque_hash (depth-1) (Term.rand term) + 31) mod
+          boolean_dag_bucket_count
+        else boolean_dag_term_hash 0 term
+
   (* Prove a shared Boolean circuit without expanding its unfolded tree.
      Every internal node receives a Tseitin variable; instantiation followed
      by reflexivity discharges the exact defining equations. *)
@@ -7912,6 +7922,20 @@ local
       sources (fn node => node_conversion node
         handle SmtFpGraph.Declined _ => raise Conv.UNCHANGED) term
 
+  fun admitted_source_alpha admitted left right =
+    if admitted left andalso admitted right then
+      (* ALPHA already checks alpha-convertibility. In particular, do not
+         traverse large opaque binder bodies twice on a successful pair.
+         Keep admission outside this handler: even an identical admission
+         error must propagate from its original gate. *)
+      (SOME (Thm.ALPHA left right)
+       handle Feedback.HOL_ERR detail =>
+         if Feedback.top_structure_of detail = "Thm" andalso
+            Feedback.top_function_of detail = "ALPHA" andalso
+            Feedback.message_of detail = "Terms not alpha-convertible"
+         then NONE else raise Feedback.HOL_ERR detail)
+    else NONE
+
   fun prove_boolean_circuit_tautology_stopping sources goal =
     (* Boolean equality already has a checked circuit gate. Compile it once,
        including both directions, rather than replaying two complete graphs. *)
@@ -8040,10 +8064,7 @@ local
             SOME (_,_,proof) => proof
           | NONE =>
               let
-                val proof = if admitted_source left andalso
-                    admitted_source right andalso
-                    Term.aconv left right then SOME (Thm.ALPHA left right)
-                  else NONE
+                val proof = admitted_source_alpha admitted_source left right
                 val _ = if !source_equality_count >= compare_maximum then ()
                   else
                     (source_equality_count := !source_equality_count+1;
@@ -9212,13 +9233,7 @@ local
       (* These are producer CNF constructors, not arbitrary semantic keys.
          A bounded deeper hint separates clauses without hashing their opaque
          substituted operands. Never open a binder for a cache hint. *)
-      fun alignment_hint 0 term = boolean_dag_term_hash 0 term
-        | alignment_hint depth term =
-            if Term.is_comb term then
-              (41 * alignment_hint (depth-1) (Term.rator term) +
-               67 * alignment_hint (depth-1) (Term.rand term) + 31) mod
-              boolean_dag_bucket_count
-            else boolean_dag_term_hash 0 term
+      val alignment_hint = boolean_dag_opaque_hash
       fun alignment_index left right =
         (alignment_hint 7 left * 67 + alignment_hint 7 right) mod
         boolean_dag_bucket_count
@@ -9957,7 +9972,7 @@ local
               val _ = trace_bridge "sources retained"
               val _ = case !private_fp_bridge_observer of
                   NONE => ()
-                | SOME observe => observe (abstract_sources target)
+                | SOME observe => observe target
               val schematic_sources = !sources
               val arithmetic_leaf_ss = simpLib.++
                 (bossLib.srw_ss(), wordsLib.WORD_BIT_EQ_ss)
@@ -10061,7 +10076,7 @@ local
                  [] : (Term.term * Thm.thm option) list)
               val fp_lower_nodes = ref 0
               fun fp_memo_index term =
-                boolean_dag_term_hash 4 term
+                boolean_dag_opaque_hash 4 term
               fun fp_memo_peek term =
                 case List.find (fn (saved, _) =>
                     Portable.pointer_eq (saved, term))
@@ -21266,6 +21281,37 @@ local
       HOLset.foldl remove_hyp thm bad_hyps
     end
 
+  fun reset_fp_memos () =
+    (fp_canonical_fact_laws := Redblackmap.mkDict Type.compare;
+     fp_atom_lowerings := Redblackmap.mkDict Term.compare;
+     fp_boolean_atom_normalizations := Redblackmap.mkDict Term.compare;
+     fp_atom_bridge_laws := [])
+
+  (* An assignment's checked bridges share hints, but rejected assignments
+     must not retain normalization intermediates for the next candidate.
+     Restore the parent on either exit; word hints and Work are untouched. *)
+  fun with_fp_assignment_memos action input =
+    let
+      val facts = !fp_canonical_fact_laws
+      val lowerings = !fp_atom_lowerings
+      val booleans = !fp_boolean_atom_normalizations
+      val bridges = !fp_atom_bridge_laws
+      fun restore () =
+        (fp_canonical_fact_laws := facts;
+         fp_atom_lowerings := lowerings;
+         fp_boolean_atom_normalizations := booleans;
+         fp_atom_bridge_laws := bridges)
+      fun run () =
+        (reset_fp_memos ();
+         CPC_ProofParser.with_cpc_shell_scope action input)
+    in Portable.finally restore run () end
+
+  fun reset_replay_memos limit =
+    (resolution_literal_normalizations := Redblackmap.mkDict Term.compare;
+     reset_fp_memos ();
+     word_graph_tautology_cache := new_word_graph_tautology_cache limit)
+
+
 in
   type replay_operation_statistics = operation_statistics
   val with_operation_statistics = with_operation_statistics_internal
@@ -21274,6 +21320,7 @@ in
     prove_boolean_circuit_tautology
   val prove_boolean_circuit_stopping_for_test =
     prove_boolean_circuit_tautology_stopping
+  val admitted_source_alpha_for_test = admitted_source_alpha
   val sharing_aware_aconv = shared_aconv
   val compact_word_target = compact_word_target
   val word_circuit_node_conversion = word_circuit_node_conversion
@@ -22411,7 +22458,7 @@ in
         else ()
       val primary_gate = ref NONE
       val checked_bridges = ref ([] : (Term.term * Thm.thm) list)
-      fun valid bindings =
+      fun valid bindings = with_fp_assignment_memos (fn bindings =>
         let
           val _ = checked_bridges := []
           val substitutions = cpc_fp_private_substitutions bindings
@@ -22452,7 +22499,7 @@ in
              | HolSatLib.SAT_cex _ =>
           (trace_private "bridge counterexample"; false)
              | HolSatLib.SAT_satisfiable _ =>
-          (trace_private "bridge counterexample"; false)
+          (trace_private "bridge counterexample"; false)) bindings
       val candidate_index = ref 0
       fun find [] = (case !primary_gate of
             SOME error => raise Feedback.HOL_ERR error
@@ -22679,18 +22726,7 @@ in
          fp_boolean_atom_normalizations := booleans;
          fp_atom_bridge_laws := bridges;
          word_graph_tautology_cache := words)
-      fun run () =
-        let
-          val _ = resolution_literal_normalizations :=
-            Redblackmap.mkDict Term.compare
-          val _ = fp_canonical_fact_laws := Redblackmap.mkDict Type.compare
-          val _ = fp_atom_lowerings := Redblackmap.mkDict Term.compare
-          val _ = fp_boolean_atom_normalizations :=
-            Redblackmap.mkDict Term.compare
-          val _ = fp_atom_bridge_laws := []
-          val _ = word_graph_tautology_cache :=
-            new_word_graph_tautology_cache limit
-        in action input end
+      fun run () = (reset_replay_memos limit; action input)
     in
       (run () before restore ())
       handle error => (restore (); raise error)
@@ -22729,30 +22765,31 @@ in
           andalso Portable.pointer_eq (!fp_atom_bridge_laws,bridges)
       in action retained end) ()
 
-  fun check_proof_impl definitions args =
-    with_replay_memos_for max_word_graph_tautology_entries
-      (fn (asl, g, proof : proof) => let
-      val trace = OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" = SOME "1"
-        orelse OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" = SOME "full"
-      fun trace_check message =
-        if trace then
-          (Feedback.HOL_MESG ("CPC proof closure: " ^ message);
-           TextIO.flushOut TextIO.stdOut)
+  local
+    fun trace_proof_closure enabled message =
+      if enabled then
+        (Feedback.HOL_MESG ("CPC proof closure: " ^ message);
+         TextIO.flushOut TextIO.stdOut)
+      else ()
+
+    fun finish_checked_proof trace (asl, g, allowed, state : state, thm) =
+    let
+      fun trace_check message = trace_proof_closure trace message
+      (* Command replay has finished. Its optional normalization hints must
+         not retain that phase's intermediates during native closure. The
+         checked theorem dependencies and source context remain; this replay's
+         enclosing boundary still restores every caller-owned memo on exit. *)
+      val _ = if trace then
+        trace_check ("release command hints: literals=" ^
+          Int.toString
+            (Redblackmap.numItems (!resolution_literal_normalizations)) ^
+          " words=" ^ Int.toString (case !word_graph_tautology_cache of
+            NONE => 0 | SOME {count,...} => count) ^ " fp=" ^
+          Int.toString (Redblackmap.numItems (!fp_atom_lowerings)) ^ "/" ^
+          Int.toString
+            (Redblackmap.numItems (!fp_boolean_atom_normalizations)))
         else ()
-      val (state, thm) = replay_commands (initial_state definitions asl)
-        (proof_commands proof)
-      val _ = trace_check "replay complete"
-      val _ = profile_cardinalities state
-      val _ = profile "CPC(check:conclusion)"
-        (fn (left, right) => Term.aconv left right)
-        (Thm.concl thm, boolSyntax.F) orelse
-        raise ERR "check_proof" "final CPC conclusion is not F"
-      val allowed = HOLset.addList (Term.empty_tmset,
-        boolSyntax.mk_neg g :: asl)
-      (* Exclude allocated markers from original Sources before either
-         kind of private abbreviation is instantiated. Explicit operands
-         close first, including those used by an unbound component bridge. *)
-      val _ = validate_cpc_fp_private_sources allowed
+      val _ = reset_replay_memos max_word_graph_tautology_entries
       val thm = profile "CPC(check:fp_private_abbreviations)"
         instantiate_cpc_fp_private_markers thm
       val _ = trace_check "private markers instantiated"
@@ -22775,7 +22812,42 @@ in
              (List.map Library.term_to_string (HOLset.listItems allowed)))
     in
       thm
-    end) args
+    end
+  in
+    fun check_proof_impl definitions args =
+      with_replay_memos_for max_word_graph_tautology_entries
+        (fn (asl, g, proof : proof) => let
+        val trace = OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" = SOME "1"
+          orelse OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" = SOME "full"
+        val (state, thm) = replay_commands (initial_state definitions asl)
+          (proof_commands proof)
+        val _ = trace_proof_closure trace "replay complete"
+        val _ = profile_cardinalities state
+        val _ = profile "CPC(check:conclusion)"
+          (fn (left, right) => Term.aconv left right)
+          (Thm.concl thm, boolSyntax.F) orelse
+          raise ERR "check_proof" "final CPC conclusion is not F"
+        val allowed = HOLset.addList (Term.empty_tmset,
+          boolSyntax.mk_neg g :: asl)
+        (* Exclude allocated markers from original Sources before either
+           kind of private abbreviation is instantiated. *)
+        val _ = validate_cpc_fp_private_sources allowed
+        (* Native closure does not query command IDs. Keep every checked
+           cached theorem and its original context, but retire completed
+           command/provenance records. Tail-call closure so this frame does
+           not keep the command state alive during large native proofs. *)
+        val closure : state = {
+          asserted_hyps = #asserted_hyps state,
+          scope_hyps = #scope_hyps state,
+          translation_definitions = #translation_definitions state,
+          steps = Redblackmap.mkDict String.compare,
+          thm_cache = #thm_cache state,
+          cache_stats = #cache_stats state
+        }
+      in
+        finish_checked_proof trace (asl, g, allowed, closure, thm)
+      end) args
+  end
 
   fun check_proof_with_definitions definitions (args as (_, _, proof)) =
     CPC_ProofParser.with_cpc_fp_private_proof proof

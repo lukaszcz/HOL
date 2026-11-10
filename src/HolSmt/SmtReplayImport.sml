@@ -70,8 +70,56 @@ struct
       val hash = add (multiply (0w37,left),right)
       val _ = observe 3
     in Word.toInt (Word.mod (hash,Word.fromInt modulus)) end
+  (* The unmetered routing hint has the same word arithmetic and traversal,
+     without constructing observer calls at every metadata instruction.
+     Keep the paid programme above literal: its debits and first refusals
+     are part of the resource contract. Neither route establishes equality. *)
   fun pointer_bucket depth modulus root =
-    pointer_bucket_observed (fn _ => ()) depth modulus root
+    let
+      val _ = if modulus > 0 then () else
+        raise Feedback.mk_HOL_ERR "SmtReplayImport" "pointer_bucket"
+          "nonpositive bucket count"
+      fun head term =
+        if Term.is_var term then
+          CharVector.foldl
+            (fn (character,hash) => Word.+ (Word.* (hash,0w33),
+              Word.fromInt (Char.ord character))) 0w17
+            (#1 (Term.dest_var term))
+        else if Term.is_const term then
+          Word.fromInt (KernelSig.epoch_of
+            (#Name (Term.dest_thy_constid term)))
+        else if Term.is_abs term then 0w19 else 0w17
+      fun first_child operator operand =
+        if Term.is_comb operator then #2 (Term.dest_comb operator)
+        else operand
+      fun sample 0 _ term = head term
+        | sample remaining first term =
+            if not (Term.is_comb term) then head term else
+              let
+                val (operator,operand) = Term.dest_comb term
+                val child = if first then first_child operator operand
+                            else operand
+              in Word.+ (Word.* (head operator,0w37),
+                   Word.+ (Word.* (0w17,sample (remaining-1) first child),
+                     0w29)) end
+      fun samples 0 term = let val code = head term in (code,code) end
+        | samples remaining term =
+            if not (Term.is_comb term) then
+              let val code = head term in (code,code) end
+            else
+              let
+                val (operator,operand) = Term.dest_comb term
+                val first = first_child operator operand
+                val (left,right) = if Portable.pointer_eq (first,operand)
+                  then samples (remaining-1) operand
+                  else (sample (remaining-1) true first,
+                        sample (remaining-1) false operand)
+                val prefix = Word.+ (Word.* (head operator,0w37),0w29)
+                fun mix code = Word.+ (prefix,Word.* (0w17,code))
+              in (mix left,mix right) end
+      val (left,right) = samples (Int.max (0,depth)) root
+      val hash = Word.+ (Word.* (0w37,left),right)
+    in Word.toInt (Word.mod (hash,Word.fromInt modulus)) end
 
   (* Stock standard dest_abs rebuilds its body. Beta on an atomic argument
      exposes the same syntax lazily, including when the input is a closure.

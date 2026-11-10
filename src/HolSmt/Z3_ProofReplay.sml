@@ -775,6 +775,8 @@ local
        reduction node in this state shares its owning-theory expansions. *)
     skeleton_context : SmtSkeletonProve.context,
     word_context : SmtWordGraph.context,
+    frontier_context : SmtSkeletonProve.sat_context,
+    def_skeleton_context : SmtSkeletonProve.context option ref,
     fp_context : fp_context,
     (* General regex-index consequences are derived from the asserted DAG.
        Share their checked specializations across all nodes in one proof. *)
@@ -798,6 +800,8 @@ local
       translation_definitions = #translation_definitions s,
       skeleton_context = #skeleton_context s,
       word_context = #word_context s,
+      frontier_context = #frontier_context s,
+      def_skeleton_context = #def_skeleton_context s,
       string_index_cache = #string_index_cache s,
       z3_version = #z3_version s
     }
@@ -841,6 +845,8 @@ local
       translation_definitions = #translation_definitions s,
       skeleton_context = #skeleton_context s,
       word_context = #word_context s,
+      frontier_context = #frontier_context s,
+      def_skeleton_context = #def_skeleton_context s,
       string_index_cache = #string_index_cache s,
       z3_version = #z3_version s
     } end
@@ -870,6 +876,8 @@ local
       translation_definitions = #translation_definitions s,
       skeleton_context = #skeleton_context s,
       word_context = #word_context s,
+      frontier_context = #frontier_context s,
+      def_skeleton_context = #def_skeleton_context s,
       string_index_cache = #string_index_cache s,
       z3_version = #z3_version s
     } end
@@ -2197,7 +2205,14 @@ local
      single call to TAUT_PROVE.  The (partly less general)
      implementation below, however, is considerably faster.
   *)
-  val def_axiom_skeleton_context = SmtSkeletonProve.new_context []
+  fun def_axiom_skeleton_context (state : state) =
+    case !(#def_skeleton_context state) of SOME context => context
+    | NONE =>
+        (* Four admitted skeleton DAGs of optional source metadata. Exhaustion
+           keeps the original semantic frontier and local proof indexes. *)
+        let val context = SmtSkeletonProve.new_context_with_index_limit
+              (4 * SmtResource.max_skeleton_replay_dag_nodes) []
+        in #def_skeleton_context state := SOME context;context end
   val def_axiom_skeleton_owners = Redblackmap.mkDict Term.compare
 
   type def_axiom_cache_entry =
@@ -3493,14 +3508,15 @@ local
   fun admitted_def_axiom_measure measure target =
     let
       val maximum = SmtResource.max_skeleton_replay_dag_nodes
-      val observed = SmtResource.profile_phase
+      (* dag_nodes_up_to already computes this complete bounded structure.
+         Retain that same admission result for diagnostics instead of
+         walking every axiom a second time. *)
+      val structure_metrics = SmtResource.profile_phase
         "skeleton/admission-bounded"
-        (SmtResource.dag_nodes_up_to maximum) target
+        (SmtResource.bounded_structure maximum) target
+      val observed = #dag_nodes structure_metrics
       val _ = SmtResource.check_dag_size_for
         "Skeleton" "z3-def-axiom" observed
-      val structure_metrics = SmtResource.profile_phase
-        "skeleton/admission-structure"
-        (SmtResource.bounded_structure maximum) target
       val _ = SmtResource.emit_e0
         ("structure stage=skeleton-admission nodes=" ^
          Int.toString observed ^ " edges=" ^
@@ -3518,6 +3534,11 @@ local
   val max_def_axiom_boolean_comparisons = 4096
   val max_def_axiom_atom_compare_nodes = 256
   val max_def_axiom_atom_compare_work = 131072
+
+  fun def_axiom_clause_frontier (state : state) =
+    if Library.no_fastpath () then SmtSkeletonProve.clause_frontier_prove
+    else SmtSkeletonProve.clause_frontier_prove_indexed
+      (#frontier_context state) (def_axiom_skeleton_context state)
 
   datatype def_axiom_disjunction_step =
       DefAxiomDisjunctionLeft of term
@@ -4045,7 +4066,7 @@ local
       result
     end
 
-  fun def_axiom_skeleton_prove state target =
+  fun def_axiom_skeleton_prove (state : state) target =
     (record_measured_target MeasuredDefAxiom target;
      SmtResource.with_resource_step_time
       "Skeleton" "z3-def-axiom"
@@ -4075,7 +4096,7 @@ local
                            NONE => NONE
                          | SOME _ => SOME observe_skeleton_node_cache)
                         (fn () => SmtSkeletonProve.attempt_with_owners
-                          def_axiom_skeleton_context
+                          (def_axiom_skeleton_context state)
                           def_axiom_skeleton_owners
                           (SmtSkeletonProve.term_measure target) target)) () of
                     SmtSkeletonProve.Proved result =>
@@ -4131,7 +4152,7 @@ local
                     raise Feedback.HOL_ERR holerr
                   else
                     (profile "def-axiom(1c2)(clause-frontier)"
-                      (SmtSkeletonProve.clause_frontier_prove
+                      (def_axiom_clause_frontier state
                         max_def_axiom_boolean_spine_nodes) target
                      handle Feedback.HOL_ERR _ => skeleton ())
               fun direct () =
@@ -5509,14 +5530,14 @@ local
       raise ERR "def_axiom_word_circuit_route"
         "word normalization left the goal unchanged"
 
-  fun z3_def_axiom (state, t) =
+  fun z3_def_axiom (state : state, t) =
     (* Prove the small gate clause before inspecting its potentially large
        Boolean inputs.  Only the bounded template is specialized. *)
     (state, profile "def-axiom(0)(clause-frontier)"
       (SmtResource.with_resource_step_time "Skeleton" "z3-def-axiom"
         (fn target =>
           (ignore (admitted_def_axiom_measure (fn _ => ()) target);
-           SmtSkeletonProve.clause_frontier_prove
+           def_axiom_clause_frontier state
              max_def_axiom_boolean_spine_nodes target))) t)
     handle Feedback.HOL_ERR holerr =>
       if SmtResource.is_resource_gate holerr then
@@ -7025,7 +7046,7 @@ local
                   SmtSkeletonProve.term_measure target
               in
                 case SmtSkeletonProve.attempt_with_owners
-                    def_axiom_skeleton_context
+                    (def_axiom_skeleton_context state)
                     def_axiom_skeleton_owners measure target of
                   SmtSkeletonProve.Proved result => SOME (#theorem result)
                 | SmtSkeletonProve.Declined => NONE
@@ -7186,7 +7207,7 @@ local
                      to the FP procedure, not to a tree-expanding tautology
                      search or an unrelated theory reduction. *)
                   case SmtSkeletonProve.attempt_with_owners
-                      def_axiom_skeleton_context
+                      (def_axiom_skeleton_context state)
                       def_axiom_skeleton_owners measure target of
                     SmtSkeletonProve.Proved result => #theorem result
                   | SmtSkeletonProve.Declined =>
@@ -7625,6 +7646,46 @@ local
        | DEFINITION_REWRITE_ERROR error => raise error
        | ASSERTED_EQUALITY_REWRITE_ERROR error => raise error
 
+  (* A Boolean circuit can close before orientation, whose normal form is
+     useful for theory rewrites but irrelevant to propositional validity.
+     The scan is only eligibility metadata; the existing checked circuit
+     prover supplies the complete closed kernel proof. *)
+  exception PURE_BOOLEAN_DECLINE
+  fun rewrite_pure_boolean_schema (state : state) target =
+    let
+      val _ = if Library.no_fastpath () then raise PURE_BOOLEAN_DECLINE else ()
+      val maximum = SmtResource.max_skeleton_replay_dag_nodes
+      val buckets = Array.array (4093,[] : term list)
+      val count = ref 0
+      fun visit term =
+        let val bucket = SmtResource.pointer_bucket 4093 term in
+          if List.exists (fn old => Portable.pointer_eq (old,term))
+              (Array.sub (buckets,bucket)) then ()
+          else
+            (count := !count+1;
+             if !count>maximum then raise PURE_BOOLEAN_DECLINE else ();
+             if Term.is_var term then
+               (if Term.type_of term=Type.bool then ()
+                else raise PURE_BOOLEAN_DECLINE)
+             else case SmtSkeletonProve.skeleton_children term of
+                 NONE => raise PURE_BOOLEAN_DECLINE
+               | SOME children => List.app visit children;
+             Array.update (buckets,bucket,term :: Array.sub (buckets,bucket)))
+        end
+      val _ = visit target
+      val _ = if SmtResource.dag_nodes_up_to maximum target<=maximum then ()
+        else raise PURE_BOOLEAN_DECLINE
+      val theorem = profile "rewrite(entry)(pure-Boolean)"
+        (SmtResource.with_resource_step_time "Skeleton"
+          "z3-pure-Boolean-rewrite"
+          (SmtSkeletonProve.propositional_prove_in (#frontier_context state)))
+        target
+    in SOME theorem end
+    handle PURE_BOOLEAN_DECLINE => NONE
+         | Feedback.HOL_ERR _ => NONE
+         | HolSatLib.SAT_cex _ => NONE
+         | HolSatLib.SAT_satisfiable _ => NONE
+
   fun z3_rewrite_entry (state, target) =
   if SmtRegLanProve.is_equiv target then
     (state, SmtRegLanProve.rewrite target)
@@ -7661,6 +7722,9 @@ local
           raise Feedback.HOL_ERR holerr
         else NONE of
      SOME theorem => (state, theorem)
+   | NONE =>
+  (case rewrite_pure_boolean_schema state target of
+     SOME theorem => (state,theorem)
    | NONE => let
     val trace = OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "1" andalso
       !replay_completed_steps < 100
@@ -7682,7 +7746,7 @@ local
   in
     (state, Thm.EQ_MP (Thm.SYM orientation)
       (SmtSkeletonProve.exact_conclusion canonical theorem))
-  end))
+  end)))
   end
 
   (* |- ~(!x. P x y) <=> ~(P (sk y) y)
@@ -10933,6 +10997,8 @@ in
     translation_definitions = definitions,
     skeleton_context = SmtSkeletonDispatch.new_context arith_prove,
     word_context = SmtWordGraph.new_context (),
+    frontier_context = SmtSkeletonProve.new_sat_context (),
+    def_skeleton_context = ref NONE,
     fp_context = new_fp_context (),
     string_index_cache = SmtStringProve.new_contextual_index_cache (),
     z3_version = proof_version proof
@@ -11764,6 +11830,8 @@ in
     var_set = #var_set s,bit_decompositions = #bit_decompositions s,
     translation_definitions = #translation_definitions s,
     skeleton_context = #skeleton_context s,word_context = #word_context s,
+    frontier_context = #frontier_context s,
+    def_skeleton_context = #def_skeleton_context s,
     fp_context = #fp_context s,
     string_index_cache = #string_index_cache s,z3_version = #z3_version s}
 

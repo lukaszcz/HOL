@@ -192,7 +192,7 @@ struct
          else SmtReplayLeafProof.large_type_pair debit lty rty)
         handle RoutingLimit => true
     in
-      if not large then Thm.TRANS (Thm.REFL left) (Thm.REFL right)
+      if not large then Thm.ALPHA left right
       else if Thm.kernelid = "expknl" andalso Term.is_var left andalso
           Portable.pointer_eq (lty,rty) then
         SmtReplayLeafProof.shared_variable left right
@@ -268,8 +268,42 @@ struct
     let
       val _ = admit_type (Term.type_of original)
       val _ = admit_type (Term.type_of canonical)
-    in anchor_right canonical
-      (anchor_left original (Thm.MK_COMB (left,right))) end
+      (* One equality-conclusion ALPHA can anchor both outer constructors.
+         Its generated equality annotation is small, and each actual child
+         must already be the exact theorem endpoint. Thus native comparison
+         stops at those children, including opaque binder/large-DAG islands.
+         This is a kernel proof, never a pointer-based equality inference. *)
+      fun small_type ty =
+        let
+          val remaining = ref 64
+          fun visit ty =
+            if !remaining=0 then false else
+              (remaining := !remaining-1;
+               if Type.is_vartype ty then
+                 String.size (Type.dest_vartype ty)<=64
+               else let val {Tyop,Args,...} = Type.dest_thy_typeid ty in
+                 String.size (KernelSig.name_of Tyop)<=64 andalso
+                 String.size (KernelSig.seg_of Tyop)<=64 andalso
+                 List.all visit Args end)
+        in visit ty end
+      fun children term (operator,operand) = Term.is_comb term andalso
+        Portable.pointer_eq (Term.rator term,operator) andalso
+        Portable.pointer_eq (Term.rand term,operand)
+      fun local_endpoints () =
+        case (Lib.total boolSyntax.dest_eq (Thm.concl left),
+              Lib.total boolSyntax.dest_eq (Thm.concl right)) of
+          (SOME (f,g),SOME (x,y)) =>
+            children original (f,x) andalso children canonical (g,y)
+        | _ => false
+    in
+      if small_type (Term.type_of original) andalso
+          small_type (Term.type_of canonical) andalso local_endpoints () then
+        let val theorem = Thm.MK_COMB (left,right)
+            val target = boolSyntax.mk_eq (original,canonical)
+        in Thm.EQ_MP (Thm.ALPHA (Thm.concl theorem) target) theorem end
+      else anchor_right canonical
+        (anchor_left original (Thm.MK_COMB (left,right)))
+    end
 
   (* Transport an independently allocated endpoint without asking ALPHA or
      TRANS to rediscover equality through its unfolded application tree.
@@ -312,7 +346,8 @@ struct
                           if Portable.pointer_eq (Term.rator left,
                                 Term.rator right) andalso
                               Portable.pointer_eq (Term.rand left,Term.rand right)
-                          then Thm.TRANS (checked_refl left) (checked_refl right)
+                          then (admit_type (Term.type_of left);
+                            admit_type (Term.type_of right);Thm.ALPHA left right)
                           else application_bridge left right
                             (visit (Term.rator left) (Term.rator right))
                             (visit (Term.rand left) (Term.rand right))
@@ -335,7 +370,8 @@ struct
         else if Term.is_comb left andalso Term.is_comb right andalso
             Portable.pointer_eq (Term.rator left,Term.rator right) andalso
             Portable.pointer_eq (Term.rand left,Term.rand right) then
-          Thm.TRANS (checked_refl left) (checked_refl right)
+          (admit_type (Term.type_of left);
+           admit_type (Term.type_of right);Thm.ALPHA left right)
         else slow ()
       val (actual_left,actual_right) = boolSyntax.dest_eq (Thm.concl theorem)
       val _ = if Portable.pointer_eq (left,actual_left) andalso

@@ -12,7 +12,101 @@ struct
   fun test label action =
     (testutils.tprint label;action ();testutils.OK ())
 
+  fun routing_hint () =
+    let
+      val x = Term.mk_var (String.implode (List.tabulate (257,
+        fn n => Char.chr (97 + n mod 26))),Type.bool)
+      val y = Term.mk_var ("routing_y",Type.bool)
+      val leaf = Term.mk_abs (x,boolSyntax.mk_conj (x,y))
+      fun grow 0 term = term
+        | grow n term = grow (n-1) (boolSyntax.mk_conj (term,term))
+      val terms = [x,y,boolSyntax.T,boolSyntax.conjunction,leaf,
+        Term.mk_comb (leaf,x),grow 12 x,
+        boolSyntax.mk_conj (grow 5 x,grow 7 y)]
+      fun check term depth modulus =
+        require "unmetered route differs from paid routing programme"
+          (SmtReplayImport.pointer_bucket depth modulus term =
+           SmtReplayImport.pointer_bucket_observed (fn _ => ())
+             depth modulus term)
+      fun failure action =
+        (ignore (action ());raise Fail "nonpositive modulus accepted")
+        handle Feedback.HOL_ERR detail =>
+          (Feedback.top_structure_of detail,Feedback.top_function_of detail,
+           Feedback.message_of detail)
+      val _ = List.app (fn term => List.app (fn depth =>
+        List.app (check term depth) [1,17,4093,8191])
+        [~1,0,1,2,4,8]) terms
+    in List.app (fn modulus =>
+      require "routing modulus diagnostic changed"
+        (failure (fn () => SmtReplayImport.pointer_bucket 4 modulus x) =
+         failure (fn () => SmtReplayImport.pointer_bucket_observed
+           (fn _ => ()) 4 modulus x))) [0,~1] end
+
   structure W = SmtReplayInvocationWork
+
+  fun semantic_pair_buckets () =
+    let
+      val order = SmtSkeletonProve.new_semantic_order ()
+      fun pair n =
+        let
+          val a = Term.mk_var ("pair_bucket_a_" ^ Int.toString n,Type.bool)
+          val b = Term.mk_var ("pair_bucket_z_" ^ Int.toString n,Type.bool)
+        in if n mod 2=0 then (a,b) else (b,a) end
+      (* More distinct pairs than buckets force collisions. Requery them
+         after growth, including reverse keys, against the native order. *)
+      val pairs = List.tabulate (6144,pair)
+      fun check pair = require "semantic pair memo changed native order"
+        (order pair = Term.compare pair)
+      val _ = List.app check pairs
+      val _ = List.app check (List.rev pairs)
+      val _ = List.app (fn (left,right) => check (right,left)) pairs
+      fun shared_type 0 = Type.bool
+        | shared_type n =
+            let val child = shared_type (n-1)
+            in Type.mk_type ("fun",[child,child]) end
+      val left = Term.mk_var ("pair_bucket_shared",shared_type 38)
+      val right = Term.mk_var ("pair_bucket_shared",shared_type 38)
+      (* Native Type comparison would unfold these independent annotations.
+         This is metadata equality, without a native theorem admission. *)
+      val _ = Timeout.apply (Time.fromSeconds 2) (fn () =>
+        require "pair memo lost DAG-aware independent Type equality"
+          (order (left,right)=EQUAL andalso order (right,left)=EQUAL)) ()
+      val x = Term.mk_var ("pair_bucket_bound_x",Type.bool)
+      val y = Term.mk_var ("pair_bucket_bound_y",Type.bool)
+    in check (Term.mk_abs (x,boolSyntax.mk_conj (x,boolSyntax.T)),
+              Term.mk_abs (y,boolSyntax.mk_conj (y,boolSyntax.T))) end
+
+  fun canonical_difference () =
+    let
+      fun checked goal =
+        let
+          val theorem = SmtReplayCanon.z3_rewrite_canon_conv goal
+          val (left,right) = Term.dest_eq (Thm.concl theorem)
+          val _ = require "canonical conversion changed its source"
+            (Term.aconv left goal)
+          val _ = require "canonical conversion acquired hypotheses"
+            (null (Thm.hyp theorem))
+          val _ = Library.check_oracle_tags "Task59"
+            "canonical-difference" theorem
+        in right end
+      val word = Parse.Term [QUOTE
+        "((geometry_canon_x:word8) + geometry_canon_y) = \
+        \ (geometry_canon_y + geometry_canon_x)"]
+      val primary = boolSyntax.rhs (Thm.concl
+        (SmtReplayCanon.z3_primary_rewrite_canon_conv word))
+      val _ = require "irrelevant difference passes changed word normal form"
+        (Term.aconv (checked word) primary)
+      val positive =
+        ["((x:int) > y) = (y < x)",
+         "((x:real) >= y) = (y <= x)",
+         "((x:int) + y) = (y + x)",
+         "((x:real) + y) = (y + x)",
+         "(if ~g then (x:word8) else y) = (if g then y else x)",
+         "(\\x:int. x + y) = (\\x:int. y + x)"]
+    in List.app (fn text =>
+      require "required difference normalization was skipped"
+        (SmtReplayCanon.equality_operands_alpha_equal
+          (checked (Parse.Term [QUOTE text])))) positive end
   fun with_work g r action =
     let
       val sources = SmtReplaySource.new_with_policy g r RP.Uncapped
@@ -552,7 +646,13 @@ struct
     let
       val _=Count.counting_thms true
       val outcome=Exn.capture (fn () =>
-        (test "native geometry: bounded cold binder rejection"
+        (test "native geometry: unmetered/paid routing agreement"
+           routing_hint;
+         test "native geometry: semantic pair collisions and shared Types"
+           semantic_pair_buckets;
+         test "native geometry: canonical difference presence/absence"
+           canonical_difference;
+         test "native geometry: bounded cold binder rejection"
            cold_binder_bound;
          test "native geometry: completed admission count reuse"
            admitted_geometry;
