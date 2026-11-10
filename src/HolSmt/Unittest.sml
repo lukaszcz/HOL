@@ -33536,13 +33536,25 @@ fun cpc_chain_resolution_success () =
       \(step @opaque :rule eq_resolve :premises (@a @eq)) \
       \(step @out :rule chain_resolution :premises (@opaque @b @c) \
       \:args ((@list false true) (@list p q)))" ``r:bool`` 3 true
+    val _ = List.app (fn (source, next, expected) => check
+      ("(assume @a " ^ source ^ ") (assume @b " ^ next ^ ") " ^
+       "(assume @c (not (or q r))) " ^
+       "(step @eq :rule refl :args (" ^ source ^ ")) " ^
+       "(step @opaque :rule eq_resolve :premises (@a @eq)) " ^
+       "(step @out :rule chain_resolution :premises (@opaque @b @c) " ^
+       ":args ((@list true true) (@list p (or q r))))")
+      expected 3 true)
+      [("(or p (or q r))", "(not p)", boolSyntax.F),
+       ("(or p (or q r))", "(or (not p) s)", ``s:bool``),
+       ("(or p (or q r) s)", "(not p)", ``s:bool``)]
     val _ = expect_hol_error_contains "chain_resolution list lengths"
       "annotation lengths differ" (fn () => ignore (parse_cpc_proof_string
         ("(" ^ declarations ^ "(assume @a p) (assume @b (not p)) \
          \(step @out :rule chain_resolution :premises (@a @b) \
          \:args ((@list true false) (@list p))))")))
     val _ = expect_hol_error_contains "chain_resolution wrong conclusion"
-      "resolution" (fn () => ignore (CPC_ProofReplay.replay_root_for_test
+      "explicit target resolution failed; target=s"
+      (fn () => ignore (CPC_ProofReplay.replay_root_for_test
         (parse_cpc_proof_string ("(" ^ declarations ^
           "(assume @a (or p q r)) (assume @b (not p)) \
           \(assume @c (not q)) (step @out s :rule chain_resolution \
