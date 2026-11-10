@@ -14670,9 +14670,11 @@ in
   assert (Thm.concl coerced ~~
       boolSyntax.mk_eq (coerced_source, coerced_source),
     "explicit CPC application lost integer-to-real coercion");
+  check_oracle_tags "CPC integer-to-real application coercion" coerced;
   assert (Thm.concl named_literal ~~
       boolSyntax.mk_eq (named_literal_source, named_literal_source),
     "declared CPC function was mistaken for an indexed literal");
+  check_oracle_tags "CPC declared function application" named_literal;
   reflexive "(+ (_ (ite c f g) x) 1)"
     ``(if c then (f:int->int) else g) x + 1``;
   reflexive "(_ (lambda (@list (@var x Int)) x) 1)"
