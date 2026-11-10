@@ -2403,6 +2403,10 @@ struct
          ("positive zero", "(_ +zero 3 5)"),
          ("word sort", "(_ BitVec 8)"),
          ("float sort", "(_ FloatingPoint 3 5)")]
+      val _ = positive "explicit application in a definition list"
+        "((declare-const x Int) \
+        \(define @xs () (@list (@ (lambda (@list (@var x Int)) x) 1))) \
+        \(step @p :rule refl :args (@xs)))"
       val _ = positive "indexed word in a definition list"
         "((define @xs () (@list (_ bv5 8))) \
         \(step @p :rule refl :args (@xs)))"
