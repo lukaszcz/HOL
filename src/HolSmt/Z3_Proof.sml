@@ -287,9 +287,22 @@ struct
     mk_rule ("unit-resolution", [], ListPremises, "unit_resolution")
   ]
 
-  fun rule_names (rule : proof_rule) = #name rule :: #aliases rule
-
-  fun rule_matches name rule = List.exists (Lib.equal name) (rule_names rule)
+  type registry_observer =
+    {visit:unit -> unit,copy:unit -> unit,
+     string_comparison:string * string -> unit,
+     prefix_comparison:string * string -> unit}
+  val silent_registry_observer:registry_observer =
+    {visit=fn()=>(),copy=fn()=>(),string_comparison=fn _=>(),
+     prefix_comparison=fn _=>()}
+  fun rule_names_observed (observer:registry_observer) (rule:proof_rule) =
+    (#copy observer ();#name rule :: #aliases rule)
+  fun rule_names rule=rule_names_observed silent_registry_observer rule
+  fun rule_matches_observed (observer:registry_observer) name rule =
+    List.exists (fn wanted=>
+      (#visit observer ();#string_comparison observer (name,wanted);
+       Lib.equal name wanted)) (rule_names_observed observer rule)
+  fun rule_matches name rule=
+    rule_matches_observed silent_registry_observer name rule
 
   (* Resolves a discovered Z3 version to the tested anchor whose proof dialect
      the registry replays under; see `Library`.  Callers resolve once, at the
@@ -300,17 +313,29 @@ struct
     Library.resolve_solver_version
       {solver = "Z3", supported = supported_z3_versions, version = version}
 
-  fun version_supported version (rule : proof_rule) =
+  fun version_supported_observed (observer:registry_observer)
+      version (rule:proof_rule) =
     case #version_support rule of
       AllZ3Versions => true
-    | Z3Versions versions => List.exists (Lib.equal version) versions
-    | Z3VersionPrefixes prefixes =>
-        List.exists (fn prefix => String.isPrefix prefix version) prefixes
+    | Z3Versions versions => List.exists (fn wanted=>
+        (#visit observer ();#string_comparison observer (version,wanted);
+         Lib.equal version wanted)) versions
+    | Z3VersionPrefixes prefixes => List.exists (fn prefix=>
+        (#visit observer ();#prefix_comparison observer (prefix,version);
+         String.isPrefix prefix version)) prefixes
+  fun version_supported version rule=
+    version_supported_observed silent_registry_observer version rule
 
-  fun lookup_rule (version : string) (name : string) =
-    case List.find (rule_matches name) proof_rule_registry of
-      SOME rule => if version_supported version rule then SOME rule else NONE
+  fun lookup_rule_observed (observer:registry_observer)
+      (version:string) (name:string) =
+    case List.find (fn rule=>
+        (#visit observer ();rule_matches_observed observer name rule))
+        proof_rule_registry of
+      SOME rule => if version_supported_observed observer version rule
+        then SOME rule else NONE
     | NONE => NONE
+  fun lookup_rule version name=
+    lookup_rule_observed silent_registry_observer version name
 
   fun lookup_rule_by_handler (handler : string) =
     List.find (fn (rule : proof_rule) => #replay_handler rule = handler)
