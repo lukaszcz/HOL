@@ -5497,6 +5497,7 @@ in
                    before constructing the authoritative HOL type. *)
               in RawList (RawAtom "_" :: RawAtom name ::
                 List.map graph_application indices) end
+            else if cpc_indexed_identifier name then raw
             else RawList (RawAtom "@" ::
               List.map graph_application (RawAtom name :: indices))
         | RawList (RawAtom "_" :: arguments) =>
@@ -6073,6 +6074,7 @@ in
                    before constructing the authoritative HOL type. *)
               in RawList (RawAtom "_" :: RawAtom name ::
                 List.map graph_application indices) end
+            else if cpc_indexed_identifier name then raw
             else RawList (RawAtom "@" ::
               List.map graph_application (RawAtom name :: indices))
         | RawList (RawAtom "_" :: arguments) =>
