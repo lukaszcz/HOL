@@ -14637,6 +14637,11 @@ let
       \(step @p :rule refl :args ((@ f 1))))")
   val coerced_source = Term.mk_comb
     (``f:real->real``, intrealSyntax.mk_real_of_int ``1:int``)
+  val named_literal = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((declare-const bv5 (-> Int Int)) (declare-const x Int) \
+      \(step @p :rule refl :args ((_ bv5 x))))")
+  val named_literal_source = ``(bv5:int->int) x``
   fun reflexive source expected =
     let
       val theorem = CPC_ProofReplay.replay_root_for_test
@@ -14665,6 +14670,9 @@ in
   assert (Thm.concl coerced ~~
       boolSyntax.mk_eq (coerced_source, coerced_source),
     "explicit CPC application lost integer-to-real coercion");
+  assert (Thm.concl named_literal ~~
+      boolSyntax.mk_eq (named_literal_source, named_literal_source),
+    "declared CPC function was mistaken for an indexed literal");
   reflexive "(+ (_ (ite c f g) x) 1)"
     ``(if c then (f:int->int) else g) x + 1``;
   reflexive "(_ (lambda (@list (@var x Int)) x) 1)"
