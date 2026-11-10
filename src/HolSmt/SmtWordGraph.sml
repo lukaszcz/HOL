@@ -1802,15 +1802,23 @@ struct
     in normalize_using_in (new_context ()) false admission
       (guarded_conversions conversions) root end
 
-  (* Arithmetic normalization turns complement into a negation and adder.
-     Keep its one-bit law available until projection expansion instead. *)
+  (* Arithmetic normalization expands negated bitwise operations into adders.
+     Keep their one-bit laws available until projection expansion instead. *)
   fun builtin_word_conversion term =
-    case Lib.total wordsSyntax.dest_word_1comp term of
-      SOME word =>
-        if wordsSyntax.is_word_literal word then
-          Library.replay_word_simp_conv term
-        else raise Conv.UNCHANGED
-    | NONE => Library.replay_word_simp_conv term
+    let
+      val (head, arguments) = boolSyntax.strip_comb term
+      val negated_bitwise =
+        case Lib.total Term.dest_thy_const head of
+          SOME {Thy="words", Name, ...} =>
+            List.exists (fn name => name = Name)
+              ["word_1comp", "word_nand", "word_nor", "word_xnor"]
+        | _ => false
+    in
+      if negated_bitwise andalso
+         not (List.all wordsSyntax.is_word_literal arguments) then
+        raise Conv.UNCHANGED
+      else Library.replay_word_simp_conv term
+    end
 
   val projection_simp = simpLib.SIMP_CONV
     (simpLib.++ (simpLib.++ (simpLib.++ (boolSimps.bool_ss, fcpLib.FCP_ss),
@@ -1818,7 +1826,9 @@ struct
     [combinTheory.o_THM, fcpTheory.index_sum,
      wordsTheory.word_and_def, wordsTheory.word_or_def,
      Rewrite.REWRITE_RULE [blastTheory.xor_thm] wordsTheory.word_xor_def,
-     wordsTheory.word_1comp_def, wordsTheory.word_lsl_def,
+     wordsTheory.word_1comp_def, wordsTheory.word_nand_def,
+     wordsTheory.word_nor_def, wordsTheory.word_xnor_def,
+     wordsTheory.word_lsl_def,
      wordsTheory.word_lsr_def, wordsTheory.word_extract_def,
      wordsTheory.word_bits_def, wordsTheory.w2w,
      wordsTheory.word_concat_def, wordsTheory.word_join_index]
@@ -1842,6 +1852,7 @@ struct
                 SOME {Thy="words", Name, ...} =>
                   List.exists (fn name => name = Name)
                     ["word_and", "word_or", "word_xor", "word_1comp",
+                     "word_nand", "word_nor", "word_xnor",
                      "word_concat", "word_join", "w2w"]
                   orelse
                   (List.exists (fn name => name = Name)
