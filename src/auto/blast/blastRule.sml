@@ -770,17 +770,18 @@ fun query_skeleton_measured checkpoint formula =
 
     fun unknown track expected term =
       case #1 (strip term) of
-          Var variable =>
+          Var _ =>
             if not track then genvar expected
             else
               (case findMeasured checkpoint
-                 (fn (key, tm) => key = variable andalso
+                 (fn (key, tm) =>
+                   aconvMeasured checkpoint (key, term) andalso
                    type_of tm = expected) (!variables) of
                    SOME (_, tm) => tm
                  | NONE =>
                      let val tm = genvar expected
                      in
-                       variables := (variable, tm) :: !variables;
+                       variables := (term, tm) :: !variables;
                        qvars := HOLset.add (!qvars, tm);
                        tm
                      end)

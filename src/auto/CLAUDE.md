@@ -114,7 +114,8 @@ belongs to the parallel build band.
   queries must supply genuine metavariables so rigid datatype variables do
   not trigger pair enumeration. Injectivity remains ordinary declarations.
 - Preserve observable claset behaviour when refactoring: `rules_of`
-  contents and order, wrapper lists, exact candidate-query sequences,
+  contents and order (except the constructor-distinctness entries above),
+  wrapper lists, exact candidate-query sequences,
   `process_claset_tags` leftovers, and the existing warnings for
   stale/ill-formed/duplicate/cross-kind declarations.
 

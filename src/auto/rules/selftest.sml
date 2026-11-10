@@ -2393,21 +2393,6 @@ val _ =
 
 
 (* clasetLib: TypeBase hook and contribution registry. *)
-fun typebase_specl [] th = th
-  | typebase_specl (tm :: tms) th = typebase_specl tms (SPEC tm th)
-
-fun typebase_distinct_elim th =
-  let
-    val (vars, _) = strip_forall (concl th)
-    val core = typebase_specl vars th
-    val eq = dest_neg (concl core)
-    val r = variant (free_varsl (concl core :: hyp core)) (mk_var ("r", bool))
-    val false_th = MP (NOT_ELIM core) (ASSUME eq)
-  in
-    GENL (vars @ [r])
-      (DISCH eq (MP (SPEC r boolTheory.FALSITY) false_th))
-  end
-
 fun legacy_fresh_outer_vars th vars =
   let
     fun freshen avoids [] = []
@@ -2450,8 +2435,6 @@ fun has_typebase_rule spec th =
        same_thm (canonical_rule_of (#kind spec) th) th')
     (rules_of (the_claset ()))
 
-val typebase_selim_spec =
-  {kind = clasetRules.Elim, safe = true, prio = NONE}
 val typebase_sdest_spec =
   {kind = clasetRules.Dest, safe = true, prio = NONE}
 val typebase_sintro_spec =

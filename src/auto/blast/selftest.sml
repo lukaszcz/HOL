@@ -4354,6 +4354,28 @@ val _ = Datatype.Datatype
 
 val _ =
   test
+    ("BLAST retrieves clashes for distinct applications of one meta",
+     fn () =>
+       let
+         val (equality, _) = blastTerm.strip_comb
+           (blastRule.fromGoalTerm ``BlastClashN0 = BlastClashN1``)
+         val f = ref NONE
+         val g = ref NONE
+         val left = Var f $ Fvar "a"
+         val right = Var f $ Fvar "b"
+         val independent = Var g $ Fvar "b"
+         val cs = clasetLib.the_claset ()
+         fun count rhs =
+           length (blastRule.safeRules (blastRule.newCache ()) cs [f, g]
+             (blastTerm.list_comb (equality, [left, rhs])))
+         val different_apps = count right
+       in
+         different_apps = count independent andalso
+         different_apps > count left
+       end)
+
+val _ =
+  test
     ("BLAST finds constructor witnesses through schematic clashes",
      fn () => List.all (fn target =>
        let
