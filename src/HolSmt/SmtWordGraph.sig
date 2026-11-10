@@ -1,8 +1,8 @@
 signature SmtWordGraph =
 sig
   type metrics =
-    (* generated_nodes/edges count newly reachable schema-result nodes after
-       instantiation.  They are observations of the staged result graph, not
+    (* generated_nodes/edges count newly reachable schema-result nodes in
+       discovery. They are observations of the staged result graph, not
        a count of allocations performed inside the kernel. *)
     {input_nodes : int,
      visited_nodes : int,
@@ -25,10 +25,40 @@ sig
   type context
   val new_context : unit -> context
   val prove_in : context -> Term.term -> Thm.thm
+  (* Discovery/checked assembly, including the Boolean proof, precedes the
+     only realization. Callbacks receive bounded typed operator frontiers. *)
+  val prove_with_node_conversion : Conv.conv -> Term.term -> Thm.thm
+  (* Complete Boolean closure of retained word/constructor recipes, then
+     perform their sole realization. Caller keeps its original admissions. *)
+  val prove_discovered_in : context -> SmtReplayGraph.graph ->
+    SmtReplayGraph.scope -> SmtReplayCanonGraph.graph_conversion -> Thm.thm
+  val graph_normalize_in : context -> SmtReplayGraph.graph ->
+    SmtReplayGraph.scope -> SmtReplayGraph.node ->
+    SmtReplayCanonGraph.graph_conversion * metrics
+  val graph_normalize_using_with_metrics :
+    {word_conversion : Conv.conv, bit_conversion : Conv.conv,
+     node_conversion : Conv.conv} -> SmtReplayGraph.graph ->
+    SmtReplayGraph.scope -> SmtReplayGraph.node ->
+    SmtReplayCanonGraph.graph_conversion * metrics
   val normalize_with_metrics : Term.term -> Thm.thm * metrics
+  (* Term-facing FP local-binder compatibility adapter. Graph producers
+     use graph_normalize_using_with_metrics and retain their recipe. *)
   val normalize_with_node_conversion : Conv.conv -> Conv.conv
   val normalize_with_node_conversion_and_metrics :
     Conv.conv -> Term.term -> Thm.thm * metrics
+  (* Opt-in term adapter: exact source pointers are uninterpreted data.
+     The original input DAG is still admitted and measured before any stop.
+     Neither callbacks nor normalization/binder descent visit these leaves.
+     Existing adapters have no stops. *)
+  val normalize_with_node_conversion_stopping :
+    Term.term list -> Conv.conv -> Conv.conv
+  val normalize_with_node_conversion_stopping_and_metrics :
+    Term.term list -> Conv.conv -> Term.term -> Thm.thm * metrics
+  (* Same retained-source admission as graph_normalize_using_with_metrics;
+     complete discovery precedes checked local-law realization. Bounded
+     closed operator frontiers may be reused within this invocation. *)
+  val normalize_retaining_sources_with_node_conversion :
+    Term.term list -> Conv.conv -> Conv.conv
   val normalize_using_with_metrics :
     {word_conversion : Conv.conv, bit_conversion : Conv.conv,
      node_conversion : Conv.conv} -> Term.term -> Thm.thm * metrics

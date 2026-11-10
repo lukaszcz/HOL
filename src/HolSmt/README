@@ -687,7 +687,16 @@ heap and drivers with:
   bin/Holmake -C src/HolSmt
 
 The external validation runner should invoke the drivers directly through
-the HOL heap.  From `src/HolSmt`, the typechecker command is equivalent to:
+the own-build `smtreplayheap`, as do the Holmake selftest shards. On Poly/ML,
+`.uo` files are source-loading manifests: starting from `smtheap` recompiles
+the replay libraries in every process. Build `smtreplayheap` incrementally
+in each tree/kernel; never copy a heap from another build. It preloads only
+libraries, not solver entry points, workload goals or completed replay
+contexts. Solver executable/version detection still runs in the consumer.
+For performance comparisons, report heap preparation separately from the
+complete fresh consumer process (including restoration, solver execution
+and all checks); source-build-plus-first-use cost is not deployment cost.
+From `src/HolSmt`, the typechecker command is equivalent to:
 
   extra=$(printf '%s\n%s' "$input" "$logic")
   "$HOL4_ROOT/bin/hol" --gcthreads=1 run \
