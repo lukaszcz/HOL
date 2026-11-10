@@ -143,16 +143,17 @@ fun check_operator_availability_unless ignore occurs {solver, version} =
     List.app check (!operator_availabilities)
   end
 
-fun check_goal_operator_availability_unless ignore target
+fun check_goal_operator_availability_unless ignore counts target
     (assumptions, conclusion) =
   let
-    val heads = List.concat (List.map term_heads (conclusion :: assumptions))
+    val heads = List.filter counts
+      (List.concat (List.map term_heads (conclusion :: assumptions)))
     fun occurs head = List.exists (fn tm =>
       Term.same_const tm head handle Feedback.HOL_ERR _ => false) heads
   in check_operator_availability_unless ignore occurs target end
 
 fun check_goal_operator_availability target =
-  check_goal_operator_availability_unless (Lib.K false) target
+  check_goal_operator_availability_unless (Lib.K false) (Lib.K true) target
 
 local
 
@@ -8121,6 +8122,10 @@ in
         [smt_seq_update_tm,smt_seq_replace_all_tm,seq_lupdate_tm,
          seq_reverse_tm,seq_map_tm,seq_foldl_tm]
   in
+    (* An operator typed at a recursive list is emitted algebraically, never
+       as a Seq operator, so it is no occurrence of one. *)
+    fun counts_for_operator_availability head =
+      not (has_recursive_list_signature (Term.type_of head))
     (* The fixed Seq decision belongs to the caller's emission context.
        The registry, version matching and diagnostic order remain shared. *)
     fun outbound_check_operator_availability {sequence_emission} target
@@ -8130,7 +8135,7 @@ in
     fun check_goal_operator_availability_for_sequence sequence_emission
         target goal =
       check_goal_operator_availability_unless (ignore sequence_emission)
-        target goal
+        counts_for_operator_availability target goal
   end
 
   fun option_logic_policy logic

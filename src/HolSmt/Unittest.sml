@@ -7398,6 +7398,15 @@ let
       SolverSpec.UNSAT (SOME _) => ()
     | _ => die "Z3 recursive-list REVERSE goal did not replay"
     else ()
+  (* Another list selecting Seq leaves the recursive-list REVERSE algebraic,
+     so it still requires no seq.rev. *)
+  val mixed = (``(P:int list -> bool) []`` :: Lib.fst recursive_only,
+    Lib.snd recursive_only)
+  val _ = if Z3.is_configured () then
+    case Z3.Z3_SMT_Prover mixed of
+      SolverSpec.UNSAT (SOME _) => ()
+    | _ => die "Z3 mixed recursive-list REVERSE goal did not replay"
+    else ()
   val recursive_text = String.concat
     (Lib.snd (SmtLib.goal_to_SmtLib_translation NONE recursive_only))
   val text = String.concat
