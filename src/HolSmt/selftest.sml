@@ -1807,6 +1807,12 @@ val graph_expect_thm = expect_thm
          0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE0w =
        word_lsl (word_lsr x 5) 5``, [thm_CVC, thm_Z3]),
 
+    (``(f:num -> word32) 0 = x ==>
+       ((7 >< 0) (f 0):word8) = (7 >< 0) x``,
+      [thm_CVC, thm_Z3, thm_Z3p,
+       mk_test_fun (CVC.is_configured ()) (expect_thm true)
+         "cvc5 (proofs, indexed num/word)" HolSmtLib.CVC_TAC]),
+
     (* A word atom must not stop the num-to-int transfer when the naturals it
        guards never meet the word theory: `DIV` is only in the SMT-LIB
        fragment once `x` has been transferred to an integer. *)
@@ -59250,15 +59256,15 @@ in
 
   val _ = run_postlude 346 "automatic-graph-raw-number-analysis-9" (fn () =>
     let
-      val _ = test "Integer coercion leaves Num outside raw-num positions"
+      val _ = test "Integer coercion retains the natural sort of Num"
         (fn () =>
           let val goal = coerced integer
           in owned goal [] (fn e =>
             let val result = native e
-            in require "coercion argument unexpectedly became raw Num"
+            in require "coerced Num lost its raw natural sort"
               (number_oracle e [] [] goal result andalso
-               null (#raw_numbers result)) end) end)
-      val _ = test "Shared Num distinguishes NONE from numeric expected type"
+               length (#raw_numbers result) = 1) end) end)
+      val _ = test "Shared coerced and direct Num retain one natural sort"
         (fn () =>
           let val goal = boolSyntax.mk_conj
                 (coerced integer,direct integer)
@@ -59270,6 +59276,19 @@ in
               (number_oracle e [] [] goal result andalso
                length (#raw_numbers result) = 1 andalso
                #node (hd (#raw_numbers result)) = original) end) end)
+      val _ = test "Integer coercion keeps Bag cardinality outside raw num"
+        (fn () =>
+          let val bag_type = Type.--> (Type.bool,numSyntax.num)
+              val bag = Term.mk_var ("graph_coerced_num_bag",bag_type)
+              val cardinality = bagSyntax.mk_card bag
+              val goal = boolSyntax.mk_eq
+                (apply intSyntax.int_injection cardinality,integer)
+          in owned goal [] (fn e =>
+            let val result = native e
+            in require "coerced Bag cardinality became raw Num"
+              (number_oracle e [] [] goal result andalso
+               length (#bags result) = 1 andalso
+               null (#raw_numbers result)) end) end)
       val _ = test "Automatic Bag markers classify cardinality and bag count"
         (fn () =>
           let val bag_type = Type.--> (Type.bool,numSyntax.num)
@@ -60368,13 +60387,11 @@ in
                       val dispatch = graph context SmtLib.FirstOrder
                       val prepared = (#prepare dispatch) current
                       val selected = kind ((#application prepared) ())
-                      val result = if raw then private context (fn () =>
-                          (#builtin dispatch) current input)
-                        else (case (#builtin dispatch) current input of
-                          SOME (name,[_]) => name = "abs" | _ => false)
-                  in require "Num bypassed opaque raw sort or lost coercion"
+                      val result = private context (fn () =>
+                        (#builtin dispatch) current input)
+                  in require "Num bypassed its opaque natural sort"
                     (selected = "builtin" andalso result andalso
-                     (#is_raw_number context) current = raw) end)) end
+                     (#is_raw_number context) current) end)) end
           in check true;check false end)
       val _ = test "Prepared native candidates authenticate after expiry"
         (fn () => owned (boolSyntax.mk_eq (integer,three)) [] (fn e =>

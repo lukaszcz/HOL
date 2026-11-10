@@ -6912,7 +6912,7 @@ local
      without rewriting the literal indices consumed by native operators. *)
   fun NUMERAL_TO_INT_CONV tm =
   let
-    val head = Lib.fst (boolSyntax.strip_comb tm)
+    val (head, arguments) = boolSyntax.strip_comb tm
     val indexed = List.exists (same_const head)
       [wordsSyntax.word_extract_tm, wordsSyntax.word_replicate_tm,
        wordsSyntax.word_rol_tm, wordsSyntax.word_ror_tm, smtstr_char_tm,
@@ -6920,8 +6920,18 @@ local
   in
     if intSyntax.is_int_literal tm orelse ratSyntax.is_literal tm orelse
        realSyntax.is_real_literal tm orelse wordsSyntax.is_word_literal tm
-       orelse Lib.can native_string_literal tm orelse indexed then
+       orelse Lib.can native_string_literal tm then
       raise Conv.UNCHANGED
+    else if indexed then
+      let
+        fun operand argument =
+          if numSyntax.is_numeral argument then Thm.REFL argument
+          else NUMERAL_TO_INT_CONV argument
+            handle Conv.UNCHANGED => Thm.REFL argument
+      in
+        List.foldl (fn (argument, theorem) =>
+          Thm.MK_COMB (theorem, operand argument)) (Thm.REFL head) arguments
+      end
     else if numSyntax.is_numeral tm then
       Thm.SYM (Thm.SPEC tm integerTheory.NUM_OF_INT)
     else
