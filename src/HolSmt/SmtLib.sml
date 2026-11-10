@@ -1111,25 +1111,13 @@ local
        back to the corresponding binding value. *)
     val terms =
       (let
-         val (bindings, body) = pairSyntax.dest_anylet tm
-         val terms =
-           if mem_aconv tm terms orelse mem_aconv body terms then
-             collect_set tm (collect_set body terms)
-           else terms
+         val (bindings, _) = pairSyntax.dest_anylet tm
        in
          List.foldl (fn ((variable, value), acc) =>
-           if mem_aconv variable acc orelse mem_aconv value acc then
-             collect_set variable (collect_set value acc)
-           else acc)
+           if mem_aconv variable acc then collect_set value acc else acc)
            terms bindings
        end
        handle Feedback.HOL_ERR _ => terms)
-    val terms =
-      case Lib.total boolSyntax.dest_cond tm of
-        SOME (_, left, right) =>
-          if List.exists (fn t => mem_aconv t terms) [tm, left, right]
-          then collect_set tm terms else terms
-      | NONE => terms
   in
     if same_const rator pred_setSyntax.in_tm then
       (case rands of [_, set] => collect_set set terms | _ => terms)
@@ -1454,26 +1442,6 @@ local
          collect_native_bag_terms immediate_rator terms
        end
        handle Feedback.HOL_ERR _ => terms)
-    val terms =
-      (let
-         val (bindings, body) = pairSyntax.dest_anylet tm
-         val terms =
-           if mem_aconv tm terms orelse mem_aconv body terms then
-             collect_bag tm (collect_bag body terms)
-           else terms
-       in
-         List.foldl (fn ((variable, value), acc) =>
-           if mem_aconv variable acc orelse mem_aconv value acc then
-             collect_bag variable (collect_bag value acc)
-           else acc) terms bindings
-       end
-       handle Feedback.HOL_ERR _ => terms)
-    val terms =
-      case Lib.total boolSyntax.dest_cond tm of
-        SOME (_, left, right) =>
-          if List.exists (fn t => mem_aconv t terms) [tm, left, right]
-          then collect_bag tm terms else terms
-      | NONE => terms
     fun binary () =
       case rands of [left, right] =>
         collect_bag tm (collect_bag left (collect_bag right terms))
@@ -1649,21 +1617,40 @@ local
         end
       fun empty () =
         Redblackmap.mkDict (Lib.pair_compare (Term.compare, Int.compare))
-      val (arguments, results) = List.foldl applications (empty (), empty ())
-        (List.concat (List.map Library.subterms roots))
+      val subterms = List.concat (List.map Library.subterms roots)
+      val (arguments, results) =
+        List.foldl applications (empty (), empty ()) subterms
+      fun connect nodes terms =
+        if List.exists (fn tm => mem_aconv tm terms) nodes then
+          List.foldl (fn (tm, acc) => add tm acc) terms nodes
+        else terms
+      fun propagate (tm, terms) =
+        let
+          val terms =
+            case Lib.total boolSyntax.dest_cond tm of
+              SOME (_, left, right) => connect [tm, left, right] terms
+            | NONE => terms
+        in
+          (let val (bindings, body) = pairSyntax.dest_anylet tm in
+             List.foldl (fn ((variable, value), acc) =>
+               connect [variable, value] acc)
+               (connect [tm, body] terms) bindings
+           end
+           handle Feedback.HOL_ERR _ => terms)
+        end
       fun spread groups terms = Redblackmap.foldl (fn (_, args, acc) =>
         if List.exists (fn arg => mem_aconv arg acc) args then
           List.foldl (fn (arg, acc) => add arg acc) acc args
         else acc) terms groups
       fun close terms =
         let
-          val next = List.foldl
-            (fn (tm, acc) => collect tm acc) terms roots
+          val next = List.foldl propagate terms subterms
           val next = spread results (spread arguments next)
         in
           if List.length next = List.length terms then next else close next
         end
-      val terms = close []
+      val seeds = List.foldl (fn (tm, acc) => collect tm acc) [] roots
+      val terms = close seeds
       val parameters = Redblackmap.foldl (fn ((head, index), args, acc) =>
         case List.find (fn arg => mem_aconv arg terms) args of
           SOME arg => (head, index, arg) :: acc
