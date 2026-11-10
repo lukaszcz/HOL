@@ -10804,6 +10804,21 @@ let
         (proof (Z3_Proof.REWRITE equation))
       val _ = assert (Thm.concl concat ~~ equation,
         "bv1-blast concat equation did not replay")
+      val _ = if width <> 8 then () else
+        let
+          val recorded =
+            Z3_ProofReplay.replay_root_with_definition_occurrences []
+              (proof (Z3_Proof.REWRITE equation))
+          val definitions = #definitions recorded
+          val theorem = #theorem recorded
+        in
+          assert (List.length definitions = width andalso
+            Thm.concl theorem ~~ equation andalso
+            List.all (fn hyp => List.exists (Term.aconv hyp) definitions)
+              (Thm.hyp theorem),
+            "recorded concat replay lost its discovered definitions");
+          check_oracle_tags "recorded bv1 concat" theorem
+        end
       val empty = Z3_Proof.mk_proof
         (Redblackmap.mkDict Int.compare, vars, [], "4.15.3")
       val initial = Z3_ProofReplay.initial_replay_state

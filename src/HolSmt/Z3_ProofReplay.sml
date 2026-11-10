@@ -11041,9 +11041,8 @@ in
         state (proof_steps proof)
     end
 
-  fun initial_replay_state_admitted admit
-      allowed_asserted_hyps definitions proof : state =
-    discover_concat_bits proof {
+  fun new_replay_state_admitted admit
+      allowed_asserted_hyps definitions proof : state = {
     datatype_admit = admit,
     allowed_asserted_hyps = allowed_asserted_hyps,
     asserted_hyps = Term.empty_tmset,
@@ -11062,6 +11061,10 @@ in
     string_index_cache = SmtStringProve.new_contextual_index_cache (),
     z3_version = proof_version proof
   }
+
+  fun initial_replay_state_admitted admit allowed definitions proof =
+    discover_concat_bits proof
+      (new_replay_state_admitted admit allowed definitions proof)
 
   fun initial_replay_state allowed definitions proof =
     initial_replay_state_admitted (SmtDatatypeProve.default_admission ())
@@ -11896,9 +11899,10 @@ in
   fun replay_root_with_definition_occurrences_admitted admit definitions proof =
     SmtSeqProve.with_admission_errors (fn () =>
     let
-      val initial = record_definition_occurrences
-        (initial_replay_state_admitted admit
-          (proof_asserted_hyps proof) definitions proof)
+      val initial = discover_concat_bits proof
+        (record_definition_occurrences
+          (new_replay_state_admitted admit
+            (proof_asserted_hyps proof) definitions proof))
       val ((state,_),theorem) =
         thm_of_proofterm ((initial,proof),ID 0) Lib.I
     in {theorem = theorem,
