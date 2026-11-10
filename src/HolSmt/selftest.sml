@@ -62241,8 +62241,11 @@ in
                 in Option.isSome native andalso native=actual end
           in require "cardinality or bound-function refusal changed"
             (check [] ``CARD (s:int set) = 0`` andalso
-             check [] ``!f:bool set -> bool. f {T}`` andalso
-             check [] ``f (s:bool set) /\ T IN s /\ f (\x:bool. x)``) end)
+             check [] ``!f:bool set -> bool. f {T}``) end)
+      val _ = test "Shared function arguments select Array collections"
+        (fn () => agrees []
+          ``f (s:bool set) /\ T IN s /\ f (\x:bool. x)``
+          SmtLib.CVC5ArraySet SmtLib.CVC5ArrayBag)
       val _ = test "Sequence eligibility pins the selected metadata context"
         (fn () => with_query [] ``LENGTH (xs:bool list) = 0``
           (fn _ => fn context =>
