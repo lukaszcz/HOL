@@ -1644,9 +1644,23 @@ struct
       fun collect bound =
         let
           val seen = Array.array (2039, [] : Term.term list)
+          fun captures_bound term =
+            if List.null bound then false
+            else
+              case SmtReplayDependencies.source_summary
+                  {dag_limit = Option.valOf Int.maxInt,
+                   admit_binder = fn binder =>
+                     (ignore (SmtResource.term_children binder);
+                      SOME SmtResource.max_bv_replay_term_nodes)} term of
+                SmtReplayGraph.Known variables =>
+                  List.exists (fn variable =>
+                    List.exists (Term.aconv variable) variables) bound
+              | SmtReplayGraph.Unknown =>
+                  raise Feedback.mk_HOL_ERR "Library" "arith_prove_raw"
+                    "conditional dependency admission is incomplete"
           fun visit term =
             let
-              val bucket = Term.pointer_bucket 4 2039 term
+              val bucket = SmtReplayImport.pointer_bucket 4 2039 term
               val prior = Array.sub (seen, bucket)
               val fresh = not (List.exists
                 (fn old => Portable.pointer_eq (term, old)) prior)
@@ -1655,9 +1669,7 @@ struct
               else
                 (Array.update (seen, bucket, term :: prior);
                  if arithmetic term andalso boolSyntax.is_cond term andalso
-                    not (List.exists
-                      (fn variable => HOLset.member
-                        (Term.FVL_dag [term] (HOLset.empty Term.compare), variable)) bound)
+                    not (captures_bound term)
                  then
                    if List.exists (Term.aconv term) (!atoms) then ()
                    else atoms := term :: !atoms
@@ -1692,7 +1704,7 @@ struct
       else
         (abstract_proof ()
          handle Feedback.HOL_ERR error =>
-           if Option.isSome (Term.term_size_bounded 256 tm) then raw tm
+           if Option.isSome (SmtReplayImport.bounded_raw_size 256 tm) then raw tm
            else raise Feedback.HOL_ERR error)
     end
 
