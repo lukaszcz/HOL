@@ -311,6 +311,7 @@ fun mk_CVCp expect_fun =
 
 val thm_CVCp = mk_CVCp (expect_thm true)
 
+(* Deliberate opt-in for the small checked arithmetic replay regressions. *)
 val thm_CVCp_arith =
   mk_test_fun (CVC.is_configured ()) (expect_thm true)
     "cvc5 (arithmetic proofs)" HolSmtLib.CVC_TAC
