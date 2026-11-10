@@ -7450,22 +7450,33 @@ let
   val conditional_consumer =
     ([``(P:(int -> bool) -> bool) r.smt_set``],
      ``(P:(int -> bool) -> bool) (if p then r.smt_set else {})``)
+  val shared_update =
+    ([], ``f (s:bool set) /\ T IN s /\ f (\x:bool. x) ==>
+       f ((T =+ T) s)``)
   val shared_result =
     ([``(P:(int -> bool) -> bool) ((f:int -> int -> bool) x)``,
       ``(R:(int -> bool) -> bool) ((f:int -> int -> bool) y)``],
      ``(P:(int -> bool) -> bool) {}``)
+  val (_, shared_update_strings) =
+    CVC.goal_to_SmtLib_translation shared_update
+  val shared_update_text = String.concat shared_update_strings
 in
+  assert (String.isSubstring "(store " shared_update_text,
+    "marked shared UPDATE did not emit an Array store");
+  ignore (SmtLib_Parser.typecheck_script_string_with_options
+    {dict_logic=NONE,solver=SOME "cvc5",elaborate_datatypes=false}
+    shared_update_text);
   List.app (typechecks true)
     [("singleton", singleton), ("conditional", conditional),
      ("selector", selector),
      ("conditional selector", conditional_selector),
      ("conditional consumer", conditional_consumer),
-     ("shared result", shared_result)];
+     ("shared result", shared_result), ("shared update", shared_update)];
   List.app (typechecks false)
     [("selector", selector),
      ("conditional selector", conditional_selector),
      ("conditional consumer", conditional_consumer),
-     ("shared result", shared_result)]
+     ("shared result", shared_result), ("shared update", shared_update)]
 end
 
 fun smtlib_native_set_translation_success () =

@@ -392,6 +392,9 @@ val graph_expect_thm = expect_thm
     (``(a : num) IN s ==> s a``, [thm_CVC, thm_CVCp_ho]),
     (``(!x : num. x IN s ==> x IN t) /\ s b ==> t b``, [thm_CVC, thm_CVCp_ho]),
     (``(a : num) IN (if c then s else t) /\ c ==> a IN s``, [thm_CVC]),
+    (* A shared collection argument keeps UPDATE as an Array under 2.7. *)
+    (``(s:bool set) = t /\ f s /\ f (\x:bool. x) /\
+       f ((T =+ T) s) ==> f ((T =+ T) t)``, [thm_CVC, thm_CVCp]),
     (* A record selector and EMPTY must share the conditional's Array sort;
        checked replay reconstructs the normalized selector under the UF. *)
     (``(r : smt_set_rec) = q /\
@@ -66389,6 +66392,7 @@ end
 
 local
   structure L = SmtLib
+  structure E = SmtLib_GraphQueryEmission
   structure G = SmtReplayGraph
   structure S = SmtReplaySource
   structure W = SmtReplayInvocationWork
@@ -66460,6 +66464,29 @@ local
 in
   val _ = run_postlude 377 "checked-backend-marker-transport-7" (fn () =>
     let
+      val _ = test "Shared Array updates emit well-sorted graph stores"
+        (fn () => fixture []
+          ``f (s:bool set) /\ T IN s /\ f (\x:bool. x) ==>
+            f ((T =+ T) s)`` (fn e =>
+          let
+            val options =
+              {policy=fn _ => NONE,dialect=L.Standard27,
+               apply_operator=L.ApplyAt,get_proof=false,
+               target=SOME {solver="cvc5",version=SOME "1.3.4"}}
+            val backend = E.prepare_backend (#work e)
+              {query= #query e,options=options,open_opaque= #open_view e}
+            val emission = E.emit (#work e)
+              {query= #query e,backend=backend,options=options,
+               prefix="array_update_",open_opaque= #open_view e}
+            val fragments = ref []
+            val _ = E.write_for (#work e) (#query e) emission
+              (fn text => fragments := text :: !fragments)
+            val text = String.concat (List.rev (!fragments))
+            val _ = require "marked graph UPDATE did not use store"
+              (String.isSubstring "(store " text)
+          in ignore (SmtLib_Parser.typecheck_script_string_with_options
+            {dict_logic=NONE,solver=SOME "cvc5",elaborate_datatypes=false}
+            text) end))
       val _ = test "Checked erasure keeps modes and marks rebuilt conditional"
         (fn () => fixture [bag_fact] goal (fn e =>
           let
