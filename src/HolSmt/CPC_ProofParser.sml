@@ -1590,7 +1590,9 @@ local
      indexed identifiers and the heads of indexed operator applications. *)
   fun normalize_cpc_testers raw =
     case raw of
-      RawList [RawAtom "is", RawAtom constructor, scrutinee] =>
+      RawList [RawAtom "@const", index, sort] =>
+        RawList [RawAtom "@const", normalize_cpc_testers index, sort]
+    | RawList [RawAtom "is", RawAtom constructor, scrutinee] =>
         RawList
           [RawList [RawAtom "_", RawAtom "is", RawAtom constructor],
            normalize_cpc_testers scrutinee]
@@ -1632,6 +1634,38 @@ local
       RawAtom token => [token]
     | RawList entries =>
         "(" :: List.concat (List.map raw_tokens entries) @ [")"]
+
+  (* The shared SMT-LIB parser does not call back into parse_term for nested
+     operands.  Elaborate private constants first, keeping their sort operands
+     out of the term namespace.  These aliases live only for this occurrence;
+     avoid every raw name, including String-named binders, to prevent capture. *)
+  fun abstract_private_constants dicts raw =
+    let
+      val local_dicts = ref dicts
+      val names = HOLset.addList (HOLset.empty String.compare,
+        List.map cpc_var_name (raw_tokens raw))
+      val serial = ref 0
+      fun fresh () =
+        let
+          val name = "@cpc.parse.const." ^ Int.toString (!serial)
+          val _ = serial := !serial + 1
+        in
+          if HOLset.member (names, name) orelse
+             Option.isSome (Redblackmap.peek (#2 (!local_dicts), name))
+          then fresh () else name
+        end
+      fun replace (node as RawList [RawAtom "@const", _, _]) =
+            let
+              val next = Library.undo_look_ahead (raw_tokens node)
+                (fn () => raise ERR "abstract_private_constants"
+                  "private constant token stream exhausted")
+              val term = parse_term local_dicts next
+              val alias = fresh ()
+              val _ = add_term local_dicts alias term
+            in RawAtom alias end
+        | replace (RawList entries) = RawList (List.map replace entries)
+        | replace atom = atom
+    in (replace raw, local_dicts) end
 
   fun raw_contains_let raw =
     case raw of
@@ -1772,13 +1806,15 @@ local
   fun parse_located_term dicts_ref get_token : located_term =
     let
       val raw = normalize_cpc_testers (read_raw_term get_token)
-      val tokens = ref (raw_tokens raw)
+      val (elaboration_raw, local_dicts) =
+        abstract_private_constants (!dicts_ref) raw
+      val tokens = ref (raw_tokens elaboration_raw)
       fun next_token () =
         case !tokens of
           token :: rest => (tokens := rest; token)
         | [] => raise ERR "parse_located_term"
             "internal CPC occurrence token stream exhausted"
-      val parsed_term = parse_term dicts_ref next_token
+      val parsed_term = parse_term local_dicts next_token
       val _ = List.null (!tokens) orelse
         raise ERR "parse_located_term"
           "internal CPC occurrence parser left trailing tokens"

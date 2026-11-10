@@ -14619,6 +14619,12 @@ let
       \(step @p :rule refl :args (@t17)))")
   val theorem = CPC_ProofReplay.replay_root_for_test proof
   val address = Term.mk_var ("address", wordsSyntax.mk_int_word_type 160)
+  val nested = CPC_ProofParser.parse_stream_with_version dicts "1.3.4"
+    (TextIO.openString
+      "((declare-const account Account_state) \
+      \(step @p :rule refl \
+      \ :args ((= (@const 2 Account_state) account))))")
+  val nested_theorem = CPC_ProofReplay.replay_root_for_test nested
   val expected = Term.mk_comb
     (Term.mk_var ("@cpc.const.0",
        Type.--> (Term.type_of address, account_type)), address)
@@ -14636,13 +14642,18 @@ let
 in
   assert (Thm.concl theorem ~~ boolSyntax.mk_eq (expected, expected),
     "CPC @const read the user sort from the term namespace");
+  assert (boolSyntax.lhs (Thm.concl nested_theorem) ~~
+      boolSyntax.mk_eq (Term.mk_var ("@cpc.const.2", account_type),
+        Term.mk_var ("account", account_type)),
+    "CPC inline @const read the user sort from the term namespace");
   assert (boolSyntax.lhs (Thm.concl declared_theorem) ~~
       Term.mk_var ("@cpc.const.1", declared_type),
     "CPC @const did not use a later declared sort");
   assert_no_hyps ("CPC user-sort reflexivity", theorem);
   assert_no_hyps ("CPC declared-sort reflexivity", declared_theorem);
+  assert_no_hyps ("CPC nested user-sort reflexivity", nested_theorem);
   List.app (check_oracle_tags "CPC private user sorts")
-    [theorem, declared_theorem]
+    [theorem, declared_theorem, nested_theorem]
 end
 
 fun cpc_private_const_purification_success () =
