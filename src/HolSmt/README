@@ -173,6 +173,10 @@ Quantifier-free checked queries and every oracle query retain `(check-sat)`.
 The verifier writes its five-version report to
 `.holsmt-z3-version-matrix/report.json` in the validation checkout.
 
+Z3's `der` equality steps use checked HOL rewrite replay.  Subsequent
+`elim-unused` steps use Boolean simplification, including unused binders
+underneath retained binders; both rules must prove their recorded equality.
+
 Seq, Set, and Bag are solver extensions rather than SMT-LIB standard
 theories.  The coverage matrix at
 `$HOLSMT_VALIDATION_DIR/tools/coverage/SMTLIB_COVERAGE.md` records every
