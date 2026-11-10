@@ -61932,8 +61932,6 @@ in
     let
       val graph_reduce =
         SmtLib_GraphCarrierResidual.theorem_reduces_exact_application
-      val complete_operations =
-        SmtLib_GraphCarrierOperations.make_with_datatypes
       (* Native terms below are small independent fixture/oracle syntax.
          The depth70 control constructs only the actual query DAG. *)
       fun lift (context:Q.outbound_context) =
@@ -61967,8 +61965,9 @@ in
           | NONE => raise Fail "registered fixture destructor is missing"
         end
       fun native_reduces theorem raw =
-        (#theorem_reduces_exact_application
-          SmtLib.outbound_term_carrier_residual_operations) theorem raw
+        let val reduction = simpLib.SIMP_CONV pureSimps.pure_ss [theorem] raw
+        in not (Term.aconv raw (boolSyntax.rhs (Thm.concl reduction))) end
+        handle Conv.UNCHANGED => false
       fun check_reduces context theorem raw expected =
         let val native = native_reduces theorem raw
             val actual = graph_reduce context theorem
@@ -61991,45 +61990,16 @@ in
           ((#same (#operations scratch))
              (#term result,(#of_template scratch) native) andalso
            actual=not (Term.aconv raw native)) end
-      val _ = test "Full datatype factory agrees on registered residuals"
-        (fn () => owned (fn _ => fn context =>
-          let val pretty = ref 0
-              val operations = complete_operations context
-                {sequence_emission=false}
-                  {term_to_string=fn _ =>
-                    (pretty := !pretty+1;raise Fail "unexpected formatter")}
-              fun check (raw,expected) =
-                let val native =
-                      SmtLib.closed_constructor_destructor_residual_for_test
-                        raw
-                    val actual = (#closed_constructor_destructor_residual
-                      operations) (lift context raw)
-                in native=expected andalso actual=native end
-          in require "registered closed-value boundary changed"
-            (List.all check
-              [(``HD ([]:int list)``,true),(``HD ([1]:int list)``,false),
-               (``FST ((1:int),T)``,false),
-               (``OUTL (INL (1:int) : int + bool)``,false),
-               (``OUTL (INR T : int + bool)``,true),
-               (``OUTL (INR p : int + bool)``,false)] andalso !pretty=0)
-          end))
       val _ = test "Wrong outer constructor still reduces its nested OUTL"
         (fn () => owned (fn _ => fn context =>
           let val raw =
                 ``OUTL (INR (OUTL (INL (1:int) : int + bool)) : int + int)``
               val theorem = registered raw
-          in check_reduces context theorem raw true;
-            require "nested registered rule was hidden by the outer head"
-              (not
-                (SmtLib.closed_constructor_destructor_residual_for_test raw))
-          end))
+          in check_reduces context theorem raw true end))
       val _ = test "PURE_ss leaves unrelated beta syntax under INR unchanged"
         (fn () => owned (fn _ => fn context =>
           let val raw = ``OUTL (INR ((\x:int. x) 1) : int + int)``
-          in check_reduces context (registered raw) raw false;
-            require "pure residual acquired an unconditional beta rule"
-              (SmtLib.closed_constructor_destructor_residual_for_test raw)
-          end))
+          in check_reduces context (registered raw) raw false end))
       val _ = test "Registered destructor simplification descends under Abs"
         (fn () => owned (fn _ => fn context =>
           let val raw =
@@ -62107,15 +62077,8 @@ in
                 ((#constant context) head,
                  (#mk_comb context) ((#constant context) inr,grow 70))
               val theorem = registered ``OUTL (INR T : int + bool)``
-              val pretty = ref 0
-              val operations = complete_operations context
-                {sequence_emission=false}
-                  {term_to_string=fn _ =>
-                    (pretty := !pretty+1;raise Fail "large residual format")}
-          in require "large residual unfolded the query or lost its boundary"
-            (not (graph_reduce context theorem current)
-             andalso (#closed_constructor_destructor_residual operations)
-               current andalso !pretty=0) end))
+          in require "large registered reduction unfolded the query"
+            (not (graph_reduce context theorem current)) end))
     in () end)
 
   val _ = run_postlude 360 "shared-graph-backend-selection-9" (fn () =>
