@@ -14601,6 +14601,111 @@ in
     (Term.mk_var ("@cpc.FloatingPoint", ``:(4,3) smtfp``))
 end
 
+fun cpc_private_const_user_sorts_success () =
+let
+  val (tydict, tmdict) = SmtLib_Logics.parsedicts_of_logic "ALL"
+  val account_type = Type.mk_thy_type
+    {Thy = "option", Tyop = "option", Args = [Type.bool]}
+  val dicts =
+    (Library.extend_dict (("Account_state",
+       SmtLib_Theories.K_zero_zero account_type), tydict),
+     Library.extend_dict (("Account_state",
+       SmtLib_Theories.K_zero_zero intSyntax.zero_tm), tmdict))
+  val proof = CPC_ProofParser.parse_stream_with_version dicts "1.3.4"
+    (TextIO.openString
+      "((declare-const address (_ BitVec 160)) \
+      \(define @t17 () \
+      \(_ (@const 0 (-> (_ BitVec 160) Account_state)) address)) \
+      \(step @p :rule refl :args (@t17)))")
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val address = Term.mk_var ("address", wordsSyntax.mk_int_word_type 160)
+  val expected = Term.mk_comb
+    (Term.mk_var ("@cpc.const.0",
+       Type.--> (Term.type_of address, account_type)), address)
+  val declared = parse_cpc_proof_string
+    "((declare-sort Later 0) (declare-const value Later) \
+    \(assume @a (= value value)) \
+    \(define @c () (@const 1 Later)) \
+    \(step @p :rule refl :args (@c)))"
+  val declared_type =
+    case CPC_Proof.proof_commands declared of
+      CPC_Proof.ASSUME (_, {term, ...}) :: _ =>
+        Term.type_of (boolSyntax.lhs term)
+    | _ => die "FAIL: CPC declared-sort fixture lost its source term"
+  val declared_theorem = CPC_ProofReplay.replay_root_for_test declared
+in
+  assert (Thm.concl theorem ~~ boolSyntax.mk_eq (expected, expected),
+    "CPC @const read the user sort from the term namespace");
+  assert (boolSyntax.lhs (Thm.concl declared_theorem) ~~
+      Term.mk_var ("@cpc.const.1", declared_type),
+    "CPC @const did not use a later declared sort");
+  assert_no_hyps ("CPC user-sort reflexivity", theorem);
+  assert_no_hyps ("CPC declared-sort reflexivity", declared_theorem);
+  List.app (check_oracle_tags "CPC private user sorts")
+    [theorem, declared_theorem]
+end
+
+fun cpc_private_const_purification_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const f (-> Int Int)) (declare-const a Int) \
+    \(define @source () (_ f a)) \
+    \(define @private () (_ (@const 0 (-> Int Int)) a)) \
+    \(assume @neg (not (= @source @source))) \
+    \(step @definition :rule trust :premises () \
+    \ :args ((= @source @private))) \
+    \(assume-push @local true) \
+    \(step-pop @closed :rule scope :premises (@definition)) \
+    \(step @reverse :rule symm :premises (@definition)) \
+    \(step @identity :rule trans :premises (@definition @reverse)) \
+    \(step @out false :rule contra :premises (@identity @neg)))"
+  val goal = ``(f:int -> int) a = f a``
+  val theorem = CPC_ProofReplay.check_proof ([], goal, proof)
+in
+  assert (Thm.concl theorem ~~ boolSyntax.F,
+    "CPC purification changed the contradiction conclusion");
+  assert (List.length (Thm.hyp theorem) = 1 andalso
+      hd (Thm.hyp theorem) ~~ boolSyntax.mk_neg goal,
+    "CPC purification retained an extra hypothesis");
+  check_oracle_tags "CPC scoped purification" theorem
+end
+
+fun cpc_private_const_closure_rejections () =
+let
+  val private = Term.mk_var ("@cpc.const.0", Type.bool)
+  val other = Term.mk_var ("@cpc.const.1", Type.bool)
+  val source = Term.mk_var ("purification_source", Type.bool)
+  fun equality left right = boolSyntax.mk_eq (left, right)
+  fun supported hypotheses = List.foldl
+    (fn (hypothesis, theorem) =>
+      Thm.MP (Thm.DISCH hypothesis theorem) (Thm.ASSUME hypothesis))
+    boolTheory.TRUTH hypotheses
+  fun close obligations allowed hypotheses =
+    CPC_ProofReplay.instantiate_private_constants_for_test
+      obligations allowed (supported hypotheses)
+  val definition = equality private source
+  val closed = close [definition] [] [definition]
+  val collision = close [definition] [private] [definition]
+  val unrecorded = close [] [] [definition]
+  val recursive = equality private (boolSyntax.mk_neg private)
+  val cycle = [equality private other,
+    equality other (boolSyntax.mk_neg private)]
+  val conflict = [equality private boolSyntax.T,
+    equality private boolSyntax.F]
+in
+  assert_no_hyps ("CPC exact purification closure", closed);
+  assert (not (List.null (Thm.hyp collision)),
+    "CPC purification instantiated an original-context variable");
+  assert (not (List.null (Thm.hyp unrecorded)),
+    "CPC purification used an unrecorded equality");
+  List.app (fn (label, hypotheses) =>
+    assert (not (List.null (Thm.hyp (close hypotheses [] hypotheses))),
+      "CPC purification accepted " ^ label))
+    [("a recursive definition", [recursive]), ("a cycle", cycle),
+     ("conflicting definitions", conflict)];
+  check_oracle_tags "CPC exact purification closure" closed
+end
+
 fun cpc_proof_replay_ho_rare_rewrites_success () =
 let
   val proof = parse_cpc_proof_string
@@ -28806,6 +28911,12 @@ let
       cpc_proof_replay_ho_cong_nary_success),
     ("cpc_nested_ho_application_success",
       cpc_nested_ho_application_success),
+    ("cpc_private_const_user_sorts_success",
+      cpc_private_const_user_sorts_success),
+    ("cpc_private_const_purification_success",
+      cpc_private_const_purification_success),
+    ("cpc_private_const_closure_rejections",
+      cpc_private_const_closure_rejections),
     ("cpc_proof_replay_ho_rare_rewrites_success",
       cpc_proof_replay_ho_rare_rewrites_success),
     ("cpc_proof_parser_declarations_success",

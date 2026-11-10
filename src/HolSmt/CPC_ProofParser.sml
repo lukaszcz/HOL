@@ -1496,6 +1496,15 @@ local
               SmtLib_Parser.apply_term tmdict "is"
                 [constructor_parameter] [scrutinee]
             end
+          else if head = "@const" then
+            let
+              val index = parse_term dicts_ref get_token
+              val ty = parse_cpc_type get_token (#1 (!dicts_ref))
+              val _ = Library.expect_token ")" (get_token ())
+            in
+              cpc_private_const_parsefn "@const" []
+                [index, Term.mk_var ("@cpc.sort", ty)]
+            end
           else if head = "@var" then
             let
               val var_name = cpc_var_name (get_token ())
@@ -1746,7 +1755,7 @@ local
         else if head = "match" orelse head = "par" then
           UnavailableProvenance
             ("unsupported binding form " ^ head)
-        else if head = "@var" then AtomicProvenance
+        else if head = "@var" orelse head = "@const" then AtomicProvenance
         else exact_application head
           (List.map (provenance_of_raw_in environment) operands)
     | RawList entries =>
