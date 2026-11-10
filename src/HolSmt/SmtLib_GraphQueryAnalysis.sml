@@ -842,11 +842,7 @@ struct
             | Native syntax => collect_native syntax NONE
             | SeededNative (syntax,seeds) =>
                 collect_native syntax (SOME seeds)
-          val analyses = ListPair.map
-            (fn ((terms,_),parameters) =>
-              let val (computed,mixed,bound,visits) = argument_analysis terms
-              in (parameters @ computed,mixed,bound,visits) end)
-            (groups,parameters)
+          val analyses = List.map (argument_analysis o #1) groups
           val _ = Redblackmap.foldl
             (fn (_,term,()) => guard term) () (!positions)
           val _ = List.app (fn (scope,original,source) =>
@@ -901,7 +897,7 @@ struct
               val (sets,bags) = case groups of
                   [(sets,_),(bags,_)] => (sets,bags)
                 | _ => raise ERR "borrow" "native analysis required"
-              val computed = List.concat
+              val computed = List.concat parameters @ List.concat
                 (List.map (fn (entries,_,_,_) => entries) analyses)
               fun contextual (function,index) =
                 Option.map (fn (_,_,argument) => argument)
