@@ -273,6 +273,8 @@ CPC word replay also checks whole extraction, extraction through a binary
 concatenation, constant logical shifts, and bitwise slicing. Slicing and
 identity-mask steps keep arithmetic operands schematic. Quantified word
 complement elimination is re-proved from complement involution.
+Extraction and constant-shift replay use the existing BitVector size and
+step-time limits.
 
 Unicode-string and regular-expression replay covers goals stated over the
 native `smtstr` carrier.  A goal stated over HOL's `:string` reaches the

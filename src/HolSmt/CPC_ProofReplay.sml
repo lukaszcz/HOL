@@ -4927,11 +4927,15 @@ local
             in boolSyntax.mk_eq (shifted, sliced) end
         | _ => raise ERR name "unsupported word rewrite argument shape"
     in
-      Tactical.TAC_PROOF (([], target),
-        Tactical.THEN
-          (bossLib.SIMP_TAC (bossLib.srw_ss())
-             [wordsTheory.word_lsl_bv_def, wordsTheory.word_lsr_bv_def],
-           wordsLib.WORD_DECIDE_TAC))
+      SmtResource.with_resource_step_time "BitVector" "word-rewrite"
+        (fn () =>
+          (SmtResource.check_resource_goal "BitVector" "word-rewrite" target;
+           Tactical.TAC_PROOF (([], target),
+             Tactical.THEN
+               (bossLib.SIMP_TAC (bossLib.srw_ss())
+                  [wordsTheory.word_lsl_bv_def,
+                   wordsTheory.word_lsr_bv_def],
+                wordsLib.WORD_DECIDE_TAC)))) ()
     end
 
   fun replay_bv_xor_duplicate args =
