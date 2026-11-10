@@ -1696,8 +1696,12 @@ local
         | _ => raise ERR "bag_sort_marker" "expected a Bag sort marker"
       fun set_sort_marker token indices args =
         case (token, indices, args) of
-          ("Set", [], [element]) => Term.mk_var ("@cpc.Set",
-            Type.--> (Term.type_of element, Type.bool))
+          ("Set", [], [element]) =>
+            if Type.compare (Term.type_of element, intSyntax.int_ty) = EQUAL
+            then raise ERR "set_sort_marker"
+              "integer Set sort is metadata, not an object term"
+            else Term.mk_var ("@cpc.Set",
+              Type.--> (Term.type_of element, Type.bool))
         | _ => raise ERR "set_sort_marker" "expected a Set sort marker"
       fun as_sort_marker token indices args =
         case (token, indices, args) of
