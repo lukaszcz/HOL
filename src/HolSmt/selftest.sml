@@ -1796,7 +1796,8 @@ val graph_expect_thm = expect_thm
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3(*, thm_Z3p*)]),
     (``~ 0w >=+ 0w:word32``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
 
-    (* Entangled naturals retain their arithmetic and coercion laws. *)
+    (* Entangled naturals retain their arithmetic and coercion laws.
+       Check CVC replay explicitly here: this is the original replay failure. *)
     (``w2i (w:256 word) = &w2n w ==> Num (w2i w) = w2n w``,
       [thm_CVC, thm_Z3, thm_Z3p,
        mk_test_fun (CVC.is_configured ()) (expect_thm true)
