@@ -129,6 +129,13 @@ sig
 
   val empty_ss        : simpset
   val ssfrags_of      : simpset -> ssfrag list
+  (* Read-only source view, with zero-based source slots in each fragment.
+     The predicate tests a canonical rewrite's
+     one-based suffix against deletions AFTER this particular addition.
+     NONE means all suffixes survive. Readding the same name does not
+     revive the older source. No canonicalization is performed. *)
+  val rewrite_sources : simpset ->
+    (ssfrag * (int * thm * (int -> bool) option) list) list
   val mk_simpset      : ssfrag list -> simpset
   val remove_ssfrags  : string list -> simpset -> simpset
 

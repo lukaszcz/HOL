@@ -871,4 +871,92 @@ Proof
     (fn th => rewrite_tac [th]) >> simp []
 QED
 
+
+(* Guard/sticky rounding on nine-bit data. All four-bit shift counts are
+   covered, including the original wrapped-word behavior at counts >= 9. *)
+Definition smtfp_word_round_qrd_up_def:
+  smtfp_word_round_qrd_up mode (sign:word1) (v:word9) (s:word4) <=>
+  case mode of
+    RNE => if s = 0w then F else if s = 1w then ((v ' 0) /\ (F \/ (v ' 1)))
+      else if s = 2w then ((v ' 1) /\ ((v ' 0) \/ (v ' 2))) else if s = 3w
+      then ((v ' 2) /\ (((v ' 0) \/ (v ' 1)) \/ (v ' 3))) else if s = 4w
+      then ((v ' 3) /\ ((((v ' 0) \/ (v ' 1)) \/ (v ' 2)) \/ (v ' 4))) else
+      if s = 5w then ((v ' 4) /\ (((((v ' 0) \/ (v ' 1)) \/ (v ' 2)) \/ (v '
+      3)) \/ (v ' 5))) else if s = 6w then ((v ' 5) /\ ((((((v ' 0) \/ (v '
+      1)) \/ (v ' 2)) \/ (v ' 3)) \/ (v ' 4)) \/ (v ' 6))) else if s = 7w
+      then ((v ' 6) /\ (((((((v ' 0) \/ (v ' 1)) \/ (v ' 2)) \/ (v ' 3)) \/
+      (v ' 4)) \/ (v ' 5)) \/ (v ' 7))) else if s = 8w then ((v ' 7) /\
+      ((((((((v ' 0) \/ (v ' 1)) \/ (v ' 2)) \/ (v ' 3)) \/ (v ' 4)) \/ (v '
+      5)) \/ (v ' 6)) \/ (v ' 8))) else ((((((((v ' 0) \/ (v ' 1)) \/ (v '
+      2)) \/ (v ' 3)) \/ (v ' 4)) \/ (v ' 5)) \/ (v ' 6)) \/ (v ' 7))
+  | RNA => if s = 0w then F else if s = 1w then ((v ' 0)) else if s = 2w
+      then ((v ' 1)) else if s = 3w then ((v ' 2)) else if s = 4w then ((v '
+      3)) else if s = 5w then ((v ' 4)) else if s = 6w then ((v ' 5)) else
+      if s = 7w then ((v ' 6)) else if s = 8w then ((v ' 7)) else v <> 0w
+  | RTP => sign = 0w /\ (if s = 0w then F else if s = 1w then ((v ' 0)) else
+      if s = 2w then (((v ' 0) \/ (v ' 1))) else if s = 3w then ((((v ' 0)
+      \/ (v ' 1)) \/ (v ' 2))) else if s = 4w then (((((v ' 0) \/ (v ' 1))
+      \/ (v ' 2)) \/ (v ' 3))) else if s = 5w then ((((((v ' 0) \/ (v ' 1))
+      \/ (v ' 2)) \/ (v ' 3)) \/ (v ' 4))) else if s = 6w then (((((((v ' 0)
+      \/ (v ' 1)) \/ (v ' 2)) \/ (v ' 3)) \/ (v ' 4)) \/ (v ' 5))) else if s
+      = 7w then ((((((((v ' 0) \/ (v ' 1)) \/ (v ' 2)) \/ (v ' 3)) \/ (v '
+      4)) \/ (v ' 5)) \/ (v ' 6))) else if s = 8w then (((((((((v ' 0) \/ (v
+      ' 1)) \/ (v ' 2)) \/ (v ' 3)) \/ (v ' 4)) \/ (v ' 5)) \/ (v ' 6)) \/
+      (v ' 7))) else v <> 0w)
+  | RTN => sign = 1w /\ (if s = 0w then F else if s = 1w then ((v ' 0)) else
+      if s = 2w then (((v ' 0) \/ (v ' 1))) else if s = 3w then ((((v ' 0)
+      \/ (v ' 1)) \/ (v ' 2))) else if s = 4w then (((((v ' 0) \/ (v ' 1))
+      \/ (v ' 2)) \/ (v ' 3))) else if s = 5w then ((((((v ' 0) \/ (v ' 1))
+      \/ (v ' 2)) \/ (v ' 3)) \/ (v ' 4))) else if s = 6w then (((((((v ' 0)
+      \/ (v ' 1)) \/ (v ' 2)) \/ (v ' 3)) \/ (v ' 4)) \/ (v ' 5))) else if s
+      = 7w then ((((((((v ' 0) \/ (v ' 1)) \/ (v ' 2)) \/ (v ' 3)) \/ (v '
+      4)) \/ (v ' 5)) \/ (v ' 6))) else if s = 8w then (((((((((v ' 0) \/ (v
+      ' 1)) \/ (v ' 2)) \/ (v ' 3)) \/ (v ' 4)) \/ (v ' 5)) \/ (v ' 6)) \/
+      (v ' 7))) else v <> 0w)
+  | RTZ => F
+End
+
+Theorem smtfp_word_round_up_qrd:
+  smtfp_word_round_up mode (sign:word1)
+    (smtfp_word_lsr_bv (v:word9) (s:word4))
+    (v - smtfp_word_lsl_bv (smtfp_word_lsr_bv v s) s)
+    (smtfp_word_lsl_bv (1w:word9) s) =
+  smtfp_word_round_qrd_up mode sign v s
+Proof
+  Cases_on `mode` >>
+  STRIP_ASSUME_TAC (blastLib.BBLAST_PROVE
+    (boolSyntax.list_mk_disj (List.tabulate (16,fn i=>
+      boolSyntax.mk_eq (``s:word4``,wordsSyntax.mk_wordii (i,4)))))) >>
+  ASM_SIMP_TAC (srw_ss())
+    [smtfp_word_round_up_def,smtfp_word_round_qrd_up_def,
+     smtfp_word_lsl_bv_exact,smtfp_word_lsr_bv_exact,LET_THM] >>
+  blastLib.BBLAST_TAC
+QED
+
+Theorem smtfp_word_encode_fields_grs:
+  smtfp_word_encode_fields mode sign (format:('t,'e)smtfp)
+    (scale:word4) (data:word9) =
+  if data = 0w then (0w:'e word,0w:'t word)
+  else
+    let exponent = smtfp_word_encode_exponent format scale data in
+    let quotient =
+      if scale <=+ exponent then
+        smtfp_word_lsr_bv data (exponent-scale)
+      else smtfp_word_lsl_bv data (scale-exponent) in
+    let rounded =
+      if scale <=+ exponent /\
+         smtfp_word_round_qrd_up mode sign data (exponent-scale) then
+        quotient+1w else quotient in
+      smtfp_word_pack_fields mode sign format exponent rounded
+Proof
+  Cases_on `data = 0w`
+  >- simp [smtfp_word_encode_fields_def] >>
+  Cases_on `scale <=+ smtfp_word_encode_exponent format scale data`
+  >- simp [smtfp_word_encode_fields_def,smtfp_word_encode_qrd_def,
+           smtfp_word_round_def,
+           simpLib.SIMP_RULE (srw_ss()) [] smtfp_word_round_up_qrd] >>
+  simp [smtfp_word_encode_fields_def,smtfp_word_encode_qrd_def,
+        smtfp_word_round_def,smtfp_word_round_up_def]
+QED
+
 val _ = export_theory ();

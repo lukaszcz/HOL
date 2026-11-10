@@ -166,14 +166,25 @@ fun readTrace lfn roots cl sva vc clauseth fin id =
 exception Trivial
 
 (*build the clause/chain list *)
-fun parseTrace roots cl sva nr fname solver vc clauseth lfn proof =
+fun parseTrace_with_roots make_roots cl sva nr fname solver vc clauseth lfn
+                          proof =
     let
         val fin = sat_fileopen (if isSome proof then valOf proof
                                 else fname^"."^(getSolverName solver)^".proof")
-        val id = readTrace lfn roots cl sva vc clauseth fin 0
-        val _ = sat_fileclose fin
-     in SOME id end
-handle Io _ => NONE
+        (* Open first: a missing certificate must select the old fallback
+           without constructing an unused compact root context. *)
+        val result = Exn.capture (fn () =>
+          let val roots = make_roots ()
+          in (readTrace lfn roots cl sva vc clauseth fin 0, roots) end) ()
+        val _ = case result of
+            Exn.Res _ => sat_fileclose fin
+          | Exn.Exn _ => (sat_fileclose fin handle _ => ())
+     in SOME (Exn.release result) end
+handle e as Io _ => if dimacsTools.is_terminal e then raise e else NONE
+
+fun parseTrace roots cl sva nr fname solver vc clauseth lfn proof =
+    Option.map #1 (parseTrace_with_roots (fn () => roots) cl sva nr fname
+                    solver vc clauseth lfn proof)
 
 (*
 nr: number of root clauses
@@ -190,14 +201,20 @@ fun replayProof sva nr fname solver vc clauseth lfn proof =
             (Feedback.HOL_MESG ("HOL SAT: " ^ message);
              TextIO.flushOut TextIO.stdOut)
           else ()
-        val _ = trace "resolution roots start"
-        val roots = profile_stage "replay-roots"
-          minisatResolve.root_context clauseth
-        val _ = trace "resolution roots done"
+        fun make_roots () =
+          if RBM.numItems lfn = 0 then
+            {conjunction = T, projections = Termtab.empty}
+          else
+            let val _ = trace "resolution roots start"
+                val roots = profile_stage "replay-roots"
+                  minisatResolve.root_context clauseth
+                val _ = trace "resolution roots done"
+            in roots end
         val _ = trace "resolution trace start"
     in case profile_stage "replay-trace"
-        (parseTrace roots cl sva nr fname solver vc clauseth lfn) proof of
-           SOME id =>
+        (parseTrace_with_roots make_roots cl sva nr fname solver vc
+           clauseth lfn) proof of
+           SOME (id, roots) =>
              let val _ = trace "resolution trace done"
                  val result = profile_stage "replay-finish"
                    (minisatResolve.finish_resolution roots lfn clauseth)
