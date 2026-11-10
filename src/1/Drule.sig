@@ -111,4 +111,10 @@ sig
   val pp    : thmpos_dtype.match_position -> thm -> thm
 
 
+  (* On-demand view of the fixed EQT_INTRO law. The body is decoded, not
+     retained from construction; no pointer identity or validity grant.
+     bare means the decoded argument is a variable, not a kernel hook. *)
+  val eqt_intro_cache_data : unit ->
+    {statement:term,body:term,quantifier_variable:term,tag:Tag.tag,
+     bare:bool,closed:bool}
 end

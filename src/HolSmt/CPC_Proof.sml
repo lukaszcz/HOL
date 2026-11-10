@@ -1890,6 +1890,7 @@ struct
   datatype conjunction_source =
       ParsedConjunction
     | AndIntroConjunction
+    | ProcessScopeConjunction
     | ArithReductionConjunction
     | EqResolveConjunction
     | CongruenceConjunction
