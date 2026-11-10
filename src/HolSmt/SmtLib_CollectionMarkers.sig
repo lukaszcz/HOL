@@ -18,6 +18,11 @@ sig
      is_collection_type : 'term -> bool,
      classify : 'term * 'term -> role}
 
+  type 'term closure_operations =
+    {compare : 'term * 'term -> order,
+     share_symbol : 'term -> bool,
+     let_body : 'term -> 'term}
+
   type 'term memo_hooks =
     {walk : 'term -> 'term list -> (unit -> 'term list) -> 'term list,
      mark : 'term -> 'term list -> (unit -> 'term list) -> 'term list}
@@ -50,6 +55,13 @@ sig
   (* The legacy entry uses direct synchronous hooks, preserving its exact
      traversal, result ordering and HOL_ERR fallback behavior. The ordinary
      collect_with_memo entry also retains that same HOL_ERR policy. *)
+  (* Seed once, then close conditional/let and same-symbol argument/result
+     carriers. The caller supplies its existing typed add and scoped equality.
+     Only selected syntax mismatches are ignored; other failures escape. *)
+  val close : 'term operations -> 'term closure_operations ->
+    (exn -> bool) -> 'term list -> 'term list ->
+    'term list * ('term * int * 'term) list
+
   val collect : 'term operations ->
     {propagate_bindings : bool, visit_prefix : bool} ->
     'term -> 'term list -> 'term list

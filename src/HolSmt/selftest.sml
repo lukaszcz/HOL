@@ -59123,6 +59123,20 @@ in
               (marker_oracle e [] goal result andalso
                length (#sets result) = 4 andalso null (#bags result)) end)
           end)
+      val _ = test "Conditional selector carriers match native markers"
+        (fn () =>
+          let val (simplified,_) = SolverSpec.simplify
+                (SmtLib.CVC_SIMP_TAC true)
+                ([], ``(P:(int -> bool) -> bool)
+                  (if p then r.smt_set else {})``)
+              val goal = #2 simplified
+              val binders = List.map (#1 o Term.dest_abs)
+                (List.filter Term.is_abs (Library.subterms goal))
+          in owned goal [] (fn e =>
+            let val result = native e
+            in require "conditional selector lost scoped collection markers"
+              (marker_oracle e binders goal result andalso
+               not (null (#sets result))) end) end)
       val _ = test "Automatic Bag markers retain immediate empty-bag prefixes"
         (fn () =>
           let val empty = bagSyntax.mk_bag ([],Type.bool)
@@ -59241,7 +59255,8 @@ in
           let val syntax = T.native_query_syntax (#graph e)
               val calls = ref 0
               val failing : Q.native_syntax =
-                {set_role=fn _ => (calls := !calls + 1;
+                {collection_symbol= #collection_symbol syntax,
+                 set_role=fn _ => (calls := !calls + 1;
                    raise Feedback.mk_HOL_ERR "marker" "callback"
                      "native marker callback Primary"),
                  bag_role= #bag_role syntax,
@@ -59370,7 +59385,8 @@ in
             let val syntax = T.native_query_syntax (#graph e)
                 val calls = ref 0
                 val failing : Q.native_syntax =
-                  {set_role= #set_role syntax,bag_role= #bag_role syntax,
+                  {collection_symbol= #collection_symbol syntax,
+                   set_role= #set_role syntax,bag_role= #bag_role syntax,
                    is_set_type= #is_set_type syntax,
                    is_bag_type= #is_bag_type syntax,
                    is_cond= #is_cond syntax,is_let= #is_let syntax,
