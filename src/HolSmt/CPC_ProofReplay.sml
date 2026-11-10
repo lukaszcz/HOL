@@ -15444,9 +15444,23 @@ local
                 List.exists (fn pivot =>
                   literal_equal pivot term orelse
                   literal_equal (complement pivot) term) stops
-              val first_lits = strip_clause_until (stop first_pivot)
+              fun strip_for_pivot required term =
+                let
+                  val literals = strip_clause_until (stop required) term
+                in
+                  if List.exists (literal_equal required) literals then
+                    literals
+                  else
+                    case Lib.total boolSyntax.dest_disj term of
+                      SOME (left, right) => left ::
+                        (if literal_equal required left then
+                           strip_clause_until (stop required) right
+                         else strip_for_pivot required right)
+                    | NONE => literals
+                end
+              val first_lits = strip_for_pivot first_pivot
                 (Thm.concl first)
-              val second_lits = strip_clause_until (stop second_pivot)
+              val second_lits = strip_for_pivot second_pivot
                 (Thm.concl second)
               val first_rest =
                 case remove_first first_pivot first_lits of

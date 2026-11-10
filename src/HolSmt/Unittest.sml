@@ -33547,6 +33547,13 @@ fun cpc_chain_resolution_success () =
       [("(or p (or q r))", "(not p)", boolSyntax.F),
        ("(or p (or q r))", "(or (not p) s)", ``s:bool``),
        ("(or p (or q r) s)", "(not p)", ``s:bool``)]
+    val _ = check
+      "(assume @a (or p q)) (assume @b (or (not p) (or p q))) \
+      \(assume @c (not (or p q))) \
+      \(step @eq :rule refl :args ((or p q))) \
+      \(step @opaque :rule eq_resolve :premises (@a @eq)) \
+      \(step @out :rule chain_resolution :premises (@opaque @b @c) \
+      \:args ((@list true true) (@list p (or p q))))" ``q:bool`` 3 true
     val _ = expect_hol_error_contains "chain_resolution list lengths"
       "annotation lengths differ" (fn () => ignore (parse_cpc_proof_string
         ("(" ^ declarations ^ "(assume @a p) (assume @b (not p)) \
