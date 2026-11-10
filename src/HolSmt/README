@@ -271,10 +271,14 @@ Definitions for translator-emitted operators are selected from the exact
 `EncodedSymbol` records of the current translation, never from constant
 names.  In particular, `bvcomp` replay unfolds its recorded definition and
 then uses the general word decision procedures.
-CPC word replay also checks whole extraction, extraction through a binary
-concatenation, constant logical shifts, and bitwise slicing. Slicing and
-identity-mask steps keep arithmetic operands schematic. Quantified word
-complement elimination is re-proved from complement involution.
+CPC word replay supports whole-word extraction (`bv-extract-whole`),
+extraction from the lower word of a concatenation (`bv-extract-concat-1`),
+literal logical shifts (`bv-shl-by-const-1`, `bv-lshr-by-const-1`) and
+`bv-bitwise-slicing`. It also eliminates quantified word variables in
+conditions of the form `!x. word_1comp x <> a \/ P x`, when `a` does not
+contain `x`.
+Extraction and constant-shift replay use the existing BitVector size and
+step-time limits.
 
 Unicode-string and regular-expression replay covers goals stated over the
 native `smtstr` carrier.  A goal stated over HOL's `:string` reaches the
@@ -502,6 +506,10 @@ proof format is CPC at `dsl-rewrite` granularity.
 For `CVC_TAC`, `UNSAT NONE` is not accepted: CPC replay must produce
 `UNSAT (SOME thm)` and pass the original-goal and no-oracle checks.
 
+CPC arithmetic rewrites include both maximum lower bounds, arith-max-geq1
+and arith-max-geq2. Checked nonlinear integer replay can use opposing bounds
+that fix an arithmetic expression to a numeral.
+
 Nonlinear real arithmetic replay may invoke CSDP through `SOSLib.REAL_SOS`.
 CSDP is an untrusted semidefinite-solver dependency: it searches for SOS
 certificates, while HOL checks the resulting certificate before any theorem is
@@ -659,16 +667,6 @@ Z3 th-lemma replay coverage:
               Z3 version; observed fpa2bv     checked SmtFpProve ladder;
               ground/atom/bit shapes          no occurrence is claimed
 
-Nonlinear integer replay substitutes numeral equalities proved from opposing
-bounds before SOS certificate search. CPC arithmetic rewrites include both
-maximum lower bounds, arith-max-geq1 and arith-max-geq2.
-Integer polynomial normalization removes negative zero introduced by
-subtraction aliases; transitivity normalizes integer relation spellings
-before searching for an equality bridge. Shared antecedents use the same
-DAG normalization for modus ponens. Numeric conditionals remain opaque
-through linear and nonlinear arithmetic before branch expansion; congruence
-preserves immediate child positions, including reflexive premises.
-
 Indexed th-lemma failures include theory, subkind, remaining proof indices and
 the parsed HOL conclusion in the replay error.
 
@@ -699,7 +697,16 @@ heap and drivers with:
   bin/Holmake -C src/HolSmt
 
 The external validation runner should invoke the drivers directly through
-the HOL heap.  From `src/HolSmt`, the typechecker command is equivalent to:
+the own-build `smtreplayheap`, as do the Holmake selftest shards. On Poly/ML,
+`.uo` files are source-loading manifests: starting from `smtheap` recompiles
+the replay libraries in every process. Build `smtreplayheap` incrementally
+in each tree/kernel; never copy a heap from another build. It preloads only
+libraries, not solver entry points, workload goals or completed replay
+contexts. Solver executable/version detection still runs in the consumer.
+For performance comparisons, report heap preparation separately from the
+complete fresh consumer process (including restoration, solver execution
+and all checks); source-build-plus-first-use cost is not deployment cost.
+From `src/HolSmt`, the typechecker command is equivalent to:
 
   extra=$(printf '%s\n%s' "$input" "$logic")
   "$HOL4_ROOT/bin/hol" --gcthreads=1 run \

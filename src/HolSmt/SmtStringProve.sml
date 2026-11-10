@@ -1489,23 +1489,11 @@ struct
 
   (* Z3 shares each tail of its bitwise comparison through proof lets.
      Parsing expands those lets, so compact the Boolean recurrence
-     top-down before bit-blasting to keep the checked term linear.
-     ((~d /\ c) \/ (~d /\ r) \/ (c /\ r)) = ((c /\ ~d) \/ ((c = d) /\ r)),
-     built rather than parsed so that a constant a client theory exports
-     cannot capture c, d or r. *)
+     top-down before bit-blasting to keep the checked term linear. *)
   val compact_char_compare =
-    let
-      open boolSyntax
-      val c = Term.mk_var ("c", Type.bool)
-      val d = Term.mk_var ("d", Type.bool)
-      val r = Term.mk_var ("r", Type.bool)
-    in
-      tautLib.TAUT_PROVE
-        (mk_eq (list_mk_disj
-                  [mk_conj (mk_neg d, c), mk_conj (mk_neg d, r),
-                   mk_conj (c, r)],
-                mk_disj (mk_conj (c, mk_neg d), mk_conj (mk_eq (c, d), r))))
-    end
+    tautLib.TAUT_PROVE
+      ``((~d /\ c) \/ (~d /\ r) \/ (c /\ r)) =
+        ((c /\ ~d) \/ ((c = d) /\ r))``
 
   val char_word_expansion_theorems =
     [smtstringz3Theory.char_bit_word18,
