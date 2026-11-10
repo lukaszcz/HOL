@@ -22,6 +22,9 @@ sig
   val represent : term -> descriptor
   val convert_atom : term -> thm
   val convert_word_projection : Conv.conv
+  (* Share a producer-local schema cache through the selected word worker.
+     LET/beta closes on helper templates before their field insertion. *)
+  val lower_words : Conv.conv
   (* Exact outer-shape domain of [lower_atom], excluding dynamic resource and
      producer failures discovered while constructing the conversion. *)
   val lower_atom_domain : term -> bool
