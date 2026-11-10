@@ -11608,6 +11608,50 @@ in
   check_oracle_tags "CPC disjunction De Morgan tail" theorem
 end
 
+fun cpc_quant_var_elim_repeated_guard_replay_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const a Bool) (declare-const t Int) \
+    \(declare-const B (-> Int Bool)) \
+    \(define @x () (@var \"x\" Int)) \
+    \(define @vars () (@list @x)) \
+    \(define @body () (or (not (= @x t)) a (not (= @x t)) (B @x))) \
+    \(define @rhs () (or a (not (= t t)) (B t))) \
+    \(step @p :rule quant-var-elim-eq \
+    \ :args ((= (forall @vars @body) @rhs))))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl theorem ~~
+    ``(!x:int. ~(x = t) \/ a \/ ~(x = t) \/ B x) =
+      (a \/ ~(t = t) \/ B t)``,
+    "CPC quantifier elimination changed its repeated guard target");
+  assert (List.null (Thm.hyp theorem),
+    "CPC repeated guard elimination retained hypotheses");
+  check_oracle_tags "CPC repeated guard elimination" theorem
+end
+
+fun cpc_quant_var_elim_symmetric_guard_replay_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const t Int) (declare-const P (-> Int Bool)) \
+    \(declare-const Q (-> Int Bool)) \
+    \(define @x () (@var \"x\" Int)) \
+    \(define @vars () (@list @x)) \
+    \(define @body () (or (not (= @x t)) (not (= t @x)) (P @x) (Q @x))) \
+    \(define @rhs () (or (not (= t t)) (P t) (Q t))) \
+    \(step @p :rule quant-var-elim-eq \
+    \ :args ((= (forall @vars @body) @rhs))))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl theorem ~~
+    ``(!x:int. ~(x = t) \/ ~(t = x) \/ P x \/ Q x) =
+      (~(t = t) \/ P t \/ Q t)``,
+    "CPC quantifier elimination changed its symmetric guard target");
+  assert (List.null (Thm.hyp theorem),
+    "CPC symmetric guard elimination retained hypotheses");
+  check_oracle_tags "CPC symmetric guard elimination" theorem
+end
+
 fun cpc_proof_parser_define_and_optional_conclusion_success () =
 let
   val proof = parse_cpc_proof_string
@@ -28922,6 +28966,10 @@ let
       cpc_quant_var_reordering_replay_success),
     ("cpc_quant_merge_prenex_replay_success",
       cpc_quant_merge_prenex_replay_success),
+    ("cpc_quant_var_elim_repeated_guard_replay_success",
+      cpc_quant_var_elim_repeated_guard_replay_success),
+    ("cpc_quant_var_elim_symmetric_guard_replay_success",
+      cpc_quant_var_elim_symmetric_guard_replay_success),
     ("cpc_bool_and_de_morgan_tail_replay_success",
       cpc_bool_and_de_morgan_tail_replay_success),
     ("cpc_bool_or_de_morgan_tail_replay_success",
