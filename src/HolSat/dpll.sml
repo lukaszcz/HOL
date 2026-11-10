@@ -114,6 +114,19 @@ fun undoCNF lfn clauses th = (* th is [ci] |-  F *)
                              inst_th (List.rev clauses) (* ~t |- F *)
     in th0 end
 
+(* Proof-only fallback uses the already prepared clauses, including explicit
+   CNF with compound atoms.  Do not re-clausify it or reconstruct a model. *)
+fun DPLL_REFUTE lfn clauseth =
+    let
+        val clauses = Array.foldr (op ::) [] clauseth
+        val initial = List.foldr
+          (fn ((clause,_),th) => CONJ (ASSUME clause) th) TRUTH clauses
+    in
+      case CoreDPLL initial of
+        Unsat th => SOME (undoCNF lfn clauses th)
+      | Sat _ => NONE
+    end
+
 fun mk_model_thm cnfv lfn t f =
     if isSome cnfv then
       let
