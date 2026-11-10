@@ -816,7 +816,9 @@ fun query_skeleton_measured checkpoint formula =
   in
     let
       val static = build false bool depth body
-      val query = build true bool depth (blastTerm.normMeasured checkpoint body)
+      val query =
+        if goal then static
+        else build true bool depth (blastTerm.normMeasured checkpoint body)
     in
       (static, {q = query, qvars = !qvars})
     end
