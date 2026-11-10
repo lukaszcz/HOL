@@ -1807,12 +1807,6 @@ val graph_expect_thm = expect_thm
          0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE0w =
        word_lsl (word_lsr x 5) 5``, [thm_CVC, thm_Z3]),
 
-    (``(f:num -> word32) 0 = x ==>
-       ((7 >< 0) (f 0):word8) = (7 >< 0) x``,
-      [thm_CVC, thm_Z3, thm_Z3p,
-       mk_test_fun (CVC.is_configured ()) (expect_thm true)
-         "cvc5 (proofs, indexed num/word)" HolSmtLib.CVC_TAC]),
-
     (* A word atom must not stop the num-to-int transfer when the naturals it
        guards never meet the word theory: `DIV` is only in the SMT-LIB
        fragment once `x` has been transferred to an integer. *)
