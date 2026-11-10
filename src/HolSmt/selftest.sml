@@ -344,16 +344,16 @@ in
     (* Sets in cvc5's array encoding: a singleton, an applied set and an
        applied bound set must all stay Arrays, in the assumptions too. *)
     (``(x : num) = y /\ P {x} ==> (P : (num -> bool) -> bool) {y}``,
-      [thm_CVC, thm_CVCp]),
-    (``(a : num) IN s ==> s a``, [thm_CVC, thm_CVCp]),
-    (``(!x : num. x IN s ==> x IN t) /\ s b ==> t b``, [thm_CVC, thm_CVCp]),
+      [thm_CVC, thm_CVCp_ho]),
+    (``(a : num) IN s ==> s a``, [thm_CVC, thm_CVCp_ho]),
+    (``(!x : num. x IN s ==> x IN t) /\ s b ==> t b``, [thm_CVC, thm_CVCp_ho]),
     (``(a : num) IN (if c then s else t) /\ c ==> a IN s``, [thm_CVC]),
     (* A record selector and EMPTY must share the conditional's Array sort;
        checked replay reconstructs the normalized selector under the UF. *)
     (``(r : smt_set_rec) = q /\
        P (if p then r.smt_set else {}) ==>
        (P : (int -> bool) -> bool) (if p then q.smt_set else {})``,
-      [thm_CVC, thm_CVCp]),
+      [thm_CVC, thm_CVCp_ho]),
 
     (``F``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
     (``p = (p:bool)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
