@@ -391,7 +391,7 @@ struct
      DAGs without unfolding their trees.  Two bounded operand paths reach
      beyond the identical operator prefixes of curried applications.  This
      is only an index hint: every hit is resolved by exact pointer equality. *)
-  val pointer_bucket = Term.pointer_bucket 16
+  val pointer_bucket = SmtReplayImport.pointer_bucket 16
 
   (* Repeated primitive types should not migrate to the cold end of a
      type-admission cache as independently allocated types are discovered.
@@ -443,7 +443,7 @@ struct
                   let val (left, right) = Term.dest_comb term
                   in [left, right] end
                 else if Term.is_abs term then
-                  (case Term.term_size_bounded (limit - count + 1) term of
+                  (case SmtReplayImport.bounded_raw_size (limit - count + 1) term of
                      NONE => raise Exceeded
                    | SOME _ =>
                        let val (binder, body) = Term.dest_abs term
@@ -501,7 +501,7 @@ struct
                         else raise Exceeded
                       val (left, right) =
                         if Term.is_comb term then Term.dest_comb term
-                        else case Term.term_size_bounded limit term of
+                        else case SmtReplayImport.bounded_raw_size limit term of
                           NONE => raise Exceeded
                         | SOME _ => Term.dest_abs term
                     in loop (Visit left :: Visit right ::
@@ -532,7 +532,7 @@ struct
      retain the public kernel's alpha-equivalence boundary.  Exhaustion is a
      cache miss, not a replay refusal, and reservations bound pending work as
      well as retained physical nodes. *)
-  fun new_bounded_term_index maximum =
+  fun new_bounded_term_index_with_types {admit_binder, intern_type} maximum =
     let
       datatype key = Variable of string * int
         | Constant of KernelSig.kernelid * int
@@ -556,12 +556,14 @@ struct
       val count = 4093
       val physical = Array.array
         (count, [] : (Term.term * int) list)
-      fun type_id ty =
-        case Redblackmap.peek (!types, ty) of
-          SOME id => id
+      fun type_id ty = case intern_type of
+          SOME intern => intern ty
         | NONE =>
-            let val id = Redblackmap.numItems (!types)
-            in types := Redblackmap.insert (!types, ty, id); id end
+            (case Redblackmap.peek (!types, ty) of
+               SOME id => id
+             | NONE =>
+                 let val id = Redblackmap.numItems (!types)
+                 in types := Redblackmap.insert (!types, ty, id); id end)
       fun fresh () = let val id = !next in next := id + 1; id end
       fun intern key =
         case Redblackmap.peek (!nodes, key) of
@@ -598,6 +600,7 @@ struct
                             SOME (intern (Application (left_id, right_id)))
                         | _ => NONE
                       end
+                    else if not (admit_binder term) then NONE
                     else
                       (case Redblackmap.peek (!abstractions, term) of
                          SOME id => SOME id
@@ -614,6 +617,49 @@ struct
                 in result end
         end
     in visit end
+
+  (* Existing term clients retain their original abstraction/Type policy. *)
+  fun new_bounded_term_index maximum =
+    new_bounded_term_index_with_types
+      {admit_binder = fn _ => true, intern_type = NONE} maximum
+
+  (* Semantic owner/metric maps must retain alpha membership even when an
+     optional index is exhausted. IDs shortcut equality, not ordering; pair
+     memoization keeps the application fallback DAG-aware. Opaque binders
+     retain the old public syntactic comparison, never a proof inference.
+     Proof caches use only admitted IDs, not this fallback comparator. *)
+  fun semantic_term_order index =
+    let
+      val count = 4093
+      val pairs = Array.array
+        (count, [] : (Term.term * Term.term * order) list)
+      fun compare (left, right) =
+        if Portable.pointer_eq (left, right) then EQUAL
+        else
+          let
+            val bucket = (pointer_bucket count left +
+              pointer_bucket count right) mod count
+          in
+            case List.find (fn (l, r, _) =>
+                Portable.pointer_eq (left, l) andalso
+                Portable.pointer_eq (right, r)) (Array.sub (pairs, bucket)) of
+              SOME (_, _, result) => result
+            | NONE =>
+                let
+                  val equal = case (index left, index right) of
+                      (SOME a, SOME b) => a = b
+                    | _ => false
+                  val result = if equal then EQUAL
+                    else if Term.is_comb left andalso Term.is_comb right then
+                      (case compare (Term.rator left, Term.rator right) of
+                         EQUAL => compare (Term.rand left, Term.rand right)
+                       | result => result)
+                    else Term.compare (left, right)
+                  val _ = Array.update (pairs, bucket,
+                    (left, right, result) :: Array.sub (pairs, bucket))
+                in result end
+          end
+    in compare end
 
   (* Replay terms are DAGs.  Count each node once while retaining the
      saturated unfolded-tree metric used by the skeleton profiler.  Keeping
@@ -632,7 +678,7 @@ struct
       let val (operator, operand) = Term.dest_comb term
       in [operator, operand] end
     else if Term.is_abs term then
-      (case Term.term_size_bounded max_bv_replay_term_nodes term of
+      (case SmtReplayImport.bounded_raw_size max_bv_replay_term_nodes term of
          NONE =>
            (check_term_size_for "BitVector" "binder-opening"
               (max_bv_replay_term_nodes + 1);
