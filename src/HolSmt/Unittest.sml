@@ -10812,7 +10812,10 @@ let
           val definitions = #definitions recorded
           val theorem = #theorem recorded
         in
-          assert (List.length definitions = width andalso
+          assert (List.length (Lib.op_mk_set Term.term_eq definitions) =
+              width andalso
+            List.all (fn definition => List.exists (Term.aconv definition)
+              (#definition_hyps result)) definitions andalso
             Thm.concl theorem ~~ equation andalso
             List.all (fn hyp => List.exists (Term.aconv hyp) definitions)
               (Thm.hyp theorem),
