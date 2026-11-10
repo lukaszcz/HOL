@@ -1919,6 +1919,8 @@ val graph_expect_thm = expect_thm
       [thm_Z3, thm_Z3p, thm_CVC, thm_CVCp]),
     (``((x:word8 option) = y) ==> (y = x)``,
       [thm_Z3, thm_Z3p, thm_CVC, thm_CVCp]),
+    (``((x:smtstr option) = y) ==> (y = x)``,
+      [thm_Z3, thm_Z3p, thm_CVC, thm_CVCp]),
     (``((x:(int -> bool) option) = y) ==> (y = x)``,
       [thm_Z3, thm_Z3p, thm_CVC, thm_CVCp]),
 

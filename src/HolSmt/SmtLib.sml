@@ -3215,24 +3215,46 @@ local
         let
           fun subterm_types predicate =
             List.exists (fn tm => predicate (type_of tm)) all_subterms
+          (* A native datatype declaration gives the sort of every
+             constructor field, so a theory sort can reach the query through
+             a field alone.  Field datatypes are type dictionary entries
+             themselves. *)
+          fun constructor_field_types ty =
+            case TypeBase.fetch ty of
+              SOME tyinfo =>
+                List.concat (List.map (fn constructor =>
+                  Lib.fst (boolSyntax.strip_fun
+                    (Term.type_of (TypeBasePure.cinst ty constructor))))
+                  (TypeBasePure.constructors_of tyinfo))
+            | NONE => []
+          fun field_types_have predicate =
+            type_exists (fn ty =>
+              case datatype_family ty of
+                SOME family =>
+                  List.exists
+                    (List.exists predicate o constructor_field_types) family
+              | NONE => false)
+          fun emitted_types predicate =
+            subterm_types predicate orelse field_types_have predicate
           val quantifiers = (#generated_forall state) () orelse
             List.exists has_quantifier terms
           val bitvectors = List.exists has_nonconstructor_bitvector terms
+            orelse field_types_have type_contains_word
           val integers =
-            subterm_types type_contains_int orelse
+            emitted_types type_contains_int orelse
             List.exists (fn tm => (test_constant is_int_arith_const)
               (Lib.fst (strip_comb tm))) all_subterms
           val reals =
-            subterm_types type_contains_real orelse
+            emitted_types type_contains_real orelse
             List.exists (fn tm => (test_constant is_real_arith_const)
               (Lib.fst (strip_comb tm))) all_subterms
           val floating_point =
-            subterm_types type_contains_fp orelse
+            emitted_types type_contains_fp orelse
             List.exists (fn tm => (test_constant is_fp_const)
               (Lib.fst (strip_comb tm))) all_subterms
           val strings =
-            subterm_types type_contains_string orelse
-            subterm_types
+            emitted_types type_contains_string orelse
+            emitted_types
               (Library.type_contains
                 (fn ty => Type.compare (ty, reglan_ty) = EQUAL)) orelse
             List.exists (fn tm => (test_constant is_string_const)
@@ -3371,7 +3393,8 @@ local
                   is_var tm andalso
                   type_contains_function (type_of tm)) all_subterms orelse
                 term_exists (fn (tm, arity) => arity = 0 andalso
-                  type_contains_function (type_of tm))
+                  type_contains_function (type_of tm)) orelse
+                field_types_have type_contains_function
             | HigherOrder _ => false
           val arrays =
             function_arrays orelse
