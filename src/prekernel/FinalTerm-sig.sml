@@ -12,10 +12,8 @@ sig
 
   val type_of       : term -> hol_type
   val free_vars     : term -> term list
-  val has_free_vars : term -> bool
   val free_vars_lr  : term -> term list
   val FVL           : term list -> term set -> term set
-  val FVL_dag       : term list -> term set -> term set
   val free_in       : term -> term -> bool
   val all_vars      : term -> term list
   val all_atoms     : term -> term set
@@ -88,16 +86,11 @@ sig
   val compare       : term * term -> order
   val term_eq       : term -> term -> bool
   val fast_term_eq  : term -> term -> bool
-  (* Bounded operand-path sampling for physical-identity cache buckets.
-     Arguments are sampling depth and positive bucket count.  Equal pointers
-     have equal indices; structural/alpha equality is NOT a key guarantee. *)
-  val pointer_bucket : int -> int -> term -> int
 
   val empty_tmset   : term set
   val empty_varset  : term set
 
   val term_size     : term -> int
-  val term_size_bounded : int -> term -> int option
 
   (* theory segment related functionality *)
   val uptodate_term     : term -> bool

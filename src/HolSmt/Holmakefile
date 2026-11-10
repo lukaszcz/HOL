@@ -1,5 +1,6 @@
 INCLUDES = ../hol88 ../integer ../n-bit ../rational ../real ../real/analysis \
-           ../res_quan/src ../sort ../string ../floating-point
+           ../res_quan/src ../sort ../string ../floating-point ../bag \
+           ../HolSat
 
 all: $(DEFAULT_TARGETS) selftest.exe smtfloat-diff.exe
 .PHONY: all
@@ -36,10 +37,12 @@ holsmt-selftest-7-8.log: holsmt-selftest-6-8.log
 all: $(HOLSMT_SELFTEST_LOGS)
 
 ifdef POLY
-holsmt-selftest-%.log: selftest.uo smtheap
+# A .uo is a source-loading manifest on Poly/ML, not compiled ML code.
+# Restore the own-build replay heap rather than compile it in every shard.
+holsmt-selftest-%.log: selftest.uo smtreplayheap
 	$(tee HOL4_SELFTEST_SHARD=$(subst -,/,$*) $(HOLDIR)/bin/hol \
 	  --gcthreads=1 --maxheap $(HOLSMT_SELFTEST_MAXHEAP) run \
-	  --holstate=$(HOLHEAP) selftest 2>&1,$@)
+	  --holstate=smtreplayheap selftest 2>&1,$@)
 else
 holsmt-selftest-%.log: selftest.exe
 	$(tee HOL4_SELFTEST_SHARD=$(subst -,/,$*) ./selftest.exe 2>&1,$@)
@@ -70,16 +73,543 @@ DEPS = $(patsubst %,%.uo,$(BARE_DEPS))
 all: $(HOLHEAP) smtreplayheap selftest.exe
 
 $(HOLHEAP): $(DEPS) $(dprot $(HOLDIR)/src/real/analysis/realheap)
-	$(protect $(HOLDIR)/bin/hol) buildheap $(DEBUG_FLAG) -o $@ \
+	$(protect $(HOLDIR)/bin/hol) --gcthreads=1 --maxheap=2800 \
+		buildheap $(DEBUG_FLAG) -o $@ \
 		-b $(protect $(HOLDIR)/src/real/analysis/realheap) $(BARE_DEPS)
 
 # Repeated proof-driver invocations share the compiled replay libraries.
 # Keep solver entry points out: executable/version detection must happen in
 # the calling process, not when this reusable heap is built.
-REPLAY_DEPS = Z3_ProofReplay CPC_ProofReplay SmtLib_Parser
+REPLAY_DEPS = SmtCheckedGraph Z3_ProofReplay CPC_ProofReplay \
+              CPC_NativePrivateClosure \
+              SmtReplayDefinitionEnvironment \
+              SmtReplayClosedSourceImages \
+              SmtReplayGroundDefinitions \
+              Z3_GraphSourceReconcile \
+              SmtLib_GraphSourcePortfolio \
+              SmtLib_GraphPreprocess \
+              SmtReplayWrapperSession \
+              SmtReplaySourceConsumerSession \
+              SmtReplayOriginalAcquisition SmtReplayInvocationWork \
+              SmtLib_GraphLawTypeInstance \
+              SmtLib_GraphCarrierRoot \
+              SmtLib_CarrierLaws \
+              SmtLib_CarrierTopDepthFn SmtLib_OwnedCarrierTraversal \
+              SmtLib_OwnedCarrierSourceStage \
+              SmtLib_OwnedPositiveGoalSourceStage \
+              SmtReplayOwnedTransport SmtReplayOwnedCompactApplication \
+              SmtReplayOwnedRawCompactApplication \
+              SmtReplayFocusAdmission \
+              SmtReplayLambdaPreflight SmtReplayOwnedLambda \
+              SmtReplayOwnedAlpha \
+              SmtLib_TraversalRootRecognition \
+              SmtReplayRecordedBeta \
+              SmtLib SmtLib_GraphTheoremDiscovery \
+              SmtLib_GraphNumTheoremStage SmtLib_GraphIntBagCarrier \
+              SmtLib_GraphIntBagPortfolio \
+              SmtReplayPackedSCC \
+              CPC_GraphNativeAdmission \
+              CPC_GraphNativeFirstPass \
+              SmtLib_Parser \
+              SmtReplaySourceBinderAlignment SmtReplayResolvedLaw \
+              SmtLib_GraphPreprocessFacts SmtLib_GraphPreprocessDerived \
+              SmtReplaySupportedEquality SmtLib_GraphScopedRecipe \
+              SmtLib_GraphNumComparison SmtLib_GraphNumArithmetic \
+              SmtLib_GraphNumGuardedArithmetic SmtLib_GraphScopedMap \
+              SmtLib_GraphNativeFloatTransfer SmtLib_GraphNativeFloatSurface \
+              SmtLib_GraphStringTransfer \
+              SmtLib_GraphBinderConversionScoped \
+              SmtLib_GraphOrderedConversionScoped \
+              SmtLib_GraphScalarPreprocessPublic \
+              SmtLib_GraphOrderedValidation \
+              SmtLib_GraphIntegerDivides \
+              SmtLib_GraphBinderPacketConversion \
+              SmtLib_GraphScopedInventory \
+              SmtLib_GraphSemanticPacketPreprocess \
+              SmtLib_GraphCarrierQuantifierAlpha \
+              SmtLib_GraphGuardedCarrierCancel \
+              SmtLib_GraphFloatCarrier \
+              SmtLib_GraphGuardedBagCarrier \
+              SmtLib_GraphNativeOrderedConversion \
+              SmtLib_GraphNativeOrderedValidation \
+              SmtLib_GraphGuardedBagPolicy \
+              SmtLib_GraphNativeBinderConversion \
+              SmtLib_GraphWordEntanglement \
+              SmtLib_FixedNumericSimple \
+              SmtLib_OwnedFixedNumSourceStage \
+              SmtLib_OwnedNaturalSequentTransfer \
+              SmtLib_OwnedStrippedNaturalQuery \
+              SmtReplayOwnedZ3GroundDefinition
 REPLAY_OBJECTS = $(patsubst %,%.uo,$(REPLAY_DEPS))
 EXTRA_CLEANS += smtreplayheap
 smtreplayheap: $(HOLHEAP) $(REPLAY_OBJECTS)
-	$(protect $(HOLDIR)/bin/hol) buildheap $(DEBUG_FLAG) -o $@ \
+	$(protect $(HOLDIR)/bin/hol) --gcthreads=1 --maxheap=2800 \
+		buildheap $(DEBUG_FLAG) -o $@ \
 		-b $(protect $(HOLHEAP)) $(REPLAY_DEPS)
 endif
+
+# P1 foundation dependency closure. Legacy solver factories remain selected.
+# Also builds the new Pending/Acquisition module before Source and Work.
+# Holdep retains every other discovered direct and reverse prerequisite.
+.PHONY: p1-original-components
+p1-original-components: SmtReplayResourcePolicy.uo \
+  ReplayRedblackPrivateWork.uo SmtReplayImport.uo SmtReplayGraph.uo \
+  SmtReplayOriginalAcquisition.uo SmtReplaySource.uo \
+  SmtLib_GraphBackend.uo SmtReplayInvocationWork.uo
+
+ReplayRedblackPrivateWork.ui: SmtReplayResourcePolicy.ui
+ReplayRedblackPrivateWork.uo: SmtReplayResourcePolicy.uo
+SmtReplayImport.ui: SmtReplayResourcePolicy.ui
+SmtReplayImport.uo: SmtReplayResourcePolicy.uo
+SmtReplayGraph.ui: ReplayRedblackPrivateWork.ui SmtReplayResourcePolicy.ui
+SmtReplayGraph.uo: ReplayRedblackPrivateWork.uo SmtReplayImport.uo \
+                   SmtReplayResourcePolicy.uo
+SmtReplayOriginalAcquisition.ui: SmtReplayGraph.ui SmtReplayResourcePolicy.ui
+SmtReplayOriginalAcquisition.uo: SmtReplayGraph.uo \
+  ReplayRedblackPrivateWork.uo SmtReplayResourcePolicy.uo
+SmtReplaySource.ui: SmtReplayOriginalAcquisition.ui SmtReplayGraph.ui \
+  SmtReplayResourcePolicy.ui
+SmtReplaySource.uo: SmtReplayOriginalAcquisition.uo SmtReplayGraph.uo \
+  SmtReplayImport.uo SmtReplayResourcePolicy.uo
+SmtLib_GraphBackend.ui: SmtReplayGraph.ui ReplayRedblackPrivateWork.ui \
+  SmtReplayImport.ui SmtReplayResourcePolicy.ui
+SmtLib_GraphBackend.uo: SmtReplayGraph.uo ReplayRedblackPrivateWork.uo \
+  SmtReplayImport.uo SmtReplayResourcePolicy.uo
+SmtReplayInvocationWork.ui: SmtLib_GraphBackend.ui \
+  SmtReplayOriginalAcquisition.ui SmtReplaySource.ui SmtReplayGraph.ui \
+  SmtReplayResourcePolicy.ui ReplayRedblackPrivateWork.ui
+SmtReplayInvocationWork.uo: SmtLib_GraphBackend.uo \
+  SmtReplayOriginalAcquisition.uo SmtReplaySource.uo SmtReplayGraph.uo \
+  SmtReplayResourcePolicy.uo ReplayRedblackPrivateWork.uo
+
+# Local structure aliases can hide these implementation dependencies from
+# Holdep. These prerequisites ensure build order; the test source also uses
+# qualified operations so the Poly/ML loader discovers the implementations.
+selftest.uo: SmtLib_GraphQueryRegime.uo SmtLib_GraphParserMapping.uo \
+  SmtLib_GraphFiniteQueryTransport.uo SmtLib_GraphParserMappingBackend.uo \
+  SmtLib_GraphQueryEmission.uo
+SmtLib_GraphBackend.ui: SmtLib_GraphParserValue.ui
+SmtLib_GraphBackend.uo: SmtLib_GraphParserValue.uo
+SmtLib_GraphParserValue.ui: SmtReplayGraph.ui SmtReplayResourcePolicy.ui
+SmtLib_GraphParserValue.uo: SmtReplayGraph.uo SmtReplayImport.uo \
+  SmtReplayResourcePolicy.uo
+SmtReplayOwnedParserValue.ui: SmtReplayInvocationWork.ui \
+  SmtLib_GraphBackend.ui SmtLib_GraphParserValue.ui SmtReplayGraph.ui
+SmtReplayOwnedParserValue.uo: SmtReplayInvocationWork.uo \
+  SmtLib_GraphBackend.uo SmtLib_GraphParserValue.uo SmtReplaySource.uo \
+  SmtReplayGraph.uo
+CPC_GraphProofReplay.uo: SmtReplayProof.uo \
+  SmtReplayOwnedSourceGeneralizationConsumer.uo
+SmtReplayOwnedScopeReceipt.ui: SmtReplayOwnedParserValue.ui
+SmtReplayOwnedScopeReceipt.uo: SmtReplayOwnedParserValue.uo
+SmtLib_GraphParserMappingBackend.ui: SmtLib_GraphBackend.ui \
+  SmtLib_GraphParserValue.ui SmtLib_GraphParserMapping.ui \
+  SmtReplayInvocationWork.ui SmtReplayOwnedParserValue.ui
+SmtLib_GraphParserMappingBackend.uo: SmtLib_GraphBackend.uo \
+  SmtLib_GraphParserValue.uo SmtLib_GraphParserMapping.uo \
+  SmtReplayInvocationWork.uo SmtReplayOwnedParserValue.uo
+SmtLib_GraphFrontend.uo: SmtLib_GraphParserMappingBackend.uo \
+  SmtLib_GraphParserValue.uo
+SmtLib_GraphDatatypeParser.ui: SmtLib_GraphFrontend.uo \
+  SmtLib_Parser.uo SmtReplayResourcePolicy.ui SmtLib.uo
+SmtLib_GraphDatatypeParser.uo: SmtLib_GraphFrontend.uo \
+  SmtLib_GraphBackend.uo SmtWordGraph.uo SmtLib.uo
+SmtLib_GraphValueTranslation.ui: SmtLib_GraphFrontend.uo \
+  SmtLib_GraphParserValue.ui SmtLib_GraphPreprocess.ui \
+  SmtLib_GraphDeclarationMetadata.ui SmtReplayOwnedParserValue.ui
+SmtLib_GraphValueTranslation.uo: SmtLib_GraphFrontend.uo \
+  SmtLib_GraphParserMappingBackend.uo SmtLib_GraphParserValue.uo \
+  SmtLib_GraphDeclarationMetadata.uo SmtLib_GraphDatatypeParser.uo \
+  SmtLib_GraphPreprocess.uo
+SmtLib_GraphValueProof.ui: SmtLib_GraphFrontend.uo \
+  SmtLib_GraphValueTranslation.ui SmtLib_GraphParserValue.ui \
+  SmtLib_GraphDeclarationMetadata.ui SmtLib_GraphPreprocess.ui \
+  SmtReplayOwnedScopeReceipt.ui
+SmtLib_GraphValueProof.uo: SmtLib_GraphFrontend.uo \
+  SmtLib_GraphValueTranslation.uo SmtLib_GraphParserValue.uo \
+  SmtLib_GraphDeclarationMetadata.uo SmtLib_GraphPreprocess.uo \
+  SmtReplayOwnedScopeReceipt.uo SmtReplayOwnedParserValue.uo
+Z3_GraphValueProofParser.ui: Z3_GraphProofParser.uo \
+  SmtLib_GraphValueProof.ui SmtLib_GraphFrontend.uo \
+  SmtLib_GraphDeclarationMetadata.ui SmtLib_GraphPreprocess.ui
+Z3_GraphValueProofParser.uo: Z3_GraphProofParser.uo \
+  SmtLib_GraphValueProof.uo SmtLib_GraphFrontend.uo \
+  SmtLib_GraphValueTranslation.uo
+CPC_GraphValueProofParser.ui: CPC_ProofParser.uo \
+  SmtLib_GraphParserValue.ui SmtLib_GraphFrontend.uo \
+  SmtLib_GraphValueProof.ui SmtLib_GraphDeclarationMetadata.ui \
+  SmtLib_GraphPreprocess.ui
+CPC_GraphValueProofParser.uo: CPC_ProofParser.uo \
+  SmtLib_GraphParserValue.uo SmtLib_GraphFrontend.uo \
+  SmtLib_GraphValueProof.uo SmtLib_GraphValueTranslation.uo \
+  SmtLib_GraphDeclarationMetadata.uo SmtLib_GraphParserMapping.uo \
+  SmtLib.uo
+SmtLib_GraphCheckedOpening.ui: SmtReplayOwnedScopeReceipt.ui \
+  SmtReplayNativeContract.ui SmtReplayProof.ui SmtReplayGraph.ui
+SmtLib_GraphCheckedOpening.uo: SmtReplayOwnedScopeReceipt.uo \
+  SmtReplayNativeContract.uo SmtReplayProof.uo SmtReplayGraph.uo \
+  SmtReplayCanonGraph.uo SmtReplayOwnedLargeProofCore.uo
+SmtLib_GraphCheckedQueryOpening.ui: SmtLib_GraphSourcePortfolio.ui \
+  SmtReplayNativeContract.ui SmtReplayGraph.ui
+SmtLib_GraphCheckedQueryOpening.uo: SmtLib_GraphSourcePortfolio.uo \
+  SmtLib_GraphCheckedOpening.uo SmtReplayOwnedLargeProofCore.uo \
+  SmtReplayOwnedScopeReceipt.uo SmtReplayCanonGraph.uo SmtReplayProof.uo
+SmtLib_GraphConditionalLambdaLaw.ui: SmtReplayOwnedLambda.ui \
+  SmtReplayNativeContract.ui SmtReplayProof.ui SmtReplayOwnedScopeReceipt.ui
+SmtLib_GraphConditionalLambdaLaw.uo: SmtReplayOwnedLambda.uo \
+  SmtReplayNativeContract.uo SmtReplayProof.uo SmtReplayOwnedScopeReceipt.uo
+SmtLib_GraphFiniteLawDAG.ui: SmtReplayOwnedScopeReceipt.ui \
+  SmtReplayNativeContract.ui SmtLib_GraphSourcePortfolio.ui
+SmtLib_GraphFiniteLawDAG.uo: SmtReplayOwnedScopeReceipt.uo \
+  SmtReplayNativeContract.uo SmtLib_GraphSourcePortfolio.uo \
+  SmtReplayProof.uo SmtReplayRules.uo
+SmtLib_GraphScopedCongruence.ui: SmtReplayInvocationWork.ui \
+  SmtReplayOwnedScopeReceipt.ui SmtReplayNativeContract.ui \
+  SmtReplayGraph.ui SmtReplayProof.ui
+SmtLib_GraphScopedCongruence.uo: SmtReplayInvocationWork.uo \
+  SmtReplayOwnedScopeReceipt.uo SmtReplayNativeContract.uo \
+  SmtReplayGraph.uo SmtReplayProof.uo SmtReplayCanonGraph.uo \
+  SmtReplayOwnedLargeProofCore.uo
+SmtLib_GraphFiniteBinderLaw.ui: SmtLib_GraphFiniteQueryTransport.ui \
+  SmtLib_GraphSourcePortfolio.ui SmtReplayProof.ui SmtReplayOwnedLambda.ui
+SmtLib_GraphFiniteBinderLaw.uo: SmtLib_GraphFiniteQueryTransport.uo \
+  SmtLib_GraphFiniteLawDAG.uo SmtLib_GraphSourcePortfolio.uo \
+  SmtLib_GraphConditionalLambdaLaw.uo SmtReplayOwnedLambda.uo \
+  SmtReplayOwnedScopeReceipt.uo SmtReplayFocusAdmission.uo \
+  SmtReplayProof.uo SmtReplayGraph.uo
+SmtLib_GraphQueryEmission.ui: SmtLib_GraphDeclarationMetadata.ui \
+  SmtLib_GraphBackendSelection.ui SmtLib_TranslationEmissions.ui \
+  SmtLib_GraphFiniteQueryTransport.ui
+SmtLib_GraphQueryEmission.uo: SmtLib_GraphDeclarationMetadata.uo \
+  SmtLib_GraphBackendSelection.uo SmtLib_GraphTranslation.uo \
+  SmtLib_GraphCarrierOperations.uo SmtLib_GraphQueryRegime.uo \
+  SmtLib_GraphQueryFeatures.uo SmtLib_GraphQueryAvailability.uo \
+  SmtLib_GraphDispatcher.uo SmtLib_OutputFragments.uo \
+  SmtLib_GraphFiniteQueryTransport.uo SmtLib.uo
+SmtLib_GraphFiniteQueryTransport.ui: SmtLib_GraphQueryAnalysis.ui \
+  SmtLib_GraphSourcePortfolio.ui SmtLib_GraphPreprocess.ui \
+  SmtReplayNativeContract.ui SmtReplayInvocationWork.ui \
+  SmtLib_GraphBackendSelection.ui SmtLib_GraphCheckedQueryOpening.ui \
+  SmtLib_GraphConditionalLambdaLaw.ui SmtReplayProof.ui SmtLib.uo
+SmtLib_GraphFiniteQueryTransport.uo: SmtLib_GraphQueryAnalysis.uo \
+  SmtLib_GraphSourcePortfolio.uo SmtLib_GraphPreprocess.uo \
+  SmtLib_GraphBackendSelection.uo SmtReplayNativeContract.uo \
+  SmtReplayFocusAdmission.uo SmtReplayInvocationWork.uo \
+  SmtLib_GraphFiniteLawDAG.uo SmtLib_GraphCheckedQueryOpening.uo \
+  SmtLib_GraphScopedCongruence.uo SmtLib_GraphConditionalLambdaLaw.uo \
+  SmtReplayProof.uo SmtLib.uo
+SmtLib_GraphTranslation.uo: SmtLib_GraphQueryAnalysis.uo \
+  SmtLib_GraphDeclarationMetadata.uo SmtLib_GraphParserMapping.uo \
+  SmtLib_GraphDatatypeParser.uo
+SmtLib_GraphCarrierBeta.uo: SmtLib_GraphQueryAnalysis.uo
+SmtLib_GraphCarrierOperations.uo: SmtLib_GraphQueryAnalysis.uo \
+  SmtLib_GraphTranslation.uo SmtLib_CarrierLetBindings.uo \
+  SmtLib_GraphCarrierBeta.uo SmtLib_GraphCarrierDatatype.uo \
+  SmtLib_GraphCarrierResidual.uo SmtLib.uo
+SmtLib_GraphCarrierDatatype.uo: SmtLib_GraphQueryAnalysis.uo SmtLib.uo
+SmtLib_GraphCarrierStore.uo: SmtLib_GraphQueryAnalysis.uo SmtLib.uo \
+  SmtLib_OutputSchedule.uo SmtLib_OutputFragments.uo
+SmtLib_GraphDispatcher.uo: SmtLib_GraphQueryAnalysis.uo SmtLib.uo \
+  SmtLib_GraphCarrierStore.uo SmtLib_OutputFragments.uo
+SmtLib_GraphQueryFeatures.uo: SmtLib_GraphQueryAnalysis.uo SmtLib.uo \
+  SmtLib_GraphTranslation.uo
+SmtLib_GraphBackendSelection.ui: SmtLib_GraphQueryAnalysis.ui \
+  SmtLib_GraphPreprocess.ui SmtReplayInvocationWork.ui SmtLib.uo
+SmtLib_GraphBackendSelection.uo: SmtLib_GraphQueryAnalysis.uo SmtLib.uo \
+  SmtLib_GraphQueryFeatures.uo SmtLib_GraphPreprocess.uo \
+  SmtReplayInvocationWork.uo SmtLib_GraphTranslation.uo
+SmtLib_GraphQueryRegime.ui: SmtLib_GraphQueryAnalysis.ui SmtLib.uo
+SmtLib_GraphQueryRegime.uo: SmtLib_GraphQueryAnalysis.uo SmtLib.uo \
+  SmtLib_GraphTranslation.uo SmtLib_GraphCarrierDatatype.uo
+SmtLib_GraphQueryAvailability.ui: SmtLib_GraphQueryAnalysis.ui SmtLib.uo
+SmtLib_GraphQueryAvailability.uo: SmtLib_GraphQueryAnalysis.uo SmtLib.uo
+SmtLib_GraphParserMapping.ui: SmtReplayGraph.ui \
+  SmtLib_GraphQueryAnalysis.ui SmtLib_GraphCarrierStore.ui SmtLib.uo
+SmtLib_GraphParserMapping.uo: SmtReplayGraph.uo \
+  SmtLib_GraphQueryAnalysis.uo SmtLib_GraphCarrierStore.uo SmtLib.uo
+SmtLib_GraphDeclarationMetadata.ui: SmtLib_GraphParserMapping.ui \
+  SmtLib_GraphQueryAnalysis.ui SmtLib_GraphDispatcher.ui SmtLib.uo
+SmtLib_GraphDeclarationMetadata.uo: SmtLib_GraphParserMapping.uo \
+  SmtLib_GraphQueryAnalysis.uo SmtLib_GraphCarrierStore.uo \
+  SmtLib_GraphDispatcher.uo SmtLib.uo
+SmtLib_GraphCarrierScratch.ui: SmtLib_GraphQueryAnalysis.ui \
+  SmtLib_CarrierHoMatch.ui
+SmtLib_GraphCarrierScratch.uo: SmtLib_GraphQueryAnalysis.uo \
+  SmtLib_CarrierHoMatch.uo
+SmtLib_CarrierHoPartMatch.ui: SmtLib_GraphCarrierScratch.ui
+SmtLib_CarrierHoPartMatch.uo: SmtLib_GraphCarrierScratch.uo \
+  SmtLib_CarrierHoMatch.uo
+SmtLib_CarrierPureRewrite.ui: SmtLib_CarrierHoMatch.ui
+SmtLib_CarrierPureRewrite.uo: SmtLib_CarrierHoMatch.uo
+SmtLib_GraphCarrierResidual.ui: SmtLib_GraphQueryAnalysis.ui
+SmtLib_GraphCarrierResidual.uo: SmtLib_GraphQueryAnalysis.uo \
+  SmtLib_GraphCarrierScratch.uo SmtLib_CarrierHoPartMatch.uo \
+  SmtLib_CarrierPureRewrite.uo SmtLib.uo
+SmtLib_OutputSchedule.uo: SmtLib_OutputFragments.uo
+SmtLib_GraphQueryAnalysis.uo: SmtReplayGraph.uo \
+  SmtReplayInvocationWork.uo SmtLib_GraphPreprocess.uo \
+  SmtLib_CollectionApplicationAnalysis.uo SmtLib_CollectionMarkers.uo \
+  SmtLib_CarrierLetBindings.uo SmtLib_RawNumAnalysis.uo
+
+# One compact programme for genuine graph and owned Value consumers.
+# The low syntax layer depends only on Work's existing native contract;
+# the sealed Value consumer sits above GP/packet ownership and never feeds
+# back into Work, the parser backend or original Source construction.
+SmtReplayNamedContext.ui: SmtReplayNativeContract.ui
+SmtReplayNamedContext.uo: SmtReplayNativeContract.uo \
+  SmtReplayRuleObservation.uo
+SmtReplayNamedBoolean.ui: SmtReplayNamedContext.ui \
+  SmtReplayNativeContract.ui
+SmtReplayNamedBoolean.uo: SmtReplayNamedContext.uo \
+  SmtReplayNativeContract.uo SmtReplayRuleObservation.uo SmtCircuitSat.uo
+SmtReplayNamedEquality.uo: SmtReplayNamedEquality.ui
+SmtReplayProof.uo: SmtReplayNamedContext.uo
+SmtReplayRules.uo: SmtReplayNamedContext.uo SmtReplayNamedBoolean.uo \
+  SmtReplayNamedEquality.uo
+SmtReplayOwnedValueProof.ui: SmtReplayInvocationWork.ui \
+  SmtLib_GraphPreprocess.ui SmtLib_GraphValueProof.ui \
+  SmtLib_GraphParserValue.ui SmtReplayNamedContext.ui \
+  SmtReplayNativeContract.ui
+SmtReplayOwnedValueProof.uo: SmtReplayInvocationWork.uo \
+  SmtLib_GraphPreprocess.uo SmtLib_GraphValueProof.uo \
+  SmtLib_GraphParserValue.uo SmtReplayNamedContext.uo \
+  SmtReplayNamedBoolean.uo SmtReplayNamedEquality.uo \
+  SmtReplayNativeContract.uo SmtCircuitSat.uo
+selftest.uo: SmtReplayOwnedValueProof.uo
+
+# One actual Z3 syntax classifier serves both receivers. The Value receiver
+# stays above packet/query ownership and the sealed named proof consumer.
+Z3_SharedReplayPlan.ui: Z3_Proof.uo Z3_GraphProofParser.uo \
+  SmtLib_GraphFrontend.uo
+Z3_SharedReplayPlan.uo: Z3_Proof.uo Z3_GraphProofParser.uo \
+  SmtLib_GraphFrontend.uo
+Z3_PolicyGraphProofReplay.uo: Z3_SharedReplayPlan.uo
+Z3_OwnedValueNamedReplay.ui: SmtReplayInvocationWork.ui \
+  SmtLib_GraphPreprocess.ui Z3_GraphValueProofParser.ui \
+  SmtLib_GraphValueProof.ui SmtLib_GraphParserValue.ui \
+  SmtReplayOwnedValueProof.ui Z3_GraphProofParser.uo \
+  SmtLib_GraphFrontend.uo
+Z3_OwnedValueNamedReplay.uo: Z3_SharedReplayPlan.uo \
+  SmtReplayInvocationWork.uo SmtReplayGraph.uo SmtReplaySource.uo \
+  SmtLib_GraphPreprocess.uo Z3_GraphValueProofParser.uo \
+  SmtLib_GraphValueProof.uo SmtLib_GraphParserValue.uo \
+  SmtReplayOwnedValueProof.uo SmtReplayNativeContract.uo \
+  Z3_Proof.uo Z3_GraphProofParser.uo SmtLib_GraphFrontend.uo
+selftest.uo: Z3_OwnedValueNamedReplay.uo
+
+# Shared realization programme and sealed original-Source finalizer.
+SmtReplaySimultaneousRealization.ui: SmtReplayRuleObservation.ui
+SmtReplaySimultaneousRealization.uo: SmtReplaySimultaneousRealization.ui \
+  SmtReplayRuleObservation.uo
+SmtReplayProof.uo: SmtReplaySimultaneousRealization.ui \
+  SmtReplaySimultaneousRealization.uo
+SmtReplayValueRealization.ui: SmtReplayOwnedValueProof.ui \
+  SmtLib_GraphParserValue.ui SmtReplayInvocationWork.ui SmtReplayGraph.ui
+SmtReplayValueRealization.uo: SmtReplayValueRealization.ui \
+  SmtReplayOwnedValueProof.uo SmtLib_GraphPreprocess.uo SmtReplayProof.uo \
+  SmtReplaySimultaneousRealization.uo SmtLib_GraphParserValue.uo \
+  SmtReplaySource.uo SmtReplayNativeContract.uo SmtReplayNamedContext.uo \
+  SmtReplayRuleObservation.uo SmtReplayInvocationWork.uo SmtReplayGraph.uo
+selftest.uo: SmtReplayValueRealization.uo
+
+# SAME recorded clause programme below graph and owned Value consumers.
+SmtReplayNamedClause.ui: SmtReplayResourcePolicy.ui
+SmtReplayNamedClause.uo: SmtReplayNamedClause.ui SmtReplayRuleObservation.uo \
+  SmtReplayResourcePolicy.uo
+SmtReplayNamedContext.ui: SmtReplayNamedClause.ui
+SmtReplayNamedContext.uo: SmtReplayNamedClause.uo
+SmtReplayProof.uo: SmtReplayNamedClause.uo
+SmtReplayClause.uo: SmtReplayNamedClause.uo
+SmtReplayValueClause.ui: SmtReplayInvocationWork.ui \
+  SmtLib_GraphPreprocess.ui SmtLib_GraphValueProof.ui \
+  SmtLib_GraphParserValue.ui SmtLib_GraphFrontend.uo SmtReplayNamedClause.ui
+SmtReplayValueClause.uo: SmtReplayValueClause.ui SmtLib_GraphPreprocess.uo \
+  SmtLib_GraphValueProof.uo SmtLib_GraphParserValue.uo \
+  SmtLib_GraphFrontend.uo SmtReplayNamedClause.uo
+SmtReplayOwnedValueProof.ui: SmtReplayValueClause.ui
+SmtReplayOwnedValueProof.uo: SmtReplayValueClause.uo
+Z3_OwnedValueNamedReplay.uo: SmtReplayValueClause.uo
+
+# Shared admitted native programmes and sealed Value Goal transport.
+SmtReplayGoalClose.ui: SmtReplayInvocationWork.ui SmtReplayNativeContract.ui \
+  SmtReplaySource.ui SmtReplayGraph.ui SmtReplayOwnedScopeReceipt.ui
+SmtReplayGoalClose.uo: SmtReplayGoalClose.ui SmtReplayNamedContext.uo \
+  SmtReplayRuleObservation.uo SmtReplaySource.uo SmtReplayGraph.uo \
+  SmtReplayOwnedScopeReceipt.uo SmtReplayNativeContract.uo \
+  SmtReplayInvocationWork.uo
+SmtReplayProof.uo: SmtReplayGoalClose.ui SmtReplayGoalClose.uo \
+  SmtReplayLocalSpecialize.uo
+Z3_OwnedValueProofReplay.ui: Z3_OwnedValueNamedReplay.ui \
+  SmtReplayValueRealization.ui SmtReplayOwnedValueProof.ui \
+  SmtReplayInvocationWork.ui SmtLib_GraphPreprocess.ui \
+  SmtLib_GraphValueProof.ui Z3_GraphValueProofParser.ui \
+  SmtLib_GraphParserValue.ui SmtReplayNativeContract.ui SmtReplayGraph.ui
+Z3_OwnedValueProofReplay.uo: Z3_OwnedValueProofReplay.ui \
+  Z3_OwnedValueNamedReplay.uo SmtReplayValueRealization.uo \
+  SmtReplayOwnedValueProof.uo SmtReplayGoalClose.uo SmtReplayNamedContext.uo \
+  SmtLib_GraphPreprocess.uo SmtLib_GraphValueProof.uo \
+  SmtReplayOwnedScopeReceipt.uo SmtReplaySource.uo \
+  SmtReplayInvocationWork.uo SmtReplayNativeContract.uo
+selftest.uo: Z3_OwnedValueProofReplay.uo
+SmtReplayLocalSpecialize.uo: SmtReplayLocalSpecialize.ui \
+  SmtReplayRuleObservation.uo
+
+# One actual CPC classifier and indexed recorded operand programme.
+CPC_SharedReplayPlan.ui: CPC_ProofParser.uo CPC_Proof.uo SmtLib_Parser.uo
+CPC_SharedReplayPlan.uo: CPC_SharedReplayPlan.ui CPC_ProofParser.uo \
+  CPC_Proof.uo SmtLib_Parser.uo
+CPC_GraphProofReplay.uo: CPC_SharedReplayPlan.uo
+CPC_OwnedValueNamedReplay.ui: SmtReplayInvocationWork.ui \
+  SmtLib_GraphPreprocess.ui SmtLib_GraphValueProof.ui \
+  SmtLib_GraphParserValue.ui SmtReplayOwnedValueProof.ui \
+  SmtReplayNativeContract.ui CPC_GraphValueProofParser.ui CPC_Proof.uo
+CPC_OwnedValueNamedReplay.uo: CPC_OwnedValueNamedReplay.ui \
+  CPC_SharedReplayPlan.uo CPC_GraphValueProofParser.uo CPC_ProofParser.uo \
+  CPC_Proof.uo SmtReplayOwnedValueProof.uo SmtReplayInvocationWork.uo \
+  SmtLib_GraphPreprocess.uo SmtLib_GraphValueProof.uo \
+  SmtLib_GraphParserValue.uo SmtLib_GraphFrontend.uo \
+  SmtReplayNativeContract.uo
+selftest.uo: CPC_OwnedValueNamedReplay.uo SmtReplayGoalClose.uo
+
+# Genuine bounded local specialization and private CLOSED Value ports.
+SmtReplayOwnedValueSpecialize.ui: SmtReplayInvocationWork.uo \
+  SmtReplayGraph.uo SmtLib_GraphParserValue.uo SmtReplayResourcePolicy.uo \
+  SmtLib_GraphPreprocess.uo SmtLib_GraphValueProof.uo \
+  SmtReplayOwnedScopeReceipt.uo SmtReplayNativeContract.uo SmtReplayProof.uo \
+  SmtReplayInvocationWork.ui SmtReplayGraph.ui SmtLib_GraphParserValue.ui \
+  SmtReplayResourcePolicy.ui
+SmtReplayOwnedValueSpecialize.uo: SmtReplayInvocationWork.uo \
+  SmtReplayGraph.uo SmtReplaySource.uo SmtLib_GraphPreprocess.uo \
+  SmtLib_GraphValueProof.uo SmtLib_GraphParserValue.uo \
+  SmtReplayOwnedScopeReceipt.uo SmtReplayNativeContract.uo \
+  SmtReplayNamedContext.uo SmtReplayProof.uo SmtReplayResourcePolicy.uo \
+  SmtReplayOwnedValueSpecialize.ui
+SmtReplayOwnedValueProof.uo: SmtReplayOwnedValueSpecialize.uo
+Z3_OwnedValueNamedReplay.ui: SmtReplayOwnedValueSpecialize.uo
+Z3_OwnedValueNamedReplay.uo: SmtReplayOwnedValueSpecialize.uo
+SmtReplayOwnedValueProof.ui: SmtReplayOwnedValueSpecialize.ui
+SmtReplayValueRealization.uo: SmtReplayOwnedValueSpecialize.uo
+Z3_OwnedValueProofReplay.uo: Z3_OwnedValueNamedReplay.uo \
+  SmtReplayValueRealization.uo
+
+# Shared genuine raw compatibility grammar and explicit Value consumers.
+SmtReplayRawClause.ui: SmtReplayNamedClause.uo
+SmtReplayRawClause.uo: SmtReplayNamedClause.uo
+SmtReplayClause.uo: SmtReplayRawClause.uo
+SmtReplayValueClause.uo: SmtReplayRawClause.uo SmtLib_GraphFrontend.uo
+SmtReplayOwnedValueProof.uo: SmtReplayValueClause.uo
+Z3_OwnedValueNamedReplay.uo: SmtReplayValueClause.uo SmtReplayOwnedValueProof.uo
+Z3_OwnedValueProofReplay.uo: Z3_OwnedValueNamedReplay.uo
+
+# Actual Value assertion interpretation uses the genuine backend root.
+SmtLib_GraphValueTranslation.uo: SmtLib_GraphBackend.uo
+
+# Shared bounded specialization preflight and genuine finalization.
+SmtReplayOwnedValueSpecialize.uo: SmtReplayLocalSpecialize.uo
+SmtReplayValueFinalFn.uo: SmtReplayInvocationWork.uo SmtReplaySource.uo SmtReplayNativeContract.uo SmtReplayOwnedScopeReceipt.uo SmtLib_GraphPreprocess.uo SmtLib_GraphValueProof.uo SmtLib_GraphParserValue.uo SmtReplayOwnedValueProof.uo SmtReplayValueRealization.uo SmtReplayGoalClose.uo SmtReplayNamedContext.uo
+Z3_OwnedValueProofReplay.uo: SmtReplayValueFinalFn.uo
+CPC_OwnedValueProofReplay.ui: CPC_OwnedValueNamedReplay.ui CPC_GraphValueProofParser.ui
+CPC_OwnedValueProofReplay.uo: CPC_OwnedValueProofReplay.ui SmtReplayValueFinalFn.uo CPC_OwnedValueNamedReplay.uo CPC_ProofParser.uo CPC_GraphValueProofParser.uo
+
+CPC_OwnedValueNamedReplay.uo: SmtRegLanProve.uo
+
+Z3_OwnedValueSolver.ui: SmtCheckedGraph.ui SmtReplayInvocationWork.ui SmtLib_GraphFiniteQueryTransport.ui Z3_OwnedValueNamedReplay.ui SmtReplayValueRealization.ui SolverSpec.uo
+Z3_OwnedValueSolver.uo: SmtCheckedGraph.uo SmtReplayWrapperSession.uo SmtReplayInvocationWork.uo SmtReplayGraph.uo SmtReplaySource.uo SmtReplayNativeContract.uo SmtReplayResourcePolicy.uo SmtLib_GraphSourcePortfolio.uo SmtLib_GraphPreprocess.uo SmtLib_GraphQueryEmission.uo SmtLib_GraphFiniteQueryTransport.uo SmtLib_GraphFiniteBinderLaw.uo SmtLib_GraphCheckedQueryOpening.uo SmtLib_GraphBackendSelection.uo SmtLib_GraphValueProof.uo SmtLib_GraphParserValue.uo SmtLib_GraphFrontend.uo Z3_GraphValueProofParser.uo Z3_OwnedValueProofReplay.uo SolverSpec.uo Z3.uo SmtResource.uo SmtLib.uo
+
+SmtReplayNamedContext.uo: SmtReplayImport.uo
+
+SmtReplayBinderClose.ui:
+SmtReplayBinderClose.uo: SmtReplayBinderClose.ui
+SmtReplayBinderEquality.uo: SmtReplayBinderClose.uo
+SmtReplayOwnedValueBinder.ui: SmtLib_GraphFrontend.uo \
+  SmtLib_GraphParserValue.ui SmtLib_GraphPreprocess.ui \
+  SmtLib_GraphValueProof.ui SmtReplayGraph.ui SmtReplayInvocationWork.ui \
+  SmtReplayNativeContract.ui SmtReplayOwnedScopeReceipt.ui SmtReplayProof.ui \
+  Z3_GraphProofParser.uo Z3_GraphValueProofParser.ui
+SmtReplayOwnedValueBinder.uo: SmtLib_GraphFrontend.uo \
+  SmtLib_GraphParserValue.uo SmtLib_GraphPreprocess.uo \
+  SmtLib_GraphValueProof.uo SmtReplayBinderClose.uo SmtReplayGraph.uo \
+  SmtReplayInvocationWork.uo SmtReplayLocalSpecialize.uo \
+  SmtReplayNamedContext.uo SmtReplayNativeContract.uo \
+  SmtReplayOwnedScopeReceipt.uo SmtReplayOwnedValueBinder.ui \
+  SmtReplayProof.uo SmtReplayResourcePolicy.uo Z3_GraphProofParser.uo \
+  Z3_GraphValueProofParser.uo Z3_Proof.uo Z3_SharedReplayPlan.uo
+SmtReplayOwnedValueProof.ui: SmtReplayOwnedValueBinder.ui
+SmtReplayOwnedValueProof.uo: SmtReplayOwnedValueBinder.uo
+SmtReplayValueRealization.uo: SmtReplayOwnedValueBinder.uo
+Z3_OwnedValueNamedReplay.ui: SmtReplayOwnedValueBinder.ui
+Z3_OwnedValueNamedReplay.uo: SmtReplayOwnedValueBinder.uo
+
+# Shared Value naming, typed interpretation and static replay dispatch.
+Z3_NamedReplayStepFn.uo: Z3_SharedReplayPlan.uo Z3_GraphProofParser.uo \
+  SmtLib_GraphFrontend.uo
+Z3_OwnedValueNamedReplay.uo: Z3_NamedReplayStepFn.uo
+SmtReplayValueNames.ui: SmtLib_GraphParserValue.ui \
+  SmtReplayNativeContract.ui
+SmtReplayValueNames.uo: SmtReplayValueNames.ui SmtLib_GraphParserValue.uo \
+  SmtReplayNativeContract.uo SmtReplayNamedContext.uo SmtCircuitSat.uo
+SmtReplayOwnedValueProof.uo: SmtReplayValueNames.uo
+SmtReplayValueInterpretation.ui: SmtReplayGraph.ui
+SmtReplayValueInterpretation.uo: SmtReplayValueInterpretation.ui \
+  SmtReplayGraph.uo
+SmtReplayValueRealization.uo: SmtReplayValueInterpretation.uo
+
+# Holdep does not infer dependencies from unqualified functor applications.
+# Keep both ordinary specializations and scoped static clients loadable.
+SmtReplayNamedBoolean.uo: SmtReplayNamedBooleanFn.uo
+SmtReplayNamedEquality.uo: SmtReplayNamedEqualityFn.uo
+SmtReplayNamedClause.uo: SmtReplayNamedClauseFn.uo
+SmtReplayScopedNativeQueue.uo: SmtReplayNamedBooleanFn.uo \
+  SmtReplayNamedEqualityFn.uo SmtReplayNamedClauseFn.uo
+SmtReplayOwnedScopedValueProgramme.uo: Z3_NamedReplayStepFn.uo
+SmtReplayRules.uo: SmtReplayImplicationLawFn.uo
+
+# Static sparse clients use the same private ordinary programme workers.
+SmtReplayCanonGraph.uo: SmtReplayCanonAssemblyFn.uo
+SmtLib_GraphSourcePortfolio.uo: SmtReplaySourcePortfolioAssemblyFn.uo \
+  SmtReplayImplicationLawFn.uo
+SmtLib_GraphPreprocess.uo: SmtReplayPreprocessAssemblyFn.uo
+
+# Holdep does not retain these alias-only module references.
+SmtReplayOwnedScopedValueSyntax.uo: SmtReplayValueNames.uo
+SmtReplayOwnedScopedValueLift.uo: SmtReplayBinderClose.uo
+
+# Shared ordinary and sparse Source realization use static functors.
+SmtReplayValueRealization.uo: SmtReplayValueRealizationFn.uo
+SmtReplaySparseValueRealization.ui: SmtReplayValueRealization.ui
+SmtReplaySparseValueRealization.uo: SmtReplayValueRealizationFn.uo \
+  SmtReplayValueRealization.uo SmtReplayProof.uo SmtLib_GraphPreprocess.uo
+SmtReplayValueFinalFn.uo: SmtReplayValueRealization.uo
+Z3_OwnedValueProofReplay.uo: SmtReplayValueFinalFn.uo \
+  SmtReplaySparseValueRealization.uo
+CPC_OwnedValueProofReplay.uo: SmtReplayValueFinalFn.uo \
+  SmtReplaySparseValueRealization.uo
+
+# Global aliases moved with each entire static worker.
+SmtReplayCanonAssemblyFn.uo: SmtReplayGraph.uo
+SmtReplayCanonAssemblyFn.uo: SmtReplayInvocationWork.uo
+SmtReplayCanonAssemblyFn.uo: SmtReplayProof.uo
+SmtReplaySourcePortfolioAssemblyFn.uo: SmtReplayCanonGraph.uo
+SmtReplaySourcePortfolioAssemblyFn.uo: SmtReplayGraph.uo
+SmtReplaySourcePortfolioAssemblyFn.uo: SmtReplayInvocationWork.uo
+SmtReplaySourcePortfolioAssemblyFn.uo: SmtReplayProof.uo
+SmtReplayPreprocessAssemblyFn.uo: SmtReplayCanonGraph.uo
+SmtReplayPreprocessAssemblyFn.uo: SmtReplayGraph.uo
+SmtReplayPreprocessAssemblyFn.uo: SmtReplayInvocationWork.uo
+SmtReplayPreprocessAssemblyFn.uo: SmtReplayProof.uo
+SmtReplayPreprocessAssemblyFn.uo: SmtReplaySource.uo
+SmtReplayValueRealizationFn.uo: SmtLib_GraphParserValue.uo
+SmtReplayValueRealizationFn.uo: SmtLib_GraphPreprocess.uo
+SmtReplayValueRealizationFn.uo: SmtReplayGraph.uo
+SmtReplayValueRealizationFn.uo: SmtReplayInvocationWork.uo
+SmtReplayValueRealizationFn.uo: SmtReplayNamedContext.uo
+SmtReplayValueRealizationFn.uo: SmtReplayNativeContract.uo
+SmtReplayValueRealizationFn.uo: SmtReplayOwnedValueBinder.uo
+SmtReplayValueRealizationFn.uo: SmtReplayOwnedValueProof.uo
+SmtReplayValueRealizationFn.uo: SmtReplayOwnedValueSpecialize.uo
+SmtReplayValueRealizationFn.uo: SmtReplayProof.uo
+SmtReplayValueRealizationFn.uo: SmtReplayRuleObservation.uo
+SmtReplayValueRealizationFn.uo: SmtReplaySource.uo
+
+# The CPC declared-target receiver uses this alias-only typed worker.
+CPC_OwnedValueNamedReplay.uo: SmtReplayValueAtomPairs.uo
