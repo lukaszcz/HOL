@@ -257,6 +257,9 @@ val _ = Hol_datatype
 val _ = Hol_datatype
   `smt_light = SmtRed | SmtAmber | SmtGreen`
 
+val _ = Hol_datatype
+  `smt_keyed_store = SmtKeyedStore of (smt_light -> int)`
+
 val _ = new_constant
   ("smt_light_from_int", ``:int -> smt_light``)
 val _ = new_constant
@@ -7260,6 +7263,51 @@ in
     builtin_text;
   assert (has_datatype_record,
     "translation records did not include datatype declaration record")
+end
+
+fun smtlib_datatype_function_domain_dependencies_success () =
+let
+  val goal = ([``(f:smt_keyed_store -> int) x < f y``],
+    ``(x:smt_keyed_store) <> y``)
+  val sat_goal = ([], ``(x:smt_keyed_store) = y``)
+  fun check_translation dialect =
+    let
+      val (translation, strings) =
+        SmtLib.goal_to_SmtLib_translation_with_dialect dialect NONE goal
+      val blocks = List.mapPartial
+        (fn SmtLib.DatatypeDeclaration {hol_types, declaration, ...} =>
+              SOME (hol_types, declaration)
+          | _ => NONE) (SmtLib.translation_records translation)
+      val emitted = List.filter
+        (String.isPrefix "(declare-datatypes ") strings
+    in
+      assert (List.map Lib.snd blocks = emitted,
+        "ordered datatype records differ from emitted declarations");
+      assert (case List.map Lib.fst blocks of
+          [[key], [store]] =>
+            Type.compare (key, ``:smt_light``) = EQUAL andalso
+            Type.compare (store, ``:smt_keyed_store``) = EQUAL
+        | _ => false,
+        "function-domain datatype must be declared before its user")
+    end
+  fun check name prover oracle =
+    (case oracle sat_goal of
+       SolverSpec.SAT _ => ()
+     | _ => die (name ^ " rejected function-domain datatype declarations");
+     case prover goal of
+       SolverSpec.UNSAT (SOME thm) =>
+         (assert (Term.aconv (Thm.concl thm) (Lib.snd goal) andalso
+            List.all (fn h => List.exists (Term.aconv h)
+              (Lib.fst goal)) (Thm.hyp thm),
+            name ^ " function-domain datatype proof changed the goal");
+          check_oracle_tags name thm)
+     | _ => die (name ^ " function-domain datatype proof did not replay"))
+in
+  List.app check_translation [SmtLib.Z3LambdaArray, SmtLib.Standard27];
+  if Z3.is_configured () then
+    check "Z3" Z3.Z3_SMT_Prover Z3.Z3_SMT_Oracle else ();
+  if CVC.is_configured () then
+    check "cvc5" CVC.CVC_SMT_Prover CVC.CVC_SMT_Oracle else ()
 end
 
 fun smtlib_nested_datatype_dependencies_success () =
@@ -28538,6 +28586,8 @@ let
       smtlib_datatype_type_translation_success),
     ("smtlib_nested_datatype_dependencies_success",
       smtlib_nested_datatype_dependencies_success),
+    ("smtlib_datatype_function_domain_dependencies_success",
+      smtlib_datatype_function_domain_dependencies_success),
     ("smtlib_extended_hol_encoding_records_success",
       smtlib_extended_hol_encoding_records_success),
     ("smtlib_seq_set_bag_feature_inference_success",

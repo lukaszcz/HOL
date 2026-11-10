@@ -3111,6 +3111,12 @@ local
         ();
       (Redblackmap.insert (tydict, ty, name), ([decl], name))
     end
+  structure DatatypeGraph = Graph(
+    type key = Type.hol_type
+    val ord = Type.compare
+    val pp = HOLPP.add_string o Hol_pp.type_to_string
+  )
+
   fun translate_type regime (tydict, ty) =
     if !current_native_sequence_emission andalso
        is_native_sequence_type ty then
@@ -3178,8 +3184,8 @@ local
         fun known ty types = member_type ty types orelse
           Option.isSome (Redblackmap.peek (tydict, ty))
         (* A nested container can refer back to its parent datatype without
-           appearing in the parent's induction theorem. Declare the whole
-           new dependency closure together, before using any of its names. *)
+           appearing in the parent's induction theorem. Collect the whole
+           dependency closure before partitioning its recursive components. *)
         fun collect (ty, types) =
           if known ty types then types
           else if !current_native_sequence_emission andalso
@@ -3201,6 +3207,24 @@ local
                   List.foldl collect acc (constructor_doms ty)) types fresh
               end
         val family = List.rev (collect (ty, []))
+        fun field_dependencies ty =
+          if !current_native_sequence_emission andalso
+             is_native_sequence_type ty then
+            field_dependencies (listSyntax.dest_list_type ty)
+          else if is_function_type ty then
+            let val (dom, rng) = Type.dom_rng ty
+            in field_dependencies dom @ field_dependencies rng end
+          else if member_type ty family then [ty]
+          else []
+        val graph = List.foldl (fn (ty, graph) =>
+          DatatypeGraph.new_node (ty, ()) graph) DatatypeGraph.empty family
+        fun add_dependencies (ty, graph) =
+          List.foldl (fn (field, graph) =>
+            List.foldl (fn (dependency, graph) =>
+              DatatypeGraph.add_edge (dependency, ty) graph) graph
+              (field_dependencies field)) graph (constructor_doms ty)
+        val components = DatatypeGraph.strong_conn
+          (List.foldl add_dependencies graph family)
         val used0 = dict_type_names tydict @ smt_reserved_type_names
         fun add_name (fam_ty, (used, acc)) =
           let
@@ -3235,16 +3259,26 @@ local
               field_sorts of
             SOME (_, sort) => sort
           | NONE => smt_sort_of_type regime tydict ty
-        val declaration = datatype_declaration_text field_sort family names
+        (* An acyclic datatype used as an Array index must already be
+           declared: Z3 rejects it as non-covariant in a mutual block. *)
+        fun declare_component types =
+          let
+            val names = List.map (fn ty => Redblackmap.find (tydict, ty))
+              types
+            val declaration = datatype_declaration_text field_sort types names
+            val _ = emitted_datatypes :=
+              DatatypeDeclaration {hol_types = types, smt_names = names,
+                declaration = declaration} :: !emitted_datatypes
+          in
+            declaration
+          end
+        val declarations = List.map declare_component components
         val name =
           case Redblackmap.peek (tydict, ty) of
             SOME n => n
           | NONE => raise ERR "translate_datatype_type" "unregistered type"
-        val _ = emitted_datatypes :=
-          DatatypeDeclaration {hol_types = family, smt_names = names,
-            declaration = declaration} :: !emitted_datatypes
       in
-        SOME (tydict, (dependency_decls @ [declaration], name))
+        SOME (tydict, (dependency_decls @ declarations, name))
       end
       handle Feedback.HOL_ERR _ => NONE
            | Redblackmap.NotFound => NONE
