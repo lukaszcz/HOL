@@ -13,7 +13,10 @@ struct
   datatype context = Context of
     {procedures : atom_procedure list,
      fallback : atom_procedure option,
-     atom_cache : (term, thm) Redblackmap.dict ref}
+     atom_index : term -> int option,
+     atom_cache : (string * int * int, thm) Redblackmap.dict ref,
+     cache_generation : unit ref ref,
+     refresh_caches : unit -> unit}
 
   type metrics =
     {target_tree_nodes : int,
@@ -104,29 +107,147 @@ struct
       Portable.finally restore run ()
     end
 
-  fun new_context procedures = Context
-    {procedures = procedures, fallback = NONE,
-     atom_cache = ref (Redblackmap.mkDict Term.compare)}
+  (* Immutable signature-table witnesses also detect Context.restore, which
+     need not advance retirement epochs. This only invalidates optional
+     hints; it is neither term validation nor proof admission. *)
+  fun cache_signature () =
+    let val current = Context.snapshot () in
+      (Context.typesig current, Context.termsig current)
+    end
 
-  fun new_dynamic_context procedures fallback = Context
-    {procedures = procedures, fallback = SOME fallback,
-     atom_cache = ref (Redblackmap.mkDict Term.compare)}
+  fun cache_signature_matches (types, symbols) =
+    let val (current_types, current_symbols) = cache_signature () in
+      Portable.pointer_eq (types, current_types) andalso
+      Portable.pointer_eq (symbols, current_symbols)
+    end
 
-  fun cache_size (Context {atom_cache, ...}) =
-    Redblackmap.numItems (!atom_cache)
+  (* Small publication hints must not dominate fresh/zero-reuse contexts.
+     Collision eviction affects retention only, never checked proving. *)
+  val live_bucket_count = 127
+  type live_memo =
+    {terms : Term.term list array, types : Type.hol_type list array}
+  fun new_live_memo () : live_memo =
+    {terms = Array.array (live_bucket_count, []),
+     types = Array.array (live_bucket_count, [])}
+
+  (* Bounded positive hints are optional publication checks, not admission.
+     Small pointer buckets avoid structural comparisons of shared Types. *)
+  fun live_check_with_hints (typesig, termsig) ({terms, types} : live_memo) =
+    let
+      exception Unknown
+      val remaining = ref SmtResource.max_bv_replay_term_nodes
+      fun spend amount =
+        if amount <= !remaining then remaining := !remaining - amount
+        else raise Unknown
+      fun known buckets bucket value =
+        List.exists (fn old => Portable.pointer_eq (value, old))
+          (Array.sub (buckets, bucket))
+      fun prefix 0 _ = []
+        | prefix _ [] = []
+        | prefix n (item :: rest) = item :: prefix (n - 1) rest
+      fun remember buckets bucket value =
+        Array.update (buckets, bucket,
+          value :: prefix 7 (Array.sub (buckets, bucket)))
+      fun live_type ty =
+        let
+          val _ = spend 1
+          val bucket = if Type.is_vartype ty then 0 else
+            KernelSig.epoch_of (#Tyop (Type.dest_thy_typeid ty))
+              mod live_bucket_count
+        in
+          if known types bucket ty then true
+          else
+            let
+              val live = Type.is_vartype ty orelse
+                let val {Tyop, Args, ...} = Type.dest_thy_typeid ty in
+                  KernelSig.uptodate_id typesig Tyop andalso
+                  List.all live_type Args
+                end
+              val _ = if live then remember types bucket ty else ()
+            in live end
+        end
+      (* Raw counting itself opens every nested binder. Standard count_body
+         builds REFL/Beta at its range Type, whose native classification can
+         unfold shared children exponentially. Liveness hints do not bound
+         that work: admit an unfolded range before ANY such opening. This
+         conservative optional check may only forgo retention. *)
+      fun before_open ty =
+        let
+          val allowance = ref 8192
+          val sizes = ref ([] : (hol_type * int) list)
+          fun debit () =
+            (if !allowance = 0 then raise Unknown else ();
+             allowance := !allowance - 1; spend 1)
+          fun find _ [] = NONE
+            | find ty ((saved,size) :: rest) =
+                (debit ();
+                 if Portable.pointer_eq (ty,saved) then SOME size
+                 else find ty rest)
+          fun visit ty =
+            (debit ();
+             case find ty (!sizes) of
+               SOME size => size
+             | NONE =>
+                 let
+                   fun add (child,total) =
+                     let val _ = debit ()
+                         val sum = total + visit child
+                     in if sum > 8192 then raise Unknown else sum end
+                   val size = if Type.is_vartype ty then 1 else
+                     List.foldl add 1 (#Args (Type.dest_thy_typeid ty))
+                   val _ = sizes := (ty,size) :: !sizes
+                 in size end)
+          (* Pointer memoization saves guard work, not the native unfolded
+             work. Reserve that too, across all openings in this check. *)
+        in spend (visit (#2 (Type.dom_rng ty))) end
+      fun live_term term =
+        let
+          val _ = spend 1
+          (* Publication hints tolerate eviction. A short sample avoids
+             duplicating the full structural index's deeper bucket work. *)
+          val bucket = SmtReplayImport.pointer_bucket 2 live_bucket_count term
+        in
+          if known terms bucket term then true
+          else
+            let
+              val live =
+                if Term.is_comb term then
+                  live_term (Term.rator term) andalso
+                  live_term (Term.rand term)
+                else if Term.is_var term then live_type (Term.type_of term)
+                else if Term.is_const term then
+                  let val {Name, Ty, ...} = Term.dest_thy_constid term in
+                    KernelSig.uptodate_id termsig Name andalso live_type Ty
+                  end
+                else
+                  (* Large binders are an optional miss. Never allow the
+                     publication walk to open an unbounded legacy body. *)
+                  (case SmtReplayImport.bounded_raw_size_with_type_check
+                      before_open (Int.min (8192, !remaining)) term of
+                     NONE => raise Unknown
+                   | SOME nodes =>
+                       let
+                         val _ = spend nodes
+                         val (variable, body) =
+                           SmtReplayImport.dest_abs_preserving_names term
+                       in live_term variable andalso live_term body end)
+              val _ = if live then remember terms bucket term else ()
+            in live end
+        end
+    in fn term => live_term term handle Unknown => false end
+
+  fun new_cache_live_check () =
+    live_check_with_hints (cache_signature ()) (new_live_memo ())
+
+  fun cache_size (Context {atom_cache, refresh_caches, ...}) =
+    (refresh_caches (); Redblackmap.numItems (!atom_cache))
 
   (* Admission and proof reconstruction share this exact DAG-aware metric.
      In particular, String dispatch must not reject a compact shared term by
      its exponentially larger unfolded tree before this engine sees it. *)
   val max_metric = SmtResource.max_metric
   val saturated_add = SmtResource.saturated_add
-  val term_children = SmtResource.term_children
-  val term_measure = SmtResource.term_measure
   val phase = SmtResource.profile_phase
-
-  fun tree_nodes term = #tree_nodes (term_measure term)
-
-  fun dag_nodes term = #dag_nodes (term_measure term)
 
   fun skeleton_children term =
     if Term.aconv term boolSyntax.T orelse
@@ -202,72 +323,308 @@ struct
       AdmissionTypeVariable of string
     | AdmissionTypeOperator of KernelSig.kernelid * int list
 
-  fun admission_type_key_compare
-      (AdmissionTypeVariable left, AdmissionTypeVariable right) =
-        String.compare (left, right)
-    | admission_type_key_compare
-        (AdmissionTypeVariable _, AdmissionTypeOperator _) = LESS
-    | admission_type_key_compare
-        (AdmissionTypeOperator _, AdmissionTypeVariable _) = GREATER
-    | admission_type_key_compare
-        (AdmissionTypeOperator (left_id, left_arguments),
-         AdmissionTypeOperator (right_id, right_arguments)) =
-        (case KernelSig.id_compare (left_id, right_id) of
-           EQUAL => list_compare Int.compare
-             (left_arguments, right_arguments)
-         | order => order)
+  (* Metadata keys are not proof evidence. Meter comparisons themselves,
+     including long names and argument lists, before inspecting each item. *)
+  fun admission_type_key_compare reserve (left, right) =
+    let
+      fun strings (left, right) =
+        let
+          fun at index =
+            (reserve 1;
+             if index = String.size left then
+               if index = String.size right then EQUAL else LESS
+             else if index = String.size right then GREATER
+             else case Char.compare
+                 (String.sub (left, index), String.sub (right, index)) of
+               EQUAL => at (index + 1)
+             | order => order)
+        in at 0 end
+      fun arguments (left, right) =
+        (reserve 1;
+         case (left, right) of
+           ([], []) => EQUAL
+         | ([], _) => LESS
+         | (_, []) => GREATER
+         | (l :: ls, r :: rs) =>
+             case Int.compare (l, r) of
+               EQUAL => arguments (ls, rs)
+             | order => order)
+      fun declarations (left, right) =
+        case strings (KernelSig.name_of left, KernelSig.name_of right) of
+          EQUAL =>
+            (case strings (KernelSig.seg_of left, KernelSig.seg_of right) of
+               EQUAL => (reserve 1; Int.compare
+                 (KernelSig.epoch_of left, KernelSig.epoch_of right))
+             | order => order)
+        | order => order
+    in
+      reserve 1;
+      case (left, right) of
+        (AdmissionTypeVariable l, AdmissionTypeVariable r) => strings (l, r)
+      | (AdmissionTypeVariable _, AdmissionTypeOperator _) => LESS
+      | (AdmissionTypeOperator _, AdmissionTypeVariable _) => GREATER
+      | (AdmissionTypeOperator (l, ls), AdmissionTypeOperator (r, rs)) =>
+          case declarations (l, r) of
+            EQUAL => arguments (ls, rs)
+          | order => order
+    end
 
   datatype admission_type_node = AdmissionTypeNode of
-    {id : int, tree_nodes : int}
+    {id : int, tree_nodes : int, comparison_nodes : IntInf.int}
 
   fun new_type_admission_context () =
     let
       val maximum = SmtResource.max_bv_replay_term_nodes
-      val ids = ref (Redblackmap.mkDict admission_type_key_compare)
+      fun check work = SmtResource.check_term_size_for "BitVector"
+        "skeleton-type-work" work
+      exception MetadataLimit
+      val remaining = ref (NONE : int option)
+      fun reserve amount =
+        case !remaining of
+          NONE => ()
+        | SOME fuel =>
+            if amount <= fuel then remaining := SOME (fuel - amount)
+            else raise MetadataLimit
+      fun metered action input =
+        let
+          val previous = !remaining
+          fun restore () = remaining := previous
+          fun run () = (remaining := SOME maximum; action input)
+        in Portable.finally restore run () end
+      val ids = ref (Redblackmap.mkDict
+        (admission_type_key_compare reserve))
+      (* Only compact interning owns the original observation/edge stats.
+         Speculative metadata must not add observations on a failed walk. *)
       val physical = ref ([] : (hol_type * admission_type_node) list)
+      val optional_physical =
+        ref ([] : (hol_type * admission_type_node) list)
+      (* Persistent optional hints are bounded independently of cache age.
+         Complete pointer memoization lives in each metadata call, below. *)
+      fun recent ty =
+        let
+          fun seek 0 _ _ _ = NONE
+            | seek fuel previous count entries =
+                (reserve 1;
+                 case entries of
+                   [] => NONE
+                 | (entry as (saved, node)) :: rest =>
+                     if Portable.pointer_eq (ty, saved) then
+                       (reserve (count + 1);
+                        optional_physical :=
+                          entry :: List.revAppend (previous, rest);
+                        SOME node)
+                     else seek (fuel - 1) (entry :: previous)
+                       (count + 1) rest)
+        in seek 8 [] 0 (!optional_physical) end
       val next_id = ref 0
       val nodes = ref 0
       val edges = ref 0
-      fun intern ty =
-        case SmtResource.recent_pointer_lookup physical ty of
+      (* Exact below the allowance; retain the first excessive subtree's
+         lower bound above it, preserving the existing diagnostic. *)
+      fun add_work left right =
+        if left > maximum then left else if right > maximum then right
+        else saturated_add left right
+      (* Both paths use owned child IDs, never native Type comparison.
+         The dictionary's comparator is metered only during optional work.
+         Commit an ID/counter only after insertion has actually completed. *)
+      fun canonical ty children =
+        let
+          fun node_id (AdmissionTypeNode {id, ...}) = id
+          fun child_ids [] = (reserve 1; [])
+            | child_ids (child :: rest) =
+                (reserve 1; node_id child :: child_ids rest)
+          val key = if Type.is_vartype ty then
+              AdmissionTypeVariable (Type.dest_vartype ty)
+            else AdmissionTypeOperator
+              (#Tyop (Type.dest_thy_typeid ty), child_ids children)
+          val _ = reserve 1
+        in
+          case Redblackmap.peek (!ids, key) of
+            SOME node => node
+          | NONE =>
+              let
+                val size = List.foldl
+                  (fn (AdmissionTypeNode {tree_nodes, ...}, count) =>
+                    (reserve 1; add_work count tree_nodes)) 1 children
+                val comparison_nodes = List.foldl
+                  (fn (AdmissionTypeNode {comparison_nodes, ...}, n) =>
+                    (reserve 1; IntInf.min
+                      (SmtReplayLeafProof.native_tree_switch + 1,
+                       n + comparison_nodes))) 1 children
+                val node = AdmissionTypeNode
+                  {id = !next_id, tree_nodes = size,
+                   comparison_nodes = comparison_nodes}
+                val _ = reserve 1
+                val updated = Redblackmap.insert (!ids, key, node)
+              in
+                ids := updated;
+                next_id := !next_id + 1; nodes := !nodes + 1;
+                node
+              end
+        end
+      (* Optional full metadata charges every probe/comparison. Its private
+         exhaustion is not the native unfolded Type-tree admission limit. *)
+      fun metadata_walk root =
+        let
+          val local_physical = ref
+            ([] : (hol_type * admission_type_node) list)
+          fun local_lookup ty entries =
+            (reserve 1;
+             case entries of
+               [] => NONE
+             | (saved, node) :: rest =>
+                 if Portable.pointer_eq (ty, saved) then SOME node
+                 else local_lookup ty rest)
+          fun remember ty node =
+            (reserve 1;
+             local_physical := (ty, node) :: !local_physical;
+             node)
+          fun lookup ty =
+            case recent ty of
+              SOME node => SOME (remember ty node)
+            | NONE => local_lookup ty (!local_physical)
+          fun visit ty =
+        (reserve 1;
+        case lookup ty of
           SOME node => node
         | NONE =>
             let
+              val _ = reserve 1
               val arguments = if Type.is_vartype ty then []
-                else Lib.snd (Type.dest_type ty)
-              val children = List.map intern arguments
-              fun node_id (AdmissionTypeNode {id, ...}) = id
-              fun node_size (AdmissionTypeNode {tree_nodes, ...}) = tree_nodes
-              val key = if Type.is_vartype ty then
-                  AdmissionTypeVariable (Type.dest_vartype ty)
-                else AdmissionTypeOperator
-                  (#Tyop (Type.dest_thy_typeid ty), List.map node_id children)
-              val _ = edges := saturated_add (!edges) (List.length children)
-              val (id, tree_nodes) =
-                case Redblackmap.peek (!ids, key) of
-                  SOME (AdmissionTypeNode fields) =>
-                    (#id fields, #tree_nodes fields)
-                | NONE =>
-                    let
-                      val size = List.foldl
-                        (fn (child, count) =>
-                          saturated_add count (node_size child)) 1 children
-                      val _ = if size <= maximum then () else
-                        SmtResource.check_term_size_for "BitVector"
-                          "skeleton-type-work" size
-                      val id = !next_id
-                    in
-                      next_id := id + 1; nodes := !nodes + 1; (id, size)
-                    end
-              val node = AdmissionTypeNode {id = id, tree_nodes = tree_nodes}
-              val _ = if Option.isSome (Redblackmap.peek (!ids, key)) then ()
-                else ids := Redblackmap.insert (!ids, key, node)
-              val _ = physical := (ty, node) :: !physical
-            in node end
-      fun type_id ty = let val AdmissionTypeNode {id, ...} = intern ty in id end
+                else #Args (Type.dest_thy_typeid ty)
+              fun children_of arguments =
+                (reserve 1;
+                 case arguments of
+                   [] => []
+                 | ty :: rest =>
+                     let
+                       val child = visit ty
+                     in child :: children_of rest end)
+              val children = children_of arguments
+              val node = canonical ty children
+              val _ = reserve 1
+              val _ = optional_physical :=
+                (ty, node) :: !optional_physical
+            in remember ty node end)
+        in visit root end
+      fun metadata ty = metered metadata_walk ty
+        handle MetadataLimit => (check (maximum + 1); raise MetadataLimit)
+      (* Required IDs and original stats have no bookkeeping allowance.
+         Preserve the original small-Type cache policy: bounded probes for
+         synthesized small Types, complete pointer memoization for shared
+         large Types. All structural keys contain owned IDs, so falling
+         back to this path cannot unfold a native Type comparison. *)
+      fun compact_type ty =
+        let
+          fun small 0 _ = NONE
+            | small fuel ty =
+                if Type.is_vartype ty then SOME (fuel - 1)
+                else small_children (fuel - 1)
+                  (#Args (Type.dest_thy_typeid ty))
+          and small_children fuel [] = SOME fuel
+            | small_children fuel (ty :: rest) =
+                case small fuel ty of
+                  NONE => NONE
+                | SOME fuel => small_children fuel rest
+          fun recent_small ty =
+            let
+              fun seek 0 _ _ = NONE
+                | seek _ _ [] = NONE
+                | seek fuel prior ((entry as (saved, node)) :: rest) =
+                    if Portable.pointer_eq (ty, saved) then
+                      (physical := entry :: List.revAppend (prior, rest);
+                       SOME node)
+                    else seek (fuel - 1) (entry :: prior) rest
+            in seek 8 [] (!physical) end
+          val saved = if Option.isSome (small 16 ty) then recent_small ty
+            else SmtResource.recent_pointer_lookup physical ty
+        in
+          case saved of
+            SOME node => node
+          | NONE =>
+              let
+                val arguments = if Type.is_vartype ty then []
+                  else #Args (Type.dest_thy_typeid ty)
+                val children = List.map compact_type arguments
+                val node = canonical ty children
+                val _ = edges := saturated_add (!edges)
+                  (List.length children)
+                val _ = physical := (ty, node) :: !physical
+              in node end
+        end
+      (* REFL only classifies the visited prefix. Never build metadata or
+         even probe a cache for the unused suffix. Count exactly native
+         classification visits, so this gate introduces no new refusal. *)
+      fun intern root =
+        let
+          val memo = ref ([] : (hol_type * (bool * int)) list)
+          val probes = ref maximum
+          (* Optional probes stop when prepaid fuel is exhausted. The
+             fallback still classifies the same visited prefix; it does
+             not inspect an unused suffix or introduce a new refusal. *)
+          fun find _ [] = NONE
+            | find ty ((saved,result) :: rest) =
+                if !probes = 0 then NONE else
+                  (probes := !probes - 1;
+                   if Portable.pointer_eq (ty,saved) then SOME result
+                   else find ty rest)
+          fun visit depth ty =
+            (check depth;
+             case find ty (!memo) of SOME result => result
+             | NONE =>
+               let
+                 fun children [] n = (false,n)
+                   | children (ty :: rest) n =
+                       let val (poly,work) = visit (depth + 1) ty
+                           val n = add_work n work
+                           val _ = check n
+                       in if poly then (true,n) else children rest n end
+                 val result = if Type.is_vartype ty then (true,1)
+                   else children (#Args (Type.dest_thy_typeid ty)) 1
+                 val _ = if !probes = 0 then () else
+                   memo := (ty,result) :: !memo
+               in result end)
+          val (_,work) = visit 1 root
+        in check work end
+      (* Opening/alpha comparison can inspect all annotation Types. Unlike
+         REFL's classification, this is intentionally a full traversal. *)
+      fun full_type ty =
+        let
+          fun native_admission () =
+            let
+              (* Metadata exhaustion must retain the first excessive
+                 subtree, not a preorder prefix's maximum+1 diagnostic.
+                 Stop at that subtree before visiting any further sibling. *)
+              fun visit ty =
+                let
+                  fun children [] count = count
+                    | children (ty :: rest) count =
+                        let val work = add_work count (visit ty)
+                            val _ = check work
+                        in children rest work end
+                in if Type.is_vartype ty then 1
+                   else children (#Args (Type.dest_thy_typeid ty)) 1 end
+            in check (visit ty) end
+          val _ =
+            (let
+               val AdmissionTypeNode {tree_nodes, ...} =
+                 metered metadata_walk ty
+             in check tree_nodes end
+             handle MetadataLimit => native_admission ())
+        in compact_type ty end
+      (* A cheap polymorphic prefix does not admit native comparison of the
+         suffix. Required IDs nevertheless cover it, using only compact keys
+         and exact pointer hits, with no optional-work refusal. *)
+      fun type_id ty =
+        let val AdmissionTypeNode {id, ...} = compact_type ty in id end
+      fun raw_size limit term =
+        (ignore (full_type (Term.type_of term));
+         SmtReplayImport.bounded_raw_size_with_type_check
+           (fn ty => if Thm.kernelid = "expknl" then ()
+             else intern (#2 (Type.dom_rng ty))) limit term)
       fun admit_abstraction operation term =
         let
-          val _ = case Term.term_size_bounded maximum term of
+          val _ = case raw_size maximum term of
               SOME _ => ()
             | NONE => SmtResource.check_term_size_for "BitVector" operation
                 (maximum + 1)
@@ -288,29 +645,377 @@ struct
             | order => order
           val atoms = HOLset.listItems
             (Term.all_atomsl [term] (HOLset.empty compare_atoms))
-          val _ = List.app (ignore o intern o Term.type_of) atoms
+          val _ = List.app (ignore o full_type o Term.type_of) atoms
+          (* The synthesized abstraction Type was admitted before raw_size
+             opened anything. Nested count-only openings admit their actual
+             range classification, not unused synthesized function Types. *)
         in () end
     in
-      {intern = intern, admit_abstraction = admit_abstraction,
+      {intern = intern, metadata = metadata, type_id = type_id,
+       compact_type = compact_type, full_type = full_type,
+       admit_abstraction = admit_abstraction, raw_size = raw_size,
        nodes = nodes, edges = edges, physical = physical}
     end
+
+  (* Canonical Type IDs may reject a mismatched pair, but cannot prove a
+     matching pair equal. In particular, reject a late mismatch before TRANS
+     unfolds a shared equal prefix. Successful transport still needs the
+     stock kernel and retains both supplied endpoint occurrences. *)
+  fun checked_leaf_transport classify_type metadata left right =
+    let
+      val left_type = Term.type_of left
+      val right_type = Term.type_of right
+      val _ = classify_type left_type
+      val _ = classify_type right_type
+      val same_atom = SmtReplayLeafProof.same_atom left right
+      val _ = if (Term.is_var left orelse Term.is_const left) andalso
+          not same_atom then raise Feedback.mk_HOL_ERR "Thm" "TRANS" ""
+        else ()
+      (* IDs are a negative/routing optimization, not required admission.
+         In particular a cheap polymorphic prefix may hide a suffix too
+         large even for a metered full DAG walk. Do not refuse its checked
+         shared-variable/redex proof just because metadata is unavailable. *)
+      fun summaries () =
+        let
+          val node as AdmissionTypeNode {id = left_id, ...} =
+            metadata left_type
+          val AdmissionTypeNode {id = right_id, ...} = metadata right_type
+          val _ = if left_id = right_id then () else
+            raise Feedback.mk_HOL_ERR "Thm" "TRANS" ""
+        in SOME node end
+        handle Feedback.HOL_ERR detail =>
+          if SmtResource.is_resource_gate detail andalso
+              String.isSubstring "skeleton-type-work"
+                (Feedback.message_of detail) then NONE
+          else raise Feedback.HOL_ERR detail
+      val summary = summaries ()
+      val large_shared = case summary of NONE => true
+        | SOME (AdmissionTypeNode {tree_nodes, ...}) =>
+            tree_nodes > SmtResource.max_bv_replay_term_nodes
+      val large_comparison = case summary of NONE => true
+        | SOME (AdmissionTypeNode {comparison_nodes, ...}) =>
+            comparison_nodes > SmtReplayLeafProof.native_tree_switch
+      (* Pair routing has its own bounded observations/probes. Exhaustion
+         selects the checked redex route, never a semantic refusal. *)
+      fun large_pair () =
+        let
+          exception RoutingLimit
+          val remaining = ref (IntInf.fromInt
+            SmtResource.max_bv_replay_term_nodes)
+          fun debit amount =
+            if amount <= !remaining then remaining := !remaining - amount
+            else raise RoutingLimit
+        in SmtReplayLeafProof.large_type_pair debit left_type right_type
+          handle RoutingLimit => true
+        end
+    in
+      if Thm.kernelid = "expknl" andalso large_shared andalso
+         Portable.pointer_eq (left_type, right_type) andalso
+         Term.is_var left andalso Term.is_var right andalso same_atom then
+        SmtReplayLeafProof.shared_variable left right
+      else if large_comparison andalso same_atom andalso
+          (Thm.kernelid = "expknl" orelse large_pair ()) then
+        SmtReplayLeafProof.redex_equality left right
+      else Thm.TRANS (Thm.REFL left) (Thm.REFL right)
+    end
+
+  (* Optional-cache admission has no theorem/procedure side effects. Only
+     these local transport gates become misses; actual proving exceptions
+     and timeouts still escape unchanged. *)
+  fun cache_admission_refusal detail =
+    SmtResource.is_resource_gate detail andalso
+    (String.isSubstring "skeleton-type-work" (Feedback.message_of detail)
+     orelse String.isSubstring "skeleton-cache-abstraction"
+       (Feedback.message_of detail))
+
+  (* Preserve native destructor names: these children also define the
+     original skeleton DAG metric, including sharing outside binders.
+     Mandatory measurement/dispatch retains the binder-opening diagnostic;
+     optional cache admission uses its separate abstraction gate below.
+     Name-only clash handling avoids native annotation comparisons. *)
+  fun admitted_dest_abs term =
+    let
+      val admission = new_type_admission_context ()
+      (* Experimental count_body/dest_abs only returns the stored body;
+         it does not run standard's range-Type classification. *)
+      fun before_open ty = if Thm.kernelid = "expknl" then ()
+        else #intern admission (#2 (Type.dom_rng ty))
+      val maximum = SmtResource.max_bv_replay_term_nodes
+      val _ = case SmtReplayImport.bounded_raw_size_with_type_check
+          before_open maximum term of SOME _ => ()
+        | NONE => SmtResource.check_term_size_for "BitVector"
+            "binder-opening" (maximum + 1)
+    in SmtReplayImport.dest_abs_preserving_names term end
+
+  (* Semantic comparison is independent of optional cache reservations.
+     Applications and Types are compared nodewise; only the public binder
+     island uses native comparison, after BOTH operands have been admitted.
+     Comparison results are lookup keys, never theorem evidence. *)
+  fun new_semantic_order () =
+    let
+      val count = 4093
+      (* A shallow structural hash sends every suffix of a homogeneous
+         spine to one bucket. A flat list of term PAIRS there is quadratic
+         even for lookup. Assign physical IDs in single-term buckets, then
+         index the pair memo by integer pairs. IDs only route memo entries;
+         the semantic order below still determines every returned result. *)
+      val physical = Array.array (count, [] : (term * int) list)
+      val next_physical = ref 0
+      fun physical_id term =
+        let val bucket = SmtResource.pointer_bucket count term in
+          case List.find (fn (saved, _) =>
+              Portable.pointer_eq (term, saved))
+              (Array.sub (physical, bucket)) of
+            SOME (_, id) => id
+          | NONE =>
+              let val id = !next_physical in
+                next_physical := id + 1;
+                Array.update (physical, bucket,
+                  (term, id) :: Array.sub (physical, bucket));
+                id
+              end
+        end
+      val pairs = ref (Redblackmap.mkDict
+        (Lib.pair_compare (Int.compare, Int.compare)))
+      val type_pairs = Array.array
+        (count, [] : (hol_type * hol_type * order) list)
+      fun type_bucket ty =
+        if Type.is_vartype ty then 0 else
+          KernelSig.epoch_of (#Tyop (Type.dest_thy_typeid ty)) mod count
+      (* Do not intern an entire annotation just to discover a different
+         outer Tyop. No native Type comparison occurs in this programme. *)
+      fun types (left, right) =
+        if Portable.pointer_eq (left, right) then EQUAL
+        else
+          let
+            val bucket = (type_bucket left + type_bucket right) mod count
+          in
+            case List.find (fn (l, r, _) =>
+                Portable.pointer_eq (left, l) andalso
+                Portable.pointer_eq (right, r))
+                (Array.sub (type_pairs, bucket)) of
+              SOME (_, _, result) => result
+            | NONE =>
+                let
+                  val result =
+                    if Type.is_vartype left then
+                      if Type.is_vartype right then String.compare
+                        (Type.dest_vartype left, Type.dest_vartype right)
+                      else LESS
+                    else if Type.is_vartype right then GREATER
+                    else
+                      (case KernelSig.id_compare
+                          (#Tyop (Type.dest_thy_typeid left),
+                           #Tyop (Type.dest_thy_typeid right)) of
+                         EQUAL => list_compare types
+                           (#2 (Type.dest_type left),
+                            #2 (Type.dest_type right))
+                       | result => result)
+                  val _ = Array.update (type_pairs, bucket,
+                    (left, right, result) :: Array.sub (type_pairs, bucket))
+                in result end
+          end
+      fun bound _ [] _ = NONE
+        | bound term (variable :: rest) index =
+            if #1 (Term.dest_var term) = #1 (Term.dest_var variable) andalso
+                types (Term.type_of term, Term.type_of variable) = EQUAL
+            then SOME index else bound term rest (index + 1)
+      fun rank env term = if Term.is_var term then
+          (case bound term env 0 of NONE => 0 | SOME _ => 1)
+        else if Term.is_const term then 2
+        else if Term.is_comb term then 3 else 4
+      fun compare_env left_env right_env (left, right) =
+        if null left_env andalso null right_env andalso
+            Portable.pointer_eq (left, right) then EQUAL
+        else
+          let
+            val key = if null left_env andalso null right_env then
+                SOME (physical_id left, physical_id right)
+              else NONE
+          in
+            case Option.mapPartial
+                (fn key => Redblackmap.peek (!pairs, key)) key of
+              SOME result => result
+            | NONE =>
+                let
+                  val result = case Int.compare
+                      (rank left_env left, rank right_env right) of
+                      EQUAL =>
+                        if Term.is_comb left then
+                          (case compare_env left_env right_env
+                              (Term.rator left, Term.rator right) of
+                             EQUAL => compare_env left_env right_env
+                               (Term.rand left, Term.rand right)
+                           | result => result)
+                        else if Term.is_var left then
+                          (case (bound left left_env 0,
+                                 bound right right_env 0) of
+                             (SOME l, SOME r) => Int.compare (l, r)
+                           | _ =>
+                             case String.compare
+                                 (#1 (Term.dest_var left),
+                                  #1 (Term.dest_var right)) of
+                               EQUAL => types
+                                 (Term.type_of left, Term.type_of right)
+                             | result => result)
+                        else if Term.is_const left then
+                          (case KernelSig.id_compare
+                              (#Name (Term.dest_thy_constid left),
+                               #Name (Term.dest_thy_constid right)) of
+                             EQUAL => types
+                               (Term.type_of left, Term.type_of right)
+                           | result => result)
+                        else
+                          (case types
+                              (#1 (Type.dom_rng (Term.type_of left)),
+                               #1 (Type.dom_rng (Term.type_of right))) of
+                             EQUAL =>
+                               let
+                                 val (lv, lb) = admitted_dest_abs left
+                                 val (rv, rb) = admitted_dest_abs right
+                               in compare_env (lv :: left_env)
+                                 (rv :: right_env) (lb, rb) end
+                           | result => result)
+                    | result => result
+                  val _ = case key of NONE => ()
+                    | SOME key => pairs := Redblackmap.insert
+                        (!pairs, key, result)
+                in result end
+          end
+    in compare_env [] [] end
+
+  fun new_cache_index maximum =
+    let
+      val admission = new_type_admission_context ()
+      fun binder term =
+        (#admit_abstraction admission "skeleton-cache-abstraction" term;
+         true)
+        handle Feedback.HOL_ERR detail =>
+          if cache_admission_refusal detail then false
+          else raise Feedback.HOL_ERR detail
+      fun type_id ty = (#intern admission ty; #type_id admission ty)
+      val index = SmtResource.new_bounded_term_index_with_types
+        {admit_binder = binder, intern_type = SOME type_id} maximum
+    in fn term => index term handle Feedback.HOL_ERR detail =>
+      if cache_admission_refusal detail then NONE
+      else raise Feedback.HOL_ERR detail
+    end
+
+  fun new_cache_order _ = new_semantic_order ()
+
+  fun term_children term =
+    if Term.is_comb term then [Term.rator term, Term.rand term]
+    else if Term.is_abs term then [#2 (admitted_dest_abs term)] else []
+
+  fun term_measure root =
+    let
+      fun general () =
+        let
+          val saved = ref (Redblackmap.mkDict (new_semantic_order ()))
+          fun visit term = case Redblackmap.peek (!saved, term) of
+              SOME size => size
+            | NONE =>
+                let val size = List.foldl
+                      (fn (child, n) => saturated_add n (visit child))
+                      1 (term_children term)
+                in saved:=Redblackmap.insert (!saved,term,size); size end
+          val size = visit root
+        in {tree_nodes=size,dag_nodes=Redblackmap.numItems (!saved)} end
+      exception GeneralMeasure
+      (* Positive hints only: bound probes even when every leaf has a fresh
+         annotation. Eviction just repeats the bounded small-Type check. *)
+      val types = Array.array (16, NONE : Type.hol_type option)
+      val next_type = ref 0
+      fun inspect term =
+        if Term.is_abs term then raise GeneralMeasure
+        else if Term.is_var term orelse Term.is_const term then
+          let val ty=Term.type_of term
+          in if Array.exists (fn SOME saved =>
+                Portable.pointer_eq (saved,ty) | NONE => false) types then ()
+            else let
+              val remaining=ref 64
+              fun small ty =
+                (remaining:= !remaining-1;
+                 if !remaining<0 then raise GeneralMeasure
+                 else if Type.is_vartype ty then ()
+                 else List.app small (#Args (Type.dest_thy_type ty)))
+              val _ = small ty
+            in
+              Array.update (types, !next_type, SOME ty);
+              next_type := (!next_type + 1) mod Array.length types
+            end
+          end
+        else ()
+      fun fast () =
+        let
+          (* For binder-free terms structural IDs give exactly the same
+             equivalence classes and saturated sizes as the general order.
+             Check leaf types before its native type comparison.  This scan
+             only admits the optimization; it changes no resource metric. *)
+          val {complete,...} = SmtResource.bounded_structure_with_children
+            (fn term => if Term.is_comb term then
+              [Term.rator term,Term.rand term] else []) inspect
+            SmtResource.max_bv_replay_term_nodes root
+          val _ = complete orelse raise GeneralMeasure
+        in SmtResource.term_measure root end
+    in fast () handle GeneralMeasure => general () end
+
+  fun tree_nodes term = #tree_nodes (term_measure term)
+  fun dag_nodes term = #dag_nodes (term_measure term)
+
+  fun make_context procedures fallback =
+    let
+      fun order ((name, role, id), (name', role', id')) =
+        case String.compare (name, name') of
+          EQUAL => (case Int.compare (role, role') of
+              EQUAL => Int.compare (id, id') | result => result)
+        | result => result
+      fun fresh_index () =
+        new_cache_index SmtResource.max_bv_replay_term_nodes
+      val signature_witness = ref (cache_signature ())
+      val index = ref (fresh_index ())
+      val cache_generation = ref (ref ())
+      val atom_cache = ref (Redblackmap.mkDict order)
+      fun refresh_caches () =
+        if cache_signature_matches (!signature_witness) then () else
+          (cache_generation := ref ();
+           index := fresh_index ();
+           atom_cache := Redblackmap.mkDict order;
+           signature_witness := cache_signature ())
+    in Context
+      {procedures = procedures, fallback = fallback,
+       atom_index = fn term => (refresh_caches (); (!index) term),
+       atom_cache = atom_cache, cache_generation = cache_generation,
+       refresh_caches = refresh_caches}
+    end
+
+  fun new_context procedures = make_context procedures NONE
+
+  fun new_dynamic_context procedures fallback =
+    make_context procedures (SOME fallback)
 
   (* Build left = right one physical node at a time.  Both endpoint anchors
      compare only a newly built outer node whose children already have the
      requested endpoint pointers.  Structural cache collisions use separate
-     pointer buckets, and the fixed skeleton DAG limit bounds reconstruction. *)
-  fun bounded_nodewise_equality maximum left right =
+     pointer buckets. Optional cache transport additionally retains its
+     caller's fixed DAG allowance. Required transport adds no new cutoff. *)
+  fun nodewise_equality_with_limit allowance left right =
     let
       val type_admission = new_type_admission_context ()
+      fun admit_type term =
+        ignore (#intern type_admission (Term.type_of term))
+      fun checked_refl term = (admit_type term; Thm.REFL term)
       fun inspect term =
         if Term.is_abs term then
           #admit_abstraction type_admission
             "skeleton-cache-abstraction" term
         else ()
-      val _ =
-        if SmtResource.dag_nodes_up_to_with_inspector inspect maximum left <=
-           maximum then ()
-        else raise REANCHOR_LIMIT
+      val _ = case allowance of
+          NONE => ()
+        | SOME maximum =>
+            if SmtResource.dag_nodes_up_to_with_inspector
+                inspect maximum left <= maximum then ()
+            else raise REANCHOR_LIMIT
       val compared = ref 0
       val bucket_count = 4093
       val cache = Array.array
@@ -328,14 +1033,16 @@ struct
               (41 * shallow_hash (depth - 1) (Term.rator term) +
                67 * shallow_hash (depth - 1) (Term.rand term) + 11) mod
                 bucket_count
-            else if Term.is_abs term then
-              (73 * shallow_hash (depth - 1) (Term.body term) + 13) mod
-                bucket_count
+            (* Routing is not binder admission. In particular the right
+               endpoint has not passed inspect yet. Keep both bodies opaque
+               until compute admits the matching abstraction pair. *)
             else shallow_hash 0 term
       fun pair_bucket (left, right) =
         (97 * shallow_hash 3 left + shallow_hash 3 right) mod bucket_count
       fun visit (left, right) =
-        if Portable.pointer_eq (left, right) then Thm.REFL left
+        (* A shared application needs only result-Type work, not the
+           annotations of descendants that this shortcut never visits. *)
+        if Portable.pointer_eq (left, right) then checked_refl left
         else
           let val bucket = pair_bucket (left, right) in
           case List.find
@@ -349,14 +1056,21 @@ struct
       and compute (left, right) =
         let
           val _ = compared := !compared + 1
-          val _ = if !compared <= maximum then () else raise REANCHOR_LIMIT
+          val _ = case allowance of NONE => ()
+            | SOME maximum =>
+                if !compared <= maximum then () else raise REANCHOR_LIMIT
           val theorem =
             if Term.is_comb left andalso Term.is_comb right then
               let
                 val (left_operator, left_operand) = Term.dest_comb left
                 val (right_operator, right_operand) = Term.dest_comb right
+                val _ = admit_type left
+                val _ = admit_type right
               in
-                anchor_right right (anchor_left left
+                if Portable.pointer_eq (left_operator,right_operator)
+                    andalso Portable.pointer_eq (left_operand,right_operand)
+                then Thm.TRANS (checked_refl left) (checked_refl right)
+                else anchor_right right (anchor_left left
                   (Thm.MK_COMB
                     (visit (left_operator, right_operator),
                      visit (left_operand, right_operand))))
@@ -368,8 +1082,15 @@ struct
                 val _ = #admit_abstraction type_admission
                   "skeleton-cache-abstraction" right
               in Thm.TRANS (Thm.REFL left) (Thm.REFL right) end
+            else if (Term.is_var left andalso Term.is_var right) orelse
+                    (Term.is_const left andalso Term.is_const right) then
+              checked_leaf_transport (#intern type_admission)
+                (#metadata type_admission) left right
             else
-              Thm.TRANS (Thm.REFL left) (Thm.REFL right)
+              (* Different constructors cannot be alpha-equal. Preserve
+                 TRANS's mismatch error without constructing unadmitted
+                 reflexivity theorems for the right endpoint. *)
+              raise Feedback.mk_HOL_ERR "Thm" "TRANS" ""
           val bucket = pair_bucket (left, right)
           val _ = Array.update
             (cache, bucket,
@@ -389,6 +1110,33 @@ struct
       theorem
     end
 
+  fun bounded_nodewise_equality maximum =
+    nodewise_equality_with_limit (SOME maximum)
+
+  (* Required transport must not turn an optional cache allowance into a
+     semantic refusal. Application work is nodewise; native binder/Type
+     work retains its original admission in the common implementation. *)
+  val nodewise_equality = nodewise_equality_with_limit NONE
+
+  fun exact_conclusion target theorem =
+    if Portable.pointer_eq (Thm.concl theorem, target) then theorem
+    else Thm.EQ_MP (nodewise_equality (Thm.concl theorem) target) theorem
+
+  fun nodewise_exact_left occurrence theorem =
+    let val left = boolSyntax.lhs (Thm.concl theorem) in
+      if Portable.pointer_eq (occurrence, left) then theorem
+      else Thm.TRANS (nodewise_equality occurrence left) theorem
+    end
+
+  fun exact_equality left right theorem =
+    let
+      val theorem = nodewise_exact_left left theorem
+      val endpoint = boolSyntax.rhs (Thm.concl theorem)
+    in
+      if Portable.pointer_eq (endpoint, right) then theorem
+      else Thm.TRANS theorem (nodewise_equality endpoint right)
+    end
+
   fun reanchor_cached_theorem occurrence theorem =
     let
       val (cached_left, _) = boolSyntax.dest_eq (Thm.concl theorem)
@@ -405,8 +1153,12 @@ struct
       else reanchor_cached_theorem occurrence theorem
     end
 
-  fun validate_theorem procedure atom theorem =
+  fun validate_theorem_with (_ : term -> int option)
+      procedure atom theorem =
     let
+      (* A cache index (including an exhausted one) grants no admission. *)
+      val order = new_semantic_order ()
+      fun same left right = order (left, right) = EQUAL
       val _ =
         if List.null (Thm.hyp theorem) then ()
         else raise ERR "validate_theorem"
@@ -417,7 +1169,7 @@ struct
             ("atom procedure " ^ procedure ^
              " did not return an equality")
       val _ =
-        if Term.aconv left atom then ()
+        if same left atom then ()
         else raise ERR "validate_theorem"
           ("atom procedure " ^ procedure ^ " returned the wrong left side")
       val _ =
@@ -425,7 +1177,7 @@ struct
         else raise ERR "validate_theorem"
           ("atom procedure " ^ procedure ^ " returned a non-Boolean residue")
       val _ =
-        if Term.aconv left right then
+        if same left right then
           raise ERR "validate_theorem"
             ("atom procedure " ^ procedure ^ " made no progress")
         else ()
@@ -434,6 +1186,11 @@ struct
     in
       theorem
     end
+
+  fun validate_theorem procedure atom theorem =
+    validate_theorem_with
+      (new_cache_index SmtResource.max_bv_replay_term_nodes)
+      procedure atom theorem
 
   fun procedure_names (Context {procedures, fallback, ...}) =
     List.map #name procedures @
@@ -457,17 +1214,11 @@ struct
         if List.null (Thm.hyp equality) then ()
         else raise ERR "checked_sat_prove"
           "checked SAT equality has hypotheses"
-      val _ =
-        if Term.aconv (Thm.concl equality) request then ()
-        else raise ERR "checked_sat_prove"
-          "checked SAT equality does not match its request"
+      val equality = exact_conclusion request equality
       val _ = Library.check_oracle_tags
         "SmtSkeletonProve" "checked-sat-equality" equality
       val theorem = Drule.EQT_ELIM equality
-      val _ =
-        if Term.aconv (Thm.concl theorem) sat_target then ()
-        else raise ERR "checked_sat_prove"
-          "EQT_ELIM did not recover the abstract skeleton"
+      val theorem = exact_conclusion sat_target theorem
     in
       theorem
     end
@@ -482,13 +1233,29 @@ struct
       (boolSyntax.mk_conj (idempotent_variable, idempotent_variable),
        idempotent_variable))
 
+  val polarity_variable = idempotent_variable
+  val polarity_negative = boolSyntax.mk_neg polarity_variable
+  val polarity_rules = List.map tautLib.TAUT_PROVE
+    [boolSyntax.mk_eq
+       (boolSyntax.mk_conj (polarity_variable,polarity_negative),boolSyntax.F),
+     boolSyntax.mk_eq
+       (boolSyntax.mk_conj (polarity_negative,polarity_variable),boolSyntax.F),
+     boolSyntax.mk_eq
+       (boolSyntax.mk_disj (polarity_variable,polarity_negative),boolSyntax.T),
+     boolSyntax.mk_eq
+       (boolSyntax.mk_disj (polarity_negative,polarity_variable),boolSyntax.T),
+     boolSyntax.mk_eq
+       (boolSyntax.mk_eq (polarity_variable,polarity_negative),boolSyntax.F),
+     boolSyntax.mk_eq
+       (boolSyntax.mk_eq (polarity_negative,polarity_variable),boolSyntax.F)];
+
   val gate_reduction_conv = Conv.FIRST_CONV
     (List.map Conv.REWR_CONV
-      (boolTheory.REFL_CLAUSE :: boolTheory.COND_ID ::
+      (polarity_rules @ (boolTheory.REFL_CLAUSE :: boolTheory.COND_ID ::
        List.concat (List.map (Drule.CONJUNCTS o Drule.SPEC_ALL)
          [boolTheory.AND_CLAUSES, boolTheory.OR_CLAUSES,
           boolTheory.NOT_CLAUSES, boolTheory.IMP_CLAUSES,
-          boolTheory.EQ_CLAUSES, boolTheory.COND_CLAUSES])))
+          boolTheory.EQ_CLAUSES, boolTheory.COND_CLAUSES]))))
 
   datatype raw_key =
       RawVariable of string * int
@@ -579,9 +1346,11 @@ struct
     let
       val maximum = SmtResource.max_bv_replay_term_nodes
       val type_admission = new_type_admission_context ()
-      fun intern_type ty = #intern type_admission ty
+      val term_order = new_semantic_order ()
+      fun intern_type ty =
+        (#intern type_admission ty; #compact_type type_admission ty)
       fun type_id (AdmissionTypeNode {id, ...}) = id
-      fun admit_type ty = ignore (intern_type ty)
+      val admit_type = #intern type_admission
       val admit_abstraction = #admit_abstraction type_admission
       val type_nodes = #nodes type_admission
       val type_edges = #edges type_admission
@@ -624,10 +1393,8 @@ struct
       fun checked_leaf_equality operation occurrence representative =
         let
           val timer = Timer.startRealTimer ()
-          val _ = admit_type (Term.type_of occurrence)
-          val _ = admit_type (Term.type_of representative)
-          val theorem =
-            Thm.TRANS (Thm.REFL occurrence) (Thm.REFL representative)
+          val theorem = checked_leaf_transport (#intern type_admission)
+            (#metadata type_admission) occurrence representative
           val _ = transport_nodes := !transport_nodes + 1
           val _ = transport_time := Time.+
             (!transport_time, Timer.checkRealTimer timer)
@@ -657,7 +1424,7 @@ struct
       fun intern_abstraction occurrence =
         let
           val size =
-            case Term.term_size_bounded maximum occurrence of
+            case #raw_size type_admission maximum occurrence of
               SOME size => size
             | NONE =>
                 (SmtResource.check_term_size_for "BitVector"
@@ -741,6 +1508,10 @@ struct
                       in
                         anchor_right representative congruence
                       end
+                    val ty = Lib.snd (Type.dom_rng (raw_type operator_node))
+                    (* An operator's polymorphic domain can hide a ground
+                       range. Admit the actual result before any proof. *)
+                    val _ = admit_type ty
                     val children_unchanged =
                       Portable.pointer_eq
                         (operator, raw_representative operator_node) andalso
@@ -760,7 +1531,6 @@ struct
                         end
                     val candidate = boolSyntax.rhs
                       (Thm.concl candidate_equality)
-                    val ty = Lib.snd (Type.dom_rng (raw_type operator_node))
                     val _ = raw_edges := saturated_add (!raw_edges) 2
                   in
                     canonical_raw key occurrence candidate candidate_equality
@@ -822,21 +1592,23 @@ struct
         let
           val variables = ref (Redblackmap.mkDict Int.compare)
           val substitution = ref []
-          fun abstract (node as GraphNode {id, kind, ...}) =
+          fun plain id representative =
+            case Redblackmap.peek (!variables,id) of
+                SOME variable => variable
+              | NONE => let val variable=Term.genvar Type.bool
+                in variables:=Redblackmap.insert (!variables,id,variable);
+                   substitution:=(variable |-> representative):: !substitution;
+                   variable end
+          (* Preserve a child's literal polarity in this small schema.
+             Underlying graph IDs retain aliases; actual operands enter only
+             through the existing checked native substitution below. *)
+          fun abstract (node as GraphNode {id,kind,representative,...}) =
             case kind of
-              GraphTrue => boolSyntax.T
-            | GraphFalse => boolSyntax.F
-            | _ =>
-                (case Redblackmap.peek (!variables, id) of
-                   SOME variable => variable
-                 | NONE =>
-                     let val variable = Term.genvar Type.bool in
-                       variables := Redblackmap.insert
-                         (!variables, id, variable);
-                       substitution := (variable |->
-                         graph_representative node) :: !substitution;
-                       variable
-                     end)
+                GraphTrue => boolSyntax.T
+              | GraphFalse => boolSyntax.F
+              | GraphNegation child => boolSyntax.mk_neg
+                  (plain child (boolSyntax.dest_neg representative))
+              | _ => plain id representative
           val head = #1 (boolSyntax.strip_comb rebuilt)
           val schematic = Term.list_mk_comb
             (head, List.map abstract children)
@@ -907,7 +1679,7 @@ struct
                             val reduction = reduce_gate rebuilt child_nodes
                             val residue = boolSyntax.rhs (Thm.concl reduction)
                           in
-                            if not (Term.aconv rebuilt residue) then
+                            if term_order (rebuilt, residue) <> EQUAL then
                               let
                                 val node = visit residue
                                 val GraphNode {id, kind, representative,
@@ -978,27 +1750,47 @@ struct
   val build_cnf_graph = build_cnf_graph_mode false
 
   type sat_context =
-    {proofs : (term * thm * int) list ref, nodes : int ref}
+    {proofs : (term * thm * int) list ref, nodes : int ref,
+     refresh_caches : unit -> unit}
 
-  fun new_sat_context () : sat_context = {proofs = ref [], nodes = ref 0}
+  fun new_sat_context () : sat_context =
+    let
+      val signature_witness = ref (cache_signature ())
+      val proofs = ref []
+      val nodes = ref 0
+      fun refresh_caches () =
+        if cache_signature_matches (!signature_witness) then () else
+          (proofs := []; nodes := 0;
+           signature_witness := cache_signature ())
+    in {proofs = proofs, nodes = nodes,
+        refresh_caches = refresh_caches} end
 
   fun cached_sat_proof (context : sat_context) target cost prove =
     let
+      val _ = #refresh_caches context ()
+      val signature_witness = cache_signature ()
       val maximum = SmtResource.max_skeleton_replay_dag_nodes
+      val term_order = new_semantic_order ()
       fun validate theorem =
-        (if List.null (Thm.hyp theorem) then ()
+        (#refresh_caches context ();
+         if List.null (Thm.hyp theorem) then ()
          else raise ERR "cached_sat_proof" "SAT certificate has hypotheses";
          Library.check_oracle_tags "SmtSkeletonProve"
            "schematic SAT certificate" theorem;
-         Thm.EQ_MP (Thm.ALPHA (Thm.concl theorem) target) theorem)
+         exact_conclusion target theorem)
       fun find [] _ = NONE
         | find ((entry as (saved, theorem, _)) :: rest) prior =
-            if Term.aconv saved target then
+            if term_order (saved, target) = EQUAL then
               ( #proofs context := entry :: List.revAppend (prior, rest);
                 SOME theorem)
             else find rest (entry :: prior)
       fun retain theorem =
-        if cost > maximum then ()
+        (#refresh_caches context ();
+        (* Never publish a certificate captured across a signature change.
+           Its checked result can still satisfy this request. *)
+        if not (cache_signature_matches signature_witness) orelse
+           cost > maximum orelse
+           not (new_cache_live_check () (Thm.concl theorem)) then ()
         else
           let
             fun fit entries nodes =
@@ -1012,7 +1804,7 @@ struct
             #proofs context := (target, theorem, cost) ::
               List.rev oldest_first;
             #nodes context := nodes + cost
-          end
+          end)
       val theorem = case find (!(#proofs context)) [] of
           SOME theorem => phase "skeleton/schematic-certificate-hit"
             validate theorem
@@ -1020,8 +1812,9 @@ struct
                   in retain theorem; theorem end
     in theorem end
 
-  fun checked_graph_sat_prove_in context entries root =
+  fun checked_graph_sat_prove_in (context : sat_context) entries root =
     let
+      val _ = #refresh_caches context ()
       fun node_id (GraphNode {id, ...}) = id
       fun node_kind (GraphNode {kind, ...}) = kind
       fun node_representative (GraphNode {representative, ...}) =
@@ -1148,8 +1941,7 @@ struct
           let val supplied_cnf = Thm.EQ_MP cnf_equivalence
             (Thm.ASSUME antecedent)
           in Thm.DISCH antecedent (Thm.MP cnf_theorem supplied_cnf) end) ()
-      val _ = Term.aconv (Thm.concl target_theorem) target orelse
-        raise ERR "checked_graph_sat_prove" "circuit implication mismatch"
+      val target_theorem = exact_conclusion target target_theorem
       val instantiated = phase "skeleton/combined-instantiation"
         (fn substitution => Thm.INST substitution target_theorem)
         substitution
@@ -1177,6 +1969,8 @@ struct
      is incomplete by design; callers retain the full graph procedure. *)
   fun clause_frontier_prove limit target =
     let
+      val term_order = new_semantic_order ()
+      val empty_terms = HOLset.empty term_order
       val work = ref 0
       fun tick () =
         (work := !work + 1;
@@ -1198,12 +1992,12 @@ struct
       fun attempt exposed =
         let
           val _ = work := 0
-          val atoms = ref (Redblackmap.mkDict Term.compare)
+          val atoms = ref (Redblackmap.mkDict term_order)
           val substitution = ref []
           (* A gate input may itself be a disjunction spread along the clause
              spine.  Preserve any occurrence of that complete input as one
              atom, rather than flattening it and losing the gate relation. *)
-          val stops = HOLset.addList (Term.empty_tmset,
+          val stops = HOLset.addList (empty_terms,
             List.concat (List.map
               (fn term => Option.getOpt (skeleton_children term, []))
               (HOLset.listItems exposed)))
@@ -1291,8 +2085,7 @@ struct
               Tactical.THEN (Tactic.BOOL_CASES_TAC variable, continuation))
               (simpLib.ASM_SIMP_TAC boolSimps.bool_ss []) variables)
           val instantiated = Thm.INST (!substitution) theorem
-          val exact = Thm.EQ_MP
-            (Thm.ALPHA (Thm.concl instantiated) target) instantiated
+          val exact = exact_conclusion target instantiated
           val _ = Library.check_oracle_tags "SmtSkeletonProve"
             "clause-frontier" exact
         in exact end
@@ -1301,13 +2094,14 @@ struct
         | try (candidate :: rest) = attempt candidate
             handle Feedback.HOL_ERR _ => try rest
     in
-      try (Term.empty_tmset ::
-        List.map (fn term => HOLset.add (Term.empty_tmset, term)) candidates @
-        [HOLset.addList (Term.empty_tmset, candidates)])
+      try (empty_terms ::
+        List.map (fn term => HOLset.add (empty_terms, term)) candidates @
+        [HOLset.addList (empty_terms, candidates)])
     end
 
-  fun propositional_prove_in context target =
+  fun propositional_prove_in (context : sat_context) target =
     let
+      val _ = #refresh_caches context ()
       val _ = Term.type_of target = Type.bool orelse
         raise ERR "propositional_prove" "target is not Boolean"
       val graph = phase "skeleton/propositional-cnf"
@@ -1321,8 +2115,7 @@ struct
         raise ERR "propositional_prove" "SAT theorem has hypotheses"
       val GraphNode {equality, ...} = #root graph
       val theorem = Thm.EQ_MP (Thm.SYM equality) actual
-      val _ = Term.aconv (Thm.concl theorem) target orelse
-        raise ERR "propositional_prove" "conclusion does not match target"
+      val theorem = exact_conclusion target theorem
       val _ = Library.check_oracle_tags
         "SmtSkeletonProve" "propositional-replay" theorem
     in theorem end
@@ -1336,11 +2129,37 @@ struct
      the potentially quadratic product of two conditional value DAGs. *)
   fun conditional_equality_conv target =
     let
-      val cache = ref (Redblackmap.mkDict Term.compare)
+      val term_order = new_semantic_order ()
+      val admission = new_type_admission_context ()
+      val cache = ref (Redblackmap.mkDict term_order)
       val visited = ref 0
+      (* Match the distribution law against a constant-size schematic
+         frontier, never against its opaque value DAGs or binder bodies.
+         Native Type matching is admitted before constructing that frontier.
+         INST's source is small; values are substitution residues only. *)
+      fun rewrite conversion term =
+        let
+          val substitution = ref []
+          fun opaque value =
+            let
+              val ty = Term.type_of value
+              val _ = ignore (#full_type admission ty)
+              val variable = Term.genvar ty
+              val _ = substitution := (variable |-> value) :: !substitution
+            in variable end
+          fun value term =
+            if boolSyntax.is_cond term then
+              let val (test, yes, no) = boolSyntax.dest_cond term in
+                boolSyntax.mk_cond (opaque test, opaque yes, opaque no)
+              end
+            else opaque term
+          val (left, right) = boolSyntax.dest_eq term
+          val schematic = boolSyntax.mk_eq (value left, value right)
+          val theorem = conversion schematic
+        in nodewise_exact_left term (Thm.INST (!substitution) theorem) end
       fun visit term =
         case Redblackmap.peek (!cache, term) of
-          SOME theorem => anchor_left term theorem
+          SOME theorem => nodewise_exact_left term theorem
         | NONE =>
             let
               val _ = visited := !visited + 1
@@ -1352,13 +2171,14 @@ struct
                 let
                   val (left, right) = boolSyntax.dest_eq term
                   fun distribute conversion =
-                    let val theorem = conversion term in
+                    let val theorem = rewrite conversion term in
                       Thm.TRANS theorem
                         (visit (boolSyntax.rhs (Thm.concl theorem)))
                     end
                 in
-                  if Term.aconv left right then
-                    Conv.REWR_CONV boolTheory.REFL_CLAUSE term
+                  if term_order (left, right) = EQUAL then
+                    nodewise_exact_left term
+                      (Drule.EQT_INTRO (nodewise_equality left right))
                   else if boolSyntax.is_cond right then
                     distribute (Conv.REWR_CONV boolTheory.COND_RAND)
                   else if boolSyntax.is_cond left then
@@ -1366,8 +2186,8 @@ struct
                       (Conv.RATOR_CONV
                          (Conv.REWR_CONV boolTheory.COND_RAND),
                        Conv.REWR_CONV boolTheory.COND_RATOR))
-                  else if Term.compare (left, right) = GREATER then
-                    Conv.REWR_CONV boolTheory.EQ_SYM_EQ term
+                  else if term_order (left, right) = GREATER then
+                    rewrite (Conv.REWR_CONV boolTheory.EQ_SYM_EQ) term
                   else Thm.REFL term
                 end
               val theorem =
@@ -1385,21 +2205,24 @@ struct
      Theory operators stay uninterpreted: their arguments must be equal by
      congruence, not by an assumed theory identity.  Maximal Boolean islands
      are discharged once rather than lowering all surrounding word circuits. *)
-  fun congruence_prove_in context target =
+  fun congruence_prove_in (context : sat_context) target =
     let
+      val _ = #refresh_caches context ()
       val (left, right) = boolSyntax.dest_eq target
+      val term_order = new_semantic_order ()
       val cache = ref (Redblackmap.mkDict
-        (pair_compare (Term.compare, Term.compare)))
+        (pair_compare (term_order, term_order)))
       val visited = ref 0
       fun boolean_island left right =
         Term.type_of left = Type.bool andalso
         (Option.isSome (skeleton_children left) orelse
          Option.isSome (skeleton_children right))
       fun visit (left, right) =
-        if Term.aconv left right then Thm.ALPHA left right
+        if term_order (left, right) = EQUAL then
+          nodewise_equality left right
         else
           case Redblackmap.peek (!cache, (left, right)) of
-            SOME theorem => theorem
+            SOME theorem => exact_equality left right theorem
           | NONE =>
               let
                 val _ = visited := !visited + 1
@@ -1412,8 +2235,9 @@ struct
                       val (left_head, left_arg) = Term.dest_comb left
                       val (right_head, right_arg) = Term.dest_comb right
                     in
-                      Thm.MK_COMB (visit (left_head, right_head),
-                        visit (left_arg, right_arg))
+                      anchor_right right (anchor_left left
+                        (Thm.MK_COMB (visit (left_head, right_head),
+                          visit (left_arg, right_arg))))
                     end
                   else raise ERR "congruence_prove"
                     "opaque endpoints are not equal"
@@ -1432,8 +2256,7 @@ struct
                   (!cache, (left, right), theorem)
               in theorem end
       val theorem = visit (left, right)
-      val exact = Thm.EQ_MP
-        (Thm.ALPHA (Thm.concl theorem) target) theorem
+      val exact = exact_conclusion target theorem
       val _ = List.null (Thm.hyp exact) orelse
         raise ERR "congruence_prove" "congruence introduced hypotheses"
       val _ = Library.check_oracle_tags
@@ -1444,9 +2267,26 @@ struct
     congruence_prove_in (new_sat_context ()) target
 
   fun prove_with_owners
-      (Context {procedures, fallback, atom_cache}) owners
+      (Context {procedures, fallback, atom_index, atom_cache,
+                cache_generation, refresh_caches}) owners
       (target_measure : {tree_nodes : int, dag_nodes : int}) target =
     let
+      val _ = refresh_caches ()
+      val signature_witness = cache_signature ()
+      val generation_witness = !cache_generation
+      (* A callback may reset the index and then restore the signature.
+         Neither old IDs nor working_cache belong to that new generation. *)
+      fun reusable () =
+        (refresh_caches ();
+         generation_witness = !cache_generation andalso
+         cache_signature_matches signature_witness)
+      val live_check = ref (NONE : (term -> bool) option)
+      fun live theorem =
+        let
+          val check = case !live_check of SOME check => check
+            | NONE => let val check = new_cache_live_check ()
+                      in live_check := SOME check; check end
+        in check (Thm.concl theorem) end
       val _ =
         if Term.type_of target = Type.bool then ()
         else raise ERR "prove" "target is not Boolean"
@@ -1456,11 +2296,32 @@ struct
             "whole obligation is a theory atom; local solve is forbidden"
         | SOME _ => ()
       val total_timer = Timer.startRealTimer ()
-      val nodes = ref (Redblackmap.mkDict Term.compare)
-      val skeleton_nodes = ref (HOLset.empty Term.compare)
-      val distinct_atoms = ref (HOLset.empty Term.compare)
+      (* Owner/node IDs are obligation-local, independent of any exhausted
+         cross-obligation atom-cache index. Reindex legacy owner maps once. *)
+      val node_index = ref (new_cache_index
+        SmtResource.max_bv_replay_term_nodes)
+      val term_order = new_semantic_order ()
+      val owners = Redblackmap.foldl
+        (fn (atom, owner, result) =>
+          Redblackmap.insert (result, atom, owner))
+        (Redblackmap.mkDict term_order) owners
+      val nodes = ref (Redblackmap.mkDict Int.compare)
+      val skeleton_nodes = ref (HOLset.empty term_order)
+      val distinct_atoms = ref (HOLset.empty term_order)
       val calls = ref (Redblackmap.mkDict String.compare)
       val working_cache = ref (!atom_cache)
+      val local_signature = ref (cache_signature ())
+      val local_generation = ref (!cache_generation)
+      fun refresh_local () =
+        (refresh_caches ();
+         if !local_generation = !cache_generation andalso
+            cache_signature_matches (!local_signature) then () else
+           (working_cache := !atom_cache;
+            node_index := new_cache_index
+              SmtResource.max_bv_replay_term_nodes;
+            nodes := Redblackmap.mkDict Int.compare;
+            local_signature := cache_signature ();
+            local_generation := !cache_generation))
       val node_hits = ref 0
       val node_pointer_hits = ref 0
       val node_reanchor_attempts = ref 0
@@ -1490,6 +2351,11 @@ struct
               val {expand, ...} = procedure
               val _ = atom_requests := !atom_requests + 1
               val _ = distinct_atoms := HOLset.add (!distinct_atoms, atom)
+              (* Explicit owners and fallback are distinct even if named
+                 alike. An atom ID alone does not identify its expansion. *)
+              val cache_key = if reusable () then Option.map
+                (fn id => (name, if required then 0 else 1, id))
+                (atom_index atom) else NONE
               fun prove () =
                 let
                   val timer = Timer.startRealTimer ()
@@ -1497,6 +2363,8 @@ struct
                   val expansion = Profile.profile_with_exn_name
                     ("th_lemma[general](atom:" ^ name ^ ")")
                     expand atom
+                  val _ = refresh_local ()
+                  val can_retain = reusable ()
                   val elapsed = Timer.checkRealTimer timer
                   val _ = atom_time := Time.+ (!atom_time, elapsed)
                 in
@@ -1506,31 +2374,39 @@ struct
                       else (Thm.REFL atom, false)
                   | Expanded theorem =>
                       let
-                        val theorem = exact_left atom
-                          (validate_theorem name atom theorem)
+                        val theorem = nodewise_exact_left atom
+                          (validate_theorem_with atom_index name atom theorem)
                         val _ = owned_atoms := !owned_atoms + 1
-                        val _ = working_cache :=
-                          Redblackmap.insert
-                            (!working_cache, atom, theorem)
+                        val _ = case cache_key of NONE => ()
+                          | SOME id =>
+                              if not can_retain orelse not (live theorem)
+                              then () else working_cache :=
+                              Redblackmap.insert (!working_cache, id, theorem)
                         val _ = atom_proofs := !atom_proofs + 1
                       in
                         (theorem, true)
                       end
                 end
             in
-              case Redblackmap.peek (!working_cache, atom) of
+              case Option.mapPartial
+                  (fn id => Redblackmap.peek (!working_cache, id)) cache_key of
                 SOME theorem =>
                   (let
                      val theorem = reanchor_cached_theorem atom theorem
                    in
                      atom_hits := !atom_hits + 1;
                      (theorem, true)
-                   end handle REANCHOR_LIMIT => prove ())
+                   end handle REANCHOR_LIMIT => prove ()
+                     | Feedback.HOL_ERR detail =>
+                         if cache_admission_refusal detail then prove ()
+                         else raise Feedback.HOL_ERR detail)
               | NONE => prove ()
             end
       fun visit term =
         let
           val _ = skeleton_nodes := HOLset.add (!skeleton_nodes, term)
+          val _ = refresh_local ()
+          val cache_key = (!node_index) term
           fun compute children =
             let
               val child_results = List.map visit children
@@ -1542,8 +2418,12 @@ struct
                       (List.map Lib.fst child_results))
                 else Thm.REFL term
               val result = (theorem, changed)
-              val _ = nodes :=
-                Redblackmap.insert (!nodes, term, (term, result))
+              (* Reindex after recursive callbacks; cache_key may belong
+                 to an index that refresh_local has discarded. *)
+              val _ = refresh_local ()
+              val _ = case (!node_index) term of NONE => ()
+                | SOME id => nodes :=
+                    Redblackmap.insert (!nodes, id, (term, result))
             in
               result
             end
@@ -1567,7 +2447,8 @@ struct
                      else (first, changed)
                    end)
           | SOME children =>
-              (case Redblackmap.peek (!nodes, term) of
+              (case Option.mapPartial
+                  (fn id => Redblackmap.peek (!nodes, id)) cache_key of
                  SOME (saved, (theorem, changed)) =>
                    (node_hits := !node_hits + 1;
                     if Portable.pointer_eq (term, saved) then
@@ -1596,6 +2477,12 @@ struct
                                 observe_node_cache
                                   (NodeCacheReanchorTime elapsed)
                               end
+                        fun fallback () =
+                          (node_reanchor_fallbacks :=
+                             !node_reanchor_fallbacks + 1;
+                           observe_node_cache
+                             NodeCacheStructuralReanchorFallback;
+                           compute children)
                         fun reanchor () =
                           let val result = (exact_left term theorem, changed)
                           in
@@ -1607,12 +2494,11 @@ struct
                           end
                       in
                         (Portable.finally finish reanchor ()
-                         handle REANCHOR_LIMIT =>
-                           (node_reanchor_fallbacks :=
-                              !node_reanchor_fallbacks + 1;
-                            observe_node_cache
-                              NodeCacheStructuralReanchorFallback;
-                            compute children))
+                         handle REANCHOR_LIMIT => fallback ()
+                              | Feedback.HOL_ERR detail =>
+                                  if cache_admission_refusal detail then
+                                    fallback ()
+                                  else raise Feedback.HOL_ERR detail)
                       end)
                | NONE => compute children)
         end
@@ -1620,7 +2506,8 @@ struct
         (phase "skeleton/conversion" visit target)
       val normalized = boolSyntax.rhs (Thm.concl normalization)
       val _ =
-        if !owned_atoms > 0 andalso Term.aconv normalized target then
+        if !owned_atoms > 0 andalso
+            term_order (normalized, target) = EQUAL then
           raise ERR "prove" "atom expansion made no progress"
         else ()
       val graph = phase "skeleton/cnf-normalization"
@@ -1719,8 +2606,10 @@ struct
           else raise ERR "prove" "result theorem has hypotheses") ()
       val _ = phase "skeleton/final-conclusion-check"
         (fn () =>
-          if Term.aconv (Thm.concl theorem) target then ()
-          else raise ERR "prove" "result theorem does not match the target") ()
+          if Portable.pointer_eq (Thm.concl theorem, target) then ()
+          else ignore (bounded_nodewise_equality
+            SmtResource.max_skeleton_replay_dag_nodes
+            (Thm.concl theorem) target)) ()
       val _ = phase "skeleton/final-oracle-check"
         (fn () => Library.check_oracle_tags
           "SmtSkeletonProve" "result" theorem) ()
@@ -1758,7 +2647,7 @@ struct
          sat_seconds = sat_time,
          total_seconds = total_time,
          procedure_calls = procedure_calls}
-      val _ = atom_cache := !working_cache
+      val _ = if reusable () then atom_cache := !working_cache else ()
     in
       {theorem = theorem, metrics = metrics}
     end
