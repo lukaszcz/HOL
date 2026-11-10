@@ -47,4 +47,23 @@ sig
   (* run something, and report which rewrites fired while it ran *)
   val with_tracking : ('a -> 'b) -> 'a -> 'b * thm list
 
+  (* SmtLib_OwnedBooleanImpEq reads these existing stock false templates.
+     No new genvar/theorem is produced by selecting or reading a handle. *)
+  datatype false_template_kind=FalseConclusion | TruthEqualsFalse
+    | FalseEqualsTruth
+  type false_template
+  val false_template : false_template_kind -> false_template
+  val false_template_data : false_template ->
+    {proof:thm,condition:term,result:term}
+
+  (* Read-only singleton of the SAME existing EQ_SYM_EQ namespace object. *)
+  type eq_sym_template
+  val eq_sym_template : unit -> eq_sym_template
+  val eq_sym_template_data : eq_sym_template -> {proof:thm,statement:term}
+
+  (* Existing operator, exposed for HolSmt's independent regression oracle.
+     Its definition and ordinary simplifier callers are unchanged. *)
+  val CONJ_DISCH : term list -> thm -> thm
+
+
 end
