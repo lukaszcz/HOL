@@ -121,8 +121,9 @@ struct
              mk_eq (listSyntax.mk_el (numSyntax.zero_tm, s), x)),
      bossLib.METIS_TAC [listTheory.EL, listTheory.HD])
 
+  (* smt_seq_nth [x] 0 = x *)
   val nth_unit_thm = Library.prove
-    (``smt_seq_nth ([x]:'a list) 0 = x``,
+    (mk_eq (seq_app "smt_seq_nth" [unit x, intSyntax.zero_tm], x),
      bossLib.RW_TAC (bossLib.srw_ss()) [HolSmtTheory.smt_seq_nth_def])
 
   (* SMT sequence nth is deliberately unspecified out of range.  Z3 rewrites
