@@ -266,6 +266,9 @@ val _ = Hol_datatype
   `smt_fun_rec = <| smt_fun : int -> bool -> int |>`
 
 val _ = Hol_datatype
+  `smt_set_rec = <| smt_set : int -> bool; smt_size : int |>`
+
+val _ = Hol_datatype
   `smt_left = SmtLeftDone | SmtLeft of smt_right;
    smt_right = SmtRightDone | SmtRight of smt_left`
 
@@ -7393,6 +7396,78 @@ in
     "Seq/Set/Bag higher-order translation did not record its regime")
 end
 
+(* cvc5's array encoding gives a marked set an Array sort, so every use of
+   that set must be an Array too.  Each goal once reached cvc5 with a
+   select or store on a function-sorted term. *)
+fun smtlib_cvc5_array_set_sorts_success () =
+let
+  fun typechecks checked (name, goal) =
+    let
+      val (simplified, _) =
+        SolverSpec.simplify (SmtLib.CVC_SIMP_TAC checked) goal
+      val (translation, strings) =
+        CVC.goal_to_SmtLib_translation simplified
+      val text = String.concat strings
+    in
+      ignore (SmtLib_Parser.typecheck_script_string_with_options
+        {dict_logic = NONE, solver = SOME "cvc5",
+         elaborate_datatypes = false} text);
+      if String.isPrefix "conditional " name then
+        let
+          val selectors = HolKernel.find_terms (fn tm =>
+            TypeBase.is_case tm andalso not (boolSyntax.is_cond tm) andalso
+            Type.compare (Term.type_of tm,
+              Type.--> (intSyntax.int_ty, Type.bool)) = EQUAL)
+            (Lib.snd simplified)
+          val dicts = SmtLib.parser_dicts_for_solver_translation
+            "cvc5" translation
+          val parsed = List.map (fn text =>
+            parse_roundtrip_term name text dicts)
+            (List.mapPartial assert_body strings)
+        in
+          assert (not (List.null selectors),
+            name ^ ": normalized selector was not exercised");
+          List.app (fn selector =>
+            assert (List.exists
+              (term_has_subterm (Term.aconv selector)) parsed,
+              name ^ ": parser lost the normalized selector")) selectors
+        end
+      else ()
+      handle Feedback.HOL_ERR holerr =>
+        die (name ^ ": cvc5 sorts are inconsistent:\n" ^ text ^ "\n" ^
+          Feedback.message_of holerr)
+    end
+  val singleton =
+    ([``(x:num) = y``, ``(P:(num -> bool) -> bool) {x}``],
+     ``(P:(num -> bool) -> bool) {y}``)
+  val conditional =
+    ([``(a:num) IN (if c then s else t)``, ``c:bool``], ``(a:num) IN s``)
+  val selector =
+    ([``(a:int) IN r.smt_set``, ``(r:smt_set_rec) = q``],
+     ``(a:int) IN q.smt_set``)
+  val conditional_selector =
+    ([], ``(if p then r.smt_set else {}) = (s:int -> bool)``)
+  val conditional_consumer =
+    ([``(P:(int -> bool) -> bool) r.smt_set``],
+     ``(P:(int -> bool) -> bool) (if p then r.smt_set else {})``)
+  val shared_result =
+    ([``(P:(int -> bool) -> bool) ((f:int -> int -> bool) x)``,
+      ``(R:(int -> bool) -> bool) ((f:int -> int -> bool) y)``],
+     ``(P:(int -> bool) -> bool) {}``)
+in
+  List.app (typechecks true)
+    [("singleton", singleton), ("conditional", conditional),
+     ("selector", selector),
+     ("conditional selector", conditional_selector),
+     ("conditional consumer", conditional_consumer),
+     ("shared result", shared_result)];
+  List.app (typechecks false)
+    [("selector", selector),
+     ("conditional selector", conditional_selector),
+     ("conditional consumer", conditional_consumer),
+     ("shared result", shared_result)]
+end
+
 fun smtlib_native_set_translation_success () =
 let
   fun text_of result = String.concat (Lib.snd result)
@@ -7523,9 +7598,16 @@ in
       contains "(Array (_ BitVec 8) Bool)" cvc_finite_word_text,
     "finite word cvc5 complements did not use the array fallback:\n" ^
     cvc_finite_word_text);
-  assert (contains "(select (ite" cvc_conditional_text andalso
-      contains "(Array Bool Bool)" cvc_conditional_text,
-    "higher-order cvc5 Set conditional lost its array sort:\n" ^
+  (ignore (SmtLib_Parser.typecheck_script_string_with_options
+      {dict_logic = NONE, solver = SOME "cvc5",
+       elaborate_datatypes = false}
+      cvc_conditional_text)
+   handle Feedback.HOL_ERR holerr =>
+     die ("higher-order cvc5 Set conditional is ill-sorted: " ^
+       Feedback.message_of holerr));
+  assert (contains "(set.member v1 (ite" cvc_conditional_text andalso
+      not (contains "(Array Bool Bool)" cvc_conditional_text),
+    "higher-order cvc5 Set conditional lost its native sort:\n" ^
     cvc_conditional_text);
   assert (contains "(-> Bool (Array Bool Bool))" cvc_function_text andalso
       contains "(select (@" cvc_function_text,
@@ -10419,13 +10501,8 @@ let
     ([], boolSyntax.mk_eq (hd_input, ``n:int``))
   val sum_goal = normalized_goal
     ([], boolSyntax.mk_eq (sum_input, ``m:int``))
-  fun translation_error label goal =
-    (ignore (SmtLib.goal_to_SmtLib_translation NONE goal);
-     die ("FAIL: " ^ label ^
-       " partial destructor translation unexpectedly succeeded"))
-    handle Feedback.HOL_ERR holerr => Feedback.message_of holerr
   val (_, hd_strings) = SmtLib.goal_to_SmtLib_translation NONE hd_goal
-  val sum_error = translation_error "OUTL" sum_goal
+  val (_, sum_strings) = SmtLib.goal_to_SmtLib_translation NONE sum_goal
   fun family_heads ty = List.map
     SmtLib.datatype_destructor_head_for_test (registered ty)
 in
@@ -10462,45 +10539,46 @@ in
       contains_any_destructor sum_result,
     "partial destructor normalization discarded an unspecified branch");
   assert (not (List.null hd_strings),
-    "closed HD residual did not translate through its zero-arity boundary");
-  assert (contains
-      SmtLib.uninterpreted_native_datatype_destructor_diagnostic sum_error,
-    "free-variable partial destructor residual missed the named boundary")
+    "closed partial destructor residue did not translate as a UF");
+  assert (not (List.null sum_strings),
+    "open partial destructor residue did not translate as a UF")
 end
 
-fun smtlib_invented_uf_native_datatype_domain_diagnostic () =
+fun smtlib_native_datatype_uf_success () =
 let
-  val goal = ``smtlib_native_dt_uf d = 0i``
-  val equality_goal = ``smtlib_native_dt_id d = (d:smt_tri)``
-  fun attributed_to function_name goal =
-    (ignore (SmtLib.goal_to_SmtLib_translation NONE ([], goal));
-     die "FAIL: invented UF over native datatype was emitted")
-    handle Feedback.HOL_ERR holerr =>
-      let val message = Feedback.message_of holerr in
-        assert (contains function_name message andalso
-            not (contains "function=$=" message),
-          "invented-UF rejection was misattributed: " ^ message)
-      end
+  fun check_translation goal head =
+    let
+      val (translation, strings) =
+        SmtLib.goal_to_SmtLib_translation NONE ([], goal)
+      val declarations = List.filter
+        (fn SmtLib.TermDeclaration {hol_term, arity, domain_sorts, ...} =>
+              Term.aconv hol_term head andalso arity = 1 andalso
+              List.length domain_sorts = 1
+          | _ => false)
+        (SmtLib.translation_records translation)
+    in
+      assert (List.length declarations = 1 andalso
+          contains "(declare-datatypes " (String.concat strings),
+        "unknown function over a native datatype was not declared as a UF")
+    end
+  val goal = ([``smtlib_native_dt_uf d < smtlib_native_dt_uf e``],
+    ``(d:smt_tri) <> e``)
+  fun check name prover =
+    case prover goal of
+      SolverSpec.UNSAT (SOME thm) =>
+        (assert (Term.aconv (Thm.concl thm) (Lib.snd goal) andalso
+            List.all (fn h => List.exists (Term.aconv h)
+              (Lib.fst goal)) (Thm.hyp thm),
+          name ^ " native-datatype UF congruence changed the goal");
+         check_oracle_tags name thm)
+    | _ => die (name ^ " native-datatype UF congruence did not replay")
 in
-  (ignore (SmtLib.goal_to_SmtLib_translation NONE ([], goal));
-   die "FAIL: invented UF over native datatype was emitted")
-  handle Feedback.HOL_ERR holerr =>
-    let val message = Feedback.message_of holerr in
-      assert (Feedback.top_structure_of holerr = "SmtLib" andalso
-          Feedback.top_function_of holerr = "translate_term",
-        "invented-UF rejection came from the wrong boundary: " ^ message);
-      assert (contains
-          SmtLib.invented_uf_native_datatype_domain_diagnostic message,
-        "invented-UF rejection omitted its named diagnostic: " ^ message);
-      assert (contains "under-specified" message andalso
-          contains "not a countermodel" message andalso
-          contains "smtlib_native_dt_uf" message andalso
-          not (contains "function=$=" message) andalso
-          contains ":smt_tri" message,
-        "invented-UF rejection omitted or misattributed its detail: " ^
-        message)
-    end;
-  attributed_to "smtlib_native_dt_id" equality_goal
+  check_translation ``smtlib_native_dt_uf d = 0i``
+    ``smtlib_native_dt_uf``;
+  check_translation ``smtlib_native_dt_id d = (d:smt_tri)``
+    ``smtlib_native_dt_id``;
+  if Z3.is_configured () then check "Z3" Z3.Z3_SMT_Prover else ();
+  if CVC.is_configured () then check "cvc5" CVC.CVC_SMT_Prover else ()
 end
 
 fun smtlib_native_datatype_equality_builtin_success () =
@@ -10516,86 +10594,54 @@ in
     "quantified native-datatype equality was declared as an invented UF")
 end
 
-fun smtlib_uninterpreted_native_datatype_destructor_diagnostic () =
+fun smtlib_native_datatype_destructor_uf_success () =
 let
-  val goal = ``OUTL (INR (p:bool) : int + bool) = 0i``
-  val closed_hd = ``HD ([]:int list)``
-  val reducible_hd = ``HD ([1]:int list)``
-  val reducible_fst = ``FST ((1i, T):int # bool)``
-  val reducible_outl = ``OUTL (INL 1i : int + bool)``
-  fun raw_rejection label term =
-    ((ignore (SmtLib.goal_to_SmtLib_translation NONE
-        ([], boolSyntax.mk_eq (term, term)));
-      die ("FAIL: raw reducible destructor crossed translation: " ^ label))
-     handle Feedback.HOL_ERR holerr =>
-       contains SmtLib.uninterpreted_native_datatype_destructor_diagnostic
-         (Feedback.message_of holerr))
-  val (closed_translation, _) = SmtLib.goal_to_SmtLib_translation NONE
-    ([], boolSyntax.mk_eq (closed_hd, closed_hd))
-  val closed_declarations = List.filter
-    (fn SmtLib.TermDeclaration {hol_term, ...} =>
-          Term.aconv hol_term closed_hd
+  fun declaration_count translation head = List.length (List.filter
+    (fn SmtLib.TermDeclaration {hol_term, arity, domain_sorts, ...} =>
+          Term.aconv hol_term head andalso arity = 1 andalso
+          List.length domain_sorts = 1
       | _ => false)
-    (SmtLib.translation_records closed_translation)
-  val closed_shape =
-    case closed_declarations of
-      [SmtLib.TermDeclaration {arity, domain_sorts, ...}] =>
-        arity = 0 andalso List.null domain_sorts
-    | _ => false
+    (SmtLib.translation_records translation))
+  fun check_translation tm =
+    let
+      val (translation, _) = SmtLib.goal_to_SmtLib_translation NONE
+        ([], boolSyntax.mk_eq (tm, tm))
+      val (head, _) = boolSyntax.strip_comb tm
+    in
+      assert (declaration_count translation head = 1,
+        "raw datatype destructor did not use the generic UF declaration")
+    end
   val reuse_input =
     ([boolSyntax.mk_eq (``HD [HD ([]:int list)]``, ``x:int``)],
-     boolSyntax.mk_eq (closed_hd, ``y:int``))
-  val reuse_goal =
-    case Lib.fst (SmtLib.SIMP_TAC true reuse_input (Context.snapshot ())) of
-      [normalized] => normalized
-    | _ => die "closed destructor reuse preprocessing changed goal count"
+     boolSyntax.mk_eq (``HD ([]:int list)``, ``y:int``))
   val (reuse_translation, _) =
-    SmtLib.goal_to_SmtLib_translation NONE reuse_goal
-  val reuse_declarations = List.filter
-    (fn SmtLib.TermDeclaration {hol_term, ...} =>
-          Term.aconv hol_term closed_hd
-      | _ => false)
-    (SmtLib.translation_records reuse_translation)
-  val prescan_message =
-    ((SmtLib.reject_uninterpreted_native_destructors_for_test [reducible_hd];
-      die "FAIL: defensive destructor pre-scan accepted raw HD [1]")
-     handle Feedback.HOL_ERR holerr => Feedback.message_of holerr)
+    SmtLib.goal_to_SmtLib_translation NONE reuse_input
+  val goals = [
+    ([``s = INR T : int + bool``],
+      ``OUTL (s:int + bool) = OUTL (INR T : int + bool)``),
+    ([``p:bool``],
+      ``OUTL (INR p : int + bool) = OUTL (INR T : int + bool)``)
+  ]
+  fun check name prover goal =
+    case prover goal of
+      SolverSpec.UNSAT (SOME thm) =>
+        (assert (Term.aconv (Thm.concl thm) (Lib.snd goal) andalso
+            List.all (fn h => List.exists (Term.aconv h)
+              (Lib.fst goal)) (Thm.hyp thm),
+          name ^ " partial-destructor congruence changed the goal");
+         check_oracle_tags name thm)
+    | _ => die (name ^ " partial-destructor congruence did not replay")
 in
-  assert (contains
-      SmtLib.uninterpreted_native_datatype_destructor_diagnostic
-      prescan_message,
-    "defensive destructor pre-scan missed its unique raw-boundary test");
-  assert (SmtLib.closed_constructor_destructor_residual_for_test closed_hd,
-    "irreducible closed HD residue missed its theorem-sensitive boundary");
-  assert (not (SmtLib.closed_constructor_destructor_residual_for_test
-      reducible_hd) andalso
-      not (SmtLib.closed_constructor_destructor_residual_for_test
-        reducible_fst) andalso
-      not (SmtLib.closed_constructor_destructor_residual_for_test
-        reducible_outl),
-    "a theorem-reducible destructor was admitted as a closed residual");
-  assert (raw_rejection "HD [1]" reducible_hd andalso
-      raw_rejection "FST (1,T)" reducible_fst andalso
-      raw_rejection "OUTL (INL 1)" reducible_outl,
-    "raw public translation did not hard-reject a reducible destructor");
-  assert (closed_shape,
-    "closed destructor residue was not reused as one zero-arity symbol");
-  assert (List.length reuse_declarations = 1,
-    "preprocessed HD [HD []] and HD [] did not reuse one residual symbol");
-  ((ignore (SmtLib.goal_to_SmtLib_translation NONE ([], goal));
-    die "FAIL: uninterpreted native-datatype destructor was emitted")
-   handle Feedback.HOL_ERR holerr =>
-     let val message = Feedback.message_of holerr in
-       assert (Feedback.top_structure_of holerr = "SmtLib" andalso
-           Feedback.top_function_of holerr = "translate_term",
-         "destructor rejection came from the wrong boundary: " ^ message);
-       assert (contains
-           SmtLib.uninterpreted_native_datatype_destructor_diagnostic
-           message,
-         "destructor rejection omitted its named diagnostic: " ^ message);
-       assert (contains "OUTL" message andalso contains ":int + bool" message,
-         "destructor rejection omitted its destructor/domain: " ^ message)
-     end)
+  List.app check_translation
+    [``HD ([]:int list)``, ``HD ([1]:int list)``,
+     ``FST ((1i, T):int # bool)``, ``OUTL (INL 1i : int + bool)``,
+     ``OUTL (INR (p:bool) : int + bool)``];
+  assert (declaration_count reuse_translation ``HD:int list -> int`` = 1,
+    "nested and closed HD calls did not reuse the same UF");
+  if Z3.is_configured () then
+    List.app (check "Z3" Z3.Z3_SMT_Prover) goals else ();
+  if CVC.is_configured () then
+    List.app (check "cvc5" CVC.CVC_SMT_Prover) goals else ()
 end
 
 fun smtlib_datatype_parser_dict_success () =
@@ -34795,6 +34841,8 @@ let
       smtlib_seq_set_bag_feature_inference_success),
     ("smtlib_native_set_translation_success",
       smtlib_native_set_translation_success),
+    ("smtlib_cvc5_array_set_sorts_success",
+      smtlib_cvc5_array_set_sorts_success),
     ("smtlib_translation_context_isolation_success",
       smtlib_translation_context_isolation_success),
     ("smtlib_native_bag_translation_success",
@@ -34851,12 +34899,12 @@ let
       datatype_exact_spine_case_eta_success),
     ("datatype_destructor_ablation_boundaries_success",
       datatype_destructor_ablation_boundaries_success),
-    ("smtlib_uninterpreted_native_datatype_destructor_diagnostic",
-      smtlib_uninterpreted_native_datatype_destructor_diagnostic),
+    ("smtlib_native_datatype_destructor_uf_success",
+      smtlib_native_datatype_destructor_uf_success),
     ("datatype_destructor_normalization_success",
       datatype_destructor_normalization_success),
-    ("smtlib_invented_uf_native_datatype_domain_diagnostic",
-      smtlib_invented_uf_native_datatype_domain_diagnostic),
+    ("smtlib_native_datatype_uf_success",
+      smtlib_native_datatype_uf_success),
     ("smtlib_native_datatype_equality_builtin_success",
       smtlib_native_datatype_equality_builtin_success),
     ("smtlib_datatype_parser_dict_success",

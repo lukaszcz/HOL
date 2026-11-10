@@ -21,7 +21,8 @@ struct
      computed_applications:(scoped_node * int * scoped_node) list,
      mixed_argument:bool,bound_application:bool,visits:int,bound_visits:int}
   type native_syntax =
-    {set_role:{head:G.node,atomic:bool} -> M.role,
+    {collection_symbol:G.node -> bool,
+     set_role:{head:G.node,atomic:bool} -> M.role,
      bag_role:{head:G.node,atomic:bool} -> M.role,
      is_set_type:Type.hol_type -> bool,is_bag_type:Type.hol_type -> bool,
      is_cond:G.node -> bool,is_let:G.node -> bool,is_uncurry:G.node -> bool,
@@ -571,7 +572,8 @@ struct
           fun collect_native (raw:native_syntax) seeds =
             let
               val syntax:native_syntax =
-                {set_role=external (#set_role raw),
+                {collection_symbol=external (#collection_symbol raw),
+                 set_role=external (#set_role raw),
                  bag_role=external (#bag_role raw),
                  is_set_type=external (#is_set_type raw),
                  is_bag_type=external (#is_bag_type raw),
@@ -724,7 +726,18 @@ struct
                     marker_ops syntax_error hooks policy
                   val terms = List.foldl (fn (term,terms) => walk term terms)
                     initial roots
-                in (terms,!walks) end
+                  val closure : term M.closure_operations =
+                    {compare=fn (left,right) =>
+                       Int.compare (semantic_id [] left,semantic_id [] right),
+                     share_symbol=fn term => case view term of
+                         Variable => true
+                       | Constant => constant_test
+                           (#collection_symbol syntax) term
+                       | _ => false,
+                     let_body=fn term => #2 (L.dest_anylet let_ops term)}
+                  val (terms,parameters) =
+                    M.close marker_ops closure syntax_error ordered terms
+                in (terms,!walks,parameters) end
               val sets = collect (#set_role syntax) (#is_set_type syntax)
                 {propagate_bindings=true,visit_prefix=false} seed_sets
               val bags = collect (#bag_role syntax) (#is_bag_type syntax)
@@ -790,7 +803,8 @@ struct
                   if List.exists (fn saved =>
                       (#same operations) (current,saved)) terms
                   then terms else current::terms) seed_numbers numbers
-            in ([sets,bags],numbers,!number_visits) end
+            in ([(#1 sets,#2 sets),(#1 bags,#2 bags)],
+                numbers,!number_visits,[#3 sets,#3 bags]) end
           fun argument_analysis collection_terms =
             let
               val bound_visits = ref 0
@@ -820,11 +834,11 @@ struct
               val bound_application = A.has_bound_application_with_memo
                 operations memoize collection_terms roots
             in (computed,mixed,bound_application,!bound_visits) end
-          val (groups,numbers,number_visits) = case selection of
+          val (groups,numbers,number_visits,parameters) = case selection of
               Explicit collections => ([(List.map (fn current =>
                 let val _ = ignore (G.type_of graph current)
                 in resolve (at (G.node_scope graph current) current) end)
-                collections,0)],[],0)
+                collections,0)],[],0,[[]])
             | Native syntax => collect_native syntax NONE
             | SeededNative (syntax,seeds) =>
                 collect_native syntax (SOME seeds)
@@ -883,7 +897,7 @@ struct
               val (sets,bags) = case groups of
                   [(sets,_),(bags,_)] => (sets,bags)
                 | _ => raise ERR "borrow" "native analysis required"
-              val computed = List.concat
+              val computed = List.concat parameters @ List.concat
                 (List.map (fn (entries,_,_,_) => entries) analyses)
               fun contextual (function,index) =
                 Option.map (fn (_,_,argument) => argument)

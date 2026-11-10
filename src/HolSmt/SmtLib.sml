@@ -1575,14 +1575,6 @@ local
 
   fun is_marked_bag_term tm = mem_aconv tm (!current_bag_terms)
 
-  fun collect_query_collection_markers roots =
-    let
-      val sets = List.foldl (fn (term, acc) =>
-        collect_native_set_terms term acc) [] roots
-      val bags = List.foldl (fn (term, acc) =>
-        collect_native_bag_terms term acc) [] roots
-    in {sets = sets, bags = bags} end
-
   datatype 'term backend_view =
       BackendVariable | BackendConstant
     | BackendApplication of 'term * 'term
@@ -1659,6 +1651,9 @@ local
       fun native_set current = memoize "native-set" [] current (fn () =>
         is_variable current orelse is_empty_set current orelse
         is_univ_set current orelse
+        (case dest boolSyntax.conditional 3 current of
+           SOME [_,left,right] => native_set left andalso native_set right
+         | _ =>
         (case binary pred_setSyntax.insert_tm current of
            SOME (_,set) => native_set set
          | NONE => (case binary pred_setSyntax.delete_tm current of
@@ -1671,7 +1666,7 @@ local
                    SOME (left,right) =>
                      native_set left andalso native_set right
                  | NONE => (case unary pred_setSyntax.compl_tm current of
-                     SOME set => native_set set | NONE => false)))))))
+                     SOME set => native_set set | NONE => false))))))))
       fun finite_set evidence current =
         memoize "finite-set" [evidence] current (fn () =>
           let
@@ -1954,6 +1949,50 @@ local
     Term.prim_mk_const {Thy = "smtstringz3", Name = "seq_nth_i"}
   val int_of_num_tm = Term.prim_mk_const {Thy="integer", Name="int_of_num"}
 
+  val native_sequence_heads = [
+    seq_append_tm, seq_cons_tm, seq_reverse_tm, seq_prefix_tm,
+    seq_lupdate_tm, seq_map_tm, seq_foldl_tm, seq_contains_tm,
+    seq_suffix_tm, smt_seq_nth_tm, smt_seq_extract_tm, smt_seq_at_tm,
+    smt_seq_indexof_tm, smt_seq_replace_tm, smt_seq_replace_all_tm,
+    smt_seq_update_tm]
+
+  fun collection_symbol head =
+    let
+      fun case_head () =
+        let val (domain,_) = Type.dom_rng (Term.type_of head)
+        in case TypeBase.fetch domain of
+            SOME info => same_const head (TypeBasePure.case_const_of info)
+          | NONE => false end
+        handle Feedback.HOL_ERR _ => false
+      val builtin = Term.is_const head andalso
+        let val {Thy,Name,...} = Term.dest_thy_const head
+        in Redblackset.member (builtin_const_names,(Thy,Name)) end
+    in (Term.is_var head orelse Term.is_const head) andalso
+      not (builtin orelse case_head () orelse
+        List.exists (same_const head) (seq_length_tm :: native_sequence_heads)
+        orelse same_const head boolSyntax.conditional orelse
+        same_const head boolSyntax.equality orelse
+        same_const head boolSyntax.let_tm orelse
+        is_native_set_head head orelse is_native_bag_head head)
+    end
+
+  fun query_collection_closure roots =
+    let
+      val inventory = List.concat (List.map Library.subterms roots)
+      val closure : Term.term SmtLib_CollectionMarkers.closure_operations =
+        {compare=Term.compare,share_symbol=collection_symbol,
+         let_body=fn term => #2 (dest_carrier_let term)}
+      fun close operations collect = SmtLib_CollectionMarkers.close
+        operations closure (fn Feedback.HOL_ERR _ => true | _ => false)
+        inventory (List.foldl (fn (term,acc) => collect term acc) [] roots)
+      val sets = close set_marker_operations collect_native_set_terms
+      val bags = close bag_marker_operations collect_native_bag_terms
+    in (sets,bags) end
+
+  fun collect_query_collection_markers roots =
+    let val ((sets,_),(bags,_)) = query_collection_closure roots
+    in {sets=sets,bags=bags} end
+
   (* One grammar serves the ordinary emitter and authenticated graph
      carriers. Primitive syntax callbacks retain the Term adapter's exact
      destructor/constructor diagnostics. Only optional_error classifies a
@@ -2085,13 +2124,7 @@ local
           Option.isSome (optional dest_string_nth_shape tm) orelse
           Option.isSome (optional dest_seq_extract_shape tm) orelse
           Option.isSome (optional dest_seq_at_shape tm) orelse
-          List.exists (fn head => same_const rator head) [
-            seq_append_tm, seq_cons_tm, seq_reverse_tm,
-            seq_prefix_tm, seq_lupdate_tm, seq_map_tm, seq_foldl_tm,
-            seq_contains_tm, seq_suffix_tm,
-            smt_seq_nth_tm,
-            smt_seq_extract_tm, smt_seq_at_tm, smt_seq_indexof_tm,
-            smt_seq_replace_tm, smt_seq_replace_all_tm, smt_seq_update_tm])
+          List.exists (same_const rator) native_sequence_heads)
         fun native_set_symbol rator rands =
           same_const rator pred_setSyntax.in_tm orelse
           is_native_set_head rator orelse
@@ -2868,12 +2901,6 @@ local
       else
         NONE
 
-  val invented_uf_native_datatype_domain_diagnostic =
-    "HOLSMT_TRANSLATION_INVENTED_UF_NATIVE_DATATYPE_DOMAIN"
-
-  val uninterpreted_native_datatype_destructor_diagnostic =
-    "HOLSMT_TRANSLATION_UNINTERPRETED_NATIVE_DATATYPE_DESTRUCTOR"
-
   val unsupported_smtfloat_constant_diagnostic =
     "HOLSMT_TRANSLATION_UNSUPPORTED_SMTFLOAT_CONSTANT"
 
@@ -2973,196 +3000,17 @@ local
   fun datatype_destructor_theorem tyinfo destructor =
     datatype_destructor_theorem_with Lib.I Term.same_const tyinfo destructor
 
-  (* This predicate follows the actual type emitter: ordinary native lists
-     are datatypes, but a selected Seq backend emits them as `(Seq ...)` and
-     therefore does not create the under-specified native-datatype boundary. *)
-  fun emits_native_datatype_sort ty =
-    not (is_function_type ty) andalso
-    not (has_type_builtin ty) andalso
-    not (!current_native_sequence_emission andalso
-      is_native_sequence_type ty) andalso
-    Option.isSome (datatype_family ty)
-
-  fun registered_destructor_for_domain destructor domain =
-    case TypeBase.fetch domain of
-      SOME tyinfo =>
-        Option.isSome (datatype_destructor_theorem tyinfo destructor)
-    | NONE => false
-
-  fun emitted_native_sort ty =
-    emits_native_datatype_sort ty orelse
-    (!current_native_sequence_emission andalso is_native_sequence_type ty)
-
-  (* The domain policy observes only types and genuine atomic declarations.
-     Query authentication and diagnostic formatting stay outside the pure
-     metadata exception boundary. The caller supplies its existing shape
-     error policy; this factory grants no Source or equality permission. *)
-  type 'term native_datatype_policy_operations =
-    {constant_leaf : 'term -> Term.term option,
-     term_to_string : 'term -> string,
-     syntax_error : string -> string -> exn,metadata_error : exn -> exn}
-
-  type 'term native_datatype_policy =
-    {destructor_domain : 'term -> Type.hol_type list -> Type.hol_type option,
-     raise_destructor : 'term -> Type.hol_type -> unit,
-     reject_invented : 'term -> Type.hol_type list -> unit}
-
-  fun native_datatype_policy_with
-      (operations : 'term native_datatype_policy_operations)
-      : 'term native_datatype_policy =
-    let
-      fun metadata thunk = thunk () handle primary as Feedback.HOL_ERR _ =>
-        raise (#metadata_error operations) primary
-      fun destructor_domain rator domain_types =
-        case (#constant_leaf operations) rator of
-          SOME atom => metadata (fn () =>
-            List.find (fn domain => emitted_native_sort domain andalso
-              registered_destructor_for_domain atom domain) domain_types)
-        | NONE => NONE
-      fun raise_destructor rator domain =
-        raise (#syntax_error operations) "translate_term"
-          (uninterpreted_native_datatype_destructor_diagnostic ^
-           ": refusing an uninterpreted TypeBase destructor over a native " ^
-           "sort; destructor=" ^ (#term_to_string operations) rator ^
-           "; domain=" ^ Hol_pp.type_to_string domain)
-      fun reject_invented rator domain_types =
-        let val domain = destructor_domain rator domain_types in
-          case domain of
-            SOME domain => raise_destructor rator domain
-          | NONE =>
-              (case metadata (fn () =>
-                  List.find emits_native_datatype_sort domain_types) of
-                NONE => ()
-              | SOME domain =>
-                  raise (#syntax_error operations) "translate_term"
-                    (invented_uf_native_datatype_domain_diagnostic ^
-                     ": refusing an invented function whose domain was " ^
-                     "emitted as a native datatype sort; the query is " ^
-                     "under-specified and its sat/unknown verdict is not " ^
-                     "a countermodel; function=" ^
-                     (#term_to_string operations) rator ^ "; domain=" ^
-                     Hol_pp.type_to_string domain))
-        end
-    in
-      {destructor_domain=destructor_domain,raise_destructor=raise_destructor,
-       reject_invented=reject_invented}
-    end
-
-  val term_native_datatype_policy_operations :
-      Term.term native_datatype_policy_operations =
-    {constant_leaf=fn rator =>
-       if Term.is_const rator then SOME rator else NONE,
-     term_to_string=Hol_pp.term_to_string,
-     syntax_error=ERR,metadata_error=Lib.I}
-  val term_native_datatype_policy =
-    native_datatype_policy_with term_native_datatype_policy_operations
-  val uninterpreted_native_destructor_domain =
-    #destructor_domain term_native_datatype_policy
-  val raise_uninterpreted_native_destructor =
-    #raise_destructor term_native_datatype_policy
-  val reject_invented_native_datatype_domain =
-    #reject_invented term_native_datatype_policy
-
   fun theorem_reduces_exact_application theorem tm =
     let
       val reduction = simpLib.SIMP_CONV pureSimps.pure_ss [theorem] tm
       val (lhs, rhs) = boolSyntax.dest_eq (Thm.concl reduction)
       val _ = Term.aconv lhs tm orelse
-        raise ERR "closed_constructor_destructor_residual"
+        raise ERR "theorem_reduces_exact_application"
           "registered destructor proof has the wrong left-hand side"
     in
       not (Term.aconv lhs rhs)
     end
     handle Conv.UNCHANGED => false
-
-  (* A partial destructor on a closed constructor outside its owning branch
-     is a fixed but unspecified HOL value.  It can soundly be represented by
-     one zero-arity SMT constant keyed by the whole application: unlike an
-     uninterpreted destructor function, that declaration has no native-sort
-     domain.  Admission is theorem-sensitive: a registered equation which can
-     reduce the exact application must be used by preprocessing, never hidden
-     behind this residual boundary.  Any free/symbolic scrutinee remains behind
-     the hard diagnostic. *)
-  type 'term carrier_residual_operations =
-    {is_comb : 'term -> bool,dest_comb : 'term -> 'term * 'term,
-     type_of : 'term -> Type.hol_type,
-     strip_comb : 'term -> 'term * 'term list,
-     same_const : 'term -> Term.term -> bool,
-     constant_leaf : 'term -> Term.term option,
-     free_vars : 'term -> 'term list,
-     theorem_reduces_exact_application : Thm.thm -> 'term -> bool,
-     metadata_error : exn -> exn}
-
-  (* The reducer must observe the exact registered theorem's complete
-     pure_ss simplification of this application. In particular, absence of
-     an outer constructor rule is not evidence that descendants are normal.
-     Only declaration/type observations enter the metadata error boundary;
-     carrier authentication and the required reducer remain outside it. *)
-  fun closed_constructor_destructor_residual_with
-      (operations : 'term carrier_residual_operations) =
-    let
-      val {is_comb,dest_comb,type_of,strip_comb,same_const,constant_leaf,
-           free_vars,theorem_reduces_exact_application,metadata_error} =
-        operations
-      fun metadata thunk = thunk () handle primary as Feedback.HOL_ERR _ =>
-        raise metadata_error primary
-      fun residual tm =
-        if not (is_comb tm) then false
-        else
-          let
-            val (destructor, scrutinee) = dest_comb tm
-            val domain = type_of scrutinee
-            val (constructor, _) = strip_comb scrutinee
-            val registered =
-              case metadata (fn () => TypeBase.fetch domain) of
-                NONE => NONE
-              | SOME tyinfo =>
-                  Option.map (fn theorem => (tyinfo, theorem))
-                    (datatype_destructor_theorem_with metadata_error
-                      same_const tyinfo destructor)
-          in
-            case registered of
-              NONE => false
-            | SOME (_, theorem) =>
-                metadata (fn () => emitted_native_sort domain) andalso
-                (case constant_leaf constructor of
-                   NONE => false
-                 | SOME atom =>
-                     metadata (fn () => TypeBase.is_constructor atom))
-                andalso List.null (free_vars tm) andalso
-                not (theorem_reduces_exact_application theorem tm)
-          end
-    in residual end
-
-  val term_carrier_residual_operations :
-      Term.term carrier_residual_operations =
-    {is_comb=Term.is_comb,dest_comb=Term.dest_comb,type_of=Term.type_of,
-     strip_comb=boolSyntax.strip_comb,same_const=Term.same_const,
-     constant_leaf=fn term => if Term.is_const term then SOME term else NONE,
-     free_vars=Term.free_vars,
-     theorem_reduces_exact_application=theorem_reduces_exact_application,
-     metadata_error=Lib.I}
-  val closed_constructor_destructor_residual =
-    closed_constructor_destructor_residual_with
-      term_carrier_residual_operations
-
-  fun reject_uninterpreted_native_destructors terms =
-  let
-    fun reject tm =
-      if not (Term.is_comb tm) then ()
-      else
-        let val (rator, argument) = Term.dest_comb tm in
-          if closed_constructor_destructor_residual tm then ()
-          else
-            (case uninterpreted_native_destructor_domain rator
-                [Term.type_of argument] of
-              SOME domain => raise_uninterpreted_native_destructor rator domain
-            | NONE => ())
-        end
-  in
-    List.app reject (List.concat (List.map Library.subterms terms))
-  end
-
 
   fun constructor_name type_name constructor used =
     let
@@ -4121,7 +3969,10 @@ local
           Redblackmap.insert (dict, s, [Lib.K (SmtLib_Theories.zero_args
             (fn args =>
               if accepted_arity args then
-                Term.list_mk_comb (tm, args)
+                List.foldl (fn (arg,function) =>
+                  if Term.is_abs function then
+                    Term.beta_conv (Term.mk_comb (function,arg))
+                  else Term.mk_comb (function,arg)) tm args
               else
                 SmtLib_Theories.decline ("<" ^ s ^ ">")
                   "wrong number of arguments"))])
@@ -4409,14 +4260,11 @@ local
     parser_case : 'term -> 'term carrier_parser_case option,
     datatype_selector_term : Type.hol_type -> Term.term -> int -> 'term ->
       'term,
-    closed_constructor_destructor_residual : 'term -> bool,
     has_ranked_semantics : 'term -> bool,
     is_case : 'term -> bool,
     is_update_comb : 'term -> bool,
     dest_update_comb : 'term -> ('term * 'term) * 'term,
     reject_unsupported_smtfloat_constant : 'term -> unit,
-    reject_invented_native_datatype_domain : 'term -> Type.hol_type list ->
-      unit,
     collection_recognizers : 'term collection_recognizers,
     syntax_error : string -> string -> exn,
     is_fallback_error : exn -> bool,
@@ -4488,8 +4336,6 @@ local
       | SOME (ParserTester fields) => SOME (CarrierTester fields)
       | NONE => NONE),
     datatype_selector_term = (datatype_selector_term),
-    closed_constructor_destructor_residual =
-      (closed_constructor_destructor_residual),
     has_ranked_semantics = (fn c => TypeBase.is_constructor c orelse
       (Term.is_const c andalso
         let val {Thy, Name, ...} = Term.dest_thy_const c
@@ -4499,8 +4345,6 @@ local
     dest_update_comb = (combinSyntax.dest_update_comb),
     reject_unsupported_smtfloat_constant =
       (reject_unsupported_smtfloat_constant),
-    reject_invented_native_datatype_domain =
-      (reject_invented_native_datatype_domain),
     collection_recognizers = term_collection_recognizers,
     syntax_error = ERR,
     is_fallback_error = (fn Feedback.HOL_ERR _ => true | _ => false),
@@ -4676,9 +4520,6 @@ local
       expected (fn () => (#parser_case operations) x)
     fun carrier_datatype_selector_term x y z u =
       expected (fn () => (#datatype_selector_term operations) x y z u)
-    fun carrier_closed_constructor_destructor_residual x =
-      expected (fn () => (#closed_constructor_destructor_residual
-        operations) x)
     fun carrier_has_ranked_semantics x =
       expected (fn () => (#has_ranked_semantics operations) x)
     fun carrier_is_case x =
@@ -4689,9 +4530,6 @@ local
       expected (fn () => (#dest_update_comb operations) x)
     fun carrier_reject_unsupported_smtfloat_constant x =
       expected (fn () => (#reject_unsupported_smtfloat_constant operations) x)
-    fun carrier_reject_invented_native_datatype_domain x y =
-      expected (fn () => (#reject_invented_native_datatype_domain
-        operations) x y)
     fun carrier_string_nth_shape current = expected (fn () =>
       (#string_nth_shape (#collection_recognizers operations)) current)
     fun carrier_seq_extract_shape current = expected (fn () =>
@@ -4900,8 +4738,10 @@ local
       end
     fun fallback_application name dependencies =
       sexpr name (List.map (output_text o Lib.snd) dependencies)
+    (* [definition] gives the defining body for a binder; with NONE the
+       symbol stays uninterpreted. *)
     fun fallback_array_definition prefix range_sort element_type
-        acc expression args body =
+        acc expression definition =
       let
         val dependencies = fallback_dependencies expression
         val dependency_vars = List.map Lib.fst dependencies
@@ -4949,18 +4789,22 @@ local
             val application = fallback_application name dependencies
             val quantified_decls = dependency_decls @
               ["(" ^ binder ^ " " ^ element_sort ^ ")"]
-            val definition = output_concat
-              [output_text "(assert ",
-               output_generated_forall quantified_decls
-                 (seal (tmdict, output_concat
-                   [output_text "(= (select ", application,
-                    output_text (" " ^ binder ^ ") "),
-                    body (output_text binder) args, output_text ")"])),
-               output_text ")\n"]
+            val definitions =
+              case definition of
+                NONE => []
+              | SOME body =>
+                  [output_concat
+                    [output_text "(assert ",
+                     output_generated_forall quantified_decls
+                       (seal (tmdict, output_concat
+                         [output_text "(= (select ", application,
+                          output_text (" " ^ binder ^ ") "),
+                          body (output_text binder), output_text ")"])),
+                     output_text ")\n"]]
           in
             ((tydict, tmdict),
              (typedecls @ List.concat dependency_typedecls @
-                [output_text declaration, definition],
+                output_text declaration :: definitions,
               application))
           end
       end
@@ -4969,7 +4813,7 @@ local
        quantified definition, rather than cvc5's finite set operators. *)
     fun fallback_set_definition acc set args body =
       fallback_array_definition "set" "Bool" (carrier_set_element_type set)
-        acc set args body
+        acc set (SOME (fn binder => body binder args))
     fun native_sequence_builtin (rator, rands) =
       let
         fun translate_args_from start args =
@@ -5285,7 +5129,7 @@ local
       end
     fun fallback_bag_definition acc bag args body =
       fallback_array_definition "bag" "Int" (carrier_bag_element_type bag)
-        acc bag args body
+        acc bag (SOME (fn binder => body binder args))
     fun z3_bag_helper terms name definition =
       let val (terms,fresh) = reserve_helper (terms,name)
       in (terms,if fresh then [output_text definition] else []) end
@@ -5463,28 +5307,6 @@ local
       let val (tydict, (decls, name)) = metadata_translate_type regime
         (tydict, ty)
       in (((tydict, tmdict), decls), name) end
-    fun translate_closed_destructor_residual acc =
-      let
-        val _ = carrier_closed_constructor_destructor_residual tm orelse
-          raise ERR "translate_closed_destructor_residual"
-            "not a closed constructor-headed destructor residue"
-        val (((tydict, tmdict), typedecls), sort) =
-          ensure_type (acc, carrier_type_of tm)
-      in
-        case term_peek (tmdict, (ordinary_key (tm, 0))) of
-          SOME name => ((tydict, tmdict), (typedecls, output_text name))
-        | NONE =>
-            let
-              val name = tm_prefix ^
-                Int.toString (term_count tmdict)
-              val tmdict = term_insert (tmdict, (ordinary_key (tm, 0)), name)
-              val declaration = output_term_declaration regime name [] sort
-              val tmdict = record_sorts
-                (tmdict, ordinary_key (tm, 0), ([], sort))
-            in
-              ((tydict, tmdict), (typedecls @ [declaration], output_text name))
-            end
-      end
     fun translate_injected_string acc =
       let
         val string = carrier_dest_injected_string tm
@@ -5569,6 +5391,42 @@ local
       let val (v, body) = carrier_dest_abs tm in
         emit_binder {head = "lambda", nest_errors = true} acc [v] body
       end
+    (* Standard27 emits abstractions, selectors and partially applied
+       constants as functions, but the Array backends give a marked
+       collection an Array sort. *)
+    fun array_collection t =
+      regime = HigherOrder Standard27 andalso
+      (!current_set_backend = CVC5ArraySet andalso
+       carrier_is_marked_set_term t orelse
+       !current_bag_backend = CVC5ArrayBag andalso
+       carrier_is_marked_bag_term t)
+    fun partial_array_collection () =
+      let val (rator, rands) = carrier_strip_comb tm in
+        array_collection tm andalso carrier_is_const rator andalso
+        List.length rands < carrier_declared_const_arity rator
+      end
+    (* A constant body is a const array; any other body is left
+       uninterpreted, keyed by the abstraction, so equal abstractions get
+       one symbol. *)
+    fun translate_array_abstraction acc =
+      let
+        val body = Lib.snd (carrier_dest_abs tm)
+        fun constant (tydict, result) = ((tydict, Lib.snd acc), result)
+        val is_set = carrier_is_marked_set_term tm
+      in
+        if is_set andalso carrier_same_const body boolSyntax.F then
+          constant (set_constant (Lib.fst acc) tm "false")
+        else if is_set andalso carrier_same_const body boolSyntax.T then
+          constant (set_constant (Lib.fst acc) tm "true")
+        else if is_set then
+          fallback_array_definition "set" "Bool"
+            (carrier_set_element_type tm) acc tm NONE
+        else if carrier_same_const body numSyntax.zero_tm then
+          constant (bag_constant (Lib.fst acc) tm)
+        else
+          fallback_array_definition "bag" "Int"
+            (carrier_bag_element_type tm) acc tm NONE
+      end
     fun eta_expand_ranked_constant acc applied rator rank rands_count =
       let
         fun drop 0 ty = ty
@@ -5603,6 +5461,8 @@ local
     fun translate_constructor_application acc rator rands =
       let
         val _ = carrier_is_constructor rator
+        val _ = not (List.exists array_collection rands) orelse
+          raise ERR "translate_term" "Array-valued constructor argument"
         val (doms, data_ty) = metadata_strip_fun (carrier_type_of rator)
         val _ = not (metadata_datatype_excluded data_ty) orelse
           raise ERR "translate_term" "excluded datatype constructor"
@@ -5640,11 +5500,36 @@ local
             SOME (_, _, selectors) =>
               Lib.fst (List.nth (selectors, selector_index))
           | NONE => raise ERR "translate_term" "selector constructor missing"
+        val (tydict,(sortdecls,result_sort)) =
+          if array_collection tm then
+            if carrier_is_marked_set_term tm then selected_set_sort tydict tm
+            else selected_bag_sort tydict tm
+          else (tydict,([],""))
+        val (tmdict,selector_decls,selector_name) =
+          if array_collection tm then
+            let
+              val variable = carrier_genvar data_ty
+              val selector = carrier_list_mk_abs ([variable],
+                carrier_datatype_selector_term data_ty constructor
+                  selector_index variable)
+              val key = ordinary_key (selector,1)
+            in case term_peek (tmdict,key) of
+              SOME name => (tmdict,[],name)
+            | NONE =>
+                let val name = tm_prefix ^ Int.toString (term_count tmdict)
+                    val tmdict = record_sorts
+                      (tmdict,key,([type_name],result_sort))
+                in (term_insert (tmdict,key,name),
+                    [output_term_declaration regime name [type_name]
+                      result_sort],name) end
+            end
+          else (tmdict,[],selector_name)
         val acc = (tydict, tmdict)
         val (acc, (elemdecls, elemname)) =
           translate (acc, (bounds, scrutinee))
       in
-        (acc, (typedecls @ elemdecls, sexpr selector_name [elemname]))
+        (acc, (typedecls @ sortdecls @ selector_decls @ elemdecls,
+          sexpr selector_name [elemname]))
       end
     fun translate_tester_case acc =
       let
@@ -5850,24 +5735,15 @@ local
     handle e as NestedTranslation _ => raise e
          | DispatchFailure _ =>
 
-    (* A closed partial-destructor residue is one fixed HOL value.  Emit the
-       whole residual as a reusable zero-arity symbol; never decompose it into
-       a function whose domain is the native datatype/sequence sort. *)
-    (if carrier_closed_constructor_destructor_residual tm then
-       translate_closed_destructor_residual acc
-       handle DispatchFailure e => raise (#commit_error operations) e
-     else
-       raise ERR "translate_term" "not a closed destructor residue")
-    handle e as NestedTranslation _ => raise e
-         | DispatchFailure _ =>
-
     (* cvc5 parses a bag literal as a lambda, but retransmission must retain
        the Bag operation rather than send that lambda to Array consumers. *)
     (if carrier_is_parsed_bag_literal tm then translate_parsed_bag_literal acc
      else
        case regime of
          FirstOrder => raise ERR "translate_term" "not first-order"
-       | HigherOrder _ => translate_lambda acc)
+       | HigherOrder _ =>
+           if array_collection tm then translate_array_abstraction acc
+           else translate_lambda acc)
     handle DispatchFailure _ =>
 
     (* translate the entire term (e.g., for numerals), using the dictionary of
@@ -5889,7 +5765,9 @@ local
       translate_constructor_application acc rator rands
     handle DispatchFailure _ =>
 
-      translate_selector_case acc
+      (if partial_array_collection () then
+         raise ERR "translate_term" "Array-valued selector"
+       else translate_selector_case acc)
     handle DispatchFailure _ =>
 
       translate_tester_case acc
@@ -5985,7 +5863,10 @@ local
         val _ =
           case regime of
             HigherOrder Standard27 =>
-              if symbol_head then
+              (* A marked collection head is applied by membership below. *)
+              if symbol_head andalso
+                 not (carrier_is_marked_set_term function orelse
+                      carrier_is_marked_bag_term function) then
                 raise ERR "translate_term" "symbol-headed application"
               else
                 ()
@@ -6077,8 +5958,10 @@ local
           case regime of
             FirstOrder => rands_count
           | HigherOrder _ =>
-              if carrier_is_const rator then carrier_declared_const_arity
-                rator else 0
+              if partial_array_collection () then rands_count
+              else if carrier_is_const rator then
+                carrier_declared_const_arity rator
+              else 0
       in
         if declaration_arity > rands_count andalso
            (regime = HigherOrder Z3LambdaArray orelse
@@ -6142,8 +6025,6 @@ local
                   Lib.foldl_map translate_domain (tydict,
                     ListPair.zip (List.tabulate (List.length domtys, Lib.I),
                       domtys))
-                val _ = carrier_reject_invented_native_datatype_domain rator
-                  domtys
                 val (domdeclss, domtys) = Lib.split domdecltys
                 val domdecls = List.concat domdeclss
                 fun translate_variable_function_type (tydict, index, ty) =
@@ -6505,8 +6386,8 @@ local
     val _ = current_native_sequence_emission := emit_sequences
     val _ = current_generated_forall_emissions := 0
     val _ = emitted_term_sorts := []
-    val {sets = set_terms, bags = bag_terms} =
-      collect_query_collection_markers (t :: original_ts)
+    val ((set_terms,set_parameters),(bag_terms,bag_parameters)) =
+      query_collection_closure (t :: original_ts)
     (* Num is an Int-valued SMT abs only beneath its integer coercion.  In an
        opaque HOL-num position it must remain an uninterpreted function. *)
     val raw_num_terms = SmtLib_RawNumAnalysis.collect
@@ -6555,6 +6436,7 @@ local
     val _ = current_bag_backend := bag_backend
     val _ = current_bag_terms := bag_terms
     val _ = current_collection_function_arguments :=
+      set_parameters @ bag_parameters @
       computed_set_applications @ computed_bag_applications
     val _ = current_bag_helpers := []
     (* FINITE hypotheses are the evidence selecting cvc5's finite Set/Bag
@@ -6596,7 +6478,6 @@ local
       (Lib.pair_compare (Term.compare, Int.compare))
     val bounds = Redblackmap.mkDict Term.compare
     val terms = ts @ [boolSyntax.mk_neg t]
-    val _ = reject_uninterpreted_native_destructors terms
     val (acc, smtlibs) = Lib.foldl_map
       (fn (acc, tm) =>
         translate_term regime apply_operator (acc, (bounds, tm)))
@@ -8053,22 +7934,6 @@ in
 
   val outbound_term_carrier_literal_recognizers = term_literal_recognizers
 
-  type 'term outbound_native_datatype_policy_operations =
-    'term native_datatype_policy_operations
-  type 'term outbound_native_datatype_policy = 'term native_datatype_policy
-  val outbound_native_datatype_policy = native_datatype_policy_with
-  val outbound_term_native_datatype_policy_operations =
-    term_native_datatype_policy_operations
-
-  type 'term outbound_carrier_residual_operations =
-    'term carrier_residual_operations
-  val outbound_carrier_residual =
-    closed_constructor_destructor_residual_with
-  val outbound_term_carrier_residual_operations =
-    term_carrier_residual_operations
-  val outbound_term_carrier_residual =
-    closed_constructor_destructor_residual
-
   type 'term outbound_builtin_operations = 'term builtin_operations
   val outbound_term_builtin_operations = term_builtin_operations
   val outbound_builtin_symbol_encodings = builtin_symbol_encodings_with
@@ -8100,6 +7965,7 @@ in
 
   (* Carrier callbacks preserve the existing ordered native head registry.
      Only the caller's syntax and type observations vary with the carrier. *)
+  val outbound_collection_symbol = collection_symbol
   val outbound_set_marker_role = classify_set_marker_with
   val outbound_bag_marker_role = classify_bag_marker_with
   val outbound_is_set_type = is_set_result_type
@@ -8513,10 +8379,6 @@ in
   val HOL_STRING_TO_SMT_CONV = HOL_STRING_TO_SMT_CONV
   val NATIVE_FLOAT_TO_SMT_CONV = NATIVE_FLOAT_TO_SMT_CONV
   val DATATYPE_TO_SMT_CONV = DATATYPE_TO_SMT_CONV
-  val invented_uf_native_datatype_domain_diagnostic =
-    invented_uf_native_datatype_domain_diagnostic
-  val uninterpreted_native_datatype_destructor_diagnostic =
-    uninterpreted_native_datatype_destructor_diagnostic
   val unsupported_smtfloat_constant_diagnostic =
     unsupported_smtfloat_constant_diagnostic
   val smtfloat_opaque_replay_constants_for_test =
@@ -8543,10 +8405,6 @@ in
     datatype_case_branch_eta_conv_with
   val datatype_case_branch_eta_conv_for_test =
     datatype_case_branch_eta_conv
-  val closed_constructor_destructor_residual_for_test =
-    closed_constructor_destructor_residual
-  val reject_uninterpreted_native_destructors_for_test =
-    reject_uninterpreted_native_destructors
   val native_float_guarded_context_match_conv_with_for_test =
     native_float_guarded_context_match_conv_with
   val native_float_guarded_postorder_conv_for_test =
@@ -8787,8 +8645,31 @@ in
     else
       raise Conv.UNCHANGED
 
+  (* Set simplification rewrites the assumptions too.  An assumption left
+     with IN or a bare EMPTY would mark a set as an SMT Array while the
+     simplified conclusion uses the same set as a function. *)
   val NATIVE_SET_SIMP_TAC =
-    Tactic.CONV_TAC (Conv.TOP_DEPTH_CONV native_set_preprocess_conv)
+    let val conv = Conv.TOP_DEPTH_CONV native_set_preprocess_conv in
+      Tactical.THEN
+        (Tactic.RULE_ASSUM_TAC (Conv.CONV_RULE conv), Tactic.CONV_TAC conv)
+    end
+
+  (* The predicate encoding of checked mode, on the assumptions as well.
+     Applied EMPTY and UNIV unfold, but the sets themselves stay (and
+     constant predicates become) EMPTY and UNIV: {e} stays e INSERT EMPTY,
+     because an SMT Array store cannot take a lambda. *)
+  val PREDICATE_SET_SIMP_TAC =
+    let
+      val ss = simpLib.mk_simpset [pred_setSimps.SET_SPEC_ss]
+      val thms = [pred_setTheory.SPECIFICATION, pred_setTheory.GSPEC_ETA,
+        pred_setTheory.EMPTY_applied,
+        Drule.EQT_INTRO (Drule.SPEC_ALL pred_setTheory.UNIV_applied),
+        Conv.GSYM pred_setTheory.EMPTY_DEF, Conv.GSYM pred_setTheory.UNIV_DEF,
+        pred_setTheory.UNION_DEF, pred_setTheory.INTER_DEF]
+    in
+      Tactical.THEN (Tactic.RULE_ASSUM_TAC (simpLib.SIMP_RULE ss thms),
+        simpLib.SIMP_TAC ss thms)
+    end
 
   fun CHECKED_SET_SIMP_TAC g =
     let
@@ -8800,7 +8681,7 @@ in
       if List.exists has_complement (#1 g @ [#2 g]) then
         NATIVE_SET_SIMP_TAC g
       else
-        Library.SET_SIMP_TAC g
+        PREDICATE_SET_SIMP_TAC g
     end
 
   (* Preserve equality on native collections.  FUN_EQ_THM would turn it into

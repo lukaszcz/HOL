@@ -183,6 +183,11 @@ finite `set.*`/`bag.*` and its cvc5-only sequence operations.  In particular,
 `seq.fold_left` is unavailable on Z3 4.11.2 and available from 4.12.4 (it is
 a parser-side alias only: the printer always emits `seq.foldl`).
 
+In cvc5's Array fallback, collection carriers propagate through conditionals,
+let bindings, and shared function arguments and results. Array-valued datatype
+selectors use unary uninterpreted functions, and constructors with Array-valued
+arguments use the UF abstraction. Checked replay reconstructs the HOL selectors.
+
 Z3 4.14.1 rejects `Array` under seven non-QF logic names that HolSmt can infer:
 `ALIRA`, `ANIA`, `ANIRA`, `AUFDTLIA`, `AUFDTLIRA`, `AUFDTNIRA`, and
 `AUFBVDT`.  For every discovered 4.14.* patch version, HolSmt therefore widens
@@ -423,6 +428,9 @@ native datatypes are related to parser case form by kernel-proved
 normalization.  For partial destructors, constructor branches not fixed by the
 registered theorem retain the original constructor-headed value; they are not
 silently identified with the parser selector's chosen `ARB` interpretation.
+Residual destructors and unknown constants over native datatype sorts are
+abstracted as uninterpreted functions.  This abstraction preserves `unsat`
+proofs, but a `sat` verdict need not be a countermodel to the HOL goal.
 
 Trusted-code-base boundary and soundness audit:
 

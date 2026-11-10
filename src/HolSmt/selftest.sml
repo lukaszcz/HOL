@@ -385,6 +385,19 @@ val graph_expect_thm = expect_thm
     (* Z3 proves this through an array lemma outside its checked Bag replay
        ladder; cvc5 supplies the native checked Bag certificate. *)
     (``BAG_IN (x : bool) (BAG_INSERT y EMPTY_BAG) <=> x = y``, [thm_CVCp]),
+    (* Sets in cvc5's array encoding: a singleton, an applied set and an
+       applied bound set must all stay Arrays, in the assumptions too. *)
+    (``(x : num) = y /\ P {x} ==> (P : (num -> bool) -> bool) {y}``,
+      [thm_CVC, thm_CVCp_ho]),
+    (``(a : num) IN s ==> s a``, [thm_CVC, thm_CVCp_ho]),
+    (``(!x : num. x IN s ==> x IN t) /\ s b ==> t b``, [thm_CVC, thm_CVCp_ho]),
+    (``(a : num) IN (if c then s else t) /\ c ==> a IN s``, [thm_CVC]),
+    (* A record selector and EMPTY must share the conditional's Array sort;
+       checked replay reconstructs the normalized selector under the UF. *)
+    (``(r : smt_set_rec) = q /\
+       P (if p then r.smt_set else {}) ==>
+       (P : (int -> bool) -> bool) (if p then q.smt_set else {})``,
+      [thm_CVC, thm_CVCp_ho]),
 
     (``F``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
     (``p = (p:bool)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
@@ -59110,6 +59123,20 @@ in
               (marker_oracle e [] goal result andalso
                length (#sets result) = 4 andalso null (#bags result)) end)
           end)
+      val _ = test "Conditional selector carriers match native markers"
+        (fn () =>
+          let val (simplified,_) = SolverSpec.simplify
+                (SmtLib.CVC_SIMP_TAC true)
+                ([], ``(P:(int -> bool) -> bool)
+                  (if p then r.smt_set else {})``)
+              val goal = #2 simplified
+              val binders = List.map (#1 o Term.dest_abs)
+                (List.filter Term.is_abs (Library.subterms goal))
+          in owned goal [] (fn e =>
+            let val result = native e
+            in require "conditional selector lost scoped collection markers"
+              (marker_oracle e binders goal result andalso
+               not (null (#sets result))) end) end)
       val _ = test "Automatic Bag markers retain immediate empty-bag prefixes"
         (fn () =>
           let val empty = bagSyntax.mk_bag ([],Type.bool)
@@ -59228,7 +59255,8 @@ in
           let val syntax = T.native_query_syntax (#graph e)
               val calls = ref 0
               val failing : Q.native_syntax =
-                {set_role=fn _ => (calls := !calls + 1;
+                {collection_symbol= #collection_symbol syntax,
+                 set_role=fn _ => (calls := !calls + 1;
                    raise Feedback.mk_HOL_ERR "marker" "callback"
                      "native marker callback Primary"),
                  bag_role= #bag_role syntax,
@@ -59357,7 +59385,8 @@ in
             let val syntax = T.native_query_syntax (#graph e)
                 val calls = ref 0
                 val failing : Q.native_syntax =
-                  {set_role= #set_role syntax,bag_role= #bag_role syntax,
+                  {collection_symbol= #collection_symbol syntax,
+                   set_role= #set_role syntax,bag_role= #bag_role syntax,
                    is_set_type= #is_set_type syntax,
                    is_bag_type= #is_bag_type syntax,
                    is_cond= #is_cond syntax,is_let= #is_let syntax,
@@ -61919,8 +61948,6 @@ in
     let
       val graph_reduce =
         SmtLib_GraphCarrierResidual.theorem_reduces_exact_application
-      val complete_operations =
-        SmtLib_GraphCarrierOperations.make_with_datatypes
       (* Native terms below are small independent fixture/oracle syntax.
          The depth70 control constructs only the actual query DAG. *)
       fun lift (context:Q.outbound_context) =
@@ -61954,8 +61981,9 @@ in
           | NONE => raise Fail "registered fixture destructor is missing"
         end
       fun native_reduces theorem raw =
-        (#theorem_reduces_exact_application
-          SmtLib.outbound_term_carrier_residual_operations) theorem raw
+        let val reduction = simpLib.SIMP_CONV pureSimps.pure_ss [theorem] raw
+        in not (Term.aconv raw (boolSyntax.rhs (Thm.concl reduction))) end
+        handle Conv.UNCHANGED => false
       fun check_reduces context theorem raw expected =
         let val native = native_reduces theorem raw
             val actual = graph_reduce context theorem
@@ -61978,45 +62006,16 @@ in
           ((#same (#operations scratch))
              (#term result,(#of_template scratch) native) andalso
            actual=not (Term.aconv raw native)) end
-      val _ = test "Full datatype factory agrees on registered residuals"
-        (fn () => owned (fn _ => fn context =>
-          let val pretty = ref 0
-              val operations = complete_operations context
-                {sequence_emission=false}
-                  {term_to_string=fn _ =>
-                    (pretty := !pretty+1;raise Fail "unexpected formatter")}
-              fun check (raw,expected) =
-                let val native =
-                      SmtLib.closed_constructor_destructor_residual_for_test
-                        raw
-                    val actual = (#closed_constructor_destructor_residual
-                      operations) (lift context raw)
-                in native=expected andalso actual=native end
-          in require "registered closed-value boundary changed"
-            (List.all check
-              [(``HD ([]:int list)``,true),(``HD ([1]:int list)``,false),
-               (``FST ((1:int),T)``,false),
-               (``OUTL (INL (1:int) : int + bool)``,false),
-               (``OUTL (INR T : int + bool)``,true),
-               (``OUTL (INR p : int + bool)``,false)] andalso !pretty=0)
-          end))
       val _ = test "Wrong outer constructor still reduces its nested OUTL"
         (fn () => owned (fn _ => fn context =>
           let val raw =
                 ``OUTL (INR (OUTL (INL (1:int) : int + bool)) : int + int)``
               val theorem = registered raw
-          in check_reduces context theorem raw true;
-            require "nested registered rule was hidden by the outer head"
-              (not
-                (SmtLib.closed_constructor_destructor_residual_for_test raw))
-          end))
+          in check_reduces context theorem raw true end))
       val _ = test "PURE_ss leaves unrelated beta syntax under INR unchanged"
         (fn () => owned (fn _ => fn context =>
           let val raw = ``OUTL (INR ((\x:int. x) 1) : int + int)``
-          in check_reduces context (registered raw) raw false;
-            require "pure residual acquired an unconditional beta rule"
-              (SmtLib.closed_constructor_destructor_residual_for_test raw)
-          end))
+          in check_reduces context (registered raw) raw false end))
       val _ = test "Registered destructor simplification descends under Abs"
         (fn () => owned (fn _ => fn context =>
           let val raw =
@@ -62094,15 +62093,8 @@ in
                 ((#constant context) head,
                  (#mk_comb context) ((#constant context) inr,grow 70))
               val theorem = registered ``OUTL (INR T : int + bool)``
-              val pretty = ref 0
-              val operations = complete_operations context
-                {sequence_emission=false}
-                  {term_to_string=fn _ =>
-                    (pretty := !pretty+1;raise Fail "large residual format")}
-          in require "large residual unfolded the query or lost its boundary"
-            (not (graph_reduce context theorem current)
-             andalso (#closed_constructor_destructor_residual operations)
-               current andalso !pretty=0) end))
+          in require "large registered reduction unfolded the query"
+            (not (graph_reduce context theorem current)) end))
     in () end)
 
   val _ = run_postlude 360 "shared-graph-backend-selection-9" (fn () =>
@@ -62249,8 +62241,11 @@ in
                 in Option.isSome native andalso native=actual end
           in require "cardinality or bound-function refusal changed"
             (check [] ``CARD (s:int set) = 0`` andalso
-             check [] ``!f:bool set -> bool. f {T}`` andalso
-             check [] ``f (s:bool set) /\ T IN s /\ f (\x:bool. x)``) end)
+             check [] ``!f:bool set -> bool. f {T}``) end)
+      val _ = test "Shared function arguments select Array collections"
+        (fn () => agrees []
+          ``f (s:bool set) /\ T IN s /\ f (\x:bool. x)``
+          SmtLib.CVC5ArraySet SmtLib.CVC5ArrayBag)
       val _ = test "Sequence eligibility pins the selected metadata context"
         (fn () => with_query [] ``LENGTH (xs:bool list) = 0``
           (fn _ => fn context =>
@@ -66913,9 +66908,73 @@ local
                 raise Fail "small grammar oracle unexpectedly retained native"
           end
     in raw value end
+  fun selector_mapping (e:env) =
+    let fun opening caller node = ignore
+          (G.record_opened_view_with_policy (#graph e) caller
+            (RP.AtMost 10000) node)
+        val ty = ``:smt_set_rec``
+        val constructor = hd (SmtLib.datatype_constructors_for_test ty)
+    in T.with_outbound_query_analysis_with_policy (#work e) (#query e)
+      opening (fn context =>
+        let exception SelectorSyntax
+            val hooks = SmtLib_GraphCarrierDatatype.make context
+              {syntax_error=fn _ => fn _ => SelectorSyntax,
+               is_mismatch=fn SelectorSyntax => true | _ => false}
+            val store = Store.create context {prefix="selector_roundtrip_"}
+            val operations = #operations store
+            val binder = (#genvar context) ty
+            val argument = (#genvar context) ty
+            val body = (#datatype_selector_term hooks) ty constructor 0 binder
+            val selector = (#list_mk_abs context) ([binder],body)
+            val terms = (#term_insert operations)
+              (#empty_terms store,(#ordinary_key operations) (selector,1),
+               "selector")
+            val terms = (#term_insert operations)
+              (terms,(#ordinary_key operations) (argument,0),"record")
+        in M.freeze context
+          {graph= #graph e,scope= #scope e,
+           regime=SmtLib.HigherOrder SmtLib.Standard27,
+           types=Redblackmap.mkDict Type.compare,
+           symbols=(#symbols store) terms} end)
+    end
 in
   val _ = run_postlude 379 "shared-policy-value-frontend-7" (fn () =>
     let
+      val _ = test "Array selector Mapping restores its normalized HOL case"
+        (fn () => owned (fn e =>
+          let val frozen = selector_mapping e val held = factory e frozen
+              val result = Exn.capture (fn () => W.with_step (#work e)
+                (fn () =>
+                  let val session = F.create_mapping_session_with_policy held
+                        (options e) (description F.CPC)
+                        (fn () => raise Fail "unused")
+                      val context = #context held
+                      val argument = #node (parse (#parse_from session) "record")
+                      val value = #node (parse (#parse_from session)
+                        "(selector record)")
+                      val ty = ``:smt_set_rec``
+                      val constructor = hd
+                        (SmtLib.datatype_constructors_for_test ty)
+                      val expected = SmtLib.datatype_selector_term_for_test ty
+                        constructor 0 (value_raw context argument)
+                      val explicit = case PV.view context value of
+                          PV.Application (function,_) =>
+                            (case PV.view context function of
+                               PV.Abstraction _ => true | _ => false)
+                        | _ => false
+                      val F.ScopedSession
+                        {session=shadow,variables,close,...} =
+                          (#open_binders session)
+                            [("selector","shadow_selector",Type.bool)]
+                      val shadowed = #node
+                        (parse (#parse_from shadow) "selector") = hd variables
+                      val _ = close ()
+                  in require "selector roundtrip or lexical shadow changed"
+                    (not explicit andalso shadowed andalso
+                     Term.aconv (value_raw context value) expected) end)) ()
+              val cleanup = Exn.capture (#close held) ()
+          in case result of Exn.Exn primary => raise primary
+            | Exn.Res answer => (Exn.release cleanup;answer) end))
       val _ = test "Both dialects use the SAME bounded construction grammar"
         (fn () => List.app (fn policy => owned (fn e => paired e policy
           (fn held => fn native => fn values =>

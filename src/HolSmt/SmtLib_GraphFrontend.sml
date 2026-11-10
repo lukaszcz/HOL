@@ -1732,8 +1732,13 @@ struct
                 (B.variable_descriptor backend node)
               fun guard frame =
                 PV.usable context (valOf (B.frame_scope backend frame)) node
-              val parse = constructed_declaration_parser backend (op =)
-                node descriptor (SOME arity) guard
+              val ordinary_parse = constructed_declaration_parser backend
+                (op =) node descriptor (SOME arity) guard
+              val parse = case #selector_body entry of NONE => ordinary_parse
+                | SOME _ => fn frame => fn token => fn indices =>
+                    fn arguments =>
+                      let val _ = ordinary_parse frame token indices arguments
+                      in (#apply_declaration factory) frame entry arguments end
               val variables = case descriptor of SOME (name,ty) =>
                     (retain_descriptor node (key,name,ty);
                      Redblackmap.insert (variables,key,(key,name,ty)))

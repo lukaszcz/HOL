@@ -304,8 +304,7 @@ SmtLib_GraphTranslation.uo: SmtLib_GraphQueryAnalysis.uo \
 SmtLib_GraphCarrierBeta.uo: SmtLib_GraphQueryAnalysis.uo
 SmtLib_GraphCarrierOperations.uo: SmtLib_GraphQueryAnalysis.uo \
   SmtLib_GraphTranslation.uo SmtLib_CarrierLetBindings.uo \
-  SmtLib_GraphCarrierBeta.uo SmtLib_GraphCarrierDatatype.uo \
-  SmtLib_GraphCarrierResidual.uo SmtLib.uo
+  SmtLib_GraphCarrierBeta.uo SmtLib_GraphCarrierDatatype.uo SmtLib.uo
 SmtLib_GraphCarrierDatatype.uo: SmtLib_GraphQueryAnalysis.uo SmtLib.uo
 SmtLib_GraphCarrierStore.uo: SmtLib_GraphQueryAnalysis.uo SmtLib.uo \
   SmtLib_OutputSchedule.uo SmtLib_OutputFragments.uo
@@ -326,7 +325,8 @@ SmtLib_GraphQueryAvailability.uo: SmtLib_GraphQueryAnalysis.uo SmtLib.uo
 SmtLib_GraphParserMapping.ui: SmtReplayGraph.ui \
   SmtLib_GraphQueryAnalysis.ui SmtLib_GraphCarrierStore.ui SmtLib.uo
 SmtLib_GraphParserMapping.uo: SmtReplayGraph.uo \
-  SmtLib_GraphQueryAnalysis.uo SmtLib_GraphCarrierStore.uo SmtLib.uo
+  SmtLib_GraphQueryAnalysis.uo SmtLib_GraphCarrierStore.uo SmtLib.uo \
+  SmtLib_GraphCarrierDatatype.uo
 SmtLib_GraphDeclarationMetadata.ui: SmtLib_GraphParserMapping.ui \
   SmtLib_GraphQueryAnalysis.ui SmtLib_GraphDispatcher.ui SmtLib.uo
 SmtLib_GraphDeclarationMetadata.uo: SmtLib_GraphParserMapping.uo \
@@ -344,7 +344,7 @@ SmtLib_CarrierPureRewrite.uo: SmtLib_CarrierHoMatch.uo
 SmtLib_GraphCarrierResidual.ui: SmtLib_GraphQueryAnalysis.ui
 SmtLib_GraphCarrierResidual.uo: SmtLib_GraphQueryAnalysis.uo \
   SmtLib_GraphCarrierScratch.uo SmtLib_CarrierHoPartMatch.uo \
-  SmtLib_CarrierPureRewrite.uo SmtLib.uo
+  SmtLib_CarrierPureRewrite.uo
 SmtLib_OutputSchedule.uo: SmtLib_OutputFragments.uo
 SmtLib_GraphQueryAnalysis.uo: SmtReplayGraph.uo \
   SmtReplayInvocationWork.uo SmtLib_GraphPreprocess.uo \
