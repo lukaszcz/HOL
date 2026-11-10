@@ -2565,7 +2565,7 @@ local
                 fun list_terms acc =
                   let val token = get_token () in
                     if token = ")" then List.rev acc
-                    else list_terms (parse_term dicts_ref
+                    else list_terms (parse_recorded_term dicts_ref
                       (Library.undo_look_ahead [token] get_token) :: acc)
                   end
                 val terms = list_terms []
@@ -3270,14 +3270,14 @@ local
                           SOME vars => vars
                         | NONE => raise ERR "parse_step"
                             ("undefined CPC @list alias " ^ binder_name)
-                      val body = parse_term dicts_ref get_token
+                      val body = parse_recorded_term dicts_ref get_token
                       val _ = Library.expect_token ")" (get_token ())
-                      val rhs = parse_term dicts_ref get_token
+                      val rhs = parse_recorded_term dicts_ref get_token
                     in (boolSyntax.list_mk_exists (binders, body), rhs) end
                     else
-                      (parse_term dicts_ref
+                      (parse_recorded_term dicts_ref
                          (Library.undo_look_ahead [first] get_token),
-                       parse_term dicts_ref get_token)
+                       parse_recorded_term dicts_ref get_token)
                   val _ = Library.expect_token ")" (get_token ())
                   val _ = Library.expect_token ")" (get_token ())
                 in
