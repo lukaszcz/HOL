@@ -14631,6 +14631,11 @@ let
         "((declare-const f (-> Bool Bool)) (declare-const x Bool) \
         \(step @p :rule refl :args ((= (_ f x) x))))"))
   val first_order_source = ``(f:bool->bool) x = x``
+  val coerced = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((declare-const f (-> Real Real)) \
+      \(step @p :rule refl :args ((@ f 1))))")
+  val coerced_source = ``(f:real->real) 1``
   fun reflexive source expected =
     let
       val theorem = CPC_ProofReplay.replay_root_for_test
@@ -14656,6 +14661,9 @@ in
       boolSyntax.mk_eq (first_order_source, first_order_source),
     "CPC higher-order application needs a higher-order source logic");
   check_oracle_tags "CPC higher-order first-order dictionary" first_order;
+  assert (Thm.concl coerced ~~
+      boolSyntax.mk_eq (coerced_source, coerced_source),
+    "explicit CPC application lost integer-to-real coercion");
   reflexive "(+ (_ (ite c f g) x) 1)"
     ``(if c then (f:int->int) else g) x + 1``;
   reflexive "(_ (lambda (@list (@var x Int)) x) 1)"

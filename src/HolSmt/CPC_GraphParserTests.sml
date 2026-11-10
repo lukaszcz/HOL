@@ -2390,6 +2390,9 @@ struct
       val _ = private_source_sharing ()
       val _ = detached_private_identity ()
       val _ = set_sort_metadata ()
+      val _ = positive "nested typed private higher-order application"
+        "((declare-const x Int) \
+        \(step @p :rule refl :args ((_ (@const 0 (-> Int Bool)) x))))"
       (* Verbatim flattened-index fixtures from Unittest, made observable
          by using each definition as a refl argument, not merely parsing it. *)
       val indexed =
