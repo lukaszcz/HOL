@@ -9,6 +9,12 @@ sig
   val has_native_bag_encoding : Term.term -> bool
   val supported_bag_operator_names_for_test : string list
 
+  (* Caller admission precedes native pattern, Hyp and branch operations.
+     The supplied arithmetic worker retains its existing fallback position. *)
+  val bag_prove_with_admission : (Term.term -> unit) ->
+    (Term.term -> Thm.thm) -> Term.term -> Thm.thm
+  val bag_contextual_prove_with_admission : (Term.term -> unit) ->
+    Term.term list -> Term.term -> Thm.thm
   val bag_prove_with_arith :
     (Term.term -> Thm.thm) -> Term.term -> Thm.thm
   val bag_prove : Term.term -> Thm.thm
