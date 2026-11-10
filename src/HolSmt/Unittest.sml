@@ -14589,7 +14589,8 @@ let
     (parse_cpc_proof_string
       "((declare-const f (-> Real Real)) \
       \(step @p :rule refl :args ((@ f 1))))")
-  val coerced_source = ``(f:real->real) 1``
+  val coerced_source = Term.mk_comb
+    (``f:real->real``, intrealSyntax.mk_real_of_int ``1:int``)
   fun reflexive source expected =
     let
       val theorem = CPC_ProofReplay.replay_root_for_test
