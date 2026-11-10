@@ -25171,6 +25171,89 @@ in
      ("Real", ``((if (x:real) >= y then x else y) >= y) = T``)]
 end
 
+fun arithmetic_shared_conditional_abstraction_success () =
+let
+  val atom = ``if p then (x:int) else -x``
+  fun double 0 = atom
+    | double n =
+        let val prior = double (n - 1)
+        in intSyntax.mk_plus (prior,prior) end
+  val shared = double 65
+  val target = boolSyntax.mk_eq (shared,shared)
+  val theorem = Library.prove_abstracting_atoms
+    (fn schema => Thm.REFL (boolSyntax.lhs schema)) [atom] target
+in
+  assert (Portable.pointer_eq (Thm.concl theorem,target) andalso
+      null (Thm.hyp theorem),
+    "shared conditional abstraction changed its exact closed endpoint");
+  check_oracle_tags "shared conditional abstraction" theorem
+end
+
+fun arithmetic_distinct_shared_atoms_success () =
+let
+  fun double 0 = ``x:int``
+    | double n =
+        let val prior = double (n - 1)
+        in intSyntax.mk_plus (prior,prior) end
+  val first = boolSyntax.mk_cond
+    (``p:bool``,double 65,``0:int``)
+  val second = boolSyntax.mk_cond
+    (``p:bool``,double 65,``1:int``)
+  val sum = intSyntax.mk_plus (first,second)
+  val target = boolSyntax.mk_eq (sum,sum)
+  val theorem = Library.arith_prove_raw target
+in
+  assert (Portable.pointer_eq (Thm.concl theorem,target) andalso
+      null (Thm.hyp theorem),
+    "distinct shared atoms changed the closed arithmetic endpoint");
+  check_oracle_tags "distinct shared atoms" theorem
+end
+
+fun arithmetic_shared_type_fallback_success () =
+let
+  fun tuple 0 = Type.bool
+    | tuple n = let val prior = tuple (n - 1)
+                in pairSyntax.mk_prod (prior,prior) end
+  val ty = tuple 21
+  val f = Term.mk_var ("f",Type.--> (Type.bool,ty))
+  val q = Term.mk_var ("q",Type.--> (ty,Type.bool))
+  val guard = Term.mk_comb (q,Term.mk_comb (f,``p:bool``))
+  val atom = boolSyntax.mk_cond (guard,``x:int``,``-x:int``)
+  val target = boolSyntax.mk_eq (atom,atom)
+  val theorem = Library.prove_abstracting_atoms
+    (fn schema => Thm.REFL (boolSyntax.lhs schema)) [atom] target
+in
+  assert_concl_alpha ("shared type fallback",theorem,target);
+  assert_no_hyps ("shared type fallback",theorem);
+  check_oracle_tags "shared type fallback" theorem
+end
+
+fun cpc_shared_arith_geq_tighten_success () =
+let
+  fun level index = "@t" ^ Int.toString index
+  fun doubling index =
+    "(define " ^ level (index + 1) ^ " () (+ " ^ level index ^ " " ^
+      level index ^ ")) "
+  val proof = parse_cpc_proof_string
+    ("((declare-const p Bool) (declare-const x Int) " ^
+     "(define @t0 () (ite p x (- x))) " ^
+     String.concat (List.tabulate (65,doubling)) ^
+     "(step @out :rule arith-geq-tighten :args (@t65 0)))")
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val (left,right) = boolSyntax.dest_eq (Thm.concl theorem)
+  val (operand,zero) = intSyntax.dest_geq (boolSyntax.dest_neg left)
+  val (bound,increment) = intSyntax.dest_geq right
+  val (restored,one) = intSyntax.dest_plus increment
+in
+  assert (Portable.pointer_eq (operand,restored) andalso
+      Term.aconv zero intSyntax.zero_tm andalso
+      Term.aconv bound intSyntax.zero_tm andalso
+      Term.aconv one intSyntax.one_tm,
+    "shared arithmetic rule changed its operands or fixed unit offset");
+  assert_no_hyps ("shared arithmetic rule",theorem);
+  check_oracle_tags "shared arithmetic rule" theorem
+end
+
 fun cpc_arith_geq_tighten_conditional_success () =
 let
   val proof = parse_cpc_proof_string
@@ -35518,6 +35601,14 @@ let
     ("nonlinear_tight_integer_bounds_success",
       nonlinear_tight_integer_bounds_success),
     ("cpc_arith_max_geq2_success", cpc_arith_max_geq2_success),
+    ("arithmetic_distinct_shared_atoms_success",
+      arithmetic_distinct_shared_atoms_success),
+    ("arithmetic_shared_type_fallback_success",
+      arithmetic_shared_type_fallback_success),
+    ("cpc_shared_arith_geq_tighten_success",
+      cpc_shared_arith_geq_tighten_success),
+    ("arithmetic_shared_conditional_abstraction_success",
+      arithmetic_shared_conditional_abstraction_success),
     ("cpc_arith_geq_tighten_conditional_success",
       cpc_arith_geq_tighten_conditional_success),
     ("symbolic_power_avoids_nla_route_success",
