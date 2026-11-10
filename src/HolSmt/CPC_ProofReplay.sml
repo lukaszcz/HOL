@@ -3995,6 +3995,17 @@ local
         arith_ite_lift arith_leq operands
     | ("arith-geq-ite-lift", operands) =>
         arith_ite_lift arith_geq operands
+    | ("bool-or-taut2", [prefix, atom, middle, suffix]) =>
+        let
+          fun disjuncts term =
+            if Term.aconv term boolSyntax.F then []
+            else boolSyntax.strip_disj term
+          val operands = disjuncts prefix @ [boolSyntax.mk_neg atom] @
+            disjuncts middle @ [atom] @ disjuncts suffix
+        in
+          tautology name (boolSyntax.mk_eq
+            (boolSyntax.list_mk_disj operands, boolSyntax.T))
+        end
     | ("bool-or-de-morgan", [left, right, _]) =>
         tautology name (boolSyntax.mk_eq
           (boolSyntax.mk_neg (boolSyntax.mk_disj (left, right)),
@@ -5265,11 +5276,42 @@ local
         bossLib.SIMP_TAC (bossLib.srw_ss()) [])
     end
 
-  fun replay_quant_rewrite name args =
+  fun replay_quant_rewrite name (located_args : located_term list) =
     let
-      val target = expect_one_arg name args
+      val target = expect_one_arg name (List.map #term located_args)
     in
-      if name = "quant-miniscope-and" then
+      if name = "quant_var_reordering" then
+        let
+          val (lhs, rhs) = boolSyntax.dest_eq target
+          val count =
+            case located_args of
+              [{provenance = EqualityProvenance
+                (BinderBlockProvenance ("forall", left, _),
+                 BinderBlockProvenance ("forall", right, _)), ...}] =>
+                if left = right andalso left > 0 then left
+                else raise ERR name "quantifier block sizes do not match"
+            | _ => raise ERR name "expected exact FORALL block provenance"
+          fun strip 0 term = ([], term)
+            | strip n term =
+                let
+                  val (variable, body) = boolSyntax.dest_forall term
+                  val (variables, rest) = strip (n - 1) body
+                in (variable :: variables, rest) end
+          val (left_vars, left_body) = strip count lhs
+          val (right_vars, right_body) = strip count rhs
+          val _ = Term.aconv left_body right_body andalso
+            HOLset.equal (HOLset.fromList Term.compare left_vars,
+              HOLset.fromList Term.compare right_vars) orelse
+            raise ERR name "expected a permutation of the same binders"
+          val forward = Thm.DISCH lhs
+            (Thm.GENL right_vars (Drule.SPECL left_vars (Thm.ASSUME lhs)))
+          val backward = Thm.DISCH rhs
+            (Thm.GENL left_vars (Drule.SPECL right_vars (Thm.ASSUME rhs)))
+        in Drule.IMP_ANTISYM_RULE forward backward end
+      else if name = "quant-merge-prenex" then
+        let val (lhs, rhs) = boolSyntax.dest_eq target
+        in Thm.ALPHA lhs rhs end
+      else if name = "quant-miniscope-and" then
         Tactical.TAC_PROOF (([], target),
           bossLib.SIMP_TAC bossLib.bool_ss [boolTheory.FORALL_AND_THM])
       else if name = "quant-miniscope-or" then
@@ -19211,7 +19253,7 @@ local
            | "quant_unused_vars" => opaque ( replay_quant_unused_vars args)
            | "quant_rewrite" =>
                let
-                 val theorem = replay_quant_rewrite (#name rule) args
+                 val theorem = replay_quant_rewrite (#name rule) located_args
                in
                  case located_args of
                    [located] => located_result

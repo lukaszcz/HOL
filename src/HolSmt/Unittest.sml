@@ -11522,6 +11522,62 @@ in
   check_oracle_tags "nested CPC datatype tester replay" theorem
 end
 
+fun cpc_quant_var_reordering_replay_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const P (-> Int Int Bool)) \
+    \(define @x () (@var \"x\" Int)) \
+    \(define @y () (@var \"y\" Int)) \
+    \(define @vars () (@list @x @y)) \
+    \(define @body () (P @x @y)) \
+    \(define @rhs () (forall (@list @y @x) @body)) \
+    \(step @p :rule quant_var_reordering \
+    \ :args ((= (forall @vars @body) @rhs))))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl theorem ~~
+    ``(!x y:int. P x y) = (!y x:int. P x y)``,
+    "CPC quantifier reordering changed its binders or body");
+  assert (List.null (Thm.hyp theorem),
+    "CPC quantifier reordering retained hypotheses");
+  check_oracle_tags "CPC quantifier reordering" theorem
+end
+
+fun cpc_quant_merge_prenex_replay_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const P (-> Int Int Bool)) \
+    \(define @x () (@var \"x\" Int)) \
+    \(define @y () (@var \"y\" Int)) \
+    \(define @body () (P @x @y)) \
+    \(define @nested () (forall (@list @x) \
+    \ (forall (@list @y) @body))) \
+    \(step @p :rule quant-merge-prenex \
+    \ :args ((= @nested (forall (@list @x @y) @body)))))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl theorem ~~
+    ``(!x:int. !y:int. P x y) = (!x y:int. P x y)``,
+    "CPC prenex merge changed its binders or body");
+  assert (List.null (Thm.hyp theorem),
+    "CPC prenex merge retained hypotheses");
+  check_oracle_tags "CPC prenex merge" theorem
+end
+
+fun cpc_bool_or_taut2_replay_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const p Bool) \
+    \(step @p :rule bool-or-taut2 :args (false p false false)))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl theorem ~~ ``(~p \/ p) = T``,
+    "CPC disjunction tautology changed its operand");
+  assert (List.null (Thm.hyp theorem),
+    "CPC disjunction tautology retained hypotheses");
+  check_oracle_tags "CPC disjunction tautology" theorem
+end
+
 fun cpc_proof_parser_define_and_optional_conclusion_success () =
 let
   val proof = parse_cpc_proof_string
@@ -28832,6 +28888,12 @@ let
       smtlib_roundtrip_current_theories_success),
     ("smtlib_roundtrip_known_gap_matrix_success",
       smtlib_roundtrip_known_gap_matrix_success),
+    ("cpc_quant_var_reordering_replay_success",
+      cpc_quant_var_reordering_replay_success),
+    ("cpc_quant_merge_prenex_replay_success",
+      cpc_quant_merge_prenex_replay_success),
+    ("cpc_bool_or_taut2_replay_success",
+      cpc_bool_or_taut2_replay_success),
     ("cpc_proof_parser_define_and_optional_conclusion_success",
       cpc_proof_parser_define_and_optional_conclusion_success),
     ("cpc_quoted_declaration_identity_success",
