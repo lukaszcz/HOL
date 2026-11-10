@@ -496,6 +496,10 @@ proof format is CPC at `dsl-rewrite` granularity.
 For `CVC_TAC`, `UNSAT NONE` is not accepted: CPC replay must produce
 `UNSAT (SOME thm)` and pass the original-goal and no-oracle checks.
 
+CPC arithmetic rewrites include both maximum lower bounds, arith-max-geq1
+and arith-max-geq2. Checked nonlinear integer replay can use opposing bounds
+that fix an arithmetic expression to a numeral.
+
 Nonlinear real arithmetic replay may invoke CSDP through `SOSLib.REAL_SOS`.
 CSDP is an untrusted semidefinite-solver dependency: it searches for SOS
 certificates, while HOL checks the resulting certificate before any theorem is
