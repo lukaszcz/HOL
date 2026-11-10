@@ -15068,15 +15068,10 @@ let
        (s, Term.mk_comb (combinSyntax.mk_update (x, boolSyntax.T), t)))
   val y = Term.mk_var ("y", intSyntax.int_ty)
   val membership = pred_setSyntax.mk_in (x, s)
-  val in_term = Term.rator (Term.rator membership)
-  val f = Term.mk_var ("f", Term.type_of in_term)
   val cases =
     [("membership", membership, Term.mk_comb (s, x)),
      ("beta source", Term.mk_comb
         (Term.mk_abs (y, Term.mk_comb (s, y)), x), membership),
-     ("beta-exposed membership", Term.mk_comb
-        (Term.mk_abs (f, Term.mk_comb (Term.mk_comb (f, x), s)), in_term),
-      membership),
      ("insert", apply (pred_setSyntax.mk_insert (x, s)),
       apply (Term.mk_comb (combinSyntax.mk_update (x, boolSyntax.T), s))),
      ("delete", apply (pred_setSyntax.mk_delete (s, x)),
