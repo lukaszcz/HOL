@@ -2403,6 +2403,9 @@ struct
          ("positive zero", "(_ +zero 3 5)"),
          ("word sort", "(_ BitVec 8)"),
          ("float sort", "(_ FloatingPoint 3 5)")]
+      val _ = positive "indexed word in a definition list"
+        "((define @xs () (@list (_ bv5 8))) \
+        \(step @p :rule refl :args (@xs)))"
       (* Verbatim flattened-index fixtures from Unittest, made observable
          by using each definition as a refl argument, not merely parsing it. *)
       val indexed =
