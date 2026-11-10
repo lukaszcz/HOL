@@ -27,7 +27,8 @@ struct
     | Fallback of {dependencies:dependency list,expression:node_id}
   type declaration =
     {token:string,rank:int,arity:arity,value:node_id,origin:origin,
-     hol_type:Type.hol_type,sorts:(string list * string) option}
+     hol_type:Type.hol_type,sorts:(string list * string) option,
+     selector_body:(slot * node_id) option}
   datatype mapping = Mapping of
     {owner:unit ref,graph:G.graph,scope:G.scope,epoch:int,symbols:int,
      nodes:(node_id,entry) Redblackmap.dict,declarations:declaration list,
@@ -255,11 +256,25 @@ struct
       fun function_arity ty count =
         case Lib.total Type.dom_rng ty of
           NONE => count | SOME (_,range) => function_arity range (count+1)
+      exception SelectorSyntax
+      val datatype_hooks = SmtLib_GraphCarrierDatatype.make context
+        {syntax_error=fn _ => fn _ => SelectorSyntax,
+         is_mismatch=fn SelectorSyntax => true | _ => false}
+      fun canonical_selector original = case (#view context) original of
+          Q.AbstractionView (binder,body) =>
+            (case (#parser_case datatype_hooks) body of
+               SOME (SmtLib.CarrierSelector {scrutinee,...}) =>
+                 (#same context) (scrutinee,binder)
+             | _ => false)
+        | _ => false
       fun declaration
           ({name,arity=rank,syntax,origin,sorts,...}:S.symbol) : declaration =
         let
           val _ = live () val _ = ignore ((#key context) syntax)
           val ty = (#type_of context) syntax
+          val selector = rank=1 andalso (case origin of
+              S.Ordinary original => canonical_selector original
+            | _ => false)
           val (value,origin) = case origin of
               S.Ordinary original =>
                 let val value = freeze_value original []
@@ -276,9 +291,14 @@ struct
           val arity = case regime of
               SmtLib.FirstOrder => Exact rank
             | SmtLib.HigherOrder _ => AtMost (function_arity ty 0)
+          val selector_body = if selector then
+              (case #form (Redblackmap.find (!nodes,value)) of
+                 Abstraction {slot,body,...} => SOME (slot,body)
+               | _ => raise ERR "freeze" "selector abstraction missing")
+            else NONE
           val _ = ignore ((#key context) syntax)
         in {token=name,rank=rank,arity=arity,value=value,origin=origin,
-          hol_type=ty,sorts=sorts} end
+          hol_type=ty,sorts=sorts,selector_body=selector_body} end
       val declarations = List.map declaration symbols
       val inputs = List.map (fn current =>
         ((#step context) ();freeze_value current [])) inputs

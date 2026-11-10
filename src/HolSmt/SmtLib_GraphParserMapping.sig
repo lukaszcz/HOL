@@ -22,12 +22,15 @@ sig
     | Fallback of {dependencies:dependency list,expression:node_id}
   type declaration =
     {token:string,rank:int,arity:arity,value:node_id,origin:origin,
-     hol_type:Type.hol_type,sorts:(string list * string) option}
+     hol_type:Type.hol_type,sorts:(string list * string) option,
+     selector_body:(slot * node_id) option}
 
   (* Call while the carrier borrow is live, using committed store symbols
      and the actual emission's type dictionary. No borrowed carrier,
      callback, semantic key or temporary construction node is retained.
      Entries are dependency-first; declaration/dependency order is exact.
+     selector_body records only a canonical unary datatype selector
+     recognized during the borrow.
      Atomic graph aliases require root visibility and complete free IDs.
      All composite syntax is frozen as a typed DAG, never rejected merely for
      having an opaque original or a synthetic abstraction.

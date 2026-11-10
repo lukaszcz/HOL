@@ -66905,9 +66905,73 @@ local
                 raise Fail "small grammar oracle unexpectedly retained native"
           end
     in raw value end
+  fun selector_mapping (e:env) =
+    let fun opening caller node = ignore
+          (G.record_opened_view_with_policy (#graph e) caller
+            (RP.AtMost 10000) node)
+        val ty = ``:smt_set_rec``
+        val constructor = hd (SmtLib.datatype_constructors_for_test ty)
+    in T.with_outbound_query_analysis_with_policy (#work e) (#query e)
+      opening (fn context =>
+        let exception SelectorSyntax
+            val hooks = SmtLib_GraphCarrierDatatype.make context
+              {syntax_error=fn _ => fn _ => SelectorSyntax,
+               is_mismatch=fn SelectorSyntax => true | _ => false}
+            val store = Store.create context {prefix="selector_roundtrip_"}
+            val operations = #operations store
+            val binder = (#genvar context) ty
+            val argument = (#genvar context) ty
+            val body = (#datatype_selector_term hooks) ty constructor 0 binder
+            val selector = (#list_mk_abs context) ([binder],body)
+            val terms = (#term_insert operations)
+              (#empty_terms store,(#ordinary_key operations) (selector,1),
+               "selector")
+            val terms = (#term_insert operations)
+              (terms,(#ordinary_key operations) (argument,0),"record")
+        in M.freeze context
+          {graph= #graph e,scope= #scope e,
+           regime=SmtLib.HigherOrder SmtLib.Standard27,
+           types=Redblackmap.mkDict Type.compare,
+           symbols=(#symbols store) terms} end)
+    end
 in
   val _ = run_postlude 379 "shared-policy-value-frontend-7" (fn () =>
     let
+      val _ = test "Array selector Mapping restores its normalized HOL case"
+        (fn () => owned (fn e =>
+          let val frozen = selector_mapping e val held = factory e frozen
+              val result = Exn.capture (fn () => W.with_step (#work e)
+                (fn () =>
+                  let val session = F.create_mapping_session_with_policy held
+                        (options e) (description F.CPC)
+                        (fn () => raise Fail "unused")
+                      val context = #context held
+                      val argument = #node (parse (#parse_from session) "record")
+                      val value = #node (parse (#parse_from session)
+                        "(selector record)")
+                      val ty = ``:smt_set_rec``
+                      val constructor = hd
+                        (SmtLib.datatype_constructors_for_test ty)
+                      val expected = SmtLib.datatype_selector_term_for_test ty
+                        constructor 0 (value_raw context argument)
+                      val explicit = case PV.view context value of
+                          PV.Application (function,_) =>
+                            (case PV.view context function of
+                               PV.Abstraction _ => true | _ => false)
+                        | _ => false
+                      val F.ScopedSession
+                        {session=shadow,variables,close,...} =
+                          (#open_binders session)
+                            [("selector","shadow_selector",Type.bool)]
+                      val shadowed = #node
+                        (parse (#parse_from shadow) "selector") = hd variables
+                      val _ = close ()
+                  in require "selector roundtrip or lexical shadow changed"
+                    (not explicit andalso shadowed andalso
+                     Term.aconv (value_raw context value) expected) end)) ()
+              val cleanup = Exn.capture (#close held) ()
+          in case result of Exn.Exn primary => raise primary
+            | Exn.Res answer => (Exn.release cleanup;answer) end))
       val _ = test "Both dialects use the SAME bounded construction grammar"
         (fn () => List.app (fn policy => owned (fn e => paired e policy
           (fn held => fn native => fn values =>

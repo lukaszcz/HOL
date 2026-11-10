@@ -325,7 +325,8 @@ SmtLib_GraphQueryAvailability.uo: SmtLib_GraphQueryAnalysis.uo SmtLib.uo
 SmtLib_GraphParserMapping.ui: SmtReplayGraph.ui \
   SmtLib_GraphQueryAnalysis.ui SmtLib_GraphCarrierStore.ui SmtLib.uo
 SmtLib_GraphParserMapping.uo: SmtReplayGraph.uo \
-  SmtLib_GraphQueryAnalysis.uo SmtLib_GraphCarrierStore.uo SmtLib.uo
+  SmtLib_GraphQueryAnalysis.uo SmtLib_GraphCarrierStore.uo SmtLib.uo \
+  SmtLib_GraphCarrierDatatype.uo
 SmtLib_GraphDeclarationMetadata.ui: SmtLib_GraphParserMapping.ui \
   SmtLib_GraphQueryAnalysis.ui SmtLib_GraphDispatcher.ui SmtLib.uo
 SmtLib_GraphDeclarationMetadata.uo: SmtLib_GraphParserMapping.uo \
