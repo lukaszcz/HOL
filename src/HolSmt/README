@@ -403,9 +403,11 @@ parser/typechecker embeddings and record proof obligations for the soundness
 audit.  Replay is not claimed merely because parsing, typechecking or HOL
 translation succeeds.
 
-Native datatype emission groups new constructor-field dependencies into one
-declaration, including recursion through lists and products. Opaque field
-sorts are declared before that group; previously declared sorts are reused.
+Native datatype emission declares constructor-field dependencies before their
+users, grouping only mutually recursive types, including recursion through
+lists and products. This permits acyclic datatype dependencies in function
+domains without creating a non-covariant mutual declaration. Opaque field
+sorts are declared first; previously declared sorts are reused.
 
 The Datatypes row's checked selector replay applies to parser-native selector
 case terms.  It is not, by itself, a claim about HOL destructor constants.
@@ -690,7 +692,16 @@ heap and drivers with:
   bin/Holmake -C src/HolSmt
 
 The external validation runner should invoke the drivers directly through
-the HOL heap.  From `src/HolSmt`, the typechecker command is equivalent to:
+the own-build `smtreplayheap`, as do the Holmake selftest shards. On Poly/ML,
+`.uo` files are source-loading manifests: starting from `smtheap` recompiles
+the replay libraries in every process. Build `smtreplayheap` incrementally
+in each tree/kernel; never copy a heap from another build. It preloads only
+libraries, not solver entry points, workload goals or completed replay
+contexts. Solver executable/version detection still runs in the consumer.
+For performance comparisons, report heap preparation separately from the
+complete fresh consumer process (including restoration, solver execution
+and all checks); source-build-plus-first-use cost is not deployment cost.
+From `src/HolSmt`, the typechecker command is equivalent to:
 
   extra=$(printf '%s\n%s' "$input" "$logic")
   "$HOL4_ROOT/bin/hol" --gcthreads=1 run \

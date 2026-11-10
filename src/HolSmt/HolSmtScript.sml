@@ -2721,6 +2721,27 @@ QED
   (* exclusive or *)
   val xor_def = bossLib.Define `xor x y = ~(x <=> y)`
 
+  (* Store the derived free-variable instance during the ordinary theory
+     build. Replay consumes this binder-free closed law with one bounded
+     variable INST; it performs no load-time SPEC_ALL or native unfolding. *)
+  val xor_pointwise = s ("xor_pointwise", Drule.SPEC_ALL xor_def)
+
+  (* Small free-variable clauses for the checked named XOR producer.
+     Each native input is at most nineteen raw nodes. These are derived
+     during the ordinary theory build, with no axiom or replay-time proof. *)
+  val xor_cnf_pos1 = s ("xor_cnf_pos1", Tactical.prove
+    (``~(xor x y) \/ (x \/ y)``,
+     Tactical.THEN (REWRITE_TAC [xor_pointwise], tautLib.TAUT_TAC)))
+  val xor_cnf_pos2 = s ("xor_cnf_pos2", Tactical.prove
+    (``~(xor x y) \/ (~x \/ ~y)``,
+     Tactical.THEN (REWRITE_TAC [xor_pointwise], tautLib.TAUT_TAC)))
+  val xor_cnf_neg1 = s ("xor_cnf_neg1", Tactical.prove
+    (``xor x y \/ (~x \/ y)``,
+     Tactical.THEN (REWRITE_TAC [xor_pointwise], tautLib.TAUT_TAC)))
+  val xor_cnf_neg2 = s ("xor_cnf_neg2", Tactical.prove
+    (``xor x y \/ (x \/ ~y)``,
+     Tactical.THEN (REWRITE_TAC [xor_pointwise], tautLib.TAUT_TAC)))
+
   (* array_ext[T] yields an index i such that select A i <> select B i
      (provided A and B are different arrays of type T) *)
   val array_ext_def = bossLib.Define `array_ext A B = @i. A i <> B i`
@@ -2829,7 +2850,7 @@ QED
 Theorem num_floor_zero:
     realax$NUM_FLOOR 0r = 0n
 Proof
-    simp[]
+    irule num_floor_nonpos >> simp[realTheory.REAL_LE_REFL]
 QED
 
 Theorem num_ceiling_zero:
