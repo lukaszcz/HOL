@@ -24955,7 +24955,7 @@ let
   val first = boolSyntax.mk_cond
     (``p:bool``,double 65,``0:int``)
   val second = boolSyntax.mk_cond
-    (``p:bool``,double 65,``1:int``)
+    (``q:bool``,double 65,``0:int``)
   val sum = intSyntax.mk_plus (first,second)
   val target = boolSyntax.mk_eq (sum,sum)
   val theorem = Library.arith_prove_raw target
@@ -25009,6 +25009,19 @@ in
     "shared arithmetic rule changed its operands or fixed unit offset");
   assert_no_hyps ("shared arithmetic rule",theorem);
   check_oracle_tags "shared arithmetic rule" theorem
+end
+
+fun cpc_arithmetic_eliminated_cast_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((step @out :rule arith_poly_norm_rel :args ((= (to_real 0) 0.0))))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val expected = boolSyntax.mk_eq
+    (intrealSyntax.mk_real_of_int intSyntax.zero_tm,realSyntax.zero_tm)
+in
+  assert_concl_alpha ("eliminated arithmetic cast",theorem,expected);
+  assert_no_hyps ("eliminated arithmetic cast",theorem);
+  check_oracle_tags "eliminated arithmetic cast" theorem
 end
 
 fun cpc_arith_geq_tighten_conditional_success () =
@@ -35348,6 +35361,8 @@ let
       cpc_shared_arith_geq_tighten_success),
     ("arithmetic_shared_conditional_abstraction_success",
       arithmetic_shared_conditional_abstraction_success),
+    ("cpc_arithmetic_eliminated_cast_success",
+      cpc_arithmetic_eliminated_cast_success),
     ("cpc_arith_geq_tighten_conditional_success",
       cpc_arith_geq_tighten_conditional_success),
     ("symbolic_power_avoids_nla_route_success",

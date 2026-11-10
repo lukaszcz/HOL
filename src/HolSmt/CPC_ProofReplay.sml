@@ -2323,7 +2323,8 @@ local
       val implication = boolSyntax.list_mk_imp
         (List.map Thm.concl prems,target)
       val concrete_theorem =
-        Library.prove_abstracting_atoms prove atoms implication
+        if List.null atoms then prove implication
+        else Library.prove_abstracting_atoms prove atoms implication
     in
       Drule.LIST_MP prems concrete_theorem
     end
