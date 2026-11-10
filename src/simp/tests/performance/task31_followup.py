@@ -13,13 +13,13 @@ layout seed is another than the first grid's and its second stage's, the
 pairs of a cell derive from the first grid's develop/develop control
 (`Grid.followup_pairs`), and the attempts go into the TASK31 ledger.
 
-CELLS is empty until a decision names cells; with none, this module has no
-engine and refuses every command. To declare a follow-up, set CELLS to
-the cell names (a subset of task31_cases.SAMPLE), choose a counts file name
-below COUNTS, and commit before any observation of the follow-up. The
-commands are the engine's (`prepare`, `pilot`, `predeclare --replaces GRID
---replaces-pilot DIR`, `verify-counts`, `run`, `extend`, `replay`), and
-task31_dispose.py takes the follow-up (`--followup`, `--followup-pilot`).
+With CELLS empty, this module would have no engine and refuse every
+command. To declare a follow-up, set CELLS to the cell names (a subset of
+task31_cases.SAMPLE), choose a counts file name below COUNTS, and commit
+before any observation of the follow-up. The commands are the engine's
+(`prepare`, `pilot`, `predeclare --replaces GRID --replaces-pilot DIR`,
+`verify-counts`, `run`, `extend`, `replay`), and task31_dispose.py takes the
+follow-up (`--followup`, `--followup-pilot`).
 """
 import sys
 
@@ -28,7 +28,11 @@ import acceptance as a
 import task31_grid as base
 import timing_grid as tg
 
-CELLS = ()
+# The cells the TASK31 grid left inconclusive after its second stage: each
+# with a passing develop/develop control and a paired interval across the 3%
+# margin.
+CELLS = ("traversal_reuse_hit-0", "traversal_weakening-0",
+         "traversal_side_conditions-100")
 LAYOUT_SEED = "task31-followup-1"
 COUNTS = a.HERE / "task31_followup_iterations.json"
 # The first grid's sealed files and its driver (this table takes its
@@ -54,8 +58,15 @@ def table(cells):
         allocation=base.TABLE.allocation)
 
 
-TABLE = table(CELLS) if CELLS else None
-ENGINE = tg.Grid(TABLE, doc=__doc__) if CELLS else None
+def engine(cells):
+    """The (table, Grid) of `cells`, or None when none is declared."""
+    if not cells:
+        return None
+    built = table(cells)
+    return built, tg.Grid(built, doc=__doc__)
+
+
+TABLE, ENGINE = engine(CELLS) or (None, None)
 
 
 def main(argv=None):

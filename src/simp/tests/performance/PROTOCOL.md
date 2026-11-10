@@ -2759,12 +2759,14 @@ and a warmup count is ceil(seconds * n / wall) of the calibration, never
 below one.
 
 Follow-up. `task31_followup.py` is the table of the cells that the first
-grid and its second stage left open (`CELLS`, empty until a decision names
-cells; with none it refuses every command). It takes the policy, the batch
-seconds, the samples, the baseline, the sources and the pins of the TASK31
-table, twice its pairs, its own layout seed and counts file; the first grid
-is replayed in full by its own table before the counts are derived. Its
-commands are the engine's, and its attempts go into the TASK31 ledger.
+grid and its second stage left open (`CELLS`: `traversal_reuse_hit-0`,
+`traversal_weakening-0` and `traversal_side_conditions-100`; with `CELLS`
+empty the module has no engine and refuses every command). It takes the
+policy, the batch seconds, the samples, the baseline, the sources and the
+pins of the TASK31 table, twice its pairs, its own layout seed and counts
+file; the first grid is replayed in full by its own table before the counts
+are derived. Its commands are the engine's, and its attempts go into the
+TASK31 ledger.
 
 ### The decision per cell
 

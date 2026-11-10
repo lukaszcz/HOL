@@ -3,6 +3,7 @@
 import contextlib
 import io
 import unittest
+import unittest.mock
 
 import task31_cases as c
 import task31_followup as f
@@ -13,12 +14,27 @@ CELLS = ["traversal_construct-0", "tactic_full_complete-100"]
 
 
 class Follow(unittest.TestCase):
-    def test_no_follow_up_is_declared_and_every_command_is_refused(self):
-        self.assertEqual(f.CELLS, ())
-        self.assertIsNone(f.ENGINE)
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err):
-            self.assertEqual(f.main(["replay"]), tg.REFUSED)
+    def test_the_declared_follow_up_is_the_open_cells(self):
+        declared = ("traversal_reuse_hit-0", "traversal_weakening-0",
+                    "traversal_side_conditions-100")
+        self.assertEqual(f.CELLS, declared)
+        self.assertIsNotNone(f.ENGINE)
+        # That they are cells of the sample is guaranteed at run time by
+        # timing_grid's check of the opened cells against the table names.
+        self.assertEqual(f.TABLE.names(), list(declared))
+        self.assertIs(f.ENGINE.t, f.TABLE)
+
+    def test_no_cells_give_no_engine(self):
+        self.assertIsNone(f.engine(()))
+        table, engine = f.engine(CELLS)
+        self.assertIs(engine.t, table)
+        self.assertEqual(table.names(), CELLS)
+
+    def test_without_cells_every_command_is_refused(self):
+        with unittest.mock.patch.object(f, "ENGINE", None):
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertEqual(f.main(["replay"]), tg.REFUSED)
         self.assertIn("REFUSED", err.getvalue())
 
     def test_a_follow_up_table_replaces_cells_of_the_first_grid(self):

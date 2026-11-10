@@ -365,6 +365,9 @@ class Command(unittest.TestCase):
             mock.patch.object(d.grid.ENGINE.h, "attempts_file",
                               lambda args, appending, create=True:
                               self.ledger),
+            mock.patch.object(d.follow.ENGINE.h, "attempts_file",
+                              lambda args, appending, create=True:
+                              self.ledger),
             mock.patch.object(d.grid.ENGINE, "replay", self.replay),
             mock.patch.object(am, "replay", self.alloc_replay),
             mock.patch.object(d.tg, "classify", lambda decisions: dict(
@@ -536,9 +539,10 @@ class Command(unittest.TestCase):
         self.assertEqual(self.run_main()[0], 2)
 
     def test_a_follow_up_needs_a_declared_table(self):
-        code, _ = self.run_main("--followup", str(self.root / "f"),
-                                "--followup-pilot", str(self.root / "fp"))
-        self.assertEqual(code, tg.REFUSED)
+        with mock.patch.object(d.follow, "ENGINE", None):
+            self.refused("a follow-up needs task31_followup.CELLS",
+                         "--followup", str(self.root / "f"),
+                         "--followup-pilot", str(self.root / "fp"))
 
     def test_the_identity_grid_is_replayed_with_the_ledger(self):
         self.assertEqual(self.run_main()[0], 0)
