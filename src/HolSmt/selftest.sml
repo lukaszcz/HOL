@@ -1898,6 +1898,9 @@ val graph_expect_thm = expect_thm
     (``(x::xs = y::ys) <=> (x = y) /\ (xs = ys)``,
       [thm_AUTO, thm_YO, thm_Z3p, thm_Z3p_v4]),
     (``(SOME x = SOME y) <=> (x = y)``, [thm_AUTO]),
+    (* Z3 rewrites an equation between one-field constructor applications
+       to a unary conjunction in its proof. *)
+    (``SOME (0 + x:int) = SOME x``, [thm_Z3p, thm_Z3p_v4]),
 
     (* data types: case constants *)
 
