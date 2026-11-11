@@ -6225,9 +6225,81 @@ local
     translate_term_step_with_store legacy_term_store_operations translate
       regime apply_operator input
 
-  fun translate_term regime apply_operator input =
-    translate_term_step (translate_term regime apply_operator)
-      regime apply_operator input
+  (* Translation failures of the current goal, keyed by subterm and lexical
+     bounds.  When an operand fails, every later rung that admits its
+     parent's shape (a builtin operator, then an invented function, ...)
+     translates the same operand again, so a failure D levels down was
+     rebuilt 2^D times.  The accumulator only gains the parent's own symbol
+     and sorts between retries, which cannot make the operand translate, so
+     a retry raises the first failure again. *)
+  val no_translation_failures : (Term.term * (Term.term * string) list,
+      Term.term * exn) Redblackmap.dict =
+    Redblackmap.mkDict (Lib.pair_compare (Term.compare,
+      Lib.list_compare (Lib.pair_compare (Term.compare, String.compare))))
+  val current_translation_failures = ref no_translation_failures
+
+  (* Partial applications whose eta expansions enclose the current term. *)
+  val current_eta_expansions : Term.term list ref = ref []
+
+  (* Whether 'child' is '\v1 ... vn. tm v1 ... vn' for some n > 0.  Only
+     eta_expand_ranked_constant gives a term such a child. *)
+  fun is_eta_expansion_of tm child =
+    let
+      val (vars, body) = Term.strip_abs child
+      fun peel t [] = Term.identical t tm
+        | peel t (v :: vs) =
+            Term.is_comb t andalso
+            let val (f, x) = Term.dest_comb t
+            in Term.identical x v andalso peel f vs end
+    in
+      not (List.null vars) andalso peel body (List.rev vars)
+    end
+
+  (* The legacy instance recurses through itself, and remembers each failure
+     of the current goal.  When an eta-expanded body fails, a later rung
+     (curried application, a bag count, ...) may translate the partial
+     application again, and expanding it again would repeat the body with
+     fresh variables forever.  Report the failing operand instead, or else
+     the repetition. *)
+  fun translate_term regime apply_operator (input as (_, (bounds, tm))) =
+  let
+    fun key () = (tm, Redblackmap.listItems bounds)
+    val failures = !current_translation_failures
+    (* Term.compare is alpha-equivalence, but a let's function binders are
+       stripped by name, so only an identical subterm reuses a failure. *)
+    val _ =
+      if Redblackmap.numItems failures = 0 then ()
+      else
+        case Redblackmap.peek (failures, key ()) of
+          SOME (failed, e) =>
+            if Term.identical failed tm then raise e else ()
+        | NONE => ()
+    fun remember e =
+      (current_translation_failures :=
+         Redblackmap.insert (!current_translation_failures, key (), (tm, e));
+       raise e)
+    fun expand (child as (acc, _)) =
+      let val enclosing = !current_eta_expansions in
+        if List.exists (fn t => Term.identical t tm) enclosing then
+          (List.app (fn operand =>
+             ignore (translate_term regime apply_operator
+               (acc, (bounds, operand))))
+             (Lib.snd (boolSyntax.strip_comb tm));
+           raise ERR "translate_term"
+             "eta expansion of a partial application repeats")
+        else
+          (current_eta_expansions := tm :: enclosing;
+           Portable.finally (fn () => current_eta_expansions := enclosing)
+             (fn () => translate_term regime apply_operator child) ())
+      end
+    fun translate (child as (_, (_, child_tm))) =
+      if is_eta_expansion_of tm child_tm then expand child
+      else translate_term regime apply_operator child
+  in
+    translate_term_step translate regime apply_operator input
+    handle e as Feedback.HOL_ERR _ => remember e
+         | e as NestedTranslation _ => remember e
+  end
 
   datatype datatype_case_scan =
       NotDatatypeCase
@@ -6548,6 +6620,8 @@ local
       (Lib.pair_compare (Term.compare, Int.compare))
     val bounds = Redblackmap.mkDict Term.compare
     val terms = ts @ [boolSyntax.mk_neg t]
+    val _ = current_translation_failures := no_translation_failures
+    val _ = current_eta_expansions := []
     val (acc, smtlibs) = Lib.foldl_map
       (fn (acc, tm) =>
         translate_term regime apply_operator (acc, (bounds, tm)))
@@ -6617,7 +6691,9 @@ local
       save_cell current_bag_backend,
       save_cell current_bag_terms,
       save_cell current_bag_helpers,
-      save_cell current_collection_function_arguments
+      save_cell current_collection_function_arguments,
+      save_cell current_translation_failures,
+      save_cell current_eta_expansions
     ]
     fun restore () = restore_cells restorers
   in
