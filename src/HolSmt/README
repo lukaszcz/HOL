@@ -150,8 +150,10 @@ In native proof replay, purification equalities involving these fresh
 constants remain exact proof obligations across scope pops. Replay instantiates
 fresh constants with kernel `INST` and removes reflexive obligations with
 `REFL`; any remaining obligation still needs a checked proof before the final
-hypothesis audit accepts the result. Variables in the original goal or assumptions are
-never instantiated by this closure.
+hypothesis audit accepts the result. Variables in the original goal or
+assumptions are never instantiated by this closure. This purification closure
+is native-only: graph replay (`check_graph_proof`) does not support applied
+fresh-function purification.
 
 CPC higher-order `(_ f x)` applications are accepted recursively in proof
 conclusions and arguments, including congruence sources. Indexed sort markers,
