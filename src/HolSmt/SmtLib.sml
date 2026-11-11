@@ -1659,6 +1659,9 @@ local
       fun native_set current = memoize "native-set" [] current (fn () =>
         is_variable current orelse is_empty_set current orelse
         is_univ_set current orelse
+        (case dest boolSyntax.conditional 3 current of
+           SOME [_,left,right] => native_set left andalso native_set right
+         | _ =>
         (case binary pred_setSyntax.insert_tm current of
            SOME (_,set) => native_set set
          | NONE => (case binary pred_setSyntax.delete_tm current of
@@ -1671,7 +1674,7 @@ local
                    SOME (left,right) =>
                      native_set left andalso native_set right
                  | NONE => (case unary pred_setSyntax.compl_tm current of
-                     SOME set => native_set set | NONE => false)))))))
+                     SOME set => native_set set | NONE => false))))))))
       fun finite_set evidence current =
         memoize "finite-set" [evidence] current (fn () =>
           let
@@ -4725,8 +4728,10 @@ local
       end
     fun fallback_application name dependencies =
       sexpr name (List.map (output_text o Lib.snd) dependencies)
+    (* [definition] gives the defining body for a binder; with NONE the
+       symbol stays uninterpreted. *)
     fun fallback_array_definition prefix range_sort element_type
-        acc expression args body =
+        acc expression definition =
       let
         val dependencies = fallback_dependencies expression
         val dependency_vars = List.map Lib.fst dependencies
@@ -4774,18 +4779,22 @@ local
             val application = fallback_application name dependencies
             val quantified_decls = dependency_decls @
               ["(" ^ binder ^ " " ^ element_sort ^ ")"]
-            val definition = output_concat
-              [output_text "(assert ",
-               output_generated_forall quantified_decls
-                 (seal (tmdict, output_concat
-                   [output_text "(= (select ", application,
-                    output_text (" " ^ binder ^ ") "),
-                    body (output_text binder) args, output_text ")"])),
-               output_text ")\n"]
+            val definitions =
+              case definition of
+                NONE => []
+              | SOME body =>
+                  [output_concat
+                    [output_text "(assert ",
+                     output_generated_forall quantified_decls
+                       (seal (tmdict, output_concat
+                         [output_text "(= (select ", application,
+                          output_text (" " ^ binder ^ ") "),
+                          body (output_text binder), output_text ")"])),
+                     output_text ")\n"]]
           in
             ((tydict, tmdict),
              (typedecls @ List.concat dependency_typedecls @
-                [output_text declaration, definition],
+                output_text declaration :: definitions,
               application))
           end
       end
@@ -4794,7 +4803,7 @@ local
        quantified definition, rather than cvc5's finite set operators. *)
     fun fallback_set_definition acc set args body =
       fallback_array_definition "set" "Bool" (carrier_set_element_type set)
-        acc set args body
+        acc set (SOME (fn binder => body binder args))
     fun native_sequence_builtin (rator, rands) =
       let
         fun translate_args_from start args =
@@ -5110,7 +5119,7 @@ local
       end
     fun fallback_bag_definition acc bag args body =
       fallback_array_definition "bag" "Int" (carrier_bag_element_type bag)
-        acc bag args body
+        acc bag (SOME (fn binder => body binder args))
     fun z3_bag_helper terms name definition =
       let val (terms,fresh) = reserve_helper (terms,name)
       in (terms,if fresh then [output_text definition] else []) end
@@ -5371,6 +5380,42 @@ local
     fun translate_lambda acc =
       let val (v, body) = carrier_dest_abs tm in
         emit_binder {head = "lambda", nest_errors = true} acc [v] body
+      end
+    (* Standard27 emits abstractions, selectors and partially applied
+       constants as functions, but the Array backends give a marked
+       collection an Array sort. *)
+    fun array_collection t =
+      regime = HigherOrder Standard27 andalso
+      (!current_set_backend = CVC5ArraySet andalso
+       carrier_is_marked_set_term t orelse
+       !current_bag_backend = CVC5ArrayBag andalso
+       carrier_is_marked_bag_term t)
+    fun partial_array_collection () =
+      let val (rator, rands) = carrier_strip_comb tm in
+        array_collection tm andalso carrier_is_const rator andalso
+        List.length rands < carrier_declared_const_arity rator
+      end
+    (* A constant body is a const array; any other body is left
+       uninterpreted, keyed by the abstraction, so equal abstractions get
+       one symbol. *)
+    fun translate_array_abstraction acc =
+      let
+        val body = Lib.snd (carrier_dest_abs tm)
+        fun constant (tydict, result) = ((tydict, Lib.snd acc), result)
+        val is_set = carrier_is_marked_set_term tm
+      in
+        if is_set andalso carrier_same_const body boolSyntax.F then
+          constant (set_constant (Lib.fst acc) tm "false")
+        else if is_set andalso carrier_same_const body boolSyntax.T then
+          constant (set_constant (Lib.fst acc) tm "true")
+        else if is_set then
+          fallback_array_definition "set" "Bool"
+            (carrier_set_element_type tm) acc tm NONE
+        else if carrier_same_const body numSyntax.zero_tm then
+          constant (bag_constant (Lib.fst acc) tm)
+        else
+          fallback_array_definition "bag" "Int"
+            (carrier_bag_element_type tm) acc tm NONE
       end
     fun eta_expand_ranked_constant acc applied rator rank rands_count =
       let
@@ -5659,7 +5704,9 @@ local
      else
        case regime of
          FirstOrder => raise ERR "translate_term" "not first-order"
-       | HigherOrder _ => translate_lambda acc)
+       | HigherOrder _ =>
+           if array_collection tm then translate_array_abstraction acc
+           else translate_lambda acc)
     handle DispatchFailure _ =>
 
     (* translate the entire term (e.g., for numerals), using the dictionary of
@@ -5681,7 +5728,9 @@ local
       translate_constructor_application acc rator rands
     handle DispatchFailure _ =>
 
-      translate_selector_case acc
+      (if partial_array_collection () then
+         raise ERR "translate_term" "Array-valued selector"
+       else translate_selector_case acc)
     handle DispatchFailure _ =>
 
       translate_tester_case acc
@@ -5777,7 +5826,10 @@ local
         val _ =
           case regime of
             HigherOrder Standard27 =>
-              if symbol_head then
+              (* A marked collection head is applied by membership below. *)
+              if symbol_head andalso
+                 not (carrier_is_marked_set_term function orelse
+                      carrier_is_marked_bag_term function) then
                 raise ERR "translate_term" "symbol-headed application"
               else
                 ()
@@ -5869,8 +5921,10 @@ local
           case regime of
             FirstOrder => rands_count
           | HigherOrder _ =>
-              if carrier_is_const rator then carrier_declared_const_arity
-                rator else 0
+              if partial_array_collection () then rands_count
+              else if carrier_is_const rator then
+                carrier_declared_const_arity rator
+              else 0
       in
         if declaration_arity > rands_count andalso
            (regime = HigherOrder Z3LambdaArray orelse
@@ -8593,8 +8647,31 @@ in
     else
       raise Conv.UNCHANGED
 
+  (* Set simplification rewrites the assumptions too.  An assumption left
+     with IN or a bare EMPTY would mark a set as an SMT Array while the
+     simplified conclusion uses the same set as a function. *)
   val NATIVE_SET_SIMP_TAC =
-    Tactic.CONV_TAC (Conv.TOP_DEPTH_CONV native_set_preprocess_conv)
+    let val conv = Conv.TOP_DEPTH_CONV native_set_preprocess_conv in
+      Tactical.THEN
+        (Tactic.RULE_ASSUM_TAC (Conv.CONV_RULE conv), Tactic.CONV_TAC conv)
+    end
+
+  (* The predicate encoding of checked mode, on the assumptions as well.
+     Applied EMPTY and UNIV unfold, but the sets themselves stay (and
+     constant predicates become) EMPTY and UNIV: {e} stays e INSERT EMPTY,
+     because an SMT Array store cannot take a lambda. *)
+  val PREDICATE_SET_SIMP_TAC =
+    let
+      val ss = simpLib.mk_simpset [pred_setSimps.SET_SPEC_ss]
+      val thms = [pred_setTheory.SPECIFICATION, pred_setTheory.GSPEC_ETA,
+        pred_setTheory.EMPTY_applied,
+        Drule.EQT_INTRO (Drule.SPEC_ALL pred_setTheory.UNIV_applied),
+        Conv.GSYM pred_setTheory.EMPTY_DEF, Conv.GSYM pred_setTheory.UNIV_DEF,
+        pred_setTheory.UNION_DEF, pred_setTheory.INTER_DEF]
+    in
+      Tactical.THEN (Tactic.RULE_ASSUM_TAC (simpLib.SIMP_RULE ss thms),
+        simpLib.SIMP_TAC ss thms)
+    end
 
   fun CHECKED_SET_SIMP_TAC g =
     let
@@ -8606,7 +8683,7 @@ in
       if List.exists has_complement (#1 g @ [#2 g]) then
         NATIVE_SET_SIMP_TAC g
       else
-        Library.SET_SIMP_TAC g
+        PREDICATE_SET_SIMP_TAC g
     end
 
   (* Preserve equality on native collections.  FUN_EQ_THM would turn it into

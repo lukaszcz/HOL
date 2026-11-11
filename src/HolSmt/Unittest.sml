@@ -290,6 +290,9 @@ val _ = Hol_datatype
   `smt_fun_rec = <| smt_fun : int -> bool -> int |>`
 
 val _ = Hol_datatype
+  `smt_set_rec = <| smt_set : int -> bool; smt_size : int |>`
+
+val _ = Hol_datatype
   `smt_left = SmtLeftDone | SmtLeft of smt_right;
    smt_right = SmtRightDone | SmtRight of smt_left`
 
@@ -7495,6 +7498,40 @@ in
     "Seq/Set/Bag higher-order translation did not record its regime")
 end
 
+(* cvc5's array encoding gives a marked set an Array sort, so every use of
+   that set must be an Array too.  Each goal once reached cvc5 with a
+   select or store on a function-sorted term. *)
+fun smtlib_cvc5_array_set_sorts_success () =
+let
+  fun typechecks checked (name, goal) =
+    let
+      val (simplified, _) =
+        SolverSpec.simplify (SmtLib.CVC_SIMP_TAC checked) goal
+      val text = String.concat
+        (Lib.snd (CVC.goal_to_SmtLib_translation simplified))
+    in
+      ignore (SmtLib_Parser.typecheck_script_string_with_options
+        {dict_logic = NONE, solver = SOME "cvc5",
+         elaborate_datatypes = false} text)
+      handle Feedback.HOL_ERR holerr =>
+        die (name ^ ": cvc5 sorts are inconsistent:\n" ^ text ^ "\n" ^
+          Feedback.message_of holerr)
+    end
+  val singleton =
+    ([``(x:num) = y``, ``(P:(num -> bool) -> bool) {x}``],
+     ``(P:(num -> bool) -> bool) {y}``)
+  val conditional =
+    ([``(a:num) IN (if c then s else t)``, ``c:bool``], ``(a:num) IN s``)
+  val selector =
+    ([``(a:int) IN r.smt_set``, ``(r:smt_set_rec) = q``],
+     ``(a:int) IN q.smt_set``)
+in
+  List.app (typechecks true)
+    [("singleton", singleton), ("conditional", conditional),
+     ("selector", selector)];
+  typechecks false ("selector", selector)
+end
+
 fun smtlib_native_set_translation_success () =
 let
   fun text_of result = String.concat (Lib.snd result)
@@ -7625,9 +7662,16 @@ in
       contains "(Array (_ BitVec 8) Bool)" cvc_finite_word_text,
     "finite word cvc5 complements did not use the array fallback:\n" ^
     cvc_finite_word_text);
-  assert (contains "(select (ite" cvc_conditional_text andalso
-      contains "(Array Bool Bool)" cvc_conditional_text,
-    "higher-order cvc5 Set conditional lost its array sort:\n" ^
+  (ignore (SmtLib_Parser.typecheck_script_string_with_options
+      {dict_logic = NONE, solver = SOME "cvc5",
+       elaborate_datatypes = false}
+      cvc_conditional_text)
+   handle Feedback.HOL_ERR holerr =>
+     die ("higher-order cvc5 Set conditional is ill-sorted: " ^
+       Feedback.message_of holerr));
+  assert (contains "(set.member v1 (ite" cvc_conditional_text andalso
+      not (contains "(Array Bool Bool)" cvc_conditional_text),
+    "higher-order cvc5 Set conditional lost its native sort:\n" ^
     cvc_conditional_text);
   assert (contains "(-> Bool (Array Bool Bool))" cvc_function_text andalso
       contains "(select (@" cvc_function_text,
@@ -34752,6 +34796,8 @@ let
       smtlib_seq_set_bag_feature_inference_success),
     ("smtlib_native_set_translation_success",
       smtlib_native_set_translation_success),
+    ("smtlib_cvc5_array_set_sorts_success",
+      smtlib_cvc5_array_set_sorts_success),
     ("smtlib_translation_context_isolation_success",
       smtlib_translation_context_isolation_success),
     ("smtlib_native_bag_translation_success",
