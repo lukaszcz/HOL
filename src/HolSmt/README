@@ -410,6 +410,9 @@ native datatypes are related to parser case form by kernel-proved
 normalization.  For partial destructors, constructor branches not fixed by the
 registered theorem retain the original constructor-headed value; they are not
 silently identified with the parser selector's chosen `ARB` interpretation.
+Residual destructors and unknown constants over native datatype sorts are
+abstracted as uninterpreted functions.  This abstraction preserves `unsat`
+proofs, but a `sat` verdict need not be a countermodel to the HOL goal.
 
 Trusted-code-base boundary and soundness audit:
 
