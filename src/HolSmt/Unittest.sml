@@ -11365,6 +11365,75 @@ in
     (SmtLib.parser_dicts_for_translation translation) "1.3.4" instream
 end
 
+(* A source symbol whose translation fixes its arity at one argument and
+   whose result is a set (an array of Booleans) may come back from cvc5 with
+   its sort curried differently.  Every such spelling of the same HOL type
+   must reuse the source entry; a different type must still be rejected. *)
+fun cpc_curried_source_redeclaration_success () =
+let
+  val domain_ty = Type.mk_vartype "'set_domain"
+  val element_ty = Type.mk_vartype "'set_element"
+  val set_of = Term.mk_var ("set_of",
+    boolSyntax.list_mk_fun ([domain_ty, element_ty], Type.bool))
+  fun set_of_parse _ indices args =
+    if List.null indices andalso List.length args = 1 then
+      Term.list_mk_comb (set_of, args)
+    else SmtLib_Theories.decline "<set_of>" "wrong number of arguments"
+  fun sort_parse ty _ indices args =
+    if List.null indices andalso List.null args then ty
+    else raise Feedback.mk_HOL_ERR "Unittest"
+      "sort_parse" "source sort signature mismatch"
+  val (logic_tydict, logic_tmdict) = SmtLib_Logics.parsedicts_of_logic "ALL"
+  val dicts =
+    (Library.extend_dict (("SetDomain", sort_parse domain_ty),
+       Library.extend_dict (("SetElement", sort_parse element_ty),
+         logic_tydict)),
+     Library.extend_dict (("set_of", set_of_parse), logic_tmdict))
+  fun proof_using application declaration =
+    "((declare-sort SetDomain 0) (declare-sort SetElement 0) " ^
+    declaration ^
+    " (declare-const a SetDomain) (declare-const x SetElement) \
+    \ (step @p (= " ^ application ^ " " ^ application ^ ") \
+    \ :rule refl :args (" ^ application ^ ")))"
+  val proof = proof_using "(select (set_of a) x)"
+  fun accept_with proof declaration =
+    let
+      val theorem = CPC_ProofReplay.replay_root_for_test
+        (CPC_ProofParser.parse_stream_with_version dicts "1.3.4"
+          (TextIO.openString (proof declaration)))
+      val (lhs, _) = boolSyntax.dest_eq (Thm.concl theorem)
+    in
+      assert (Term.free_in set_of lhs,
+        "curried CPC redeclaration did not reuse the source symbol: " ^
+        declaration);
+      assert (List.null (Thm.hyp theorem),
+        "curried CPC redeclaration retained hypotheses: " ^ declaration);
+      check_oracle_tags ("curried CPC redeclaration " ^ declaration) theorem
+    end
+  val accept = accept_with proof
+  val wrong = "(declare-const set_of (-> SetElement (Array SetDomain Bool)))"
+in
+  List.app accept
+    ["(declare-const set_of (-> SetDomain (Array SetElement Bool)))",
+     "(declare-fun set_of (SetDomain) (Array SetElement Bool))",
+     "(declare-fun set_of (SetDomain SetElement) Bool)",
+     "(declare-const set_of (-> SetDomain SetElement Bool))"];
+  (* The binary spellings may also apply the symbol to both arguments,
+     beyond the source entry's one-argument arity. *)
+  List.app (accept_with (proof_using "(set_of a x)"))
+    ["(declare-fun set_of (SetDomain SetElement) Bool)",
+     "(declare-const set_of (-> SetDomain SetElement Bool))"];
+  (ignore (CPC_ProofParser.parse_stream_with_version dicts "1.3.4"
+     (TextIO.openString (proof wrong)));
+   die "CPC parser reused a source declaration of a different type")
+  handle Feedback.HOL_ERR holerr =>
+    assert (Feedback.top_function_of holerr = "parse_declaration" andalso
+        Feedback.message_of holerr =
+          "incompatible redeclaration of CPC symbol set_of",
+      "CPC curried declaration diagnostic drifted: " ^
+      Feedback.message_of holerr)
+end
+
 fun smtlib_datatype_tester_instantiations_success () =
 let
   fun check goal cases =
@@ -36444,6 +36513,8 @@ let
       cpc_proof_parser_define_and_optional_conclusion_success),
     ("cpc_quoted_declaration_identity_success",
       cpc_quoted_declaration_identity_success),
+    ("cpc_curried_source_redeclaration_success",
+      cpc_curried_source_redeclaration_success),
     ("cpc_tokenizer_eof_and_lexical_validation_success",
       cpc_tokenizer_eof_and_lexical_validation_success),
     ("cpc_parser_graph_contract_diagnostics",
