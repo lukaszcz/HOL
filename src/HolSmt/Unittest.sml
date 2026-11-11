@@ -15215,10 +15215,10 @@ end
 
 fun cpc_proof_replay_bv_poly_norm_word_ring_success () =
 let
-  fun profile_count prefix results = List.foldl
-    (fn ((name, info), total) =>
-      if String.isPrefix prefix name then total + #n info else total)
-    0 results
+  fun profile_count name results =
+    case List.find (fn (candidate, _) => candidate = name) results of
+      SOME (_, info) => #n info
+    | NONE => 0
   val one = "(_ bv1 256)"
   fun ring_step a b =
     "(step @p1 :rule bv_poly_norm :args ((= (bvmul " ^ one ^

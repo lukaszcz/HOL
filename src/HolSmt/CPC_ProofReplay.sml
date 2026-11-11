@@ -5481,14 +5481,14 @@ local
              SmtResource.check_dag_size_with_limit
                "BitVector" "word-ring-schema"
                SmtResource.max_skeleton_replay_dag_nodes (!visited))
+          (* [abstract] memoises by pointer, so a shared leaf gets one
+             variable.  Comparing leaves structurally would walk opaque
+             subterms that no bound covers. *)
           fun atom term =
-            case List.find (fn (saved, _) => Term.aconv saved term) (!atoms) of
-              SOME (_, variable) => variable
-            | NONE =>
-                let val variable = Term.genvar (Term.type_of term) in
-                  atoms := (term, variable) :: !atoms;
-                  variable
-                end
+            let val variable = Term.genvar (Term.type_of term) in
+              atoms := (term, variable) :: !atoms;
+              variable
+            end
           fun abstract term =
             case List.find
                 (fn (saved, _) => Portable.pointer_eq (term, saved)) (!memo) of
