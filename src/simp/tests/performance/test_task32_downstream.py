@@ -2258,6 +2258,21 @@ class CountsDefaults(unittest.TestCase):
                 dict(report, stage="second"), None, None))
 
 
+class HelpRenders(unittest.TestCase):
+    def test_every_help_renders(self):
+        parser = dw.build_parser()
+        subs = [x for x in parser._actions
+                if isinstance(x, argparse._SubParsersAction)]
+        self.assertTrue(subs)
+        out = [parser.format_help()]
+        for action in subs:
+            for name, sp in action.choices.items():
+                text = sp.format_help()
+                self.assertIn("usage", text, name)
+                out.append(text)
+        self.assertIn("is 6% of its median", "\n".join(out))
+
+
 if __name__ == "__main__":
     unittest.main()
 

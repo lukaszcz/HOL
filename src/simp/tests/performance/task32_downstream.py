@@ -2421,7 +2421,7 @@ def build_parser():
     sub.choices["control"].add_argument("--reps", type=int, default=1)
     sub.choices["control"].add_argument(
         "--pilot", type=Path, required=True,
-        help="this gate's pilot: the busy time is %.0f%% of its median "
+        help="this gate's pilot: the busy time is %.0f%%%% of its median "
         "CPU of the control unit" % (100 * BUSY))
     sub.choices["extend"].add_argument("--first", type=Path, required=True)
     sub.choices["followup"].add_argument("--followup-counts", type=Path)
