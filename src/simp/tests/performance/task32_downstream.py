@@ -691,19 +691,21 @@ def launch(argv, cwd, env, timeout, out_path, fds=()):
             timer.start()
         error = None
         try:
-            with snap.raising():  # the only interruptible wait
-                _, status, usage = os.wait4(proc.pid, 0)
-                wall = time.perf_counter() - started
-        except BaseException as caught:
-            error = caught
-        with snap.deferred(raise_pending=False):
-            with lock:
-                state["done"] = True
-            timer.cancel()
-            # always: a leader that is gone leaves its group behind, and
-            # an interrupted wait leaves the leader itself
-            leftover = [] if error else group_members(proc.pid)
-            unkilled = kill_group(proc.pid)
+            try:
+                with snap.raising():  # the only interruptible wait
+                    _, status, usage = os.wait4(proc.pid, 0)
+                    wall = time.perf_counter() - started
+            except BaseException as caught:
+                error = caught
+        finally:
+            with snap.deferred(raise_pending=False):
+                with lock:
+                    state["done"] = True
+                timer.cancel()
+                # always: a leader that is gone leaves its group behind,
+                # and an interrupted wait leaves the leader itself
+                leftover = [] if error else group_members(proc.pid)
+                unkilled = kill_group(proc.pid)
         if error is not None:
             proc.returncode = -signal.SIGKILL  # reaped by kill_group
             raise error
@@ -1718,15 +1720,20 @@ def run_stage(args, spec):
             try:
                 body(args, spec, report, sides, scratch, fds, verify,
                      journal)
+                snap.hold()  # last: from here a signal is only recorded
                 report["success"] = True
             except (Refusal, OSError, ValueError, KeyError, IndexError,
                     TypeError, subprocess.SubprocessError, Fatal,
                     snap.Terminated) as error:
+                snap.hold()  # a signal at this call still reaches finally
                 report["failure"] = "%s: %s" % (type(error).__name__, error)
                 for note in getattr(error, "__notes__", ()):
                     report["failure"] += " (%s)" % note
                 if isinstance(error, Blocked):
                     report["blocked"] = str(error)
+            except BaseException:
+                snap.hold()
+                raise
             finally:
                 # a signal here is only recorded: the save and the close
                 # complete, and `terminating` raises it afterwards

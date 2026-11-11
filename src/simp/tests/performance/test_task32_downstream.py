@@ -5,6 +5,7 @@ schedule, counts commit rules, replay, the verify interface of
 task32_snapshots, and a whole smoke -> pilot -> control -> counts -> first
 stage -> second stage -> follow-up -> disposition chain."""
 import argparse
+import contextlib
 import gzip
 import json
 import os
@@ -1478,6 +1479,50 @@ class Unsaved(Base):
         self.assertEqual(row["closes"][0]["seal"],
                          a.seal(w.tmp / "x" / "downstream.json")["sha256"])
         self.assertIsNotNone(why[key])  # judged, not void
+
+
+    def test_a_signal_at_the_entry_of_the_deferred_close_still_closes(self):
+        w = self.world
+        real = snap.deferred
+
+        @contextlib.contextmanager
+        def entering(*args, **kw):
+            # the signal arrives as the close's deferred block is entered
+            if sys._getframe(2).f_code.co_name == "run_stage":
+                os.kill(os.getpid(), signal.SIGTERM)
+                time.sleep(0.05)
+            with real(*args, **kw):
+                yield
+        with mock.patch.object(snap, "deferred", entering):
+            with self.assertRaises(snap.Terminated):
+                w.run("x", w.spec(["logroot"]))
+        self.assertTrue((w.tmp / "x" / "downstream.json").is_file())
+        found, _ = self.judged_closes()
+        (key, row), = found.items()
+        self.assertEqual(row["closes"][0]["seal"],
+                         a.seal(w.tmp / "x" / "downstream.json")["sha256"])
+
+    def test_a_signal_as_the_hold_is_made_still_closes(self):
+        w = self.world
+        real = snap.hold
+        calls = []
+
+        def hold():
+            # the first call is the end of the body's try: the signal
+            # raises there, inside the try, so the finally runs
+            calls.append(1)
+            if len(calls) == 1:
+                os.kill(os.getpid(), signal.SIGTERM)
+                time.sleep(0.05)
+            real()
+        with mock.patch.object(snap, "hold", hold):
+            report = w.run("x", w.spec(["logroot"]))
+        self.assertFalse(report["success"])
+        self.assertTrue(report["failure"].startswith("Terminated"))
+        found, _ = self.judged_closes()
+        (key, row), = found.items()
+        self.assertEqual(len(row["closes"]), 1)
+        self.assertIsNotNone(row["closes"][0]["seal"])
 
 
 class Replay(Base):

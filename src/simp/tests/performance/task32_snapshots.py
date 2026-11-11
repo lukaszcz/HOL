@@ -435,6 +435,15 @@ def check():
         raise Terminated(STATE.recorded[0])
 
 
+def hold():
+    """Enter DEFER for good (until the guard ends). The last statement of
+    a `try` whose `finally` must complete, and of its `except` clauses: a
+    signal before it raises inside the `try`, so the `finally` runs; after
+    it a signal is only recorded, so none can cut the `finally` short."""
+    if STATE.mode == RAISE:
+        STATE.mode = DEFER
+
+
 @contextmanager
 def deferred(raise_pending=True):
     """Signals in this block are only recorded. At its end the mode is
