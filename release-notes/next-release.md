@@ -29,6 +29,15 @@ New features
     suppresses Metis and Grobner progress chatter during proof replay while
     preserving errors and restoring both tools' trace settings.
 
+-   Checked `Z3_TAC` and `CVC_TAC` proof replay now runs over typed proof
+    graphs owned by `HolSmt`: compact proofs are assembled over graph
+    variables, realized once on the source terms, and checked against the
+    original goal and tags.  It uses only the public interface of the
+    unchanged standard and experimental kernels, with no kernel extension,
+    axiom or oracle, and keeps HolSmt's fixed resource limits.  `Holmake`
+    in `src/HolSmt` also builds `smtreplayheap`, which preloads the replay
+    libraries for proof drivers and the sharded selftest.
+
 -   `CVC_TAC` now uses cvc5's native CPC proof format by default.  CPC proof
     text is untrusted input: HOL parses the version-gated rule vocabulary,
     reconstructs the proof, and checks the resulting theorem has no oracle

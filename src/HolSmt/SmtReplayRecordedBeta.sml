@@ -500,7 +500,6 @@ struct
   structure NativeContract = SmtReplayNativeContract
   type native_budget = NativeContract.contract
   val native_budget_for = NativeContract.for_work
-  val validate_native_budget_for = NativeContract.validate_for
 
   fun native_source_limit
       (budget:NativeContract.limits) category =

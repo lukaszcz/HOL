@@ -63,23 +63,6 @@ struct
       val _ = install_datatypes (#base configured) translation session
     in session end
 
-  (* Branch provenance comes only from authoritative datatype recipes. *)
-  fun create_alignment_session base translation description tokens =
-    let
-      val configured = configured_options base translation
-      val session = F.create_configured_session configured description tokens
-      val branches = ref (Redblackset.empty Int.compare)
-      val graph = #graph base
-      val scope = #scope base
-      fun record nodes = branches := Redblackset.addList
-        (!branches,List.map G.node_id nodes)
-      val _ = install_datatypes_with_branches (#base configured)
-        translation session record
-      fun admitted_branch (_,parsed) =
-        (G.validate_scope graph scope;
-         ignore (G.type_of graph parsed);
-         Redblackset.member (!branches,G.node_id parsed))
-    in {session = session,admitted_branch = admitted_branch} end
   fun install_declared_datatypes_with_policy_and_branches
       (options:F.policy_options) types declarations guard
       (session:F.session) record =
@@ -755,21 +738,4 @@ struct
        seeds action
      handle primary => (SmtReplayInvocationWork.close expected;raise primary))
 
-  (* Branch provenance comes only from authoritative datatype recipes. *)
-  fun create_alignment_session_with_policy base translation description tokens =
-    let
-      val configured = configured_options_with_policy base translation
-      val session = F.create_configured_session_with_policy configured description tokens
-      val branches = ref (Redblackset.empty Int.compare)
-      val graph = #graph base
-      val scope = #scope base
-      fun record nodes = branches := Redblackset.addList
-        (!branches,List.map G.node_id nodes)
-      val _ = install_datatypes_with_policy_and_branches (#base configured)
-        translation session record
-      fun admitted_branch (_,parsed) =
-        (G.validate_scope graph scope;
-         ignore (G.type_of graph parsed);
-         Redblackset.member (!branches,G.node_id parsed))
-    in {session = session,admitted_branch = admitted_branch} end
 end

@@ -12,12 +12,8 @@ sig
     SmtLib.translation
   (* This is the old fixed bounded worker with authentic per-run stock
      definitions. It gives no assertion-alignment or private Work credit. *)
-  val worker_for : SmtReplayInvocationWork.portfolio -> receipt ->
-    CPC_GraphProofReplay.worker
   val force_worker_for : SmtReplayInvocationWork.portfolio -> receipt ->
     CPC_GraphProofReplay.worker
-  val clause_worker_for : SmtReplayInvocationWork.portfolio -> receipt ->
-    CPC_GraphProofReplay.clause_worker
   (* Caller-local declaration/pattern admission from the naming boundary. *)
   val admitted_worker_for : SmtReplayInvocationWork.portfolio -> receipt ->
     (Term.term -> unit) -> CPC_GraphProofReplay.worker

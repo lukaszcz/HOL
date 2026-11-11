@@ -330,17 +330,6 @@ struct
       in (rule2 SmtReplayRuleObservation.MP) implication antecedent end) (definitions @ facts)
     end
 
-  fun prove_graph_using profile {graph, scope, root} =
-    let
-      val _ = ignore (graph_gates graph [root])
-      val block = P.freeze graph
-        {scope = scope, roots = [root], sources = [],
-         template_limit = SmtResource.max_bitblast_term_nodes}
-      val derived = assemble_graph_using profile
-        {graph = graph,block = block,root = root,premises = []}
-    in
-      profile "realize" (fn () => P.realize block root derived)
-    end
   end
   end
 end

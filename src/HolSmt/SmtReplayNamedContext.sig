@@ -55,9 +55,6 @@ sig
   val clear_profile_store : profile_store -> unit
   val inspector_with_store : admission -> profile_store ->
     {profile:Term.term -> profile}
-  val prepare_fixed : admission -> ('node -> Term.term) ->
-    'node primitive -> Thm.thm list ->
-    {proofs:Thm.thm list,shape:shape,hypotheses:Term.term list}
   val prepare_fixed_using : fixed_admission -> (Term.term -> profile) ->
     ('node -> Term.term) -> 'node primitive -> Thm.thm list ->
     {proofs:Thm.thm list,shape:shape,hypotheses:Term.term list}
@@ -205,9 +202,6 @@ sig
   val prepare_freeze_with_formals : 'node operations ->
     {nodes:'node list,sources:'node list,formals:shape list,
      template_limit:int} -> 'node freeze_plan
-  val freeze_with_formals : 'node operations ->
-    {nodes:'node list,sources:'node list,formals:shape list,
-     template_limit:int} -> 'node block
   val prepare_freeze : 'node operations ->
     {nodes:'node list,sources:'node list,template_limit:int} ->
     'node freeze_plan

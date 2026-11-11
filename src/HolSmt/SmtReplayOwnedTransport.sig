@@ -125,8 +125,6 @@ sig
     -> policy_focus ->
     {node:SmtReplayGraph.node,scope:SmtReplayGraph.scope,
      provenance:provenance,occurrence:IntInf.int option}
-  val node_with_policy : policy_focus -> SmtReplayGraph.node
-  val scope_with_policy : policy_focus -> SmtReplayGraph.scope
   val child_with_policy : policy_focus -> SmtReplayGraph.closure_child
   val application_children_with_policy : policy_focus ->
     policy_focus * policy_focus
@@ -155,30 +153,15 @@ sig
      check_type:Type.hol_type -> unit} -> policy_application_plan
   val execute_application_with_policy : policy_application_plan ->
     policy_conversion
-  val closed_fact_with_policy : policy_conversion ->
-    {ordinal:int,check_type:Type.hol_type -> unit} ->
-    SmtReplayProof.closed_fact
   val closed_fact_with_policy_for :
     {graph:SmtReplayGraph.graph,scope:SmtReplayGraph.scope,
      sources:SmtReplaySource.sources,work:SmtReplayInvocationWork.portfolio}
     -> policy_conversion -> {ordinal:int,check_type:Type.hol_type -> unit} ->
     SmtReplayProof.closed_fact
   (* Whole import/opened association for the actual Lambda body producer. *)
-  val closed_fact_from_import_with_policy_for :
-    {graph:SmtReplayGraph.graph,scope:SmtReplayGraph.scope,
-     sources:SmtReplaySource.sources,work:SmtReplayInvocationWork.portfolio}
-    -> policy_conversion -> {ordinal:int,check_type:Type.hol_type -> unit} ->
-    SmtReplayProof.closed_fact
-  val lift_lambda_admitted_with_policy :
-    {parent:policy_focus,admission:SmtReplayFocusAdmission.policy_focus,
-     body:policy_conversion,record_ordinal:int,lift_ordinal:int,
-     check_type:Type.hol_type -> unit} -> policy_conversion
   val denial_conversion_with_policy : policy_conversion ->
     {denial_view:SmtReplayGraph.source,ordinal:int,
      check_type:Type.hol_type -> unit} -> SmtReplayProof.closed_conversion
-  val alpha_changed_admitted_with_policy :
-    {conversion:policy_conversion,
-     admission:SmtReplayFocusAdmission.policy_focus} -> bool
   val closed_generated_equality_with_policy_for :
     SmtReplayFocusAdmission.expected -> policy_conversion ->
     {ordinal:int,check_type:Type.hol_type -> unit} ->

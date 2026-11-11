@@ -338,11 +338,6 @@ structure SolverSpec = struct
       (make_solver_with_capture_command_and_validation_writer_internal
         strict_capture validate capture retain command_stem post) goal end
 
-  fun make_solver_with_capture_command_and_completion_writer
-      validate complete capture pre command_stem post =
-    make_solver_with_capture_command_and_completion_writer_internal false
-      validate complete capture pre command_stem post
-
   fun make_solver_with_capture_command_and_completion_writer_strict
       validate complete capture pre command_stem post =
     make_solver_with_capture_command_and_completion_writer_internal true

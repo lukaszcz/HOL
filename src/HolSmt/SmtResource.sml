@@ -663,44 +663,6 @@ struct
     new_bounded_term_index_with_types
       {admit_binder = fn _ => true, intern_type = NONE} maximum
 
-  (* Semantic owner/metric maps must retain alpha membership even when an
-     optional index is exhausted. IDs shortcut equality, not ordering; pair
-     memoization keeps the application fallback DAG-aware. Opaque binders
-     retain the old public syntactic comparison, never a proof inference.
-     Proof caches use only admitted IDs, not this fallback comparator. *)
-  fun semantic_term_order index =
-    let
-      val count = 4093
-      val pairs = Array.array
-        (count, [] : (Term.term * Term.term * order) list)
-      fun compare (left, right) =
-        if Portable.pointer_eq (left, right) then EQUAL
-        else
-          let
-            val bucket = (pointer_bucket count left +
-              pointer_bucket count right) mod count
-          in
-            case List.find (fn (l, r, _) =>
-                Portable.pointer_eq (left, l) andalso
-                Portable.pointer_eq (right, r)) (Array.sub (pairs, bucket)) of
-              SOME (_, _, result) => result
-            | NONE =>
-                let
-                  val equal = case (index left, index right) of
-                      (SOME a, SOME b) => a = b
-                    | _ => false
-                  val result = if equal then EQUAL
-                    else if Term.is_comb left andalso Term.is_comb right then
-                      (case compare (Term.rator left, Term.rator right) of
-                         EQUAL => compare (Term.rand left, Term.rand right)
-                       | result => result)
-                    else Term.compare (left, right)
-                  val _ = Array.update (pairs, bucket,
-                    (left, right, result) :: Array.sub (pairs, bucket))
-                in result end
-          end
-    in compare end
-
   (* Replay terms are DAGs.  Count each node once while retaining the
      saturated unfolded-tree metric used by the skeleton profiler.  Keeping
      this measurement here gives admission gates and the skeleton engine one

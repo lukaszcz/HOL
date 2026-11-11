@@ -72,6 +72,5 @@ sig
   type type_admission
   val new_type_admission : unit -> type_admission
   val admit_primitive_type : type_admission -> Type.hol_type -> unit
-  val primitive_type_id : type_admission -> Type.hol_type -> int
   val word_width : type_admission -> Type.hol_type -> Arbnum.num
 end

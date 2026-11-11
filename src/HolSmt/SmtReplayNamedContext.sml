@@ -360,11 +360,6 @@ struct
   fun prepare_fixed_using admission profile names recipe proofs =
     prepare_fixed_observed Thm.concl Thm.hyp admission profile names
       recipe proofs
-  fun prepare_fixed admission names recipe proofs =
-    let val inspect=inspector admission
-    in prepare_fixed_using (fixed_admission admission) (#profile inspect)
-      names recipe proofs
-    end
   fun matches (HeldSyntax held) actual=
         Portable.pointer_eq(held,actual) orelse
         (Thm.kernelid="stdknl" andalso Term.aconv held actual)
@@ -1345,14 +1340,6 @@ struct
         val count=formal_freeze_count formals
     in freeze_using_sources facts count plan_freeze operations
       {nodes=nodes,sources=sources,template_limit=template_limit}end
-  fun freeze_with_formals operations
-      {nodes,sources,formals,template_limit}=
-    let val _= #guard operations ()
-        val _= #spend operations 6
-        val facts=formal_freeze_facts formals
-        val count=formal_freeze_count formals
-    in freeze_using_sources facts count finish_freeze operations
-      {nodes=nodes,sources=sources,template_limit=template_limit}end
   fun freeze_layout(FreezePlan{operations,pay,planned,definitions,
       source_count,epoch,symbols,used,...})=
     let
@@ -1679,145 +1666,6 @@ struct
      prepared:{shape:named_inst_shape,oracles:string list},
      predicted:Term.term,epoch:int,symbols:int,
      used:bool ref}
-  fun prepare_pointwise_xor
-      (block as Block{operations,...}){left,right,metadata_template}=
-    let
-      val _=active block
-      (* Admission11, local helpers4, native limit observations10 and
-         the two declaration epoch reads. *)
-      val _=pay block 27
-      val admitted=admission block
-      val native=(#native_limits operations)()
-      val limits= #semantic_limits native
-      val ceiling=IntInf.fromInt(#type_work_limit native)
-      val bound=Int.min(#input_limit limits,
-        Int.min(#output_limit limits,#template_limit limits))
-      val types=Type.type_epoch()val symbols=Term.term_epoch()
-      fun fail text=raise ERR "fixed_xor" text
-      fun guard()=
-        (active block;pay block 6;
-         if types=Type.type_epoch()andalso symbols=Term.term_epoch()then()
-         else fail "fixed pointwise XOR epochs changed")
-      fun tick()=(guard();pay block 1)
-      val original=HolSmtTheory.xor_pointwise
-      val statement=Thm.concl original
-      val _=pay block 3
-      val token=case SmtReplayImport.bounded_raw_size_with_bound_observed
-          {limit=bound,observe=tick}statement of SOME token=>token
-        | NONE=>fail "fixed XOR instance exceeds native input bound"
-      (* Actual pointer/control3, declaration reads/comparisons/control6,
-         and the returned two-field record3, before the passive getter. *)
-      val _=pay block 12
-      val measured=SmtReplayImport.raw_bound_data token statement
-      val _=pay block 8
-      val _=if #raw_upper measured=15 andalso #inc_upper measured=15
-          andalso SmtReplayResourcePolicy.allows metadata_template 15
-        then()else fail "fixed XOR pointwise schema or template differs"
-      (* The trusted source is binder-free before the following ordinary
-         destructors. Real operands below are privately owned named vars. *)
-      val _=pay block 21
-      val(left_schema,right_schema)=boolSyntax.dest_eq statement
-      val(partial,y)=Term.dest_comb left_schema
-      val(operator,x)=Term.dest_comb partial
-      val equality=boolSyntax.dest_neg right_schema
-      val(a,b)=boolSyntax.dest_eq equality
-      val _=if Term.is_const operator andalso
-          Term.same_const operator
-            (Term.prim_mk_const{Thy="HolSmt",Name="xor"})andalso
-          Term.is_var x andalso Term.is_var y then()else
-        fail "fixed XOR pointwise source geometry differs"
-      fun bytes term=
-        (tick();if Term.is_var term then
-          let val _=pay block 2 val(name,_)=Term.dest_var term
-              val amount=IntInf.fromInt(String.size name)
-          in pay block amount;amount end
-        else if Term.is_const term then
-          let val _=pay block 3 val{Thy,Name,...}=Term.dest_thy_const term
-              val amount=IntInf.fromInt(String.size Thy+String.size Name)
-          in pay block amount;amount end
-        else if Term.is_comb term then
-          let val _=pay block 2 val(f,z)=Term.dest_comb term
-          in bytes f+bytes z end
-        else fail "binder in stored pointwise XOR")
-      val names=bytes x+bytes y+bytes a+bytes b
-      val _=pay block(2+names)
-      val _=if Term.var_compare(x,a)=EQUAL andalso
-          Term.var_compare(y,b)=EQUAL then()else
-        fail "fixed XOR pointwise variable geometry differs"
-      (* Exactly two variable-to-owned-variable substitutions. This is
-         the SAME original named-inst forecast/matcher; the private zero
-         result-event instance returns a theorem, not an unused N edge. *)
-      (* Two substitution records6 and cons2, admission record7,
-         two partial applications2, and the request record3. *)
-      val _=pay block 20
-      val substitution=[{redex=x,residue=left},{redex=y,residue=right}]
-      val prepared=prepare_named_inst_using 0
-        {pay=pay block,type_weight=native_type_weight block,
-         member= #member admitted,template_limit=bound,
-         type_work_limit= #type_work_limit native,error=ERR}
-        {substitution=substitution,theorem=original}
-      val spelling=bytes statement+bytes left+bytes right
-      val _=pay block(1+30*(1+spelling))
-      val predicted=Term.subst substitution statement
-      val _=guard()
-      (* Price this additional proof-free prediction match independently
-         of the SAME helper's retained future native-result comparison. *)
-      val _=pay block(1+60*(1+spelling))
-      val _=if named_inst_matches(#shape prepared)predicted then()else
-        fail "fixed XOR prediction differs"
-      val _=pay block 4
-      val callback_types=ref([]:Type.hol_type list)
-      fun annotations term=
-        let val _=tick()val ty=Term.type_of term
-            val _=pay block 3
-            val _=callback_types:=ty:: !callback_types
-        in if Term.is_comb term then
-            let val _=pay block 2 val(f,z)=Term.dest_comb term
-            in annotations f;annotations z end
-          else if Term.is_var term orelse Term.is_const term then()else
-            fail "binder in fixed XOR callback portfolio"end
-      val _=annotations statement val _=annotations predicted
-      val _=annotations left val _=annotations right
-      val _=pay block 8
-      val _=SmtReplayLocalSpecialize.callback_forest
-        {visit=tick,type_weight=native_type_weight block,
-         ceiling=ceiling,error=ERR "fixed_xor"}(!callback_types)
-      fun check []=guard()
-        | check(ty::rest)=
-            (tick();guard();(#check_type operations)ty;guard();check rest)
-      val _=check(!callback_types)
-      (* Eight fields plus the record, constructor and once ref. Shared
-         named-inst already quotes INST, its once branch, actual empty
-         Hyp/tag and the full shape checks. *)
-      val _=pay block 11
-    in PointwiseXorPlan{block=block,proof=original,
-      substitution=substitution,prepared=prepared,predicted=predicted,
-      epoch=types,symbols=symbols,used=ref false}end
-  fun pointwise_xor_guard block epoch symbols=
-    (active block;pay block 6;
-     if Type.type_epoch()=epoch andalso Term.term_epoch()=symbols then()
-     else raise ERR "fixed_xor" "pointwise declaration lifetime changed")
-  fun pointwise_xor_conclusion
-      (PointwiseXorPlan{block,predicted,epoch,symbols,...})=
-    (pointwise_xor_guard block epoch symbols;predicted)
-  fun pointwise_xor_oracles
-      (PointwiseXorPlan{block,prepared,epoch,symbols,...})=
-    (pointwise_xor_guard block epoch symbols;#oracles prepared)
-  fun execute_pointwise_xor(PointwiseXorPlan
-      {block,proof,substitution,prepared,epoch,symbols,used,...})=
-    let
-      val _=pointwise_xor_guard block epoch symbols
-      val _=if !used then raise ERR "fixed_xor" "used instance plan"else
-        used:=true
-      (* The original named-inst forecast pays the actual once read,
-         branch and write. This additional quote covers only the final
-         declaration fence, before the sole shared kernel operation. *)
-      val _=pay block 6
-      val result=execute_prepared_named_inst block substitution proof prepared
-      val _=active block
-      val _=if Type.type_epoch()=epoch andalso Term.term_epoch()=symbols then()
-        else raise ERR "fixed_xor" "pointwise declaration lifetime changed"
-    in result end
 
   (* Four small, normally derived schemas replace a raw defining equation
      at the already-CNF SAT boundary. A single genuine constructor bridge

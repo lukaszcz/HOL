@@ -62,7 +62,6 @@ sig
     {law:SmtLib_GraphSelectedAuxiliary.policy_receipt,
      conversion:SmtReplayOwnedTransport.policy_conversion,ordinal:int} ->
     policy_normalized
-  val validate_reuse_with_policy : policy_pending -> policy_normalized -> unit
   val validate_reuse_cached_with_policy :
     policy_pending -> policy_normalized -> unit
   val reuse_with_policy : policy_pending ->
@@ -72,7 +71,6 @@ sig
   val resume_with_policy :
     policy_pending -> policy_normalized list -> policy_result
   val pending_originals_with_policy : policy_pending -> Thm.thm list
-  val pending_heads_with_policy : policy_pending -> Term.term list
   val pending_requests_with_policy : policy_pending -> policy_request list
   val pending_selections_with_policy : policy_pending ->
     {selection:SmtLib_GraphNumericStock.selection,ordinal:int} list

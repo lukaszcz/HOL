@@ -41,10 +41,6 @@ sig
     'a SmtLib_Parser.construction_parse_fn
   (* Declared source objects retain their declaration identity and origin
      bridges; they are not reconstructed as arbitrary schematic variables. *)
-  val bind_sources : 'a SmtLib_GraphBackend.backend ->
-    'a SmtLib_GraphBackend.frame ->
-    (string * Term.term) list -> 'a SmtLib_Parser.construction_dict ->
-    'a SmtLib_Parser.construction_dict
   (* Legacy retry coercion from cached operand types and a tiny recipe. *)
   val coerce_arguments : 'a SmtLib_GraphBackend.backend ->
     'a SmtLib_GraphBackend.frame -> 'a list -> 'a list * bool

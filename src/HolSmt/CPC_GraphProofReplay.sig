@@ -121,37 +121,11 @@ sig
      force_worker : worker option,observer : observer} -> Thm.thm
   (* Additive checked history discovery. The original observer API does
      not run this path. An unavailable origin conveys no source authority. *)
-  val check_contradiction_history_observing :
-    {graph : SmtReplayGraph.graph,scope : SmtReplayGraph.scope,
-     sources : SmtReplaySource.sources,proof : CPC_ProofParser.graph_proof,
-     ordinary_limit : int,template_limit : int,worker : worker,
-     force_worker : worker option,observer : observer,
-     check_type : Type.hol_type -> unit} -> Thm.thm
   (* Actual selected history closes after capture, while committed leases
      are live, before ordinary completion freezes or forces any obligation.
      NONE preserves the existing completion route. Exceptions remain fatal. *)
-  val check_contradiction_history_completing :
-    {graph : SmtReplayGraph.graph,scope : SmtReplayGraph.scope,
-     sources : SmtReplaySource.sources,proof : CPC_ProofParser.graph_proof,
-     ordinary_limit : int,template_limit : int,worker : worker,
-     force_worker : worker option,observer : observer,
-     check_type : Type.hol_type -> unit,completion : completion} -> Thm.thm
-  val check_contradiction_history_lexical_completing :
-    {graph : SmtReplayGraph.graph,scope : SmtReplayGraph.scope,
-     sources : SmtReplaySource.sources,proof : CPC_ProofParser.graph_proof,
-     ordinary_limit : int,template_limit : int,worker : worker,
-     force_worker : worker option,observer : observer,
-     check_type : Type.hol_type -> unit,completion : completion,
-     direct_deferred : direct_deferred} -> Thm.thm
   (* The force callback receives the actual owned obligation. Its returned
      theorem still passes every existing independent closure/Source gate. *)
-  val check_contradiction_lexical_force_completing :
-    {graph : SmtReplayGraph.graph,scope : SmtReplayGraph.scope,
-     sources : SmtReplaySource.sources,proof : CPC_ProofParser.graph_proof,
-     ordinary_limit : int,template_limit : int,worker : worker,
-     observer : observer,check_type : Type.hol_type -> unit,
-     completion : completion,direct_deferred : direct_deferred,
-     owned_force_worker : owned_force_worker} -> Thm.thm
   (* prove is a dynamic callback lease over the same actual persistent
      forced worker and serial counter. It expires on return or exception. *)
   val check_contradiction_owned_proof_completing :
@@ -161,15 +135,6 @@ sig
      observer : observer,check_type : Type.hol_type -> unit,
      completion : owned_completion,direct_deferred : direct_deferred,
      owned_force_worker : owned_force_worker} -> Thm.thm
-  val check_contradiction_native_reserving :
-    {graph : SmtReplayGraph.graph,scope : SmtReplayGraph.scope,
-     sources : SmtReplaySource.sources,proof : CPC_ProofParser.graph_proof,
-     ordinary_limit : int,template_limit : int,worker : worker,
-     observer : observer,check_type : Type.hol_type -> unit,
-     completion : owned_completion,direct_deferred : direct_deferred,
-     owned_force_worker : owned_force_worker,
-     reserve : {serial : int,step : CPC_ProofParser.graph_rule_step} ->
-       CPC_GraphNativeReservation.origin option} -> Thm.thm
   val prove_using :
     {graph : SmtReplayGraph.graph, scope : SmtReplayGraph.scope,
      sources : SmtReplaySource.sources, proof : CPC_ProofParser.graph_proof,

@@ -21,7 +21,6 @@ sig
      source_occurrence:int,rigid_variables:SmtReplayGraph.node list option}
   (* Genuine named proof only; semantic evidence carries no past Work credit.
      The exported theorem proves the NAME of node, not a raw Source clause. *)
-  val named_theorem_for : SmtReplayInvocationWork.portfolio -> seed -> Thm.thm
   (* A selected seed must be this exact Goal. No theorem/callback is supplied.
      Query variant closes its own registered block through GEN/CHOOSE. *)
   val close_goal : SmtReplayInvocationWork.portfolio -> catalogue ->

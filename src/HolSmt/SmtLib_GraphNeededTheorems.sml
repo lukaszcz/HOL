@@ -1102,12 +1102,10 @@ struct
   val begin_preprocessed_with_policy=PolicyNeeded.begin_preprocessed
   val collect_with_policy=PolicyNeeded.collect
   val normalize_result_with_policy=PolicyNeeded.normalize_result
-  val validate_reuse_with_policy=PolicyNeeded.validate_reuse
   val validate_reuse_cached_with_policy=PolicyNeeded.validate_reuse_cached
   val reuse_with_policy=PolicyNeeded.reuse
   val resume_with_policy=PolicyNeeded.resume
   val pending_originals_with_policy=PolicyNeeded.pending_originals
-  val pending_heads_with_policy=PolicyNeeded.pending_heads
   val pending_requests_with_policy=PolicyNeeded.pending_requests
   val pending_selections_with_policy=PolicyNeeded.pending_selections
 end

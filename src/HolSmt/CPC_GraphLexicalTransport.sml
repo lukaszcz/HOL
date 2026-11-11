@@ -152,15 +152,6 @@ struct
           source_roots = source_nodes,source_goal = source_goal}
         val _ = active plan
     in plan end
-  fun native_component_contract
-      (plan as Plan {graph,scope,check_type,...}) target =
-    (active plan;visible graph scope target;{check_type = check_type})
-  fun closed_component_contract
-      (plan as Plan {graph,scope,limit,check_type,...}) target =
-    let val _ = active plan val _ = visible graph scope target
-        val actual = G.representative graph target
-    in if CPC_GraphClosedPrivateComponent.admit limit actual then
-        SOME {limit = limit,check_type = check_type} else NONE end
   fun prepare (plan as Plan {graph,scope,limit,check_type,forward,
       owned_variables,...}) {target,step : CPC_Proof.step,premises} =
     let val _ = active plan val _ = visible graph scope target

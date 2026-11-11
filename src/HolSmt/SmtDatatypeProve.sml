@@ -1145,9 +1145,6 @@ struct
   fun with_checked_rewrites_using check source_ss conversion prove =
     #with_simpset
       (checked_procedures_using source_ss conversion true check) prove
-  fun with_checked_rewrites check source_ss prove =
-    with_checked_rewrites_using check source_ss
-      (fn _ => raise Conv.UNCHANGED) prove
 
   (* The callback receives the protected admission continuation, the
      canonical SPEC_ALL theorem, and the redex. Use admit for terminal

@@ -499,10 +499,6 @@ struct
   fun admit_primitive_type admission ty =
     #check_primitive_type admission ty
 
-  fun primitive_type_id admission ty =
-    (#check_primitive_type admission ty;
-     #identity (#type_info admission ty))
-
   fun word_width admission ty =
     (#check_primitive_type admission ty;
      case #bounded_word_width admission ty of

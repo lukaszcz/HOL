@@ -102,12 +102,8 @@ sig
     SmtReplayResourcePolicy.limit -> string_insertion
   val lookup_string_with_policy : string_set * string *
     SmtReplayResourcePolicy.limit -> string_lookup
-  val list_int_plan_with_policy : 'a int_map *
-    SmtReplayResourcePolicy.limit -> 'a int_listing
   val list_int_batch_plan_with_policy : 'a int_batch *
     SmtReplayResourcePolicy.limit -> 'a int_batch_listing
-  val insert_int_batch_reachable :
-    'a int_map * int list * IntInf.int -> 'a int_batch
 
   (* Real same-counter snapshot AFTER this query's successful debit.
      Ordinary integer ScopeMeter is unsupported and raises Domain. *)
@@ -138,8 +134,6 @@ sig
   (* Direct original-meter admission before inspecting either input root.
      Only two empty count0/E roots accepted; other roots raise StalePlan
      after the nonrefundable local64. No planning ledger or callback. *)
-  val scope_singletons_from_empty : scope_meter ->
-    'a int_map * string_set * int * 'a * string -> 'a int_map * string_set
 
 
   (* Original-meter local64 before tuple/root inspection. Empty count0/E

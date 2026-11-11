@@ -179,18 +179,6 @@ struct
           (edge_for expected block) edges
     in wrap expected block
       (N.derive_boolean named (boolean_primitive context recipe) actual) end)
-  fun needed_source_ports_for expected
-      (block as Block {named,assertions,originals,...}) edge =
-    protected expected (fn () =>
-      let val actual=edge_for expected block edge
-          val needed=N.needed_sources named actual
-          val Block {closed_laws,binder_laws,...}=block
-          val indices=case (originals,closed_laws,binder_laws) of
-              (NONE,NONE,NONE)=>needed
-            | _=>metadata_filter expected block
-                (fn index=>index<Vector.length assertions) needed
-      in metadata_map expected block
-        (source_port_for expected block) indices end)
   fun source_dependencies_for expected
       (block as Block {named,assertions,...}) edge =
     protected expected (fn () =>

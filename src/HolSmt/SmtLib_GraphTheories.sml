@@ -507,12 +507,6 @@ struct
   fun select backend limits options =
     select_with backend limits (fn _ => NONE) options
 
-  fun bind_sources backend frame sources dictionary =
-    List.foldl (fn ((key, original), dictionary) =>
-      Library.extend_dict
-        ((key, P.construction_value_parsefn backend
-           (B.source backend frame original)), dictionary)) dictionary sources
-
   val integer_hole = Term.mk_var ("__smt_recipe_integer", intSyntax.int_ty)
   val integer_to_real = B.compile_recipe
     {template = intrealSyntax.mk_real_of_int integer_hole,

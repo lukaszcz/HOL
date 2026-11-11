@@ -135,8 +135,6 @@ sig
      It is NOT a theorem of the original Sources or expanded Value syntax. *)
   val compact_theorem_for : SmtReplayInvocationWork.portfolio -> block ->
     edge -> Thm.thm
-  val needed_source_ports_for : SmtReplayInvocationWork.portfolio -> block ->
-    edge -> source_port list
   (* Exact constructor/rule provenance, distinct from Hyp-derived support
      when equal named Source terms have duplicate ordered occurrences. *)
   val source_dependencies_for : SmtReplayInvocationWork.portfolio -> block ->

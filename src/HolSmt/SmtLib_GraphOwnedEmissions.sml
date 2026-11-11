@@ -40,14 +40,6 @@ struct
       {goal,translation,emission,...}) =
     (validate_for expected receipt;
      #definitions (E.describe_for translation goal emission))
-  fun worker_for expected receipt =
-    let val fixed = CPC_ProofReplay.graph_bounded_worker
-          (selected expected receipt)
-    in fn request =>
-      ((validate_for expected receipt;
-        let val result = fixed request
-        in validate_for expected receipt;result end)
-       handle primary => (W.close expected;raise primary)) end
   fun force_worker_for expected receipt =
     let val fixed = CPC_ProofReplay.graph_bounded_force_worker
           (selected expected receipt)
@@ -57,14 +49,6 @@ struct
         in validate_for expected receipt;result end)
        handle primary => (W.close expected;raise primary)) end
   val _ = CPC_ProofReplay.graph_bounded_worker_with_clause
-  fun clause_worker_for expected receipt =
-    let val fixed = CPC_ProofReplay.graph_bounded_worker_with_clause expected
-          (selected expected receipt)
-    in fn request =>
-      ((validate_for expected receipt;
-        let val result = fixed request
-        in validate_for expected receipt;result end)
-       handle primary => (W.close expected;raise primary)) end
   (* The naming boundary supplies its actual per-rule cap and Work observer.
      Keep these separate from the legacy factories above: no default policy
      may replace the invocation's admission continuation. *)

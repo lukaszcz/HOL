@@ -9,16 +9,6 @@ struct
   structure PV = SmtLib_GraphParserValue
   structure M = SmtLib_GraphParserMapping
   val ERR = Feedback.mk_HOL_ERR "SmtLib_GraphFrontend"
-  (* Inspect retained lexical metadata only; generated private markers and
-     compound operands are not variable binders. *)
-  fun binder_variable backend key node =
-    case B.variable_descriptor backend node of
-      SOME variable =>
-        let val (name, ty) = Term.dest_var variable
-        in (key, name, ty) end
-    | NONE => raise (Feedback.mk_HOL_ERR "SmtLib_Parser"
-        "parse_binder_term"
-        "CPC @list binder contains a non-variable term")
 
   fun binder_list backend descriptors values =
     case values of
@@ -1766,9 +1756,6 @@ struct
     {recipe_limits : R.policy_limits,
      special : G.node B.backend -> R.entry ->
        G.node P.construction_parse_fn option}
-  fun create_constructor_dictionary_with_policy backend
-      ({recipe_limits,special}:constructor_policy_options) description =
-    R.select_with_policy backend recipe_limits (special backend) description
   fun recipe_parser_with_policy backend
       ({recipe_limits,...}:constructor_policy_options) parse =
     R.recipe_parsefn_with_policy backend recipe_limits parse

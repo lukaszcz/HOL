@@ -28,7 +28,7 @@ cvc5, Yices) with checked proof reconstruction.
 ```sh
 cd src/HolSmt
 Holmake <module>.uo    # compile one changed module, e.g. Z3_ProofReplay.uo
-Holmake                # full library + smtheap + selftest.exe + drivers
+Holmake                # library, both heaps, selftest.exe and drivers
 ```
 
 Plain `Holmake` works here (no `--holstate` needed).  `Holmake` also builds
@@ -113,6 +113,15 @@ and th-lemma dispatch) + `Z3_ProformaThms.sml`.
 reconstructed theorem against the original goal) → `CPC_ProofParser.sml` →
 `CPC_Proof.sml` (version-gated CPC rule registry, `resolve_version`) →
 `CPC_ProofReplay.sml`.
+
+**Typed-graph replay layer:** both engines replay over HolSmt-owned typed
+semantic graphs (`SmtCheckedGraph`, `SmtReplay*`, `SmtLib_Graph*`,
+`Z3_Graph*`, `CPC_Graph*`): distinct HOL variables name nodes, compact
+proofs are assembled over them and realized once on the source terms.
+Only the public interface of the unchanged stock kernels is used — never
+add kernel operations, private kernel access, axioms or global graph
+constants, and never treat graph IDs/hashes/pointer equality as proof.
+`smtreplayheap` preloads these libraries for drivers and selftest shards.
 
 **Theory re-provers (shared by both replay engines):** arithmetic th-lemmas
 go through the `arith_prove` ladder (linear deciders, then the nonlinear SOS

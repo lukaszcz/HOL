@@ -1489,31 +1489,10 @@ struct
       NONE false false NONE NONE
       canonical_sources NONE graph scope args
 
-  fun replay_with_needed_ground_definition_sources_using
-      canonical_sources graph scope args =
-    replay_with_sources_using_environment true true true true true
-      NONE false false NONE NONE
-      canonical_sources NONE graph scope args
-
   fun replay_with_recorded_definitions_using recorded_law
       canonical_sources graph scope args =
     replay_with_sources_using_environment true true true true true
       (SOME recorded_law) true false NONE NONE
-      canonical_sources NONE graph scope args
-
-  (* Compatibility selectors retain their original portfolios. *)
-  fun replay_with_needed_packed_scc_sources_using
-      canonical_sources graph scope args =
-    replay_with_sources_using_environment true true true false false
-      NONE true false NONE NONE
-      canonical_sources NONE graph scope args
-
-  (* Missing per-bit equations become checked local obligations, not
-     canonical Sources. The original packed selector remains conservative. *)
-  fun replay_with_needed_fresh_packed_sources_using
-      canonical_sources graph scope args =
-    replay_with_sources_using_environment true true true false false
-      NONE true true NONE NONE
       canonical_sources NONE graph scope args
 
   (* Definition/category custody and exact beta/eta Source custody compose
@@ -1689,16 +1668,6 @@ struct
          nnf = nnf}
       val _ = SmtReplaySource.check_contradiction sources theorem
     in SmtReplaySource.close_contradiction sources theorem end
-  fun check_proof_with_closed_definition_sources_using graph scope
-      {sources,proof,template_limit,local_law,nnf} =
-    let
-      val theorem = replay_with_closed_definition_sources_using
-        (SmtReplaySource.denied_goal_node sources ::
-         SmtReplaySource.assumption_nodes sources) graph scope
-        {proof = proof,template_limit = template_limit,local_law = local_law,
-         nnf = nnf}
-      val _ = SmtReplaySource.check_contradiction sources theorem
-    in SmtReplaySource.close_contradiction sources theorem end
   fun check_proof_with_needed_definition_sources_using graph scope
       {sources,proof,template_limit,local_law,nnf} =
     let
@@ -1732,17 +1701,6 @@ struct
       val _ = SmtReplaySource.check_contradiction sources theorem
     in SmtReplaySource.close_contradiction sources theorem end
 
-  fun check_proof_with_needed_ground_definition_sources_using graph scope
-      {sources,proof,template_limit,local_law,nnf} =
-    let
-      val theorem = replay_with_needed_ground_definition_sources_using
-        (SmtReplaySource.denied_goal_node sources ::
-         SmtReplaySource.assumption_nodes sources) graph scope
-        {proof = proof,template_limit = template_limit,local_law = local_law,
-         nnf = nnf}
-      val _ = SmtReplaySource.check_contradiction sources theorem
-    in SmtReplaySource.close_contradiction sources theorem end
-
   fun check_proof_with_recorded_definitions_using graph scope
       {sources,proof,template_limit,local_law,recorded_law,nnf} =
     let
@@ -1761,28 +1719,6 @@ struct
         graph scope {sources = sources,proof = proof,
           template_limit = template_limit,local_law = local_law,nnf = nnf,
           views = views,admission = admission}
-      val _ = SmtReplaySource.check_contradiction sources theorem
-    in SmtReplaySource.close_contradiction sources theorem end
-
-  fun check_proof_with_needed_packed_scc_sources_using graph scope
-      {sources,proof,template_limit,local_law,nnf} =
-    let
-      val theorem = replay_with_needed_packed_scc_sources_using
-        (SmtReplaySource.denied_goal_node sources ::
-         SmtReplaySource.assumption_nodes sources) graph scope
-        {proof = proof,template_limit = template_limit,local_law = local_law,
-         nnf = nnf}
-      val _ = SmtReplaySource.check_contradiction sources theorem
-    in SmtReplaySource.close_contradiction sources theorem end
-
-  fun check_proof_with_needed_fresh_packed_sources_using graph scope
-      {sources,proof,template_limit,local_law,nnf} =
-    let
-      val theorem = replay_with_needed_fresh_packed_sources_using
-        (SmtReplaySource.denied_goal_node sources ::
-         SmtReplaySource.assumption_nodes sources) graph scope
-        {proof = proof,template_limit = template_limit,local_law = local_law,
-         nnf = nnf}
       val _ = SmtReplaySource.check_contradiction sources theorem
     in SmtReplaySource.close_contradiction sources theorem end
 

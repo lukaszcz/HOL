@@ -846,10 +846,6 @@ sig
     SmtReplayInvocationWork.portfolio -> source_predicate_conditional_ready ->
     {frame:SmtReplayOwnedScopeReceipt.receipt,statement:Term.term,
      import:SmtReplayGraph.import_plan option}
-  val execute_source_predicate_conditional :
-    SmtReplayInvocationWork.portfolio ->
-    {ready:source_predicate_conditional_ready,law:closed_fact option} ->
-    source_condition_evidence
 
   (* A quoted assertion receiver for genuine transformed SCE. No graph
      syntax shadow or caller theorem is accepted by this producer. *)
@@ -969,10 +965,6 @@ sig
   type source_eqt_cache_data =
     {valid:bool,body_nodes:int,type_nodes:int,name_bytes:int,
      closed:bool,bare:bool}
-  val prepare_source_eqt_cache_read :
-    SmtReplayInvocationWork.portfolio -> source_eqt_cache_read
-  val source_eqt_cache_read_for : SmtReplayInvocationWork.portfolio ->
-    source_eqt_cache_read -> source_eqt_cache_data
 
   (* Actual native-effect origin DATA, separately from historical emits. *)
   type source_conditional_effect_origins
@@ -1101,11 +1093,6 @@ sig
     SmtReplayInvocationWork.portfolio ->
     {roots:SmtReplayGraph.node list,closed_facts:closed_fact list,
      conversions:closed_conversion list} -> policy_realization_frontier
-  val prepare_original_realization_frontier_with_extras_with_policy :
-    SmtReplayInvocationWork.portfolio ->
-    {roots:SmtReplayGraph.node list,additional_sources:SmtReplayGraph.node list,
-     closed_facts:closed_fact list,conversions:closed_conversion list} ->
-    policy_realization_frontier
   val prepare_scoped_original_realization_frontier_with_policy :
     SmtReplayInvocationWork.portfolio ->
     {frame:SmtReplayOwnedScopeReceipt.receipt,
@@ -1554,16 +1541,5 @@ sig
 
   (* A genuine sparse result is the only public witness constructor. *)
   type policy_sparse_parent_source
-  val record_policy_sparse_parent_source :
-    SmtReplayInvocationWork.portfolio -> policy_sparse_result ->
-    policy_sparse_parent_source
-  val policy_sparse_parent_source_for :
-    SmtReplayInvocationWork.portfolio -> policy_sparse_parent_source ->
-    {graph:SmtReplayGraph.graph,scope:SmtReplayGraph.scope,
-     frame:SmtReplayOwnedScopeReceipt.receipt,
-     sources:SmtReplaySource.sources,
-     contract:SmtReplayNativeContract.contract,
-     target:SmtReplayGraph.node,theorem:Thm.thm,
-     original_occurrences:int list}
 
 end

@@ -2062,11 +2062,6 @@ struct
           val _=all ()
       in result end)) end
 
-  fun closed_fact_from_import_for expected converted request=
-    protected (#work expected) (fn()=>
-      (ignore (conversion_description_for expected converted);
-       closed_fact_from_import converted request))
-
   fun lift_lambda_admitted
       {parent,admission,body,record_ordinal,lift_ordinal,check_type} =
     protected (work_of parent) (fn () =>
@@ -2487,8 +2482,6 @@ struct
   val start_goal_with_policy = NativePolicyTransport.start_goal
   val start_assumption_with_policy = NativePolicyTransport.start_assumption
   val description_with_policy_for = NativePolicyTransport.description_for
-  val node_with_policy = NativePolicyTransport.node
-  val scope_with_policy = NativePolicyTransport.scope
   val child_with_policy = NativePolicyTransport.child
   val application_children_with_policy =
     NativePolicyTransport.application_children
@@ -2505,16 +2498,9 @@ struct
     NativePolicyTransport.prepare_application
   val execute_application_with_policy =
     NativePolicyTransport.execute_application
-  val closed_fact_with_policy = NativePolicyTransport.closed_fact
   val closed_fact_with_policy_for = NativePolicyTransport.closed_fact_for
-  val closed_fact_from_import_with_policy_for =
-    NativePolicyTransport.closed_fact_from_import_for
-  val lift_lambda_admitted_with_policy =
-    NativePolicyTransport.lift_lambda_admitted
   val denial_conversion_with_policy =
     NativePolicyTransport.denial_conversion
-  val alpha_changed_admitted_with_policy =
-    NativePolicyTransport.alpha_changed_admitted
   (* Same native portfolios as ordinary publication; metric acquisition
      follows actual checked binder frames and authentic retained profiles. *)
   structure ScopedPolicyPublication =

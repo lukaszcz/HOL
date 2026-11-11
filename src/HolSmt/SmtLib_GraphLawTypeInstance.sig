@@ -60,7 +60,6 @@ sig
     {theorem : Thm.thm, holes : Term.term list}
   val charged : producer -> int
   (* Metadata only: no invented symbol-byte cap or global work claim. *)
-  val symbol_bytes : producer -> int
   type policy_producer
   type policy_plan
   type policy_instance
@@ -69,7 +68,6 @@ sig
     {original:SmtReplayProof.closed_fact,check_type:Type.hol_type->unit,
      work:SmtReplayInvocationWork.portfolio,
      native_contract:SmtReplayNativeContract.contract} -> policy_producer
-  val original_theorem_with_policy : policy_producer -> Thm.thm
   val type_variables_with_policy : policy_producer -> Type.hol_type list
   val prepare_with_policy : policy_producer ->
     {bindings:(int*Type.hol_type) list} -> policy_plan
@@ -77,7 +75,6 @@ sig
   val planned_syntax_with_policy : policy_plan ->
     {raw:int,binder:int,typed_annotations:Type.hol_type list}
   val execute_with_policy : policy_plan -> policy_instance
-  val selected_original_with_policy : policy_instance -> Thm.thm
   val typed_theorem_with_policy : policy_instance -> Thm.thm
   val typed_plan_with_policy : policy_instance -> SmtReplayProof.closed_fact
   val substitution_with_policy : policy_instance ->
@@ -86,6 +83,5 @@ sig
     {graph:SmtReplayGraph.graph,scope:SmtReplayGraph.scope,
      work:SmtReplayInvocationWork.portfolio} -> policy_instance -> unit
   val charged_with_policy : policy_producer -> int
-  val symbol_bytes_with_policy : policy_producer -> int
 
 end

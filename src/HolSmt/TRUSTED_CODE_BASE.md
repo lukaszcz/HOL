@@ -56,10 +56,17 @@ uninterpreted sort and is never treated as an SMT FloatingPoint value.
 `SmtResource.sml` is the single budget module for checked replay; the FP
 bit-blast case and the Seq/Set/Bag/String/Array replay provers share its
 caps.  It defines the fixed D12 limits: 32 MiB of proof text before parsing,
-10 seconds per bit-blast step, and 200,000 term nodes.  A limit breach is an
-explicit `resource-gated: fp-bitblast;` outcome (other categories use their
-own `resource-gated:` prefixes), distinct from the D2 unsupported-shape
-diagnostic; neither outcome accepts a theorem.
+10 seconds per bit-blast step, and 200,000 term nodes.  The same module fixes
+the bit-vector (2,000,000 nodes, 90 seconds per step), skeleton (8,192 DAG
+nodes, 30 seconds per attempt) and deferred-entailment (10 seconds) limits.
+A limit breach is an explicit `resource-gated: fp-bitblast;` outcome (other
+categories use their own `resource-gated:` prefixes), distinct from the D2
+unsupported-shape diagnostic; neither outcome accepts a theorem.
+
+Checked replay runs over HolSmt-owned typed proof graphs built only with the
+public interface of the unchanged HOL kernels; graph metadata never proves a
+rewrite.  See the `Checked replay architecture and kernel boundary` section
+of `README`.
 
 Replay uses the certifying `binary_ieeeLib`/Arbrat evaluation path.
 `native_ieeeLib`, `fp64_machineLib`, and hardware evaluation are never

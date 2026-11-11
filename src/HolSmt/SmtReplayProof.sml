@@ -309,7 +309,6 @@ struct
              end)
       val _ = spend 2
     in walk [[ty]] (0 : IntInf.int) end
-  fun variable_type_work work = variable_type_work_using (W.spend work)
   (* Private query within one already guarded callback-free inspection.
      Outer guard validates all incoming paths before and after this span. *)
   fun fixed_names_member_using spend metadata_pay expected (FixedNames
@@ -8167,28 +8166,6 @@ struct
         else nc_lookup rest term
   fun nc_hold (log:nc_log) value term=
     (log:=(term,value):: !log;term)
-  fun nc_atom log term=nc_hold log(nc_seed term)term
-  fun nc_application (log:nc_log) operator operand term=
-    let val left=nc_lookup(!log)operator
-        val right=nc_lookup(!log)operand
-        val value=if nc_known left andalso nc_known right then
-          NCApplication(term,left,right)else NCDeferred
-    in nc_hold log value term end
-  fun nc_equality (log:nc_log) left right term=
-    let val a=nc_lookup(!log)left val b=nc_lookup(!log)right
-        val value=if nc_known a andalso nc_known b then
-          NCEquality(term,a,b)else NCDeferred
-    in nc_hold log value term end
-  fun nc_binding forall (log:nc_log) variables id body term=
-    let val value=nc_lookup(!log)body
-        val binder=List.find(fn(old,_)=>old=id)variables
-        val result=case binder of SOME(_,actual)=>
-              if Term.is_var actual andalso nc_known value then
-                if forall then NCForall(term,actual,value)
-                else NCAbstraction(term,actual,value)
-              else NCDeferred
-          | NONE=>NCDeferred
-    in nc_hold log result term end
   (* Fixed Source instruction groups; cached at module bootstrap. These
      are logical bookkeeping units, not machine/private-kernel prices. *)
   val nc_consume_fee=IntInf.fromInt(length
@@ -8315,25 +8292,6 @@ struct
       binders*nc_find_fee)+nc_snapshot_fee+
       (hypotheses+1)*(events*nc_lookup_fee+nc_seed_fee)+
       hypotheses*nc_hyp_fee+events*nc_length_fee
-  fun nc_prepare_allowance work guard events binders hypotheses=
-    let
-      val _=guard()val _=W.spend work nc_model_fee
-      val _=if events>=0 andalso binders>=0 andalso hypotheses>=0 then ()
-        else raise ERR "constructor_capture" "negative producer model"
-      val total=nc_capture_total events binders hypotheses
-      val _=guard()
-      val remaining=IntInf.fromInt(W.work_limit work)-
-        IntInf.fromInt(#charged(W.audit work))
-      val _=if total<=remaining then ()else
-        (W.close work;raise ERR "constructor_capture"
-          "original Work cannot reserve capture programme")
-      val _=W.spend work(IntInf.toInt total)
-      val _=guard()
-      val result=NCAllowance{work=work,guard=guard,
-        remaining=ref(total-nc_allowance_fee),open_phase=ref true,
-        epoch=Type.type_epoch(),symbols=Term.term_epoch(),
-        events=events,binders=binders,hypotheses=hypotheses}
-    in result end
   (* Private only: amounts are derived by owned producer programmes.
      No Work API token, caller fee, proof or Ready authority is issued. *)
   val nc_aux_consume_fee=nc_consume_fee
@@ -16213,9 +16171,6 @@ struct
           ncc_fail "different actual cached proof"
         val _=guard_conj_cache_inside_using expected value debit
     in law end
-  fun conj_cache_fact_for_inside expected value frame fact=
-    conj_cache_fact_for_inside_using expected value frame fact
-      (W.spend expected)
 
   datatype scr_conj_envelope=SCRConjEnvelope of
     {statement:Term.term,first:Term.term,second:Term.term,third:Term.term,
@@ -17173,13 +17128,6 @@ struct
   fun eqc_inside_guard expected value=
     eqc_inside_guard_using expected value
       (fn()=>W.spend expected eqc_get_fee)
-  fun source_eqt_cache_read_for expected
-      (value as SourceEqtCacheRead{work,data,...})=
-    sr_fail expected(fn()=>
-      (if Portable.pointer_eq(expected,work)then ()else
-         eqc_fail "foreign expected Work";
-       W.with_step expected(fn()=>
-         (eqc_inside_guard expected value;data))))
   fun eqc_prepare_inside expected=let
       val _=W.spend expected eqc_export_fee
       val sources=W.original_sources expected
@@ -17275,9 +17223,6 @@ struct
         symbols=Term.term_epoch(),ports=ports,data=data}
       val _=eqc_inside_guard expected value
     in value end
-  fun prepare_source_eqt_cache_read expected=
-    sr_fail expected(fn()=>W.with_step expected(fn()=>
-      eqc_prepare_inside expected))
 
   (* The historical emitter sidecar is unchanged. This private portfolio
      records actual existing native effects, not a predicted sr_tree. *)
@@ -19667,10 +19612,6 @@ struct
            val _=source_predicate_conditional_guard expected value
        in (SourcePredicateConditionalCompleted{work=expected,
            parent=value,evidence=result},result)end))
-  fun execute_source_predicate_conditional expected data=
-    let val(_,result)=execute_source_predicate_conditional_completed
-          expected data
-    in result end
 
 
   datatype source_assertion_plan=SourceAssertionPlan of
@@ -20119,8 +20060,6 @@ struct
           in {recipe=recipe,target=target,representative=representative,
               aliases=aliases,variables=variables}end
         val candidates=List.map candidate recipes
-        fun aliases_for root aliases=
-          List.filter(fn(_,node)=>(tick 2;node=root))aliases
         fun candidate_for root node
             {recipe,target,representative,aliases,variables}=
           (validate_source_rule_for expected recipe;tick 6;
@@ -23017,14 +22956,6 @@ struct
       in W.with_step work (fn()=>pr_prepare_frontier true false [] work
         {frame=frame,roots=roots,closed_facts=closed_facts,
          conversions=conversions}) end)
-     handle primary=>(W.close work;raise primary))
-  fun prepare_original_realization_frontier_with_extras_with_policy work
-      {roots,additional_sources,closed_facts,conversions} =
-    ((let val frame=Scope.root_with_policy work
-      in W.with_step work (fn()=>
-        pr_prepare_frontier true false additional_sources work
-          {frame=frame,roots=roots,closed_facts=closed_facts,
-           conversions=conversions}) end)
      handle primary=>(W.close work;raise primary))
   fun prepare_scoped_original_realization_frontier_with_policy work
       {frame,roots,additional_sources,closed_facts,conversions} =
@@ -28211,32 +28142,5 @@ struct
      accepted and no parser occurrence identity is invented here. *)
   datatype policy_sparse_parent_source=PolicySparseParentSource of
     policy_sparse_result
-  fun record_policy_sparse_parent_source expected
-      (saved as PolicySparseResult{work,...})=
-    ((if Portable.pointer_eq(expected,work)then ()else
-        raise ERR "policy_sparse_parent_source" "different original Work";
-      let val PolicySparseResult{guard,...}=saved
-          val _=guard()
-          (* Original Work header comparison/branch2 and token envelope1. *)
-          val _=W.spend_policy expected 3
-      in PolicySparseParentSource saved end)
-     handle primary=>(W.close expected;raise primary))
-  fun policy_sparse_parent_source_for expected
-      (PolicySparseParentSource(saved as PolicySparseResult{work,...}))=
-    ((if Portable.pointer_eq(expected,work)then ()else
-        raise ERR "policy_sparse_parent_source" "different original Work";
-      let
-        val PolicySparseResult{guard,frontier,contract,target,theorem,
-          occurrences,...}=saved
-        val _=guard()
-        (* Header2, original Source getter1, eight fields and record9.
-           The Source getter and retained guard pay their own live work. *)
-        val _=W.spend_policy expected 12
-        val sources=W.original_sources expected
-        val PolicyRealizationFrontier{graph,scope,frame,...}=frontier
-      in {graph=graph,scope=scope,frame=frame,sources=sources,
-        contract=contract,target=target,theorem=theorem,
-        original_occurrences=occurrences}end)
-     handle primary=>(W.close expected;raise primary))
 
 end

@@ -394,10 +394,6 @@ struct
     ((#literals(po_data expected saved))
      handle primary=>(W.close expected;raise primary))
 
-  fun names_with_policy_for expected saved=
-    ((#names(po_data expected saved))
-     handle primary=>(W.close expected;raise primary))
-
   datatype policy_clause=PolicyClause of
     {work:W.portfolio,block:P.block,occurrences:policy_occurrences,
      edge:P.edge}
@@ -600,12 +596,6 @@ struct
 
   fun raw_roots_with_policy_for expected saved=
     ((#roots(raw_data expected saved))
-     handle primary=>(W.close expected;raise primary))
-  fun raw_names_with_policy_for expected saved=
-    ((#names(raw_data expected saved))
-     handle primary=>(W.close expected;raise primary))
-  fun raw_fallback_count_with_policy_for expected saved=
-    ((List.length(#fallbacks(raw_data expected saved)))
      handle primary=>(W.close expected;raise primary))
 
   fun prepare_raw_resolution_with_policy expected block

@@ -368,8 +368,6 @@ struct
   fun description_for work (Seed {owner,row,...})=
     (expected work owner;{node= #node row,assumption_slot= #slot row,
       source_occurrence= #occurrence row,rigid_variables= #rigid row})
-  fun named_theorem_for work (Seed {owner,block,edge,...})=
-    (expected work owner;P.validate_block_for work block;P.theorem block edge)
   fun finish_goal work (owner as Owner
       {receiver,sources,graph,goal,denied,assumptions,phase,...}) block edge=
     ((expected work owner;

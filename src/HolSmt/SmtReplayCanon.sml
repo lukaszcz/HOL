@@ -478,13 +478,6 @@ struct
       root_conversion (equality_orientation (new_term_order ())) term
     end
 
-  fun reorient_binary_conv dest comm term =
-    root_conversion_with_patterns (schema_patterns comm)
-      (orient_binary (new_term_order ()) dest comm) term
-
-  fun boolean_commute_conv term =
-    root_conversion (boolean_orientation (new_term_order ())) term
-
   (* Build rewrite nets once, but run them only on compact prefixes (or
      already admitted native binder islands), never on an expanded DAG. *)
   val alias_schema_conv = Rewrite.PURE_REWRITE_CONV cpc_alias_rewrites
@@ -552,16 +545,6 @@ struct
          Conv.REWR_CONV HolSmtTheory.COND_NEG) tm
     end
     handle Feedback.HOL_ERR _ => raise Conv.UNCHANGED
-
-  fun additive_order_conv tm =
-    if intSyntax.is_plus tm then
-      reorient_binary_conv intSyntax.dest_plus
-        integerTheory.INT_ADD_COMM tm
-    else if realSyntax.is_plus tm then
-      reorient_binary_conv realSyntax.dest_plus
-        realTheory.REAL_ADD_COMM tm
-    else
-      raise Conv.UNCHANGED
 
   fun additive_orientation order term =
     if intSyntax.is_plus term then

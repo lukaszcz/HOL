@@ -435,8 +435,6 @@ val mint_placeholder_terms : graph -> scope -> placeholder_plan ->
   val recorded_abstraction_with_policy : graph -> scope ->
     SmtReplayResourcePolicy.limit ->
     {binder:node,body:node,body_frame:scope} -> node
-  val admit_binder_with_policy : graph -> scope ->
-    SmtReplayResourcePolicy.limit -> Term.term -> source
   val record_opened_view_with_policy : graph -> scope ->
     SmtReplayResourcePolicy.limit -> node -> source
   type policy_partial_discovery
@@ -552,9 +550,6 @@ val mint_placeholder_terms : graph -> scope -> placeholder_plan ->
      actual absent recipe, never a selected-numeric no-change certificate. *)
   val carrier_alpha_from_partial_with_policy : graph -> scope ->
     policy_partial_discovery -> carrier_alpha option
-  val carrier_alpha_from_selected_with_policy : graph -> scope ->
-    discovery_heads -> policy_selected_partial_discovery ->
-    carrier_alpha option
   val carrier_alpha_application_children_with_policy : graph -> scope ->
     carrier_alpha -> carrier_alpha * carrier_alpha
 
@@ -606,13 +601,6 @@ val mint_placeholder_terms : graph -> scope -> placeholder_plan ->
     | FixedApplication of fixed_node_id * fixed_node_id
   val new_fixed_storage_with_bootstrap_meter :
     ReplayRedblackPrivateWork.scope_meter -> fixed_storage * scope
-  val fixed_storage_counts :
-    fixed_storage -> scope -> {types:int,keys:int}
-  val fixed_storage_revision : fixed_storage -> scope -> IntInf.int
-  val fixed_type_key_id :
-    fixed_storage -> scope -> fixed_type_key -> fixed_type_id
-  val fixed_node_key_id :
-    fixed_storage -> scope -> fixed_node_key -> fixed_node_id
 
   (* Fresh ORIGINAL birth bundle, never an existing-handle graph getter.
      This distinct factory deliberately returns its newly born graph alias;
@@ -630,13 +618,9 @@ val mint_placeholder_terms : graph -> scope -> placeholder_plan ->
        {semantic_limits:SmtReplayResourcePolicy.semantic_policy,
         import_limit:SmtReplayResourcePolicy.limit,
         type_work_limit:SmtReplayResourcePolicy.limit}}
-  val import_first_boolean_variable : fixed_storage -> scope ->
-    {original:Term.term,limits:first_boolean_variable_limits} -> source option
 
   (* FIRST-only genuine canonical Bool constant. Reuses the identical
      original request record vocabulary; variable API remains literal. *)
-  val import_first_boolean_constant : fixed_storage -> scope ->
-    {original:Term.term,limits:first_boolean_variable_limits} -> source option
 
   (* Exact captured original policy/list PREFIX, not native admission.
      No public quota debit/reset, graph extractor or executor is exported. *)

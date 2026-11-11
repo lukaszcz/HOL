@@ -71,8 +71,6 @@ sig
      full_tariff:bool}
   (* No request/profile/term/theorem/callback argument. All finite semantic,
      native, Type and Work requests refuse in this NEW partial API only. *)
-  val acquire_originals_uncapped : work -> unit
-  val acquisition_portfolio_for : work -> acquisition_portfolio
   (* One-shot Source adoption, inside SAME owned action. Its data is issued
      only from a privately committed payload for this exact seed/work. *)
   val take_ready_sources : work -> seed ->
@@ -81,7 +79,6 @@ sig
      denied:SmtReplayGraph.source}
 
   (* Additive SAME action guard/debit ports. Neither issues native authority. *)
-  val validate_owned_action : work -> unit
   val charge_guard : work -> IntInf.int -> unit
 
   (* Pending-only bounded native observation; not G Source/Ready authority.
@@ -92,20 +89,15 @@ sig
     {original_count:IntInf.int,original_annotations:IntInf.int,
      reflexive_raw_nodes:IntInf.int,reflexive_annotations:IntInf.int,
      prospective_native_work:IntInf.int,full_tariff:bool}
-  val prepare_boolean_original_view : work -> boolean_original_view option
   (* Expected owner first; SAME live action, Scope/epochs and paid revision.
      No raw native proof getter and no caller native/admission callback. *)
-  val boolean_original_summary_for :
-    work -> boolean_original_view -> boolean_original_summary
 
 
   (* FIRST attempt only; genuine canonical Bool Var/no assumptions.
      Actual Source is kept privately; no Ready or raw proof getter. *)
-  val prepare_first_boolean_variable_source : work -> bool
 
   (* FIRST-only fresh canonical Bool Const, same Pending original Work;
      no assumptions, denial, portfolio, Ready or caller-supplied proof. *)
-  val prepare_first_boolean_constant_source : work -> bool
 
   (* One-shot SAME Work owned ordered-original capture/progress PREFIX.
      No Source/native witness getter, executor, Ready or denial authority. *)
@@ -162,7 +154,6 @@ sig
 
   (* Paid SAME-context prepared-payload/live-issuance validation only.
      Also validates the SAME privately committed payload in Ready. *)
-  val validate_prepared_ordered_sources : work -> ordered_original_context -> unit
 
   (* One actual native finalisation from SAME prepared private context.
      Works in Acquiring or Ready; never changes publication or renews it. *)

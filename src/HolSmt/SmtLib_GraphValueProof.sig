@@ -74,11 +74,6 @@ sig
      A caller's scoped-session variable list is never adopted. Supplied
      parents retain the complete original getter and packet validation,
      including every parent callback through the frame receipt. *)
-  val prepare_binding_frame_with_policy :
-    SmtReplayInvocationWork.portfolio ->
-    SmtLib_GraphPreprocess.graph_query -> 'proof packet ->
-    SmtReplayOwnedScopeReceipt.receipt ->
-    SmtLib_GraphFrontend.value_scoped_session -> binding_frame
   (* Outside an action. Owns construction of the private root receipt;
      only this port permits paired-witness caching of frame geometry.
      No supplied parent receipt or arbitrary callback is adopted. *)

@@ -28,7 +28,5 @@ sig
   val finish_needed_with_policy : SmtReplayInvocationWork.portfolio ->
     policy_needed_owner -> SmtLib_GraphSourcePortfolio.validation ->
     SmtLib_GraphPreprocess.validation
-  val validate_needed_with_policy_for : SmtReplayInvocationWork.portfolio ->
-    policy_needed_owner -> unit
 
 end

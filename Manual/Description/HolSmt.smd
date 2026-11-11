@@ -85,6 +85,17 @@ do not always contain enough information to allow efficient
 checking in HOL; therefore, proof reconstruction may be slow or
 fail.
 
+Proof reconstruction is ordinary library code: solver proofs are
+replayed over typed proof graphs owned by `HolSmtLib`, using only the
+public interface of the unchanged HOL kernel (standard or
+experimental).  No kernel extension, axiom or oracle is involved.  The
+resulting theorem is checked against the original goal, and theorems
+carrying unexpected oracle tags are rejected.  Replay is bounded by
+fixed resource limits; a step that exceeds them, or that uses a proof
+rule outside the supported fragment, makes the tactic fail with an
+explicit diagnostic.  See `src/HolSmt/README` for the replay
+architecture, the resource limits and the supported proof rules.
+
 There is no proof reconstruction for Yices: `YICES_TAC` and
 `YICES_PROVE` currently always fail, with a message pointing at the
 explicitly named `YICES_ORACLE_TAC` and `YICES_ORACLE_PROVE`.  Use

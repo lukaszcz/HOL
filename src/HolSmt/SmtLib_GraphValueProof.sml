@@ -285,9 +285,6 @@ struct
           binding=binding,root_owned=root_owned,checked=ref NONE} end)
     in result end) handle primary=>(W.close expected;raise primary))
 
-  fun prepare_binding_frame_with_policy expected query packet parent saved =
-    prepare_binding_frame false expected query packet parent saved
-
   fun prepare_root_binding_frame_with_policy expected query packet saved =
     ((let
       val parent=BinderScope.root_with_policy expected

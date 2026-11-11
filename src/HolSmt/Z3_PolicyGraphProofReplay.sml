@@ -489,9 +489,4 @@ struct
         fun loop()=case replay_next_with_policy work owner of
             SOME _=>loop()|NONE=>finish_with_policy work owner
     in loop()end
-  fun prove_raw_with_policy work native request=
-    let val owner=begin_raw_with_policy work native request
-        fun loop()=case replay_next_with_policy work owner of
-            SOME _=>loop()|NONE=>finish_with_policy work owner
-    in loop()end
 end

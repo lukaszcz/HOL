@@ -12,11 +12,7 @@ sig
     {target : SmtReplayGraph.node, step : CPC_Proof.step,
      premises : CPC_Proof.located_term list} -> prepared
   (* Optional closed-constructor computation budget; no theorem authority. *)
-  val closed_component_contract : plan -> SmtReplayGraph.node ->
-    {limit : int,check_type : Type.hol_type -> unit} option
   (* Native proof templates still need exact packet/Source lifetime checks. *)
-  val native_component_contract : plan -> SmtReplayGraph.node ->
-    {check_type : Type.hol_type -> unit}
   val step : prepared -> CPC_Proof.step
   val premises : prepared -> CPC_Proof.located_term list
   (* This transports the caller's actual proof and explicit Hyp; it never

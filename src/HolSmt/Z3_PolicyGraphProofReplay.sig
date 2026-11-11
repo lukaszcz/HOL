@@ -24,7 +24,5 @@ sig
      Both factories retain the same original Work/Source/native contract. *)
   val begin_raw_with_policy : SmtReplayInvocationWork.portfolio ->
     SmtReplayNativeContract.contract -> request -> invocation
-  val prove_raw_with_policy : SmtReplayInvocationWork.portfolio ->
-    SmtReplayNativeContract.contract -> request -> Thm.thm
 
 end

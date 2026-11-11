@@ -81,61 +81,26 @@ $(HOLHEAP): $(DEPS) $(dprot $(HOLDIR)/src/real/analysis/realheap)
 # Keep solver entry points out: executable/version detection must happen in
 # the calling process, not when this reusable heap is built.
 REPLAY_DEPS = SmtCheckedGraph Z3_ProofReplay CPC_ProofReplay \
-              CPC_NativePrivateClosure \
-              SmtReplayDefinitionEnvironment \
-              SmtReplayClosedSourceImages \
-              SmtReplayGroundDefinitions \
-              Z3_GraphSourceReconcile \
-              SmtLib_GraphSourcePortfolio \
-              SmtLib_GraphPreprocess \
-              SmtReplayWrapperSession \
-              SmtReplaySourceConsumerSession \
+              SmtReplayDefinitionEnvironment SmtReplayClosedSourceImages \
+              SmtReplayGroundDefinitions Z3_GraphSourceReconcile \
+              SmtLib_GraphSourcePortfolio SmtLib_GraphPreprocess \
+              SmtReplayWrapperSession SmtReplaySourceConsumerSession \
               SmtReplayOriginalAcquisition SmtReplayInvocationWork \
-              SmtLib_GraphLawTypeInstance \
-              SmtLib_GraphCarrierRoot \
-              SmtLib_CarrierLaws \
-              SmtLib_CarrierTopDepthFn SmtLib_OwnedCarrierTraversal \
-              SmtLib_OwnedCarrierSourceStage \
-              SmtLib_OwnedPositiveGoalSourceStage \
-              SmtReplayOwnedTransport SmtReplayOwnedCompactApplication \
-              SmtReplayOwnedRawCompactApplication \
-              SmtReplayFocusAdmission \
+              SmtLib_GraphLawTypeInstance SmtLib_GraphCarrierRoot \
+              SmtLib_CarrierLaws SmtLib_CarrierTopDepthFn \
+              SmtLib_OwnedCarrierTraversal SmtLib_OwnedCarrierSourceStage \
+              SmtLib_OwnedPositiveGoalSourceStage SmtReplayOwnedTransport \
+              SmtReplayOwnedCompactApplication \
+              SmtReplayOwnedRawCompactApplication SmtReplayFocusAdmission \
               SmtReplayLambdaPreflight SmtReplayOwnedLambda \
-              SmtReplayOwnedAlpha \
-              SmtLib_TraversalRootRecognition \
-              SmtReplayRecordedBeta \
-              SmtLib SmtLib_GraphTheoremDiscovery \
+              SmtReplayOwnedAlpha SmtLib_TraversalRootRecognition \
+              SmtReplayRecordedBeta SmtLib SmtLib_GraphTheoremDiscovery \
               SmtLib_GraphNumTheoremStage SmtLib_GraphIntBagCarrier \
-              SmtLib_GraphIntBagPortfolio \
-              SmtReplayPackedSCC \
-              CPC_GraphNativeAdmission \
-              CPC_GraphNativeFirstPass \
-              SmtLib_Parser \
-              SmtReplaySourceBinderAlignment SmtReplayResolvedLaw \
-              SmtLib_GraphPreprocessFacts SmtLib_GraphPreprocessDerived \
-              SmtReplaySupportedEquality SmtLib_GraphScopedRecipe \
-              SmtLib_GraphNumComparison SmtLib_GraphNumArithmetic \
-              SmtLib_GraphNumGuardedArithmetic SmtLib_GraphScopedMap \
-              SmtLib_GraphNativeFloatTransfer SmtLib_GraphNativeFloatSurface \
-              SmtLib_GraphStringTransfer \
-              SmtLib_GraphBinderConversionScoped \
-              SmtLib_GraphOrderedConversionScoped \
-              SmtLib_GraphScalarPreprocessPublic \
-              SmtLib_GraphOrderedValidation \
-              SmtLib_GraphIntegerDivides \
-              SmtLib_GraphBinderPacketConversion \
-              SmtLib_GraphScopedInventory \
-              SmtLib_GraphSemanticPacketPreprocess \
-              SmtLib_GraphCarrierQuantifierAlpha \
-              SmtLib_GraphGuardedCarrierCancel \
-              SmtLib_GraphFloatCarrier \
-              SmtLib_GraphGuardedBagCarrier \
-              SmtLib_GraphNativeOrderedConversion \
-              SmtLib_GraphNativeOrderedValidation \
-              SmtLib_GraphGuardedBagPolicy \
-              SmtLib_GraphNativeBinderConversion \
-              SmtLib_GraphWordEntanglement \
-              SmtLib_FixedNumericSimple \
+              SmtLib_GraphIntBagPortfolio SmtReplayPackedSCC \
+              CPC_GraphNativeAdmission SmtLib_Parser \
+              SmtReplaySourceBinderAlignment SmtLib_GraphPreprocessFacts \
+              SmtLib_GraphScopedRecipe SmtLib_GraphNumComparison \
+              SmtLib_GraphNumArithmetic SmtLib_FixedNumericSimple \
               SmtLib_OwnedFixedNumSourceStage \
               SmtLib_OwnedNaturalSequentTransfer \
               SmtLib_OwnedStrippedNaturalQuery \
@@ -148,15 +113,8 @@ smtreplayheap: $(HOLHEAP) $(REPLAY_OBJECTS)
 		-b $(protect $(HOLHEAP)) $(REPLAY_DEPS)
 endif
 
-# P1 foundation dependency closure. Legacy solver factories remain selected.
-# Also builds the new Pending/Acquisition module before Source and Work.
-# Holdep retains every other discovered direct and reverse prerequisite.
-.PHONY: p1-original-components
-p1-original-components: SmtReplayResourcePolicy.uo \
-  ReplayRedblackPrivateWork.uo SmtReplayImport.uo SmtReplayGraph.uo \
-  SmtReplayOriginalAcquisition.uo SmtReplaySource.uo \
-  SmtLib_GraphBackend.uo SmtReplayInvocationWork.uo
-
+# Explicit replay-library build-order prerequisites.  Holdep retains every
+# other discovered direct and reverse prerequisite.
 ReplayRedblackPrivateWork.ui: SmtReplayResourcePolicy.ui
 ReplayRedblackPrivateWork.uo: SmtReplayResourcePolicy.uo
 SmtReplayImport.ui: SmtReplayResourcePolicy.ui

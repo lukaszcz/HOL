@@ -303,8 +303,6 @@ struct
         | _ => fail seed "ready" "original acquisition is not Ready")
      handle primary => (retire_seed seed;raise primary))
   fun require_ready (Work seed) = ignore (ready seed)
-  fun acquisition_portfolio_for (Work seed) =
-    let val ReadyPayload {portfolio,...}=ready seed in portfolio end
 
   (* This NEW partial route requires actual Uncapped fields, never changes
      them to Uncapped. The original construction/import request stays exact.
@@ -322,8 +320,6 @@ struct
     {original_count:IntInf.int,original_annotations:IntInf.int,
      reflexive_raw_nodes:IntInf.int,reflexive_annotations:IntInf.int,
      prospective_native_work:IntInf.int,full_tariff:bool}
-  val boolean_leaf_native_upper : IntInf.int = 74
-  val boolean_reflexive_native_upper : IntInf.int = 1424
   fun boolean_pending_revision (seed as Seed {graph,root,meter,
       initial_revision,publication,...}) =
     (active seed;
@@ -333,325 +329,9 @@ struct
      let val revision=G.validation_revision_with_meter graph root meter
      in if revision=initial_revision then revision else
        fail seed "boolean_original_view" "Pending graph was mutated" end)
-  fun prepare_boolean_original_view (work as Work seed) =
-    let val Seed {original,request,meter,native_started,...}=seed
-        val _=active seed
-        val Seed {context_eligible,...} = seed
-        val _ = R.scope_meter_charge meter 4
-        val _ = context_eligible := false
-        val _=R.scope_meter_charge meter 240
-    in
-      with_action work (fn () =>
-        let
-          val revision=boolean_pending_revision seed
-          val (assumptions,goal)=original
-          fun observe terms =
-            (R.scope_meter_charge meter 120;
-             case terms of [] => SOME ([],0 : IntInf.int)
-             | term::rest =>
-               (R.scope_meter_charge meter boolean_leaf_native_upper;
-                (* Positive atom evidence MUST precede type_of: STD is_comb
-                   would also accept a hidden Clos and is never used here. *)
-                if (Term.is_var term orelse Term.is_const term) andalso
-                    Portable.pointer_eq (Term.type_of term,Type.bool) then
-                  (case observe rest of NONE => NONE
-                   | SOME (tail,count) => SOME (term::tail,count+1))
-                else NONE))
-        in case observe (goal::assumptions) of NONE => NONE
-        | SOME (terms,count) =>
-          let
-            val _=R.scope_meter_charge meter 240
-            val semantic= #semantic_limits request
-            val native= #native_limits request
-            val ns= #semantic_limits native
-            val annotations=11*count
-            val type_work=count*(boolean_leaf_native_upper+
-              boolean_reflexive_native_upper)
-            val _=if RP.allows (#input_limit semantic) count andalso
-                RP.allows (#output_limit semantic) annotations andalso
-                RP.allows (#template_limit semantic) annotations andalso
-                RP.allows (#input_limit ns) count andalso
-                RP.allows (#output_limit ns) annotations andalso
-                RP.allows (#template_limit ns) annotations andalso
-                RP.allows (#import_limit native) (5*count) andalso
-                RP.allows (#type_work_limit native) type_work then () else
-              fail seed "boolean_original_view" "native policy exhausted"
-            val native_work=count*boolean_reflexive_native_upper
-            (* ALL native REFL and local reflection/control work is admitted
-               BEFORE the FIRST theorem effect. No refund for Count/Trace. *)
-            val _=R.scope_meter_charge meter
-              (count*(120+boolean_reflexive_native_upper))
-            fun reflect [] = []
-              | reflect (term::rest) =
-                let val _=inside seed
-                    val _=R.scope_meter_charge meter 4
-                    val _=native_started:=true
-                    val theorem=Thm.REFL term
-                    val _=inside seed
-                in (term,theorem)::reflect rest end
-            val rows=reflect terms
-            val _=if boolean_pending_revision seed=revision then () else
-              fail seed "boolean_original_view" "revision changed"
-          in SOME (BooleanOriginalView {owner=seed,original=original,
-            revision=revision,rows=rows,count=count,native_work=native_work})
-          end
-        end)
-    end handle primary => (retire_seed seed;raise primary)
-  fun boolean_original_summary_for (work as Work expected) view =
-    let
-      (* Only identity is inspected on held view before expected-owner test.
-         No held graph/epoch/revision/term/theorem is read on a foreign row. *)
-      val BooleanOriginalView {owner=held,...}=view
-      val _=if same_seed (expected,held) then () else
-        fail expected "boolean_original_summary" "foreign original view"
-      val _=active expected
-      val Seed {meter,...}=expected
-      val _=R.scope_meter_charge meter 240
-    in with_action work (fn () =>
-      let val BooleanOriginalView
-        {original,revision,count,native_work,...}=view
-          val _=if Portable.pointer_eq
-              (original_metadata expected,original) andalso
-              boolean_pending_revision expected=revision then () else
-            fail expected "boolean_original_summary" "stale original view"
-      in {original_count=count,original_annotations=count,
-          reflexive_raw_nodes=5*count,reflexive_annotations=11*count,
-          prospective_native_work=native_work,full_tariff=false}
-      end)
-    end handle primary => (retire_seed expected;raise primary)
 
-
-  (* Private membership indices accompany the checked payload before
-     Ready. Their mutable arrays never cross an A public interface. *)
-  val source_membership_buckets = 4093
-  val source_membership_hint =
-    SmtReplayImport.pointer_bucket 4 source_membership_buckets
-  fun source_membership_put table term =
-    let val bucket = source_membership_hint term
-    in Array.update (table,bucket,term::Array.sub(table,bucket)) end
-  fun source_membership table term =
-    List.exists (fn saved => Portable.pointer_eq(term,saved))
-      (Array.sub(table,source_membership_hint term))
-  fun source_membership_clean theorem =
-    let val tag = Thm.tag theorem
-        val (oracles,_) = Tag.dest_tag tag
-    in List.all (fn name => name="DISK_THM") oracles andalso
-       List.null (Tag.axioms_of tag) end
 
   fun uncapped RP.Uncapped=true | uncapped _=false
-  fun acquisition_envelope (request:request) =
-    let val semantic= #semantic_limits request
-        val native= #native_limits request
-        val ns= #semantic_limits native
-    in List.all uncapped [#work_limit request,
-      #input_limit semantic,#output_limit semantic,#template_limit semantic,
-      #input_limit ns,#output_limit ns,#template_limit ns,
-      #import_limit native,#type_work_limit native] end
-  fun acquire_originals_uncapped (work as Work seed) =
-    let val Seed {graph,root,original=(assumptions,goal),request,
-          initial_revision,publication,payload,meter,...}=seed
-        fun abort primary =
-          (retire_seed seed;
-           (G.close_scope graph root handle _ => ());raise primary)
-    in
-      ((with_action work (fn () =>
-        let
-          val _=if acquisition_envelope request then () else
-            fail seed "acquire" "finite acquisition not implemented"
-          val _=case !publication of Pending=>() | _=>
-            fail seed "acquire" "original acquisition is one-shot"
-          val _=if G.validation_revision graph root=initial_revision then ()
-            else fail seed "acquire" "Pending graph was mutated"
-          val _=publication:=Acquiring
-          fun step ()=charge work 1
-          fun invoke action=(step ();let val value=action ()
-            val _=inside seed in value end)
-          (* Qualified public inspection, not finite pre-ALL-Type/Clos CPU
-             admission. No count_body/REFL/Beta/native proof is used here. *)
-          (* The Type memo is local to this one closed acquisition action.
-             Identity routes only actual immutable public Type objects;
-             no structural compare or caller-supplied identity is trusted. *)
-          val type_memo_epoch=invoke Type.type_epoch
-          val type_memo=invoke(fn()=>
-            ref ([] : (Type.hol_type * IntInf.int) list))
-          fun type_weight ty : IntInf.int =
-            let
-              val _=inside seed
-              val _=if invoke(fn()=>Type.type_epoch()=type_memo_epoch)
-                then ()else fail seed "type_weight" "Type memo epoch changed"
-              fun find []=NONE
-                | find ((held,weight)::rest)=
-                    if invoke(fn()=>Portable.pointer_eq(ty,held))
-                    then SOME weight else find rest
-              val entries=invoke(fn()=> !type_memo)
-            in case find entries of
-              SOME weight=>invoke(fn()=>weight)
-            | NONE=>
-                let
-                  val weight=
-                    if invoke(fn()=>Type.is_vartype ty) then 1 else
-                      let val (_,args)=invoke(fn()=>Type.dest_type ty)
-                      in List.foldl(fn(child,total)=>
-                        (step();total+type_weight child)) 1 args end
-                  (* The complete exact weight is published only after
-                     recursive success and fresh SAME Work/Scope/epochs.
-                     Each repeated child still adds the saved full weight. *)
-                  val previous=invoke(fn()=> !type_memo)
-                  val updated=invoke(fn()=>(ty,weight)::previous)
-                  val _=invoke(fn()=>type_memo:=updated)
-                in weight end
-            end
-          val memo=ref ([] : (Term.term * shape) list)
-          fun find term []=NONE
-            | find term ((held,profile)::rest)=
-                (step ();if Portable.pointer_eq(term,held) then SOME profile
-                 else find term rest)
-          fun plus (a:IntInf.int option) (b:IntInf.int option)=case (a,b) of
-            (SOME x,SOME y)=>SOME(x+y)
-            | _=>NONE
-          fun add (n:IntInf.int) (a:IntInf.int option)=Option.map(fn x=>n+x)a
-          fun inspect term : shape =
-            case find term (!memo) of SOME profile=>profile
-            | NONE=>
-              let val ty=invoke (fn()=>Term.type_of term)
-                  val own=type_weight ty
-                  val profile=
-                    if invoke (fn()=>Term.is_comb term) then
-                      let val(f,x)=invoke(fn()=>Term.dest_comb term)
-                          val a=inspect f val b=inspect x
-                      in {raw=add 1(plus (#raw a)(#raw b)),
-                        inc=add 1(plus (#inc a)(#inc b)),
-                        ann=add own(plus (#ann a)(#ann b)),root_type=own} end
-                    else if invoke(fn()=>Term.is_abs term) then
-                      (* Import retains this exact object and uses REFL.
-                         Its initial Type programme is exposed above, but
-                         no binder is opened for unnecessary whole geometry. *)
-                      {raw=NONE,inc=NONE,ann=NONE,root_type=own}
-                    else if invoke(fn()=>Term.is_var term) orelse
-                        invoke(fn()=>Term.is_const term) then
-                      {raw=SOME 1,inc=SOME 1,ann=SOME own,root_type=own}
-                    else fail seed "inspect" "unknown public constructor"
-                  val _=step ()
-                  val _=memo:=(term,profile):: !memo
-              in profile end
-          fun boolean term=
-            if invoke(fn()=>Type.compare(Term.type_of term,Type.bool))=EQUAL
-            then ()else fail seed "acquire" "non-Boolean original source"
-          val originals=goal::assumptions
-          val _=List.app boolean originals
-          val profiles=List.map inspect originals
-          val positive=hd profiles
-          val negation=inspect boolSyntax.negation
-          (* Derive denial MK_COMB geometry BEFORE making the denial. *)
-          val denial:shape={raw=add 1(plus (#raw negation)(#raw positive)),
-            inc=add 1(plus (#inc negation)(#inc positive)),
-            ann=add 1(plus (#ann negation)(#ann positive)),root_type=1}
-          fun equality ({raw,inc,ann,root_type}:shape) : shape =
-            {raw=Option.map(fn n=>3+2*n)raw,
-             inc=Option.map(fn n=>3+2*n)inc,
-             ann=Option.map(fn n=>6+3*root_type+2*n)ann,root_type=1}
-          val portfolio:acquisition_portfolio=
-            {originals=profiles,denied=denial,
-             equalities=List.map equality (profiles@[denial]),
-             native_program=["denial: Term.mk_comb(not,original_goal)",
-               "leaf: ALPHA(original,canonical), empty Hyp",
-               "opaque Abs: REFL(original), empty Hyp; no binder rule",
-               "application: MK_COMB(child bridges), ALPHA endpoints",
-               "application: TRANS(inner), TRANS(outer), empty Hyp"],
-             qualified_initial_inspection=true,full_tariff=false}
-          (* All native/Type policies above were authenticated as Uncapped.
-             Known optional rows are exact; opaque-containing geometry is
-             unknown, not materialized just to obtain a numeric profile.
-             REFL of an unopened original has actual root-Type/pointer
-             operations, not an expanded binder/output constructor rule.
-             This is NOT finite admission or an executed-instruction log.
-             G may reuse interned nodes; no cached fee is credited. *)
-          val denied_term=invoke(fn()=>boolSyntax.mk_neg goal)
-          val plans=invoke(fn()=>G.plan_imports_with_policy graph root
-            (#import_limit (#construction_limits request))
-            (originals@[denied_term]))
-          val imported=List.map (fn plan=>
-            invoke(fn()=>G.execute_import_with_policy plan)) plans
-          fun clean theorem=
-            let val tag=invoke(fn()=>Thm.tag theorem)
-                val (oracles,_)=invoke(fn()=>Tag.dest_tag tag)
-            in List.all(fn name=>name="DISK_THM") oracles andalso
-               List.null(invoke(fn()=>Tag.axioms_of tag)) end
-          fun check (term,source:G.source)=
-            let val _=if Portable.pointer_eq(term,#original source) then ()
-                  else fail seed "acquire" "original Source order changed"
-                val bridge= #bridge source
-                val(l,r)=invoke(fn()=>Term.dest_eq(Thm.concl bridge))
-                val canonical=invoke(fn()=>(R.scope_meter_charge meter 1;
-                  G.representative_with_meter graph (#node source) meter))
-                val _=if Portable.pointer_eq(l,term) andalso
-                    Portable.pointer_eq(r,canonical) andalso
-                    List.null(invoke(fn()=>Thm.hyp bridge)) andalso
-                    clean bridge then ()else
-                  fail seed "acquire" "Source bridge endpoints/Hyp/tags"
-            in ()end
-          val _=ListPair.appEq check (originals@[denied_term],imported)
-          val goal_source=hd imported
-          val assumption_sources=List.take(tl imported,length assumptions)
-          val denied=List.last imported
-          val _=inside seed
-          val revision=G.validation_revision graph root
-          (* Private witness capture has no public Source/theorem/profile
-             input. The original checked bridges above remain authoritative.
-             Metadata/list and billing administration remain unpriced;
-             converted G ports now add genuine SAME-counter debits. This
-             supplies no finite/native/default or whole Ready admission. *)
-          val _=if root=(R.scope_meter_charge meter 1;
-          G.root_scope_with_meter graph meter) then ()else
-            fail seed "acquire" "different acquired original root"
-          fun origin (source:G.source) =
-            let
-              val _=inside seed
-              val _=if (R.scope_meter_charge meter 1;
-                   G.node_scope_with_meter graph (#node source) meter)=root
-                     then ()else
-                fail seed "acquire" "original node outside acquired root"
-              val canonical=(R.scope_meter_charge meter 1;
-                      G.representative_with_meter graph (#node source) meter)
-              val _=inside seed
-            in ReadyOrigin {source=source,canonical=canonical} end
-          val origins=List.map origin imported
-          val _=inside seed
-
-          (* All membership indices and immutable Source query lists are
-             ready BEFORE the private publication. This legacy producer
-             requires the exact uncapped native policy; invoke remains
-             qualified administration, not finite/native admission. *)
-          val allowed=invoke(fn()=>Array.array(source_membership_buckets,[]))
-          val ordinary=invoke(fn()=>Array.array(source_membership_buckets,[]))
-          fun put_source table (source:G.source) =
-            let val term=invoke(fn()=>G.representative_with_meter graph
-                  (#node source) meter)
-            in invoke(fn()=>source_membership_put table term) end
-          val _=List.app (fn source =>
-            (put_source ordinary source;put_source allowed source))
-            assumption_sources
-          val _=put_source allowed denied
-          val assumption_nodes=invoke(fn()=>List.map #node assumption_sources)
-          val reconciliation=invoke(fn()=>denied::assumption_sources)
-          val canonical_goal=case origins of
-              ReadyOrigin {canonical,...}::_ => canonical
-            | [] => fail seed "acquire" "missing original goal origin"
-
-          val result=ReadyPayload {goal=goal_source,
-            assumptions=assumption_sources,denied=denied,
-            portfolio=portfolio,revision=revision,origins=origins,
-            allowed=allowed,ordinary=ordinary,
-            assumption_nodes=assumption_nodes,reconciliation=reconciliation,
-            canonical_goal=canonical_goal,ordered_owner=NONE}
-          val _=inside seed
-          (* No callback between construction and the two private stores.
-             Any later exception retires the SAME seed, making Ready unusable.
-               *)
-          val _=payload:=SOME result
-          val _=publication:=Ready
-        in ()end)) handle primary=>abort primary)
-    end
   fun take_ready_sources (work as Work expected) held =
     let val Seed {graph,root,source_claimed,...}=expected
         val _=validate_for work held graph root
@@ -664,7 +344,6 @@ struct
     in {graph=graph,root=root,goal=goal,assumptions=assumptions,
       denied=denied} end
 
-  fun validate_owned_action (Work seed) = inside seed
   (* Ordinary Work guard bookkeeping is valid in Idle OR Busy, retaining
      the SAME action state. It is not implemented with a nested action. *)
   fun charge_guard (work as Work seed) amount =
@@ -679,87 +358,6 @@ struct
        handle primary=>(retire_seed seed;raise primary))
     end
 
-
-  (* Closed work-only FIRST original Var component. This creates and keeps
-     a real Source, never Ready/denial/portfolio or a caller proof token.
-     A prior native attempt cannot be silently treated as fresh credit. *)
-  fun prepare_first_boolean_variable_source (work as Work seed) =
-    let val Seed {original,request,meter,fixed_storage,native_started,
-          first_variable_source,publication,root,...}=seed
-        val _ = active seed
-        val Seed {context_eligible,...} = seed
-        val _ = R.scope_meter_charge meter 4
-        val _ = context_eligible := false
-        val _ = R.scope_meter_charge meter 64
-    in with_action work (fn () =>
-      let
-        val _ = if !publication=Pending then () else
-          fail seed "first_boolean_variable_source" "original is not Pending"
-        val _ = if !native_started then
-          fail seed "first_boolean_variable_source" "previous native programme"
-          else ()
-      in case original of
-          ([],goal) =>
-            let
-              (* Conservative once-attempt flag: even a later refusal is
-                 never retried as if no original native work was paid. *)
-              val _ = R.scope_meter_charge meter 4
-              val _ = native_started := true
-              val result = G.import_first_boolean_variable fixed_storage root
-                {original=goal,limits=
-                  {construction_limits= #construction_limits request,
-                   semantic_limits= #semantic_limits request,
-                   native_limits= #native_limits request}}
-              val _ = inside seed
-            in case result of NONE => false
-              | SOME source =>
-                  (R.scope_meter_charge meter 4;
-                   first_variable_source := SOME source;true)
-            end
-        | _ => false
-      end)
-    end handle primary => (retire_seed seed;raise primary)
-
-  (* Additive constant producer, mutually exclusive with all prior native
-     attempts. The legacy-named private first_variable_source slot
-     retains either actual FIRST Source; no raw proof getter or new
-     Seed/counter/graph allocation is introduced. *)
-  fun prepare_first_boolean_constant_source (work as Work seed) =
-    let val Seed {original,request,meter,fixed_storage,native_started,
-          first_variable_source,publication,root,...}=seed
-        val _ = active seed
-        val Seed {context_eligible,...} = seed
-        val _ = R.scope_meter_charge meter 4
-        val _ = context_eligible := false
-        val _ = R.scope_meter_charge meter 64
-    in with_action work (fn () =>
-      let
-        val _ = if !publication=Pending then () else
-          fail seed "first_boolean_constant_source" "original is not Pending"
-        val _ = if !native_started then
-          fail seed "first_boolean_constant_source" "previous native programme"
-          else ()
-      in case original of
-          ([],goal) =>
-            let
-              (* Conservative once-attempt flag: even a later refusal is
-                 never retried as if no original native work was paid. *)
-              val _ = R.scope_meter_charge meter 4
-              val _ = native_started := true
-              val result = G.import_first_boolean_constant fixed_storage root
-                {original=goal,limits=
-                  {construction_limits= #construction_limits request,
-                   semantic_limits= #semantic_limits request,
-                   native_limits= #native_limits request}}
-              val _ = inside seed
-            in case result of NONE => false
-              | SOME source =>
-                  (R.scope_meter_charge meter 4;
-                   first_variable_source := SOME source;true)
-            end
-        | _ => false
-      end)
-    end handle primary => (retire_seed seed;raise primary)
 
   (* Closed ownership/list-capture PREFIX. All original occurrences are
      retained in goal-first order; no opaque Term is assigned a size1.
@@ -1320,9 +918,6 @@ struct
             "completion witness changed"
       in result end)
     end handle primary => (retire_seed expected;raise primary)
-
-  fun validate_prepared_ordered_sources work context =
-    ignore(ordered_prepared_publication_candidate work context)
 
   (* Genuine closed proof operation on the SAME prepared owner, before
      or after authenticated publication. No quota or result-latch renewal. *)

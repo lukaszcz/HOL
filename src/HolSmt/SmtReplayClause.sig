@@ -44,8 +44,6 @@ sig
      include opaque atoms as DATA; they are not extra ordinary roots. *)
   val roots_with_policy_for : SmtReplayInvocationWork.portfolio ->
     policy_occurrences -> SmtReplayGraph.node list
-  val names_with_policy_for : SmtReplayInvocationWork.portfolio ->
-    policy_occurrences -> SmtReplayGraph.node list
   val recorded_with_policy_for : SmtReplayInvocationWork.portfolio ->
     policy_occurrences -> literal list
 
@@ -72,10 +70,6 @@ sig
      target:SmtLib_GraphFrontend.term} -> policy_raw_occurrences
   val raw_roots_with_policy_for : SmtReplayInvocationWork.portfolio ->
     policy_raw_occurrences -> SmtReplayGraph.node list
-  val raw_names_with_policy_for : SmtReplayInvocationWork.portfolio ->
-    policy_raw_occurrences -> SmtReplayGraph.node list
-  val raw_fallback_count_with_policy_for :
-    SmtReplayInvocationWork.portfolio -> policy_raw_occurrences -> int
   (* Owns one action. Existing execute_resolution_with_policy consumes the
      genuine same plan; no public raw theorem or unowned fallback input. *)
   val prepare_raw_resolution_with_policy :

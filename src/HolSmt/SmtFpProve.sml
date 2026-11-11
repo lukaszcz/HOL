@@ -43,9 +43,6 @@ struct
       let val {Thy, ...} = Term.dest_thy_const tm
       in Thy = "smtfloat" end)
 
-  fun is_fp_theory_term tm =
-    is_fp_theory_term_using (new_type_mentions_fp ()) tm
-
   (* Dispatch examines both the types and the constants below an equation.
      The type check is essential for a rewrite between proof-local FP
      variables, where no smtfloat constant need occur. *)

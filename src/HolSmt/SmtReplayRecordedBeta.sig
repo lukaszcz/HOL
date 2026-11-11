@@ -30,8 +30,6 @@ sig
      theorem : Thm.thm}
   (* Shared caller contract; no native credit or admission is minted here. *)
   type native_budget = SmtReplayNativeContract.contract
-  val validate_native_budget_for : SmtReplayInvocationWork.portfolio ->
-    native_budget -> unit
 
   type policy_plan
   type policy_conversion

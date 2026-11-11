@@ -701,6 +701,5 @@ struct
   val traversal_needed_with_policy_for=PolicyNeededStage.traversal_for
   val numeric_needed_with_policy_for=PolicyNeededStage.numeric_for
   val finish_needed_with_policy=PolicyNeededStage.finish
-  val validate_needed_with_policy_for=PolicyNeededStage.for_work
 
 end

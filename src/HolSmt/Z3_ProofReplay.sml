@@ -10734,10 +10734,6 @@ in
     ground_subterm_eval_max_nodes
   val ground_subterm_eval_max_calls_for_test =
     ground_subterm_eval_max_calls
-  val packed_atom_residue_observer_for_test = packed_atom_residue_observer
-  val rewrite_fp_packed_atom_for_test = rewrite_fp_packed_atom
-  fun new_packed_atom_rewriter_for_test () =
-    rewrite_fp_packed_atom_in (new_fp_context ())
   fun new_fp_field_cache_for_test () = #field_law (new_fp_context ())
   fun new_fp_node_index_for_test () = #node_id (new_fp_context ())
   fun new_fp_conversion_caches_for_test () =
@@ -10754,7 +10750,6 @@ in
     rewrite_fp_self_add_in (new_fp_context ())
   fun new_fp_grs_rewriter_for_test () =
     rewrite_fp_grs_in (new_fp_context ())
-  val rewrite_fp_pack_roundtrip_for_test = rewrite_fp_pack_roundtrip
   val word_decide_for_test = word_decide
   val admitted_def_axiom_measure_for_test = admitted_def_axiom_measure
   fun def_axiom_candidate_exception_for_test raised =
@@ -11537,10 +11532,6 @@ in
 
   fun check_proof args : Thm.thm = check_proof_with_definitions [] args
 
-  (* Direct graph replay remains additive until its specialized adapters and
-     complete certificate gates pass. The source validator transports only
-     the retained original goal and admitted original assumptions. *)
-  val replay_graph_root = Z3_GraphProofReplay.replay
   val check_graph_proof = Z3_GraphProofReplay.check_proof
   structure ReplayGraph = SmtReplayGraph
 

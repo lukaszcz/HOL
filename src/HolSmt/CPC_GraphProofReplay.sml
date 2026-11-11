@@ -4873,51 +4873,6 @@ struct
        direct_deferred = NONE,owned_force_worker = NONE,
        owned_completion = NONE,native_reservation = NONE,
         preprocessing = NONE,owned_work = NONE,clause_worker = NONE}
-  fun check_contradiction_history_observing
-      {graph,scope,sources,proof,ordinary_limit,template_limit,
-       worker,force_worker,observer,check_type} =
-    check_contradiction_observing_impl
-      {graph = graph,scope = scope,sources = sources,proof = proof,
-       ordinary_limit = ordinary_limit,template_limit = template_limit,
-       worker = worker,force_worker = force_worker,observer = observer,
-       history_mode = true,check_type = check_type,completion = NONE,
-       direct_deferred = NONE,owned_force_worker = NONE,
-       owned_completion = NONE,native_reservation = NONE,
-        preprocessing = NONE,owned_work = NONE,clause_worker = NONE}
-  fun check_contradiction_history_completing
-      {graph,scope,sources,proof,ordinary_limit,template_limit,
-       worker,force_worker,observer,check_type,completion} =
-    check_contradiction_observing_impl
-      {graph = graph,scope = scope,sources = sources,proof = proof,
-       ordinary_limit = ordinary_limit,template_limit = template_limit,
-       worker = worker,force_worker = force_worker,observer = observer,
-       history_mode = true,check_type = check_type,completion = SOME completion,
-       direct_deferred = NONE,owned_force_worker = NONE,
-       owned_completion = NONE,native_reservation = NONE,
-        preprocessing = NONE,owned_work = NONE,clause_worker = NONE}
-  fun check_contradiction_history_lexical_completing
-      {graph,scope,sources,proof,ordinary_limit,template_limit,
-       worker,force_worker,observer,check_type,completion,direct_deferred} =
-    check_contradiction_observing_impl
-      {graph = graph,scope = scope,sources = sources,proof = proof,
-       ordinary_limit = ordinary_limit,template_limit = template_limit,
-       worker = worker,force_worker = force_worker,observer = observer,
-       history_mode = true,check_type = check_type,completion = SOME completion,
-       direct_deferred = SOME direct_deferred,owned_force_worker = NONE,
-       owned_completion = NONE,native_reservation = NONE,
-        preprocessing = NONE,owned_work = NONE,clause_worker = NONE}
-  fun check_contradiction_lexical_force_completing
-      {graph,scope,sources,proof,ordinary_limit,template_limit,worker,
-       observer,check_type,completion,direct_deferred,owned_force_worker} =
-    check_contradiction_observing_impl
-      {graph = graph,scope = scope,sources = sources,proof = proof,
-       ordinary_limit = ordinary_limit,template_limit = template_limit,
-       worker = worker,force_worker = NONE,observer = observer,
-       history_mode = true,check_type = check_type,completion = SOME completion,
-       direct_deferred = SOME direct_deferred,
-       owned_force_worker = SOME owned_force_worker,owned_completion = NONE,
-       native_reservation = NONE,
-        preprocessing = NONE,owned_work = NONE,clause_worker = NONE}
   fun check_contradiction_owned_proof_completing
       {graph,scope,sources,proof,ordinary_limit,template_limit,worker,
        observer,check_type,completion,direct_deferred,owned_force_worker} =
@@ -4943,21 +4898,6 @@ struct
       {graph = graph,scope = scope,sources = sources,proof = proof,
        ordinary_limit = ordinary_limit,template_limit = template_limit,
        worker = worker,force_worker = NONE}
-  (* Native reservation avoids raw lexical preparation. A missing native
-     completion is an explicit adapter gap, never an ordinary assumption. *)
-  fun check_contradiction_native_reserving
-      {graph,scope,sources,proof,ordinary_limit,template_limit,worker,
-       observer,check_type,completion,direct_deferred,owned_force_worker,
-       reserve} =
-    check_contradiction_observing_impl
-      {graph = graph,scope = scope,sources = sources,proof = proof,
-       ordinary_limit = ordinary_limit,template_limit = template_limit,
-       worker = worker,force_worker = NONE,observer = observer,
-       history_mode = true,check_type = check_type,completion = NONE,
-       direct_deferred = SOME direct_deferred,
-       owned_force_worker = SOME owned_force_worker,
-       owned_completion = SOME completion,native_reservation = SOME reserve,
-       preprocessing = NONE,owned_work = NONE,clause_worker = NONE}
   (* Ordinary whole-engine opt-in. Native completion/default entry points
      retain their original ownership and Hyp policy. *)
   fun check_contradiction_preprocessed_using

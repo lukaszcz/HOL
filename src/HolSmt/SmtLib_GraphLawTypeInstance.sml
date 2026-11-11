@@ -33,7 +33,6 @@ struct
   fun type_variables (p as Producer {variables,...}) =
     (active p;Vector.foldr op:: [] variables)
   fun charged (p as Producer {used,...}) = (active p;!used)
-  fun symbol_bytes (p as Producer {bytes,...}) = (active p;!bytes)
   fun spend (p as Producer {limit,used,work,...}) count =
     (active p;
      if count < 0 orelse count > limit - !used then
@@ -455,13 +454,9 @@ struct
      G.validate_scope graph scope;
      if Type.type_epoch () = epoch then () else
        raise ERR "active" "type declaration epoch changed")
-  fun original_theorem_with_policy (p as PolicyProducer {original,...}) =
-    (active p;P.closed_original original)
   fun type_variables_with_policy (p as PolicyProducer {variables,...}) =
     (active p;Vector.foldr op:: [] variables)
   fun charged_with_policy (p as PolicyProducer {used,...}) = (active p;!used)
-  fun symbol_bytes_with_policy (p as PolicyProducer {bytes,...}) = (active
-    p;!bytes)
   fun spend (p as PolicyProducer {limit,used,work,model_limit,...}) count =
     (active p;
      if count < 0 orelse count > model_limit - !used then
@@ -842,9 +837,6 @@ struct
     case identity_epoch of NONE => active policy_producer
       | SOME epoch => identity_active policy_producer epoch
 
-  fun selected_original_with_policy (value as PolicyInstance
-      {policy_producer = PolicyProducer {original,...},...}) =
-    (instance_active value;P.closed_original original)
   fun typed_theorem_with_policy (value as PolicyInstance {typed,...}) =
     (instance_active value;P.closed_original typed)
   fun typed_plan_with_policy (value as PolicyInstance {typed,...}) =

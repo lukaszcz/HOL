@@ -465,8 +465,6 @@ local
         raise (#syntax_error operations) function_name detail
     end
 
-  val numeral_string = numeral_string_with term_builtin_operations
-
   fun indexed_char_encoding_with (operations : 'term builtin_operations)
       (_, args) =
     builtin_one_arg_with operations
@@ -7989,8 +7987,6 @@ in
   type 'term outbound_string_presence_operations =
     'term string_presence_operations
   val outbound_string_presence = string_presence_with
-  val outbound_term_string_presence_operations =
-    term_string_presence_operations
   val outbound_native_string_presence = native_string_presence
 
   (* Graph query analysis supplies an actual constant leaf here. Use the
@@ -8000,7 +7996,6 @@ in
 
   datatype outbound_regime_request = datatype regime_request
   type 'term outbound_regime_operations = 'term regime_operations
-  val outbound_goal_ho_reason = goal_ho_reason_with
   val outbound_select_regime = select_regime_with
   val outbound_term_regime_operations = term_regime_operations
 
@@ -8032,33 +8027,23 @@ in
   val outbound_term_translation_operations = term_translation_operations
   val outbound_term_store_operations = legacy_term_store_operations
   type 'doc outbound_output_operations = 'doc output_operations
-  val outbound_string_output_operations = string_output_operations
   val outbound_select_logic = outbound_select_logic
   val outbound_query_script = outbound_query_script
   val outbound_query_tail = outbound_query_tail
   val outbound_translate_term_step_with_output =
     translate_term_step_with_output
-  val outbound_translate_term_step_with_scoped_output =
-    translate_term_step_with_scoped_output
   val outbound_translate_term_step_with_lexical_output =
     translate_term_step_with_lexical_output
-  val outbound_translate_term_step = translate_term_step_with_carrier
 
   type 'term outbound_carrier_literal_operations =
     'term literal_recognition_operations
   type 'term outbound_carrier_literal_recognizers = 'term literal_recognizers
   val outbound_carrier_literal_recognizers = carrier_literal_recognizers_with
-  val outbound_term_carrier_literal_operations =
-    term_literal_recognition_operations
-
-  val outbound_term_carrier_literal_recognizers = term_literal_recognizers
 
   type 'term outbound_native_datatype_policy_operations =
     'term native_datatype_policy_operations
   type 'term outbound_native_datatype_policy = 'term native_datatype_policy
   val outbound_native_datatype_policy = native_datatype_policy_with
-  val outbound_term_native_datatype_policy_operations =
-    term_native_datatype_policy_operations
 
   type 'term outbound_carrier_residual_operations =
     'term carrier_residual_operations
@@ -8066,8 +8051,6 @@ in
     closed_constructor_destructor_residual_with
   val outbound_term_carrier_residual_operations =
     term_carrier_residual_operations
-  val outbound_term_carrier_residual =
-    closed_constructor_destructor_residual
 
   type 'term outbound_builtin_operations = 'term builtin_operations
   val outbound_term_builtin_operations = term_builtin_operations
@@ -8080,14 +8063,11 @@ in
   type outbound_feature_state = feature_state
   type 'term outbound_feature_operations = 'term feature_operations
   val outbound_feature_analysis = feature_analysis_with
-  val outbound_term_feature_operations = term_feature_operations
-  val outbound_infer_features = infer_features
   val outbound_infer_features_with_state = infer_features_with_state
 
   type 'term outbound_sequence_eligibility_operations =
     'term sequence_eligibility_operations
   val outbound_sequence_eligibility = sequence_eligibility_with
-  val outbound_native_sequence_goal = native_sequence_goal
   val outbound_term_collection_recognition_operations =
     term_collection_recognition_operations
   val outbound_is_native_set_head = is_native_set_head
@@ -8696,18 +8676,6 @@ in
      The caller must admit original constructor/type and each returned law;
      selector-internal fixed theorem operations remain explicit prerequisites. *)
   val graph_preprocessing_theorems_for_head = thms_per_const
-
-  (* Ordered ordinary stages, including the unlabelled conversion passes.
-     This is an inventory, not an implementation or a completion flag. *)
-  fun graph_preprocessing_stage_inventory z3 =
-    ["hol-string","native-float","real-pow-positive","num-algebra",
-     "num-to-int-1","let-simp","real-pow-numeral","polymorphic-simp",
-     "real-div-simp","refl-simp","function-equality","word-simp",
-     "set-simp","int-divides-assumptions","int-divides-goal","beta",
-     "num-to-int-2","add-theorems","cleanup-assumptions-1",
-     "num-to-int-3","cleanup-assumptions-2","datatype-to-smt"] @
-    (if z3 then ["z3-assertion-roundtrip-assumptions",
-                 "z3-assertion-roundtrip-goal"] else [])
 
   (* This tactic calls ASSUME_TAC on theorems that are deemed necessary for SMT
      solvers to solve the goal (but only if `include_theorems` is true) *)

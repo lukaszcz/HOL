@@ -83860,8 +83860,6 @@ in
           val _=require "XOR comparison no longer crosses actual input cap"
             (SmtReplayImport.bounded_raw_size 20 source=SOME 17 andalso
              SmtReplayImport.bounded_raw_size 20
-               (Thm.concl HolSmtTheory.xor_pointwise)=SOME 15 andalso
-             SmtReplayImport.bounded_raw_size 20
                (Thm.concl HolSmtTheory.xor_def)=NONE andalso
              SmtReplayImport.bounded_raw_size 20
                (Thm.concl HolSmtTheory.xor_cnf_pos1)=SOME 15 andalso
@@ -83871,7 +83869,6 @@ in
                (Thm.concl HolSmtTheory.xor_cnf_neg1)=SOME 15 andalso
              SmtReplayImport.bounded_raw_size 20
                (Thm.concl HolSmtTheory.xor_cnf_neg2)=SOME 15 andalso
-             null(Thm.hyp HolSmtTheory.xor_pointwise) andalso
              null(Thm.hyp HolSmtTheory.xor_cnf_pos1))
           val _=native_reference_with (#semantic_limits tiny)[]clause text
         in fixture_with_limits tiny true[]clause(fn e=>

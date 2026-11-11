@@ -695,14 +695,6 @@ struct
        "graph match declined: " ^ reason)
 
   in
-  (* Production graph entry point retains obligations and compact proofs.
-     The caller owns graph import and any local binder admission. *)
-  fun graph_gen_instantiation graph input =
-    case graph_instantiation graph input of Instantiation plan => plan
-      | InstantiationDeclined (reason,_) => instantiation_declined reason
-  fun graph_gen_instantiation_using graph input =
-    case graph_instantiation_using graph input of Instantiation plan => plan
-      | InstantiationDeclined (reason,_) => instantiation_declined reason
 
   fun gen_instantiation (lhs,rhs,var_set) =
     let

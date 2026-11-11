@@ -138,10 +138,6 @@ struct
       val link = Future {color=c,left=a,key=k,datum=v,right=b,result=ref NONE}
       val _ = instructions := link :: !instructions
     in link end
-  fun root_black l instructions tree =
-    case expose l tree of
-      Empty => raise Fail "cannot be empty here"
-    | Node(_,a,k,v,b) => node l instructions (B,a,k,v,b)
   fun map_insert l instructions compare root key value =
     let
       val _ = spend l 1
@@ -741,188 +737,8 @@ struct
     plan_string (table_policy_ceiling maximum) (base,key)
   fun lookup_string_with_policy (base,key,maximum) =
     plan_lookup_string (table_policy_ceiling maximum) NONE (base,key)
-  fun list_int_plan_with_policy (base,maximum) =
-    plan_list_int (table_policy_ceiling maximum) NONE base
   fun list_int_batch_plan_with_policy (batch,maximum) =
     plan_list_int_batch (table_policy_ceiling maximum) NONE batch
-  fun reachable_plan_node (l as Ledger {plan_nodes,finish_nodes,...}) instructions
-           (c,a,k,v,b) =
-    let
-      (* One plan record, ref, link and program cons; replay includes reverse
-         cons, instruction visit, two child slots, datum, T, slot and case. *)
-      val _ = spend l 4
-      val _ = plan_nodes := !plan_nodes+1
-      val link = Future {color=c,left=a,key=k,datum=v,right=b,result=ref NONE}
-      val _ = instructions := link :: !instructions
-    in link end
-  fun map_insert_reachable l instructions compare root key value =
-    let
-      val _ = spend l 1
-      val fresh = ref false
-      fun make args = reachable_plan_node l instructions args
-      fun ins s =
-        case expose l s of
-          Empty => (fresh := true;make(R,Held E,key,value,Held E))
-        | Node(color,a,yk,y,b) =>
-          (spend l 1;
-           case compare(key,yk) of
-             EQUAL => make(color,a,key,value,b)
-           | LESS =>
-             (case expose l a of
-                Node(R,c,zk,z,d) =>
-                  (spend l 1;
-                   case compare(key,zk) of
-                     EQUAL => make(color,make(R,c,key,value,d),yk,y,b)
-                   | LESS =>
-                       let val next = ins c in
-                         case expose l next of
-                           Node(R,e,wk,w,f) =>
-                             make(R,make(B,e,wk,w,f),zk,z,make(B,d,yk,y,b))
-                         | _ => make(B,make(R,next,zk,z,d),yk,y,b)
-                       end
-                   | GREATER =>
-                       let val next = ins d in
-                         case expose l next of
-                           Node(R,e,wk,w,f) =>
-                             make(R,make(B,c,zk,z,e),wk,w,make(B,f,yk,y,b))
-                         | _ => make(B,make(R,c,zk,z,next),yk,y,b)
-                       end)
-              | _ => make(B,ins a,yk,y,b))
-           | GREATER =>
-             (case expose l b of
-                Node(R,c,zk,z,d) =>
-                  (spend l 1;
-                   case compare(key,zk) of
-                     EQUAL => make(color,a,yk,y,make(R,c,key,value,d))
-                   | LESS =>
-                       let val next = ins c in
-                         case expose l next of
-                           Node(R,e,wk,w,f) =>
-                             make(R,make(B,a,yk,y,e),wk,w,make(B,f,zk,z,d))
-                         | _ => make(B,a,yk,y,make(R,next,zk,z,d))
-                       end
-                   | GREATER =>
-                       let val next = ins d in
-                         case expose l next of
-                           Node(R,e,wk,w,f) =>
-                             make(R,make(B,a,yk,y,c),zk,z,make(B,e,wk,w,f))
-                         | _ => make(B,a,yk,y,make(R,c,zk,z,next))
-                       end)
-              | _ => make(B,a,yk,y,ins b)))
-    in
-      ((
-        case expose l root of
-          Empty => (fresh := true;make(B,Held E,key,value,Held E))
-        | Node(color,a,yk,y,b) =>
-          (spend l 1;
-           case compare(key,yk) of
-             EQUAL => make(B,a,key,value,b)
-           | LESS =>
-             (case expose l a of
-                Node(R,c,zk,z,d) =>
-                  (spend l 1;
-                   case compare(key,zk) of
-                     EQUAL => make(B,make(R,c,key,value,d),yk,y,b)
-                   | LESS =>
-                       let val next = ins c in
-                         case expose l next of
-                           Node(R,e,wk,w,f) =>
-                             make(B,make(B,e,wk,w,f),zk,z,make(B,d,yk,y,b))
-                         | _ => make(B,make(R,next,zk,z,d),yk,y,b)
-                       end
-                   | GREATER =>
-                       let val next = ins d in
-                         case expose l next of
-                           Node(R,e,wk,w,f) =>
-                             make(B,make(B,c,zk,z,e),wk,w,make(B,f,yk,y,b))
-                         | _ => make(B,make(R,c,zk,z,next),yk,y,b)
-                       end)
-              | _ => make(B,ins a,yk,y,b))
-           | GREATER =>
-             (case expose l b of
-                Node(R,c,zk,z,d) =>
-                  (spend l 1;
-                   case compare(key,zk) of
-                     EQUAL => make(B,a,yk,y,make(R,c,key,value,d))
-                   | LESS =>
-                       let val next = ins c in
-                         case expose l next of
-                           Node(R,e,wk,w,f) =>
-                             make(B,make(B,a,yk,y,e),wk,w,make(B,f,zk,z,d))
-                         | _ => make(B,a,yk,y,make(R,next,zk,z,d))
-                       end
-                   | GREATER =>
-                       let val next = ins d in
-                         case expose l next of
-                           Node(R,e,wk,w,f) =>
-                             make(B,make(B,a,yk,y,c),zk,z,make(B,e,wk,w,f))
-                         | _ => make(B,a,yk,y,make(R,c,zk,z,next))
-                       end)
-              | _ => make(B,a,yk,y,ins b)))
-       ),!fresh)
-    end
-
-  (* NEW private discovery programme. Returns reverse postorder, so the
-     literal existing replay's List.rev executes child Futures first.
-     Held subtrees are already materialized and are NEVER descended into.
-     Parameter/meter transport and R billing-counter admin retain the
-     explicit existing terminating primitive model, not whole CPU pricing. *)
-  fun reachable_finish_instructions (l as Ledger {finish_nodes,...}) root =
-    let
-      val _ = spend l 1 (* Actual invocation-local recursive closure. *)
-      fun visit current rest =
-        (view_tick l; (* Actual link tag/case before inspection. *)
-         case current of
-             Held _ => rest
-           | Future _ =>
-               let
-                 (* Second tag/payload, left/right projections+holds6. *)
-                 val _ = spend l 6
-                 val Future {left,right,...} = current
-                 val _ = spend l 3 (* Left recursive apps2 + held answer1. *)
-                 val after_left = visit left rest
-                 val _ = spend l 3 (* Right recursive apps2 + held answer1. *)
-                 val after_right = visit right after_left
-                 val _ = spend l 1 (* Actual reachable-program list cons. *)
-                 (* SAME original10 future replay programme, now only for
-                    an actually retained Future; no old charge/refund. *)
-                 val _ = spend l 10
-                 val _ = finish_nodes := !finish_nodes+1
-               in current :: after_right end)
-      val _ = spend l 2 (* Actual initial visit applications. *)
-    in visit root [] end
-
-  fun plan_batch_reachable cap (base as IntMap(count,tree),keys) =
-    let
-      val l=ledger cap
-      val _=spend l 2
-      val instructions=ref []
-      fun loop remaining root count ordinal =
-        (spend l 1;
-         case remaining of
-           [] => (root,count,ordinal)
-         | key::rest =>
-           let val _=spend l 1
-               val (next,fresh)=map_insert_reachable l instructions
-                 (int_compare l) root key (Input ordinal)
-               val _=spend l 2
-           in loop rest next (if fresh then count+1 else count) (ordinal+1)
-           end)
-      val (root,count,n)=loop keys (Held tree) count 0
-      (* Actual outer discovery applications2 + result hold1. *)
-      val _ = spend l 3
-      val live = reachable_finish_instructions l root
-      (* Actual private history-ref replacement; no public token escapes. *)
-      val _ = spend l 1
-      val _ = instructions := live
-      (* Exact bounded payload scan, array cells and wrapper, final table,
-         plan fields/ref and one-shot identity/retirement checks. *)
-      val _=spend l (IntInf.fromInt n*3+16)
-    in IntBatch {base=base,root=root,instructions= !instructions,count=count,
-      payloads=n,cost=cost l,used=ref false} end
-  (* NEW API ONLY: existing single/string/batch APIs remain byte-literal. *)
-  fun insert_int_batch_reachable (base,keys,ceiling) =
-    plan_batch_reachable (SOME ceiling) (base,keys)
 
   (* Authentic post-debit remaining query on a genuine policy meter.
      The original counter/limit stay opaque here. The bounded pre-charge
@@ -1134,17 +950,6 @@ struct
       val total = if !fresh then count+1 else count
     in GraphKeyMap(total,black) end
 
-
-  (* Closed directly funded FIRST-only roots. Keep the whole argument as
-     DATA until the real original meter has admitted the local programme.
-     No quote/planner/private Ledger, callback, traversal or name copy. *)
-  fun scope_singletons_from_empty meter arguments =
-    (scope_meter_charge meter 64;
-     case arguments of
-         (IntMap(0,E),StringSet(0,E),key,value,name) =>
-           (IntMap(1,T(B,E,key,value,E)),
-            StringSet(1,T(B,E,name,(),E)))
-       | _ => raise StalePlan)
 
 
   (* Closed int-only FIRST root. The original meter pays BEFORE the

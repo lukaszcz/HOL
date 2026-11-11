@@ -41,6 +41,18 @@ Z3_Proof.sml            Proof reconstruction for Z3: SML type of Z3 proofs.
 Z3_ProofParser.sml      Proof reconstruction for Z3: parsing of Z3's proofs.
 Z3_ProofReplay.sml      Proof reconstruction for Z3: replaying Z3's proofs in
                         HOL.
+SmtCheckedGraph.{sig,sml} Typed-graph entry points for checked Z3 and cvc5
+                        CPC replay.
+SmtReplay*.{sig,sml}    HolSmt-owned typed semantic graphs: source import,
+                        occurrences, compact proof assembly, one-shot
+                        realization, scoped caches and work accounting.
+SmtLib_Graph*, SmtLib_Owned*, SmtLib_Carrier*
+                        Graph-native parsing, preprocessing and theory-law
+                        support for checked replay.
+Z3_Graph*, CPC_Graph*, *OwnedValue*
+                        Graph-based Z3 and cvc5 CPC proof replay.
+*Tests.sml              Deterministic replay regressions, run from
+                        Unittest.sml and selftest.sml.
 cvc_cpc_tac_driver.sml  cvc5 CPC conformance driver.
 smtfloatLib.{sig,sml}   Floating-point syntax and evaluation support.
 smtfloatScript.sml      Floating-point theory (smtfloatTheory).
@@ -411,6 +423,49 @@ normalization.  For partial destructors, constructor branches not fixed by the
 registered theorem retain the original constructor-headed value; they are not
 silently identified with the parser selector's chosen `ARB` interpretation.
 
+Checked replay architecture and kernel boundary:
+
+Both checked engines replay solver proofs over HolSmt-owned typed semantic
+graphs rather than over expanded HOL terms.  Distinct HOL variables name
+graph nodes.  Rigid source variables, solver-flexible variables, typed
+constant declarations and source occurrence roles stay explicit, and every
+connection between a graph node and an original source term is a checked
+bridge theorem.  Graph IDs, hashes, pointer equality, metadata and provenance
+select and share work; they never justify a semantic rewrite.
+
+Replay first discovers and assembles a compact checked proof over the graph
+variables, then realizes the result once on the source terms.  No general
+substitution, type instantiation, matching or simplification is applied to
+a realized large graph: binder operands are bounded before native binder
+operations, and local definitions are closed before the final theorem is
+produced.  That theorem is checked against the exact original goal, its
+hypotheses and its tags, as described below.  Optional caches only reuse
+already checked results; a cache miss, collision, eviction or disabled
+cache falls back to the complete checked procedure.
+
+The graph layer is library code over the public interface of the unchanged
+HOL kernels.  HolSmt adds no kernel operation, private kernel access, shadow
+term representation, primitive inference rule, trusted equality, axiom or
+global graph constant, and checked replay is supported on both the standard
+and the experimental kernel.  Outside HolSmt and HolSat, the libraries it
+uses carry only independent additions; existing definitions, interfaces and
+initialization are unchanged.
+
+Checked replay keeps the original call-site resource limits defined in
+`SmtResource.sml`: 32 MiB of proof text before parsing; 200,000 term nodes
+and 10 seconds per FloatingPoint bit-blast step; 2,000,000 term nodes and
+90 seconds per bit-vector replay step; 8,192 DAG nodes and 30 seconds per
+skeleton replay attempt; and 10 seconds per deferred hypothesis entailment.
+A breach fails with an explicit resource diagnostic, never an accepted
+theorem.  A checked tactic either returns a theorem for the original goal
+or fails: with an enumerated unsupported or resource-gated diagnostic, or
+because the solver reports `sat`, `unknown` or an error.  No checked path
+falls back to an oracle.
+
+The `smtreplayheap` built by `Holmake` preloads these replay libraries (not
+solver entry points or workload state) for drivers and the sharded
+selftest.
+
 Trusted-code-base boundary and soundness audit:
 
 This section documents the checked boundaries for `Z3_TAC` and `CVC_TAC`. It
@@ -600,18 +655,13 @@ Setting `HOL4_HOLSMT_NO_FASTPATH=1` disables every fast path classified
 E1(c).  This D-mode is a checked-replay CI configuration: the general replay
 procedures remain enabled, so a D-mode failure identifies an E1(c) path that
 has accidentally become coverage-bearing.  It does not disable every retained
-shortcut.  TASK_09 ablated the ten residual candidates recorded in
-`.agent-files/tasks_2/T8_deletions.md`; only the measured word-arithmetic and
-symbolic-String middle-singleton caches survived, and both are E1(c)-gated.
+shortcut.
 
 The Z3 rewrite and th-lemma ladders use integer-sequential profile rungs.
 Each classified rung is recorded in the replay source as an E1(a) complete
 procedure for a named decidable fragment, an E1(b) general-family procedure
 with a loud boundary, or an E1(c) redundant performance cache.  Every E1(c)
-rung consults the D-mode switch above.  The ten TASK_09 candidates named in
-`T8_deletions.md` have recorded one-by-one ablation outcomes: redundant fixed
-shapes were deleted or folded into general unification/String procedures, and
-the two measured survivors are E1(c) caches.  Rewrites additionally use closed
+rung consults the D-mode switch above.  Rewrites additionally use closed
 proof-local definition normalization and structural asserted-equality
 substitution at rewrite nodes.  Any remaining contextual rewrite reaches the
 terminal exact unsupported boundary.  Final hypothesis reconciliation is
