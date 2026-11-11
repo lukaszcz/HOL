@@ -2860,8 +2860,10 @@ Tools (all under `src/simp/tests/performance/` unless noted):
 `../compatibility/run_task25_consumer.py`. Tests: `test_task32_*.py` and
 `../compatibility/test_task25_consumer.py`. Every snapshot and downstream
 command takes the serial lock (`acceptance.serial_lock`), and the consumer
-driver takes the same serial lock for TASK32-style runs (`--scratch`);
-run them one at a time, with stdin from `/dev/null`, and never a timing run
+driver takes the same serial lock for every run that builds (all but
+`--prepare-only`, the exact TASK25 reproduction included) and refuses, with
+a nonzero exit and nothing created, if it cannot take it; run them one at
+a time, with stdin from `/dev/null`, and never a timing run
 beside a build.
 
 ### Scope, and what is not measured
