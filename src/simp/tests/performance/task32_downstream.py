@@ -561,6 +561,105 @@ def settle(folder, stops, before, meta, store, name, stray_dir):
                 rewritten=rewritten)
 
 
+def hol_dirs(root):
+    """The rel paths of the directories below `root` (it included, as "")
+    that have a `.hol` subdirectory: where Holmake keeps `.hol/make-deps`.
+    One walk of a snapshot, which does not change during a run; neither
+    `.git` nor `.hol` nor symlinks are entered."""
+    found = []
+
+    def walk(path, rel):
+        try:
+            entries = list(os.scandir(path))
+        except OSError:
+            return
+        names = {e.name for e in entries if e.is_dir(follow_symlinks=False)}
+        if ".hol" in names:
+            found.append(rel)
+        for name in sorted(names - {".hol", ".git"}):
+            walk(os.path.join(path, name),
+                 os.path.join(rel, name) if rel else name)
+    walk(str(root), "")
+    return found
+
+
+def outside_dirs(dirs, unit_dir, stops):
+    """The inventoried directories the scan of a unit's folder does not
+    cover: everything but the folder and what is below it (the `stops`
+    below it belong to other units and are not scanned)."""
+    def covered(d):
+        if d != unit_dir and not d.startswith(unit_dir + "/"):
+            return False
+        return not any(d == s or d.startswith(s + "/") for s in (
+            unit_dir + "/" + t for t in stops))
+    return [d for d in dirs if not covered(d)]
+
+
+def list_make_deps(root, dirs):
+    """rel path (from `root`) -> entry (as `scan`'s, files without the
+    digest) of every `<d>/.hol/make-deps` and what is in it, for the
+    directories `dirs`. A cheap listing, no file is read."""
+    found = {}
+    for d in dirs:
+        deps = os.path.join(d, ".hol/make-deps")
+        try:
+            entries = list(os.scandir(os.path.join(root, deps)))
+        except OSError:
+            continue
+        found[deps] = ["d"]
+        for e in entries:
+            info = e.stat(follow_symlinks=False)
+            found[os.path.join(deps, e.name)] = (
+                ["d"] if stat.S_ISDIR(info.st_mode) else
+                ["l" if stat.S_ISLNK(info.st_mode) else "f",
+                 info.st_size, info.st_mtime_ns])
+    return found
+
+
+def settle_outside(root, folder, dirs, before, stray_dir):
+    """The `settle` of the make-deps directories `dirs` outside the unit's
+    folder, `before` being their `list_make_deps` before the process.
+    Holmake scans the INCLUDES directories even with `--no_prereqs` and
+    writes the missing dependency caches there. A new `*.d` file
+    (`is_holmake_cache`) is removed and is `churn`, any other new file is
+    moved to `<stray_dir>/outside/` (`moved`), a `make-deps` directory the
+    process made is removed once empty, and an existing entry that changed
+    or vanished is `modified`. The paths returned are relative to `folder`,
+    as `settle`'s."""
+    now = list_make_deps(root, dirs)
+    moved, churn = [], []
+    for rel in sorted(p for p, e in now.items()
+                      if p not in before and e[0] != "d"):
+        shown = os.path.relpath(os.path.join(root, rel), folder)
+        if now[rel][0] == "f" and is_holmake_cache(rel):
+            (Path(root) / rel).unlink()
+            churn.append(shown)
+        else:
+            dst = Path(stray_dir) / "outside" / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(Path(root) / rel), str(dst))
+            moved.append(shown)
+    for rel in sorted((p for p, e in now.items()
+                       if p not in before and e[0] == "d"), reverse=True):
+        with contextlib.suppress(OSError):
+            (Path(root) / rel).rmdir()
+    final = list_make_deps(root, dirs)
+    modified = sorted(os.path.relpath(os.path.join(root, p), folder)
+                      for p in before if before[p][0] != "d" and
+                      before[p] != final.get(p))
+    return dict(moved=moved, churn=churn, modified=modified)
+
+
+def outside_for(ctx, side, unit, stops):
+    """The directories of a snapshot whose make-deps are watched for a
+    unit: the inventory (one walk per side and run, kept in `ctx`) less
+    what the scan of the unit's folder covers."""
+    inventory = ctx.setdefault("inventory", {})
+    if side not in inventory:
+        inventory[side] = hol_dirs(ctx["roots"][side])
+    return outside_dirs(inventory[side], unit["dir"], stops)
+
+
 def normalize_text(data, root):
     """A selftest's output (bytes) with S1's rules: the root, ANSI codes,
     GC tags and durations masked. The one rule set, shared with
@@ -975,6 +1074,8 @@ def execute_unit(ctx, unit, side, label, layout, busy, expected):
     started = time.perf_counter()
     before = scan(folder, stops)
     sigobj_before = scan(root / "sigobj")
+    outside = outside_for(ctx, side, unit, stops)
+    outside_before = list_make_deps(root, outside)
     scans = time.perf_counter() - started
     rels = snap.theory_target_files(folder, name) if theory else []
     store = Path(ctx["journal"]) / "backup" / label
@@ -992,7 +1093,9 @@ def execute_unit(ctx, unit, side, label, layout, busy, expected):
                 label=label, folder=str(folder), store=str(store),
                 name=name, stops=list(stops), meta=meta,
                 unit=unit["name"], before=sorted(
-                    p for p, e in before.items() if e[0] != "d")))
+                    p for p, e in before.items() if e[0] != "d"),
+                outside=dict(root=str(root), dirs=outside,
+                             before=outside_before)))
         try:
             for rel in rels:
                 (folder / rel).unlink()
@@ -1004,6 +1107,8 @@ def execute_unit(ctx, unit, side, label, layout, busy, expected):
             started = time.perf_counter()
             settled = settle(folder, stops, before, meta, store, name,
                              Path(ctx["evidence"]) / "stray" / label)
+            outer = settle_outside(root, folder, outside, outside_before,
+                                   Path(ctx["evidence"]) / "stray" / label)
             scans += time.perf_counter() - started
             if theory:
                 if not settled["ok"]:
@@ -1018,10 +1123,11 @@ def execute_unit(ctx, unit, side, label, layout, busy, expected):
     sigobj = ["sigobj/" + p for p in changed(sigobj_before,
                                              scan(root / "sigobj"))]
     receipt["scan_seconds"] = scans + time.perf_counter() - started
-    receipt.update(moved=settled["moved"], churn=settled["churn"],
-                   modified=settled["modified"],
+    receipt.update(moved=settled["moved"] + outer["moved"],
+                   churn=settled["churn"] + outer["churn"],
+                   modified=settled["modified"] + outer["modified"],
                    rewritten=settled["rewritten"])
-    receipt["stray"] = settled["modified"] + settled["moved"] + sigobj
+    receipt["stray"] = receipt["modified"] + receipt["moved"] + sigobj
     data = b""
     with contextlib.suppress(OSError):
         data = out_path.read_bytes()
@@ -2625,6 +2731,10 @@ def recover(repo):
                     dst = folder / "strays" / rel
                     dst.parent.mkdir(parents=True, exist_ok=True)
                     shutil.move(str(unit_dir / rel), str(dst))
+            out = entry.get("outside")
+            if out:
+                settle_outside(out["root"], unit_dir, out["dirs"],
+                               out["before"], folder / "strays")
             for rel, m in entry["meta"].items():
                 path = unit_dir / rel
                 require(path.is_file() and sha(path.read_bytes()) ==

@@ -227,6 +227,17 @@ class World:
                     parents=True)
                 (cwd / ".hol/make-deps/sub/.hol/make-deps/B.sml.d"
                  ).write_text("d\n")
+            deps = cwd.parents[2] / "src/integer/.hol/make-deps"
+            if fault == "xcache":
+                (deps / "IncTheory.sig.d").write_text("d\n")
+            if fault == "xnewdir":
+                made = cwd.parents[2] / "src/boss/.hol/make-deps"
+                made.mkdir()
+                (made / "BTheory.sml.d").write_text("d\n")
+            if fault == "xother":
+                (deps / "inc.txt").write_text("x")
+            if fault == "xmodify":
+                (deps / "other.d").write_text("changed\n")
             if fault == "other":
                 (cwd / ".hol/other.txt").write_text("x")
             if fault == "outsided":
@@ -839,6 +850,41 @@ class Refusals(Base):
         self.assertIn("stray write: foo.d",
                       self.attempt("outsided")["failure"])
 
+    def test_churn_in_another_directorys_make_deps_is_removed(self):
+        before = self.world.snapshot()
+        self.world.fault = lambda u, s, n: "xcache"
+        report = self.world.run("x", self.world.spec(["logroot"]))
+        self.assertTrue(report["success"], report.get("failure"))
+        self.assertEqual(self.world.snapshot(), before)
+        receipt = a.load(Path(report["output"]) / report["runs"][0][
+            "receipt"])
+        self.assertEqual(receipt["churn"], [
+            "../../integer/.hol/make-deps/IncTheory.sig.d"])
+        self.assertEqual(receipt["stray"], [])
+        self.assertGreater(receipt["scan_seconds"], 0)
+
+    def test_a_make_deps_directory_the_process_made_is_removed(self):
+        for side in self.world.roots.values():
+            shutil.rmtree(side / "src/boss/.hol/make-deps")
+        before = self.world.snapshot()
+        self.world.fault = lambda u, s, n: "xnewdir"
+        report = self.world.run("x", self.world.spec(["logroot"]))
+        self.assertTrue(report["success"], report.get("failure"))
+        self.assertEqual(self.world.snapshot(), before)
+
+    def test_another_directorys_non_cache_file_is_stray(self):
+        report = self.attempt("xother")
+        self.assertIn("stray write: ../../integer/.hol/make-deps/inc.txt",
+                      report["failure"])
+
+    def test_another_directorys_modified_cache_file_is_refused(self):
+        self.world.fault = lambda u, s, n: "xmodify"
+        report = self.world.run("x", self.world.spec(["logroot"]))
+        self.assertFalse(report["success"])
+        self.assertIn("modified existing file(s) outside the products: "
+                      "../../integer/.hol/make-deps/other.d",
+                      report["failure"])
+
     def test_the_cache_predicate(self):
         yes = dw.is_holmake_cache
         self.assertTrue(yes(".hol/make-deps/XTheory.sig.d"))
@@ -1313,6 +1359,17 @@ class Journal(Base):
         self.assertEqual(self.world.snapshot(), before)
         kept = list((self.world.repo / dw.JOURNALS).glob(
             "*/strays/.hol/objs/leftover.uo"))
+        self.assertEqual(len(kept), 1)
+
+    def test_recover_removes_cache_churn_in_other_directories(self):
+        before, report = self.fatal()
+        deps = self.world.roots["base"] / "src/integer/.hol/make-deps"
+        (deps / "IncTheory.sig.d").write_text("d\n")
+        (deps / "inc.txt").write_text("x")
+        self.assertEqual(dw.recover(self.world.repo), 0)
+        self.assertEqual(self.world.snapshot(), before)
+        kept = list((self.world.repo / dw.JOURNALS).glob(
+            "*/strays/outside/src/integer/.hol/make-deps/inc.txt"))
         self.assertEqual(len(kept), 1)
 
     def test_recover_with_nothing_pending_is_a_noop(self):

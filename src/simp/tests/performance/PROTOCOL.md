@@ -3195,10 +3195,17 @@ puts the products back, moves files the process left into the journal's
 
 Holmake cache churn. A second Holmake run in a built directory writes
 `.hol/make-deps/<X>Theory.{sig,sml}.d` for the theories there, which
-`bin/build` never wrote. A new `*.d` file under a `.hol/make-deps`
-directory (`is_holmake_cache`) is removed by `settle`, recorded in the
-receipt as `churn` and is not a stray write; every other new file is
-stray, and a changed or vanished existing one is `modified`.
+`bin/build` never wrote, and even with `--no_prereqs` it scans the INCLUDES
+directories and writes the missing caches there too. So the rule covers
+every `.hol/make-deps` in the snapshot: a new `*.d` file there
+(`is_holmake_cache`) is removed, recorded in the receipt as `churn` (paths
+relative to the unit's folder) and is not a stray write, so every process
+starts from the identical snapshot. The unit's folder is scanned in full;
+the other directories with a `.hol` (`hol_dirs`, one walk per side and run)
+have their `.hol/make-deps` listed before and after each process
+(`settle_outside`, journaled for `recover`), and a `make-deps` directory the
+process made is removed. Any other new file is stray, and a changed or
+vanished existing one is `modified`.
 
 Margin and validity. `POLICY` is `acceptance.EQUIVALENCE_POLICY`: a 3%
 margin on inclusive CPU and wall. For a unit and metric, `low > 1.03` is
