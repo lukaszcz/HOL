@@ -21,15 +21,21 @@
   compare  the untimed behaviour comparison: every common untracked
            `*Theory.sig` and `*Theory.dat` and the normalized selftest logs
            of the two trees. Any unexplained difference makes the result
-           `blocked`. A `.dat` byte difference is explained only by
-           `--dat-printer`: each tree's own `dat-printer` (the HOL tool that
-           prints a `.dat`'s theorems; `theorytool` only reports keys, graphs
-           and unused theorems of directories) must print identical text.
+           `blocked`. A `.dat` whose bytes differ is compared by its
+           canonical form (task32_dat.py: every table index resolved, every
+           field kept); the only masked field is a parent's hash, and only
+           for a parent theory that itself compared equal. A parse failure
+           blocks.
 
 Product set. After a build the products are every file `git status
 --porcelain --ignored=matching --untracked-files=all` lists (directories
-followed, so each file is sealed on its own), except the `.hol/build-logs`
-and the non-selftest `.hol/logs` entries, which timing drivers may write.
+followed, so each file is sealed on its own), except what a Holmake run
+rewrites without changing meaning: `.hol/locks` (process ids),
+`.hol/build-logs` and the non-selftest `.hol/logs`. Everything else a theory
+target writes is a product, and `theory_target_files(directory, name)`
+lists those files: a timing driver that reruns a theory target imports it to
+back them up before the run and to restore their bytes and mtimes
+afterwards, after which `verify` passes again.
 A seal is sha256, size and mtime (a symlink: its text and own mtime); the
 inode is deliberately not recorded, so that a driver may restore a product by
 copying its bytes and mtime back. Inodes are read live, only to show that no
@@ -47,7 +53,6 @@ import argparse
 from contextlib import contextmanager
 import gzip
 import hashlib
-import inspect
 import json
 import os
 from pathlib import Path
@@ -68,9 +73,10 @@ sys.path.insert(0, str(HERE))
 import acceptance as a
 from performance_schema import require
 import startup_gate as sg
+import task32_dat as dat
 
 SCHEMA = "task32-independent-build-v2"
-BEHAVIOR_SCHEMA = "task32-behavior-v2"
+BEHAVIOR_SCHEMA = "task32-behavior-v3"
 LABELS = ("base", "cand")
 PATH = "/usr/local/bin:/usr/bin:/bin"
 POLY = "/usr/local/bin/poly"
@@ -78,7 +84,6 @@ SEQUENCE = "tools/sequences/upto-parallel"
 CONFIGURE_INPUT = "tools/smart-configure.sml"
 MKTOOL_PATH = sg.MKTOOL[0]
 SYSTEML = "tools/Holmake/Systeml.sml"
-DAT_PRINTER = "src/portableML/rawtheory/dat-printer"
 C31 = "bdc4dac42d"
 UNCOMPILED = ":!src/simp/tests"
 BIN_PRODUCTS = ("bin/hol", "bin/hol.state0", "bin/hol.state",
@@ -386,16 +391,37 @@ def status_lines(root, *extra):
 
 
 def excluded(rel):
-    """The `.hol` entries timing drivers may write: build logs and logs
-    that are not selftest logs."""
+    """The `.hol` entries a Holmake run rewrites without a change of
+    meaning: lock files (process ids), build logs and the logs that are not
+    selftest logs."""
     parts = rel.split("/")
     for i, part in enumerate(parts[:-1]):
-        if part == ".hol" and parts[i + 1] == "build-logs":
+        if part != ".hol":
+            continue
+        if parts[i + 1] in ("locks", "build-logs"):
             return True
-        if part == ".hol" and parts[i + 1] == "logs" and \
-                "selftest" not in parts[-1]:
+        if parts[i + 1] == "logs" and "selftest" not in parts[-1]:
             return True
     return False
+
+
+THEORY_TARGET_TEMPLATES = (
+    ".hol/objs/{n}Theory.sig", ".hol/objs/{n}Theory.sml",
+    ".hol/objs/{n}Theory.dat", ".hol/objs/{n}Theory.ui",
+    ".hol/objs/{n}Theory.uo", ".hol/objs/{n}Theory.cachekey",
+    ".hol/docs/{n}Theory.html", ".hol/docs/{n}Script.html",
+    ".hol/make-deps/{n}Theory.sig.d", ".hol/make-deps/{n}Theory.sml.d",
+    ".hol/make-deps/{n}Script.sml.d")
+
+
+def theory_target_files(directory, name):
+    """The existing files (paths relative to `directory`) that building
+    the theory target `<name>Theory` in `directory` writes. These are
+    products: a driver backs them up and restores their bytes and mtimes.
+    The lock and log files of the run are not products (see `excluded`)."""
+    return [rel for rel in (t.format(n=name)
+                            for t in THEORY_TARGET_TEMPLATES)
+            if (Path(directory) / rel).exists()]
 
 
 def listed_files(root):
@@ -516,12 +542,9 @@ def build_side(repo, side, pin, root, manifest_path, logs, scratch, *,
                    if x.get("label") == side])
     home = scratch / ("home-%s-a%d" % (side, attempt))
     require(not home.exists(), "HOME is not fresh: %s" % home)
-    home.mkdir(parents=True)
-    Path(tmpdir).mkdir(parents=True, exist_ok=True)
-    logs.mkdir(parents=True, exist_ok=True)
-    root.mkdir(parents=True, exist_ok=True)
     env = environment(home, tmpdir)
     record = {"label": side, "root": str(target), "home": str(home),
+              "scratch": str(scratch),
               "pin": pin, "mktool": mktool, "attempt": attempt,
               "cand_pin": cand_pin if mktool else None, "commands": []}
 
@@ -534,6 +557,10 @@ def build_side(repo, side, pin, root, manifest_path, logs, scratch, *,
 
     with terminating():
         try:
+            home.mkdir(parents=True)
+            Path(tmpdir).mkdir(parents=True, exist_ok=True)
+            logs.mkdir(parents=True, exist_ok=True)
+            root.mkdir(parents=True, exist_ok=True)
             step("clone", ["git", "clone", "--shared", "--no-checkout",
                            str(repo), str(target)], repo)
             record["alternates"] = alternates(target)
@@ -587,16 +614,29 @@ def build_side(repo, side, pin, root, manifest_path, logs, scratch, *,
     return record
 
 
-def discard_side(manifest_path, side):
-    """Move a side's record into `attempts` and delete its tree and HOME."""
+def discard_side(manifest_path, side, force=False):
+    """Move a side's record into `attempts` and delete its tree and HOME.
+    Only an `incomplete` record may be discarded unless `force`; the tree
+    must be the clone that was recorded (its alternates equal) and the HOME
+    one of the scratch directory's `home-<side>-a<n>`."""
     manifest = load_manifest(manifest_path)
     require(side in manifest["sides"], "no such side recorded")
-    record = manifest["sides"].pop(side)
-    require(Path(record["root"]).name == side, "root is not named by its "
-            "label")
+    record = manifest["sides"][side]
+    require(record.get("incomplete") or force, "the record is complete "
+            "(use --force to discard it)")
+    root, home = Path(record["root"]), Path(record["home"])
+    require(root.name == side, "root is not named by its label")
+    require(re.fullmatch(r"home-%s-a[0-9]+" % side, home.name) and
+            str(home.parent) == record.get("scratch"),
+            "HOME is not a scratch home of this side")
+    if os.path.lexists(root):
+        require((root / ".git").is_dir() and
+                alternates(root) == record.get("alternates"),
+                "root is not the recorded clone (alternates differ)")
+    del manifest["sides"][side]
     manifest.setdefault("attempts", []).append(record)
     store_manifest(manifest_path, manifest)
-    for path in (record["root"], record["home"]):
+    for path in (root, home):
         if os.path.lexists(path):
             shutil.rmtree(path)
 
@@ -726,6 +766,11 @@ def verify(manifest, base_pin, cand_pin, c31=C31, probe=probe_toolchain,
     require(git(croot, "rev-parse", "HEAD:" + MKTOOL_PATH) ==
             base["patch"]["candidate_blob"],
             "sealed patch is not blob-equal to the candidate's mktool.ML")
+    resolved = git_run(croot, "rev-parse", "--verify", c31 + "^{commit}",
+                       check=False)
+    require(resolved.returncode == 0, "cannot resolve " + c31)
+    c31 = resolved.stdout.decode().strip()
+    a.exact_pin(c31)
     same = git_run(croot, "diff", "--quiet", c31, cand["pin"], "--", ".",
                    UNCOMPILED, check=False)
     require(same.returncode in (0, 1), "cannot compare with " + c31)
@@ -747,7 +792,9 @@ def verify(manifest, base_pin, cand_pin, c31=C31, probe=probe_toolchain,
             "builds were not serial")
     same_toolchain(manifest["toolchain"],
                    probe(poly, environment("/nonexistent")))
-    return {"schema": SCHEMA, "base_products": len(products["base"]),
+    return {"schema": SCHEMA, "base_pin": base["pin"],
+            "cand_pin": cand["pin"], "c31": c31,
+            "base_products": len(products["base"]),
             "cand_products": len(products["cand"]), "status": "pass"}
 
 
@@ -768,50 +815,14 @@ def normalize_log(data, root):
     return text
 
 
-class DatPrinter:
-    """The `.dat` normalizer: each side's own `dat-printer` prints the
-    theorems of the `.dat`; the printed texts (root masked) are compared."""
-
-    def __init__(self, tool=DAT_PRINTER, timeout=600):
-        self.tool, self.timeout, self.runs = tool, timeout, []
-
-    def dump(self, root, path):
-        tool = Path(root) / self.tool
-        require(tool.is_file(), "no dat-printer at %s" % tool)
-        argv = [str(tool), str(path)]
-        p = subprocess.run(argv, cwd=str(root), stdin=subprocess.DEVNULL,
-                           env=environment("/nonexistent"),
-                           timeout=self.timeout,
-                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        require(p.returncode == 0, "dat-printer failed on %s" % path)
-        self.runs.append({"argv": [argv[0], Path(path).relative_to(root)
-                                   .as_posix()],
-                          "tool": a.seal(tool), "exit": 0})
-        return normalize_bytes(p.stdout, root)
-
-    def describe(self):
-        return {"tool": self.tool, "runs": self.runs}
-
-
-def hook_identity(hook):
-    """What a dump hook must record: its class and the sha256 of its
-    source."""
-    require(callable(getattr(hook, "dump", None)) and
-            callable(getattr(hook, "describe", None)),
-            "a .dat normalizer needs dump(root, path) and describe()")
-    source = inspect.getsource(type(hook))
-    return dict(hook.describe(), cls=type(hook).__name__,
-                source_sha256=sha256_bytes(source.encode()))
-
-
-def untracked_files(root, pattern, tracked):
+def untracked_files(root, wanted, tracked):
     found = {}
     for folder, dirs, names in os.walk(root):
         dirs[:] = [d for d in dirs if d not in (".git", "sigobj")]
         for name in names:
             path = Path(folder) / name
             rel = path.relative_to(root).as_posix()
-            if pattern(rel, name) and rel not in tracked and \
+            if wanted(rel, name) and rel not in tracked and \
                     not path.is_symlink():
                 found[rel] = path
     return dict(sorted(found.items()))
@@ -824,15 +835,18 @@ def theory_files(root, tracked):
 
 
 def selftest_logs(root, tracked):
+    """The sealed selftest logs of the areas (see `excluded`)."""
     def wanted(rel, name):
         parts = rel.split("/")
         return len(parts) > 2 and parts[0] == "src" and \
-            parts[1] in AREAS and name.endswith(".log") and (
-                "selftest" in name or parts[-3:-1] == [".hol", "logs"])
+            parts[1] in AREAS and name.endswith(".log") and \
+            "selftest" in name and not excluded(rel)
     return untracked_files(root, wanted, tracked)
 
 
-def differ(kind, rel, paths, roots, hook, dumps):
+def differ(kind, rel, paths, roots):
+    """None when the (root-masked, for logs also time-masked) contents are
+    equal, else the digests that differ."""
     x, y = (Path(p).read_bytes() for p in paths)
     if kind == "log":
         nx = normalize_log(x, roots[0]).encode("latin-1")
@@ -841,41 +855,100 @@ def differ(kind, rel, paths, roots, hook, dumps):
         nx, ny = normalize_bytes(x, roots[0]), normalize_bytes(y, roots[1])
     if nx == ny:
         return None
-    if kind == "theory" and rel.endswith(".dat") and hook is not None:
-        dx, dy = (hook.dump(r, p) for r, p in zip(roots, paths))
-        dumps.append({"path": rel, "base": sha256_bytes(dx),
-                      "cand": sha256_bytes(dy), "equal": dx == dy})
-        if dx == dy:
-            return None
     return {"path": rel, "base": sha256_bytes(nx), "cand": sha256_bytes(ny)}
 
 
-def compare(manifest, dat_normalizer=None):
-    """The behaviour record of two verified trees."""
+def canonical_dats(pending, roots, byte_equal):
+    """Compare the `.dat` files whose bytes differ by canonical form.
+    `pending` maps a relative path to the two file paths, `byte_equal` is
+    the set of relative paths that are equal byte for byte. A parent's hash
+    is masked only for a theory (by file stem) all of whose files are
+    equal. Returns the list of per-file records (equal or not)."""
+    canon, records = {}, {}
+    for rel, paths in pending.items():
+        record = records[rel] = {"path": rel, "equal": False}
+        try:
+            canon[rel] = [
+                dat.canonical(normalize_bytes(Path(p).read_bytes(), r)
+                              .decode("latin-1"))
+                for p, r in zip(paths, roots)]
+            stem = Path(rel).name[:-len("Theory.dat")]
+            if canon[rel][0]["name"] != stem or \
+                    canon[rel][1]["name"] != stem:
+                raise dat.Failure("theory name differs from its file")
+        except dat.Failure as error:
+            record["error"] = "parse failure: %s" % error
+    stems = {}
+    for rel in list(pending) + sorted(byte_equal):
+        stems.setdefault(Path(rel).name[:-len("Theory.dat")],
+                         []).append(rel)
+    resolved = set(byte_equal)
+    changed = True
+    while changed:
+        changed = False
+        equal_names = {n for n, rels in stems.items()
+                       if all(r in resolved for r in rels)}
+        for rel in canon:
+            if rel not in resolved:
+                x, y = canon[rel]
+                if dat.digest(x, equal_names)[0] == \
+                        dat.digest(y, equal_names)[0]:
+                    resolved.add(rel)
+                    changed = True
+    equal_names = {n for n, rels in stems.items()
+                   if all(r in resolved for r in rels)}
+    for rel, (x, y) in canon.items():
+        (dx, masked), (dy, _) = (dat.digest(x, equal_names),
+                                 dat.digest(y, equal_names))
+        records[rel].update(base=dx, cand=dy, masked_parents=masked,
+                            equal=rel in resolved)
+    return [records[rel] for rel in sorted(records)]
+
+
+def compare(manifest, pins=None):
+    """The behaviour record of two verified trees. `pins` (the summary of
+    `verify`) is recorded in it."""
     base, cand = manifest["sides"]["base"], manifest["sides"]["cand"]
     roots = {"base": Path(base["root"]), "cand": Path(cand["root"])}
     tracked = {l: tracked_paths(roots[l]) for l in LABELS}
-    blocked, dumps = [], []
-    out = {"schema": BEHAVIOR_SCHEMA}
-    identity = None if dat_normalizer is None else \
-        hook_identity(dat_normalizer)
+    blocked = []
+    out = {"schema": BEHAVIOR_SCHEMA, "pins": pins}
+    pending, byte_equal = {}, set()
     for kind, key, finder in (("theory", "theories", theory_files),
                               ("log", "logs", selftest_logs)):
         files = {l: finder(roots[l], tracked[l]) for l in LABELS}
         common = sorted(set(files["base"]) & set(files["cand"]))
-        differing = [d for d in (
-            differ(kind, rel, (files["base"][rel], files["cand"][rel]),
-                   (roots["base"], roots["cand"]), dat_normalizer, dumps)
-            for rel in common) if d]
+        differing = []
+        for rel in common:
+            paths = (files["base"][rel], files["cand"][rel])
+            found = differ(kind, rel, paths,
+                           (roots["base"], roots["cand"]))
+            if found is None:
+                if rel.endswith(".dat"):
+                    byte_equal.add(rel)
+            elif kind == "theory" and rel.endswith(".dat"):
+                pending[rel] = paths
+            else:
+                differing.append(found)
         base_only = sorted(set(files["base"]) - set(files["cand"]))
         out[key] = {
             "common": len(common), "differing": differing,
             "baseline_only": base_only,
             "candidate_only": sorted(set(files["cand"]) -
                                      set(files["base"]))}
+        require(common, "no common %ss" % kind)
+        if kind == "theory":
+            records = canonical_dats(pending, (roots["base"],
+                                               roots["cand"]), byte_equal)
+            out["dat_canonical"] = {
+                "module_sha256": sha256_file(Path(dat.__file__)),
+                "mask": "a parent's hash, only for an equal parent theory",
+                "files": records}
+            differing += [{"path": r["path"], "base": r.get("base"),
+                           "cand": r.get("cand"), "error": r.get("error")}
+                          for r in records if not r["equal"]]
         blocked += [kind + " differs: " + d["path"] for d in differing]
         blocked += [kind + " missing on cand: " + p for p in base_only]
-        require(common, "no common %ss" % kind)
         if kind == "log":
             for area in AREAS:
                 for label in LABELS:
@@ -891,12 +964,7 @@ def compare(manifest, dat_normalizer=None):
     out["normalization"] = {
         "root": PLACEHOLDER,
         "logs": [[n, p, r] for n, p, r in LOG_RULES],
-        "dat": "byte-equal after root masking" if identity is None else
-        "byte-equal, else equal printed text of each side's own tool"}
-    out["dat_normalizer"] = identity
-    if identity is not None:
-        identity["runs"] = dat_normalizer.describe()["runs"]
-    out["dat_dumps"] = dumps
+        "dat": "byte-equal after root masking, else canonical form"}
     return out
 
 
@@ -931,6 +999,7 @@ def main(argv=None):
     d = sub.add_parser("discard")
     common(d)
     d.add_argument("--side", choices=LABELS, required=True)
+    d.add_argument("--force", action="store_true")
     v = sub.add_parser("verify")
     common(v)
     pins(v)
@@ -938,7 +1007,6 @@ def main(argv=None):
     common(c)
     pins(c)
     c.add_argument("--output", type=Path, required=True)
-    c.add_argument("--dat-printer", action="store_true")
     args = p.parse_args(argv)
     with a.serial_lock(args.repo) as fds:
         if args.command == "build":
@@ -949,7 +1017,7 @@ def main(argv=None):
                        runner=real_runner(fds))
             return 0
         if args.command == "discard":
-            discard_side(args.manifest, args.side)
+            discard_side(args.manifest, args.side, args.force)
             return 0
         manifest = json.loads(args.manifest.read_text())
         summary = verify(manifest, args.base_pin, args.cand_pin, args.c31,
@@ -957,8 +1025,7 @@ def main(argv=None):
         if args.command == "verify":
             print(json.dumps(summary, indent=2))
             return 0
-        result = compare(manifest, DatPrinter() if args.dat_printer
-                         else None)
+        result = compare(manifest, summary)
         with args.output.open("x") as stream:
             json.dump(result, stream, indent=2, sort_keys=True)
             stream.write("\n")

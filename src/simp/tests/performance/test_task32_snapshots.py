@@ -22,6 +22,7 @@ from unittest import mock
 
 import acceptance as a
 import startup_gate as sg
+import task32_dat as dat
 import task32_snapshots as s
 
 MKTOOL = s.MKTOOL_PATH
@@ -74,6 +75,143 @@ def make_repo(path):
     return base, c31, git(path, "rev-parse", "HEAD")
 
 
+REAL_DAT = (
+    '(theory\n'
+    ' ("basicSize" ("numeral" . "c5b9378dfb99f058873ae63010b3a2c3'
+    '8e1f584f")\n'
+    '  ("pairToolsContext" . "286b920811c2ee1cb3ccb47011db0831426'
+    '63494")\n'
+    '  ("option" . "7d325eb28d258de6d3f1ce44c4dbe34a127234b9"))\n'
+    ' (core-data\n'
+    '  (tables\n'
+    '   (string-table "min" "bool" "fun" "num" "sum" "itself" "on'
+    'e" "!"\n'
+    '    "arithmetic" "+" "pair" "," "prod" "/\\\\" "0" "=" "BIT1" '
+    '"INL" "INR"\n'
+    '    "option" "NONE" "NUMERAL" "SOME" "ZERO" "basicSize" "boo'
+    'l_size"\n'
+    '    "full_sum_size" "itself_size" "min_pair_size" "one_size"'
+    ' "option_size"\n'
+    '    "pair_size" "sum_size" "sum_size_def" "pair_size_def" "o'
+    'ption_size_def"\n'
+    '    "one_size_def" "min_pair_size_def" "itself_size_def"\n'
+    '    "full_sum_size_thm" "full_sum_size_def" "bool_size_def" '
+    '"" "$(HOLDIR)"\n'
+    '    "src" "theories" "basicSizeScript.sml")\n'
+    '   (id-table (0 . 1) (0 . 2) (3 . 3) (4 . 4) (1 . 5) (6 . 6)'
+    ' (1 . 7)\n'
+    '    (8 . 9) (10 . 11) (10 . 12) (1 . 13) (3 . 14) (0 . 15) ('
+    '8 . 16)\n'
+    '    (4 . 17) (4 . 18) (19 . 20) (19 . 19) (8 . 21) (19 . 22)'
+    ' (8 . 23)\n'
+    '    (24 . 25) (24 . 26) (24 . 27) (24 . 28) (24 . 29) (24 . '
+    '30) (24 . 31)\n'
+    '    (24 . 32))\n'
+    '   (type-table (0) (2) "\'a" (1 2 1) "\'b" (1 4 1) (3 2 4) (4 '
+    '2) (5) (1 2 0)\n'
+    '    (1 9 0) (1 4 0) (1 11 0) (1 0 0) (1 13 0) (1 3 0) (1 15 '
+    '0) (1 5 0)\n'
+    '    (1 17 0) (1 7 0) (1 19 0) (1 8 0) (1 21 0) (1 6 0) (1 23'
+    ' 0) (1 1 1)\n'
+    '    (1 1 25) (9 2 4) (1 4 27) (1 2 28) (1 0 13) (1 1 0) (1 1'
+    ' 31) (1 2 6)\n'
+    '    (1 4 6) (17 2) (1 2 35) (1 0 1) (1 6 1) (1 5 38) (1 3 39'
+    ') (1 7 1)\n'
+    '    (1 27 1) (1 5 42) (1 3 43) (1 8 1) (1 35 1) (1 3 46))\n'
+    '   (term-table ("b" 0) ("f" 3) ("g" 5) ("sum" 6) ("x" 2) ("x'
+    '" 7) ("x" 8)\n'
+    '    ("y" 4) (6 10) (6 12) (6 14) (6 16) (6 18) (6 20) (6 22)'
+    ' (6 24) (7 26)\n'
+    '    (8 29) (10 30) (11 1) (12 32) (13 25) (14 33) (15 34) (1'
+    '6 35) (18 25)\n'
+    '    (19 36) (20 1) (21 37) (22 40) (23 41) (24 44) (25 45) ('
+    '26 47) (27 44)\n'
+    '    (28 40))) exports (nil) (nil)\n'
+    '  ((33 (((24 5) (4 11)) "DISK_THM") (1 0)\n'
+    '    ("%1%2%4$2$1B35$0U22@$0u2B20|U8|U12|U11%1%2%7$2$1B35$0U2'
+    '3@$0u1B20|U9|U12|U11B18"))\n'
+    '   (34 (((24 2) (10 22)) "DISK_THM") (1 0)\n'
+    '    ("%1%2%4%7$3$2B34$1$0B17@%27U21U25$1u3$0u2B16B16B20|U9|U'
+    '8|U12|U11"))\n'
+    '   (35 (((24 8) (19 4)) "DISK_THM") (1 0)\n'
+    '    ("%1$0%24B33%19B20|U11%1%4$1$0U26B33%27U21U25$0u1B16B20|'
+    'U8|U11B18"))\n'
+    '   (36 (((24 3))) (1 0) ("%6$0U32%19B20|U14"))\n'
+    '   (37 (((24 1) (10 22)) "DISK_THM") (1 0)\n'
+    '    ("%1%2%4%7$3$2B31$1$0B17@$1u3$0u2B16B20|U9|U8|U12|U11"))'
+    '\n'
+    '   (38 (((24 4))) (1 0) ("%5$0U30%19B20|U13"))\n'
+    '   (39 (((24 7) (24 5 6) (1 25 50 56)) "DISK_THM")\n'
+    '    (2 0 1 31 42 43 44 3 45 46)\n'
+    '    ("%1%2B29%4U22@%27U21U25%4U1B16B20%1%2B29%7U23@%27U21U25'
+    '%7U2B16B20B18"))\n'
+    '   (40 (((24 6))) (1 0)\n'
+    '    ("%1%2%3$2$1B29$0@%27U21U25$2$1B35$0@B16B20|U15|U12|U11"'
+    '))\n'
+    '   (41 (((24 0))) (1 0) ("%0$0U28%19B20|U10"))))\n'
+    ' (incorporate (incorporate-types) incorporate-consts ("sum_s'
+    'ize" . 40)\n'
+    '  ("pair_size" . 44) ("option_size" . 47) ("one_size" . 45)\n'
+    '  ("min_pair_size" . 44) ("itself_size" . 41) ("full_sum_siz'
+    'e" . 40)\n'
+    '  ("bool_size" . 37))\n'
+    ' (loadable-thydata\n'
+    '  ("userdef.deltas" (tag-knm 24 . 41) (tag-knm 24 . 37) (tag'
+    '-knm 24 . 34)\n'
+    '   (tag-knm 24 . 36) (tag-knm 24 . 38) (tag-knm 24 . 33) (ta'
+    'g-knm 24 . 40)\n'
+    '   (tag-knm 24 . 35))\n'
+    '  ("grammardelta" (OO "bool_size" (tag-tm . "%28"))\n'
+    '   (OO "min_pair_size" (tag-tm . "%31")) (OO "pair_size" (ta'
+    'g-tm . "%34"))\n'
+    '   (OO "one_size" (tag-tm . "%32")) (OO "itself_size" (tag-t'
+    'm . "%30"))\n'
+    '   (OO "sum_size" (tag-tm . "%35")) (OO "full_sum_size" (tag'
+    '-tm . "%29"))\n'
+    '   (OO "option_size" (tag-tm . "%33")))))\n'
+)
+
+
+def sexp_str(text):
+    return '"%s"' % text
+
+
+def mk_dat(name, parents=(), strings=None, types=None, terms=None,
+           hyps=(), tags=("DISK_THM",), newsig_arity=1, deltas=0):
+    """A theory in the real .dat format with one theorem. `strings`,
+    `types` and `terms` are orders of the sharing tables' entries."""
+    strings = strings or ["min", "bool", "c", name, "x"]
+    types = types or ["alpha", "bool"]
+    terms = terms or ["x", "c", "ap"]
+    sidx = {v: i for i, v in enumerate(strings)}
+    ids = [("min", "bool"), (name, "c")]
+    idx_id = {v: i for i, v in enumerate(ids)}
+    tkey = {"alpha": "\"'a\"", "bool": "(%d)" % idx_id[ids[0]]}
+    tyidx = {v: i for i, v in enumerate(types)}
+    # a type entry's text may not mention a later type
+    tytext = ["%s" % tkey[v] for v in types]
+    tmtext = {"x": '("x" %d)' % tyidx["bool"],
+              "c": "(%d %d)" % (idx_id[ids[1]], tyidx["bool"])}
+    tmidx = {v: i for i, v in enumerate(terms)}
+    tmtext["ap"] = "(ap %d %d)" % (tmidx["x"], tmidx["c"])
+    enc = lambda key: "%%%d" % tmidx[key]
+    thm = '(%d (((%d 0)) %s) (2 0) (%s))' % (
+        sidx["c"], sidx[name], " ".join(sexp_str(t) for t in tags),
+        " ".join(sexp_str(t) for t in [enc("c")] + [enc(h) for h in hyps]))
+    plist = "".join(' ("%s" . "%s")' % p for p in parents)
+    return (
+        '(theory\n ("%s"%s)\n (core-data (tables (string-table %s)\n'
+        '  (id-table %s)\n  (type-table %s)\n  (term-table %s))\n'
+        '  exports (nil) (nil) (%s))\n'
+        ' (incorporate (incorporate-types ("T" . %d)) incorporate-consts '
+        '("c" . %d))\n (loadable-thydata ("userdef.deltas" '
+        '(tag-knm %d . %d)) ("grammardelta" (OO "c" (tag-tm . "%s")))))\n'
+        % (name, plist, " ".join(sexp_str(x) for x in strings),
+           " ".join("(%d . %d)" % (sidx[a], sidx[b]) for a, b in ids),
+           " ".join(tytext), " ".join(tmtext[t] for t in terms), thm,
+           newsig_arity, tyidx["bool"], sidx[name], deltas, enc("c")))
+
+
 class Fake:
     """A runner: real git, everything else leaves fake products."""
 
@@ -116,6 +254,11 @@ class Fake:
         put(objs / "numTheory.uo", "uo %s\n" % root)
         put(objs / "numTheory.dat", "dat %s\n" % root)
         put(objs / "numTheory.sml", "sml %s\n" % root)
+        put(objs / "numTheory.cachekey", "key\n")
+        put(root / "src/num/theories/.hol/docs/numTheory.html", "html\n")
+        put(root / "src/num/theories/.hol/make-deps/numTheory.sml.d", "d\n")
+        put(root / "src/num/theories/.hol/locks/numTheory.uo.lock",
+            "%d\n" % os.getpid())
         put(root / SIG, "sig %s\n" % root)
         (root / "sigobj").mkdir(exist_ok=True)
         os.symlink(objs / "numTheory.uo", root / "sigobj/numTheory.uo")
@@ -188,7 +331,11 @@ class BuildTests(unittest.TestCase):
         self.assertEqual(set(doc["sides"]["base"]["commands"][0]["env"]),
                          set(s.ENV_KEYS))
         self.assertEqual(doc["sides"]["base"]["cand_pin"], w.cand_pin)
-        self.assertEqual(w.verify()["status"], "pass")
+        summary = w.verify(c31="HEAD~1")
+        self.assertEqual((summary["status"], summary["base_pin"],
+                          summary["cand_pin"], summary["c31"]),
+                         ("pass", w.base_pin, w.cand_pin, w.c31))
+        self.assertEqual(len(summary["c31"]), 40)
         base = Path(doc["sides"]["base"]["root"])
         self.assertEqual(git(base, "hash-object", MKTOOL),
                          git(w.repo, "rev-parse", w.cand_pin + ":" + MKTOOL))
@@ -351,6 +498,47 @@ class BuildTests(unittest.TestCase):
             self.assertNotEqual(signal.getsignal(signal.SIGTERM),
                                 signal.SIG_IGN)
 
+    def edit_manifest(self, w, side, **changes):
+        doc = w.doc()
+        doc["sides"][side].update(changes)
+        s.store_manifest(w.manifest, doc)
+
+    def test_discard_guards(self):
+        w = World(self).both()
+        with self.assertRaisesRegex(ValueError, "--force"):
+            s.discard_side(w.manifest, "cand")
+        self.edit_manifest(w, "cand", home=str(w.dir / "elsewhere"))
+        with self.assertRaisesRegex(ValueError, "scratch home"):
+            s.discard_side(w.manifest, "cand", force=True)
+        doc = w.doc()
+        home = Path(doc["sides"]["base"]["home"])
+        self.edit_manifest(w, "cand", home=str(
+            home.parent / "home-cand-a0x"))
+        with self.assertRaisesRegex(ValueError, "scratch home"):
+            s.discard_side(w.manifest, "cand", force=True)
+        self.edit_manifest(w, "cand", home=str(home.parent / "home-cand-a0"),
+                           alternates=["/elsewhere"])
+        with self.assertRaisesRegex(ValueError, "alternates differ"):
+            s.discard_side(w.manifest, "cand", force=True)
+        root = Path(w.doc()["sides"]["cand"]["root"])
+        self.assertTrue(root.exists())
+        self.edit_manifest(w, "cand", alternates=w.doc()["sides"]["base"][
+            "alternates"])
+        s.discard_side(w.manifest, "cand", force=True)
+        self.assertFalse(root.exists())
+
+    def test_directories_are_made_inside_the_guarded_part(self):
+        w = World(self)
+        (w.dir / "ev").write_text("a file, not a directory")
+        with self.assertRaises(OSError):
+            w.build("cand")
+        record = w.doc()["sides"]["cand"]
+        self.assertTrue(record["incomplete"])
+        self.assertTrue(Path(record["home"]).exists())
+        s.discard_side(w.manifest, "cand")
+        self.assertFalse(Path(record["home"]).exists())
+        self.assertEqual(len(w.doc()["attempts"]), 1)
+
     def test_roots_and_scratch_not_nested(self):
         w = World(self)
         with self.assertRaisesRegex(ValueError, "inside a snapshot"):
@@ -431,7 +619,8 @@ class VerifyTests(unittest.TestCase):
 
     def test_compiled_sources_must_equal_c31(self):
         self.fails("compiled sources differ", c31=self.w.base_pin)
-        self.fails("cannot compare", c31="1" * 40)
+        self.fails("cannot resolve", c31="1" * 40)
+        self.fails("cannot resolve", c31="nosuchrev")
         self.assertEqual(self.w.verify(c31=self.w.c31)["status"], "pass")
 
     def test_head_moved(self):
@@ -495,6 +684,29 @@ class VerifyTests(unittest.TestCase):
         self.assertEqual(self.w.verify()["status"], "pass")
         put(self.cand / "src/num/.hol/logs/num-selftest.log", "changed")
         self.fails("product changed")
+
+    def test_theory_rerun_restores_to_a_passing_tree(self):
+        folder = self.cand / "src/num/theories"
+        files = s.theory_target_files(folder, "num")
+        self.assertEqual(sorted(files), sorted([
+            ".hol/objs/numTheory.sml", ".hol/objs/numTheory.dat",
+            ".hol/objs/numTheory.uo", ".hol/objs/numTheory.cachekey",
+            ".hol/docs/numTheory.html",
+            ".hol/make-deps/numTheory.sml.d"]))
+        self.assertEqual(s.theory_target_files(folder, "nothing"), [])
+        backup = {rel: ((folder / rel).read_bytes(),
+                        (folder / rel).stat().st_mtime_ns) for rel in files}
+        # a rerun rewrites the lock (process ids) and every target file
+        put(folder / ".hol/locks/numTheory.uo.lock", "99999\n")
+        put(folder / ".hol/locks/numTheoryScript.lock", "1\n")
+        self.assertEqual(self.w.verify()["status"], "pass")
+        for rel in files:
+            put(folder / rel, "rewritten %s\n" % rel)
+        self.fails("product changed")
+        for rel, (data, mtime) in backup.items():
+            (folder / rel).write_bytes(data)
+            os.utime(folder / rel, ns=(mtime, mtime))
+        self.assertEqual(self.w.verify()["status"], "pass")
 
     def test_missing_product(self):
         doc = self.w.doc()
@@ -620,11 +832,6 @@ class VerifyTests(unittest.TestCase):
         self.fails("schema", doc)
 
 
-class DatTool:
-    """A fake dat-printer: the file without its `id` lines."""
-    SCRIPT = "#!/bin/sh\ngrep -v '^id' \"$1\"\n"
-
-
 class CompareTests(unittest.TestCase):
     def setUp(self):
         self.w = World(self).both()
@@ -635,19 +842,12 @@ class CompareTests(unittest.TestCase):
     def run_compare(self, **kw):
         return s.compare(self.w.doc(), **kw)
 
-    def install_tool(self, script=DatTool.SCRIPT, sides=s.LABELS):
-        for label in sides:
-            tool = Path(self.doc["sides"][label]["root"]) / s.DAT_PRINTER
-            put(tool, script)
-            tool.chmod(0o755)
-
     def test_identical_behaviour_passes(self):
         out = self.run_compare()
         self.assertEqual(out["status"], "pass", out["blocked"])
         self.assertEqual(out["theories"]["common"], 2)
         self.assertEqual(out["logs"]["common"], len(s.AREAS))
         self.assertEqual(out["normalization"]["logs"][1][0], "gc-tag")
-        self.assertIsNone(out["dat_normalizer"])
 
     def test_tracked_theory_sources_are_not_compared(self):
         # TRACKED_SIG differs between the commits and is not a product
@@ -680,47 +880,107 @@ class CompareTests(unittest.TestCase):
         put(self.base / SIG, "sig %s\n" % os.path.realpath(self.base))
         self.assertEqual(self.run_compare()["status"], "pass")
 
-    def test_differing_dat_blocks_without_the_flag(self):
-        put(self.cand / DAT, "z")
-        self.assertEqual(self.run_compare()["status"], "blocked")
+    def write_dat(self, rel, base_text, cand_text):
+        put(self.base / rel, base_text)
+        put(self.cand / rel, cand_text)
 
-    def test_dat_printer_explains_a_dat_difference(self):
-        self.install_tool()
-        put(self.base / DAT, "id 1\nthm %s\n" % self.base)
-        put(self.cand / DAT, "id 2\nthm %s\n" % self.cand)
-        printer = s.DatPrinter()
-        out = self.run_compare(dat_normalizer=printer)
+    def dat_files(self, out):
+        return {r["path"]: r for r in out["dat_canonical"]["files"]}
+
+    def test_unparsable_dat_difference_blocks(self):
+        put(self.cand / DAT, "z")
+        out = self.run_compare()
+        self.assertEqual(out["status"], "blocked")
+        self.assertIn("parse failure", self.dat_files(out)[DAT]["error"])
+
+    def test_table_reorder_is_equal(self):
+        self.write_dat(DAT.replace("num", "t"), mk_dat("t"), mk_dat(
+            "t", strings=["x", "t", "bool", "c", "min"],
+            types=["bool", "alpha"], terms=["c", "x", "ap"]))
+        out = self.run_compare()
+        rel = DAT.replace("num", "t")
         self.assertEqual(out["status"], "pass", out["blocked"])
-        self.assertEqual(out["dat_dumps"][0]["equal"], True)
-        ident = out["dat_normalizer"]
-        self.assertEqual(len(ident["source_sha256"]), 64)
-        self.assertEqual(ident["cls"], "DatPrinter")
-        self.assertEqual(len(ident["runs"]), 2)
-        run = ident["runs"][0]
-        self.assertEqual(run["argv"][1], DAT)
-        self.assertEqual(len(run["tool"]["sha256"]), 64)
+        record = self.dat_files(out)[rel]
+        self.assertTrue(record["equal"])
+        self.assertEqual(record["base"], record["cand"])
+        self.assertEqual(len(out["dat_canonical"]["module_sha256"]), 64)
         json.dumps(out)
 
-    def test_dat_printer_with_real_difference_blocks(self):
-        self.install_tool()
-        put(self.base / DAT, "thm a\n")
-        put(self.cand / DAT, "thm b\n")
-        out = self.run_compare(dat_normalizer=s.DatPrinter())
-        self.assertEqual(out["status"], "blocked")
-        self.assertFalse(out["dat_dumps"][0]["equal"])
+    def test_content_differences_block(self):
+        rel = DAT.replace("num", "t")
+        variants = {
+            "hyp": mk_dat("t", hyps=("x",)),
+            "tag": mk_dat("t", tags=("DISK_THM", "ORACLE")),
+            "newsig": mk_dat("t", newsig_arity=2),
+            "thydata": mk_dat("t", deltas=7),
+            "parent": mk_dat("t", parents=[("a", "h")]),
+            "name": mk_dat("u")}
+        for what, text in variants.items():
+            self.write_dat(rel, mk_dat("t"), text)
+            out = self.run_compare()
+            self.assertEqual(out["status"], "blocked", what)
+            self.assertFalse(self.dat_files(out)[rel]["equal"], what)
 
-    def test_dat_printer_missing_or_failing_is_an_error(self):
-        put(self.cand / DAT, "z")
-        with self.assertRaisesRegex(ValueError, "no dat-printer"):
-            self.run_compare(dat_normalizer=s.DatPrinter())
-        self.install_tool("#!/bin/sh\nexit 3\n")
-        with self.assertRaisesRegex(ValueError, "failed"):
-            self.run_compare(dat_normalizer=s.DatPrinter())
+    def test_real_format_fixture(self):
+        c = dat.canonical(REAL_DAT)
+        self.assertEqual(c["name"], "basicSize")
+        self.assertEqual(len(c["parents"]), 3)
+        self.assertEqual(len(c["thms"]), 9)
+        self.assertEqual(c["thms"][0]["tags"], ["DISK_THM"])
+        base = dat.digest(c)[0]
+        for old, new in (
+                ('("%0$0U28%19B20|U10")', '("%0$0U28%19B20|U10" "%0")'),
+                ('"DISK_THM") (1 0)\n    ("%1%2%4$2', '"OTHER") (1 0)\n'
+                 '    ("%1%2%4$2'),
+                ('("bool_size" . 37)', '("bool_size" . 38)'),
+                ('(tag-knm 24 . 41)', '(tag-knm 24 . 42)'),
+                ('(tag-tm . "%28")', '(tag-tm . "%29")'),
+                ('("sum_size" . 40)\n  ("pair_size" . 44)',
+                 '("sum_size" . 41)\n  ("pair_size" . 44)')):
+            self.assertIn(old, REAL_DAT)
+            other = dat.digest(dat.canonical(REAL_DAT.replace(old, new, 1)))
+            self.assertNotEqual(other[0], base, old)
 
-    def test_bool_only_hook_is_refused(self):
-        put(self.cand / DAT, "z")
-        with self.assertRaisesRegex(ValueError, "needs dump"):
-            self.run_compare(dat_normalizer=lambda x, y: True)
+    def test_parent_hash_masked_only_for_an_equal_parent(self):
+        a_rel, b_rel = (DAT.replace("numTheory", n + "Theory")
+                        for n in ("a", "b"))
+        a_same = mk_dat("a")
+        a_reordered = mk_dat("a", strings=["x", "a", "bool", "c", "min"])
+        # the parent compares equal, so the hash of it may differ
+        self.write_dat(a_rel, a_same, a_reordered)
+        self.write_dat(b_rel, mk_dat("b", parents=[("a", "h1")]),
+                       mk_dat("b", parents=[("a", "h2")]))
+        out = self.run_compare()
+        self.assertEqual(out["status"], "pass", out["blocked"])
+        self.assertEqual(self.dat_files(out)[b_rel]["masked_parents"],
+                         ["a"])
+        # the parent differs: its hash is not masked and the child blocks
+        self.write_dat(a_rel, a_same, mk_dat("a", hyps=("x",)))
+        out = self.run_compare()
+        files = self.dat_files(out)
+        self.assertFalse(files[a_rel]["equal"])
+        self.assertFalse(files[b_rel]["equal"])
+        self.assertEqual(files[b_rel]["masked_parents"], [])
+        # a parent that is not compared at all is not masked either
+        self.write_dat(a_rel, a_same, a_same)
+        self.write_dat(b_rel, mk_dat("b", parents=[("zz", "h1")]),
+                       mk_dat("b", parents=[("zz", "h2")]))
+        self.assertEqual(self.run_compare()["status"], "blocked")
+        # equal bytes need no canonical form
+        self.write_dat(b_rel, mk_dat("b"), mk_dat("b"))
+        self.assertEqual(self.run_compare()["status"], "pass")
+
+    def test_pins_are_recorded(self):
+        out = s.compare(self.w.doc(), {"c31": "c" * 40})
+        self.assertEqual(out["pins"], {"c31": "c" * 40})
+
+    def test_only_selftest_logs_are_compared(self):
+        self.write_dat("src/num/.hol/logs/other.log", "a", "b")
+        out = self.run_compare()
+        self.assertEqual(out["status"], "pass", out["blocked"])
+        self.assertNotIn("src/num/.hol/logs/other.log",
+                         [d["path"] for d in out["logs"]["differing"]])
+        self.assertEqual(out["logs"]["common"], len(s.AREAS))
 
     def test_missing_on_candidate_blocks(self):
         (self.cand / SIG).unlink()
@@ -792,8 +1052,10 @@ class MainTests(unittest.TestCase):
         self.assertEqual(json.loads(text)["status"], "pass")
         code, text = self.run_main(*self.w.argv(
             "compare", "--output", str(self.out)))
-        self.assertEqual((code, json.loads(self.out.read_text())["status"]),
-                         (0, "pass"))
+        result = json.loads(self.out.read_text())
+        self.assertEqual((code, result["status"]), (0, "pass"))
+        self.assertEqual(result["pins"]["c31"], self.w.c31)
+        self.assertEqual(result["pins"]["cand_pin"], self.w.cand_pin)
         with self.assertRaises(FileExistsError):
             self.run_main(*self.w.argv("compare", "--output",
                                        str(self.out)))
@@ -815,9 +1077,11 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, 1)
 
     def test_discard_through_main(self):
-        code, _ = self.run_main("discard", "--repo", str(self.w.repo),
-                                "--manifest", str(self.w.manifest),
-                                "--side", "cand")
+        args = ["discard", "--repo", str(self.w.repo), "--manifest",
+                str(self.w.manifest), "--side", "cand"]
+        with self.assertRaisesRegex(ValueError, "--force"):
+            self.run_main(*args)
+        code, _ = self.run_main(*args, "--force")
         self.assertEqual(code, 0)
         self.assertNotIn("cand", self.w.doc()["sides"])
 
@@ -921,7 +1185,8 @@ class RunCommandTests(unittest.TestCase):
 
 class StyleTests(unittest.TestCase):
     def test_no_tabs_or_long_lines(self):
-        for name in ("task32_snapshots.py", "test_task32_snapshots.py"):
+        for name in ("task32_snapshots.py", "task32_dat.py",
+                     "test_task32_snapshots.py"):
             for n, line in enumerate(Path(s.HERE / name).read_text()
                                      .splitlines(), 1):
                 self.assertNotIn("\t", line, (name, n))
