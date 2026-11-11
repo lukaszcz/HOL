@@ -311,6 +311,12 @@ fun mk_CVCp expect_fun =
 
 val thm_CVCp = mk_CVCp (expect_thm true)
 
+(* Run small arithmetic regressions whenever cvc5 is configured, bypassing
+   mk_CVCp's numeric fragment filter for slow checked replay. *)
+val thm_CVCp_arith =
+  mk_test_fun (CVC.is_configured ()) (expect_thm true)
+    "cvc5 (arithmetic proofs)" HolSmtLib.CVC_TAC
+
 (* These small higher-order regressions need checked replay even though
    their function domains contain integers. *)
 val thm_CVCp_ho =
@@ -536,13 +542,9 @@ val graph_expect_thm = expect_thm
     (``(x:num) - y - z = x - (y + z)``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (``(x:num) <= y ==> (x - y = 0)``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp_arith]),
     (``((x:num) - y = 0) \/ (y - x = 0)``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
-
-    (* thm_CVCp omitted: CPC parsing fails on
-       ``(x:num) <= y ==> (x - y = 0)`` and
-       ``((x:num) - y = 0) \/ (y - x = 0)`` (unknown arith-max-geq2). *)
+      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp_arith]),
 
     (``(x:num) * 0 = 0``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
@@ -1233,6 +1235,8 @@ val graph_expect_thm = expect_thm
       [thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (* NIA: square nonneg *)
     (``(x:int) * x >= 0``, [thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (``(x:int) >= 4 /\ x <= 4 ==> 37 * x - 6 * (x * x) >= -37``,
+      [thm_Z3p_v4, thm_CVCp_arith]),
     (* NIA: bounded product *)
     (``(x:int) >= 5 /\ (y:int) >= 5 ==> x * y >= 25``,
       [thm_Z3, thm_CVCp

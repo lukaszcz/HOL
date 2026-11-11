@@ -20353,9 +20353,16 @@ let
     ``(x:real) * (y + z) - x * y = z * x``
   val rdiv_goal =
     ``HolSmt$smt_rdiv (x:real) 42 = x * (1 / 42)``
+  val first = ``if p then x else -x:int``
+  val second = ``if q then y else -y:int``
+  val difference = ``if ^first >= ^second then ^first - ^second else 0``
+  val zero_goal =
+    ``1 * (^second + -^first + ^difference - 0) =
+      1 * (^second - (^first + -^difference))``
   val integer_thm = SmtReplayCanon.arith_poly_norm_prove integer_goal
   val real_thm = SmtReplayCanon.arith_poly_norm_prove real_goal
   val rdiv_thm = SmtReplayCanon.arith_poly_norm_prove rdiv_goal
+  val zero_thm = SmtReplayCanon.arith_poly_norm_prove zero_goal
 in
   assert (Thm.concl integer_thm ~~ integer_goal,
     "integer polynomial normalizer returned the wrong theorem");
@@ -20363,9 +20370,94 @@ in
     "real polynomial normalizer returned the wrong theorem");
   assert (Thm.concl rdiv_thm ~~ rdiv_goal,
     "real polynomial normalizer did not discharge nonzero total division");
+  assert (Thm.concl zero_thm ~~ zero_goal andalso null (Thm.hyp zero_thm),
+    "polynomial normalization retained negative zero or assumptions");
   check_oracle_tags "integer polynomial normal form" integer_thm;
   check_oracle_tags "real polynomial normal form" real_thm;
-  check_oracle_tags "total real division polynomial normal form" rdiv_thm
+  check_oracle_tags "total real division polynomial normal form" rdiv_thm;
+  check_oracle_tags "integer negative zero polynomial normal form" zero_thm
+end
+
+fun cpc_shared_integer_relation_alias_success () =
+let
+  fun level index = "@t" ^ Int.toString index
+  fun doubling index =
+    "(define " ^ level (index + 1) ^ " () (+ " ^ level index ^ " " ^
+      level index ^ ")) "
+  val proof = parse_cpc_proof_string
+    ("((declare-const p Bool) (declare-const q Bool) " ^
+     "(declare-const x Int) (declare-const y Int) " ^
+     "(define @t0 () (ite (>= x 0) x (- x))) " ^
+     String.concat (List.tabulate (8, doubling)) ^
+     "(assume @p1 (= p (not (<= @t8 y)))) " ^
+     "(assume @p2 (= (not (>= y @t8)) q)) " ^
+     "(step @out :rule trans :premises (@p1 @p2)))")
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert ((Thm.concl theorem ~~ ``(p:bool) = q``) andalso
+      List.length (Thm.hyp theorem) = 2,
+    "shared integer relation transitivity: " ^ Hol_pp.thm_to_string theorem);
+  check_oracle_tags "shared integer relation transitivity" theorem
+end
+
+fun cpc_shared_modus_ponens_alias_success () =
+let
+  fun doubling index =
+    let val previous = "@a" ^ Int.toString (index - 1) in
+      "(define @a" ^ Int.toString index ^ " () (+ " ^ previous ^ " " ^
+        previous ^ ")) "
+    end
+  val proof = parse_cpc_proof_string
+    ("((declare-const x Int) (declare-const p Bool) " ^
+     "(declare-const q Bool) (define @a0 () (ite p x (- x))) " ^
+     String.concat (List.tabulate (12, fn index => doubling (index + 1))) ^
+     "(assume @premise (not (<= @a12 0))) " ^
+     "(assume @implication (=> (not (>= 0 @a12)) q)) " ^
+     "(step @out :rule modus_ponens :premises (@premise @implication)))")
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl theorem ~~ ``q:bool`` andalso
+      List.length (Thm.hyp theorem) = 2,
+    "shared modus ponens changed the exact consequence or assumptions");
+  check_oracle_tags "shared modus ponens aliases" theorem
+end
+
+fun cpc_cong_positional_reflexive_child_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const x Int) (declare-const y Int) \
+    \(define @a () (ite (>= x 0) x 0)) \
+    \(step @keep :rule refl :args (@a)) \
+    \(assume @change (= x y)) \
+    \(step @out :rule cong :premises (@keep @change) :args ((= @a x))))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val atom = ``if (x:int) >= 0 then x else 0``
+  val expected = ``(^atom = x) = (^atom = y)``
+in
+  assert (Thm.concl theorem ~~ expected andalso
+      List.length (Thm.hyp theorem) = 1,
+    "congruence rewrote inside the reflexive child");
+  check_oracle_tags "positional congruence reflexivity" theorem
+end
+
+fun cpc_trans_conditional_swap_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const x Int) (declare-const p Bool) \
+    \(declare-const q Bool) (declare-const r Bool) \
+    \(assume @a (= r (ite (not (<= 0 x)) p q))) \
+    \(step @b :rule ite-not-cond :args ((>= x 0) p q)) \
+    \(step @c :rule trans :premises (@a @b)) \
+    \(assume @r r) \
+    \(step @conditional :rule eq_resolve :premises (@r @c)) \
+    \(step @out :rule ite_elim1 :premises (@conditional)))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val expected = ``~((x:int) >= 0) \/ (q:bool)``
+in
+  assert (Thm.concl theorem ~~ expected andalso
+      List.length (Thm.hyp theorem) = 2,
+    "transitivity discarded the conditional-swap endpoint");
+  check_oracle_tags "conditional-swap transitivity" theorem
 end
 
 fun quantified_boolean_rewrite_n_binders_success () =
@@ -25536,6 +25628,162 @@ in
     "difference-directed extension changed non-equality canonicalization")
 end
 
+fun nonlinear_tight_integer_bounds_success () =
+let
+  val goals = [
+    ``(x:int) >= 4 ==> x <= 4 ==>
+        ~(37 * x + -6 * (x * x) >= -37) ==> F``,
+    ``(if p then x else -x:int) >= 4 ==>
+        (if p then x else -x) <= 4 ==>
+        ~(37 * (if p then x else -x) +
+          -6 * ((if p then x else -x) * (if p then x else -x)) >= -37)
+        ==> F``]
+  fun check goal =
+    let val theorem = Library.nla_prove goal in
+      assert (Thm.concl theorem ~~ goal andalso null (Thm.hyp theorem),
+        "tight integer bound replay changed the goal or retained assumptions");
+      check_oracle_tags "tight integer bound replay" theorem
+    end
+  val false_goal = ``(x:int) >= 4 ==> x <= 4 ==> x * x < 16``
+  val rejected =
+    (Library.nla_prove false_goal; false)
+    handle Feedback.HOL_ERR _ => true
+in
+  List.app check goals;
+  assert (rejected, "tight integer bounds proved a false quadratic clause")
+end
+
+fun cpc_arith_max_geq2_success () =
+let
+  fun check (sort, expected) =
+    let
+      val proof = parse_cpc_proof_string
+        ("((declare-const x " ^ sort ^ ") (declare-const y " ^ sort ^
+         ") (step @p1 :rule arith-max-geq2 :args (x y)))")
+      val theorem = CPC_ProofReplay.replay_root_for_test proof
+    in
+      assert (Thm.concl theorem ~~ expected andalso null (Thm.hyp theorem),
+        "arith-max-geq2 returned the wrong theorem or retained assumptions");
+      check_oracle_tags "arith-max-geq2" theorem
+    end
+in
+  List.app check
+    [("Int", ``((if (x:int) >= y then x else y) >= y) = T``),
+     ("Real", ``((if (x:real) >= y then x else y) >= y) = T``)]
+end
+
+fun arithmetic_shared_conditional_abstraction_success () =
+let
+  val atom = ``if p then (x:int) else -x``
+  fun double 0 = atom
+    | double n =
+        let val prior = double (n - 1)
+        in intSyntax.mk_plus (prior,prior) end
+  val shared = double 65
+  val target = boolSyntax.mk_eq (shared,shared)
+  val theorem = Library.prove_abstracting_atoms
+    (fn schema => Thm.REFL (boolSyntax.lhs schema)) [atom] target
+in
+  assert (Portable.pointer_eq (Thm.concl theorem,target) andalso
+      null (Thm.hyp theorem),
+    "shared conditional abstraction changed its exact closed endpoint");
+  check_oracle_tags "shared conditional abstraction" theorem
+end
+
+fun arithmetic_distinct_shared_atoms_success () =
+let
+  fun double 0 = ``x:int``
+    | double n =
+        let val prior = double (n - 1)
+        in intSyntax.mk_plus (prior,prior) end
+  val first = boolSyntax.mk_cond
+    (``p:bool``,double 65,``0:int``)
+  val second = boolSyntax.mk_cond
+    (``q:bool``,double 65,``0:int``)
+  val sum = intSyntax.mk_plus (first,second)
+  val target = boolSyntax.mk_eq (sum,sum)
+  val theorem = Library.arith_prove_raw target
+in
+  assert (Portable.pointer_eq (Thm.concl theorem,target) andalso
+      null (Thm.hyp theorem),
+    "distinct shared atoms changed the closed arithmetic endpoint");
+  check_oracle_tags "distinct shared atoms" theorem
+end
+
+fun arithmetic_shared_type_fallback_success () =
+let
+  fun tuple 0 = Type.bool
+    | tuple n = let val prior = tuple (n - 1)
+                in pairSyntax.mk_prod (prior,prior) end
+  val ty = tuple 21
+  val f = Term.mk_var ("f",Type.--> (Type.bool,ty))
+  val q = Term.mk_var ("q",Type.--> (ty,Type.bool))
+  val guard = Term.mk_comb (q,Term.mk_comb (f,``p:bool``))
+  val atom = boolSyntax.mk_cond (guard,``x:int``,``-x:int``)
+  val target = boolSyntax.mk_eq (atom,atom)
+  val theorem = Library.prove_abstracting_atoms
+    (fn schema => Thm.REFL (boolSyntax.lhs schema)) [atom] target
+in
+  assert_concl_alpha ("shared type fallback",theorem,target);
+  assert_no_hyps ("shared type fallback",theorem);
+  check_oracle_tags "shared type fallback" theorem
+end
+
+fun cpc_shared_arith_geq_tighten_success () =
+let
+  fun level index = "@t" ^ Int.toString index
+  fun doubling index =
+    "(define " ^ level (index + 1) ^ " () (+ " ^ level index ^ " " ^
+      level index ^ ")) "
+  val proof = parse_cpc_proof_string
+    ("((declare-const p Bool) (declare-const x Int) " ^
+     "(define @t0 () (ite p x (- x))) " ^
+     String.concat (List.tabulate (65,doubling)) ^
+     "(step @out :rule arith-geq-tighten :args (@t65 0)))")
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val (left,right) = boolSyntax.dest_eq (Thm.concl theorem)
+  val (operand,zero) = intSyntax.dest_geq (boolSyntax.dest_neg left)
+  val (bound,increment) = intSyntax.dest_geq right
+  val (restored,one) = intSyntax.dest_plus increment
+in
+  assert (Portable.pointer_eq (operand,restored) andalso
+      Term.aconv zero intSyntax.zero_tm andalso
+      Term.aconv bound intSyntax.zero_tm andalso
+      Term.aconv one intSyntax.one_tm,
+    "shared arithmetic rule changed its operands or fixed unit offset");
+  assert_no_hyps ("shared arithmetic rule",theorem);
+  check_oracle_tags "shared arithmetic rule" theorem
+end
+
+fun cpc_arithmetic_eliminated_cast_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((step @out :rule arith_poly_norm_rel :args ((= (to_real 0) 0.0))))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val expected = boolSyntax.mk_eq
+    (intrealSyntax.mk_real_of_int intSyntax.zero_tm,realSyntax.zero_tm)
+in
+  assert_concl_alpha ("eliminated arithmetic cast",theorem,expected);
+  assert_no_hyps ("eliminated arithmetic cast",theorem);
+  check_oracle_tags "eliminated arithmetic cast" theorem
+end
+
+fun cpc_arith_geq_tighten_conditional_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const x Int) (declare-const y Int) \
+    \(declare-const p Bool) (declare-const q Bool) \
+    \(define @a () (+ (ite p x (- x)) (ite q y (- y)))) \
+    \(step @out :rule arith-geq-tighten :args (@a 0)))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val atom = ``(if p then x else -x:int) + (if q then y else -y:int)``
+  val expected = ``~(^atom >= 0) = (0 >= ^atom + 1)``
+in
+  assert (Thm.concl theorem ~~ expected andalso null (Thm.hyp theorem),
+    "integer bound tightening returned the wrong conditional theorem");
+  check_oracle_tags "conditional integer bound tightening" theorem
+end
+
 fun symbolic_power_nonpolynomial_detection_success () =
 let
   val cases = [
@@ -25579,6 +25827,16 @@ let
   val neg = CPC_ProofReplay.replay_arith_mult_neg_for_test
   val pos = CPC_ProofReplay.replay_arith_mult_pos_for_test
   val cases = [
+    ("positive symbolic int conditional", pos, ``k:int``,
+      ``(if p then x else -x:int) >= (if q then y else -y:int)``,
+      ``((k:int) > 0 /\
+        (if p then x else -x:int) >= (if q then y else -y:int)) ==>
+        k * (if p then x else -x) >= k * (if q then y else -y)``),
+    ("negative int conditional", neg, ``-2i``,
+      ``(if p then x else -x:int) >= (if q then y else -y:int)``,
+      ``(-2i < 0i /\
+        (if p then x else -x:int) >= (if q then y else -y:int)) ==>
+        -2i * (if p then x else -x) <= -2i * (if q then y else -y)``),
     ("negative int equality", neg, ``-2i``, ``(x:int) = y``,
       ``(-2i < 0i /\ (x:int) = y) ==> -2i * x = -2i * y``),
     ("negative int less", neg, ``-2i``, ``(x:int) < y``,
@@ -35886,6 +36144,14 @@ let
       cpc_emitted_definition_identity_table_success),
     ("replay_polynomial_normal_form_success",
       replay_polynomial_normal_form_success),
+    ("cpc_shared_integer_relation_alias_success",
+      cpc_shared_integer_relation_alias_success),
+    ("cpc_shared_modus_ponens_alias_success",
+      cpc_shared_modus_ponens_alias_success),
+    ("cpc_cong_positional_reflexive_child_success",
+      cpc_cong_positional_reflexive_child_success),
+    ("cpc_trans_conditional_swap_success",
+      cpc_trans_conditional_swap_success),
     ("ground_subterm_evaluation_budget_success",
       ground_subterm_evaluation_budget_success),
     ("quantified_boolean_rewrite_n_binders_success",
@@ -35992,6 +36258,21 @@ let
       nonlinear_power_detection_success),
     ("symbolic_power_nonpolynomial_detection_success",
       symbolic_power_nonpolynomial_detection_success),
+    ("nonlinear_tight_integer_bounds_success",
+      nonlinear_tight_integer_bounds_success),
+    ("cpc_arith_max_geq2_success", cpc_arith_max_geq2_success),
+    ("arithmetic_distinct_shared_atoms_success",
+      arithmetic_distinct_shared_atoms_success),
+    ("arithmetic_shared_type_fallback_success",
+      arithmetic_shared_type_fallback_success),
+    ("cpc_shared_arith_geq_tighten_success",
+      cpc_shared_arith_geq_tighten_success),
+    ("arithmetic_shared_conditional_abstraction_success",
+      arithmetic_shared_conditional_abstraction_success),
+    ("cpc_arithmetic_eliminated_cast_success",
+      cpc_arithmetic_eliminated_cast_success),
+    ("cpc_arith_geq_tighten_conditional_success",
+      cpc_arith_geq_tighten_conditional_success),
     ("symbolic_power_avoids_nla_route_success",
       symbolic_power_avoids_nla_route_success),
     ("cpc_arith_mult_relation_replay_success",

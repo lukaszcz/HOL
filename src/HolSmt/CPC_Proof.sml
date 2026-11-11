@@ -1825,6 +1825,7 @@ struct
     mk_rule RareRewrite ("arith-geq-tighten", "arith_rule"),
     mk_rule RareRewrite ("arith-int-geq-tighten", "arith_rule"),
     mk_rule RareRewrite ("arith-max-geq1", "arith_max_geq1"),
+    mk_rule RareRewrite ("arith-max-geq2", "arith_max_geq2"),
     mk_rule RareRewrite ("arith-min-lt2", "arith_min_lt2"),
     mk_rule RareRewrite ("ite-not-cond", "ite_not_cond"),
     mk_rule RareRewrite ("ite-true-cond", "ite_true_cond"),
