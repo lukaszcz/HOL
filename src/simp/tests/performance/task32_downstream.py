@@ -1569,15 +1569,44 @@ def judged(rows, stage, why):
     return sorted(i for i in rows if why[i, stage] is not None)
 
 
+def own_report(path, attempt, sealed):
+    """(report, why) of the file at `path` as the report of `attempt`
+    whose `info-end` line recorded the seal `sealed`: why is None when it
+    is that attempt's own, unchanged report with a negative-control
+    outcome, else the reason it is not. The bytes are read once, hashed as
+    `acceptance.seal` does and parsed."""
+    try:
+        data = Path(path).read_bytes()
+        report = json.loads(data)
+    except (OSError, ValueError):
+        return None, "unreadable"
+    if sealed is None:
+        return None, "no seal in its info-end"
+    if not isinstance(report, dict) or report.get("attempt") != attempt:
+        other = report.get("attempt") if isinstance(report, dict) else None
+        return None, "the report of attempt %s" % other
+    if hashlib.sha256(data).hexdigest() != sealed:
+        return None, "changed since its info-end"
+    try:
+        report["outcome"]["negative_control"]["decision"]
+        report["outcome"]["negative_control"]["detected"]
+    except (KeyError, TypeError):
+        return None, "no negative_control outcome"
+    return report, None
+
+
 def info_runs(state, relocated=None):
     """Every information run (smoke, pilot, control) of the table with how
     it ended; a control also with its decision and whether it was detected,
     from its report. The report is taken only where the run recorded its
     output, or from `relocated[attempt]` (a directory the operator
     asserts), and only when it is that attempt's own (its `attempt`, and
-    its seal the `info-end` line recorded); otherwise decision and detected
-    are None and `report` says why, a relocated report that is not the
-    attempt's being a refusal."""
+    its seal the `info-end` line recorded). A row carries `report` (the
+    path read, None when no report is read) and `why` (None when decision
+    and detected were read, else the reason they are None: see
+    `own_report`). `relocated` is checked here: an entry naming no
+    information run, a run that is not a successful control, or a report
+    that is not the attempt's own is a refusal."""
     relocated = dict(relocated or {})
     ends = {r["attempt"]: r for r in table_lines(state)
             if r["event"] == "info-end"}
@@ -1589,30 +1618,22 @@ def info_runs(state, relocated=None):
     def found(r, status):
         moved = r["attempt"] in relocated
         if r["mode"] != "control" or status != "success":
-            require(not moved, "--relocated %s: not a successful control, "
-                    "it has no report" % r["attempt"])
-            return {}
+            require(not moved, "--relocated %s: only a successful "
+                    "control's report is read" % r["attempt"])
+            return dict(report=None, why=None)
         path = (relocated[r["attempt"]] if moved else Path(r["output"])) / \
             "downstream.json"
-        why = "unreadable"
-        try:
-            report = a.load(path)
-            own = report.get("attempt") == r["attempt"] and \
-                ends[r["attempt"]]["seal"] is not None and \
-                a.seal(path)["sha256"] == ends[r["attempt"]]["seal"]
-            if not own:
-                why = "not at its recorded output" if not moved else \
-                    "another attempt or a changed report"
-            if own:
-                result = report["outcome"]["negative_control"]
-                return dict(decision=result["decision"],
-                            detected=result["detected"], report=str(path))
-        except Exception:
-            pass
-        require(not moved, "--relocated %s: %s is not that attempt's own "
-                "report (%s)" % (r["attempt"], path, why))
-        return dict(decision=None, detected=None,
-                    report="%s: %s" % (path, why))
+        report, why = own_report(path, r["attempt"],
+                                 ends[r["attempt"]]["seal"])
+        require(not (moved and why), "--relocated %s: %s is not that "
+                "attempt's own report (%s)" % (r["attempt"], path, why))
+        if why:
+            return dict(decision=None, detected=None, report=str(path),
+                        why=why)
+        result = report["outcome"]["negative_control"]
+        return dict(decision=result["decision"],
+                    detected=result["detected"], report=str(path),
+                    why=None)
 
     rows = []
     for r in starts:
@@ -1625,7 +1646,8 @@ def info_runs(state, relocated=None):
 
 
 def parse_relocated(entries):
-    """`--relocated ATTEMPT=DIR` entries -> {attempt: absolute Path}."""
+    """`--relocated ATTEMPT=DIR` entries -> {attempt: absolute Path}
+    (`~` expanded, a relative DIR taken from the working directory)."""
     found = {}
     for entry in entries or ():
         attempt, sep, folder = entry.partition("=")
@@ -1633,7 +1655,7 @@ def parse_relocated(entries):
                 "ATTEMPT=DIR" % entry)
         require(attempt not in found, "--relocated names %s twice" %
                 attempt)
-        found[attempt] = Path(folder).resolve()
+        found[attempt] = Path(folder).expanduser().resolve()
     return found
 
 
@@ -1652,7 +1674,8 @@ def redraws(attempts, infos, counts):
     information runs that did not succeed or that the first-stage counts
     do not cite - for the report to the owner. An information run row
     carries its gate key and, for a control, its decision and whether it
-    was detected (None when unavailable)."""
+    was detected (None when unavailable), with the `report` read and the
+    `why` they are unavailable, as `info_runs` has them."""
     def why(r):
         if r["status"] != "success":
             return "information run " + r["status"]
@@ -1663,7 +1686,8 @@ def redraws(attempts, infos, counts):
              for r in attempts if r["void"]] +
             [dict(attempt=r["attempt"], kind=r["mode"], why=why(r),
                   key=r["key"], decision=r.get("decision"),
-                  detected=r.get("detected"))
+                  detected=r.get("detected"), report=r.get("report"),
+                  why_unknown=r.get("why"))
              for r in infos if r["status"] != "success" or
              r["attempt"] != (counts.get(r["mode"]) or {}).get("attempt")])
 
@@ -2904,6 +2928,11 @@ def dispatch(args):
     else:
         require_ledger(args)
         relocated = parse_relocated(args.relocated)
+        if relocated and (args.ledger or args.repo):
+            # fail fast on a typo, before the replay (disposition checks
+            # the same entries again, with the same rule: info_runs)
+            info_runs(read_ledger(args.ledger or ledger_path(args.repo))[0],
+                      relocated)
         chain = replay_chain(args.stage, args.ledger, args.counts,
                              args.followup_counts, args.repo)
         data = disposition(chain, args.ledger or ledger_path(

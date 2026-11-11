@@ -2774,6 +2774,96 @@ class Chain(Base):
                    if r["mode"] == "control"][0]
         self.assertIsNone(control["detected"])
         self.assertIsNone(control["decision"])
+        self.assertEqual(control["why"], "unreadable")
+        (row,) = dw.redraws([], [control], {})
+        self.assertEqual(row["why_unknown"], "unreadable")
+        self.assertEqual(row["report"], control["report"])
+
+    def test_the_attempts_own_report_edited_in_place_is_changed(self):
+        w = self.world
+        pilot(w)
+        w.ignore_busy = True
+        args, spec = w.info("c1", "control", pilot=w.tmp / "pilot")
+        self.assertTrue(dw.run_stage(args, spec)["success"])
+        state, found = dw.read_ledger(w.ledger())
+        control = [r for r in dw.info_runs(state)
+                   if r["mode"] == "control"][0]
+        self.assertIsNone(control["why"])
+        path = w.tmp / "c1/downstream.json"
+        report = a.load(path)
+        report["note"] = "edited"
+        path.write_text(dw.dumps(report))
+        row = [r for r in dw.info_runs(state)
+               if r["mode"] == "control"][0]
+        self.assertEqual(row["why"], "changed since its info-end")
+        self.assertIsNone(row["decision"])
+        with self.assertRaisesRegex(dw.Refusal, "changed since its "
+                                    "info-end"):
+            dw.info_runs(state, {control["attempt"]: w.tmp / "c1"})
+        # no negative_control outcome
+        del report["outcome"]["negative_control"]
+        self.assertEqual(dw.own_report(path, report["attempt"], None)[1],
+                         "no seal in its info-end")
+        seal = a.seal(path.write_text(dw.dumps(report)) and path)["sha256"]
+        self.assertEqual(dw.own_report(path, report["attempt"], seal)[1],
+                         "no negative_control outcome")
+
+    def test_only_a_successful_controls_report_may_be_relocated(self):
+        w = self.world
+        args, spec = w.info("s", "smoke", names=["logroot"])
+        self.assertTrue(dw.run_stage(args, spec)["success"])
+        pilot(w)
+        w.ignore_busy = True
+        state, found = dw.read_ledger(w.ledger())
+        for row in dw.info_runs(state):
+            self.assertIsNone(row["report"])
+            self.assertIsNone(row["why"])
+            with self.assertRaisesRegex(dw.Refusal, "only a successful "
+                                        "control's report is read"):
+                dw.info_runs(state, {row["attempt"]: w.tmp})
+        w.fault = lambda u, s, n: "exit"
+        args, spec = w.info("f", "control", pilot=w.tmp / "pilot")
+        self.assertFalse(dw.run_stage(args, spec)["success"])
+        state, found = dw.read_ledger(w.ledger())
+        failed = [r for r in dw.info_runs(state)
+                  if r["mode"] == "control"][0]
+        self.assertEqual(failed["status"], "failed")
+        with self.assertRaisesRegex(dw.Refusal, "only a successful "
+                                    "control's report is read"):
+            dw.info_runs(state, {failed["attempt"]: w.tmp / "f"})
+
+    def test_dispose_checks_relocated_before_the_replay(self):
+        w = self.world
+        ledger = w.ledger()
+        ns = dw.build_parser().parse_args(
+            ["dispose", "--stage", "x", "--out", "o", "--ledger",
+             str(ledger), "--relocated", "control-nope=" + str(w.tmp)])
+        with mock.patch.object(dw, "require_ledger"), \
+                mock.patch.object(dw, "replay_chain") as replay, \
+                mock.patch.object(dw, "read_ledger") as read, \
+                mock.patch.object(dw, "info_runs", side_effect=dw.Refusal(
+                    "no information run")) as infos:
+            read.return_value = ("state", None)
+            with self.assertRaisesRegex(dw.Refusal, "no information run"):
+                dw.dispatch(ns)
+        replay.assert_not_called()
+        infos.assert_called_once_with(
+            "state", {"control-nope": w.tmp.resolve()})
+        # a good entry goes through to the disposition
+        out = w.tmp / "dis-out.json"
+        ns = dw.build_parser().parse_args(
+            ["dispose", "--stage", "x", "--out", str(out), "--ledger",
+             str(ledger), "--relocated", "c=" + str(w.tmp)])
+        chain = [dict(report=dict(repo=str(w.repo)))]
+        with mock.patch.object(dw, "require_ledger"), \
+                mock.patch.object(dw, "replay_chain", return_value=chain), \
+                mock.patch.object(dw, "read_ledger",
+                                  return_value=("state", None)), \
+                mock.patch.object(dw, "info_runs"), \
+                mock.patch.object(dw, "disposition", return_value=dict(
+                    status="pass", counts={})) as disp:
+            self.assertEqual(dw.dispatch(ns), 0)
+        self.assertEqual(disp.call_args[0][3], {"c": w.tmp.resolve()})
 
     def test_a_report_of_another_attempt_is_not_the_runs_own(self):
         w = self.world
@@ -2796,11 +2886,18 @@ class Chain(Base):
                if r["attempt"] == first["attempt"]][0]
         self.assertIsNone(row["decision"])
         self.assertIsNone(row["detected"])
-        self.assertIn("not at its recorded output", row["report"])
+        self.assertEqual(row["why"],
+                         "the report of attempt " + second["attempt"])
+        self.assertEqual(row["report"], str(w.tmp / "c1/downstream.json"))
+        (row,) = dw.redraws([], [row], {})
+        self.assertEqual(row["why_unknown"],
+                         "the report of attempt " + second["attempt"])
+        self.assertEqual(row["report"], str(w.tmp / "c1/downstream.json"))
         # the relocation names the archived report
         row = [r for r in dw.info_runs(state, {first["attempt"]: moved})
                if r["attempt"] == first["attempt"]][0]
         self.assertIs(row["detected"], False)
+        self.assertIsNone(row["why"])
         self.assertEqual(row["report"], str(moved / "downstream.json"))
         # a relocated report of another attempt or seal is a refusal
         with self.assertRaisesRegex(dw.Refusal, "not that attempt's own"):
@@ -2814,7 +2911,9 @@ class Chain(Base):
             dw.info_runs(state, {"control-nope": moved})
         # the entries of --relocated
         self.assertEqual(dw.parse_relocated(["x=" + str(moved), "y=/z"]),
-                         {"x": moved, "y": Path("/z")})
+                         {"x": moved.resolve(), "y": Path("/z").resolve()})
+        self.assertEqual(dw.parse_relocated(["r=some/dir"]),
+                         {"r": (Path.cwd() / "some/dir").resolve()})
         for bad in (["x"], ["=d"], ["x="], ["x=a", "x=b"]):
             with self.assertRaises(dw.Refusal):
                 dw.parse_relocated(bad)

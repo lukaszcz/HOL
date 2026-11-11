@@ -509,7 +509,7 @@ that pins the history constant is edited with it:
 - the TASK32 driver (`task32_downstream.HISTORY`): the seal of the code
   that made the TASK32 smoke and pilot (`b545d1fd0e`); the entry for
   `task32_downstream.py` also holds the seal of the code that made the
-  counts file and runs the first decision stage.
+  counts file and runs the first decision stage (`e1fef186b2`).
 
 A file whose seal no record carries needs no entry (usage text, style). The
 cascade, with a worked example, is in the bullet "Seal histories" of "TASK30
@@ -3343,7 +3343,8 @@ counts needs the audit. Run them in this order:
    routing below. The follow-up has its own seed and counts.
 8. `replay RUN...`: recomputes every decision of an archive (a single
    decision stage with its whole chain) offline; runs no process.
-9. `dispose --stage LAST --out FILE`: replays the chain and writes the
+9. `dispose --stage LAST --out FILE [--relocated ATTEMPT=DIR ...]`:
+   replays the chain and writes the
    per-unit and overall disposition with every attempt, information run
    and redraw. `recover` as above, whenever a journal is pending.
 
@@ -3386,14 +3387,21 @@ information run and every successful one that the first-stage counts do not
 cite (an information run not cited by the first-stage counts) are listed
 in the disposition and are reported to the owner; each such row carries
 the run's gate key and, for a control, its decision and whether it was
-detected (None when its report is unreadable). The report is accepted
-only if it is the attempt's own: at the output the `info` line recorded,
-with that attempt's name and the seal its `info-end` line recorded;
-otherwise decision and detected are None and the row says so. An output
-that was moved is named to `dispose` with `--relocated ATTEMPT=DIR`
-(repeatable; the report is then `DIR/downstream.json`, under the same
-check, a mismatch, a repeat or an attempt not in the ledger being a
-refusal).
+detected (None when unavailable). The report is accepted only if it is
+the attempt's own: at the output the `info` line recorded, with that
+attempt's name and the seal its `info-end` line recorded. The row has
+`report` (the path read, None when none is read) and `why` (None when
+decision and detected were read, else the reason they are None: `no seal
+in its info-end`, `the report of attempt X`, `changed since its info-end`,
+`no negative_control outcome` or `unreadable`); a redraw row of an
+information run copies them (`report`, `why_unknown`). An output that was
+moved is named to `dispose` with `--relocated ATTEMPT=DIR` (repeatable;
+`~` is expanded; the report is then `DIR/downstream.json`, under the same
+check). Refused, before the chain is replayed when `--ledger` or `--repo`
+names the ledger: a malformed entry, a repeat, an attempt not in the
+ledger, a run that is not a successful control (`only a successful
+control's report is read`) and a report that is not the attempt's own,
+with the reason above.
 A stage whose close line could not be written stays open and counts as
 judged.
 
