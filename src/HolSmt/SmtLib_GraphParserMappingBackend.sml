@@ -113,8 +113,17 @@ struct
                 | M.AtMost maximum => count<=maximum
               val _ = if accepted orelse value<>original then () else
                 raise ERR "mapping" "wrong declaration argument count"
-          in List.foldl (fn (argument,function) =>
-            B.application backend frame (function,argument)) value arguments
+          in case (#selector_body declaration,value=original,arguments) of
+              (SOME (slot,body),true,[argument]) =>
+                let val current_scope = valOf (B.frame_scope backend frame)
+                    val (domain,_) = Type.dom_rng (#hol_type declaration)
+                    val _ = PV.usable context current_scope argument
+                    val _ = if Type.compare
+                        (PV.type_of context argument,domain)=EQUAL then ()
+                      else raise ERR "mapping" "selector argument type differs"
+                in mapped frame [(slot,argument)] body end
+            | _ => List.foldl (fn (argument,function) =>
+                B.application backend frame (function,argument)) value arguments
           end)
     in {backend=backend,context=context,owner=parser_owner,
       mapping_value=mapping_value,

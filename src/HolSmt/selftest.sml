@@ -428,6 +428,18 @@ val graph_expect_thm = expect_thm
     (``(a : num) IN s ==> s a``, [thm_CVC, thm_CVCp]),
     (``(!x : num. x IN s ==> x IN t) /\ s b ==> t b``, [thm_CVC, thm_CVCp]),
     (``(a : num) IN (if c then s else t) /\ c ==> a IN s``, [thm_CVC]),
+    (* A shared collection argument keeps UPDATE as an Array under 2.7. *)
+    (``(s:bool set) = t /\ f s /\ f (\x:bool. x) /\
+       f ((T =+ T) s) ==> f ((T =+ T) t)``, [thm_CVC, thm_CVCp]),
+    (* The conditional marks UPDATE's result without a separate base use. *)
+    (``P (if c then ((0 =+ T) s) else ({}:int set)) /\ ~c ==> P {}``,
+      [thm_CVC, thm_CVCp_ho]),
+    (* A record selector and EMPTY must share the conditional's Array sort;
+       checked replay reconstructs the normalized selector under the UF. *)
+    (``(r : smt_set_rec) = q /\
+       P (if p then r.smt_set else {}) ==>
+       (P : (int -> bool) -> bool) (if p then q.smt_set else {})``,
+      [thm_CVC, thm_CVCp_ho]),
 
     (``F``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
     (``p = (p:bool)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
@@ -59228,6 +59240,20 @@ in
               (marker_oracle e [] goal result andalso
                length (#sets result) = 4 andalso null (#bags result)) end)
           end)
+      val _ = test "Conditional selector carriers match native markers"
+        (fn () =>
+          let val (simplified,_) = SolverSpec.simplify
+                (SmtLib.CVC_SIMP_TAC true)
+                ([], ``(P:(int -> bool) -> bool)
+                  (if p then r.smt_set else {})``)
+              val goal = #2 simplified
+              val binders = List.map (#1 o Term.dest_abs)
+                (List.filter Term.is_abs (Library.subterms goal))
+          in owned goal [] (fn e =>
+            let val result = native e
+            in require "conditional selector lost scoped collection markers"
+              (marker_oracle e binders goal result andalso
+               not (null (#sets result))) end) end)
       val _ = test "Automatic Bag markers retain immediate empty-bag prefixes"
         (fn () =>
           let val empty = bagSyntax.mk_bag ([],Type.bool)
@@ -59346,7 +59372,8 @@ in
           let val syntax = T.native_query_syntax (#graph e)
               val calls = ref 0
               val failing : Q.native_syntax =
-                {set_role=fn _ => (calls := !calls + 1;
+                {collection_symbol= #collection_symbol syntax,
+                 set_role=fn _ => (calls := !calls + 1;
                    raise Feedback.mk_HOL_ERR "marker" "callback"
                      "native marker callback Primary"),
                  bag_role= #bag_role syntax,
@@ -59488,7 +59515,8 @@ in
             let val syntax = T.native_query_syntax (#graph e)
                 val calls = ref 0
                 val failing : Q.native_syntax =
-                  {set_role= #set_role syntax,bag_role= #bag_role syntax,
+                  {collection_symbol= #collection_symbol syntax,
+                   set_role= #set_role syntax,bag_role= #bag_role syntax,
                    is_set_type= #is_set_type syntax,
                    is_bag_type= #is_bag_type syntax,
                    is_cond= #is_cond syntax,is_let= #is_let syntax,
@@ -62341,8 +62369,11 @@ in
                 in Option.isSome native andalso native=actual end
           in require "cardinality or bound-function refusal changed"
             (check [] ``CARD (s:int set) = 0`` andalso
-             check [] ``!f:bool set -> bool. f {T}`` andalso
-             check [] ``f (s:bool set) /\ T IN s /\ f (\x:bool. x)``) end)
+             check [] ``!f:bool set -> bool. f {T}``) end)
+      val _ = test "Shared function arguments select Array collections"
+        (fn () => agrees []
+          ``f (s:bool set) /\ T IN s /\ f (\x:bool. x)``
+          SmtLib.CVC5ArraySet SmtLib.CVC5ArrayBag)
       val _ = test "Sequence eligibility pins the selected metadata context"
         (fn () => with_query [] ``LENGTH (xs:bool list) = 0``
           (fn _ => fn context =>
@@ -66495,6 +66526,7 @@ end
 
 local
   structure L = SmtLib
+  structure E = SmtLib_GraphQueryEmission
   structure G = SmtReplayGraph
   structure S = SmtReplaySource
   structure W = SmtReplayInvocationWork
@@ -66566,6 +66598,40 @@ local
 in
   val _ = run_postlude 377 "checked-backend-marker-transport-7" (fn () =>
     let
+      val _ = List.app (fn (unmarked,goal) =>
+        test "Array updates emit well-sorted graph stores"
+        (fn () => fixture [] goal (fn e =>
+          let
+            val options =
+              {policy=fn _ => NONE,dialect=L.Standard27,
+               apply_operator=L.ApplyAt,get_proof=false,
+               target=SOME {solver="cvc5",version=SOME "1.3.4"}}
+            val backend = E.prepare_backend (#work e)
+              {query= #query e,options=options,open_opaque= #open_view e}
+            val emission = E.emit (#work e)
+              {query= #query e,backend=backend,options=options,
+               prefix="array_update_",open_opaque= #open_view e}
+            val fragments = ref []
+            val _ = E.write_for (#work e) (#query e) emission
+              (fn text => fragments := text :: !fragments)
+            val text = String.concat (List.rev (!fragments))
+            val _ = require "marked graph UPDATE did not use store"
+              (String.isSubstring "(store " text)
+            val _ = if unmarked then
+                require "unrelated graph UPDATE lost its function carrier"
+                  (String.isSubstring "(lambda " text andalso
+                   String.isSubstring "(-> Int Bool)" text)
+              else ()
+          in ignore (SmtLib_Parser.typecheck_script_string_with_options
+            {dict_logic=NONE,solver=SOME "cvc5",elaborate_datatypes=false}
+            text) end)))
+        [(false,``f (s:bool set) /\ T IN s /\ f (\x:bool. x) ==>
+            f ((T =+ T) s)``),
+         (false,``(P:(int -> bool) -> bool)
+            (if c then ((0 =+ T) s) else ({}:int set))``),
+         (true,``(P:(int -> bool) -> bool)
+            (if c then ((0 =+ T) s) else ({}:int set)) /\
+            (((1:int) =+ F) (f:int -> bool)) z = b``)]
       val _ = test "Checked erasure keeps modes and marks rebuilt conditional"
         (fn () => fixture [bag_fact] goal (fn e =>
           let
@@ -67014,9 +67080,107 @@ local
                 raise Fail "small grammar oracle unexpectedly retained native"
           end
     in raw value end
+  fun selector_mapping (e:env) =
+    let fun opening caller node = ignore
+          (G.record_opened_view_with_policy (#graph e) caller
+            (RP.AtMost 10000) node)
+        val ty = ``:smt_set_rec``
+        val constructor = hd (SmtLib.datatype_constructors_for_test ty)
+    in T.with_outbound_query_analysis_with_policy (#work e) (#query e)
+      opening (fn context =>
+        let exception SelectorSyntax
+            val hooks = SmtLib_GraphCarrierDatatype.make context
+              {syntax_error=fn _ => fn _ => SelectorSyntax,
+               is_mismatch=fn SelectorSyntax => true | _ => false}
+            val store = Store.create context {prefix="selector_roundtrip_"}
+            val operations = #operations store
+            val binder = (#genvar context) ty
+            val argument = (#genvar context) ty
+            val body = (#datatype_selector_term hooks) ty constructor 0 binder
+            val selector = (#list_mk_abs context) ([binder],body)
+            val terms = (#term_insert operations)
+              (#empty_terms store,(#ordinary_key operations) (selector,1),
+               "selector")
+            val terms = (#term_insert operations)
+              (terms,(#ordinary_key operations) (argument,0),"record")
+        in M.freeze context
+          {graph= #graph e,scope= #scope e,
+           regime=SmtLib.HigherOrder SmtLib.Standard27,
+           types=Redblackmap.mkDict Type.compare,
+           symbols=(#symbols store) terms} end)
+    end
 in
   val _ = run_postlude 379 "shared-policy-value-frontend-7" (fn () =>
     let
+      val _ = test "Array selector Mapping restores its normalized HOL case"
+        (fn () => owned (fn e =>
+          let val frozen = selector_mapping e val held = factory e frozen
+              val result = Exn.capture (fn () => W.with_step (#work e)
+                (fn () =>
+                  let val session = F.create_mapping_session_with_policy held
+                        (options e) (description F.CPC)
+                        (fn () => raise Fail "unused")
+                      val context = #context held
+                      val argument = #node (parse (#parse_from session) "record")
+                      val declaration = valOf (List.find
+                        (fn (entry:M.declaration) => #token entry="selector")
+                        (M.declarations frozen))
+                      val warmed = (#apply_declaration held)
+                        (B.root (#backend held)) declaration [argument]
+                      fun marker () = PV.key context
+                        (PV.variable context (#scope e) G.Generated
+                          (Term.genvar Type.bool))
+                      val first = marker ()
+                      val value = #node (parse (#parse_from session)
+                        "(selector record)")
+                      val after = marker ()
+                      val _ = require "selector allocated a discarded value"
+                        (value=warmed andalso after=first+1)
+                      val ty = ``:smt_set_rec``
+                      val constructor = hd
+                        (SmtLib.datatype_constructors_for_test ty)
+                      val expected = SmtLib.datatype_selector_term_for_test ty
+                        constructor 0 (value_raw context argument)
+                      val explicit = case PV.view context value of
+                          PV.Application (function,_) =>
+                            (case PV.view context function of
+                               PV.Abstraction _ => true | _ => false)
+                        | _ => false
+                      val F.ScopedSession
+                        {session=shadow,variables,close,...} =
+                          (#open_binders session)
+                            [("selector","shadow_selector",Type.bool)]
+                      val shadowed = #node
+                        (parse (#parse_from shadow) "selector") = hd variables
+                      val _ = close ()
+                  in require "selector roundtrip or lexical shadow changed"
+                    (not explicit andalso shadowed andalso
+                     Term.aconv (value_raw context value) expected) end)) ()
+              val cleanup = Exn.capture (#close held) ()
+          in case result of Exn.Exn primary => raise primary
+            | Exn.Res answer => (Exn.release cleanup;answer) end))
+      val _ = test "Mapped selector rejection preserves validation order"
+        (fn () => List.app (fn (text,diagnostic) => owned (fn e =>
+          let val frozen = selector_mapping e val held = factory e frozen
+              val failure = error (fn () => W.with_step (#work e)
+                (fn () =>
+                  let val session = F.create_mapping_session_with_policy held
+                        (options e) (description F.CPC)
+                        (fn () => raise Fail "unused")
+                  in ignore (parse (#parse_from session) text) end))
+              val accepted = case failure of SOME (_,_,message) =>
+                    String.isSubstring diagnostic message andalso
+                    #retired (W.audit_policy (#work e))
+                | NONE => false
+              val cleanup = Exn.capture (#close held) ()
+          in Exn.release cleanup;
+            require "selector refusal or primary diagnostic changed" accepted
+          end))
+          [("((_ selector 0) true)",
+              "source value does not take indices"),
+           ("(selector record record record)",
+              "wrong number of arguments"),
+           ("(selector true)","selector argument type differs")])
       val _ = test "Both dialects use the SAME bounded construction grammar"
         (fn () => List.app (fn policy => owned (fn e => paired e policy
           (fn held => fn native => fn values =>

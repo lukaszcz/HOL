@@ -23,7 +23,8 @@ sig
   (* Creation captures DATA while Idle. Constructors, observations and
      declaration application require the SAME caller-owned Work action.
      Exact/AtMost rank and lexical variable shadowing retain the existing
-     parser conventions. App(Abs,argument) remains explicit syntax.
+     parser conventions. General App(Abs,argument) remains explicit syntax;
+     canonical unary datatype selectors substitute their recorded slot.
      No value/origin can be cast to G.node or grant Source/proof authority. *)
   val create : SmtReplayInvocationWork.portfolio ->
     {graph:SmtReplayGraph.graph,scope:SmtReplayGraph.scope,

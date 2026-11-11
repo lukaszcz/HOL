@@ -7687,12 +7687,32 @@ let
     let
       val (simplified, _) =
         SolverSpec.simplify (SmtLib.CVC_SIMP_TAC checked) goal
-      val text = String.concat
-        (Lib.snd (CVC.goal_to_SmtLib_translation simplified))
+      val (translation, strings) =
+        CVC.goal_to_SmtLib_translation simplified
+      val text = String.concat strings
     in
-      ignore (SmtLib_Parser.typecheck_script_string_with_options
+      (ignore (SmtLib_Parser.typecheck_script_string_with_options
         {dict_logic = NONE, solver = SOME "cvc5",
-         elaborate_datatypes = false} text)
+         elaborate_datatypes = false} text);
+      if String.isPrefix "conditional " name then
+        let
+          val selectors = HolKernel.find_terms (fn tm =>
+            TypeBase.is_case tm andalso not (boolSyntax.is_cond tm) andalso
+            Type.compare (Term.type_of tm,
+              Type.--> (intSyntax.int_ty, Type.bool)) = EQUAL)
+            (Lib.snd simplified)
+          val dicts = SmtLib.parser_dicts_for_solver_translation
+            "cvc5" translation
+          val parsed = parse_roundtrip_term name
+            (List.last (List.mapPartial assert_body strings)) dicts
+        in
+          assert (not (List.null selectors),
+            name ^ ": normalized selector was not exercised");
+          List.app (fn selector =>
+            assert (term_has_subterm (Term.aconv selector) parsed,
+              name ^ ": parser lost the normalized selector")) selectors
+        end
+      else ())
       handle Feedback.HOL_ERR holerr =>
         die (name ^ ": cvc5 sorts are inconsistent:\n" ^ text ^ "\n" ^
           Feedback.message_of holerr)
@@ -7705,11 +7725,69 @@ let
   val selector =
     ([``(a:int) IN r.smt_set``, ``(r:smt_set_rec) = q``],
      ``(a:int) IN q.smt_set``)
+  val conditional_selector =
+    ([], ``(if p then r.smt_set else {}) = (s:int -> bool)``)
+  val conditional_consumer =
+    ([``(P:(int -> bool) -> bool) r.smt_set``],
+     ``(P:(int -> bool) -> bool) (if p then r.smt_set else {})``)
+  val shared_update =
+    ([], ``f (s:bool set) /\ T IN s /\ f (\x:bool. x) ==>
+       f ((T =+ T) s)``)
+  val contextual_update =
+    ([], ``(P:(int -> bool) -> bool)
+      (if c then ((0 =+ T) s) else ({}:int set))``)
+  val isolated_update =
+    ([], ``(P:(int -> bool) -> bool)
+       (if c then ((0 =+ T) s) else ({}:int set)) /\
+       (((1:int) =+ F) (f:int -> bool)) z = b``)
+  val shared_result =
+    ([``(P:(int -> bool) -> bool) ((f:int -> int -> bool) x)``,
+      ``(R:(int -> bool) -> bool) ((f:int -> int -> bool) y)``],
+     ``(P:(int -> bool) -> bool) {}``)
+  fun raw_update goal =
+    let val (_, strings) = CVC.goal_to_SmtLib_translation goal
+        val text = String.concat strings
+    in
+      assert (String.isSubstring "(store " text,
+        "marked UPDATE did not emit an Array store");
+      ignore (SmtLib_Parser.typecheck_script_string_with_options
+        {dict_logic=NONE,solver=SOME "cvc5",elaborate_datatypes=false} text)
+    end
+  fun isolated_updates () =
+    let
+      val (_, strings) = CVC.goal_to_SmtLib_translation isolated_update
+      val text = String.concat strings
+      val marks = #sets (SmtLib.outbound_collection_markers isolated_update)
+      fun marked term = List.exists (Term.aconv term) marks
+    in
+      assert (marked ``((0:int) =+ T) (s:int -> bool)`` andalso
+          marked ``s:int -> bool`` andalso
+          not (marked ``((1:int) =+ F) (f:int -> bool)``) andalso
+          not (marked ``f:int -> bool``),
+        "unrelated UPDATE shared a collection marker");
+      assert (String.isSubstring "(store " text andalso
+          String.isSubstring "(lambda " text andalso
+          String.isSubstring "(-> Int Bool)" text,
+        "unrelated UPDATE lost its function carrier:\n" ^ text);
+      ignore (SmtLib_Parser.typecheck_script_string_with_options
+        {dict_logic=NONE,solver=SOME "cvc5",elaborate_datatypes=false} text)
+    end
 in
+  isolated_updates ();
+  List.app raw_update [shared_update,contextual_update];
   List.app (typechecks true)
     [("singleton", singleton), ("conditional", conditional),
-     ("selector", selector)];
-  typechecks false ("selector", selector)
+     ("selector", selector),
+     ("conditional selector", conditional_selector),
+     ("conditional consumer", conditional_consumer),
+     ("shared result", shared_result), ("shared update", shared_update),
+     ("context-only update", contextual_update)];
+  List.app (typechecks false)
+    [("selector", selector),
+     ("conditional selector", conditional_selector),
+     ("conditional consumer", conditional_consumer),
+     ("shared result", shared_result), ("shared update", shared_update),
+     ("context-only update", contextual_update)]
 end
 
 fun smtlib_native_set_translation_success () =

@@ -1497,6 +1497,8 @@ local
       SmtLib_CollectionMarkers.Empty
     else if same_head boolSyntax.equality then
       SmtLib_CollectionMarkers.Equality
+    else if same_head combinSyntax.update_tm then
+      SmtLib_CollectionMarkers.Update
     else SmtLib_CollectionMarkers.Other
 
   fun classify_set_marker (tm, rator) =
@@ -1602,6 +1604,8 @@ local
     else if is_empty tm then SmtLib_CollectionMarkers.Empty
     else if same_head boolSyntax.equality then
       SmtLib_CollectionMarkers.Equality
+    else if same_head combinSyntax.update_tm then
+      SmtLib_CollectionMarkers.Update
     else SmtLib_CollectionMarkers.Other
 
   fun classify_bag_marker (tm, rator) =
@@ -1623,14 +1627,6 @@ local
       {propagate_bindings = false, visit_prefix = true}
 
   fun is_marked_bag_term tm = mem_aconv tm (!current_bag_terms)
-
-  fun collect_query_collection_markers roots =
-    let
-      val sets = List.foldl (fn (term, acc) =>
-        collect_native_set_terms term acc) [] roots
-      val bags = List.foldl (fn (term, acc) =>
-        collect_native_bag_terms term acc) [] roots
-    in {sets = sets, bags = bags} end
 
   datatype 'term backend_view =
       BackendVariable | BackendConstant
@@ -2006,6 +2002,51 @@ local
     Term.prim_mk_const {Thy = "smtstringz3", Name = "seq_nth_i"}
   val int_of_num_tm = Term.prim_mk_const {Thy="integer", Name="int_of_num"}
 
+  val native_sequence_heads = [
+    seq_append_tm, seq_cons_tm, seq_reverse_tm, seq_prefix_tm,
+    seq_lupdate_tm, seq_map_tm, seq_foldl_tm, seq_contains_tm,
+    seq_suffix_tm, smt_seq_nth_tm, smt_seq_extract_tm, smt_seq_at_tm,
+    smt_seq_indexof_tm, smt_seq_replace_tm, smt_seq_replace_all_tm,
+    smt_seq_update_tm]
+
+  fun collection_symbol head =
+    let
+      fun case_head () =
+        let val (domain,_) = Type.dom_rng (Term.type_of head)
+        in case TypeBase.fetch domain of
+            SOME info => same_const head (TypeBasePure.case_const_of info)
+          | NONE => false end
+        handle Feedback.HOL_ERR _ => false
+      val builtin = Term.is_const head andalso
+        let val {Thy,Name,...} = Term.dest_thy_const head
+        in Redblackset.member (builtin_const_names,(Thy,Name)) end
+    in (Term.is_var head orelse Term.is_const head) andalso
+      not (builtin orelse case_head () orelse
+        List.exists (same_const head) (seq_length_tm :: native_sequence_heads)
+        orelse same_const head boolSyntax.conditional orelse
+        same_const head boolSyntax.equality orelse
+        same_const head boolSyntax.let_tm orelse
+        same_const head combinSyntax.update_tm orelse
+        is_native_set_head head orelse is_native_bag_head head)
+    end
+
+  fun query_collection_closure roots =
+    let
+      val inventory = List.concat (List.map Library.subterms roots)
+      val closure : Term.term SmtLib_CollectionMarkers.closure_operations =
+        {compare=Term.compare,share_symbol=collection_symbol,
+         let_body=fn term => #2 (dest_carrier_let term)}
+      fun close operations collect = SmtLib_CollectionMarkers.close
+        operations closure (fn Feedback.HOL_ERR _ => true | _ => false)
+        inventory (List.foldl (fn (term,acc) => collect term acc) [] roots)
+      val sets = close set_marker_operations collect_native_set_terms
+      val bags = close bag_marker_operations collect_native_bag_terms
+    in (sets,bags) end
+
+  fun collect_query_collection_markers roots =
+    let val ((sets,_),(bags,_)) = query_collection_closure roots
+    in {sets=sets,bags=bags} end
+
   (* One grammar serves the ordinary emitter and authenticated graph
      carriers. Primitive syntax callbacks retain the Term adapter's exact
      destructor/constructor diagnostics. Only optional_error classifies a
@@ -2140,13 +2181,7 @@ local
           Option.isSome (optional dest_string_nth_shape tm) orelse
           Option.isSome (optional dest_seq_extract_shape tm) orelse
           Option.isSome (optional dest_seq_at_shape tm) orelse
-          List.exists (fn head => same_const rator head) [
-            seq_append_tm, seq_cons_tm, seq_reverse_tm,
-            seq_prefix_tm, seq_lupdate_tm, seq_map_tm, seq_foldl_tm,
-            seq_contains_tm, seq_suffix_tm,
-            smt_seq_nth_tm,
-            smt_seq_extract_tm, smt_seq_at_tm, smt_seq_indexof_tm,
-            smt_seq_replace_tm, smt_seq_replace_all_tm, smt_seq_update_tm])
+          List.exists (same_const rator) native_sequence_heads)
         fun native_set_symbol rator rands =
           same_const rator pred_setSyntax.in_tm orelse
           is_native_set_head rator orelse
@@ -4022,7 +4057,10 @@ local
           Redblackmap.insert (dict, s, [Lib.K (SmtLib_Theories.zero_args
             (fn args =>
               if accepted_arity args then
-                Term.list_mk_comb (tm, args)
+                List.foldl (fn (arg,function) =>
+                  if Term.is_abs function then
+                    Term.beta_conv (Term.mk_comb (function,arg))
+                  else Term.mk_comb (function,arg)) tm args
               else
                 SmtLib_Theories.decline ("<" ^ s ^ ">")
                   "wrong number of arguments"))])
@@ -5549,6 +5587,8 @@ local
     fun translate_constructor_application acc rator rands =
       let
         val _ = carrier_is_constructor rator
+        val _ = not (List.exists array_collection rands) orelse
+          raise ERR "translate_term" "Array-valued constructor argument"
         val (doms, data_ty) = metadata_strip_fun (carrier_type_of rator)
         val _ = not (metadata_datatype_excluded data_ty) orelse
           raise ERR "translate_term" "excluded datatype constructor"
@@ -5586,11 +5626,36 @@ local
             SOME (_, _, selectors) =>
               Lib.fst (List.nth (selectors, selector_index))
           | NONE => raise ERR "translate_term" "selector constructor missing"
+        val (tydict,(sortdecls,result_sort)) =
+          if array_collection tm then
+            if carrier_is_marked_set_term tm then selected_set_sort tydict tm
+            else selected_bag_sort tydict tm
+          else (tydict,([],""))
+        val (tmdict,selector_decls,selector_name) =
+          if array_collection tm then
+            let
+              val variable = carrier_genvar data_ty
+              val selector = carrier_list_mk_abs ([variable],
+                carrier_datatype_selector_term data_ty constructor
+                  selector_index variable)
+              val key = ordinary_key (selector,1)
+            in case term_peek (tmdict,key) of
+              SOME name => (tmdict,[],name)
+            | NONE =>
+                let val name = tm_prefix ^ Int.toString (term_count tmdict)
+                    val tmdict = record_sorts
+                      (tmdict,key,([type_name],result_sort))
+                in (term_insert (tmdict,key,name),
+                    [output_term_declaration regime name [type_name]
+                      result_sort],name) end
+            end
+          else (tmdict,[],selector_name)
         val acc = (tydict, tmdict)
         val (acc, (elemdecls, elemname)) =
           translate (acc, (bounds, scrutinee))
       in
-        (acc, (typedecls @ elemdecls, sexpr selector_name [elemname]))
+        (acc, (typedecls @ sortdecls @ selector_decls @ elemdecls,
+          sexpr selector_name [elemname]))
       end
     fun translate_tester_case acc =
       let
@@ -5841,13 +5906,13 @@ local
       translate_case_constant acc rator rands
     handle DispatchFailure _ =>
 
-      (* FO functions and the Z3 dialect are arrays.  Standard 2.7 maps have
-         no store operator, so preserve HOL UPDATE with a native lambda. *)
+      (* Array collections use store in every regime.  Unmarked Standard
+         2.7 maps have no store operator, so preserve UPDATE with a lambda. *)
       let
         val ((index, value), array) = carrier_dest_update_comb tm
       in
-        case regime of
-          HigherOrder Standard27 =>
+        case (regime, array_collection tm) of
+          (HigherOrder Standard27, false) =>
             let
               val v = carrier_genvar (carrier_type_of index)
               val (lambda_bounds, smtvar) = create_bound_name (bounds, v)
@@ -6529,8 +6594,8 @@ local
     val _ = current_generated_forall_emissions := 0
     val _ = emitted_term_sorts := []
     val _ = emitted_datatypes := []
-    val {sets = set_terms, bags = bag_terms} =
-      collect_query_collection_markers (t :: original_ts)
+    val ((set_terms,set_parameters),(bag_terms,bag_parameters)) =
+      query_collection_closure (t :: original_ts)
     (* Num retains its HOL-num sort in opaque positions, including beneath
        an uninterpreted integer coercion. *)
     val raw_num_terms = SmtLib_RawNumAnalysis.collect
@@ -6579,6 +6644,7 @@ local
     val _ = current_bag_backend := bag_backend
     val _ = current_bag_terms := bag_terms
     val _ = current_collection_function_arguments :=
+      set_parameters @ bag_parameters @
       computed_set_applications @ computed_bag_applications
     val _ = current_bag_helpers := []
     (* FINITE hypotheses are the evidence selecting cvc5's finite Set/Bag
@@ -8159,6 +8225,7 @@ in
 
   (* Carrier callbacks preserve the existing ordered native head registry.
      Only the caller's syntax and type observations vary with the carrier. *)
+  val outbound_collection_symbol = collection_symbol
   val outbound_set_marker_role = classify_set_marker_with
   val outbound_bag_marker_role = classify_bag_marker_with
   val outbound_is_set_type = is_set_result_type

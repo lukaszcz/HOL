@@ -40,7 +40,8 @@ sig
      distinguishes an empty collection constant from its application.
      pair_constant returns only the typed atomic pair constructor. *)
   type native_syntax =
-    {set_role:{head:SmtReplayGraph.node,atomic:bool} ->
+    {collection_symbol:SmtReplayGraph.node -> bool,
+     set_role:{head:SmtReplayGraph.node,atomic:bool} ->
         SmtLib_CollectionMarkers.role,
      bag_role:{head:SmtReplayGraph.node,atomic:bool} ->
         SmtLib_CollectionMarkers.role,
