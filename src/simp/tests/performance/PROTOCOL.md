@@ -2842,6 +2842,396 @@ Tests: `test_task31_cases.py`, `test_task31_attribution.py`,
 `test_task31_grid.py`, `test_task31_followup.py`,
 `test_task31_attempts.py`, `test_task31_dispose.py`.
 
+## TASK32 independent snapshots and downstream proof builds
+
+TASK32 builds two whole-repository snapshots with the same toolchain and
+options (the develop pin B and the candidate C32), compares what they
+built, times fifteen downstream proof-build units on both, and proves the
+migrated `clasimp` consumer against C32. It is machinery and procedure; the
+results, logs and dates of runs live outside the repository (see
+"Evidence and what is committed"). Like everything in this file it is not
+release acceptance: the full routine and `-F` regressions belong to
+TASK35-36, and `acceptance.py verify-builds` (see "Independent builds and
+fresh loading") is untouched.
+
+Tools (all under `src/simp/tests/performance/` unless noted):
+`task32_snapshots.py` (`build`, `discard`, `verify`, `compare`),
+`task32.seq`, `task32_dat.py`, `task32_cases.py`, `task32_downstream.py`,
+`../compatibility/run_task25_consumer.py`. Tests: `test_task32_*.py` and
+`../compatibility/test_task25_consumer.py`. Every command that builds or
+measures takes the serial lock (`acceptance.serial_lock`); run them one at
+a time, with stdin from `/dev/null`, and never a timing run beside a build.
+
+### Scope, and what is not measured
+
+Measured: Linux aarch64 on one shared 16-core host, Poly/ML 5.9.2 native,
+the default stdknl kernel, scripts run with `--gcthreads=1`, Holmake with
+`--no-cache`, `HOLSELFTESTLEVEL` as `bin/build -t` sets it. The fifteen
+units are representative, not exhaustive; equivalence means within the 3%
+policy margin, not a universal cost proof. Whole-build durations are
+recorded as descriptive figures (n = 1) and gate nothing.
+
+Not measured: other platforms and runtimes (x86_64, macOS, Windows,
+MoscowML, other Poly/ML versions, the compact32 or interpreted runtime,
+the otknl and expk kernels, MLton-built tools); `--mt` scripts, Holmake
+with its cache on, `HOLSELFTESTLEVEL` 2 or more, interactive and LSP
+sessions; and the `-F` tree (examples, more-theories, large-theories),
+which only TASK36 builds, on the candidate.
+
+### Snapshots
+
+Recipe (`task32_snapshots.py build`; flags `--repo`, `--manifest`,
+`--root`, `--evidence`, `--scratch`, `--side`, `--pin`, `--jobs` (default
+8), `--poly`, `--tmpdir`):
+
+    task32_snapshots.py build --side base --pin B --mktool \
+        --cand-pin C32 ...
+    task32_snapshots.py build --side cand --pin C32 ...
+
+with the same `--root`, `--manifest`, `--evidence` and `--scratch` for
+both. Each side is `git clone --shared --no-checkout` into
+`ROOT/<side>` (`LABELS` = `base`, `cand`; equal length, so the HOLDIR
+strings and path-length effects match), `git checkout --detach PIN`, the
+sealed `mktool.ML` fix on the baseline only (`startup_gate.apply_mktool`,
+imported; B cannot build `theorytool` without it; the patched file must be
+blob-equal to C32's, hence `--cand-pin`), `poly < tools/smart-configure.sml`
+and `bin/build --no-cache -t -jN --seq=<copy of task32.seq>`. Commands run
+in this order (`COMMANDS`: clone, checkout, configure, build). The
+snapshots live on disk, not `/dev/shm`, and outside the repository's
+tracked paths (`require_location`). Build base, then cand.
+
+Environment (`environment`): `env -i` with `PATH=/usr/local/bin:/usr/bin:/bin`,
+`LC_ALL=C`, `TZ=UTC`, `TERM=dumb`, `TMPDIR` (`--tmpdir`, default
+`/dev/shm/t32/tmp`) and a fresh empty `HOME`, `<scratch>/home-<side>-a<n>`,
+the only value that differs between the sides. Stdin of configure is
+`tools/smart-configure.sml`, of the others `/dev/null`. The build refuses a
+target that exists, an unclean tree (the base's `status` must be exactly
+the sealed patch), ignored files, and stale `*.uo|*.ui|*.dat|hol.state*|
+.hol` products before the build. `--no-cache` plus the fresh HOME means no
+shared Holmake cache can supply a product. The committed `task32.seq` must
+equal `HEAD` of the harness repository (`sequence_record`); it is copied
+once to an immutable `<scratch>/task32-<sha256>.seq` and that path is
+passed.
+
+Sequence (`task32.seq`). `bin/build` resolves `#include
+sequences/upto-parallel` against the tree's own `tools/`. upto-parallel
+stops before `src/parallel_builds/core`, so integer, rational and real
+would be missing, and `core` at `-t` also builds many example directories.
+The file therefore adds only what the workloads need, in dependency order:
+the libraries below integer (sort, string, n-bit, bag, res_quan, TeX,
+finite_maps), integer, rational, the parents of real (hol88, transfer,
+pred_set/more_theories, algebra), real, real/analysis and integer/testing.
+An entry marked `!` is built at `-t` and never uploaded by `bin/build`:
+every directory whose Holmakefile links its own products into sigobj
+(`link-to-sigobj`, with `HOLBUILD=1`) must carry it, or `bin/build`
+uploads a second time and dies with "File exists". `src/algebra` has no
+such rule and is plain. `bin/build` never passes `--no_prereqs`, and the
+intermediate directories are listed as roots so that their own selftests
+and link rules run.
+
+Manifest (`SCHEMA` = `task32-independent-build-v3`; written after each
+side, an interrupted or failed build leaves an `incomplete` record that
+only `discard` removes). Per side: pin, `HEAD^{tree}`, `mktool` flag, the
+patch seal (sha256, bytes, candidate blob), `status_before`,
+`ignored_before`, `stale_before`, the input hash (sha256 of `git ls-files
+-s` plus the diff), the object alternates, and per command the argv, cwd,
+environment, stdin hash, start and end ns, exit and log seal (logs go to
+`--evidence`, outside both roots). Further:
+
+- `sequence`: path, sha256, content, source path, blob and the harness
+  head; `verify` requires the same file and digest on both sides and that
+  the build argv used it.
+- `build_interval_ns` and `products`: every file git lists as untracked or
+  ignored after the build (directories followed), each sealed by sha256,
+  size and mtime, except `.hol/locks`, `.hol/build-logs` and non-selftest
+  `.hol/logs`. Inodes are not recorded; they are read live.
+- `REQUIRED_PRODUCTS`: the theories (`rat`, `integer`, `integer_word`,
+  `real`, `real_sigma`, `lim`, `arithmetic`, `logroot`, `rich_list`,
+  `pred_set`), `realheap` and the six selftest logs the workloads need. A
+  sequence that stops short fails `verify` and `compare`.
+- `systeml`: hashes of the configured `Systeml.sml`; at the top level the
+  toolchain (`poly -v`, hashes of `poly`, `polyc`, `libpolymain.a` and
+  every library `ldd` resolves) and the host.
+
+`verify` (`--base-pin`, `--cand-pin`, `--c31`) is fail-closed and only
+reads. It checks both pins and trees, that only the base is patched and
+that the patch is still the sealed one, the input hashes, the commands and
+their `env -i` shape (identical keys), log seals, the sequence, the
+required products, every product seal and that its mtime lies inside that
+side's build interval, no shared or doubly linked inode, equal-length roots
+that are not nested, a HOME outside the root, the same toolchain, and the
+C31 check: the candidate's compiled sources equal C31's (`C31`,
+`bdc4dac42d`), i.e. `git diff --quiet C31 C32 -- .` with `TEST_ONLY`
+(`:(exclude,glob)src/**/tests/**`) is empty. Directories named `tests` under
+`src/` are in no heap or
+library closure and are not uploaded to sigobj, so they cannot move the
+TASK31 gates; `tools/` and `tools-poly/` `tests` directories are still
+compared. Any change fails it.
+
+`compare --output FILE` (`task32_snapshots.py compare`, flags as `verify`
+and `--output`, which must be new) writes `behavior.json` (schema
+`task32-behavior-v3`), prints `compare: pass|blocked` and exits 0 or 1. It
+starts the verification above, then compares, over the files untracked in
+both trees, every `*Theory.sig` and `*Theory.dat` and the selftest logs
+(`*selftest*.log` under `src/<area>/`, `AREAS` below). Roots are replaced by
+`$(HOLDIR)` first.
+
+- `.sig`: byte-equal. `.dat`: byte-equal, or equal in canonical form
+  (`task32_dat.py`: every table index resolved to a structural digest,
+  theorem names, dependencies, tags, exports, new signature and
+  theory data kept in full and in order; where data cannot be attributed
+  to a tag the ordered string, identifier, type and term tables are kept
+  too). The only masked field is a parent's hash, and only for a parent
+  theory that itself compared equal. A parse failure blocks.
+- Logs are normalized by `LOG_RULES`, in this order: `ansi` (escape
+  sequences), `pad-backspace` (the padding spaces and run of `\x08` that
+  `testutils` prints, which depends on the length of the tail, become one
+  space), `gc-tag` (`[GC = ...] `), `timing` (`(0.003s)`), `theory-time`
+  (`took 1.4s to build`), `cpu-times` (`runtime:`, `gctime:`, `systime:`)
+  and `banner-date`.
+- Blocked: any differing common theory or log, a base file missing on cand,
+  no common file, no log under any of `AREAS` (num, integer, rational,
+  real, boss, list, pred_set) on a side, a missing required product, or a
+  failed build. Candidate-only files are listed, not blocked. A baseline
+  selftest failure is not waived.
+
+`discard --side S [--force]` moves the record into `attempts` and deletes
+the tree and HOME, after checking that the root is the recorded clone and
+the HOME a scratch home of that side. Without `--force` only an
+`incomplete` record may be discarded. It is how a side is rebuilt.
+
+Signals. `build` runs under `terminating()`: SIGTERM and SIGHUP raise
+`Terminated` once (state RAISE) so that the child's group is killed and the
+`incomplete` record written; work that must finish (a restore, a group
+kill) runs in DEFER, where a signal is only recorded and raised at the end
+of the block or at `check()`. IGNORE, in which a signal is dropped, is part
+of the same state (shared with the consumer driver, which enters it once
+its manifest is final).
+
+Retention. The built, verified, unchanged `ROOT/base` and `ROOT/cand`,
+`snapshots.json` and `behavior.json` are kept for TASK33, which owns their
+deletion after its last use. Nothing run after the builds may change them:
+the downstream driver verifies them before and after every run, and
+restores every product it rebuilds. The recipe above recreates a snapshot
+deterministically from the pins, the sealed patch and the toolchain record.
+The fresh HOME directories and `/dev/shm/t32` are removed when their last
+use ends.
+
+### Migrated consumer
+
+`../compatibility/run_task25_consumer.py` (the TASK25 reproduction, whose
+default behaviour is unchanged) takes, for TASK32:
+
+    python3 -B src/simp/tests/compatibility/run_task25_consumer.py \
+      --consumer-patch src/simp/tests/compatibility/consumer/consumer.patch \
+      --simplifier-revision C32 --alias /dev/shm/t32-alias \
+      --scratch /dev/shm/t32-consumer --jobs 8 --skip-routine \
+      --output .agent-files/evidence/task32/consumer
+
+`--simplifier-revision` must descend from the TASK25 pin (`MAIN`) and is
+recorded in full; the core is that revision plus the consumer's own
+`src/list/src/listScript.sml` (`takeWhile`). The built candidate snapshot
+cannot be the core, since the list prerequisite would rebuild part of it.
+`--alias` is an explicit absolute private path, which must equal the HOLDIR
+the core is configured with and not overlap the scratch, output or any
+reused tree. `--scratch` is required with any of `--simplifier-revision`
+other than the pin, `--alias`, `--jobs` or `--skip-routine`; it must be
+absolute, new, in an existing parent, outside the caller checkout and not
+under `/tmp` or `/var/tmp`, and is removed on exit and on SIGTERM and
+SIGHUP. `--jobs N` passes `-jN` to `bin/build`; `--skip-routine` omits the
+`bin/build -t` pass after the bootstrap (the routine passes on C32 belong
+to TASK35-36). `--patch-sha256` overrides the pinned patch seal only for a
+reviewed refresh: a patch that no longer applies or a failing test blocks
+the task until a refreshed, reviewed patch passes and its seal is recorded.
+`--output` must be new. The run needs `bwrap`, Python 3.12 or later, git,
+Poly/ML with `polyc` and a C++ toolchain, and its manifest is
+`OUTPUT/manifest.json`; the consumer scope, source inventories and compressed
+logs are described in its docstring.
+
+### Downstream timing driver
+
+`task32_downstream.py` times fifteen units (`task32_cases.UNITS`) in the two
+snapshots. A unit is one fresh process tree with its dependencies prebuilt:
+a theory unit deletes exactly that target's products and runs
+`bin/Holmake --no-cache -j1 <name>Theory.uo` in its directory; a selftest
+unit runs the `hol run` line of the directory's four-line `selftest.exe`
+(`parse_selftest`, a fixed format that is checked).
+
+- arithmetic: theory `arithmetic` (src/num/theories, hol.state0) and
+  `rat` (src/rational, hol.state); selftest `arith-selftest`
+  (src/num/arith/src, hol.state0).
+- reduce: theory `logroot` (src/num/extra_theories, numheap); selftest
+  `reduce-selftest` (src/num/reduce/src, hol.state0).
+- integer: theories `integer` and `integer_word` (src/integer,
+  hol.state); selftest `integer2-selftest` (src/integer/testing,
+  hol.state).
+- real: theories `real` and `real_sigma` (src/real, hol.state) and `lim`
+  (src/real/analysis, realheap); selftest `real-selftest` (src/real,
+  hol.state).
+- boss: theories `rich_list` (src/list/src) and `pred_set`
+  (src/pred_set/src), both numheap; selftest `boss-selftest` (src/boss,
+  numheap).
+
+The heaps are `bin/hol.state0`, `src/num/termination/numheap`,
+`bin/hol.state` and `src/real/analysis/realheap`. The `serial` times in
+`task32_cases.py` are expectations for the pilot, not gates.
+
+Measurement. Each process is timed from outside (`launch`: monotonic wall;
+`wait4` CPU, usr plus sys, of the whole tree; maxrss) and from inside by a
+small reporter (`REPORTER`, sealed, built per side by that side's Holmake)
+that enters through `POLY_CLINE_OPTIONS` (theory units) or the argument
+slot before `selftest`, pads the code layout from `T32_LAYOUT` and at exit
+writes one JSON line to `$T32_STATS`: CPU and GC times, GC counts, heap
+size, `Systeml.HOLDIR` and the modules loaded. Inclusive CPU and wall are
+gated; GC and maxrss are reported. A process is refused, never dropped,
+unless it exits 0 with exactly one stats line, loads every path from inside
+its side's root, loads no extension module (`loading.extension_name`),
+changes nothing but the target's products (`scan` of the directory and of
+`sigobj`), leaves no running descendant, and produces the reference output
+digest (`theory_digest`: root-masked `.sig` and `.sml` plus the canonical
+`.dat`; selftests: the normalized text). A finding about the candidate (an
+extension module, a different output) is `Blocked`, judged and never void.
+
+Backups and restore. Before any product is deleted, `execute_unit` backs
+the unit's products up and writes a restore journal (`task32-journal-v1`)
+under `.agent-files/scratch/task32/<attempt>`, fsynced, not in `/dev/shm`.
+After the process the products are restored byte for byte with their
+mtimes, the restore is checked and only then the backups and journal are
+removed. A run refuses to start while a journal is pending. If a restore
+fails (`Fatal`) the backups and journal are kept; `recover --repo REPO`
+puts the products back, moves files the process left into the journal's
+`strays`, verifies sha256 and mtime and clears the journal.
+
+Margin and validity. `POLICY` is `acceptance.EQUIVALENCE_POLICY`: a 3%
+margin on inclusive CPU and wall. For a unit and metric, `low > 1.03` is
+`fail`; `high <= 1.03` with a valid B/B control (`apply_control`: the
+control lies inside the equivalence window) is `pass`; anything else is
+`inconclusive`.
+A control outside the window turns anything but a fail into inconclusive
+and the unit is control-limited. No outlier is removed.
+
+Schedule. Units run round-robin, so host drift spreads across them. In
+round i a unit runs its control pair (B, B) and its candidate pair (B,
+C), each side of a pair being R fresh processes (the sample is their
+mean); the order of the two sides alternates (AB on even i, BA on odd i,
+`loading.schedule`) and so does the order of the two phases. Layout seeds:
+`task32-1` (first stage), `task32-1-ext` (second), `task32-1-fu`
+(follow-up), and one per information run. Stages of 20 pairs (`PAIRS`).
+
+Commands (flags common to all: `--repo`, `--base-root`, `--cand-root`,
+`--manifest`; the run commands also `--output` (new), `--scratch` (default
+`/dev/shm/t32`), `--timeout`, `--authorize-measurements`, `--only`,
+`--verify-argv`, `--no-verify`). Every run verifies the snapshots with
+`task32_snapshots.py verify` before and after; `--no-verify` is allowed only
+for an `--only` subset of an information run, and a run feeding the counts
+needs the audit. Run them in this order:
+
+1. `smoke`: one process per side and unit, a harness check and never a
+   draw. It records the probe facts (the reporter in `Meta.fileDirMap`, all
+   four heaps) and the overheads of the scans and audits.
+2. `pilot`: base against base only, 10 pairs per unit (`PILOT_PAIRS`, the
+   least `paired_statistics` accepts). It checks the outputs and that each
+   unit costs at least 1 s of CPU (`MIN_UNIT_CPU`), and sizes R,
+   `max(1, ceil(required_units(sd) / 20))`; an R above `R_CAP` (4) refuses.
+3. `control --pilot PILOT [--reps N]`: the live negative control, 10 pairs
+   of `CONTROL_UNIT` (`logroot`). Its busy time is `BUSY` (6%) of that
+   unit's median CPU in the pilot, spun at exit in absolute seconds
+   (`T32_BUSY`); the whole run uses the base snapshot. It must be
+   judged `fail`; it is ledgered as a control, never as a decision, and
+   exits 1 if it is not detected. (The pilot has to come first: it sizes
+   the busy time.)
+4. `predeclare --pilot P --smoke S --control C --out task32_counts.json`
+   (add `--ledger` only to point at a copy): replays the three runs and
+   writes the counts (R per unit, the reference digests, seals of the three
+   runs, overheads, the time estimate, the seals of the code, `CODE`).
+   Commit this file alone (`check_counts_commit`: exactly one commit
+   touches it and nothing else, and HEAD differs from the candidate only
+   below `src/simp/tests/performance`) before any decision process.
+5. `run --output DIR`: the first stage (`--counts`, default
+   `task32_counts.json`), all 15 units, 20 pairs.
+6. `extend --first DIR`: the second stage of the units that did not fail
+   and whose control was invalid, with `second_stage_pairs` of that unit's
+   first-stage control (the grid's rule: `timing_grid.TARGET` 0.015, cap
+   120) and the extension seed. It has no counts file of its own; the
+   plan comes from the replayed first stage (`--counts` names the first
+   stage's, for that replay).
+7. `predeclare --followup --stage DIR --out task32_followup_counts.json`,
+   commit alone, then `followup --output DIR2 [--followup-counts F]`: see
+   the routing below. The follow-up has its own seed and counts.
+8. `replay RUN...`: recomputes every decision of an archive (a single
+   decision stage with its whole chain) offline; runs no process.
+9. `dispose --stage LAST --out FILE`: replays the chain and writes the
+   per-unit and overall disposition with every attempt, information run
+   and redraw. `recover` as above, whenever a journal is pending.
+
+Routing (`classify`; a stage's decision is never combined with another's):
+
+- A `fail` blocks, with no retry and no waiver.
+- Control-limited (invalid control) and not failed after the first stage:
+  owed the second stage (`extend`). Control-limited after the second stage
+  blocks. `followup` refuses while a second stage is owed.
+- Inconclusive with a valid control, after the first or the second stage:
+  owed the targeted follow-up of those units only, with pairs from
+  `followup_pairs` (the first stage's `second_stage_pairs`, at least twice
+  its pairs, capped), `FOLLOWUP_SEED` and its own counts file.
+  Inconclusive after the follow-up blocks.
+- Overall: `fail` if any unit fails, `pass` only if all pass, else
+  `blocked`.
+- The `base2` image control (a second baseline built by the recipe and
+  measured against `base`) is a diagnosis of image-layout versus source
+  effects, needs an owner decision to use, and never turns a result into a
+  pass.
+
+Ledger (`.agent-files/evidence/task32/attempts.jsonl`, hash-chained,
+`TABLE` = `task32-downstream`; it must be git-ignored). A decision stage
+writes an `open` line before its first process and a `close` line (status
+`pass`, `fail`, `inconclusive`, `failed` or `blocked`, with the sha256 of
+its `downstream.json`) after saving; smoke, pilot and control write `info`
+and `info-end`. A run refuses a stage that has a judged attempt already.
+Rule R-1 (`void_attempts.py`, `judged_because`): an attempt is void, and
+may be drawn again, only if it admitted no measurement, shown from its own
+output: exactly one close, status `failed`, a sealed `downstream.json` of
+that attempt with `success` false and no blocked finding, and every
+archived measuring process rejected. Everything else is judged: no close, a
+close of any other status, a missing or changed output, and a close with no
+seal (the report could not be saved, so nothing shows that no measurement
+was admitted). A redraw of a void attempt and every unsuccessful
+information run are listed in the disposition and are reported to the owner.
+A stage whose close line could not be written stays open and counts as
+judged.
+
+Exit codes (`exit_of`, `main`): 0 pass (a pilot covering every unit, a
+detected control, a smoke run, `predeclare`, `replay`, `recover`); 1 fail
+(a failing stage, an undetected control, a failing disposition); 2
+inconclusive or blocked (or a pilot with a unit under 1 s of CPU, or an
+inconclusive or blocked disposition); 3 the run failed or was refused
+(`REFUSED:` on stderr); 4 SIGTERM or SIGHUP ended the run. After a signal
+the child's group is killed, the products are restored and the attempt is
+closed; with status 4 the saved result, if any, is still printed, else
+the attempt is judged or void by the ledger and its output (R-1). A signal
+noted on another failure (a failed restore, a failed save) keeps status 3.
+
+Signal discipline. The same RAISE, DEFER and IGNORE states as the
+snapshot tool (`task32_snapshots.SignalState`): a signal raises only while
+waiting for the child (RAISE); the backup-to-restore span, the save of the
+report and the ledger close run in DEFER, so a signal there is only
+recorded and raised afterwards; IGNORE (the result is final) is entered
+only by the consumer driver.
+
+### Evidence and what is committed
+
+Under `.agent-files/evidence/task32/`, never in git: build logs
+(`build/`, compressed), `snapshots.json`, `behavior.json`, the attempts
+ledger, the output directory of every run (`downstream.json` and the
+compressed process receipts), the dispositions, consumer evidence
+(`consumer/`: manifest, patch, logs and source inventories) and the
+handoff. Restore journals live under `.agent-files/scratch/task32`, the
+snapshots under `.agent-files/snapshots/task32/{base,cand}`, scratch and
+probe reporters under `/dev/shm/t32` (removed after `run` or `extend`),
+the consumer scratch under `/dev/shm/t32-consumer`. Committed: the tools
+and tests above, `task32.seq`, and the two counts files, each in a commit
+of its own. No result, log, date of a run or handoff is committed.
+
 ## Matrix boundaries and final evidence
 
 [`MATRIX.md`](MATRIX.md) and the frozen schema define the requirements and
