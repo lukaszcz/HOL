@@ -395,6 +395,9 @@ val graph_expect_thm = expect_thm
     (* A shared collection argument keeps UPDATE as an Array under 2.7. *)
     (``(s:bool set) = t /\ f s /\ f (\x:bool. x) /\
        f ((T =+ T) s) ==> f ((T =+ T) t)``, [thm_CVC, thm_CVCp]),
+    (* The conditional marks UPDATE's result without a separate base use. *)
+    (``P (if c then ((0 =+ T) s) else ({}:int set)) /\ ~c ==> P {}``,
+      [thm_CVC, thm_CVCp_ho]),
     (* A record selector and EMPTY must share the conditional's Array sort;
        checked replay reconstructs the normalized selector under the UF. *)
     (``(r : smt_set_rec) = q /\
@@ -66464,10 +66467,9 @@ local
 in
   val _ = run_postlude 377 "checked-backend-marker-transport-7" (fn () =>
     let
-      val _ = test "Shared Array updates emit well-sorted graph stores"
-        (fn () => fixture []
-          ``f (s:bool set) /\ T IN s /\ f (\x:bool. x) ==>
-            f ((T =+ T) s)`` (fn e =>
+      val _ = List.app (fn goal =>
+        test "Array updates emit well-sorted graph stores"
+        (fn () => fixture [] goal (fn e =>
           let
             val options =
               {policy=fn _ => NONE,dialect=L.Standard27,
@@ -66486,7 +66488,11 @@ in
               (String.isSubstring "(store " text)
           in ignore (SmtLib_Parser.typecheck_script_string_with_options
             {dict_logic=NONE,solver=SOME "cvc5",elaborate_datatypes=false}
-            text) end))
+            text) end)))
+        [``f (s:bool set) /\ T IN s /\ f (\x:bool. x) ==>
+            f ((T =+ T) s)``,
+         ``(P:(int -> bool) -> bool)
+            (if c then ((0 =+ T) s) else ({}:int set))``]
       val _ = test "Checked erasure keeps modes and marks rebuilt conditional"
         (fn () => fixture [bag_fact] goal (fn e =>
           let

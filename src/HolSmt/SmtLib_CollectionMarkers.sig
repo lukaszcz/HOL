@@ -3,7 +3,7 @@ signature SmtLib_CollectionMarkers =
 sig
   (* Classification is supplied by the existing theory registry. These
      roles describe argument positions, not operator names or proof rules. *)
-  datatype role = Membership | UnaryObservation | Insert | Delete
+  datatype role = Membership | UnaryObservation | Insert | Delete | Update
                 | BinaryConstruction | UnaryConstruction | Inclusion
                 | Empty | Equality | Other
 
@@ -55,7 +55,7 @@ sig
   (* The legacy entry uses direct synchronous hooks, preserving its exact
      traversal, result ordering and HOL_ERR fallback behavior. The ordinary
      collect_with_memo entry also retains that same HOL_ERR policy. *)
-  (* Seed once, then close conditional/let and same-symbol argument/result
+  (* Seed once, then close conditional/let/update and same-symbol argument/result
      carriers. The caller supplies its existing typed add and scoped equality.
      Only selected syntax mismatches are ignored; other failures escape. *)
   val close : 'term operations -> 'term closure_operations ->
