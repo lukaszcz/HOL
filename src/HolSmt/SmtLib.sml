@@ -2502,7 +2502,7 @@ local
       ("higher-order", higher_order)
     ]))
 
-  fun infer_logic_from_features_for_regime regime
+  fun infer_logic_from_features_for_regime regime has_nonnullary_uf
       (features as LogicFeatures {
       quantifiers, uninterpreted, arrays, bitvectors, integers, reals,
       floating_point, strings, sequences, sets, bags, datatypes, nonlinear,
@@ -2588,7 +2588,9 @@ local
           else
             qf ^ (if nonlinear then "NRA" else "LRA")
         else if arrays then
-          if quantifiers then quantified_array_arith_logic () else "QF_AX"
+          if quantifiers then quantified_array_arith_logic ()
+          else if has_nonnullary_uf then "QF_AUFLIA"
+          else "QF_AX"
         else
           qf ^ "UF"
       fun bitvector_datatype_logic () =
@@ -6316,10 +6318,11 @@ local
      declared rank, or zero for a function-valued variable, so partial and
      full applications share one symbol. *)
   (* Native and graph query boundaries use the same final logic policy. *)
-  fun outbound_select_logic regime (policy:logic_selection_policy) features =
+  fun outbound_select_logic_with_uf regime has_nonnullary_uf
+      (policy:logic_selection_policy) features =
     let
       val (feature_logic, feature_reason) =
-        infer_logic_from_features_for_regime regime features
+        infer_logic_from_features_for_regime regime has_nonnullary_uf features
       (* Z3's array-lambda extension is accepted uniformly under ALL, while
        narrower FO array logics reject lambda as quantified syntax on some
        supported Z3 versions.  The C1 replay corpus also uses ALL, so keeping
@@ -6337,6 +6340,10 @@ local
           NONE => (inferred_logic, reason)
         | SOME {logic, reason} => (logic, reason)
     in {logic=selected_logic,reason=reason} end
+
+  fun outbound_select_logic regime policy
+      (features as LogicFeatures {uninterpreted,...}) =
+    outbound_select_logic_with_uf regime uninterpreted policy features
 
   (* Only command assembly is parameterized. Semantic translation remains
      the existing shared dispatcher; declarations stay interleaved with
@@ -6465,8 +6472,11 @@ local
     val (tydict, tmdict) = acc
     val features =
       infer_features regime terms tydict tmdict
+    (* QF_AX allows constants and free sorts, but no non-nullary UF. *)
+    val has_nonnullary_uf = Redblackmap.foldl
+      (fn ((_,arity),_,found) => found orelse arity > 0) false tmdict
     val {logic=selected_logic,reason} =
-      outbound_select_logic regime policy features
+      outbound_select_logic_with_uf regime has_nonnullary_uf policy features
     (* Metadata is public lazily, so retain the query's collection state for
        its eventual construction instead of consulting the restored ambient
        state. *)
@@ -7929,6 +7939,7 @@ in
   type 'doc outbound_output_operations = 'doc output_operations
   val outbound_string_output_operations = string_output_operations
   val outbound_select_logic = outbound_select_logic
+  val outbound_select_logic_with_uf = outbound_select_logic_with_uf
   val outbound_query_script = outbound_query_script
   val outbound_query_tail = outbound_query_tail
   val outbound_translate_term_step_with_output =
@@ -8116,10 +8127,11 @@ in
   val parser_datatype_selector_template = datatype_selector_term
   fun parser_dicts_for_solver_translation solver =
     parser_dicts_for_translation_aux (SOME solver)
+  fun infer_logic_from_features_with_regime regime
+      (features as LogicFeatures {uninterpreted,...}) =
+    infer_logic_from_features_for_regime regime uninterpreted features
   fun infer_logic_from_features features =
-    infer_logic_from_features_for_regime FirstOrder features
-  val infer_logic_from_features_with_regime =
-    infer_logic_from_features_for_regime
+    infer_logic_from_features_with_regime FirstOrder features
   val goal_requires_ho = goal_requires_ho_aux
   fun regime_for_goal dialect goal =
     select_regime (AutomaticRegime dialect) goal
