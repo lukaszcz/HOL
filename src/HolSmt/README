@@ -116,6 +116,9 @@ Quoted reserved-symbol spellings retain their distinct symbol identity.
 
 CPC `@const` sort operands use the sort dictionary, including source datatypes
 and proof-local declared sorts; legacy term-valued markers remain accepted.
+This syntax is enabled only by CPC parser configuration with a registered
+`@const` constructor. Ordinary SMT-LIB and Z3 declarations retain their term
+operands even when a term name is also a registered sort.
 In native proof replay, purification equalities involving these fresh
 constants remain exact proof obligations across scope pops. Replay instantiates
 fresh constants with kernel `INST` and removes reflexive obligations with

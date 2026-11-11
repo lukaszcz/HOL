@@ -18,6 +18,8 @@ sig
      is_collection_type : 'term -> bool,
      classify : 'term * 'term -> role}
 
+  (* compare is a total order on symbol identities in the supplied inventory;
+     its equality must agree with operations.member and operations.add. *)
   type 'term closure_operations =
     {compare : 'term * 'term -> order,
      share_symbol : 'term -> bool,
@@ -52,16 +54,20 @@ sig
     {propagate_bindings : bool, visit_prefix : bool} ->
     'term -> 'term list -> 'term list
 
-  (* The legacy entry uses direct synchronous hooks, preserving its exact
-     traversal, result ordering and HOL_ERR fallback behavior. The ordinary
-     collect_with_memo entry also retains that same HOL_ERR policy. *)
-  (* Seed once, then close conditional/let/update and same-symbol argument/result
-     carriers. The caller supplies its existing typed add and scoped equality.
-     Only selected syntax mismatches are ignored; other failures escape. *)
+  (* Seed once, then close conditional/let/update and same-symbol
+     argument/result carriers over the supplied term inventory. Return the
+     closed markers and (head, zero-based argument index, marked argument)
+     tuples, with one representative per marked argument group for contextual
+     lookup. Result groups propagate markers but do not add tuples. The caller
+     supplies its existing typed add and term identity. Only selected syntax
+     mismatches are ignored; other failures escape. *)
   val close : 'term operations -> 'term closure_operations ->
     (exn -> bool) -> 'term list -> 'term list ->
     'term list * ('term * int * 'term) list
 
+  (* The legacy entry uses direct synchronous hooks, preserving its exact
+     traversal, result ordering and HOL_ERR fallback behavior. The ordinary
+     collect_with_memo entry also retains that same HOL_ERR policy. *)
   val collect : 'term operations ->
     {propagate_bindings : bool, visit_prefix : bool} ->
     'term -> 'term list -> 'term list

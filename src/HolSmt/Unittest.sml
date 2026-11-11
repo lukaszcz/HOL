@@ -7409,7 +7409,7 @@ let
         CVC.goal_to_SmtLib_translation simplified
       val text = String.concat strings
     in
-      ignore (SmtLib_Parser.typecheck_script_string_with_options
+      (ignore (SmtLib_Parser.typecheck_script_string_with_options
         {dict_logic = NONE, solver = SOME "cvc5",
          elaborate_datatypes = false} text);
       if String.isPrefix "conditional " name then
@@ -7432,7 +7432,7 @@ let
               (term_has_subterm (Term.aconv selector)) parsed,
               name ^ ": parser lost the normalized selector")) selectors
         end
-      else ()
+      else ())
       handle Feedback.HOL_ERR holerr =>
         die (name ^ ": cvc5 sorts are inconsistent:\n" ^ text ^ "\n" ^
           Feedback.message_of holerr)
@@ -14863,6 +14863,20 @@ in
       hd (Thm.hyp theorem) ~~ boolSyntax.mk_neg goal,
     "CPC purification retained an extra hypothesis");
   check_oracle_tags "CPC scoped purification" theorem
+end
+
+fun ordinary_const_declaration () =
+let
+  val assertions = parse_smtlib_assertions
+    "(set-logic ALL) (declare-const Bool Bool) \
+    \(declare-fun @const (Int Bool) Bool) (assert (@const 0 Bool))"
+  val function = Term.mk_var
+    ("@const", boolSyntax.list_mk_fun ([intSyntax.int_ty,Type.bool],Type.bool))
+  val expected = Term.list_mk_comb
+    (function,[intSyntax.zero_tm,Term.mk_var ("Bool",Type.bool)])
+in
+  assert (length assertions = 1 andalso hd assertions ~~ expected,
+    "ordinary @const declaration was parsed as CPC sort metadata")
 end
 
 fun cpc_private_const_requires_registry () =
@@ -35208,6 +35222,7 @@ let
       cpc_private_const_user_sorts_success),
     ("cpc_private_const_purification_success",
       cpc_private_const_purification_success),
+    ("ordinary_const_declaration",ordinary_const_declaration),
     ("cpc_private_const_requires_registry",
       cpc_private_const_requires_registry),
     ("cpc_private_const_graph_worker_unchanged",

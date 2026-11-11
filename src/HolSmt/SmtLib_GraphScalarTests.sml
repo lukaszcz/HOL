@@ -26,11 +26,12 @@ struct
     {mk_let_bindings=P.smtlib_mk_let_bindings,mk_let=P.smtlib_mk_let,
      mk_bound_var=Term.mk_var,lookup_binder_list=fn _ => NONE,
      record_binder_block=fn _ => (),symbol_key=key,
-     type_symbol_key=Lib.I,parse_choice=false,parse_lambda=true}
+     type_symbol_key=Lib.I,parse_choice=false,parse_lambda=true,
+     parse_cpc_const=false}
   fun options backend frame : 'a P.construction_cfg =
     {backend=backend,frame=frame,symbol_key=key,
      type_symbol_key=Lib.I,index_limit=256,parse_choice=false,
-     parse_lambda=true,lookup_binder_list=fn _ => NONE,
+     parse_lambda=true,parse_cpc_const=false,lookup_binder_list=fn _ => NONE,
      binder_reference=fn _ => fn _ => raise Fail "binder alias",
      record_binder_block=fn _ => (),
      ascribed_symbol=fn _ => fn _ => raise Fail "ascription",
@@ -38,7 +39,7 @@ struct
   fun policy_options backend frame : 'a P.policy_construction_cfg =
     {backend=backend,frame=frame,symbol_key=key,
      type_symbol_key=Lib.I,index_limit=RP.AtMost 256,parse_choice=false,
-     parse_lambda=true,lookup_binder_list=fn _ => NONE,
+     parse_lambda=true,parse_cpc_const=false,lookup_binder_list=fn _ => NONE,
      binder_reference=fn _ => fn _ => raise Fail "binder alias",
      record_binder_block=fn _ => (),
      ascribed_symbol=fn _ => fn _ => raise Fail "ascription",
