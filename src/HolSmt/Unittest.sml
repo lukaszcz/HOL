@@ -15783,7 +15783,8 @@ let
           "(step @def :rule trust :args ((= " ^ atom ^ " s))) "
         else "(step @def :rule refl :args (s)) "
       val text = "((declare-const s (Set Int)) (declare-const t (Set Int)) " ^
-        "(assume @neg (not (= (set.union s t) (set.union t s)))) " ^ definition ^
+        "(assume @neg (not (= (set.union s t) (set.union t s)))) " ^
+        definition ^
         "(step @lemma :rule trust :args ((= (set.union " ^ atom ^
         " t) (set.union t " ^ atom ^ ")))) " ^
         "(step @left :rule cong :premises (@def) :args ((set.union " ^
