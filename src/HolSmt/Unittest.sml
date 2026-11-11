@@ -15602,8 +15602,9 @@ fun cpc_array_set_assumption_bridge_success () =
 let
   fun check (name, source, echo) =
     let
+      val unrelated = Term.mk_var ("unrelated", Type.bool)
       val theorem = CPC_ProofReplay.remove_hyps_for_test
-        ([source], boolSyntax.F, Thm.ASSUME echo)
+        ([unrelated, boolSyntax.T, source], boolSyntax.F, Thm.ASSUME echo)
       val _ = check_oracle_tags ("array-set bridge " ^ name) theorem
     in
       assert (Term.aconv (Thm.concl theorem) echo andalso
