@@ -26042,12 +26042,26 @@ let
         (fn (v, sum) => intSyntax.mk_plus (double v, sum))
         (hd variables) (tl variables)
     in boolSyntax.mk_eq (left, right) end
-  val chain_start = Time.now ()
+  (* A shared doubling circuit, a(k+1) = a(k) + a(k), of depth 40 equals
+     2 ** 40 * x.  Walking it as a tree takes 2 ** 40 steps; its DAG has
+     40 nodes. *)
+  val circuit =
+    let
+      val x = ``x:int``
+      fun double (0, a) = a
+        | double (n, a) = double (n - 1, intSyntax.mk_plus (a, a))
+    in
+      boolSyntax.mk_eq (double (40, x), ``1099511627776 * ^x``)
+    end
 in
   List.app closes closing_cases;
-  closes ("long-chain", chain);
-  assert (Time.< (Time.- (Time.now (), chain_start), Time.fromSeconds 3),
-    "ring normalization of a long chain was not linear");
+  let val chain_start = Time.now ()
+  in
+    closes ("long-chain", chain);
+    assert (Time.< (Time.- (Time.now (), chain_start), Time.fromSeconds 3),
+      "ring normalization of a long chain was not linear")
+  end;
+  closes ("shared-circuit", circuit);
   assert (not (Term.aconv guarded_left guarded_right),
     "difference-directed rewrite canonicalization closed a non-dual pair");
   assert (guarded ~~ incomplete orelse guarded ~~ incomplete_reversed,

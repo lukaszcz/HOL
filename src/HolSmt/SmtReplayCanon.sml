@@ -82,7 +82,8 @@ struct
   (* Canonical orientation only permutes children.  Visit each physically
      shared input node once, normalize its children first, and cache the
      checked equality for this invocation.  Tree-depth conversions revisit
-     exponentially many paths through solver-generated shared circuits. *)
+     exponentially many paths through solver-generated shared circuits.
+     [orient source] rewrites a node whose input occurrence was [source]. *)
   fun dag_conversion revisit orient root =
     let
       val bucket_count = 4093
@@ -142,7 +143,7 @@ struct
                   else checked_refl term
                 val current = boolSyntax.rhs (Thm.concl children)
                 val orientation = exact_left current
-                  (Conv.QCONV (Conv.TRY_CONV orient) current)
+                  (Conv.QCONV (Conv.TRY_CONV (orient term)) current)
                 val right = boolSyntax.rhs (Thm.concl orientation)
                 val orientation =
                   if revisit andalso order (current,right) <> EQUAL then
@@ -160,8 +161,8 @@ struct
         end
     in normalize root end
 
-  val dag_orientation_conv = dag_conversion false
-  val dag_rewrite_conv = dag_conversion true
+  fun dag_orientation_conv orient = dag_conversion false (fn _ => orient)
+  fun dag_rewrite_conv orient = dag_conversion true (fn _ => orient)
 
   exception SHARE_LIMIT
 
@@ -612,12 +613,15 @@ struct
   (* Ring normal form of each maximal arithmetic subterm, so that operands
      Z3 re-associated, reordered or re-spelled (-x for -1 * x, a - b for
      a + -1 * b) meet; other subterms (conditionals, divisions) stay atoms
-     and are normalized inside first, bottom-up.  Only component roots are
-     normalized: the normal form of an inner arithmetic node would be
-     rescanned by every enclosing one, which is quadratic in a chain.  This
-     runs on the expanded DAG, not as a compact schema: a schema exposes
-     one constructor level with opaque operand holes, across which the
-     ring normal form cannot collect. *)
+     and are normalized inside first, bottom-up.  Normalizing every
+     arithmetic node would rescan each inner normal form from every
+     enclosing node, which is quadratic in a chain; normalizing only the
+     roots would walk a shared circuit as a tree, which is exponential.  So
+     the roots are the arithmetic subterms below a non-arithmetic node and
+     those with several parents, each normalized once.  This runs on the
+     expanded DAG, not as a compact schema: a schema exposes one
+     constructor level with opaque operand holes, across which the ring
+     normal form cannot collect. *)
   fun is_arithmetic tm =
     intSyntax.is_plus tm orelse intSyntax.is_minus tm orelse
     intSyntax.is_mult tm orelse intSyntax.is_negated tm orelse
@@ -633,22 +637,66 @@ struct
 
   fun component_conv tm = polynomial_conv (Term.type_of tm) tm
 
-  fun component_root_conv tm =
-    if is_arithmetic tm orelse is_arithmetic_operator tm then
-      raise Conv.UNCHANGED
-    else if Term.is_comb tm andalso is_arithmetic (Term.rand tm) then
-      Conv.RAND_CONV component_conv tm
-    else if Term.is_abs tm andalso is_arithmetic (Term.body tm) then
-      Conv.ABS_CONV (fn body =>
-        let val theorem = component_conv body
-        in admit_body_result (boolSyntax.rhs (Thm.concl theorem));
-           theorem
-        end) tm
-    else raise Conv.UNCHANGED
-
-  fun polynomial_components_conv tm =
-    Conv.THENC (dag_orientation_conv component_root_conv,
-      if is_arithmetic tm then component_conv else Conv.ALL_CONV) tm
+  fun polynomial_components_conv root =
+    let
+      val bucket_count = 4093
+      fun new_table () = Array.array (bucket_count, [] : Term.term list)
+      fun member table term = List.exists
+        (fn saved => Portable.pointer_eq (saved, term))
+        (Array.sub (table, SmtResource.pointer_bucket bucket_count term))
+      fun insert table term =
+        let val index = SmtResource.pointer_bucket bucket_count term
+        in Array.update (table, index, term :: Array.sub (table, index)) end
+      (* Arithmetic nodes reached from more than one parent node.  The
+         operands of an arithmetic node count as its children, skipping
+         the partial application in between. *)
+      val visited = new_table ()
+      val referenced = new_table ()
+      val shared = new_table ()
+      fun reference term =
+        if member referenced term then
+          (if is_arithmetic term andalso not (member shared term)
+           then insert shared term else ())
+        else (insert referenced term; visit term)
+      and visit term =
+        if member visited term then ()
+        else
+          (insert visited term;
+           if is_arithmetic term then
+             List.app reference (#2 (boolSyntax.strip_comb term))
+           else if Term.is_comb term then
+             (reference (Term.rator term); reference (Term.rand term))
+           else if Term.is_abs term then reference (Term.body term)
+           else ())
+      val _ = visit root
+      (* Normal forms of shared roots, which enclosing nodes take as
+         given. *)
+      val normalized = new_table ()
+      fun normalize tm =
+        if member normalized tm then raise Conv.UNCHANGED
+        else component_conv tm
+      fun root_conv source tm =
+        if is_arithmetic tm then
+          if member shared source then
+            let val theorem = Conv.QCONV component_conv tm
+            in insert normalized (boolSyntax.rhs (Thm.concl theorem));
+               theorem
+            end
+          else raise Conv.UNCHANGED
+        else if is_arithmetic_operator tm then raise Conv.UNCHANGED
+        else if Term.is_comb tm andalso is_arithmetic (Term.rand tm) then
+          Conv.RAND_CONV normalize tm
+        else if Term.is_abs tm andalso is_arithmetic (Term.body tm) then
+          Conv.ABS_CONV (fn body =>
+            let val theorem = normalize body
+            in admit_body_result (boolSyntax.rhs (Thm.concl theorem));
+               theorem
+            end) tm
+        else raise Conv.UNCHANGED
+    in
+      Conv.THENC (dag_conversion false root_conv,
+        if is_arithmetic root then normalize else Conv.ALL_CONV) root
+    end
 
   val z3_difference_rewrite_canon_conv = compose
     [z3_relation_dual_conv,
