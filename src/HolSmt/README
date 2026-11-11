@@ -90,6 +90,11 @@ with `--proof-granularity=dsl-rewrite`; the CPC parser version-gates every
 rule and the replay engine reconstructs a HOL theorem before `CVC.sml` checks
 its hypotheses, conclusion, and oracle tags.  Set `HOL4_CVC_EXECUTABLE` to
 select cvc5.  CPC is the sole checked cvc5 replay format.
+Array-encoded set assumptions are matched to their source context through
+proved membership, update, constant-array and subset rewrites. The bridge
+accepts only alpha-equivalent normalized terms; it never assumes the echoed
+form.
+
 Array extensionality (`arrays_ext`) derives the differing choice-index
 reads from the array disequality premise in HOL, including array-encoded
 sets; the certificate conclusion is checked against that theorem.
@@ -290,6 +295,14 @@ Definitions for translator-emitted operators are selected from the exact
 `EncodedSymbol` records of the current translation, never from constant
 names.  In particular, `bvcomp` replay unfolds its recorded definition and
 then uses the general word decision procedures.
+CPC word replay supports whole-word extraction (`bv-extract-whole`),
+extraction from the lower word of a concatenation (`bv-extract-concat-1`),
+literal logical shifts (`bv-shl-by-const-1`, `bv-lshr-by-const-1`) and
+`bv-bitwise-slicing`. It also eliminates quantified word variables in
+conditions of the form `!x. word_1comp x <> a \/ P x`, when `a` does not
+contain `x`.
+Extraction and constant-shift replay use the existing BitVector size and
+step-time limits.
 
 Unicode-string and regular-expression replay covers goals stated over the
 native `smtstr` carrier.  A goal stated over HOL's `:string` reaches the
@@ -531,6 +544,10 @@ proof format is CPC at `dsl-rewrite` granularity.
 `CVC_ORACLE_TAC` and `CVC.CVC_SMT_Oracle` are outside this checked boundary.
 For `CVC_TAC`, `UNSAT NONE` is not accepted: CPC replay must produce
 `UNSAT (SOME thm)` and pass the original-goal and no-oracle checks.
+
+CPC arithmetic rewrites include both maximum lower bounds, arith-max-geq1
+and arith-max-geq2. Checked nonlinear integer replay can use opposing bounds
+that fix an arithmetic expression to a numeral.
 
 Nonlinear real arithmetic replay may invoke CSDP through `SOSLib.REAL_SOS`.
 CSDP is an untrusted semidefinite-solver dependency: it searches for SOS
