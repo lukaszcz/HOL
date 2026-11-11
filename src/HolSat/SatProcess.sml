@@ -24,6 +24,102 @@ fun close_owned descriptors fd =
         ((Thread.setAttributes attributes handle _ => ()); raise e)
   in Thread.setAttributes attributes end
 
+(* Raised only before opening the command gate: retrying the fork route
+   cannot run the user's command twice. *)
+exception FastUnavailable
+
+(* Poly/ML 5.9.x's Unix.execute uses fork even though it execs in native
+   code.  Call POSIX spawn instead: no ML executes in a forked live heap,
+   and NULL file actions preserve the caller's actual stdin/stdout (including
+   sockets and file offsets).  Unlike Unix.execute there are no unused stdio
+   pipes to drain/close.  Only standard POSIX types cross this interface:
+   pid_t is int on the supported Unix targets, and argv/envp are terminated
+   arrays of strings.  Symbol lookup is lazy; missing spawn support takes
+   the unchanged fork route.  The spawn attribute object stays opaque: it is
+   only initialised/destroyed by libc, in a buffer larger than
+   posix_spawnattr_t on every supported target (a pointer on Darwin and the
+   BSDs, 336 bytes on glibc/musl). *)
+local
+  open Foreign
+  val spawn = buildCall6
+    (getSymbol (loadExecutable ()) "posix_spawn",
+     (cStar cInt,cString,cPointer,cPointer,
+      cVectorPointer (cOptionPtr cString),
+      cVectorPointer (cOptionPtr cString)),cInt)
+    handle Foreign _ => fn _ => raise FastUnavailable
+  fun attribute name argument = buildCall2
+    (getSymbol (loadExecutable ()) ("posix_spawnattr_" ^ name),
+     (cPointer,argument),cInt)
+    handle Foreign _ => fn _ => raise FastUnavailable
+  val attr_init = buildCall1
+    (getSymbol (loadExecutable ()) "posix_spawnattr_init",cPointer,cInt)
+    handle Foreign _ => fn _ => raise FastUnavailable
+  val attr_destroy = buildCall1
+    (getSymbol (loadExecutable ()) "posix_spawnattr_destroy",cPointer,cInt)
+    handle Foreign _ => fn _ => raise FastUnavailable
+  val attr_setflags = attribute "setflags" cShort
+  val attr_setpgroup = attribute "setpgroup" cInt
+  (* POSIX_SPAWN_SETPGROUP is 0x02 on every ABI accepted by setsid_path. *)
+  val setpgroup_flag = 2
+  val attr_bytes = 0w1024
+  val wait = buildCall3
+    (getSymbol (loadExecutable ()) "waitpid",(cInt,cStar cInt,cInt),cInt)
+    handle Foreign _ => fn _ => ~1
+  fun strings ss = Vector.fromList (List.map SOME ss @ [NONE])
+in
+  (* Only used with interrupts deferred, after SIGKILL.  Poly/ML's Basis
+     waitpid polls WNOHANG with a 10ms sleep, even for this dying child.
+     Keep the interruptible command wait in ML; block natively only to reap
+     our exact owned PID.  On EINTR/error use the Basis error/retry path. *)
+  fun native_reap pid =
+    let
+      fun basis () = ignore (Posix.Process.waitpid
+        (Posix.Process.W_CHILD pid,[]))
+      val number = SysWord.toInt (Posix.Process.pidToWord pid)
+    in
+      if (wait (number,ref 0,0) handle Foreign _ => ~1) = number
+      then () else basis ()
+    end
+
+  fun spawn_with attr (path,args) =
+    let
+      val pid = ref 0
+      val error = spawn (pid,path,Memory.null,attr,
+        strings (OS.Path.file path :: args),
+        strings (Posix.ProcEnv.environ ()))
+    in
+      if error = 0 then Posix.Process.wordToPid (SysWord.fromInt (!pid))
+      else raise FastUnavailable
+    end handle Foreign _ => raise FastUnavailable
+
+  fun native_spawn command = spawn_with Memory.null command
+
+  (* Same group ownership as the fork route's child setpgid, but the new
+     process is created by libc without duplicating the live ML heap.
+     Called with interrupts deferred; the attribute is always released. *)
+  fun native_spawn_group command =
+    let
+      val attr = Memory.malloc attr_bytes
+        handle Foreign _ => raise FastUnavailable
+      (* Never raise after a successful spawn: its PID must reach owner. *)
+      fun release () = Memory.free attr handle _ => ()
+      val _ = if (attr_init attr handle e => (release (); raise e)) = 0
+              then () else (release (); raise FastUnavailable)
+      fun finish () = ((ignore (attr_destroy attr) handle _ => ());
+                       release ())
+      val pid =
+        (if attr_setflags (attr,setpgroup_flag) = 0 andalso
+            attr_setpgroup (attr,0) = 0
+         then spawn_with attr command else raise FastUnavailable)
+        handle e => (finish (); raise e)
+    in finish (); pid end
+    handle Foreign _ => raise FastUnavailable
+end
+
+(* How spawn_system creates the owned supervisor: as the session leader
+   via setsid -w, or (no setsid program) as a process group leader. *)
+datatype launcher = Session of string | Group
+
 fun fork_system command =
   let
     val attributes = Thread.getAttributes ()
@@ -58,8 +154,9 @@ fun fork_system command =
       ((pipe (),pipe ()) handle e => (close_all (); reraise e))
     fun retry f = f () handle e as OS.SysErr (_,SOME code) =>
       if code = Posix.Error.intr then retry f else raise e
-    fun wait pid = retry (fn () =>
-      #2 (Posix.Process.waitpid (Posix.Process.W_CHILD pid,[])))
+    (* Like spawn_system: native blocking reap of the killed supervisor,
+       not the Basis 10ms WNOHANG polling loop. *)
+    fun wait pid = retry (fn () => native_reap pid)
     fun write_all fd bytes =
       let
         fun loop slice = if Word8VectorSlice.length slice = 0 then ()
@@ -158,58 +255,7 @@ fun fork_system command =
         end
   end
 
-(* Raised only before opening the command gate: retrying the fork route
-   cannot run the user's command twice. *)
-exception FastUnavailable
-
-(* Poly/ML 5.9.x's Unix.execute uses fork even though it execs in native
-   code.  Call POSIX spawn instead: no ML executes in a forked live heap,
-   and NULL file actions preserve the caller's actual stdin/stdout (including
-   sockets and file offsets).  Unlike Unix.execute there are no unused stdio
-   pipes to drain/close.  Only standard POSIX types cross this interface:
-   pid_t is int on the supported Unix targets, and argv/envp are terminated
-   arrays of strings.  Symbol lookup is lazy; missing spawn support takes
-   the unchanged fork route. *)
-local
-  open Foreign
-  val spawn = buildCall6
-    (getSymbol (loadExecutable ()) "posix_spawn",
-     (cStar cInt,cString,cPointer,cPointer,
-      cVectorPointer (cOptionPtr cString),
-      cVectorPointer (cOptionPtr cString)),cInt)
-    handle Foreign _ => fn _ => raise FastUnavailable
-  val wait = buildCall3
-    (getSymbol (loadExecutable ()) "waitpid",(cInt,cStar cInt,cInt),cInt)
-    handle Foreign _ => fn _ => ~1
-  fun strings ss = Vector.fromList (List.map SOME ss @ [NONE])
-in
-  (* Only used with interrupts deferred, after SIGKILL.  Poly/ML's Basis
-     waitpid polls WNOHANG with a 10ms sleep, even for this dying child.
-     Keep the interruptible command wait in ML; block natively only to reap
-     our exact owned PID.  On EINTR/error use the Basis error/retry path. *)
-  fun native_reap pid =
-    let
-      fun basis () = ignore (Posix.Process.waitpid
-        (Posix.Process.W_CHILD pid,[]))
-      val number = SysWord.toInt (Posix.Process.pidToWord pid)
-    in
-      if (wait (number,ref 0,0) handle Foreign _ => ~1) = number
-      then () else basis ()
-    end
-
-  fun native_spawn (path,args) =
-    let
-      val pid = ref 0
-      val error = spawn (pid,path,Memory.null,Memory.null,
-        strings (OS.Path.file path :: args),
-        strings (Posix.ProcEnv.environ ()))
-    in
-      if error = 0 then Posix.Process.wordToPid (SysWord.fromInt (!pid))
-      else raise FastUnavailable
-    end handle Foreign _ => raise FastUnavailable
-end
-
-fun spawn_system setsid command =
+fun spawn_system launcher command =
   let
     val attributes = Thread.getAttributes ()
     fun defer () = Thread.setAttributes
@@ -251,9 +297,10 @@ fun spawn_system setsid command =
       Posix.Process.kill (target,Posix.Signal.kill))
       handle e as OS.SysErr (_,SOME code) =>
         if code = Posix.Error.srch then () else raise e
-    (* The session leader remains alive (STOPped after completion), so its
-       group number cannot be recycled before killpg.  setsid -w retains
-       ownership even on implementations that fork a session leader. *)
+    (* The session/group leader remains alive (STOPped after completion),
+       so its group number cannot be recycled before killpg.  setsid -w
+       retains ownership even on implementations that fork a session leader;
+       a Group launch makes the direct process itself the leader. *)
     fun cleanup () =
       let
         val first = ref (NONE : exn option)
@@ -298,7 +345,10 @@ fun spawn_system setsid command =
          Posix.IO.setfd (fd,Posix.IO.FD.flags [])) inherited
        (* Defer through acquisition AND recording the direct PID.  An async
           exception at the return boundary must not lose the process owner. *)
-       val pid = native_spawn (setsid,["-w","/bin/sh","-c",wrapper])
+       val pid = case launcher of
+           Session setsid =>
+             native_spawn (setsid,["-w","/bin/sh","-c",wrapper])
+         | Group => native_spawn_group ("/bin/sh",["-c",wrapper])
        val _ = process := SOME pid
        val _ = List.app (fn fd =>
          Posix.IO.setfd (fd,Posix.IO.FD.cloexec)) inherited
@@ -341,20 +391,26 @@ fun spawn_system setsid command =
 
 fun setsid_path () =
   (* Limit the FFI to known pid_t=int ABIs.  Other Unix targets retain the
-     existing implementation rather than making assumptions about C types. *)
+     existing implementation rather than making assumptions about C types.
+     Without a setsid program (e.g. stock macOS), still spawn natively, as a
+     process group leader: forking the live ML heap per call costs far more
+     system time than the supervisor itself. *)
   if not (List.exists (fn (key,value) => key = "sysname" andalso
     List.exists (fn name => value = name)
       ["Linux","Darwin","FreeBSD","NetBSD","OpenBSD","DragonFly"])
     (Posix.ProcEnv.uname () handle OS.SysErr _ => [])) then NONE
-  else List.find (fn path => OS.FileSys.access (path,[OS.FileSys.A_EXEC])
-                             handle OS.SysErr _ => false)
-                 ["/usr/bin/setsid","/bin/setsid"]
+  else SOME (case List.find (fn path =>
+                    OS.FileSys.access (path,[OS.FileSys.A_EXEC])
+                    handle OS.SysErr _ => false)
+                  ["/usr/bin/setsid","/bin/setsid"] of
+               SOME setsid => Session setsid
+             | NONE => Group)
 
 fun system command =
   if not Systeml.isUnix then Systeml.system_ps command
   else case setsid_path () of
     NONE => fork_system command
-  | SOME setsid => spawn_system setsid command
+  | SOME launcher => spawn_system launcher command
       handle FastUnavailable => fork_system command
 
 end

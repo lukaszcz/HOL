@@ -9970,9 +9970,11 @@ local
                   in observed_inst source_substitutions theorem end
               val schematic_target = target
               val _ = trace_bridge "sources retained"
+              (* Test-only: observe the schema the local laws see, i.e. the
+                 target with every abstracted source replaced. *)
               val _ = case !private_fp_bridge_observer of
                   NONE => ()
-                | SOME observe => observe target
+                | SOME observe => observe (abstract_sources target)
               val schematic_sources = !sources
               val arithmetic_leaf_ss = simpLib.++
                 (bossLib.srw_ss(), wordsLib.WORD_BIT_EQ_ss)

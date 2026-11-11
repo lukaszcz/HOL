@@ -132,8 +132,10 @@ fun finish_resolution ({conjunction, ...} : root_context) lfn clauseth th =
     if RBM.numItems lfn = 0 then th
     else
       let
+        (* One environment check per finish, not per message. *)
+        val tracing = OS.Process.getEnv "HOL4_SAT_TRACE" = SOME "1"
         fun trace message =
-          if OS.Process.getEnv "HOL4_SAT_TRACE" = SOME "1" then
+          if tracing then
             (Feedback.HOL_MESG ("HOL SAT: finish " ^ message);
              TextIO.flushOut TextIO.stdOut)
           else ()
@@ -144,8 +146,8 @@ fun finish_resolution ({conjunction, ...} : root_context) lfn clauseth th =
         val insts = RBM.foldl
           (fn (variable, term, result) =>
             (variable |-> term) :: result) [] lfn
-        val _ = trace ("instantiate start count=" ^
-          Int.toString (List.length insts))
+        val _ = if tracing then trace ("instantiate start count=" ^
+          Int.toString (List.length insts)) else ()
         val instantiated = profile_stage "replay-finish/instantiate"
           (INST insts) discharged
         val _ = trace "instantiate done"

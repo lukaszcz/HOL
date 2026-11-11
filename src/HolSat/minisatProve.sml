@@ -28,11 +28,13 @@ fun profile_stage name action input =
       Profile.profile_with_exn_name ("HolSat(" ^ name ^ ")") action input
     else action input
 
-fun sat_trace message =
+(* One environment check per top-level call; when disabled, messages are
+   never constructed (no per-message RTS call or formatting). *)
+fun sat_tracer () =
     if OS.Process.getEnv "HOL4_SAT_TRACE" = SOME "1" then
-      (Feedback.HOL_MESG ("HOL SAT: " ^ message);
-       TextIO.flushOut TextIO.stdOut)
-    else ()
+      (fn message => (Feedback.HOL_MESG ("HOL SAT: " ^ message ());
+                      TextIO.flushOut TextIO.stdOut))
+    else (fn _ => ())
 
 fun warn ss =
     if !Globals.interactive andalso !sat_warn
@@ -48,7 +50,8 @@ fun fallback check_sat_model clauseth lfn ntm =
           SOME th => th
         | NONE => raise SAT_satisfiable ())
 
-fun replay_proof check_sat_model is_proved sva nr in_name solver vc
+fun replay_proof sat_trace check_sat_model is_proved sva nr in_name
+                 solver vc
                  clauseth lfn ntm proof =
     if is_proved then
         ((case getSolverPostExe solver of (* post-process proof, if required *)
@@ -59,10 +62,11 @@ fun replay_proof check_sat_model is_proved sva nr in_name solver vc
                         (getSolverPostRun solver post_exe (fin,fout)))
              end
            | NONE => ());
-        sat_trace "resolution replay start";
+        sat_trace (fn () => "resolution replay start");
         (case profile_stage "certificate-replay"
                 (replayProof sva nr in_name solver vc clauseth lfn) proof of
-             SOME th => (sat_trace "resolution replay done"; th)
+             SOME th => (sat_trace (fn () => "resolution replay done");
+                         th)
            | NONE => (warn "Proof replay failed. Using internal prover.";
                       fallback check_sat_model clauseth lfn ntm)))
                         (*triv prob/unknown err*)
@@ -79,17 +83,18 @@ local
             else model
         in model2 end
 in
-fun invoke_solver solver lfn ntm clauseth cnfv vc is_proved
+fun invoke_solver sat_trace solver lfn ntm clauseth cnfv vc is_proved
                   check_sat_model svm sva in_name =
     let val nr = Array.length clauseth
     in
       if access(getSolverExe solver,[A_EXEC]) then
         let
-          val _ = sat_trace ("solver start clauses=" ^ int_to_string nr)
+          val _ = sat_trace (fn () =>
+                    "solver start clauses=" ^ int_to_string nr)
           val answer = profile_stage "solver"
             (invokeSat solver T (SOME vc) (SOME nr) svm sva) in_name
-          val _ = sat_trace "solver done"
-          val _ = sat_trace (case answer of
+          val _ = sat_trace (fn () => "solver done")
+          val _ = sat_trace (fn () => case answer of
                                SOME _ => "solver result SAT"
                              | NONE => "solver result UNSAT")
         in case answer of
@@ -101,8 +106,8 @@ fun invoke_solver solver lfn ntm clauseth cnfv vc is_proved
                    profile_stage "model-check" (satCheck model') ntm
                  else mk_sat_oracle_thm([],mk_imp(list_mk_conj model',ntm)) end
             | NONE    => (* returns ~t |- F *)
-                replay_proof check_sat_model is_proved sva nr in_name solver
-                             vc clauseth lfn ntm NONE
+                replay_proof sat_trace check_sat_model is_proved sva nr
+                             in_name solver vc clauseth lfn ntm NONE
         end
       else (* do not have execute access to solver binary, or it doesn't exist*)
         (if nr > !sat_limit then
@@ -199,7 +204,8 @@ fun GEN_SAT_WITH check_sat_model conf =
            handle OS.SysErr (_, SOME code) =>
                     OS.syserror "ENOENT" = SOME code
                 | OS.SysErr _ => false)
-        val _ = sat_trace "CNF start"
+        val sat_trace = sat_tracer ()
+        val _ = sat_trace (fn () => "CNF start")
         val (cnfv,vc,svm,sva,tmpname,in_name,ntm,lfn,clauseth) =
             profile_stage "initialise"
               (initialise check_sat_model infile is_cnf) tm
@@ -208,17 +214,18 @@ fun GEN_SAT_WITH check_sat_model conf =
                                         tmpname in_name)
          (fn () =>
            let
-             val _ = sat_trace ("CNF done variables=" ^ int_to_string vc ^
-                                " clauses=" ^
-                                int_to_string (Array.length clauseth))
+             val _ = sat_trace (fn () =>
+                       "CNF done variables=" ^ int_to_string vc ^
+                       " clauses=" ^ int_to_string (Array.length clauseth))
              val th = if isSome proof
-                      then replay_proof check_sat_model is_proved sva
-                             (Array.length clauseth) in_name solver vc
+                      then replay_proof sat_trace check_sat_model is_proved
+                             sva (Array.length clauseth) in_name solver vc
                              clauseth lfn ntm proof
-                      else invoke_solver solver lfn ntm clauseth cnfv vc
-                             is_proved check_sat_model svm sva in_name
+                      else invoke_solver sat_trace solver lfn ntm clauseth
+                             cnfv vc is_proved check_sat_model svm sva
+                             in_name
              val res = profile_stage "finalise" (finalise is_cnf) th
-             val _ = sat_trace "finalise done"
+             val _ = sat_trace (fn () => "finalise done")
            in res end) ()
     end
     handle initexp th => th

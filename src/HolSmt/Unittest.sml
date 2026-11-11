@@ -24176,13 +24176,23 @@ let
         "rewrite(entry)(canonical-orientation)_OK"
       val proforma = profile_call_count "rewrite(9)(proforma)_OK"
       val seq = profile_call_count "rewrite(6)(seq)_OK"
+      val pure = profile_call_count "rewrite(entry)(pure-Boolean)_OK"
+      (* A Boolean circuit closes before orientation unless fast paths
+         are disabled; the orientation itself is checked above. *)
+      val propositional = not (Library.no_fastpath ()) andalso
+        List.all (fn v => Type.compare (Term.type_of v, Type.bool) = EQUAL)
+          (Term.free_vars goal)
     in
       assert_no_hyps ("commuted rewrite " ^ name, thm);
       assert_concl_alpha ("commuted rewrite " ^ name, thm, goal);
       check_oracle_tags ("commuted rewrite " ^ name) thm;
       assert (Term.aconv canonical recanonical,
         "rewrite canonical orientation was not idempotent");
-      assert (orientation = 1,
+      if propositional then
+        assert (pure = 1 andalso orientation = 0 andalso proforma = 0,
+          "propositional commuted rewrite skipped the pure-Boolean entry")
+      else
+      (assert (pure = 0 andalso orientation = 1,
         "commuted rewrite did not consume entry canonical orientation");
       if through_seq then
         assert (seq = 1 andalso proforma = 0,
@@ -24192,7 +24202,7 @@ let
           "commuted rewrite consumed a disabled proforma fastpath")
       else
         assert (proforma = 1,
-          "commuted rewrite did not consume the surviving proforma")
+          "commuted rewrite did not consume the surviving proforma"))
     end
   val cases = [
     ("cond-true-left", false, ``(if p then q else T) <=> (~p \/ q)``),
@@ -30219,9 +30229,7 @@ let
     (List.length source_nodes = 3 andalso
      List.nth (source_nodes,0) = List.nth (source_nodes,2))
   val _ = ensure "equal source goal and independent assumption not canonicalized"
-    (ptr canonical_first canonical_goal andalso
-     not (ptr canonical_first original_first) andalso
-     not (ptr canonical_goal goal))
+    (ptr canonical_first canonical_goal)
   val _ = ensure "independent deep source prefixes remain distinct"
     (ptr (#1 (boolSyntax.dest_conj canonical_first))
       (#1 (boolSyntax.dest_conj canonical_second)))
@@ -30255,7 +30263,8 @@ let
   val raw_contradiction = Thm.CONJUNCT2 (Thm.ASSUME original_first)
   val _ = ensure "raw-source rejection fixture was malformed"
     (ptr (Thm.concl raw_contradiction) boolSyntax.F andalso
-     List.length (Thm.hyp raw_contradiction) = 1 andalso clean raw_contradiction)
+     List.length (Thm.hyp raw_contradiction) = 1 andalso
+     clean raw_contradiction andalso not (ptr original_first canonical_first))
   val _ = ensure "original source hypothesis bypassed canonical assembly"
     (reject "hypothesis is not a retained permitted source"
       (fn () => S.check_contradiction sources raw_contradiction))
@@ -30271,9 +30280,13 @@ let
   val _ = ensure "unpermitted false hypothesis was accepted"
     (reject "hypothesis is not a retained permitted source"
       (fn () => S.check_contradiction sources (Thm.ASSUME boolSyntax.F)))
+  (* An identical import may retain the goal itself as its canonical term;
+     then an equal rebuilt goal stands for the replaced conclusion. *)
+  val replaced = if ptr canonical_goal goal then source_goal ()
+    else canonical_goal
   val _ = ensure "canonical result replaced the exact original source conclusion"
     (reject "source conclusion was not retained exactly"
-      (fn () => S.check_goal sources (Thm.ASSUME canonical_goal)))
+      (fn () => S.check_goal sources (Thm.ASSUME replaced)))
   val oracle_false = Thm.mk_oracle_thm "replay_source_negative"
     ([canonical_first],boolSyntax.F)
   val oracle_goal = Thm.mk_oracle_thm "replay_source_negative"
@@ -30845,7 +30858,6 @@ let
         (ptr (Thm.concl theorem) goal andalso clean theorem andalso
          length (Thm.hyp theorem) = 1 andalso
          ptr (hd (Thm.hyp theorem)) canonical andalso
-         not (ptr canonical assumption) andalso
          S.assumption_nodes sources = [source,source])
       val _ = G.close_scope graph scope
     in () end
@@ -31117,6 +31129,12 @@ let
       val _ = OK ()
       val _ = tprint "Equal alpha theorem from a foreign Source is rejected"
       val foreign = G.new ()
+      (* An identical import may retain the caller's term, so seed the
+         foreign graph with a rebuilt application over the same children:
+         its canonical Hyp is then equal to, but not the same object as,
+         this Source's. *)
+      val _ = G.import foreign (G.root_scope foreign) 4096
+        (Term.mk_comb (Term.dest_comb first))
       val other = make foreign (G.root_scope foreign)
         {goal = first,assumptions = originals}
       val raw = Thm.ASSUME (S.canonical_goal other)

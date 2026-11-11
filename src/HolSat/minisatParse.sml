@@ -279,7 +279,9 @@ fun read_live_trace path lfn roots cl sva vc clauseth fin id =
     let
       val bytes = OS.FileSys.fileSize path handle OS.SysErr _ => 0
       val uses = if bytes > 0 then count_uses path else NONE
-      val {next,ended} = if bytes > 65536 then buffered_input fin
+      (* Any non-empty regular file: Basis input1 takes the stream lock for
+         every byte; bounded blocks are cheaper even for small proofs. *)
+      val {next,ended} = if bytes > 0 then buffered_input fin
         else {next=fn () => sat_getint fin,
               ended=fn () => BinIO.endOfStream fin}
           fun release ci = case uses of NONE => () | SOME table =>
@@ -311,8 +313,10 @@ clauseth: root clause vector. clauseth[i] is i'th root clause from original
 fun replayProof sva nr fname solver vc clauseth lfn proof =
     let val _ = (minisatResolve.counter:=0)
         val cl = Dynarray.array((Array.length clauseth) * 2,TRUTH)
+        (* One environment check per replay, not per message. *)
+        val tracing = OS.Process.getEnv "HOL4_SAT_TRACE" = SOME "1"
         fun trace message =
-          if OS.Process.getEnv "HOL4_SAT_TRACE" = SOME "1" then
+          if tracing then
             (Feedback.HOL_MESG ("HOL SAT: " ^ message);
              TextIO.flushOut TextIO.stdOut)
           else ()
