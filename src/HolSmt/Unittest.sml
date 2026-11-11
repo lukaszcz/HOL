@@ -16642,6 +16642,50 @@ in
      "CPC XOR rotation family did not consume the checked word route")
 end
 
+fun cpc_proof_replay_bv_poly_norm_word_ring_success () =
+let
+  fun profile_count name results =
+    case List.find (fn (candidate, _) => candidate = name) results of
+      SOME (_, info) => #n info
+    | NONE => 0
+  val one = "(_ bv1 256)"
+  fun ring_step a b =
+    "(step @p1 :rule bv_poly_norm :args ((= (bvmul " ^ one ^
+    " (bvsub " ^ a ^ " " ^ b ^ ")) (bvmul (bvneg " ^ one ^ ") (bvsub " ^
+    b ^ " " ^ a ^ ")))))"
+  val proofs =
+    ["((declare-const a (_ BitVec 256)) (declare-const b (_ BitVec 256)) " ^
+     ring_step "a" "b" ^ ")",
+     "((declare-const f (-> Int (_ BitVec 256))) " ^
+     "(declare-const g (-> (_ BitVec 256) Int (_ BitVec 256))) " ^
+     "(declare-const a (_ BitVec 256)) (declare-const n Int) " ^
+     ring_step "(f n)" "(g (bvand a (f n)) n)" ^ ")"]
+  val expected =
+    [``(1w:256 word) * (a - b) = -1w * (b - a)``,
+     ``(1w:256 word) * (f (n:int) - g (a && f n) n) =
+       -1w * (g (a && f n) n - f n)``]
+  fun replay proof = SmtResource.with_e0_invocation_for_test
+    CPC_ProofReplay.replay_root_for_test (parse_cpc_proof_string proof)
+  val () = Profile.reset_all ()
+  val theorems = List.map replay proofs
+  val results = Profile.results ()
+in
+  ListPair.appEq (fn (theorem, expected) =>
+    (assert (Thm.concl theorem ~~ expected,
+       "CPC word ring replay proved the wrong identity");
+     assert (null (Thm.hyp theorem),
+       "CPC word ring replay retained hypotheses");
+     check_oracle_tags "CPC word ring replay" theorem))
+    (theorems, expected);
+  assert
+    (profile_count "CPC(rung:word/poly_norm_schematic_word_ring)_OK"
+       results = 2,
+     "CPC word ring family did not use the algebraic route");
+  assert
+    (profile_count "E0(word-graph-expand)" results = 0,
+     "CPC word ring family expanded the word graph")
+end
+
 fun cpc_proof_replay_cong_consumes_premises_success () =
 let
   val proof = parse_cpc_proof_string
@@ -26864,7 +26908,23 @@ let
       ``(if (x:real) < y then T else F) =
         (if y <= x then F else T)``),
     ("int-additive-order", ``((x:int) + y) = (y + x)``),
-    ("real-additive-order", ``((x:real) + y) = (y + x)``)]
+    ("real-additive-order", ``((x:real) + y) = (y + x)``),
+    ("real-polynomial-guard",
+      ``(if (x:real) + -1 * y <= 0 then -1 * x + y else 0) =
+        (if y < x then 0 else y - x)``),
+    (* Z3's arithmetic rewrite of a guarded division over a product of
+       re-spelled absolute values *)
+    ("int-conditional-product-polynomial",
+      ``(if d = 0 then 0 else
+          ((if v1 >= 0 then v1 else -1 * v1) *
+           (if d + -1 * (if v2 >= 0 then v2 else -1 * v2) <= 0 then
+              -1 * d + if v2 >= 0 then v2 else -1 * v2
+            else 0) * (if v5 >= 0 then v5 else -1 * v5)) / d) =
+        (if d = 0 then 0 else
+          ((if v1 < 0 then -v1 else v1) *
+           ((if (if v2 < 0 then -v2 else v2) < d then 0
+             else (if v2 < 0 then -v2 else v2) - d) *
+            (if v5 < 0 then -v5 else v5))) / (d:int))``)]
   val incomplete = ``~((x:int) < y) = (x <= y)``
   val (incomplete_left, incomplete_right) = boolSyntax.dest_eq incomplete
   val incomplete_reversed =
@@ -26874,8 +26934,37 @@ let
   val non_equality = ``p /\ q``
   val non_equality_reversed = ``q /\ p``
   val non_equality_canonical = canonical_target non_equality
+  (* A long sum, left-nested on one side and right-nested on the other.
+     Normalizing every node of the chain rescans it quadratically
+     (about 6 s at this length); normalizing its root takes well under
+     one.  No wall-clock bound: it would fail on a loaded host. *)
+  val chain =
+    let
+      val variables = List.tabulate (800, fn i =>
+        Term.mk_var ("v" ^ Int.toString i, intSyntax.int_ty))
+      fun double v = intSyntax.mk_mult (v, ``2:int``)
+      val left = List.foldl
+        (fn (v, sum) => intSyntax.mk_plus (sum, double v))
+        (hd variables) (tl variables)
+      val right = List.foldr
+        (fn (v, sum) => intSyntax.mk_plus (double v, sum))
+        (hd variables) (tl variables)
+    in boolSyntax.mk_eq (left, right) end
+  (* A shared doubling circuit, a(k+1) = a(k) + a(k), of depth 40 equals
+     2 ** 40 * x.  Walking it as a tree takes 2 ** 40 steps; its DAG has
+     40 nodes. *)
+  val circuit =
+    let
+      val x = ``x:int``
+      fun double (0, a) = a
+        | double (n, a) = double (n - 1, intSyntax.mk_plus (a, a))
+    in
+      boolSyntax.mk_eq (double (40, x), ``1099511627776 * ^x``)
+    end
 in
   List.app closes closing_cases;
+  closes ("long-chain", chain);
+  closes ("shared-circuit", circuit);
   assert (not (Term.aconv guarded_left guarded_right),
     "difference-directed rewrite canonicalization closed a non-dual pair");
   assert (guarded ~~ incomplete orelse guarded ~~ incomplete_reversed,
@@ -27069,6 +27158,152 @@ let
 in
   assert (profile_call_count "arith(8)(nla)" = 0,
     "symbolic power was routed to nla_prove")
+end
+
+fun cpc_arith_mult_sign_replay_success () =
+let
+  val sign = CPC_ProofReplay.replay_arith_mult_sign_for_test
+  val a = ``if (x:int) < 0 then -x else x``
+  val b = ``if (y:int) = 0 then 0 else (x:int) * x / y``
+  val c = ``if (y:int) < x then 0 else y - (x:int)``
+  val r = ``if (u:real) < 0 then -u else u``
+  val s = ``if (v:real) = 0 then 0 else (u:real) * u / v``
+  val cases = [
+    ("two positive int factors",
+      ``^a > 0 /\ ^b > 0``, ``^a * ^b``,
+      ``^a > 0 /\ ^b > 0 ==> ^a * ^b > 0``),
+    ("positive and negative int factors",
+      ``^a > 0 /\ ^b < 0``, ``^a * ^b``,
+      ``^a > 0 /\ ^b < 0 ==> ^a * ^b < 0``),
+    ("nonzero int square", ``~(^c = 0)``, ``^c * ^c``,
+      ``~(^c = 0) ==> ^c * ^c > 0``),
+    ("positive int cube", ``^a > 0``, ``^a * ^a * ^a``,
+      ``^a > 0 ==> ^a * ^a * ^a > 0``),
+    ("two negative int factors",
+      ``^a < 0 /\ ^c < 0``, ``^a * ^c``,
+      ``^a < 0 /\ ^c < 0 ==> ^a * ^c > 0``),
+    ("positive and negative real factors",
+      ``^r > 0 /\ ^s < 0``, ``^r * ^s``,
+      ``^r > 0 /\ ^s < 0 ==> ^r * ^s < 0``),
+    ("nonzero real square", ``~(^s = 0)``, ``^s * ^s``,
+      ``~(^s = 0) ==> ^s * ^s > 0``),
+    ("nonzero factor with a known sign", ``~(^c = 0) /\ ^c > 0``, ``^c``,
+      ``~(^c = 0) /\ ^c > 0 ==> ^c > 0``)]
+  val () = Profile.reset_all ()
+  fun check (name, factors, product, expected) =
+    let val theorem = sign [factors, product]
+    in
+      assert (Thm.concl theorem ~~ expected,
+        name ^ " returned the wrong theorem: " ^
+        Library.thm_to_string theorem);
+      check_oracle_tags name theorem
+    end
+  (* Every nonzero factor is split into its two signs, so a product of
+     squares of many nonzero factors must be refused before the 2^n sign
+     assignments are expanded. *)
+  val derive = CPC_ProofReplay.derive_arith_mult_sign_for_test
+  fun squares n =
+    let
+      val vs = List.tabulate (n, fn i =>
+        mk_var ("z" ^ Int.toString i, intSyntax.int_ty))
+      val factors = list_mk_conj
+        (List.map (fn v => ``~(^v = 0)``) vs)
+      val product = List.foldl (fn (v, acc) => ``^acc * ^v * ^v``)
+        (let val v = hd vs in ``^v * ^v`` end) (tl vs)
+    in (factors, product) end
+  (* Refused with the expected diagnostic, not some other replay error. *)
+  fun refused_with diagnostic f x =
+    (f x; false) handle HOL_ERR e =>
+      String.isSubstring diagnostic (Feedback.message_of e)
+  val too_many = "too many nonzero factors to split"
+  val sign_open = "a nonzero factor leaves the product's sign open"
+  val refused = refused_with too_many derive
+  val (factors8, product8) = squares 8
+  (* A nonzero conjunct absent from the product is not split, so eight
+     squares stay within the limit next to it. *)
+  val factors8unused = ``~((w:int) = 0) /\ ^factors8``
+  val (factors9, product9) = squares 9
+  (* Past the split limit replay fails closed instead of searching for a
+     sign: a negative factor times nine nonzero squares is refused. *)
+  val (factors9neg, product9neg) =
+    let val x = ``x:int``
+    in (``^x < 0 /\ ^factors9``, ``^x * ^product9``) end
+  fun replay_refused (factors, product) =
+    refused_with too_many sign [factors, product]
+  val cube_factor = ``~((x:int) = 0)``
+  val cube_product = ``(x:int) * x * x``
+in
+  List.app check cases;
+  assert (Thm.concl (derive (factors8, product8)) ~~
+            ``^factors8 ==> ^product8 > 0``,
+    "eight nonzero squares were not derived");
+  assert (Thm.concl (derive (factors8unused, product8)) ~~
+            ``^factors8unused ==> ^product8 > 0``,
+    "an unused nonzero factor was split");
+  assert (refused (factors9, product9),
+    "nine nonzero squares were split");
+  assert (replay_refused (factors9, product9),
+    "nine nonzero squares were replayed");
+  assert (replay_refused (factors9neg, product9neg),
+    "a negative factor times nine nonzero squares was replayed");
+  assert (refused_with sign_open derive (cube_factor, cube_product),
+    "a nonzero cube was derived");
+  assert (profile_call_count "CPC(rung:arith/cases)" = 0,
+    "arith_mult_sign was routed to arithmetic search")
+end
+
+fun cpc_arith_mult_monotone_replay_success () =
+let
+  val pos = CPC_ProofReplay.replay_arith_mult_pos_for_test
+  val neg = CPC_ProofReplay.replay_arith_mult_neg_for_test
+  val k = ``if (z:int) < 0 then -z else z + 1``
+  val n = ``if (z:int) < 0 then z else -z - 1``
+  val a = ``if (y:int) = 0 then 0 else (x:int) * x / y``
+  val b = ``if (y:int) < x then 0 else y - (x:int)``
+  val r = ``if (u:real) < 0 then -u else u + 1``
+  val c = ``if (v:real) = 0 then 0 else (u:real) * u / v``
+  val d = ``if (v:real) < u then 0 else v - (u:real)``
+  fun int_case (name, replay, coefficient, sign, relation, result) =
+    (name, replay, coefficient, relation,
+     mk_imp (mk_conj (sign, relation), result))
+  val cases = [
+    int_case ("positive int equality", pos, k, ``^k > 0``,
+      ``^a = ^b``, ``^k * ^a = ^k * ^b``),
+    int_case ("positive int less", pos, k, ``^k > 0``,
+      ``^a < ^b``, ``^k * ^a < ^k * ^b``),
+    int_case ("positive int less-or-equal", pos, k, ``^k > 0``,
+      ``^a <= ^b``, ``^k * ^a <= ^k * ^b``),
+    int_case ("positive int greater", pos, k, ``^k > 0``,
+      ``^a > ^b``, ``^k * ^a > ^k * ^b``),
+    int_case ("positive int greater-or-equal", pos, k, ``^k > 0``,
+      ``^a >= ^b``, ``^k * ^a >= ^k * ^b``),
+    int_case ("negative int equality", neg, n, ``^n < 0``,
+      ``^a = ^b``, ``^n * ^a = ^n * ^b``),
+    int_case ("negative int less", neg, n, ``^n < 0``,
+      ``^a < ^b``, ``^n * ^a > ^n * ^b``),
+    int_case ("negative int less-or-equal", neg, n, ``^n < 0``,
+      ``^a <= ^b``, ``^n * ^a >= ^n * ^b``),
+    int_case ("negative int greater", neg, n, ``^n < 0``,
+      ``^a > ^b``, ``^n * ^a < ^n * ^b``),
+    int_case ("negative int greater-or-equal", neg, n, ``^n < 0``,
+      ``^a >= ^b``, ``^n * ^a <= ^n * ^b``),
+    int_case ("positive real less", pos, r, ``^r > 0``,
+      ``^c < ^d``, ``^r * ^c < ^r * ^d``),
+    int_case ("negative real greater-or-equal", neg, ``-^r``, ``-^r < 0``,
+      ``^c >= ^d``, ``-^r * ^c <= -^r * ^d``)]
+  val () = Profile.reset_all ()
+  fun check (name, replay, coefficient, relation, expected) =
+    let val theorem = replay [coefficient, relation]
+    in
+      assert (Thm.concl theorem ~~ expected,
+        name ^ " returned the wrong theorem: " ^
+        Library.thm_to_string theorem);
+      check_oracle_tags name theorem
+    end
+in
+  List.app check cases;
+  assert (profile_call_count "CPC(rung:arith/cases)" = 0,
+    "arith_mult_pos/neg was routed to arithmetic search")
 end
 
 fun cpc_arith_mult_relation_replay_success () =
@@ -36600,6 +36835,51 @@ fun run_cache_lifetime_unittests () =
      ("CPC omitted conclusion", cpc_cache_omitted_conclusion_bypasses_success),
      ("CPC cache atomicity", cpc_fastpath_error_and_cache_atomicity_contract)]
 
+fun cpc_quantified_trans_prefix_limit_success () =
+let
+  val variables = List.tabulate
+    (257, fn i => Term.mk_var ("prefix" ^ Int.toString i, Type.bool))
+  fun endpoints prefix =
+    (boolSyntax.list_mk_forall (prefix, ``p \/ q \/ r``),
+     boolSyntax.list_mk_forall (prefix, ``r \/ p \/ q``))
+  val pair = endpoints (List.take (variables, 256))
+  val theorem = CPC_ProofReplay.quantified_boolean_equality_for_test pair
+in
+  assert (Thm.concl theorem ~~ boolSyntax.mk_eq pair andalso
+      List.null (Thm.hyp theorem),
+    "quantified Boolean bridge changed an in-budget endpoint");
+  check_oracle_tags "bounded quantified Boolean bridge" theorem;
+  expect_hol_error_contains "quantified Boolean prefix limit"
+    "prefix limit exceeded"
+    (fn () => ignore (CPC_ProofReplay.quantified_boolean_equality_for_test
+      (endpoints variables)))
+end
+
+fun cpc_instantiate_after_quantified_trans_success () =
+let
+  val proof = parse_cpc_proof_string (
+    "((declare-fun p (Int) Bool) " ^
+    " (declare-fun q (Int) Bool) " ^
+    " (declare-fun r (Int) Bool) " ^
+    " (declare-const s Bool) " ^
+    " (declare-const a Int) " ^
+    " (define @q () (forall ((x Int)) (or (p x) (q x) (r x)))) " ^
+    " (define @r () (forall ((x Int)) (or (r x) (p x) (q x)))) " ^
+    " (assume @a s) " ^
+    " (assume @e (= s (not (not @r)))) " ^
+    " (step @nn :rule bool-double-not-elim :args (@q)) " ^
+    " (step @trans :rule trans :premises (@e @nn)) " ^
+    " (step @forall :rule eq_resolve :premises (@a @trans)) " ^
+    " (step @inst :rule instantiate :premises (@forall) :args ((@list a)))) ")
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val expected = ``(p:int -> bool) a \/ q a \/ r a``
+in
+  assert (Thm.concl theorem ~~ expected andalso
+      List.length (Thm.hyp theorem) = 2,
+    "quantified transitivity lost the endpoint needed by instantiate");
+  check_oracle_tags "instantiate after quantified transitivity" theorem
+end
+
 fun run_unittests () =
 let
   val () = print "Running unit tests...\n\n"
@@ -37252,10 +37532,16 @@ let
       cpc_eq_resolve_real_route_independent_success),
     ("cpc_proof_replay_omitted_arith_poly_norm_success",
       cpc_proof_replay_omitted_arith_poly_norm_success),
+    ("cpc_quantified_trans_prefix_limit_success",
+      cpc_quantified_trans_prefix_limit_success),
+    ("cpc_instantiate_after_quantified_trans_success",
+      cpc_instantiate_after_quantified_trans_success),
     ("cpc_proof_replay_canonical_trans_terminal_success",
       cpc_proof_replay_canonical_trans_terminal_success),
     ("cpc_proof_replay_bv_xor_rotation_general_success",
       cpc_proof_replay_bv_xor_rotation_general_success),
+    ("cpc_proof_replay_bv_poly_norm_word_ring_success",
+      cpc_proof_replay_bv_poly_norm_word_ring_success),
     ("cpc_proof_replay_cong_consumes_premises_success",
       cpc_proof_replay_cong_consumes_premises_success),
     ("cpc_proof_replay_and_elim_success",
@@ -37611,6 +37897,10 @@ let
       symbolic_power_avoids_nla_route_success),
     ("cpc_arith_mult_relation_replay_success",
       cpc_arith_mult_relation_replay_success),
+    ("cpc_arith_mult_sign_replay_success",
+      cpc_arith_mult_sign_replay_success),
+    ("cpc_arith_mult_monotone_replay_success",
+      cpc_arith_mult_monotone_replay_success),
     ("nonlinear_power_nla_route_success",
       nonlinear_power_nla_route_success),
     ("z3_ediv_emod_general_replay_success",
