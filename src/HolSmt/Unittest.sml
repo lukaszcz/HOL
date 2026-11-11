@@ -7718,11 +7718,8 @@ let
             "function-valued collection let lost its collection markers");
           assert (not require_application orelse
             List.exists (fn {node,...} =>
-              case G.view graph node of
-                G.Application (head,_) =>
-                  (case G.view graph head of G.Variable _ => true
-                   | _ => false)
-              | _ => false) (#sets analysis),
+              G.representative graph node ~~ ``(f:int -> int set) a``)
+              (#sets analysis),
             "function-valued let lost its authentic application marker");
           List.app (fn {scope,node} =>
             (G.validate_scope graph scope; ignore (G.type_of graph node)))
@@ -7735,7 +7732,8 @@ let
 in
   check false ``let f (a:int) = ({}:int set) in
     (P:(int -> int set) -> bool) f``;
-  check true ``let f (a:int) = ({}:int set) in (7:int) IN f 0``
+  check true ``let f (a:int) = ({}:int set) in
+    (P:(int set) -> bool) (f a)``
 end
 end
 
