@@ -7678,9 +7678,6 @@ in
     "Seq/Set/Bag higher-order translation did not record its regime")
 end
 
-(* cvc5's array encoding gives a marked set an Array sort, so every use of
-   that set must be an Array too.  Each goal once reached cvc5 with a
-   select or store on a function-sorted term. *)
 local
   structure G = SmtReplayGraph
   structure S = SmtReplaySource
@@ -7737,6 +7734,9 @@ in
 end
 end
 
+(* cvc5's array encoding gives a marked set an Array sort, so every use of
+   that set must be an Array too.  Each goal once reached cvc5 with a
+   select or store on a function-sorted term. *)
 fun smtlib_cvc5_array_set_sorts_success () =
 let
   fun typechecks checked (name, goal) =
