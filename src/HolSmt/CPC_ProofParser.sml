@@ -1928,6 +1928,11 @@ local
         RawList
           [RawList [RawAtom "_", RawAtom "is", RawAtom constructor],
            normalize_cpc_testers indexed scrutinee]
+    | RawList [RawAtom "set.insert",
+        RawList (RawAtom "@list" :: (elements as _ :: _)), set] =>
+        (* CPC packs the variadic element operands in a syntax-only list. *)
+        RawList (RawAtom "set.insert" ::
+          List.map (normalize_cpc_testers indexed) (elements @ [set]))
     | RawList [RawAtom "and"] => RawAtom "true"
     | RawList [RawAtom "or"] => RawAtom "false"
     | RawList [RawAtom "and", operand] =>
