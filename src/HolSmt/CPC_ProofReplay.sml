@@ -620,7 +620,8 @@ local
     String.isPrefix "@cpc.const." (Lib.fst (Term.dest_var tm))
 
   fun has_private_const tm =
-    List.exists is_private_const (Term.free_vars tm)
+    Option.isSome (HOLset.find is_private_const
+      (SmtReplayImport.FVL_dag [tm] Term.empty_tmset))
 
   fun cache_thm_with_fastpath fastpath state thm =
     if not theorem_cache_enabled then
@@ -9966,7 +9967,7 @@ local
 
   exception FpBindingCounterexample
   fun replay_trust_admitted_mode candidate_validation
-      admit force_fp state prems args =
+      admit allow_defer force_fp state prems args =
     SmtSeqProve.with_admission_errors (fn () =>
     let
       val target = expect_one_arg "trust" args
@@ -11269,7 +11270,7 @@ local
              closure the caller requires an independent checked proof;
              recreating ASSUME here cannot discharge the obligation and
              can traverse an enormous instantiated witness unnecessarily. *)
-          val _ = force_fp andalso raise ERR "trust"
+          val _ = not allow_defer andalso raise ERR "trust"
             "forced FP checking could not prove the deferred obligation"
           val seen = ref ([] : Term.term list)
           val variables = ref ([] : Term.term list)
@@ -11506,17 +11507,19 @@ local
           Term.type_of left = Term.type_of right
         end
         handle Feedback.HOL_ERR _ => false
+      val force_fp = force_fp orelse
+        (not allow_defer andalso fp_term_dag target)
     in
       (* Native Seq, Set, and Bag trusts have no unchecked fallback.  Bag's
          second rung is the checked contextual simplifier used by its shared
          D2 prover; failure records a theory-specific CPC obligation. *)
-      if not force_fp andalso Option.isSome (#private_const_hyps state)
+      if allow_defer andalso Option.isSome (#private_const_hyps state)
           andalso has_private_const target then
         (Option.app (fn obligations =>
            obligations := HOLset.add (!obligations,target))
            (#private_const_hyps state);
          Thm.ASSUME target)
-      else if not force_fp andalso has_private_fp_marker target then
+      else if allow_defer andalso has_private_fp_marker target then
         profile "CPC(rung:trust/fp_deferred)" deferred_fp_trust ()
       else if force_fp andalso word_equality_target () then
         next_fp
@@ -11534,7 +11537,7 @@ local
               (fn () => profile "CPC(rung:trust/fp_deferred)"
                 deferred_fp_trust ()))
         else if fp_word_bridge_target () then
-          if force_fp then
+          if not allow_defer then
             next_fp
               (fn () => profile "CPC(rung:trust/fp-atom-bridge)"
                 replay_fp_atom_bridge ())
@@ -11542,7 +11545,7 @@ local
                 deferred_fp_trust ())
           else profile "CPC(rung:trust/fp_deferred)" deferred_fp_trust ()
         else if fp_atom_rewrite_target () then
-          if not force_fp andalso
+          if allow_defer andalso
              (has_private_fp_marker target orelse
               SmtResource.dag_nodes_up_to 2001 target > 2000) then
             profile "CPC(rung:trust/fp_deferred)" deferred_fp_trust ()
@@ -11576,7 +11579,7 @@ local
                       (fn () => next_fp bridge defer)
                   end))
         else if SmtResource.dag_nodes_up_to 257 target > 256 then
-          if force_fp then
+          if not allow_defer then
             next_fp
               (fn () => profile "CPC(rung:trust/fp-atom-bridge)"
                 replay_fp_atom_bridge ())
@@ -11634,7 +11637,8 @@ local
     end)
 
   fun replay_trust_admitted admit force_fp state prems args =
-    replay_trust_admitted_mode false admit force_fp state prems args
+    replay_trust_admitted_mode false admit (not force_fp) force_fp
+      state prems args
   fun replay_trust force_fp state prems args = replay_trust_admitted
     (SmtDatatypeProve.default_admission ()) force_fp state prems args
 
@@ -23585,7 +23589,7 @@ in
                 (fn () => SmtSkeletonProve.exact_conclusion instance
                   (replay_trust_admitted_mode true
                     (SmtDatatypeProve.default_admission ())
-                    true state [] [instance])) ()
+                    false true state [] [instance])) ()
               val _ = trace_private "bridge proved at exact source endpoint"
             in
               if Term.aconv (Thm.concl proof) instance andalso
@@ -23643,7 +23647,12 @@ in
     end
 
   fun instantiate_cpc_private_constants state allowed theorem =
+    case #private_const_hyps state of
+      NONE => theorem
+    | SOME obligations => if HOLset.isEmpty (!obligations) then theorem else
     let
+      val allowed_fvs = SmtReplayImport.FVL_dag
+        (HOLset.listItems allowed) Term.empty_tmset
       (* Removing equal trailing arguments recovers the fresh function's
          defining substitution without assuming function extensionality. *)
       fun peel (left, right) =
@@ -23652,7 +23661,7 @@ in
                 Term.aconv (Term.rand left) (Term.rand right) then
           peel (Term.rator left, Term.rator right)
         else NONE
-      fun candidate theorem obligation =
+      fun candidate conclusion_fvs obligation =
         let
           val (left, right) = boolSyntax.dest_eq obligation
           val binding = case peel (left, right) of
@@ -23660,9 +23669,10 @@ in
             | NONE => peel (right, left)
           fun admissible (variable, replacement) =
             Term.type_of variable = Term.type_of replacement andalso
-            not (Term.free_in variable replacement) andalso
-            not (Term.free_in variable (Thm.concl theorem)) andalso
-            not (List.exists (Term.free_in variable) (HOLset.listItems allowed))
+            not (HOLset.member (allowed_fvs, variable)) andalso
+            not (HOLset.member (conclusion_fvs, variable)) andalso
+            not (HOLset.member (SmtReplayImport.FVL_dag [replacement]
+              Term.empty_tmset, variable))
         in
           case binding of
             SOME binding => if admissible binding then SOME binding else NONE
@@ -23681,9 +23691,11 @@ in
         let
           val theorem = HOLset.foldl discharge_reflexive theorem obligations
           val live = HOLset.intersection (obligations, Thm.hypset theorem)
+          val conclusion_fvs = SmtReplayImport.FVL_dag
+            [Thm.concl theorem] Term.empty_tmset
           fun find [] = NONE
             | find (obligation :: rest) =
-                case candidate theorem obligation of
+                case candidate conclusion_fvs obligation of
                   SOME binding => SOME binding
                 | NONE => find rest
         in
@@ -23699,8 +23711,7 @@ in
         end
       (* Nonreflexive obligations still need checked replay below;
          the final hypothesis guard remains in force. *)
-    in case #private_const_hyps state of NONE => theorem
-      | SOME obligations => close (!obligations) theorem end
+    in close (!obligations) theorem end
 
   fun instantiate_private_constants_for_test obligations allowed theorem =
     let
@@ -23826,7 +23837,9 @@ in
             else ()
           fun replay_checked () =
             let
-              val proof = replay_trust true state [] [hypothesis]
+              val proof = replay_trust_admitted_mode false
+                (SmtDatatypeProve.default_admission ())
+                false false state [] [hypothesis]
               val _ = HOLset.member (Thm.hypset proof, hypothesis) andalso
                 raise ERR "discharge_later_checked_steps"
                   "checked trust replay deferred the hypothesis again"
@@ -24785,7 +24798,7 @@ in
   fun try_private_fp_bridge_for_test target =
     SOME (replay_trust_admitted_mode true
       (SmtDatatypeProve.default_admission ())
-      true (initial_state [] []) [] [target])
+      false true (initial_state [] []) [] [target])
     handle FpBindingCounterexample => NONE
 
   fun discharge_private_fp_with_context_for_test hypotheses theorem =

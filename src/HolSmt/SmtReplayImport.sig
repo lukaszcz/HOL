@@ -10,6 +10,10 @@ sig
   val pointer_bucket_observed : (IntInf.int -> unit) -> int -> int ->
     Term.term -> int
 
+  (* Exact free variables, visiting shared application nodes once. *)
+  val FVL_dag : Term.term list -> Term.term HOLset.set ->
+    Term.term HOLset.set
+
   (* Count-only view: marker names may collide with free variables. Never
      use this view for binding, free-variable analysis or proof endpoints. *)
   val count_body : Term.term -> Term.term
