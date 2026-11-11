@@ -303,6 +303,8 @@ val _ = Hol_datatype
   `smt_nested = SmtTip of bool |
                 SmtBranch of ((string # smt_nested) list)`
 
+val _ = Hol_datatype `smt_tree = SmtLeaf | SmtNode of smt_tree list`
+
 val _ = new_constant
   ("smt_left_from_int", ``:int -> smt_left``)
 
@@ -7467,6 +7469,63 @@ in
     "nested recursive datatypes were not declared together")
 end
 
+(* A list inside a datatype recursion cycle stays an algebraic datatype even
+   when another list selects the Seq model: cvc5 rejects datatypes that
+   recurse through Seq as nested-recursive. *)
+fun smtlib_recursive_list_stays_datatype_success () =
+let
+  val lists = [``(P:int list -> bool) []``, ``(Q:smt_tree list -> bool) [x]``]
+  val goal = (``(f:smt_tree -> int) x < f y`` :: lists, ``(x:smt_tree) <> y``)
+  (* A satisfiable query makes the solver check its datatypes in full. *)
+  val sat_goal = (lists, ``(x:smt_tree) = y``)
+  fun check name prover oracle =
+    ((case oracle sat_goal of
+        SolverSpec.SAT _ => ()
+      | SolverSpec.UNKNOWN (SOME reason) => die (name ^ ": " ^ reason)
+      | _ => die (name ^ " rejected the recursive list datatype"));
+     case prover goal of
+       SolverSpec.UNSAT (SOME thm) =>
+         assert (Term.aconv (Thm.concl thm) (Lib.snd goal) andalso
+           List.all (fn h => List.exists (Term.aconv h) (Lib.fst goal))
+             (Thm.hyp thm),
+           name ^ " recursive list congruence changed the goal")
+     | _ => die (name ^ " recursive list congruence did not replay"))
+  val _ = if Z3.is_configured () then
+    check "Z3" Z3.Z3_SMT_Prover Z3.Z3_SMT_Oracle else ()
+  val _ = if CVC.is_configured () then
+    check "cvc5" CVC.CVC_SMT_Prover CVC.CVC_SMT_Oracle else ()
+  (* An operator on recursive lists alone selects no Seq model, so no Seq
+     operator such as seq.rev (which Z3 lacks) is required. *)
+  val recursive_only = ([``(f:smt_tree -> int) x < f y``,
+      ``(R:smt_tree list -> bool) (REVERSE ts)``], ``(x:smt_tree) <> y``)
+  val _ = if Z3.is_configured () then
+    case Z3.Z3_SMT_Prover recursive_only of
+      SolverSpec.UNSAT (SOME _) => ()
+    | _ => die "Z3 recursive-list REVERSE goal did not replay"
+    else ()
+  (* Another list selecting Seq leaves the recursive-list REVERSE algebraic,
+     so it still requires no seq.rev. *)
+  val mixed = (``(P:int list -> bool) []`` :: Lib.fst recursive_only,
+    Lib.snd recursive_only)
+  val _ = if Z3.is_configured () then
+    case Z3.Z3_SMT_Prover mixed of
+      SolverSpec.UNSAT (SOME _) => ()
+    | _ => die "Z3 mixed recursive-list REVERSE goal did not replay"
+    else ()
+  val recursive_text = String.concat
+    (Lib.snd (SmtLib.goal_to_SmtLib_translation NONE recursive_only))
+  val text = String.concat
+    (Lib.snd (SmtLib.goal_to_SmtLib_translation NONE goal))
+in
+  assert (not (contains "(Seq " recursive_text) andalso
+    not (contains "seq." recursive_text),
+    "recursive-list REVERSE selected the Seq model");
+  assert (contains "(Seq Int)" text, "int list did not select Seq");
+  assert (contains "(List_Smt_tree 0)" text andalso
+    not (contains "(Seq Smt_tree)" text),
+    "recursive list was emitted as Seq")
+end
+
 fun smtlib_extended_hol_encoding_records_success () =
 let
   (* HOL strings reach SMT-LIB only through str_inj, so the encoding records
@@ -8840,6 +8899,12 @@ let
   val cons_expected = ``APPEND [x:'a] xs``
   val cons = checked_conversion "symbolic CONS assertion normalization"
     cons_input
+  (* A cons on a list in a datatype recursion cycle is a datatype
+     constructor, not a Seq concatenation. *)
+  val _ = (ignore (SmtLib.z3_assertion_roundtrip_conv_for_test
+      ``(t:smt_tree)::ts``);
+    die "FAIL: recursive-list CONS was rewritten to APPEND")
+    handle Conv.UNCHANGED => ()
   val multi_cons_input = ``(x:'a)::y::(xs:'a list)``
   val multi_cons_expected = ``APPEND [x:'a] (APPEND [y] xs)``
   val multi_cons =
@@ -36230,6 +36295,8 @@ let
       smtlib_datatype_type_translation_success),
     ("smtlib_nested_datatype_dependencies_success",
       smtlib_nested_datatype_dependencies_success),
+    ("smtlib_recursive_list_stays_datatype_success",
+      smtlib_recursive_list_stays_datatype_success),
     ("smtlib_datatype_function_domain_dependencies_success",
       smtlib_datatype_function_domain_dependencies_success),
     ("smtlib_extended_hol_encoding_records_success",

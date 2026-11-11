@@ -143,16 +143,17 @@ fun check_operator_availability_unless ignore occurs {solver, version} =
     List.app check (!operator_availabilities)
   end
 
-fun check_goal_operator_availability_unless ignore target
+fun check_goal_operator_availability_unless ignore counts target
     (assumptions, conclusion) =
   let
-    val heads = List.concat (List.map term_heads (conclusion :: assumptions))
+    val heads = List.filter counts
+      (List.concat (List.map term_heads (conclusion :: assumptions)))
     fun occurs head = List.exists (fn tm =>
       Term.same_const tm head handle Feedback.HOL_ERR _ => false) heads
   in check_operator_availability_unless ignore occurs target end
 
 fun check_goal_operator_availability target =
-  check_goal_operator_availability_unless (Lib.K false) target
+  check_goal_operator_availability_unless (Lib.K false) (Lib.K true) target
 
 local
 
@@ -1244,12 +1245,47 @@ local
 
   fun is_function_type ty = Lib.can Type.dom_rng ty
 
-  (* Lists are the native model of SMT sequences, except for HOL strings.
-     The latter must retain Phase 4's str_inj/smtstr route rather than being
-     silently reclassified as arbitrary (Seq Char) content. *)
+  (* A list type is recursive when its element type leads back to the list
+     itself through datatype constructor fields or function types, as in
+     tree = Leaf | Node of tree list. *)
+  fun is_recursive_list_type ty =
+    let
+      fun constructor_doms ty = List.concat (List.map
+        (Lib.fst o boolSyntax.strip_fun o Term.type_of o
+         TypeBasePure.cinst ty) (TypeBase.constructors_of ty))
+        handle Feedback.HOL_ERR _ => []
+      fun reaches _ [] = false
+        | reaches seen (t :: ts) =
+          if Type.compare (t, ty) = EQUAL then true
+          else if List.exists (fn s => Type.compare (s, t) = EQUAL) seen
+                  orelse has_type_builtin t then
+            reaches seen ts
+          else if is_function_type t then
+            let val (dom, rng) = Type.dom_rng t
+            in reaches (t :: seen) (dom :: rng :: ts) end
+          else
+            reaches (t :: seen) (constructor_doms t @ ts)
+    in
+      reaches [] [listSyntax.dest_list_type ty]
+    end
+
+  (* Lists are the native model of SMT sequences, except for HOL strings and
+     recursive lists.  Strings must retain Phase 4's str_inj/smtstr route
+     rather than being silently reclassified as arbitrary (Seq Char) content.
+     Recursive lists stay algebraic datatypes: a datatype recursing through
+     Seq is nested-recursive, which cvc5 rejects. *)
   fun is_native_sequence_type ty =
     listSyntax.is_list_type ty andalso
-    Type.compare (ty, stringSyntax.string_ty) <> EQUAL
+    Type.compare (ty, stringSyntax.string_ty) <> EQUAL andalso
+    not (is_recursive_list_type ty)
+
+  (* Whether a list operator's type applies it at a recursive list type,
+     which keeps it off the Seq model. *)
+  fun has_recursive_list_signature ty =
+    let val (doms, rng) = boolSyntax.strip_fun ty in
+      List.exists (fn ty => listSyntax.is_list_type ty andalso
+        is_recursive_list_type ty) (rng :: doms)
+    end
 
   (* Checked Seq replay is introduced by TASK_18.  Until then, proof
      requests retain the old datatype encoding while oracle emission uses the
@@ -2301,7 +2337,8 @@ local
       fun selects_seq {native_parts, is_totalized_whole} tm =
         ((named "list" direct_list_heads tm orelse
           named "rich_list" rich_list_heads tm orelse
-          named "HolSmt" holsmt_heads tm) andalso native_parts tm) orelse
+          named "HolSmt" holsmt_heads tm) andalso native_parts tm andalso
+         not (has_recursive_list_signature (type_of tm))) orelse
         is_totalized_whole tm
     in
       {totalized=totalized, supported=supported, native_part=native_part,
@@ -3308,8 +3345,11 @@ local
           fun is_native_bag_const tm = thy_const_named "bag" bag_names tm
           val sequences = (#sequence_emission state) () andalso
             (subterm_types is_native_sequence_type orelse
-             List.exists (fn tm => is_native_sequence_const
-               (Lib.fst (strip_comb tm))) all_subterms)
+             List.exists (fn tm =>
+               let val head = Lib.fst (strip_comb tm) in
+                 is_native_sequence_const head andalso
+                 not (has_recursive_list_signature (type_of head))
+               end) all_subterms)
           (* Finite-set hypotheses select cvc5's native Set sort and are
              removed before this scan. Backend selection is a Set feature. *)
           val sets = (#has_set_terms state) () orelse
@@ -8200,6 +8240,10 @@ in
         [smt_seq_update_tm,smt_seq_replace_all_tm,seq_lupdate_tm,
          seq_reverse_tm,seq_map_tm,seq_foldl_tm]
   in
+    (* An operator typed at a recursive list is emitted algebraically, never
+       as a Seq operator, so it is no occurrence of one. *)
+    fun counts_for_operator_availability head =
+      not (has_recursive_list_signature (Term.type_of head))
     (* The fixed Seq decision belongs to the caller's emission context.
        The registry, version matching and diagnostic order remain shared. *)
     fun outbound_check_operator_availability {sequence_emission} target
@@ -8209,7 +8253,7 @@ in
     fun check_goal_operator_availability_for_sequence sequence_emission
         target goal =
       check_goal_operator_availability_unless (ignore sequence_emission)
-        target goal
+        counts_for_operator_availability target goal
   end
 
   fun option_logic_policy logic
@@ -8937,7 +8981,8 @@ in
       SOME (Z3Inverse (realSyntax.dest_inv tm))
     else if intrealSyntax.is_INT_CEILING tm then
       SOME (Z3Ceiling (intrealSyntax.dest_INT_CEILING tm))
-    else if listSyntax.is_cons tm then
+    else if listSyntax.is_cons tm andalso
+            is_native_sequence_type (Term.type_of tm) then
       let val (element, tail) = listSyntax.dest_cons tm in
         if listSyntax.is_nil tail orelse listSyntax.is_cons tail then NONE
         else SOME (Z3SymbolicCons (element, tail))
