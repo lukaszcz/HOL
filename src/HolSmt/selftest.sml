@@ -67021,26 +67021,27 @@ in
           in case result of Exn.Exn primary => raise primary
             | Exn.Res answer => (Exn.release cleanup;answer) end))
       val _ = test "Mapped selector rejection preserves validation order"
-        (fn () => List.app (fn (text,diagnostic) => owned (fn e =>
+        (fn () => List.app (fn (text,diagnostic,retired) => owned (fn e =>
           let val frozen = selector_mapping e val held = factory e frozen
-              val result = Exn.capture (fn () => W.with_step (#work e)
+              val failure = error (fn () => W.with_step (#work e)
                 (fn () =>
                   let val session = F.create_mapping_session_with_policy held
                         (options e) (description F.CPC)
                         (fn () => raise Fail "unused")
-                      val failure = error (fn () =>
-                        ignore (parse (#parse_from session) text))
-                  in require "selector refusal or primary diagnostic changed"
-                    (case failure of SOME (_,_,message) =>
-                       String.isSubstring diagnostic message andalso
-                       #retired (W.audit_policy (#work e))
-                     | NONE => false) end)) ()
+                  in ignore (parse (#parse_from session) text) end))
+              val accepted = case failure of SOME (_,_,message) =>
+                    String.isSubstring diagnostic message andalso
+                    #retired (W.audit_policy (#work e)) = retired
+                | NONE => false
               val cleanup = Exn.capture (#close held) ()
-          in case result of Exn.Exn primary => raise primary
-            | Exn.Res answer => (Exn.release cleanup;answer) end))
-          [("((_ selector 0) true)","source value does not take indices"),
-           ("(selector record record)","wrong number of arguments"),
-           ("(selector true)","selector argument type differs")])
+          in Exn.release cleanup;
+            require "selector refusal or primary diagnostic changed" accepted
+          end))
+          [("((_ selector 0) true)",
+              "source value does not take indices",false),
+           ("(selector record record record)",
+              "wrong number of arguments",false),
+           ("(selector true)","selector argument type differs",true)])
       val _ = test "Both dialects use the SAME bounded construction grammar"
         (fn () => List.app (fn policy => owned (fn e => paired e policy
           (fn held => fn native => fn values =>
