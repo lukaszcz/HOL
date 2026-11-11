@@ -15046,6 +15046,7 @@ let
     let
       val theorem = CPC_ProofReplay.remove_hyps_for_test
         ([source], boolSyntax.F, Thm.ASSUME echo)
+      val _ = check_oracle_tags ("array-set bridge " ^ name) theorem
     in
       assert (Term.aconv (Thm.concl theorem) echo andalso
           List.length (Thm.hyp theorem) = 1 andalso
