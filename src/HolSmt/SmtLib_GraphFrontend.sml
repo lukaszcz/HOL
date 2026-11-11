@@ -949,8 +949,8 @@ struct
     let fun count [] (n:IntInf.int) = n
           | count (_::rest) n = count rest (n+1)
     in count pending 0 end
-  fun constructed_declaration_parser backend same_identity
-      node descriptor arity guard frame name indices arguments =
+  fun constructed_declaration_value backend same_identity
+      node descriptor arity guard frame name arguments =
     let
       val _ = guard frame
       val value = case descriptor of
@@ -963,8 +963,13 @@ struct
         | SOME (AtMost maximum) => count<=maximum
       val _ = if accepted orelse not (same_identity (value,node)) then () else
         SmtLib_Theories.decline ("<" ^ name ^ ">") "wrong number of arguments"
-    in P.construction_value_parsefn backend value
-      frame name indices arguments end
+    in value end
+  fun constructed_declaration_parser backend same_identity
+      node descriptor arity guard frame name indices arguments =
+    P.construction_value_parsefn backend
+      (constructed_declaration_value backend same_identity
+        node descriptor arity guard frame name arguments)
+      frame name indices arguments
 
   (* One policy grammar for genuine graph nodes and typed parser values.
      Native admission remains in its original initializer below; the value
@@ -1737,7 +1742,13 @@ struct
               val parse = case #selector_body entry of NONE => ordinary_parse
                 | SOME _ => fn frame => fn token => fn indices =>
                     fn arguments =>
-                      let val _ = ordinary_parse frame token indices arguments
+                      let
+                        val _ = constructed_declaration_value backend (op =)
+                          node descriptor (SOME arity) guard
+                          frame token arguments
+                        val _ = if null indices then () else
+                          SmtLib_Theories.decline token
+                            "source value does not take indices"
                       in (#apply_declaration factory) frame entry arguments end
               val variables = case descriptor of SOME (name,ty) =>
                     (retain_descriptor node (key,name,ty);
