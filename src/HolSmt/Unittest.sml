@@ -36458,6 +36458,51 @@ fun run_cache_lifetime_unittests () =
      ("CPC omitted conclusion", cpc_cache_omitted_conclusion_bypasses_success),
      ("CPC cache atomicity", cpc_fastpath_error_and_cache_atomicity_contract)]
 
+fun cpc_quantified_trans_prefix_limit_success () =
+let
+  val variables = List.tabulate
+    (257, fn i => Term.mk_var ("prefix" ^ Int.toString i, Type.bool))
+  fun endpoints prefix =
+    (boolSyntax.list_mk_forall (prefix, ``p \/ q \/ r``),
+     boolSyntax.list_mk_forall (prefix, ``r \/ p \/ q``))
+  val pair = endpoints (List.take (variables, 256))
+  val theorem = CPC_ProofReplay.quantified_boolean_equality_for_test pair
+in
+  assert (Thm.concl theorem ~~ boolSyntax.mk_eq pair andalso
+      List.null (Thm.hyp theorem),
+    "quantified Boolean bridge changed an in-budget endpoint");
+  check_oracle_tags "bounded quantified Boolean bridge" theorem;
+  expect_hol_error_contains "quantified Boolean prefix limit"
+    "prefix limit exceeded"
+    (fn () => ignore (CPC_ProofReplay.quantified_boolean_equality_for_test
+      (endpoints variables)))
+end
+
+fun cpc_instantiate_after_quantified_trans_success () =
+let
+  val proof = parse_cpc_proof_string (
+    "((declare-fun p (Int) Bool) " ^
+    " (declare-fun q (Int) Bool) " ^
+    " (declare-fun r (Int) Bool) " ^
+    " (declare-const s Bool) " ^
+    " (declare-const a Int) " ^
+    " (define @q () (forall ((x Int)) (or (p x) (q x) (r x)))) " ^
+    " (define @r () (forall ((x Int)) (or (r x) (p x) (q x)))) " ^
+    " (assume @a s) " ^
+    " (assume @e (= s (not (not @r)))) " ^
+    " (step @nn :rule bool-double-not-elim :args (@q)) " ^
+    " (step @trans :rule trans :premises (@e @nn)) " ^
+    " (step @forall :rule eq_resolve :premises (@a @trans)) " ^
+    " (step @inst :rule instantiate :premises (@forall) :args ((@list a)))) ")
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val expected = ``(p:int -> bool) a \/ q a \/ r a``
+in
+  assert (Thm.concl theorem ~~ expected andalso
+      List.length (Thm.hyp theorem) = 2,
+    "quantified transitivity lost the endpoint needed by instantiate");
+  check_oracle_tags "instantiate after quantified transitivity" theorem
+end
+
 fun run_unittests () =
 let
   val () = print "Running unit tests...\n\n"
@@ -37098,6 +37143,10 @@ let
       cpc_eq_resolve_real_route_independent_success),
     ("cpc_proof_replay_omitted_arith_poly_norm_success",
       cpc_proof_replay_omitted_arith_poly_norm_success),
+    ("cpc_quantified_trans_prefix_limit_success",
+      cpc_quantified_trans_prefix_limit_success),
+    ("cpc_instantiate_after_quantified_trans_success",
+      cpc_instantiate_after_quantified_trans_success),
     ("cpc_proof_replay_canonical_trans_terminal_success",
       cpc_proof_replay_canonical_trans_terminal_success),
     ("cpc_proof_replay_bv_xor_rotation_general_success",

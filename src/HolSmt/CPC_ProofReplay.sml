@@ -2827,9 +2827,8 @@ local
      such identities with a deliberately bounded kernel proof, so TRANS does
      not have to normalize an increasingly shared Boolean context merely to
      discover that the premise is logically neutral. *)
-  fun bounded_propositional_tautology theorem =
+  fun bounded_propositional_proof goal =
     let
-      val goal = Thm.concl theorem
       val node_limit = 256
       val atom_limit = 16
       val nodes = ref 0
@@ -2867,9 +2866,47 @@ local
           else add_atom term
         end
       val _ = visit goal
-      val _ = tautLib.TAUT_PROVE goal
-    in true end
+    in tautLib.TAUT_PROVE goal end
+
+  fun bounded_propositional_tautology theorem =
+    (ignore (bounded_propositional_proof (Thm.concl theorem)); true)
     handle Feedback.HOL_ERR _ => false
+
+  (* Canonical Boolean bodies may permute a quantified clause.  Lift the
+     checked body equality so TRANS keeps the next certificate endpoint. *)
+  fun quantified_boolean_equality (left, right) =
+    let
+      (* Check before free-variable scans or substitutions touch the prefix. *)
+      fun check_prefix remaining term =
+        if not (boolSyntax.is_forall term) then ()
+        else if remaining = 0 then
+          raise ERR "trans" "quantified Boolean prefix limit exceeded"
+        else check_prefix (remaining - 1)
+          (SmtReplayImport.count_body (Term.rand term))
+      val _ = check_prefix 256 left
+      val _ = check_prefix 256 right
+      fun prove (left, right) =
+        let
+          val (left_variable, left_body) = boolSyntax.dest_forall left
+          val (right_variable, right_body) = boolSyntax.dest_forall right
+          val variable = Term.variant
+            (Term.free_vars left @ Term.free_vars right) left_variable
+          fun rename bound body =
+            Term.subst [{redex = bound, residue = variable}] body
+          val left_body = rename left_variable left_body
+          val right_body = rename right_variable right_body
+          val body_equality =
+            if boolSyntax.is_forall left_body andalso
+               boolSyntax.is_forall right_body then
+              prove (left_body, right_body)
+            else bounded_propositional_proof
+              (boolSyntax.mk_eq (left_body, right_body))
+        in
+          Thm.AP_TERM (Term.rator left) (Thm.ABS variable body_equality)
+        end
+    in
+      prove (left, right)
+    end
 
   fun replay_trans_with_provenance
       (premise_steps : replayed_step list) =
@@ -3022,7 +3059,11 @@ local
                     in
                       if Term.aconv normalized_left normalized_right then
                         finish left_norm' right_norm'
-                      else refine rest (left_norm', right_norm')
+                      else case Lib.total quantified_boolean_equality
+                          (normalized_left, normalized_right) of
+                        SOME bridge =>
+                          finish (Thm.TRANS left_norm' bridge) right_norm'
+                      | NONE => refine rest (left_norm', right_norm')
                     end
             in
               refine
@@ -6910,7 +6951,11 @@ local
                 same left_canonical right_canonical
               val (left_theorem, right_theorem) =
                 if canonical_same then (left_theorem, right_theorem)
-                else if not allow_bridge then
+                else case Lib.total quantified_boolean_equality
+                    (left_canonical, right_canonical) of
+                  SOME bridge =>
+                    (Thm.TRANS left_theorem bridge, right_theorem)
+                | NONE => if not allow_bridge then
                   raise ERR "trans" "DAG equality normal forms differ"
                 else
                   let
@@ -22018,6 +22063,7 @@ in
   val compact_word_target = compact_word_target
   val word_circuit_node_conversion = word_circuit_node_conversion
   val resolution_word_graph_for_test = new_resolution_word_graph
+  val quantified_boolean_equality_for_test = quantified_boolean_equality
   val replay_bv_poly_norm_for_test = replay_bv_poly_norm
   val retain_producer_conclusion_for_test = retain_producer_conclusion
   val replay_cong_for_test = replay_cong
