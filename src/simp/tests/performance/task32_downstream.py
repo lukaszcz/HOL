@@ -2413,19 +2413,27 @@ def add_run(parser):
     parser.add_argument("--only", action="append", default=[])
 
 
+RUN_COMMANDS = ("smoke", "pilot", "control", "run", "extend", "followup")
+COMMANDS = RUN_COMMANDS + ("predeclare", "recover", "replay", "dispose")
+COMMAND_HELP = {"recover": "put back the products a killed or failed "
+                "restore left in a journal"}
+
+
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ("smoke", "pilot", "control", "run", "extend", "followup"):
-        add_run(sub.add_parser(name))
-    sub.choices["control"].add_argument("--reps", type=int, default=1)
-    sub.choices["control"].add_argument(
+    cmd = {name: sub.add_parser(name, help=COMMAND_HELP.get(name))
+           for name in COMMANDS}
+    for name in RUN_COMMANDS:
+        add_run(cmd[name])
+    cmd["control"].add_argument("--reps", type=int, default=1)
+    cmd["control"].add_argument(
         "--pilot", type=Path, required=True,
-        help="this gate's pilot: the busy time is %.0f%%%% of its median "
-        "CPU of the control unit" % (100 * BUSY))
-    sub.choices["extend"].add_argument("--first", type=Path, required=True)
-    sub.choices["followup"].add_argument("--followup-counts", type=Path)
-    pre = sub.add_parser("predeclare")
+        help=f"this gate's pilot: the busy time is {100 * BUSY:.0f}%% "
+        "of its median CPU of the control unit")
+    cmd["extend"].add_argument("--first", type=Path, required=True)
+    cmd["followup"].add_argument("--followup-counts", type=Path)
+    pre = cmd["predeclare"]
     add_common(pre)
     add_ledger(pre)
     pre.add_argument("--pilot", type=Path)
@@ -2435,16 +2443,15 @@ def build_parser():
                      "stage")
     pre.add_argument("--followup", action="store_true")
     pre.add_argument("--out", type=Path, required=True)
-    rec = sub.add_parser("recover", help="put back the products a killed "
-                         "or failed restore left in a journal")
+    rec = cmd["recover"]
     rec.add_argument("--repo", type=Path, required=True)
-    rep = sub.add_parser("replay")
+    rep = cmd["replay"]
     rep.add_argument("runs", type=Path, nargs="+")
     rep.add_argument("--ledger", type=Path)
     rep.add_argument("--counts", type=Path)
     rep.add_argument("--followup-counts", type=Path)
     rep.add_argument("--repo", type=Path)
-    dis = sub.add_parser("dispose")
+    dis = cmd["dispose"]
     dis.add_argument("--stage", type=Path, required=True)
     dis.add_argument("--out", type=Path, required=True)
     dis.add_argument("--ledger", type=Path)

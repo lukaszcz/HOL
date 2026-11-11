@@ -2259,18 +2259,30 @@ class CountsDefaults(unittest.TestCase):
 
 
 class HelpRenders(unittest.TestCase):
+    def help_of(self, argv):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as ctx:
+                dw.build_parser().parse_args(argv)
+        self.assertEqual(ctx.exception.code, 0, argv)
+        self.assertIn("usage", out.getvalue(), argv)
+        return " ".join(out.getvalue().split())
+
     def test_every_help_renders(self):
-        parser = dw.build_parser()
-        subs = [x for x in parser._actions
-                if isinstance(x, argparse._SubParsersAction)]
-        self.assertTrue(subs)
-        out = [parser.format_help()]
-        for action in subs:
-            for name, sp in action.choices.items():
-                text = sp.format_help()
-                self.assertIn("usage", text, name)
-                out.append(text)
-        self.assertIn("is 6% of its median", "\n".join(out))
+        self.help_of(["--help"])
+        for name in dw.COMMANDS:
+            flat = self.help_of([name, "--help"])
+            if name == "control":
+                self.assertIn("is %.0f%% of its median" % (100 * dw.BUSY),
+                              flat)
+
+    def test_commands_match_parser(self):
+        # No public API lists the subparsers; the top-level usage line
+        # names every choice, so read it from there.
+        flat = self.help_of(["--help"])
+        usage = flat[flat.index("{"):flat.index("}")]
+        self.assertEqual(set(usage.strip("{").split(",")),
+                         set(dw.COMMANDS))
 
 
 if __name__ == "__main__":
