@@ -98,44 +98,80 @@ struct
         (List.concat (List.map side_condition_forms thms))
     end
 
+  (* The statements below are built, not parsed: a constant a client
+     theory exports must not capture their variables.  Arrays are
+     a, b : 'a -> 'b with indices i, j : 'a and elements e, f : 'b. *)
+  local
+    open boolSyntax
+    val i = Term.mk_var ("i", Type.alpha)
+    val j = Term.mk_var ("j", Type.alpha)
+    val e = Term.mk_var ("e", Type.beta)
+    val f = Term.mk_var ("f", Type.beta)
+    val a = Term.mk_var ("a", Type.--> (Type.alpha, Type.beta))
+    val b = Term.mk_var ("b", Type.--> (Type.alpha, Type.beta))
+    (* (k =+ v) arr *)
+    fun store (k, v) arr = Term.mk_comb (combinSyntax.mk_update (k, v), arr)
+    val distinct = mk_neg (mk_eq (i, j))
+    val pointwise = mk_forall (i, mk_eq (Term.mk_comb (a, i), Term.mk_comb (b, i)))
+  in
   val array_thm_list = [
+    (* ((i =+ e) a) i = e *)
     Library.prove
-      (``((i =+ e) a) i = e``,
+      (mk_eq (Term.mk_comb (store (i, e) a, i), e),
         bossLib.RW_TAC (bossLib.srw_ss()) [combinTheory.APPLY_UPDATE_THM]),
+    (* i <> j ==> ((i =+ e) a) j = a j *)
     Library.prove
-      (``i <> j ==> ((i =+ e) a) j = a j``,
+      (mk_imp (distinct, mk_eq (Term.mk_comb (store (i, e) a, j), Term.mk_comb (a, j))),
         bossLib.RW_TAC (bossLib.srw_ss()) [combinTheory.APPLY_UPDATE_THM]),
+    (* (i =+ f) ((i =+ e) a) = (i =+ f) a *)
     Library.prove
-      (``(i =+ f) ((i =+ e) a) = (i =+ f) a``,
+      (mk_eq (store (i, f) (store (i, e) a), store (i, f) a),
         bossLib.RW_TAC (bossLib.srw_ss()) [
           boolTheory.FUN_EQ_THM,
           combinTheory.APPLY_UPDATE_THM
         ]),
+    (* i <> j ==> (j =+ f) ((i =+ e) a) = (i =+ e) ((j =+ f) a) *)
     Library.prove
-      (``i <> j ==>
-          (j =+ f) ((i =+ e) a) = (i =+ e) ((j =+ f) a)``,
+      (mk_imp (distinct,
+         mk_eq (store (j, f) (store (i, e) a), store (i, e) (store (j, f) a))),
         Tactical.THEN (bossLib.RW_TAC (bossLib.srw_ss()) [
             boolTheory.FUN_EQ_THM,
             combinTheory.APPLY_UPDATE_THM
           ], bossLib.METIS_TAC [])),
+    (* i <> j ==> ((j =+ f) ((i =+ e) a)) i = e *)
     Library.prove
-      (``i <> j ==> ((j =+ f) ((i =+ e) a)) i = e``,
+      (mk_imp (distinct, mk_eq (Term.mk_comb (store (j, f) (store (i, e) a), i), e)),
         bossLib.RW_TAC (bossLib.srw_ss()) [combinTheory.APPLY_UPDATE_THM]),
+    (* i <> j ==> ((j =+ f) ((i =+ e) a)) j = f *)
     Library.prove
-      (``i <> j ==> ((j =+ f) ((i =+ e) a)) j = f``,
+      (mk_imp (distinct, mk_eq (Term.mk_comb (store (j, f) (store (i, e) a), j), f)),
         bossLib.RW_TAC (bossLib.srw_ss()) [combinTheory.APPLY_UPDATE_THM]),
+    (* (!i. a i = b i) ==> (a = b) *)
     Library.prove
-      (``(!i. a i = b i) ==> (a = b)``,
+      (mk_imp (pointwise, mk_eq (a, b)),
         bossLib.RW_TAC (bossLib.srw_ss()) [boolTheory.FUN_EQ_THM]),
+    (* (a = b) <=> (!i. a i = b i) *)
     Library.prove
-      (``(a = b) <=> (!i. a i = b i)``,
+      (mk_eq (mk_eq (a, b), pointwise),
         bossLib.RW_TAC (bossLib.srw_ss()) [boolTheory.FUN_EQ_THM])
   ]
+  end
 
   (* Z3 encodes sets as Bool-valued arrays.  The proof parser restores the
      D13 carrier 'a -> bool, so the pointwise pred_set facts below are the
      checked counterparts of Z3's map/select and constant-array shapes.
-     These are precisely the operations recorded in the Phase-6 Z3 corpus. *)
+     These are precisely the operations recorded in the Phase-6 Z3 corpus.
+     The statements are built, not parsed, with s, t : 'a set, x, i : 'a
+     and v : bool. *)
+  local
+    open boolSyntax pred_setSyntax
+    val s = Term.mk_var ("s", mk_set_type Type.alpha)
+    val t = Term.mk_var ("t", mk_set_type Type.alpha)
+    val x = Term.mk_var ("x", Type.alpha)
+    val i = Term.mk_var ("i", Type.alpha)
+    val v = Term.mk_var ("v", Type.bool)
+    fun store (k, b) set = Term.mk_comb (combinSyntax.mk_update (k, b), set)
+  in
   val set_thm_list = [
     pred_setTheory.IN_UNION,
     pred_setTheory.IN_INTER,
@@ -146,30 +182,37 @@ struct
     (* Z3's array-set subset rewrite is [a SUBSET b =
        ((\x. a x /\ ~b x) = EMPTY)].  It is the recorded map-and/map-not
        lowering, not a guessed alternative Set encoding. *)
+    (* s SUBSET t = ((\x. x IN s /\ x NOTIN t) = EMPTY) *)
     Library.prove
-      (``((s:'a set) SUBSET t) =
-          ((\x. x IN s /\ x NOTIN t) = (EMPTY:'a set))``,
+      (mk_eq (mk_subset (s, t),
+         mk_eq (Term.mk_abs (x, mk_conj (mk_in (x, s), mk_neg (mk_in (x, t)))),
+                mk_empty Type.alpha)),
        Tactical.THEN (bossLib.RW_TAC (bossLib.srw_ss())
          [pred_setTheory.SUBSET_DEF, pred_setTheory.EXTENSION],
          bossLib.METIS_TAC [])),
-    (* A store pushed through Z3's Boolean map-not. *)
+    (* A store pushed through Z3's Boolean map-not:
+       (\x. ~((i =+ v) s) x) = (i =+ ~v) (\x. ~s x) *)
     Library.prove
-      (``(\x. ~((i =+ v) (s:'a set)) x) =
-          (i =+ ~v) (\x. ~s x)``,
+      (mk_eq (Term.mk_abs (x, mk_neg (Term.mk_comb (store (i, v) s, x))),
+              store (i, mk_neg v) (Term.mk_abs (x, mk_neg (Term.mk_comb (s, x))))),
        Tactical.THEN (bossLib.RW_TAC (bossLib.srw_ss())
          [boolTheory.FUN_EQ_THM, combinTheory.APPLY_UPDATE_THM],
          Tactical.THEN (Tactical.REPEAT boolLib.COND_CASES_TAC,
            bossLib.RW_TAC (bossLib.srw_ss()) []))),
+    (* (!x. x IN s <=> x IN t) ==> (s = t) *)
     Library.prove
-      (``(!x:'a. x IN s <=> x IN t) ==> (s = t)``,
+      (mk_imp (mk_forall (x, mk_eq (mk_in (x, s), mk_in (x, t))), mk_eq (s, t)),
        bossLib.RW_TAC (bossLib.srw_ss()) [pred_setTheory.EXTENSION]),
+    (* F = (x IN EMPTY) *)
     Library.prove
-      (``F = ((x:'a) IN (EMPTY:'a set))``,
+      (mk_eq (F, mk_in (x, mk_empty Type.alpha)),
        bossLib.RW_TAC (bossLib.srw_ss()) [pred_setTheory.NOT_IN_EMPTY]),
+    (* (x IN UNIV) = T *)
     Library.prove
-      (``((x:'a) IN (UNIV:'a set)) = T``,
+      (mk_eq (mk_in (x, mk_univ Type.alpha), T),
        bossLib.RW_TAC (bossLib.srw_ss()) [pred_setTheory.IN_UNIV])
   ]
+  end
 
   (* Floating-point rewrite seed.  The literal facts are stored with their
      side conditions in the sequent: the net first matches the concrete

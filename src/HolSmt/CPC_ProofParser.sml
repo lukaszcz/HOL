@@ -650,7 +650,8 @@ local
       fun width index = fcpLib.index_type (numeral_of_term token index)
     in
       case (token, indices, args) of
-        ("BitVec", [bits], []) =>
+        ("Int", [], []) => marker "@cpc.Int" intSyntax.int_ty
+      | ("BitVec", [bits], []) =>
           marker "@cpc.BitVec" (wordsSyntax.mk_word_type (width bits))
       | ("FloatingPoint", [eb, sb], []) =>
           marker "@cpc.FloatingPoint"
@@ -1059,7 +1060,7 @@ local
       val tmdict = List.foldl
         (fn (name, dict) => Library.extend_dict
           ((name, cpc_sort_marker_parsefn), dict))
-        tmdict ["BitVec", "FloatingPoint", "->"]
+        tmdict ["Int", "BitVec", "FloatingPoint", "->"]
       val tmdict = List.foldl
         (fn (name, dict) => Library.extend_dict
           ((name, cpc_fp_private_parsefn), dict))
@@ -1695,8 +1696,12 @@ local
         | _ => raise ERR "bag_sort_marker" "expected a Bag sort marker"
       fun set_sort_marker token indices args =
         case (token, indices, args) of
-          ("Set", [], [element]) => Term.mk_var ("@cpc.Set",
-            Type.--> (Term.type_of element, Type.bool))
+          ("Set", [], [element]) =>
+            if Type.compare (Term.type_of element, intSyntax.int_ty) = EQUAL
+            then raise ERR "set_sort_marker"
+              "integer Set sort is metadata, not an object term"
+            else Term.mk_var ("@cpc.Set",
+              Type.--> (Term.type_of element, Type.bool))
         | _ => raise ERR "set_sort_marker" "expected a Set sort marker"
       fun as_sort_marker token indices args =
         case (token, indices, args) of
@@ -1718,6 +1723,8 @@ local
                 Library.union_dict tmdict
                   SmtLib_Theories.Reals_Ints.tmdict)))))
       val tmdict = with_cpc_parameterized_skolems tmdict
+      val tmdict = Library.extend_dict
+        (("@", SmtLib_Theories.apply_operator "@"), tmdict)
       val tmdict = Library.extend_dict (("=", cpc_equality_parsefn),
         Library.extend_dict (("distinct", cpc_distinct_parsefn), tmdict))
     in
@@ -1751,6 +1758,15 @@ local
             with_cpc_fp_entries tmdict)))))))))))))))))))))))
     end
 
+  fun cpc_indexed_identifier declared name =
+    name = "BitVec" orelse name = "FloatingPoint" orelse
+    List.exists (fn (family, _) => family <> "_" andalso family = name)
+      cpc_indexed_term_families orelse
+    (not (declared name) andalso
+     String.isPrefix "bv" name andalso String.size name > 2 andalso
+     List.all Char.isDigit
+       (String.explode (String.extract (name, 2, NONE))))
+
   fun parse_term dicts_ref raw_get_token =
     let
       (* Keep the lexical spelling through the shared term parser.  Its
@@ -1769,37 +1785,36 @@ local
           val marked_head = get_token ()
           val head = cpc_semantic_token marked_head
         in
-          if head = "_" then
+          if marked_head = "_" orelse marked_head = "@" then
             let
-              val marked_operator = get_token ()
-            in
-              if marked_head = "_" andalso
-                 (marked_operator = "BitVec" orelse
-                  marked_operator = "FloatingPoint") then
-                (* Only actual indexed sort markers use this shared path.
-                   Every other CPC underscore keeps higher-order semantics. *)
-                ordinary [first, marked_head, marked_operator]
-              else
-            let
-              val get_token = Library.undo_look_ahead
-                [marked_operator] get_token
+              val first_operand = get_token ()
+              val application_token =
+                Library.undo_look_ahead [first_operand] get_token
+
               fun application_terms terms =
-                let val token = get_token () in
+                let val token = application_token () in
                   if token = ")" then List.rev terms
                   else application_terms
                     (parse_term dicts_ref
-                       (Library.undo_look_ahead [token] get_token) :: terms)
+                       (Library.undo_look_ahead [token]
+                         application_token) :: terms)
                 end
             in
-              case application_terms [] of
+              if marked_head = "_" andalso
+                 cpc_indexed_identifier
+                   (fn name => Option.isSome
+                     (Redblackmap.peek (#2 (!dicts_ref), name)))
+                   first_operand then
+                ordinary ["(", marked_head, first_operand]
+              else case application_terms [] of
                 function :: arguments =>
                   if List.null arguments then
                     raise ERR "parse_term"
                       "CPC `_` application expects an argument"
-                  else Term.list_mk_comb (function, arguments)
+                  else SmtLib_Parser.apply_term (Lib.snd (!dicts_ref))
+                    "@" [] (function :: arguments)
               | [] => raise ERR "parse_term"
                   "CPC `_` application expects a function"
-            end
             end
           (* CPC declares [is] as a parameterized constant whose first
              explicit argument is a constructor symbol, rather than as the
@@ -1903,20 +1918,31 @@ local
      spelling.  Normalize the complete raw occurrence tree before
      elaboration so nested CPC testers take the same registered dictionary
      path as ((_ is Constructor) scrutinee).  Malformed arities remain
-     untouched and therefore retain the ordinary parser diagnostic. *)
-  fun normalize_cpc_testers raw =
+     untouched and therefore retain the ordinary parser diagnostic.
+     CPC also spells higher-order application (_ f x).  Normalize nested
+     occurrences to the shared parser's @ spelling, retaining genuine
+     indexed identifiers and the heads of indexed operator applications. *)
+  fun normalize_cpc_testers indexed raw =
     case raw of
       RawList [RawAtom "is", RawAtom constructor, scrutinee] =>
         RawList
           [RawList [RawAtom "_", RawAtom "is", RawAtom constructor],
-           normalize_cpc_testers scrutinee]
+           normalize_cpc_testers indexed scrutinee]
     | RawList [RawAtom "and"] => RawAtom "true"
     | RawList [RawAtom "or"] => RawAtom "false"
     | RawList [RawAtom "and", operand] =>
-        normalize_cpc_testers operand
+        normalize_cpc_testers indexed operand
     | RawList [RawAtom "or", operand] =>
-        normalize_cpc_testers operand
-    | RawList entries => RawList (List.map normalize_cpc_testers entries)
+        normalize_cpc_testers indexed operand
+    | RawList (RawAtom "_" :: (operands as RawAtom name :: _)) =>
+        if indexed name then raw
+        else RawList (RawAtom "@" ::
+          List.map (normalize_cpc_testers indexed) operands)
+    | RawList (RawAtom "_" :: operands) =>
+        RawList (RawAtom "@" :: List.map (normalize_cpc_testers indexed) operands)
+    | RawList ((head as RawList (RawAtom "_" :: _)) :: operands) =>
+        RawList (head :: List.map (normalize_cpc_testers indexed) operands)
+    | RawList entries => RawList (List.map (normalize_cpc_testers indexed) entries)
     | RawAtom _ => raw
 
   fun read_raw_term get_token =
@@ -2441,7 +2467,10 @@ local
      recovery. *)
   fun parse_located_term dicts_ref get_token : located_term =
     let
-      val raw = normalize_cpc_testers (read_raw_term get_token)
+      val raw = normalize_cpc_testers
+        (cpc_indexed_identifier (fn name => Option.isSome
+          (Redblackmap.peek (#2 (!dicts_ref), name))))
+        (read_raw_term get_token)
       val tokens = ref (raw_tokens raw)
       fun next_token () =
         case !tokens of
@@ -3483,30 +3512,39 @@ local
                       val _ = ignore_terms ()
                     in [polarity, pivot] end
                 end
+              fun parse_list_after_open () =
+                let
+                  fun entries acc =
+                    let val token = get_token () in
+                      if token = ")" then List.rev acc
+                      else entries (parse_located_term dicts_ref
+                        (Library.undo_look_ahead [token] get_token) :: acc)
+                    end
+                in entries [] end
+              fun parse_list token =
+                if token = "(" then
+                  let
+                    val _ = Library.expect_token "@list" (get_token ())
+                  in parse_list_after_open () end
+                else
+                  case lookup_cpc_list token of
+                    SOME terms => List.map
+                      (unavailable_term
+                        "expanded CPC resolution-list alias") terms
+                  | NONE => raise ERR "parse_step"
+                      ("undefined CPC resolution @list alias " ^ token)
+              fun chain_resolution_args () =
+                let
+                  val polarities = parse_list (get_token ())
+                  val pivots = parse_list (get_token ())
+                  val _ = Library.expect_token ")" (get_token ())
+                  val _ = if List.length polarities = List.length pivots
+                    then () else raise ERR "parse_step"
+                      "CPC chain_resolution annotation lengths differ"
+                in polarities @ pivots end
               fun macro_resolution_args () =
                 let
                   val first = get_token ()
-                  fun parse_list_after_open () =
-                    let
-                      fun entries acc =
-                        let val token = get_token () in
-                          if token = ")" then List.rev acc
-                          else entries (parse_located_term dicts_ref
-                            (Library.undo_look_ahead [token] get_token) :: acc)
-                        end
-                    in entries [] end
-                  fun parse_list token =
-                    if token = "(" then
-                      let
-                        val _ = Library.expect_token "@list" (get_token ())
-                      in parse_list_after_open () end
-                    else
-                      case lookup_cpc_list token of
-                        SOME terms => List.map
-                          (unavailable_term
-                            "expanded CPC resolution-list alias") terms
-                      | NONE => raise ERR "parse_step"
-                          ("undefined CPC resolution @list alias " ^ token)
                 in
                   if first = ")" then []
                   else
@@ -3799,6 +3837,8 @@ local
             in
               if rule_name = "resolution" then
                 attrs seen_premises true premises (resolution_args ())
+              else if rule_name = "chain_resolution" then
+                attrs seen_premises true premises (chain_resolution_args ())
               else if #replay_handler rule = "resolution" then
                 (* Macro/chain resolution gives its result clause first;
                    the remaining arguments only describe its pivots. *)
@@ -4852,7 +4892,8 @@ in
       fun marker frame token indices args =
         let
           val ty = case (token, indices, args) of
-              ("BitVec", [bits], []) =>
+              ("Int", [], []) => intSyntax.int_ty
+            | ("BitVec", [bits], []) =>
                 wordsSyntax.mk_word_type (fcpLib.index_type (index bits))
             | ("FloatingPoint", [eb, sb], []) =>
                 SmtLib_Theories.smtfp_type (index eb, index sb)
@@ -4915,7 +4956,7 @@ in
         (#add_constructor_parser terms) (name, arithmetic)) totals
       val _ = List.app (fn name =>
         (#add_constructor_parser terms) (name, marker))
-        ["BitVec", "FloatingPoint", "->"]
+        ["Int", "BitVec", "FloatingPoint", "->"]
       val _ = List.app (fn name =>
         (#add_constructor_parser terms) (name, private_fp))
         ["@fp.SIGN", "@fp.EXPONENT", "@fp.SIGNIFICAND", "@fp.ZERO",
@@ -5063,7 +5104,7 @@ in
           | char::rest => (chars := rest;SOME char)
     in P.make_cpc_proof_tokenizer_from_input input () end
 
-  fun graph_definition_tokens resolve_binder_list next =
+  fun graph_definition_tokens indexed resolve_binder_list next =
     let
       fun finished () = raise ERR "graph_definition_tokens"
         "read beyond definition-list element"
@@ -5149,12 +5190,14 @@ in
         case cpc_semantic_token marked of
           "_" =>
             let val name = next () in
-              if marked = "_" andalso
-                 (name = "BitVec" orelse name = "FloatingPoint") then
+              if marked = "_" andalso indexed name then
                 emit "_" (literal name (data_tail continuation))
               else emit "@" (fn () =>
                 term_from name (terms continuation))
             end
+        | "@" =>
+            if marked = "@" then emit "@" (terms continuation)
+            else ordinary_head_from marked continuation
         | "is" => emit "(" (literal "_" (literal "is"
             (tester continuation)))
         | token =>
@@ -5200,10 +5243,10 @@ in
      Top-level @var has no shared-parser callback: parse its sort and close
      before constructing it. Inline binder operands use the same recursive
      grammar, while binders below ordinary applications remain ordinary. *)
-  fun graph_read_definition_list resolve_binder_list next parse_from parse_sort
+  fun graph_read_definition_list indexed resolve_binder_list next parse_from parse_sort
       private_variable locate =
     let
-      fun ordinary prefix = parse_from (graph_definition_tokens
+      fun ordinary prefix = parse_from (graph_definition_tokens indexed
         resolve_binder_list (Library.undo_look_ahead prefix next))
       fun object "(" =
             let val head = next () in
@@ -5227,7 +5270,7 @@ in
   (* Keep only alias names here, never copied list syntax or operands. The
      recursive parser resolves aliases before touching the body, unlike its
      ordinary sorted-binder fallback. *)
-  fun graph_definition_lists lookup_list symbol_key define_list =
+  fun graph_definition_lists indexed lookup_list symbol_key define_list =
     let
       val names = ref []
       fun resolve token =
@@ -5237,7 +5280,7 @@ in
              String.concatWith ", " (List.rev (!names)) ^ ")")
       fun define (name, entries) =
         (define_list (name, entries); names := symbol_key name :: !names)
-    in (graph_read_definition_list resolve, define) end
+    in (graph_read_definition_list indexed resolve, define) end
 
   (* Only structured rule formals are homogeneous lists. Ordinary argument
      packets flatten @list and deliberately allow heterogeneous objects. *)
@@ -5475,8 +5518,14 @@ in
         {solver = "cvc5", version = version, policy = F.CPC,
          reserved_names = reserved_names} token
       val _ = install_graph_recipes options terms
+      val indexed = cpc_indexed_identifier (fn name =>
+        let val namespace = (#namespace terms) () in
+          set_member (#proof_terms namespace) name orelse
+          set_member (#source_terms namespace) name orelse
+          Option.isSome (Redblackmap.peek (#2 declaration_dicts, name))
+        end)
       val (graph_read_definition_list, define_list) = graph_definition_lists
-        (#lookup_list terms) (#symbol_key terms) (#define_list terms)
+        indexed (#lookup_list terms) (#symbol_key terms) (#define_list terms)
       val _ = (#add_literal_parser terms)
         (fn token => cpc_literal_parsefn token [] [])
       val locations = graph_locations (#backend (#reader terms))
@@ -5514,6 +5563,7 @@ in
                    before constructing the authoritative HOL type. *)
               in RawList (RawAtom "_" :: RawAtom name ::
                 List.map graph_application indices) end
+            else if indexed name then raw
             else RawList (RawAtom "@" ::
               List.map graph_application (RawAtom name :: indices))
         | RawList (RawAtom "_" :: arguments) =>
@@ -5526,7 +5576,7 @@ in
         case raw of
           RawList [RawAtom "@var", RawAtom name, ty] =>
             (#private_variable terms) (cpc_var_name name, sort ty)
-        | _ => tokens (graph_application (normalize_cpc_testers raw))
+        | _ => tokens (graph_application (normalize_cpc_testers indexed raw))
             (#parse_from terms))
       fun raw_list context raw = case raw of RawList entries => entries
         | _ => error (context ^ " must be parenthesized")
@@ -5904,7 +5954,8 @@ in
       fun marker frame token indices args =
         let
           val ty = case (token, indices, args) of
-              ("BitVec", [bits], []) =>
+              ("Int", [], []) => intSyntax.int_ty
+            | ("BitVec", [bits], []) =>
                 wordsSyntax.mk_word_type (fcpLib.index_type (index bits))
             | ("FloatingPoint", [eb, sb], []) =>
                 SmtLib_Theories.smtfp_type (index eb, index sb)
@@ -5967,7 +6018,7 @@ in
         (#add_constructor_parser terms) (name, arithmetic)) totals
       val _ = List.app (fn name =>
         (#add_constructor_parser terms) (name, marker))
-        ["BitVec", "FloatingPoint", "->"]
+        ["Int", "BitVec", "FloatingPoint", "->"]
       val _ = List.app (fn name =>
         (#add_constructor_parser terms) (name, private_fp))
         ["@fp.SIGN", "@fp.EXPONENT", "@fp.SIGNIFICAND", "@fp.ZERO",
@@ -6050,8 +6101,14 @@ in
       val token = make_token ()
       val terms = make_session options description token
       val _ = install_recipes options terms
+      val indexed = cpc_indexed_identifier (fn name =>
+        let val namespace = (#namespace terms) () in
+          set_member (#proof_terms namespace) name orelse
+          set_member (#source_terms namespace) name orelse
+          Option.isSome (Redblackmap.peek (#2 declaration_dicts, name))
+        end)
       val (graph_read_definition_list, define_list) = graph_definition_lists
-        (#lookup_list terms) (#symbol_key terms) (#define_list terms)
+        indexed (#lookup_list terms) (#symbol_key terms) (#define_list terms)
       val _ = (#add_literal_parser terms)
         (fn token => cpc_literal_parsefn token [] [])
       val locations = graph_locations (#backend (#reader terms))
@@ -6089,6 +6146,7 @@ in
                    before constructing the authoritative HOL type. *)
               in RawList (RawAtom "_" :: RawAtom name ::
                 List.map graph_application indices) end
+            else if indexed name then raw
             else RawList (RawAtom "@" ::
               List.map graph_application (RawAtom name :: indices))
         | RawList (RawAtom "_" :: arguments) =>
@@ -6101,7 +6159,7 @@ in
         case raw of
           RawList [RawAtom "@var", RawAtom name, ty] =>
             (#private_variable terms) (cpc_var_name name, sort ty)
-        | _ => tokens (graph_application (normalize_cpc_testers raw))
+        | _ => tokens (graph_application (normalize_cpc_testers indexed raw))
             (#parse_from terms))
       fun raw_list context raw = case raw of RawList entries => entries
         | _ => error (context ^ " must be parenthesized")
