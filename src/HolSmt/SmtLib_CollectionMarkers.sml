@@ -31,6 +31,51 @@ struct
             SOME (_, then_term, else_term) =>
               mark else_term (mark then_term ((#add operations) term terms))
           | NONE => (#add operations) term terms)
+      (* Marks what the application [term] = [rator rands] introduces. *)
+      fun mark_application term rator rands terms =
+        case (#classify operations) (term, rator) of
+          Membership =>
+            (case rands of [_, collection] => mark collection terms
+             | _ => terms)
+        | UnaryObservation =>
+            (case rands of [collection] => mark collection terms
+             | _ => terms)
+        | Insert =>
+            (case rands of [_, collection] =>
+               mark term (mark collection terms)
+             | _ => terms)
+        | Delete =>
+            (case rands of [collection, _] =>
+               mark term (mark collection terms)
+             | _ => terms)
+        | BinaryConstruction =>
+            (case rands of [left, right] =>
+               mark term (mark left (mark right terms))
+             | _ => terms)
+        | UnaryConstruction =>
+            (case rands of [collection] =>
+               mark term (mark collection terms)
+             | _ => terms)
+        | Inclusion =>
+            (case rands of [left, right] => mark left (mark right terms)
+             | _ => terms)
+        | Empty => (#add operations) term terms
+        | Equality =>
+            (case rands of [left, right] =>
+               if (#is_collection_type operations) left andalso
+                  (#is_collection_type operations) right then
+                 mark left (mark right terms)
+               else terms
+             | _ => terms)
+        | Other => terms
+      (* The application prefixes of [term], longest first, ending with its
+         head. *)
+      fun prefixes term =
+        case (SOME ((#dest_comb operations) term)
+              handle primary => if is_syntax_error primary then NONE
+                else raise primary) of
+          SOME (function, _) => function :: prefixes function
+        | NONE => []
       fun walk term terms =
         memo_walk term terms (fn () => let
           val (rator, rands) = (#strip_comb operations) term
@@ -49,49 +94,22 @@ struct
                handle primary => if is_syntax_error primary then terms
                  else raise primary)
             else terms
+          (* Walking each prefix would walk its arguments again, so that
+             applications nested in their first argument took arity^depth
+             walks.  Walk the head once and mark each partial application
+             from its own arguments, which were walked above. *)
           val terms =
             if visit_prefix then
-              (let val (immediate_rator, _) = (#dest_comb operations) term
-               in walk immediate_rator terms end
-               handle primary => if is_syntax_error primary then terms
-                 else raise primary)
+              (case List.rev (prefixes term) of
+                 [] => terms
+               | head :: partials =>
+                   #2 (List.foldl (fn (partial, (count, acc)) =>
+                     (count + 1, mark_application partial rator
+                        (List.take (rands, count)) acc))
+                     (1, walk head terms) partials))
             else terms
         in
-          case (#classify operations) (term, rator) of
-            Membership =>
-              (case rands of [_, collection] => mark collection terms
-               | _ => terms)
-          | UnaryObservation =>
-              (case rands of [collection] => mark collection terms
-               | _ => terms)
-          | Insert =>
-              (case rands of [_, collection] =>
-                 mark term (mark collection terms)
-               | _ => terms)
-          | Delete =>
-              (case rands of [collection, _] =>
-                 mark term (mark collection terms)
-               | _ => terms)
-          | BinaryConstruction =>
-              (case rands of [left, right] =>
-                 mark term (mark left (mark right terms))
-               | _ => terms)
-          | UnaryConstruction =>
-              (case rands of [collection] =>
-                 mark term (mark collection terms)
-               | _ => terms)
-          | Inclusion =>
-              (case rands of [left, right] => mark left (mark right terms)
-               | _ => terms)
-          | Empty => (#add operations) term terms
-          | Equality =>
-              (case rands of [left, right] =>
-                 if (#is_collection_type operations) left andalso
-                    (#is_collection_type operations) right then
-                   mark left (mark right terms)
-                 else terms
-               | _ => terms)
-          | Other => terms
+          mark_application term rator rands terms
         end)
     in walk end
 
