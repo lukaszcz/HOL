@@ -1448,6 +1448,8 @@ local
       SmtLib_CollectionMarkers.Empty
     else if same_head boolSyntax.equality then
       SmtLib_CollectionMarkers.Equality
+    else if same_head combinSyntax.update_tm then
+      SmtLib_CollectionMarkers.Update
     else SmtLib_CollectionMarkers.Other
 
   fun classify_set_marker (tm, rator) =
@@ -1553,6 +1555,8 @@ local
     else if is_empty tm then SmtLib_CollectionMarkers.Empty
     else if same_head boolSyntax.equality then
       SmtLib_CollectionMarkers.Equality
+    else if same_head combinSyntax.update_tm then
+      SmtLib_CollectionMarkers.Update
     else SmtLib_CollectionMarkers.Other
 
   fun classify_bag_marker (tm, rator) =

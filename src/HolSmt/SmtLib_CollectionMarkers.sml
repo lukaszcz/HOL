@@ -1,7 +1,7 @@
 (* Copyright (c) 2026 The HOL4 contributors. *)
 structure SmtLib_CollectionMarkers :> SmtLib_CollectionMarkers =
 struct
-  datatype role = Membership | UnaryObservation | Insert | Delete
+  datatype role = Membership | UnaryObservation | Insert | Delete | Update
                 | BinaryConstruction | UnaryConstruction | Inclusion
                 | Empty | Equality | Other
 
@@ -96,6 +96,7 @@ struct
                    mark left (mark right terms)
                  else terms
                | _ => terms)
+          | Update => terms
           | Other => terms
         end)
     in walk end
@@ -127,6 +128,12 @@ struct
         let val terms = case (#condition operations) term of
                 SOME (_,left,right) => connect [term,left,right] terms
               | NONE => terms
+            val (head,args) = (#strip_comb operations) term
+            val terms = case (#classify operations) (term,head) of
+                Update => (case args of
+                    [_,_,base] => connect [term,base] terms
+                  | _ => terms)
+              | _ => terms
         in (let val bindings = (#bindings operations) term
                 val body = (#let_body closure) term
             in List.foldl (fn ((variable,value),acc) =>
