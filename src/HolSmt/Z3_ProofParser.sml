@@ -1286,7 +1286,8 @@ local
     symbol_key = SmtLib_Parser.proof_symbol_text,
     type_symbol_key = Lib.I,
     parse_choice = false,
-    parse_lambda = true
+    parse_lambda = true,
+    parse_cpc_const = false
   }
 
   fun unknown_proof_rule token _ args =

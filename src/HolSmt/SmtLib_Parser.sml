@@ -170,7 +170,8 @@ struct
     symbol_key: string -> string,
     type_symbol_key: string -> string,
     parse_choice: bool,
-    parse_lambda: bool
+    parse_lambda: bool,
+    parse_cpc_const: bool
   }
 
   (* Construction is selected before elaborating let bodies or binders.
@@ -184,7 +185,7 @@ struct
      heads : unit -> (string * 'a * int) list, sorts : Type.hol_type dict,
      callbacks : unit -> SmtLib_GraphBackend.index_callback list,
      symbol_key : string -> string, type_symbol_key : string -> string,
-     parse_choice : bool, parse_lambda : bool,
+     parse_choice : bool, parse_lambda : bool, parse_cpc_const : bool,
      binder_lists : unit -> (string * Term.term list) list,
      fixed : Term.term option, literal : Term.term option ref,
      diagnostic : (unit -> Term.term option) option ref}
@@ -210,6 +211,7 @@ struct
     index_limit : int,
     parse_choice : bool,
     parse_lambda : bool,
+    parse_cpc_const : bool,
     lookup_binder_list : string ->
       'a SmtLib_GraphBackend.binder option list option,
     binder_reference : 'a SmtLib_GraphBackend.frame -> string ->
@@ -284,6 +286,7 @@ struct
     index_limit : SmtReplayResourcePolicy.limit,
     parse_choice : bool,
     parse_lambda : bool,
+    parse_cpc_const : bool,
     lookup_binder_list : string ->
       'a SmtLib_GraphBackend.binder option list option,
     binder_reference : 'a SmtLib_GraphBackend.frame -> string ->
@@ -2267,7 +2270,8 @@ local
    let
     val headfn = parse_term_aux cfg get_token (tydict, tmdict) token
     val (typed,tokens) =
-      if token = "@const" andalso Option.isSome
+      if #parse_cpc_const cfg andalso token = "@const" andalso
+          Option.isSome
           (Redblackmap.peek (tmdict,(#symbol_key cfg) token)) then
         cpc_const_sort_operand (#type_symbol_key cfg) tydict get_token
       else (false,[])
@@ -2399,7 +2403,8 @@ local
     symbol_key = proof_symbol_text,
     type_symbol_key = Lib.I,
     parse_choice = false,
-    parse_lambda = false
+    parse_lambda = false,
+    parse_cpc_const = false
   }
 
   val parse_term = parse_term_with_cfg smtlib_cfg
@@ -2539,17 +2544,19 @@ local
      Persistent tails let nested captures share the token/head histories. *)
   fun construction_binder_lookup lookup
       {backend,frame,symbol_key,type_symbol_key,index_limit,parse_choice,
-       parse_lambda,lookup_binder_list,record_binder_block,binder_reference,
-       ascribed_symbol,coerce_arguments} =
+       parse_lambda,parse_cpc_const,lookup_binder_list,record_binder_block,
+       binder_reference,ascribed_symbol,coerce_arguments} =
     {backend=backend,frame=frame,symbol_key=symbol_key,
      type_symbol_key=type_symbol_key,index_limit=index_limit,
      parse_choice=parse_choice,parse_lambda=parse_lambda,
+     parse_cpc_const=parse_cpc_const,
      lookup_binder_list=lookup,record_binder_block=record_binder_block,
      binder_reference=binder_reference,ascribed_symbol=ascribed_symbol,
      coerce_arguments=coerce_arguments}
 
   fun index_source_reader backend symbol_key type_symbol_key sorts
-      parse_choice parse_lambda lookup_binder_list original_token =
+      parse_choice parse_lambda parse_cpc_const
+      lookup_binder_list original_token =
     let
       val depth = ref 0
       val history = ref []
@@ -2620,7 +2627,7 @@ local
              callbacks=callbacks,sorts=sorts,
              symbol_key=symbol_key,
              type_symbol_key=type_symbol_key,parse_choice=parse_choice,
-             parse_lambda=parse_lambda,
+             parse_lambda=parse_lambda,parse_cpc_const=parse_cpc_const,
              binder_lists=fn () => prefix before_lists after_lists,
              fixed=fixed,literal=ref fixed,diagnostic=ref NONE}
         in (SourceIndex (construction_value parsed,source),SOME parsed,token)
@@ -2885,7 +2892,8 @@ local
       val backend = #backend cfg
       val reader = index_source_reader backend (#symbol_key cfg)
         (#type_symbol_key cfg) tydict (#parse_choice cfg)
-        (#parse_lambda cfg) (#lookup_binder_list cfg) get_token
+        (#parse_lambda cfg) (#parse_cpc_const cfg)
+        (#lookup_binder_list cfg) get_token
       val cfg = construction_binder_lookup (#lookup_binder_list reader) cfg
       val original_token = #get_token reader
       val pending_tokens = ref ([] : string list)
@@ -3024,7 +3032,8 @@ local
               in construction_apply_qualified backend frame occurrence function
               end
             end
-          else if head = "@const" then
+          else if #parse_cpc_const cfg andalso head = "@const" andalso
+              Redblackmap.inDomain (dictionary,(#symbol_key cfg) head) then
             let
               val (typed,tokens) = cpc_const_sort_operand
                 (#type_symbol_key cfg) tydict get_token
@@ -3286,7 +3295,8 @@ local
       val backend = #backend cfg
       val reader = index_source_reader backend (#symbol_key cfg)
         (#type_symbol_key cfg) tydict (#parse_choice cfg)
-        (#parse_lambda cfg) (#lookup_binder_list cfg) get_token
+        (#parse_lambda cfg) (#parse_cpc_const cfg)
+        (#lookup_binder_list cfg) get_token
       val cfg = construction_binder_lookup (#lookup_binder_list reader) cfg
       val original_token = #get_token reader
       val pending_tokens = ref ([] : string list)
@@ -3424,7 +3434,8 @@ local
               in construction_apply_qualified backend frame occurrence function
               end
             end
-          else if head = "@const" then
+          else if #parse_cpc_const cfg andalso head = "@const" andalso
+              Redblackmap.inDomain (dictionary,(#symbol_key cfg) head) then
             let
               val (typed,tokens) = cpc_const_sort_operand
                 (#type_symbol_key cfg) tydict get_token

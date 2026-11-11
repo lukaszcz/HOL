@@ -287,7 +287,8 @@ local
     symbol_key = quoted_symbol_key,
     type_symbol_key = quoted_symbol_key,
     parse_choice = false,
-    parse_lambda = true
+    parse_lambda = true,
+    parse_cpc_const = true
   }
 
   fun cpc_symbol_key where_ token =

@@ -14735,6 +14735,20 @@ in
   check_oracle_tags "CPC scoped purification" theorem
 end
 
+fun ordinary_const_declaration () =
+let
+  val assertions = parse_smtlib_assertions
+    "(set-logic ALL) (declare-const Bool Bool) \
+    \(declare-fun @const (Int Bool) Bool) (assert (@const 0 Bool))"
+  val function = Term.mk_var
+    ("@const", boolSyntax.list_mk_fun ([intSyntax.int_ty,Type.bool],Type.bool))
+  val expected = Term.list_mk_comb
+    (function,[intSyntax.zero_tm,Term.mk_var ("Bool",Type.bool)])
+in
+  assert (length assertions = 1 andalso hd assertions ~~ expected,
+    "ordinary @const declaration was parsed as CPC sort metadata")
+end
+
 fun cpc_private_const_requires_registry () =
 let
   val next = SmtLib_Parser.make_cpc_proof_stream_tokenizer
@@ -35054,6 +35068,7 @@ let
       cpc_private_const_user_sorts_success),
     ("cpc_private_const_purification_success",
       cpc_private_const_purification_success),
+    ("ordinary_const_declaration",ordinary_const_declaration),
     ("cpc_private_const_requires_registry",
       cpc_private_const_requires_registry),
     ("cpc_private_const_graph_worker_unchanged",
