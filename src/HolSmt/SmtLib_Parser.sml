@@ -1699,38 +1699,25 @@ local
     t_with_args_raw dict token indices args
     handle SmtLib_Theories.ParseDecline exn => raise exn
 
-  (* Sort operands and legacy term-valued CPC markers have distinct
-     namespaces. Look ahead without choosing a term fallback after a sort
-     error; callers replay the tokens through their current lexical frame. *)
-  fun cpc_const_sort_operand symbol_key tydict get_token =
+  (* Elaborate the index before looking at the next operand, so its errors
+     precede later malformed syntax. Only the sort head needs lookahead;
+     callers replay that prefix without retrying sort errors as terms. *)
+  fun cpc_const_sort_operand symbol_key tydict parse_index get_token =
     let
-      fun operand first =
-        if first <> "(" then [first] else
-          let
-            fun read depth acc =
-              let val token = get_token ()
-                  val depth = if token = "(" then depth + 1
-                    else if token = ")" then depth - 1 else depth
-              in if depth = 0 then List.rev (token :: acc)
-                else read depth (token :: acc) end
-          in read 1 [first] end
-      fun sort_head ("(" :: "_" :: name :: _) = SOME name
-        | sort_head ("(" :: name :: _) = SOME name
-        | sort_head [name] = SOME name
-        | sort_head _ = NONE
       val first = get_token ()
-    in if first = ")" then (false,[first]) else
-      let val index = operand first
+    in if first = ")" then (NONE,false,[first]) else
+      let val index = parse_index first
           val second = get_token ()
-      in if second = ")" then (false,index @ [second]) else
-        let val sort = operand second
-            val last = get_token ()
-            val typed = last = ")" andalso
-              (case sort_head sort of NONE => false
-                | SOME name => Option.isSome
-                    (Redblackmap.peek (tydict,symbol_key name)))
-        in (typed,index @ sort @ [last]) end
-      end
+          val (name,tokens) = if second = "(" then
+              let val head = get_token ()
+              in if head = "_" then
+                  let val name = get_token ()
+                  in (name,[second,head,name]) end
+                else (head,[second,head]) end
+            else (second,[second])
+          val typed = Option.isSome
+            (Redblackmap.peek (tydict,symbol_key name))
+      in (SOME index,typed,tokens) end
     end
 
   fun declared_sort_parsefn sort_name arity =
@@ -2269,20 +2256,22 @@ local
     : Term.term =
    let
     val headfn = parse_term_aux cfg get_token (tydict, tmdict) token
-    val (typed,tokens) =
+    val (index,typed,tokens) =
       if #parse_cpc_const cfg andalso token = "@const" andalso
           Option.isSome
           (Redblackmap.peek (tmdict,(#symbol_key cfg) token)) then
-        cpc_const_sort_operand (#type_symbol_key cfg) tydict get_token
-      else (false,[])
+        cpc_const_sort_operand (#type_symbol_key cfg) tydict
+          (fn first => parse_term_aux cfg get_token
+            (tydict,tmdict) first []) get_token
+      else (NONE,false,[])
     val next = Library.undo_look_ahead tokens get_token
     val operands = if typed then
         let
-          val index = parse_term_with_cfg cfg next (tydict,tmdict)
           val ty = parse_type_with_key (#type_symbol_key cfg) next tydict
           val _ = Library.expect_token ")" (next ())
-        in [index,Term.mk_var ("@cpc.sort",ty)] end
-      else parse_term_operands cfg next (tydict,tmdict) []
+        in [valOf index,Term.mk_var ("@cpc.sort",ty)] end
+      else parse_term_operands cfg next (tydict,tmdict)
+        (case index of NONE => [] | SOME value => [value])
   in
     headfn operands
   end
@@ -3035,12 +3024,12 @@ local
           else if #parse_cpc_const cfg andalso head = "@const" andalso
               Redblackmap.inDomain (dictionary,(#symbol_key cfg) head) then
             let
-              val (typed,tokens) = cpc_const_sort_operand
-                (#type_symbol_key cfg) tydict get_token
+              val (number,typed,tokens) = cpc_const_sort_operand
+                (#type_symbol_key cfg) tydict
+                (fn first => term_aux frame first []) get_token
               val _ = unread tokens
               val value = if typed then
                 let
-                  val number = term frame
                   val ty = parse_type_with_key (#type_symbol_key cfg)
                     get_token tydict
                   val _ = expect ")"
@@ -3049,10 +3038,11 @@ local
                   val metadata = occurrence frame
                     (SOME (C.variable (Term.mk_var ("@cpc.sort",ty))))
                     marker ConstructionAtom "@cpc.sort" []
-                in apply frame head [] [number,metadata]
-                  ConstructionApplication [number] end
+                in apply frame head [] [valOf number,metadata]
+                  ConstructionApplication [valOf number] end
               else
-                let val children = operands frame []
+                let val children = operands frame
+                      (case number of NONE => [] | SOME value => [value])
                 in apply frame head [] children
                   ConstructionApplication children end
             in fn arguments => no_arguments arguments value end
@@ -3437,12 +3427,12 @@ local
           else if #parse_cpc_const cfg andalso head = "@const" andalso
               Redblackmap.inDomain (dictionary,(#symbol_key cfg) head) then
             let
-              val (typed,tokens) = cpc_const_sort_operand
-                (#type_symbol_key cfg) tydict get_token
+              val (number,typed,tokens) = cpc_const_sort_operand
+                (#type_symbol_key cfg) tydict
+                (fn first => term_aux frame first []) get_token
               val _ = unread tokens
               val value = if typed then
                 let
-                  val number = term frame
                   val ty = parse_type_with_key (#type_symbol_key cfg)
                     get_token tydict
                   val _ = expect ")"
@@ -3451,10 +3441,11 @@ local
                   val metadata = occurrence frame
                     (SOME (C.variable (Term.mk_var ("@cpc.sort",ty))))
                     marker ConstructionAtom "@cpc.sort" []
-                in apply frame head [] [number,metadata]
-                  ConstructionApplication [number] end
+                in apply frame head [] [valOf number,metadata]
+                  ConstructionApplication [valOf number] end
               else
-                let val children = operands frame []
+                let val children = operands frame
+                      (case number of NONE => [] | SOME value => [value])
                 in apply frame head [] children
                   ConstructionApplication children end
             in fn arguments => no_arguments arguments value end

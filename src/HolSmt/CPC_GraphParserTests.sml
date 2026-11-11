@@ -2585,8 +2585,27 @@ struct
       val _ = private_dependencies ()
       val _ = argument_resource_failure ()
       val _ = typed_private_constants ()
-      val _ = negative "truncated registered private constant first error"
-        "((assume @a (= (@const task35_missing_arg (-> Bool"
+      val _ = List.app (fn (label,term) =>
+        let val text = "((define @xs () (@list " ^ term
+        in
+          test (label ^ " / native") (fn () => owned (fn e => require
+            "private constant unknown operand did not precede later syntax"
+            (failure (fn () => ignore (legacy e text)) =
+             SOME ("SmtLib_Parser","t_with_args_unknown_symbol",
+               "failed to parse 'task35_missing_arg' (with indices [] and " ^
+               "0 argument(s)): unknown symbol (no dictionary entry)"))));
+          negative label text
+        end)
+        [("private index precedes malformed sort",
+          "(@const task35_missing_arg (-> Bool"),
+         ("private index precedes EOF","(@const task35_missing_arg"),
+         ("private marker precedes EOF","(@const 0 task35_missing_arg"),
+         ("nested private index precedes later syntax",
+          "(@const (or task35_missing_arg ("),
+         ("closed private index diagnostic",
+          "(@const task35_missing_arg Bool))))"),
+         ("closed private marker diagnostic",
+          "(@const 0 task35_missing_arg))))")]
       val _ = test "actual emitted datatype tester fixtures" testers
       (* All registry entries must reject missing/extra arguments through
          the native authoritative callback, not a graph-only catch-all. *)
