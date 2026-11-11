@@ -5687,9 +5687,11 @@ local
             SmtResource.max_skeleton_replay_dag_nodes
             (SmtResource.dag_nodes_up_to
                SmtResource.max_skeleton_replay_dag_nodes template)
-          val normalized = wordsLib.WORD_ARITH_CONV template
+          val normalized = SmtResource.with_resource_step_time
+              "BitVector" "word-ring-schema" wordsLib.WORD_ARITH_CONV template
             handle Conv.UNCHANGED =>
-              raise ERR "bv_poly_norm" "word ring normalisation made no progress"
+              raise ERR "bv_poly_norm"
+                "word ring normalisation made no progress"
           val _ = Term.aconv (boolSyntax.rhs (Thm.concl normalized))
               boolSyntax.T orelse
             raise ERR "bv_poly_norm" "word ring sides normalise differently"
