@@ -448,6 +448,13 @@ class PrepareOnly(FakeRepo):
         finally:
             sys.argv, task25.__file__ = saved
         manifest = json.loads((self.out / "manifest.json").read_text())
+        if self.exit is None:  # the exit status must follow the disk manifest
+            self.assertTrue(manifest["success"])
+        else:
+            self.assertFalse(manifest["success"])
+            self.assertEqual(str(self.exit), "; ".join(
+                manifest[k] for k in ("failure", "cleanup_failure")
+                if k in manifest))
         return manifest, scratch
 
     def test_provenance_and_cleanup(self):
@@ -581,22 +588,43 @@ class PrepareOnly(FakeRepo):
         self.assertNotIn("failure", m)
         self.assertIsNone(self.exit)
 
-    def test_signal_after_first_manifest_write_rewrites_it(self):
-        dump = task25.dump
+    def test_signal_after_final_write_is_ignored(self):
+        finish = task25.finish
 
-        def spy(output, name, value):
-            result = dump(output, name, value)
-            if name == "manifest.json" and not self.sent:
-                self.sent = True
-                os.kill(os.getpid(), signal.SIGTERM)
-            return result
-        self.sent = False
-        with mock.patch.object(task25, "dump", spy):
-            m, scratch = self.run_main(expect_exit=True)
-        self.assertFalse(m["success"])
-        self.assertIn("terminated by SIGTERM", m["failure"])
-        self.assertIn("terminated by SIGTERM", str(self.exit))
+        def late(*a, **kw):
+            finish(*a, **kw)
+            os.kill(os.getpid(), signal.SIGTERM)
+            os.kill(os.getpid(), signal.SIGINT)
+        with mock.patch.object(task25, "finish", late):
+            m, scratch = self.run_main()  # run_main checks exit == manifest
+        self.assertTrue(m["success"])
+        self.assertIsNone(self.exit)
         self.assertFalse(scratch.exists())
+
+    def test_signal_at_finish_entry_is_a_recorded_failure(self):
+        finish = task25.finish
+
+        def early(*a, **kw):
+            self.assertEqual(task25.STATE.mode, task25.DEFER)
+            os.kill(os.getpid(), signal.SIGTERM)
+            finish(*a, **kw)
+        with mock.patch.object(task25, "finish", early):
+            m, scratch = self.run_main(expect_exit=True)
+        self.assertIn("terminated by SIGTERM", m["failure"])
+        self.assertFalse(scratch.exists())
+        self.assertTrue(m["task_scratch_removed"])
+
+    def test_signal_during_create_records_path_and_cleans(self):
+        mkdir = task25.mkdir_scratch
+
+        def signalling(path):
+            os.kill(os.getpid(), signal.SIGTERM)
+            return mkdir(path)
+        with mock.patch.object(task25, "mkdir_scratch", signalling):
+            m, scratch = self.run_main(expect_exit=True)
+        self.assertIn("terminated by SIGTERM", m["failure"])
+        self.assertFalse(scratch.exists())
+        self.assertTrue(m["task_scratch_removed"])
 
     def test_keyboard_interrupt_exits_with_manifest_message(self):
         def archive(runner, *a, **kw):
@@ -605,19 +633,7 @@ class PrepareOnly(FakeRepo):
         with mock.patch.object(task25.Runner, "archive", archive):
             m, scratch = self.run_main(expect_exit=True)
         self.assertIn("KeyboardInterrupt", m["failure"])
-        self.assertEqual(str(self.exit), m["failure"])
         self.assertFalse(scratch.exists())
-
-    def test_keyboard_interrupt_outside_guarded_region(self):
-        finish = task25.finish
-
-        def interrupted(*a, **kw):
-            finish(*a, **kw)
-            raise KeyboardInterrupt
-        with mock.patch.object(task25, "finish", interrupted):
-            m, scratch = self.run_main(expect_exit=True)
-        self.assertFalse(scratch.exists())
-        self.assertEqual(str(self.exit), "KeyboardInterrupt")
 
     def test_cleanup_failure_keeps_original_failure(self):
         self.patch.write_text(self.patch.read_text().replace(

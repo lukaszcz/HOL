@@ -729,39 +729,60 @@ def parse_args():
     return ap.parse_args()
 
 
+RAISE, DEFER, IGNORE = "raise", "defer", "ignore"
+GUARDED = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+
+
+class SignalState:
+    """RAISE: a guarded signal raises. DEFER: it is only recorded. IGNORE:
+    it is dropped (the result is final)."""
+    mode = RAISE
+    recorded = []
+
+
+STATE = SignalState()
+
+
+def on_signal(signum, frame):
+    name = signal.Signals(signum).name
+    if STATE.mode == IGNORE:
+        return
+    STATE.recorded.append(name)
+    if STATE.mode == RAISE:
+        raise_recorded(name)
+
+
+def raise_recorded(name):
+    if name == "SIGINT":
+        raise KeyboardInterrupt
+    raise SystemExit("terminated by " + name)
+
+
 @contextlib.contextmanager
 def terminating_signals():
-    """Turn SIGTERM/SIGHUP into SystemExit so the cleanup always runs."""
-    def handler(signum, frame):
-        raise SystemExit("terminated by " + signal.Signals(signum).name)
+    """Route SIGTERM/SIGHUP/SIGINT through the state machine above."""
+    STATE.mode, STATE.recorded = RAISE, []
     # Leave ignored signals (nohup) ignored.
-    previous = {n: signal.signal(n, handler)
-                for n in (signal.SIGTERM, signal.SIGHUP)
+    previous = {n: signal.signal(n, on_signal) for n in GUARDED
                 if signal.getsignal(n) != signal.SIG_IGN}
     try:
         yield
     finally:
         for number, old in previous.items():
             signal.signal(number, old)
-
-
-GUARDED = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
-
-
-@contextlib.contextmanager
-def blocked_signals():
-    """Defer termination signals; they arrive when the block is left."""
-    old = signal.pthread_sigmask(signal.SIG_BLOCK, GUARDED)
-    try:
-        yield
-    finally:
-        signal.pthread_sigmask(signal.SIG_SETMASK, old)
+        STATE.mode = RAISE
 
 
 def create(created, key, make):
-    """Create something and record it with no signal in between."""
-    with blocked_signals():
+    """Create something and record it with no signal raised in between."""
+    seen = len(STATE.recorded)
+    STATE.mode = DEFER
+    try:
         created[key] = make()
+    finally:
+        STATE.mode = RAISE
+    if len(STATE.recorded) > seen:
+        raise_recorded(STATE.recorded[-1])
 
 
 def mkdir_output(path):
@@ -947,17 +968,6 @@ def execute(args, repo, planned, m, created):
     m["success"] = True
 
 
-def consume_signals():
-    """Take pending guarded signals; names of those not ignored."""
-    names = []
-    while True:
-        info = signal.sigtimedwait(GUARDED, 0)
-        if info is None:
-            return names
-        if signal.getsignal(info.si_signo) != signal.SIG_IGN:
-            names.append(signal.Signals(info.si_signo).name)
-
-
 def note_signals(m, names):
     if names:
         m["success"] = False
@@ -965,23 +975,20 @@ def note_signals(m, names):
 
 
 def finish(args, planned, m, created):
-    with blocked_signals():
-        scratch = created.get("scratch")
-        if scratch is not None:
-            try:
-                shutil.rmtree(scratch)
-            except OSError as exc:
-                m["success"] = False
-                m["cleanup_failure"] = "scratch cleanup failed: " + str(exc)
-        m["task_scratch_removed"] = scratch is None or not scratch.exists()
-        m["existing_scratch_preserved"] = bool(args.existing_core)
-        note_signals(m, consume_signals())
-        if created.get("output"):
-            dump(planned["output"], "manifest.json", m)
-            late = consume_signals()  # nothing may stay pending on unblock
-            if late:
-                note_signals(m, late)
-                dump(planned["output"], "manifest.json", m)
+    """Runs in DEFER mode; leaves IGNORE mode once the manifest is final."""
+    scratch = created.get("scratch")
+    if scratch is not None:
+        try:
+            shutil.rmtree(scratch)
+        except OSError as exc:
+            m["success"] = False
+            m["cleanup_failure"] = "scratch cleanup failed: " + str(exc)
+    m["task_scratch_removed"] = scratch is None or not scratch.exists()
+    m["existing_scratch_preserved"] = bool(args.existing_core)
+    note_signals(m, set(STATE.recorded))
+    if created.get("output"):
+        dump(planned["output"], "manifest.json", m)
+    STATE.mode = IGNORE
 
 
 def main():
@@ -989,22 +996,21 @@ def main():
     repo = Path(__file__).resolve().parents[4]
     planned = plan(args, repo)
     m, created = {"schema": 1, "success": False, "runs": []}, {}
-    try:
-        with terminating_signals():
-            try:
-                execute(args, repo, planned, m, created)
-            except BaseException as exc:
-                m["success"] = False
-                m["failure"] = type(exc).__name__ + ": " + str(exc)
-            finally:
-                finish(args, planned, m, created)
-    except KeyboardInterrupt:
-        m["success"] = False
-        m.setdefault("failure", "KeyboardInterrupt")
-    print(planned["output"] / "manifest.json")
-    if not m["success"]:
-        raise SystemExit("; ".join(m[k] for k in ("failure", "cleanup_failure")
-                                   if k in m))
+    with terminating_signals():
+        try:
+            execute(args, repo, planned, m, created)
+        except BaseException as exc:
+            m["success"] = False
+            m["failure"] = type(exc).__name__ + ": " + str(exc)
+        finally:
+            STATE.mode = DEFER
+            finish(args, planned, m, created)
+        # The exit status follows the manifest that finish() just wrote.
+        print(planned["output"] / "manifest.json")
+        if not m["success"]:
+            raise SystemExit("; ".join(m[k] for k in
+                                       ("failure", "cleanup_failure")
+                                       if k in m))
 
 
 def inventory_sources(root, sources):
