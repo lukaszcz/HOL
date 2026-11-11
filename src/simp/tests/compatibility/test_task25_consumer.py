@@ -565,6 +565,60 @@ class PrepareOnly(FakeRepo):
         self.assertFalse(m["success"])
         self.assertIn("terminated by SIGTERM", m["failure"])
 
+    def test_ignored_signal_during_cleanup_is_not_a_failure(self):
+        rmtree = shutil.rmtree
+
+        def signalling(path, *a, **kw):
+            os.kill(os.getpid(), signal.SIGHUP)
+            return rmtree(path, *a, **kw)
+        previous = signal.signal(signal.SIGHUP, signal.SIG_IGN)
+        try:
+            with mock.patch.object(task25.shutil, "rmtree", signalling):
+                m, scratch = self.run_main()
+        finally:
+            signal.signal(signal.SIGHUP, previous)
+        self.assertTrue(m["success"])
+        self.assertNotIn("failure", m)
+        self.assertIsNone(self.exit)
+
+    def test_signal_after_first_manifest_write_rewrites_it(self):
+        dump = task25.dump
+
+        def spy(output, name, value):
+            result = dump(output, name, value)
+            if name == "manifest.json" and not self.sent:
+                self.sent = True
+                os.kill(os.getpid(), signal.SIGTERM)
+            return result
+        self.sent = False
+        with mock.patch.object(task25, "dump", spy):
+            m, scratch = self.run_main(expect_exit=True)
+        self.assertFalse(m["success"])
+        self.assertIn("terminated by SIGTERM", m["failure"])
+        self.assertIn("terminated by SIGTERM", str(self.exit))
+        self.assertFalse(scratch.exists())
+
+    def test_keyboard_interrupt_exits_with_manifest_message(self):
+        def archive(runner, *a, **kw):
+            os.kill(os.getpid(), signal.SIGINT)
+            time.sleep(5)
+        with mock.patch.object(task25.Runner, "archive", archive):
+            m, scratch = self.run_main(expect_exit=True)
+        self.assertIn("KeyboardInterrupt", m["failure"])
+        self.assertEqual(str(self.exit), m["failure"])
+        self.assertFalse(scratch.exists())
+
+    def test_keyboard_interrupt_outside_guarded_region(self):
+        finish = task25.finish
+
+        def interrupted(*a, **kw):
+            finish(*a, **kw)
+            raise KeyboardInterrupt
+        with mock.patch.object(task25, "finish", interrupted):
+            m, scratch = self.run_main(expect_exit=True)
+        self.assertFalse(scratch.exists())
+        self.assertEqual(str(self.exit), "KeyboardInterrupt")
+
     def test_cleanup_failure_keeps_original_failure(self):
         self.patch.write_text(self.patch.read_text().replace(
             "@@ -1 +1,2 @@\n \n", "@@ -1 +1,2 @@\n x\n"))

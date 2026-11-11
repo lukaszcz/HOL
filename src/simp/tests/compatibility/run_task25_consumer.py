@@ -25,8 +25,9 @@ revision plus the consumer's own listScript.sml. --alias (absolute) replaces
 the alias derived from the caller's configuration and must equal the HOLDIR
 the core is configured with; it must not equal, contain or lie inside the
 scratch, output, reused core or consumer. --scratch is REQUIRED when
---simplifier-revision differs from the pin or --alias is given (only the exact
-TASK25 reproduction may fall back to a private /tmp directory). It must be
+--simplifier-revision differs from the pin or --alias, --jobs or
+--skip-routine is given (only the exact TASK25 reproduction may fall back to a
+private /tmp directory). It must be
 absolute, new, in an existing parent directory, outside the caller checkout
 (it is neither inside nor containing it, symlinks resolved) and not under /tmp
 or /var/tmp; it is created with mkdir and removed on exit or on SIGTERM/SIGHUP.
@@ -946,6 +947,23 @@ def execute(args, repo, planned, m, created):
     m["success"] = True
 
 
+def consume_signals():
+    """Take pending guarded signals; names of those not ignored."""
+    names = []
+    while True:
+        info = signal.sigtimedwait(GUARDED, 0)
+        if info is None:
+            return names
+        if signal.getsignal(info.si_signo) != signal.SIG_IGN:
+            names.append(signal.Signals(info.si_signo).name)
+
+
+def note_signals(m, names):
+    if names:
+        m["success"] = False
+        m.setdefault("failure", "terminated by " + ", ".join(sorted(names)))
+
+
 def finish(args, planned, m, created):
     with blocked_signals():
         scratch = created.get("scratch")
@@ -957,13 +975,13 @@ def finish(args, planned, m, created):
                 m["cleanup_failure"] = "scratch cleanup failed: " + str(exc)
         m["task_scratch_removed"] = scratch is None or not scratch.exists()
         m["existing_scratch_preserved"] = bool(args.existing_core)
-        pending = signal.sigpending() & set(GUARDED)
-        if pending:
-            m["success"] = False
-            m.setdefault("failure", "terminated by " + ", ".join(
-                sorted(signal.Signals(n).name for n in pending)))
+        note_signals(m, consume_signals())
         if created.get("output"):
             dump(planned["output"], "manifest.json", m)
+            late = consume_signals()  # nothing may stay pending on unblock
+            if late:
+                note_signals(m, late)
+                dump(planned["output"], "manifest.json", m)
 
 
 def main():
@@ -971,14 +989,18 @@ def main():
     repo = Path(__file__).resolve().parents[4]
     planned = plan(args, repo)
     m, created = {"schema": 1, "success": False, "runs": []}, {}
-    with terminating_signals():
-        try:
-            execute(args, repo, planned, m, created)
-        except BaseException as exc:
-            m["success"] = False
-            m["failure"] = type(exc).__name__ + ": " + str(exc)
-        finally:
-            finish(args, planned, m, created)
+    try:
+        with terminating_signals():
+            try:
+                execute(args, repo, planned, m, created)
+            except BaseException as exc:
+                m["success"] = False
+                m["failure"] = type(exc).__name__ + ": " + str(exc)
+            finally:
+                finish(args, planned, m, created)
+    except KeyboardInterrupt:
+        m["success"] = False
+        m.setdefault("failure", "KeyboardInterrupt")
     print(planned["output"] / "manifest.json")
     if not m["success"]:
         raise SystemExit("; ".join(m[k] for k in ("failure", "cleanup_failure")
