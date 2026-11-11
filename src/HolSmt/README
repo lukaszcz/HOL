@@ -90,6 +90,19 @@ with `--proof-granularity=dsl-rewrite`; the CPC parser version-gates every
 rule and the replay engine reconstructs a HOL theorem before `CVC.sml` checks
 its hypotheses, conclusion, and oracle tags.  Set `HOL4_CVC_EXECUTABLE` to
 select cvc5.  CPC is the sole checked cvc5 replay format.
+Array extensionality (`arrays_ext`) derives the differing choice-index
+reads from the array disequality premise in HOL, including array-encoded
+sets; the certificate conclusion is checked against that theorem.
+
+CPC `chain_resolution` accepts parallel polarity and pivot lists, including
+proof-local list aliases. Its conclusion may be omitted; checked replay then
+derives the resolvent one pivot occurrence at a time, falling back to
+checked canonical binary resolution when occurrence replay declines.
+
+CPC `quant-dt-split` rewrites a universal datatype quantifier into a
+conjunction of constructor cases. Replay proves the certificate's equality
+using the datatype's TypeBase exhaustiveness theorem and universal
+specialization, preserving the remaining binders and constructor fields.
 
 For a cvc5 upgrade, test the official release binary against the checked
 matrix rather than accepting proof-format drift.  The matrix commands are in
@@ -177,6 +190,10 @@ Quantifier-free checked queries and every oracle query retain `(check-sat)`.
 The verifier writes its five-version report to
 `.holsmt-z3-version-matrix/report.json` in the validation checkout.
 
+Z3's `der` equality steps use checked HOL rewrite replay.  Subsequent
+`elim-unused` steps use Boolean simplification, including unused binders
+underneath retained binders; both rules must prove their recorded equality.
+
 Seq, Set, and Bag are solver extensions rather than SMT-LIB standard
 theories.  The coverage matrix at
 `$HOLSMT_VALIDATION_DIR/tools/coverage/SMTLIB_COVERAGE.md` records every
@@ -185,11 +202,6 @@ Sets and Z3-only sequence higher-order operators; cvc5 1.3.4 has native
 finite `set.*`/`bag.*` and its cvc5-only sequence operations.  In particular,
 `seq.fold_left` is unavailable on Z3 4.11.2 and available from 4.12.4 (it is
 a parser-side alias only: the printer always emits `seq.foldl`).
-
-In cvc5's Array fallback, collection carriers propagate through conditionals,
-let bindings, and shared function arguments and results. Array-valued datatype
-selectors use unary uninterpreted functions, and constructors with Array-valued
-arguments use the UF abstraction. Checked replay reconstructs the HOL selectors.
 
 Z3 4.14.1 rejects `Array` under seven non-QF logic names that HolSmt can infer:
 `ALIRA`, `ANIA`, `ANIRA`, `AUFDTLIA`, `AUFDTLIRA`, `AUFDTNIRA`, and
@@ -424,6 +436,12 @@ parser/typechecker embeddings and record proof obligations for the soundness
 audit.  Replay is not claimed merely because parsing, typechecking or HOL
 translation succeeds.
 
+Native datatype emission declares constructor-field dependencies before their
+users, grouping only mutually recursive types, including recursion through
+lists and products. This permits acyclic datatype dependencies in function
+domains without creating a non-covariant mutual declaration. Opaque field
+sorts are declared first; previously declared sorts are reused.
+
 The Datatypes row's checked selector replay applies to parser-native selector
 case terms.  It is not, by itself, a claim about HOL destructor constants.
 Before emission, applications of TypeBase-registered destructors to symbolic
@@ -468,8 +486,10 @@ For a theorem-producing result, the trusted path is:
   representation are trusted translation code, with deterministic round-trip
   and range checks in `Unittest.sml`.
 - Native HOL strings are first rewritten through the proved `str_inj`
-  injectivity and operator-transfer theorems.  Each resulting injection image
-  is generalized to an unconstrained SMT-LIB `String` value.  A solver result
+  injectivity and operator-transfer theorems, including `STRLEN` after
+  natural-to-integer transfer. Injected HOL string literals retain their
+  character codes as SMT-LIB string literals. Other injection images
+  are generalized to unconstrained SMT-LIB `String` values. A solver result
   proved for every well-formed Unicode string therefore specializes soundly
   to the injection image, while tactic validation carries the exact HOL-side
   rewrite back to the original goal.  This is the only route from HOL string

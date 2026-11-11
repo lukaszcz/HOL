@@ -30,8 +30,10 @@ sig
      mark : 'term -> 'term list -> (unit -> 'term list) -> 'term list}
 
   (* Set and Bag preserve different traversal policies. Set markers flow
-     from let-local variables back to binding values. Bag markers also visit
-     immediate application prefixes, as well as the flattened arguments.
+     from let-local variables back to binding values. Bag markers also
+     classify every application prefix with its own arguments and walk the
+     head, as well as the flattened arguments. Without binding propagation
+     this gives the markers, in order, of walking every prefix in full.
      Body/binding/prefix discovery retains the legacy HOL_ERR fallbacks.
      Each hook receives the current term, exact immutable incoming marker
      list and a synchronous computation. A graph caller keys separate walk
@@ -55,12 +57,14 @@ sig
     'term -> 'term list -> 'term list
 
   (* Seed once, then close conditional/let/update and same-symbol
-     argument/result carriers over the supplied term inventory. Return the
-     closed markers and (head, zero-based argument index, marked argument)
-     tuples, with one representative per marked argument group for contextual
+     argument/result carriers. The term-list arguments are the inventory,
+     followed by the initial seed markers. Return the closed markers and
+     (head, zero-based argument index, marked argument) tuples, with one
+     representative per marked argument group for contextual
      lookup. Result groups propagate markers but do not add tuples. The caller
-     supplies its existing typed add and term identity. Only selected syntax
-     mismatches are ignored; other failures escape. *)
+     supplies its existing typed add and term identity. add must be idempotent
+     and preserve existing markers. Only selected syntax mismatches are
+     ignored; other failures escape. *)
   val close : 'term operations -> 'term closure_operations ->
     (exn -> bool) -> 'term list -> 'term list ->
     'term list * ('term * int * 'term) list
