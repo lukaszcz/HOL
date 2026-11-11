@@ -26,6 +26,19 @@ type aentry = {tag : tag, rule : aesop_rule}
 type aesop_index =
   {target : aentry clasetNet.net, hyp : aentry clasetNet.net}
 
+(* Cache schemas built from the generic tyinfo, never from a query's type
+   instance or constructor arguments.  Indices belong to the enclosing
+   claset and are reassigned when entries are merged into another claset. *)
+type distinct_source =
+  {name : string, case_def : thm, case_const : term,
+   constructors : term vector, cases : thm vector,
+   cache : (int * int, aesop_rule) Redblackmap.dict ref}
+type distinct_entry = {source : distinct_source, first : int}
+type distinct_table = (string * string, distinct_entry) Redblackmap.dict
+
+val empty_distinct : distinct_table =
+  Redblackmap.mkDict (Lib.pair_compare (String.compare, String.compare))
+
 (* The components a claset derives from its declarations; [add_decl] and
    [delete_decl] maintain them together. *)
 type cs_index =
@@ -36,9 +49,10 @@ type cs_wrappers =
   (string * NTactical.wrapper) list * (string * NTactical.wrapper) list
 
 datatype claset =
-  CS of {decls : decls, wrappers : cs_wrappers, index : cs_index}
+  CS of {decls : decls, wrappers : cs_wrappers, index : cs_index,
+         distinct : distinct_table}
 
-type claset_part = netpair
+type claset_part = netpair * distinct_table
 
 val empty_netpair = (clasetNet.empty, clasetNet.empty)
 val empty_aesop_index =
@@ -49,7 +63,8 @@ val empty_index : cs_index =
    dup = empty_netpair, aesop_index = empty_aesop_index, norm_decls = []}
 
 val empty_cs =
-  CS {decls = empty_decls, wrappers = ([], []), index = empty_index}
+  CS {decls = empty_decls, wrappers = ([], []), index = empty_index,
+      distinct = empty_distinct}
 
 fun rule_brl kind th = (is_elim kind, th)
 
@@ -210,11 +225,12 @@ fun make_rule_decl spec (name, th) =
                info = info, orig = th}
   end
 
-fun add_rule_by extend spec named_th (cs as CS {decls, wrappers, index}) =
+fun add_rule_by extend spec named_th
+      (cs as CS {decls, wrappers, index, distinct}) =
   case extend (make_rule_decl spec named_th) decls of
       (NONE, _) => cs
     | (SOME new_decl, decls') =>
-        CS {decls = decls', wrappers = wrappers,
+        CS {decls = decls', wrappers = wrappers, distinct = distinct,
             index = add_decl new_decl index}
 
 val add_rule = add_rule_by extend_decl
@@ -235,6 +251,178 @@ val forward_spec = {kind = Forward, safe = false, prio = NONE}
 val sforward_spec = {kind = Forward, safe = true, prio = NONE}
 val norm_spec = {kind = Norm, safe = false, prio = NONE}
 
+fun tyinfo_stem tyi =
+  let val (thy, tyop) = TypeBasePure.ty_name_of tyi
+  in "__claset_tyinfo_" ^ thy ^ "_" ^ tyop end
+
+fun distinctness_contribution tyi =
+  case Lib.total TypeBasePure.constructors_of tyi of
+      SOME constructors =>
+        if length constructors < 2 then NONE
+        else
+          SOME
+            {name = tyinfo_stem tyi ^ "_distinct",
+             case_def = TypeBasePure.case_def_of tyi,
+             case_const = TypeBasePure.case_const_of tyi,
+             constructors = Vector.fromList constructors,
+             cases = Vector.fromList
+               (CONJUNCTS (TypeBasePure.case_def_of tyi)),
+             cache = ref (Redblackmap.mkDict
+               (Lib.pair_compare (Int.compare, Int.compare)))}
+    | NONE => NONE
+
+fun add_distinct_source key (source : distinct_source)
+      (cs as CS {decls, wrappers, index, distinct}) =
+  case Redblackmap.peek (distinct, key) of
+      SOME {source = old, ...} =>
+        if aconv (concl (#case_def old)) (concl (#case_def source)) then cs
+        else
+          let
+            val (distinct', _) = Redblackmap.remove (distinct, key)
+          in
+            add_distinct_source key source
+              (CS {decls = decls, wrappers = wrappers, index = index,
+                   distinct = distinct'})
+          end
+    | NONE =>
+        let
+          val n = Vector.length (#constructors source)
+          val (first, decls') = reserve_decl_indices (n * n) decls
+        in
+          CS {decls = decls', wrappers = wrappers, index = index,
+              distinct = Redblackmap.insert
+                (distinct, key, {source = source, first = first})}
+        end
+
+fun reconcile_distinct tyi (cs as CS {decls, wrappers, index, distinct}) =
+  let val key = TypeBasePure.ty_name_of tyi
+  in
+    case distinctness_contribution tyi of
+        SOME source => add_distinct_source key source cs
+      | NONE =>
+          CS {decls = decls, wrappers = wrappers, index = index,
+              distinct = Redblackmap.filteri
+                (fn (key', _) => key <> key') distinct}
+  end
+
+fun catch_up_distinct cs =
+  List.foldl (fn (tyi, acc) => reconcile_distinct tyi acc)
+    cs (TypeBase.elts ())
+
+fun distinct_rule_names (CS {distinct, ...}) =
+  map (#name o #source o #2) (Redblackmap.listItems distinct)
+
+(* A Boolean case discriminator proves a clash from the two case clauses.
+   Unlike distinct_of, case_def_of is linear and exists for wide enums. *)
+fun distinct_pair checkpoint
+      ({source = {name, constructors, cases, case_const, cache, ...},
+        first} : distinct_entry) (i, j) =
+  let
+    val _ = checkpoint ()
+    val n = Vector.length constructors
+    val rule =
+      case Redblackmap.peek (!cache, (i, j)) of
+          SOME rule => rule
+        | NONE =>
+            let
+              fun arguments c =
+                map genvar (#1 (boolSyntax.strip_fun (type_of c)))
+              fun applied k =
+                let val c = Vector.sub (constructors, k)
+                in list_mk_comb (c, arguments c) end
+              val left = applied i
+              val right = applied j
+              val equality = boolSyntax.mk_eq (left, right)
+              val result_type =
+                #2 (boolSyntax.strip_fun (type_of case_const))
+              val case_bool = Term.inst [result_type |-> bool] case_const
+              val branches = Vector.foldri
+                (fn (k, c, rest) =>
+                   (checkpoint ();
+                    list_mk_abs
+                      (arguments c, if k = i then boolSyntax.T
+                                    else boolSyntax.F) :: rest))
+                [] constructors
+              val x = genvar (type_of left)
+              val discriminator =
+                mk_abs (x, list_mk_comb (case_bool, x :: branches))
+              val equal = Conv.CONV_RULE (Conv.BINOP_CONV BETA_CONV)
+                (AP_TERM discriminator (ASSUME equality))
+              val (l, r) = boolSyntax.dest_eq (concl equal)
+              fun reduce k tm =
+                Conv.RIGHT_CONV_RULE (Conv.DEPTH_CONV BETA_CONV)
+                  (Conv.REWR_CONV (Vector.sub (cases, k)) tm)
+              val reduced = TRANS (SYM (reduce i l))
+                (TRANS equal (reduce j r))
+              val false_th = EQ_MP reduced boolTheory.TRUTH
+              val result = genvar bool
+              val theorem = GEN_ALL (DISCH equality
+                (MP (SPEC result boolTheory.FALSITY) false_th))
+              val pair_name = name ^ "_" ^ Int.toString i ^ "_" ^
+                Int.toString j
+              val decl = make_rule_decl selim_spec (pair_name, theorem)
+              val rule =
+                {name = pair_name, spec = selim_spec,
+                 thm = #orig decl, info = #info decl}
+            in
+              cache := Redblackmap.insert (!cache, (i, j), rule);
+              rule
+            end
+  in
+    ({tag = {weight = 0, index = first - i * n - j}, rule = rule} : aentry)
+  end
+
+fun distinct_candidates checkpoint distinct {q, qvars} =
+  case Lib.total boolSyntax.dest_eq q of
+      NONE => []
+    | SOME (left, right) =>
+      if aconv left right then []
+      else
+        let
+          fun candidates (_, entry as {source, ...} : distinct_entry) =
+            let
+              val constructors = #constructors source
+              val n = Vector.length constructors
+              fun positions tm =
+                let val head = fst (strip_comb tm)
+                in
+                  if is_var head andalso HOLset.member (qvars, head) then
+                    List.tabulate (n, Lib.I)
+                  else if is_const head then
+                    Vector.foldri
+                      (fn (k, c, rest) =>
+                         (checkpoint ();
+                          if same_const c head then k :: rest else rest))
+                      [] constructors
+                  else []
+                end
+              val ls = positions left
+              val rs = positions right
+            in
+              List.concat (map (fn i => List.mapPartial
+                (fn j => (checkpoint ();
+                  if i = j then NONE
+                  else SOME (distinct_pair checkpoint entry (i, j)))) rs) ls)
+            end
+          val ty = type_of left
+          val entries =
+            if Type.is_vartype ty then Redblackmap.listItems distinct
+            else
+              let val {Thy, Tyop, ...} = Type.dest_thy_type ty
+                  val key = (Thy, Tyop)
+              in
+                case Redblackmap.peek (distinct, key) of
+                    NONE => []
+                  | SOME entry => [(key, entry)]
+              end
+        in
+          List.concat (map candidates entries)
+        end
+
+fun distinct_brl ({tag = {weight, index}, rule, ...} : aentry) =
+  ({weight = weight, index = 2 * index + 1},
+   (true, #1 (#rl (#info rule))))
+
 fun add_rules spec rules cs =
   List.foldl (fn (rule, acc) => add_rule spec rule acc) cs rules
 
@@ -244,11 +432,13 @@ val add_selims = add_rules selim_spec
 val add_elims = add_rules elim_spec
 val add_sdests = add_rules sdest_spec
 
-fun remove_rule name (CS {decls, wrappers, index}) =
+fun remove_rule name (CS {decls, wrappers, index, distinct}) =
   let
     val (old_decls, decls') = remove_decl name decls
   in
     CS {decls = decls', wrappers = wrappers,
+        distinct = Redblackmap.filter
+          (fn {source, ...} => #name source <> name) distinct,
         index =
           List.foldl (fn (decl, index) => delete_decl decl index)
             index old_decls}
@@ -262,18 +452,21 @@ fun merge_alists left right =
 (* The left claset's derived components are the accumulator: only the
    declarations the merge newly admits are indexed again. *)
 fun merge_cs
-  (CS {decls, wrappers = (safe_wrappers, unsafe_wrappers), index},
-   CS {decls = decls2, wrappers = (safe_wrappers2, unsafe_wrappers2), ...}) =
+  (CS {decls, wrappers = (safe_wrappers, unsafe_wrappers), index, distinct},
+   CS {decls = decls2, wrappers = (safe_wrappers2, unsafe_wrappers2),
+       distinct = distinct2, ...}) =
   let
     val (new_decls, decls') = merge_decls (decls, decls2)
     val index' =
       List.foldl (fn (decl, index) => add_decl decl index) index new_decls
   in
-    CS {decls = decls',
-        wrappers =
-          (merge_alists safe_wrappers safe_wrappers2,
-           merge_alists unsafe_wrappers unsafe_wrappers2),
-        index = index'}
+    Redblackmap.foldl
+      (fn (key, {source, ...}, cs) => add_distinct_source key source cs)
+      (CS {decls = decls', distinct = distinct,
+           wrappers =
+             (merge_alists safe_wrappers safe_wrappers2,
+              merge_alists unsafe_wrappers unsafe_wrappers2),
+           index = index'}) distinct2
   end
 
 (* Replace an existing entry in place; put a new entry at the front. *)
@@ -292,8 +485,9 @@ fun update_alist (entry as (key, _)) entries =
 fun delete_wrapper name wrappers =
   List.filter (fn (name', _) => name <> name') wrappers
 
-fun map_wrappers f (CS {decls, wrappers, index}) =
-  CS {decls = decls, wrappers = f wrappers, index = index}
+fun map_wrappers f (CS {decls, wrappers, index, distinct}) =
+  CS {decls = decls, wrappers = f wrappers, index = index,
+      distinct = distinct}
 
 fun map_safe_wrappers f =
   map_wrappers (fn (safe_wrappers, unsafe_wrappers) =>
@@ -376,26 +570,41 @@ fun pp_claset0
 
 val pp_claset = Parse.mlower o pp_claset0
 
-fun safe0_part (CS {index = {safe0, ...}, ...}) = safe0
-fun safep_part (CS {index = {safep, ...}, ...}) = safep
-fun unsafe_part (CS {index = {unsafe, ...}, ...}) = unsafe
-fun dup_part (CS {index = {dup, ...}, ...}) = dup
+fun safe0_part (CS {index = {safe0, ...}, distinct, ...}) =
+  (safe0, distinct)
+fun safep_part (CS {index = {safep, ...}, ...}) = (safep, empty_distinct)
+fun unsafe_part (CS {index = {unsafe, ...}, ...}) = (unsafe, empty_distinct)
+fun dup_part (CS {index = {dup, ...}, ...}) = (dup, empty_distinct)
 
 fun match_candidates net tm = candidate_order (clasetNet.match tm net)
 
-fun match_intro_candidates ((inet, _) : claset_part) = match_candidates inet
-fun match_elim_candidates ((_, enet) : claset_part) = match_candidates enet
+fun match_intro_candidates (((inet, _), _) : claset_part) =
+  match_candidates inet
+fun match_elim_candidates (((_, enet), distinct) : claset_part) tm =
+  candidate_order (clasetNet.match tm enet @
+    map distinct_brl (distinct_candidates listUtil.no_checkpoint distinct
+      {q = tm, qvars = Term.empty_tmset}))
 
 fun unify_candidates checkpoint net tm =
   candidate_order_measured checkpoint
     (clasetNet.unifyMeasured checkpoint
        {q = tm, qvars = Term.FVL [tm] Term.empty_tmset} net)
 
-fun unify_intro_candidates_measured checkpoint ((inet, _) : claset_part) =
+fun unify_intro_candidates_measured checkpoint
+      (((inet, _), _) : claset_part) =
   unify_candidates checkpoint inet
 
-fun unify_elim_candidates_measured checkpoint ((_, enet) : claset_part) =
-  unify_candidates checkpoint enet
+(* Static nets retain their historical broad skeleton query; only lazy
+   pair generation must distinguish true search metas from rigid frees. *)
+fun unify_elim_candidates_with checkpoint
+      (((_, enet), distinct) : claset_part) tm query =
+  candidate_order_measured checkpoint
+    (unify_candidates checkpoint enet tm @
+     map distinct_brl (distinct_candidates checkpoint distinct query))
+
+fun unify_elim_candidates_measured checkpoint part tm =
+  unify_elim_candidates_with checkpoint part tm
+    {q = tm, qvars = Term.FVL [tm] Term.empty_tmset}
 
 fun unify_intro_candidates part =
   unify_intro_candidates_measured listUtil.no_checkpoint part
@@ -432,7 +641,13 @@ fun aesop_rules select (CS {index = {aesop_index, ...}, ...}) query =
       (clasetNet.unify query (select aesop_index)))
 
 val aesop_target_rules = aesop_rules #target
-val aesop_hyp_rules = aesop_rules #hyp
+fun aesop_hyp_rules_measured checkpoint
+      (CS {distinct, index = {aesop_index, ...}, ...}) query =
+    map #rule (Listsort.sort compare_aentry
+      (clasetNet.unify query (#hyp aesop_index) @
+       distinct_candidates checkpoint distinct query))
+
+val aesop_hyp_rules = aesop_hyp_rules_measured listUtil.no_checkpoint
 
 type tyinfo_contribution =
   string * (TypeBasePure.tyinfo -> (rulespec * (string * thm)) list)
@@ -457,11 +672,9 @@ type cstate = claset * owned_tyinfo_rule list * readiness
 val state0 : cstate = (empty_cs, [], Pending [])
 
 fun decl_is_live (CS {decls, ...}) (wanted : decl) =
-  List.exists
-    (fn (current : decl) =>
-      #name current = #name wanted andalso
-      #index (#tag current) = #index (#tag wanted))
-    (dest_decls decls)
+  case find_decl decls (#name wanted) of
+      SOME current => #index (#tag current) = #index (#tag wanted)
+    | NONE => false
 
 fun live_owned cs owned =
   List.filter (fn {decl, ...} => decl_is_live cs decl) owned
@@ -519,8 +732,8 @@ fun update_decls (ADD {name, spec}) decls =
              end)
   | update_decls (RM name) decls = #2 (remove_decl name decls)
 
-fun rebuild_claset decls (CS {wrappers, ...}) =
-  CS {decls = decls, wrappers = wrappers,
+fun rebuild_claset decls (CS {wrappers, distinct, ...}) =
+  CS {decls = decls, wrappers = wrappers, distinct = distinct,
       index =
         List.foldl (fn (decl, index) => add_decl decl index)
           empty_index (dest_decls decls)}
@@ -536,7 +749,10 @@ fun apply_add_batch (ADD args, cs) =
 fun batch_apply deltas (cs as CS {decls, ...}) =
   if List.exists is_removal deltas then
     rebuild_claset
-      (List.foldl (fn (delta, acc) => update_decls delta acc) decls deltas) cs
+      (List.foldl (fn (delta, acc) => update_decls delta acc) decls deltas)
+      (List.foldl
+        (fn (RM name, acc) => remove_rule name acc | (_, acc) => acc)
+        cs deltas)
   else
     List.foldl apply_add_batch cs deltas
 
@@ -592,7 +808,7 @@ fun reconcile_owned scope desired (cs, owned) =
 
 fun add_tyinfo_rule
   ({provider, tyname, spec, named_th = (name, th)} : tyinfo_rule)
-  (cs as CS {decls, wrappers, index}, owned) =
+  (cs as CS {decls, wrappers, index, distinct}, owned) =
   let
     fun same_class (decl : decl) =
       #kind (#spec decl) = #kind spec andalso
@@ -605,7 +821,7 @@ fun add_tyinfo_rule
         case extend_decl candidate decls of
             (NONE, _) => (cs, owned)
           | (SOME installed, decls') =>
-              (CS {decls = decls', wrappers = wrappers,
+              (CS {decls = decls', wrappers = wrappers, distinct = distinct,
                    index = add_decl installed index},
                {provider = provider, tyname = tyname,
                 decl = installed} :: owned)
@@ -645,9 +861,9 @@ fun collect_typebase_rules contributions =
   end
 
 fun catch_up_typebase cs =
-  #1
+  catch_up_distinct (#1
     (apply_tyinfo_rules
-      (collect_typebase_rules (!tyinfo_contributions)) (cs, []))
+      (collect_typebase_rules (!tyinfo_contributions)) (cs, [])))
 
 fun reconcile_typebase contributions state =
   let
@@ -655,7 +871,8 @@ fun reconcile_typebase contributions state =
       reconcile_owned (fn _ => true)
         (collect_typebase_rules contributions) state
   in
-    apply_tyinfo_rules remaining state'
+    let val (cs, owned) = apply_tyinfo_rules remaining state'
+    in (catch_up_distinct cs, owned) end
   end
 
 fun reconcile_tyinfo contributions tyi state =
@@ -666,12 +883,15 @@ fun reconcile_tyinfo contributions tyi state =
         (fn {tyname = owned_name, ...} => owned_name = tyname)
         (rules_for_tyinfo contributions tyi) state
   in
-    apply_tyinfo_rules remaining state'
+    let val (cs, owned) = apply_tyinfo_rules remaining state'
+    in (reconcile_distinct tyi cs, owned) end
   end
 
 fun replay_pending typebase_rules [] (cs, owned, caught_up) =
       if caught_up then (cs, owned)
-      else apply_tyinfo_rules typebase_rules (cs, owned)
+      else
+        let val (cs', owned') = apply_tyinfo_rules typebase_rules (cs, owned)
+        in (catch_up_distinct cs', owned') end
   | replay_pending typebase_rules (update :: updates)
       (cs, owned, caught_up) =
       (case update of
@@ -784,20 +1004,6 @@ fun typebase_update tyi =
 
 val _ = TypeBase.register_update_fn typebase_update
 
-fun distinct_elim_rule th =
-  let
-    val th' = canonical_rule th
-    val (vars, _) = strip_forall (concl th')
-    val vars' = fresh_forall_vars th' vars
-    val core = Drule.SPECL vars' th'
-    val eq = dest_neg (concl core)
-    val r = variant (free_varsl (concl core :: hyp core)) (mk_var ("r", bool))
-    val false_th = MP (NOT_ELIM core) (ASSUME eq)
-    val result = MP (SPEC r boolTheory.FALSITY) false_th
-  in
-    GENL (vars' @ [r]) (DISCH eq result)
-  end
-
 fun iff_rules name theorem =
   let
     val (outer_vars, _) = strip_forall (concl theorem)
@@ -874,29 +1080,8 @@ fun iff_rules name theorem =
         (name ^ "_intro", gen_all_ordered th))]
   end
 
-fun tyinfo_stem tyi =
-  case Lib.total TypeBasePure.ty_name_of tyi of
-      SOME (thy, tyop) => "__claset_tyinfo_" ^ thy ^ "_" ^ tyop
-    | NONE => "__claset_tyinfo_unknown"
-
 fun number_contribution make_rule ths =
   List.concat (Lib.mapi make_rule ths)
-
-fun distinctness_contribution tyi =
-  case Lib.total TypeBasePure.distinct_of tyi of
-      SOME (SOME th) =>
-        let
-          val stem = tyinfo_stem tyi ^ "_distinct_"
-          fun make_rule index conjunct =
-            [(selim_spec,
-              (stem ^ Int.toString index, distinct_elim_rule conjunct)),
-             (selim_spec,
-              (stem ^ "sym_" ^ Int.toString index,
-               distinct_elim_rule (GSYM conjunct)))]
-        in
-          number_contribution make_rule (CONJUNCTS th)
-        end
-    | _ => []
 
 fun injectivity_contribution tyi =
   case Lib.total TypeBasePure.one_one_of tyi of
@@ -909,9 +1094,6 @@ fun injectivity_contribution tyi =
           number_contribution make_rule (CONJUNCTS th)
         end
     | _ => []
-
-val _ = register_tyinfo_contribution
-  ("claset-distinctness", distinctness_contribution)
 
 val _ = register_tyinfo_contribution
   ("claset-injectivity", injectivity_contribution)

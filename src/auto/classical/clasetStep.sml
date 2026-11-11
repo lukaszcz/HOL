@@ -360,7 +360,7 @@ fun dedup_tagged [] = []
         entry :: dedup_tagged (drop_same rest)
       end
 
-fun candidates mode part
+fun candidates store mode part
       ({conclusion, assumptions} : clasetGoal.spellings) =
   let
     val (intro_lookup, elim_lookup) =
@@ -370,7 +370,10 @@ fun candidates mode part
              clasetLib.match_elim_candidates)
         | clasetUnify.Unify =>
             (clasetLib.unify_intro_candidates,
-             clasetLib.unify_elim_candidates)
+             fn part => fn q =>
+               clasetLib.unify_elim_candidates_with listUtil.no_checkpoint
+                 part q {q = q, qvars = HOLset.fromList Term.compare
+                   (clasetMeta.metas_of store q)})
     (* The index is keyed on the rules as stated, and [x IN P] and [P x] are
        one proposition indexed two ways: a rule stated about [IN] sits under
        that constant, where an applied goal atom never reaches it, and a rule
@@ -1033,7 +1036,8 @@ fun rule_results mode cs duplicated part weight_filter (node, pos) =
       let
         val (asl, _) = clasetGoal.render node pos
         val tagged = List.filter (weight_filter o #1)
-          (candidates mode part (clasetGoal.lookup_spellings node pos))
+          (candidates (clasetGoal.store node) mode part
+            (clasetGoal.lookup_spellings node pos))
 
         fun intro_application entry =
           seq.delay

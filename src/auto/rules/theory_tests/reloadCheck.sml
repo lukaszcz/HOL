@@ -28,3 +28,24 @@ val _ =
   else if has_duplicate reload_rules then
     fail "reloading duplicated a TypeBase-derived rule"
   else ()
+
+val distinct_name = prefix ^ "distinct"
+val distinct_handles =
+  List.filter (fn name => name = distinct_name)
+    (distinct_rule_names (the_claset ()))
+val distinct_query =
+  {q = Parse.Term [QUOTE "ReloadLeft = ReloadRight b"],
+   qvars = Term.empty_tmset}
+fun distinct_candidates cs =
+  List.filter (fn {name, ...} => begins_with (distinct_name ^ "_") name)
+    (aesop_hyp_rules cs distinct_query)
+
+val _ =
+  if length distinct_handles <> 1 then
+    fail "reloading did not retain exactly one lazy distinctness handle"
+  else if length (distinct_candidates (the_claset ())) <> 1 then
+    fail "reloaded constructor clash did not retrieve one theorem"
+  else if not (List.null
+      (distinct_candidates (remove_rule distinct_name (the_claset ())))) then
+    fail "removing the lazy handle left its cached theorem visible"
+  else ()

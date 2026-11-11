@@ -77,6 +77,9 @@ sig
   val all_rules : claset -> aesop_rule list
   (* The name/theorem view of [all_rules], in the same order. *)
   val rules_of : claset -> (rulespec * (string * thm)) list
+  (* Runtime TypeBase clash entries are lazy, not theorem declarations.
+     These names are the handles remove_rule/Del use to suppress them. *)
+  val distinct_rule_names : claset -> string list
   (* The claset's Norm declarations, in [rules_of] order.  The aesop
      normalisation phase applies all of them to every goal rather than
      retrieving by goal shape, so they are kept as a list; this is the
@@ -92,6 +95,12 @@ sig
   val match_elim_candidates : claset_part -> term -> (tag * brl) list
   val unify_intro_candidates : claset_part -> term -> (tag * brl) list
   val unify_elim_candidates : claset_part -> term -> (tag * brl) list
+  (* The first term retains the static net's query approximation; the record
+     supplies the actual query and genuine metas for lazy constructor pairs.
+     The term-only APIs treat every free variable as schematic. *)
+  val unify_elim_candidates_with :
+    (unit -> unit) -> claset_part -> term ->
+    {q : term, qvars : term HOLset.set} -> (tag * brl) list
   val unify_intro_candidates_measured :
     (unit -> unit) -> claset_part -> term -> (tag * brl) list
   val unify_elim_candidates_measured :
@@ -107,6 +116,10 @@ sig
     claset -> {q : term, qvars : term HOLset.set} -> aesop_rule list
   val aesop_hyp_rules :
     claset -> {q : term, qvars : term HOLset.set} -> aesop_rule list
+  (* Charge lazy constructor-pair enumeration and derivation before work. *)
+  val aesop_hyp_rules_measured :
+    (unit -> unit) -> claset ->
+    {q : term, qvars : term HOLset.set} -> aesop_rule list
 
   val SIntro : thm -> thm
   val Intro : thm -> thm

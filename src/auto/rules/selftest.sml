@@ -13,6 +13,22 @@ val _ = Theory.new_theory "clasetHookSelftest"
 val _ = Datatype.Datatype
   `claset_hook_before_demand = ClasetHookA | ClasetHookB num`
 
+(* Payload and pure-enum datatypes exercise both case-definition forms. *)
+val _ = Datatype.Datatype
+  `claset_hook_wide =
+     ClasetWide0 | ClasetWide1 | ClasetWide2 | ClasetWide3 | ClasetWide4
+   | ClasetWide5 | ClasetWide6 | ClasetWide7 | ClasetWide8 | ClasetWide9
+   | ClasetWide10 | ClasetWide11 | ClasetWide12 | ClasetWide13
+   | ClasetWide14 | ClasetWide15 num`
+
+val _ = Datatype.Datatype
+  `claset_hook_enum = Enum0 | Enum1 | Enum2 | Enum3 | Enum4 | Enum5
+   | Enum6 | Enum7 | Enum8 | Enum9 | Enum10 | Enum11 | Enum12 | Enum13
+   | Enum14 | Enum15`
+
+val _ = Datatype.Datatype
+  `claset_hook_poly = PolyLeft 'a | PolyRight 'a`
+
 fun same_seed_spec
   ({kind = kind1, safe = safe1, prio = prio1} : rulespec)
   ({kind = kind2, safe = safe2, prio = prio2} : rulespec) =
@@ -123,7 +139,7 @@ val _ =
 val _ =
   test
     ("seed claset initialisation stays within its load-time budget",
-     fn () => Time.< (seed_initialisation_time, Time.fromSeconds 30))
+     fn () => Time.< (seed_initialisation_time, Time.fromMilliseconds 750))
 
 fun same_terms ts1 ts2 =
   ListPair.allEq (fn (tm1, tm2) => Term.aconv tm1 tm2) (ts1, ts2)
@@ -2377,21 +2393,6 @@ val _ =
 
 
 (* clasetLib: TypeBase hook and contribution registry. *)
-fun typebase_specl [] th = th
-  | typebase_specl (tm :: tms) th = typebase_specl tms (SPEC tm th)
-
-fun typebase_distinct_elim th =
-  let
-    val (vars, _) = strip_forall (concl th)
-    val core = typebase_specl vars th
-    val eq = dest_neg (concl core)
-    val r = variant (free_varsl (concl core :: hyp core)) (mk_var ("r", bool))
-    val false_th = MP (NOT_ELIM core) (ASSUME eq)
-  in
-    GENL (vars @ [r])
-      (DISCH eq (MP (SPEC r boolTheory.FALSITY) false_th))
-  end
-
 fun legacy_fresh_outer_vars th vars =
   let
     fun freshen avoids [] = []
@@ -2418,13 +2419,14 @@ fun derived_iff_dest th =
       [(_, (_, dest))] => dest
     | _ => raise Fail "missing derived iff dest rule"
 
-fun typebase_hook_tyinfo () =
+fun typebase_tyinfo tyop =
   case List.filter
-    (fn tyi => #2 (TypeBasePure.ty_name_of tyi) =
-               "claset_hook_before_demand")
+    (fn tyi => #2 (TypeBasePure.ty_name_of tyi) = tyop)
     (TypeBase.elts ()) of
       [tyi] => tyi
-    | _ => raise Fail "missing TypeBase selftest datatype"
+    | _ => raise Fail ("missing TypeBase selftest datatype " ^ tyop)
+
+fun typebase_hook_tyinfo () = typebase_tyinfo "claset_hook_before_demand"
 
 fun has_typebase_rule spec th =
   List.exists
@@ -2433,8 +2435,6 @@ fun has_typebase_rule spec th =
        same_thm (canonical_rule_of (#kind spec) th) th')
     (rules_of (the_claset ()))
 
-val typebase_selim_spec =
-  {kind = clasetRules.Elim, safe = true, prio = NONE}
 val typebase_sdest_spec =
   {kind = clasetRules.Dest, safe = true, prio = NONE}
 val typebase_sintro_spec =
@@ -2471,30 +2471,138 @@ val _ =
          List.all agrees (TypeBase.elts ())
        end)
 
+fun distinct_handle tyop =
+  let val (thy, name) = TypeBasePure.ty_name_of (typebase_tyinfo tyop)
+  in "__claset_tyinfo_" ^ thy ^ "_" ^ name ^ "_distinct" end
+
+fun clash_candidates cs tyop query =
+  List.filter
+    (fn {name, ...} => String.isPrefix (distinct_handle tyop ^ "_") name)
+    (aesop_hyp_rules cs query)
+
+fun clash_query q vars =
+  {q = q, qvars = HOLset.fromList Term.compare vars}
+
+fun clash_valid cs tyop equality =
+  case clash_candidates cs tyop (clash_query equality []) of
+      [rule] =>
+        let
+          val theorem = Drule.PART_MATCH (fst o dest_imp) (#thm rule) equality
+          val result = snd (dest_imp (concl theorem))
+          val proof = MP (INST [result |-> p] theorem) (ASSUME equality)
+          val (residues, validation) = Tactical.VALID (ACCEPT_TAC proof)
+            ([equality], p) (Context.snapshot())
+        in
+          null residues andalso aconv (concl (validation [])) p
+        end
+    | _ => false
+
 val _ =
   test
-    ("claset catches up TypeBase facts before its first demand",
+    ("TypeBase keeps injectivity and one lazy distinctness handle",
      fn () =>
        let
-         val tyi = typebase_hook_tyinfo ()
-         val distinct = Option.valOf (TypeBasePure.distinct_of tyi)
-         val injective = Option.valOf (TypeBasePure.one_one_of tyi)
-         val distinct_rules =
-           List.concat
-             (map (fn th => [typebase_distinct_elim th,
-                             typebase_distinct_elim (Conv.GSYM th)])
-                  (Drule.CONJUNCTS distinct))
-         val injective_rules =
-           List.concat
-             (map (iff_rules "claset-selftest-injectivity")
-                (Drule.CONJUNCTS injective))
+         fun check tyop =
+           let
+             val tyi = typebase_tyinfo tyop
+             val injective = Option.valOf (TypeBasePure.one_one_of tyi)
+             val rules = List.concat
+               (map (iff_rules "claset-selftest-injectivity")
+                 (Drule.CONJUNCTS injective))
+           in
+             List.exists (fn name => name = distinct_handle tyop)
+               (distinct_rule_names seed_claset) andalso
+             not (List.exists
+               (String.isPrefix (distinct_handle tyop) o #1 o #2)
+               (rules_of seed_claset)) andalso
+             List.all (fn (spec, (_, th)) => has_typebase_rule spec th) rules
+           end
        in
-         List.all (has_typebase_rule typebase_selim_spec) distinct_rules
-           andalso
-         List.all
-           (fn (spec, (_, theorem)) =>
-             has_typebase_rule spec theorem)
-           injective_rules
+         check "claset_hook_before_demand" andalso check "claset_hook_wide"
+       end)
+
+val _ =
+  test
+    ("lazy clashes prove both orientations, payloads and wide pure enums",
+     fn () => List.all (fn (tyop, equality) =>
+       clash_valid seed_claset tyop equality)
+       [("claset_hook_before_demand", ``ClasetHookA = ClasetHookB n``),
+        ("claset_hook_before_demand", ``ClasetHookB 0 = ClasetHookA``),
+        ("claset_hook_wide", ``ClasetWide0 = ClasetWide15 n``),
+        ("claset_hook_wide", ``ClasetWide15 0 = ClasetWide14``),
+        ("claset_hook_enum", ``Enum0 = Enum15``)])
+
+val _ =
+  test
+    ("clash cache retains generic payloads and polymorphic type instances",
+     fn () => List.all (clash_valid seed_claset "claset_hook_poly")
+       [``PolyLeft 0 = PolyRight 1``,
+        ``PolyLeft (x:num) = PolyRight y``,
+        ``PolyLeft T = PolyRight F``,
+        ``PolyLeft (x:'a) = PolyRight y``])
+
+val _ =
+  test
+    ("clash retrieval distinguishes rigid variables from genuine metas",
+     fn () =>
+       let
+         val tyop = "claset_hook_wide"
+         fun count query = length (clash_candidates seed_claset tyop query)
+         val x = ``x:claset_hook_wide``
+         val y = ``y:claset_hook_wide``
+         val one = mk_eq (``ClasetWide0``, x)
+         val both = mk_eq (x, y)
+         val candidates = clash_candidates seed_claset tyop
+           (clash_query both [x, y])
+         val names = map #name candidates
+         val tagged = unify_elim_candidates_with listUtil.no_checkpoint
+           (safe0_part seed_claset) both (clash_query both [x, y])
+         val indices = map (#index o #1) tagged
+       in
+         count (clash_query one []) = 0 andalso
+         count (clash_query both []) = 0 andalso
+         count (clash_query one [x]) = 15 andalso
+         length candidates = 16 * 15 andalso
+         length (Lib.mk_set names) = length names andalso
+         length (Lib.mk_set indices) = length indices andalso
+         count (clash_query ``ClasetWide15 n = ClasetWide15 m`` []) = 0
+       end)
+
+val _ =
+  test
+    ("deleting a lazy handle suppresses it without changing the snapshot",
+     fn () =>
+       let
+         val tyop = "claset_hook_wide"
+         val query = clash_query ``ClasetWide0 = ClasetWide15 n`` []
+         val removed = remove_rule (distinct_handle tyop) seed_claset
+       in
+         null (clash_candidates removed tyop query) andalso
+         length (clash_candidates seed_claset tyop query) = 1 andalso
+         null (distinct_rule_names persisted_seed_claset)
+       end)
+
+val _ =
+  test
+    ("schematic clash enumeration observes candidate checkpoints",
+     fn () =>
+       let
+         val only_distinct = List.foldl
+           (fn ((_, (name, _)), cs) => remove_rule name cs)
+           seed_claset (rules_of seed_claset)
+         val x = ``x:claset_hook_wide``
+         val y = ``y:claset_hook_wide``
+         val equality = mk_eq (x, y)
+         val polls = ref 0
+         exception ClashLimit
+         fun checkpoint () =
+           (polls := !polls + 1;
+            if !polls = 50 then raise ClashLimit else ())
+       in
+         ((ignore (unify_elim_candidates_with checkpoint
+              (safe0_part only_distinct) equality
+              (clash_query equality [x, y])); false)
+          handle ClashLimit => !polls = 50)
        end)
 
 fun has_named_spec_rule spec name =
@@ -2745,7 +2853,8 @@ val _ =
                encode = NONE})
          fun contributed_names () =
            List.filter (String.isPrefix stem)
-             (map (#1 o #2) (rules_of (the_claset ())))
+             (map (#1 o #2) (rules_of (the_claset ())) @
+              distinct_rule_names (the_claset ()))
          fun restore () = TypeBase.write [original]
          fun check () =
            let

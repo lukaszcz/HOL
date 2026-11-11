@@ -673,6 +673,9 @@ datatype decls =
 val empty_decls =
   Decls {next = ~1, byconcl = Termtab.empty, byname = Symtab.empty}
 
+fun reserve_decl_indices count (Decls {next, byconcl, byname}) =
+  (next, Decls {next = next - count, byconcl = byconcl, byname = byname})
+
 fun make_decl {name, spec, weight, info, orig} =
   {name = name, spec = spec, tag = {weight = weight, index = 0},
    info = info, orig = canonical_rule_of (#kind spec) orig}
@@ -682,8 +685,9 @@ fun get_decls (Decls {byconcl, ...}) th =
       NONE => []
     | SOME ds => ds
 
-fun decl_name_member (Decls {byname, ...}) name =
-  Option.isSome (Symtab.lookup byname name)
+fun find_decl (Decls {byname, ...}) name = Symtab.lookup byname name
+
+fun decl_name_member decls name = Option.isSome (find_decl decls name)
 
 fun dest_decls (Decls {byconcl, ...}) =
   Listsort.sort decl_order

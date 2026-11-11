@@ -88,6 +88,82 @@ val _ =
    anyway. *)
 val _ = Theory.new_theory "aesopSelftest"
 
+val _ = Datatype.Datatype
+  `aesop_clash_narrow =
+   AesopClashN0 | AesopClashN1 | AesopClashN2 | AesopClashN3 |
+   AesopClashN4 | AesopClashN5 | AesopClashN6 | AesopClashN7 |
+   AesopClashN8 | AesopClashN9 | AesopClashN10 | AesopClashN11 |
+   AesopClashN12 | AesopClashN13 | AesopClashN14`
+
+val _ = Datatype.Datatype
+  `aesop_clash_wide =
+   AesopClashW0 | AesopClashW1 | AesopClashW2 | AesopClashW3 |
+   AesopClashW4 | AesopClashW5 | AesopClashW6 | AesopClashW7 |
+   AesopClashW8 | AesopClashW9 | AesopClashW10 | AesopClashW11 |
+   AesopClashW12 | AesopClashW13 | AesopClashW14 | AesopClashW15 num`
+
+val _ = Datatype.Datatype
+  `aesop_clash_enum =
+   AesopClashE0 | AesopClashE1 | AesopClashE2 | AesopClashE3 |
+   AesopClashE4 | AesopClashE5 | AesopClashE6 | AesopClashE7 |
+   AesopClashE8 | AesopClashE9 | AesopClashE10 | AesopClashE11 |
+   AesopClashE12 | AesopClashE13 | AesopClashE14 | AesopClashE15`
+
+val _ =
+  check
+    ("AESOP stops cold schematic clash retrieval at its candidate budget",
+     fn () =>
+       let
+         fun stopped limit =
+           let
+             val claset = Option.valOf
+               (clasetLib.claset_of_theory {thyname = "min"})
+             val budget = searchBudget.create
+               {candidates = SOME limit, applications = NONE,
+                normalization = NONE}
+             val x = ``x:aesop_clash_wide``
+             val y = ``y:aesop_clash_wide``
+           in
+             (ignore (aesopRule.claset_rules_with (SOME budget)
+                {claset = claset, mode = clasetUnify.Unify,
+                 conclusion = ``p:bool``,
+                 assumptions = [boolSyntax.mk_eq (x, y)],
+                 qvars = HOLset.fromList Term.compare [x, y],
+                 simpset = simpLib.empty_ss, simp_controls = []}); false)
+             handle searchBudget.LimitReached
+               (searchBudget.Candidate, usage) => #candidates usage = limit
+           end
+       in List.all stopped [0, 50] end)
+
+val _ =
+  check
+    ("AESOP finds constructor witnesses through schematic clashes",
+     fn () => List.all (fn target =>
+       let
+         val (residues, validation) =
+           Tactical.VALID (aesopLib.AESOP_TAC []) ([], target)
+       in
+         null residues andalso Term.aconv (concl (validation [])) target
+       end)
+       [``?x:aesop_clash_wide. AesopClashW0 = x ==> p``,
+        ``?x y:aesop_clash_wide. x = y ==> p``])
+
+val _ =
+  check
+    ("AESOP refutes narrow and wide constructor clashes without hints",
+     fn () => List.all (fn equality =>
+       let
+         val (residues, validation) = Tactical.VALID
+           (aesopLib.AESOP_TAC []) ([equality], ``p:bool``)
+       in
+         null residues andalso Term.aconv (concl (validation [])) ``p:bool``
+       end)
+       [``AesopClashN0 = AesopClashN14``,
+        ``AesopClashW0 = AesopClashW15 n``,
+        ``AesopClashW15 n = AesopClashW0``,
+        ``AesopClashE0 = AesopClashE15``])
+
+
 val attribute_lhs = ``aesop_attribute_lhs:'a``
 val attribute_rhs = ``aesop_attribute_rhs:'a``
 val attribute_rule =

@@ -7544,6 +7544,117 @@ end
 (* A plain citation must be available to safe inference even when its
    implication shape also admits an unsafe search-rule reading. *)
 val _ = Theory.new_theory "classicalFactSelftest"
+
+val _ = Datatype.Datatype
+  `classical_clash_narrow =
+   ClassicalClashN0 | ClassicalClashN1 | ClassicalClashN2 |
+   ClassicalClashN3 | ClassicalClashN4 | ClassicalClashN5 |
+   ClassicalClashN6 | ClassicalClashN7 | ClassicalClashN8 |
+   ClassicalClashN9 | ClassicalClashN10 | ClassicalClashN11 |
+   ClassicalClashN12 | ClassicalClashN13 | ClassicalClashN14`
+
+val _ = Datatype.Datatype
+  `classical_clash_wide =
+   ClassicalClashW0 | ClassicalClashW1 | ClassicalClashW2 |
+   ClassicalClashW3 | ClassicalClashW4 | ClassicalClashW5 |
+   ClassicalClashW6 | ClassicalClashW7 | ClassicalClashW8 |
+   ClassicalClashW9 | ClassicalClashW10 | ClassicalClashW11 |
+   ClassicalClashW12 | ClassicalClashW13 | ClassicalClashW14 |
+   ClassicalClashW15 num`
+
+val _ = Datatype.Datatype
+  `classical_clash_enum =
+   ClassicalClashE0 | ClassicalClashE1 | ClassicalClashE2 |
+   ClassicalClashE3 | ClassicalClashE4 | ClassicalClashE5 |
+   ClassicalClashE6 | ClassicalClashE7 | ClassicalClashE8 |
+   ClassicalClashE9 | ClassicalClashE10 | ClassicalClashE11 |
+   ClassicalClashE12 | ClassicalClashE13 | ClassicalClashE14 |
+   ClassicalClashE15`
+
+val _ =
+  test
+    ("SAFE refutes narrow and wide constructor clashes without hints",
+     fn () => List.all (fn equality =>
+       let
+         val (residues, validation) = Tactical.VALID
+           (classicalLib.SAFE_TAC []) ([equality], ``p:bool``)
+       in
+         null residues andalso Term.aconv (concl (validation [])) ``p:bool``
+       end)
+       [``ClassicalClashN0 = ClassicalClashN14``,
+        ``ClassicalClashW0 = ClassicalClashW15 n``,
+        ``ClassicalClashW15 n = ClassicalClashW0``,
+        ``ClassicalClashE0 = ClassicalClashE15``])
+
+val _ =
+  test
+    ("FAST finds constructor witnesses through schematic clashes",
+     fn () => List.all (fn target =>
+       let
+         val (residues, validation) =
+           Tactical.VALID (classicalLib.FAST_TAC []) ([], target)
+       in
+         null residues andalso Term.aconv (concl (validation [])) target
+       end)
+       [``?x:classical_clash_wide. ClassicalClashW0 = x ==> p``,
+        ``?x y:classical_clash_wide. x = y ==> p``])
+
+val _ =
+  test
+    ("BEST finds constructor witnesses through schematic clashes",
+     fn () => List.all (fn target =>
+       let
+         val (residues, validation) =
+           Tactical.VALID (classicalLib.BEST_TAC []) ([], target)
+       in
+         null residues andalso Term.aconv (concl (validation [])) target
+       end)
+       [``?x:classical_clash_wide. ClassicalClashW0 = x ==> p``,
+        ``?x y:classical_clash_wide. x = y ==> p``])
+
+val _ =
+  test
+    ("FAST refutes narrow and wide constructor clashes without hints",
+     fn () => List.all (fn equality =>
+       let
+         val (residues, validation) = Tactical.VALID
+           (classicalLib.FAST_TAC []) ([equality], ``p:bool``)
+       in
+         null residues andalso Term.aconv (concl (validation [])) ``p:bool``
+       end)
+       [``ClassicalClashN0 = ClassicalClashN14``,
+        ``ClassicalClashW0 = ClassicalClashW15 n``,
+        ``ClassicalClashW15 n = ClassicalClashW0``,
+        ``ClassicalClashE0 = ClassicalClashE15``])
+
+val _ =
+  test
+    ("BEST refutes narrow and wide constructor clashes without hints",
+     fn () => List.all (fn equality =>
+       let
+         val (residues, validation) = Tactical.VALID
+           (classicalLib.BEST_TAC []) ([equality], ``p:bool``)
+       in
+         null residues andalso Term.aconv (concl (validation [])) ``p:bool``
+       end)
+       [``ClassicalClashN0 = ClassicalClashN14``,
+        ``ClassicalClashW0 = ClassicalClashW15 n``,
+        ``ClassicalClashW15 n = ClassicalClashW0``,
+        ``ClassicalClashE0 = ClassicalClashE15``])
+
+val _ =
+  test
+    ("SAFE refuses a rigid equality between datatype-valued applications",
+     fn () =>
+       let
+         val equality = ``(f:classical_clash_wide -> classical_clash_wide) x
+                           = g y``
+         val goal = ([equality], ``p:bool``)
+       in
+         tactic_error_message (classicalLib.SAFE_TAC []) goal =
+           SOME "no change"
+       end)
+
 val safe_fact_q_def =
   new_definition
     ("safe_fact_q_def", ``safe_fact_q (x:'a) <=> T``)

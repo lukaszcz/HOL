@@ -4331,6 +4331,80 @@ val _ =
    the state anything doing either is called in anyway. *)
 val _ = Theory.new_theory "blastSelftest"
 
+val _ = Datatype.Datatype
+  `blast_clash_narrow =
+   BlastClashN0 | BlastClashN1 | BlastClashN2 | BlastClashN3 |
+   BlastClashN4 | BlastClashN5 | BlastClashN6 | BlastClashN7 |
+   BlastClashN8 | BlastClashN9 | BlastClashN10 | BlastClashN11 |
+   BlastClashN12 | BlastClashN13 | BlastClashN14`
+
+val _ = Datatype.Datatype
+  `blast_clash_wide =
+   BlastClashW0 | BlastClashW1 | BlastClashW2 | BlastClashW3 |
+   BlastClashW4 | BlastClashW5 | BlastClashW6 | BlastClashW7 |
+   BlastClashW8 | BlastClashW9 | BlastClashW10 | BlastClashW11 |
+   BlastClashW12 | BlastClashW13 | BlastClashW14 | BlastClashW15 num`
+
+val _ = Datatype.Datatype
+  `blast_clash_enum =
+   BlastClashE0 | BlastClashE1 | BlastClashE2 | BlastClashE3 |
+   BlastClashE4 | BlastClashE5 | BlastClashE6 | BlastClashE7 |
+   BlastClashE8 | BlastClashE9 | BlastClashE10 | BlastClashE11 |
+   BlastClashE12 | BlastClashE13 | BlastClashE14 | BlastClashE15`
+
+val _ =
+  test
+    ("BLAST retrieves clashes for distinct applications of one meta",
+     fn () =>
+       let
+         val (equality, _) = blastTerm.strip_comb
+           (blastRule.fromGoalTerm ``BlastClashN0 = BlastClashN1``)
+         val f = ref NONE
+         val g = ref NONE
+         val left = Var f $ Fvar "a"
+         val right = Var f $ Fvar "b"
+         val independent = Var g $ Fvar "b"
+         val cs = clasetLib.the_claset ()
+         fun count rhs =
+           length (blastRule.safeRules (blastRule.newCache ()) cs [f, g]
+             (blastTerm.list_comb (equality, [left, rhs])))
+         val different_apps = count right
+       in
+         different_apps = count independent andalso
+         different_apps > count left
+       end)
+
+val _ =
+  test
+    ("BLAST finds constructor witnesses through schematic clashes",
+     fn () => List.all (fn target =>
+       let
+         val (residues, validation) =
+           Tactical.VALID (tableauLib.BLAST_TAC []) ([], target)
+       in
+         null residues andalso Term.aconv (concl (validation [])) target
+       end)
+       [``?x:blast_clash_wide. BlastClashW0 = x ==> p``,
+        ``?x y:blast_clash_wide. x = y ==> p``,
+        ``?f:num -> blast_clash_wide. BlastClashW0 = f 0 ==> p``,
+        ``?f:num -> blast_clash_wide. f 0 = BlastClashW0 ==> p``])
+
+val _ =
+  test
+    ("BLAST refutes narrow and wide constructor clashes without hints",
+     fn () => List.all (fn equality =>
+       let
+         val (residues, validation) = Tactical.VALID
+           (tableauLib.BLAST_TAC []) ([equality], ``p:bool``)
+       in
+         null residues andalso Term.aconv (concl (validation [])) ``p:bool``
+       end)
+       [``BlastClashN0 = BlastClashN14``,
+        ``BlastClashW0 = BlastClashW15 n``,
+        ``BlastClashW15 n = BlastClashW0``,
+        ``BlastClashE0 = BlastClashE15``])
+
+
 (* The kernel typechecks every term it hands out, so the goal the
    translator cannot translate is one that has gone out of date: a
    deleted constant survives in a retained term, and the translator's
@@ -5447,6 +5521,9 @@ val _ =
            linear_large > 32 * large
          end)
   else ()
+
+val _ = Parse.temp_remove_rules_for_term "OO"
+val _ = Parse.hide "OO"
 
 val halting_ii =
   “(((?x:'a. A x /\ (!y. C y ==> !z. D x y z)) ==>
