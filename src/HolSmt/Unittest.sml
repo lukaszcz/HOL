@@ -16095,6 +16095,115 @@ in
         (apply (Term.mk_comb (combinSyntax.mk_update (x, boolSyntax.T), s))))))
 end
 
+(* The translation defines a fresh array constant for a set expression;
+   mapped back to that expression, its definition is an identity. *)
+fun cpc_array_set_definition_identity_success () =
+let
+  fun check (name, definition) =
+    let
+      val theorem = CPC_ProofReplay.remove_hyps_for_test
+        ([], boolSyntax.F, Thm.ASSUME definition)
+      val _ = check_oracle_tags
+        ("array-set definition identity " ^ name) theorem
+    in
+      assert (Term.aconv (Thm.concl theorem) definition andalso
+          List.null (Thm.hyp theorem),
+        "array-set definition identity kept a hypothesis for " ^ name)
+    end
+in
+  List.app check
+    [("difference",
+      ``!x. (s DELETE (a:int) DIFF (s DELETE b)) x <=>
+            (s (| a |-> F |) x /\ ~s (| b |-> F |) x)``),
+     ("abstracted difference",
+      ``!x. (\a b s. s DELETE a DIFF (s DELETE b)) (a:int) b s x <=>
+            (s (| a |-> F |) x /\ ~s (| b |-> F |) x)``)];
+  expect_hol_error_contains "array-set definition non-identity"
+    "extra hypothesis is not one of the enumerated cvc5 semantic bridges"
+    (fn () => ignore (CPC_ProofReplay.remove_hyps_for_test
+      ([], boolSyntax.F, Thm.ASSUME
+        ``!x. ((s:int -> bool) DIFF t) x <=> s x``)))
+end
+
+(* A const array of Booleans is the empty set or the universe. *)
+fun cpc_arrays_select_const_set_success () =
+let
+  fun check (value, expected) =
+    let
+      val theorem = CPC_ProofReplay.replay_root_for_test
+        (parse_cpc_proof_string
+          ("((declare-sort t0 0) (declare-const i t0) \
+           \(step @p1 :rule arrays-select-const :args \
+           \((= (select ((as const (Array t0 Bool)) " ^ value ^ ") i) " ^
+           value ^ "))))"))
+      val _ = check_oracle_tags
+        ("CPC arrays-select-const " ^ value) theorem
+    in
+      assert (List.null (Thm.hyp theorem) andalso
+          Term.aconv (boolSyntax.rhs (Thm.concl theorem)) expected,
+        "CPC arrays-select-const did not replay for " ^ value)
+    end
+in
+  List.app check [("false", boolSyntax.F), ("true", boolSyntax.T)]
+end
+
+(* With a reflexive left premise, eq_resolve still yields the right
+   premise's right-hand side, which later resolution pivots mention. *)
+fun cpc_eq_resolve_reflexive_left_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((assume @p1 (= true true)) (assume @p2 (= (= true true) true)) \
+    \(step @p3 :rule eq_resolve :premises (@p1 @p2)))"
+  val thm = CPC_ProofReplay.replay_root_for_test proof
+  val _ = check_oracle_tags "CPC eq_resolve reflexive left" thm
+in
+  assert (Thm.concl thm ~~ ``T``,
+    "CPC eq_resolve with a reflexive left premise kept the equation")
+end
+
+(* A congruence under a quantifier is the binder lift of its premise, not a
+   canonical normal form of it. *)
+fun cpc_binder_cong_lift_success () =
+let
+  val prefix =
+    "(declare-sort t0 0) (declare-const set3 (Array t0 Bool)) \
+    \(declare-const v0 t0) (declare-const v2 (Array t0 Bool)) \
+    \(declare-const v1 t0) \
+    \(define @t1 () (@var \"x\" t0)) \
+    \(define @t4 () (select set3 @t1)) \
+    \(define @t22 () (select v2 @t1)) \
+    \(define @t23 () (not (= v0 @t1))) \
+    \(define @t24 () (not @t22)) \
+    \(define @t25 () (= v1 @t1)) \
+    \(define @t26 () (not @t25)) \
+    \(define @t28 () (and (not (and @t26 @t22)) @t23 @t22)) \
+    \(define @t29 () (= @t4 @t28)) \
+    \(step @p17 :rule refl :args (@t22)) \
+    \(step @p18 :rule refl :args (@t23)) \
+    \(step @p19 :rule refl :args (@t24)) \
+    \(step @p20 :rule bool-double-not-elim :args (@t25)) \
+    \(step @p21 :rule nary_cong :premises (@p20 @p19) \
+    \:args ((or (not @t26) @t24))) \
+    \(step @p22 :rule bool-and-de-morgan :args (@t26 @t22 true)) \
+    \(step @p23 :rule trans :premises (@p22 @p21)) \
+    \(step @p24 :rule nary_cong :premises (@p23 @p18 @p17) :args (@t28)) \
+    \(step @p25 :rule refl :args (@t4)) \
+    \(step @p26 :rule cong :premises (@p25 @p24) :args (@t29))"
+  fun replay steps = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string ("(" ^ prefix ^ steps ^ ")"))
+  val body = replay ""
+  val lifted = replay
+    " (step @p27 :rule cong :premises (@p26) \
+    \:args ((forall (@list @t1) @t29)))"
+  val (x, _) = boolSyntax.dest_forall (boolSyntax.lhs (Thm.concl lifted))
+  val _ = check_oracle_tags "CPC binder congruence body" body
+  val _ = check_oracle_tags "CPC binder congruence lift" lifted
+in
+  assert (Term.aconv (boolSyntax.rhs (Thm.concl lifted))
+      (boolSyntax.mk_forall (x, boolSyntax.rhs (Thm.concl body))),
+    "CPC congruence under a quantifier is not the binder lift of its premise")
+end
+
 
 fun cpc_proof_replay_contra_success () =
 let
@@ -36806,6 +36915,13 @@ let
       cpc_long_refutation_widening_success),
     ("cpc_array_set_assumption_bridge_success",
       cpc_array_set_assumption_bridge_success),
+    ("cpc_array_set_definition_identity_success",
+      cpc_array_set_definition_identity_success),
+    ("cpc_arrays_select_const_set_success",
+      cpc_arrays_select_const_set_success),
+    ("cpc_eq_resolve_reflexive_left_success",
+      cpc_eq_resolve_reflexive_left_success),
+    ("cpc_binder_cong_lift_success", cpc_binder_cong_lift_success),
     ("cpc_proof_replay_contra_success",
       cpc_proof_replay_contra_success),
     ("cpc_proof_replay_eq_refl_cong_chain_success",

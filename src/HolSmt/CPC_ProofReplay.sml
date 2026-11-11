@@ -3076,11 +3076,12 @@ local
         else if Term.aconv (Thm.concl right) boolSyntax.F then right
         else if is_reflexive_boolean_equality right then
           retain_support left right
-        else if is_reflexive_boolean_equality left then
-          retain_support right left
         else
           (Thm.EQ_MP right left
            handle Feedback.HOL_ERR _ =>
+           if is_reflexive_boolean_equality left then
+             retain_support right left
+           else
              (Thm.EQ_MP (Thm.SYM right) left
               handle Feedback.HOL_ERR _ =>
                 (Thm.EQ_MP left right
@@ -3134,13 +3135,14 @@ local
       else if is_reflexive_boolean_equality right andalso
               occurrence_reflexive right_step then
         (retain_support left right, step_provenance left_step)
-      else if is_reflexive_boolean_equality left andalso
-              occurrence_reflexive left_step then
-        (retain_support right left, step_provenance right_step)
       else
         ((Thm.EQ_MP right left,
           equality_side_provenance 1 (step_provenance right_step))
          handle Feedback.HOL_ERR _ =>
+         if is_reflexive_boolean_equality left andalso
+            occurrence_reflexive left_step then
+           (retain_support right left, step_provenance right_step)
+         else
            ((Thm.EQ_MP (Thm.SYM right) left,
              equality_side_provenance 0 (step_provenance right_step))
             handle Feedback.HOL_ERR _ =>
@@ -8096,7 +8098,9 @@ local
   fun replay_arrays_select_const args =
     case args of
       [target] => Tactical.TAC_PROOF (([], target),
-        bossLib.SIMP_TAC boolSimps.bool_ss [])
+        bossLib.SIMP_TAC boolSimps.bool_ss
+          [pred_setTheory.EMPTY_DEF, pred_setTheory.UNIV_DEF,
+           combinTheory.K_THM])
     | _ => raise ERR "arrays-select-const" "expected one equality"
 
   (* Compact CPC omits the conclusion of the read-over-write rules and gives
@@ -21771,11 +21775,13 @@ local
           combinSyntax.mk_K_1 (boolSyntax.F, element)),
          (pred_setSyntax.mk_univ element,
           combinSyntax.mk_K_1 (boolSyntax.T, element))]
+      val diff_applied = Rewrite.PURE_REWRITE_RULE
+        [pred_setTheory.SPECIFICATION] pred_setTheory.IN_DIFF
     in
       Conv.QCONV (Conv.THENC
         (Rewrite.PURE_REWRITE_CONV
            (pred_setTheory.SPECIFICATION :: pred_setTheory.SUBSET_applied ::
-            equations),
+            diff_applied :: equations),
          Conv.DEPTH_CONV Thm.BETA_CONV))
     end)
 
@@ -21784,7 +21790,8 @@ local
       combinSyntax.is_update_comb tm orelse combinSyntax.is_K_1 tm orelse
       pred_setSyntax.is_in tm orelse pred_setSyntax.is_insert tm orelse
       pred_setSyntax.is_delete tm orelse pred_setSyntax.is_empty tm orelse
-      pred_setSyntax.is_univ tm orelse pred_setSyntax.is_subset tm)) term
+      pred_setSyntax.is_univ tm orelse pred_setSyntax.is_subset tm orelse
+      pred_setSyntax.is_diff tm)) term
 
   (* cvc5's preprocessing can expose canonical arithmetic spellings, record
      and datatype eliminators, and FP bit representations in a proof
@@ -21830,6 +21837,13 @@ local
           val conv = Susp.force array_set_echo_conv
           val hyp_eq = conv hyp
           val normalized_hyp = boolSyntax.rhs (Thm.concl hyp_eq)
+          (* The translation's definition of a fresh set constant, mapped
+             back to the set it names, is an identity once both sides are
+             in array form. *)
+          fun identity () =
+            Drule.EQT_ELIM (Conv.QCONV (Conv.EVERY_CONV
+              [Conv.DEPTH_CONV Thm.BETA_CONV, conv,
+               Rewrite.REWRITE_CONV []]) hyp)
           fun match assumption =
             let
               val normalized_assumption = Susp.force assumption
@@ -21841,7 +21855,8 @@ local
               Thm.EQ_MP (Thm.SYM hyp_eq) normalized_assumption
             end
         in
-          Lib.tryfind match array_set_context
+          identity () handle Feedback.HOL_ERR _ =>
+            Lib.tryfind match array_set_context
         end
       fun prove_from_context hyp =
         Tactical.TAC_PROOF ((context, hyp),
