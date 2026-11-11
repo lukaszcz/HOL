@@ -3216,17 +3216,24 @@ local
           if is_optional_error primary then NONE else raise primary
       fun metadata thunk = thunk ()
         handle primary as Feedback.HOL_ERR _ => raise metadata_error primary
-      fun distinct_elements tm = dest_list (dest_all_distinct tm)
+      (* The elements of ALL_DISTINCT over a list literal, the SMT-LIB
+         [distinct] encoding; NONE for every other term, including
+         ALL_DISTINCT over a non-literal list, which is an ordinary
+         application. *)
+      fun distinct_literal_elements tm =
+        if is_all_distinct tm then
+          shape (fn () => SOME (#1 (dest_list (dest_all_distinct tm))))
+            (fn () => NONE)
+        else NONE
       fun encoding_subterms tm =
         let
           fun walk (tm, acc) =
             tm ::
-            (if is_all_distinct tm then
-               let val (elements, _) = distinct_elements tm in
+            (case distinct_literal_elements tm of
+               SOME elements =>
                  List.foldl (fn (element, rest) => walk (element, rest))
                    acc elements
-               end
-             else shape
+             | NONE => shape
                (fn () => let val (rator, rand) = dest_comb tm
                  in walk (rator, walk (rand, acc)) end)
                (fn () => shape
@@ -3235,11 +3242,13 @@ local
                  (fn () => acc)))
         in walk (tm, []) end
       (* The graph inventory uses this single-step form and a scoped visited
-         set. ALL_DISTINCT visits current plus reversed explicit elements;
-         list constructors and abstraction binder leaves are excluded. *)
+         set. ALL_DISTINCT over a list literal visits current plus reversed
+         explicit elements; list constructors and abstraction binder leaves
+         are excluded. *)
       fun encoding_children tm =
-        if is_all_distinct tm then List.rev (#1 (distinct_elements tm))
-        else shape (fn () => let val (left,right) = dest_comb tm
+        case distinct_literal_elements tm of
+          SOME elements => List.rev elements
+        | NONE => shape (fn () => let val (left,right) = dest_comb tm
             in [left,right] end)
           (fn () => shape (fn () => [#2 (dest_abs tm)]) (fn () => []))
       fun has_quantifier tm = memo_quantifier tm (fn () =>
