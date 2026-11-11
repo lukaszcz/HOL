@@ -681,6 +681,38 @@ class Pieces(unittest.TestCase):
             self.assertEqual(path.read_bytes(), b"abc")
             self.assertEqual(path.stat().st_mtime_ns, 5 * 10 ** 18)
 
+    def test_move_stray_merges_directories_and_keeps_collisions(self):
+        with tempfile.TemporaryDirectory(dir="/dev/shm") as tmp:
+            tmp = Path(tmp)
+            (tmp / "a/d").mkdir(parents=True)
+            (tmp / "a/d/x").write_text("new")
+            (tmp / "a/f").write_text("newf")
+            (tmp / "s/a/d").mkdir(parents=True)
+            (tmp / "s/a/d/y").write_text("old")
+            (tmp / "s/a/f").write_text("oldf")
+            dw.move_stray(tmp / "a", tmp / "s/a")
+            self.assertFalse((tmp / "a").exists())
+            self.assertEqual((tmp / "s/a/d/x").read_text(), "new")
+            self.assertEqual((tmp / "s/a/d/y").read_text(), "old")
+            self.assertEqual((tmp / "s/a/f").read_text(), "oldf")
+            self.assertEqual((tmp / "s/a/f.1").read_text(), "newf")
+            self.assertFalse((tmp / "s/a/d/d").exists())
+
+    def test_an_outside_make_deps_that_cannot_be_removed_is_moved(self):
+        with tempfile.TemporaryDirectory(dir="/dev/shm") as tmp:
+            root = Path(tmp, "root")
+            (root / "x/.hol").mkdir(parents=True)
+            folder, stray = root / "u", Path(tmp, "stray")
+            folder.mkdir()
+            before = dw.list_make_deps(root, ["x"])
+            (root / "x/.hol/make-deps").mkdir()
+            with mock.patch.object(Path, "rmdir", side_effect=OSError):
+                got = dw.settle_outside(root, folder, ["x"], before, [],
+                                        stray)
+            self.assertEqual(got["moved"], ["../x/.hol/make-deps"])
+            self.assertTrue((stray / "x/.hol/make-deps").is_dir())
+            self.assertFalse((root / "x/.hol/make-deps").exists())
+
     def test_a_directory_that_cannot_be_removed_is_moved_as_stray(self):
         with tempfile.TemporaryDirectory(dir="/dev/shm") as tmp:
             folder, stray = Path(tmp, "f"), Path(tmp, "stray")
@@ -1451,12 +1483,18 @@ class Journal(Base):
                 data["pending"].update(change)
             return edit
 
+        def bad_meta(key, value):
+            def edit(data):
+                meta = data["pending"]["meta"]
+                meta[sorted(meta)[0]][key] = value
+            return edit
+
         def drop(key):
             def edit(data):
                 del data["pending"][key]
             return edit
         for edit, text in (
-                (outside(root=str(self.world.tmp / "elsewhere")), "hold"),
+                (outside(root=str(self.world.tmp / "elsewhere")), "disagree"),
                 (outside(dirs=["../x"]), "bad directory"),
                 (outside(dirs=["/etc"]), "bad directory"),
                 (outside(bare=["a/./b"]), "bad directory"),
@@ -1466,6 +1504,19 @@ class Journal(Base):
                 (drop("store"), "malformed"),
                 (entry(store="/tmp/elsewhere"), "backup directory"),
                 (entry(meta={"../x": {}}), "not the theory's"),
+                (entry(unit="arithmetic"), "disagree"),
+                (entry(unit="nowhere"), "disagree"),
+                (entry(folder="/tmp/elsewhere"), "disagree"),
+                (entry(stops=["x"]), "disagree"),
+                (lambda d: d["pending"].update(
+                    store=d["pending"]["store"] + "/../x"), "normalized"),
+                (entry(folder="rel/path"), "normalized"),
+                (outside(dirs="abc"), "malformed"),
+                (outside(before=[]), "malformed"),
+                (bad_meta("sha256", "XYZ"), "bad product record"),
+                (bad_meta("mode", "x"), "bad product record"),
+                (bad_meta("mtime_ns", 1.5), "bad product record"),
+                (bad_meta("sha256", "0" * 64), "missing or changed"),
                 (lambda d: d.update(schema="task32-journal-v1"),
                  "not of schema")):
             data = json.loads(json.dumps(good))
@@ -1478,6 +1529,16 @@ class Journal(Base):
         dw.journal_write(folder, good)
         self.assertEqual(dw.recover(self.world.repo), 0)
         self.assertFalse(leftover.exists())
+
+    def test_recover_removes_the_directories_the_process_made(self):
+        before, report = self.fatal()
+        folder = self.world.roots["base"] / "src/num/extra_theories"
+        (folder / "fresh/.hol/make-deps").mkdir(parents=True)
+        (folder / "fresh/.hol/make-deps/C.d").write_text("d\n")
+        self.assertEqual(dw.recover(self.world.repo), 0)
+        self.assertEqual(self.world.snapshot(), before)
+        self.assertEqual(len(list((self.world.repo / dw.JOURNALS).glob(
+            "*/strays/inside/fresh/.hol/make-deps/C.d"))), 1)
 
     def test_recover_removes_in_folder_cache_churn(self):
         before, report = self.fatal()

@@ -562,7 +562,8 @@ def excluded(rel):
 
 def is_holmake_cache(rel):
     """True for a rel path that is Holmake's dependency cache: a file named
-    `*.d` directly in a `.hol/make-deps` directory. On a second Holmake run
+    `*.d` directly in a `.hol/make-deps` directory (the callers also
+    require a regular file). On a second Holmake run
     in an already built directory Holmake writes such a file for the
     generated files of every theory there (`<X>Theory.sig.d`,
     `<X>Theory.sml.d`), which `bin/build` did not write consistently. They
@@ -635,7 +636,7 @@ def scan_products(root):
     return dict(sorted(found.items()))
 
 
-def check_prime(before, after):
+def check_prime(before, after, label="prime"):
     """The prime commands changed no product: every product of `before` is
     sealed the same in `after`, and what is new is only Holmake's
     dependency cache (`is_holmake_cache`), which they exist to write: a
@@ -645,11 +646,11 @@ def check_prime(before, after):
     dependency scan that the other arm's processes may not (the driver
     deletes the caches after each process). Returns the new rel paths."""
     changed = [r for r in before if after.get(r) != before[r]]
-    stray = [r for r in after if r not in before and
-             not is_holmake_cache(r)]
+    stray = [r for r in after if r not in before and not (
+        is_holmake_cache(r) and after[r]["kind"] == "file")]
     require(not changed and not stray,
-            "the prime commands changed products: %s" % ", ".join(
-                (changed + stray)[:5]))
+            "the %s commands changed products: %s" % (label, ", ".join(
+                (changed + stray)[:5])))
     return sorted(r for r in after if r not in before)
 
 
@@ -816,7 +817,7 @@ def build_side(repo, side, pin, root, manifest_path, logs, scratch, *,
                      cases.theory_argv(target, unit["theory"]),
                      target / unit["dir"])
             record["products"] = scan_products(target)
-            require(check_prime(primed, record["products"]) == [],
+            require(check_prime(primed, record["products"], "reprime") == [],
                     "the snapshot is not a fixed point of the prime "
                     "commands: a second pass wrote files")
             record["build_interval_ns"] = [
@@ -951,25 +952,32 @@ def log_seal(path):
 
 
 def check_primed(record, commands, products, label):
-    """`primed` is a sorted, unique list of caches among the products; every
-    other product was written by the build (its mtime is not after the
-    build command's end), every cache by the prime commands (not before
-    the first one's start)."""
+    """`primed` is a sorted, unique list of caches (regular files) among the
+    products; every other product was written by the build (its mtime is
+    not after the build command's end), every cache by the prime commands
+    (not before the first one's start, not after the first reprime's
+    start), and no product was written while the reprime commands ran."""
     primed = record["primed"]
     require(isinstance(primed, list) and primed == sorted(set(primed)) and
             set(primed) <= set(products) and
-            all(is_holmake_cache(r) for r in primed),
-            "%s: bad list of primed caches" % label)
+            all(is_holmake_cache(r) and products[r]["kind"] == "file"
+                for r in primed), "%s: bad list of primed caches" % label)
     named = {c["name"]: c for c in commands}
     built = named["build"]["end_ns"]
     first = named[PRIME + cases.THEORY_UNITS[0]["name"]]["start_ns"]
+    again = named[REPRIME + cases.THEORY_UNITS[0]["name"]]["start_ns"]
+    last = named[REPRIME + cases.THEORY_UNITS[-1]["name"]]["end_ns"]
+    for rel in primed:
+        require(first <= products[rel]["mtime_ns"] <= again,
+                "%s: primed cache outside the prime commands' window: %s"
+                % (label, rel))
     for rel, seal in products.items():
-        if rel in primed:
-            require(seal["mtime_ns"] >= first, "%s: primed cache older "
-                    "than the prime commands: %s" % (label, rel))
-        else:
+        if rel not in primed:
             require(seal["mtime_ns"] <= built, "%s: product written after "
                     "the build: %s" % (label, rel))
+            require(not again <= seal["mtime_ns"] <= last, "%s: product "
+                    "written during the reprime commands: %s" %
+                    (label, rel))
 
 
 def verify_side(record, label, expected_pin):

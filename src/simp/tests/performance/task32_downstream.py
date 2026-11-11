@@ -506,6 +506,26 @@ def restore(folder, meta, store, now):
 is_holmake_cache = snap.is_holmake_cache
 
 
+def move_stray(src, dst):
+    """Move `src` to `dst`, creating its parents. A directory whose
+    destination is already a directory is merged into it, child by child
+    (never nested into it); another collision gets a numbered name, so
+    that no evidence is overwritten."""
+    src, dst = Path(src), Path(dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if src.is_dir() and not src.is_symlink() and dst.is_dir() and \
+            not dst.is_symlink():
+        for child in sorted(os.listdir(src)):
+            move_stray(src / child, dst / child)
+        src.rmdir()
+        return
+    target, n = dst, 0
+    while os.path.lexists(target):
+        n += 1
+        target = dst.with_name("%s.%d" % (dst.name, n))
+    shutil.move(str(src), str(target))
+
+
 def is_cache_churn(rel, entry, before):
     """True for a new entry of the unit's folder that is Holmake's
     dependency cache: a regular `*.d` file in the `.hol/make-deps` of a
@@ -538,18 +558,14 @@ def settle(folder, stops, before, meta, store, name, stray_dir):
             (Path(folder) / rel).unlink()
             churn.append(rel)
             continue
-        src, dst = Path(folder) / rel, Path(stray_dir) / rel
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(src), str(dst))
+        move_stray(Path(folder) / rel, Path(stray_dir) / rel)
         moved.append(rel)
     for rel in sorted((p for p, e in now.items()
                        if p not in before and e[0] == "d"), reverse=True):
         try:
             (Path(folder) / rel).rmdir()
         except OSError:
-            dst = Path(stray_dir) / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(Path(folder) / rel), str(dst))
+            move_stray(Path(folder) / rel, Path(stray_dir) / rel)
             moved.append(rel)
     final = scan(folder, stops)
     ok = all(final.get(r) == before.get(r) for r in meta) and not any(
@@ -629,16 +645,14 @@ def settle_outside(root, folder, dirs, before, bare, stray_dir):
     with all it holds) is moved to `stray_dir` by its path from `root`
     (`moved`), as is a `.hol` that appeared in a bare directory; a
     `make-deps` directory the process made is removed once empty (or
-    recorded as moved when it cannot be); an existing entry that changed
+    moved to `stray_dir` when it cannot be); an existing entry that changed
     or vanished is `modified`. The paths returned are relative to
     `folder`, as `settle`'s."""
     def shown(rel):
         return os.path.relpath(os.path.join(root, rel), folder)
 
     def move(rel):
-        dst = Path(stray_dir) / rel
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(Path(root) / rel), str(dst))
+        move_stray(Path(root) / rel, Path(stray_dir) / rel)
         moved.append(shown(rel))
 
     deps = {os.path.join(d, ".hol/make-deps") for d in dirs}
@@ -656,7 +670,7 @@ def settle_outside(root, folder, dirs, before, bare, stray_dir):
         try:
             (Path(root) / rel).rmdir()
         except OSError:
-            moved.append(shown(rel))
+            move(rel)
     for d in bare:
         if os.path.lexists(os.path.join(root, d, ".hol")):
             move(os.path.join(d, ".hol"))
@@ -2775,27 +2789,51 @@ OUTSIDE_KEYS = ("root", "dirs", "bare", "before")
 
 def check_journal(folder, data):
     """A journal is trusted only if it is of this schema, has every key and
-    its paths are sane: its folder lies under the snapshot root, its store
-    is the journal's own backup directory and its products are files of
-    the theory target. Raises Refusal, before anything is changed."""
+    its paths are sane: normalized and absolute, the folder the unit's own
+    under the snapshot root, the store the journal's own backup directory,
+    the products the theory's, each backup present with its sha256.
+    Raises Refusal, before anything is changed."""
     require(isinstance(data, dict) and data.get("schema") ==
             JOURNAL_SCHEMA, "journal %s is not of schema %s (an older or "
             "malformed journal: restore by hand)" % (folder,
                                                      JOURNAL_SCHEMA))
     entry = data.get("pending")
+    out = entry.get("outside") if isinstance(entry, dict) else None
     require(isinstance(entry, dict) and all(k in entry for k in ENTRY_KEYS)
-            and isinstance(entry["outside"], dict) and all(
-                k in entry["outside"] for k in OUTSIDE_KEYS) and
+            and isinstance(out, dict) and all(k in out for k in OUTSIDE_KEYS)
+            and isinstance(out["dirs"], list) and
+            isinstance(out["bare"], list) and
+            isinstance(out["before"], dict) and
             isinstance(entry["meta"], dict) and all(
                 isinstance(entry[k], list) for k in ("stops", "before")) and
             all(isinstance(entry[k], str) for k in (
-                "label", "folder", "store", "name", "unit")),
+                "label", "folder", "store", "name", "unit")) and
+            isinstance(out["root"], str),
             "journal %s is malformed" % folder)
+    for path in (entry["folder"], entry["store"], out["root"]):
+        require(os.path.isabs(path) and os.path.normpath(path) == path,
+                "journal: %r is not a normalized absolute path" % path)
+    unit = cases.BY_NAME.get(entry["unit"])
+    require(unit is not None and unit["kind"] == "theory" and
+            unit["theory"] == entry["name"] and
+            entry["folder"] == str(Path(out["root"]) / unit["dir"]) and
+            entry["stops"] == list(stops_for(unit)),
+            "journal: the unit, theory, folder and stops disagree")
     require(Path(entry["store"]).is_relative_to(Path(folder) / "backup"),
             "journal: the store is not the journal's backup directory")
     require(set(entry["meta"]) <= set(target_rels(entry["name"])),
             "journal: products that are not the theory's")
-    check_outside(entry["outside"], Path(entry["folder"]))
+    for rel, m in entry["meta"].items():
+        require(isinstance(m, dict) and type(m.get("mtime_ns")) is int and
+                type(m.get("mode")) is int and isinstance(
+                    m.get("sha256"), str) and
+                re.fullmatch("[0-9a-f]{64}", m["sha256"]),
+                "journal: bad product record for " + rel)
+        backup = Path(entry["store"]) / rel
+        require(backup.is_file() and sha(backup.read_bytes()) ==
+                m["sha256"], "journal: the backup of %s is missing or "
+                "changed" % rel)
+    check_outside(out, Path(entry["folder"]))
 
 
 def check_outside(out, unit_dir):
@@ -2849,9 +2887,14 @@ def recover(repo):
                     if is_cache_churn(rel, e, before):
                         (unit_dir / rel).unlink()
                         continue
-                    dst = folder / "strays/inside" / rel
-                    dst.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.move(str(unit_dir / rel), str(dst))
+                    move_stray(unit_dir / rel, folder / "strays/inside" / rel)
+            for rel in sorted((p for p, e in now.items()
+                               if p not in before and e[0] == "d"),
+                              reverse=True):
+                try:
+                    (unit_dir / rel).rmdir()
+                except OSError:
+                    move_stray(unit_dir / rel, folder / "strays/inside" / rel)
             out = entry["outside"]
             settle_outside(out["root"], unit_dir, out["dirs"],
                            out["before"], out["bare"],

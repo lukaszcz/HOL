@@ -427,9 +427,9 @@ class BuildTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "reprime-arithmetic failed"):
             w.build("base")
 
-    def tampered(self, change, pattern):
+    def tampered(self, change, pattern, primed=True):
         w = World(self)
-        w.fake.prime = write_cache_once
+        w.fake.prime = write_cache_once if primed else None
         w.both()
         doc = w.doc()
         change(doc["sides"]["cand"])
@@ -454,7 +454,16 @@ class BuildTests(unittest.TestCase):
 
         def late(record):
             record["commands"][4]["start_ns"] = 2**62
-        self.tampered(late, "primed cache older")
+        self.tampered(late, "primed cache outside")
+
+        def again(record):
+            record["commands"][4 + len(cases.THEORY_UNITS)]["start_ns"] = 1
+        self.tampered(again, "primed cache outside")
+        self.tampered(again, "during the reprime commands", primed=False)
+
+        def kind(record):
+            record["primed"] = ["sigobj/numTheory.uo"]
+        self.tampered(kind, "bad list of primed")
 
     def test_a_failing_prime_fails_the_build(self):
         w = World(self)
@@ -1263,6 +1272,8 @@ class VerifyTests(unittest.TestCase):
         record["commands"][2]["start_ns"] = 1
         record["build_interval_ns"][0] = 1
         record["commands"][3]["end_ns"] = 2**62
+        record["commands"][4 + len(cases.THEORY_UNITS)][
+            "start_ns"] = 2**62 - 1
         record["commands"][-1]["end_ns"] = 2**62
         record["build_interval_ns"][1] = 2**62
 

@@ -2935,8 +2935,10 @@ new file is not a `.hol/make-deps/*.d`. Then every command runs a second
 time (`reprime-<unit>`) and must change nothing at all: the snapshot is a
 fixed point of the unit commands. `verify` requires both passes (argv, cwd
 and exit 0), a `primed` list that is sorted, unique, among the products and
-made of caches, every other product not newer than the end of `build` and
-every primed cache not older than the first prime. The snapshots live on
+made of regular cache files, every other product not newer than the end of
+`build`, every primed cache within the window from the first prime's start
+to the first reprime's start, and no product written during the reprime
+commands. The snapshots live on
 disk, not `/dev/shm`, and outside the repository's tracked paths
 (`require_location`). Build base, then cand.
 
@@ -2969,9 +2971,10 @@ such rule and is plain. `bin/build` never passes `--no_prereqs`, and the
 intermediate directories are listed as roots so that their own selftests
 and link rules run.
 
-Manifest (`SCHEMA` = `task32-independent-build-v4`; written after each
-side, an interrupted or failed build leaves an `incomplete` record that
-only `discard` removes). Per side: pin, `HEAD^{tree}`, `mktool` flag, the
+Manifest (`SCHEMA` = `task32-independent-build-v4`, whose records include
+the reprime commands; v4 manifests made before commit c4694c7a91 are not
+supported; written after each side, an interrupted or failed build leaves
+an `incomplete` record that only `discard` removes). Per side: pin, `HEAD^{tree}`, `mktool` flag, the
 patch seal (sha256, bytes, candidate blob), `status_before`,
 `ignored_before`, `stale_before`, the input hash (sha256 of `git ls-files
 -s` plus the diff), the object alternates, and per command the argv, cwd,
@@ -3219,7 +3222,9 @@ journal's own, the listing) and refuses an older or malformed one before
 changing anything; then it puts the products back, deletes new Holmake
 caches, moves other files the process left into the journal's
 `strays/inside` (the unit's folder) and `strays/outside` (the rest of the
-snapshot), verifies sha256 and mtime and clears the journal.
+snapshot), removes the directories the process made (a stray directory is
+merged into an existing one, never nested), verifies sha256 and mtime and
+clears the journal.
 
 Holmake cache churn. A second Holmake run in a built directory writes
 `.hol/make-deps/<X>Theory.{sig,sml}.d` for the theories there, which
@@ -3241,8 +3246,8 @@ walk per side and run, kept in the run's context) have their
 `.hol/make-deps` listed before and after each process (`settle_outside`);
 every other new entry there (a file, or a directory whole) is stray, a
 changed or vanished existing one is `modified`, a `make-deps` directory the
-process made is removed (stray if it cannot be). The cleanup runs after
-every process whatever its end, each step under its own try so that an
+process made is removed (moved to the stray directory if it cannot be).
+The cleanup runs after every process whatever its end, each step under its own try so that an
 error of one neither skips the other nor masks the primary error (the
 others are notes on it). For a theory unit it is journaled (the listing,
 the directories and the root are in the journal entry); selftest units are
