@@ -6103,7 +6103,43 @@ local
             [thm, lifted]
           end
           handle Feedback.HOL_ERR _ => [thm]
+    (* Normalize only the annotated prefix. Rewriting the body first can
+       destroy the pointwise premise before a negated quantifier exposes it. *)
+    fun prefix_conv 0 tm = Thm.REFL tm
+      | prefix_conv depth tm =
+          if boolSyntax.is_forall tm orelse boolSyntax.is_exists tm then
+            Conv.BINDER_CONV (prefix_conv (depth - 1)) tm
+          else
+            Conv.THENC
+              (Conv.ORELSEC (Conv.NOT_FORALL_CONV, Conv.NOT_EXISTS_CONV),
+               prefix_conv depth) tm
+    fun exact_premise ([], _) =
+          raise ERR "z3_nnf_bound" "no annotated binders"
+      | exact_premise (vars, thm) =
+          let
+            val (l, r) = boolSyntax.dest_eq t
+            val left = prefix_conv (List.length vars) l
+            val right = prefix_conv (List.length vars) r
+            val nl = boolSyntax.rhs (Thm.concl left)
+            val nr = boolSyntax.rhs (Thm.concl right)
+            fun close quant_eq =
+              let
+                val lifted = List.foldr
+                  (fn (var, result) => quant_eq var result) thm vars
+                val (pl, pr) = boolSyntax.dest_eq (Thm.concl lifted)
+                val aligned =
+                  if pl ~~ nl andalso pr ~~ nr then lifted
+                  else if pl ~~ nr andalso pr ~~ nl then Thm.SYM lifted
+                  else raise ERR "z3_nnf_bound" "prefix does not match"
+              in
+                Thm.TRANS left (Thm.TRANS aligned (Thm.SYM right))
+              end
+          in
+            Lib.tryfind close [Drule.FORALL_EQ, Drule.EXISTS_EQ]
+          end
     val thms = List.concat (List.map lift bound_thms)
+    val thms = Lib.tryfind exact_premise bound_thms :: thms
+      handle Feedback.HOL_ERR _ => thms
   in
     z3_nnf (state, thms, t)
   end
@@ -7729,19 +7765,39 @@ local
             else
               raise ERR "z3_skolem" "expected a quantified formula"
         | NONE => raise ERR "z3_skolem" "expected a quantified formula"
+    fun definition {redex, residue} =
+      if HOLset.member (#var_set state, redex) then
+        redex |-> Thm.ASSUME (boolSyntax.mk_eq (redex, residue))
+      else
+        raise ERR "z3_skolem"
+          "match produced a definition for a non-Z3 variable"
     fun instantiate accumulated substs =
       let
-        fun definition {redex, residue} =
-          if HOLset.member (#var_set state, redex) then
-            redex |-> Thm.SYM
-              (Thm.ASSUME (boolSyntax.mk_eq (redex, residue)))
-          else
-            raise ERR "z3_skolem"
-              "match produced a definition for a non-Z3 variable"
-        val conversion = Drule.SUBST_CONV (List.map definition substs) t
+        fun reverse {redex, residue} = redex |-> Thm.SYM residue
+        val conversion = Drule.SUBST_CONV
+          (List.map (reverse o definition) substs) t
           (Thm.concl accumulated)
       in
         Thm.EQ_MP conversion accumulated
+      end
+    fun higher_order accumulated =
+      let
+        val rigid = HOLset.difference
+          (Term.FVL [t] Term.empty_tmset, #var_set state)
+        val (substs, tyins) =
+          HolKernel.ho_match_term [] rigid t (Thm.concl accumulated)
+        val _ = List.null tyins orelse
+          raise ERR "z3_skolem" "match instantiated a fixed type variable"
+        (* Applied witnesses need lambda definitions.  Check their beta
+           instance against the SELECT theorem before recording them. *)
+        val conversion = Drule.SUBST_CONV
+          (List.map definition substs) t t
+        val conversion = Conv.CONV_RULE
+          (Conv.RAND_CONV (Conv.TOP_DEPTH_CONV Thm.BETA_CONV)) conversion
+        val accumulated = Conv.CONV_RULE
+          (Conv.TOP_DEPTH_CONV Thm.BETA_CONV) accumulated
+      in
+        Thm.EQ_MP (Thm.SYM conversion) accumulated
       end
     (* Z3 may skolemize all or only a prefix of a binder block.  Peel at
        least one binder (this is the [sk] rule), then stop at the first
@@ -7754,7 +7810,7 @@ local
         fun matched theorem =
           case Lib.total (Term.match_term t) (Thm.concl theorem) of
             SOME (substs, _) => SOME (instantiate theorem substs)
-          | NONE => NONE
+          | NONE => Lib.total higher_order theorem
       in
         case matched accumulated of
           SOME theorem => theorem

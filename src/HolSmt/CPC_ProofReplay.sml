@@ -1074,9 +1074,18 @@ local
       (expect_one_arg "beta-reduce" args)
 
   fun replay_lambda_elim args =
-    conversion_equal "lambda-elim"
-      (Conv.TOP_DEPTH_CONV Drule.ETA_CONV)
-      (expect_one_arg "lambda-elim" args)
+    let
+      (* Contract the leading binders, preserving redexes in the function
+         being returned: CPC does not normalize its arguments here. *)
+      fun leading_eta_conv tm =
+        if Term.is_abs tm then
+          Conv.THENC (Conv.ABS_CONV leading_eta_conv,
+            Conv.TRY_CONV Drule.ETA_CONV) tm
+        else Thm.REFL tm
+    in
+      conversion_equal "lambda-elim" leading_eta_conv
+        (expect_one_arg "lambda-elim" args)
+    end
 
   (* CPC's HO_CONG omits both :args and its conclusion.  For an n-ary
      application cvc5 emits the function equality followed by one equality
@@ -5520,6 +5529,33 @@ local
     let val target = expect_one_arg "quant-unused-vars" args in
       Tactical.TAC_PROOF (([], target),
         bossLib.SIMP_TAC (bossLib.srw_ss()) [])
+    end
+
+  fun replay_quant_dt_split args =
+    let
+      val target = expect_one_arg "quant-dt-split" args
+      val (left, right) = boolSyntax.dest_eq target
+      val (variable, _) = boolSyntax.dest_forall left
+      val constructors =
+        SmtDatatypeProve.constructors_of (Term.type_of variable)
+      (* A nullary constructor's body may itself be a conjunction. *)
+      val cases = Drule.CONJ_LIST (List.length constructors)
+        (Thm.ASSUME right)
+      val forward = Thm.DISCH left
+        (Drule.LIST_CONJ (List.map
+          (fn branch => Tactical.TAC_PROOF (([left], Thm.concl branch),
+            Tactic.MATCH_ACCEPT_TAC (Thm.ASSUME left))) cases))
+      val backward = Thm.DISCH right
+        (Tactical.TAC_PROOF (([right], left),
+          Tactical.THEN
+            (Tactic.X_GEN_TAC variable,
+             Tactical.THEN
+               (Tactic.FULL_STRUCT_CASES_TAC
+                  (Drule.ISPEC variable
+                    (TypeBase.nchotomy_of (Term.type_of variable))),
+                Tactical.FIRST (List.map Tactic.MATCH_ACCEPT_TAC cases)))))
+    in
+      Drule.IMP_ANTISYM_RULE forward backward
     end
 
   fun replay_quant_rewrite name args =
@@ -20730,6 +20766,17 @@ local
            | "ite_elim1" => opaque ( replay_ite_elim1 prems)
            | "ite_elim2" => opaque ( replay_ite_elim2 prems)
            | "quant_unused_vars" => opaque ( replay_quant_unused_vars args)
+           | "quant_dt_split" =>
+               let
+                 val theorem = replay_quant_dt_split args
+               in
+                 case located_args of
+                   [located] => located_result
+                     "quantified datatype split exact argument" theorem located
+                 | _ => unavailable_result
+                     "quantified datatype split lacks one equality argument"
+                     theorem
+               end
            | "quant_rewrite" =>
                let
                  val theorem = replay_quant_rewrite (#name rule) args

@@ -11886,6 +11886,58 @@ in
   check_oracle_tags "nested CPC datatype tester replay" theorem
 end
 
+fun cpc_quant_dt_split_replay_success () =
+let
+  val option_target =
+    ``(!x:int option. P x) = (P NONE /\ !y. P (SOME y))``
+  val option_prefix =
+    "(define @x () (@var \"x\" Option_Int)) \
+    \(define @y () (@var \"y\" Int)) \
+    \(define @q () (forall (@list @x) (select v0 @x))) "
+  val option_right =
+    "(and (select v0 ctor_Option_Int_NONE) \
+    \(forall (@list @y) (select v0 (ctor_Option_Int_SOME @y))))"
+  fun replay goal prefix right =
+    let
+      val (translation, _) =
+        SmtLib.goal_to_SmtLib_translation NONE ([], goal)
+      val proof = CPC_ProofParser.parse_stream_with_version
+        (SmtLib.parser_dicts_for_translation translation) "1.3.4"
+        (TextIO.openString ("(" ^ prefix ^
+          "(define @r () " ^ right ^ ") \
+          \(step @p :rule quant-dt-split :args ((= @q @r))))"))
+    in
+      CPC_ProofReplay.replay_root_for_test proof
+    end
+  fun check goal prefix right =
+    let val theorem = replay goal prefix right in
+      assert (Thm.concl theorem ~~ goal,
+        "quantified datatype split changed the certificate equality");
+      assert (List.null (Thm.hyp theorem),
+        "quantified datatype split retained hypotheses");
+      check_oracle_tags "quantified datatype split" theorem
+    end
+in
+  check option_target option_prefix option_right;
+  check
+    ``(!x:bool+int. !z:int. P x z) =
+      ((!z b. P (INL b) z) /\ (!z i. P (INR i) z))``
+    ("(define @x () (@var \"x\" Sum_Bool_Int)) \
+     \(define @z () (@var \"z\" Int)) \
+     \(define @b () (@var \"b\" Bool)) \
+     \(define @i () (@var \"i\" Int)) \
+     \(define @q () (forall (@list @x @z) \
+     \(select (select v0 @x) @z))) ")
+    ("(and (forall (@list @z @b) \
+     \(select (select v0 (ctor_Sum_Bool_Int_INL @b)) @z)) \
+     \(forall (@list @z @i) \
+     \(select (select v0 (ctor_Sum_Bool_Int_INR @i)) @z)))");
+  assert ((ignore (replay option_target option_prefix
+      "(select v0 ctor_Option_Int_NONE)"); false)
+    handle Feedback.HOL_ERR _ => true,
+    "quantified datatype split accepted a missing constructor branch")
+end
+
 fun cpc_proof_parser_define_and_optional_conclusion_success () =
 let
   val proof = parse_cpc_proof_string
@@ -14853,6 +14905,26 @@ let
       \(define @t1 () (@var \"x\" Bool)) \
       \(define @t2 () (lambda (@list @t1) (f @t1))) \
       \(step @p1 :rule lambda-elim :args ((= @t2 f))))")
+  fun nested_eta reversed binders =
+    CPC_ProofReplay.replay_root_for_test
+      (parse_cpc_proof_string
+        ("((declare-const f (-> (-> Int Int) Int " ^
+         (if binders = 2 then "Int " else "") ^ "Int)) " ^
+         "(declare-const g (-> Int Int)) " ^
+         "(define @z () (@var \"z\" Int)) " ^
+         "(define @h () (lambda (@list @z) (g @z))) " ^
+         "(define @x () (@var \"x\" Int)) " ^
+         "(define @y () (@var \"y\" Int)) " ^
+         "(define @lhs () (lambda (@list @x " ^
+         (if binders = 2 then "@y" else "") ^ ") (f @h @x " ^
+         (if binders = 2 then "@y" else "") ^ "))) " ^
+         "(define @rhs () (_ f @h)) " ^
+         "(step @p1 :rule lambda-elim :args ((= " ^
+         (if reversed then "@rhs @lhs" else "@lhs @rhs") ^
+         "))))"))
+  val nested = nested_eta false 1
+  val reversed = nested_eta true 1
+  val multiple = nested_eta false 2
   val alpha = CPC_ProofReplay.replay_root_for_test
     (parse_cpc_proof_string
       "((define @t1 () (@var \"x\" Int)) \
@@ -14870,10 +14942,22 @@ in
     assert (Term.aconv eta_reduced eta_right,
       "CPC lambda-elim returned the wrong eta equality")
   end;
+  assert (Thm.concl nested ~~
+      ``(\x:int. (f:(int -> int) -> int -> int) (\z. g z) x) =
+        f (\z:int. g z)``,
+    "CPC lambda-elim normalized a nested function argument");
+  assert (Thm.concl reversed ~~
+      ``(f:(int -> int) -> int -> int) (\z:int. g z) =
+        (\x:int. f (\z:int. g z) x)``,
+    "CPC reversed lambda-elim normalized a nested function argument");
+  assert (Thm.concl multiple ~~
+      ``(\x:int y:int. (f:(int -> int) -> int -> int -> int)
+          (\z. g z) x y) = f (\z:int. g z)``,
+    "CPC lambda-elim did not preserve the multi-binder target");
   assert (Thm.concl alpha ~~ ``(\x:int. x) = (\y:int. y)``,
     "CPC alpha_equiv did not replay abstraction renaming");
   List.app (check_oracle_tags "CPC HO conversion unit test")
-    [beta, eta, alpha]
+    [beta, eta, nested, reversed, multiple, alpha]
 end
 
 (* Alpha interning must retain the exact source binder and mapping. *)
@@ -20450,6 +20534,52 @@ in
       (Z3_ProofReplay.replay_root_for_test guarded_proof))
 end
 
+fun z3_skolem_dependent_witness_replay_success () =
+let
+  fun proof target witnesses =
+    let
+      val initial = Z3_Proof.empty_proof "4.15.3"
+      val steps = Redblackmap.insert (Z3_Proof.proof_steps initial, 0,
+        Z3_Proof.SKOLEM target)
+    in
+      Z3_Proof.update_proof_vars
+        (Z3_Proof.update_proof_steps initial steps)
+        (HOLset.addList (Term.empty_tmset, witnesses))
+    end
+  fun run_case (label, target, witness) =
+    let
+      val {asserted_hyps, definition_hyps, thm} =
+        Z3_ProofReplay.replay_root_with_state_for_test
+          (proof target [witness])
+      val definition =
+        case definition_hyps of
+          [term] => term
+        | _ => die ("FAIL: " ^ label ^ " lost the witness definition")
+      val (name, body) = boolSyntax.dest_eq definition
+    in
+      assert (Thm.concl thm ~~ target,
+        label ^ " returned the wrong skolem equality");
+      assert (List.null asserted_hyps andalso
+          List.length (Thm.hyp thm) = 1 andalso
+          name ~~ witness andalso Term.is_abs body,
+        label ^ " did not retain exactly the fresh function definition");
+      check_oracle_tags label thm;
+      expect_hol_error_contains (label ^ " rigid witness")
+        "expected a quantified formula"
+        (fn () => ignore
+          (Z3_ProofReplay.replay_root_with_state_for_test (proof target [])))
+    end
+in
+  List.app run_case
+    [("one-parameter skolem",
+      ``~(!x:int. ~P x \/ Q (y:int) x) =
+        ~(~P (sk y) \/ Q y (sk y))``, ``sk:int->int``),
+     ("three-parameter skolem",
+      ``~(!x:int. ~P x (a:bool) (b:int) (c:bool) \/ Q x) =
+        ~(~P (sk a b c) a b c \/ Q (sk a b c))``,
+      ``sk:bool->int->bool->int``)]
+end
+
 fun ground_subterm_evaluation_budget_success () =
 let
   val profile_name = "arith-linear(5)(ground-subterm-eval)_OK"
@@ -23680,6 +23810,59 @@ fun z3_trans_star_chain_search_no_path_diagnostic () =
       assert (String.isSubstring "a" msg andalso String.isSubstring "d" msg,
         "trans* no-path diagnostic did not include endpoints: " ^ msg)
     end
+
+fun z3_nnf_neg_quantified_body_replay_success () =
+let
+  fun run_case (label, vars, source, result, witness) =
+    let
+      val body_target = boolSyntax.mk_eq
+        (boolSyntax.mk_neg source, result)
+      val target = boolSyntax.mk_eq
+        (boolSyntax.mk_neg (boolSyntax.list_mk_exists (vars, source)),
+         boolSyntax.list_mk_forall (vars, result))
+      val (skolem_source, _) = boolSyntax.dest_conj source
+      val (skolem_result, _) = boolSyntax.dest_disj result
+      val skolem_target = boolSyntax.mk_eq
+        (boolSyntax.mk_neg skolem_source, skolem_result)
+      val body_node = Z3_Proof.NNF_NEG
+        ([Z3_Proof.SKOLEM skolem_target], body_target)
+      val node = Z3_Proof.NNF_NEG
+        ([Z3_Proof.PROOF_BIND (vars, body_node)], target)
+      val initial = Z3_Proof.empty_proof "4.15.3"
+      val proof = Z3_Proof.update_proof_vars
+        (Z3_Proof.update_proof_steps initial
+          (Redblackmap.insert (Z3_Proof.proof_steps initial, 0, node)))
+        (HOLset.add (Term.empty_tmset, witness))
+      val () = Profile.reset_all ()
+      val {asserted_hyps, definition_hyps, thm} =
+        Z3_ProofReplay.replay_root_with_state_for_test proof
+    in
+      assert (Thm.concl thm ~~ target,
+        label ^ " returned the wrong quantified NNF equality");
+      assert (List.null asserted_hyps andalso
+          List.length definition_hyps = 1 andalso
+          HOLset.equal (Thm.hypset thm,
+            HOLset.addList (Term.empty_tmset, definition_hyps)),
+        label ^ " changed the skolem definition hypotheses");
+      assert (profile_call_count "nnf[metis-fallback]" = 0,
+        label ^ " used METIS for quantified NNF congruence");
+      check_oracle_tags label thm
+    end
+in
+  List.app run_case
+    [("one-binder negative existential",
+      [``y:int``],
+      ``(!x:int. ~(P x \/ Q (y:int) x) \/ R x) /\ P1 y /\ P2 y``,
+      ``~(~(P ((sk:int->int) y) \/ Q (y:int) (sk y)) \/ R (sk y)) \/
+        ~P1 y \/ ~P2 y``, ``sk:int->int``),
+     ("three-binder negative existential",
+      [``a:bool``, ``b:int``, ``c:bool``],
+      ``(!x:int. ~(P x (a:bool) (b:int) (c:bool) \/ Q x) \/ R x) /\
+        P1 a b c /\ P2 a b c``,
+      ``~(~(P ((sk:bool->int->bool->int) a b c) a b c \/ Q (sk a b c)) \/
+        R (sk a b c)) \/ ~P1 a b c \/ ~P2 a b c``,
+      ``sk:bool->int->bool->int``)]
+end
 
 fun z3_nnf_structural_replay_no_metis_success () =
 let
@@ -35401,6 +35584,8 @@ let
       cpc_proof_parser_parameterized_datatype_tester_success),
     ("cpc_proof_replay_nested_datatype_tester_success",
       cpc_proof_replay_nested_datatype_tester_success),
+    ("cpc_quant_dt_split_replay_success",
+      cpc_quant_dt_split_replay_success),
     ("cpc_proof_parser_ascribed_seq_empty_success",
       cpc_proof_parser_ascribed_seq_empty_success),
     ("cpc_proof_parser_ascribed_bag_empty_success",
@@ -35763,6 +35948,8 @@ let
       quantified_boolean_rewrite_n_binders_success),
     ("z3_skolem_nary_binders_replay_success",
       z3_skolem_nary_binders_replay_success),
+    ("z3_skolem_dependent_witness_replay_success",
+      z3_skolem_dependent_witness_replay_success),
     ("z3_core_proof_rule_replay_minimal_raw_success",
       z3_core_proof_rule_replay_minimal_raw_success),
     ("z3_def_axiom_bounded_structural_ordering_success",
@@ -35797,6 +35984,8 @@ let
       z3_trans_star_chain_search_replay_no_metis_success),
     ("z3_trans_star_chain_search_no_path_diagnostic",
       z3_trans_star_chain_search_no_path_diagnostic),
+    ("z3_nnf_neg_quantified_body_replay_success",
+      z3_nnf_neg_quantified_body_replay_success),
     ("z3_nnf_structural_replay_no_metis_success",
       z3_nnf_structural_replay_no_metis_success),
     ("z3_th_lemma_existing_theory_replay_minimal_success",

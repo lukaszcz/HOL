@@ -99,6 +99,11 @@ proof-local list aliases. Its conclusion may be omitted; checked replay then
 derives the resolvent one pivot occurrence at a time, falling back to
 checked canonical binary resolution when occurrence replay declines.
 
+CPC `quant-dt-split` rewrites a universal datatype quantifier into a
+conjunction of constructor cases. Replay proves the certificate's equality
+using the datatype's TypeBase exhaustiveness theorem and universal
+specialization, preserving the remaining binders and constructor fields.
+
 For a cvc5 upgrade, test the official release binary against the checked
 matrix rather than accepting proof-format drift.  The matrix commands are in
 `$HOLSMT_VALIDATION_DIR/tools/cvc5-version-matrix.md`.
