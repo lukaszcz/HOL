@@ -18,10 +18,9 @@ argument (selftests) and writes one JSON line to $T32_STATS at exit.
              processes per sample (a unit above the cap R_CAP is declared
              at R_CAP, not refused);
   control    the live negative control: PAIRS pairs of one unit at its
-             declared R, the candidate
-             reporter busy-loops BUSY (6%) of the unit's median whole-tree
-             CPU from the pilot, in absolute seconds, on the base snapshot;
-             must be judged a fail;
+             declared R, the candidate reporter busy-loops BUSY (6%) of
+             the unit's median whole-tree CPU from the pilot, in absolute
+             seconds, on the base snapshot; must be judged a fail;
   predeclare writes the counts file (R per unit, references, seals of the
              replayed smoke, pilot and control, overheads, the time
              estimate), which is committed alone before any decision
@@ -1374,9 +1373,14 @@ def declared_reps(pilot_outcome):
     """unit -> the R a decision stage (and the negative control) runs at:
     the pilot's R, clamped to R_CAP. The pilot reports what its data asks
     for; a unit above the cap is underpowered at the cap, which the
-    routing of the stages (control-limited, inconclusive) handles."""
-    return {w: min(R_CAP, p["reps"])
-            for w, p in pilot_outcome["pilot"].items()}
+    routing of the stages (control-limited, inconclusive) handles. A pilot
+    that sized no R for a unit (it is not covered) is refused."""
+    units = pilot_outcome["pilot"]
+    require(pilot_outcome.get("covered") and units and all(
+        isinstance(p.get("reps"), int) for p in units.values()),
+        "the pilot is not usable: a unit is under %.0f s of CPU, so it "
+        "sized no R" % MIN_UNIT_CPU)
+    return {w: min(R_CAP, p["reps"]) for w, p in units.items()}
 
 
 def second_stage_plan(first_results):
@@ -1563,14 +1567,32 @@ def judged(rows, stage, why):
 
 def info_runs(state):
     """Every information run (smoke, pilot, control) of the table with how
-    it ended."""
+    it ended; a control also with its decision and whether it was detected,
+    from the run's report when that is readable (else None)."""
     ends = {r["attempt"]: r for r in table_lines(state)
             if r["event"] == "info-end"}
-    return [dict(attempt=r["attempt"], mode=r["mode"], key=r["key"],
-                 output=r["output"], checkout=r["checkout"],
-                 status="unclosed" if r["attempt"] not in ends else
-                 "success" if ends[r["attempt"]]["success"] else "failed")
-            for r in table_lines(state) if r["event"] == "info"]
+
+    def found(r, status):
+        if r["mode"] != "control" or status != "success":
+            return {}
+        try:
+            result = a.load(Path(r["output"]) / "downstream.json")[
+                "outcome"]["negative_control"]
+            return dict(decision=result["decision"],
+                        detected=result["detected"])
+        except Exception:
+            return dict(decision=None, detected=None)
+
+    rows = []
+    for r in table_lines(state):
+        if r["event"] != "info":
+            continue
+        status = "unclosed" if r["attempt"] not in ends else \
+            "success" if ends[r["attempt"]]["success"] else "failed"
+        rows.append(dict(attempt=r["attempt"], mode=r["mode"], key=r["key"],
+                         output=r["output"], checkout=r["checkout"],
+                         status=status, **found(r, status)))
+    return rows
 
 
 def attempts_table(found, why):
@@ -1586,17 +1608,20 @@ def attempts_table(found, why):
 def redraws(attempts, infos, counts):
     """R-1: what was drawn again - the void decision attempts and the
     information runs that did not succeed or that the first-stage counts
-    do not cite (superseded by a later run of the mode) - for the report
-    to the owner."""
+    do not cite - for the report to the owner. An information run row
+    carries its gate key and, for a control, its decision and whether it
+    was detected (None when unavailable)."""
     def why(r):
         if r["status"] != "success":
             return "information run " + r["status"]
-        return "information run success, not the one the counts use"
+        return "information run not cited by the first-stage counts"
 
     return ([dict(attempt=r["attempt"], kind="decision " + r["stage"],
                   why="void: admitted no measurement")
              for r in attempts if r["void"]] +
-            [dict(attempt=r["attempt"], kind=r["mode"], why=why(r))
+            [dict(attempt=r["attempt"], kind=r["mode"], why=why(r),
+                  key=r["key"], decision=r.get("decision"),
+                  detected=r.get("detected"))
              for r in infos if r["status"] != "success" or
              r["attempt"] != (counts.get(r["mode"]) or {}).get("attempt")])
 
@@ -2213,7 +2238,7 @@ def replay_one(folder, ledger=None, counts=None, followup_counts=None,
     require([(r["workload"], r["phase"], r["pair"], r["selection"],
               r["rep"]) for r in report["runs"]] == order,
             "missing, extra or reordered processes")
-    least = dict(smoke=1, pilot=PILOT_PAIRS, control=PAIRS)
+    least = dict(smoke=1, pilot=PILOT_PAIRS)
     require(mode not in DECISIVE or all(
         report["verify"][k]["exit"] == 0 for k in ("before", "after")),
         "a decision stage ran without the snapshot verification")
@@ -2221,7 +2246,7 @@ def replay_one(folder, ledger=None, counts=None, followup_counts=None,
                 for w in report["workloads"]), "too few pairs")
     require(mode != "control" or all(
         report["pairs"][w] == PAIRS for w in report["workloads"]),
-        "the negative control has %d pairs" % PAIRS)
+        "a negative control has exactly %d pairs" % PAIRS)
     refs = report["references"]
     receipts = [check_receipt(folder, report, e, refs)
                 for e in report["runs"]]
@@ -2393,7 +2418,6 @@ def predeclare_first(args):
     required = {w: pilot["outcome"]["pilot"][w]["reps"]
                 for w in cases.NAMES}
     reps = declared_reps(pilot["outcome"])
-    require(set(reps) == set(cases.NAMES), "the pilot lacks a workload")
     require(control["pairs"][cases.CONTROL_UNIT] == PAIRS and
             control["reps"][cases.CONTROL_UNIT] ==
             reps[cases.CONTROL_UNIT], "the negative control did not run at "
@@ -2470,7 +2494,9 @@ def predeclare_followup(args):
 def disposition(chain, ledger, counts_path=None):
     """Per workload and overall: pass, fail or blocked (the R-1 table of
     every attempt of the gate, the information runs and the redraws
-    included)."""
+    included). `counts_path` names the first-stage counts file, as in
+    replay (default: the committed COUNTS); its seal must be the one the
+    first stage used."""
     chains = workload_chains(chain)
     require(sorted(chains) == sorted(cases.NAMES), "not all workloads")
     rows = {}
@@ -2492,7 +2518,7 @@ def disposition(chain, ledger, counts_path=None):
     attempts = attempts_table(found, reasons(found))
     infos = info_runs(state)
     use = chain[0]["report"]["counts"]
-    path = Path(counts_path or use["path"])
+    path = counts_file_for(chain[0]["report"], counts_path, None)
     require(a.seal(path) == use["seal"], "%s is not the counts file the "
             "first stage used" % path)
     return dict(status=overall, workloads=rows, attempts=attempts,
@@ -2526,6 +2552,8 @@ def busy_spec(args, key, mseal):
             cases.CONTROL_UNIT in pilot["workloads"],
             "--pilot is not a pilot of this gate with %s" %
             cases.CONTROL_UNIT)
+    require(pilot["outcome"]["covered"], "--pilot is not usable: a unit "
+            "is under %.0f s of CPU" % MIN_UNIT_CPU)
     require(pilot["manifest"] == mseal, "--pilot was made on other "
             "snapshots (the manifest seal differs)")
     cpu = pilot["outcome"]["pilot"][cases.CONTROL_UNIT]["median_cpu"]
@@ -2563,6 +2591,15 @@ def first_spec(args):
             sorted(counts["reps"]) == sorted(cases.NAMES) and
             max(counts["reps"].values()) <= counts["r_cap"] <= R_CAP,
             "the counts file is not the first stage's")
+    need = counts.get("required_reps")
+    require(isinstance(need, dict) and sorted(need) == sorted(cases.NAMES)
+            and all(isinstance(need[w], int) and need[w] >= 1
+                    for w in cases.NAMES) and
+            counts["reps"] == {w: min(counts["r_cap"], need[w])
+                               for w in cases.NAMES} and
+            counts.get("capped") == sorted(
+                w for w in cases.NAMES if need[w] > counts["r_cap"]),
+            "the counts file's reps, required_reps and capped disagree")
     require(not getattr(args, "only", None), "a decision stage measures all "
             "the workloads")
     return dict(mode="first", stage="first", names=list(cases.NAMES),
@@ -2711,7 +2748,8 @@ def build_parser():
     cmd["control"].add_argument(
         "--pilot", type=Path, required=True,
         help=f"this gate's pilot: the busy time is {100 * BUSY:.0f}%% "
-        "of its median CPU of the control unit")
+        "of its median CPU of the control unit, and it sets the control's "
+        "R")
     cmd["extend"].add_argument("--first", type=Path, required=True)
     cmd["followup"].add_argument("--followup-counts", type=Path)
     pre = cmd["predeclare"]

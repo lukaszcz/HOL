@@ -505,7 +505,9 @@ that pins the history constant is edited with it:
 - the TASK31 timing table (`task31_grid.py`): its own `DRIVERS`, `ENGINES`,
   `ACCEPTANCE` and `SEALED_HISTORY`, empty until its first record; its pins
   are the `history` of `task31_attributed.json`, which `pin_history` reads;
-- the TASK31 disposition (`task31_dispose.HISTORY`).
+- the TASK31 disposition (`task31_dispose.HISTORY`);
+- the TASK32 driver (`task32_downstream.HISTORY`): the seal of the code
+  that made the TASK32 smoke and pilot (`b545d1fd0e`).
 
 A file whose seal no record carries needs no entry (usage text, style). The
 cascade, with a worked example, is in the bullet "Seal histories" of "TASK30
@@ -3256,7 +3258,9 @@ for the rest (a receipt path starting with `..` is that path joined to the
 unit's directory and normalized). `outcome` also refuses a run in which the
 churn of the processes of a unit is not one and the same set on both arms
 (`check_churn`, a guard that replay shares). Receipts made before
-`--no_prereqs` (and without `churn`) cannot be replayed.
+`--no_prereqs` (and without `churn`) cannot be replayed. Negative controls
+made before the control ran at its unit's declared R (10 pairs) cannot be
+replayed either: replay requires exactly `PAIRS` pairs.
 
 Margin and validity. `POLICY` is `acceptance.EQUIVALENCE_POLICY`: a 3%
 margin on inclusive CPU and wall. For a unit and metric, `low > 1.03` is
@@ -3304,9 +3308,8 @@ counts needs the audit. Run them in this order:
    (`logroot`) at that unit's declared R (there is no `--reps`; replay
    refuses a control that has not exactly `PAIRS` pairs, and `predeclare`
    one whose pairs and R are not the unit's). Its busy time is `BUSY` (6%)
-   of that
-   unit's median CPU in the pilot, spun at exit in absolute seconds
-   (`T32_BUSY`); the whole run uses the base snapshot. It must be
+   of that unit's median CPU in the pilot, spun at exit in absolute
+   seconds (`T32_BUSY`); the whole run uses the base snapshot. It must be
    judged `fail`; it is ledgered as a control, never as a decision, and
    exits 1 if it is not detected. (The pilot has to come first: it sizes
    the busy time.)
@@ -3378,8 +3381,10 @@ close of any other status, a missing or changed output, and a close with no
 seal (the report could not be saved, so nothing shows that no measurement
 was admitted). A redraw of a void attempt, every unsuccessful
 information run and every successful one that the first-stage counts do not
-cite (superseded by a later run of its mode) are listed in the disposition
-and are reported to the owner.
+cite (an information run not cited by the first-stage counts) are listed
+in the disposition and are reported to the owner; each such row carries
+the run's gate key and, for a control, its decision and whether it was
+detected (None when its report is unreadable).
 A stage whose close line could not be written stays open and counts as
 judged.
 

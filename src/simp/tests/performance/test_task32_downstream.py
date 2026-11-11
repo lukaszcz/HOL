@@ -1383,7 +1383,6 @@ class NegativeControl(Base):
                          {spec["busy"]["seconds"]})
         self.assertEqual(spec["pairs"], {"logroot": dw.PAIRS})
         self.assertEqual(spec["reps"], {"logroot": 1})
-        self.assertFalse(hasattr(dw, "CONTROL_PAIRS"))
         control_calls = self.world.calls[40:]  # after the pilot
         self.assertEqual({c[1] for c in control_calls}, {"base"})
         infos = dw.tg.Ledger(self.world.ledger()).records
@@ -1432,11 +1431,45 @@ class NegativeControl(Base):
         self.assertEqual(spec["pairs"], {"logroot": dw.PAIRS})
 
     def test_declared_reps_clamp_the_pilots_r_at_the_cap(self):
-        outcome = dict(pilot={
+        outcome = dict(covered=True, pilot={
             "a": dict(reps=1), "b": dict(reps=dw.R_CAP),
             "c": dict(reps=dw.R_CAP + 1), "d": dict(reps=1998)})
         self.assertEqual(dw.declared_reps(outcome), dict(
             a=1, b=dw.R_CAP, c=dw.R_CAP, d=dw.R_CAP))
+
+    def test_declared_reps_refuse_an_uncovered_pilot(self):
+        for outcome in (
+                dict(covered=False, pilot={"a": dict(reps=None)}),
+                dict(covered=True, pilot={"a": dict(reps=None)}),
+                dict(covered=False, pilot={"a": dict(reps=3)})):
+            with self.assertRaisesRegex(dw.Refusal, "pilot is not usable"):
+                dw.declared_reps(outcome)
+
+    def test_a_control_refuses_a_pilot_with_a_unit_under_the_minimum(self):
+        pilot(self.world)
+        path = self.world.tmp / "pilot/downstream.json"
+        outcome = a.load(path)["outcome"]
+        outcome["covered"] = False
+        outcome["pilot"]["logroot"]["reps"] = None
+        key = dw.gate_key(dw.pins_of(self.world.args("z"))[0])
+        mseal = dw.pins_of(self.world.args("z"))[1]
+        with mock.patch.object(dw, "replay_one", lambda p: (
+                dict(seal={}), dict(mode="pilot", outcome=outcome, key=key,
+                                    workloads=["logroot"], manifest=mseal,
+                                    attempt="x"))):
+            with self.assertRaisesRegex(dw.Refusal, "not usable"):
+                dw.info_spec(self.world.args("c", pilot=path), "control")
+
+    def test_replay_refuses_a_control_of_more_than_pairs_pairs(self):
+        pilot(self.world)
+        args, spec = self.world.info("big", "control",
+                                     pilot=self.world.tmp / "pilot")
+        spec["pairs"] = {"logroot": dw.PAIRS + 1}
+        report = dw.run_stage(args, spec)
+        self.assertTrue(report["success"], report.get("failure"))
+        with self.assertRaisesRegex(dw.Refusal, "exactly %d pairs" %
+                                    dw.PAIRS):
+            dw.replay_one(self.world.tmp / "big")
 
     def test_a_control_needs_a_pilot_of_this_gate(self):
         args = self.world.args("c", pilot=self.world.tmp / "missing")
@@ -2445,6 +2478,22 @@ class Chain(Base):
         with self.assertRaisesRegex(dw.Refusal, "not committed"):
             dw.first_spec(w.args("a", counts=counts_path))
         self.commit_counts(counts_path)
+        # inconsistent v2 keys are refused
+        real_load = dw.load_counts
+        for key, value in (
+                ("reps", dict(counts["reps"], logroot=counts["reps"][
+                    "logroot"] + 1)),
+                ("capped", ["logroot"]),
+                ("required_reps", dict(counts["required_reps"],
+                                       logroot=dw.R_CAP + 1)),
+                ("required_reps", None)):
+            def load(*a_, _k=key, _v=value, **kw):
+                got = real_load(*a_, **kw)
+                got[_k] = _v
+                return got
+            with mock.patch.object(dw, "load_counts", load):
+                with self.assertRaisesRegex(dw.Refusal, "disagree"):
+                    dw.first_spec(w.args("a", counts=counts_path))
         # a snapshot rebuilt after predeclare: another manifest seal
         text = w.manifest.read_text()
         w.manifest.write_text(json.dumps(json.loads(text), indent=1))
@@ -2492,7 +2541,7 @@ class Chain(Base):
         chain = dw.replay_chain(w.tmp / "first", ledger,
                                 counts=counts_path, repo=w.repo)
         self.assertEqual([e["stage"] for e in chain], ["first"])
-        disp = dw.disposition(chain, ledger)
+        disp = dw.disposition(chain, ledger, counts_path)
         self.assertEqual(disp["workloads"]["logroot"]["note"],
                          dw.NOTE_SECOND)
         self.assertEqual(disp["workloads"]["rat"]["status"], "followup")
@@ -2514,7 +2563,7 @@ class Chain(Base):
         chain = dw.replay_chain(w.tmp / "second", ledger,
                                 counts=counts_path, repo=w.repo)
         self.assertEqual([e["stage"] for e in chain], ["first", "second"])
-        disp = dw.disposition(chain, ledger)
+        disp = dw.disposition(chain, ledger, counts_path)
         self.assertEqual(disp["workloads"]["logroot"]["status"],
                          "followup")
         self.assertEqual(disp["counts"]["followup"], 2)
@@ -2555,7 +2604,7 @@ class Chain(Base):
         self.assertEqual([e["stage"] for e in chain],
                          ["first", "second", "followup"])
         self.assertEqual(dw.dumps(chain[-1]["report"]), dw.dumps(follow))
-        disp = dw.disposition(chain, ledger)
+        disp = dw.disposition(chain, ledger, counts_path)
         self.assertEqual(disp["status"], "pass")
         self.assertEqual(disp["counts"]["pass"], 15)
         self.assertEqual(len(disp["attempts"]), 3)
@@ -2583,19 +2632,47 @@ class Chain(Base):
                         "--followup-counts", str(fpath), "--repo",
                         str(w.repo)])
         self.assertEqual(code, 0)
+        # disposition: the default counts path is COUNTS, as in replay
+        with mock.patch.object(dw, "COUNTS", counts_path):
+            self.assertEqual(dw.dumps(dw.disposition(chain, ledger)),
+                             dw.dumps(disp))
+        with mock.patch.object(dw, "COUNTS", w.tmp / "absent.json"):
+            with self.assertRaisesRegex(dw.Refusal, "is absent"):
+                dw.disposition(chain, ledger)
+        # a counts file that is not the one the first stage used
+        other = w.tmp / "other-counts.json"
+        other.write_text(counts_path.read_text() + "\n")
+        with self.assertRaisesRegex(dw.Refusal, "not the counts file"):
+            dw.disposition(chain, ledger, other)
+        # a later successful smoke run and an undetected control are
+        # redraws, through disposition itself
+        args, spec = w.info("smoke2", "smoke")
+        self.assertTrue(dw.run_stage(args, spec)["success"])
+        w.ignore_busy = True
+        args, spec = w.info("control2", "control", pilot=w.tmp / "pilot")
+        self.assertTrue(dw.run_stage(args, spec)["success"])
+        disp = dw.disposition(chain, ledger, counts_path)
+        by_mode = {r["kind"]: r for r in disp["redraws"]}
+        self.assertEqual(sorted(by_mode), ["control", "smoke"])
+        self.assertIn("not cited", by_mode["smoke"]["why"])
+        self.assertIs(by_mode["control"]["detected"], False)
+        self.assertEqual(by_mode["control"]["key"], dw.gate_key(
+            dw.pins_of(w.args("z"))[0]))
+        self.assertEqual(
+            [r["detected"] for r in disp["info_runs"]
+             if r["mode"] == "control"], [True, False])
         # the code the counts are bound to cannot change under them
         sides, _ = dw.pins_of(w.args("z"))
         with mock.patch.object(dw, "code_seals",
                                lambda: dict(counts["code"], x="y")):
             with self.assertRaisesRegex(dw.Refusal, "code changed"):
                 dw.load_counts(counts_path, sides, "first", w.repo)
-        # a counts file of another gate, or over the R cap, is refused
+        # a counts file of another gate is refused
         other = dict(sides, cand=dict(sides["cand"], pin="2" * 40))
         with self.assertRaisesRegex(dw.Refusal, "another gate"):
             dw.load_counts(counts_path, other, "first", w.repo)
 
-    def test_predeclare_refuses_without_a_detected_control_or_over_the_cap(
-            self):
+    def test_predeclare_refuses_a_partial_set_of_workloads(self):
         w = self.world
         names = ["logroot"]
         for mode in ("smoke", "pilot"):
@@ -2645,6 +2722,15 @@ class Chain(Base):
                          {dw.R_CAP + 2})
         self.assertEqual(counts["capped"], sorted(cases.NAMES))
         self.assertEqual(counts["r_cap"], dw.R_CAP)
+        # the time estimate is made at the declared (clamped) R
+        per_unit = counts["time_estimate_seconds"]["per_unit"]
+        over = counts["smoke"]["overheads"]["scan_seconds"]
+        median = a.load(w.tmp / "pilot/downstream.json")["outcome"][
+            "pilot"]
+        for name in cases.NAMES:
+            self.assertAlmostEqual(per_unit[name], dw.PAIRS * dw.R_CAP * (
+                4 * median[name]["median_wall"] +
+                3 * over[name]["base"] + over[name]["cand"]))
 
     def test_redraws_list_a_superseded_successful_information_run(self):
         w = self.world
@@ -2658,7 +2744,34 @@ class Chain(Base):
         redrawn = dw.redraws([], infos, counts)
         self.assertEqual([r["attempt"] for r in redrawn],
                          [infos[0]["attempt"]])
-        self.assertIn("not the one the counts use", redrawn[0]["why"])
+        self.assertIn("not cited by the first-stage counts",
+                      redrawn[0]["why"])
+        self.assertEqual(redrawn[0]["key"], infos[0]["key"])
+        self.assertIsNone(redrawn[0]["decision"])
+        self.assertIsNone(redrawn[0]["detected"])
+
+    def test_an_undetected_control_shows_its_outcome_in_the_rows(self):
+        w = self.world
+        pilot(w)
+        w.ignore_busy = True
+        args, spec = w.info("ctl", "control", pilot=w.tmp / "pilot")
+        self.assertTrue(dw.run_stage(args, spec)["success"])
+        state, found = dw.read_ledger(w.ledger())
+        control = [r for r in dw.info_runs(state)
+                   if r["mode"] == "control"][0]
+        self.assertEqual(control["status"], "success")
+        self.assertIs(control["detected"], False)
+        self.assertNotEqual(control["decision"], "fail")
+        (row,) = dw.redraws([], [control], {})
+        self.assertIs(row["detected"], False)
+        self.assertEqual(row["decision"], control["decision"])
+        self.assertEqual(row["key"], control["key"])
+        # an unreadable report: the outcome is None, not an error
+        (w.tmp / "ctl/downstream.json").unlink()
+        control = [r for r in dw.info_runs(state)
+                   if r["mode"] == "control"][0]
+        self.assertIsNone(control["detected"])
+        self.assertIsNone(control["decision"])
 
     def test_redraws_list_void_attempts_and_failed_information_runs(self):
         w = self.world
