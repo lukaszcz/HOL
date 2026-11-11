@@ -1662,6 +1662,7 @@ struct
     mk_rule ProofRule ("reordering", "reordering"),
     mk_rule ProofRule ("arith", "arith"),
     mk_rule ProofRule ("array", "array"),
+    mk_rule ProofRule ("arrays_ext", "arrays_ext"),
     mk_rule ProofRule ("arrays-select-const", "arrays_select_const"),
     mk_rule ProofRule ("arrays_read_over_write_1", "arrays_read_over_write"),
     mk_rule ProofRule ("arrays_read_over_write", "arrays_read_over_write"),
