@@ -739,6 +739,9 @@ class SignalState:
     mode = RAISE
     recorded = []
 
+    def defer(self):
+        self.mode = DEFER
+
 
 STATE = SignalState()
 
@@ -749,6 +752,7 @@ def on_signal(signum, frame):
         return
     STATE.recorded.append(name)
     if STATE.mode == RAISE:
+        STATE.mode = DEFER  # a burst of signals raises at most once
         raise_recorded(name)
 
 
@@ -1003,8 +1007,13 @@ def main():
             m["success"] = False
             m["failure"] = type(exc).__name__ + ": " + str(exc)
         finally:
-            STATE.mode = DEFER
-            finish(args, planned, m, created)
+            try:
+                try:
+                    STATE.defer()
+                finally:
+                    finish(args, planned, m, created)
+            except (SystemExit, KeyboardInterrupt):
+                pass  # raised by a signal; finish() recorded it
         # The exit status follows the manifest that finish() just wrote.
         print(planned["output"] / "manifest.json")
         if not m["success"]:

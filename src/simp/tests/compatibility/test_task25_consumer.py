@@ -614,6 +614,29 @@ class PrepareOnly(FakeRepo):
         self.assertFalse(scratch.exists())
         self.assertTrue(m["task_scratch_removed"])
 
+    def test_signal_raising_during_defer_still_finishes(self):
+        def defer(state):
+            os.kill(os.getpid(), signal.SIGTERM)
+            time.sleep(5)
+        with mock.patch.object(task25.SignalState, "defer", defer):
+            m, scratch = self.run_main(expect_exit=True)
+        self.assertIn("terminated by SIGTERM", m["failure"])
+        self.assertFalse(scratch.exists())
+        self.assertTrue(m["task_scratch_removed"])
+
+    def test_signal_burst_raises_once(self):
+        def archive(runner, *a, **kw):
+            os.kill(os.getpid(), signal.SIGTERM)
+            try:
+                time.sleep(5)
+            finally:
+                os.kill(os.getpid(), signal.SIGHUP)  # during unwinding
+                time.sleep(0.05)
+        with mock.patch.object(task25.Runner, "archive", archive):
+            m, scratch = self.run_main(expect_exit=True)
+        self.assertIn("terminated by SIGTERM", m["failure"])
+        self.assertFalse(scratch.exists())
+
     def test_signal_during_create_records_path_and_cleans(self):
         mkdir = task25.mkdir_scratch
 
