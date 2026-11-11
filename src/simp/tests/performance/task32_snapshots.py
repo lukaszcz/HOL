@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""TASK32 independent snapshots: build, discard, verify (v2) and compare.
+"""TASK32 independent snapshots: build, discard, verify and compare (v3).
 
   build    one snapshot (`--side base|cand`): `git clone --shared
            --no-checkout` of the repository into ROOT/<label>, detached at the
            pin, the sealed `mktool` fix on the baseline when asked, then
            smart-configure and `bin/build --no-cache -t -jN
-           --seq=tools/sequences/upto-parallel`, under an `env -i`
+           --seq=<task32.seq>`, under an `env -i`
            environment and a fresh HOME that are the same for both sides. The
            record of the side goes into the manifest (SCHEMA). A failed,
            interrupted (SIGTERM/SIGHUP) or otherwise incomplete build leaves
@@ -14,7 +14,9 @@
            deletes its tree and HOME, so the side can be built again.
   verify   fail-closed audit of the manifest against the live trees: both
            pins, tree and input hashes, the sealed patch (blob-equal to the
-           candidate's mktool.ML), the compiled-source equality of the
+           candidate's mktool.ML), the build sequence (same immutable file
+           and digest on both sides, as built), the required workload
+           products (REQUIRED_PRODUCTS), the compiled-source equality of the
            candidate with C31, no stale products, every product seal and
            mtime inside the build interval, no shared inodes, identical
            argv/env, the toolchain, no nested roots.
@@ -75,12 +77,20 @@ from performance_schema import require
 import startup_gate as sg
 import task32_dat as dat
 
-SCHEMA = "task32-independent-build-v2"
+SCHEMA = "task32-independent-build-v3"
 BEHAVIOR_SCHEMA = "task32-behavior-v3"
 LABELS = ("base", "cand")
 PATH = "/usr/local/bin:/usr/bin:/bin"
 POLY = "/usr/local/bin/poly"
-SEQUENCE = "tools/sequences/upto-parallel"
+# upto-parallel stops before src/parallel_builds/core, which builds integer,
+# rational and real; task32.seq adds just those (and what they need), so
+# that -t also runs their selftests. The file is passed by absolute path,
+# the same for both sides, and its digest is recorded and verified.
+# The harness copies the committed file once to an immutable
+# <scratch>/task32-<sha256>.seq and builds with that path.
+HARNESS_ROOT = HERE.parents[3]
+SEQUENCE_REL = "src/simp/tests/performance/task32.seq"
+SEQUENCE = str(HERE / "task32.seq")
 CONFIGURE_INPUT = "tools/smart-configure.sml"
 MKTOOL_PATH = sg.MKTOOL[0]
 SYSTEML = "tools/Holmake/Systeml.sml"
@@ -95,7 +105,34 @@ TEST_ONLY = (":(exclude,glob)src/**/tests/**",)
 BIN_PRODUCTS = ("bin/hol", "bin/hol.state0", "bin/hol.state",
                 "bin/hol.state.min", "bin/Holmake")
 STALE_NAMES = re.compile(r"(.*\.(uo|ui|dat)|hol\.state.*|\.hol)\Z")
-AREAS = ("num", "integer", "real", "boss", "list", "pred_set")
+AREAS = ("num", "integer", "rational", "real", "boss", "list", "pred_set")
+# What the TASK32 workloads need from a build (design section 3); verify and
+# compare require each one, so that a sequence that stops short cannot pass.
+# S2's task32_cases must stay consistent with this list. ("theory", dir,
+# name): <name>Theory's .dat among theory_target_files(dir, name); ("file",
+# dir, name); ("log", dir, name): <dir>/.hol/logs/<name>, named by the
+# `<x>-selftest.log` rule of the Holmakefile (`$(tee ./selftest.exe 2>&1,
+# $@)`; observed for num/arith/reduce/boss, taken from the Holmakefiles for
+# integer/testing, real and real/analysis).
+REQUIRED_PRODUCTS = (
+    ("theory", "src/rational", "rat"),
+    ("theory", "src/integer", "integer"),
+    ("theory", "src/integer", "integer_word"),
+    ("theory", "src/real", "real"),
+    ("theory", "src/real", "real_sigma"),
+    ("theory", "src/real/analysis", "lim"),
+    ("file", "src/real/analysis", "realheap"),
+    ("theory", "src/num/theories", "arithmetic"),
+    ("theory", "src/num/extra_theories", "logroot"),
+    ("theory", "src/list/src", "rich_list"),
+    ("theory", "src/pred_set/src", "pred_set"),
+    ("log", "src/integer/testing", "integer2-selftest.log"),
+    ("log", "src/real", "real-selftest.log"),
+    ("log", "src/real/analysis", "real-selftest2.log"),
+    ("log", "src/num/arith/src", "arith-selftest.log"),
+    ("log", "src/num/reduce/src", "reduce-selftest.log"),
+    ("log", "src/boss", "boss-selftest.log"))
+
 PLACEHOLDER = "$(HOLDIR)"
 ENV_KEYS = ("HOME", "LC_ALL", "PATH", "TERM", "TMPDIR", "TZ")
 COMMANDS = ["clone", "checkout", "configure", "build"]
@@ -105,9 +142,16 @@ TIMEOUT = 6 * 3600
 # testutils.timed prints `[GC = 0.015] ` and `(0.003s)`; Holmake logs
 # `Theory "x" took 1.4s to build`; cv_compute prints `runtime: ...s,
 # gctime: ...s, systime: ...s.`; the banner holds the build date. Paths of
-# the root are replaced by PLACEHOLDER first. Applied in this order.
+# the root are replaced by PLACEHOLDER first. Applied in this order (the
+# tuple; NORMALIZERS keeps it). testutils right-aligns the status: it
+# prints padding spaces, then as many `\x08` as the tail is long, then the
+# tail. The count follows the tail, so a `[GC = ...] ` tag on one side only
+# changes it. Pad and backspaces are presentation, replaced by one space
+# before `gc-tag` removes the tag; the text left of the pad and the tail
+# are still compared. A bare run of backspaces also becomes one space.
 LOG_RULES = (
     ("ansi", r"\x1b\[[0-9;?]*[A-Za-z]", ""),
+    ("pad-backspace", r" *\x08+", " "),
     ("gc-tag", r"\[GC = [0-9.]+\] ", ""),
     ("timing", r"\(\s*[0-9]+(\.[0-9]+)?\s*m?s\s*\)", "(<TIME>)"),
     ("theory-time", r"took [0-9.]+m?s to build", "took <TIME> to build"),
@@ -115,6 +159,7 @@ LOG_RULES = (
      r"\1: <TIME>"),
     ("banner-date", r"built [A-Z][a-z]{2} [A-Z][a-z]{2} +[0-9]+ "
      r"[0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4}", "built <DATE>"))
+assert len({name for name, _, _ in LOG_RULES}) == len(LOG_RULES)
 NORMALIZERS = [(name, re.compile(pattern), repl)
                for name, pattern, repl in LOG_RULES]
 
@@ -489,6 +534,14 @@ def real_runner(fds):
         run_command(argv, cwd, env, stdin, log, fds)
 
 
+def require_schema(manifest):
+    require(manifest.get("schema") == SCHEMA,
+            "manifest schema is %r, not %s: a task32-independent-build-v2 "
+            "manifest is superseded evidence and must be moved aside; use "
+            "a fresh manifest and a fresh evidence directory"
+            % (manifest.get("schema"), SCHEMA))
+
+
 def load_manifest(path):
     path = Path(path)
     if path.exists():
@@ -521,7 +574,7 @@ def alternates(root):
 def build_side(repo, side, pin, root, manifest_path, logs, scratch, *,
                mktool=False, cand_pin=None, jobs=8, poly=POLY,
                tmpdir="/dev/shm/t32/tmp", runner, probe=probe_toolchain,
-               host=probe_host):
+               host=probe_host, harness=(HARNESS_ROOT, SEQUENCE_REL)):
     """Build one snapshot and record it. `runner(argv, cwd, env, stdin,
     log)` runs a command and returns its exit (a fake in the tests)."""
     require(side in LABELS, "side must be one of %s" % (LABELS,))
@@ -539,7 +592,7 @@ def build_side(repo, side, pin, root, manifest_path, logs, scratch, *,
         require(not nested(folder, target) and not nested(folder, other),
                 "evidence/scratch inside a snapshot root")
     manifest = load_manifest(manifest_path)
-    require(manifest.get("schema") == SCHEMA, "manifest schema")
+    require_schema(manifest)
     require(side not in manifest["sides"], "side already recorded "
             "(discard it first)")
     if mktool:
@@ -567,6 +620,7 @@ def build_side(repo, side, pin, root, manifest_path, logs, scratch, *,
             Path(tmpdir).mkdir(parents=True, exist_ok=True)
             logs.mkdir(parents=True, exist_ok=True)
             root.mkdir(parents=True, exist_ok=True)
+            record["sequence"] = sequence_record(scratch, harness)
             step("clone", ["git", "clone", "--shared", "--no-checkout",
                            str(repo), str(target)], repo)
             record["alternates"] = alternates(target)
@@ -600,7 +654,7 @@ def build_side(repo, side, pin, root, manifest_path, logs, scratch, *,
             record["input_hash"] = input_hash(target)
             step("configure", [poly], target, target / CONFIGURE_INPUT)
             step("build", ["bin/build", "--no-cache", "-t", "-j%d" % jobs,
-                           "--seq=" + SEQUENCE], target)
+                           "--seq=" + record["sequence"]["path"]], target)
             record["build_interval_ns"] = [
                 record["commands"][2]["start_ns"],
                 record["commands"][3]["end_ns"]]
@@ -676,6 +730,49 @@ def normalized_command(entry, record, pin):
                         "<HOME>"), (pin, "<PIN>")):
         text = text.replace(value, mark)
     return text
+
+
+def sequence_record(scratch, harness=(HARNESS_ROOT, SEQUENCE_REL)):
+    """Copy the harness' committed sequence file once to an immutable
+    `<scratch>/task32-<sha256>.seq` and describe it. An uncommitted or
+    modified file is refused: its blob must be `HEAD:<rel>` of the harness
+    repository."""
+    repo, rel = Path(harness[0]), harness[1]
+    source = repo / rel
+    blob = git(repo, "hash-object", str(source))
+    require(blob == git(repo, "rev-parse", "HEAD:" + rel),
+            "sequence file differs from HEAD (commit it first): %s" % rel)
+    data = source.read_bytes()
+    digest = sha256_bytes(data)
+    copy = Path(scratch).resolve() / ("task32-%s.seq" % digest)
+    if copy.exists():
+        require(copy.read_bytes() == data, "immutable sequence copy "
+                "differs: %s" % copy)
+    else:
+        copy.write_bytes(data)
+        copy.chmod(0o444)
+    return {"path": str(copy), "sha256": digest, "content": data.decode(),
+            "source": rel, "blob": blob,
+            "harness_head": git(repo, "rev-parse", "HEAD")}
+
+
+def check_sequence(record, label):
+    seq = record.get("sequence")
+    require(isinstance(seq, dict) and seq.get("path") and
+            seq.get("sha256") and isinstance(seq.get("content"), str) and
+            seq.get("source") and re.fullmatch("[0-9a-f]{40}",
+                                               str(seq.get("blob"))) and
+            re.fullmatch("[0-9a-f]{40}", str(seq.get("harness_head"))),
+            "%s: no build sequence record" % label)
+    require(Path(seq["path"]).is_absolute(),
+            "%s: sequence path is not absolute" % label)
+    require(sha256_bytes(seq["content"].encode()) == seq["sha256"],
+            "%s: sequence content does not match its digest" % label)
+    used = [x for x in record["commands"][3]["argv"]
+            if x.startswith("--seq=")]
+    require(used == ["--seq=" + seq["path"]],
+            "%s: build did not use the recorded sequence" % label)
+    return seq
 
 
 def log_seal(path):
@@ -761,6 +858,9 @@ def verify_side(record, label, expected_pin):
                 for r in products), "%s: no sigobj products" % label)
     require(systeml_hashes(root) == record["systeml"],
             "%s: Systeml.sml changed" % label)
+    lacking = missing_products(root)
+    require(not lacking, "%s: required products missing: %s"
+            % (label, ", ".join(lacking)))
     return products
 
 
@@ -768,7 +868,7 @@ def verify(manifest, base_pin, cand_pin, c31=C31, probe=probe_toolchain,
            poly=POLY):
     """Audit a manifest (a dict) against the live trees; raises on any
     failure and returns the summary otherwise."""
-    require(manifest.get("schema") == SCHEMA, "wrong manifest schema")
+    require_schema(manifest)
     sides = manifest.get("sides", {})
     require(set(sides) == set(LABELS), "both sides must be recorded")
     base, cand = sides["base"], sides["cand"]
@@ -806,6 +906,14 @@ def verify(manifest, base_pin, cand_pin, c31=C31, probe=probe_toolchain,
                 "a snapshot links a product twice")
     require(not (set(live[0].values()) & set(live[1].values())),
             "snapshots share inodes")
+    bseq = check_sequence(base, "base")
+    cseq = check_sequence(cand, "cand")
+    same = ("path", "sha256", "content", "source", "blob")
+    require([bseq[k] for k in same] == [cseq[k] for k in same],
+            "build sequence differs between sides")
+    require(Path(bseq["path"]).is_file() and
+            sha256_file(bseq["path"]) == bseq["sha256"],
+            "immutable sequence file changed or is gone")
     for x, y in zip(base["commands"], cand["commands"]):
         require(normalized_command(x, base, base["pin"]) ==
                 normalized_command(y, cand, cand["pin"]),
@@ -866,6 +974,25 @@ def selftest_logs(root, tracked):
             parts[1] in AREAS and name.endswith(".log") and \
             "selftest" in name and not excluded(rel)
     return untracked_files(root, wanted, tracked)
+
+
+def required_path(root, kind, directory, name):
+    """The file a REQUIRED_PRODUCTS entry stands for, or None if absent."""
+    folder = Path(root) / directory
+    if kind == "theory":
+        rel = ".hol/objs/%sTheory.dat" % name
+        found = rel in theory_target_files(folder, name)
+    else:
+        rel = name if kind == "file" else ".hol/logs/" + name
+        found = (folder / rel).is_file()
+    return (directory + "/" + rel) if found else None
+
+
+def missing_products(root):
+    """The REQUIRED_PRODUCTS (as `kind dir/name`) that `root` lacks."""
+    return ["%s %s/%s" % (kind, directory, name)
+            for kind, directory, name in REQUIRED_PRODUCTS
+            if required_path(root, kind, directory, name) is None]
 
 
 def differ(kind, rel, paths, roots):
@@ -983,6 +1110,8 @@ def compare(manifest, pins=None):
                         blocked.append("no selftest log under src/%s/ on %s"
                                        % (area, label))
     for label in LABELS:
+        blocked += ["missing required product on %s: %s" % (label, m)
+                    for m in missing_products(roots[label])]
         if manifest["sides"][label]["commands"][3]["exit"] != 0:
             blocked.append("%s build failed" % label)
     out["blocked"] = blocked

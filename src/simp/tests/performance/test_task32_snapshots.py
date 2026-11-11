@@ -8,10 +8,13 @@ leaves the products the real build would. Every guard of `verify` and
 import contextlib
 import copy
 import gzip
+import hashlib
 import io
 import json
 import os
 from pathlib import Path
+import posixpath
+import re
 import shutil
 import signal
 import subprocess
@@ -272,6 +275,16 @@ class Fake:
             put(root / "src" / area / ".hol/logs" / (area + "-selftest.log"),
                 "\x1b[32mOK\x1b[0m %s (0.%ds)\n%s" %
                 (root, len(side or ""), self.log.get(side, "")))
+        for kind, directory, name in s.REQUIRED_PRODUCTS:
+            folder = root / directory
+            if kind == "theory":
+                put(folder / (".hol/objs/%sTheory.dat" % name), "dat\n")
+            elif kind == "file":
+                put(folder / name, "%s %s\n" % (name, root.name))
+            else:
+                put(folder / ".hol/logs" / name,
+                    "\x1b[32mOK\x1b[0m %s (0.%ds)\n" %
+                    (root, len(side or "")))
         return 0
 
 
@@ -285,6 +298,11 @@ class World:
             if nested else self.dir / "snap"
         self.manifest = self.dir / "manifest.json"
         self.fake = Fake()
+        self.harness = self.dir / "harness"
+        put(self.harness / s.SEQUENCE_REL, Path(s.SEQUENCE).read_text())
+        git(self.harness, "init", "-q")
+        git(self.harness, "add", "-A")
+        git(self.harness, "commit", "-qm", "seq")
         self.mktool = mktool
         self.probe = lambda poly, env: copy.deepcopy(TOOLCHAIN)
 
@@ -292,6 +310,7 @@ class World:
         base = side == "base"
         args = dict(mktool=base and self.mktool, cand_pin=self.cand_pin,
                     tmpdir=self.dir / "tmp", runner=self.fake,
+                    harness=(self.harness, s.SEQUENCE_REL),
                     probe=self.probe,
                     host=lambda: {"uname": ["Linux"], "nproc": 1})
         args.update(kw)
@@ -325,15 +344,27 @@ class BuildTests(unittest.TestCase):
     def test_build_and_verify(self):
         w = World(self).both()
         doc = w.doc()
-        self.assertEqual(doc["schema"], "task32-independent-build-v2")
+        self.assertEqual(doc["schema"], "task32-independent-build-v3")
         self.assertEqual(doc["sides"]["base"]["tree"],
                          git(w.repo, "rev-parse", w.base_pin + "^{tree}"))
         self.assertEqual(
             [c["name"] for c in doc["sides"]["cand"]["commands"]],
             ["clone", "checkout", "configure", "build"])
         build = doc["sides"]["cand"]["commands"][3]["argv"]
+        seq = doc["sides"]["cand"]["sequence"]
         self.assertEqual(build, ["bin/build", "--no-cache", "-t", "-j8",
-                                 "--seq=tools/sequences/upto-parallel"])
+                                 "--seq=" + seq["path"]])
+        data = Path(s.SEQUENCE).read_bytes()
+        digest = hashlib.sha256(data).hexdigest()
+        copy = w.dir / "scratch" / ("task32-%s.seq" % digest)
+        self.assertEqual(seq, {
+            "path": str(copy), "sha256": digest, "content": data.decode(),
+            "source": s.SEQUENCE_REL, "blob": git(
+                w.harness, "rev-parse", "HEAD:" + s.SEQUENCE_REL),
+            "harness_head": git(w.harness, "rev-parse", "HEAD")})
+        self.assertEqual(copy.read_bytes(), data)
+        self.assertFalse(os.access(copy, os.W_OK))
+        self.assertEqual(doc["sides"]["base"]["sequence"], seq)
         self.assertEqual(set(doc["sides"]["base"]["commands"][0]["env"]),
                          set(s.ENV_KEYS))
         self.assertEqual(doc["sides"]["base"]["cand_pin"], w.cand_pin)
@@ -355,6 +386,33 @@ class BuildTests(unittest.TestCase):
             self.assertIn(rel, products)
         self.assertEqual(products["sigobj/numTheory.uo"]["kind"], "link")
         self.assertNotIn("ino", products[HEAP])
+
+    def test_uncommitted_sequence_refused(self):
+        w = World(self)
+        seq = w.harness / s.SEQUENCE_REL
+        seq.write_text(seq.read_text() + "src/extra\n")
+        with self.assertRaisesRegex(ValueError, "differs from HEAD"):
+            w.build("base")
+        self.assertFalse(list((w.dir / "scratch").glob("*.seq")))
+        self.assertTrue(w.doc()["sides"]["base"]["incomplete"])
+        s.discard_side(w.manifest, "base")
+        git(w.harness, "commit", "-qam", "more")
+        w.build("base")
+        self.assertEqual(
+            w.doc()["sides"]["base"]["sequence"]["harness_head"],
+            git(w.harness, "rev-parse", "HEAD"))
+
+    def test_immutable_copy_is_shared_and_never_replaced(self):
+        w = World(self).both()
+        seqs = [w.doc()["sides"][x]["sequence"] for x in s.LABELS]
+        self.assertEqual(seqs[0]["path"], seqs[1]["path"])
+        self.assertEqual(len(list((w.dir / "scratch").glob("*.seq"))), 1)
+        path = Path(seqs[0]["path"])
+        path.chmod(0o644)
+        path.write_text("other\n")
+        with self.assertRaisesRegex(ValueError, "immutable sequence copy"):
+            s.sequence_record(w.dir / "scratch", (w.harness,
+                                                  s.SEQUENCE_REL))
 
     def test_snapshot_inside_the_ignored_agent_files(self):
         w = World(self, nested=True).both()
@@ -584,7 +642,7 @@ class BuildTests(unittest.TestCase):
         with self.assertRaises(s.Terminated):
             s.build_side(wt, "cand", w.cand_pin, w.root, w.manifest,
                          w.dir / "ev", w.dir / "scratch", runner=killed,
-                         probe=w.probe)
+                         probe=w.probe, harness=(w.harness, s.SEQUENCE_REL))
         record = w.doc()["sides"]["cand"]
         self.assertEqual(record["repo"], str(wt.resolve()))
         target = Path(record["root"])
@@ -627,6 +685,146 @@ class BuildTests(unittest.TestCase):
         w.probe = lambda poly, env: dict(TOOLCHAIN, cc="gcc 2")
         with self.assertRaisesRegex(ValueError, "toolchain changed: cc"):
             w.build("cand")
+
+
+# the fake build's theories (num and basicSize) and selftest logs: the
+# area logs plus the required ones, which share boss and real
+THEORIES = 2 + len([1 for k, _, _ in s.REQUIRED_PRODUCTS if k == "theory"])
+THEORIES -= 2
+LOGS = len({"src/%s/.hol/logs/%s-selftest.log" % (a, a) for a in s.AREAS} |
+           {d + "/.hol/logs/" + n for k, d, n in s.REQUIRED_PRODUCTS
+            if k == "log"})
+BASE_OBJECT = "cccaa27d7099"
+REPO = Path(__file__).resolve().parents[4]
+
+
+def seq_entries(read, name):
+    """The directories of sequence file `name` (relative to tools/) in
+    order, as buildutils.read_buildsequence expands them: `#include`
+    against <root>/tools, `[sys]`/`(knl)` selectors (poly, stdknl),
+    leading `!`. `read(path)` returns the text of a repo path."""
+    out = []
+    for raw in read(posixpath.normpath("tools/" + name)).splitlines():
+        line = raw.strip()
+        if line.startswith("#include "):
+            out += seq_entries(read, line[len("#include "):].strip())
+            continue
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        m = re.match(r"(\[(\w+)\])?(\((\w+)\))?(!*)(.*)", line)
+        if m.group(2) in (None, "poly") and \
+                m.group(4) in (None, "stdknl"):
+            out.append(m.group(6))
+    return out
+
+
+def holmake_includes(read, directory, strict=True):
+    """The INCLUDES of a Holmakefile (as repo-relative directories):
+    backslash continuations joined, `ifeq ($(KERNELID),otknl)` blocks
+    skipped, `include $(HOLDIR)/src/TeX/mungedeps.hmf` taken as src/TeX."""
+    text = read(directory + "/Holmakefile")
+    if text is None:
+        return []
+    out, skip = [], 0
+    for line in text.replace("\\\n", " ").splitlines():
+        line = line.strip()
+        if re.match(r"ifeq\s*\(\$\(KERNELID\),otknl\)", line):
+            skip += 1
+        elif skip and re.match(r"if(n?eq|n?def)\b", line):
+            skip += 1
+        elif skip and line == "endif":
+            skip -= 1
+        elif not skip:
+            m = re.match(r"include\s+\$\(HOLDIR\)/(\S+)", line)
+            if m and m.group(1) == "src/TeX/mungedeps.hmf":
+                out.append("src/TeX")
+            m = re.match(r"INCLUDES\s*\+?=\s*(.*)", line)
+            for word in (m.group(1).split() if m else []):
+                if word.startswith("#"):
+                    break
+                word = word.replace("$(HOLDIR)", "/H")
+                if "$" in word and not strict:
+                    continue
+                if "$" in word:
+                    raise AssertionError("unexpanded %s in %s" %
+                                         (word, directory))
+                out.append(os.path.relpath(os.path.normpath(
+                    os.path.join("/H", directory, word)), "/H"))
+    return out
+
+
+def check_closure(read, exists):
+    """Problems of the directories task32.seq adds to upto-parallel:
+    each must exist, and each INCLUDES must be an upto-parallel directory,
+    one that an upto-parallel directory itself INCLUDES (Holmake builds
+    prerequisites), or an earlier addition."""
+    base = seq_entries(read, "sequences/upto-parallel")
+    own = read(s.SEQUENCE_REL)
+    both = seq_entries(read, "../" + s.SEQUENCE_REL)
+    assert both[:len(base)] == base
+    added = [d.lstrip("!") for d in both[len(base):]]
+    implicit = {i for d in base
+                for i in holmake_includes(read, d.lstrip("!"), False)}
+    known = {d.lstrip("!") for d in base} | implicit
+    problems = []
+    for d in added:
+        if not exists(d):
+            problems.append("missing directory " + d)
+        for inc in holmake_includes(read, d):
+            if inc not in known:
+                problems.append("%s: INCLUDES %s is not built before" %
+                                (d, inc))
+        known.add(d)
+    assert own
+    return added, problems
+
+
+class SequenceClosureTests(unittest.TestCase):
+    def test_current_tree(self):
+        def read(path):
+            f = REPO / path
+            return f.read_text() if f.is_file() else None
+        added, problems = check_closure(read, lambda d: (REPO / d).is_dir())
+        self.assertEqual(problems, [])
+        self.assertEqual(len(added), len(set(added)))
+        for need in ("src/integer", "src/rational", "src/real",
+                     "src/real/analysis", "src/integer/testing"):
+            self.assertIn(need, added)
+        self.assertEqual(added[-1], "src/integer/testing")
+        self.assertTrue(any(
+            l.startswith("!src/integer/testing")
+            for l in Path(s.SEQUENCE).read_text().splitlines()))
+
+    def test_base_tree(self):
+        have = subprocess.run(["git", "-C", str(REPO), "cat-file", "-e",
+                               BASE_OBJECT], stdin=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL).returncode == 0
+        if not have:
+            self.skipTest("base object %s is not in this repository"
+                          % BASE_OBJECT)
+
+        def show(path):
+            r = subprocess.run(["git", "-C", str(REPO), "show",
+                                "%s:%s" % (BASE_OBJECT, path)],
+                               stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL)
+            return r.stdout.decode() if r.returncode == 0 else None
+
+        def read(path):
+            if path == s.SEQUENCE_REL:   # the sequence is not in the base
+                return (REPO / path).read_text()
+            return show(path)
+
+        def exists(d):
+            return subprocess.run(
+                ["git", "-C", str(REPO), "cat-file", "-e",
+                 "%s:%s" % (BASE_OBJECT, d)], stdin=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL).returncode == 0
+        added, problems = check_closure(read, exists)
+        self.assertEqual(problems, [])
+        self.assertTrue(added)
 
 
 class VerifyTests(unittest.TestCase):
@@ -848,7 +1046,74 @@ class VerifyTests(unittest.TestCase):
 
     def test_different_argv(self):
         self.fails("argv/env differ between sides: build", self.edit(
-            "cand", "commands", 3, "argv", value=["bin/build", "-j4"]))
+            "cand", "commands", 3, "argv",
+            value=["bin/build", "-j4", "--seq=" + self.doc["sides"]["cand"][
+                "sequence"]["path"]]))
+
+    def reseal(self, doc, side, **fields):
+        seq = doc["sides"][side]["sequence"]
+        seq.update(fields)
+        if "content" in fields:
+            seq["sha256"] = hashlib.sha256(
+                seq["content"].encode()).hexdigest()
+
+    def test_sequence_mismatch_refused(self):
+        doc = self.w.doc()
+        cand = doc["sides"]["cand"]
+        cand["sequence"]["path"] = "/x/other.seq"
+        cand["commands"][3]["argv"][-1] = "--seq=/x/other.seq"
+        self.fails("build sequence differs between sides", doc)
+        doc = self.w.doc()
+        self.reseal(doc, "base", content="src/extra\n")
+        self.fails("build sequence differs between sides", doc)
+        doc = self.w.doc()
+        doc["sides"]["cand"]["sequence"]["sha256"] = "0" * 64
+        self.fails("does not match its digest", doc)
+        doc = self.w.doc()
+        for side in s.LABELS:
+            self.reseal(doc, side, content="src/extra\n")
+        self.fails("immutable sequence file changed", doc)
+        doc = self.w.doc()
+        doc["sides"]["cand"]["sequence"]["blob"] = "1" * 40
+        self.fails("build sequence differs between sides", doc)
+
+    def test_sequence_file_changed_or_gone(self):
+        path = Path(self.doc["sides"]["cand"]["sequence"]["path"])
+        path.chmod(0o644)
+        path.write_text("tampered\n")
+        self.fails("immutable sequence file changed")
+        path.unlink()
+        self.fails("immutable sequence file changed")
+
+    def test_sequence_must_be_the_one_built_with(self):
+        doc = self.w.doc()
+        del doc["sides"]["cand"]["sequence"]
+        self.fails("no build sequence record", doc)
+        doc = self.w.doc()
+        for side in s.LABELS:
+            doc["sides"][side]["sequence"]["path"] = "/x/other.seq"
+        self.fails("did not use the recorded sequence", doc)
+
+    def test_sequence_path_must_be_absolute(self):
+        doc = self.w.doc()
+        for side in s.LABELS:
+            doc["sides"][side]["sequence"]["path"] = "task32.seq"
+            doc["sides"][side]["commands"][3]["argv"][-1] = \
+                "--seq=task32.seq"
+        self.fails("sequence path is not absolute", doc)
+
+    def test_required_products_are_verified(self):
+        for kind, directory, name in s.REQUIRED_PRODUCTS:
+            path = s.required_path(self.cand, kind, directory, name)
+            self.assertIsNotNone(path, name)
+        victim = self.cand / s.required_path(
+            self.cand, "file", "src/real/analysis", "realheap")
+        victim.unlink()
+        doc = self.w.doc()
+        del doc["sides"]["cand"]["products"][
+            "src/real/analysis/realheap"]
+        self.fails("cand: required products missing: "
+                   "file src/real/analysis/realheap", doc)
 
     def test_different_env(self):
         self.fails("argv/env differ between sides: build", self.edit(
@@ -928,8 +1193,11 @@ class VerifyTests(unittest.TestCase):
 
     def test_schema(self):
         doc = self.w.doc()
-        doc["schema"] = "task32-independent-build-v1"
-        self.fails("schema", doc)
+        doc["schema"] = "task32-independent-build-v2"
+        self.fails("moved aside.*fresh manifest and a fresh evidence "
+                   "directory", doc)
+        with self.assertRaisesRegex(ValueError, "moved aside"):
+            s.require_schema(doc)
 
 
 class CompareTests(unittest.TestCase):
@@ -945,15 +1213,17 @@ class CompareTests(unittest.TestCase):
     def test_identical_behaviour_passes(self):
         out = self.run_compare()
         self.assertEqual(out["status"], "pass", out["blocked"])
-        self.assertEqual(out["theories"]["common"], 2)
-        self.assertEqual(out["logs"]["common"], len(s.AREAS))
-        self.assertEqual(out["normalization"]["logs"][1][0], "gc-tag")
+        self.assertEqual(out["theories"]["common"], 2 + THEORIES)
+        self.assertEqual(out["logs"]["common"], LOGS)
+        names = [n for n, _, _ in s.LOG_RULES]
+        self.assertEqual(out["normalization"]["logs"][
+            names.index("gc-tag")][0], "gc-tag")
 
     def test_tracked_theory_sources_are_not_compared(self):
         # TRACKED_SIG differs between the commits and is not a product
         out = self.run_compare()
         self.assertNotIn(TRACKED_SIG, out["theories"]["differing"])
-        self.assertEqual(out["theories"]["common"], 2)
+        self.assertEqual(out["theories"]["common"], 2 + THEORIES)
 
     def test_candidate_only_is_listed(self):
         put(self.cand / "src/simp/.hol/objs/simpMarkerTheory.dat", "x")
@@ -1146,7 +1416,7 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(out["status"], "pass", out["blocked"])
         self.assertNotIn("src/num/.hol/logs/other.log",
                          [d["path"] for d in out["logs"]["differing"]])
-        self.assertEqual(out["logs"]["common"], len(s.AREAS))
+        self.assertEqual(out["logs"]["common"], LOGS)
 
     def test_missing_on_candidate_blocks(self):
         (self.cand / SIG).unlink()
@@ -1163,6 +1433,35 @@ class CompareTests(unittest.TestCase):
         self.assertIn("log differs: src/real/.hol/logs/real-selftest.log",
                       out["blocked"])
 
+    def test_required_products_block_compare(self):
+        for kind, directory, name in s.REQUIRED_PRODUCTS:
+            label = "base" if len(name) % 2 else "cand"
+            root = self.base if label == "base" else self.cand
+            victim = root / s.required_path(root, kind, directory, name)
+            saved = victim.read_bytes()
+            victim.unlink()
+            out = s.compare(self.w.doc())
+            self.assertIn("missing required product on %s: %s %s/%s"
+                          % (label, kind, directory, name), out["blocked"])
+            victim.write_bytes(saved)
+        self.assertEqual(s.compare(self.w.doc())["status"], "pass")
+
+    def test_required_products_follow_the_workloads(self):
+        names = {(d, n) for _, d, n in s.REQUIRED_PRODUCTS}
+        for need in (("src/rational", "rat"), ("src/integer", "integer"),
+                     ("src/integer", "integer_word"),
+                     ("src/real", "real"), ("src/real", "real_sigma"),
+                     ("src/real/analysis", "lim"),
+                     ("src/real/analysis", "realheap"),
+                     ("src/num/theories", "arithmetic"),
+                     ("src/num/extra_theories", "logroot"),
+                     ("src/list/src", "rich_list"),
+                     ("src/pred_set/src", "pred_set"),
+                     ("src/integer/testing", "integer2-selftest.log"),
+                     ("src/real/analysis", "real-selftest2.log")):
+            self.assertIn(need, names)
+        self.assertIn("rational", s.AREAS)
+
     def test_missing_area_log_blocks(self):
         for p in (self.cand / "src/pred_set").rglob("*.log"):
             p.unlink()
@@ -1175,6 +1474,38 @@ class CompareTests(unittest.TestCase):
         doc = self.w.doc()
         doc["sides"]["base"]["commands"][3]["exit"] = 2
         self.assertIn("base build failed", s.compare(doc)["blocked"])
+
+    def test_pad_and_backspaces_are_presentation(self):
+        head = b"EL_CONV 5 fEL [a; b; c] 1 ..." + b" " * 20
+        base = head + 27 * b"\x08" + b"[GC = 0.075] (0.000s)      OK\n"
+        cand = head + 14 * b"\x08" + b"(0.000s)      OK\n"
+        self.assertNotEqual(base, cand)
+        self.assertEqual(s.normalize_log(base, "/r"),
+                         s.normalize_log(cand, "/r"))
+        other = head + 14 * b"\x08" + b"(0.000s)      FAILED\n"
+        self.assertNotEqual(s.normalize_log(other, "/r"),
+                            s.normalize_log(cand, "/r"))
+        moved = b"EL_CONV 5 fEL [a; b; d] 1 ..." + b" " * 20 + \
+            14 * b"\x08" + b"(0.000s)      OK\n"
+        self.assertNotEqual(s.normalize_log(moved, "/r"),
+                            s.normalize_log(cand, "/r"))
+
+    def test_name_is_compared_when_the_tail_is_longer(self):
+        pad = b" " * 4
+        one = b"EL_CONV 5 fEL" + pad + 9 * b"\x08" + b"(0.000s) OK\n"
+        two = b"EL_CONV 6 fEL" + pad + 9 * b"\x08" + b"(0.000s) OK\n"
+        self.assertNotEqual(s.normalize_log(one, "/r"),
+                            s.normalize_log(two, "/r"))
+        self.assertEqual(s.normalize_log(one, "/r"),
+                         "EL_CONV 5 fEL (<TIME>) OK\n")
+
+    def test_rule_order_is_fixed(self):
+        names = [n for n, _, _ in s.LOG_RULES]
+        self.assertEqual(names, [n for n, _, _ in s.NORMALIZERS])
+        self.assertEqual(len(names), len(set(names)))
+        self.assertLess(names.index("ansi"), names.index("pad-backspace"))
+        self.assertLess(names.index("pad-backspace"),
+                        names.index("gc-tag"))
 
     def test_normalizers_on_real_log_lines(self):
         lines = [
