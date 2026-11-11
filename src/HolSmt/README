@@ -90,6 +90,8 @@ with `--proof-granularity=dsl-rewrite`; the CPC parser version-gates every
 rule and the replay engine reconstructs a HOL theorem before `CVC.sml` checks
 its hypotheses, conclusion, and oracle tags.  Set `HOL4_CVC_EXECUTABLE` to
 select cvc5.  CPC is the sole checked cvc5 replay format.
+CPC bit-vector extraction rewrites include distributing complement through
+a bounded slice (`bv-extract-not`), re-proved by HOL word decision.
 Array-encoded set assumptions are matched to their source context through
 proved membership, update, constant-array and subset rewrites. The bridge
 accepts only alpha-equivalent normalized terms; it never assumes the echoed
@@ -108,6 +110,13 @@ CPC `quant-dt-split` rewrites a universal datatype quantifier into a
 conjunction of constructor cases. Replay proves the certificate's equality
 using the datatype's TypeBase exhaustiveness theorem and universal
 specialization, preserving the remaining binders and constructor fields.
+
+CPC arithmetic reductions for integer division, modulus, real division and
+absolute value instantiate general checked identities, so nested conditional
+operands do not change their proof or their zero-divisor endpoints.
+
+CPC replay compacts exact occurrence metadata for large terms while retaining
+nested conjunction operand boundaries, including those in equality endpoints.
 
 For a cvc5 upgrade, test the official release binary against the checked
 matrix rather than accepting proof-format drift.  The matrix commands are in
@@ -453,7 +462,11 @@ Native datatype emission declares constructor-field dependencies before their
 users, grouping only mutually recursive types, including recursion through
 lists and products. This permits acyclic datatype dependencies in function
 domains without creating a non-covariant mutual declaration. Opaque field
-sorts are declared first; previously declared sorts are reused.
+sorts are declared first; previously declared sorts are reused.  A list type
+whose element type leads back to the list itself (`tree list` for
+`tree = Leaf | Node of tree list`) stays an algebraic datatype; native Seq is
+used only for the other lists, since a datatype recursing through Seq is
+nested-recursive, which cvc5 rejects.
 
 The Datatypes row's checked selector replay applies to parser-native selector
 case terms.  It is not, by itself, a claim about HOL destructor constants.
@@ -500,12 +513,15 @@ For a theorem-producing result, the trusted path is:
   and range checks in `Unittest.sml`.
 - Native HOL strings are first rewritten through the proved `str_inj`
   injectivity and operator-transfer theorems, including `STRLEN` after
-  natural-to-integer transfer. Injected HOL string literals retain their
-  character codes as SMT-LIB string literals. Other injection images
-  are generalized to unconstrained SMT-LIB `String` values. A solver result
-  proved for every well-formed Unicode string therefore specializes soundly
-  to the injection image, while tactic validation carries the exact HOL-side
-  rewrite back to the original goal.  This is the only route from HOL string
+  natural-to-integer transfer.  Injected HOL string literals retain their
+  character codes as SMT-LIB string literals.  Each other injection image
+  whose argument mentions no bound variable is generalized to an
+  unconstrained SMT-LIB `String` value; an image of a bound string, or of a
+  term mentioning one, applies `str_inj` as an uninterpreted function into
+  `String`.  A solver result proved for every well-formed Unicode string (and
+  every such function) therefore specializes soundly to the injection image,
+  while tactic validation carries the exact HOL-side rewrite back to the
+  original goal.  This is the only route from HOL string
   content to the SMT `String` sort: HOL's `:string` (a `char list`) is not
   mapped to `String`, and a `:string` term that survives the rewrite is
   emitted as an uninterpreted sort.  There is therefore no HOL char-list

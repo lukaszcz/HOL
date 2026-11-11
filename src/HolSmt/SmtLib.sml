@@ -143,16 +143,17 @@ fun check_operator_availability_unless ignore occurs {solver, version} =
     List.app check (!operator_availabilities)
   end
 
-fun check_goal_operator_availability_unless ignore target
+fun check_goal_operator_availability_unless ignore counts target
     (assumptions, conclusion) =
   let
-    val heads = List.concat (List.map term_heads (conclusion :: assumptions))
+    val heads = List.filter counts
+      (List.concat (List.map term_heads (conclusion :: assumptions)))
     fun occurs head = List.exists (fn tm =>
       Term.same_const tm head handle Feedback.HOL_ERR _ => false) heads
   in check_operator_availability_unless ignore occurs target end
 
 fun check_goal_operator_availability target =
-  check_goal_operator_availability_unless (Lib.K false) target
+  check_goal_operator_availability_unless (Lib.K false) (Lib.K true) target
 
 local
 
@@ -1244,12 +1245,47 @@ local
 
   fun is_function_type ty = Lib.can Type.dom_rng ty
 
-  (* Lists are the native model of SMT sequences, except for HOL strings.
-     The latter must retain Phase 4's str_inj/smtstr route rather than being
-     silently reclassified as arbitrary (Seq Char) content. *)
+  (* A list type is recursive when its element type leads back to the list
+     itself through datatype constructor fields or function types, as in
+     tree = Leaf | Node of tree list. *)
+  fun is_recursive_list_type ty =
+    let
+      fun constructor_doms ty = List.concat (List.map
+        (Lib.fst o boolSyntax.strip_fun o Term.type_of o
+         TypeBasePure.cinst ty) (TypeBase.constructors_of ty))
+        handle Feedback.HOL_ERR _ => []
+      fun reaches _ [] = false
+        | reaches seen (t :: ts) =
+          if Type.compare (t, ty) = EQUAL then true
+          else if List.exists (fn s => Type.compare (s, t) = EQUAL) seen
+                  orelse has_type_builtin t then
+            reaches seen ts
+          else if is_function_type t then
+            let val (dom, rng) = Type.dom_rng t
+            in reaches (t :: seen) (dom :: rng :: ts) end
+          else
+            reaches (t :: seen) (constructor_doms t @ ts)
+    in
+      reaches [] [listSyntax.dest_list_type ty]
+    end
+
+  (* Lists are the native model of SMT sequences, except for HOL strings and
+     recursive lists.  Strings must retain Phase 4's str_inj/smtstr route
+     rather than being silently reclassified as arbitrary (Seq Char) content.
+     Recursive lists stay algebraic datatypes: a datatype recursing through
+     Seq is nested-recursive, which cvc5 rejects. *)
   fun is_native_sequence_type ty =
     listSyntax.is_list_type ty andalso
-    Type.compare (ty, stringSyntax.string_ty) <> EQUAL
+    Type.compare (ty, stringSyntax.string_ty) <> EQUAL andalso
+    not (is_recursive_list_type ty)
+
+  (* Whether a list operator's type applies it at a recursive list type,
+     which keeps it off the Seq model. *)
+  fun has_recursive_list_signature ty =
+    let val (doms, rng) = boolSyntax.strip_fun ty in
+      List.exists (fn ty => listSyntax.is_list_type ty andalso
+        is_recursive_list_type ty) (rng :: doms)
+    end
 
   (* Checked Seq replay is introduced by TASK_18.  Until then, proof
      requests retain the old datatype encoding while oracle emission uses the
@@ -1990,6 +2026,7 @@ local
         orelse same_const head boolSyntax.conditional orelse
         same_const head boolSyntax.equality orelse
         same_const head boolSyntax.let_tm orelse
+        same_const head combinSyntax.update_tm orelse
         is_native_set_head head orelse is_native_bag_head head)
     end
 
@@ -2335,7 +2372,8 @@ local
       fun selects_seq {native_parts, is_totalized_whole} tm =
         ((named "list" direct_list_heads tm orelse
           named "rich_list" rich_list_heads tm orelse
-          named "HolSmt" holsmt_heads tm) andalso native_parts tm) orelse
+          named "HolSmt" holsmt_heads tm) andalso native_parts tm andalso
+         not (has_recursive_list_signature (type_of tm))) orelse
         is_totalized_whole tm
     in
       {totalized=totalized, supported=supported, native_part=native_part,
@@ -3213,17 +3251,24 @@ local
           if is_optional_error primary then NONE else raise primary
       fun metadata thunk = thunk ()
         handle primary as Feedback.HOL_ERR _ => raise metadata_error primary
-      fun distinct_elements tm = dest_list (dest_all_distinct tm)
+      (* The elements of ALL_DISTINCT over a list literal, the SMT-LIB
+         [distinct] encoding; NONE for every other term, including
+         ALL_DISTINCT over a non-literal list, which is an ordinary
+         application. *)
+      fun distinct_literal_elements tm =
+        if is_all_distinct tm then
+          shape (fn () => SOME (#1 (dest_list (dest_all_distinct tm))))
+            (fn () => NONE)
+        else NONE
       fun encoding_subterms tm =
         let
           fun walk (tm, acc) =
             tm ::
-            (if is_all_distinct tm then
-               let val (elements, _) = distinct_elements tm in
+            (case distinct_literal_elements tm of
+               SOME elements =>
                  List.foldl (fn (element, rest) => walk (element, rest))
                    acc elements
-               end
-             else shape
+             | NONE => shape
                (fn () => let val (rator, rand) = dest_comb tm
                  in walk (rator, walk (rand, acc)) end)
                (fn () => shape
@@ -3232,11 +3277,13 @@ local
                  (fn () => acc)))
         in walk (tm, []) end
       (* The graph inventory uses this single-step form and a scoped visited
-         set. ALL_DISTINCT visits current plus reversed explicit elements;
-         list constructors and abstraction binder leaves are excluded. *)
+         set. ALL_DISTINCT over a list literal visits current plus reversed
+         explicit elements; list constructors and abstraction binder leaves
+         are excluded. *)
       fun encoding_children tm =
-        if is_all_distinct tm then List.rev (#1 (distinct_elements tm))
-        else shape (fn () => let val (left,right) = dest_comb tm
+        case distinct_literal_elements tm of
+          SOME elements => List.rev elements
+        | NONE => shape (fn () => let val (left,right) = dest_comb tm
             in [left,right] end)
           (fn () => shape (fn () => [#2 (dest_abs tm)]) (fn () => []))
       fun has_quantifier tm = memo_quantifier tm (fn () =>
@@ -3342,8 +3389,11 @@ local
           fun is_native_bag_const tm = thy_const_named "bag" bag_names tm
           val sequences = (#sequence_emission state) () andalso
             (subterm_types is_native_sequence_type orelse
-             List.exists (fn tm => is_native_sequence_const
-               (Lib.fst (strip_comb tm))) all_subterms)
+             List.exists (fn tm =>
+               let val head = Lib.fst (strip_comb tm) in
+                 is_native_sequence_const head andalso
+                 not (has_recursive_list_signature (type_of head))
+               end) all_subterms)
           (* Finite-set hypotheses select cvc5's native Set sort and are
              removed before this scan. Backend selection is a Set feature. *)
           val sets = (#has_set_terms state) () orelse
@@ -3556,8 +3606,10 @@ local
           replay = false,
           notes =
             "HOL strings are rewritten through the proved str_inj transfer " ^
-            "kit; literals retain their content and other injected " ^
-            "occurrences are generalized to SMT-LIB String.  " ^
+            "kit; literals retain their content, other closed injected " ^
+            "occurrences are generalized to SMT-LIB String, and " ^
+            "bound-dependent ones apply str_inj as an uninterpreted " ^
+            "function into String.  " ^
             "The HOL :string type itself is not the SMT String sort: a " ^
             "residual occurrence is emitted as an uninterpreted sort.  " ^
             "Ground native smtstr goals do replay; the oracle tactics " ^
@@ -5400,39 +5452,20 @@ local
       let val (tydict, (decls, name)) = metadata_translate_type regime
         (tydict, ty)
       in (((tydict, tmdict), decls), name) end
+    fun mentions_bound_variable t =
+      List.exists (fn v => Option.isSome (bound_peek (bounds, v)))
+        (carrier_free_vars t)
     fun translate_injected_string acc =
-      let
-        val string = carrier_dest_injected_string tm
-      in
-        case bound_peek (bounds, string) of
-          SOME name => (acc, ([], output_text name))
-        | NONE =>
-          let
-            val depends_on_bound =
-              List.exists
-                (fn v => Option.isSome (bound_peek (bounds, v)))
-                (carrier_free_vars string)
-            val _ =
-              if depends_on_bound then
-                raise ERR "translate_injected_string"
-                  "non-atomic injected term depends on a bound variable"
-              else
-                ()
-          in
-            case term_peek (tmdict, (ordinary_key (tm, 0))) of
-              SOME name => (acc, ([], output_text name))
-            | NONE =>
-              let
-                val name =
-                  tm_prefix ^ Int.toString (term_count tmdict)
-                val tmdict = term_insert (tmdict, (ordinary_key (tm, 0)), name)
-                val declaration =
-                  output_term_declaration regime name [] "String"
-              in
-                ((tydict, tmdict), ([declaration], output_text name))
-              end
-          end
-      end
+      case term_peek (tmdict, (ordinary_key (tm, 0))) of
+        SOME name => (acc, ([], output_text name))
+      | NONE =>
+        let
+          val name = tm_prefix ^ Int.toString (term_count tmdict)
+          val tmdict = term_insert (tmdict, (ordinary_key (tm, 0)), name)
+          val declaration = output_term_declaration regime name [] "String"
+        in
+          ((tydict, tmdict), ([declaration], output_text name))
+        end
     fun translate_injected_float acc =
       let
         val float = carrier_dest_injected_float tm
@@ -5795,10 +5828,14 @@ local
     (acc, ([], output_text (bound_find (bounds, tm))))
     handle Redblackmap.NotFound =>
 
-    (* Each str_inj image is generalized to an SMT String value.  Proving the
-       strengthened SMT formula over every Unicode string and then using the
-       tactic validation at this image is the sound direction. *)
-    (if carrier_is_injected_string tm then
+    (* Each closed str_inj image is generalized to an SMT String value.
+       Proving the strengthened SMT formula over every Unicode string and
+       then using the tactic validation at this image is the sound
+       direction.  An image whose argument mentions a bound variable is
+       left to the application case below, which emits str_inj as an
+       uninterpreted function from the argument's sort to String. *)
+    (if carrier_is_injected_string tm andalso
+        not (mentions_bound_variable (carrier_dest_injected_string tm)) then
        translate_injected_string acc
        handle DispatchFailure e => raise (#commit_error operations) e
      else
@@ -6253,9 +6290,81 @@ local
     translate_term_step_with_store legacy_term_store_operations translate
       regime apply_operator input
 
-  fun translate_term regime apply_operator input =
-    translate_term_step (translate_term regime apply_operator)
-      regime apply_operator input
+  (* Translation failures of the current goal, keyed by subterm and lexical
+     bounds.  When an operand fails, every later rung that admits its
+     parent's shape (a builtin operator, then an invented function, ...)
+     translates the same operand again, so a failure D levels down was
+     rebuilt 2^D times.  The accumulator only gains the parent's own symbol
+     and sorts between retries, which cannot make the operand translate, so
+     a retry raises the first failure again. *)
+  val no_translation_failures : (Term.term * (Term.term * string) list,
+      Term.term * exn) Redblackmap.dict =
+    Redblackmap.mkDict (Lib.pair_compare (Term.compare,
+      Lib.list_compare (Lib.pair_compare (Term.compare, String.compare))))
+  val current_translation_failures = ref no_translation_failures
+
+  (* Partial applications whose eta expansions enclose the current term. *)
+  val current_eta_expansions : Term.term list ref = ref []
+
+  (* Whether 'child' is '\v1 ... vn. tm v1 ... vn' for some n > 0.  Only
+     eta_expand_ranked_constant gives a term such a child. *)
+  fun is_eta_expansion_of tm child =
+    let
+      val (vars, body) = Term.strip_abs child
+      fun peel t [] = Term.identical t tm
+        | peel t (v :: vs) =
+            Term.is_comb t andalso
+            let val (f, x) = Term.dest_comb t
+            in Term.identical x v andalso peel f vs end
+    in
+      not (List.null vars) andalso peel body (List.rev vars)
+    end
+
+  (* The legacy instance recurses through itself, and remembers each failure
+     of the current goal.  When an eta-expanded body fails, a later rung
+     (curried application, a bag count, ...) may translate the partial
+     application again, and expanding it again would repeat the body with
+     fresh variables forever.  Report the failing operand instead, or else
+     the repetition. *)
+  fun translate_term regime apply_operator (input as (_, (bounds, tm))) =
+  let
+    fun key () = (tm, Redblackmap.listItems bounds)
+    val failures = !current_translation_failures
+    (* Term.compare is alpha-equivalence, but a let's function binders are
+       stripped by name, so only an identical subterm reuses a failure. *)
+    val _ =
+      if Redblackmap.numItems failures = 0 then ()
+      else
+        case Redblackmap.peek (failures, key ()) of
+          SOME (failed, e) =>
+            if Term.identical failed tm then raise e else ()
+        | NONE => ()
+    fun remember e =
+      (current_translation_failures :=
+         Redblackmap.insert (!current_translation_failures, key (), (tm, e));
+       raise e)
+    fun expand (child as (acc, _)) =
+      let val enclosing = !current_eta_expansions in
+        if List.exists (fn t => Term.identical t tm) enclosing then
+          (List.app (fn operand =>
+             ignore (translate_term regime apply_operator
+               (acc, (bounds, operand))))
+             (Lib.snd (boolSyntax.strip_comb tm));
+           raise ERR "translate_term"
+             "eta expansion of a partial application repeats")
+        else
+          (current_eta_expansions := tm :: enclosing;
+           Portable.finally (fn () => current_eta_expansions := enclosing)
+             (fn () => translate_term regime apply_operator child) ())
+      end
+    fun translate (child as (_, (_, child_tm))) =
+      if is_eta_expansion_of tm child_tm then expand child
+      else translate_term regime apply_operator child
+  in
+    translate_term_step translate regime apply_operator input
+    handle e as Feedback.HOL_ERR _ => remember e
+         | e as NestedTranslation _ => remember e
+  end
 
   datatype datatype_case_scan =
       NotDatatypeCase
@@ -6577,6 +6686,8 @@ local
       (Lib.pair_compare (Term.compare, Int.compare))
     val bounds = Redblackmap.mkDict Term.compare
     val terms = ts @ [boolSyntax.mk_neg t]
+    val _ = current_translation_failures := no_translation_failures
+    val _ = current_eta_expansions := []
     val (acc, smtlibs) = Lib.foldl_map
       (fn (acc, tm) =>
         translate_term regime apply_operator (acc, (bounds, tm)))
@@ -6646,7 +6757,9 @@ local
       save_cell current_bag_backend,
       save_cell current_bag_terms,
       save_cell current_bag_helpers,
-      save_cell current_collection_function_arguments
+      save_cell current_collection_function_arguments,
+      save_cell current_translation_failures,
+      save_cell current_eta_expansions
     ]
     fun restore () = restore_cells restorers
   in
@@ -8266,6 +8379,10 @@ in
         [smt_seq_update_tm,smt_seq_replace_all_tm,seq_lupdate_tm,
          seq_reverse_tm,seq_map_tm,seq_foldl_tm]
   in
+    (* An operator typed at a recursive list is emitted algebraically, never
+       as a Seq operator, so it is no occurrence of one. *)
+    fun counts_for_operator_availability head =
+      not (has_recursive_list_signature (Term.type_of head))
     (* The fixed Seq decision belongs to the caller's emission context.
        The registry, version matching and diagnostic order remain shared. *)
     fun outbound_check_operator_availability {sequence_emission} target
@@ -8275,7 +8392,7 @@ in
     fun check_goal_operator_availability_for_sequence sequence_emission
         target goal =
       check_goal_operator_availability_unless (ignore sequence_emission)
-        target goal
+        counts_for_operator_availability target goal
   end
 
   fun option_logic_policy logic
@@ -8769,13 +8886,23 @@ in
     MAP_EVERY (fn _ => cleanup_one) assumptions g
   end
 
-  (* Expand just an atom whose set operand is outside the printer's native
-     grammar.  Applying SET_SIMP_TAC to the entire goal would also erase an
-     unrelated UNION/INTER atom, defeating native-by-default emission. *)
-  fun set_atom_needs_predicate_expansion tm =
+  fun has_set_complement tm =
+    List.exists (fn subterm =>
+      Option.isSome (Lib.total pred_setSyntax.dest_compl subterm))
+      (Library.subterms tm)
+
+  (* Checked CARD keeps finite set atoms native, while unrelated non-finite
+     atoms still lower to predicates. Native-by-default mode only lowers
+     operands outside the printer's native grammar. *)
+  fun set_atom_needs_predicate_expansion expand_native finite_terms tm =
   let
     val (rator, rands) = boolSyntax.strip_comb tm
-    fun unsupported set = is_set_type set andalso not (native_set_term set)
+    fun unsupported set = is_set_type set andalso
+      (not (native_set_term set) orelse
+       (expand_native andalso
+        not (List.all (finite_set_term finite_terms)
+          (collect_native_set_terms set [set])) andalso
+        not (has_set_complement tm)))
   in
     if same_const rator pred_setSyntax.in_tm then
       (case rands of [_, set] => unsupported set | _ => false)
@@ -8791,11 +8918,15 @@ in
       false
   end
 
-  fun native_set_preprocess_conv tm =
-    if set_atom_needs_predicate_expansion tm then
+  val card_operand_cong = Thm.REFL (pred_setSyntax.mk_card
+    (Term.mk_var ("card_set", pred_setSyntax.mk_set_type Type.alpha)))
+
+  fun native_set_preprocess_conv expand_native finite_terms tm =
+    if set_atom_needs_predicate_expansion expand_native finite_terms tm then
       simpLib.SIMP_CONV
         (simpLib.mk_simpset [pred_setSimps.SET_SPEC_ss])
-        [pred_setTheory.SPECIFICATION, pred_setTheory.GSPEC_ETA,
+        [simpLib.Cong card_operand_cong,
+         pred_setTheory.SPECIFICATION, pred_setTheory.GSPEC_ETA,
          pred_setTheory.EMPTY_DEF, pred_setTheory.UNIV_DEF,
          pred_setTheory.UNION_DEF, pred_setTheory.INTER_DEF] tm
     else
@@ -8805,7 +8936,8 @@ in
      with IN or a bare EMPTY would mark a set as an SMT Array while the
      simplified conclusion uses the same set as a function. *)
   val NATIVE_SET_SIMP_TAC =
-    let val conv = Conv.TOP_DEPTH_CONV native_set_preprocess_conv in
+    let val conv =
+          Conv.TOP_DEPTH_CONV (native_set_preprocess_conv false []) in
       Tactical.THEN
         (Tactic.RULE_ASSUM_TAC (Conv.CONV_RULE conv), Tactic.CONV_TAC conv)
     end
@@ -8827,18 +8959,22 @@ in
         simpLib.SIMP_TAC ss thms)
     end
 
-  fun CHECKED_SET_SIMP_TAC g =
-    let
-      fun has_complement tm =
-        List.exists (fn subterm =>
-          Option.isSome (Lib.total pred_setSyntax.dest_compl subterm))
-          (Library.subterms tm)
-    in
-      if List.exists has_complement (#1 g @ [#2 g]) then
-        NATIVE_SET_SIMP_TAC g
-      else
-        PREDICATE_SET_SIMP_TAC g
-    end
+  fun CHECKED_SET_SIMP_TAC preserve_native_card g =
+    if preserve_native_card andalso
+        List.exists (Lib.can (HolKernel.find_term pred_setSyntax.is_card))
+          (#1 g @ [#2 g]) then
+      let
+        val finite_terms = List.mapPartial finite_set_hypothesis (#1 g)
+        val conv =
+          Conv.TOP_DEPTH_CONV (native_set_preprocess_conv true finite_terms)
+      in
+        Tactical.THEN
+          (Tactic.RULE_ASSUM_TAC (Conv.CONV_RULE conv), Tactic.CONV_TAC conv) g
+      end
+    else if List.exists has_set_complement (#1 g @ [#2 g]) then
+      NATIVE_SET_SIMP_TAC g
+    else
+      PREDICATE_SET_SIMP_TAC g
 
   (* Preserve equality on native collections.  FUN_EQ_THM would turn it into
      a predicate equality before collection discovery can select Set or Bag. *)
@@ -8949,7 +9085,8 @@ in
        must retain complements: SET_SIMP_TAC lowers their membership to NOTIN,
        which does not have a native SMT Set translation. *)
     stage "set-simp"
-      (if simp_let then CHECKED_SET_SIMP_TAC else NATIVE_SET_SIMP_TAC) THEN
+      (if simp_let then CHECKED_SET_SIMP_TAC preserve_native_bags
+       else NATIVE_SET_SIMP_TAC) THEN
     Tactic.RULE_ASSUM_TAC
       (Conv.CONV_RULE (Conv.DEPTH_CONV INT_DIVIDES_LITERAL_MOD_CONV)) THEN
     Tactic.CONV_TAC (Conv.DEPTH_CONV INT_DIVIDES_LITERAL_MOD_CONV) THEN
@@ -8983,7 +9120,8 @@ in
       SOME (Z3Inverse (realSyntax.dest_inv tm))
     else if intrealSyntax.is_INT_CEILING tm then
       SOME (Z3Ceiling (intrealSyntax.dest_INT_CEILING tm))
-    else if listSyntax.is_cons tm then
+    else if listSyntax.is_cons tm andalso
+            is_native_sequence_type (Term.type_of tm) then
       let val (element, tail) = listSyntax.dest_cons tm in
         if listSyntax.is_nil tail orelse listSyntax.is_cons tail then NONE
         else SOME (Z3SymbolicCons (element, tail))

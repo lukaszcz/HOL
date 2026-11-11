@@ -325,6 +325,11 @@ val thm_CVCp_ho =
     (REPEAT STRIP_TAC THEN HolSmtLib.CVC_TAC)
 val sat_CVCp = mk_CVCp expect_sat
 
+(* These bounded cardinality regressions must bypass the numeric filter. *)
+val thm_card_CVCp =
+  mk_test_fun (CVC.is_configured ()) (expect_thm true)
+    "cvc5 (proofs, finite CARD)" HolSmtLib.CVC_TAC
+
 (*****************************************************************************)
 (* HOL definitions (e.g., user-defined data types)                           *)
 (*****************************************************************************)
@@ -336,6 +341,10 @@ val _ = bossLib.Hol_datatype `dt1 = foo | bar | baz`
 val _ = bossLib.Hol_datatype `dirn = NS | EW`
 
 val flc_def = Define `flc d = case d of NS => EW | EW => NS`
+
+(* An uninterpreted set-valued function: translated with one argument and an
+   array-of-Bool result, which cvc5's proof redeclares with a curried sort. *)
+val _ = new_constant ("smt_set_of", ``:'a -> 'b -> bool``)
 
 fun expect_flc_checked name solver goal =
   let
@@ -356,6 +365,11 @@ val thm_flc_Z3p =
 
 val thm_flc_CVCp =
   mk_test_fun (CVC.is_configured ()) expect_flc_checked
+    "cvc5 (proofs)" HolSmtLib.CVC_TAC
+
+(* thm_CVCp without its num-goal skip, for a row whose regression needs num *)
+val thm_num_CVCp =
+  mk_test_fun (CVC.is_configured ()) (expect_thm true)
     "cvc5 (proofs)" HolSmtLib.CVC_TAC
 
 val _ = bossLib.Hol_datatype `person = <| employed :bool; age :num |>`
@@ -399,9 +413,14 @@ val graph_expect_thm = expect_thm
       [thm_Z3p_v4, thm_CVCp]),
     (``(x : int) IN (s UNION t) <=> x IN s \/ x IN t``,
       [thm_CVC, thm_CVCp]),
+    (``!(a:'a) b. CARD {a; b} = 2 <=> a <> b``, [thm_card_CVCp]),
+    (``!(a:'a) b c. CARD {a; b; c} = 3 <=>
+        a <> b /\ a <> c /\ b <> c``, [thm_card_CVCp]),
     (* Z3 proves this through an array lemma outside its checked Bag replay
        ladder; cvc5 supplies the native checked Bag certificate. *)
     (``BAG_IN (x : bool) (BAG_INSERT y EMPTY_BAG) <=> x = y``, [thm_CVCp]),
+    (``(smt_set_of (a : 'a) = (s : 'b set)) /\ (a = b) ==>
+        (s = smt_set_of b)``, [thm_Z3p_v4, thm_CVCp]),
     (* Sets in cvc5's array encoding: a singleton, an applied set and an
        applied bound set must all stay Arrays, in the assumptions too. *)
     (``(x : num) = y /\ P {x} ==> (P : (num -> bool) -> bool) {y}``,
@@ -449,6 +468,15 @@ val graph_expect_thm = expect_thm
     (``isPREFIX (s:string) s``, [thm_Z3]),
     (``~((s:string) < s)``, [thm_Z3]),
     (``(s:string) <= s``, [thm_Z3]),
+    (* A str_inj image of a bound string, or of a term mentioning one, is an
+       application of str_inj as an uninterpreted function, so the bound
+       string may also occur outside the injection. *)
+    (``!s:string. isPREFIX s s``, [thm_Z3, thm_CVC]),
+    (``(!s:string t. P s /\ isPREFIX s t ==> P t) ==>
+       !s t u. P s /\ isPREFIX s t /\ isPREFIX t u ==> P u``,
+      [thm_Z3, thm_CVC]),
+    (``!s:string. P s ==> isPREFIX (f s) (STRCAT (f s) (g s))``,
+      [thm_Z3, thm_CVC]),
 
     (``(s:string) = STRCAT t u ==> STRLEN s = STRLEN t + STRLEN u``,
       [thm_Z3, thm_CVC]),
@@ -726,12 +754,11 @@ val graph_expect_thm = expect_thm
     (``(y:int) <> 0 ==>
        emod 0 y = 0``,
       [thm_CVC, thm_CVCp, thm_Z3, thm_Z3p]),
-    (* Symbolic remainder bounds.  thm_CVCp omitted: CPC replay fails at
-       a trans middle-equality step on these. *)
+    (* Symbolic remainder bounds. *)
     (``(y:int) = 0 \/ emod x y >= 0``,
-      [thm_CVC, thm_Z3, thm_Z3p]),
+      [thm_CVC, thm_CVCp_arith, thm_Z3, thm_Z3p]),
     (``(y:int) = 0 \/ emod x y < ABS y``,
-      [thm_CVC, thm_Z3, thm_Z3p]),
+      [thm_CVC, thm_CVCp_arith, thm_Z3, thm_Z3p]),
     (``(y:real) <> 0 ==> ((x:real) / y) * y = x``,
       [thm_CVC, thm_CVCp, thm_Z3, thm_Z3p]),
     (``ediv (~7) (~2) = (4:int)``,
@@ -1996,6 +2023,12 @@ val graph_expect_thm = expect_thm
        ov = NONE \/ ?x. ov = SOME x``,
       [thm_Z3, thm_Z3p]),
 
+    (* ALL_DISTINCT over a non-literal list is an ordinary predicate
+       application, not an n-ary distinct *)
+
+    (``ALL_DISTINCT (s:string) /\ (STRLEN s = 2) ==> STRLEN s > 1``,
+      [thm_Z3, thm_Z3p, thm_CVC, thm_num_CVCp]),
+
     (* data types: theory sorts that only occur in constructor fields *)
 
     (``((x:int option) = y) ==> (y = x)``,
@@ -2206,7 +2239,7 @@ val graph_expect_thm = expect_thm
          and r = emod m n
          in
            (m = n * q + r /\ 0 <= r /\ r <= (ABS n) - 1)``,
-      [(*thm_AUTO,*) thm_CVC, thm_Z3_v4, thm_Z3p_v4]),
+      [(*thm_AUTO,*) thm_CVC, thm_CVCp_arith, thm_Z3_v4, thm_Z3p_v4]),
 
     (* regression tests *)
 
@@ -66565,7 +66598,7 @@ local
 in
   val _ = run_postlude 377 "checked-backend-marker-transport-7" (fn () =>
     let
-      val _ = List.app (fn goal =>
+      val _ = List.app (fn (unmarked,goal) =>
         test "Array updates emit well-sorted graph stores"
         (fn () => fixture [] goal (fn e =>
           let
@@ -66584,13 +66617,21 @@ in
             val text = String.concat (List.rev (!fragments))
             val _ = require "marked graph UPDATE did not use store"
               (String.isSubstring "(store " text)
+            val _ = if unmarked then
+                require "unrelated graph UPDATE lost its function carrier"
+                  (String.isSubstring "(lambda " text andalso
+                   String.isSubstring "(-> Int Bool)" text)
+              else ()
           in ignore (SmtLib_Parser.typecheck_script_string_with_options
             {dict_logic=NONE,solver=SOME "cvc5",elaborate_datatypes=false}
             text) end)))
-        [``f (s:bool set) /\ T IN s /\ f (\x:bool. x) ==>
-            f ((T =+ T) s)``,
-         ``(P:(int -> bool) -> bool)
-            (if c then ((0 =+ T) s) else ({}:int set))``]
+        [(false,``f (s:bool set) /\ T IN s /\ f (\x:bool. x) ==>
+            f ((T =+ T) s)``),
+         (false,``(P:(int -> bool) -> bool)
+            (if c then ((0 =+ T) s) else ({}:int set))``),
+         (true,``(P:(int -> bool) -> bool)
+            (if c then ((0 =+ T) s) else ({}:int set)) /\
+            (((1:int) =+ F) (f:int -> bool)) z = b``)]
       val _ = test "Checked erasure keeps modes and marks rebuilt conditional"
         (fn () => fixture [bag_fact] goal (fn e =>
           let

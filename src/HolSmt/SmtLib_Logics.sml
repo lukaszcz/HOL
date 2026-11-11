@@ -689,6 +689,13 @@ in
   fun term_mentions_datatype_sort tm =
     term_type_contains type_is_datatype_sort tm
 
+  (* The elements of ALL_DISTINCT over a list literal, the SMT-LIB [distinct]
+     encoding; NONE for every other term, including ALL_DISTINCT over a
+     non-literal list, which is an ordinary application. *)
+  fun distinct_literal_elements tm =
+    Option.map Lib.fst
+      (Lib.total (listSyntax.dest_list o listSyntax.dest_all_distinct) tm)
+
   (* Core.distinct is represented by HOL's ALL_DISTINCT over an internal list.
      The list is an encoding detail, not an SMT datatype sort.  Inspect the
      encoded elements, but do not classify the wrapper list itself.  Likewise,
@@ -718,21 +725,17 @@ in
 
       fun walk tm =
         if is_smtstr_value tm then false
-        else if listSyntax.is_all_distinct tm then
-          let
-            val (elements, _) =
-              listSyntax.dest_list (listSyntax.dest_all_distinct tm)
-          in
-            List.exists walk elements
-          end
         else
-          type_contains_visible_datatype (Term.type_of tm) orelse
-          (let val (rator, rand) = Term.dest_comb tm
-           in walk rator orelse walk rand end
-           handle Feedback.HOL_ERR _ =>
-             (let val (_, body) = Term.dest_abs tm
-              in walk body end
-              handle Feedback.HOL_ERR _ => false))
+          case distinct_literal_elements tm of
+            SOME elements => List.exists walk elements
+          | NONE =>
+            type_contains_visible_datatype (Term.type_of tm) orelse
+            (let val (rator, rand) = Term.dest_comb tm
+             in walk rator orelse walk rand end
+             handle Feedback.HOL_ERR _ =>
+               (let val (_, body) = Term.dest_abs tm
+                in walk body end
+                handle Feedback.HOL_ERR _ => false))
     in
       walk tm
     end
