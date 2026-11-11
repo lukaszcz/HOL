@@ -244,7 +244,8 @@ class Fake:
                     else:
                         put(Path(cwd) / rel, text)
             return p.returncode
-        name = "configure" if argv[0] == s.POLY else "build"
+        name = "configure" if os.path.basename(argv[0]) == "poly" \
+            else "build"
         if name == self.fail:
             return 1
         root = Path(cwd)
@@ -455,17 +456,41 @@ class BuildTests(unittest.TestCase):
         os.chdir(w.dir)
         try:
             w.build("base", tmpdir="tmp", scratch="scratch",
-                    logs="ev")
+                    logs="ev", root="root", manifest="m.json")
         finally:
             os.chdir(here)
-        doc = w.doc()["sides"]["base"]
+        doc = json.loads((w.dir / "m.json").read_text())["sides"]["base"]
         home, root = Path(doc["home"]), Path(doc["root"])
+        self.assertEqual(doc["root"], str((w.dir / "root" / "base")
+                                          .resolve()))
         self.assertTrue(home.is_absolute() and root.is_absolute())
         self.assertTrue(home.is_dir())
         self.assertFalse(s.nested(home, root))
         for c in doc["commands"]:
             self.assertTrue(Path(c["log"]).is_absolute())
             self.assertEqual(c["env"]["HOME"], str(home))
+
+    def test_the_root_is_resolved_through_symlinks(self):
+        w = World(self)
+        link = w.dir / "link"
+        link.symlink_to(w.dir / "real-root")
+        (w.dir / "real-root").mkdir()
+        w.build("base", root=link)
+        self.assertEqual(w.doc()["sides"]["base"]["root"],
+                         str((w.dir / "real-root" / "base").resolve()))
+
+    def configure_argv(self, given):
+        w = World(self)
+        w.build("cand", poly=given)
+        return [c["argv"] for c in w.doc()["sides"]["cand"]["commands"]
+                if c["name"] == "configure"][0]
+
+    def test_a_poly_path_is_made_absolute(self):
+        self.assertEqual(self.configure_argv("bin/poly"),
+                         [os.path.abspath("bin/poly")])
+
+    def test_a_bare_poly_name_stays_a_path_lookup(self):
+        self.assertEqual(self.configure_argv("poly"), ["poly"])
 
     def test_alternates_recorded(self):
         w = World(self)

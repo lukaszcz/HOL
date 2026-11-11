@@ -683,7 +683,9 @@ def build_side(repo, side, pin, root, manifest_path, logs, scratch, *,
     a.exact_pin(pin)
     # relative paths are resolved against the current directory, once: the
     # children run elsewhere (cwd = the root) and the record is absolute
-    repo, root = Path(repo).resolve(strict=True), absolute(root)
+    # root through symlinks too: smart-configure records the realpath HOLDIR
+    repo, root = Path(repo).resolve(strict=True), Path(root).resolve()
+    poly = os.path.abspath(poly) if os.sep in str(poly) else poly
     logs, scratch, tmpdir = absolute(logs), absolute(scratch), \
         str(absolute(tmpdir))
     manifest_path = absolute(manifest_path)

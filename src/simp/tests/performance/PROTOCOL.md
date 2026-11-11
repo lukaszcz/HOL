@@ -2860,12 +2860,13 @@ Tools (all under `src/simp/tests/performance/` unless noted):
 `../compatibility/run_task25_consumer.py`. Tests: `test_task32_*.py` and
 `../compatibility/test_task25_consumer.py`. Every snapshot command, every
 downstream run command and `recover` take the serial lock
-(`acceptance.serial_lock`; `predeclare`, `replay` and `dispose` only read and
-take none), and the consumer driver takes the same serial lock for every run
-that builds (all but `--prepare-only`, the exact TASK25 reproduction included)
-and refuses, with a nonzero exit and nothing created, if it cannot take it;
-run them one at a time, with stdin from `/dev/null`, and never a timing run
-beside a build.
+(`acceptance.serial_lock`; `predeclare`, `replay` and `dispose` only read the
+evidence, `predeclare` and `dispose` write their `--out`, and they take none),
+and the consumer driver takes the same serial lock for every run that builds
+(all but `--prepare-only`, the exact TASK25 reproduction included) and
+refuses, with a nonzero exit and nothing created, if it cannot take it; run
+them one at a time, with stdin from `/dev/null`, and never a timing run beside
+a build.
 
 ### Scope, and what is not measured
 
@@ -3164,18 +3165,20 @@ changes nothing but the target's products (`scan` of the directory and of
 `sigobj`), leaves no running descendant, and produces the reference output
 digest (`theory_digest`: root-masked `.sig` and `.sml` plus the canonical
 `.dat`; selftests: the normalized text). The reporter's
-`Systeml.HOLDIR` must equal the side's root. In a decision stage an output
-differing from the reference is checked per process (`check_digest`): a
-candidate process is `Blocked`, a baseline one refused. Where there is no
-reference (smoke, pilot, control), `outcome` refuses outputs that differ
-between the processes (or sides) of a unit. The run-level rule
+`Systeml.HOLDIR` must equal the side's root. Each process's output is
+checked against an expected digest (`check_digest`): the counts file's
+reference in a decision stage, otherwise what the side's snapshot already
+holds (`originals`, which must agree between the sides). A candidate
+process that differs is `Blocked`, a baseline one refused. `outcome` also
+refuses outputs that differ between the processes of a unit, or from the
+references. The run-level rule
 `check_new_stems` applies too: a candidate process that loads a module no
 baseline process of that unit loaded is `Blocked` (`STEM_ALLOWANCE` is
 empty). A finding about the candidate (an extension module, a new stem) is
 `Blocked`, judged and never void.
 
-Run scratch `<scratch>/run-<attempt>` is removed at the end of each run,
-including smoke, pilot and control.
+Each run's `<scratch>/run-<attempt>` (probes included) is removed at its
+end, and `--scratch` (default `/dev/shm/t32`) too if it is then empty.
 
 Backups and restore. Before any product is deleted, `execute_unit` backs
 the unit's products up and writes a restore journal (`task32-journal-v1`)
@@ -3304,8 +3307,9 @@ judged.
 Exit codes (`exit_of`, `main`): 0 pass (a pilot covering every unit, a
 detected control, a smoke run, `predeclare`, `replay`, `recover`); 1 fail
 (a failing stage, an undetected control, a failing disposition); 2
-inconclusive or blocked (or a pilot with a unit under 1 s of CPU, or a
-blocked disposition); 3 the run failed or was refused;
+an inconclusive stage, a blocked run (a finding about the candidate), a
+pilot with a unit under 1 s of CPU, or a blocked disposition; 3 the run
+failed or was refused;
 4 SIGTERM or SIGHUP ended the run. After a signal
 the child's group is killed, the products are restored and the attempt is
 closed; with status 4 the saved result, if any, is still printed, else

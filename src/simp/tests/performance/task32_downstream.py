@@ -1768,6 +1768,12 @@ def run_stage(args, spec):
                             report["journal"] = str(journal)
                         a.save(output / "downstream.json", report)
                         saved = state["saved"] = True
+                    except Exception as error:
+                        error.add_note("after " + (
+                            report.get("failure") or "success"))
+                        if signalled is not None or snap.STATE.recorded:
+                            error.add_note("a signal was pending")
+                        raise
                     finally:
                         state["closed"] = end_attempt(ledger, report,
                                                       output, saved)
@@ -2349,15 +2355,16 @@ TERMINATED = 4
 def exit_of(report):
     """The exit status of a run: 0 passed (a pilot that covers every unit,
     a negative control that was detected, a smoke run); 1 failed (a failing
-    stage, an undetected control); 2 inconclusive or blocked (or a pilot
-    with a unit under the CPU minimum); 3 the run failed or was refused;
+    stage, an undetected control); 2 an inconclusive stage, a blocked run
+    (a finding about the candidate: `report["blocked"]`) or a pilot with a
+    unit under the CPU minimum; 3 the run failed or was refused;
     4 (TERMINATED, from `main`, never from a report) the signal itself
     ended the run (SIGTERM or SIGHUP): the result, if the report was saved
     and the attempt closed, is recorded and printed all the same. A signal
     noted on another failure (a Fatal restore, an OSError in the save)
     keeps that failure's status, 3."""
     if not report["success"]:
-        return 3
+        return 2 if report.get("blocked") else 3
     out = report["outcome"]
     if report["mode"] == "control":
         return 0 if out["negative_control"]["detected"] else 1
@@ -2398,10 +2405,16 @@ def add_ledger(parser):
     parser.add_argument("--ledger", type=Path)
 
 
+def absolute_path(text):
+    """A path option, made absolute against the current directory."""
+    return Path(os.path.abspath(text))
+
+
 def add_run(parser):
     add_common(parser)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--scratch", type=Path, default=Path("/dev/shm/t32"))
+    parser.add_argument("--scratch", type=absolute_path,
+                        default=Path("/dev/shm/t32"))
     parser.add_argument("--timeout", type=int, default=TIMEOUT)
     parser.add_argument("--verify-argv", type=shlex.split,
                         help="command that exits 0 while the snapshots are "

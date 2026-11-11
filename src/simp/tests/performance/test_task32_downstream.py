@@ -832,6 +832,16 @@ class Refusals(Base):
                       report["failure"])
         self.assertNotIn("blocked", report)
 
+    def test_a_blocked_run_exits_2(self):
+        blocked = self.attempt("extension", side="cand", name="logroot")
+        self.assertIn("blocked", blocked)
+        self.assertEqual(dw.exit_of(blocked), 2)
+
+    def test_a_refused_run_exits_3(self):
+        refused = self.attempt("exit")
+        self.assertNotIn("blocked", refused)
+        self.assertEqual(dw.exit_of(refused), 3)
+
     def test_a_loaded_path_outside_the_root_is_refused(self):
         self.assertIn("outside the root",
                       self.attempt("outside")["failure"])
@@ -1631,6 +1641,49 @@ class Unsaved(Base):
         ends = [r for r in dw.table_lines(state)
                 if r["event"] == "info-end"]
         self.assertEqual([r["success"] for r in ends], [False])
+
+    def test_a_keyboard_interrupt_in_the_body_still_closes_the_attempt(self):
+        def interrupt(*args, **kw):
+            raise KeyboardInterrupt
+        with self.assertRaises(KeyboardInterrupt):
+            self.cli("ki", mock.patch.object(dw, "run_verify", interrupt))
+        state = dw.tg.Ledger(self.world.ledger())
+        ends = [r for r in dw.table_lines(state)
+                if r["event"] == "info-end"]
+        self.assertEqual([r["success"] for r in ends], [False])
+
+    def test_a_relative_scratch_is_resolved_for_the_children(self):
+        w = self.world
+        parsed = dw.build_parser().parse_args([
+            "smoke", "--repo", "r", "--base-root", "b", "--cand-root",
+            "c", "--manifest", "m", "--output", "o", "--scratch", "rel"])
+        self.assertEqual(parsed.scratch, Path(os.getcwd()) / "rel")
+        seen = []
+        real = dw.process_env
+
+        def spy(scratch, extra):
+            env = real(scratch, extra)
+            seen.append((env["HOME"], env["TMPDIR"]))
+            return env
+        here = os.getcwd()
+        os.chdir(w.tmp)
+        try:
+            argv = ["smoke", "--repo", str(w.repo), "--base-root",
+                    str(w.roots["base"]), "--cand-root",
+                    str(w.roots["cand"]), "--manifest", str(w.manifest),
+                    "--output", "rel-out", "--scratch", "rel-scratch",
+                    "--verify-argv", "%s -c pass" % sys.executable,
+                    "--authorize-measurements", "--only", "logroot"]
+            with mock.patch.object(dw, "process_env", spy), \
+                    mock.patch.object(sys, "stdout", io.StringIO()), \
+                    mock.patch.object(sys, "stderr", io.StringIO()):
+                dw.main(argv)
+        finally:
+            os.chdir(here)
+        self.assertTrue(seen)
+        for home, tmp in seen:
+            self.assertTrue(os.path.isabs(home) and os.path.isabs(tmp))
+            self.assertTrue(home.startswith(str(w.tmp / "rel-scratch")))
 
     def test_a_signal_before_any_report_prints_what_is_left(self):
         def terminate(*args, **kw):
