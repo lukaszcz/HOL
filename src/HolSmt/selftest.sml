@@ -536,6 +536,11 @@ val graph_expect_thm = expect_thm
     (``!n:num. v <= n + v``, [thm_Z3p, thm_CVC, thm_CVCp]),
     (``(v:num) - (w + 1) <= v``, [thm_Z3p, thm_CVC, thm_CVCp]),
 
+    (* Rational-bound normalization can eliminate every integer-to-real
+       cast before the arithmetic replay step abstracts its atoms. *)
+    (``LENGTH (xs:bool list) < 10 ==> 7 * LENGTH xs < 100``,
+      [thm_CVCp_arith]),
+
     (``(x:num) - 0 = x``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (``(x:num) - y = y - x``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),

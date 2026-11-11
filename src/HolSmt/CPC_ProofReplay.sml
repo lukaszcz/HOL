@@ -7799,9 +7799,13 @@ local
         profile "CPC(rung:arith/poly_norm_canonical)"
           SmtReplayCanon.arith_poly_norm_prove target
       else if name = "arith-leq-norm" then
-        simpLib.SIMP_PROVE (bossLib.srw_ss())
-          [integerTheory.int_ge, integerTheory.INT_NOT_LE,
-           integerTheory.INT_NOT_LT, integerTheory.INT_LE_LT1] target
+        let
+          val (left, right) = boolSyntax.dest_eq target
+          val le_lt = Conv.REWR_CONV integerTheory.INT_LE_LT1 left
+          val not_ge = Conv.THENC
+            (Conv.RAND_CONV (Conv.REWR_CONV integerTheory.int_ge),
+             Conv.REWR_CONV integerTheory.INT_NOT_LE) right
+        in Thm.TRANS le_lt (Thm.SYM not_ge) end
       else arith_prove target
     end
 
