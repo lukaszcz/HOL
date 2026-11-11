@@ -287,7 +287,8 @@ local
     symbol_key = quoted_symbol_key,
     type_symbol_key = quoted_symbol_key,
     parse_choice = false,
-    parse_lambda = true
+    parse_lambda = true,
+    parse_cpc_const = true
   }
 
   fun cpc_symbol_key where_ token =
@@ -2456,7 +2457,7 @@ local
         else if head = "match" orelse head = "par" then
           UnavailableProvenance
             ("unsupported binding form " ^ head)
-        else if head = "@var" then AtomicProvenance
+        else if head = "@var" orelse head = "@const" then AtomicProvenance
         else exact_application head
           (List.map (provenance_of_raw_in environment) operands)
     | RawList entries =>

@@ -29,13 +29,14 @@ struct
     {mk_let_bindings=P.smtlib_mk_let_bindings,mk_let=P.smtlib_mk_let,
      mk_bound_var=Term.mk_var,lookup_binder_list=fn _ => NONE,
      record_binder_block=fn _ => (),symbol_key=P.proof_symbol_text,
-     type_symbol_key=Lib.I,parse_choice=false,parse_lambda=true}
+     type_symbol_key=Lib.I,parse_choice=false,parse_lambda=true,
+     parse_cpc_const=false}
   fun required NONE = raise Fail "unhandled test ascription"
     | required (SOME value) = value
   fun options backend frame : 'a P.construction_cfg =
     {backend=backend,frame=frame,symbol_key=P.proof_symbol_text,
      type_symbol_key=Lib.I,index_limit=256,parse_choice=false,
-     parse_lambda=true,lookup_binder_list=fn _ => NONE,
+     parse_lambda=true,parse_cpc_const=false,lookup_binder_list=fn _ => NONE,
      binder_reference=fn _ => fn _ => raise Fail "binder alias",
      record_binder_block=fn _ => (),
      ascribed_symbol=fn frame => fn description =>
@@ -44,7 +45,7 @@ struct
   fun policy_options backend frame : 'a P.policy_construction_cfg =
     {backend=backend,frame=frame,symbol_key=P.proof_symbol_text,
      type_symbol_key=Lib.I,index_limit=RP.AtMost 256,parse_choice=false,
-     parse_lambda=true,lookup_binder_list=fn _ => NONE,
+     parse_lambda=true,parse_cpc_const=false,lookup_binder_list=fn _ => NONE,
      binder_reference=fn _ => fn _ => raise Fail "binder alias",
      record_binder_block=fn _ => (),
      ascribed_symbol=fn frame => fn description =>
@@ -357,6 +358,66 @@ struct
        "((_ re.^ ((as true true) true)) re.allchar)",
        "((_ re.^ ((as (lambda ((s (Set Int))) s) true) false)) re.allchar)"]
     end
+
+  fun ordinary_const_applications () =
+    let
+      val (sorts,native) = SmtLib_Logics.parsedicts_of_logic "ALL"
+      val operand = Term.mk_var ("Bool",Type.bool)
+      val function = Term.mk_var ("@const",
+        boolSyntax.list_mk_fun ([intSyntax.int_ty,Type.bool],Type.bool))
+      fun constant token = SmtLib_Theories.K_zero_two
+        (fn (index,value) => Term.list_mk_comb (function,[index,value])) token
+      val application = Term.list_mk_comb
+        (function,[intSyntax.zero_tm,operand])
+      fun keep token = SmtLib_Theories.K_one_zero (fn index =>
+        (ensure "deferred ordinary @const index"
+           (Term.aconv index application); boolSyntax.T)) token
+      val entries =
+        [("Bool",SmtLib_Theories.K_zero_zero operand),("@const",constant),
+         ("keep",keep)]
+      val native = List.foldl Library.extend_dict native entries
+      fun dictionaries backend exact =
+        let val (_,dictionary) = if exact then #dictionaries
+              (R.select_with_policy_no_override backend policy
+                {logic="ALL",solver=SOME "Z3"})
+            else #dictionaries (R.select backend limits
+              {logic="ALL",solver=SOME "Z3"})
+            val frame = B.root backend
+            val dictionary = R.bind_sources backend frame
+              [("Bool",operand),("@const",function)] dictionary
+        in (sorts,Library.extend_dict
+          (("keep",R.recipe_parsefn backend limits keep),dictionary)) end
+      fun check text =
+        let
+          fun ordinary () = P.parse_term_with_cfg cfg (tokens text)
+            (sorts,native)
+          val expected = failure ordinary
+          val _ = case expected of NONE => ensure "ordinary @const operand"
+              (Term.aconv (ordinary ())
+                (if String.isPrefix "(_ keep" text then boolSyntax.T
+                 else application))
+            | SOME error => ensure "ordinary @const first error"
+                (error = ("SmtLib_Parser","t_with_args_unknown_symbol",
+                  "failed to parse 'missing' (with indices [] and 0 " ^
+                  "argument(s)): unknown symbol (no dictionary entry)"))
+          fun compare parse = case expected of NONE => bridge
+                (ordinary ()) (parse ())
+            | SOME error => ensure "constructed @const first error"
+                (failure parse = SOME error)
+          fun parse backend exact = if exact then P.parse_term_with_policy
+              (policy_options backend (B.root backend)) (tokens text)
+              (dictionaries backend exact)
+            else P.parse_term_with_backend
+              (options backend (B.root backend)) (tokens text)
+              (dictionaries backend exact)
+          val _ = List.app (fn exact => with_graph exact
+            (fn graph => fn backend => compare (fn () =>
+              small_graph graph (parse backend exact)))) [false,true]
+        in List.app (fn exact => with_values
+          (fn _ => fn context => fn backend => compare (fn () =>
+            small_value context (parse backend exact)))) [false,true] end
+    in List.app check ["(@const 0 Bool)","(_ keep (@const 0 Bool))",
+      "(@const missing"] end
 
   (* Let the native strip_abs/name convention decide acceptance. In
      particular, duplicate lexical names are not an a priori refusal. *)
@@ -1612,6 +1673,9 @@ struct
          ("strings","cvc5",strings),("regular languages","cvc5",regexps),
          ("scoped sets","cvc5",sets),("Z3 sets","Z3",z3_sets),
          ("scoped bags","cvc5",bags)]
+      val _=tprint "Structured ordinary @const dictionary semantics"
+      val _=ordinary_const_applications ()
+      val _=OK ()
       val _=tprint "Structured generic qualification dictionary semantics"
       val _=generic_qualifications ()
       val _=OK ()

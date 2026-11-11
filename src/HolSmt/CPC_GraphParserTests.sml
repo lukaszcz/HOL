@@ -984,6 +984,43 @@ struct
           (length free=1 andalso PV.key context (hd free)=
             PV.key context marker) end)) end
 
+  fun typed_private_constants () = owned (fn original =>
+    let
+      val ty = ``:bool option``
+      val sort = Redblackmap.find (types original,ty)
+      val text = "((declare-const " ^ sort ^ " Int) " ^
+        "(assume @a (= (@const 0 " ^ sort ^ ") (@const 0 " ^ sort ^ "))))"
+      fun inventory (e:env) =
+        require "typed constant leaked its sort metadata allocation"
+          (case !(#private_atoms e) of [(term,"@cpc.const.0")] =>
+             Type.compare (Term.type_of term,ty)=EQUAL | _ => false)
+      fun root (proof:'a C.constructed_graph_proof) =
+        case #commands proof of [C.GraphAssume (_,value)] => #node value
+          | _ => raise Fail "typed constant assumption changed"
+    in List.app (fn route =>
+      test ("emitted @const sort wins term collision / " ^ route_name route)
+        (fn () => case route of
+          Value => with_value text (fn e => fn current =>
+            let val context = #context current
+                val variables = PV.free_variables context
+                  (root (#proof current))
+            in inventory e;
+               require "sort marker leaked into Value root variables"
+                 (case variables of [variable] =>
+                   Type.compare (PV.type_of context variable,ty)=EQUAL
+                   | _ => false);
+               compare_commands (small_value e context)
+                 (legacy e text) (#proof current) end)
+        | _ => with_native route text (fn e => fn proof =>
+            (inventory e;
+             require "sort marker leaked into graph root variables"
+               (case G.free_variable_nodes (#graph e) (root proof) of
+                  SOME [variable] =>
+                    Type.compare (G.type_of (#graph e) variable,ty)=EQUAL
+                | _ => false);
+             compare_commands (small_graph e) (legacy e text) proof)))) routes
+    end)
+
   fun testers () = owned (fn e =>
     let
       val declarations = SmtLib.parser_datatype_declarations_from_types
@@ -1210,7 +1247,7 @@ struct
          ("function sort","(-> (_ BitVec 1) (_ BitVec 1))",
           ["@cpc.BitVec","@cpc.->"],["@cpc.->"]),
          ("const discards sort operand","(@const 0 (_ BitVec 1))",
-          ["@cpc.BitVec","@cpc.const.0"],["@cpc.const.0"])]
+          ["@cpc.const.0"],["@cpc.const.0"])]
       val _ = List.app (fn name => List.app (fn source => single
         (name ^ (if source="" then " fresh" else " source-indexed"),
          "(" ^ name ^ " (_ BitVec 1)" ^ source ^ ")",
@@ -2547,6 +2584,28 @@ struct
       val _ = private_quantifier_capture ()
       val _ = private_dependencies ()
       val _ = argument_resource_failure ()
+      val _ = typed_private_constants ()
+      val _ = List.app (fn (label,term) =>
+        let val text = "((define @xs () (@list " ^ term
+        in
+          test (label ^ " / native") (fn () => owned (fn e => require
+            "private constant unknown operand did not precede later syntax"
+            (failure (fn () => ignore (legacy e text)) =
+             SOME ("SmtLib_Parser","t_with_args_unknown_symbol",
+               "failed to parse 'task35_missing_arg' (with indices [] and " ^
+               "0 argument(s)): unknown symbol (no dictionary entry)"))));
+          negative label text
+        end)
+        [("private index precedes malformed sort",
+          "(@const task35_missing_arg (-> Bool"),
+         ("private index precedes EOF","(@const task35_missing_arg"),
+         ("private marker precedes EOF","(@const 0 task35_missing_arg"),
+         ("nested private index precedes later syntax",
+          "(@const (or task35_missing_arg ("),
+         ("closed private index diagnostic",
+          "(@const task35_missing_arg Bool))))"),
+         ("closed private marker diagnostic",
+          "(@const 0 task35_missing_arg))))")]
       val _ = test "actual emitted datatype tester fixtures" testers
       (* All registry entries must reject missing/extra arguments through
          the native authoritative callback, not a graph-only catch-all. *)

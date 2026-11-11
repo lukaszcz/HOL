@@ -592,6 +592,8 @@ local
   type state = {
     asserted_hyps : Term.term HOLset.set,
     scope_hyps : Term.term list,
+    (* Only whole native proof checks retain purification obligations. *)
+    private_const_hyps : Term.term HOLset.set ref option,
     (* Retained for shared canonicalization: TASK_12 consumes these exact
        per-translation emitted-definition records. *)
     translation_definitions : SmtLib.emitted_definition list,
@@ -606,11 +608,19 @@ local
   fun initial_state definitions asserted_hyps : state = {
     asserted_hyps = HOLset.addList (Term.empty_tmset, asserted_hyps),
     scope_hyps = [],
+    private_const_hyps = NONE,
     translation_definitions = definitions,
     steps = Redblackmap.mkDict String.compare,
     thm_cache = Net.empty,
     cache_stats = new_cache_stats ()
   }
+
+  fun is_private_const tm =
+    Term.is_var tm andalso
+    String.isPrefix "@cpc.const." (Lib.fst (Term.dest_var tm))
+
+  fun has_private_const tm =
+    List.exists is_private_const (Term.free_vars tm)
 
   fun cache_thm_with_fastpath fastpath state thm =
     if not theorem_cache_enabled then
@@ -641,6 +651,7 @@ local
         in {
           asserted_hyps = #asserted_hyps state,
           scope_hyps = #scope_hyps state,
+          private_const_hyps = #private_const_hyps state,
           translation_definitions = #translation_definitions state,
           steps = #steps state,
           thm_cache = thm_cache,
@@ -666,6 +677,7 @@ local
   in {
     asserted_hyps = #asserted_hyps state,
     scope_hyps = #scope_hyps state,
+    private_const_hyps = #private_const_hyps state,
     translation_definitions = #translation_definitions state,
     steps = Redblackmap.insert (#steps state, id,
       {rule_name = rule_name, result = result}),
@@ -682,6 +694,7 @@ local
         in {
           asserted_hyps = #asserted_hyps state,
           scope_hyps = #scope_hyps state,
+          private_const_hyps = #private_const_hyps state,
           translation_definitions = #translation_definitions state,
           steps = steps,
           thm_cache = #thm_cache state,
@@ -691,6 +704,7 @@ local
   fun assert_hyp state tm = {
     asserted_hyps = HOLset.add (#asserted_hyps state, tm),
     scope_hyps = #scope_hyps state,
+    private_const_hyps = #private_const_hyps state,
     translation_definitions = #translation_definitions state,
     steps = #steps state,
     thm_cache = #thm_cache state,
@@ -700,6 +714,7 @@ local
   fun push_scope_hyp state tm = {
     asserted_hyps = #asserted_hyps state,
     scope_hyps = tm :: #scope_hyps state,
+    private_const_hyps = #private_const_hyps state,
     translation_definitions = #translation_definitions state,
     steps = #steps state,
     thm_cache = #thm_cache state,
@@ -711,6 +726,7 @@ local
       tm :: rest => (tm, {
         asserted_hyps = #asserted_hyps state,
         scope_hyps = rest,
+        private_const_hyps = #private_const_hyps state,
         translation_definitions = #translation_definitions state,
         steps = #steps state,
         thm_cache = #thm_cache state,
@@ -11440,7 +11456,13 @@ local
       (* Native Seq, Set, and Bag trusts have no unchecked fallback.  Bag's
          second rung is the checked contextual simplifier used by its shared
          D2 prover; failure records a theory-specific CPC obligation. *)
-      if not force_fp andalso has_private_fp_marker target then
+      if not force_fp andalso Option.isSome (#private_const_hyps state)
+          andalso has_private_const target then
+        (Option.app (fn obligations =>
+           obligations := HOLset.add (!obligations,target))
+           (#private_const_hyps state);
+         Thm.ASSUME target)
+      else if not force_fp andalso has_private_fp_marker target then
         profile "CPC(rung:trust/fp_deferred)" deferred_fp_trust ()
       else if force_fp andalso word_equality_target () then
         next_fp
@@ -11622,6 +11644,11 @@ local
       val (hyp, state) = pop_scope_hyp state
       val thm = Thm.DISCH hyp premise
       val allowed = HOLset.addList (#asserted_hyps state, #scope_hyps state)
+      val obligations = case #private_const_hyps state of
+          NONE => Term.empty_tmset
+        | SOME recorded => HOLset.filter (fn tm => not (Term.aconv tm hyp))
+            (!recorded)
+      val allowed = HOLset.union (allowed,obligations)
       val _ = HOLset.isSubset (Thm.hypset thm, allowed) orelse
         raise ERR "scope"
           ("CPC scope pop did not close all of its local assumptions; " ^
@@ -23559,6 +23586,77 @@ in
         in result end
     end
 
+  fun instantiate_cpc_private_constants state allowed theorem =
+    let
+      (* Removing equal trailing arguments recovers the fresh function's
+         defining substitution without assuming function extensionality. *)
+      fun peel (left, right) =
+        if is_private_const left then SOME (left, right)
+        else if Term.is_comb left andalso Term.is_comb right andalso
+                Term.aconv (Term.rand left) (Term.rand right) then
+          peel (Term.rator left, Term.rator right)
+        else NONE
+      fun candidate theorem obligation =
+        let
+          val (left, right) = boolSyntax.dest_eq obligation
+          val binding = case peel (left, right) of
+              SOME binding => SOME binding
+            | NONE => peel (right, left)
+          fun admissible (variable, replacement) =
+            Term.type_of variable = Term.type_of replacement andalso
+            not (Term.free_in variable replacement) andalso
+            not (Term.free_in variable (Thm.concl theorem)) andalso
+            not (List.exists (Term.free_in variable) (HOLset.listItems allowed))
+        in
+          case binding of
+            SOME binding => if admissible binding then SOME binding else NONE
+          | NONE => NONE
+        end
+        handle Feedback.HOL_ERR _ => NONE
+      fun discharge_reflexive (obligation, result) =
+        if not (HOLset.member (Thm.hypset result, obligation)) then result
+        else
+          let val (left, right) = boolSyntax.dest_eq obligation
+          in if Term.aconv left right then
+            Drule.PROVE_HYP (Thm.REFL left) result
+          else result end
+          handle Feedback.HOL_ERR _ => result
+      fun close obligations theorem =
+        let
+          val theorem = HOLset.foldl discharge_reflexive theorem obligations
+          val live = HOLset.intersection (obligations, Thm.hypset theorem)
+          fun find [] = NONE
+            | find (obligation :: rest) =
+                case candidate theorem obligation of
+                  SOME binding => SOME binding
+                | NONE => find rest
+        in
+          case find (HOLset.listItems live) of
+            NONE => theorem
+          | SOME (variable, replacement) =>
+              let
+                val substitution = [{redex = variable, residue = replacement}]
+                val theorem = unretained_observed_inst substitution theorem
+                val obligations = HOLset.addList (Term.empty_tmset,
+                  List.map (Term.subst substitution) (HOLset.listItems live))
+              in close obligations theorem end
+        end
+      (* Nonreflexive obligations still need checked replay below;
+         the final hypothesis guard remains in force. *)
+    in case #private_const_hyps state of NONE => theorem
+      | SOME obligations => close (!obligations) theorem end
+
+  fun instantiate_private_constants_for_test obligations allowed theorem =
+    let
+      val initial = initial_state [] []
+      val state = {asserted_hyps = #asserted_hyps initial,
+        scope_hyps = [],private_const_hyps = SOME (ref
+          (HOLset.addList (Term.empty_tmset,obligations))),
+        translation_definitions = [],steps = #steps initial,
+        thm_cache = #thm_cache initial,cache_stats = #cache_stats initial}
+    in instantiate_cpc_private_constants state
+      (HOLset.addList (Term.empty_tmset, allowed)) theorem end
+
   fun discharge_later_checked_steps state allowed theorem =
     let
       val extra = HOLset.difference (Thm.hypset theorem, allowed)
@@ -23814,8 +23912,12 @@ in
           (Feedback.HOL_MESG ("CPC proof closure: " ^ message);
            TextIO.flushOut TextIO.stdOut)
         else ()
-      val (state, thm) = replay_commands (initial_state definitions asl)
-        (proof_commands proof)
+      val initial = initial_state definitions asl
+      val initial = {asserted_hyps = #asserted_hyps initial,
+        scope_hyps = [],private_const_hyps = SOME (ref Term.empty_tmset),
+        translation_definitions = definitions,steps = #steps initial,
+        thm_cache = #thm_cache initial,cache_stats = #cache_stats initial}
+      val (state, thm) = replay_commands initial (proof_commands proof)
       val _ = trace_check "replay complete"
       val _ = profile_cardinalities state
       val _ = profile "CPC(check:conclusion)"
@@ -23834,6 +23936,8 @@ in
       val thm = profile "CPC(check:fp_private_unbound)"
         (instantiate_cpc_fp_unbound_markers state allowed) thm
       val _ = trace_check "unbound private markers reconstructed"
+      val thm = profile "CPC(check:private_constants)"
+        (instantiate_cpc_private_constants state allowed) thm
       val thm = profile "CPC(check:discharge_later_checked_steps)"
         (discharge_later_checked_steps state allowed) thm
       val _ = trace_check "checked hypotheses discharged"
@@ -24067,7 +24171,8 @@ in
         let val saved = !committed in
           {asserted_hyps = HOLset.addList
              (Term.empty_tmset,List.map #term premises),
-           scope_hyps = [],translation_definitions = definitions,
+           scope_hyps = [],private_const_hyps = NONE,
+           translation_definitions = definitions,
            steps = Redblackmap.mkDict String.compare,
            thm_cache = #thm_cache saved,cache_stats = #cache_stats saved}
         end
@@ -24647,6 +24752,7 @@ in
     let
       val initial = initial_state [] hypotheses
       val state = {asserted_hyps = #asserted_hyps initial,scope_hyps = [],
+        private_const_hyps = NONE,
         translation_definitions = [],steps = #steps initial,
         cache_stats = #cache_stats initial,
         thm_cache = List.foldl (fn (proof, cache) =>

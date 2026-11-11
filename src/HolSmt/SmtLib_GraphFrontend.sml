@@ -691,6 +691,7 @@ struct
          type_symbol_key = case policy of CPC => symbol_key | Z3 => Lib.I,
          index_limit = #index_limit (#recipe_limits options),
          parse_choice = false, parse_lambda = true,
+         parse_cpc_const = policy = CPC,
          lookup_binder_list = fn token => binder_list_lookup backend
            (Redblackmap.peek (!binder_lists_ref, symbol_key token))
            (Option.map (List.map #node)
@@ -1347,6 +1348,7 @@ struct
          type_symbol_key = case policy of CPC => symbol_key | Z3 => Lib.I,
          index_limit = #index_limit (#recipe_limits options),
          parse_choice = false, parse_lambda = true,
+         parse_cpc_const = policy = CPC,
          lookup_binder_list = fn token => binder_list_lookup backend
            (Redblackmap.peek (!binder_lists_ref, symbol_key token))
            (Option.map (List.map #node)
