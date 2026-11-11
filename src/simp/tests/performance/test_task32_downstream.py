@@ -52,6 +52,28 @@ def git(repo, *args):
         stderr=subprocess.PIPE, text=True).stdout.strip()
 
 
+NUM_DEPS = ["Arith", "Norm", "Solve", "numLib", "Defn"]
+REAL_DEPS = ["realLib", "metricTheory"]
+HEAP_MAKEFILES = {
+    "src/num/termination": "ARITH_DEPS = Arith Norm \\\n  Solve\n"
+    "BARE_DEPS = ../numLib ../../tfl/src/Defn \\\n"
+    "  $(patsubst %,../arith/src/%,$(ARITH_DEPS))\nDEPS = $(BARE_DEPS)\n",
+    "src/real/analysis": "REAL_DEPS = realLib metricTheory\n"
+    "BARE_DEPS = $(patsubst %,../%,$(REAL_DEPS))\n"}
+
+
+def preloaded(heap):
+    """What a process of the heap finds loaded: each heap holds the one it
+    was built on and its own Holmakefile's modules."""
+    base = ["Lib", "Thm"]
+    if heap == cases.NUMHEAP:
+        return base + NUM_DEPS
+    if heap == "bin/hol.state0":
+        return base
+    state = base + ["boss"]
+    return state if heap == "bin/hol.state" else state + REAL_DEPS
+
+
 STAT_FIELDS = dict(gc_full=1, gc_partial=3, gc_share=0, size_heap=1 << 20)
 BUILD_LOG = "selftest ok (0.0s)\n"
 
@@ -101,6 +123,9 @@ class World:
         (root / "bin").mkdir(parents=True)
         for n in ("Holmake", "hol", "hol.state0"):
             (root / "bin" / n).write_text("x")
+        for rel, text in HEAP_MAKEFILES.items():
+            (root / rel).mkdir(parents=True, exist_ok=True)
+            (root / rel / "Holmakefile").write_text(text)
         (root / "sigobj").mkdir()
         (root / "sigobj/Lib.ui").symlink_to(root / "bin/hol")
         for unit in cases.UNITS:
@@ -169,7 +194,7 @@ class World:
                      nongc_sys=cpu * 0.05, gc_usr=cpu * 0.04,
                      gc_sys=cpu * 0.01, gc_time=cpu * 0.05 * (
                          1 + 0.2 * rng.random()), holdir=str(root),
-                     loaded_before=["Lib", "Thm", unit["heap"]],
+                     loaded_before=preloaded(unit["heap"]),
                      loaded=["Foo"],
                      files=[["Foo.sml", str(root / "src/foo")],
                             ["T32Report.sml", str(Path(uo).parent)]],
@@ -649,35 +674,73 @@ class Pieces(unittest.TestCase):
                         "d", True)
 
     def test_probe_facts_need_the_reporter_in_every_process(self):
-        report = dict(workloads=list(cases.NAMES), reporter={
-            s: dict(dir="/rep-" + s) for s in ("base", "cand")})
-
-        def receipt(name, side, seen=True):
-            files = [["T32Report.sml", "/rep-" + side]] if seen else []
-            return dict(workload=name, side=side, rewritten=[], stats=dict(
-                loaded_before=["a", cases.BY_NAME[name]["heap"]],
-                loaded=[], files=files))
-        full = [receipt(w, s) for w in cases.NAMES
-                for s in ("base", "cand")]
+        report = self.probe_report()
+        full = self.probe_receipts()
         facts = dw.probe_facts(report, full)
-        self.assertTrue(facts["ok"])
+        self.assertTrue(facts["ok"], facts)
         self.assertEqual(facts["heaps"], list(cases.HEAPS))
-        full[3] = receipt(cases.NAMES[1], "base", seen=False)
-        self.assertFalse(dw.probe_facts(report, full)["ok"])
-        full[3] = receipt(cases.NAMES[1], "base")
-        self.assertTrue(dw.probe_facts(report, full)["heaps_observed"])
-        # a unit that does not run in the heap the cases table declares
-        odd = cases.NAMES[0]
-        full[0] = dict(full[0], stats=dict(full[0]["stats"], loaded_before=[
-            "a", "other"]))
-        got = dw.probe_facts(report, full)
-        self.assertFalse(got["heaps_observed"])
-        self.assertFalse(got["ok"], odd)
-        full[0] = receipt(odd, "base")
+        self.assertEqual(
+            facts["heap_anchors"]["base:" + cases.REALHEAP]["anchors"],
+            sorted(REAL_DEPS))
+        self.assertEqual(
+            facts["heap_anchors"]["cand:" + cases.NUMHEAP]["anchors"],
+            sorted(NUM_DEPS))
+        unseen = self.probe_receipts(unseen=("rat", "base"))
+        self.assertFalse(dw.probe_facts(report, unseen)["ok"])
         part = dict(report, workloads=["logroot"])
-        one = [receipt("logroot", s) for s in ("base", "cand")]
+        one = [r for r in full if r["workload"] == "logroot"]
         self.assertTrue(dw.probe_facts(part, one)["ok"])
         self.assertFalse(dw.probe_facts(part, one)["complete"])
+
+    def test_every_heap_must_positively_show_itself(self):
+        report = self.probe_report()
+        # the realheap unit shows a heap that differs from the others but
+        # has none of the modules the realheap is built from
+        for loaded in (["Lib", "Thm", "boss", "other"],
+                       ["Lib", "Thm", "boss"] + REAL_DEPS[:1],
+                       preloaded("bin/hol.state0")):
+            got = dw.probe_facts(report, self.probe_receipts(
+                loaded={"lim": loaded}))
+            self.assertFalse(got["ok"], loaded)
+        # a heap that does not contain the heap it was built on
+        got = dw.probe_facts(report, self.probe_receipts(
+            loaded={"lim": REAL_DEPS + ["Lib", "Thm"]}))
+        self.assertFalse(got["ok"])
+        # units of one heap that disagree
+        got = dw.probe_facts(report, self.probe_receipts(
+            loaded={"rich_list": preloaded("bin/hol.state0")}))
+        self.assertFalse(got["ok"])
+        # an anchor list that cannot be read from the heap's own build
+        root = Path(report["roots"]["base"])
+        (root / "src/real/analysis/Holmakefile").write_text("all:\n")
+        got = dw.probe_facts(report, self.probe_receipts())
+        self.assertFalse(got["ok"])
+
+    def probe_report(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="t32-probe-"))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        roots = {}
+        for side in ("base", "cand"):
+            roots[side] = str(self.tmp / side)
+            for rel, text in HEAP_MAKEFILES.items():
+                (self.tmp / side / rel).mkdir(parents=True)
+                (self.tmp / side / rel / "Holmakefile").write_text(text)
+        return dict(workloads=list(cases.NAMES), roots=roots, reporter={
+            s: dict(dir="/rep-" + s) for s in ("base", "cand")})
+
+    @staticmethod
+    def probe_receipts(unseen=None, loaded=None):
+        out = []
+        for name in cases.NAMES:
+            for side in ("base", "cand"):
+                files = [] if unseen == (name, side) else [
+                    ["T32Report.sml", "/rep-" + side]]
+                modules = (loaded or {}).get(name) or preloaded(
+                    cases.BY_NAME[name]["heap"])
+                out.append(dict(workload=name, side=side, rewritten=[],
+                                stats=dict(loaded_before=modules,
+                                           loaded=[], files=files)))
+        return out
 
 
 class Refusals(Base):
@@ -1248,7 +1311,9 @@ class Launch(unittest.TestCase):
         got = dw.launch(["sh", "-c", "echo $$ > %s; sleep 30 &" % pidfile],
                         self.tmp, dict(os.environ), 30, self.tmp / "o")
         self.assertEqual((got["exit"], got["timed_out"]), (0, False))
-        self.assertEqual(got["survivors"], ["sleep"])
+        # the backgrounded child may still be the forked sh before its exec
+        self.assertTrue(got["survivors"])
+        self.assertLessEqual(set(got["survivors"]), {"sh", "sleep"})
         self.assertEqual(dw.group_members(int(pidfile.read_text())), [])
         clean = dw.launch(["true"], self.tmp, dict(os.environ), 30,
                           self.tmp / "o")
@@ -1261,15 +1326,70 @@ class Launch(unittest.TestCase):
                         cases.BY_NAME["logroot"], Path("/r"), "/rep", "d",
                         False)
 
-    def test_shielded_defers_a_signal_until_the_block_ends(self):
+    def test_signals_follow_the_shared_state_machine(self):
+        term = signal.SIGTERM
+        # DEFER records, the end of the block raises
         seen = []
         with snap.terminating():
             with self.assertRaises(snap.Terminated):
-                with dw.shielded():
-                    os.kill(os.getpid(), signal.SIGTERM)
+                with snap.deferred():
+                    os.kill(os.getpid(), term)
                     time.sleep(0.05)
-                    seen.append("restore finished")
-        self.assertEqual(seen, ["restore finished"])
+                    seen.append("finished")
+        self.assertEqual(seen, ["finished"])
+        # a burst raises at most once
+        with snap.terminating():
+            with self.assertRaises(snap.Terminated):
+                os.kill(os.getpid(), term)
+                time.sleep(0.05)
+            os.kill(os.getpid(), term)
+            time.sleep(0.05)  # recorded only: no second raise
+            self.assertEqual(snap.STATE.mode, snap.DEFER)
+            self.assertEqual(len(snap.STATE.recorded), 2)
+        # a signal recorded outside a wait is raised at its entry
+        with snap.terminating(snap.DEFER):
+            os.kill(os.getpid(), term)
+            time.sleep(0.05)
+            with self.assertRaises(snap.Terminated):
+                with snap.raising():
+                    seen.append("not reached")
+        self.assertEqual(seen, ["finished"])
+        # a block that ends with an error keeps it as the primary error
+        with snap.terminating():
+            with self.assertRaises(dw.Fatal) as caught:
+                with snap.deferred():
+                    os.kill(os.getpid(), term)
+                    time.sleep(0.05)
+                    raise dw.Fatal("restore failed")
+        self.assertEqual(str(caught.exception), "restore failed")
+        self.assertIn("SIGTERM", caught.exception.__notes__[0])
+        # recorded and never raised: raised when the guard ends
+        with self.assertRaises(snap.Terminated):
+            with snap.terminating(snap.DEFER):
+                os.kill(os.getpid(), term)
+                time.sleep(0.05)
+        self.assertEqual(snap.STATE.mode, snap.RAISE)
+
+    def test_a_signal_during_a_failed_restore_keeps_the_fatal(self):
+        (self.tmp / "w").mkdir()
+        world = World(self.tmp / "w")
+        for patch in world.patches():
+            patch.start()
+            self.addCleanup(patch.stop)
+
+        def settle(*args, **kw):
+            os.kill(os.getpid(), signal.SIGTERM)
+            time.sleep(0.05)
+            return dict(ok=False, moved=[], modified=[], rewritten=[])
+        with mock.patch.object(dw, "settle", settle):
+            report = world.run("x", world.spec(["logroot"]))
+        self.assertFalse(report["success"])
+        self.assertTrue(report["failure"].startswith("Fatal: could not "
+                                                     "restore"))
+        self.assertIn("SIGTERM", report["failure"])
+        self.assertTrue(report.get("journal"))
+        for lock in Path(world.repo, ".agent-files").glob("*.lock"):
+            lock.unlink()
 
     def test_a_signal_during_the_restore_does_not_cut_it_short(self):
         (self.tmp / "w").mkdir()
@@ -1574,6 +1694,15 @@ class Chain(Base):
         # predeclare: replays the three, writes the counts
         pargs = w.args("x", pilot=w.tmp / "pilot", smoke=w.tmp / "smoke",
                        control=w.tmp / "control")
+        # snapshots rebuilt since the information runs: another manifest
+        text = w.manifest.read_text()
+        w.manifest.write_text(json.dumps(json.loads(text), indent=1))
+        with self.assertRaisesRegex(dw.Refusal, "other snapshots"):
+            dw.predeclare_first(pargs)
+        with self.assertRaisesRegex(dw.Refusal, "--pilot was made on "
+                                    "other snapshots"):
+            dw.info_spec(w.args("c", pilot=w.tmp / "pilot"), "control")
+        w.manifest.write_text(text)
         counts = dw.predeclare_first(pargs)
         self.assertEqual(set(counts["reps"]), set(cases.NAMES))
         self.assertEqual(counts["r_cap"], dw.R_CAP)
@@ -1608,14 +1737,16 @@ class Chain(Base):
                   checkout="c")
         with self.assertRaisesRegex(dw.Refusal, "no `info` line"):
             dw.info_run(w.tmp / "smoke", dw.gate_key(dw.pins_of(
-                w.args("z"))[0]), "smoke", empty)
+                w.args("z"))[0]), "smoke", empty, mseal=dw.pins_of(
+                    w.args("z"))[1])
         lines = ledger.read_text().splitlines(keepends=True)
         short = w.tmp / "short-ledger.jsonl"
         self.assertIn('"info-end"', lines[-1])  # the control's
         short.write_text("".join(lines[:-1]))
         with self.assertRaisesRegex(dw.Refusal, "no successful `info-end`"):
             dw.info_run(w.tmp / "control", dw.gate_key(dw.pins_of(
-                w.args("z"))[0]), "control", short, [cases.CONTROL_UNIT])
+                w.args("z"))[0]), "control", short, [cases.CONTROL_UNIT],
+                mseal=dw.pins_of(w.args("z"))[1])
         # first stage
         for name in cases.NAMES:
             w.profile[name] = (1.0, 0.001)
@@ -1770,6 +1901,43 @@ class Chain(Base):
         redrawn = dw.redraws(attempts, infos)
         self.assertEqual(sorted(r["kind"] for r in redrawn),
                          ["decision first", "smoke"])
+
+
+class CasesAgreeWithS1(unittest.TestCase):
+    """Every unit of task32_cases is something S1's snapshots require, so a
+    sequence or verify that stops short cannot leave a unit unbuilt."""
+
+    def test_every_unit_has_a_required_product(self):
+        required = set(snap.REQUIRED_PRODUCTS)
+        for unit in cases.UNITS:
+            if unit["kind"] == "theory":
+                entry = ("theory", unit["dir"], unit["theory"])
+            else:
+                # the build's own log of the selftest, as S1 names it
+                logs = [n for k, d, n in required
+                        if k == "log" and d == unit["dir"]]
+                self.assertEqual(len(logs), 1, unit["name"])
+                entry = ("log", unit["dir"], logs[0])
+                self.assertTrue(
+                    logs[0] == unit["name"] + ".log" or
+                    logs[0].endswith("selftest.log") or
+                    logs[0].endswith("selftest2.log"), unit["name"])
+            self.assertIn(entry, required, unit["name"])
+        heaps = {u["heap"] for u in cases.UNITS if u["heap"] not in (
+            "bin/hol.state0", "bin/hol.state", cases.NUMHEAP)}
+        self.assertEqual(heaps, {cases.REALHEAP})
+        self.assertIn(("file", *cases.REALHEAP.rsplit("/", 1)), required)
+        # no required unit directory is left out of the cases
+        dirs = {u["dir"] for u in cases.UNITS}
+        for kind, directory, name in required:
+            if kind != "file":
+                self.assertIn(directory, dirs, name)
+
+    def test_the_heap_parents_are_heaps_of_the_cases(self):
+        for heap, parent in cases.HEAP_PARENTS.items():
+            self.assertIn(heap, cases.HEAPS)
+            self.assertTrue(parent in cases.HEAPS or
+                            parent == "bin/hol.state0")
 
 
 class CandidateCheck(unittest.TestCase):

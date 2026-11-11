@@ -632,19 +632,6 @@ def group_members(pgid):
     return found
 
 
-@contextlib.contextmanager
-def shielded():
-    """SIGTERM and SIGHUP are blocked (they stay pending and are delivered,
-    so raise Terminated, only when the block ends): a second signal cannot
-    cut a group kill or a restore short."""
-    old = signal.pthread_sigmask(
-        signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGHUP})
-    try:
-        yield
-    finally:
-        signal.pthread_sigmask(signal.SIG_SETMASK, old)
-
-
 def kill_group(pid):
     """SIGKILL a process group, reap its leader if that is still to do and
     wait until no live process is left in the group, so that nothing still
@@ -669,53 +656,57 @@ def launch(argv, cwd, env, timeout, out_path, fds=()):
     Output goes to a file; stdin is /dev/null. The timer kills only a child
     that has not exited yet (`done` and `waitid` under a lock), so a child
     that ended just before the deadline is not reported as timed out. An
-    exception while waiting (a signal turned into Terminated) kills the
-    group and waits for it to be empty before it propagates. Whatever the
+    exception while waiting (a signal turned into Terminated, which only the
+    wait itself can raise) kills the group and waits for it to be empty
+    before it propagates. Whatever the
     leader's end, the group is killed afterwards, and any process that was
     still in it (`survivors`, by command name) makes the process refused."""
     with open(out_path, "wb") as out:
-        started = time.perf_counter()
-        proc = subprocess.Popen(
-            argv, cwd=str(cwd), env=env, stdin=subprocess.DEVNULL,
-            stdout=out, stderr=subprocess.STDOUT, start_new_session=True,
-            pass_fds=tuple(fds))
         lock = threading.Lock()
         state = dict(done=False, expired=False)
+        # no signal can lose the child or the timer between their starts:
+        # in DEFER mode one is only recorded
+        with snap.deferred(raise_pending=False):
+            started = time.perf_counter()
+            proc = subprocess.Popen(
+                argv, cwd=str(cwd), env=env, stdin=subprocess.DEVNULL,
+                stdout=out, stderr=subprocess.STDOUT,
+                start_new_session=True, pass_fds=tuple(fds))
 
-        def kill():
-            with lock:
-                if state["done"]:
-                    return
-                try:
-                    if os.waitid(os.P_PID, proc.pid, os.WEXITED |
-                                 os.WNOWAIT | os.WNOHANG) is not None:
-                        return  # already exited, only not reaped
-                except ChildProcessError:
-                    return
-                state["expired"] = True
-                with contextlib.suppress(ProcessLookupError):
-                    os.killpg(proc.pid, signal.SIGKILL)
+            def kill():
+                with lock:
+                    if state["done"]:
+                        return
+                    try:
+                        if os.waitid(os.P_PID, proc.pid, os.WEXITED |
+                                     os.WNOWAIT | os.WNOHANG) is not None:
+                            return  # already exited, only not reaped
+                    except ChildProcessError:
+                        return
+                    state["expired"] = True
+                    with contextlib.suppress(ProcessLookupError):
+                        os.killpg(proc.pid, signal.SIGKILL)
 
-        timer = threading.Timer(timeout, kill)
-        timer.start()
+            timer = threading.Timer(timeout, kill)
+            timer.start()
+        error = None
         try:
-            _, status, usage = os.wait4(proc.pid, 0)
-            wall = time.perf_counter() - started
+            with snap.raising():  # the only interruptible wait
+                _, status, usage = os.wait4(proc.pid, 0)
+                wall = time.perf_counter() - started
+        except BaseException as caught:
+            error = caught
+        with snap.deferred(raise_pending=False):
             with lock:
                 state["done"] = True
-            # always: a leader that is gone leaves its group behind
-            with shielded():
-                leftover = group_members(proc.pid)
-                unkilled = kill_group(proc.pid)
-        except BaseException:
-            with lock:
-                state["done"] = True
-            with shielded():
-                kill_group(proc.pid)
-            proc.returncode = -signal.SIGKILL  # reaped by kill_group
-            raise
-        finally:
             timer.cancel()
+            # always: a leader that is gone leaves its group behind, and
+            # an interrupted wait leaves the leader itself
+            leftover = [] if error else group_members(proc.pid)
+            unkilled = kill_group(proc.pid)
+        if error is not None:
+            proc.returncode = -signal.SIGKILL  # reaped by kill_group
+            raise error
     proc.returncode = os.waitstatus_to_exitcode(status)
     return dict(exit=proc.returncode, timed_out=state["expired"], wall=wall,
                 utime=usage.ru_utime, stime=usage.ru_stime,
@@ -951,23 +942,29 @@ def execute_unit(ctx, unit, side, label, layout, busy, expected):
     scans = time.perf_counter() - started
     rels = snap.theory_target_files(folder, name) if theory else []
     store = Path(ctx["journal"]) / "backup" / label
-    meta = back_up(folder, rels, store) if theory else {}
-    if theory:
-        journal_begin(ctx, dict(
-            label=label, folder=str(folder), store=str(store), name=name,
-            stops=list(stops), meta=meta, unit=unit["name"],
-            before=sorted(p for p, e in before.items() if e[0] != "d")))
     produced = {}
     settled = None
-    try:
-        for rel in rels:
-            (folder / rel).unlink()
-        receipt["usage"] = launch(argv, cwd, env, ctx["timeout"], out_path,
-                                  ctx["fds"])
+    # From the backup to the restore a signal is only recorded (DEFER);
+    # only the process wait in launch can raise it. So the restore always
+    # runs and completes, a Fatal stays the primary error (a recorded
+    # signal is noted on it), and otherwise the signal is raised at the end
+    # of the block.
+    with snap.deferred():
+        meta = back_up(folder, rels, store) if theory else {}
         if theory:
-            produced = read_products(folder, name)
-    finally:
-        with shielded():  # a signal waits for the restore and its check
+            journal_begin(ctx, dict(
+                label=label, folder=str(folder), store=str(store),
+                name=name, stops=list(stops), meta=meta,
+                unit=unit["name"], before=sorted(
+                    p for p, e in before.items() if e[0] != "d")))
+        try:
+            for rel in rels:
+                (folder / rel).unlink()
+            receipt["usage"] = launch(argv, cwd, env, ctx["timeout"],
+                                      out_path, ctx["fds"])
+            if theory:
+                produced = read_products(folder, name)
+        finally:
             started = time.perf_counter()
             settled = settle(folder, stops, before, meta, store, name,
                              Path(ctx["evidence"]) / "stray" / label)
@@ -1469,6 +1466,27 @@ def check_new_stems(receipts):
                                   r["workload"], ",".join(sorted(extra))))
 
 
+def heap_anchors(root, heap):
+    """The modules the heap `heap` (relative to `root`) preloads, from its
+    own build: the module names in the `*DEPS` variables of the Holmakefile
+    of its directory (the words `buildheap` is given). None for a heap with
+    no Holmakefile of its own (those in bin/); an empty set if the
+    Holmakefile names none."""
+    directory = Path(root) / Path(heap).parent
+    makefile = directory / "Holmakefile"
+    if not makefile.is_file() or Path(heap).parent == Path("bin"):
+        return None
+    text = makefile.read_text().replace("\\\n", " ")
+    names = set()
+    for line in text.splitlines():
+        found = re.match(r"\s*([A-Z_]*DEPS)\s*=(.*)", line)
+        if found and found.group(1) != "DEPS":
+            for word in found.group(2).split():
+                if "$" not in word:
+                    names.add(Path(word).name)
+    return names
+
+
 def probe_facts(report, receipts):
     """What a smoke run shows about the harness itself, per unit and side:
     one stats line, the heap fingerprint (the modules loaded before it
@@ -1490,25 +1508,36 @@ def probe_facts(report, receipts):
             rewritten=r["rewritten"])
     heaps = sorted({cases.BY_NAME[w]["heap"] for w in report["workloads"]})
     complete = list(report["workloads"]) == list(cases.NAMES)
-    # the heap is observed: what a process finds loaded before it starts
-    # identifies its heap, so units of one declared heap agree on it and
-    # those of different heaps differ (per side)
-    prints = {}
+    # the heap is observed, with a positive anchor each: the modules a
+    # process finds loaded before it starts are the same for the units of a
+    # declared heap; a heap built from a Holmakefile preloads the modules
+    # that file names (`heap_anchors`); a heap strictly contains the heap
+    # it was built on (cases.HEAP_PARENTS)
+    modules = {}
     for r in receipts:
         unit = cases.BY_NAME[r["workload"]]
-        fingerprint = sha("\n".join(sorted(
-            r["stats"]["loaded_before"])).encode())
-        facts[unit["name"]][r["side"]]["heap_fingerprint"] = fingerprint
-        prints.setdefault((r["side"], unit["heap"]), set()).add(fingerprint)
-    sides = {side for side, _ in prints}
-    heap_ok = all(len(v) == 1 for v in prints.values()) and all(
-        len({next(iter(v)) for (sd, _), v in prints.items() if sd == side})
-        == len([1 for (sd, _) in prints if sd == side]) for side in sides)
+        found = frozenset(r["stats"]["loaded_before"])
+        facts[unit["name"]][r["side"]]["heap_fingerprint"] = sha(
+            "\n".join(sorted(found)).encode())
+        modules.setdefault((r["side"], unit["heap"]), set()).add(found)
+    heap_ok = all(len(v) == 1 for v in modules.values())
+    anchors = {}
+    if heap_ok:
+        for (side, heap), found in sorted(modules.items()):
+            have = next(iter(found))
+            want = heap_anchors(report["roots"][side], heap)
+            parent = modules.get((side, cases.HEAP_PARENTS.get(heap)))
+            anchors[side + ":" + heap] = dict(
+                anchors=sorted(want or ()), contains_parent=None
+                if parent is None else have > next(iter(parent)))
+            heap_ok = heap_ok and (
+                want is None or (bool(want) and want <= have)) and (
+                parent is None or have > next(iter(parent)))
     ok = all(f["reporter_in_files"] for found in facts.values()
              for f in found.values()) and heap_ok and (
         not complete or heaps == list(cases.HEAPS))
     return dict(units=facts, heaps=heaps, complete=complete,
-                heaps_observed=heap_ok, ok=ok)
+                heaps_observed=heap_ok, heap_anchors=anchors, ok=ok)
 
 
 def overheads(report, receipts):
@@ -1687,6 +1716,8 @@ def run_stage(args, spec):
                     TypeError, subprocess.SubprocessError, Fatal,
                     snap.Terminated) as error:
                 report["failure"] = "%s: %s" % (type(error).__name__, error)
+                for note in getattr(error, "__notes__", ()):
+                    report["failure"] += " (%s)" % note
                 if isinstance(error, Blocked):
                     report["blocked"] = str(error)
             finally:
@@ -1995,12 +2026,15 @@ def pins_of(args):
     return sides, mseal
 
 
-def info_run(folder, key, mode, ledger, names=None):
+def info_run(folder, key, mode, ledger, names=None, *, mseal):
     """A replayed information run of this gate, verified before and after
     (a run without the audit cannot feed the counts)."""
     info, report = replay_one(folder, ledger=ledger)
     require(report["mode"] == mode and report["key"] == key,
             "--%s is not a %s run of this gate" % (mode, mode))
+    require(report["manifest"] == mseal, "the %s run was made on other "
+            "snapshots (the manifest seal differs): the snapshots were "
+            "rebuilt since" % mode)
     require(report["workloads"] == (names or list(cases.NAMES)),
             "the %s run is not of the workloads the counts need" % mode)
     require(all(k in (report.get("verify") or {})
@@ -2029,10 +2063,13 @@ def predeclare_first(args):
     negative control that all ran, verified, on this gate."""
     sides, mseal = pins_of(args)
     key = gate_key(sides)
-    pilot_info, pilot = info_run(args.pilot, key, "pilot", args.ledger)
-    smoke_info, smoke = info_run(args.smoke, key, "smoke", args.ledger)
+    pilot_info, pilot = info_run(args.pilot, key, "pilot", args.ledger,
+                                 mseal=mseal)
+    smoke_info, smoke = info_run(args.smoke, key, "smoke", args.ledger,
+                                 mseal=mseal)
     control_info, control = info_run(args.control, key, "control",
-                                     args.ledger, [cases.CONTROL_UNIT])
+                                     args.ledger, [cases.CONTROL_UNIT],
+                                     mseal=mseal)
     require(pilot["outcome"]["covered"], "the pilot is not usable: a unit "
             "is under %.0f s of CPU" % MIN_UNIT_CPU)
     over = sorted(w for w, p in pilot["outcome"]["pilot"].items()
@@ -2165,7 +2202,7 @@ def selected(args):
     return [w for w in cases.NAMES if w in only]
 
 
-def busy_spec(args, key):
+def busy_spec(args, key, mseal):
     """The negative control's busy time: BUSY of the median whole-tree CPU
     of the control unit's base processes in this gate's pilot, in absolute
     seconds, so that the tree-level slowdown is BUSY."""
@@ -2174,6 +2211,8 @@ def busy_spec(args, key):
             cases.CONTROL_UNIT in pilot["workloads"],
             "--pilot is not a pilot of this gate with %s" %
             cases.CONTROL_UNIT)
+    require(pilot["manifest"] == mseal, "--pilot was made on other "
+            "snapshots (the manifest seal differs)")
     cpu = pilot["outcome"]["pilot"][cases.CONTROL_UNIT]["median_cpu"]
     return dict(seconds=round(BUSY * cpu, 6), fraction=BUSY, median_cpu=cpu,
                 pilot=dict(attempt=pilot["attempt"], seal=info["seal"]))
@@ -2183,7 +2222,8 @@ def info_spec(args, mode):
     if mode == "control":
         names = [cases.CONTROL_UNIT]
         pairs, reps = CONTROL_PAIRS, args.reps
-        busy = busy_spec(args, gate_key(pins_of(args)[0]))
+        sides, mseal = pins_of(args)
+        busy = busy_spec(args, gate_key(sides), mseal)
     else:
         names = selected(args)
         pairs, reps = (1, 1) if mode == "smoke" else (PILOT_PAIRS, 1)

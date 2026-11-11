@@ -61,3 +61,9 @@ BY_NAME = {u["name"]: u for u in UNITS}
 # The unit of the live negative control (the cheapest one).
 CONTROL_UNIT = "logroot"
 HEAPS = tuple(sorted({u["heap"] for u in UNITS}))
+# The heap each heap is built on (hol.state0 is the bare one): numheap with
+# `buildheap -b hol.state0` (src/num/termination/Holmakefile), hol.state on
+# hol.state0, realheap by `hol buildheap` from hol.state
+# (src/real/analysis/Holmakefile).
+HEAP_PARENTS = {NUMHEAP: "bin/hol.state0", "bin/hol.state": "bin/hol.state0",
+                REALHEAP: "bin/hol.state"}

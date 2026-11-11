@@ -393,26 +393,112 @@ def execute(runner, name, argv, cwd, env, stdin, logs, side, attempt):
             "log": str(log), "log_hash": a.seal(log)}
 
 
+RAISE, DEFER, IGNORE = "raise", "defer", "ignore"
+
+
+class SignalState:
+    """The one signal discipline of the TASK32 tools (the same states as
+    S3's compatibility driver). RAISE: a SIGTERM/SIGHUP raises Terminated,
+    once (a burst of signals raises at most once). DEFER: it is only
+    recorded, to be raised at the next `check` or at the end of the
+    deferred block. IGNORE: it is dropped (the result is final).
+    CPython runs a handler in the main thread whatever thread was signalled
+    and at any bytecode boundary, so work that must complete (a restore, a
+    group kill) runs in DEFER mode, with no mask to set or unset."""
+
+    def __init__(self):
+        self.mode = RAISE
+        self.recorded = []
+        self.reported = False  # a recorded signal was raised or noted
+
+    def pending(self):
+        return bool(self.recorded) and not self.reported
+
+
+STATE = SignalState()
+
+
+def on_signal(number, frame):
+    name = signal.Signals(number).name
+    if STATE.mode == IGNORE:
+        return
+    STATE.recorded.append(name)
+    if STATE.mode == RAISE and not STATE.reported:
+        STATE.mode, STATE.reported = DEFER, True
+        raise Terminated(name)
+
+
+def check():
+    """Raise a signal that was only recorded (not yet raised or noted)."""
+    if STATE.pending():
+        STATE.mode, STATE.reported = DEFER, True
+        raise Terminated(STATE.recorded[0])
+
+
 @contextmanager
-def terminating():
-    """SIGTERM and SIGHUP raise Terminated (unless ignored), so that the
-    cleanup paths run and a running child's group is killed."""
-    saved = {}
+def deferred(raise_pending=True):
+    """Signals in this block are only recorded. At its end the mode is
+    what it was (DEFER if a signal was raised meanwhile) and a recorded
+    signal is raised, unless `raise_pending` is false (the caller `check`s
+    where raising is safe). A block that ends with an exception keeps it as
+    the primary error: a recorded signal is attached to it as a note."""
+    previous = STATE.mode
+    if previous == RAISE:
+        STATE.mode = DEFER
+    try:
+        yield
+    except BaseException as error:
+        STATE.mode = DEFER if STATE.reported else previous
+        if STATE.pending() and not isinstance(error, Terminated):
+            error.add_note("also received %s while finishing" %
+                           STATE.recorded[0])
+            STATE.reported = True
+        raise
+    STATE.mode = DEFER if STATE.reported else previous
+    if raise_pending:
+        check()
 
-    def handler(number, frame):
-        raise Terminated(signal.Signals(number).name)
 
+@contextmanager
+def raising():
+    """The one place a blocking wait may be interrupted: a signal recorded
+    so far is raised at entry, one that arrives inside raises. The mode
+    after is DEFER if a signal was raised, else what it was."""
+    previous = STATE.mode
+    check()
+    if previous == DEFER:
+        STATE.mode = RAISE
+    try:
+        yield
+    finally:
+        STATE.mode = DEFER if STATE.reported else previous
+
+
+@contextmanager
+def terminating(mode=RAISE):
+    """SIGTERM and SIGHUP are routed through STATE (unless ignored), so
+    that the cleanup paths run and a running child's group is killed. A
+    signal that was only recorded is raised when the block ends without an
+    exception."""
+    saved, outer = {}, (STATE.mode, STATE.recorded, STATE.reported)
+    STATE.mode, STATE.recorded, STATE.reported = mode, [], False
     if threading.current_thread() is threading.main_thread():
         for number in (signal.SIGTERM, signal.SIGHUP):
             old = signal.getsignal(number)
             if old != signal.SIG_IGN:
                 saved[number] = old
-                signal.signal(number, handler)
+                signal.signal(number, on_signal)
+    late = None
     try:
         yield
+        if STATE.pending():
+            late = STATE.recorded[0]
     finally:
         for number, old in saved.items():
             signal.signal(number, old)
+        STATE.mode, STATE.recorded, STATE.reported = outer
+    if late:
+        raise Terminated(late)
 
 
 # -- products ----------------------------------------------------------
