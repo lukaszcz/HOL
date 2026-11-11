@@ -503,11 +503,29 @@ def restore(folder, meta, store, now):
         os.utime(dst, ns=(m["mtime_ns"], m["mtime_ns"]))
 
 
+def is_holmake_cache(rel):
+    """True for a rel path that is Holmake's dependency cache: a file named
+    `*.d` under a `.hol/make-deps` directory, at any depth. On a second
+    Holmake run in an already built directory Holmake writes such a file
+    for the generated files of every theory there (`<X>Theory.sig.d`,
+    `<X>Theory.sml.d`), which `bin/build` never wrote, so the snapshot
+    lacks them. They are derived from the sources and the sigobj and equal
+    on both arms, and `settle` removes them after each process so every
+    process starts from, and rewrites, the same state: churn, not output.
+    Only the path is judged here; `settle` applies it to new regular files
+    only, so a changed or vanished existing file stays `modified`."""
+    parts = rel.split("/")
+    return parts[-1].endswith(".d") and any(
+        a == ".hol" and b == "make-deps" for a, b in zip(parts, parts[1:-1]))
+
+
 def settle(folder, stops, before, meta, store, name, stray_dir):
     """After a process, whatever its end: put the unit's products back,
-    move every other new file (Holmake intermediates a failed process
-    leaves, anything a selftest writes) into `stray_dir`, and remove the
-    directories the process made. Returns the moved rel paths, the existing
+    remove the new Holmake dependency-cache files (`is_holmake_cache`,
+    returned as `churn`), move every other new file (Holmake intermediates
+    a failed process leaves, anything a selftest writes) into `stray_dir`,
+    and remove the directories the process made. Returns the moved rel
+    paths, the churn rel paths, the existing
     files outside the products that changed or vanished (`modified`), the
     products the process rewrote (`rewritten`: the Holmake churn of the
     target, e.g. its make-deps files) and whether the products are back as
@@ -515,10 +533,14 @@ def settle(folder, stops, before, meta, store, name, stray_dir):
     targets = set(target_rels(name)) if name else set()
     now = scan(folder, stops)
     restore(folder, meta, store, [p for p in now if p in targets])
-    moved = []
+    moved, churn = [], []
     for rel in sorted(p for p, e in now.items()
                       if p not in before and p not in targets and
                       e[0] != "d"):
+        if now[rel][0] == "f" and is_holmake_cache(rel):
+            (Path(folder) / rel).unlink()
+            churn.append(rel)
+            continue
         src, dst = Path(folder) / rel, Path(stray_dir) / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(src), str(dst))
@@ -535,7 +557,8 @@ def settle(folder, stops, before, meta, store, name, stray_dir):
                       before[p][0] != "d")
     rewritten = sorted(r for r in targets if r in now and
                        before.get(r) != now.get(r))
-    return dict(moved=moved, modified=modified, ok=ok, rewritten=rewritten)
+    return dict(moved=moved, churn=churn, modified=modified, ok=ok,
+                rewritten=rewritten)
 
 
 def normalize_text(data, root):
@@ -863,6 +886,10 @@ def validate(receipt, unit, root, reporter_dir, expected, candidate):
     require(not receipt["modified"], "modified existing file(s) outside "
             "the products: %s; the snapshot must be rebuilt" %
             ", ".join(receipt["modified"][:5]))
+    churn = receipt.get("churn", [])  # absent from older receipts
+    require(all(is_holmake_cache(p) for p in churn),
+            "churn that is not Holmake's dependency cache: " +
+            ", ".join(churn[:5]))
     require(not receipt["stray"], "stray write: " + ", ".join(
         receipt["stray"][:5]))
     check_digest(receipt["digest"], expected, candidate)
@@ -934,7 +961,7 @@ def execute_unit(ctx, unit, side, label, layout, busy, expected):
     receipt = dict(argv=argv, cwd=str(cwd), layout=layout, busy=busy or None,
                    env={k: v for k, v in env.items() if k.startswith(
                        ("T32_", "POLY_"))},
-                   stats=None, stray=[], moved=[], modified=[],
+                   stats=None, stray=[], moved=[], churn=[], modified=[],
                    rewritten=[], digest=None, accepted=False)
     theory = unit["kind"] == "theory"
     name = unit["theory"] if theory else None
@@ -984,7 +1011,8 @@ def execute_unit(ctx, unit, side, label, layout, busy, expected):
     sigobj = ["sigobj/" + p for p in changed(sigobj_before,
                                              scan(root / "sigobj"))]
     receipt["scan_seconds"] = scans + time.perf_counter() - started
-    receipt.update(moved=settled["moved"], modified=settled["modified"],
+    receipt.update(moved=settled["moved"], churn=settled["churn"],
+                   modified=settled["modified"],
                    rewritten=settled["rewritten"])
     receipt["stray"] = settled["modified"] + settled["moved"] + sigobj
     data = b""

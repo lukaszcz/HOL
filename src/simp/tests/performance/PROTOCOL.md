@@ -3190,6 +3190,13 @@ fails (`Fatal`) the backups and journal are kept; `recover --repo REPO`
 puts the products back, moves files the process left into the journal's
 `strays`, verifies sha256 and mtime and clears the journal.
 
+Holmake cache churn. A second Holmake run in a built directory writes
+`.hol/make-deps/<X>Theory.{sig,sml}.d` for the theories there, which
+`bin/build` never wrote. A new `*.d` file under a `.hol/make-deps`
+directory (`is_holmake_cache`) is removed by `settle`, recorded in the
+receipt as `churn` and is not a stray write; every other new file is
+stray, and a changed or vanished existing one is `modified`.
+
 Margin and validity. `POLICY` is `acceptance.EQUIVALENCE_POLICY`: a 3%
 margin on inclusive CPU and wall. For a unit and metric, `low > 1.03` is
 `fail`; `high <= 1.03` with a valid B/B control (`apply_control`: the

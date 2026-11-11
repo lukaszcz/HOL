@@ -221,6 +221,16 @@ class World:
                 (cwd / ".hol/objs/part.dumpedheap").write_text("junk")
             if fault == "churn":
                 (cwd / ".hol/make-deps/other.d").write_text("changed\n")
+            if fault == "cache":
+                (cwd / ".hol/make-deps/FooTheory.sig.d").write_text("d\n")
+                (cwd / ".hol/make-deps/sub/.hol/make-deps").mkdir(
+                    parents=True)
+                (cwd / ".hol/make-deps/sub/.hol/make-deps/B.sml.d"
+                 ).write_text("d\n")
+            if fault == "other":
+                (cwd / ".hol/other.txt").write_text("x")
+            if fault == "outsided":
+                (cwd / "foo.d").write_text("x")
             if fault == "modify":
                 (cwd / "other.sml").write_text("val x = 2\n")
             out = "Holmake: built %s in %.2fs\n" % (unit["name"],
@@ -810,6 +820,34 @@ class Refusals(Base):
         self.assertIn("other.d", report["failure"])
         self.assertIn("must be rebuilt", report["failure"])
 
+    def test_new_make_deps_files_are_churn_and_removed(self):
+        before = self.world.snapshot()
+        self.world.fault = lambda u, s, n: "cache"
+        report = self.world.run("k", self.world.spec(["logroot"]))
+        self.assertTrue(report["success"], report.get("failure"))
+        self.assertEqual(self.world.snapshot(), before)
+        receipt = a.load(Path(report["output"]) / report["runs"][0][
+            "receipt"])
+        self.assertEqual(receipt["churn"], [
+            ".hol/make-deps/FooTheory.sig.d",
+            ".hol/make-deps/sub/.hol/make-deps/B.sml.d"])
+        self.assertEqual(receipt["stray"], [])
+
+    def test_new_files_outside_make_deps_are_still_stray(self):
+        self.assertIn("stray write: .hol/other.txt",
+                      self.attempt("other")["failure"])
+        self.assertIn("stray write: foo.d",
+                      self.attempt("outsided")["failure"])
+
+    def test_the_cache_predicate(self):
+        yes = dw.is_holmake_cache
+        self.assertTrue(yes(".hol/make-deps/XTheory.sig.d"))
+        self.assertTrue(yes("a/.hol/make-deps/x/Y.d"))
+        self.assertFalse(yes("foo.d"))
+        self.assertFalse(yes(".hol/make-deps/x.txt"))
+        self.assertFalse(yes(".hol/other/x.d"))
+        self.assertFalse(yes(".hol/make-deps"))
+
     def attempt_nowrite(self, kind):
         self.world.fault = lambda u, s, n: kind
         report = self.world.run("c", self.world.spec(["logroot"]))
@@ -1398,7 +1436,8 @@ class Launch(unittest.TestCase):
         def settle(*args, **kw):
             os.kill(os.getpid(), signal.SIGTERM)
             time.sleep(0.05)
-            return dict(ok=False, moved=[], modified=[], rewritten=[])
+            return dict(ok=False, moved=[], churn=[], modified=[],
+                        rewritten=[])
         with mock.patch.object(dw, "settle", settle):
             report = world.run("x", world.spec(["logroot"]))
         self.assertFalse(report["success"])
