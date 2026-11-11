@@ -3292,11 +3292,19 @@ counts needs the audit. Run them in this order:
 2. `pilot`: base against base only, 10 pairs per unit (`PILOT_PAIRS`, the
    least `paired_statistics` accepts). It checks the outputs and that each
    unit costs at least 1 s of CPU (`MIN_UNIT_CPU`), and sizes R,
-   `max(1, ceil(required_units(sd) / 20))`. The pilot itself exits 0 even
-   when R is above `R_CAP` (4), because `covered` ignores `within_cap`;
-   it is `predeclare` that refuses such a pilot.
-3. `control --pilot PILOT [--reps N]`: the live negative control, 10 pairs
-   of `CONTROL_UNIT` (`logroot`). Its busy time is `BUSY` (6%) of that
+   `max(1, ceil(required_units(sd) / 20))`, and reports it unclamped. The
+   R a unit is declared at is `declared_reps`: `min(R_CAP, R)` with
+   `R_CAP` = 4. A unit above the cap is clamped, not refused: the counts
+   record `required_reps` and the sorted `capped` units, and an
+   underpowered first stage goes through the routing below
+   (control-limited, then a second stage sized from its own B/B control;
+   inconclusive, then a follow-up).
+3. `control --pilot PILOT`: the live negative control, at the decision
+   configuration of its unit: `PAIRS` (20) pairs of `CONTROL_UNIT`
+   (`logroot`) at that unit's declared R (there is no `--reps`; replay
+   refuses a control that has not exactly `PAIRS` pairs, and `predeclare`
+   one whose pairs and R are not the unit's). Its busy time is `BUSY` (6%)
+   of that
    unit's median CPU in the pilot, spun at exit in absolute seconds
    (`T32_BUSY`); the whole run uses the base snapshot. It must be
    judged `fail`; it is ledgered as a control, never as a decision, and
@@ -3305,7 +3313,8 @@ counts needs the audit. Run them in this order:
 4. `predeclare --pilot P --smoke S --control C --out
    src/simp/tests/performance/task32_counts.json` (add `--ledger` only to
    point at a copy): replays the three runs and
-   writes the counts (R per unit, the reference digests, seals of the three
+   writes the counts (declared R per unit, `required_reps`, `capped`, the
+   reference digests, seals of the three
    runs, overheads, the time estimate, the seals of the code, `CODE`).
    The counts files belong in `src/simp/tests/performance`: the defaults
    of `run` and `followup` are there, and `check_counts_commit` refuses a
@@ -3367,8 +3376,10 @@ that attempt with `success` false and no blocked finding, and every
 archived measuring process rejected. Everything else is judged: no close, a
 close of any other status, a missing or changed output, and a close with no
 seal (the report could not be saved, so nothing shows that no measurement
-was admitted). A redraw of a void attempt and every unsuccessful
-information run are listed in the disposition and are reported to the owner.
+was admitted). A redraw of a void attempt, every unsuccessful
+information run and every successful one that the first-stage counts do not
+cite (superseded by a later run of its mode) are listed in the disposition
+and are reported to the owner.
 A stage whose close line could not be written stays open and counts as
 judged.
 

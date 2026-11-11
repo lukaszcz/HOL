@@ -15,8 +15,10 @@ argument (selftests) and writes one JSON line to $T32_STATS at exit.
              scans and the snapshot audits;
   pilot      develop-only: 10 B/B pairs per unit (loading.jitter); checks
              the outputs and the 1 s unit floor and sizes R, the fresh
-             processes per sample, under the cap R_CAP;
-  control    the live negative control: 10 pairs of one unit, the candidate
+             processes per sample (a unit above the cap R_CAP is declared
+             at R_CAP, not refused);
+  control    the live negative control: PAIRS pairs of one unit at its
+             declared R, the candidate
              reporter busy-loops BUSY (6%) of the unit's median whole-tree
              CPU from the pilot, in absolute seconds, on the base snapshot;
              must be judged a fail;
@@ -85,14 +87,13 @@ import task32_snapshots as snap
 import timing_grid as tg
 
 SCHEMA = "task32-downstream-v1"
-COUNTS_SCHEMA = "task32-counts-v1"
+COUNTS_SCHEMA = "task32-counts-v2"
 STATS_SCHEMA = "task32-stats-v1"
 TABLE = "task32-downstream"
 POLICY = a.EQUIVALENCE_POLICY
 PAIRS = 20
 PILOT_PAIRS = 10  # the least that paired_statistics accepts
-R_CAP = 4  # fresh processes per sample: a pilot asking for more refuses
-CONTROL_PAIRS = 10
+R_CAP = 4  # fresh processes per sample: a pilot asking for more is clamped
 BUSY = 0.06
 MIN_UNIT_CPU = 1.0
 LAYOUT_SEED = "task32-1"
@@ -121,7 +122,11 @@ CODE = ("task32_cases.py", "task32_downstream.py", "task32_snapshots.py",
 # Per file of CODE, the seals it had when a record was made, once it has
 # changed since (PROTOCOL "Seals and seal histories"): replay accepts the
 # current seal or one listed here; a run needs the current one.
-HISTORY = {}
+HISTORY = {
+    "task32_downstream.py": [
+        {"sha256": "a5cc94d14ff37fa0586803153ab155dfa4c1564e6dc3bd2aef93c2"
+                   "10663eb5a7", "bytes": 133766}],
+}
 
 
 def require(ok, message):
@@ -1365,6 +1370,15 @@ def pilot_summary(rows_by_unit, reps_floor=1):
     return out
 
 
+def declared_reps(pilot_outcome):
+    """unit -> the R a decision stage (and the negative control) runs at:
+    the pilot's R, clamped to R_CAP. The pilot reports what its data asks
+    for; a unit above the cap is underpowered at the cap, which the
+    routing of the stages (control-limited, inconclusive) handles."""
+    return {w: min(R_CAP, p["reps"])
+            for w, p in pilot_outcome["pilot"].items()}
+
+
 def second_stage_plan(first_results):
     """workload -> pairs of the second stage: the workloads that did not
     fail and whose control missed the equivalence window (TASK30/31)."""
@@ -1569,15 +1583,22 @@ def attempts_table(found, why):
             for (i, st), r in found.items()]
 
 
-def redraws(attempts, infos):
+def redraws(attempts, infos, counts):
     """R-1: what was drawn again - the void decision attempts and the
-    information runs that did not succeed - for the report to the owner."""
+    information runs that did not succeed or that the first-stage counts
+    do not cite (superseded by a later run of the mode) - for the report
+    to the owner."""
+    def why(r):
+        if r["status"] != "success":
+            return "information run " + r["status"]
+        return "information run success, not the one the counts use"
+
     return ([dict(attempt=r["attempt"], kind="decision " + r["stage"],
                   why="void: admitted no measurement")
              for r in attempts if r["void"]] +
-            [dict(attempt=r["attempt"], kind=r["mode"],
-                  why="information run " + r["status"])
-             for r in infos if r["status"] != "success"])
+            [dict(attempt=r["attempt"], kind=r["mode"], why=why(r))
+             for r in infos if r["status"] != "success" or
+             r["attempt"] != (counts.get(r["mode"]) or {}).get("attempt")])
 
 
 def refuse_second_draw(path, key, stage):
@@ -2192,12 +2213,15 @@ def replay_one(folder, ledger=None, counts=None, followup_counts=None,
     require([(r["workload"], r["phase"], r["pair"], r["selection"],
               r["rep"]) for r in report["runs"]] == order,
             "missing, extra or reordered processes")
-    least = dict(smoke=1, pilot=PILOT_PAIRS, control=CONTROL_PAIRS)
+    least = dict(smoke=1, pilot=PILOT_PAIRS, control=PAIRS)
     require(mode not in DECISIVE or all(
         report["verify"][k]["exit"] == 0 for k in ("before", "after")),
         "a decision stage ran without the snapshot verification")
     require(all(report["pairs"][w] >= least.get(mode, 10)
                 for w in report["workloads"]), "too few pairs")
+    require(mode != "control" or all(
+        report["pairs"][w] == PAIRS for w in report["workloads"]),
+        "the negative control has %d pairs" % PAIRS)
     refs = report["references"]
     receipts = [check_receipt(folder, report, e, refs)
                 for e in report["runs"]]
@@ -2354,11 +2378,6 @@ def predeclare_first(args):
                                      mseal=mseal)
     require(pilot["outcome"]["covered"], "the pilot is not usable: a unit "
             "is under %.0f s of CPU" % MIN_UNIT_CPU)
-    over = sorted(w for w, p in pilot["outcome"]["pilot"].items()
-                  if not p["within_cap"])
-    require(not over, "R above the cap of %d for: %s (the first stage would "
-            "take %d times longer than planned)" % (R_CAP, ", ".join(over),
-                                                    R_CAP))
     require(smoke["outcome"]["probe"]["ok"] and
             smoke["outcome"]["probe"]["complete"],
             "the smoke run did not pass the probe facts (reporter in "
@@ -2371,7 +2390,15 @@ def predeclare_first(args):
     require(control["busy"]["pilot"] == dict(
         attempt=pilot["attempt"], seal=pilot_info["seal"]),
         "the negative control was sized from another pilot")
-    reps = {w: pilot["outcome"]["pilot"][w]["reps"] for w in cases.NAMES}
+    required = {w: pilot["outcome"]["pilot"][w]["reps"]
+                for w in cases.NAMES}
+    reps = declared_reps(pilot["outcome"])
+    require(set(reps) == set(cases.NAMES), "the pilot lacks a workload")
+    require(control["pairs"][cases.CONTROL_UNIT] == PAIRS and
+            control["reps"][cases.CONTROL_UNIT] ==
+            reps[cases.CONTROL_UNIT], "the negative control did not run at "
+            "its unit's decision configuration (%d pairs, R %d)" % (
+                PAIRS, reps[cases.CONTROL_UNIT]))
     over = smoke["outcome"]["overheads"]
     estimate = {w: 4 * PAIRS * reps[w] *
                 pilot["outcome"]["pilot"][w]["median_wall"]
@@ -2387,7 +2414,8 @@ def predeclare_first(args):
         "schema": COUNTS_SCHEMA, "kind": "first", "base": pilot["base"],
         "cand": pilot["cand"], "manifest": mseal, "pairs": PAIRS,
         "seed": LAYOUT_SEED, "extension_seed": EXTENSION_SEED,
-        "reps": reps, "r_cap": R_CAP,
+        "reps": reps, "r_cap": R_CAP, "required_reps": required,
+        "capped": sorted(w for w in cases.NAMES if required[w] > R_CAP),
         "time_estimate_seconds": dict(
             total=sum(estimate.values()) + verifying, per_unit=estimate,
             scan_seconds=sum(scanning.values()),
@@ -2439,7 +2467,7 @@ def predeclare_followup(args):
             "code": code_seals()}
 
 
-def disposition(chain, ledger):
+def disposition(chain, ledger, counts_path=None):
     """Per workload and overall: pass, fail or blocked (the R-1 table of
     every attempt of the gate, the information runs and the redraws
     included)."""
@@ -2463,8 +2491,13 @@ def disposition(chain, ledger):
     state, found = read_ledger(ledger)
     attempts = attempts_table(found, reasons(found))
     infos = info_runs(state)
+    use = chain[0]["report"]["counts"]
+    path = Path(counts_path or use["path"])
+    require(a.seal(path) == use["seal"], "%s is not the counts file the "
+            "first stage used" % path)
     return dict(status=overall, workloads=rows, attempts=attempts,
-                info_runs=infos, redraws=redraws(attempts, infos),
+                info_runs=infos,
+                redraws=redraws(attempts, infos, a.load(path)),
                 chain=[dict(stage=e["stage"], run=str(e["folder"]),
                             seal=e["info"]["seal"],
                             attempt=e["report"]["attempt"])
@@ -2497,15 +2530,17 @@ def busy_spec(args, key, mseal):
             "snapshots (the manifest seal differs)")
     cpu = pilot["outcome"]["pilot"][cases.CONTROL_UNIT]["median_cpu"]
     return dict(seconds=round(BUSY * cpu, 6), fraction=BUSY, median_cpu=cpu,
-                pilot=dict(attempt=pilot["attempt"], seal=info["seal"]))
+                pilot=dict(attempt=pilot["attempt"], seal=info["seal"])), \
+        pilot
 
 
 def info_spec(args, mode):
     if mode == "control":
         names = [cases.CONTROL_UNIT]
-        pairs, reps = CONTROL_PAIRS, args.reps
         sides, mseal = pins_of(args)
-        busy = busy_spec(args, gate_key(sides), mseal)
+        busy, pilot = busy_spec(args, gate_key(sides), mseal)
+        pairs, reps = PAIRS, declared_reps(pilot["outcome"])[
+            cases.CONTROL_UNIT]
     else:
         names = selected(args)
         pairs, reps = (1, 1) if mode == "smoke" else (PILOT_PAIRS, 1)
@@ -2673,7 +2708,6 @@ def build_parser():
            for name in COMMANDS}
     for name in RUN_COMMANDS:
         add_run(cmd[name])
-    cmd["control"].add_argument("--reps", type=int, default=1)
     cmd["control"].add_argument(
         "--pilot", type=Path, required=True,
         help=f"this gate's pilot: the busy time is {100 * BUSY:.0f}%% "
@@ -2788,7 +2822,7 @@ def dispatch(args):
         chain = replay_chain(args.stage, args.ledger, args.counts,
                              args.followup_counts, args.repo)
         data = disposition(chain, args.ledger or ledger_path(
-            chain[0]["report"]["repo"]))
+            chain[0]["report"]["repo"]), args.counts)
         with args.out.open("x") as stream:
             stream.write(dumps(data))
         print("TASK32 disposition: %s %s" % (data["status"],

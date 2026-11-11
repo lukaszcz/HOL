@@ -1378,9 +1378,12 @@ class NegativeControl(Base):
         self.assertTrue(control["detected"], control)
         self.assertEqual(control["unit"], "logroot")
         busy = [c for c in self.world.calls if "T32_BUSY" in c[2]]
-        self.assertEqual(len(busy), 10)
+        self.assertEqual(len(busy), dw.PAIRS)  # R = 1
         self.assertEqual({float(c[2]["T32_BUSY"]) for c in busy},
                          {spec["busy"]["seconds"]})
+        self.assertEqual(spec["pairs"], {"logroot": dw.PAIRS})
+        self.assertEqual(spec["reps"], {"logroot": 1})
+        self.assertFalse(hasattr(dw, "CONTROL_PAIRS"))
         control_calls = self.world.calls[40:]  # after the pilot
         self.assertEqual({c[1] for c in control_calls}, {"base"})
         infos = dw.tg.Ledger(self.world.ledger()).records
@@ -1410,6 +1413,30 @@ class NegativeControl(Base):
         path.write_text(json.dumps(forged))
         with self.assertRaises(dw.Refusal):
             dw.replay_one(self.world.tmp / "ctl")
+
+    def test_the_control_runs_at_the_declared_reps_of_its_unit(self):
+        pilot(self.world)
+        path = self.world.tmp / "pilot/downstream.json"
+        outcome = a.load(path)["outcome"]
+        outcome["pilot"]["logroot"]["reps"] = 9
+        with mock.patch.object(dw, "replay_one", lambda p: (
+                dict(seal={}), dict(mode="pilot", outcome=outcome,
+                                    key=dw.gate_key(dw.pins_of(
+                                        self.world.args("z"))[0]),
+                                    workloads=["logroot"],
+                                    manifest=dw.pins_of(
+                                        self.world.args("z"))[1],
+                                    attempt="x"))):
+            spec = dw.info_spec(self.world.args("c", pilot=path), "control")
+        self.assertEqual(spec["reps"], {"logroot": dw.R_CAP})
+        self.assertEqual(spec["pairs"], {"logroot": dw.PAIRS})
+
+    def test_declared_reps_clamp_the_pilots_r_at_the_cap(self):
+        outcome = dict(pilot={
+            "a": dict(reps=1), "b": dict(reps=dw.R_CAP),
+            "c": dict(reps=dw.R_CAP + 1), "d": dict(reps=1998)})
+        self.assertEqual(dw.declared_reps(outcome), dict(
+            a=1, b=dw.R_CAP, c=dw.R_CAP, d=dw.R_CAP))
 
     def test_a_control_needs_a_pilot_of_this_gate(self):
         args = self.world.args("c", pilot=self.world.tmp / "missing")
@@ -2295,8 +2322,11 @@ class Sealed(unittest.TestCase):
             self.assertIn(name, dw.CODE)
         self.assertEqual(sorted(dw.code_seals()), sorted(dw.CODE))
 
-    def test_the_history_is_empty_until_a_record_exists(self):
-        self.assertEqual(dw.HISTORY, {})
+    def test_the_history_lists_the_seal_of_the_code_the_runs_were_made_by(
+            self):
+        self.assertEqual(dw.HISTORY, {"task32_downstream.py": [dict(
+            sha256="a5cc94d14ff37fa0586803153ab155dfa4c1564e6dc3bd2aef93c210"
+                   "663eb5a7", bytes=133766)]})
 
     def test_a_record_carries_the_current_seal_or_one_the_history_lists(self):
         now = dw.code_seals()
@@ -2580,6 +2610,56 @@ class Chain(Base):
         with self.assertRaisesRegex(dw.Refusal, "workloads the counts"):
             dw.predeclare_first(pargs)
 
+    def test_a_pilot_above_the_cap_is_clamped_not_refused(self):
+        w = self.world
+        original = dw.pilot_summary
+
+        def demanding(rows, reps_floor=1):
+            out = original(rows, reps_floor)
+            for p in out.values():
+                p.update(reps=dw.R_CAP + 2, within_cap=False)
+            return out
+
+        with mock.patch.object(dw, "pilot_summary", demanding):
+            for mode in ("smoke", "pilot"):
+                args, spec = w.info(mode, mode)
+                self.assertTrue(dw.run_stage(args, spec)["success"])
+            args, spec = w.info("control", "control", pilot=w.tmp / "pilot")
+            self.assertEqual(spec["pairs"], {"logroot": dw.PAIRS})
+            self.assertEqual(spec["reps"], {"logroot": dw.R_CAP})
+            self.assertTrue(dw.run_stage(args, spec)["success"])
+            # a control that did not run at the decision configuration
+            args, short = w.info("weak", "control", pilot=w.tmp / "pilot")
+            short["reps"] = {"logroot": 1}
+            self.assertTrue(dw.run_stage(args, short)["success"])
+            with self.assertRaisesRegex(dw.Refusal, "decision "
+                                        "configuration"):
+                dw.predeclare_first(w.args(
+                    "x", pilot=w.tmp / "pilot", smoke=w.tmp / "smoke",
+                    control=w.tmp / "weak"))
+            counts = dw.predeclare_first(w.args(
+                "x", pilot=w.tmp / "pilot", smoke=w.tmp / "smoke",
+                control=w.tmp / "control"))
+        self.assertEqual(set(counts["reps"].values()), {dw.R_CAP})
+        self.assertEqual(set(counts["required_reps"].values()),
+                         {dw.R_CAP + 2})
+        self.assertEqual(counts["capped"], sorted(cases.NAMES))
+        self.assertEqual(counts["r_cap"], dw.R_CAP)
+
+    def test_redraws_list_a_superseded_successful_information_run(self):
+        w = self.world
+        for name in ("old", "new"):
+            args, spec = w.info(name, "smoke", names=["logroot"])
+            self.assertTrue(dw.run_stage(args, spec)["success"])
+        state, found = dw.read_ledger(w.ledger())
+        infos = dw.info_runs(state)
+        self.assertEqual([r["status"] for r in infos], ["success"] * 2)
+        counts = dict(smoke=dict(attempt=infos[1]["attempt"]))
+        redrawn = dw.redraws([], infos, counts)
+        self.assertEqual([r["attempt"] for r in redrawn],
+                         [infos[0]["attempt"]])
+        self.assertIn("not the one the counts use", redrawn[0]["why"])
+
     def test_redraws_list_void_attempts_and_failed_information_runs(self):
         w = self.world
         w.fault = lambda u, s, n: "exit"
@@ -2591,7 +2671,7 @@ class Chain(Base):
         infos = dw.info_runs(state)
         self.assertEqual([r["status"] for r in infos], ["failed"])
         self.assertTrue(attempts[0]["void"])
-        redrawn = dw.redraws(attempts, infos)
+        redrawn = dw.redraws(attempts, infos, {})
         self.assertEqual(sorted(r["kind"] for r in redrawn),
                          ["decision first", "smoke"])
 
