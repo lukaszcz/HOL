@@ -67,7 +67,7 @@ import time
 MAIN = "4a0ad8e9160dd911393385d748b3535fc5ce65ba"
 CONSUMER = "442009a1f7f04366573dc2b649d31650ea7b113b"
 PATCH_SHA256 = (
-    "6a0a8f54dcb1af06a1b824f56453619195a11d321f97851bcc7b61149166ad1a")
+    "dbb8da2b73100b9e484c2737f08d9599b83393e2677f98def5029035a43757cc")
 BANNED_SCRATCH = (Path("/tmp"), Path("/var/tmp"))
 LIST = "src/list/src/listScript.sml"
 PARSER = "tools/parsing/HOLSourceParser.sml"

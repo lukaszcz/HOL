@@ -4629,7 +4629,7 @@ index 02b9f55..5c65bfc 100644
    (* Driver stages retain one bound invocation across direct and nested
       simplification. View selection remains explicit for table placement. *)
 diff --git a/src/auto/clasimp/clasimpLib.sml b/src/auto/clasimp/clasimpLib.sml
-index 1109390..f5aa311 100644
+index 1109390..540d2a5 100644
 --- a/src/auto/clasimp/clasimpLib.sml
 +++ b/src/auto/clasimp/clasimpLib.sml
 @@ -3,6 +3,14 @@ struct
@@ -4768,6 +4768,15 @@ index 1109390..f5aa311 100644
        else with_order
    in
      if linarith then
+@@ -2048,7 +2057,7 @@ local
+       val (left, right) = boolSyntax.dest_eq equation
+       val (head, _) = boolSyntax.strip_comb left
+     in
+-      if Cond_rewr.is_var_perm (left, right) then SOME (specialised, head)
++      if Cond_rewrExt.is_var_perm (left, right) then SOME (specialised, head)
+       else NONE
+     end
+     handle HOL_ERR _ => NONE
 @@ -2385,6 +2394,8 @@ fun retract_persistent_iffs [] = ()
              cs knames
        in
