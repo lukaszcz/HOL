@@ -37,11 +37,17 @@ patch sha256 must equal the pin (--patch-sha256 overrides it for a reviewed
 refresh). --jobs N passes -jN to bin/build; --skip-routine omits the routine
 `bin/build -t` pass after the bootstrap.
 
-With --scratch the run holds TASK32's advisory serial performance/build lock
-(acceptance.serial_lock on the caller checkout) from before the scratch is
-created until it is removed, so the bootstrap build never overlaps a timing
-measurement; a busy lock refuses the run with a nonzero exit. The exact
-TASK25 reproduction (no --scratch) does not take it.
+Every run that builds (all but --prepare-only, including the exact TASK25
+reproduction) holds TASK32's advisory serial performance/build lock
+(acceptance.serial_lock on the caller checkout) from before anything is
+created until the scratch is removed, so builds never overlap a timing
+measurement; if the lock cannot be taken the run is refused with a nonzero
+exit. --prepare-only builds nothing and does not take it.
+
+Replaying the earlier TASK25 evidence byte-exactly needs the original patch,
+`git show 2d32112dc5:src/simp/tests/compatibility/consumer/consumer.patch`,
+run with --patch-sha256
+6a0a8f54dcb1af06a1b824f56453619195a11d321f97851bcc7b61149166ad1a.
 
 --prepare-only checks archives/patch and emits source inventories, without
 configuring or building. Task-owned staging is removed even on failure.
@@ -1006,27 +1012,30 @@ def finish(args, planned, m, created):
 def serial_lock(repo):
     """TASK32's advisory performance/build lock for the caller checkout.
 
-    The sibling performance directory is put at the END of sys.path so
-    that it cannot shadow anything; `acceptance` is imported only when a
-    --scratch run needs the lock."""
-    sys.path.append(str(PERFORMANCE))
+    The sibling performance directory goes first on sys.path, as in
+    run_paired.py; acceptance does the same for itself, and compatibility/
+    and performance/ share no module names. `acceptance` is imported only
+    when a run that builds needs the lock."""
+    sys.path.insert(0, str(PERFORMANCE))
     import acceptance
     return acceptance.serial_lock(repo)
 
 
 @contextlib.contextmanager
 def run_lock(args, repo):
-    """Hold the serial lock for a whole --scratch (TASK32-style) run: it is
-    taken before anything is created and released after the scratch is
-    removed. A busy lock refuses the run (nonzero exit, nothing created).
-    The exact TASK25 reproduction (no --scratch) does not take it."""
-    if args.scratch is None:
+    """Hold the serial lock for a whole run that builds, i.e. every run but
+    --prepare-only: it is taken before anything is created and released
+    after the scratch is removed. Any failure to take it refuses the run
+    (nonzero exit, nothing created)."""
+    if args.prepare_only:
         yield
         return
     with contextlib.ExitStack() as stack:
         try:
             stack.enter_context(serial_lock(repo))
-        except ValueError as exc:  # acceptance.Blocked
+        except (ValueError, OSError, subprocess.SubprocessError) as exc:
+            # acceptance.Blocked is a ValueError; the set is that of
+            # acceptance.main.
             raise SystemExit("refusing to run: " + str(exc))
         yield
 

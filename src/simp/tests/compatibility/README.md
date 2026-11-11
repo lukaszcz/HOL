@@ -30,11 +30,6 @@ runs are not stored in the repository: every runner takes an explicit
   The patch calls `Cond_rewrExt.is_var_perm`, the extension engine's
   audited copy, because develop's `Cond_rewr` interface does not export
   `is_var_perm`.
-  The driver takes TASK32's advisory serial performance/build lock
-  (`acceptance.serial_lock` on the caller checkout) for any `--scratch` run,
-  from before the scratch exists until it is removed, and refuses to run
-  when the lock is busy; the exact TASK25 reproduction (no `--scratch`)
-  does not take it.
 - `tools/root-wrapper.sh`: runs a command in a checkout whose configured root
   (`HOLDIR` in `tools/Holmake/Systeml.sml`) differs from its real location,
   using `bwrap` to map the checkout at the configured root.  It needs no
@@ -100,7 +95,13 @@ and the configured Poly/ML/HOL tools.
    a fresh output path outside the repository.
 
 The downstream-consumer driver is documented in its module docstring and
-`--help`; it is run as
+`--help`. Every run that builds (all but `--prepare-only`) holds the TASK32
+serial lock and is refused if it is busy. Replaying the earlier TASK25
+evidence byte-exactly needs the original patch
+(`git show 2d32112dc5:src/simp/tests/compatibility/consumer/consumer.patch`)
+with `--patch-sha256`
+`6a0a8f54dcb1af06a1b824f56453619195a11d321f97851bcc7b61149166ad1a`.
+It is run as
 
 ```sh
 python3 -B src/simp/tests/compatibility/run_task25_consumer.py \

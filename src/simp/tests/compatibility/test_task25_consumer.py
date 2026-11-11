@@ -421,13 +421,14 @@ class PrepareOnly(FakeRepo):
         return SHM / ("t32-s3-unit-%d-%s" % (os.getpid(), self.id()[-24:]))
 
     def run_main(self, *extra, revision=None, scratch=None,
-                 expect_exit=False):
+                 expect_exit=False, prepare_only=True):
         PrepareOnly.runs += 1
         self.out = self.base / ("out%d" % PrepareOnly.runs)
         scratch = scratch or self.scratch_path()
         self.addCleanup(lambda: scratch.exists() and shutil.rmtree(scratch))
         argv = ["driver", "--consumer-patch", str(self.patch),
-                "--output", str(self.out), "--prepare-only",
+                "--output", str(self.out),
+                *(["--prepare-only"] if prepare_only else []),
                 "--simplifier-revision", revision or self.cand,
                 "--alias", "/dev/shm/t32-s3-unit-alias",
                 "--scratch", str(scratch), *extra]
@@ -495,38 +496,67 @@ class PrepareOnly(FakeRepo):
         written = (self.out / "consumer.patch").read_bytes()
         self.assertEqual(task25.sha(written), m["patch_sha256"])
 
-    def test_scratch_run_holds_the_serial_lock(self):
+    def locked_run(self, fail=False, **kw):
+        """A run that builds, with the lock and execute both faked."""
         events = []
 
         @contextlib.contextmanager
         def lock(repo):
             events.append(("take", Path(repo).resolve(),
-                           self.scratch_path().exists()))
+                           self.out.exists(), self.scratch_path().exists()))
             try:
                 yield
             finally:
                 events.append(("release", self.scratch_path().exists()))
-        with mock.patch.object(task25, "serial_lock", lock):
-            self.run_main()
-        # Taken on the caller checkout before the scratch exists, released
-        # only after it was removed.
-        self.assertEqual(events, [("take", self.repo.resolve(), False),
-                                  ("release", False)])
+
+        def execute(args, repo, planned, m, created):
+            task25.create(created, "output",
+                          lambda: task25.mkdir_output(planned["output"]))
+            task25.create(created, "scratch",
+                          lambda: task25.mkdir_scratch(planned["scratch"]))
+            events.append(("execute",))
+            if fail:
+                raise RuntimeError("boom")
+            m["success"] = True
+        with mock.patch.object(task25, "serial_lock", lock), \
+                mock.patch.object(task25, "execute", execute):
+            self.run_main(prepare_only=False, expect_exit=fail, **kw)
+        return events
+
+    def test_build_run_holds_the_serial_lock(self):
+        # Taken on the caller checkout before the output or scratch exist,
+        # released only after the scratch was removed.
+        self.assertEqual(self.locked_run(), [
+            ("take", self.repo.resolve(), False, False), ("execute",),
+            ("release", False)])
+
+    def test_lock_released_when_execute_fails(self):
+        events = self.locked_run(fail=True)
+        self.assertEqual(events[-1], ("release", False))
+        self.assertIn(("execute",), events)
+        self.assertIn("boom", str(self.exit))
 
     def test_busy_serial_lock_refuses_and_creates_nothing(self):
         with task25.serial_lock(self.repo):
             with self.assertRaisesRegex(SystemExit, "refusing to run.*busy"):
-                self.run_main()
+                self.run_main(prepare_only=False)
         self.assertFalse(self.out.exists())
         self.assertFalse(self.scratch_path().exists())
 
-    def test_no_scratch_does_not_take_the_lock(self):
-        taken = []
-        with mock.patch.object(task25, "serial_lock",
-                               lambda repo: taken.append(repo)):
-            with task25.run_lock(self.args(scratch=None), self.repo):
-                pass
-        self.assertEqual(taken, [])
+    def test_lock_failure_of_any_kind_refuses(self):
+        for error in (OSError("no lock file"),
+                      subprocess.SubprocessError("no git")):
+            with self.subTest(error=error), mock.patch.object(
+                    task25, "serial_lock", side_effect=error):
+                with self.assertRaisesRegex(SystemExit,
+                                            "refusing to run"):
+                    self.run_main(prepare_only=False)
+                self.assertFalse(self.out.exists())
+
+    def test_prepare_only_does_not_take_the_lock(self):
+        with mock.patch.object(task25, "serial_lock") as lock:
+            self.run_main()
+        lock.assert_not_called()
 
     def test_wrong_revision_leaves_no_output(self):
         with self.assertRaisesRegex(RuntimeError, "does not descend"):
