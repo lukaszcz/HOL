@@ -10,11 +10,13 @@ import json
 import os
 from pathlib import Path
 import random
+import shutil
 import signal
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest import mock
 
@@ -167,7 +169,8 @@ class World:
                      nongc_sys=cpu * 0.05, gc_usr=cpu * 0.04,
                      gc_sys=cpu * 0.01, gc_time=cpu * 0.05 * (
                          1 + 0.2 * rng.random()), holdir=str(root),
-                     loaded_before=["Lib", "Thm"], loaded=["Foo"],
+                     loaded_before=["Lib", "Thm", unit["heap"]],
+                     loaded=["Foo"],
                      files=[["Foo.sml", str(root / "src/foo")],
                             ["T32Report.sml", str(Path(uo).parent)]],
                      **STAT_FIELDS)
@@ -216,7 +219,8 @@ class World:
         if fault != "nostats":
             Path(env["T32_STATS"]).write_text(json.dumps(stats) + "\n")
         return dict(exit=code, timed_out=False, wall=cpu * 1.03,
-                    utime=cpu * 0.9, stime=cpu * 0.1, maxrss=10 ** 8)
+                    utime=cpu * 0.9, stime=cpu * 0.1, maxrss=10 ** 8,
+                    survivors=[])
 
     @staticmethod
     def reporter(root, folder, env, timeout, fds):
@@ -651,7 +655,8 @@ class Pieces(unittest.TestCase):
         def receipt(name, side, seen=True):
             files = [["T32Report.sml", "/rep-" + side]] if seen else []
             return dict(workload=name, side=side, rewritten=[], stats=dict(
-                loaded_before=["a"], loaded=[], files=files))
+                loaded_before=["a", cases.BY_NAME[name]["heap"]],
+                loaded=[], files=files))
         full = [receipt(w, s) for w in cases.NAMES
                 for s in ("base", "cand")]
         facts = dw.probe_facts(report, full)
@@ -659,6 +664,16 @@ class Pieces(unittest.TestCase):
         self.assertEqual(facts["heaps"], list(cases.HEAPS))
         full[3] = receipt(cases.NAMES[1], "base", seen=False)
         self.assertFalse(dw.probe_facts(report, full)["ok"])
+        full[3] = receipt(cases.NAMES[1], "base")
+        self.assertTrue(dw.probe_facts(report, full)["heaps_observed"])
+        # a unit that does not run in the heap the cases table declares
+        odd = cases.NAMES[0]
+        full[0] = dict(full[0], stats=dict(full[0]["stats"], loaded_before=[
+            "a", "other"]))
+        got = dw.probe_facts(report, full)
+        self.assertFalse(got["heaps_observed"])
+        self.assertFalse(got["ok"], odd)
+        full[0] = receipt(odd, "base")
         part = dict(report, workloads=["logroot"])
         one = [receipt("logroot", s) for s in ("base", "cand")]
         self.assertTrue(dw.probe_facts(part, one)["ok"])
@@ -961,7 +976,7 @@ class Processes(Base):
                                             pairs=10))
         theory = next(c for c in self.world.calls if c[0] == "logroot")
         env = theory[2]
-        self.assertEqual(env["PATH"], dw.SANE_PATH)
+        self.assertEqual(env["PATH"], snap.PATH)
         self.assertEqual((env["LC_ALL"], env["TZ"], env["TERM"]),
                          ("C", "UTC", "dumb"))
         self.assertTrue(env["POLY_CLINE_OPTIONS"].endswith("T32Report.uo"))
@@ -969,7 +984,17 @@ class Processes(Base):
         self.assertTrue(env["HOME"].endswith("/home"))
         test = next(c for c in self.world.calls
                     if c[0] == "reduce-selftest")
-        self.assertEqual(test[2]["HOLSELFTESTLEVEL"], dw.SELFTEST_LEVEL)
+        # exactly the build's recipe environment (S1's), nothing more
+        # than the harness variables: no HOLSELFTESTLEVEL
+        self.assertNotIn("HOLSELFTESTLEVEL", test[2])
+        for call, extra in ((theory, {"T32_STATS", "T32_LAYOUT",
+                                      "POLY_CLINE_OPTIONS"}),
+                            (test, {"T32_STATS", "T32_LAYOUT"})):
+            env = call[2]
+            home = Path(env["HOME"])
+            self.assertEqual(
+                {k: v for k, v in env.items() if k not in extra},
+                snap.environment(home, env["TMPDIR"]))
         self.assertNotIn("POLY_CLINE_OPTIONS", test[2])
         self.assertEqual({c[1] for c in self.world.calls}, {"base", "cand"})
 
@@ -1205,8 +1230,7 @@ class Launch(unittest.TestCase):
                          pidfile], self.tmp, dict(os.environ), 0.5,
                         self.tmp / "o")
         self.assertEqual((got["exit"], got["timed_out"]), (-9, True))
-        with self.assertRaises(ProcessLookupError):
-            os.killpg(int(pidfile.read_text()), 0)
+        self.assertEqual(dw.group_members(int(pidfile.read_text())), [])
 
     def test_a_signal_kills_the_group_and_waits_for_it(self):
         pidfile = self.tmp / "pid"
@@ -1217,8 +1241,61 @@ class Launch(unittest.TestCase):
                 dw.launch(["sh", "-c", "echo $$ > %s; sleep 30" % pidfile],
                           self.tmp, dict(os.environ), 60, self.tmp / "o")
         timer.cancel()
-        with self.assertRaises(ProcessLookupError):
-            os.killpg(int(pidfile.read_text()), 0)
+        self.assertEqual(dw.group_members(int(pidfile.read_text())), [])
+
+    def test_a_group_left_behind_by_the_leader_is_killed_and_recorded(self):
+        pidfile = self.tmp / "pid"
+        got = dw.launch(["sh", "-c", "echo $$ > %s; sleep 30 &" % pidfile],
+                        self.tmp, dict(os.environ), 30, self.tmp / "o")
+        self.assertEqual((got["exit"], got["timed_out"]), (0, False))
+        self.assertEqual(got["survivors"], ["sleep"])
+        self.assertEqual(dw.group_members(int(pidfile.read_text())), [])
+        clean = dw.launch(["true"], self.tmp, dict(os.environ), 30,
+                          self.tmp / "o")
+        self.assertEqual(clean["survivors"], [])
+        usage = dict(exit=0, timed_out=False, survivors=["sleep"])
+        with self.assertRaisesRegex(dw.Refusal, "running descendants: "
+                                    "sleep"):
+            dw.validate(dict(usage=usage, stats=None, modified=[],
+                             stray=[], digest="d"),
+                        cases.BY_NAME["logroot"], Path("/r"), "/rep", "d",
+                        False)
+
+    def test_shielded_defers_a_signal_until_the_block_ends(self):
+        seen = []
+        with snap.terminating():
+            with self.assertRaises(snap.Terminated):
+                with dw.shielded():
+                    os.kill(os.getpid(), signal.SIGTERM)
+                    time.sleep(0.05)
+                    seen.append("restore finished")
+        self.assertEqual(seen, ["restore finished"])
+
+    def test_a_signal_during_the_restore_does_not_cut_it_short(self):
+        (self.tmp / "w").mkdir()
+        world = World(self.tmp / "w")
+        for patch in world.patches():
+            patch.start()
+            self.addCleanup(patch.stop)
+        real = dw.settle
+        done = []
+
+        def settle(*args, **kw):
+            os.kill(os.getpid(), signal.SIGTERM)  # a second signal
+            got = real(*args, **kw)
+            done.append(got["ok"])
+            return got
+        with mock.patch.object(dw, "settle", settle):
+            before = world.snapshot()
+            with snap.terminating():
+                try:
+                    world.run("x", world.spec(["logroot"]))
+                except snap.Terminated:
+                    pass
+        self.assertEqual(done and set(done), {True})
+        self.assertEqual(world.snapshot(), before)
+        for lock in Path(world.repo, ".agent-files").glob("*.lock"):
+            lock.unlink()
 
     def test_handlers_do_not_override_an_ignored_signal(self):
         old = signal.signal(signal.SIGHUP, signal.SIG_IGN)
@@ -1505,11 +1582,40 @@ class Chain(Base):
         self.assertIn("scan_seconds", counts["smoke"]["overheads"])
         self.assertEqual(sorted(counts["smoke"]["overheads"][
             "verify_seconds"]), ["after", "before"])
+        estimate = counts["time_estimate_seconds"]
+        self.assertGreater(estimate["scan_seconds"], 0)
+        self.assertGreater(estimate["verify_seconds"], 0)
+        self.assertAlmostEqual(
+            estimate["total"], sum(estimate["per_unit"].values()) +
+            estimate["verify_seconds"])
         counts_path = perf / "counts.json"
         counts_path.write_text(dw.dumps(counts))
         with self.assertRaisesRegex(dw.Refusal, "not committed"):
             dw.first_spec(w.args("a", counts=counts_path))
         self.commit_counts(counts_path)
+        # a snapshot rebuilt after predeclare: another manifest seal
+        text = w.manifest.read_text()
+        w.manifest.write_text(json.dumps(json.loads(text), indent=1))
+        with self.assertRaisesRegex(dw.Refusal, "rebuilt"):
+            dw.first_spec(w.args("a", counts=counts_path))
+        w.manifest.write_text(text)
+        # an information run needs its `info` line and a successful
+        # `info-end` with its seal in the ledger
+        empty = w.tmp / "other-ledger.jsonl"
+        tg_append = dw.tg.ledger_append
+        tg_append(empty, event="info", table=dw.TABLE, attempt="x",
+                  mode="smoke", key="k", seed="s", output="o",
+                  checkout="c")
+        with self.assertRaisesRegex(dw.Refusal, "no `info` line"):
+            dw.info_run(w.tmp / "smoke", dw.gate_key(dw.pins_of(
+                w.args("z"))[0]), "smoke", empty)
+        lines = ledger.read_text().splitlines(keepends=True)
+        short = w.tmp / "short-ledger.jsonl"
+        self.assertIn('"info-end"', lines[-1])  # the control's
+        short.write_text("".join(lines[:-1]))
+        with self.assertRaisesRegex(dw.Refusal, "no successful `info-end`"):
+            dw.info_run(w.tmp / "control", dw.gate_key(dw.pins_of(
+                w.args("z"))[0]), "control", short, [cases.CONTROL_UNIT])
         # first stage
         for name in cases.NAMES:
             w.profile[name] = (1.0, 0.001)
@@ -1666,5 +1772,95 @@ class Chain(Base):
                          ["decision first", "smoke"])
 
 
+class CandidateCheck(unittest.TestCase):
+    """check_candidate on a real git repository."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory(prefix="t32-cand-")
+        self.addCleanup(self.dir.cleanup)
+        self.repo = Path(self.dir.name)
+        git(self.repo, "init", "-q")
+        for rel in ("src/boss/tests/t.sml", "src/boss/compiled.sml",
+                    "src/simp/tests/performance/p.py"):
+            (self.repo / rel).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / rel).write_text("0\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "c31")
+        self.c31 = git(self.repo, "rev-parse", "HEAD")
+        patcher = mock.patch.object(dw, "COMPILED_REF", self.c31)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def commit(self, rel):
+        path = self.repo / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("changed\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", rel)
+        return git(self.repo, "rev-parse", "HEAD")
+
+    def sides(self, cand):
+        return dict(base=dict(pin=a.BASE), cand=dict(pin=cand))
+
+    def test_changes_under_any_tests_directory_pass(self):
+        self.commit("src/boss/tests/t.sml")
+        self.commit("src/simp/tests/performance/p.py")
+        cand = self.commit("src/boss/tests/tracked-defaults/new.sml")
+        self.assertEqual(dw.check_candidate(self.repo, self.sides(cand)),
+                         self.c31)
+
+    def test_a_compiled_change_is_refused(self):
+        cand = self.commit("src/boss/compiled.sml")
+        with self.assertRaisesRegex(dw.Refusal, "compiled sources differ"):
+            dw.check_candidate(self.repo, self.sides(cand))
+
+    def test_the_baseline_must_be_the_pin(self):
+        with self.assertRaises(dw.Refusal):
+            dw.check_candidate(self.repo, dict(
+                base=dict(pin="2" * 40), cand=dict(pin=self.c31)))
+
+
+class MissingUnits(Base):
+    def test_a_snapshot_without_a_unit_names_the_unit_and_the_path(self):
+        root = self.world.roots["base"]
+        unit = cases.BY_NAME["rat"]
+        ctx = dict(roots=self.world.roots)
+        shutil.rmtree(root / unit["dir"] / ".hol")
+        with self.assertRaisesRegex(
+                dw.Refusal, r"theory product missing: \.sig \(base side, "
+                r"unit rat: expected .*/%s/\.hol/objs/ratTheory\."
+                r"\{sig,dat,sml\}\)" % unit["dir"]):
+            dw.originals(ctx, ["rat"])
+        test = cases.BY_NAME["reduce-selftest"]
+        (root / test["dir"] / "selftest.exe").unlink()
+        with self.assertRaisesRegex(
+                dw.Refusal, r"selftest.exe missing: base side, unit "
+                r"reduce-selftest: expected .*selftest\.exe"):
+            dw.originals(ctx, ["reduce-selftest"])
+
+
+class CountsDefaults(unittest.TestCase):
+    def test_a_run_that_used_counts_is_not_replayed_without_them(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            absent = Path(tmp, "no.json")
+            report = dict(stage="first", counts=dict(seal=None))
+            with mock.patch.object(dw, "COUNTS", absent):
+                with self.assertRaisesRegex(dw.Refusal, "is absent"):
+                    dw.counts_file_for(report, None, None)
+                present = Path(tmp, "yes.json")
+                present.write_text("{}")
+                self.assertEqual(dw.counts_file_for(report, present, None),
+                                 present)
+            with mock.patch.object(dw, "FOLLOWUP_COUNTS", absent):
+                with self.assertRaisesRegex(dw.Refusal, "--followup-counts"):
+                    dw.counts_file_for(dict(report, stage="followup"),
+                                       None, None)
+            self.assertIsNone(dw.counts_file_for(
+                dict(stage="first", counts=None), None, None))
+            self.assertIsNone(dw.counts_file_for(
+                dict(report, stage="second"), None, None))
+
+
 if __name__ == "__main__":
     unittest.main()
+

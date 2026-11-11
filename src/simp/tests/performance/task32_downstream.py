@@ -104,17 +104,14 @@ SEEDS = dict(smoke=LAYOUT_SEED + "-smoke", control=LAYOUT_SEED + "-control",
 COUNTS = HERE / "task32_counts.json"
 FOLLOWUP_COUNTS = HERE / "task32_followup_counts.json"
 COMPILED_REF = snap.C31  # C32's compiled sources must equal it
-TESTS_PATH = "src/simp/tests"
 COUNTS_SCOPE = "src/simp/tests/performance/"
 # The timed metrics, as loading.jitter names them (+ maxrss).
 METRICS = loading.METRICS + ("maxrss",)
 DECISIVE = ("first", "second", "followup")
 INFO_MODES = ("smoke", "control", "pilot")
 PROCESS_PHASES = ("control", "candidate")
-SANE_PATH = "/usr/local/bin:/usr/bin:/bin"
 JOURNALS = ".agent-files/scratch/task32"  # restore journals, not /dev/shm
 TIMEOUT = 900
-SELFTEST_LEVEL = "1"
 DECISIONS = loading.DECISIONS
 FAILED, BLOCKED = loading.FAILED, loading.BLOCKED
 # Code the counts file is bound to (replay refuses a changed one).
@@ -331,13 +328,13 @@ def run_verify(argv, cwd, fds):
 
 def check_candidate(repo, sides):
     """Base is the develop pin; the candidate's compiled sources equal C31's
-    (everything outside src/simp/tests)."""
+    (everything outside the tests directories, snap.TEST_ONLY)."""
     require(sides["base"]["pin"] == a.BASE, "the baseline is not the pin")
     try:
         c31 = a.git(repo, "rev-parse", COMPILED_REF + "^{commit}")
         differs = subprocess.run(
             ["git", "-C", str(repo), "diff", "--quiet", c31,
-             sides["cand"]["pin"], "--", ".", ":!" + TESTS_PATH],
+             sides["cand"]["pin"], "--", ".", *snap.TEST_ONLY],
             stdin=subprocess.DEVNULL).returncode
     except subprocess.CalledProcessError as error:
         raise Refusal("cannot resolve %s: %s" % (COMPILED_REF, error))
@@ -393,7 +390,8 @@ def check_counts_commit(repo, path, cand_pin):
     return commit
 
 
-def load_counts(path, sides, kind, repo=None, committed=True):
+def load_counts(path, sides, kind, repo=None, committed=True,
+                mseal=None):
     """A counts file, checked against this gate: schema, pins, manifest, the
     code it is bound to and (committed=True) the commit rule."""
     counts = a.load(path)
@@ -402,6 +400,9 @@ def load_counts(path, sides, kind, repo=None, committed=True):
     require(counts["base"] == sides["base"]["pin"] and
             counts["cand"] == sides["cand"]["pin"],
             "the counts file is of another gate")
+    require(mseal is None or counts.get("manifest") == mseal,
+            "the snapshots were rebuilt since the counts file was made "
+            "(its manifest seal is not the current one): predeclare again")
     require(counts["code"] == code_seals(), "the code changed since the "
             "counts file was made: " + ", ".join(
                 n for n in CODE if counts["code"].get(n) !=
@@ -550,20 +551,23 @@ def text_digest(data, root):
     return sha(normalize_text(data, root).encode("latin-1", "replace"))
 
 
-def theory_digest(files, root):
+def theory_digest(files, root, where=None):
     """sha256 of a theory's generated .sig and .sml with the root masked and
     of its .dat in canonical form (task32_dat: every table index resolved).
     A parent's hash is masked: the parents are separate theories, compared
-    by `task32_snapshots compare`."""
+    by `task32_snapshots compare`. `where` names the unit and folder in a
+    refusal."""
     for ext in ("sig", "dat", "sml"):
-        require(ext in files, "theory product missing: ." + ext)
+        require(ext in files, "theory product missing: ." + ext +
+                (" (%s)" % where if where else ""))
     try:
         canon = dat.canonical(snap.normalize_bytes(
             files["dat"], root).decode("latin-1"))
         shown = dat.digest(canon, [t for t, _ in canon["parents"]])[0]
     except (dat.Failure, ValueError, IndexError, KeyError,
             TypeError, AttributeError) as error:
-        raise Refusal("unparsable .dat: %s" % error)
+        raise Refusal("unparsable .dat: %s%s" % (
+            error, " (%s)" % where if where else ""))
     digest = hashlib.sha256()
     for ext in ("sig", "sml"):
         digest.update(ext.encode() + b"\0" +
@@ -572,10 +576,23 @@ def theory_digest(files, root):
     return digest.hexdigest()
 
 
+def product_path(folder, name, ext):
+    return Path(folder) / ".hol/objs" / ("%sTheory.%s" % (name, ext))
+
+
+def where_of(unit, folder):
+    """Where a unit's products are expected, for a refusal."""
+    if unit["kind"] == "theory":
+        return "unit %s: expected %s" % (unit["name"], product_path(
+            folder, unit["theory"], "{sig,dat,sml}"))
+    return "unit %s: expected %s" % (unit["name"],
+                                      Path(folder) / "selftest.exe")
+
+
 def read_products(folder, name):
     found = {}
     for ext in ("sig", "dat", "sml"):
-        path = Path(folder) / ".hol/objs" / ("%sTheory.%s" % (name, ext))
+        path = product_path(folder, name, ext)
         if path.is_file():
             found[ext] = path.read_bytes()
     return found
@@ -588,27 +605,62 @@ def build_log_digest(folder, unit, root):
     path = logs / (unit["name"] + ".log")
     if not path.is_file():
         found = sorted(logs.glob("*selftest.log")) if logs.is_dir() else []
-        require(len(found) == 1, "no build log of %s in %s" % (
-            unit["name"], logs))
+        require(len(found) == 1, "no build log of %s: expected %s or one "
+                "*selftest.log in %s" % (unit["name"], path, logs))
         path = found[0]
     return text_digest(path.read_bytes(), root)
 
 
 # ------------------------------------------------------------- processes
 
+def group_members(pgid):
+    """The live (not zombie) processes of a process group, as
+    (pid, command) pairs, from /proc."""
+    found = []
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            text = Path("/proc", entry, "stat").read_text()
+        except OSError:
+            continue
+        head, _, tail = text.rpartition(")")
+        fields = tail.split()
+        if len(fields) > 2 and fields[0] != "Z" and \
+                int(fields[2]) == pgid:
+            found.append((int(entry), head.partition("(")[2]))
+    return found
+
+
+@contextlib.contextmanager
+def shielded():
+    """SIGTERM and SIGHUP are blocked (they stay pending and are delivered,
+    so raise Terminated, only when the block ends): a second signal cannot
+    cut a group kill or a restore short."""
+    old = signal.pthread_sigmask(
+        signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGHUP})
+    try:
+        yield
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, old)
+
+
 def kill_group(pid):
-    """SIGKILL a process group, reap its leader and wait until the group
-    is empty, so that nothing still writes when the caller restores."""
+    """SIGKILL a process group, reap its leader if that is still to do and
+    wait until no live process is left in the group, so that nothing still
+    writes when the caller restores. Returns the survivors, as
+    (pid, command) pairs (empty when the group is gone)."""
     with contextlib.suppress(ProcessLookupError):
         os.killpg(pid, signal.SIGKILL)
     with contextlib.suppress(ChildProcessError):
         os.waitpid(pid, 0)
+    left = group_members(pid)
     for _ in range(500):
-        try:
-            os.killpg(pid, 0)
-        except ProcessLookupError:
-            return
+        if not left:
+            break
         time.sleep(0.01)
+        left = group_members(pid)
+    return left
 
 
 def launch(argv, cwd, env, timeout, out_path, fds=()):
@@ -618,7 +670,9 @@ def launch(argv, cwd, env, timeout, out_path, fds=()):
     that has not exited yet (`done` and `waitid` under a lock), so a child
     that ended just before the deadline is not reported as timed out. An
     exception while waiting (a signal turned into Terminated) kills the
-    group and waits for it to be empty before it propagates."""
+    group and waits for it to be empty before it propagates. Whatever the
+    leader's end, the group is killed afterwards, and any process that was
+    still in it (`survivors`, by command name) makes the process refused."""
     with open(out_path, "wb") as out:
         started = time.perf_counter()
         proc = subprocess.Popen(
@@ -649,23 +703,29 @@ def launch(argv, cwd, env, timeout, out_path, fds=()):
             wall = time.perf_counter() - started
             with lock:
                 state["done"] = True
+            # always: a leader that is gone leaves its group behind
+            with shielded():
+                leftover = group_members(proc.pid)
+                unkilled = kill_group(proc.pid)
         except BaseException:
             with lock:
                 state["done"] = True
-            kill_group(proc.pid)
+            with shielded():
+                kill_group(proc.pid)
+            proc.returncode = -signal.SIGKILL  # reaped by kill_group
             raise
         finally:
             timer.cancel()
     proc.returncode = os.waitstatus_to_exitcode(status)
     return dict(exit=proc.returncode, timed_out=state["expired"], wall=wall,
                 utime=usage.ru_utime, stime=usage.ru_stime,
-                maxrss=usage.ru_maxrss * 1024)
+                maxrss=usage.ru_maxrss * 1024,
+                survivors=sorted(set(c for _, c in leftover + unkilled)))
 
 
 def process_env(scratch, extra):
-    env = dict(PATH=SANE_PATH, HOME=str(Path(scratch) / "home"),
-               LC_ALL="C", TZ="UTC", TERM="dumb",
-               TMPDIR=str(Path(scratch) / "tmp"))
+    env = dict(snap.environment(Path(scratch) / "home",
+                                Path(scratch) / "tmp"))
     env.update(extra)
     return env
 
@@ -727,8 +787,6 @@ def unit_env(ctx, unit, reporter_uo, stats, layout, busy):
     extra = dict(T32_STATS=str(stats), T32_LAYOUT=str(layout))
     if unit["kind"] == "theory":
         extra["POLY_CLINE_OPTIONS"] = reporter_uo
-    else:
-        extra["HOLSELFTESTLEVEL"] = SELFTEST_LEVEL
     if busy:
         extra["T32_BUSY"] = repr(float(busy))  # seconds of spin at exit
     return process_env(ctx["scratch"], extra)
@@ -803,6 +861,9 @@ def validate(receipt, unit, root, reporter_dir, expected, candidate):
             "process failed: exit %s%s" % (
                 receipt["usage"]["exit"],
                 ", timed out" if receipt["usage"]["timed_out"] else ""))
+    require(not receipt["usage"].get("survivors"),
+            "the process left running descendants: %s" %
+            ", ".join(receipt["usage"].get("survivors") or []))
     stats = receipt["stats"]
     require(stats is not None, "missing stats")
     check_loaded(stats, root, reporter_dir, candidate)
@@ -879,7 +940,7 @@ def execute_unit(ctx, unit, side, label, layout, busy, expected):
     env = unit_env(ctx, unit, reporter["uo"], stats_path, layout, busy)
     receipt = dict(argv=argv, cwd=str(cwd), layout=layout, busy=busy or None,
                    env={k: v for k, v in env.items() if k.startswith(
-                       ("T32_", "POLY_", "HOLSELF"))},
+                       ("T32_", "POLY_"))},
                    stats=None, stray=[], moved=[], modified=[],
                    rewritten=[], digest=None, accepted=False)
     theory = unit["kind"] == "theory"
@@ -906,19 +967,20 @@ def execute_unit(ctx, unit, side, label, layout, busy, expected):
         if theory:
             produced = read_products(folder, name)
     finally:
-        started = time.perf_counter()
-        settled = settle(folder, stops, before, meta, store, name,
-                         Path(ctx["evidence"]) / "stray" / label)
-        scans += time.perf_counter() - started
-        if theory:
-            if not settled["ok"]:
-                raise Fatal(
-                    "could not restore the products of %s in %s: the "
-                    "backups and the journal are kept in %s (`recover` "
-                    "puts them back)" % (unit["name"], folder,
-                                         ctx["journal"]))
-            journal_end(ctx)
-            shutil.rmtree(store, ignore_errors=True)
+        with shielded():  # a signal waits for the restore and its check
+            started = time.perf_counter()
+            settled = settle(folder, stops, before, meta, store, name,
+                             Path(ctx["evidence"]) / "stray" / label)
+            scans += time.perf_counter() - started
+            if theory:
+                if not settled["ok"]:
+                    raise Fatal(
+                        "could not restore the products of %s in %s: the "
+                        "backups and the journal are kept in %s (`recover` "
+                        "puts them back)" % (unit["name"], folder,
+                                             ctx["journal"]))
+                journal_end(ctx)
+                shutil.rmtree(store, ignore_errors=True)
     started = time.perf_counter()
     sigobj = ["sigobj/" + p for p in changed(sigobj_before,
                                              scan(root / "sigobj"))]
@@ -936,7 +998,8 @@ def execute_unit(ctx, unit, side, label, layout, busy, expected):
     receipt["stdout"] = text[-4000:] if theory else text
     receipt["stdout_sha256"] = sha(data)
     try:
-        receipt["digest"] = theory_digest(produced, root) if theory else \
+        receipt["digest"] = theory_digest(
+            produced, root, where_of(unit, folder)) if theory else \
             text_digest(data, root)
     except Refusal as error:
         receipt["digest_error"] = str(error)
@@ -1408,9 +1471,11 @@ def check_new_stems(receipts):
 
 def probe_facts(report, receipts):
     """What a smoke run shows about the harness itself, per unit and side:
-    one stats line, the heap it ran in, whether the reporter registered in
-    Meta.fileDirMap, and what the process rewrote. `ok` needs the reporter
-    in every process and, for all the workloads, all four heaps."""
+    one stats line, the heap fingerprint (the modules loaded before it
+    started), whether the reporter registered in Meta.fileDirMap, and what
+    the process rewrote. `ok` needs the reporter in every process, a
+    consistent heap fingerprint per declared heap (distinct between heaps)
+    and, for all the workloads, all four heaps."""
     facts = {}
     for r in receipts:
         unit = cases.BY_NAME[r["workload"]]
@@ -1425,10 +1490,25 @@ def probe_facts(report, receipts):
             rewritten=r["rewritten"])
     heaps = sorted({cases.BY_NAME[w]["heap"] for w in report["workloads"]})
     complete = list(report["workloads"]) == list(cases.NAMES)
-    ok = all(f["reporter_in_files"] for sides in facts.values()
-             for f in sides.values()) and (
+    # the heap is observed: what a process finds loaded before it starts
+    # identifies its heap, so units of one declared heap agree on it and
+    # those of different heaps differ (per side)
+    prints = {}
+    for r in receipts:
+        unit = cases.BY_NAME[r["workload"]]
+        fingerprint = sha("\n".join(sorted(
+            r["stats"]["loaded_before"])).encode())
+        facts[unit["name"]][r["side"]]["heap_fingerprint"] = fingerprint
+        prints.setdefault((r["side"], unit["heap"]), set()).add(fingerprint)
+    sides = {side for side, _ in prints}
+    heap_ok = all(len(v) == 1 for v in prints.values()) and all(
+        len({next(iter(v)) for (sd, _), v in prints.items() if sd == side})
+        == len([1 for (sd, _) in prints if sd == side]) for side in sides)
+    ok = all(f["reporter_in_files"] for found in facts.values()
+             for f in found.values()) and heap_ok and (
         not complete or heaps == list(cases.HEAPS))
-    return dict(units=facts, heaps=heaps, complete=complete, ok=ok)
+    return dict(units=facts, heaps=heaps, complete=complete,
+                heaps_observed=heap_ok, ok=ok)
 
 
 def overheads(report, receipts):
@@ -1535,8 +1615,12 @@ def originals(ctx, names):
             folder = root / unit["dir"]
             if unit["kind"] == "theory":
                 found[w, side] = theory_digest(
-                    read_products(folder, unit["theory"]), root)
+                    read_products(folder, unit["theory"]), root,
+                    "%s side, %s" % (side, where_of(unit, folder)))
             else:
+                require((folder / "selftest.exe").is_file(),
+                        "selftest.exe missing: %s side, %s" % (
+                            side, where_of(unit, folder)))
                 unit_argv(unit, root, "-")  # format check
                 found[w, side] = build_log_digest(folder, unit, root)
         require(found[w, "base"] == found[w, "cand"],
@@ -1742,10 +1826,18 @@ def unit_argv_shape(unit, root, uo, argv):
 
 
 def counts_file_for(report, counts, followup_counts):
+    """The counts file a decision run used: the one named, else the
+    committed default of its stage. A run that used counts is not replayed
+    without them."""
     stage = report["stage"]
-    if stage == "first":
-        return counts
-    return followup_counts if stage == "followup" else None
+    if report.get("counts") is None or stage not in ("first", "followup"):
+        return None
+    file = counts if stage == "first" else followup_counts
+    file = Path(file or (COUNTS if stage == "first" else FOLLOWUP_COUNTS))
+    require(file.is_file(), "the %s stage used a counts file; %s is absent "
+            "(name it with --%s)" % (stage, file, "counts" if stage ==
+                                     "first" else "followup-counts"))
+    return file
 
 
 def replay_one(folder, ledger=None, counts=None, followup_counts=None,
@@ -1854,7 +1946,7 @@ def replay_chain(folder, ledger=None, counts=None, followup_counts=None,
     require(a.seal(Path(link["run"]) / "downstream.json") == link["seal"]
             and link["attempt"] == last["report"]["attempt"],
             "the stage names another parent")
-    for key in ("base", "cand", "key", "roots"):
+    for key in ("base", "cand", "key", "roots", "manifest"):
         require(report[key] == last["report"][key],
                 "the stage changes " + key)
     require(all(report["references"][w] == last["report"]["references"][w]
@@ -1914,6 +2006,21 @@ def info_run(folder, key, mode, ledger, names=None):
     require(all(k in (report.get("verify") or {})
                 for k in ("before", "after")),
             "the %s run did not verify the snapshots" % mode)
+    path = Path(ledger or ledger_path(report["repo"]))
+    require(path.is_file(), "no attempts ledger: %s" % path)
+    lines = table_lines(tg.Ledger(path))
+    attempt = report["attempt"]
+    starts = [r for r in lines if r["event"] == "info" and
+              r["attempt"] == attempt]
+    ends = [r for r in lines if r["event"] == "info-end" and
+            r["attempt"] == attempt]
+    require(len(starts) == 1 and (starts[0]["mode"], starts[0]["key"]) ==
+            (mode, key), "the ledger has no `info` line of this %s run" %
+            mode)
+    require(len(ends) == 1 and ends[0]["success"] is True and
+            ends[0]["seal"] == info["seal"]["sha256"],
+            "the ledger has no successful `info-end` with the seal of this "
+            "%s run" % mode)
     return info, report
 
 
@@ -1946,16 +2053,26 @@ def predeclare_first(args):
         attempt=pilot["attempt"], seal=pilot_info["seal"]),
         "the negative control was sized from another pilot")
     reps = {w: pilot["outcome"]["pilot"][w]["reps"] for w in cases.NAMES}
+    over = smoke["outcome"]["overheads"]
     estimate = {w: 4 * PAIRS * reps[w] *
                 pilot["outcome"]["pilot"][w]["median_wall"]
                 for w in cases.NAMES}
+    # the harness around the timed processes: scans (3 baseline and 1
+    # candidate process per pair and repetition) and the two verifications
+    scanning = {w: PAIRS * reps[w] * (
+        3 * over["scan_seconds"][w]["base"] +
+        over["scan_seconds"][w]["cand"]) for w in cases.NAMES}
+    verifying = sum(over["verify_seconds"].values())
+    estimate = {w: estimate[w] + scanning[w] for w in cases.NAMES}
     return {
         "schema": COUNTS_SCHEMA, "kind": "first", "base": pilot["base"],
         "cand": pilot["cand"], "manifest": mseal, "pairs": PAIRS,
         "seed": LAYOUT_SEED, "extension_seed": EXTENSION_SEED,
         "reps": reps, "r_cap": R_CAP,
-        "time_estimate_seconds": dict(total=sum(estimate.values()),
-                                      per_unit=estimate),
+        "time_estimate_seconds": dict(
+            total=sum(estimate.values()) + verifying, per_unit=estimate,
+            scan_seconds=sum(scanning.values()),
+            verify_seconds=verifying),
         "references": smoke["outcome"]["digests"],
         "pilot": dict(attempt=pilot["attempt"], seal=pilot_info["seal"]),
         "smoke": dict(attempt=smoke["attempt"], seal=smoke_info["seal"],
@@ -2084,7 +2201,7 @@ def counts_use(path, counts):
 def first_spec(args):
     sides, mseal = pins_of(args)
     path = Path(args.counts or COUNTS).resolve(strict=True)
-    counts = load_counts(path, sides, "first", args.repo)
+    counts = load_counts(path, sides, "first", args.repo, mseal=mseal)
     require(counts["pairs"] == PAIRS and counts["seed"] == LAYOUT_SEED and
             sorted(counts["reps"]) == sorted(cases.NAMES) and
             max(counts["reps"].values()) <= counts["r_cap"] <= R_CAP,
@@ -2098,10 +2215,13 @@ def first_spec(args):
 
 
 def second_spec(args):
+    sides, mseal = pins_of(args)
     chain = replay_chain(args.first, None, args.counts,
                          repo=args.repo)
     first = chain[-1]
     require(first["stage"] == "first", "--first must be a first stage")
+    require(first["report"]["manifest"] == mseal, "the snapshots were "
+            "rebuilt since the first stage ran")
     plan = second_stage_plan(first["report"]["outcome"]["results"])
     require(plan, "no workload is owed a second stage")
     names = [w for w in cases.NAMES if w in plan]
@@ -2117,11 +2237,14 @@ def second_spec(args):
 def followup_spec(args):
     sides, mseal = pins_of(args)
     path = Path(args.followup_counts or FOLLOWUP_COUNTS).resolve(strict=True)
-    counts = load_counts(path, sides, "followup", args.repo)
+    counts = load_counts(path, sides, "followup", args.repo,
+                         mseal=mseal)
     require(counts["seed"] == FOLLOWUP_SEED, "the follow-up seed is fixed")
     chain = replay_chain(counts["replaces"]["run"], None, args.counts,
                          repo=args.repo)
     last = chain[-1]
+    require(last["report"]["manifest"] == mseal, "the snapshots were "
+            "rebuilt since the stage this follow-up replaces ran")
     require(a.seal(last["folder"] / "downstream.json") ==
             counts["replaces"]["seal"] and last["report"]["attempt"] ==
             counts["replaces"]["attempt"],
