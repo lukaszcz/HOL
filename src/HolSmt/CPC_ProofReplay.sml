@@ -2880,7 +2880,7 @@ local
         else if remaining = 0 then
           raise ERR "trans" "quantified Boolean prefix limit exceeded"
         else check_prefix (remaining - 1)
-          (#2 (boolSyntax.dest_forall term))
+          (SmtReplayImport.count_body (Term.rand term))
       val _ = check_prefix 256 left
       val _ = check_prefix 256 right
       fun prove (left, right) =
