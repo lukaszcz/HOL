@@ -39,8 +39,8 @@ def theory_argv(root, name):
     """The command of the theory unit `<name>` (in its directory): used by
     the timing driver for each process and by the snapshot build to prime
     the Holmake caches, so the two cannot drift. `--no_prereqs` builds the
-    target only and never the INCLUDES directories (Holmake still scans
-    them for dependencies)."""
+    target only and never builds in other directories (the INCLUDES
+    directories; Holmake still scans them for dependencies)."""
     return ["%s/bin/Holmake" % root, "--no-cache", "--no_prereqs", "-j1",
             "%sTheory.uo" % name]
 

@@ -2916,23 +2916,29 @@ imported; B cannot build `theorytool` without it; the patched file must be
 blob-equal to C32's, hence `--cand-pin`), `poly < tools/smart-configure.sml`
 and `bin/build --no-cache -t -jN --seq=<copy of task32.seq>`. Commands run
 in this order (`COMMANDS`: clone, checkout, configure, build, then one
-`prime-<unit>` per theory unit). Priming: `bin/build` never wrote the
-dependency caches `.hol/make-deps/<X>Theory.{sig,sml}.d` of the generated
-files, which a later Holmake run writes (in the unit's directory, and in the
-INCLUDES directories it scans even with `--no_prereqs`), and the two builds
-do not leave the same ones (the candidate's `bin/build` wrote some the
-baseline's did not), so the first process of each unit would pay the
-dependency scan on one arm only. After the build, each theory unit's own
-downstream command (`task32_cases.theory_argv`, the same function the
-timing driver uses: `bin/Holmake --no-cache --no_prereqs -j1
-<X>Theory.uo`) runs once in the unit's directory with the build's
-environment. The target is up to date, so nothing is built, but Holmake
-builds the dependency graph of the directory and of its INCLUDES
-directories whatever the target and writes every missing cache. `check_prime`
-fails the build if any product changed or any new file is not a
-`.hol/make-deps/*.d`; `verify` requires the prime commands (argv, cwd and
-exit 0). The snapshots live on disk, not `/dev/shm`, and outside the
-repository's tracked paths (`require_location`). Build base, then cand.
+`prime-<unit>` and one `reprime-<unit>` per theory unit). Priming:
+`bin/build` does not write consistently the dependency caches
+`.hol/make-deps/<X>Theory.{sig,sml}.d` of the generated files, which a later
+Holmake run writes (in the unit's directory, and in the INCLUDES directories
+it scans even with `--no_prereqs`), and the two builds do not leave the same
+ones (the candidate's `bin/build` wrote some the baseline's did not). The
+driver deletes the caches a process writes, so every process of a unit
+would pay the dependency scan, and one arm could pay for more of it than
+the other. After the build, each theory unit's own downstream command
+(`task32_cases.theory_argv`, the same function the timing driver uses:
+`bin/Holmake --no-cache --no_prereqs -j1 <X>Theory.uo`) runs once in the
+unit's directory with the build's environment. The target is up to date, so
+nothing is built, but Holmake builds the dependency graph of the directory
+and of its INCLUDES directories whatever the target and writes every
+missing cache. `check_prime` fails the build if any product changed or any
+new file is not a `.hol/make-deps/*.d`. Then every command runs a second
+time (`reprime-<unit>`) and must change nothing at all: the snapshot is a
+fixed point of the unit commands. `verify` requires both passes (argv, cwd
+and exit 0), a `primed` list that is sorted, unique, among the products and
+made of caches, every other product not newer than the end of `build` and
+every primed cache not older than the first prime. The snapshots live on
+disk, not `/dev/shm`, and outside the repository's tracked paths
+(`require_location`). Build base, then cand.
 
 Environment (`environment`): `env -i` with `PATH=/usr/local/bin:/usr/bin:/bin`,
 `LC_ALL=C`, `TZ=UTC`, `TERM=dumb`, `TMPDIR` (`--tmpdir`, default
@@ -3201,43 +3207,53 @@ Each run's `<scratch>/run-<attempt>` (probes included) is removed at its
 end, and `--scratch` (default `/dev/shm/t32`) too if it is then empty.
 
 Backups and restore. Before any product is deleted, `execute_unit` backs
-the unit's products up and writes a restore journal (`task32-journal-v1`)
+the unit's products up and writes a restore journal (`task32-journal-v2`)
 under `.agent-files/scratch/task32/<attempt>`, fsynced, not in `/dev/shm`.
 After the process the products are restored byte for byte with their
 mtimes, the restore is checked and only then the backups and journal are
 removed. A run refuses to start while a journal is pending. If a restore
-fails (`Fatal`) the backups and journal are kept; `recover --repo REPO`
-puts the products back, moves files the process left into the journal's
-`strays`, verifies sha256 and mtime and clears the journal.
+fails (`Fatal`) or any settle step raises, the backups and journal are
+kept; `recover --repo REPO` first checks every pending journal (schema,
+keys, that the folder lies under the snapshot root, that the store is the
+journal's own, the listing) and refuses an older or malformed one before
+changing anything; then it puts the products back, deletes new Holmake
+caches, moves other files the process left into the journal's
+`strays/inside` (the unit's folder) and `strays/outside` (the rest of the
+snapshot), verifies sha256 and mtime and clears the journal.
 
 Holmake cache churn. A second Holmake run in a built directory writes
 `.hol/make-deps/<X>Theory.{sig,sml}.d` for the theories there, which
-`bin/build` never wrote (the snapshot build now primes them, see above),
-and even with `--no_prereqs` it scans the INCLUDES directories and writes
-the missing caches there too. So the rule covers every `.hol/make-deps` of
-the snapshot: a new `*.d` file directly in one (`is_holmake_cache`) is
-removed and recorded in the receipt as `churn` (paths relative to the
-unit's folder), not as a stray write, so every process starts from the
-identical snapshot. The unit's folder is scanned in full. The other
-directories (`hol_dirs`: one walk per side and run, kept in the run's
-context) have their `.hol/make-deps` listed before and after each process
-(`settle_outside`); every other new entry there (a file, or a directory
-whole) is stray, a changed or vanished existing one is `modified`, a
-`make-deps` directory the process made is removed (stray if it cannot
-be), and so is a `.hol` that appears in a directory that had none. The
-cleanup runs after every process whatever its end, each step under its own
-try so that an error of one neither skips the other nor masks the primary
-error (the others are notes on it). For a theory unit it is journaled (the
-listing, the directories and the root are in the journal entry, checked by
-`recover` before use): `recover` deletes the caches and moves the rest to
-`strays/outside`; selftest units are watched but not journaled. Evidence of
-a stray is `stray/<label>/inside/<path>` for the unit's folder and
+`bin/build` does not write consistently (the snapshot build primes them,
+see above), and even with `--no_prereqs` it scans the INCLUDES directories
+and writes the missing caches there too. One rule covers every
+`.hol/make-deps` of the snapshot, inside the unit's folder and outside it:
+churn is a new regular `*.d` file directly in the `.hol/make-deps` of a
+directory that already had a `.hol` before the process
+(`is_holmake_cache`, `is_cache_churn`); `settle` removes it and the receipt
+records it as `churn` (paths relative to the unit's folder), not as a stray
+write, so every process starts from the identical snapshot. A `.hol` that
+appears in a directory that had none is stray, wherever it is. Since the
+snapshots are primed fixed points, `validate` still refuses a process whose
+`churn` is not empty (the snapshot must be re-primed or rebuilt); the
+cleanup and the record stay, so the evidence shows what was written. The
+unit's folder is scanned in full. The other directories (`hol_dirs`: one
+walk per side and run, kept in the run's context) have their
+`.hol/make-deps` listed before and after each process (`settle_outside`);
+every other new entry there (a file, or a directory whole) is stray, a
+changed or vanished existing one is `modified`, a `make-deps` directory the
+process made is removed (stray if it cannot be). The cleanup runs after
+every process whatever its end, each step under its own try so that an
+error of one neither skips the other nor masks the primary error (the
+others are notes on it). For a theory unit it is journaled (the listing,
+the directories and the root are in the journal entry); selftest units are
+watched but not journaled. Evidence of a stray is
+`stray/<label>/inside/<path>` for the unit's folder and
 `stray/<label>/outside/<path from the snapshot root>` for the rest (a
 receipt path starting with `..` is that path joined to the unit's
-directory and normalized). `outcome` refuses a run in which the churn of
-the processes of a unit is not one and the same set on both arms
-(`check_churn`): a cache one arm lacks would bias the timing. Receipts made
-before `--no_prereqs` (and without `churn`) cannot be replayed.
+directory and normalized). `outcome` also refuses a run in which the churn
+of the processes of a unit is not one and the same set on both arms
+(`check_churn`, a guard that replay shares). Receipts made before
+`--no_prereqs` (and without `churn`) cannot be replayed.
 
 Margin and validity. `POLICY` is `acceptance.EQUIVALENCE_POLICY`: a 3%
 margin on inclusive CPU and wall. For a unit and metric, `low > 1.03` is

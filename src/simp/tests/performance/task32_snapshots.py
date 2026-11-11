@@ -139,8 +139,12 @@ ENV_KEYS = ("HOME", "LC_ALL", "PATH", "TERM", "TMPDIR", "TZ")
 # After the build, each theory unit's own downstream command runs once in
 # its directory (`prime`): see `check_prime`.
 PRIME = "prime-"
+# and once more (`reprime`): the second pass must change nothing, proving
+# that the snapshot is a fixed point of those commands.
+REPRIME = "reprime-"
 COMMANDS = ["clone", "checkout", "configure", "build"] + [
-    PRIME + u["name"] for u in cases.THEORY_UNITS]
+    PRIME + u["name"] for u in cases.THEORY_UNITS] + [
+    REPRIME + u["name"] for u in cases.THEORY_UNITS]
 TIMEOUT = 6 * 3600
 # Run-dependent text of the selftest and check logs (surveyed over the
 # num, integer, real, boss, list and pred_set logs of a built tree):
@@ -561,10 +565,10 @@ def is_holmake_cache(rel):
     `*.d` directly in a `.hol/make-deps` directory. On a second Holmake run
     in an already built directory Holmake writes such a file for the
     generated files of every theory there (`<X>Theory.sig.d`,
-    `<X>Theory.sml.d`), which `bin/build` never wrote. They are derived
-    from the sources and the sigobj. Only the path is judged here; the
-    callers apply it to new regular files only, so a changed or vanished
-    existing file is never a cache."""
+    `<X>Theory.sml.d`), which `bin/build` did not write consistently. They
+    are derived from the sources and the sigobj. Only the path is judged
+    here; the callers apply it to new regular files only, so a changed or
+    vanished existing file is never a cache."""
     parts = rel.split("/")
     return parts[-1].endswith(".d") and parts[-3:-1] == [".hol",
                                                          "make-deps"]
@@ -636,9 +640,10 @@ def check_prime(before, after):
     sealed the same in `after`, and what is new is only Holmake's
     dependency cache (`is_holmake_cache`), which they exist to write: a
     second Holmake run in a built directory writes the `.d` files of the
-    generated theory files, and `bin/build` did not, so without them the
-    first process of each arm in a directory would pay the dependency
-    scan the others do not. Returns the new rel paths."""
+    generated theory files, and `bin/build` did not write them
+    consistently, so without priming every process of a unit would pay a
+    dependency scan that the other arm's processes may not (the driver
+    deletes the caches after each process). Returns the new rel paths."""
     changed = [r for r in before if after.get(r) != before[r]]
     stray = [r for r in after if r not in before and
              not is_holmake_cache(r)]
@@ -804,11 +809,19 @@ def build_side(repo, side, pin, root, manifest_path, logs, scratch, *,
                 step(PRIME + unit["name"],
                      cases.theory_argv(target, unit["theory"]),
                      target / unit["dir"])
+            primed = scan_products(target)
+            record["primed"] = check_prime(built, primed)
+            for unit in cases.THEORY_UNITS:
+                step(REPRIME + unit["name"],
+                     cases.theory_argv(target, unit["theory"]),
+                     target / unit["dir"])
+            record["products"] = scan_products(target)
+            require(check_prime(primed, record["products"]) == [],
+                    "the snapshot is not a fixed point of the prime "
+                    "commands: a second pass wrote files")
             record["build_interval_ns"] = [
                 record["commands"][2]["start_ns"],
                 record["commands"][-1]["end_ns"]]
-            record["products"] = scan_products(target)
-            record["primed"] = check_prime(built, record["products"])
             record["systeml"] = systeml_hashes(target)
             live = probe(poly, env)
             if "toolchain" in manifest:
@@ -937,6 +950,28 @@ def log_seal(path):
     return {"sha256": sha256_bytes(data), "bytes": len(data)}
 
 
+def check_primed(record, commands, products, label):
+    """`primed` is a sorted, unique list of caches among the products; every
+    other product was written by the build (its mtime is not after the
+    build command's end), every cache by the prime commands (not before
+    the first one's start)."""
+    primed = record["primed"]
+    require(isinstance(primed, list) and primed == sorted(set(primed)) and
+            set(primed) <= set(products) and
+            all(is_holmake_cache(r) for r in primed),
+            "%s: bad list of primed caches" % label)
+    named = {c["name"]: c for c in commands}
+    built = named["build"]["end_ns"]
+    first = named[PRIME + cases.THEORY_UNITS[0]["name"]]["start_ns"]
+    for rel, seal in products.items():
+        if rel in primed:
+            require(seal["mtime_ns"] >= first, "%s: primed cache older "
+                    "than the prime commands: %s" % (label, rel))
+        else:
+            require(seal["mtime_ns"] <= built, "%s: product written after "
+                    "the build: %s" % (label, rel))
+
+
 def verify_side(record, label, expected_pin):
     require(record.get("label") == label and not record.get("incomplete"),
             "%s: incomplete or mislabelled record" % label)
@@ -995,7 +1030,7 @@ def verify_side(record, label, expected_pin):
     require(first == commands[2]["start_ns"] and
             last == commands[-1]["end_ns"] and first < last,
             "%s: bad build interval" % label)
-    for c, unit in zip(commands[4:], cases.THEORY_UNITS):
+    for c, unit in zip(commands[4:], 2 * cases.THEORY_UNITS):
         require(c["argv"] == cases.theory_argv(record["root"],
                                                unit["theory"]) and
                 c["cwd"] == str(Path(record["root"]) / unit["dir"]),
@@ -1010,6 +1045,7 @@ def verify_side(record, label, expected_pin):
         require(first <= now["mtime_ns"] <= last,
                 "%s: stale product (mtime outside the build): %s"
                 % (label, rel))
+    check_primed(record, commands, products, label)
     require(any(r.startswith("sigobj/") and r.endswith(".uo")
                 for r in products), "%s: no sigobj products" % label)
     require(systeml_hashes(root) == record["systeml"],

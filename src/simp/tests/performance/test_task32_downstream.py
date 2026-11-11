@@ -133,7 +133,7 @@ class World:
         for unit in cases.UNITS:
             folder = root / unit["dir"]
             for sub in (".hol/objs", ".hol/docs", ".hol/logs",
-                        ".hol/make-deps", ".hol/locks"):
+                        ".hol/make-deps", ".hol/locks", "sub/.hol"):
                 (folder / sub).mkdir(parents=True, exist_ok=True)
             if unit["kind"] == "theory":
                 self.write_products(folder, unit["theory"], root, "sig")
@@ -223,7 +223,7 @@ class World:
                 (cwd / ".hol/make-deps/other.d").write_text("changed\n")
             if fault == "cache":
                 (cwd / ".hol/make-deps/FooTheory.sig.d").write_text("d\n")
-                (cwd / "sub/.hol/make-deps").mkdir(parents=True)
+                (cwd / "sub/.hol/make-deps").mkdir()
                 (cwd / "sub/.hol/make-deps/B.sml.d").write_text("d\n")
             deps = cwd.parents[2] / "src/integer/.hol/make-deps"
             if fault == "xcache":
@@ -232,6 +232,9 @@ class World:
                 made = cwd.parents[2] / "src/boss/.hol/make-deps"
                 made.mkdir()
                 (made / "BTheory.sml.d").write_text("d\n")
+            if fault == "newhol":
+                (cwd / "fresh/.hol/make-deps").mkdir(parents=True)
+                (cwd / "fresh/.hol/make-deps/C.d").write_text("d\n")
             if fault == "xsubdir":
                 (deps / "sub").mkdir()
                 (deps / "sub/x.d").write_text("d\n")
@@ -678,6 +681,19 @@ class Pieces(unittest.TestCase):
             self.assertEqual(path.read_bytes(), b"abc")
             self.assertEqual(path.stat().st_mtime_ns, 5 * 10 ** 18)
 
+    def test_a_directory_that_cannot_be_removed_is_moved_as_stray(self):
+        with tempfile.TemporaryDirectory(dir="/dev/shm") as tmp:
+            folder, stray = Path(tmp, "f"), Path(tmp, "stray")
+            folder.mkdir()
+            before = dw.scan(folder)
+            (folder / "newdir").mkdir()
+            with mock.patch.object(Path, "rmdir", side_effect=OSError):
+                got = dw.settle(folder, (), before, {}, Path(tmp, "s"),
+                                None, stray)
+            self.assertEqual(got["moved"], ["newdir"])
+            self.assertTrue((stray / "newdir").is_dir())
+            self.assertFalse((folder / "newdir").exists())
+
     def test_validate_names_each_refusal(self):
         usage = dict(exit=0, timed_out=False, wall=1.0, utime=1.0,
                      stime=0.0, maxrss=1)
@@ -703,9 +719,12 @@ class Pieces(unittest.TestCase):
         with self.assertRaises(dw.Blocked):
             dw.validate(dict(rec, digest="e"), unit, Path("/r"), "/rep",
                         "d", True)
-        dw.validate(dict(rec, churn=[".hol/make-deps/A.sig.d",
-                                     "../../integer/.hol/make-deps/B.d"]),
-                    unit, Path("/r"), "/rep", "d", False)
+        with self.assertRaisesRegex(dw.Refusal, "not a fixed point.*"
+                                    "re-primed or rebuilt"):
+            dw.validate(dict(rec, churn=[".hol/make-deps/A.sig.d",
+                                         "../../integer/.hol/make-deps/"
+                                         "B.d"]),
+                        unit, Path("/r"), "/rep", "d", False)
 
     def test_probe_facts_need_the_reporter_in_every_process(self):
         report = self.probe_report()
@@ -842,18 +861,28 @@ class Refusals(Base):
         self.assertIn("other.d", report["failure"])
         self.assertIn("must be rebuilt", report["failure"])
 
-    def test_new_make_deps_files_are_churn_and_removed(self):
-        before = self.world.snapshot()
-        self.world.fault = lambda u, s, n: "cache"
-        report = self.world.run("k", self.world.spec(["logroot"]))
-        self.assertTrue(report["success"], report.get("failure"))
-        self.assertEqual(self.world.snapshot(), before)
-        receipt = a.load(Path(report["output"]) / report["runs"][0][
+    def evidence(self, report):
+        label = report["runs"][-1]["receipt"][:-len(".json.gz")]
+        return Path(report["output"]) / "stray" / label
+
+    def receipt_of(self, report):
+        return a.load(Path(report["output"]) / report["runs"][-1][
             "receipt"])
+
+    def test_new_make_deps_files_are_churn_removed_and_refused(self):
+        report = self.attempt("cache")
+        self.assertIn("not a fixed point", report["failure"])
+        receipt = self.receipt_of(report)
         self.assertEqual(receipt["churn"], [
             ".hol/make-deps/FooTheory.sig.d",
             "sub/.hol/make-deps/B.sml.d"])
         self.assertEqual(receipt["stray"], [])
+
+    def test_a_new_dot_hol_in_the_folder_is_stray_not_churn(self):
+        report = self.attempt("newhol")
+        self.assertIn("stray write: fresh/.hol/make-deps/C.d",
+                      report["failure"])
+        self.assertEqual(self.receipt_of(report)["churn"], [])
 
     def test_new_files_outside_make_deps_are_still_stray(self):
         self.assertIn("stray write: .hol/other.txt",
@@ -862,13 +891,9 @@ class Refusals(Base):
                       self.attempt("outsided")["failure"])
 
     def test_churn_in_another_directorys_make_deps_is_removed(self):
-        before = self.world.snapshot()
-        self.world.fault = lambda u, s, n: "xcache"
-        report = self.world.run("x", self.world.spec(["logroot"]))
-        self.assertTrue(report["success"], report.get("failure"))
-        self.assertEqual(self.world.snapshot(), before)
-        receipt = a.load(Path(report["output"]) / report["runs"][0][
-            "receipt"])
+        report = self.attempt("xcache")
+        self.assertIn("not a fixed point", report["failure"])
+        receipt = self.receipt_of(report)
         self.assertEqual(receipt["churn"], [
             "../../integer/.hol/make-deps/IncTheory.sig.d"])
         self.assertEqual(receipt["stray"], [])
@@ -877,16 +902,16 @@ class Refusals(Base):
     def test_a_make_deps_directory_the_process_made_is_removed(self):
         for side in self.world.roots.values():
             shutil.rmtree(side / "src/boss/.hol/make-deps")
-        before = self.world.snapshot()
-        self.world.fault = lambda u, s, n: "xnewdir"
-        report = self.world.run("x", self.world.spec(["logroot"]))
-        self.assertTrue(report["success"], report.get("failure"))
-        self.assertEqual(self.world.snapshot(), before)
+        report = self.attempt("xnewdir")
+        self.assertEqual(self.receipt_of(report)["churn"], [
+            "../../boss/.hol/make-deps/BTheory.sml.d"])
 
     def test_another_directorys_non_cache_file_is_stray(self):
         report = self.attempt("xother")
         self.assertIn("stray write: ../../integer/.hol/make-deps/inc.txt",
                       report["failure"])
+        self.assertTrue((self.evidence(report) / "outside" /
+                         "src/integer/.hol/make-deps/inc.txt").is_file())
 
     def test_another_directorys_modified_cache_file_is_refused(self):
         self.world.fault = lambda u, s, n: "xmodify"
@@ -904,14 +929,8 @@ class Refusals(Base):
     def test_a_new_dot_hol_in_a_directory_without_one_is_stray(self):
         report = self.attempt("xbare")
         self.assertIn("stray write: ../.hol", report["failure"])
-
-    def test_churn_must_be_the_same_on_both_arms(self):
-        self.world.fault = lambda u, s, n: "xcache" if s == "base" else None
-        report = self.world.run("y", self.world.spec(["logroot"]))
-        self.assertFalse(report["success"])
-        self.assertIn("Holmake cache churn differs between the processes "
-                      "(or arms) of: logroot", report["failure"])
-        self.assertIn("IncTheory.sig.d'] on base", report["failure"])
+        self.assertTrue((self.evidence(report) / "outside" /
+                         "src/num/.hol/make-deps/x.d").is_file())
 
     def test_check_churn(self):
         one = dict(workload="u", side="base", churn=["a/.hol/make-deps/x.d"])
@@ -1419,20 +1438,46 @@ class Journal(Base):
         self.fatal()
         (folder,) = dw.pending_journals(self.world.repo)
         good = dw.journal_read(folder)
-        for change, text in (
-                (dict(root=str(self.world.tmp / "elsewhere")), "hold"),
-                (dict(dirs=["../x"]), "bad directory"),
-                (dict(dirs=["/etc"]), "bad directory"),
-                (dict(bare=["a/./b"]), "bad directory"),
-                (dict(before={"x/.hol/make-deps/a.d": ["f", 1, 2]}),
-                 "bad listing")):
+        leftover = self.world.roots["base"] / "src/num/extra_theories/x.txt"
+        leftover.write_text("x")
+
+        def outside(**change):
+            def edit(data):
+                data["pending"]["outside"].update(change)
+            return edit
+
+        def entry(**change):
+            def edit(data):
+                data["pending"].update(change)
+            return edit
+
+        def drop(key):
+            def edit(data):
+                del data["pending"][key]
+            return edit
+        for edit, text in (
+                (outside(root=str(self.world.tmp / "elsewhere")), "hold"),
+                (outside(dirs=["../x"]), "bad directory"),
+                (outside(dirs=["/etc"]), "bad directory"),
+                (outside(bare=["a/./b"]), "bad directory"),
+                (outside(before={"x/.hol/make-deps/a.d": ["f", 1, 2]}),
+                 "bad listing"),
+                (drop("outside"), "malformed"),
+                (drop("store"), "malformed"),
+                (entry(store="/tmp/elsewhere"), "backup directory"),
+                (entry(meta={"../x": {}}), "not the theory's"),
+                (lambda d: d.update(schema="task32-journal-v1"),
+                 "not of schema")):
             data = json.loads(json.dumps(good))
-            data["pending"]["outside"].update(change)
+            edit(data)
             dw.journal_write(folder, data)
             with self.assertRaisesRegex(dw.Refusal, text):
                 dw.recover(self.world.repo)
+            # nothing was changed before the refusal
+            self.assertTrue(leftover.exists(), text)
         dw.journal_write(folder, good)
         self.assertEqual(dw.recover(self.world.repo), 0)
+        self.assertFalse(leftover.exists())
 
     def test_recover_removes_in_folder_cache_churn(self):
         before, report = self.fatal()
@@ -1440,8 +1485,8 @@ class Journal(Base):
         (folder / ".hol/make-deps/XTheory.sig.d").write_text("d\n")
         self.assertEqual(dw.recover(self.world.repo), 0)
         self.assertEqual(self.world.snapshot(), before)
-        self.assertEqual(list((self.world.repo / dw.JOURNALS).glob(
-            "*/strays/inside/.hol/make-deps/*")), [])
+        self.assertEqual(list((self.world.repo / dw.JOURNALS).rglob(
+            "XTheory.sig.d")), [])
 
     def test_a_failing_settle_does_not_mask_a_fatal_restore(self):
         def boom(*args):

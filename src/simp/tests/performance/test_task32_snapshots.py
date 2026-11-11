@@ -230,7 +230,7 @@ class Fake:
         self.drop = {}     # side -> {relative path: text} after checkout
         self.log = {}      # side -> text added to every selftest log
         self.during = None  # callable run inside the build step
-        self.prime = None  # callable (cwd, side) run in a prime command
+        self.prime = None  # callable (cwd, side, again) run in a prime command
 
     def __call__(self, argv, cwd, env, stdin, log):
         side = Path(cwd).name if Path(cwd).name in s.LABELS else None
@@ -247,10 +247,11 @@ class Fake:
                         put(Path(cwd) / rel, text)
             return p.returncode
         if os.path.basename(argv[0]) == "Holmake":
-            if self.fail == "prime":
+            again = "-reprime-" in Path(log).name
+            if self.fail == ("reprime" if again else "prime"):
                 return 1
             if self.prime:
-                self.prime(Path(cwd), side)
+                self.prime(Path(cwd), side, again)
             return 0
         name = "configure" if os.path.basename(argv[0]) == "poly" \
             else "build"
@@ -295,6 +296,14 @@ class Fake:
                     "\x1b[32mOK\x1b[0m %s (0.%ds)\n" %
                     (root, len(side or "")))
         return 0
+
+
+def write_cache_once(cwd, side, again):
+    """A prime command that writes a cache the first time only: a fixed
+    point."""
+    path = cwd / ".hol/make-deps/listTheory.sig.d"
+    if str(cwd).endswith("src/list/src") and not path.exists():
+        put(path, "d\n")
 
 
 class World:
@@ -357,8 +366,11 @@ class BuildTests(unittest.TestCase):
     def test_every_theory_unit_is_primed_with_its_downstream_command(self):
         w = World(self).both()
         record = w.doc()["sides"]["cand"]
-        for c, unit in zip(record["commands"][4:], cases.THEORY_UNITS):
-            self.assertEqual(c["name"], "prime-" + unit["name"])
+        units = cases.THEORY_UNITS
+        for c, unit, name in zip(record["commands"][4:], 2 * units, [
+                "prime-" + u["name"] for u in units] + [
+                "reprime-" + u["name"] for u in units]):
+            self.assertEqual(c["name"], name)
             self.assertEqual(c["argv"], cases.theory_argv(
                 record["root"], unit["theory"]))
             self.assertIn("--no_prereqs", c["argv"])
@@ -371,8 +383,7 @@ class BuildTests(unittest.TestCase):
     def test_primed_caches_are_recorded_as_products(self):
         w = World(self)
         cache = "src/list/src/.hol/make-deps/listTheory.sig.d"
-        w.fake.prime = lambda cwd, side: put(
-            cwd / ".hol/make-deps/listTheory.sig.d", "d\n")
+        w.fake.prime = write_cache_once
         w.both()
         doc = w.doc()
         self.assertEqual(doc["sides"]["cand"]["primed"],
@@ -383,7 +394,7 @@ class BuildTests(unittest.TestCase):
 
     def test_a_prime_that_changes_a_product_fails_the_build(self):
         w = World(self)
-        w.fake.prime = lambda cwd, side: put(
+        w.fake.prime = lambda cwd, side, again: put(
             cwd / ".hol/objs/numTheory.uo", "changed\n") \
             if cwd.name == "theories" else None
         with self.assertRaisesRegex(ValueError, "prime commands changed"):
@@ -392,9 +403,58 @@ class BuildTests(unittest.TestCase):
 
     def test_a_prime_that_writes_another_file_fails_the_build(self):
         w = World(self)
-        w.fake.prime = lambda cwd, side: put(cwd / "stray.txt", "x\n")
+        w.fake.prime = lambda cwd, side, again: put(
+            cwd / "stray.txt", "x\n")
         with self.assertRaisesRegex(ValueError, "prime commands changed"):
             w.build("base")
+
+    def test_a_second_pass_that_writes_again_is_not_a_fixed_point(self):
+        w = World(self)
+        count = []
+
+        def hook(cwd, side, again):
+            if str(cwd).endswith("src/list/src"):
+                count.append(1)
+                put(cwd / (".hol/make-deps/L%dTheory.sig.d" % len(count)),
+                    "d\n")
+        w.fake.prime = hook
+        with self.assertRaisesRegex(ValueError, "not a fixed point"):
+            w.build("base")
+
+    def test_a_failing_reprime_fails_the_build(self):
+        w = World(self)
+        w.fake.fail = "reprime"
+        with self.assertRaisesRegex(ValueError, "reprime-arithmetic failed"):
+            w.build("base")
+
+    def tampered(self, change, pattern):
+        w = World(self)
+        w.fake.prime = write_cache_once
+        w.both()
+        doc = w.doc()
+        change(doc["sides"]["cand"])
+        with self.assertRaisesRegex(ValueError, pattern):
+            w.verify(doc)
+
+    def test_verify_checks_the_primed_list(self):
+        key = "src/list/src/.hol/make-deps/listTheory.sig.d"
+        self.tampered(lambda r: r["primed"].append(key),
+                      "bad list of primed")
+        self.tampered(lambda r: r["primed"].append("nowhere.d"),
+                      "bad list of primed")
+        self.tampered(lambda r: r.update(primed=[key, "src/f.txt"]),
+                      "bad list of primed")
+        self.tampered(lambda r: r.update(primed=["bin/hol"]),
+                      "bad list of primed")
+
+    def test_verify_checks_when_products_were_written(self):
+        def early(record):
+            record["commands"][3]["end_ns"] = 1
+        self.tampered(early, "written after the build")
+
+        def late(record):
+            record["commands"][4]["start_ns"] = 2**62
+        self.tampered(late, "primed cache older")
 
     def test_a_failing_prime_fails_the_build(self):
         w = World(self)
@@ -420,7 +480,7 @@ class BuildTests(unittest.TestCase):
             s.COMMANDS)
         self.assertEqual(s.COMMANDS[:4],
                          ["clone", "checkout", "configure", "build"])
-        self.assertEqual(len(s.COMMANDS), 4 + len(cases.THEORY_UNITS))
+        self.assertEqual(len(s.COMMANDS), 4 + 2 * len(cases.THEORY_UNITS))
         build = doc["sides"]["cand"]["commands"][3]["argv"]
         seq = doc["sides"]["cand"]["sequence"]
         self.assertEqual(build, ["bin/build", "--no-cache", "-t", "-j8",
@@ -1202,6 +1262,7 @@ class VerifyTests(unittest.TestCase):
         record = doc["sides"][side]
         record["commands"][2]["start_ns"] = 1
         record["build_interval_ns"][0] = 1
+        record["commands"][3]["end_ns"] = 2**62
         record["commands"][-1]["end_ns"] = 2**62
         record["build_interval_ns"][1] = 2**62
 

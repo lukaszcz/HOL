@@ -506,18 +506,27 @@ def restore(folder, meta, store, now):
 is_holmake_cache = snap.is_holmake_cache
 
 
+def is_cache_churn(rel, entry, before):
+    """True for a new entry of the unit's folder that is Holmake's
+    dependency cache: a regular `*.d` file in the `.hol/make-deps` of a
+    directory that already had a `.hol` (`before`, the scan before the
+    process). A `.hol` that appears where there was none is stray."""
+    return entry[0] == "f" and is_holmake_cache(rel) and \
+        rel.rsplit("/", 2)[0] in before
+
+
 def settle(folder, stops, before, meta, store, name, stray_dir):
     """After a process, whatever its end: put the unit's products back,
-    remove the new Holmake dependency-cache files (`is_holmake_cache`,
+    remove the new Holmake dependency-cache files (`is_cache_churn`,
     returned as `churn`), move every other new file (Holmake intermediates
     a failed process leaves, anything a selftest writes) into `stray_dir`,
     and remove the directories the process made (one that cannot be removed
-    is recorded as moved, so as stray). Returns the moved rel paths, the
-    churn rel paths, the existing
-    files outside the products that changed or vanished (`modified`), the
-    products the process rewrote (`rewritten`: the Holmake churn of the
-    target, e.g. its make-deps files) and whether the products are back as
-    they were (`ok`)."""
+    is moved into `stray_dir` with what it holds). Returns the moved rel
+    paths, the churn rel paths, the existing files outside the products
+    that changed or vanished (`modified`), the products the process
+    rewrote (`rewritten`: the Holmake churn of the target, e.g. its
+    make-deps files) and whether the products are back as they were
+    (`ok`)."""
     targets = set(target_rels(name)) if name else set()
     now = scan(folder, stops)
     restore(folder, meta, store, [p for p in now if p in targets])
@@ -525,7 +534,7 @@ def settle(folder, stops, before, meta, store, name, stray_dir):
     for rel in sorted(p for p, e in now.items()
                       if p not in before and p not in targets and
                       e[0] != "d"):
-        if now[rel][0] == "f" and is_holmake_cache(rel):
+        if is_cache_churn(rel, now[rel], before):
             (Path(folder) / rel).unlink()
             churn.append(rel)
             continue
@@ -538,6 +547,9 @@ def settle(folder, stops, before, meta, store, name, stray_dir):
         try:
             (Path(folder) / rel).rmdir()
         except OSError:
+            dst = Path(stray_dir) / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(Path(folder) / rel), str(dst))
             moved.append(rel)
     final = scan(folder, stops)
     ok = all(final.get(r) == before.get(r) for r in meta) and not any(
@@ -552,7 +564,7 @@ def settle(folder, stops, before, meta, store, name, stray_dir):
 
 
 def hol_dirs(root):
-    """The rel paths (`"" ` is the root) of the directories below `root`,
+    """The rel paths (`""` is the root) of the directories below `root`,
     as (those with a `.hol` subdirectory, where Holmake keeps
     `.hol/make-deps`; those without). One walk of a snapshot, which does
     not change during a run; neither `.git` nor `.hol` nor symlinks are
@@ -996,12 +1008,16 @@ def validate(receipt, unit, root, reporter_dir, expected, candidate):
                                      ).is_relative_to(root))]
     require(not bad, "churn that is not Holmake's dependency cache in the "
             "snapshot: " + ", ".join(bad[:5]))
+    require(not receipt["churn"], "the process wrote Holmake cache file(s) "
+            "(%s): the snapshot is not a fixed point under the unit's "
+            "Holmake scan; it must be re-primed or rebuilt" %
+            ", ".join(receipt["churn"][:5]))
     require(not receipt["stray"], "stray write: " + ", ".join(
         receipt["stray"][:5]))
     check_digest(receipt["digest"], expected, candidate)
 
 
-JOURNAL_SCHEMA = "task32-journal-v1"
+JOURNAL_SCHEMA = "task32-journal-v2"
 
 
 def journal_read(folder):
@@ -1093,10 +1109,10 @@ def execute_unit(ctx, unit, side, label, layout, busy, expected):
             journal_begin(ctx, dict(
                 label=label, folder=str(folder), store=str(store),
                 name=name, stops=list(stops), meta=meta,
-                unit=unit["name"], before=sorted(
-                    p for p, e in before.items() if e[0] != "d"),
+                unit=unit["name"], before=sorted(before),
                 outside=dict(root=str(root), dirs=outside, bare=bare,
                              before=outside_before)))
+        pending = None
         try:
             for rel in rels:
                 (folder / rel).unlink()
@@ -1104,11 +1120,13 @@ def execute_unit(ctx, unit, side, label, layout, busy, expected):
                                       out_path, ctx["fds"])
             if theory:
                 produced = read_products(folder, name)
+        except BaseException as error:
+            pending = error
+            raise
         finally:
             # Each step has its own try: an error of one must not skip
             # the other nor the Fatal check, and the primary error (an
             # error of the process wait, e.g. Terminated) stays primary.
-            pending = sys.exc_info()[1]
             errors = []
             started = time.perf_counter()
             try:
@@ -2750,19 +2768,49 @@ def require_ledger(args):
             getattr(args, "repo", None) or HERE.parents[3]))
 
 
+ENTRY_KEYS = ("label", "folder", "store", "name", "stops", "meta", "unit",
+              "before", "outside")
+OUTSIDE_KEYS = ("root", "dirs", "bare", "before")
+
+
+def check_journal(folder, data):
+    """A journal is trusted only if it is of this schema, has every key and
+    its paths are sane: its folder lies under the snapshot root, its store
+    is the journal's own backup directory and its products are files of
+    the theory target. Raises Refusal, before anything is changed."""
+    require(isinstance(data, dict) and data.get("schema") ==
+            JOURNAL_SCHEMA, "journal %s is not of schema %s (an older or "
+            "malformed journal: restore by hand)" % (folder,
+                                                     JOURNAL_SCHEMA))
+    entry = data.get("pending")
+    require(isinstance(entry, dict) and all(k in entry for k in ENTRY_KEYS)
+            and isinstance(entry["outside"], dict) and all(
+                k in entry["outside"] for k in OUTSIDE_KEYS) and
+            isinstance(entry["meta"], dict) and all(
+                isinstance(entry[k], list) for k in ("stops", "before")) and
+            all(isinstance(entry[k], str) for k in (
+                "label", "folder", "store", "name", "unit")),
+            "journal %s is malformed" % folder)
+    require(Path(entry["store"]).is_relative_to(Path(folder) / "backup"),
+            "journal: the store is not the journal's backup directory")
+    require(set(entry["meta"]) <= set(target_rels(entry["name"])),
+            "journal: products that are not the theory's")
+    check_outside(entry["outside"], Path(entry["folder"]))
+
+
 def check_outside(out, unit_dir):
-    """The `outside` of a journal entry is trusted only if it is sane: its
-    root holds the unit's folder, and every directory is a normalized
-    relative path without `..` (`""` is the root) whose make-deps listing
-    entries are the ones listed."""
+    """The `outside` of a journal entry: its root holds the unit's folder,
+    and every directory is a normalized relative path without `..` (`""` is
+    the root) whose make-deps listing entries are the ones listed."""
     root = Path(out["root"])
     require(root.is_absolute() and Path(unit_dir).is_relative_to(root),
             "journal: the snapshot root does not hold the unit's folder")
+    require(all(isinstance(d, str) for d in out["dirs"] + out["bare"]),
+            "journal: bad directory")
     for d in out["dirs"] + out["bare"]:
-        require(isinstance(d, str) and not os.path.isabs(d) and
-                (d == "" or os.path.normpath(d) == d) and
-                ".." not in d.split("/"), "journal: bad directory " +
-                repr(d))
+        require(not os.path.isabs(d) and (d == "" or os.path.normpath(d) ==
+                                          d) and ".." not in d.split("/"),
+                "journal: bad directory " + repr(d))
     known = {os.path.join(d, ".hol/make-deps") for d in out["dirs"]}
     for rel in out["before"]:
         require(rel in known or os.path.dirname(rel) in known,
@@ -2774,12 +2822,21 @@ def recover(repo):
     theory unit from the backups, the new Holmake caches removed, the other
     files the process left moved into the journal's `strays/inside` (and
     `strays/outside` for the rest of the snapshot); then clear the
-    journal. Takes the serial lock."""
+    journal. Every journal is checked (`check_journal`) before any is
+    acted on. Takes the serial lock."""
     repo = Path(repo).resolve(strict=True)
     with a.serial_lock(repo):
         pending = pending_journals(repo)
+        loaded = []
         for folder in pending:
-            data = journal_read(folder)
+            try:
+                data = journal_read(folder)
+            except (OSError, ValueError) as error:
+                raise Refusal("journal %s is unreadable: %s" %
+                              (folder, error))
+            check_journal(folder, data)
+            loaded.append((folder, data))
+        for folder, data in loaded:
             entry = data["pending"]
             unit_dir = Path(entry["folder"])
             before = {p: None for p in entry["before"]}
@@ -2789,14 +2846,13 @@ def recover(repo):
                     [p for p in now if p in targets])
             for rel, e in sorted(now.items()):
                 if e[0] != "d" and rel not in before and rel not in targets:
-                    if e[0] == "f" and is_holmake_cache(rel):
+                    if is_cache_churn(rel, e, before):
                         (unit_dir / rel).unlink()
                         continue
                     dst = folder / "strays/inside" / rel
                     dst.parent.mkdir(parents=True, exist_ok=True)
                     shutil.move(str(unit_dir / rel), str(dst))
             out = entry["outside"]
-            check_outside(out, unit_dir)
             settle_outside(out["root"], unit_dir, out["dirs"],
                            out["before"], out["bare"],
                            folder / "strays/outside")
