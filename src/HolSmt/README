@@ -90,6 +90,8 @@ with `--proof-granularity=dsl-rewrite`; the CPC parser version-gates every
 rule and the replay engine reconstructs a HOL theorem before `CVC.sml` checks
 its hypotheses, conclusion, and oracle tags.  Set `HOL4_CVC_EXECUTABLE` to
 select cvc5.  CPC is the sole checked cvc5 replay format.
+CPC bit-vector extraction rewrites include distributing complement through
+a bounded slice (`bv-extract-not`), re-proved by HOL word decision.
 Array-encoded set assumptions are matched to their source context through
 proved membership, update, constant-array and subset rewrites. The bridge
 accepts only alpha-equivalent normalized terms; it never assumes the echoed
@@ -441,7 +443,11 @@ Native datatype emission declares constructor-field dependencies before their
 users, grouping only mutually recursive types, including recursion through
 lists and products. This permits acyclic datatype dependencies in function
 domains without creating a non-covariant mutual declaration. Opaque field
-sorts are declared first; previously declared sorts are reused.
+sorts are declared first; previously declared sorts are reused.  A list type
+whose element type leads back to the list itself (`tree list` for
+`tree = Leaf | Node of tree list`) stays an algebraic datatype; native Seq is
+used only for the other lists, since a datatype recursing through Seq is
+nested-recursive, which cvc5 rejects.
 
 The Datatypes row's checked selector replay applies to parser-native selector
 case terms.  It is not, by itself, a claim about HOL destructor constants.

@@ -1682,6 +1682,7 @@ struct
     mk_rule ProofRule ("bv_poly_norm_eq", "bv_poly_norm_eq"),
     mk_rule ProofRule ("bv_bitblast_step", "bv_poly_norm"),
     mk_rule RareRewrite ("bv-extract-whole", "bv_word_rewrite"),
+    mk_rule RareRewrite ("bv-extract-not", "bv_word_rewrite"),
     mk_rule RareRewrite ("bv-extract-concat-1", "bv_word_rewrite"),
     mk_rule RareRewrite ("bv-shl-by-const-1", "bv_word_rewrite"),
     mk_rule RareRewrite ("bv-lshr-by-const-1", "bv_word_rewrite"),

@@ -325,6 +325,11 @@ val thm_CVCp_ho =
     (REPEAT STRIP_TAC THEN HolSmtLib.CVC_TAC)
 val sat_CVCp = mk_CVCp expect_sat
 
+(* These bounded cardinality regressions must bypass the numeric filter. *)
+val thm_card_CVCp =
+  mk_test_fun (CVC.is_configured ()) (expect_thm true)
+    "cvc5 (proofs, finite CARD)" HolSmtLib.CVC_TAC
+
 (*****************************************************************************)
 (* HOL definitions (e.g., user-defined data types)                           *)
 (*****************************************************************************)
@@ -399,6 +404,9 @@ val graph_expect_thm = expect_thm
       [thm_Z3p_v4, thm_CVCp]),
     (``(x : int) IN (s UNION t) <=> x IN s \/ x IN t``,
       [thm_CVC, thm_CVCp]),
+    (``!(a:'a) b. CARD {a; b} = 2 <=> a <> b``, [thm_card_CVCp]),
+    (``!(a:'a) b c. CARD {a; b; c} = 3 <=>
+        a <> b /\ a <> c /\ b <> c``, [thm_card_CVCp]),
     (* Z3 proves this through an array lemma outside its checked Bag replay
        ladder; cvc5 supplies the native checked Bag certificate. *)
     (``BAG_IN (x : bool) (BAG_INSERT y EMPTY_BAG) <=> x = y``, [thm_CVCp]),
@@ -2197,6 +2205,12 @@ val graph_expect_thm = expect_thm
       [(*thm_AUTO,*) thm_CVC, thm_Z3_v4, thm_Z3p_v4]),
 
     (* regression tests *)
+
+    (* Z3 bv1-blast may visit fresh bits before their concat definition. *)
+    (``(w:word8) <> 0w /\ ~word_bit 0 w ==> w >>> 1 <> 0w``,
+      [thm_Z3p_v4]),
+    (``(w:256 word) <> 0w /\ ~word_bit 0 w ==> w >>> 1 <> 0w``,
+      [thm_Z3p_v4]),
 
     (``!(n:num) z y a. (3 * n + 1) * z <= y * a ==> 3 * (n * z) <= 2 * (y * a)``,
       [thm_AUTO, (*thm_CVC,*) thm_Z3(*, thm_Z3p*)]),
