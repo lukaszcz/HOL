@@ -614,6 +614,13 @@ def build_side(repo, side, pin, root, manifest_path, logs, scratch, *,
     return record
 
 
+def objects_of(repo):
+    """The object directory `git clone --shared` borrows from `repo`: that
+    of its common git directory (a linked worktree's, too)."""
+    common = git(repo, "rev-parse", "--git-common-dir")
+    return os.path.realpath(os.path.join(repo, common, "objects"))
+
+
 def discard_side(manifest_path, side, force=False):
     """Move a side's record into `attempts` and delete its tree and HOME.
     Only an `incomplete` record may be discarded unless `force`; the tree
@@ -639,11 +646,10 @@ def discard_side(manifest_path, side, force=False):
             # a clone that did not finish: nothing, or a partial clone
             # that borrows objects from the source repository at most
             theirs = alternates(root)
-            source = Path(record["repo"]) if record.get("repo") else None
             require(not (root / ".git").exists() or not theirs or
-                    (source is not None and all(
-                        Path(p) in (source / ".git/objects",
-                                    source / "objects") for p in theirs)),
+                    (record.get("repo") and all(
+                        os.path.realpath(p) == objects_of(record["repo"])
+                        for p in theirs)),
                     "root is not a partial clone of the repository")
     del manifest["sides"][side]
     manifest.setdefault("attempts", []).append(record)

@@ -571,6 +571,33 @@ class BuildTests(unittest.TestCase):
                     s.discard_side(w.manifest, "cand")
                 shutil.rmtree(target)
 
+    def test_partial_clone_of_a_linked_worktree(self):
+        w = World(self)
+        wt = w.dir / "linked"
+        git(w.repo, "worktree", "add", "-q", "--detach", str(wt))
+
+        def killed(argv, cwd, env, stdin, log):
+            Path(log).write_text("")
+            raise s.Terminated("SIGTERM")
+
+        with self.assertRaises(s.Terminated):
+            s.build_side(wt, "cand", w.cand_pin, w.root, w.manifest,
+                         w.dir / "ev", w.dir / "scratch", runner=killed,
+                         probe=w.probe)
+        record = w.doc()["sides"]["cand"]
+        self.assertEqual(record["repo"], str(wt.resolve()))
+        target = Path(record["root"])
+        subprocess.run(["git", "clone", "-q", "--shared", "--no-checkout",
+                        str(wt), str(target)], check=True, env=GIT_ENV)
+        alt = (target / ".git/objects/info/alternates").read_text().strip()
+        # the alternate is the common objects directory, not the worktree's
+        self.assertEqual(os.path.realpath(alt),
+                         os.path.realpath(w.repo / ".git/objects"))
+        self.assertNotEqual(os.path.realpath(alt),
+                            os.path.realpath(wt / ".git"))
+        s.discard_side(w.manifest, "cand")
+        self.assertFalse(target.exists())
+
     def test_directories_are_made_inside_the_guarded_part(self):
         w = World(self)
         (w.dir / "ev").write_text("a file, not a directory")
@@ -994,6 +1021,23 @@ class CompareTests(unittest.TestCase):
                               extra=self.THYDATA["raw ints"]))
         record = self.dat_files(self.run_compare())[rel]
         self.assertEqual(record["fallback"], {"base": True, "cand": True})
+
+    def test_a_quoted_string_is_not_a_tag(self):
+        for tag in ("tag-str", "tag-tm", "tag-ty", "tag-ch", "tag-knm"):
+            text = mk_dat("t", strings=self.STRINGS, extra={
+                "tag-knm": '("k" ("tag-knm" 3 . 5))',
+                "tag-ch": '("k" ("tag-ch" . 5))',
+                "tag-str": '("k" ("tag-str" . 5))',
+                "tag-tm": '("k" ("tag-tm" . "%0"))',
+                "tag-ty": '("k" ("tag-ty" . "%0"))'}[tag])
+            canon = dat.canonical(text)
+            self.assertTrue(canon["fallback"], tag)
+            self.assertIn(["t", tag], json.loads(json.dumps(
+                canon["thydata"]))[-1][1][1][1], tag)
+        # the same data with a symbol tag does not need the fallback
+        self.assertFalse(dat.canonical(mk_dat(
+            "t", strings=self.STRINGS,
+            extra='("k" (tag-str . 5))'))["fallback"])
 
     def test_resolved_references_survive_a_table_reorder(self):
         rel = DAT.replace("num", "t")

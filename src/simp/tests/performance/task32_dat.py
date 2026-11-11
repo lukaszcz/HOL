@@ -329,7 +329,8 @@ class ThyData:
         t = self.tables
         if isinstance(x, Dot):
             head, tail = x.items, x.tail
-            tag = head[0] if len(head) == 1 else None
+            tag = head[0] if len(head) == 1 and \
+                isinstance(head[0], Sym) else None
             if tag in ("tag-tm", "tag-ty") and isinstance(tail, str) and \
                     not isinstance(tail, Sym):
                 return [tag, t.decode(tail)]
@@ -338,6 +339,7 @@ class ThyData:
             if tag == "tag-ch" and isinstance(tail, int):
                 return [tag, tail]
             if len(head) == 2 and head[0] == "tag-knm" and \
+                    isinstance(head[0], Sym) and \
                     isinstance(head[1], int) and isinstance(tail, int):
                 return ["tag-knm", t.s(head[1]), t.s(tail)]
             return ["d", [self.value(i) for i in head], self.value(tail)]
