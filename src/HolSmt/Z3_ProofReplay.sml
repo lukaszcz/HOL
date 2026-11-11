@@ -768,6 +768,8 @@ local
        hypotheses: fp(3)(bit-decomposition) must prove a definition before
        adding it through [state_define]. *)
     bit_decompositions : bit_decomposition list,
+    (* Fresh word1 names defined from bv1-blast concat hints. *)
+    concat_bits : Term.term HOLset.set,
     (* Exact per-translation operator provenance.  Only definitions selected
        by SmtLib's EncodedSymbol records may be unfolded during replay. *)
     translation_definitions : SmtLib.emitted_definition list,
@@ -795,6 +797,7 @@ local
       large_thm_cache = #large_thm_cache s,
       var_set = #var_set s,
       bit_decompositions = #bit_decompositions s,
+      concat_bits = #concat_bits s,
       translation_definitions = #translation_definitions s,
       skeleton_context = #skeleton_context s,
       word_context = #word_context s,
@@ -817,7 +820,7 @@ local
   fun oriented_definition_name var_set definition =
     Option.map Lib.fst (oriented_definition_parts var_set definition)
 
-  fun state_define (s : state) (terms : Term.term list) : state =
+  fun state_define_with_concat_bits (s : state) terms concat_bits : state =
     let
       val newly_rigid = List.mapPartial
         (oriented_definition_name (#var_set s)) terms
@@ -838,12 +841,16 @@ local
       large_thm_cache = #large_thm_cache s,
       var_set = #var_set s,
       bit_decompositions = #bit_decompositions s,
+      concat_bits = concat_bits,
       translation_definitions = #translation_definitions s,
       skeleton_context = #skeleton_context s,
       word_context = #word_context s,
       string_index_cache = #string_index_cache s,
       z3_version = #z3_version s
     } end
+
+  fun state_define (s : state) terms =
+    state_define_with_concat_bits s terms (#concat_bits s)
 
   (* Net indexing walks the unfolded term.  A large shared conclusion is
      cheap as a DAG but can be prohibitively expensive to index.  Keep such
@@ -867,6 +874,7 @@ local
         else #large_thm_cache s,
       var_set = #var_set s,
       bit_decompositions = #bit_decompositions s,
+      concat_bits = #concat_bits s,
       translation_definitions = #translation_definitions s,
       skeleton_context = #skeleton_context s,
       word_context = #word_context s,
@@ -6571,9 +6579,65 @@ local
     bv_rewrite_prove_with_pre_bblast rewrite_profile direct_bv lowered_bv
       no_pre_bblast definitions target
 
+  (* Preserve contiguous slices as one extraction instead of expanding a
+     separate word-width schema for every node in a long concat spine. *)
+  fun concat_extract_conv term =
+    let
+      val (left, right) = wordsSyntax.dest_word_concat term
+      val (high, left_low, source, _) = wordsSyntax.dest_word_extract left
+      val (middle, low, other_source, _) = wordsSyntax.dest_word_extract right
+      val _ = Term.aconv source other_source andalso
+        numSyntax.dest_numeral left_low =
+          Arbnum.plus1 (numSyntax.dest_numeral middle) orelse
+        raise Conv.UNCHANGED
+      (* Simplify only the bounded schema, before inserting a shared word. *)
+      val variable = Term.genvar (Term.type_of source)
+      val theorem = Drule.ISPECL [high, middle, low, variable]
+        (Thm.INST_TYPE
+          [{redex = Type.beta, residue = wordsSyntax.dim_of left},
+           {redex = Type.gamma, residue = wordsSyntax.dim_of right},
+           {redex = Type.delta, residue = wordsSyntax.dim_of term}]
+          wordsTheory.CONCAT_EXTRACT)
+      val theorem = simpLib.SIMP_RULE
+        (simpLib.++ (bossLib.arith_ss, wordsLib.SIZES_ss)) [] theorem
+      val theorem = Thm.INST [{redex = variable, residue = source}] theorem
+      val _ = Term.aconv (boolSyntax.lhs (Thm.concl theorem)) term orelse
+        raise Conv.UNCHANGED
+    in theorem end
+    handle Feedback.HOL_ERR _ => raise Conv.UNCHANGED
+
+  fun concat_compact_conv term =
+    let val (left, right) = wordsSyntax.dest_word_concat term
+    in
+      if wordsSyntax.is_word_literal left andalso
+         wordsSyntax.is_word_literal right then wordsLib.WORD_EVAL_CONV term
+      else concat_extract_conv term
+    end
+    handle Feedback.HOL_ERR _ => raise Conv.UNCHANGED
+
+  fun concat_word_prove context target =
+    let
+      val normalized = if SmtResource.contains
+          wordsSyntax.is_word_concat target then
+        SmtReplayCanon.dag_rewrite_conv concat_compact_conv target
+      else Thm.REFL target
+      val theorem = SmtWordGraph.prove_in context
+        (boolSyntax.rhs (Thm.concl normalized))
+    in Thm.EQ_MP (Thm.SYM normalized) theorem end
+
+  fun concat_definition_prove context definitions equation =
+    SmtFpProve.definition_bitblast_prove_with
+      (concat_word_prove context) definitions equation
+    handle HolSatLib.SAT_cex _ =>
+        raise ERR "concat_definition_prove" "concat identity is false"
+      | HolSatLib.SAT_satisfiable _ =>
+        raise ERR "concat_definition_prove" "concat identity is false"
+
   fun bv_rewrite_prove rewrite_profile pre_bblast (state : state) =
     bv_rewrite_prove_with_word_prover
-      (SmtWordGraph.prove_in (#word_context state)) rewrite_profile has_word_atom
+      (if HOLset.isEmpty (#concat_bits state) then
+         SmtWordGraph.prove_in (#word_context state)
+       else concat_word_prove (#word_context state)) rewrite_profile has_word_atom
       (has_allocated_fp_bv_atom state) pre_bblast
       (#translation_definitions state)
 
@@ -7473,10 +7537,13 @@ local
        which final replay eliminates as usual. *)
     (let
        val free_vars = replay_free_variables "z3_rewrite" t
-       val packed_vars = fp_packed_vars state
+       val has_concat_bit = not (HOLset.isEmpty
+         (HOLset.intersection (free_vars, #concat_bits state)))
+       val packed_vars = fp_packed_vars state @
+         HOLset.listItems (#concat_bits state)
        val _ = List.exists
            (fn var => HOLset.member (free_vars, var)) packed_vars orelse
-         raise ERR "z3_rewrite" "no FP packed word in rewrite"
+         raise ERR "z3_rewrite" "no packed word or concat bit in rewrite"
        val definitions = fp_per_bit_definitions state @
          HOLset.listItems (#definition_hyps state)
        (* E1(a): checked definitions reduce this fragment to BV blasting. *)
@@ -7484,7 +7551,8 @@ local
          (rewrite_profile "floating-point/bit-vectors"
             "rewrite(15)(fp-packed-bits)"
             (SmtFpProve.definition_bitblast_prove_with
-              (SmtWordGraph.prove_in (#word_context state)) definitions) t
+              (if has_concat_bit then concat_word_prove (#word_context state)
+               else SmtWordGraph.prove_in (#word_context state)) definitions) t
           handle Feedback.HOL_ERR holerr =>
             if SmtResource.is_resource_gate holerr then
               raise Feedback.HOL_ERR holerr
@@ -11002,7 +11070,65 @@ in
     recursive_rewrite_outer_for_test
       RecursiveAbstraction recurse fallback input
 
-  fun initial_replay_state_admitted admit
+  (* bv1-blast uses a bit before replay visits the concat rewrite that
+     names it.  Discover those definitions first; an unusable hint changes
+     no state.  Soundness still comes from final definition elimination. *)
+  fun define_concat_bits_with prove (state : state) equation =
+    let
+      val (source, packed) = boolSyntax.dest_eq equation
+      val _ = wordsSyntax.is_word_concat packed orelse
+        raise ERR "define_concat_bits" "not a concat decomposition"
+      val source_vars = replay_free_variables "define_concat_bits" source
+      val _ = HOLset.isEmpty
+        (HOLset.intersection (source_vars, #flexible_vars state)) orelse
+        raise ERR "define_concat_bits" "source has a flexible proof variable"
+      val word1 = wordsSyntax.mk_int_word_type 1
+      val seen = ref Term.empty_tmset
+      fun collect term tail =
+        if wordsSyntax.is_word_concat term then
+          let val (left, right) = wordsSyntax.dest_word_concat term
+          in collect left (collect right tail) end
+        else if Term.is_var term andalso Term.type_of term = word1 andalso
+                HOLset.member (#flexible_vars state, term) andalso
+                not (HOLset.member (!seen, term)) then
+          (seen := HOLset.add (!seen, term); term :: tail)
+        else raise ERR "define_concat_bits" "not distinct fresh word1 names"
+      val bits = collect packed []
+      val width = List.length bits
+      val _ = wordsSyntax.size_of source = Arbnum.fromInt width orelse
+        raise ERR "define_concat_bits" "concat width differs from source"
+      val definitions = Lib.mapi (fn offset => fn bit =>
+        let val index = numSyntax.term_of_int (width - offset - 1)
+        in boolSyntax.mk_eq (bit, wordsSyntax.mk_word_extract
+          (index, index, source, wordsSyntax.dest_word_type word1)) end) bits
+      val theorem = profile "concat(definition-proof)"
+        (prove definitions) equation
+      val _ = Term.aconv (Thm.concl theorem) equation orelse
+        raise ERR "define_concat_bits" "concat proof has a different conclusion"
+    in
+      state_define_with_concat_bits (state_cache_thm state theorem)
+        definitions (HOLset.union (#concat_bits state, !seen))
+    end
+    (* No proof node has requested this equation yet.  A shape, semantic or
+       resource refusal must leave its original replay path available. *)
+    handle Feedback.HOL_ERR _ => state
+
+  fun discover_concat_bits proof state =
+    let
+      fun collect (node, state) =
+        let
+          val state = case node of
+              REWRITE equation => define_concat_bits_with
+                (concat_definition_prove (#word_context state))
+                state equation
+            | _ => state
+        in List.foldl collect state (proofterm_premises node) end
+    in
+      Redblackmap.foldl (fn (_, node, state) => collect (node, state))
+        state (proof_steps proof)
+    end
+
+  fun new_replay_state_admitted admit
       allowed_asserted_hyps definitions proof : state = {
     datatype_admit = admit,
     allowed_asserted_hyps = allowed_asserted_hyps,
@@ -11014,6 +11140,7 @@ in
     large_thm_cache = [],
     var_set = proof_vars proof,
     bit_decompositions = proof_bit_decompositions proof,
+    concat_bits = Term.empty_tmset,
     translation_definitions = definitions,
     skeleton_context = SmtSkeletonDispatch.new_context arith_prove,
     word_context = SmtWordGraph.new_context (),
@@ -11021,6 +11148,10 @@ in
     string_index_cache = SmtStringProve.new_contextual_index_cache (),
     z3_version = proof_version proof
   }
+
+  fun initial_replay_state_admitted admit allowed definitions proof =
+    discover_concat_bits proof
+      (new_replay_state_admitted admit allowed definitions proof)
 
   fun initial_replay_state allowed definitions proof =
     initial_replay_state_admitted (SmtDatatypeProve.default_admission ())
@@ -11846,6 +11977,7 @@ in
     definition_occurrences_rev = SOME [],flexible_vars = #flexible_vars s,
     thm_cache = #thm_cache s,large_thm_cache = #large_thm_cache s,
     var_set = #var_set s,bit_decompositions = #bit_decompositions s,
+    concat_bits = #concat_bits s,
     translation_definitions = #translation_definitions s,
     skeleton_context = #skeleton_context s,word_context = #word_context s,
     fp_context = #fp_context s,
@@ -11854,9 +11986,10 @@ in
   fun replay_root_with_definition_occurrences_admitted admit definitions proof =
     SmtSeqProve.with_admission_errors (fn () =>
     let
-      val initial = record_definition_occurrences
-        (initial_replay_state_admitted admit
-          (proof_asserted_hyps proof) definitions proof)
+      val initial = discover_concat_bits proof
+        (record_definition_occurrences
+          (new_replay_state_admitted admit
+            (proof_asserted_hyps proof) definitions proof))
       val ((state,_),theorem) =
         thm_of_proofterm ((initial,proof),ID 0) Lib.I
     in {theorem = theorem,

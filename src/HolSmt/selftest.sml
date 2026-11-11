@@ -311,6 +311,12 @@ fun mk_CVCp expect_fun =
 
 val thm_CVCp = mk_CVCp (expect_thm true)
 
+(* Run small arithmetic regressions whenever cvc5 is configured, bypassing
+   mk_CVCp's numeric fragment filter for slow checked replay. *)
+val thm_CVCp_arith =
+  mk_test_fun (CVC.is_configured ()) (expect_thm true)
+    "cvc5 (arithmetic proofs)" HolSmtLib.CVC_TAC
+
 (* These small higher-order regressions need checked replay even though
    their function domains contain integers. *)
 val thm_CVCp_ho =
@@ -318,6 +324,11 @@ val thm_CVCp_ho =
     "cvc5 (higher-order proofs)"
     (REPEAT STRIP_TAC THEN HolSmtLib.CVC_TAC)
 val sat_CVCp = mk_CVCp expect_sat
+
+(* These bounded cardinality regressions must bypass the numeric filter. *)
+val thm_card_CVCp =
+  mk_test_fun (CVC.is_configured ()) (expect_thm true)
+    "cvc5 (proofs, finite CARD)" HolSmtLib.CVC_TAC
 
 (*****************************************************************************)
 (* HOL definitions (e.g., user-defined data types)                           *)
@@ -372,6 +383,12 @@ val graph_expect_thm = expect_thm
       [thm_CVCp]),
 
     (* propositional logic *)
+    (``!w:word16. w && 0xFFF8w = word_lsl (word_lsr w 3) 3``,
+      [thm_CVCp_arith]),
+    (``!w:word16. word_1comp w = 0w ==> w = -1w``,
+      [thm_CVCp_arith]),
+    (``LENGTH (xs:word8 list) <= 19 ==> 4 * LENGTH xs < 65536``,
+      [thm_CVCp_arith]),
     (``T``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
 
     (* Seq/Set/Bag checked-replay smoke tests.  `bool` has finite carrier,
@@ -387,6 +404,9 @@ val graph_expect_thm = expect_thm
       [thm_Z3p_v4, thm_CVCp]),
     (``(x : int) IN (s UNION t) <=> x IN s \/ x IN t``,
       [thm_CVC, thm_CVCp]),
+    (``!(a:'a) b. CARD {a; b} = 2 <=> a <> b``, [thm_card_CVCp]),
+    (``!(a:'a) b c. CARD {a; b; c} = 3 <=>
+        a <> b /\ a <> c /\ b <> c``, [thm_card_CVCp]),
     (* Z3 proves this through an array lemma outside its checked Bag replay
        ladder; cvc5 supplies the native checked Bag certificate. *)
     (``BAG_IN (x : bool) (BAG_INSERT y EMPTY_BAG) <=> x = y``, [thm_CVCp]),
@@ -530,19 +550,20 @@ val graph_expect_thm = expect_thm
     (``!n:num. v <= n + v``, [thm_Z3p, thm_CVC, thm_CVCp]),
     (``(v:num) - (w + 1) <= v``, [thm_Z3p, thm_CVC, thm_CVCp]),
 
+    (* Rational-bound normalization can eliminate every integer-to-real
+       cast before the arithmetic replay step abstracts its atoms. *)
+    (``LENGTH (xs:bool list) < 10 ==> 7 * LENGTH xs < 100``,
+      [thm_CVCp_arith]),
+
     (``(x:num) - 0 = x``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (``(x:num) - y = y - x``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
     (``(x:num) - y - z = x - (y + z)``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (``(x:num) <= y ==> (x - y = 0)``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp_arith]),
     (``((x:num) - y = 0) \/ (y - x = 0)``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
-
-    (* thm_CVCp omitted: CPC parsing fails on
-       ``(x:num) <= y ==> (x - y = 0)`` and
-       ``((x:num) - y = 0) \/ (y - x = 0)`` (unknown arith-max-geq2). *)
+      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp_arith]),
 
     (``(x:num) * 0 = 0``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
@@ -1233,6 +1254,8 @@ val graph_expect_thm = expect_thm
       [thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (* NIA: square nonneg *)
     (``(x:int) * x >= 0``, [thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (``(x:int) >= 4 /\ x <= 4 ==> 37 * x - 6 * (x * x) >= -37``,
+      [thm_Z3p_v4, thm_CVCp_arith]),
     (* NIA: bounded product *)
     (``(x:int) >= 5 /\ (y:int) >= 5 ==> x * y >= 25``,
       [thm_Z3, thm_CVCp
@@ -2182,6 +2205,12 @@ val graph_expect_thm = expect_thm
       [(*thm_AUTO,*) thm_CVC, thm_Z3_v4, thm_Z3p_v4]),
 
     (* regression tests *)
+
+    (* Z3 bv1-blast may visit fresh bits before their concat definition. *)
+    (``(w:word8) <> 0w /\ ~word_bit 0 w ==> w >>> 1 <> 0w``,
+      [thm_Z3p_v4]),
+    (``(w:256 word) <> 0w /\ ~word_bit 0 w ==> w >>> 1 <> 0w``,
+      [thm_Z3p_v4]),
 
     (``!(n:num) z y a. (3 * n + 1) * z <= y * a ==> 3 * (n * z) <= 2 * (y * a)``,
       [thm_AUTO, (*thm_CVC,*) thm_Z3(*, thm_Z3p*)]),
