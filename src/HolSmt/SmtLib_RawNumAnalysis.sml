@@ -40,8 +40,10 @@ struct
                 val domain =
                   Lib.fst (Type.dom_rng ((#type_of operations) rator))
                 val expected_arg =
-                  if (#is_integer_coercion operations) rator then NONE
-                  else SOME domain
+                  if (#is_integer_coercion operations) rator andalso
+                     not (case (#strip_comb operations) rand of
+                       (head, [_]) => (#is_num_head operations) head
+                     | _ => false) then NONE else SOME domain
                 val acc = visit NONE rator acc
                 val acc = visit expected_arg rand acc
               in
