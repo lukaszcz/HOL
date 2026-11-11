@@ -1657,6 +1657,7 @@ struct
     mk_rule ProofRule ("dt-cycle", "datatype_eq"),
     mk_rule ProofRule ("dt", "datatype"),
     mk_rule ProofRule ("resolution", "resolution"),
+    mk_rule ProofRule ("chain_resolution", "resolution"),
     mk_rule ProofRule ("chain_m_resolution", "resolution"),
     mk_rule ProofRule ("reordering", "reordering"),
     mk_rule ProofRule ("arith", "arith"),
