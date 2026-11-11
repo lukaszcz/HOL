@@ -7681,6 +7681,64 @@ end
 (* cvc5's array encoding gives a marked set an Array sort, so every use of
    that set must be an Array too.  Each goal once reached cvc5 with a
    select or store on a function-sorted term. *)
+local
+  structure G = SmtReplayGraph
+  structure S = SmtReplaySource
+  structure W = SmtReplayInvocationWork
+  structure V = SmtLib_GraphSourcePortfolio
+  structure GP = SmtLib_GraphPreprocess
+in
+fun smtlib_graph_function_let_collection_success () =
+let
+  val limit = SmtReplayResourcePolicy.AtMost 10000
+  fun check require_application goal =
+    let
+      val graph = G.new ()
+      val scope = G.root_scope graph
+      val sources = S.new_with_policy graph scope limit
+        {assumptions=[],goal=goal}
+      val work = W.begin_with_policy graph scope sources
+        {limits={input_limit=limit,output_limit=limit,template_limit=limit},
+         work_limit=limit}
+      fun run () =
+        let
+          val {assumptions,denied} = V.originals_with_policy work
+          val validation = V.validate_portfolio_with_policy work
+            {assumptions=assumptions,goal= #node (S.goal_source sources),
+             denied=denied}
+          val query = GP.prepare_query_with_policy work
+            (GP.from_portfolio_with_policy work validation)
+          fun open_view caller node = ignore
+            (G.record_opened_view_with_policy graph caller limit node)
+          val analysis =
+            SmtLib_GraphTranslation.analyse_native_query_with_policy
+              work query open_view
+        in
+          assert (not (List.null (#sets analysis)),
+            "function-valued collection let lost its collection markers");
+          assert (not require_application orelse
+            List.exists (fn {node,...} =>
+              case G.view graph node of
+                G.Application (head,_) =>
+                  (case G.view graph head of G.Variable _ => true
+                   | _ => false)
+              | _ => false) (#sets analysis),
+            "function-valued let lost its authentic application marker");
+          List.app (fn {scope,node} =>
+            (G.validate_scope graph scope; ignore (G.type_of graph node)))
+            (#sets analysis)
+        end
+      val result = Exn.capture run ()
+      val _ = W.close work
+      val _ = G.close_scope graph scope
+    in Exn.release result end
+in
+  check false ``let f (a:int) = ({}:int set) in
+    (P:(int -> int set) -> bool) f``;
+  check true ``let f (a:int) = ({}:int set) in (7:int) IN f 0``
+end
+end
+
 fun smtlib_cvc5_array_set_sorts_success () =
 let
   fun typechecks checked (name, goal) =
@@ -15713,6 +15771,45 @@ in
     [theorem, declared_theorem, nested_theorem, listed_theorem, exists_theorem]
 end
 
+fun cpc_private_const_collection_trust_success () =
+let
+  val goal = ``(s:int set) UNION t = t UNION s``
+  val (translation, _) = CVC.goal_to_SmtLib_translation
+    ([], ``CARD ({}:int set) = 0``)
+  fun check private =
+    let
+      val atom = if private then "(@const 0 (Set Int))" else "s"
+      val definition = if private then
+          "(step @def :rule trust :args ((= " ^ atom ^ " s))) "
+        else "(step @def :rule refl :args (s)) "
+      val text = "((declare-const s (Set Int)) (declare-const t (Set Int)) " ^
+        "(assume @neg (not (= (set.union s t) (set.union t s)))) " ^ definition ^
+        "(step @lemma :rule trust :args ((= (set.union " ^ atom ^
+        " t) (set.union t " ^ atom ^ ")))) " ^
+        "(step @left :rule cong :premises (@def) :args ((set.union " ^
+        atom ^ " t))) " ^
+        "(step @right :rule cong :premises (@def) :args ((set.union t " ^
+        atom ^ "))) " ^
+        "(step @back :rule symm :premises (@left)) " ^
+        "(step @source :rule trans :premises (@back @lemma @right)) " ^
+        "(step @out false :rule contra :premises (@source @neg)))"
+      val input = TextIO.openString text
+      val proof = Portable.finally (fn () => TextIO.closeIn input)
+        (CPC_ProofParser.parse_stream_with_version
+          (SmtLib.parser_dicts_for_translation translation) "1.3.4") input
+      val theorem = CPC_ProofReplay.check_proof ([], goal, proof)
+    in
+      assert (Thm.concl theorem ~~ boolSyntax.F andalso
+          HOLset.equal (Thm.hypset theorem,
+            HOLset.add (Term.empty_tmset, boolSyntax.mk_neg goal)),
+        "CPC deferred collection trust retained an extra hypothesis");
+      check_oracle_tags "CPC deferred collection trust" theorem
+    end
+in
+  check false;
+  check true
+end
+
 fun cpc_private_const_purification_success () =
 let
   val proof = parse_cpc_proof_string
@@ -15801,6 +15898,9 @@ let
   val definition = equality private source
   val closed = close [definition] [] [definition]
   val collision = close [definition] [private] [definition]
+  val bound = boolSyntax.mk_forall (private, private)
+  val bound_definition = equality private bound
+  val bound_closed = close [bound_definition] [bound] [bound_definition]
   val unrecorded = close [] [] [definition]
   val recursive = equality private (boolSyntax.mk_neg private)
   val cycle = [equality private other,
@@ -15809,6 +15909,7 @@ let
     equality private boolSyntax.F]
 in
   assert_no_hyps ("CPC exact purification closure", closed);
+  assert_no_hyps ("CPC purification ignores bound occurrences", bound_closed);
   assert (not (List.null (Thm.hyp collision)),
     "CPC purification instantiated an original-context variable");
   assert (not (List.null (Thm.hyp unrecorded)),
@@ -37396,6 +37497,8 @@ let
       smtlib_seq_set_bag_feature_inference_success),
     ("smtlib_native_set_translation_success",
       smtlib_native_set_translation_success),
+    ("smtlib_graph_function_let_collection_success",
+      smtlib_graph_function_let_collection_success),
     ("smtlib_cvc5_array_set_sorts_success",
       smtlib_cvc5_array_set_sorts_success),
     ("smtlib_translation_context_isolation_success",
@@ -37616,6 +37719,8 @@ let
       cpc_proof_replay_ho_cong_nary_success),
     ("cpc_private_const_user_sorts_success",
       cpc_private_const_user_sorts_success),
+    ("cpc_private_const_collection_trust_success",
+      cpc_private_const_collection_trust_success),
     ("cpc_private_const_purification_success",
       cpc_private_const_purification_success),
     ("ordinary_const_declaration",ordinary_const_declaration),

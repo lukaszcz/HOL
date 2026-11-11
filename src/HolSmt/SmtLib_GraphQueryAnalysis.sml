@@ -668,10 +668,17 @@ struct
                     (fn saved => (#same operations) (term,saved)) terms
               fun collect role is_collection policy initial =
                 let
-                  fun add term terms =
-                    if is_collection (type_of term) andalso
-                        not (member term terms)
-                    then (spend 4;term :: terms) else terms
+                  fun add (term as Term _) terms =
+                        if is_collection (type_of term) andalso
+                            not (member term terms)
+                        then (spend 4;term :: terms) else terms
+                    | add (LetPattern {value,...}) terms =
+                        List.foldl (fn (candidate, result) =>
+                          case candidate of
+                            Term _ => if lexical_same (value,candidate)
+                              then add candidate result else result
+                          | _ => result) terms ordered
+                    | add _ terms = terms
                   fun classify (term,head) = case view head of
                       Constant =>
                         let val _ = valid ()

@@ -73,6 +73,31 @@ struct
   fun pointer_bucket depth modulus root =
     pointer_bucket_observed (fn _ => ()) depth modulus root
 
+  (* Application sharing is context independent. Leave binders to the
+     kernel's free-variable traversal rather than opening them with names. *)
+  fun FVL_dag roots initial =
+    let
+      val buckets = Array.array (4093, [] : Term.term list)
+      fun seen term =
+        let
+          val slot = pointer_bucket 4 (Array.length buckets) term
+          val saved = Array.sub (buckets, slot)
+        in
+          if List.exists (fn other => Portable.pointer_eq (term, other))
+              saved then true
+          else (Array.update (buckets, slot, term :: saved); false)
+        end
+      fun walk [] free = free
+        | walk (term :: rest) free =
+            if Term.is_var term then walk rest (HOLset.add (free, term))
+            else if Term.is_comb term then
+              if seen term then walk rest free
+              else let val (operator, operand) = Term.dest_comb term
+                   in walk (operator :: operand :: rest) free end
+            else if Term.is_abs term then walk rest (Term.FVL [term] free)
+            else walk rest free
+    in walk roots initial end
+
   (* Stock standard dest_abs rebuilds its body. Beta on an atomic argument
      exposes the same syntax lazily, including when the input is a closure.
      Experimental dest_abs already returns its body without rebuilding it.
