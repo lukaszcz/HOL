@@ -717,7 +717,12 @@ struct
   fun cpc_canon_rule theorem = Conv.CONV_RULE cpc_canon_conv theorem
 
   fun normalize_polynomial conv tm =
-    compose [cpc_term_canon_conv, conv] tm
+    compose
+      [cpc_term_canon_conv,
+       dag_rewrite_conv (Conv.FIRST_CONV (List.map Conv.REWR_CONV
+         [integerTheory.INT_NEG_0, integerTheory.INT_NEGNEG,
+          realTheory.REAL_NEG_0, realTheory.REAL_NEGNEG])),
+       conv] tm
 
   fun normalize_polynomial_function tm =
     let
