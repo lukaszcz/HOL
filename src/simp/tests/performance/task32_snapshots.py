@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""TASK32 independent snapshots: build, verify (v2 manifest) and compare.
+"""TASK32 independent snapshots: build, discard, verify (v2) and compare.
 
   build    one snapshot (`--side base|cand`): `git clone --shared
            --no-checkout` of the repository into ROOT/<label>, detached at the
@@ -7,29 +7,59 @@
            smart-configure and `bin/build --no-cache -t -jN
            --seq=tools/sequences/upto-parallel`, under an `env -i`
            environment and a fresh HOME that are the same for both sides. The
-           record of the side goes into the manifest (SCHEMA).
-  verify   fail-closed audit of the manifest against the live trees: pins,
-           tree and input hashes, the sealed patch, no stale products, every
-           product seal and mtime inside the build interval, no shared
-           inodes, identical argv/env, the toolchain, no nested roots.
-  compare  the untimed behaviour comparison: every common `*Theory.sig` and
-           `*Theory.dat` and the normalized selftest logs of the two trees.
-           Any unexplained difference makes the result `blocked`.
+           record of the side goes into the manifest (SCHEMA). A failed,
+           interrupted (SIGTERM/SIGHUP) or otherwise incomplete build leaves
+           an `incomplete` record that only `discard` removes.
+  discard  moves a side's record into the manifest's `attempts` list and
+           deletes its tree and HOME, so the side can be built again.
+  verify   fail-closed audit of the manifest against the live trees: both
+           pins, tree and input hashes, the sealed patch (blob-equal to the
+           candidate's mktool.ML), the compiled-source equality of the
+           candidate with C31, no stale products, every product seal and
+           mtime inside the build interval, no shared inodes, identical
+           argv/env, the toolchain, no nested roots.
+  compare  the untimed behaviour comparison: every common untracked
+           `*Theory.sig` and `*Theory.dat` and the normalized selftest logs
+           of the two trees. Any unexplained difference makes the result
+           `blocked`. A `.dat` byte difference is explained only by
+           `--dat-printer`: each tree's own `dat-printer` (the HOL tool that
+           prints a `.dat`'s theorems; `theorytool` only reports keys, graphs
+           and unused theorems of directories) must print identical text.
+
+Product set. After a build the products are every file `git status
+--porcelain --ignored=matching --untracked-files=all` lists (directories
+followed, so each file is sealed on its own), except the `.hol/build-logs`
+and the non-selftest `.hol/logs` entries, which timing drivers may write.
+A seal is sha256, size and mtime (a symlink: its text and own mtime); the
+inode is deliberately not recorded, so that a driver may restore a product by
+copying its bytes and mtime back. Inodes are read live, only to show that no
+file is shared between the sides or linked twice within one.
+
+`clone --shared` borrows objects from the source repository through
+alternates; they are recorded, and verify fails closed when one is gone.
 
 The labels `base` and `cand` have the same length so that the HOLDIR strings
 embedded in heaps and loaders do too. Nothing here edits the trees after the
-build; verify and compare only read them.
+build; verify and compare only read them. Audit commands run in a fixed
+environment (no user git configuration).
 """
 import argparse
+from contextlib import contextmanager
+import gzip
 import hashlib
+import inspect
 import json
 import os
 from pathlib import Path
 import platform
 import re
+import shutil
+import signal
+import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 sys.dont_write_bytecode = True
@@ -40,7 +70,7 @@ from performance_schema import require
 import startup_gate as sg
 
 SCHEMA = "task32-independent-build-v2"
-BEHAVIOR_SCHEMA = "task32-behavior-v1"
+BEHAVIOR_SCHEMA = "task32-behavior-v2"
 LABELS = ("base", "cand")
 PATH = "/usr/local/bin:/usr/bin:/bin"
 POLY = "/usr/local/bin/poly"
@@ -48,14 +78,38 @@ SEQUENCE = "tools/sequences/upto-parallel"
 CONFIGURE_INPUT = "tools/smart-configure.sml"
 MKTOOL_PATH = sg.MKTOOL[0]
 SYSTEML = "tools/Holmake/Systeml.sml"
+DAT_PRINTER = "src/portableML/rawtheory/dat-printer"
+C31 = "bdc4dac42d"
+UNCOMPILED = ":!src/simp/tests"
 BIN_PRODUCTS = ("bin/hol", "bin/hol.state0", "bin/hol.state",
                 "bin/hol.state.min", "bin/Holmake")
-PRODUCT_SUFFIXES = (".uo", ".ui", ".dat")
 STALE_NAMES = re.compile(r"(.*\.(uo|ui|dat)|hol\.state.*|\.hol)\Z")
 AREAS = ("num", "integer", "real", "boss", "list", "pred_set")
 PLACEHOLDER = "$(HOLDIR)"
 ENV_KEYS = ("HOME", "LC_ALL", "PATH", "TERM", "TMPDIR", "TZ")
+COMMANDS = ["clone", "checkout", "configure", "build"]
 TIMEOUT = 6 * 3600
+# Run-dependent text of the selftest and check logs (surveyed over the
+# num, integer, real, boss, list and pred_set logs of a built tree):
+# testutils.timed prints `[GC = 0.015] ` and `(0.003s)`; Holmake logs
+# `Theory "x" took 1.4s to build`; cv_compute prints `runtime: ...s,
+# gctime: ...s, systime: ...s.`; the banner holds the build date. Paths of
+# the root are replaced by PLACEHOLDER first. Applied in this order.
+LOG_RULES = (
+    ("ansi", r"\x1b\[[0-9;?]*[A-Za-z]", ""),
+    ("gc-tag", r"\[GC = [0-9.]+\] ", ""),
+    ("timing", r"\(\s*[0-9]+(\.[0-9]+)?\s*m?s\s*\)", "(<TIME>)"),
+    ("theory-time", r"took [0-9.]+m?s to build", "took <TIME> to build"),
+    ("cpu-times", r"\b(runtime|gctime|systime): +[0-9.]+s",
+     r"\1: <TIME>"),
+    ("banner-date", r"built [A-Z][a-z]{2} [A-Z][a-z]{2} +[0-9]+ "
+     r"[0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4}", "built <DATE>"))
+NORMALIZERS = [(name, re.compile(pattern), repl)
+               for name, pattern, repl in LOG_RULES]
+
+
+class Terminated(BaseException):
+    """SIGTERM or SIGHUP reached the builder."""
 
 
 def sha256_file(path):
@@ -76,20 +130,50 @@ def environment(home, tmpdir="/dev/shm/t32/tmp"):
             "TERM": "dumb", "TMPDIR": str(tmpdir)}
 
 
+def audit_environment():
+    """The environment of every audit command: no user git configuration
+    and no inherited GIT_* variable."""
+    return {"PATH": PATH, "HOME": "/nonexistent", "LC_ALL": "C",
+            "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null"}
+
+
+@contextmanager
+def audit_process_environment():
+    """os.environ replaced by the audit environment (for library code that
+    runs git with the inherited one)."""
+    saved = dict(os.environ)
+    os.environ.clear()
+    os.environ.update(audit_environment())
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(saved)
+
+
+def git_run(root, *args, check=True):
+    return subprocess.run(["git", "-c", "color.ui=never", "-C", str(root),
+                           *args], check=check, env=audit_environment(),
+                          stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE)
+
+
 def git_bytes(root, *args):
-    return subprocess.run(["git", "-C", str(root), *args], check=True,
-                          stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE).stdout
+    return git_run(root, *args).stdout
+
+
+def git(root, *args):
+    return git_bytes(root, *args).decode().strip()
 
 
 def input_hash(root):
     """sha256 of `git ls-files -s` and the working-tree patch."""
     return sha256_bytes(git_bytes(root, "ls-files", "-s") +
-                        git_bytes(root, "diff"))
+                        git_bytes(root, "diff", "--no-ext-diff"))
 
 
 def patch_seal(root):
-    data = git_bytes(root, "diff")
+    data = git_bytes(root, "diff", "--no-ext-diff")
     return {"sha256": sha256_bytes(data), "bytes": len(data)}
 
 
@@ -98,6 +182,22 @@ def nested(first, second):
         Path(os.path.realpath(second))
     return first == second or first.is_relative_to(second) or \
         second.is_relative_to(first)
+
+
+def require_location(target, repo):
+    """A snapshot may sit inside the repository only where git ignores it
+    and tracks nothing; the repository may never sit inside it."""
+    target, repo = Path(os.path.realpath(target)), \
+        Path(os.path.realpath(repo))
+    require(target != repo and not repo.is_relative_to(target),
+            "snapshot nested with repository")
+    if target.is_relative_to(repo):
+        ignored = git_run(repo, "check-ignore", "-q", str(target),
+                          check=False).returncode == 0
+        tracked = git(repo, "ls-files", "--",
+                      target.relative_to(repo).as_posix())
+        require(ignored and not tracked, "snapshot nested with repository "
+                "outside an ignored, untracked path")
 
 
 # -- toolchain ---------------------------------------------------------
@@ -112,19 +212,43 @@ def _first_line(argv, env):
     return p.stdout.strip().splitlines()[0] if p.stdout.strip() else ""
 
 
-def _libpolyml(poly):
-    p = subprocess.run(["ldd", poly], stdout=subprocess.PIPE,
-                       stderr=subprocess.DEVNULL, text=True)
-    for line in p.stdout.splitlines():
-        if "libpolyml" in line and "=>" in line:
-            return os.path.realpath(line.split("=>")[1].split()[0])
-    return None
+def parse_ldd(text):
+    """{soname: resolved real path} of an `ldd` listing."""
+    found = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if "=>" in line:
+            name, rest = line.split("=>", 1)
+            fields = rest.split()
+            require(fields and fields[0] != "not", "unresolved library: " +
+                    line)
+            found[name.strip()] = os.path.realpath(fields[0])
+        elif line.startswith("/"):
+            path = line.split()[0]
+            found[os.path.basename(path)] = os.path.realpath(path)
+    return found
+
+
+def parse_polyc_libdir(text):
+    """The LIBDIR of a polyc script, with its ${prefix}-style variables
+    expanded."""
+    values = {}
+    for line in text.splitlines():
+        found = re.fullmatch(r'([A-Za-z_]+)="?([^"]*)"?', line.strip())
+        if found:
+            values.setdefault(found.group(1), found.group(2))
+    value = values.get("LIBDIR")
+    for _ in range(8):
+        if value is None or "${" not in value:
+            break
+        value = re.sub(r"\$\{([A-Za-z_]+)\}",
+                       lambda m: values.get(m.group(1), m.group(0)), value)
+    return value if value and "${" not in value else None
 
 
 def _libpolymain(polyc):
-    text = Path(polyc).read_text(errors="replace")
-    found = re.search(r'^\s*LIBDIR="?([^"\s]+)', text, re.M)
-    candidates = ([Path(found.group(1)) / "libpolymain.a"] if found else [])
+    libdir = parse_polyc_libdir(Path(polyc).read_text(errors="replace"))
+    candidates = ([Path(libdir) / "libpolymain.a"] if libdir else [])
     candidates.append(Path(polyc).resolve().parent.parent / "lib" /
                       "libpolymain.a")
     for path in candidates:
@@ -134,16 +258,19 @@ def _libpolymain(polyc):
 
 
 def probe_toolchain(poly=POLY, env=None):
-    """The toolchain record: versions and file hashes."""
+    """The toolchain record: versions and file hashes (every library `ldd`
+    resolves for poly included)."""
     env = env if env is not None else environment("/nonexistent")
     poly = os.path.realpath(poly)
     polyc = os.path.realpath(str(Path(poly).with_name("polyc")))
-    version = subprocess.run([poly, "-v"], env=env, stdin=subprocess.DEVNULL,
-                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                             text=True, timeout=60).stdout.strip()
-    files = {"poly": poly, "polyc": polyc, "libpolyml": _libpolyml(poly),
+    run = dict(env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+               stderr=subprocess.STDOUT, text=True, timeout=60)
+    record = {"poly_v": subprocess.run([poly, "-v"], **run).stdout.strip(),
+              "files": {}}
+    libs = parse_ldd(subprocess.run(["ldd", poly], **run).stdout)
+    files = {"poly": poly, "polyc": polyc,
              "libpolymain.a": _libpolymain(polyc)}
-    record = {"poly_v": version, "files": {}}
+    files.update({"lib:" + k: v for k, v in libs.items()})
     for name, path in files.items():
         record["files"][name] = None if path is None else \
             {"path": path, "sha256": sha256_file(path)}
@@ -176,9 +303,9 @@ def same_toolchain(recorded, live):
 # -- running -----------------------------------------------------------
 
 def run_command(argv, cwd, env, stdin, log, fds=()):
-    """Run one command with exactly `env`, `stdin` (a path or None for
-    /dev/null) and its output in the new file `log`; returns its exit."""
-    import signal
+    """Run one command with exactly `env`, `stdin` (a path, else
+    /dev/null) and its output in the new file `log`; returns its exit. On
+    timeout or any interruption its process group is killed."""
     with Path(log).open("x") as out:
         source = open(stdin, "rb") if stdin else subprocess.DEVNULL
         try:
@@ -196,9 +323,9 @@ def run_command(argv, cwd, env, stdin, log, fds=()):
                 source.close()
 
 
-def execute(runner, name, argv, cwd, env, stdin, logs, side):
+def execute(runner, name, argv, cwd, env, stdin, logs, side, attempt):
     """One recorded command: the record holds everything the audit needs."""
-    log = Path(logs) / ("%s-%s.log" % (side, name))
+    log = Path(logs) / ("%s-a%d-%s.log" % (side, attempt, name))
     start = time.time_ns()
     code = runner(argv, cwd, env, stdin, log)
     end = time.time_ns()
@@ -210,49 +337,33 @@ def execute(runner, name, argv, cwd, env, stdin, logs, side):
             "log": str(log), "log_hash": a.seal(log)}
 
 
+@contextmanager
+def terminating():
+    """SIGTERM and SIGHUP raise Terminated (unless ignored), so that the
+    cleanup paths run and a running child's group is killed."""
+    saved = {}
+
+    def handler(number, frame):
+        raise Terminated(signal.Signals(number).name)
+
+    if threading.current_thread() is threading.main_thread():
+        for number in (signal.SIGTERM, signal.SIGHUP):
+            old = signal.getsignal(number)
+            if old != signal.SIG_IGN:
+                saved[number] = old
+                signal.signal(number, handler)
+    try:
+        yield
+    finally:
+        for number, old in saved.items():
+            signal.signal(number, old)
+
+
 # -- products ----------------------------------------------------------
 
-def is_product(rel, name):
-    return name.endswith(PRODUCT_SUFFIXES) or \
-        re.fullmatch(r".*Theory\.sig", name) is not None or \
-        ("selftest" in name and name.endswith(".log"))
-
-
-def scan_products(root):
-    """{relative path: seal} of the bin products, every sigobj and object
-    file, theory signature and selftest log. A symlink is followed to its
-    target, which must lie inside the root."""
-    root = Path(root).resolve(strict=True)
-    tracked = tracked_paths(root)
-    found = {}
-    cache = {}
-
-    def seal_of(path):
-        target = a.contained(root, str(path))
-        if target not in cache:
-            st = target.stat()
-            cache[target] = {"sha256": sha256_file(target),
-                             "bytes": st.st_size, "mtime_ns": st.st_mtime_ns,
-                             "dev": st.st_dev, "ino": st.st_ino,
-                             "resolved": target.relative_to(root).as_posix()}
-        return dict(cache[target])
-
-    for rel in BIN_PRODUCTS:
-        require((root / rel).is_file(), "missing product " + rel)
-        found[rel] = seal_of(root / rel)
-    for folder, dirs, names in os.walk(root):
-        dirs[:] = [d for d in dirs if d != ".git"]
-        for name in names:
-            path = Path(folder) / name
-            rel = path.relative_to(root).as_posix()
-            if rel not in found and rel not in tracked and \
-                    is_product(rel, name):
-                found[rel] = seal_of(path)
-    return dict(sorted(found.items()))
-
-
 def stale_products(root, tracked):
-    """Untracked paths that look like products of an earlier build."""
+    """Untracked paths that look like products of an earlier build (this
+    also finds the empty `.hol` directories git does not list)."""
     root, found = Path(root), []
     for folder, dirs, names in os.walk(root):
         dirs[:] = [d for d in dirs if d != ".git"]
@@ -264,7 +375,7 @@ def stale_products(root, tracked):
 
 
 def tracked_paths(root):
-    out = git_bytes(root, "ls-files", "-z").decode()
+    out = git_bytes(root, "ls-files", "-z").decode(errors="surrogateescape")
     return {p for p in out.split("\0") if p}
 
 
@@ -272,6 +383,71 @@ def status_lines(root, *extra):
     out = git_bytes(root, "status", "--porcelain=v1",
                     "--untracked-files=all", *extra).decode()
     return [line for line in out.splitlines() if line]
+
+
+def excluded(rel):
+    """The `.hol` entries timing drivers may write: build logs and logs
+    that are not selftest logs."""
+    parts = rel.split("/")
+    for i, part in enumerate(parts[:-1]):
+        if part == ".hol" and parts[i + 1] == "build-logs":
+            return True
+        if part == ".hol" and parts[i + 1] == "logs" and \
+                "selftest" not in parts[-1]:
+            return True
+    return False
+
+
+def listed_files(root):
+    """Every untracked or ignored file git lists, directories followed."""
+    out = git_bytes(root, "status", "--porcelain=v1", "-z",
+                    "--untracked-files=all", "--ignored=matching")
+    found = set()
+    for entry in out.decode(errors="surrogateescape").split("\0"):
+        if entry[:2] not in ("??", "!!"):
+            continue
+        path = entry[3:]
+        if path.endswith("/"):
+            for folder, _, names in os.walk(Path(root) / path):
+                for name in names:
+                    found.add((Path(folder) / name).relative_to(root)
+                              .as_posix())
+        else:
+            found.add(path)
+    return sorted(p for p in found if not excluded(p))
+
+
+def seal_product(root, rel):
+    path = Path(root) / rel
+    st = path.lstat()
+    if stat.S_ISLNK(st.st_mode):
+        real = Path(os.path.realpath(path))
+        require(real.is_relative_to(root), "product link leaves the root: "
+                + rel)
+        return {"kind": "link", "link": os.readlink(path),
+                "mtime_ns": st.st_mtime_ns}
+    require(stat.S_ISREG(st.st_mode), "product is not a file: " + rel)
+    return {"kind": "file", "sha256": sha256_file(path),
+            "bytes": st.st_size, "mtime_ns": st.st_mtime_ns}
+
+
+def scan_products(root):
+    """{relative path: seal} of every product (see the module docstring)."""
+    root = Path(root).resolve(strict=True)
+    found = {rel: seal_product(root, rel) for rel in listed_files(root)}
+    for rel in BIN_PRODUCTS:
+        require(rel in found, "missing product " + rel)
+    return dict(sorted(found.items()))
+
+
+def inodes(root, products):
+    """{path: (dev, ino)} of the regular-file products, read live."""
+    result = {}
+    for rel, seal in products.items():
+        if seal["kind"] == "file":
+            st = (Path(root) / rel).lstat()
+            result[rel] = (st.st_dev, st.st_ino)
+    return result
 
 
 # -- build -------------------------------------------------------------
@@ -298,6 +474,18 @@ def store_manifest(path, manifest):
     os.replace(stream.name, path)
 
 
+def systeml_hashes(root):
+    data = (Path(root) / SYSTEML).read_bytes()
+    return {"raw": sha256_bytes(data),
+            "normalized": sha256_bytes(
+                data.replace(str(root).encode(), b"<ROOT>"))}
+
+
+def alternates(root):
+    path = Path(root) / ".git/objects/info/alternates"
+    return path.read_text().split() if path.exists() else []
+
+
 def build_side(repo, side, pin, root, manifest_path, logs, scratch, *,
                mktool=False, cand_pin=None, jobs=8, poly=POLY,
                tmpdir="/dev/shm/t32/tmp", runner, probe=probe_toolchain,
@@ -309,20 +497,24 @@ def build_side(repo, side, pin, root, manifest_path, logs, scratch, *,
     a.exact_pin(pin)
     repo, root = Path(repo).resolve(strict=True), Path(root)
     target, logs, scratch = root / side, Path(logs), Path(scratch)
-    require(not os.path.lexists(target), "target exists: %s" % target)
+    require(not os.path.lexists(target), "target exists (discard it "
+            "first?): %s" % target)
     other = root / LABELS[1 - LABELS.index(side)]
     for path in (target, other):
-        require(not nested(path, repo), "snapshot nested with repository")
+        require_location(path, repo)
     require(not nested(target, other), "nested snapshot roots")
     for folder in (logs, scratch):
         require(not nested(folder, target) and not nested(folder, other),
                 "evidence/scratch inside a snapshot root")
     manifest = load_manifest(manifest_path)
     require(manifest.get("schema") == SCHEMA, "manifest schema")
-    require(side not in manifest["sides"], "side already recorded")
+    require(side not in manifest["sides"], "side already recorded "
+            "(discard it first)")
     if mktool:
         a.exact_pin(cand_pin)
-    home = scratch / ("home-" + side)
+    attempt = len([x for x in manifest.get("attempts", [])
+                   if x.get("label") == side])
+    home = scratch / ("home-%s-a%d" % (side, attempt))
     require(not home.exists(), "HOME is not fresh: %s" % home)
     home.mkdir(parents=True)
     Path(tmpdir).mkdir(parents=True, exist_ok=True)
@@ -330,54 +522,64 @@ def build_side(repo, side, pin, root, manifest_path, logs, scratch, *,
     root.mkdir(parents=True, exist_ok=True)
     env = environment(home, tmpdir)
     record = {"label": side, "root": str(target), "home": str(home),
-              "pin": pin, "mktool": mktool, "root_existed_before": False,
-              "commands": []}
+              "pin": pin, "mktool": mktool, "attempt": attempt,
+              "cand_pin": cand_pin if mktool else None, "commands": []}
 
     def step(name, argv, cwd, stdin=None):
-        entry = execute(runner, name, argv, cwd, env, stdin, logs, side)
+        entry = execute(runner, name, argv, cwd, env, stdin, logs, side,
+                        attempt)
         record["commands"].append(entry)
         require(entry["exit"] == 0, "%s failed (exit %s)" %
                 (name, entry["exit"]))
 
-    try:
-        step("clone", ["git", "clone", "--shared", "--no-checkout",
-                       str(repo), str(target)], repo)
-        step("checkout", ["git", "checkout", "--detach", pin], target)
-        record["tree"] = a.git(target, "rev-parse", "HEAD^{tree}")
-        if mktool:
-            sealed = sg.apply_mktool(target)
-            blob = a.git(target, "hash-object", MKTOOL_PATH)
-            want = a.git(repo, "rev-parse", "%s:%s" % (cand_pin, MKTOOL_PATH))
-            require(blob == want, "patched mktool.ML is not blob-equal to "
-                    "the candidate's")
-            record["patch"] = dict(sealed, candidate_blob=want)
-        else:
+    with terminating():
+        try:
+            step("clone", ["git", "clone", "--shared", "--no-checkout",
+                           str(repo), str(target)], repo)
+            record["alternates"] = alternates(target)
+            step("checkout", ["git", "checkout", "--detach", pin], target)
+            record["tree"] = git(target, "rev-parse", "HEAD^{tree}")
             record["patch"] = None
-        record["status_before"] = status_lines(target)
-        record["ignored_before"] = [
-            line for line in status_lines(target, "--ignored=matching")
-            if line.startswith("!!")]
-        expected = [" M " + MKTOOL_PATH] if mktool else []
-        require(record["status_before"] == expected,
-                "tree is not clean (or not exactly the sealed patch)")
-        require(not record["ignored_before"], "ignored files before build")
-        record["stale_before"] = stale_products(target, tracked_paths(target))
-        require(not record["stale_before"], "stale products before build")
-        record["input_hash"] = input_hash(target)
-        step("configure", [poly], target, target / CONFIGURE_INPUT)
-        step("build", ["bin/build", "--no-cache", "-t", "-j%d" % jobs,
-                       "--seq=" + SEQUENCE], target)
-    except BaseException:
-        manifest["sides"][side] = dict(record, incomplete=True)
-        store_manifest(manifest_path, manifest)
-        raise
-    record["build_interval_ns"] = [record["commands"][2]["start_ns"],
-                                   record["commands"][3]["end_ns"]]
-    record["products"] = scan_products(target)
-    record["systeml"] = systeml_hashes(target)
-    live = probe(poly, env)
-    if "toolchain" in manifest:
-        same_toolchain(manifest["toolchain"], live)
+            if mktool:
+                with audit_process_environment():
+                    sealed = sg.apply_mktool(target)
+                require(sealed["sha256"] == patch_seal(target)["sha256"],
+                        "patch seal differs from the audit's")
+                blob = git(target, "hash-object", MKTOOL_PATH)
+                want = git(repo, "rev-parse",
+                           "%s:%s" % (cand_pin, MKTOOL_PATH))
+                require(blob == want, "patched mktool.ML is not "
+                        "blob-equal to the candidate's")
+                record["patch"] = dict(sealed, candidate_blob=want)
+            record["status_before"] = status_lines(target)
+            record["ignored_before"] = [
+                line for line in status_lines(target, "--ignored=matching")
+                if line.startswith("!!")]
+            expected = [" M " + MKTOOL_PATH] if mktool else []
+            require(record["status_before"] == expected,
+                    "tree is not clean (or not exactly the sealed patch)")
+            require(not record["ignored_before"],
+                    "ignored files before build")
+            record["stale_before"] = stale_products(target,
+                                                    tracked_paths(target))
+            require(not record["stale_before"],
+                    "stale products before build")
+            record["input_hash"] = input_hash(target)
+            step("configure", [poly], target, target / CONFIGURE_INPUT)
+            step("build", ["bin/build", "--no-cache", "-t", "-j%d" % jobs,
+                           "--seq=" + SEQUENCE], target)
+            record["build_interval_ns"] = [
+                record["commands"][2]["start_ns"],
+                record["commands"][3]["end_ns"]]
+            record["products"] = scan_products(target)
+            record["systeml"] = systeml_hashes(target)
+            live = probe(poly, env)
+            if "toolchain" in manifest:
+                same_toolchain(manifest["toolchain"], live)
+        except BaseException:
+            manifest["sides"][side] = dict(record, incomplete=True)
+            store_manifest(manifest_path, manifest)
+            raise
     manifest.setdefault("toolchain", live)
     manifest.setdefault("host", host())
     manifest["sides"][side] = record
@@ -385,11 +587,18 @@ def build_side(repo, side, pin, root, manifest_path, logs, scratch, *,
     return record
 
 
-def systeml_hashes(root):
-    data = (Path(root) / SYSTEML).read_bytes()
-    return {"raw": sha256_bytes(data),
-            "normalized": sha256_bytes(
-                data.replace(str(root).encode(), b"<ROOT>"))}
+def discard_side(manifest_path, side):
+    """Move a side's record into `attempts` and delete its tree and HOME."""
+    manifest = load_manifest(manifest_path)
+    require(side in manifest["sides"], "no such side recorded")
+    record = manifest["sides"].pop(side)
+    require(Path(record["root"]).name == side, "root is not named by its "
+            "label")
+    manifest.setdefault("attempts", []).append(record)
+    store_manifest(manifest_path, manifest)
+    for path in (record["root"], record["home"]):
+        if os.path.lexists(path):
+            shutil.rmtree(path)
 
 
 # -- verify ------------------------------------------------------------
@@ -405,6 +614,18 @@ def normalized_command(entry, record, pin):
     return text
 
 
+def log_seal(path):
+    """The seal of a log, kept as it is or compressed (`.gz`: the seal of
+    the decompressed bytes)."""
+    path = Path(path)
+    if path.exists():
+        return a.seal(path)
+    packed = path.with_name(path.name + ".gz")
+    require(packed.exists(), "log missing: %s" % path)
+    data = gzip.decompress(packed.read_bytes())
+    return {"sha256": sha256_bytes(data), "bytes": len(data)}
+
+
 def verify_side(record, label, expected_pin):
     require(record.get("label") == label and not record.get("incomplete"),
             "%s: incomplete or mislabelled record" % label)
@@ -413,20 +634,20 @@ def verify_side(record, label, expected_pin):
     root = root.resolve(strict=True)
     pin = record["pin"]
     a.exact_pin(pin)
-    if expected_pin is not None:
-        a.exact_pin(expected_pin)
-        require(pin == expected_pin, "%s: recorded pin is not the "
-                "expected one" % label)
-    require(a.git(root, "rev-parse", "--show-toplevel") == str(root),
-            "%s: not a worktree root" % label)
-    require(a.git(root, "rev-parse", "HEAD") == pin,
-            "%s: HEAD is not the pin" % label)
-    require(a.git(root, "rev-parse", "HEAD^{tree}") == record["tree"],
-            "%s: tree hash changed" % label)
-    require(record["root_existed_before"] is False, "%s: root pre-existed"
+    a.exact_pin(expected_pin)
+    require(pin == expected_pin, "%s: recorded pin is not the expected one"
             % label)
+    require(git(root, "rev-parse", "--show-toplevel") == str(root),
+            "%s: not a worktree root" % label)
+    require(git(root, "rev-parse", "HEAD") == pin,
+            "%s: HEAD is not the pin" % label)
+    require(git(root, "rev-parse", "HEAD^{tree}") == record["tree"],
+            "%s: tree hash changed" % label)
     require(record["stale_before"] == [] and record["ignored_before"] == [],
             "%s: stale or ignored files before the build" % label)
+    require(alternates(root) == record["alternates"] and
+            all(Path(p).is_dir() for p in record["alternates"]),
+            "%s: object alternates changed or gone" % label)
     live = patch_seal(root)
     if record["mktool"]:
         sealed = record["patch"]
@@ -435,34 +656,30 @@ def verify_side(record, label, expected_pin):
         require(live["sha256"] == sealed["sha256"] and
                 live["bytes"] == sealed["bytes"],
                 "%s: working tree differs from the sealed patch" % label)
-        names = a.git(root, "diff", "--name-only").splitlines()
-        require(names == [MKTOOL_PATH], "%s: patch touches other files"
-                % label)
-        require(a.git(root, "hash-object", MKTOOL_PATH) ==
+        require(git(root, "diff", "--no-ext-diff", "--name-only") ==
+                MKTOOL_PATH, "%s: patch touches other files" % label)
+        require(git(root, "hash-object", MKTOOL_PATH) ==
                 sealed["candidate_blob"], "%s: mktool blob differs from "
                 "the candidate's" % label)
     else:
         require(record["patch"] is None and live["bytes"] == 0 and
                 record["status_before"] == [],
                 "%s: tree is dirty or patched" % label)
-    require(not a.git(root, "diff", "--cached"), "%s: staged changes"
-            % label)
+    require(not git(root, "diff", "--cached"), "%s: staged changes" % label)
     require(input_hash(root) == record["input_hash"],
             "%s: input hash changed" % label)
     commands = record["commands"]
-    require([c["name"] for c in commands] ==
-            ["clone", "checkout", "configure", "build"],
+    require([c["name"] for c in commands] == COMMANDS,
             "%s: unexpected command list" % label)
     for c in commands:
         require(c["exit"] == 0, "%s: %s exited %s" %
                 (label, c["name"], c["exit"]))
         require(set(c["env"]) == set(ENV_KEYS), "%s: not an env -i "
                 "environment" % label)
-        log = Path(c["log"])
-        require(not nested(log.parent, root), "%s: log inside the root"
+        require(not nested(Path(c["log"]).parent, root),
+                "%s: log inside the root" % label)
+        require(log_seal(c["log"]) == c["log_hash"], "%s: log changed"
                 % label)
-        if log.exists():
-            require(a.seal(log) == c["log_hash"], "%s: log changed" % label)
     first, last = record["build_interval_ns"]
     require(first == commands[2]["start_ns"] and
             last == commands[3]["end_ns"] and first < last,
@@ -471,13 +688,11 @@ def verify_side(record, label, expected_pin):
     require(set(products) == set(record["products"]),
             "%s: product set changed" % label)
     for rel, now in products.items():
-        was = record["products"][rel]
-        require(now == was, "%s: product changed: %s" % (label, rel))
-        require(first <= was["mtime_ns"] <= last,
+        require(now == record["products"][rel],
+                "%s: product changed: %s" % (label, rel))
+        require(first <= now["mtime_ns"] <= last,
                 "%s: stale product (mtime outside the build): %s"
                 % (label, rel))
-    for rel in BIN_PRODUCTS:
-        require(rel in products, "%s: missing %s" % (label, rel))
     require(any(r.startswith("sigobj/") and r.endswith(".uo")
                 for r in products), "%s: no sigobj products" % label)
     require(systeml_hashes(root) == record["systeml"],
@@ -485,7 +700,7 @@ def verify_side(record, label, expected_pin):
     return products
 
 
-def verify(manifest, base_pin=None, cand_pin=None, probe=probe_toolchain,
+def verify(manifest, base_pin, cand_pin, c31=C31, probe=probe_toolchain,
            poly=POLY):
     """Audit a manifest (a dict) against the live trees; raises on any
     failure and returns the summary otherwise."""
@@ -493,21 +708,35 @@ def verify(manifest, base_pin=None, cand_pin=None, probe=probe_toolchain,
     sides = manifest.get("sides", {})
     require(set(sides) == set(LABELS), "both sides must be recorded")
     base, cand = sides["base"], sides["cand"]
-    require(len(Path(base["root"]).name) == len(Path(cand["root"]).name) and
-            len(base["root"]) == len(cand["root"]),
+    require(len(base["root"]) == len(cand["root"]),
             "HOLDIR strings differ in length")
     require(not nested(base["root"], cand["root"]), "nested snapshot roots")
     require(base["mktool"] is True and cand["mktool"] is False,
             "only the baseline carries the mktool patch")
-    pins = {"base": base_pin, "cand": cand_pin}
-    products = {l: verify_side(sides[l], l, pins[l]) for l in LABELS}
-    inodes = [{(p["dev"], p["ino"]) for p in products[l].values()}
-              for l in LABELS]
-    require(not (inodes[0] & inodes[1]), "snapshots share inodes")
+    require(base.get("cand_pin") == cand["pin"],
+            "baseline patch was made for another candidate")
     for label in LABELS:
-        require(len(inodes[LABELS.index(label)]) ==
-                len({p["resolved"] for p in products[label].values()}),
-                "%s: product hard links" % label)
+        require(not nested(sides[label]["home"], sides[label]["root"]),
+                "HOME inside the root")
+    require(base["home"] != cand["home"], "shared HOME")
+    products = {}
+    for label, pin in zip(LABELS, (base_pin, cand_pin)):
+        products[label] = verify_side(sides[label], label, pin)
+    croot = Path(cand["root"])
+    require(git(croot, "rev-parse", "HEAD:" + MKTOOL_PATH) ==
+            base["patch"]["candidate_blob"],
+            "sealed patch is not blob-equal to the candidate's mktool.ML")
+    same = git_run(croot, "diff", "--quiet", c31, cand["pin"], "--", ".",
+                   UNCOMPILED, check=False)
+    require(same.returncode in (0, 1), "cannot compare with " + c31)
+    require(same.returncode == 0, "candidate's compiled sources differ "
+            "from %s" % c31)
+    live = [inodes(sides[l]["root"], products[l]) for l in LABELS]
+    for numbers in live:
+        require(len(set(numbers.values())) == len(numbers),
+                "a snapshot links a product twice")
+    require(not (set(live[0].values()) & set(live[1].values())),
+            "snapshots share inodes")
     for x, y in zip(base["commands"], cand["commands"]):
         require(normalized_command(x, base, base["pin"]) ==
                 normalized_command(y, cand, cand["pin"]),
@@ -516,77 +745,108 @@ def verify(manifest, base_pin=None, cand_pin=None, probe=probe_toolchain,
             "configured Systeml.sml differs between sides")
     require(base["build_interval_ns"][1] <= cand["build_interval_ns"][0],
             "builds were not serial")
-    for label in LABELS:
-        require(nested(sides[label]["home"], sides[label]["root"]) is False,
-                "HOME inside the root")
-    require(base["home"] != cand["home"], "shared HOME")
-    live = probe(poly, environment("/nonexistent"))
-    same_toolchain(manifest["toolchain"], live)
+    same_toolchain(manifest["toolchain"],
+                   probe(poly, environment("/nonexistent")))
     return {"schema": SCHEMA, "base_products": len(products["base"]),
             "cand_products": len(products["cand"]), "status": "pass"}
 
 
 # -- compare -----------------------------------------------------------
 
-ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
-TIMING = re.compile(r"\(\s*\d+(\.\d+)?\s*m?s\s*\)")
-
-
-def normalize_text(data, root):
-    text = data.decode("latin-1")
-    for spelling in {str(root), os.path.realpath(root)}:
-        text = text.replace(spelling, PLACEHOLDER)
-    return text
+def normalize_bytes(data, root):
+    """`data` with every spelling of the root replaced by PLACEHOLDER."""
+    for spelling in sorted({str(root), os.path.realpath(root)},
+                           key=lambda x: (-len(x), x)):
+        data = data.replace(spelling.encode(), PLACEHOLDER.encode())
+    return data
 
 
 def normalize_log(data, root):
-    text = ANSI.sub("", normalize_text(data, root))
-    return TIMING.sub("(<TIME>)", text)
+    text = normalize_bytes(data, root).decode("latin-1")
+    for _, pattern, repl in NORMALIZERS:
+        text = pattern.sub(repl, text)
+    return text
 
 
-def theory_files(root):
+class DatPrinter:
+    """The `.dat` normalizer: each side's own `dat-printer` prints the
+    theorems of the `.dat`; the printed texts (root masked) are compared."""
+
+    def __init__(self, tool=DAT_PRINTER, timeout=600):
+        self.tool, self.timeout, self.runs = tool, timeout, []
+
+    def dump(self, root, path):
+        tool = Path(root) / self.tool
+        require(tool.is_file(), "no dat-printer at %s" % tool)
+        argv = [str(tool), str(path)]
+        p = subprocess.run(argv, cwd=str(root), stdin=subprocess.DEVNULL,
+                           env=environment("/nonexistent"),
+                           timeout=self.timeout,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        require(p.returncode == 0, "dat-printer failed on %s" % path)
+        self.runs.append({"argv": [argv[0], Path(path).relative_to(root)
+                                   .as_posix()],
+                          "tool": a.seal(tool), "exit": 0})
+        return normalize_bytes(p.stdout, root)
+
+    def describe(self):
+        return {"tool": self.tool, "runs": self.runs}
+
+
+def hook_identity(hook):
+    """What a dump hook must record: its class and the sha256 of its
+    source."""
+    require(callable(getattr(hook, "dump", None)) and
+            callable(getattr(hook, "describe", None)),
+            "a .dat normalizer needs dump(root, path) and describe()")
+    source = inspect.getsource(type(hook))
+    return dict(hook.describe(), cls=type(hook).__name__,
+                source_sha256=sha256_bytes(source.encode()))
+
+
+def untracked_files(root, pattern, tracked):
     found = {}
     for folder, dirs, names in os.walk(root):
         dirs[:] = [d for d in dirs if d not in (".git", "sigobj")]
         for name in names:
-            if re.fullmatch(r".*Theory\.(sig|dat)", name):
-                path = Path(folder) / name
-                if not path.is_symlink():
-                    found[path.relative_to(root).as_posix()] = path
+            path = Path(folder) / name
+            rel = path.relative_to(root).as_posix()
+            if pattern(rel, name) and rel not in tracked and \
+                    not path.is_symlink():
+                found[rel] = path
     return dict(sorted(found.items()))
 
 
-def selftest_logs(root):
-    found = {}
-    for area in AREAS:
-        base = Path(root) / "src" / area
-        for folder, dirs, names in os.walk(base):
-            for name in names:
-                if name.endswith(".log") and (
-                        "selftest" in name or
-                        Path(folder).parts[-2:] == (".hol", "logs")):
-                    path = Path(folder) / name
-                    found[path.relative_to(root).as_posix()] = path
-    return dict(sorted(found.items()))
+def theory_files(root, tracked):
+    return untracked_files(
+        root, lambda rel, name: re.fullmatch(r".*Theory\.(sig|dat)", name)
+        is not None, tracked)
 
 
-def differ(kind, rel, base_path, cand_path, base_root, cand_root,
-           normalizer):
-    x, y = Path(base_path).read_bytes(), Path(cand_path).read_bytes()
+def selftest_logs(root, tracked):
+    def wanted(rel, name):
+        parts = rel.split("/")
+        return len(parts) > 2 and parts[0] == "src" and \
+            parts[1] in AREAS and name.endswith(".log") and (
+                "selftest" in name or parts[-3:-1] == [".hol", "logs"])
+    return untracked_files(root, wanted, tracked)
+
+
+def differ(kind, rel, paths, roots, hook, dumps):
+    x, y = (Path(p).read_bytes() for p in paths)
     if kind == "log":
-        nx = normalize_log(x, base_root).encode("latin-1")
-        ny = normalize_log(y, cand_root).encode("latin-1")
-    elif rel.endswith(".sig"):
-        nx = normalize_text(x, base_root).encode("latin-1")
-        ny = normalize_text(y, cand_root).encode("latin-1")
+        nx = normalize_log(x, roots[0]).encode("latin-1")
+        ny = normalize_log(y, roots[1]).encode("latin-1")
     else:
-        nx = x.replace(str(base_root).encode(), PLACEHOLDER.encode())
-        ny = y.replace(str(cand_root).encode(), PLACEHOLDER.encode())
+        nx, ny = normalize_bytes(x, roots[0]), normalize_bytes(y, roots[1])
     if nx == ny:
         return None
-    if kind == "theory" and rel.endswith(".dat") and normalizer is not None \
-            and normalizer(base_path, cand_path):
-        return None
+    if kind == "theory" and rel.endswith(".dat") and hook is not None:
+        dx, dy = (hook.dump(r, p) for r, p in zip(roots, paths))
+        dumps.append({"path": rel, "base": sha256_bytes(dx),
+                      "cand": sha256_bytes(dy), "equal": dx == dy})
+        if dx == dy:
+            return None
     return {"path": rel, "base": sha256_bytes(nx), "cand": sha256_bytes(ny)}
 
 
@@ -594,15 +854,18 @@ def compare(manifest, dat_normalizer=None):
     """The behaviour record of two verified trees."""
     base, cand = manifest["sides"]["base"], manifest["sides"]["cand"]
     roots = {"base": Path(base["root"]), "cand": Path(cand["root"])}
-    blocked = []
+    tracked = {l: tracked_paths(roots[l]) for l in LABELS}
+    blocked, dumps = [], []
     out = {"schema": BEHAVIOR_SCHEMA}
+    identity = None if dat_normalizer is None else \
+        hook_identity(dat_normalizer)
     for kind, key, finder in (("theory", "theories", theory_files),
                               ("log", "logs", selftest_logs)):
-        files = {l: finder(roots[l]) for l in LABELS}
+        files = {l: finder(roots[l], tracked[l]) for l in LABELS}
         common = sorted(set(files["base"]) & set(files["cand"]))
         differing = [d for d in (
-            differ(kind, rel, files["base"][rel], files["cand"][rel],
-                   roots["base"], roots["cand"], dat_normalizer)
+            differ(kind, rel, (files["base"][rel], files["cand"][rel]),
+                   (roots["base"], roots["cand"]), dat_normalizer, dumps)
             for rel in common) if d]
         base_only = sorted(set(files["base"]) - set(files["cand"]))
         out[key] = {
@@ -613,23 +876,27 @@ def compare(manifest, dat_normalizer=None):
         blocked += [kind + " differs: " + d["path"] for d in differing]
         blocked += [kind + " missing on cand: " + p for p in base_only]
         require(common, "no common %ss" % kind)
-    for area in AREAS:
-        prefix = "src/%s/" % area
-        for label in LABELS:
-            if not any(p.startswith(prefix)
-                       for p in selftest_logs(roots[label])):
-                blocked.append("no selftest log under %s on %s" %
-                               (prefix, label))
+        if kind == "log":
+            for area in AREAS:
+                for label in LABELS:
+                    if not any(p.startswith("src/%s/" % area)
+                               for p in files[label]):
+                        blocked.append("no selftest log under src/%s/ on %s"
+                                       % (area, label))
     for label in LABELS:
-        build = manifest["sides"][label]["commands"][3]
-        if build["exit"] != 0:
+        if manifest["sides"][label]["commands"][3]["exit"] != 0:
             blocked.append("%s build failed" % label)
     out["blocked"] = blocked
     out["status"] = "blocked" if blocked else "pass"
     out["normalization"] = {
-        "root": PLACEHOLDER, "logs": "ANSI stripped, (Ns) masked",
-        "dat": "byte-equal; no theorytool normalizer unless supplied"
-        if dat_normalizer is None else "supplied normalizer"}
+        "root": PLACEHOLDER,
+        "logs": [[n, p, r] for n, p, r in LOG_RULES],
+        "dat": "byte-equal after root masking" if identity is None else
+        "byte-equal, else equal printed text of each side's own tool"}
+    out["dat_normalizer"] = identity
+    if identity is not None:
+        identity["runs"] = dat_normalizer.describe()["runs"]
+    out["dat_dumps"] = dumps
     return out
 
 
@@ -638,10 +905,20 @@ def compare(manifest, dat_normalizer=None):
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="command", required=True)
+
+    def common(parser):
+        parser.add_argument("--repo", type=Path, default=HERE.parents[3])
+        parser.add_argument("--manifest", type=Path, required=True)
+
+    def pins(parser):
+        parser.add_argument("--base-pin", required=True)
+        parser.add_argument("--cand-pin", required=True)
+        parser.add_argument("--c31", default=C31)
+        parser.add_argument("--poly", default=POLY)
+
     b = sub.add_parser("build")
-    b.add_argument("--repo", type=Path, default=HERE.parents[3])
+    common(b)
     b.add_argument("--root", type=Path, required=True)
-    b.add_argument("--manifest", type=Path, required=True)
     b.add_argument("--evidence", type=Path, required=True)
     b.add_argument("--scratch", type=Path, required=True)
     b.add_argument("--side", choices=LABELS, required=True)
@@ -651,37 +928,42 @@ def main(argv=None):
     b.add_argument("--jobs", type=int, default=8)
     b.add_argument("--poly", default=POLY)
     b.add_argument("--tmpdir", default="/dev/shm/t32/tmp")
+    d = sub.add_parser("discard")
+    common(d)
+    d.add_argument("--side", choices=LABELS, required=True)
     v = sub.add_parser("verify")
-    v.add_argument("--manifest", type=Path, required=True)
-    v.add_argument("--base-pin")
-    v.add_argument("--cand-pin")
-    v.add_argument("--poly", default=POLY)
+    common(v)
+    pins(v)
     c = sub.add_parser("compare")
-    c.add_argument("--manifest", type=Path, required=True)
+    common(c)
+    pins(c)
     c.add_argument("--output", type=Path, required=True)
-    c.add_argument("--base-pin")
-    c.add_argument("--cand-pin")
-    c.add_argument("--poly", default=POLY)
+    c.add_argument("--dat-printer", action="store_true")
     args = p.parse_args(argv)
-    if args.command == "build":
-        with a.serial_lock(args.repo) as fds:
+    with a.serial_lock(args.repo) as fds:
+        if args.command == "build":
             build_side(args.repo, args.side, args.pin, args.root,
                        args.manifest, args.evidence, args.scratch,
                        mktool=args.mktool, cand_pin=args.cand_pin,
                        jobs=args.jobs, poly=args.poly, tmpdir=args.tmpdir,
                        runner=real_runner(fds))
-        return 0
-    manifest = json.loads(args.manifest.read_text())
-    summary = verify(manifest, args.base_pin, args.cand_pin, poly=args.poly)
-    if args.command == "verify":
-        print(json.dumps(summary, indent=2))
-        return 0
-    result = compare(manifest)
-    with args.output.open("x") as stream:
-        json.dump(result, stream, indent=2, sort_keys=True)
-        stream.write("\n")
-    print("compare:", result["status"])
-    return 0 if result["status"] == "pass" else 1
+            return 0
+        if args.command == "discard":
+            discard_side(args.manifest, args.side)
+            return 0
+        manifest = json.loads(args.manifest.read_text())
+        summary = verify(manifest, args.base_pin, args.cand_pin, args.c31,
+                         probe=probe_toolchain, poly=args.poly)
+        if args.command == "verify":
+            print(json.dumps(summary, indent=2))
+            return 0
+        result = compare(manifest, DatPrinter() if args.dat_printer
+                         else None)
+        with args.output.open("x") as stream:
+            json.dump(result, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+        print("compare:", result["status"])
+        return 0 if result["status"] == "pass" else 1
 
 
 if __name__ == "__main__":
