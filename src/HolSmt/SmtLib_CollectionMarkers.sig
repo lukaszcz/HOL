@@ -55,12 +55,14 @@ sig
     'term -> 'term list -> 'term list
 
   (* Seed once, then close conditional/let/update and same-symbol
-     argument/result carriers over the supplied term inventory. Return the
-     closed markers and (head, zero-based argument index, marked argument)
-     tuples, with one representative per marked argument group for contextual
+     argument/result carriers. The term-list arguments are the inventory,
+     followed by the initial seed markers. Return the closed markers and
+     (head, zero-based argument index, marked argument) tuples, with one
+     representative per marked argument group for contextual
      lookup. Result groups propagate markers but do not add tuples. The caller
-     supplies its existing typed add and term identity. Only selected syntax
-     mismatches are ignored; other failures escape. *)
+     supplies its existing typed add and term identity. add must be idempotent
+     and preserve existing markers. Only selected syntax mismatches are
+     ignored; other failures escape. *)
   val close : 'term operations -> 'term closure_operations ->
     (exn -> bool) -> 'term list -> 'term list ->
     'term list * ('term * int * 'term) list
