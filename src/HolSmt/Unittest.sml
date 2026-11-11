@@ -10883,8 +10883,7 @@ let
   fun set_of_parse _ indices args =
     if List.null indices andalso List.length args = 1 then
       Term.list_mk_comb (set_of, args)
-    else raise Feedback.mk_HOL_ERR "Unittest"
-      "set_of_parse" "source arity mismatch"
+    else SmtLib_Theories.decline "<set_of>" "wrong number of arguments"
   fun sort_parse ty _ indices args =
     if List.null indices andalso List.null args then ty
     else raise Feedback.mk_HOL_ERR "Unittest"
@@ -10895,13 +10894,14 @@ let
        Library.extend_dict (("SetElement", sort_parse element_ty),
          logic_tydict)),
      Library.extend_dict (("set_of", set_of_parse), logic_tmdict))
-  fun proof declaration =
+  fun proof_using application declaration =
     "((declare-sort SetDomain 0) (declare-sort SetElement 0) " ^
     declaration ^
     " (declare-const a SetDomain) (declare-const x SetElement) \
-    \ (step @p (= (select (set_of a) x) (select (set_of a) x)) \
-    \ :rule refl :args ((select (set_of a) x))))"
-  fun accept declaration =
+    \ (step @p (= " ^ application ^ " " ^ application ^ ") \
+    \ :rule refl :args (" ^ application ^ ")))"
+  val proof = proof_using "(select (set_of a) x)"
+  fun accept_with proof declaration =
     let
       val theorem = CPC_ProofReplay.replay_root_for_test
         (CPC_ProofParser.parse_stream_with_version dicts "1.3.4"
@@ -10915,12 +10915,18 @@ let
         "curried CPC redeclaration retained hypotheses: " ^ declaration);
       check_oracle_tags ("curried CPC redeclaration " ^ declaration) theorem
     end
+  val accept = accept_with proof
   val wrong = "(declare-const set_of (-> SetElement (Array SetDomain Bool)))"
 in
   List.app accept
     ["(declare-const set_of (-> SetDomain (Array SetElement Bool)))",
      "(declare-fun set_of (SetDomain) (Array SetElement Bool))",
      "(declare-fun set_of (SetDomain SetElement) Bool)",
+     "(declare-const set_of (-> SetDomain SetElement Bool))"];
+  (* The binary spellings may also apply the symbol to both arguments,
+     beyond the source entry's one-argument arity. *)
+  List.app (accept_with (proof_using "(set_of a x)"))
+    ["(declare-fun set_of (SetDomain SetElement) Bool)",
      "(declare-const set_of (-> SetDomain SetElement Bool))"];
   (ignore (CPC_ProofParser.parse_stream_with_version dicts "1.3.4"
      (TextIO.openString (proof wrong)));

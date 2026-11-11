@@ -2588,6 +2588,34 @@ local
       List.exists compatible candidates
     end
 
+  (* A compatible redeclaration may apply the source symbol to more
+     arguments than its source entry takes (e.g. [(set_of a x)] for a
+     one-argument [set_of] with a set result).  Apply the source entry to
+     the longest argument prefix it accepts, and the result to the rest. *)
+  fun curried_source_parse sources token indices args =
+    let
+      fun try_sources _ [] = NONE
+        | try_sources prefix (parsefn :: rest) =
+            SOME (parsefn token indices prefix)
+            handle SmtLib_Theories.ParseDecline (Feedback.HOL_ERR _) =>
+              try_sources prefix rest
+      fun split k =
+        if k < 0 then
+          SmtLib_Theories.decline ("<" ^ token ^ ">")
+            "wrong number of arguments"
+        else
+          case try_sources (List.take (args, k)) sources of
+            SOME head =>
+              (Term.list_mk_comb (head, List.drop (args, k))
+               handle Feedback.HOL_ERR holerr =>
+                 SmtLib_Theories.decline ("<" ^ token ^ ">")
+                   ("ill-typed CPC application: " ^
+                    Feedback.message_of holerr))
+          | NONE => split (k - 1)
+    in
+      split (List.length args)
+    end
+
   fun parse_or_keep_term_declaration parse_domain dicts_ref get_token =
     let
       val tokens = declaration_tokens get_token
@@ -2609,7 +2637,11 @@ local
         raise ERR "parse_declaration"
           ("duplicate CPC declaration of symbol " ^ name)
       else if source_symbol then
-        if declaration_compatible tmdict declaration then ()
+        if declaration_compatible tmdict declaration then
+          dicts_ref := (tydict, Library.extend_dict ((key,
+            curried_source_parse
+              (Option.getOpt (Redblackmap.peek (tmdict, key), []))),
+            tmdict))
         else incompatible ()
       else if Option.isSome (Redblackmap.peek (tmdict, key)) then
         incompatible ()
