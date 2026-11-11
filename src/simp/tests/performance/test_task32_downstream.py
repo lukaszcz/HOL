@@ -1584,6 +1584,27 @@ class Unsaved(Base):
                 if r["event"] == "info-end"]
         self.assertEqual([r["success"] for r in ends], [False])
 
+    def test_any_other_exception_is_exit_3_not_a_traceback(self):
+        def explode(*args, **kw):
+            raise KeyError("malformed")
+        code, out, err = self.cli("k", mock.patch.object(
+            dw, "info_spec", explode))
+        self.assertEqual(code, 3)
+        self.assertIn("REFUSED: KeyError", err)
+
+    def test_a_malformed_counts_file_exits_3(self):
+        w = self.world
+        bad = w.tmp / "bad-counts.json"
+        bad.write_text("[]")
+        err = io.StringIO()
+        with mock.patch.object(sys, "stderr", err), \
+                mock.patch.object(sys, "stdout", io.StringIO()):
+            code = dw.main(["dispose", "--stage", str(w.tmp / "none"),
+                            "--out", str(w.tmp / "disp.json"),
+                            "--counts", str(bad), "--repo", str(w.repo)])
+        self.assertEqual(code, 3)
+        self.assertIn("REFUSED", err.getvalue())
+
     def test_a_signal_before_any_report_prints_what_is_left(self):
         def terminate(*args, **kw):
             raise snap.Terminated("SIGHUP")

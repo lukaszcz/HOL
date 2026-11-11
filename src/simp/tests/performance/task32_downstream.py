@@ -2472,6 +2472,11 @@ def main(argv=None):
             " (%s)" % n for n in getattr(error, "__notes__", ()))),
             file=sys.stderr)
         return 3
+    except Exception as error:
+        # exit 1 is reserved for "fail": any other failure is exit 3
+        print("REFUSED: %s: %s" % (type(error).__name__, error),
+              file=sys.stderr)
+        return 3
 
 
 def terminated(args, signalled):
