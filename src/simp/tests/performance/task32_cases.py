@@ -35,6 +35,16 @@ def selftest(name, area, directory, heap, serial):
 NUMHEAP = "src/num/termination/numheap"
 REALHEAP = "src/real/analysis/realheap"
 
+def theory_argv(root, name):
+    """The command of the theory unit `<name>` (in its directory): used by
+    the timing driver for each process and by the snapshot build to prime
+    the Holmake caches, so the two cannot drift. `--no_prereqs` builds the
+    target only and never the INCLUDES directories (Holmake still scans
+    them for dependencies)."""
+    return ["%s/bin/Holmake" % root, "--no-cache", "--no_prereqs", "-j1",
+            "%sTheory.uo" % name]
+
+
 UNITS = (
     theory("arithmetic", "arithmetic", "src/num/theories",
            "bin/hol.state0", 7.4),
@@ -56,6 +66,7 @@ UNITS = (
     theory("pred_set", "boss", "src/pred_set/src", NUMHEAP, 10.8),
     selftest("boss-selftest", "boss", "src/boss", NUMHEAP, 7.3),
 )
+THEORY_UNITS = tuple(u for u in UNITS if u["kind"] == "theory")
 NAMES = tuple(u["name"] for u in UNITS)
 BY_NAME = {u["name"]: u for u in UNITS}
 # The unit of the live negative control (the cheapest one).

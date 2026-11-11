@@ -75,9 +75,10 @@ sys.path.insert(0, str(HERE))
 import acceptance as a
 from performance_schema import require
 import startup_gate as sg
+import task32_cases as cases
 import task32_dat as dat
 
-SCHEMA = "task32-independent-build-v3"
+SCHEMA = "task32-independent-build-v4"
 BEHAVIOR_SCHEMA = "task32-behavior-v3"
 LABELS = ("base", "cand")
 PATH = "/usr/local/bin:/usr/bin:/bin"
@@ -135,7 +136,11 @@ REQUIRED_PRODUCTS = (
 
 PLACEHOLDER = "$(HOLDIR)"
 ENV_KEYS = ("HOME", "LC_ALL", "PATH", "TERM", "TMPDIR", "TZ")
-COMMANDS = ["clone", "checkout", "configure", "build"]
+# After the build, each theory unit's own downstream command runs once in
+# its directory (`prime`): see `check_prime`.
+PRIME = "prime-"
+COMMANDS = ["clone", "checkout", "configure", "build"] + [
+    PRIME + u["name"] for u in cases.THEORY_UNITS]
 TIMEOUT = 6 * 3600
 # Run-dependent text of the selftest and check logs (surveyed over the
 # num, integer, real, boss, list and pred_set logs of a built tree):
@@ -551,6 +556,20 @@ def excluded(rel):
     return False
 
 
+def is_holmake_cache(rel):
+    """True for a rel path that is Holmake's dependency cache: a file named
+    `*.d` directly in a `.hol/make-deps` directory. On a second Holmake run
+    in an already built directory Holmake writes such a file for the
+    generated files of every theory there (`<X>Theory.sig.d`,
+    `<X>Theory.sml.d`), which `bin/build` never wrote. They are derived
+    from the sources and the sigobj. Only the path is judged here; the
+    callers apply it to new regular files only, so a changed or vanished
+    existing file is never a cache."""
+    parts = rel.split("/")
+    return parts[-1].endswith(".d") and parts[-3:-1] == [".hol",
+                                                         "make-deps"]
+
+
 THEORY_TARGET_TEMPLATES = (
     ".hol/objs/{n}Theory.sig", ".hol/objs/{n}Theory.sml",
     ".hol/objs/{n}Theory.dat", ".hol/objs/{n}Theory.ui",
@@ -612,6 +631,23 @@ def scan_products(root):
     return dict(sorted(found.items()))
 
 
+def check_prime(before, after):
+    """The prime commands changed no product: every product of `before` is
+    sealed the same in `after`, and what is new is only Holmake's
+    dependency cache (`is_holmake_cache`), which they exist to write: a
+    second Holmake run in a built directory writes the `.d` files of the
+    generated theory files, and `bin/build` did not, so without them the
+    first process of each arm in a directory would pay the dependency
+    scan the others do not. Returns the new rel paths."""
+    changed = [r for r in before if after.get(r) != before[r]]
+    stray = [r for r in after if r not in before and
+             not is_holmake_cache(r)]
+    require(not changed and not stray,
+            "the prime commands changed products: %s" % ", ".join(
+                (changed + stray)[:5]))
+    return sorted(r for r in after if r not in before)
+
+
 def inodes(root, products):
     """{path: (dev, ino)} of the regular-file products, read live."""
     result = {}
@@ -631,8 +667,8 @@ def real_runner(fds):
 
 def require_schema(manifest):
     require(manifest.get("schema") == SCHEMA,
-            "manifest schema is %r, not %s: a task32-independent-build-v2 "
-            "manifest is superseded evidence and must be moved aside; use "
+            "manifest schema is %r, not %s: an older manifest is "
+            "superseded evidence and must be moved aside; use "
             "a fresh manifest and a fresh evidence directory"
             % (manifest.get("schema"), SCHEMA))
 
@@ -763,10 +799,16 @@ def build_side(repo, side, pin, root, manifest_path, logs, scratch, *,
             step("configure", [poly], target, target / CONFIGURE_INPUT)
             step("build", ["bin/build", "--no-cache", "-t", "-j%d" % jobs,
                            "--seq=" + record["sequence"]["path"]], target)
+            built = scan_products(target)
+            for unit in cases.THEORY_UNITS:
+                step(PRIME + unit["name"],
+                     cases.theory_argv(target, unit["theory"]),
+                     target / unit["dir"])
             record["build_interval_ns"] = [
                 record["commands"][2]["start_ns"],
-                record["commands"][3]["end_ns"]]
+                record["commands"][-1]["end_ns"]]
             record["products"] = scan_products(target)
+            record["primed"] = check_prime(built, record["products"])
             record["systeml"] = systeml_hashes(target)
             live = probe(poly, env)
             if "toolchain" in manifest:
@@ -951,8 +993,14 @@ def verify_side(record, label, expected_pin):
                 % label)
     first, last = record["build_interval_ns"]
     require(first == commands[2]["start_ns"] and
-            last == commands[3]["end_ns"] and first < last,
+            last == commands[-1]["end_ns"] and first < last,
             "%s: bad build interval" % label)
+    for c, unit in zip(commands[4:], cases.THEORY_UNITS):
+        require(c["argv"] == cases.theory_argv(record["root"],
+                                               unit["theory"]) and
+                c["cwd"] == str(Path(record["root"]) / unit["dir"]),
+                "%s: %s is not the unit's downstream command" %
+                (label, c["name"]))
     products = scan_products(root)
     require(set(products) == set(record["products"]),
             "%s: product set changed" % label)

@@ -26,6 +26,7 @@ from unittest import mock
 import acceptance as a
 import startup_gate as sg
 import task32_dat as dat
+import task32_cases as cases
 import task32_snapshots as s
 
 MKTOOL = s.MKTOOL_PATH
@@ -229,6 +230,7 @@ class Fake:
         self.drop = {}     # side -> {relative path: text} after checkout
         self.log = {}      # side -> text added to every selftest log
         self.during = None  # callable run inside the build step
+        self.prime = None  # callable (cwd, side) run in a prime command
 
     def __call__(self, argv, cwd, env, stdin, log):
         side = Path(cwd).name if Path(cwd).name in s.LABELS else None
@@ -244,6 +246,12 @@ class Fake:
                     else:
                         put(Path(cwd) / rel, text)
             return p.returncode
+        if os.path.basename(argv[0]) == "Holmake":
+            if self.fail == "prime":
+                return 1
+            if self.prime:
+                self.prime(Path(cwd), side)
+            return 0
         name = "configure" if os.path.basename(argv[0]) == "poly" \
             else "build"
         if name == self.fail:
@@ -346,15 +354,73 @@ class World:
 
 
 class BuildTests(unittest.TestCase):
+    def test_every_theory_unit_is_primed_with_its_downstream_command(self):
+        w = World(self).both()
+        record = w.doc()["sides"]["cand"]
+        for c, unit in zip(record["commands"][4:], cases.THEORY_UNITS):
+            self.assertEqual(c["name"], "prime-" + unit["name"])
+            self.assertEqual(c["argv"], cases.theory_argv(
+                record["root"], unit["theory"]))
+            self.assertIn("--no_prereqs", c["argv"])
+            self.assertEqual(c["cwd"], str(Path(record["root"]) /
+                                           unit["dir"]))
+        self.assertEqual(record["build_interval_ns"][1],
+                         record["commands"][-1]["end_ns"])
+        self.assertEqual(record["primed"], [])
+
+    def test_primed_caches_are_recorded_as_products(self):
+        w = World(self)
+        cache = "src/list/src/.hol/make-deps/listTheory.sig.d"
+        w.fake.prime = lambda cwd, side: put(
+            cwd / ".hol/make-deps/listTheory.sig.d", "d\n")
+        w.both()
+        doc = w.doc()
+        self.assertEqual(doc["sides"]["cand"]["primed"],
+                         sorted(r for r in doc["sides"]["cand"]["products"]
+                                if r.endswith("listTheory.sig.d")))
+        self.assertIn(cache, doc["sides"]["cand"]["products"])
+        w.verify()
+
+    def test_a_prime_that_changes_a_product_fails_the_build(self):
+        w = World(self)
+        w.fake.prime = lambda cwd, side: put(
+            cwd / ".hol/objs/numTheory.uo", "changed\n") \
+            if cwd.name == "theories" else None
+        with self.assertRaisesRegex(ValueError, "prime commands changed"):
+            w.build("base")
+        self.assertTrue(w.doc()["sides"]["base"]["incomplete"])
+
+    def test_a_prime_that_writes_another_file_fails_the_build(self):
+        w = World(self)
+        w.fake.prime = lambda cwd, side: put(cwd / "stray.txt", "x\n")
+        with self.assertRaisesRegex(ValueError, "prime commands changed"):
+            w.build("base")
+
+    def test_a_failing_prime_fails_the_build(self):
+        w = World(self)
+        w.fake.fail = "prime"
+        with self.assertRaisesRegex(ValueError, "prime-arithmetic failed"):
+            w.build("base")
+
+    def test_verify_refuses_a_prime_that_is_not_the_units_command(self):
+        w = World(self).both()
+        doc = w.doc()
+        doc["sides"]["cand"]["commands"][4]["argv"].remove("--no_prereqs")
+        with self.assertRaisesRegex(ValueError, "downstream command"):
+            w.verify(doc)
+
     def test_build_and_verify(self):
         w = World(self).both()
         doc = w.doc()
-        self.assertEqual(doc["schema"], "task32-independent-build-v3")
+        self.assertEqual(doc["schema"], "task32-independent-build-v4")
         self.assertEqual(doc["sides"]["base"]["tree"],
                          git(w.repo, "rev-parse", w.base_pin + "^{tree}"))
         self.assertEqual(
             [c["name"] for c in doc["sides"]["cand"]["commands"]],
-            ["clone", "checkout", "configure", "build"])
+            s.COMMANDS)
+        self.assertEqual(s.COMMANDS[:4],
+                         ["clone", "checkout", "configure", "build"])
+        self.assertEqual(len(s.COMMANDS), 4 + len(cases.THEORY_UNITS))
         build = doc["sides"]["cand"]["commands"][3]["argv"]
         seq = doc["sides"]["cand"]["sequence"]
         self.assertEqual(build, ["bin/build", "--no-cache", "-t", "-j8",
@@ -1136,7 +1202,7 @@ class VerifyTests(unittest.TestCase):
         record = doc["sides"][side]
         record["commands"][2]["start_ns"] = 1
         record["build_interval_ns"][0] = 1
-        record["commands"][3]["end_ns"] = 2**62
+        record["commands"][-1]["end_ns"] = 2**62
         record["build_interval_ns"][1] = 2**62
 
     def test_shared_inode(self):
@@ -1304,7 +1370,7 @@ class VerifyTests(unittest.TestCase):
 
     def test_schema(self):
         doc = self.w.doc()
-        doc["schema"] = "task32-independent-build-v2"
+        doc["schema"] = "task32-independent-build-v3"
         self.fails("moved aside.*fresh manifest and a fresh evidence "
                    "directory", doc)
         with self.assertRaisesRegex(ValueError, "moved aside"):

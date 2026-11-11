@@ -2915,9 +2915,24 @@ sealed `mktool.ML` fix on the baseline only (`startup_gate.apply_mktool`,
 imported; B cannot build `theorytool` without it; the patched file must be
 blob-equal to C32's, hence `--cand-pin`), `poly < tools/smart-configure.sml`
 and `bin/build --no-cache -t -jN --seq=<copy of task32.seq>`. Commands run
-in this order (`COMMANDS`: clone, checkout, configure, build). The
-snapshots live on disk, not `/dev/shm`, and outside the repository's
-tracked paths (`require_location`). Build base, then cand.
+in this order (`COMMANDS`: clone, checkout, configure, build, then one
+`prime-<unit>` per theory unit). Priming: `bin/build` never wrote the
+dependency caches `.hol/make-deps/<X>Theory.{sig,sml}.d` of the generated
+files, which a later Holmake run writes (in the unit's directory, and in the
+INCLUDES directories it scans even with `--no_prereqs`), and the two builds
+do not leave the same ones (the candidate's `bin/build` wrote some the
+baseline's did not), so the first process of each unit would pay the
+dependency scan on one arm only. After the build, each theory unit's own
+downstream command (`task32_cases.theory_argv`, the same function the
+timing driver uses: `bin/Holmake --no-cache --no_prereqs -j1
+<X>Theory.uo`) runs once in the unit's directory with the build's
+environment. The target is up to date, so nothing is built, but Holmake
+builds the dependency graph of the directory and of its INCLUDES
+directories whatever the target and writes every missing cache. `check_prime`
+fails the build if any product changed or any new file is not a
+`.hol/make-deps/*.d`; `verify` requires the prime commands (argv, cwd and
+exit 0). The snapshots live on disk, not `/dev/shm`, and outside the
+repository's tracked paths (`require_location`). Build base, then cand.
 
 Environment (`environment`): `env -i` with `PATH=/usr/local/bin:/usr/bin:/bin`,
 `LC_ALL=C`, `TZ=UTC`, `TERM=dumb`, `TMPDIR` (`--tmpdir`, default
@@ -2948,7 +2963,7 @@ such rule and is plain. `bin/build` never passes `--no_prereqs`, and the
 intermediate directories are listed as roots so that their own selftests
 and link rules run.
 
-Manifest (`SCHEMA` = `task32-independent-build-v3`; written after each
+Manifest (`SCHEMA` = `task32-independent-build-v4`; written after each
 side, an interrupted or failed build leaves an `incomplete` record that
 only `discard` removes). Per side: pin, `HEAD^{tree}`, `mktool` flag, the
 patch seal (sha256, bytes, candidate blob), `status_before`,
@@ -2960,9 +2975,10 @@ environment, stdin hash, start and end ns, exit and log seal (logs go to
 - `sequence`: path, sha256, content, source path, blob and the harness
   head; `verify` requires the same file and digest on both sides and that
   the build argv used it.
-- `build_interval_ns` and `products`: every file git lists as untracked or
-  ignored after the build (directories followed), each sealed by sha256,
-  size and mtime, except `.hol/locks`, `.hol/build-logs` and non-selftest
+- `build_interval_ns` (configure start to the last prime end), `primed`
+  (the caches the prime commands wrote) and `products`: every file git
+  lists as untracked or ignored after priming (directories followed), each
+  sealed by sha256, size and mtime, except `.hol/locks`, `.hol/build-logs` and non-selftest
   `.hol/logs`. Inodes are not recorded; they are read live.
 - `REQUIRED_PRODUCTS`: the theories (`rat`, `integer`, `integer_word`,
   `real`, `real_sigma`, `lim`, `arithmetic`, `logroot`, `rich_list`,

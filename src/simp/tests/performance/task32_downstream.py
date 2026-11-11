@@ -503,20 +503,7 @@ def restore(folder, meta, store, now):
         os.utime(dst, ns=(m["mtime_ns"], m["mtime_ns"]))
 
 
-def is_holmake_cache(rel):
-    """True for a rel path that is Holmake's dependency cache: a file named
-    `*.d` under a `.hol/make-deps` directory, at any depth. On a second
-    Holmake run in an already built directory Holmake writes such a file
-    for the generated files of every theory there (`<X>Theory.sig.d`,
-    `<X>Theory.sml.d`), which `bin/build` never wrote, so the snapshot
-    lacks them. They are derived from the sources and the sigobj and equal
-    on both arms, and `settle` removes them after each process so every
-    process starts from, and rewrites, the same state: churn, not output.
-    Only the path is judged here; `settle` applies it to new regular files
-    only, so a changed or vanished existing file stays `modified`."""
-    parts = rel.split("/")
-    return parts[-1].endswith(".d") and any(
-        a == ".hol" and b == "make-deps" for a, b in zip(parts, parts[1:-1]))
+is_holmake_cache = snap.is_holmake_cache
 
 
 def settle(folder, stops, before, meta, store, name, stray_dir):
@@ -888,19 +875,11 @@ def parse_selftest(text, root, unit):
     return argv
 
 
-def theory_prefix(root):
-    """The Holmake command of a theory unit up to its target. `--no_prereqs`
-    builds only the target, never the INCLUDES directories (as in the other
-    harnesses here)."""
-    return [str(root / "bin/Holmake"), "--no-cache", "--no_prereqs", "-j1"]
-
-
 def unit_argv(unit, root, reporter_uo):
     """The command of a unit (and its working directory)."""
     folder = root / unit["dir"]
     if unit["kind"] == "theory":
-        return theory_prefix(root) + [
-            "%sTheory.uo" % unit["theory"]], folder
+        return cases.theory_argv(root, unit["theory"]), folder
     argv = parse_selftest((folder / "selftest.exe").read_text(), root, unit)
     return argv[:-1] + [reporter_uo, argv[-1]], folder
 
@@ -2036,8 +2015,7 @@ def check_receipt(folder, report, entry, refs):
 
 def unit_argv_shape(unit, root, uo, argv):
     if unit["kind"] == "theory":
-        return argv == theory_prefix(root) + [
-            "%sTheory.uo" % unit["theory"]]
+        return argv == cases.theory_argv(root, unit["theory"])
     return (len(argv) >= 6 and argv[0] == str(root / "bin/hol") and
             argv[2] == "run" and argv[-2:] == [uo, "selftest"] and
             argv[3] == "--holstate=" + str(root / unit["heap"]))
