@@ -325,6 +325,11 @@ val thm_CVCp_ho =
     (REPEAT STRIP_TAC THEN HolSmtLib.CVC_TAC)
 val sat_CVCp = mk_CVCp expect_sat
 
+(* These bounded cardinality regressions must bypass the numeric filter. *)
+val thm_card_CVCp =
+  mk_test_fun (CVC.is_configured ()) (expect_thm true)
+    "cvc5 (proofs, finite CARD)" HolSmtLib.CVC_TAC
+
 (*****************************************************************************)
 (* HOL definitions (e.g., user-defined data types)                           *)
 (*****************************************************************************)
@@ -336,6 +341,10 @@ val _ = bossLib.Hol_datatype `dt1 = foo | bar | baz`
 val _ = bossLib.Hol_datatype `dirn = NS | EW`
 
 val flc_def = Define `flc d = case d of NS => EW | EW => NS`
+
+(* An uninterpreted set-valued function: translated with one argument and an
+   array-of-Bool result, which cvc5's proof redeclares with a curried sort. *)
+val _ = new_constant ("smt_set_of", ``:'a -> 'b -> bool``)
 
 fun expect_flc_checked name solver goal =
   let
@@ -399,9 +408,14 @@ val graph_expect_thm = expect_thm
       [thm_Z3p_v4, thm_CVCp]),
     (``(x : int) IN (s UNION t) <=> x IN s \/ x IN t``,
       [thm_CVC, thm_CVCp]),
+    (``!(a:'a) b. CARD {a; b} = 2 <=> a <> b``, [thm_card_CVCp]),
+    (``!(a:'a) b c. CARD {a; b; c} = 3 <=>
+        a <> b /\ a <> c /\ b <> c``, [thm_card_CVCp]),
     (* Z3 proves this through an array lemma outside its checked Bag replay
        ladder; cvc5 supplies the native checked Bag certificate. *)
     (``BAG_IN (x : bool) (BAG_INSERT y EMPTY_BAG) <=> x = y``, [thm_CVCp]),
+    (``(smt_set_of (a : 'a) = (s : 'b set)) /\ (a = b) ==>
+        (s = smt_set_of b)``, [thm_Z3p_v4, thm_CVCp]),
     (* Sets in cvc5's array encoding: a singleton, an applied set and an
        applied bound set must all stay Arrays, in the assumptions too. *)
     (``(x : num) = y /\ P {x} ==> (P : (num -> bool) -> bool) {y}``,

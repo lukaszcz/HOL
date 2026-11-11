@@ -303,6 +303,8 @@ val _ = Hol_datatype
   `smt_nested = SmtTip of bool |
                 SmtBranch of ((string # smt_nested) list)`
 
+val _ = Hol_datatype `smt_tree = SmtLeaf | SmtNode of smt_tree list`
+
 val _ = new_constant
   ("smt_left_from_int", ``:int -> smt_left``)
 
@@ -7467,6 +7469,63 @@ in
     "nested recursive datatypes were not declared together")
 end
 
+(* A list inside a datatype recursion cycle stays an algebraic datatype even
+   when another list selects the Seq model: cvc5 rejects datatypes that
+   recurse through Seq as nested-recursive. *)
+fun smtlib_recursive_list_stays_datatype_success () =
+let
+  val lists = [``(P:int list -> bool) []``, ``(Q:smt_tree list -> bool) [x]``]
+  val goal = (``(f:smt_tree -> int) x < f y`` :: lists, ``(x:smt_tree) <> y``)
+  (* A satisfiable query makes the solver check its datatypes in full. *)
+  val sat_goal = (lists, ``(x:smt_tree) = y``)
+  fun check name prover oracle =
+    ((case oracle sat_goal of
+        SolverSpec.SAT _ => ()
+      | SolverSpec.UNKNOWN (SOME reason) => die (name ^ ": " ^ reason)
+      | _ => die (name ^ " rejected the recursive list datatype"));
+     case prover goal of
+       SolverSpec.UNSAT (SOME thm) =>
+         assert (Term.aconv (Thm.concl thm) (Lib.snd goal) andalso
+           List.all (fn h => List.exists (Term.aconv h) (Lib.fst goal))
+             (Thm.hyp thm),
+           name ^ " recursive list congruence changed the goal")
+     | _ => die (name ^ " recursive list congruence did not replay"))
+  val _ = if Z3.is_configured () then
+    check "Z3" Z3.Z3_SMT_Prover Z3.Z3_SMT_Oracle else ()
+  val _ = if CVC.is_configured () then
+    check "cvc5" CVC.CVC_SMT_Prover CVC.CVC_SMT_Oracle else ()
+  (* An operator on recursive lists alone selects no Seq model, so no Seq
+     operator such as seq.rev (which Z3 lacks) is required. *)
+  val recursive_only = ([``(f:smt_tree -> int) x < f y``,
+      ``(R:smt_tree list -> bool) (REVERSE ts)``], ``(x:smt_tree) <> y``)
+  val _ = if Z3.is_configured () then
+    case Z3.Z3_SMT_Prover recursive_only of
+      SolverSpec.UNSAT (SOME _) => ()
+    | _ => die "Z3 recursive-list REVERSE goal did not replay"
+    else ()
+  (* Another list selecting Seq leaves the recursive-list REVERSE algebraic,
+     so it still requires no seq.rev. *)
+  val mixed = (``(P:int list -> bool) []`` :: Lib.fst recursive_only,
+    Lib.snd recursive_only)
+  val _ = if Z3.is_configured () then
+    case Z3.Z3_SMT_Prover mixed of
+      SolverSpec.UNSAT (SOME _) => ()
+    | _ => die "Z3 mixed recursive-list REVERSE goal did not replay"
+    else ()
+  val recursive_text = String.concat
+    (Lib.snd (SmtLib.goal_to_SmtLib_translation NONE recursive_only))
+  val text = String.concat
+    (Lib.snd (SmtLib.goal_to_SmtLib_translation NONE goal))
+in
+  assert (not (contains "(Seq " recursive_text) andalso
+    not (contains "seq." recursive_text),
+    "recursive-list REVERSE selected the Seq model");
+  assert (contains "(Seq Int)" text, "int list did not select Seq");
+  assert (contains "(List_Smt_tree 0)" text andalso
+    not (contains "(Seq Smt_tree)" text),
+    "recursive list was emitted as Seq")
+end
+
 fun smtlib_extended_hol_encoding_records_success () =
 let
   (* HOL strings reach SMT-LIB only through str_inj, so the encoding records
@@ -8840,6 +8899,12 @@ let
   val cons_expected = ``APPEND [x:'a] xs``
   val cons = checked_conversion "symbolic CONS assertion normalization"
     cons_input
+  (* A cons on a list in a datatype recursion cycle is a datatype
+     constructor, not a Seq concatenation. *)
+  val _ = (ignore (SmtLib.z3_assertion_roundtrip_conv_for_test
+      ``(t:smt_tree)::ts``);
+    die "FAIL: recursive-list CONS was rewritten to APPEND")
+    handle Conv.UNCHANGED => ()
   val multi_cons_input = ``(x:'a)::y::(xs:'a list)``
   val multi_cons_expected = ``APPEND [x:'a] (APPEND [y] xs)``
   val multi_cons =
@@ -11298,6 +11363,75 @@ let
 in
   CPC_ProofParser.parse_stream_with_version
     (SmtLib.parser_dicts_for_translation translation) "1.3.4" instream
+end
+
+(* A source symbol whose translation fixes its arity at one argument and
+   whose result is a set (an array of Booleans) may come back from cvc5 with
+   its sort curried differently.  Every such spelling of the same HOL type
+   must reuse the source entry; a different type must still be rejected. *)
+fun cpc_curried_source_redeclaration_success () =
+let
+  val domain_ty = Type.mk_vartype "'set_domain"
+  val element_ty = Type.mk_vartype "'set_element"
+  val set_of = Term.mk_var ("set_of",
+    boolSyntax.list_mk_fun ([domain_ty, element_ty], Type.bool))
+  fun set_of_parse _ indices args =
+    if List.null indices andalso List.length args = 1 then
+      Term.list_mk_comb (set_of, args)
+    else SmtLib_Theories.decline "<set_of>" "wrong number of arguments"
+  fun sort_parse ty _ indices args =
+    if List.null indices andalso List.null args then ty
+    else raise Feedback.mk_HOL_ERR "Unittest"
+      "sort_parse" "source sort signature mismatch"
+  val (logic_tydict, logic_tmdict) = SmtLib_Logics.parsedicts_of_logic "ALL"
+  val dicts =
+    (Library.extend_dict (("SetDomain", sort_parse domain_ty),
+       Library.extend_dict (("SetElement", sort_parse element_ty),
+         logic_tydict)),
+     Library.extend_dict (("set_of", set_of_parse), logic_tmdict))
+  fun proof_using application declaration =
+    "((declare-sort SetDomain 0) (declare-sort SetElement 0) " ^
+    declaration ^
+    " (declare-const a SetDomain) (declare-const x SetElement) \
+    \ (step @p (= " ^ application ^ " " ^ application ^ ") \
+    \ :rule refl :args (" ^ application ^ ")))"
+  val proof = proof_using "(select (set_of a) x)"
+  fun accept_with proof declaration =
+    let
+      val theorem = CPC_ProofReplay.replay_root_for_test
+        (CPC_ProofParser.parse_stream_with_version dicts "1.3.4"
+          (TextIO.openString (proof declaration)))
+      val (lhs, _) = boolSyntax.dest_eq (Thm.concl theorem)
+    in
+      assert (Term.free_in set_of lhs,
+        "curried CPC redeclaration did not reuse the source symbol: " ^
+        declaration);
+      assert (List.null (Thm.hyp theorem),
+        "curried CPC redeclaration retained hypotheses: " ^ declaration);
+      check_oracle_tags ("curried CPC redeclaration " ^ declaration) theorem
+    end
+  val accept = accept_with proof
+  val wrong = "(declare-const set_of (-> SetElement (Array SetDomain Bool)))"
+in
+  List.app accept
+    ["(declare-const set_of (-> SetDomain (Array SetElement Bool)))",
+     "(declare-fun set_of (SetDomain) (Array SetElement Bool))",
+     "(declare-fun set_of (SetDomain SetElement) Bool)",
+     "(declare-const set_of (-> SetDomain SetElement Bool))"];
+  (* The binary spellings may also apply the symbol to both arguments,
+     beyond the source entry's one-argument arity. *)
+  List.app (accept_with (proof_using "(set_of a x)"))
+    ["(declare-fun set_of (SetDomain SetElement) Bool)",
+     "(declare-const set_of (-> SetDomain SetElement Bool))"];
+  (ignore (CPC_ProofParser.parse_stream_with_version dicts "1.3.4"
+     (TextIO.openString (proof wrong)));
+   die "CPC parser reused a source declaration of a different type")
+  handle Feedback.HOL_ERR holerr =>
+    assert (Feedback.top_function_of holerr = "parse_declaration" andalso
+        Feedback.message_of holerr =
+          "incompatible redeclaration of CPC symbol set_of",
+      "CPC curried declaration diagnostic drifted: " ^
+      Feedback.message_of holerr)
 end
 
 fun smtlib_datatype_tester_instantiations_success () =
@@ -15545,6 +15679,63 @@ in
     "arith_mult_abs_comparison strict replay produced the wrong conclusion")
 end
 
+fun cpc_arith_reduction_conditional_operands_success () =
+let
+  val a = ``if p then (x:int) + 11 else x * 17``
+  val b = ``if q then (y:int) else 0``
+  val nested = SmtLib_Theories.mk_int_ediv
+    (intSyntax.mk_mult (a, a), b)
+  val integer_operands =
+    [(a, ``(7:int)``), (``(11:int)``, b), (nested, b),
+     (a, ``(0:int)``)]
+  val smt_ediv = Term.prim_mk_const
+    {Thy = "HolSmt", Name = "smt_ediv_total"}
+  val smt_emod = Term.prim_mk_const
+    {Thy = "HolSmt", Name = "smt_emod_total"}
+  val smt_rdiv = Term.prim_mk_const
+    {Thy = "HolSmt", Name = "smt_rdiv"}
+  fun app (operator, a, b) = Term.list_mk_comb (operator, [a, b])
+  fun check (label, term, expected) =
+    let
+      val theorem =
+        CPC_ProofReplay.replay_arith_reduction_for_test [term]
+    in
+      assert_concl_alpha (label, theorem, expected);
+      assert_no_hyps (label, theorem);
+      check_oracle_tags label theorem
+    end
+  fun check_integer (label, make, total) (a, b) =
+    let
+      val term = make (a, b)
+      val expected = boolSyntax.mk_eq (term,
+        boolSyntax.mk_cond (boolSyntax.mk_eq (b, intSyntax.zero_tm),
+          make (a, intSyntax.zero_tm), app (total, a, b)))
+    in check (label, term, expected) end
+  fun check_real (a, b) =
+    let
+      val term = app (smt_rdiv, a, b)
+      val expected = boolSyntax.mk_eq (term,
+        boolSyntax.mk_cond (boolSyntax.mk_eq (b, realSyntax.zero_tm),
+          app (smt_rdiv, a, realSyntax.zero_tm),
+          realSyntax.mk_div (a, b)))
+    in check ("real division conditional operands", term, expected) end
+  val real_a = ``if p then (r:real) + 11 else r * 17``
+  val real_b = ``if q then (s:real) else 0``
+  val abs_term = intSyntax.mk_absval a
+  val abs_expected = boolSyntax.mk_eq (abs_term,
+    boolSyntax.mk_cond (intSyntax.mk_less (a, intSyntax.zero_tm),
+      intSyntax.mk_negated a, a))
+in
+  List.app (check_integer ("ediv conditional operands",
+    SmtLib_Theories.mk_int_ediv, smt_ediv)) integer_operands;
+  List.app (check_integer ("emod conditional operands",
+    SmtLib_Theories.mk_int_emod, smt_emod)) integer_operands;
+  List.app check_real [(real_a, ``(7:real)``), (``(11:real)``, real_b),
+    (app (smt_rdiv, real_a, real_b), real_b),
+    (real_a, realSyntax.zero_tm)];
+  check ("absolute value conditional operand", abs_term, abs_expected)
+end
+
 fun cpc_arith_mult_abs_nary_success () =
 let
   fun int_abs term = intSyntax.mk_absval term
@@ -17046,6 +17237,154 @@ in
   replay "trust native Seq"
     ([], ``smt_seq_update ([1]:int list) 0 [2] =
            smt_seq_update [1] 0 [2]``) trust
+end
+
+fun cpc_finite_literal_card_success () =
+let
+  val goals =
+    [``!(a:'a) b. CARD {a; b} = 2 <=> a <> b``,
+     ``!(a:'a) b c. CARD {a; b; c} = 3 <=>
+         a <> b /\ a <> c /\ b <> c``]
+  fun check_translation tm =
+    let
+      val (simplified, _) =
+        SolverSpec.simplify (SmtLib.CVC_SIMP_TAC true) ([], tm)
+      val (_, lines) = CVC.goal_to_SmtLib_translation simplified
+      val text = String.concat lines
+    in
+      assert (contains "set.card" text andalso
+          not (contains "(Array " text),
+        "checked CARD preprocessing lost the native finite Set encoding")
+    end
+  val _ = List.app check_translation goals
+  val ((_, z3_empty), _) = SolverSpec.simplify
+    (SmtLib.Z3_SIMP_TAC true)
+    ([], ``CARD ({}:int set) = CARD (\x:int. F)``)
+  val (z3_left, z3_right) = boolSyntax.dest_eq z3_empty
+  val _ = assert (Term.aconv z3_left z3_right,
+    "checked cvc5 CARD preservation changed Z3 set preprocessing")
+  val (mixed, _) = SolverSpec.simplify (SmtLib.CVC_SIMP_TAC true)
+    ([``FINITE (s:int set)``],
+     ``CARD (s:int set) < CARD s + 1 /\
+       ((x:int) IN (t UNION u) <=> x IN t \/ x IN u)``)
+  val (_, mixed_lines) = CVC.goal_to_SmtLib_translation mixed
+  val _ = assert (contains "set.card" (String.concat mixed_lines),
+    "unrelated non-finite set atoms disabled finite CARD translation")
+  val _ = List.app (fn goal =>
+    let
+      val (simplified, _) = SolverSpec.simplify (SmtLib.CVC_SIMP_TAC true)
+        ([``FINITE (s:int set)``], goal)
+      val (_, lines) = CVC.goal_to_SmtLib_translation simplified
+      val text = String.concat lines
+    in
+      assert (contains "set.card" text,
+        "partially finite set atom disabled finite CARD translation")
+    end)
+    [``CARD (s:int set) < CARD s + 1 /\
+       ((x:int) IN (s INTER t) <=> x IN s /\ x IN t)``,
+     ``CARD (s:int set) < CARD s + 1 /\
+       ((x:int) IN (s DIFF t) <=> x IN s /\ ~(x IN t))``]
+  val (finite_equality, _) = SolverSpec.simplify (SmtLib.CVC_SIMP_TAC true)
+    ([``FINITE (s:int set)``], ``CARD (s:int set) = 0 <=> s = {}``)
+  val (_, finite_lines) = CVC.goal_to_SmtLib_translation finite_equality
+  val finite_text = String.concat finite_lines
+  val _ = assert (contains "set.card" finite_text andalso
+      not (contains "(Array " finite_text),
+    "finite equality beside CARD lost its native Set operands")
+  val (translation, _) = CVC.goal_to_SmtLib_translation
+    ([``FINITE ({}:int set)``], ``({}:int set) = {}``)
+  fun parse text = CPC_ProofParser.parse_stream_with_version
+    (SmtLib.parser_dicts_for_translation translation) "1.3.4"
+    (TextIO.openString text)
+  fun replay text =
+    let val theorem = CPC_ProofReplay.replay_root_for_test (parse text) in
+      check_oracle_tags "finite literal CARD replay" theorem;
+      theorem
+    end
+  val element = Term.mk_var ("card_element", Type.alpha)
+  val expected_refl = boolSyntax.mk_eq (element, element)
+  val (abstract_translation, _) =
+    CVC.goal_to_SmtLib_translation ([], expected_refl)
+  val saved_grammars = Parse.current_grammars ()
+  val abstract_refl = Portable.finally
+    (fn () => Parse.temp_set_grammars saved_grammars)
+    (fn () =>
+      (Parse.temp_set_grammars Parse.min_grammars;
+       CPC_ProofReplay.replay_root_for_test
+         (CPC_ProofParser.parse_stream_with_version
+           (SmtLib.parser_dicts_for_translation abstract_translation) "1.3.4"
+           (TextIO.openString
+             "((step @p :rule refl :args (v0)))")))) ()
+  val _ = check_oracle_tags "polymorphic CPC reflexivity" abstract_refl
+  val _ = assert (Term.aconv (Thm.concl abstract_refl) expected_refl,
+    "CPC reflexivity misclassified a polymorphic element as RegLan")
+  val packet = "(set.insert (@list 7 8) " ^
+    "(set.insert (@list 9) (set.singleton 10)))"
+  val packet_proof = replay ("((define @s () " ^ packet ^
+    ") (step @p :rule refl :args (@s)))")
+  val empty = pred_setSyntax.mk_empty intSyntax.int_ty
+  fun singleton element = pred_setSyntax.mk_insert (element, empty)
+  fun numeral n = intSyntax.term_of_int (Arbint.fromInt n)
+  fun card set = Term.mk_comb
+    (intSyntax.int_injection, pred_setSyntax.mk_card set)
+  val expected_set = List.foldr pred_setSyntax.mk_insert empty
+    (List.map numeral [7, 8, 9, 10])
+  val _ = assert (Term.aconv (Thm.concl packet_proof)
+      (boolSyntax.mk_eq (expected_set, expected_set)),
+    "nested CPC set.insert packet changed its element order or base set")
+  val union = replay
+    ("((step @p :rule sets-card-union " ^
+     ":args ((set.singleton 7) (set.singleton 8))))")
+  val minus = replay
+    ("((step @p :rule sets-card-minus " ^
+     ":args ((set.singleton 7) (set.singleton 8))))")
+  val nonnegative = replay
+    ("((step @p :rule trust :args " ^
+     "((>= (set.card (set.inter (set.singleton 7) " ^
+     "(set.singleton 8))) 0))))")
+  val positive = replay
+    ("((declare-const a Int) (declare-const b Int) " ^
+     "(define @s () (set.minus (set.singleton a) (set.singleton b))) " ^
+     "(assume @p1 (set.member a @s)) " ^
+     "(step @p2 :rule trust :premises (@p1) " ^
+     ":args ((>= (set.card @s) 1))))")
+  val left = singleton (numeral 7)
+  val right = singleton (numeral 8)
+  val intersection_card = card (pred_setSyntax.mk_inter (left, right))
+  val expected_union = boolSyntax.mk_eq
+    (card (pred_setSyntax.mk_union (left, right)),
+     intSyntax.mk_minus
+       (intSyntax.mk_plus (card left, card right), intersection_card))
+  val expected_minus = boolSyntax.mk_eq
+    (card (pred_setSyntax.mk_diff (left, right)),
+     intSyntax.mk_minus (card left, intersection_card))
+  val a = Term.mk_var ("a", intSyntax.int_ty)
+  val b = Term.mk_var ("b", intSyntax.int_ty)
+  val difference = pred_setSyntax.mk_diff (singleton a, singleton b)
+  val membership = pred_setSyntax.mk_in (a, difference)
+  val expected_positive = intSyntax.mk_geq (card difference, intSyntax.one_tm)
+  val _ = assert (Term.aconv (Thm.concl union) expected_union andalso
+      Term.aconv (Thm.concl minus) expected_minus andalso
+      Term.aconv (Thm.concl nonnegative)
+        (intSyntax.mk_geq (intersection_card, intSyntax.zero_tm)) andalso
+      Term.aconv (Thm.concl positive) expected_positive andalso
+      List.exists (Term.aconv membership) (Thm.hyp positive),
+    "literal Set cardinality replay changed the conclusion or membership: " ^
+      Library.term_to_string (Thm.concl union) ^ "; " ^
+      Library.term_to_string (Thm.concl minus) ^ "; " ^
+      Library.term_to_string (Thm.concl positive) ^ "; hypotheses: " ^
+      String.concatWith ", " (List.map Library.term_to_string
+        (Thm.hyp positive)))
+in
+  expect_hol_error_contains "empty insertion packet" "@list"
+    (fn () => ignore (parse
+      "((define @s () (set.insert (@list) (set.singleton 8))))"));
+  assert ((ignore (parse
+      "((define @s () (set.insert (@list true) (set.singleton 8))))");
+      false) handle Feedback.HOL_ERR error =>
+        Feedback.top_structure_of error = "pred_setSyntax" andalso
+        Feedback.top_function_of error = "mk_INSERT",
+    "CPC insertion packet did not report its element-type error")
 end
 
 (* The Set names are an explicit frozen registry, not a prefix catch-all.
@@ -20729,6 +21068,8 @@ let
   val cases =
     [("bv-extract-whole", "x 7",
       ``((7 >< 0) (x:word8):word8) = x``),
+     ("bv-extract-not", "x 1 6",
+      ``((6 >< 1) (~(x:word8)):word6) = ~((6 >< 1) x:word6)``),
      ("bv-extract-concat-1", "x @bv_empty #b1010 1 6",
       ``((6 >< 1) (((0xAw:word4) @@ (x:word8)):word12):word6) =
         ((6 >< 1) x:word6)``),
@@ -36124,6 +36465,8 @@ let
       smtlib_datatype_type_translation_success),
     ("smtlib_nested_datatype_dependencies_success",
       smtlib_nested_datatype_dependencies_success),
+    ("smtlib_recursive_list_stays_datatype_success",
+      smtlib_recursive_list_stays_datatype_success),
     ("smtlib_datatype_function_domain_dependencies_success",
       smtlib_datatype_function_domain_dependencies_success),
     ("smtlib_extended_hol_encoding_records_success",
@@ -36214,6 +36557,8 @@ let
       cpc_proof_parser_define_and_optional_conclusion_success),
     ("cpc_quoted_declaration_identity_success",
       cpc_quoted_declaration_identity_success),
+    ("cpc_curried_source_redeclaration_success",
+      cpc_curried_source_redeclaration_success),
     ("cpc_tokenizer_eof_and_lexical_validation_success",
       cpc_tokenizer_eof_and_lexical_validation_success),
     ("cpc_parser_graph_contract_diagnostics",
@@ -36341,6 +36686,8 @@ let
     ("cpc_totalized_outbound_exclusions_success",
       cpc_totalized_outbound_exclusions_success),
     ("cpc_totalized_replay_success", cpc_totalized_replay_success),
+    ("cpc_arith_reduction_conditional_operands_success",
+      cpc_arith_reduction_conditional_operands_success),
     ("cpc_arith_mult_abs_nary_success",
       cpc_arith_mult_abs_nary_success),
     ("cpc_proof_parser_singleton_premise_success",
@@ -36393,6 +36740,7 @@ let
       cpc_proof_replay_boolean_rewrites_success),
     ("cpc_proof_replay_seq_rules_success",
       cpc_proof_replay_seq_rules_success),
+    ("cpc_finite_literal_card_success", cpc_finite_literal_card_success),
     ("cpc_proof_replay_set_rules_success",
       cpc_proof_replay_set_rules_success),
     ("cpc_proof_replay_bag_trust_success",
