@@ -220,8 +220,10 @@ struct
                types= #types emission,declarations=declaration_inputs})
             val _ = checkpoint "features.after"
             val _ = live ()
-            val logic = SmtLib.outbound_select_logic regime
-              (#policy options) features
+            val has_nonnullary_uf = List.exists
+              (fn (_,arity) => arity > 0) declaration_inputs
+            val logic = SmtLib.outbound_select_logic_with_uf regime
+              has_nonnullary_uf (#policy options) features
             val _ = live ()
             val presence = Features.string_presence context roots
             fun hold current = case (#graph_node context) current of

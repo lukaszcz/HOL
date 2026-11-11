@@ -2772,6 +2772,13 @@ Proof
   irule (cj 1 closest_such_finite_properties)
 QED
 
+(* realLib.REAL_ASM_ARITH_TAC feeds the whole assumption list to the
+   arithmetic procedure, which case-splits on every abs and if in it and
+   gets exponential in the goals below.  Pass it only the assumptions
+   matching the given patterns. *)
+fun real_arith_from pats =
+  MAP_EVERY (fn p => qpat_x_assum p mp_tac) pats >> realLib.REAL_ARITH_TAC
+
 Theorem round_tiesToAway_from_closest_away:
   x <> 0 /\
   -threshold (:'t # 'w) < x /\ x < threshold (:'t # 'w) /\
@@ -2789,7 +2796,12 @@ Proof
     (qspec_then `float_plus_zero (:'t # 'w)` mp_tac) >>
   simp [IN_DEF] >> strip_tac >>
   `float_to_real a = float_to_real y` by
-    realLib.REAL_ASM_ARITH_TAC >>
+    real_arith_from
+      [`abs (float_to_real y - x) <= abs x`,
+       `abs (float_to_real y - x) <= abs (float_to_real a - x)`,
+       `abs (float_to_real a - x) <= abs (float_to_real y - x)`,
+       `abs x <= abs (float_to_real a)`,
+       `abs x <= abs (float_to_real y)`, `x <> 0`] >>
   fs [binary_ieeeTheory.float_to_real_eq] >> fs []
 QED
 
@@ -3092,11 +3104,11 @@ Proof
         (strip_assume_tac o
          REWRITE_RULE [integral_round_candidate_def])
       >- (`float_to_real a <> 0` by
-            (strip_tac >> fs [] >> Cases_on `0 <= x` >>
-             fs [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+            (strip_tac >> pop_assum SUBST_ALL_TAC >>
+             real_arith_from [`abs x <= abs 0`, `x <> 0`]) >>
           `float_to_real y <> 0` by
-            (strip_tac >> fs [] >> Cases_on `0 <= x` >>
-             fs [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+            (strip_tac >> pop_assum SUBST_ALL_TAC >>
+             real_arith_from [`abs x <= abs 0`, `x <> 0`]) >>
           `1 <= abs (float_to_real a)` by
             (mp_tac (Q.INST [`a` |-> `a`]
                integral_round_candidate_gap) >>
@@ -3111,16 +3123,19 @@ Proof
                irule >>
              simp [integral_round_candidate_def]) >>
           `float_to_real a = float_to_real y` by
-            (Cases_on `0 <= x` >>
-             Cases_on `0 <= float_to_real a` >>
-             Cases_on `0 <= float_to_real y` >>
-             Cases_on `0 <= float_to_real a - x` >>
-             Cases_on `0 <= float_to_real y - x` >>
-             fs [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+            real_arith_from
+              [`abs (float_to_real y - x) <= abs (float_to_real a - x)`,
+               `abs (float_to_real a - x) <= abs (float_to_real y - x)`,
+               `abs x <= abs (float_to_real a)`,
+               `abs x <= abs (float_to_real y)`,
+               `1 <= abs (float_to_real a)`, `1 <= abs (float_to_real y)`,
+               `2 * abs (float_to_real y - x) <= 1`] >>
           metis_tac [binary_ieeeTheory.float_to_real_eq])
       >- (fs [GSYM IN_DEF, binary_ieeeTheory.float_sets] >>
           qpat_x_assum `a = _` SUBST_ALL_TAC >>
-          realLib.REAL_ASM_ARITH_TAC))
+          qpat_x_assum `abs _ <= abs (float_to_real y - x)` mp_tac >>
+          rpt (qpat_x_assum `abs (float_to_real y - x) < _` mp_tac) >>
+          realLib.REAL_ARITH_TAC))
   >- (irule integral_candidate_nearest >> simp [])
 QED
 
@@ -3293,7 +3308,7 @@ Proof
   >- (`abs (float_to_real a - x) = x - float_to_real a` by
         (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
       `abs (float_to_real y - x) = x - float_to_real y` by
-        (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+        real_arith_from [`float_to_real y < x`] >>
       `float_to_real a = float_to_real y` by
         realLib.REAL_ASM_ARITH_TAC >>
       metis_tac [binary_ieeeTheory.float_to_real_eq])
@@ -3302,17 +3317,29 @@ Proof
       `abs (float_to_real (next_hi y)) <= abs (float_to_real a)` by
         metis_tac [binary_ieeeTheory.next_hi_discrete] >>
       `0 < float_to_real (next_hi y)` by
-        realLib.REAL_ASM_ARITH_TAC >>
+        real_arith_from
+          [`0 < float_to_real y`, `float_to_real y < x`,
+           `x < float_to_real (next_hi y)`] >>
       `float_to_real (next_hi y) <= float_to_real a` by
-        (fs [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+        real_arith_from
+          [`abs (float_to_real (next_hi y)) <= abs (float_to_real a)`,
+           `0 < float_to_real (next_hi y)`, `0 < float_to_real y`,
+           `~(float_to_real a <= float_to_real y)`] >>
       `abs (float_to_real a - x) = float_to_real a - x` by
         (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
       `abs (float_to_real y - x) = x - float_to_real y` by
-        (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+        real_arith_from [`float_to_real y < x`] >>
       `abs (float_to_real (next_hi y) - x) =
        float_to_real (next_hi y) - x` by
-        (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
-      realLib.REAL_ASM_ARITH_TAC)
+        real_arith_from [`x < float_to_real (next_hi y)`] >>
+      real_arith_from
+        [`abs (float_to_real a - x) = abs (float_to_real y - x)`,
+         `abs (float_to_real a - x) = float_to_real a - x`,
+         `abs (float_to_real y - x) = x - float_to_real y`,
+         `abs (float_to_real (next_hi y) - x) =
+          float_to_real (next_hi y) - x`,
+         `abs (float_to_real y - x) < abs (float_to_real (next_hi y) - x)`,
+         `float_to_real (next_hi y) <= float_to_real a`])
 QED
 
 Theorem closest_finite_negative_inward_unique:
@@ -3341,7 +3368,7 @@ Proof
   >- (`abs (float_to_real a - x) = float_to_real a - x` by
         (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
       `abs (float_to_real y - x) = float_to_real y - x` by
-        (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+        real_arith_from [`x < float_to_real y`] >>
       `float_to_real a = float_to_real y` by
         realLib.REAL_ASM_ARITH_TAC >>
       metis_tac [binary_ieeeTheory.float_to_real_eq])
@@ -3350,17 +3377,31 @@ Proof
       `abs (float_to_real (next_hi y)) <= abs (float_to_real a)` by
         metis_tac [binary_ieeeTheory.next_hi_discrete] >>
       `float_to_real (next_hi y) < 0` by
-        realLib.REAL_ASM_ARITH_TAC >>
+        real_arith_from
+          [`float_to_real y < 0`, `x < float_to_real y`,
+           `float_to_real (next_hi y) < x`] >>
       `float_to_real a <= float_to_real (next_hi y)` by
-        (fs [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+        real_arith_from
+          [`abs (float_to_real (next_hi y)) <= abs (float_to_real a)`,
+           `float_to_real (next_hi y) < 0`, `float_to_real y < 0`,
+           `~(float_to_real y <= float_to_real a)`] >>
       `abs (float_to_real a - x) = x - float_to_real a` by
-        (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+        real_arith_from
+          [`float_to_real a <= float_to_real (next_hi y)`,
+           `float_to_real (next_hi y) < x`] >>
       `abs (float_to_real y - x) = float_to_real y - x` by
-        (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+        real_arith_from [`x < float_to_real y`] >>
       `abs (float_to_real (next_hi y) - x) =
        x - float_to_real (next_hi y)` by
-        (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
-      realLib.REAL_ASM_ARITH_TAC)
+        real_arith_from [`float_to_real (next_hi y) < x`] >>
+      real_arith_from
+        [`abs (float_to_real a - x) = abs (float_to_real y - x)`,
+         `abs (float_to_real a - x) = x - float_to_real a`,
+         `abs (float_to_real y - x) = float_to_real y - x`,
+         `abs (float_to_real (next_hi y) - x) =
+          x - float_to_real (next_hi y)`,
+         `abs (float_to_real y - x) < abs (float_to_real (next_hi y) - x)`,
+         `float_to_real a <= float_to_real (next_hi y)`])
 QED
 
 Theorem round_tiesToAway_positive_inward:
@@ -3631,7 +3672,9 @@ Proof
      qpat_x_assum `is_closest integral_round_candidate x y` mp_tac >>
      simp [binary_ieeeTheory.is_closest_def, IN_DEF]) >>
   `abs (float_to_real z - x) = abs (float_to_real y - x)` by
-    realLib.REAL_ASM_ARITH_TAC >>
+    real_arith_from
+      [`abs (float_to_real z - x) <= abs (float_to_real y - x)`,
+       `abs (float_to_real y - x) <= abs (float_to_real z - x)`] >>
   `integral_round_candidate z` by
     (qpat_x_assum `is_closest integral_round_candidate x z` mp_tac >>
      simp [binary_ieeeTheory.is_closest_def, IN_DEF]) >>
@@ -3639,7 +3682,9 @@ Proof
     (strip_tac >>
      fs [GSYM IN_DEF, binary_ieeeTheory.float_sets] >>
      qpat_x_assum `z = _` SUBST_ALL_TAC >>
-     realLib.REAL_ASM_ARITH_TAC) >>
+     qpat_x_assum `abs _ = abs (float_to_real y - x)` mp_tac >>
+     rpt (qpat_x_assum `abs (float_to_real y - x) < _` mp_tac) >>
+     realLib.REAL_ARITH_TAC) >>
   `float_is_integral z` by
     fs [integral_round_candidate_def] >>
   `is_closest float_is_finite x z` by
@@ -11018,26 +11063,33 @@ Proof
   simp [smtfp_nan_def, canon_def]
 QED
 
+(* The definitions the add/sub special-case circuit correspondences
+   below unfold. *)
+val circuit_rws =
+  [smtfp_add_def, smtfp_sub_def, smt_float_add_def, smt_float_sub_def,
+   smtfp_addsub_circuit_def, smtfp_circuit_infinity_def,
+   to_binary_rounding_def,
+   binary_ieeeTheory.float_add_def, binary_ieeeTheory.float_sub_def,
+   binary_ieeeTheory.float_value_def, binary_ieeeTheory.float_is_nan_def,
+   binary_ieeeTheory.float_negate_def,
+   binary_ieeeTheory.float_component_equality,
+   binary_ieeeTheory.some_nan_properties,
+   smtfp_nan_def, smtfp_bits_def, canon_def, smtfp_canonical_def,
+   smtfp_nan_pattern_def, float_canon_qnan_def, canon_qnan_msb];
+
 Theorem smtfp_left_nan_circuit[local]:
   (if subtract then smtfp_sub mode smtfp_nan y
    else smtfp_add mode smtfp_nan y) =
   SND (smtfp_addsub_circuit subtract mode
     (smtfp_nan : ('t,'w) smtfp) y)
 Proof
-  Cases_on `subtract` >> Cases_on `mode` >>
+  Cases_on `subtract` >>
+  (* Unfolding once before the rounding-mode and value splits keeps the
+     second simp, over every resulting goal, cheap. *)
+  simp circuit_rws >>
+  Cases_on `mode` >>
   Cases_on `float_value (smtfp_rep y)` >>
-  simp [smtfp_add_def, smtfp_sub_def,
-        smt_float_add_def, smt_float_sub_def,
-        smtfp_addsub_circuit_def,
-        to_binary_rounding_def,
-        binary_ieeeTheory.float_add_def,
-        binary_ieeeTheory.float_sub_def,
-        binary_ieeeTheory.float_value_def,
-        binary_ieeeTheory.float_is_nan_def,
-        binary_ieeeTheory.some_nan_properties,
-        smtfp_nan_def, canon_def, smtfp_canonical_def,
-        smtfp_nan_pattern_def, float_canon_qnan_def,
-        canon_qnan_msb]
+  simp circuit_rws
 QED
 
 Theorem smtfp_right_nan_circuit[local]:
@@ -11061,19 +11113,11 @@ Theorem smtfp_left_infinity_finite_circuit[local]:
 Proof
   strip_tac >>
   wordsLib.Cases_on_word_value `sign` >>
-  Cases_on `subtract` >> Cases_on `mode` >>
+  Cases_on `subtract` >>
+  simp circuit_rws >>
+  Cases_on `mode` >>
   Cases_on `float_value (smtfp_rep y)` >>
-  fs [smtfp_add_def, smtfp_sub_def,
-      smt_float_add_def, smt_float_sub_def,
-      smtfp_addsub_circuit_def, smtfp_circuit_infinity_def,
-      to_binary_rounding_def,
-      binary_ieeeTheory.float_add_def,
-      binary_ieeeTheory.float_sub_def,
-      binary_ieeeTheory.float_value_def,
-      binary_ieeeTheory.float_is_nan_def,
-      binary_ieeeTheory.some_nan_properties,
-      smtfp_bits_def, canon_def, smtfp_canonical_def,
-      smtfp_nan_pattern_def]
+  fs circuit_rws
 QED
 
 Theorem smtfp_right_infinity_finite_circuit[local]:
@@ -11085,21 +11129,11 @@ Theorem smtfp_right_infinity_finite_circuit[local]:
 Proof
   strip_tac >>
   wordsLib.Cases_on_word_value `sign` >>
-  Cases_on `subtract` >> Cases_on `mode` >>
+  Cases_on `subtract` >>
+  simp circuit_rws >>
+  Cases_on `mode` >>
   Cases_on `float_value (smtfp_rep x)` >>
-  fs [smtfp_add_def, smtfp_sub_def,
-      smt_float_add_def, smt_float_sub_def,
-      smtfp_addsub_circuit_def, smtfp_circuit_infinity_def,
-      to_binary_rounding_def,
-      binary_ieeeTheory.float_add_def,
-      binary_ieeeTheory.float_sub_def,
-      binary_ieeeTheory.float_value_def,
-      binary_ieeeTheory.float_is_nan_def,
-      binary_ieeeTheory.float_negate_def,
-      binary_ieeeTheory.float_component_equality,
-      binary_ieeeTheory.some_nan_properties,
-      smtfp_bits_def, canon_def, smtfp_canonical_def,
-      smtfp_nan_pattern_def]
+  fs circuit_rws
 QED
 
 Theorem smtfp_both_infinity_circuit[local]:
@@ -11115,20 +11149,10 @@ Theorem smtfp_both_infinity_circuit[local]:
 Proof
   wordsLib.Cases_on_word_value `sx` >>
   wordsLib.Cases_on_word_value `sy` >>
-  Cases_on `subtract` >> Cases_on `mode` >>
-  simp [smtfp_add_def, smtfp_sub_def,
-      smt_float_add_def, smt_float_sub_def,
-      smtfp_addsub_circuit_def, smtfp_circuit_infinity_def,
-      to_binary_rounding_def,
-      binary_ieeeTheory.float_add_def,
-      binary_ieeeTheory.float_sub_def,
-      binary_ieeeTheory.float_value_def,
-      binary_ieeeTheory.float_is_nan_def,
-      binary_ieeeTheory.float_negate_def,
-      binary_ieeeTheory.float_component_equality,
-      binary_ieeeTheory.some_nan_properties,
-      smtfp_bits_def, smtfp_nan_def, canon_def,
-      smtfp_canonical_def, smtfp_nan_pattern_def]
+  Cases_on `subtract` >>
+  simp circuit_rws >>
+  Cases_on `mode` >>
+  simp circuit_rws
 QED
 
 Theorem smtfp_addsub_circuit_correspondence:
