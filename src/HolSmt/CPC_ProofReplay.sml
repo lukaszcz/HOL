@@ -2874,22 +2874,36 @@ local
      checked body equality so TRANS keeps the next certificate endpoint. *)
   fun quantified_boolean_equality (left, right) =
     let
-      val (left_variable, left_body) = boolSyntax.dest_forall left
-      val (right_variable, right_body) = boolSyntax.dest_forall right
-      val variable = Term.variant
-        (Term.free_vars left @ Term.free_vars right) left_variable
-      fun rename bound body =
-        Term.subst [{redex = bound, residue = variable}] body
-      val left_body = rename left_variable left_body
-      val right_body = rename right_variable right_body
-      val body_equality =
-        if boolSyntax.is_forall left_body andalso
-           boolSyntax.is_forall right_body then
-          quantified_boolean_equality (left_body, right_body)
-        else bounded_propositional_proof
-          (boolSyntax.mk_eq (left_body, right_body))
+      (* Check before free-variable scans or substitutions touch the prefix. *)
+      fun check_prefix remaining term =
+        if not (boolSyntax.is_forall term) then ()
+        else if remaining = 0 then
+          raise ERR "trans" "quantified Boolean prefix limit exceeded"
+        else check_prefix (remaining - 1)
+          (#2 (boolSyntax.dest_forall term))
+      val _ = check_prefix 256 left
+      val _ = check_prefix 256 right
+      fun prove (left, right) =
+        let
+          val (left_variable, left_body) = boolSyntax.dest_forall left
+          val (right_variable, right_body) = boolSyntax.dest_forall right
+          val variable = Term.variant
+            (Term.free_vars left @ Term.free_vars right) left_variable
+          fun rename bound body =
+            Term.subst [{redex = bound, residue = variable}] body
+          val left_body = rename left_variable left_body
+          val right_body = rename right_variable right_body
+          val body_equality =
+            if boolSyntax.is_forall left_body andalso
+               boolSyntax.is_forall right_body then
+              prove (left_body, right_body)
+            else bounded_propositional_proof
+              (boolSyntax.mk_eq (left_body, right_body))
+        in
+          Thm.AP_TERM (Term.rator left) (Thm.ABS variable body_equality)
+        end
     in
-      Thm.AP_TERM (Term.rator left) (Thm.ABS variable body_equality)
+      prove (left, right)
     end
 
   fun replay_trans_with_provenance
@@ -21908,6 +21922,7 @@ in
   val compact_word_target = compact_word_target
   val word_circuit_node_conversion = word_circuit_node_conversion
   val resolution_word_graph_for_test = new_resolution_word_graph
+  val quantified_boolean_equality_for_test = quantified_boolean_equality
   val replay_bv_poly_norm_for_test = replay_bv_poly_norm
   val retain_producer_conclusion_for_test = retain_producer_conclusion
   val replay_cong_for_test = replay_cong

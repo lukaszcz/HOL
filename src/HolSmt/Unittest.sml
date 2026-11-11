@@ -35717,6 +35717,26 @@ fun run_cache_lifetime_unittests () =
      ("CPC omitted conclusion", cpc_cache_omitted_conclusion_bypasses_success),
      ("CPC cache atomicity", cpc_fastpath_error_and_cache_atomicity_contract)]
 
+fun cpc_quantified_trans_prefix_limit_success () =
+let
+  val variables = List.tabulate
+    (257, fn i => Term.mk_var ("prefix" ^ Int.toString i, Type.bool))
+  fun endpoints prefix =
+    (boolSyntax.list_mk_forall (prefix, ``p \/ q \/ r``),
+     boolSyntax.list_mk_forall (prefix, ``r \/ p \/ q``))
+  val pair = endpoints (List.take (variables, 256))
+  val theorem = CPC_ProofReplay.quantified_boolean_equality_for_test pair
+in
+  assert (Thm.concl theorem ~~ boolSyntax.mk_eq pair andalso
+      List.null (Thm.hyp theorem),
+    "quantified Boolean bridge changed an in-budget endpoint");
+  check_oracle_tags "bounded quantified Boolean bridge" theorem;
+  expect_hol_error_contains "quantified Boolean prefix limit"
+    "prefix limit exceeded"
+    (fn () => ignore (CPC_ProofReplay.quantified_boolean_equality_for_test
+      (endpoints variables)))
+end
+
 fun cpc_instantiate_after_quantified_trans_success () =
 let
   val proof = parse_cpc_proof_string (
@@ -36360,6 +36380,8 @@ let
       cpc_eq_resolve_real_route_independent_success),
     ("cpc_proof_replay_omitted_arith_poly_norm_success",
       cpc_proof_replay_omitted_arith_poly_norm_success),
+    ("cpc_quantified_trans_prefix_limit_success",
+      cpc_quantified_trans_prefix_limit_success),
     ("cpc_instantiate_after_quantified_trans_success",
       cpc_instantiate_after_quantified_trans_success),
     ("cpc_proof_replay_canonical_trans_terminal_success",
