@@ -7755,7 +7755,7 @@ local
     fun higher_order accumulated =
       let
         val rigid = HOLset.difference
-          (Term.FVL_dag [t] Term.empty_tmset, #var_set state)
+          (Term.FVL [t] Term.empty_tmset, #var_set state)
         val (substs, tyins) =
           HolKernel.ho_match_term [] rigid t (Thm.concl accumulated)
         val _ = List.null tyins orelse
