@@ -129,7 +129,7 @@ struct
     structure R = realTheory
     structure RA = realaxTheory
   in
-    fun thms_per_const const =
+    fun thms_per_const preserve_num const =
     let
       val { Thy, Name, Ty } = Term.dest_thy_const const
       val bool = Type.bool
@@ -152,35 +152,44 @@ struct
          seem to cause issues, but EXP_2 prevents Z3 from solving
          ``x DIV 42 <= x``. *)
       case (Thy, Name) of
-        ("arithmetic", "*") => []
-      | ("arithmetic", "+") => []
-      | ("arithmetic", "-") => []
-      | ("arithmetic", "<=") => []
-      | ("arithmetic", ">") => []
-      | ("arithmetic", ">=") => []
-      | ("arithmetic", "DIV") => []
-      | ("arithmetic", "EXP") => []
-      | ("arithmetic", "MAX") => []
-      | ("arithmetic", "MIN") => []
-      | ("arithmetic", "MOD") => []
-      | ("integer", "Num") => []
+        ("arithmetic", "*") =>
+          if preserve_num then [I.NUM_INT_MUL] else []
+      | ("arithmetic", "+") => if preserve_num then [I.INT_ADD] else []
+      | ("arithmetic", "-") =>
+          if preserve_num then [int_arithTheory.INT_NUM_SUB] else []
+      | ("arithmetic", "<=") => if preserve_num then [I.INT_LE] else []
+      | ("arithmetic", ">") => if preserve_num then [A.GREATER_DEF] else []
+      | ("arithmetic", ">=") => if preserve_num then [A.GREATER_EQ] else []
+      | ("arithmetic", "DIV") =>
+          if preserve_num then [I.NUM_INT_EDIV] else []
+      | ("arithmetic", "EXP") =>
+          if preserve_num then [A.EXP, A.EXP_1, A.EXP_POS] else []
+      | ("arithmetic", "MAX") => if preserve_num then [A.MAX_DEF] else []
+      | ("arithmetic", "MIN") => if preserve_num then [A.MIN_DEF] else []
+      | ("arithmetic", "MOD") =>
+          if preserve_num then [I.NUM_INT_EMOD] else []
+      | ("integer", "Num") =>
+          if preserve_num then [I.INT_OF_NUM, I.NUM_OF_INT] else []
       | ("integer", "int_div") => [ I.INT_DIV_EDIV ]
       | ("integer", "int_exp") => [ I.int_exp ]
       | ("integer", "int_max") => [ I.INT_MAX ]
       | ("integer", "int_min") => [ I.INT_MIN ]
       | ("integer", "int_mod") => [ I.INT_MOD_EMOD ]
-      | ("integer", "int_of_num") => []
+      | ("integer", "int_of_num") =>
+          if preserve_num then [I.INT_OF_NUM, I.INT_POS, I.NUM_OF_INT]
+          else []
       | ("integer", "int_quot") => [ I.INT_QUOT_EDIV ]
       | ("integer", "int_rem") => [ I.INT_REM_EMOD ]
       | ("intreal", "INT_CEILING") => []
       | ("marker", "Abbrev") => [ markerTheory.Abbrev_def ]
       | ("min", "=") =>
-          if Type.compare (Ty, num --> num --> bool) = EQUAL then
-            []
+          if preserve_num andalso
+             Type.compare (Ty, num --> num --> bool) = EQUAL then
+            [I.INT_INJ]
           else
             []
-      | ("num", "SUC") => []
-      | ("prim_rec", "<") => []
+      | ("num", "SUC") => if preserve_num then [I.INT] else []
+      | ("prim_rec", "<") => if preserve_num then [I.INT_LT] else []
       | ("realax", "/") => [ HolSmtTheory.real_div_smt_rdiv ]
       | ("realax", "NUM_CEILING") => [ IR.INT_NUM_CEILING, R.NUM_CEILING_BASE ]
       | ("realax", "NUM_FLOOR") => [ IR.INT_NUM_FLOOR, R.NUM_FLOOR_BASE ]
@@ -196,7 +205,8 @@ struct
   end
 
   val rewrites = num_transfer_rewrites
-  val for_head = thms_per_const
+  val for_head_preserving_num = thms_per_const
+  val for_head = thms_per_const false
   (* Opaque exact selector occurrence. This is no Source/Work receipt;
      admission, policy and construction remain the consuming owner's work. *)
   datatype selection = Selection of

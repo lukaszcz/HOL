@@ -148,7 +148,10 @@ struct
              translate_type=fn regime => fn input => borrowed
                (fn () => (#translate_type installed) regime input),
              sort_of_type=fn regime => fn dictionary => fn ty => borrowed
-               (fn () => (#sort_of_type installed) regime dictionary ty)}
+               (fn () => (#sort_of_type installed) regime dictionary ty),
+             type_declaration_records=fn dictionary => fn declarations =>
+               borrowed (fn () => (#type_declaration_records installed)
+                 dictionary declarations)}
         in borrowed (fn () => action guarded) end
     in SmtLib.outbound_with_backend_context modes run end
 
