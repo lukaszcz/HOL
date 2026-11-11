@@ -5,7 +5,7 @@ check:
 	python3 -B -m unittest discover -s . -p 'test_*.py'
 	python3 -B -m unittest discover -s performance -p 'test_*.py'
 	python3 -B -m unittest discover -s performance/assembly -p 'test_*.py'
-	@out=$$(mktemp -d /tmp/hol-tactics.XXXXXX); \
+	@out=$$(mktemp -d "$${TMPDIR:-/tmp}/hol-tactics.XXXXXX"); \
 	  python3 -B run_behavior.py --output $$out/paired && \
 	  python3 -B ../compatibility/run_paired.py --staging-contracts \
 	    --candidate HEAD --candidate-signature pass \

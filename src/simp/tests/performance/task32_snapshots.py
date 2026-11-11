@@ -85,7 +85,13 @@ CONFIGURE_INPUT = "tools/smart-configure.sml"
 MKTOOL_PATH = sg.MKTOOL[0]
 SYSTEML = "tools/Holmake/Systeml.sml"
 C31 = "bdc4dac42d"
-UNCOMPILED = ":!src/simp/tests"
+# Test-only paths: directories named `tests` under src/ are not uploaded to
+# sigobj and lie in no heap or library closure.  Library Holmakefiles drive
+# some of them through `-C tests/...`, but only as selftests under
+# HOLSELFTESTLEVEL, so a change there cannot move the TASK31 measurements.
+# Toolchain `tests` directories (tools/, tools-poly/) stay compared: TASK31's
+# validity rule treats toolchain inputs as decisive.
+TEST_ONLY = (":(exclude,glob)src/**/tests/**",)
 BIN_PRODUCTS = ("bin/hol", "bin/hol.state0", "bin/hol.state",
                 "bin/hol.state.min", "bin/Holmake")
 STALE_NAMES = re.compile(r"(.*\.(uo|ui|dat)|hol\.state.*|\.hol)\Z")
@@ -790,7 +796,7 @@ def verify(manifest, base_pin, cand_pin, c31=C31, probe=probe_toolchain,
     c31 = resolved.stdout.decode().strip()
     a.exact_pin(c31)
     same = git_run(croot, "diff", "--quiet", c31, cand["pin"], "--", ".",
-                   UNCOMPILED, check=False)
+                   *TEST_ONLY, check=False)
     require(same.returncode in (0, 1), "cannot compare with " + c31)
     require(same.returncode == 0, "candidate's compiled sources differ "
             "from %s" % c31)

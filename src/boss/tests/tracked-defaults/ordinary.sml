@@ -11,7 +11,7 @@ fun absent () = List.app (fn name => check ("ordinary load excludes " ^ name)
   (not (List.exists (equal name) (Meta.loaded ())) andalso
    not (Option.isSome (#lookupStruct PolyML.globalNameSpace name)))) extensions
 val _ = absent ()
-val root = valOf (OS.Process.getEnv "HOLDIR")
+val root = Systeml.HOLDIR
 val _ = List.app (fn path =>
   (Meta.load (OS.Path.concat (root,path)); absent ()))
   ["src/basicProof/BasicProvers","src/num/arith/src/numSimps",

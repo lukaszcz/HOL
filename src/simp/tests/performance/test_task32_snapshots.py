@@ -70,6 +70,7 @@ def make_repo(path):
     git(path, "commit", "-qam", "cand sources")
     c31 = git(path, "rev-parse", "HEAD")
     put(path / "src/simp/tests/t.txt", "test only\n")
+    put(path / "src/boss/tests/x/t.txt", "test only\n")
     git(path, "add", "-A")
     git(path, "commit", "-qm", "tests")
     return base, c31, git(path, "rev-parse", "HEAD")
@@ -693,6 +694,34 @@ class VerifyTests(unittest.TestCase):
         self.fails("cannot resolve", c31="1" * 40)
         self.fails("cannot resolve", c31="nosuchrev")
         self.assertEqual(self.w.verify(c31=self.w.c31)["status"], "pass")
+
+    def c31_differing_in(self, path):
+        """A commit equal to the candidate pin plus one file, built with
+        commit-tree so the shared fixture's HEAD never moves."""
+        repo = self.w.repo
+        with tempfile.TemporaryDirectory() as scratch:
+            env = dict(os.environ, GIT_INDEX_FILE=scratch + "/index")
+            def run(*args, **kw):
+                return subprocess.run(
+                    ["git", "-C", str(repo), *args], env=env, check=True,
+                    stdout=subprocess.PIPE, **kw).stdout.decode().strip()
+            run("read-tree", self.w.cand_pin)
+            blob = run("hash-object", "-w", "--stdin", input=b"x\n")
+            run("update-index", "--add", "--cacheinfo",
+                "100644," + blob + "," + path)
+            tree = run("write-tree")
+        return git(repo, "commit-tree", tree, "-p", self.w.cand_pin,
+                   "-m", "boundary")
+
+    def test_test_only_boundary(self):
+        c31 = self.c31_differing_in("src/num/tests/x.sml")
+        self.assertEqual(self.w.verify(c31=c31)["status"], "pass")
+        for path in ("src/boss/theory_tests/x.sml", "src/boss/tests.sml",
+                     "src/mytests/x", "tools/Holmake/tests/x",
+                     "src/boss/bossLib.sml"):
+            with self.subTest(path=path):
+                self.fails("compiled sources differ",
+                           c31=self.c31_differing_in(path))
 
     def test_head_moved(self):
         git(self.cand, "checkout", "-q", "--detach", self.w.base_pin)
