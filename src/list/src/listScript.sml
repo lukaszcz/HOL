@@ -23,12 +23,6 @@ Libs
   boolSimps pred_setLib TotalDefn metisLib quotientLib
   Datatype[qualified] OpenTheoryMap[qualified]
 
-(* the bound is a cardinality, and cardinalityCoreTheory makes no
-   grammar of its own; this is kept to itself so that a theory
-   declaring a datatype does not inherit the notation *)
-Overload "<<="[local] = “cardleq”
-
-
 val ERR = mk_HOL_ERR "listScript"
 
 val arith_ss = bool_ss ++ numSimps.ARITH_ss ++ numSimps.REDUCE_ss
@@ -1419,6 +1413,12 @@ Theorem SUM_eq_0:
    !ls. (SUM ls = 0) = !x. MEM x ls ==> (x = 0)
 Proof
   LIST_INDUCT_TAC THEN SRW_TAC[] [SUM, MEM] THEN METIS_TAC[]
+QED
+
+Theorem SUM_less_EVERY_less:
+  SUM ls < n ==> EVERY (λx. x < n) ls
+Proof
+  Induct_on ‘ls’ >> simp[SUM, EVERY_DEF]
 QED
 
 Theorem NULL_FILTER:
