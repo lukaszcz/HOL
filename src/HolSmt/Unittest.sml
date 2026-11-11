@@ -26303,9 +26303,17 @@ let
       val product = List.foldl (fn (v, acc) => ``^acc * ^v * ^v``)
         (let val v = hd vs in ``^v * ^v`` end) (tl vs)
     in (factors, product) end
-  fun refused (factors, product) =
-    (derive (factors, product); false) handle HOL_ERR _ => true
+  (* Refused with the expected diagnostic, not some other replay error. *)
+  fun refused_with diagnostic f x =
+    (f x; false) handle HOL_ERR e =>
+      String.isSubstring diagnostic (Feedback.message_of e)
+  val too_many = "too many nonzero factors to split"
+  val sign_open = "a nonzero factor leaves the product's sign open"
+  val refused = refused_with too_many derive
   val (factors8, product8) = squares 8
+  (* A nonzero conjunct absent from the product is not split, so eight
+     squares stay within the limit next to it. *)
+  val factors8unused = ``~((w:int) = 0) /\ ^factors8``
   val (factors9, product9) = squares 9
   (* Past the split limit replay fails closed instead of searching for a
      sign: a negative factor times nine nonzero squares is refused. *)
@@ -26313,7 +26321,7 @@ let
     let val x = ``x:int``
     in (``^x < 0 /\ ^factors9``, ``^x * ^product9``) end
   fun replay_refused (factors, product) =
-    (sign [factors, product]; false) handle HOL_ERR _ => true
+    refused_with too_many sign [factors, product]
   val cube_factor = ``~((x:int) = 0)``
   val cube_product = ``(x:int) * x * x``
 in
@@ -26321,13 +26329,16 @@ in
   assert (Thm.concl (derive (factors8, product8)) ~~
             ``^factors8 ==> ^product8 > 0``,
     "eight nonzero squares were not derived");
+  assert (Thm.concl (derive (factors8unused, product8)) ~~
+            ``^factors8unused ==> ^product8 > 0``,
+    "an unused nonzero factor was split");
   assert (refused (factors9, product9),
     "nine nonzero squares were split");
   assert (replay_refused (factors9, product9),
     "nine nonzero squares were replayed");
   assert (replay_refused (factors9neg, product9neg),
     "a negative factor times nine nonzero squares was replayed");
-  assert (refused (cube_factor, cube_product),
+  assert (refused_with sign_open derive (cube_factor, cube_product),
     "a nonzero cube was derived");
   assert (profile_call_count "CPC(rung:arith/cases)" = 0,
     "arith_mult_sign was routed to arithmetic search")
