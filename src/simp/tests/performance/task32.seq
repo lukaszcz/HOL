@@ -4,8 +4,11 @@
 # directories the TASK32 workloads need beyond it, in dependency order.
 # src/parallel_builds/core is not used: with -t it also builds many
 # example directories.  bin/build never passes --no_prereqs, so Holmake
-# builds INCLUDES prerequisites itself; the intermediate directories are
-# listed so that their selftests run, not to make the targets buildable.
+# builds INCLUDES prerequisites itself.  The intermediate directories
+# are still listed: as roots of their own Holmake run, their selftests
+# and their own link-to-sigobj rule run.  As a mere INCLUDES prerequisite
+# Holmake builds only the files a dependent needs, so neither would run
+# and their products would never reach sigobj.
 # A leading `!` marks a directory built only at selftest level >= 1 (-t,
 # which task32_snapshots always passes) and never uploaded by bin/build.
 # It is used for every directory whose Holmakefile links its own products

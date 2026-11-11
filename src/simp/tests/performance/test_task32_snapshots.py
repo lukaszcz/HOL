@@ -702,8 +702,8 @@ def seq_entries(read, name, bang=False):
     """The directories of sequence file `name` (relative to tools/) in
     order, as buildutils.read_buildsequence expands them: `#include`
     against <root>/tools, `[sys]`/`(knl)` selectors (poly, stdknl),
-    leading `!` (kept only when `bang`). `read(path)` returns the text of
-    a repo path."""
+    leading `!` (with `bang`, entries are (number of `!`, directory)
+    pairs). `read(path)` returns the text of a repo path."""
     out = []
     for raw in read(posixpath.normpath("tools/" + name)).splitlines():
         line = raw.strip()
@@ -716,7 +716,8 @@ def seq_entries(read, name, bang=False):
         m = re.match(r"(\[(\w+)\])?(\((\w+)\))?(!*)(.*)", line)
         if m.group(2) in (None, "poly") and \
                 m.group(4) in (None, "stdknl"):
-            out.append((m.group(5) if bang else "") + m.group(6))
+            out.append(((len(m.group(5)), m.group(6)) if bang
+                        else m.group(6)))
     return out
 
 
@@ -757,9 +758,21 @@ def holmake_includes(read, directory, strict=True):
 
 def links_to_sigobj(read, directory):
     """Whether the Holmakefile of `directory` links its own products into
-    sigobj (`link-to-sigobj` / $(HOL_LNSIGOBJ), under `ifdef HOLBUILD`)."""
+    sigobj: an uncommented `$(HOL_LNSIGOBJ)` recipe line or
+    `all: link-to-sigobj` inside an `ifdef HOLBUILD` block."""
     text = read(directory + "/Holmakefile") or ""
-    return "HOL_LNSIGOBJ" in text or "link-to-sigobj" in text
+    stack = []
+    for line in text.replace("\\\n", " ").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if re.match(r"if(n?eq|n?def)\b", line):
+            stack.append(re.match(r"ifdef\s+HOLBUILD\s*$", line) is not None)
+        elif line == "endif":
+            if stack:
+                stack.pop()
+        elif any(stack) and (re.match(r"\$\(HOL_LNSIGOBJ\)", line) or
+                             re.match(r"all\s*:\s*link-to-sigobj\b", line)):
+            return True
+    return False
 
 
 def check_closure(read, exists):
@@ -771,10 +784,10 @@ def check_closure(read, exists):
     own = read(s.SEQUENCE_REL)
     both = seq_entries(read, "../" + s.SEQUENCE_REL)
     assert both[:len(base)] == base
-    added = [d.lstrip("!") for d in both[len(base):]]
+    added = both[len(base):]
     implicit = {i for d in base
-                for i in holmake_includes(read, d.lstrip("!"), False)}
-    known = {d.lstrip("!") for d in base} | implicit
+                for i in holmake_includes(read, d, False)}
+    known = set(base) | implicit
     problems = []
     for d in added:
         if not exists(d):
@@ -787,16 +800,19 @@ def check_closure(read, exists):
     assert own
     # `!` (built at -t, never uploaded by bin/build) exactly for the
     # directories that link themselves to sigobj, else bin/build's upload
-    # fails with "File exists"; and for test directories (a `testing`
-    # directory has nothing to upload and only runs at -t).
-    marked = {d[1:] for d in
-              seq_entries(read, "../" + s.SEQUENCE_REL, True)[len(base):]
-              if d.startswith("!")}
+    # fails with "File exists"; and for test directories, which must not
+    # be uploaded (they only run at -t).
+    bangs = {d: n for n, d in
+             seq_entries(read, "../" + s.SEQUENCE_REL, True)[len(base):]}
+    marked = {d for d, n in bangs.items() if n}
     for d in added:
-        want = links_to_sigobj(read, d) or posixpath.basename(d) == "testing"
+        want = links_to_sigobj(read, d) or \
+            bool({"test", "tests", "testing"} & set(d.split("/")))
         if want and d not in marked:
             problems.append("%s: needs a leading `!`" % d)
-        if marked >= {d} and not want:
+        if bangs[d] > 1:
+            problems.append("%s: must be exactly one `!`" % d)
+        if d in marked and not want:
             problems.append("%s: has `!` but no link-to-sigobj rule" % d)
     return added, problems
 
@@ -816,6 +832,33 @@ class SequenceClosureTests(unittest.TestCase):
         self.assertTrue(any(
             l.startswith("!src/integer/testing")
             for l in Path(s.SEQUENCE).read_text().splitlines()))
+
+    def test_marking_rule(self):
+        link = ("ifdef HOLBUILD\nall: link-to-sigobj\n"
+                "link-to-sigobj: $(DEFAULT_TARGETS)\n\t$(HOL_LNSIGOBJ)\n"
+                "endif\n")
+        files = {
+            "tools/sequences/upto-parallel": "src/base\n",
+            "src/base/Holmakefile": "",
+            "src/plain/Holmakefile": link,
+            "src/bang/Holmakefile": "",
+            "src/bangs/Holmakefile": link,
+            "src/quiet/Holmakefile": "# ifdef HOLBUILD\n"
+                "# all: link-to-sigobj\n# link-to-sigobj:\n"
+                "# \t$(HOL_LNSIGOBJ)\n# endif\n",
+        }
+
+        def check(seq):
+            files[s.SEQUENCE_REL] = \
+                "#include sequences/upto-parallel\n" + seq
+            return check_closure(files.get, lambda d: True)[1]
+        self.assertEqual(check("src/plain\n"),
+                         ["src/plain: needs a leading `!`"])
+        self.assertEqual(check("!src/bang\n"),
+                         ["src/bang: has `!` but no link-to-sigobj rule"])
+        self.assertEqual(check("!!src/bangs\n"),
+                         ["src/bangs: must be exactly one `!`"])
+        self.assertEqual(check("src/quiet\n!src/bangs\n"), [])
 
     def test_base_tree(self):
         have = subprocess.run(["git", "-C", str(REPO), "cat-file", "-e",
