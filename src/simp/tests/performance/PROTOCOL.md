@@ -2903,43 +2903,42 @@ sides use the same four paths:
         --scratch .agent-files/scratch/task32 \
         --evidence .agent-files/evidence/task32/build/logs
 
-`--scratch` holds the immutable `<scratch>/task32-<sha256>.seq` copy of
-the sequence and the fresh HOMEs. `verify` fails if the copy is gone, and
-`verify` runs before and after every downstream run and again in TASK33,
-so the `.seq` copy is kept as long as the snapshots are. The build logs
-may be gzipped afterwards: `log_seal` accepts `<log>.gz` and seals the
-decompressed bytes. Each side is `git clone --shared --no-checkout` into
-`ROOT/<side>` (`LABELS` = `base`, `cand`; equal length, so the HOLDIR
-strings and path-length effects match), `git checkout --detach PIN`, the
-sealed `mktool.ML` fix on the baseline only (`startup_gate.apply_mktool`,
-imported; B cannot build `theorytool` without it; the patched file must be
-blob-equal to C32's, hence `--cand-pin`), `poly < tools/smart-configure.sml`
-and `bin/build --no-cache -t -jN --seq=<copy of task32.seq>`. Commands run
-in this order (`COMMANDS`: clone, checkout, configure, build, then one
-`prime-<unit>` and one `reprime-<unit>` per theory unit). Priming:
-`bin/build` does not write consistently the dependency caches
-`.hol/make-deps/<X>Theory.{sig,sml}.d` of the generated files, which a later
-Holmake run writes (in the unit's directory, and in the INCLUDES directories
-it scans even with `--no_prereqs`), and the two builds do not leave the same
-ones (the candidate's `bin/build` wrote some the baseline's did not). The
-driver deletes the caches a process writes, so every process of a unit
-would pay the dependency scan, and one arm could pay for more of it than
-the other. After the build, each theory unit's own downstream command
-(`task32_cases.theory_argv`, the same function the timing driver uses:
-`bin/Holmake --no-cache --no_prereqs -j1 <X>Theory.uo`) runs once in the
-unit's directory with the build's environment. The target is up to date, so
-nothing is built, but Holmake builds the dependency graph of the directory
-and of its INCLUDES directories whatever the target and writes every
-missing cache. `check_prime` fails the build if any product changed or any
-new file is not a `.hol/make-deps/*.d`. Then every command runs a second
+`--scratch` holds the immutable `<scratch>/task32-<sha256>.seq` copy of the
+sequence and the fresh HOMEs. `verify` fails if the copy is gone, and `verify`
+runs before and after every downstream run and again in TASK33, so the `.seq`
+copy is kept as long as the snapshots are. The build logs may be gzipped
+afterwards: `log_seal` accepts `<log>.gz` and seals the decompressed bytes.
+Each side is `git clone --shared --no-checkout` into `ROOT/<side>` (`LABELS` =
+`base`, `cand`; equal length, so the HOLDIR strings and path-length effects
+match), `git checkout --detach PIN`, the sealed `mktool.ML` fix on the
+baseline only (`startup_gate.apply_mktool`, imported; B cannot build
+`theorytool` without it; the patched file must be blob-equal to C32's, hence
+`--cand-pin`), `poly < tools/smart-configure.sml` and `bin/build --no-cache -t
+-jN --seq=<copy of task32.seq>`. Commands run in this order (`COMMANDS`:
+clone, checkout, configure, build, then one `prime-<unit>` and one
+`reprime-<unit>` per theory unit). Priming: `bin/build` does not write
+consistently the dependency caches `.hol/make-deps/<X>Theory.{sig,sml}.d` of
+the generated files, which a later Holmake run writes (in the unit's
+directory, and in the INCLUDES directories it scans even with `--no_prereqs`),
+and the two builds do not leave the same ones (the candidate's `bin/build`
+wrote some the baseline's did not). The driver deletes the caches a process
+writes, so every process of a unit would pay the dependency scan, and one arm
+could pay for more of it than the other. After the build, each theory unit's
+own downstream command (`task32_cases.theory_argv`, the same function the
+timing driver uses: `bin/Holmake --no-cache --no_prereqs -j1 <X>Theory.uo`)
+runs once in the unit's directory with the build's environment. The target is
+up to date, so nothing is built, but Holmake builds the dependency graph of
+the directory and of its INCLUDES directories whatever the target and writes
+every missing cache. `check_prime` fails the build if any product changed or
+any new file is not a `.hol/make-deps/*.d`. Then every command runs a second
 time (`reprime-<unit>`) and must change nothing at all: the snapshot is a
-fixed point of the unit commands. `verify` requires both passes (argv, cwd
-and exit 0), a `primed` list that is sorted, unique, among the products and
-made of regular cache files, every other product not newer than the end of
-`build`, every primed cache within the window from the first prime's start
-to the first reprime's start, and no product written during the reprime
-commands. The snapshots live on
-disk, not `/dev/shm`, and outside the repository's tracked paths
+fixed point of the unit commands. `verify` requires both passes (argv, cwd and
+exit 0), a `primed` list that is sorted, unique, among the products and made
+of regular cache files, every other product not newer than the end of `build`,
+every primed cache within the window from the first prime's start to the last
+prime's end. The commands must be in order (each ends no earlier than it
+starts, and starts no earlier than the previous one ends). The snapshots live
+on disk, not `/dev/shm`, and outside the repository's tracked paths
 (`require_location`). Build base, then cand.
 
 Environment (`environment`): `env -i` with `PATH=/usr/local/bin:/usr/bin:/bin`,
@@ -2971,15 +2970,15 @@ such rule and is plain. `bin/build` never passes `--no_prereqs`, and the
 intermediate directories are listed as roots so that their own selftests
 and link rules run.
 
-Manifest (`SCHEMA` = `task32-independent-build-v4`, whose records include
-the reprime commands; v4 manifests made before commit c4694c7a91 are not
-supported; written after each side, an interrupted or failed build leaves
-an `incomplete` record that only `discard` removes). Per side: pin, `HEAD^{tree}`, `mktool` flag, the
-patch seal (sha256, bytes, candidate blob), `status_before`,
-`ignored_before`, `stale_before`, the input hash (sha256 of `git ls-files
--s` plus the diff), the object alternates, and per command the argv, cwd,
-environment, stdin hash, start and end ns, exit and log seal (logs go to
-`--evidence`, outside both roots). Further:
+Manifest (`SCHEMA` = `task32-independent-build-v4`, whose records include the
+reprime commands, so a v4 record without them is refused as an unexpected
+command list; written after each side, an interrupted or failed build leaves
+an `incomplete` record that only `discard` removes). Per side: pin,
+`HEAD^{tree}`, `mktool` flag, the patch seal (sha256, bytes, candidate blob),
+`status_before`, `ignored_before`, `stale_before`, the input hash (sha256 of
+`git ls-files -s` plus the diff), the object alternates, and per command the
+argv, cwd, environment, stdin hash, start and end ns, exit and log seal (logs
+go to `--evidence`, outside both roots). Further:
 
 - `sequence`: path, sha256, content, source path, blob and the harness
   head; `verify` requires the same file and digest on both sides and that
@@ -3209,54 +3208,53 @@ empty). A finding about the candidate (an extension module, a new stem) is
 Each run's `<scratch>/run-<attempt>` (probes included) is removed at its
 end, and `--scratch` (default `/dev/shm/t32`) too if it is then empty.
 
-Backups and restore. Before any product is deleted, `execute_unit` backs
-the unit's products up and writes a restore journal (`task32-journal-v2`)
-under `.agent-files/scratch/task32/<attempt>`, fsynced, not in `/dev/shm`.
-After the process the products are restored byte for byte with their
-mtimes, the restore is checked and only then the backups and journal are
-removed. A run refuses to start while a journal is pending. If a restore
-fails (`Fatal`) or any settle step raises, the backups and journal are
-kept; `recover --repo REPO` first checks every pending journal (schema,
-keys, that the folder lies under the snapshot root, that the store is the
-journal's own, the listing) and refuses an older or malformed one before
-changing anything; then it puts the products back, deletes new Holmake
-caches, moves other files the process left into the journal's
-`strays/inside` (the unit's folder) and `strays/outside` (the rest of the
-snapshot), removes the directories the process made (a stray directory is
-merged into an existing one, never nested), verifies sha256 and mtime and
-clears the journal.
+Backups and restore. Before any product is deleted, `execute_unit` backs the
+unit's products up and writes a restore journal (`task32-journal-v2`) under
+`.agent-files/scratch/task32/<attempt>`, fsynced, not in `/dev/shm`. After the
+process the products are restored byte for byte with their mtimes, the restore
+is checked and only then the backups and journal are removed. A run refuses to
+start while a journal is pending. If a restore fails (`Fatal`) or any settle
+step raises, the backups and journal are kept; `recover --repo REPO` first
+checks every pending journal (schema, keys, that the folder lies under the
+snapshot root, that the store is the journal's own, the listing, and that the
+root is a snapshot clone of this repository: named as a side, with a `.git`
+directory, borrowing the repository's object store, and not the repository
+itself) and refuses an older or malformed one before changing anything; then
+it puts the products back, deletes new Holmake caches, moves other files the
+process left into the journal's `strays/inside` (the unit's folder) and
+`strays/outside` (the rest of the snapshot), removes the directories the
+process made (a stray directory is merged into an existing one, never nested),
+verifies sha256 and mtime and clears the journal.
 
 Holmake cache churn. A second Holmake run in a built directory writes
 `.hol/make-deps/<X>Theory.{sig,sml}.d` for the theories there, which
-`bin/build` does not write consistently (the snapshot build primes them,
-see above), and even with `--no_prereqs` it scans the INCLUDES directories
-and writes the missing caches there too. One rule covers every
-`.hol/make-deps` of the snapshot, inside the unit's folder and outside it:
-churn is a new regular `*.d` file directly in the `.hol/make-deps` of a
-directory that already had a `.hol` before the process
-(`is_holmake_cache`, `is_cache_churn`); `settle` removes it and the receipt
-records it as `churn` (paths relative to the unit's folder), not as a stray
-write, so every process starts from the identical snapshot. A `.hol` that
-appears in a directory that had none is stray, wherever it is. Since the
-snapshots are primed fixed points, `validate` still refuses a process whose
-`churn` is not empty (the snapshot must be re-primed or rebuilt); the
-cleanup and the record stay, so the evidence shows what was written. The
-unit's folder is scanned in full. The other directories (`hol_dirs`: one
-walk per side and run, kept in the run's context) have their
+`bin/build` does not write consistently (the snapshot build primes them, see
+above), and even with `--no_prereqs` it scans the INCLUDES directories and
+writes the missing caches there too. One rule covers every `.hol/make-deps` of
+the snapshot, inside the unit's folder and outside it: churn is a new regular
+`*.d` file directly in the `.hol/make-deps` of a directory that already had a
+`.hol` before the process (`is_holmake_cache`, `is_cache_churn`); `settle`
+removes it and the receipt records it as `churn` (paths relative to the unit's
+folder), not as a stray write, so every process starts from the identical
+snapshot. A `.hol` that appears in a directory that had none is stray,
+wherever it is. Since the snapshots are primed fixed points, `validate` still
+refuses a process whose `churn` is not empty (the snapshot must be re-primed
+or rebuilt); the cleanup and the record stay, so the evidence shows what was
+written. The unit's folder is scanned in full. The other directories
+(`hol_dirs`: one walk per side and run, kept in the run's context) have their
 `.hol/make-deps` listed before and after each process (`settle_outside`);
-every other new entry there (a file, or a directory whole) is stray, a
-changed or vanished existing one is `modified`, a `make-deps` directory the
-process made is removed (moved to the stray directory if it cannot be).
-The cleanup runs after every process whatever its end, each step under its own try so that an
-error of one neither skips the other nor masks the primary error (the
-others are notes on it). For a theory unit it is journaled (the listing,
-the directories and the root are in the journal entry); selftest units are
-watched but not journaled. Evidence of a stray is
-`stray/<label>/inside/<path>` for the unit's folder and
-`stray/<label>/outside/<path from the snapshot root>` for the rest (a
-receipt path starting with `..` is that path joined to the unit's
-directory and normalized). `outcome` also refuses a run in which the churn
-of the processes of a unit is not one and the same set on both arms
+every other new entry there (a file, or a directory whole) is stray, a changed
+or vanished existing one is `modified`, a `make-deps` directory the process
+made is removed (moved to the stray directory if it cannot be). The cleanup
+runs after every process whatever its end, each step under its own try so that
+an error of one neither skips the other nor masks the primary error (the
+others are notes on it). For a theory unit it is journaled (the listing, the
+directories and the root are in the journal entry); selftest units are watched
+but not journaled. Evidence of a stray is `stray/<label>/inside/<path>` for
+the unit's folder and `stray/<label>/outside/<path from the snapshot root>`
+for the rest (a receipt path starting with `..` is that path joined to the
+unit's directory and normalized). `outcome` also refuses a run in which the
+churn of the processes of a unit is not one and the same set on both arms
 (`check_churn`, a guard that replay shares). Receipts made before
 `--no_prereqs` (and without `churn`) cannot be replayed.
 

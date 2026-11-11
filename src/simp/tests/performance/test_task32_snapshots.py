@@ -449,21 +449,67 @@ class BuildTests(unittest.TestCase):
 
     def test_verify_checks_when_products_were_written(self):
         def early(record):
-            record["commands"][3]["end_ns"] = 1
+            record["commands"][3]["end_ns"] = record["commands"][3][
+                "start_ns"]
         self.tampered(early, "written after the build")
-
-        def late(record):
-            record["commands"][4]["start_ns"] = 2**62
-        self.tampered(late, "primed cache outside")
-
-        def again(record):
-            record["commands"][4 + len(cases.THEORY_UNITS)]["start_ns"] = 1
-        self.tampered(again, "primed cache outside")
-        self.tampered(again, "during the reprime commands", primed=False)
 
         def kind(record):
             record["primed"] = ["sigobj/numTheory.uo"]
         self.tampered(kind, "bad list of primed")
+
+    def test_verify_checks_the_prime_window(self):
+        w = World(self)
+        w.fake.prime = write_cache_once
+        w.both()
+        doc = w.doc()
+        record = doc["sides"]["cand"]
+        rel = record["primed"][0]
+        named = {c["name"]: c for c in record["commands"]}
+        first = named[s.PRIME + cases.THEORY_UNITS[0]["name"]]["start_ns"]
+        last = named[s.PRIME + cases.THEORY_UNITS[-1]["name"]]["end_ns"]
+        path = w.root / "cand" / rel
+        real = path.stat().st_mtime_ns
+        for stamp in (first - 1, last + 1):
+            os.utime(path, ns=(stamp, stamp))
+            doc = w.doc()
+            doc["sides"]["cand"]["products"][rel]["mtime_ns"] = stamp
+            with self.assertRaisesRegex(ValueError, "primed cache outside"):
+                w.verify(doc)
+        os.utime(path, ns=(real, real))
+        w.verify()
+
+    def test_verify_checks_the_commands_in_order(self):
+        def swap(record):
+            c = record["commands"]
+            c[5]["start_ns"], c[5]["end_ns"] = c[5]["end_ns"] + 1, \
+                c[5]["start_ns"]
+        self.tampered(swap, "out of order at")
+
+        def overlap(record):
+            c = record["commands"]
+            c[6]["start_ns"] = c[5]["end_ns"] - 1
+        self.tampered(overlap, "out of order at")
+
+        def shifted(record):
+            c = record["commands"]
+            c[1]["end_ns"] = c[2]["start_ns"] + 1
+        self.tampered(shifted, "out of order at")
+
+    def test_check_prime_refuses_a_cache_that_is_not_a_regular_file(self):
+        rel = "src/list/src/.hol/make-deps/listTheory.sig.d"
+        seal = {"kind": "link", "link": "x", "mtime_ns": 1}
+        with self.assertRaisesRegex(ValueError, "changed products"):
+            s.check_prime({}, {rel: seal})
+        good = {"kind": "file", "sha256": "0" * 64, "bytes": 1,
+                "mtime_ns": 1}
+        self.assertEqual(s.check_prime({}, {rel: good}), [rel])
+
+    def test_check_primed_refuses_a_cache_that_is_a_link(self):
+        rel = "src/list/src/.hol/make-deps/listTheory.sig.d"
+        seal = {"kind": "link", "link": "x", "mtime_ns": 1}
+        commands = [dict(name=n, start_ns=0, end_ns=2) for n in s.COMMANDS]
+        with self.assertRaisesRegex(ValueError, "bad list of primed"):
+            s.check_primed({"primed": [rel]}, commands, {rel: seal}, "x")
 
     def test_a_failing_prime_fails_the_build(self):
         w = World(self)
@@ -1269,12 +1315,13 @@ class VerifyTests(unittest.TestCase):
 
     def widen(self, doc, side):
         record = doc["sides"][side]
+        for c in record["commands"][:2]:
+            c["start_ns"] = c["end_ns"] = 1
         record["commands"][2]["start_ns"] = 1
         record["build_interval_ns"][0] = 1
         record["commands"][3]["end_ns"] = 2**62
-        record["commands"][4 + len(cases.THEORY_UNITS)][
-            "start_ns"] = 2**62 - 1
-        record["commands"][-1]["end_ns"] = 2**62
+        for c in record["commands"][4:]:
+            c["start_ns"] = c["end_ns"] = 2**62
         record["build_interval_ns"][1] = 2**62
 
     def test_shared_inode(self):
@@ -1426,7 +1473,7 @@ class VerifyTests(unittest.TestCase):
         doc = self.w.doc()
         doc["sides"]["cand"]["commands"][2]["start_ns"] = 1
         doc["sides"]["cand"]["build_interval_ns"][0] = 1
-        self.fails("stale product|not serial", doc)
+        self.fails("out of order", doc)
 
     def test_systeml_changed_and_different_between_sides(self):
         put(self.cand / s.SYSTEML, "different\n")

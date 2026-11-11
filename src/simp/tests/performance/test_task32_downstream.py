@@ -102,6 +102,7 @@ class World:
         self.roots = {"base": self.tmp / "base", "cand": self.tmp / "cand"}
         for side, root in self.roots.items():
             self.build_tree(root)
+            self.make_clone(root)
         self.manifest = self.tmp / "snapshots.json"
         self.write_manifest()
         self.profile = {}  # workload -> (candidate scale, noise)
@@ -110,6 +111,14 @@ class World:
         self.fault = None  # (unit, side, n) -> kind or None
         self.calls = []
         self.ignore_busy = False
+
+    def make_clone(self, root):
+        """What a snapshot clone looks like to `check_root`: a `.git`
+        directory borrowing the repository's objects."""
+        info = root / ".git/objects/info"
+        info.mkdir(parents=True)
+        (info / "alternates").write_text(
+            snap.objects_of(self.repo) + "\n")
 
     def write_manifest(self, **change):
         sides = {}
@@ -690,13 +699,31 @@ class Pieces(unittest.TestCase):
             (tmp / "s/a/d").mkdir(parents=True)
             (tmp / "s/a/d/y").write_text("old")
             (tmp / "s/a/f").write_text("oldf")
-            dw.move_stray(tmp / "a", tmp / "s/a")
+            dw.move_stray(tmp / "a", tmp / "s/a", tmp / "s")
             self.assertFalse((tmp / "a").exists())
             self.assertEqual((tmp / "s/a/d/x").read_text(), "new")
             self.assertEqual((tmp / "s/a/d/y").read_text(), "old")
             self.assertEqual((tmp / "s/a/f").read_text(), "oldf")
             self.assertEqual((tmp / "s/a/f.1").read_text(), "newf")
             self.assertFalse((tmp / "s/a/d/d").exists())
+
+    def test_move_stray_goes_around_a_file_in_the_parent_chain(self):
+        with tempfile.TemporaryDirectory(dir="/dev/shm") as tmp:
+            tmp = Path(tmp)
+            (tmp / "a/b").mkdir(parents=True)
+            (tmp / "a/b/x").write_text("new")
+            (tmp / "s/a").mkdir(parents=True)
+            (tmp / "s/a/b").write_text("old")
+            (tmp / "s/a/b.1").write_text("older")
+            dw.move_stray(tmp / "a/b/x", tmp / "s/a/b/x", tmp / "s")
+            self.assertEqual((tmp / "s/a/b").read_text(), "old")
+            self.assertEqual((tmp / "s/a/b.1").read_text(), "older")
+            self.assertEqual((tmp / "s/a/b.2/x").read_text(), "new")
+            self.assertFalse((tmp / "a/b/x").exists())
+            # the stray root itself, even a file, is not an ancestor
+            (tmp / "t").write_text("t")
+            self.assertEqual(
+                dw.clear_parents(tmp / "t/x", tmp / "t"), tmp / "t/x")
 
     def test_an_outside_make_deps_that_cannot_be_removed_is_moved(self):
         with tempfile.TemporaryDirectory(dir="/dev/shm") as tmp:
@@ -1493,6 +1520,24 @@ class Journal(Base):
             def edit(data):
                 del data["pending"][key]
             return edit
+
+        def elsewhere(root):
+            def edit(data):
+                out = data["pending"]["outside"]
+                old = out["root"]
+                out["root"] = str(root)
+                data["pending"]["folder"] = data["pending"][
+                    "folder"].replace(old, str(root), 1)
+            return edit
+        other = self.world.tmp / "other" / "base"
+        (other / ".git").mkdir(parents=True)
+        plain = self.world.tmp / "plain" / "cand"
+        plain.mkdir(parents=True)
+        wrong = self.world.tmp / "wrong" / "base"
+        self.world.make_clone(wrong)
+        (wrong / ".git/objects/info/alternates").write_text("/nowhere\n")
+        misnamed = self.world.tmp / "misnamed"
+        self.world.make_clone(misnamed)
         for edit, text in (
                 (outside(root=str(self.world.tmp / "elsewhere")), "disagree"),
                 (outside(dirs=["../x"]), "bad directory"),
@@ -1513,6 +1558,21 @@ class Journal(Base):
                 (entry(folder="rel/path"), "normalized"),
                 (outside(dirs="abc"), "malformed"),
                 (outside(before=[]), "malformed"),
+                (entry(before=[1]), "malformed"),
+                (outside(before={"src/integer/.hol/make-deps": "d"}),
+                 "bad listing"),
+                (outside(before={"src/integer/.hol/make-deps": []}),
+                 "bad listing"),
+                (outside(before={"src/integer/.hol/make-deps": ["x"]}),
+                 "bad listing"),
+                (outside(before={"src/integer/.hol/make-deps": ["d"],
+                                 "src/integer/.hol/make-deps/a.d": [7]}),
+                 "bad listing"),
+                (elsewhere(other), "does not borrow"),
+                (elsewhere(plain), "not a snapshot clone"),
+                (elsewhere(wrong), "does not borrow"),
+                (elsewhere(misnamed), "not a snapshot clone"),
+                (elsewhere(self.world.repo), "not a snapshot clone"),
                 (bad_meta("sha256", "XYZ"), "bad product record"),
                 (bad_meta("mode", "x"), "bad product record"),
                 (bad_meta("mtime_ns", 1.5), "bad product record"),

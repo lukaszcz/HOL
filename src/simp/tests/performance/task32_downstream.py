@@ -506,17 +506,39 @@ def restore(folder, meta, store, now):
 is_holmake_cache = snap.is_holmake_cache
 
 
-def move_stray(src, dst):
-    """Move `src` to `dst`, creating its parents. A directory whose
-    destination is already a directory is merged into it, child by child
-    (never nested into it); another collision gets a numbered name, so
-    that no evidence is overwritten."""
+def clear_parents(dst, root):
+    """`dst`, or where it goes when a parent of it between `root` and
+    itself exists and is not a directory: then the first such ancestor is
+    replaced by its first free numbered sibling (`name.1`, ...), so that no
+    evidence is overwritten."""
+    dst, root = Path(dst), Path(root)
+    chain = [p for p in reversed(dst.parents) if p.is_relative_to(root)
+             and p != root]
+    for ancestor in chain:
+        if os.path.lexists(ancestor) and (
+                ancestor.is_symlink() or not ancestor.is_dir()):
+            n = 0
+            while os.path.lexists(ancestor.with_name(
+                    "%s.%d" % (ancestor.name, n + 1))):
+                n += 1
+            free = ancestor.with_name("%s.%d" % (ancestor.name, n + 1))
+            return free / dst.relative_to(ancestor)
+    return dst
+
+
+def move_stray(src, dst, root):
+    """Move `src` to `dst` (below the stray directory `root`), creating
+    its parents. A directory whose destination is already a directory is
+    merged into it, child by child (never nested into it); another
+    collision, also a file where a parent directory should be, gets a
+    numbered name, so that no evidence is overwritten."""
     src, dst = Path(src), Path(dst)
+    dst = clear_parents(dst, root)
     dst.parent.mkdir(parents=True, exist_ok=True)
     if src.is_dir() and not src.is_symlink() and dst.is_dir() and \
             not dst.is_symlink():
         for child in sorted(os.listdir(src)):
-            move_stray(src / child, dst / child)
+            move_stray(src / child, dst / child, root)
         src.rmdir()
         return
     target, n = dst, 0
@@ -558,14 +580,15 @@ def settle(folder, stops, before, meta, store, name, stray_dir):
             (Path(folder) / rel).unlink()
             churn.append(rel)
             continue
-        move_stray(Path(folder) / rel, Path(stray_dir) / rel)
+        move_stray(Path(folder) / rel, Path(stray_dir) / rel, stray_dir)
         moved.append(rel)
     for rel in sorted((p for p, e in now.items()
                        if p not in before and e[0] == "d"), reverse=True):
         try:
             (Path(folder) / rel).rmdir()
         except OSError:
-            move_stray(Path(folder) / rel, Path(stray_dir) / rel)
+            move_stray(Path(folder) / rel, Path(stray_dir) / rel,
+                       stray_dir)
             moved.append(rel)
     final = scan(folder, stops)
     ok = all(final.get(r) == before.get(r) for r in meta) and not any(
@@ -652,7 +675,7 @@ def settle_outside(root, folder, dirs, before, bare, stray_dir):
         return os.path.relpath(os.path.join(root, rel), folder)
 
     def move(rel):
-        move_stray(Path(root) / rel, Path(stray_dir) / rel)
+        move_stray(Path(root) / rel, Path(stray_dir) / rel, stray_dir)
         moved.append(shown(rel))
 
     deps = {os.path.join(d, ".hol/make-deps") for d in dirs}
@@ -2787,12 +2810,13 @@ ENTRY_KEYS = ("label", "folder", "store", "name", "stops", "meta", "unit",
 OUTSIDE_KEYS = ("root", "dirs", "bare", "before")
 
 
-def check_journal(folder, data):
+def check_journal(folder, data, repo):
     """A journal is trusted only if it is of this schema, has every key and
     its paths are sane: normalized and absolute, the folder the unit's own
     under the snapshot root, the store the journal's own backup directory,
-    the products the theory's, each backup present with its sha256.
-    Raises Refusal, before anything is changed."""
+    the products the theory's, each backup present with its sha256, the
+    root a snapshot clone of `repo` (`check_root`). Raises Refusal, before
+    anything is changed."""
     require(isinstance(data, dict) and data.get("schema") ==
             JOURNAL_SCHEMA, "journal %s is not of schema %s (an older or "
             "malformed journal: restore by hand)" % (folder,
@@ -2806,6 +2830,7 @@ def check_journal(folder, data):
             isinstance(out["before"], dict) and
             isinstance(entry["meta"], dict) and all(
                 isinstance(entry[k], list) for k in ("stops", "before")) and
+            all(isinstance(p, str) for p in entry["before"]) and
             all(isinstance(entry[k], str) for k in (
                 "label", "folder", "store", "name", "unit")) and
             isinstance(out["root"], str),
@@ -2834,6 +2859,7 @@ def check_journal(folder, data):
                 m["sha256"], "journal: the backup of %s is missing or "
                 "changed" % rel)
     check_outside(out, Path(entry["folder"]))
+    check_root(out["root"], repo)
 
 
 def check_outside(out, unit_dir):
@@ -2850,18 +2876,40 @@ def check_outside(out, unit_dir):
                                           d) and ".." not in d.split("/"),
                 "journal: bad directory " + repr(d))
     known = {os.path.join(d, ".hol/make-deps") for d in out["dirs"]}
-    for rel in out["before"]:
+    for rel, item in out["before"].items():
         require(rel in known or os.path.dirname(rel) in known,
                 "journal: bad listing entry " + repr(rel))
+        require(isinstance(item, list) and item and
+                item[0] in ("d", "f", "l"),
+                "journal: bad listing item for " + repr(rel))
+
+
+def check_root(root, repo):
+    """The journal's snapshot root is a snapshot clone of `repo`: named as
+    a side, not the repository, a git directory of its own whose object
+    alternates are the repository's object store (as `discard_side`
+    requires of the clone it removes)."""
+    root = Path(root)
+    require(root.name in snap.LABELS and
+            os.path.realpath(root) != os.path.realpath(repo) and
+            root.is_dir() and not root.is_symlink() and
+            (root / ".git").is_dir() and not (root / ".git").is_symlink(),
+            "journal: the root %s is not a snapshot clone" % root)
+    theirs = snap.alternates(root)
+    require(theirs and all(os.path.realpath(p) == snap.objects_of(repo)
+                           for p in theirs),
+            "journal: the root %s does not borrow this repository's "
+            "objects" % root)
 
 
 def recover(repo):
     """Restore every pending journal: the products of the interrupted
     theory unit from the backups, the new Holmake caches removed, the other
     files the process left moved into the journal's `strays/inside` (and
-    `strays/outside` for the rest of the snapshot); then clear the
-    journal. Every journal is checked (`check_journal`) before any is
-    acted on. Takes the serial lock."""
+    `strays/outside` for the rest of the snapshot), the directories the
+    process made removed (a stray directory is merged into an existing
+    one); then clear the journal. Every journal is checked
+    (`check_journal`) before any is acted on. Takes the serial lock."""
     repo = Path(repo).resolve(strict=True)
     with a.serial_lock(repo):
         pending = pending_journals(repo)
@@ -2872,7 +2920,7 @@ def recover(repo):
             except (OSError, ValueError) as error:
                 raise Refusal("journal %s is unreadable: %s" %
                               (folder, error))
-            check_journal(folder, data)
+            check_journal(folder, data, repo)
             loaded.append((folder, data))
         for folder, data in loaded:
             entry = data["pending"]
@@ -2887,14 +2935,16 @@ def recover(repo):
                     if is_cache_churn(rel, e, before):
                         (unit_dir / rel).unlink()
                         continue
-                    move_stray(unit_dir / rel, folder / "strays/inside" / rel)
+                    move_stray(unit_dir / rel, folder / "strays/inside" / rel,
+                               folder / "strays/inside")
             for rel in sorted((p for p, e in now.items()
                                if p not in before and e[0] == "d"),
                               reverse=True):
                 try:
                     (unit_dir / rel).rmdir()
                 except OSError:
-                    move_stray(unit_dir / rel, folder / "strays/inside" / rel)
+                    move_stray(unit_dir / rel, folder / "strays/inside" / rel,
+                               folder / "strays/inside")
             out = entry["outside"]
             settle_outside(out["root"], unit_dir, out["dirs"],
                            out["before"], out["bare"],

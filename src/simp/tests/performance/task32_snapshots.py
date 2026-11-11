@@ -955,8 +955,7 @@ def check_primed(record, commands, products, label):
     """`primed` is a sorted, unique list of caches (regular files) among the
     products; every other product was written by the build (its mtime is
     not after the build command's end), every cache by the prime commands
-    (not before the first one's start, not after the first reprime's
-    start), and no product was written while the reprime commands ran."""
+    (not before the first one's start, not after the last one's end)."""
     primed = record["primed"]
     require(isinstance(primed, list) and primed == sorted(set(primed)) and
             set(primed) <= set(products) and
@@ -965,19 +964,15 @@ def check_primed(record, commands, products, label):
     named = {c["name"]: c for c in commands}
     built = named["build"]["end_ns"]
     first = named[PRIME + cases.THEORY_UNITS[0]["name"]]["start_ns"]
-    again = named[REPRIME + cases.THEORY_UNITS[0]["name"]]["start_ns"]
-    last = named[REPRIME + cases.THEORY_UNITS[-1]["name"]]["end_ns"]
+    last = named[PRIME + cases.THEORY_UNITS[-1]["name"]]["end_ns"]
     for rel in primed:
-        require(first <= products[rel]["mtime_ns"] <= again,
+        require(first <= products[rel]["mtime_ns"] <= last,
                 "%s: primed cache outside the prime commands' window: %s"
                 % (label, rel))
     for rel, seal in products.items():
         if rel not in primed:
             require(seal["mtime_ns"] <= built, "%s: product written after "
                     "the build: %s" % (label, rel))
-            require(not again <= seal["mtime_ns"] <= last, "%s: product "
-                    "written during the reprime commands: %s" %
-                    (label, rel))
 
 
 def verify_side(record, label, expected_pin):
@@ -1034,6 +1029,10 @@ def verify_side(record, label, expected_pin):
                 "%s: log inside the root" % label)
         require(log_seal(c["log"]) == c["log_hash"], "%s: log changed"
                 % label)
+    for c, nxt in zip(commands, commands[1:] + [None]):
+        require(c["start_ns"] <= c["end_ns"] and (
+            nxt is None or c["end_ns"] <= nxt["start_ns"]),
+            "%s: commands out of order at %s" % (label, c["name"]))
     first, last = record["build_interval_ns"]
     require(first == commands[2]["start_ns"] and
             last == commands[-1]["end_ns"] and first < last,
