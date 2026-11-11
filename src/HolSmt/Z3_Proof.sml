@@ -220,6 +220,9 @@ struct
     mk_rule ("asserted", [], ZeroPremises, "asserted"),
     mk_rule ("commutativity", [], ZeroPremises, "commutativity"),
     mk_rule ("def-axiom", [], ZeroPremises, "def_axiom"),
+    (* Z3 4.15.3 emits this quantified equality before elim-unused.
+       Re-prove its conclusion with the existing checked rewrite handler. *)
+    mk_z3_4_rule ("der", [], ZeroPremises, "rewrite"),
     mk_rule ("elim-unused", [], ZeroPremises, "elim_unused"),
     mk_rule ("hypothesis", [], ZeroPremises, "hypothesis"),
     mk_rule ("iff-false", [], OnePremise, "iff_false"),

@@ -5645,44 +5645,11 @@ local
       else
       (state, def_axiom_case_split t)
 
-  (* (!x. ?y. !z. P) = P *)
+  (* Unused binders can occur beneath retained, used binders. *)
   fun z3_elim_unused (state, t) =
-  let
-    val (lhs, rhs) = boolSyntax.dest_eq t
-    fun get_forall_thms term : term * thm * thm =
-    let
-      val (var, body) = boolSyntax.dest_forall term
-      val th1 = Thm.DISCH term (Thm.SPEC var (Thm.ASSUME term))
-      val th2 = Thm.DISCH body (Thm.GEN var (Thm.ASSUME body))
-    in
-      (body, th1, th2)
-    end
-    fun get_exists_thms term : term * thm * thm =
-    let
-      val (var, body) = boolSyntax.dest_exists term
-      val th1 = Thm.DISCH term (Thm.CHOOSE (var, Thm.ASSUME term)
-        (Thm.ASSUME body))
-      val th2 = Thm.DISCH body (Thm.EXISTS (term, var) (Thm.ASSUME body))
-    in
-      (body, th1, th2)
-    end
-    fun strip_some_quants term =
-    let
-      val (body, th1, th2) =
-        if boolSyntax.is_forall term then
-          get_forall_thms term
-        else
-          get_exists_thms term
-      val strip_th = Drule.IMP_ANTISYM_RULE th1 th2
-    in
-      if body ~~ rhs then
-        strip_th  (* stripped enough quantifiers *)
-      else
-        Thm.TRANS strip_th (strip_some_quants body)
-      end
-  in
-    (state, strip_some_quants lhs)
-  end
+    (state, simpLib.SIMP_PROVE boolSimps.bool_ss [] t)
+    handle Conv.UNCHANGED =>
+      raise ERR "z3_elim_unused" "unused-binder equality did not simplify"
 
   (* introduces a local hypothesis (which must be discharged by
      'z3_lemma' at some later point in the proof) *)

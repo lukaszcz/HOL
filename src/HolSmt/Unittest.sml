@@ -17739,6 +17739,71 @@ in
   | NONE => die "FAIL: pull-quant proof did not define root proof step"
 end
 
+fun z3_der_unused_binder_replay_success () =
+let
+  val (tydict, tmdict) = SmtLib_Logics.parsedicts_of_logic "ALL"
+  val dictionaries =
+    (Library.extend_dict
+      (("U", SmtLib_Theories.K_zero_zero Type.alpha), tydict), tmdict)
+  fun parse text =
+    parse_z3_proof_string_with_dicts dictionaries "4.15.3" text
+  (* Preserve the encountered substitution, then unused-binder elimination
+     beneath a retained binder, including the nested quantified body. *)
+  val fragment = String.concat [
+    "((set-logic ALL)\n",
+    "(declare-fun der_guard (Int) Bool)\n",
+    "(declare-fun der_result (Int) Bool)\n",
+    "(declare-fun der_first (Int) U)\n",
+    "(declare-fun der_second (Int (_ BitVec 256)) U)\n",
+    "(declare-fun der_mark (U Int) Bool)\n",
+    "(proof\n",
+    "(let ((q1 (forall ((x Int) (y U) (z U))\n",
+    "          (or (not (and (der_guard x) (= y (der_first x))\n",
+    "                        (= z (der_second x (_ bv32 256)))))\n",
+    "              (and (der_result x)\n",
+    "                   (forall ((w Int)) (not (der_mark z w))))))))\n",
+    "(let ((q2 (forall ((x Int) (y U) (z U))\n",
+    "          (or (and (der_result x)\n",
+    "                   (forall ((w Int))\n",
+    "                     (not (der_mark (der_second x (_ bv32 256)) w))))\n",
+    "              (not (der_guard x))))))\n",
+    "(let ((q3 (forall ((x Int))\n",
+    "          (or (and (der_result x)\n",
+    "                   (forall ((w Int))\n",
+    "                     (not (der_mark (der_second x (_ bv32 256)) w))))\n",
+    "              (not (der_guard x))))))\n",
+    "(trans (der (= q1 q2)) (elim-unused (= q2 q3)) (= q1 q3)))))))\n"
+  ]
+  val proof = parse fragment
+  val _ =
+    case Redblackmap.peek (Z3_Proof.proof_steps proof, 0) of
+      SOME (Z3_Proof.TRANS
+        (Z3_Proof.REWRITE _, Z3_Proof.ELIM_UNUSED _, _)) => ()
+    | _ => die "FAIL: der did not normalize to checked rewrite replay"
+  val expected =
+    ``(!x:int. !y:'a. !z:'a.
+        ~(der_guard x /\ y = der_first x /\
+          z = der_second x (32w:256 word)) \/
+        der_result x /\ (!w:int. ~der_mark z w)) <=>
+      !x:int. der_result x /\
+        (!w:int. ~der_mark (der_second x (32w:256 word)) w) \/
+        ~der_guard x``
+  val theorem = Z3_ProofReplay.replay_root_for_test proof
+  val _ = assert (Thm.concl theorem ~~ expected,
+    "der sequence returned the wrong quantified equality")
+  val _ = assert (List.null (Thm.hyp theorem),
+    "der sequence retained unexpected hypotheses")
+  val _ = check_oracle_tags "Z3 der and unused-binder replay" theorem
+in
+  expect_hol_error_contains "malformed unused-binder equality"
+    "proof rule: elim_unused"
+    (fn () => ignore (Z3_ProofReplay.replay_root_for_test (parse
+      ("((declare-fun der_guard (Int) Bool) " ^
+       "(declare-fun der_result (Int) Bool) " ^
+       "(proof (elim-unused (= (forall ((x Int)) (der_guard x)) " ^
+       "(forall ((x Int)) (der_result x))))))"))))
+end
+
 fun z3_proof_parser_structures_proof_bind_success () =
 let
   (* Pinned from the 4.15.3 named-lambda-def proof family. *)
@@ -35471,6 +35536,8 @@ let
       z3_proof_parser_normalizes_pull_quant_success),
     ("z3_nested_lambda_equality_rewrite_success",
       z3_nested_lambda_equality_rewrite_success),
+    ("z3_der_unused_binder_replay_success",
+      z3_der_unused_binder_replay_success),
     ("z3_proof_parser_structures_proof_bind_success",
       z3_proof_parser_structures_proof_bind_success),
     ("z3_proof_parser_erases_inert_proof_bind_success",
