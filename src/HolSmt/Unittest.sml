@@ -25120,7 +25120,13 @@ let
      ("emod nonpositive-divisor nonnegative clause",
       ``(b:int) <= 0 \/ emod 0 b >= 0``),
      ("emod nonpositive-divisor clause",
-      ``(b:int) <= 0 \/ emod 0 b <= 0``)]
+      ``(b:int) <= 0 \/ emod 0 b <= 0``),
+     ("emod symbolic-divisor nonnegative clause",
+      ``(d:int) = 0 \/ emod n d >= 0``),
+     ("emod symbolic-divisor upper-bound clause",
+      ``(d:int) = 0 \/ emod n d < ABS d``),
+     ("ediv emod symbolic division identity",
+      ``(d:int) = 0 \/ n = d * ediv n d + emod n d``)]
   val consumed_cases =
     [
      ("symbolic nonzero dividend ediv totalization",
