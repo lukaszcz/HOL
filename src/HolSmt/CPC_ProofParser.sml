@@ -3680,6 +3680,11 @@ local
               fun terms acc =
                 let val token = get_token () in
                   if token = ")" then List.rev acc
+                  else if token = "@bv_empty" andalso
+                          rule_name = "bv-extract-concat-1" andalso
+                          List.length acc = 1 then
+                    terms (unavailable_term "empty CPC bit-vector list"
+                      (listSyntax.mk_nil Type.bool) :: acc)
                   else if token = "(" then
                     let val head = get_token () in
                       if head = "@list" then
