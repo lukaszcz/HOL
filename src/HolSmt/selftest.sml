@@ -367,6 +367,11 @@ val thm_flc_CVCp =
   mk_test_fun (CVC.is_configured ()) expect_flc_checked
     "cvc5 (proofs)" HolSmtLib.CVC_TAC
 
+(* thm_CVCp without its num-goal skip, for a row whose regression needs num *)
+val thm_num_CVCp =
+  mk_test_fun (CVC.is_configured ()) (expect_thm true)
+    "cvc5 (proofs)" HolSmtLib.CVC_TAC
+
 val _ = bossLib.Hol_datatype `person = <| employed :bool; age :num |>`
 
 val _ = bossLib.Hol_datatype `
@@ -451,6 +456,15 @@ val graph_expect_thm = expect_thm
     (``isPREFIX (s:string) s``, [thm_Z3]),
     (``~((s:string) < s)``, [thm_Z3]),
     (``(s:string) <= s``, [thm_Z3]),
+    (* A str_inj image of a bound string, or of a term mentioning one, is an
+       application of str_inj as an uninterpreted function, so the bound
+       string may also occur outside the injection. *)
+    (``!s:string. isPREFIX s s``, [thm_Z3, thm_CVC]),
+    (``(!s:string t. P s /\ isPREFIX s t ==> P t) ==>
+       !s t u. P s /\ isPREFIX s t /\ isPREFIX t u ==> P u``,
+      [thm_Z3, thm_CVC]),
+    (``!s:string. P s ==> isPREFIX (f s) (STRCAT (f s) (g s))``,
+      [thm_Z3, thm_CVC]),
 
     (``(s:string) = STRCAT t u ==> STRLEN s = STRLEN t + STRLEN u``,
       [thm_Z3, thm_CVC]),
@@ -1997,6 +2011,12 @@ val graph_expect_thm = expect_thm
     (``option_CASE ov (n:bool) s = n ==>
        ov = NONE \/ ?x. ov = SOME x``,
       [thm_Z3, thm_Z3p]),
+
+    (* ALL_DISTINCT over a non-literal list is an ordinary predicate
+       application, not an n-ary distinct *)
+
+    (``ALL_DISTINCT (s:string) /\ (STRLEN s = 2) ==> STRLEN s > 1``,
+      [thm_Z3, thm_Z3p, thm_CVC, thm_num_CVCp]),
 
     (* data types: theory sorts that only occur in constructor fields *)
 
