@@ -1668,6 +1668,18 @@ def originals(ctx, names):
     return found
 
 
+@contextlib.contextmanager
+def carries(report, output):
+    """A Terminated that leaves the run carries the report and whether its
+    downstream.json was saved, for `terminated` in `main`."""
+    try:
+        yield
+    except snap.Terminated as signalled:
+        signalled.report = report
+        signalled.saved = (Path(output) / "downstream.json").is_file()
+        raise
+
+
 def run_stage(args, spec):
     """One run (smoke, control, pilot or a decision stage): lock, ledger,
     reporters, the processes in order (failing fast on a rejection), the
@@ -1716,7 +1728,8 @@ def run_stage(args, spec):
         scratch = Path(args.scratch) / ("run-" + report["attempt"])
         journal = journals_dir(repo) / report["attempt"]
         saved = False
-        with snap.terminating():
+        signalled = None
+        with carries(report, output), snap.terminating():
             try:
                 body(args, spec, report, sides, scratch, fds, verify,
                      journal)
@@ -1726,6 +1739,8 @@ def run_stage(args, spec):
                     TypeError, subprocess.SubprocessError, Fatal,
                     snap.Terminated) as error:
                 snap.hold()  # a signal at this call still reaches finally
+                if isinstance(error, snap.Terminated):
+                    signalled = error  # raised again once it is closed
                 report["failure"] = "%s: %s" % (type(error).__name__, error)
                 for note in getattr(error, "__notes__", ()):
                     report["failure"] += " (%s)" % note
@@ -1751,6 +1766,8 @@ def run_stage(args, spec):
                         saved = True
                     finally:
                         end_attempt(ledger, report, output, saved)
+            if signalled is not None:
+                raise signalled
     return report
 
 
@@ -2321,7 +2338,17 @@ def followup_spec(args):
                               stage=last["stage"]))
 
 
+TERMINATED = 4
+
+
 def exit_of(report):
+    """The exit status of a run: 0 passed (a pilot that covers every unit,
+    a negative control that was detected, a smoke run); 1 failed (a failing
+    stage, an undetected control); 2 inconclusive or blocked (or a pilot
+    with a unit under the CPU minimum); 3 the run failed or was refused;
+    4 (TERMINATED, from `main`, never from a report) the process was
+    terminated by SIGTERM or SIGHUP: the result, if the report was saved
+    and the attempt closed, is recorded and printed all the same."""
     if not report["success"]:
         return 3
     out = report["outcome"]
@@ -2422,9 +2449,32 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     try:
         return dispatch(args)
+    except snap.Terminated as signalled:
+        return terminated(args, signalled)
     except (Refusal, a.Blocked, ValueError, OSError) as error:
         print("REFUSED: %s" % error, file=sys.stderr)
         return 3
+
+
+def terminated(args, signalled):
+    """The status 4 of a run ended by a signal, with what is left. A report
+    that was saved (and its attempt closed) is still summarized: the stage
+    result is recorded, whatever the signal. Otherwise the attempt is
+    judged or void as the ledger and its output show (R-1)."""
+    print("TERMINATED by %s" % signalled, file=sys.stderr)
+    report = getattr(signalled, "report", None)
+    if report is not None and getattr(signalled, "saved", False):
+        print(summary_line(report))
+        print("the result is recorded: %s, attempt %s is closed" % (
+            Path(report["output"]) / "downstream.json",
+            report.get("attempt")))
+    else:
+        print("no report was saved%s; the attempt is judged or void by "
+              "the ledger and its output (R-1): %s" % (
+                  "" if report is None else " for attempt %s" %
+                  report.get("attempt"),
+                  getattr(args, "output", None) or "no output directory"))
+    return TERMINATED
 
 
 def dispatch(args):

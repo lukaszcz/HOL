@@ -7,6 +7,7 @@ stage -> second stage -> follow-up -> disposition chain."""
 import argparse
 import contextlib
 import gzip
+import io
 import json
 import os
 from pathlib import Path
@@ -1266,7 +1267,13 @@ class Journal(Base):
     def test_a_signal_restores_closes_the_attempt_and_leaves_no_journal(self):
         self.world.fault = lambda u, s, n: "terminate" if n >= 3 else None
         before = self.world.snapshot()
-        report = self.world.run("t", self.world.spec(["logroot"]))
+        with self.assertRaises(snap.Terminated) as caught:
+            self.world.run("t", self.world.spec(["logroot"]))
+        # raised again after the close; it carries the saved report
+        self.assertTrue(caught.exception.saved)
+        report = a.load(self.world.tmp / "t" / "downstream.json")
+        self.assertEqual(report, json.loads(dw.dumps(
+            caught.exception.report)))
         self.assertFalse(report["success"])
         self.assertIn("Terminated: SIGTERM", report["failure"])
         self.assertEqual(self.world.snapshot(), before)
@@ -1481,6 +1488,73 @@ class Unsaved(Base):
         self.assertIsNotNone(why[key])  # judged, not void
 
 
+    def cli(self, name, hook):
+        """`main` of a smoke run of logroot with `hook` replacing a.save;
+        returns (exit status, stdout, stderr)."""
+        w = self.world
+        argv = ["smoke", "--repo", str(w.repo), "--base-root",
+                str(w.roots["base"]), "--cand-root", str(w.roots["cand"]),
+                "--manifest", str(w.manifest), "--output",
+                str(w.tmp / name), "--scratch", str(w.tmp / "scratch"),
+                "--verify-argv", "%s -c pass" % sys.executable,
+                "--authorize-measurements", "--only", "logroot"]
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(sys, "stdout", out), \
+                mock.patch.object(sys, "stderr", err), hook:
+            code = dw.main(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_a_signal_during_the_save_exits_4_with_the_summary(self):
+        real = a.save
+
+        def save(path, data, *rest):
+            if Path(path).name == "downstream.json":
+                os.kill(os.getpid(), signal.SIGTERM)
+                time.sleep(0.05)
+            return real(path, data, *rest)
+        code, out, err = self.cli("x", mock.patch.object(a, "save", save))
+        self.assertEqual(code, dw.TERMINATED)
+        self.assertEqual(dw.TERMINATED, 4)
+        self.assertIn("TERMINATED by SIGTERM", err)
+        self.assertIn("TASK32 smoke: attempt", out)
+        self.assertIn("success True", out)
+        self.assertIn("the result is recorded", out)
+        self.assertTrue((self.world.tmp / "x/downstream.json").is_file())
+
+    def test_a_signal_during_the_body_exits_4(self):
+        w = self.world
+        real = dw.run_verify
+        calls = []
+
+        def verify(*args, **kw):
+            calls.append(1)
+            os.kill(os.getpid(), signal.SIGTERM)
+            time.sleep(0.05)
+            return real(*args, **kw)
+        code, out, err = self.cli("y", mock.patch.object(
+            dw, "run_verify", verify))
+        self.assertEqual(code, 4)
+        self.assertIn("TERMINATED by SIGTERM", err)
+        # the body's signal is a failed stage, saved and closed
+        self.assertIn("success False", out)
+        self.assertIn("the result is recorded", out)
+        saved = a.load(self.world.tmp / "y" / "downstream.json")
+        self.assertIn("Terminated: SIGTERM", saved["failure"])
+        state = dw.tg.Ledger(self.world.ledger())
+        ends = [r for r in dw.table_lines(state)
+                if r["event"] == "info-end"]
+        self.assertEqual([r["success"] for r in ends], [False])
+
+    def test_a_signal_before_any_report_prints_what_is_left(self):
+        def terminate(*args, **kw):
+            raise snap.Terminated("SIGHUP")
+        code, out, err = self.cli("z", mock.patch.object(
+            dw, "info_spec", terminate))
+        self.assertEqual(code, 4)
+        self.assertIn("TERMINATED by SIGHUP", err)
+        self.assertIn("no report was saved", out)
+        self.assertIn("(R-1)", out)
+
     def test_a_signal_at_the_entry_of_the_deferred_close_still_closes(self):
         w = self.world
         real = snap.deferred
@@ -1516,7 +1590,9 @@ class Unsaved(Base):
                 time.sleep(0.05)
             real()
         with mock.patch.object(snap, "hold", hold):
-            report = w.run("x", w.spec(["logroot"]))
+            with self.assertRaises(snap.Terminated):
+                w.run("x", w.spec(["logroot"]))
+        report = a.load(w.tmp / "x" / "downstream.json")
         self.assertFalse(report["success"])
         self.assertTrue(report["failure"].startswith("Terminated"))
         found, _ = self.judged_closes()
