@@ -5662,6 +5662,75 @@ local
         end
         handle HolSatLib.SAT_cex _ =>
           raise ERR "bv_poly_norm" "bitblast equivalence is not valid"
+      (* A polynomial identity between fixed-width words holds whatever its
+         non-ring subterms denote, so replace each of them by a fresh
+         variable and normalise the ring skeleton algebraically.  This
+         avoids bit-blasting wide multiplications. *)
+      fun schematic_word_ring () =
+        let
+          val (left, right) = boolSyntax.dest_eq target
+          fun is_ring_operation term =
+            wordsSyntax.is_word_add term orelse
+            wordsSyntax.is_word_sub term orelse
+            wordsSyntax.is_word_mul term orelse
+            wordsSyntax.is_word_2comp term
+          val _ = Lib.can fcpLib.index_to_num (wordsSyntax.dim_of left)
+            andalso (is_ring_operation left orelse is_ring_operation right)
+            orelse raise ERR "bv_poly_norm" "not a fixed-width ring identity"
+          val atoms = ref ([] : (Term.term * Term.term) list)
+          val memo = ref ([] : (Term.term * Term.term) list)
+          (* Each distinct ring node visited adds a template node, so the
+             skeleton limit also bounds this traversal and its list
+             lookups. *)
+          val visited = ref 0
+          fun visit () =
+            (visited := !visited + 1;
+             SmtResource.check_dag_size_with_limit
+               "BitVector" "word-ring-schema"
+               SmtResource.max_skeleton_replay_dag_nodes (!visited))
+          (* [abstract] memoises by pointer, so a shared leaf gets one
+             variable.  Comparing leaves structurally would walk opaque
+             subterms that no bound covers. *)
+          fun atom term =
+            let val variable = Term.genvar (Term.type_of term) in
+              atoms := (term, variable) :: !atoms;
+              variable
+            end
+          fun abstract term =
+            case List.find
+                (fn (saved, _) => Portable.pointer_eq (term, saved)) (!memo) of
+              SOME (_, result) => result
+            | NONE =>
+                let
+                  val result =
+                    if is_ring_operation term then
+                      let
+                        val () = visit ()
+                        val (operator, operands) = boolSyntax.strip_comb term
+                      in Term.list_mk_comb
+                        (operator, List.map abstract operands) end
+                    else if wordsSyntax.is_word_literal term then term
+                    else atom term
+                  val _ = memo := (term, result) :: !memo
+                in result end
+          val template = boolSyntax.mk_eq (abstract left, abstract right)
+          val _ = SmtResource.check_dag_size_with_limit
+            "BitVector" "word-ring-schema"
+            SmtResource.max_skeleton_replay_dag_nodes
+            (SmtResource.dag_nodes_up_to
+               SmtResource.max_skeleton_replay_dag_nodes template)
+          val normalized = SmtResource.with_resource_step_time
+              "BitVector" "word-ring-schema" wordsLib.WORD_ARITH_CONV template
+            handle Conv.UNCHANGED =>
+              raise ERR "bv_poly_norm"
+                "word ring normalisation made no progress"
+          val _ = Term.aconv (boolSyntax.rhs (Thm.concl normalized))
+              boolSyntax.T orelse
+            raise ERR "bv_poly_norm" "word ring sides normalise differently"
+          val substitutions = List.map
+            (fn (term, variable) => {redex = variable, residue = term})
+            (!atoms)
+        in Thm.INST substitutions (Drule.EQT_ELIM normalized) end
       fun bitblast_equality_circuit () =
         let
           val (word_equality, bits) = boolSyntax.dest_eq target
@@ -5763,6 +5832,10 @@ local
       traced "schematic_bvite"
         (profile "CPC(rung:word/poly_norm_schematic_bvite)"
           schematic_bvite) ()
+      handle Feedback.HOL_ERR _ =>
+      traced "schematic_word_ring"
+        (profile "CPC(rung:word/poly_norm_schematic_word_ring)"
+          schematic_word_ring) ()
       handle Feedback.HOL_ERR _ =>
       traced "schematic_bvite_words"
         (profile "CPC(rung:word/poly_norm_schematic_bvite_words)"

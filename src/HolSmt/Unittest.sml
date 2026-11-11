@@ -16456,6 +16456,50 @@ in
      "CPC XOR rotation family did not consume the checked word route")
 end
 
+fun cpc_proof_replay_bv_poly_norm_word_ring_success () =
+let
+  fun profile_count name results =
+    case List.find (fn (candidate, _) => candidate = name) results of
+      SOME (_, info) => #n info
+    | NONE => 0
+  val one = "(_ bv1 256)"
+  fun ring_step a b =
+    "(step @p1 :rule bv_poly_norm :args ((= (bvmul " ^ one ^
+    " (bvsub " ^ a ^ " " ^ b ^ ")) (bvmul (bvneg " ^ one ^ ") (bvsub " ^
+    b ^ " " ^ a ^ ")))))"
+  val proofs =
+    ["((declare-const a (_ BitVec 256)) (declare-const b (_ BitVec 256)) " ^
+     ring_step "a" "b" ^ ")",
+     "((declare-const f (-> Int (_ BitVec 256))) " ^
+     "(declare-const g (-> (_ BitVec 256) Int (_ BitVec 256))) " ^
+     "(declare-const a (_ BitVec 256)) (declare-const n Int) " ^
+     ring_step "(f n)" "(g (bvand a (f n)) n)" ^ ")"]
+  val expected =
+    [``(1w:256 word) * (a - b) = -1w * (b - a)``,
+     ``(1w:256 word) * (f (n:int) - g (a && f n) n) =
+       -1w * (g (a && f n) n - f n)``]
+  fun replay proof = SmtResource.with_e0_invocation_for_test
+    CPC_ProofReplay.replay_root_for_test (parse_cpc_proof_string proof)
+  val () = Profile.reset_all ()
+  val theorems = List.map replay proofs
+  val results = Profile.results ()
+in
+  ListPair.appEq (fn (theorem, expected) =>
+    (assert (Thm.concl theorem ~~ expected,
+       "CPC word ring replay proved the wrong identity");
+     assert (null (Thm.hyp theorem),
+       "CPC word ring replay retained hypotheses");
+     check_oracle_tags "CPC word ring replay" theorem))
+    (theorems, expected);
+  assert
+    (profile_count "CPC(rung:word/poly_norm_schematic_word_ring)_OK"
+       results = 2,
+     "CPC word ring family did not use the algebraic route");
+  assert
+    (profile_count "E0(word-graph-expand)" results = 0,
+     "CPC word ring family expanded the word graph")
+end
+
 fun cpc_proof_replay_cong_consumes_premises_success () =
 let
   val proof = parse_cpc_proof_string
@@ -37058,6 +37102,8 @@ let
       cpc_proof_replay_canonical_trans_terminal_success),
     ("cpc_proof_replay_bv_xor_rotation_general_success",
       cpc_proof_replay_bv_xor_rotation_general_success),
+    ("cpc_proof_replay_bv_poly_norm_word_ring_success",
+      cpc_proof_replay_bv_poly_norm_word_ring_success),
     ("cpc_proof_replay_cong_consumes_premises_success",
       cpc_proof_replay_cong_consumes_premises_success),
     ("cpc_proof_replay_and_elim_success",
