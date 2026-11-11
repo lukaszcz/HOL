@@ -2680,6 +2680,8 @@ local
   val emitted_term_sorts =
     ref ([] : ((Term.term * int) * (string list * string)) list)
 
+  val emitted_datatypes = ref ([] : translation_record list)
+
   fun record_emitted_term_sorts key sorts =
     emitted_term_sorts := (key, sorts) :: !emitted_term_sorts
 
@@ -3116,22 +3118,6 @@ local
       "(declare-datatypes (" ^ String.concatWith " " sort_decls ^ ") (" ^
       String.concatWith " " datatype_decls ^ "))\n"
     end
-
-  fun datatype_decl_record regime tydict ty =
-    case datatype_family ty of
-      NONE => NONE
-    | SOME family =>
-      let
-        val names = List.map (fn fam_ty => Redblackmap.find (tydict, fam_ty))
-          family
-        val declaration = datatype_declaration_text
-          (smt_sort_of_type regime tydict) family names
-      in
-        SOME (DatatypeDeclaration {hol_types = family, smt_names = names,
-          declaration = declaration}, family)
-      end
-      handle Redblackmap.NotFound => NONE
-           | Feedback.HOL_ERR _ => NONE
 
   (* The same feature grammar serves native terms and borrowed graph DATA.
      State observations are thunks to preserve the native scan's read order.
@@ -3688,34 +3674,37 @@ local
         {has_hol_strings = has_strings} features
     end
 
-  (* Preserve the native dictionary fold and datatype-family suppression.
-     These records contain only type/declaration metadata, never a query
-     carrier or a borrowed graph closure. *)
-  fun type_declaration_records regime tydict =
+  (* Only final emitted datatype blocks authorize grouped type records. *)
+  fun type_declaration_records tydict datatype_records =
     let
-      fun add_type_record (ty, name, (seen, acc)) =
-        if member_type ty seen then
-          (seen, acc)
-        else
-          case datatype_decl_record regime tydict ty of
-            SOME (record, family) =>
-              (List.foldl (fn (fam_ty, seen) => add_type fam_ty seen)
-                seen family, record :: acc)
-          | NONE =>
-              (add_type ty seen, type_decl_record (ty, name) :: acc)
-      val (_, type_records) = Redblackmap.foldl add_type_record ([], []) tydict
-    in
-      List.rev type_records
-    end
+      val datatype_types = List.concat (List.map
+        (fn DatatypeDeclaration {hol_types, ...} => hol_types | _ => [])
+        datatype_records)
+      fun add_type_record (ty, name, acc) =
+        if member_type ty datatype_types then acc
+        else type_decl_record (ty, name) :: acc
+      val type_records = Redblackmap.foldl add_type_record [] tydict
+    in List.rev type_records @ datatype_records end
+
+  fun emitted_datatype_records tydict declarations =
+    let
+      fun record text = List.find
+        (fn DatatypeDeclaration {declaration,hol_types,smt_names} =>
+              declaration = text andalso
+              ListPair.allEq (fn (ty,name) =>
+                Redblackmap.peek (tydict,ty) = SOME name)
+                (hol_types,smt_names)
+          | _ => false) (!emitted_datatypes)
+    in List.mapPartial record declarations end
 
   fun build_translation_records regime regime_reason terms logic reason
-      features tydict tmdict =
+      features tydict tmdict datatype_records =
     let
       val regime_record =
         RegimeSelection {regime = regime, reason = regime_reason}
       val logic_record = LogicSelection {logic = logic, reason = reason,
         features = features}
-      val type_records = type_declaration_records regime tydict
+      val type_records = type_declaration_records tydict datatype_records
       val term_records = Redblackmap.foldl (fn (key, name, acc) =>
         term_decl_for_tmdict regime tydict (key, name) :: acc)
         [] tmdict
@@ -4014,6 +4003,12 @@ local
         ();
       (Redblackmap.insert (tydict, ty, name), ([decl], name))
     end
+  structure DatatypeGraph = Graph(
+    type key = Type.hol_type
+    val ord = Type.compare
+    val pp = HOLPP.add_string o Hol_pp.type_to_string
+  )
+
   fun translate_type regime (tydict, ty) =
     if !current_native_sequence_emission andalso
        is_native_sequence_type ty then
@@ -4073,8 +4068,55 @@ local
   and translate_datatype_type regime (tydict, ty) =
     case datatype_family ty of
       NONE => NONE
-    | SOME family =>
+    | SOME _ =>
       let
+        fun constructor_doms ty = List.concat (List.map
+          (Lib.fst o boolSyntax.strip_fun o Term.type_of o
+           TypeBasePure.cinst ty) (TypeBase.constructors_of ty))
+        fun known ty types = member_type ty types orelse
+          Option.isSome (Redblackmap.peek (tydict, ty))
+        (* A nested container can refer back to its parent datatype without
+           appearing in the parent's induction theorem. Collect the whole
+           dependency closure before partitioning its recursive components. *)
+        fun collect (ty, types) =
+          if known ty types then types
+          else if !current_native_sequence_emission andalso
+                  is_native_sequence_type ty then
+            collect (listSyntax.dest_list_type ty, types)
+          else if is_function_type ty then
+            let val (dom, rng) = Type.dom_rng ty
+            in collect (rng, collect (dom, types)) end
+          else if has_type_builtin ty then types
+          else case datatype_family ty of
+            NONE => types
+          | SOME family =>
+              let
+                val fresh = List.filter (fn ty => not (known ty types)) family
+                val types = List.foldl (fn (ty, acc) => add_type ty acc)
+                  types fresh
+              in
+                List.foldl (fn (ty, acc) =>
+                  List.foldl collect acc (constructor_doms ty)) types fresh
+              end
+        val family = List.rev (collect (ty, []))
+        fun field_dependencies ty =
+          if !current_native_sequence_emission andalso
+             is_native_sequence_type ty then
+            field_dependencies (listSyntax.dest_list_type ty)
+          else if is_function_type ty then
+            let val (dom, rng) = Type.dom_rng ty
+            in field_dependencies dom @ field_dependencies rng end
+          else if member_type ty family then [ty]
+          else []
+        val graph = List.foldl (fn (ty, graph) =>
+          DatatypeGraph.new_node (ty, ()) graph) DatatypeGraph.empty family
+        fun add_dependencies (ty, graph) =
+          List.foldl (fn (field, graph) =>
+            List.foldl (fn (dependency, graph) =>
+              DatatypeGraph.add_edge (dependency, ty) graph) graph
+              (field_dependencies field)) graph (constructor_doms ty)
+        val components = DatatypeGraph.strong_conn
+          (List.foldl add_dependencies graph family)
         val used0 = dict_type_names tydict @ smt_reserved_type_names
         fun add_name (fam_ty, (used, acc)) =
           let
@@ -4090,28 +4132,16 @@ local
           tydict (family, names)
         fun translate_constructor_doms (fam_ty, (dict, decls, sorts)) =
           let
-            val tyinfo =
-              case TypeBase.fetch fam_ty of
-                SOME info => info
-              | NONE => raise ERR "translate_datatype_type"
-                  "missing TypeBase entry"
-            fun translate_one (constructor, (dict, decls, sorts)) =
+            fun translate_dom (dom, (dict, decls, sorts)) =
               let
-                val constructor = TypeBasePure.cinst fam_ty constructor
-                val (doms, _) = boolSyntax.strip_fun (Term.type_of constructor)
-                fun translate_dom (dom, (dict, decls, sorts)) =
-                  let
-                    val (dict, (new_decls, sort)) =
-                      translate_type regime (dict, dom)
-                  in
-                    (dict, decls @ new_decls, (dom, sort) :: sorts)
-                  end
+                val (dict, (new_decls, sort)) =
+                  translate_type regime (dict, dom)
               in
-                List.foldl translate_dom (dict, decls, sorts) doms
+                (dict, decls @ new_decls, (dom, sort) :: sorts)
               end
           in
-            List.foldl translate_one (dict, decls, sorts)
-              (TypeBasePure.constructors_of tyinfo)
+            List.foldl translate_dom (dict, decls, sorts)
+              (constructor_doms fam_ty)
           end
         val (tydict, dependency_decls, field_sorts) =
           List.foldl translate_constructor_doms
@@ -4121,13 +4151,26 @@ local
               field_sorts of
             SOME (_, sort) => sort
           | NONE => smt_sort_of_type regime tydict ty
-        val declaration = datatype_declaration_text field_sort family names
+        (* An acyclic datatype used as an Array index must already be
+           declared: Z3 rejects it as non-covariant in a mutual block. *)
+        fun declare_component types =
+          let
+            val names = List.map (fn ty => Redblackmap.find (tydict, ty))
+              types
+            val declaration = datatype_declaration_text field_sort types names
+            val _ = emitted_datatypes :=
+              DatatypeDeclaration {hol_types = types, smt_names = names,
+                declaration = declaration} :: !emitted_datatypes
+          in
+            declaration
+          end
+        val declarations = List.map declare_component components
         val name =
           case Redblackmap.peek (tydict, ty) of
             SOME n => n
           | NONE => raise ERR "translate_datatype_type" "unregistered type"
       in
-        SOME (tydict, (dependency_decls @ [declaration], name))
+        SOME (tydict, (dependency_decls @ declarations, name))
       end
       handle Feedback.HOL_ERR _ => NONE
            | Redblackmap.NotFound => NONE
@@ -4140,6 +4183,9 @@ local
      nested Array/select.  Both dialects eta-expand partially applied ranked
      constants when omission would lose their built-in semantics. *)
 
+  (* returns an updated accumulator, a (possibly empty) list of
+     SMT-LIB (type and term) declarations, and the SMT-LIB
+     representation of the given term *)
   (* Keep ordered lexical names and declaration keys separate from
      semantic dispatch. Fallback keys need not manufacture syntax.
      Find callbacks signal absence with Redblackmap.NotFound, as expected
@@ -6373,6 +6419,7 @@ local
     val _ = current_native_sequence_emission := emit_sequences
     val _ = current_generated_forall_emissions := 0
     val _ = emitted_term_sorts := []
+    val _ = emitted_datatypes := []
     val {sets = set_terms, bags = bag_terms} =
       collect_query_collection_markers (t :: original_ts)
     (* Num retains its HOL-num sort in opaque positions, including beneath
@@ -6486,6 +6533,8 @@ local
     val record_set_backend = !current_set_backend
     val record_bag_backend = !current_bag_backend
     val record_emitted_term_sorts = !emitted_term_sorts
+    val datatype_records = emitted_datatype_records tydict
+      (List.concat (List.map Lib.fst smtlibs))
     fun records () =
       let
         val restorers = [
@@ -6505,7 +6554,7 @@ local
            current_bag_backend := record_bag_backend;
            emitted_term_sorts := record_emitted_term_sorts;
            build_translation_records regime regime_reason terms
-             selected_logic reason features tydict tmdict)
+             selected_logic reason features tydict tmdict datatype_records)
         fun restore () = restore_cells restorers
       in
         Portable.finally restore work ()
@@ -6524,6 +6573,7 @@ local
       save_cell current_native_sequence_emission,
       save_cell current_generated_forall_emissions,
       save_cell emitted_term_sorts,
+      save_cell emitted_datatypes,
       save_cell current_set_backend,
       save_cell current_set_terms,
       save_cell current_raw_num_terms,
@@ -6550,7 +6600,9 @@ local
        (Type.hol_type,string) Redblackmap.dict * Type.hol_type ->
        (Type.hol_type,string) Redblackmap.dict * (string list * string),
      sort_of_type:regime -> (Type.hol_type,string) Redblackmap.dict ->
-       Type.hol_type -> string}
+       Type.hol_type -> string,
+     type_declaration_records:(Type.hol_type,string) Redblackmap.dict ->
+       string list -> translation_record list}
 
   (* The store, dispatcher and metadata producer run inside one fixed
      installation. No raw marker Terms are fabricated for graph syntax.
@@ -6567,6 +6619,7 @@ local
         val _ = current_native_sequence_emission := sequence_emission
         val _ = current_generated_forall_emissions := 0
         val _ = emitted_term_sorts := []
+        val _ = emitted_datatypes := []
         val _ = current_set_backend := set_backend
         val _ = current_set_terms := []
         val _ = current_raw_num_terms := []
@@ -6605,7 +6658,10 @@ local
            translate_type=fn regime => fn input =>
              observe (fn () => translate_type regime input),
            sort_of_type=fn regime => fn dictionary => fn ty =>
-             observe (fn () => smt_sort_of_type regime dictionary ty)}
+             observe (fn () => smt_sort_of_type regime dictionary ty),
+           type_declaration_records=fn dictionary => fn declarations =>
+             observe (fn () => type_declaration_records dictionary
+               (emitted_datatype_records dictionary declarations))}
         val _ = active := false
       in Exn.release outcome end)
 

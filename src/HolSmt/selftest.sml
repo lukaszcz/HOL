@@ -64146,8 +64146,10 @@ in
                   ((metadata_opaque:'metadata_sort)=metadata_opaque_other)``
               val actual = List.mapPartial type_record records
               val shared = List.mapPartial type_record
-                (L.outbound_type_declaration_records regime
-                  (#tydict translation))
+                (L.outbound_type_declaration_records (#tydict translation)
+                  (List.filter
+                    (fn L.DatatypeDeclaration _ => true | _ => false)
+                    records))
           in require "type metadata lost grouping, order or actual output"
             (ListPair.allEq same_type_record (actual,shared) andalso
              List.exists (fn L.DatatypeDeclaration _ => true | _ => false)
@@ -64302,6 +64304,11 @@ local
     (testutils.tprint label;action ();testutils.OK ())
   fun error action = (action ();NONE)
     handle Feedback.HOL_ERR detail => SOME (Feedback.message_of detail)
+  fun render document =
+    let val chunks = ref []
+        val _ = SmtLib_OutputFragments.render
+          (fn chunk => chunks := chunk :: !chunks) document
+    in String.concat (List.rev (!chunks)) end
   fun fixture goal build inspect =
     let
       val graph = G.new () val scope = G.root_scope graph
@@ -64436,8 +64443,10 @@ in
                 val _ = check_descriptions (#graph e) SmtLib.FirstOrder value
                 val _ = require "shared native type-record order changed"
                   (same_type_records (MD.type_records value)
-                    (SmtLib.outbound_type_declaration_records
-                      SmtLib.FirstOrder (#types emission)))
+                    ((#type_declaration_records backend) (#types emission)
+                      (List.concat (List.map
+                        (fn ({declarations,...}:SmtLib_GraphDispatcher.root) =>
+                          List.map render declarations) (#roots emission)))))
             in (value,length (#symbols emission)) end)
           (fn e => fn outcome =>
             let val (value,count) = Exn.release outcome
