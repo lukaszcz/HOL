@@ -11733,14 +11733,14 @@ local
       Thm.DISCH positive_factors result
     end
 
+  (* No arithmetic-search fallback: when the sign cases cannot establish the
+     sign, the product's sign is either open or needs more than
+     [max_nonzero_splits] splits, and arithmetic search does not finish on
+     such products either. *)
   fun replay_arith_mult_sign args =
     case args of
       [positive_factors, product] =>
-        (derive_arith_mult_sign (positive_factors, product)
-         handle Feedback.HOL_ERR _ =>
-           arith_prove (boolSyntax.mk_imp
-             (positive_factors,
-              arith_greater (product, arith_zero product))))
+        derive_arith_mult_sign (positive_factors, product)
     | _ => raise ERR "arith_mult_sign"
       "expected a conjunction of positive factors and their product"
 

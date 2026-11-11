@@ -24893,6 +24893,13 @@ let
     (derive (factors, product); false) handle HOL_ERR _ => true
   val (factors8, product8) = squares 8
   val (factors9, product9) = squares 9
+  (* Past the split limit replay fails closed instead of searching for a
+     sign: a negative factor times nine nonzero squares is refused. *)
+  val (factors9neg, product9neg) =
+    let val x = ``x:int``
+    in (``^x < 0 /\ ^factors9``, ``^x * ^product9``) end
+  fun replay_refused (factors, product) =
+    (sign [factors, product]; false) handle HOL_ERR _ => true
   val cube_factor = ``~((x:int) = 0)``
   val cube_product = ``(x:int) * x * x``
 in
@@ -24902,6 +24909,10 @@ in
     "eight nonzero squares were not derived");
   assert (refused (factors9, product9),
     "nine nonzero squares were split");
+  assert (replay_refused (factors9, product9),
+    "nine nonzero squares were replayed");
+  assert (replay_refused (factors9neg, product9neg),
+    "a negative factor times nine nonzero squares was replayed");
   assert (refused (cube_factor, cube_product),
     "a nonzero cube was derived");
   assert (profile_call_count "CPC(rung:arith/cases)" = 0,
