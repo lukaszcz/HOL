@@ -230,9 +230,10 @@ def plan_revisions(args, repo, out):
 
 def plan_scratch(args, repo, out):
     require(args.scratch is not None or
-            (out["simplifier"] == MAIN and args.alias is None),
+            (out["simplifier"] == MAIN and args.alias is None and
+             args.jobs is None and not args.skip_routine),
             "--scratch is required with --simplifier-revision other than "
-            "the pin or with --alias")
+            "the pin, --alias, --jobs or --skip-routine")
     out["scratch"] = None
     if args.scratch is None:
         return
@@ -732,13 +733,44 @@ def terminating_signals():
     """Turn SIGTERM/SIGHUP into SystemExit so the cleanup always runs."""
     def handler(signum, frame):
         raise SystemExit("terminated by " + signal.Signals(signum).name)
+    # Leave ignored signals (nohup) ignored.
     previous = {n: signal.signal(n, handler)
-                for n in (signal.SIGTERM, signal.SIGHUP)}
+                for n in (signal.SIGTERM, signal.SIGHUP)
+                if signal.getsignal(n) != signal.SIG_IGN}
     try:
         yield
     finally:
         for number, old in previous.items():
             signal.signal(number, old)
+
+
+GUARDED = (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)
+
+
+@contextlib.contextmanager
+def blocked_signals():
+    """Defer termination signals; they arrive when the block is left."""
+    old = signal.pthread_sigmask(signal.SIG_BLOCK, GUARDED)
+    try:
+        yield
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, old)
+
+
+def create(created, key, make):
+    """Create something and record it with no signal in between."""
+    with blocked_signals():
+        created[key] = make()
+
+
+def mkdir_output(path):
+    path.mkdir(parents=True)
+    return path
+
+
+def mkdir_scratch(path):
+    path.mkdir()  # no parents: cleanup removes everything created
+    return path
 
 
 def record_provenance(m, args, planned, trees):
@@ -891,14 +923,13 @@ def build_and_test(runner, args, sources):
 
 def execute(args, repo, planned, m, created):
     """Everything after planning; `created` collects what must be cleaned."""
-    planned["output"].mkdir(parents=True)
-    created["output"] = True
+    create(created, "output", lambda: mkdir_output(planned["output"]))
     if planned["scratch"] is not None:
-        planned["scratch"].mkdir()  # no parents: cleanup removes it all
-        scratch = planned["scratch"]
+        create(created, "scratch", lambda: mkdir_scratch(planned["scratch"]))
     else:
-        scratch = Path(tempfile.mkdtemp(prefix="task25-run-", dir="/tmp"))
-    created["scratch"] = scratch
+        create(created, "scratch", lambda: Path(tempfile.mkdtemp(
+            prefix="task25-run-", dir="/tmp")))
+    scratch = created["scratch"]
     core = planned["core"] or scratch / "core"
     consumer = planned["consumer"] or scratch / "consumer"
     runner = Runner(repo, planned["output"], scratch, planned["alias"], core,
@@ -916,17 +947,23 @@ def execute(args, repo, planned, m, created):
 
 
 def finish(args, planned, m, created):
-    scratch = created.get("scratch")
-    if scratch is not None:
-        try:
-            shutil.rmtree(scratch)
-        except OSError as exc:
+    with blocked_signals():
+        scratch = created.get("scratch")
+        if scratch is not None:
+            try:
+                shutil.rmtree(scratch)
+            except OSError as exc:
+                m["success"] = False
+                m["cleanup_failure"] = "scratch cleanup failed: " + str(exc)
+        m["task_scratch_removed"] = scratch is None or not scratch.exists()
+        m["existing_scratch_preserved"] = bool(args.existing_core)
+        pending = signal.sigpending() & set(GUARDED)
+        if pending:
             m["success"] = False
-            m["failure"] = "scratch cleanup failed: " + str(exc)
-    m["task_scratch_removed"] = scratch is None or not scratch.exists()
-    m["existing_scratch_preserved"] = bool(args.existing_core)
-    if created.get("output"):
-        dump(planned["output"], "manifest.json", m)
+            m.setdefault("failure", "terminated by " + ", ".join(
+                sorted(signal.Signals(n).name for n in pending)))
+        if created.get("output"):
+            dump(planned["output"], "manifest.json", m)
 
 
 def main():
@@ -944,7 +981,8 @@ def main():
             finish(args, planned, m, created)
     print(planned["output"] / "manifest.json")
     if not m["success"]:
-        raise SystemExit(m["failure"])
+        raise SystemExit("; ".join(m[k] for k in ("failure", "cleanup_failure")
+                                   if k in m))
 
 
 def inventory_sources(root, sources):

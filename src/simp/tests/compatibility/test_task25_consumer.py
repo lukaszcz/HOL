@@ -23,9 +23,15 @@ task25 = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(task25)
 
 
+SHM = Path("/dev/shm")
+NO_SHM = "no /dev/shm: the fixtures must not fall back to /tmp"
+
+
+@unittest.skipUnless(SHM.is_dir(), NO_SHM)
 class Controls(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="task25-control-")
+        self.temp = tempfile.TemporaryDirectory(prefix="task25-control-",
+                                                dir=SHM)
         self.root = Path(self.temp.name)
         self.runner = task25.Runner(self.root, self.root, self.root,
                                     self.root, self.root, self.root)
@@ -101,8 +107,6 @@ class Controls(unittest.TestCase):
             self.runner.launcher(launcher, "selftest")
 
 
-SHM = Path("/dev/shm")
-NO_SHM = "no /dev/shm: the fixtures must not fall back to /tmp"
 TERMINATING = (signal.SIGTERM, signal.SIGHUP)
 
 
@@ -271,6 +275,11 @@ class Plan(FakeRepo):
                 with self.assertRaisesRegex(RuntimeError,
                                             "--scratch is required"):
                     self.plan(**over)
+        for over in (dict(jobs=4), dict(skip_routine=True)):
+            with self.subTest(over=over):
+                with self.assertRaisesRegex(RuntimeError,
+                                            "--scratch is required"):
+                    self.plan(**over)
         self.plan()  # the exact reproduction keeps the /tmp fallback
 
     def test_scratch_refusals(self):
@@ -384,21 +393,23 @@ class Commands(unittest.TestCase):
 
 
 class Sandbox(FakeRepo):
-    def test_binds_in_exact_order(self):
-        scratch = self.base / "s"
-        runner = task25.Runner(self.repo, self.base / "out", scratch,
-                               Path("/dev/shm/a"), scratch / "core",
-                               scratch / "consumer")
+    def test_mount_ops_in_exact_order(self):
+        scratch = Path("/dev/shm/t32-consumer")
+        alias = Path("/dev/shm/t32-alias")
+        runner = task25.Runner(self.repo, self.base / "out", scratch, alias,
+                               scratch / "core", scratch / "consumer")
         runner.git_common = self.repo / ".git"
         cmd = runner.sandbox(["true"])
-        triples = [tuple(cmd[i:i + 3]) for i, word in enumerate(cmd)
-                   if word in ("--bind", "--ro-bind")]
-        self.assertEqual(triples, [
-            ("--ro-bind", "/", "/"),
-            ("--bind", str(scratch), str(scratch)),
-            ("--bind", str(scratch / "core"), "/dev/shm/a"),
-            ("--ro-bind", str(self.repo), str(self.repo)),
-            ("--ro-bind", str(self.repo / ".git"), str(self.repo / ".git"))])
+        ops = cmd[:cmd.index("--setenv")]
+        self.assertEqual(ops, [
+            "bwrap", "--die-with-parent", "--clearenv", "--unshare-pid",
+            "--unshare-net", "--ro-bind", "/", "/", "--dev", "/dev",
+            "--proc", "/proc", "--tmpfs", "/tmp",
+            "--tmpfs", "/dev/shm",
+            "--bind", str(scratch), str(scratch),
+            "--bind", str(scratch / "core"), str(alias),
+            "--ro-bind", str(self.repo), str(self.repo),
+            "--ro-bind", str(self.repo / ".git"), str(self.repo / ".git")])
 
 
 class PrepareOnly(FakeRepo):
@@ -508,6 +519,67 @@ class PrepareOnly(FakeRepo):
         for cwd, env in applies:
             self.assertTrue(Path(cwd).is_relative_to(scratch))
             self.assertEqual(env["GIT_CEILING_DIRECTORIES"], ceiling)
+
+    def test_scratch_inside_another_repository(self):
+        outer = self.base / "outer"
+        outer.mkdir()
+        git(outer, "init", "-q")
+        m, scratch = self.run_main(scratch=outer / "s")
+        self.assertTrue(m["success"])
+        self.assertFalse(scratch.exists())
+        inventory = json.loads(gzip.decompress(
+            (self.out / m["consumer_canonical"]["file"]).read_bytes()))
+        self.assertEqual(
+            inventory["src/auto/rules/Holmakefile"]["sha256"],
+            task25.sha(b"\n# patched\n"))
+
+    def test_ignored_signal_stays_ignored(self):
+        seen, archive = [], task25.Runner.archive
+
+        def spy(runner, *a, **kw):
+            seen.append((signal.getsignal(signal.SIGHUP),
+                         signal.getsignal(signal.SIGTERM)))
+            return archive(runner, *a, **kw)
+        previous = signal.signal(signal.SIGHUP, signal.SIG_IGN)
+        try:
+            with mock.patch.object(task25.Runner, "archive", spy):
+                m, _ = self.run_main()
+            after = signal.getsignal(signal.SIGHUP)
+        finally:
+            signal.signal(signal.SIGHUP, previous)
+        self.assertTrue(m["success"])
+        self.assertEqual(seen[0][0], signal.SIG_IGN)
+        self.assertTrue(callable(seen[0][1]))
+        self.assertEqual(after, signal.SIG_IGN)
+
+    def test_signal_during_cleanup_still_cleans_and_records(self):
+        rmtree = shutil.rmtree
+
+        def signalling(path, *a, **kw):
+            os.kill(os.getpid(), signal.SIGTERM)
+            return rmtree(path, *a, **kw)
+        with mock.patch.object(task25.shutil, "rmtree", signalling):
+            m, scratch = self.run_main(expect_exit=True)
+        self.assertFalse(scratch.exists())
+        self.assertTrue(m["task_scratch_removed"])
+        self.assertFalse(m["success"])
+        self.assertIn("terminated by SIGTERM", m["failure"])
+
+    def test_cleanup_failure_keeps_original_failure(self):
+        self.patch.write_text(self.patch.read_text().replace(
+            "@@ -1 +1,2 @@\n \n", "@@ -1 +1,2 @@\n x\n"))
+        digest = task25.sha(self.patch.read_bytes())
+
+        def broken(path, *a, **kw):
+            raise OSError("nope")
+        with mock.patch.object(task25.shutil, "rmtree", broken):
+            m, _ = self.run_main("--patch-sha256", digest, expect_exit=True)
+        self.assertIn("command failed: patch-check", m["failure"])
+        self.assertNotIn("cleanup", m["failure"])
+        self.assertIn("nope", m["cleanup_failure"])
+        self.assertIn("command failed", str(self.exit))
+        self.assertIn("nope", str(self.exit))
+        self.assertFalse(m["task_scratch_removed"])
 
     def test_terminating_signal_cleans_scratch(self):
         for number in TERMINATING:
