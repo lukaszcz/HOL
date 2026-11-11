@@ -15108,6 +15108,8 @@ let
     let
       val theorem = CPC_ProofReplay.remove_hyps_for_test
         ([], boolSyntax.F, Thm.ASSUME definition)
+      val _ = check_oracle_tags
+        ("array-set definition identity " ^ name) theorem
     in
       assert (Term.aconv (Thm.concl theorem) definition andalso
           List.null (Thm.hyp theorem),
@@ -15139,6 +15141,8 @@ let
            \(step @p1 :rule arrays-select-const :args \
            \((= (select ((as const (Array t0 Bool)) " ^ value ^ ") i) " ^
            value ^ "))))"))
+      val _ = check_oracle_tags
+        ("CPC arrays-select-const " ^ value) theorem
     in
       assert (List.null (Thm.hyp theorem) andalso
           Term.aconv (boolSyntax.rhs (Thm.concl theorem)) expected,
@@ -15156,6 +15160,7 @@ let
     "((assume @p1 (= true true)) (assume @p2 (= (= true true) true)) \
     \(step @p3 :rule eq_resolve :premises (@p1 @p2)))"
   val thm = CPC_ProofReplay.replay_root_for_test proof
+  val _ = check_oracle_tags "CPC eq_resolve reflexive left" thm
 in
   assert (Thm.concl thm ~~ ``T``,
     "CPC eq_resolve with a reflexive left premise kept the equation")
@@ -15196,6 +15201,8 @@ let
     " (step @p27 :rule cong :premises (@p26) \
     \:args ((forall (@list @t1) @t29)))"
   val (x, _) = boolSyntax.dest_forall (boolSyntax.lhs (Thm.concl lifted))
+  val _ = check_oracle_tags "CPC binder congruence body" body
+  val _ = check_oracle_tags "CPC binder congruence lift" lifted
 in
   assert (Term.aconv (boolSyntax.rhs (Thm.concl lifted))
       (boolSyntax.mk_forall (x, boolSyntax.rhs (Thm.concl body))),
