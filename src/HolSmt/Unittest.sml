@@ -11365,6 +11365,75 @@ in
     (SmtLib.parser_dicts_for_translation translation) "1.3.4" instream
 end
 
+(* A source symbol whose translation fixes its arity at one argument and
+   whose result is a set (an array of Booleans) may come back from cvc5 with
+   its sort curried differently.  Every such spelling of the same HOL type
+   must reuse the source entry; a different type must still be rejected. *)
+fun cpc_curried_source_redeclaration_success () =
+let
+  val domain_ty = Type.mk_vartype "'set_domain"
+  val element_ty = Type.mk_vartype "'set_element"
+  val set_of = Term.mk_var ("set_of",
+    boolSyntax.list_mk_fun ([domain_ty, element_ty], Type.bool))
+  fun set_of_parse _ indices args =
+    if List.null indices andalso List.length args = 1 then
+      Term.list_mk_comb (set_of, args)
+    else SmtLib_Theories.decline "<set_of>" "wrong number of arguments"
+  fun sort_parse ty _ indices args =
+    if List.null indices andalso List.null args then ty
+    else raise Feedback.mk_HOL_ERR "Unittest"
+      "sort_parse" "source sort signature mismatch"
+  val (logic_tydict, logic_tmdict) = SmtLib_Logics.parsedicts_of_logic "ALL"
+  val dicts =
+    (Library.extend_dict (("SetDomain", sort_parse domain_ty),
+       Library.extend_dict (("SetElement", sort_parse element_ty),
+         logic_tydict)),
+     Library.extend_dict (("set_of", set_of_parse), logic_tmdict))
+  fun proof_using application declaration =
+    "((declare-sort SetDomain 0) (declare-sort SetElement 0) " ^
+    declaration ^
+    " (declare-const a SetDomain) (declare-const x SetElement) \
+    \ (step @p (= " ^ application ^ " " ^ application ^ ") \
+    \ :rule refl :args (" ^ application ^ ")))"
+  val proof = proof_using "(select (set_of a) x)"
+  fun accept_with proof declaration =
+    let
+      val theorem = CPC_ProofReplay.replay_root_for_test
+        (CPC_ProofParser.parse_stream_with_version dicts "1.3.4"
+          (TextIO.openString (proof declaration)))
+      val (lhs, _) = boolSyntax.dest_eq (Thm.concl theorem)
+    in
+      assert (Term.free_in set_of lhs,
+        "curried CPC redeclaration did not reuse the source symbol: " ^
+        declaration);
+      assert (List.null (Thm.hyp theorem),
+        "curried CPC redeclaration retained hypotheses: " ^ declaration);
+      check_oracle_tags ("curried CPC redeclaration " ^ declaration) theorem
+    end
+  val accept = accept_with proof
+  val wrong = "(declare-const set_of (-> SetElement (Array SetDomain Bool)))"
+in
+  List.app accept
+    ["(declare-const set_of (-> SetDomain (Array SetElement Bool)))",
+     "(declare-fun set_of (SetDomain) (Array SetElement Bool))",
+     "(declare-fun set_of (SetDomain SetElement) Bool)",
+     "(declare-const set_of (-> SetDomain SetElement Bool))"];
+  (* The binary spellings may also apply the symbol to both arguments,
+     beyond the source entry's one-argument arity. *)
+  List.app (accept_with (proof_using "(set_of a x)"))
+    ["(declare-fun set_of (SetDomain SetElement) Bool)",
+     "(declare-const set_of (-> SetDomain SetElement Bool))"];
+  (ignore (CPC_ProofParser.parse_stream_with_version dicts "1.3.4"
+     (TextIO.openString (proof wrong)));
+   die "CPC parser reused a source declaration of a different type")
+  handle Feedback.HOL_ERR holerr =>
+    assert (Feedback.top_function_of holerr = "parse_declaration" andalso
+        Feedback.message_of holerr =
+          "incompatible redeclaration of CPC symbol set_of",
+      "CPC curried declaration diagnostic drifted: " ^
+      Feedback.message_of holerr)
+end
+
 fun smtlib_datatype_tester_instantiations_success () =
 let
   fun check goal cases =
@@ -15608,6 +15677,63 @@ in
     "arith_mult_abs_comparison equality replay produced the wrong conclusion");
   assert (Thm.concl abs_product_gt ~~ abs_product_gt_target,
     "arith_mult_abs_comparison strict replay produced the wrong conclusion")
+end
+
+fun cpc_arith_reduction_conditional_operands_success () =
+let
+  val a = ``if p then (x:int) + 11 else x * 17``
+  val b = ``if q then (y:int) else 0``
+  val nested = SmtLib_Theories.mk_int_ediv
+    (intSyntax.mk_mult (a, a), b)
+  val integer_operands =
+    [(a, ``(7:int)``), (``(11:int)``, b), (nested, b),
+     (a, ``(0:int)``)]
+  val smt_ediv = Term.prim_mk_const
+    {Thy = "HolSmt", Name = "smt_ediv_total"}
+  val smt_emod = Term.prim_mk_const
+    {Thy = "HolSmt", Name = "smt_emod_total"}
+  val smt_rdiv = Term.prim_mk_const
+    {Thy = "HolSmt", Name = "smt_rdiv"}
+  fun app (operator, a, b) = Term.list_mk_comb (operator, [a, b])
+  fun check (label, term, expected) =
+    let
+      val theorem =
+        CPC_ProofReplay.replay_arith_reduction_for_test [term]
+    in
+      assert_concl_alpha (label, theorem, expected);
+      assert_no_hyps (label, theorem);
+      check_oracle_tags label theorem
+    end
+  fun check_integer (label, make, total) (a, b) =
+    let
+      val term = make (a, b)
+      val expected = boolSyntax.mk_eq (term,
+        boolSyntax.mk_cond (boolSyntax.mk_eq (b, intSyntax.zero_tm),
+          make (a, intSyntax.zero_tm), app (total, a, b)))
+    in check (label, term, expected) end
+  fun check_real (a, b) =
+    let
+      val term = app (smt_rdiv, a, b)
+      val expected = boolSyntax.mk_eq (term,
+        boolSyntax.mk_cond (boolSyntax.mk_eq (b, realSyntax.zero_tm),
+          app (smt_rdiv, a, realSyntax.zero_tm),
+          realSyntax.mk_div (a, b)))
+    in check ("real division conditional operands", term, expected) end
+  val real_a = ``if p then (r:real) + 11 else r * 17``
+  val real_b = ``if q then (s:real) else 0``
+  val abs_term = intSyntax.mk_absval a
+  val abs_expected = boolSyntax.mk_eq (abs_term,
+    boolSyntax.mk_cond (intSyntax.mk_less (a, intSyntax.zero_tm),
+      intSyntax.mk_negated a, a))
+in
+  List.app (check_integer ("ediv conditional operands",
+    SmtLib_Theories.mk_int_ediv, smt_ediv)) integer_operands;
+  List.app (check_integer ("emod conditional operands",
+    SmtLib_Theories.mk_int_emod, smt_emod)) integer_operands;
+  List.app check_real [(real_a, ``(7:real)``), (``(11:real)``, real_b),
+    (app (smt_rdiv, real_a, real_b), real_b),
+    (real_a, realSyntax.zero_tm)];
+  check ("absolute value conditional operand", abs_term, abs_expected)
 end
 
 fun cpc_arith_mult_abs_nary_success () =
@@ -36496,6 +36622,8 @@ let
       cpc_proof_parser_define_and_optional_conclusion_success),
     ("cpc_quoted_declaration_identity_success",
       cpc_quoted_declaration_identity_success),
+    ("cpc_curried_source_redeclaration_success",
+      cpc_curried_source_redeclaration_success),
     ("cpc_tokenizer_eof_and_lexical_validation_success",
       cpc_tokenizer_eof_and_lexical_validation_success),
     ("cpc_parser_graph_contract_diagnostics",
@@ -36623,6 +36751,8 @@ let
     ("cpc_totalized_outbound_exclusions_success",
       cpc_totalized_outbound_exclusions_success),
     ("cpc_totalized_replay_success", cpc_totalized_replay_success),
+    ("cpc_arith_reduction_conditional_operands_success",
+      cpc_arith_reduction_conditional_operands_success),
     ("cpc_arith_mult_abs_nary_success",
       cpc_arith_mult_abs_nary_success),
     ("cpc_proof_parser_singleton_premise_success",

@@ -342,6 +342,10 @@ val _ = bossLib.Hol_datatype `dirn = NS | EW`
 
 val flc_def = Define `flc d = case d of NS => EW | EW => NS`
 
+(* An uninterpreted set-valued function: translated with one argument and an
+   array-of-Bool result, which cvc5's proof redeclares with a curried sort. *)
+val _ = new_constant ("smt_set_of", ``:'a -> 'b -> bool``)
+
 fun expect_flc_checked name solver goal =
   let
     val solver_calls = ref 0
@@ -410,6 +414,8 @@ val graph_expect_thm = expect_thm
     (* Z3 proves this through an array lemma outside its checked Bag replay
        ladder; cvc5 supplies the native checked Bag certificate. *)
     (``BAG_IN (x : bool) (BAG_INSERT y EMPTY_BAG) <=> x = y``, [thm_CVCp]),
+    (``(smt_set_of (a : 'a) = (s : 'b set)) /\ (a = b) ==>
+        (s = smt_set_of b)``, [thm_Z3p_v4, thm_CVCp]),
     (* Sets in cvc5's array encoding: a singleton, an applied set and an
        applied bound set must all stay Arrays, in the assumptions too. *)
     (``(x : num) = y /\ P {x} ==> (P : (num -> bool) -> bool) {y}``,
