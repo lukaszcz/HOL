@@ -5,33 +5,63 @@
 structure SmtFpProve =
 struct
 
+  structure G = SmtReplayGraph
+
   val ERR = Feedback.mk_HOL_ERR "SmtFpProve"
 
   fun profile name f x = Profile.profile_with_exn_name name f x
 
-  fun type_mentions_fp ty =
-    if Type.is_vartype ty then
-      false
-    else
-      let
-        val {Thy, Tyop, Args} = Type.dest_thy_type ty
-      in
-        (Thy = "smtfloat" andalso
-          (Tyop = "smtfp" orelse Tyop = "smt_rounding")) orelse
-        List.exists type_mentions_fp Args
-      end
+  (* Dispatch is not Type admission. A bounded physical hot cache avoids
+     expanding shared annotation suffixes without an unbounded linear lookup
+     over independent annotations. Misses use the original syntax query:
+     no new refusal, structural Type comparison or proof inference. *)
+  fun new_type_mentions_fp () =
+    let
+      val seen = ref ([] : (Type.hol_type * bool) list)
+      fun visit ty =
+        if Type.is_vartype ty then false else
+          let val {Thy, Tyop, Args} = Type.dest_thy_type ty
+          in
+            if Thy = "smtfloat" andalso
+                (Tyop = "smtfp" orelse Tyop = "smt_rounding") then true
+            else if null Args then false
+            else case SmtResource.recent_pointer_lookup seen ty of
+              SOME result => result
+            | NONE =>
+                let val result = List.exists visit Args
+                    val _ = seen := (ty,result) ::
+                      List.take (!seen,Int.min (7,length (!seen)))
+                in result end
+          end
+    in visit end
 
-  fun is_fp_theory_term tm =
-    type_mentions_fp (Term.type_of tm) orelse
+  fun type_mentions_fp ty = new_type_mentions_fp () ty
+
+  fun is_fp_theory_term_using mentions tm =
+    mentions (Term.type_of tm) orelse
     (Term.is_const tm andalso
       let val {Thy, ...} = Term.dest_thy_const tm
       in Thy = "smtfloat" end)
+
+  fun is_fp_theory_term tm =
+    is_fp_theory_term_using (new_type_mentions_fp ()) tm
 
   (* Dispatch examines both the types and the constants below an equation.
      The type check is essential for a rewrite between proof-local FP
      variables, where no smtfloat constant need occur. *)
   fun has_fp_theory_term t =
-    SmtResource.contains is_fp_theory_term t
+    SmtResource.contains
+      (is_fp_theory_term_using (new_type_mentions_fp ())) t
+
+  (* Close the generic beta redexes BEFORE specializing Types or inserting
+     an FP source. A source may be a SELECT with an opaque/shared body; its
+     interior must not become a TOP_DEPTH_CONV operand. *)
+  val canonical_fields_schema = Conv.CONV_RULE
+    (Conv.TOP_DEPTH_CONV Thm.BETA_CONV)
+    smtfloatReplayRoundingTheory.smtfp_rep_canonical_fields
+
+  fun canonical_fields source =
+    Drule.ISPECL [source] (Drule.GEN_ALL canonical_fields_schema)
 
   fun unsupported t =
     raise ERR "unsupported"
@@ -374,10 +404,22 @@ struct
      formula. *)
   fun definition_bitblast_uncapped_with word_prover definitions t =
   let
+    val limit = SmtResource.max_bv_replay_term_nodes
+    val source_limit = case Int.maxInt of SOME n => n
+      | NONE => SmtResource.max_metric
     val _ = SmtResource.contains
       (wordsSyntax.is_word_type o Term.type_of) t orelse
       raise ERR "definition_bitblast_prove" "no packed word in conclusion"
-    val free_vars = Term.FVL_dag [t] Term.empty_tmset
+    (* The timed caller owns its existing source DAG admission. Uncapped
+       callers gain no new root quota; bounded binder islands retain their
+       standing binder-opening diagnostic. *)
+    val summary = SmtReplayDependencies.source_summary
+      {dag_limit = source_limit, admit_binder = fn term =>
+        (ignore (SmtResource.term_children term); SOME limit)} t
+    val free_vars = case summary of
+        G.Known variables => HOLset.addList (Term.empty_tmset, variables)
+      | G.Unknown => raise ERR "definition_bitblast_prove"
+          "packed-bit definition relevance has unadmitted dependencies"
     fun relevant definition =
       pure_word_definition definition andalso
       HOLset.member (free_vars, Lib.fst (boolSyntax.dest_eq definition))

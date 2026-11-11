@@ -125,7 +125,7 @@ Proof
 QED
 
 Definition smtstr_size_def:
-  smtstr_size (s : smtstr) = 0
+  smtstr_size (s : smtstr) = (0 : num)
 End
 
 (* Registering the ranged nchotomy keeps 'Cases_on' usable on ':smtstr' and

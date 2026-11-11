@@ -2,6 +2,14 @@
 signature SmtClause =
 sig
   type clause
+  (* Same lower-engine domains on both benchmark builds; no Work credit.
+     Selected returns are explicit kernel/library boundaries, not hidden
+     primitive calls or the separate P.edge allocation domain. *)
+  type clause_statistics =
+    {clause_objects:IntInf.int,clause_accesses:IntInf.int,
+     selected_proof_returns:IntInf.int,inst_calls:IntInf.int,
+     schema_raw_nodes:IntInf.int,index_hits:IntInf.int,index_misses:IntInf.int}
+  val with_clause_statistics : (unit -> 'a) -> 'a * clause_statistics
   val term : Term.term list -> Term.term
   val from_literals : Term.term list -> Thm.thm -> clause
   val literals : clause -> Term.term list
@@ -21,4 +29,11 @@ sig
     (Term.term list -> Term.term list * Thm.thm)
   val new_normalizer : Conv.conv ->
     (Term.term list -> Term.term list * Thm.thm)
+  (* Actual checked clause occurrence DATA, never original Source credit. *)
+  type owned_witness
+  val retain_with_work : SmtReplayInvocationWork.portfolio -> clause ->
+    owned_witness
+  val description_for : SmtReplayInvocationWork.portfolio -> owned_witness ->
+    {theorem:Thm.thm,
+     occurrences:{literal:Term.term,negative:bool,atom:Term.term} list}
 end
