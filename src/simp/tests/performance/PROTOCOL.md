@@ -2858,12 +2858,13 @@ Tools (all under `src/simp/tests/performance/` unless noted):
 `task32_snapshots.py` (`build`, `discard`, `verify`, `compare`),
 `task32.seq`, `task32_dat.py`, `task32_cases.py`, `task32_downstream.py`,
 `../compatibility/run_task25_consumer.py`. Tests: `test_task32_*.py` and
-`../compatibility/test_task25_consumer.py`. Every snapshot and downstream
-command takes the serial lock (`acceptance.serial_lock`), and the consumer
-driver takes the same serial lock for every run that builds (all but
-`--prepare-only`, the exact TASK25 reproduction included) and refuses, with
-a nonzero exit and nothing created, if it cannot take it; run them one at
-a time, with stdin from `/dev/null`, and never a timing run
+`../compatibility/test_task25_consumer.py`. Every snapshot command, every
+downstream run command and `recover` take the serial lock
+(`acceptance.serial_lock`; `predeclare`, `replay` and `dispose` only read and
+take none), and the consumer driver takes the same serial lock for every run
+that builds (all but `--prepare-only`, the exact TASK25 reproduction included)
+and refuses, with a nonzero exit and nothing created, if it cannot take it;
+run them one at a time, with stdin from `/dev/null`, and never a timing run
 beside a build.
 
 ### Scope, and what is not measured
@@ -2886,8 +2887,9 @@ which only TASK36 builds, on the candidate.
 
 Recipe (`task32_snapshots.py build`; flags `--repo`, `--manifest`,
 `--root`, `--evidence`, `--scratch`, `--side`, `--pin`, `--mktool`,
-`--cand-pin`, `--jobs` (default 8), `--poly`, `--tmpdir`). Both sides use
-the same four paths:
+`--cand-pin`, `--jobs` (default 8), `--poly`, `--tmpdir`). Relative paths
+are resolved against the current directory (and recorded absolute). Both
+sides use the same four paths:
 
     task32_snapshots.py build --side base --pin B --mktool \
         --cand-pin C32 --manifest .agent-files/evidence/task32/snapshots.json \
@@ -3009,11 +3011,12 @@ above, then compares, over the files untracked in both trees, every
   space), `gc-tag` (`[GC = ...] `), `timing` (`(0.003s)`), `theory-time`
   (`took 1.4s to build`), `cpu-times` (`runtime:`, `gctime:`, `systime:`)
   and `banner-date`.
-- Blocked: any differing common theory or log, a base file missing on cand,
-  an area of `AREAS` (num, integer, rational, real, boss, list, pred_set)
-  without a selftest log on either side, or a missing required product.
-  No common file at all is a raised refusal, not `blocked`, as is a failed
-  build. Candidate-only files are listed, not blocked. A baseline
+- Blocked: any differing common theory or log, a base file missing on cand, an
+  area of `AREAS` (num, integer, rational, real, boss, list, pred_set) whose
+  selftest log is missing on a side (or both), or a missing required product.
+  No common theory file, or no common selftest log, is a raised refusal, not
+  `blocked`, as is a failed build (the verification that starts the comparison
+  rejects it). Candidate-only files are listed, not blocked. A baseline
   selftest failure is not waived.
 
 `discard --side S [--force]` moves the record into `attempts` and deletes
@@ -3023,7 +3026,9 @@ the HOME a scratch home of that side. Without `--force` only an
 `verify` requires `base.build_interval_ns[1] <= cand.build_interval_ns[0]`,
 rebuilding only the base forces a cand rebuild after it; rebuilding the
 base needs `--mktool --cand-pin C32` again. Every rebuild changes the
-manifest seal, so the counts files must be predeclared again.
+manifest seal: `smoke`, `pilot` and `control` must then be rerun
+(`info_run` and `busy_spec` refuse those made on another manifest seal),
+and the counts must be predeclared again.
 
 Signals. `build` runs under `terminating()`: SIGTERM and SIGHUP raise
 `Terminated` once (state RAISE) so that the child's group is killed and the
@@ -3159,8 +3164,11 @@ changes nothing but the target's products (`scan` of the directory and of
 `sigobj`), leaves no running descendant, and produces the reference output
 digest (`theory_digest`: root-masked `.sig` and `.sml` plus the canonical
 `.dat`; selftests: the normalized text). The reporter's
-`Systeml.HOLDIR` must equal the side's root. Outputs that differ between
-processes (or sides) of a unit are refused (`outcome`). The run-level rule
+`Systeml.HOLDIR` must equal the side's root. In a decision stage an output
+differing from the reference is checked per process (`check_digest`): a
+candidate process is `Blocked`, a baseline one refused. Where there is no
+reference (smoke, pilot, control), `outcome` refuses outputs that differ
+between the processes (or sides) of a unit. The run-level rule
 `check_new_stems` applies too: a candidate process that loads a module no
 baseline process of that unit loaded is `Blocked` (`STEM_ALLOWANCE` is
 empty). A finding about the candidate (an extension module, a new stem) is
@@ -3228,9 +3236,10 @@ counts needs the audit. Run them in this order:
    point at a copy): replays the three runs and
    writes the counts (R per unit, the reference digests, seals of the three
    runs, overheads, the time estimate, the seals of the code, `CODE`).
-   The counts files must live in `src/simp/tests/performance`: `run` and
-   `followup` read them there, and `check_counts_commit` refuses any HEAD
-   change outside that directory. Commit the file alone (exactly one
+   The counts files belong in `src/simp/tests/performance`: the defaults
+   of `run` and `followup` are there, and `check_counts_commit` refuses a
+   counts file committed anywhere else and any HEAD change outside that
+   directory. Commit the file alone (exactly one
    commit touches it and nothing else, and HEAD differs from the candidate
    only below `src/simp/tests/performance`) before any decision process.
 5. `run --output DIR`: the first stage (`--counts`, default
@@ -3295,20 +3304,22 @@ judged.
 Exit codes (`exit_of`, `main`): 0 pass (a pilot covering every unit, a
 detected control, a smoke run, `predeclare`, `replay`, `recover`); 1 fail
 (a failing stage, an undetected control, a failing disposition); 2
-inconclusive or blocked (or a pilot with a unit under 1 s of CPU, or an
-inconclusive or blocked disposition); 3 the run failed or was refused;
+inconclusive or blocked (or a pilot with a unit under 1 s of CPU, or a
+blocked disposition); 3 the run failed or was refused;
 4 SIGTERM or SIGHUP ended the run. After a signal
 the child's group is killed, the products are restored and the attempt is
 closed; with status 4 the saved result, if any, is still printed, else
 the attempt is judged or void by the ledger and its output (R-1). A signal
 noted on another failure (a failed restore, a failed save) keeps status 3.
 
-Status 1 is reserved for "fail". A failure inside a stage (`run_stage`)
-prints `failure: ...` in the stdout summary and exits 3. `REFUSED: ...` on
-stderr is only for refusals outside `run_stage`; there `main` maps every
-non-signal exception to status 3, so none escapes as a traceback with
-status 1. A disposition is pass, fail or blocked, never inconclusive
-(its exit is 0, 1 or 2).
+Status 1 is reserved for "fail". Any non-signal failure after the attempt
+opens (in the `run_stage` body) is recorded as `failure: ...` in the stdout
+summary, the saved report and the ledger, and exits 3. Refusals before it
+opens (manifest, `check_candidate`, authorization, a pending journal, a second
+draw, an existing output) print `REFUSED: ...` on stderr and also exit 3;
+`main` maps every non-signal exception to 3, so none escapes as a traceback
+with status 1. A disposition is pass, fail or blocked, never inconclusive (its
+exit is 0, 1 or 2).
 
 Signal discipline. The same RAISE, DEFER and IGNORE states as the
 snapshot tool (`task32_snapshots.SignalState`). `run_stage` runs its body
@@ -3326,8 +3337,9 @@ ledger, the output directory of every run (`downstream.json` and the
 compressed process receipts), the dispositions, consumer evidence
 (`consumer/`: manifest, patch, logs and source inventories) and the
 handoff. Restore journals live under `.agent-files/scratch/task32`, the
-snapshots under `.agent-files/snapshots/task32/{base,cand}`, scratch and
-probe reporters under `/dev/shm/t32` (removed after `run` or `extend`),
+snapshots under `.agent-files/snapshots/task32/{base,cand}`, each run's
+`run-<attempt>` scratch, probes included, is removed at its end, and
+`/dev/shm/t32` when it is empty;
 the consumer scratch under `/dev/shm/t32-consumer`. Committed: the tools
 and tests above, `task32.seq`, and the two counts files, each in a commit
 of its own. No result, log, date of a run or handoff is committed.

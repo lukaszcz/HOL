@@ -666,6 +666,12 @@ def alternates(root):
     return path.read_text().split() if path.exists() else []
 
 
+def absolute(path):
+    """`path` made absolute against the current directory (not resolving
+    symlinks)."""
+    return Path(os.path.abspath(path))
+
+
 def build_side(repo, side, pin, root, manifest_path, logs, scratch, *,
                mktool=False, cand_pin=None, jobs=8, poly=POLY,
                tmpdir="/dev/shm/t32/tmp", runner, probe=probe_toolchain,
@@ -675,8 +681,13 @@ def build_side(repo, side, pin, root, manifest_path, logs, scratch, *,
     require(side in LABELS, "side must be one of %s" % (LABELS,))
     require(len(LABELS[0]) == len(LABELS[1]), "labels differ in length")
     a.exact_pin(pin)
-    repo, root = Path(repo).resolve(strict=True), Path(root)
-    target, logs, scratch = root / side, Path(logs), Path(scratch)
+    # relative paths are resolved against the current directory, once: the
+    # children run elsewhere (cwd = the root) and the record is absolute
+    repo, root = Path(repo).resolve(strict=True), absolute(root)
+    logs, scratch, tmpdir = absolute(logs), absolute(scratch), \
+        str(absolute(tmpdir))
+    manifest_path = absolute(manifest_path)
+    target = root / side
     require(not os.path.lexists(target), "target exists (discard it "
             "first?): %s" % target)
     other = root / LABELS[1 - LABELS.index(side)]

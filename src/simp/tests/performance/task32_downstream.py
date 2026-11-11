@@ -1741,9 +1741,7 @@ def run_stage(args, spec):
                      journal)
                 snap.hold()  # last: from here a signal is only recorded
                 report["success"] = True
-            except (Refusal, OSError, ValueError, KeyError, IndexError,
-                    TypeError, subprocess.SubprocessError, Fatal,
-                    snap.Terminated) as error:
+            except (Exception, snap.Terminated) as error:
                 snap.hold()  # a signal at this call still reaches finally
                 if isinstance(error, snap.Terminated):
                     signalled = error  # raised again once it is closed
@@ -2474,8 +2472,9 @@ def main(argv=None):
         return 3
     except Exception as error:
         # exit 1 is reserved for "fail": any other failure is exit 3
-        print("REFUSED: %s: %s" % (type(error).__name__, error),
-              file=sys.stderr)
+        print("REFUSED: %s: %s%s" % (type(error).__name__, error, "".join(
+            " (%s)" % n for n in getattr(error, "__notes__", ()))),
+            file=sys.stderr)
         return 3
 
 

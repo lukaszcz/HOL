@@ -313,11 +313,15 @@ class World:
                     harness=(self.harness, s.SEQUENCE_REL),
                     probe=self.probe,
                     host=lambda: {"uname": ["Linux"], "nproc": 1})
+        paths = dict(root=self.root, manifest=self.manifest,
+                     logs=self.dir / "ev", scratch=self.dir / "scratch")
+        for key in paths:
+            paths[key] = kw.pop(key, paths[key])
         args.update(kw)
         return s.build_side(
             self.repo, side, self.base_pin if base else self.cand_pin,
-            self.root, self.manifest, self.dir / "ev", self.dir / "scratch",
-            **args)
+            paths["root"], paths["manifest"], paths["logs"],
+            paths["scratch"], **args)
 
     def both(self):
         self.build("base")
@@ -444,6 +448,24 @@ class BuildTests(unittest.TestCase):
             "base-a0-"))
         with self.assertRaisesRegex(ValueError, "exists"):
             w.build("base")
+
+    def test_relative_paths_are_resolved_to_absolute(self):
+        w = World(self)
+        here = os.getcwd()
+        os.chdir(w.dir)
+        try:
+            w.build("base", tmpdir="tmp", scratch="scratch",
+                    logs="ev")
+        finally:
+            os.chdir(here)
+        doc = w.doc()["sides"]["base"]
+        home, root = Path(doc["home"]), Path(doc["root"])
+        self.assertTrue(home.is_absolute() and root.is_absolute())
+        self.assertTrue(home.is_dir())
+        self.assertFalse(s.nested(home, root))
+        for c in doc["commands"]:
+            self.assertTrue(Path(c["log"]).is_absolute())
+            self.assertEqual(c["env"]["HOME"], str(home))
 
     def test_alternates_recorded(self):
         w = World(self)
