@@ -15,10 +15,15 @@ every table index to a structural value, so only the content is compared:
     src/portableML/rawtheory/RawTermPP.sml and resolved the same way;
   - theorem names, dependencies, tags, class, privacy, locations, the new
     signature and the exports are kept in full and in order;
-  - the loadable theory data is kept in full; `tag-tm` terms and the string
-    index of `tag-knm` are resolved, and every other integer stays as it is
-    (so an unrecognized index can only cause a false difference, never hide
-    one).
+  - the loadable theory data is kept in full and every ThyDataSexp tag is
+    resolved through the tables: both fields of `tag-knm`, `tag-str`,
+    `tag-tm`, `tag-ty` and the encoded terms of `tag-th`. Data that this
+    module cannot attribute to a tag - any integer or untagged string left
+    in it, as written by an unknown or custom writer (grammar ancestry,
+    split data, ...) - may be a table index. For such a file the canonical
+    form also holds the ordered full string, identifier, type and term
+    tables (`fallback`), so an index it cannot resolve can only make two
+    equal files differ, never hide a difference.
 
 A parent's hash is the only field that may be masked (`<MASK>`), and only
 by the caller, for a parent that itself compared equal. Any parse failure
@@ -301,23 +306,59 @@ class Tables:
         return stack[0]
 
 
-def thydata(x, tables):
+def plain(x):
+    """A JSON-able copy of an s-expression that resolves nothing."""
     if isinstance(x, list):
-        return ["l"] + [thydata(i, tables) for i in x]
+        return ["l"] + [plain(i) for i in x]
     if isinstance(x, Dot):
-        head = x.items
-        if head == [Sym("tag-tm")] and isinstance(x.tail, str):
-            return ["tag-tm", tables.decode(x.tail)]
-        if len(head) == 2 and head[0] == "tag-knm" and \
-                isinstance(head[1], int) and isinstance(x.tail, int):
-            return ["tag-knm", tables.s(head[1]), x.tail]
-        return ["d", [thydata(i, tables) for i in head],
-                thydata(x.tail, tables)]
+        return ["d", [plain(i) for i in x.items], plain(x.tail)]
     if isinstance(x, Sym):
         return ["s", str(x)]
-    if isinstance(x, int):
-        return ["i", x]
-    return ["t", x]
+    return ["i", x] if isinstance(x, int) else ["t", x]
+
+
+class ThyData:
+    """Resolution of the ThyDataSexp tags; `unresolved` is set when an
+    integer or untagged string remains that might be a table index."""
+
+    def __init__(self, tables):
+        self.tables = tables
+        self.unresolved = False
+
+    def value(self, x):
+        t = self.tables
+        if isinstance(x, Dot):
+            head, tail = x.items, x.tail
+            tag = head[0] if len(head) == 1 else None
+            if tag in ("tag-tm", "tag-ty") and isinstance(tail, str) and \
+                    not isinstance(tail, Sym):
+                return [tag, t.decode(tail)]
+            if tag == "tag-str" and isinstance(tail, int):
+                return [tag, t.s(tail)]
+            if tag == "tag-ch" and isinstance(tail, int):
+                return [tag, tail]
+            if len(head) == 2 and head[0] == "tag-knm" and \
+                    isinstance(head[1], int) and isinstance(tail, int):
+                return ["tag-knm", t.s(head[1]), t.s(tail)]
+            return ["d", [self.value(i) for i in head], self.value(tail)]
+        if isinstance(x, list):
+            if len(x) == 5 and x[0] == "tag-th" and isinstance(x[0], Sym) \
+                    and isinstance(x[2], list) and isinstance(x[4], int) \
+                    and isinstance(x[3], str):
+                return ["tag-th", plain(x[1]),
+                        [t.decode(string(i)) for i in x[2]], x[3], x[4]]
+            return ["l"] + [self.value(i) for i in x]
+        if isinstance(x, Sym):
+            return ["s", str(x)]
+        self.unresolved = True
+        return ["i", x] if isinstance(x, int) else ["t", x]
+
+    def entries(self, x):
+        out = []
+        for entry in as_list(x):
+            name, rest = car_cdr(entry)
+            out.append([string(name), self.value(rest)])
+        return out
 
 
 def theorem(x, tables):
@@ -373,6 +414,8 @@ def canonical(text):
     newconsts = [[string(n), tables.ty(integer(t))] for n, t in
                  (car_cdr(p) for p in as_list(tagged("incorporate-consts",
                                                      inc_consts)))]
+    data = ThyData(tables)
+    resolved = data.entries(tagged("loadable-thydata", loadable))
     return {
         "name": string(name), "parents": parents,
         "unnamed_types": [tables.ty(i) for i in as_list(utys)],
@@ -383,7 +426,10 @@ def canonical(text):
                         (car_cdr(p) for p in as_list(ntms))],
         "thms": [theorem(t, tables) for t in as_list(thms)],
         "newsig": {"types": newtypes, "consts": newconsts},
-        "thydata": thydata(tagged("loadable-thydata", loadable), tables)}
+        "thydata": resolved, "fallback": data.unresolved,
+        "tables": {"strings": tables.strings, "ids": tables.ids,
+                   "types": tables.types, "terms": tables.terms}
+        if data.unresolved else None}
 
 
 def digest(canon, equal_parents=()):

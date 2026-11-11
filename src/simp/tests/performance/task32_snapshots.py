@@ -544,7 +544,7 @@ def build_side(repo, side, pin, root, manifest_path, logs, scratch, *,
     require(not home.exists(), "HOME is not fresh: %s" % home)
     env = environment(home, tmpdir)
     record = {"label": side, "root": str(target), "home": str(home),
-              "scratch": str(scratch),
+              "scratch": str(scratch), "repo": str(repo),
               "pin": pin, "mktool": mktool, "attempt": attempt,
               "cand_pin": cand_pin if mktool else None, "commands": []}
 
@@ -630,9 +630,21 @@ def discard_side(manifest_path, side, force=False):
             str(home.parent) == record.get("scratch"),
             "HOME is not a scratch home of this side")
     if os.path.lexists(root):
-        require((root / ".git").is_dir() and
-                alternates(root) == record.get("alternates"),
-                "root is not the recorded clone (alternates differ)")
+        cloned = [c for c in record["commands"] if c["name"] == "clone"]
+        if cloned and cloned[0]["exit"] == 0 and "alternates" in record:
+            require((root / ".git").is_dir() and
+                    alternates(root) == record["alternates"],
+                    "root is not the recorded clone (alternates differ)")
+        else:
+            # a clone that did not finish: nothing, or a partial clone
+            # that borrows objects from the source repository at most
+            theirs = alternates(root)
+            source = Path(record["repo"]) if record.get("repo") else None
+            require(not (root / ".git").exists() or not theirs or
+                    (source is not None and all(
+                        Path(p) in (source / ".git/objects",
+                                    source / "objects") for p in theirs)),
+                    "root is not a partial clone of the repository")
     del manifest["sides"][side]
     manifest.setdefault("attempts", []).append(record)
     store_manifest(manifest_path, manifest)
@@ -901,7 +913,9 @@ def canonical_dats(pending, roots, byte_equal):
         (dx, masked), (dy, _) = (dat.digest(x, equal_names),
                                  dat.digest(y, equal_names))
         records[rel].update(base=dx, cand=dy, masked_parents=masked,
-                            equal=rel in resolved)
+                            equal=rel in resolved,
+                            fallback={"base": x["fallback"],
+                                      "cand": y["fallback"]})
     return [records[rel] for rel in sorted(records)]
 
 

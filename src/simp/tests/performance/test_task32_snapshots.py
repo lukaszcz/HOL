@@ -177,7 +177,8 @@ def sexp_str(text):
 
 
 def mk_dat(name, parents=(), strings=None, types=None, terms=None,
-           hyps=(), tags=("DISK_THM",), newsig_arity=1, deltas=0):
+           hyps=(), tags=("DISK_THM",), newsig_arity=1, deltas=None,
+           extra=None, xname="x"):
     """A theory in the real .dat format with one theorem. `strings`,
     `types` and `terms` are orders of the sharing tables' entries."""
     strings = strings or ["min", "bool", "c", name, "x"]
@@ -190,11 +191,14 @@ def mk_dat(name, parents=(), strings=None, types=None, terms=None,
     tyidx = {v: i for i, v in enumerate(types)}
     # a type entry's text may not mention a later type
     tytext = ["%s" % tkey[v] for v in types]
-    tmtext = {"x": '("x" %d)' % tyidx["bool"],
+    tmtext = {"x": '("%s" %d)' % (xname, tyidx["bool"]),
               "c": "(%d %d)" % (idx_id[ids[1]], tyidx["bool"])}
     tmidx = {v: i for i, v in enumerate(terms)}
     tmtext["ap"] = "(ap %d %d)" % (tmidx["x"], tmidx["c"])
     enc = lambda key: "%%%d" % tmidx[key]
+    deltas = sidx["c"] if deltas is None else deltas
+    extra_text = "" if extra is None else " " + (
+        extra(sidx, tmidx) if callable(extra) else extra)
     thm = '(%d (((%d 0)) %s) (2 0) (%s))' % (
         sidx["c"], sidx[name], " ".join(sexp_str(t) for t in tags),
         " ".join(sexp_str(t) for t in [enc("c")] + [enc(h) for h in hyps]))
@@ -205,11 +209,12 @@ def mk_dat(name, parents=(), strings=None, types=None, terms=None,
         '  exports (nil) (nil) (%s))\n'
         ' (incorporate (incorporate-types ("T" . %d)) incorporate-consts '
         '("c" . %d))\n (loadable-thydata ("userdef.deltas" '
-        '(tag-knm %d . %d)) ("grammardelta" (OO "c" (tag-tm . "%s")))))\n'
+        '(tag-knm %d . %d)) ("grammardelta" (OO c (tag-tm . "%s")))%s))\n'
         % (name, plist, " ".join(sexp_str(x) for x in strings),
            " ".join("(%d . %d)" % (sidx[a], sidx[b]) for a, b in ids),
            " ".join(tytext), " ".join(tmtext[t] for t in terms), thm,
-           newsig_arity, tyidx["bool"], sidx[name], deltas, enc("c")))
+           newsig_arity, tyidx["bool"], sidx[name], deltas, enc("c"),
+           extra_text))
 
 
 class Fake:
@@ -526,6 +531,45 @@ class BuildTests(unittest.TestCase):
             "alternates"])
         s.discard_side(w.manifest, "cand", force=True)
         self.assertFalse(root.exists())
+
+    def test_discard_after_a_killed_clone(self):
+        w = World(self)
+        w.fake.during = None
+        real = w.fake.__call__
+
+        def killed(argv, cwd, env, stdin, log):
+            if argv[:2] == ["git", "clone"]:
+                Path(log).write_text("")
+                raise s.Terminated("SIGTERM")
+            return real(argv, cwd, env, stdin, log)
+
+        with self.assertRaises(s.Terminated):
+            w.build("cand", runner=killed)
+        record = w.doc()["sides"]["cand"]
+        self.assertTrue(record["incomplete"])
+        self.assertNotIn("alternates", record)
+        self.assertEqual(record["commands"], [])
+        target = Path(record["root"])
+        # nothing was cloned yet
+        s.discard_side(w.manifest, "cand")
+        self.assertEqual(len(w.doc()["attempts"]), 1)
+        # a half-made clone: .git without alternates, or borrowing the
+        # recorded repository's objects, is accepted; any other is not
+        for text, ok in (("", True), ("%s/.git/objects\n" % w.repo, True),
+                         ("/elsewhere/objects\n", False)):
+            doc = w.doc()
+            doc["sides"]["cand"] = dict(record, home=record["home"])
+            s.store_manifest(w.manifest, doc)
+            Path(record["home"]).mkdir(parents=True, exist_ok=True)
+            put(target / ".git/objects/info/alternates", text) \
+                if text else (target / ".git").mkdir(parents=True)
+            if ok:
+                s.discard_side(w.manifest, "cand")
+                self.assertFalse(target.exists())
+            else:
+                with self.assertRaisesRegex(ValueError, "partial clone"):
+                    s.discard_side(w.manifest, "cand")
+                shutil.rmtree(target)
 
     def test_directories_are_made_inside_the_guarded_part(self):
         w = World(self)
@@ -912,7 +956,7 @@ class CompareTests(unittest.TestCase):
             "hyp": mk_dat("t", hyps=("x",)),
             "tag": mk_dat("t", tags=("DISK_THM", "ORACLE")),
             "newsig": mk_dat("t", newsig_arity=2),
-            "thydata": mk_dat("t", deltas=7),
+            "thydata": mk_dat("t", deltas=4),
             "parent": mk_dat("t", parents=[("a", "h")]),
             "name": mk_dat("u")}
         for what, text in variants.items():
@@ -920,6 +964,55 @@ class CompareTests(unittest.TestCase):
             out = self.run_compare()
             self.assertEqual(out["status"], "blocked", what)
             self.assertFalse(self.dat_files(out)[rel]["equal"], what)
+
+    THYDATA = {
+        "tag-knm": '("k" (tag-knm 3 . 5))',
+        "tag-str": '("k" (tag-str . 5))',
+        "tag-ty": '("k" (tag-ty . "%0"))',
+        "tag-th": '("k" (tag-th ("t" 0 nil nil) ("%0") "t" 1))',
+        "raw ints": '("GrammarAncestry" 5)'}
+    STRINGS = ["min", "bool", "c", "t", "x", "e1"]
+
+    def test_changed_table_entry_behind_an_unchanged_index_blocks(self):
+        rel = DAT.replace("num", "t")
+        for what, extra in self.THYDATA.items():
+            same = mk_dat("t", strings=self.STRINGS, extra=extra)
+            by_string = mk_dat("t", strings=self.STRINGS[:5] + ["e2"],
+                               extra=extra)
+            by_term = mk_dat("t", strings=self.STRINGS, extra=extra,
+                             xname="y")
+            uses = "term" if what in ("tag-ty", "tag-th") else "string"
+            other = by_term if uses == "term" else by_string
+            self.write_dat(rel, same, other)
+            out = self.run_compare()
+            self.assertEqual(out["status"], "blocked", what)
+            self.assertFalse(self.dat_files(out)[rel]["equal"], what)
+        # the string table behind a raw integer list and a tag-str
+        self.write_dat(rel, mk_dat("t", strings=self.STRINGS,
+                                   extra=self.THYDATA["raw ints"]),
+                       mk_dat("t", strings=self.STRINGS[:5] + ["e2"],
+                              extra=self.THYDATA["raw ints"]))
+        record = self.dat_files(self.run_compare())[rel]
+        self.assertEqual(record["fallback"], {"base": True, "cand": True})
+
+    def test_resolved_references_survive_a_table_reorder(self):
+        rel = DAT.replace("num", "t")
+
+        def extra(sidx, tmidx):
+            return ('("k" (tag-knm %d . %d) (tag-str . %d) (tag-ty . "%%%d")'
+                    ' (tag-th ("t" 0 nil nil) ("%%%d") "t" 1))'
+                    % (sidx["t"], sidx["e1"], sidx["e1"], tmidx["x"],
+                       tmidx["x"]))
+
+        self.write_dat(rel, mk_dat("t", strings=self.STRINGS, extra=extra),
+                       mk_dat("t", strings=["e1", "x", "t", "c", "bool",
+                                            "min"],
+                              terms=["c", "x", "ap"], types=["bool", "alpha"],
+                              extra=extra))
+        out = self.run_compare()
+        self.assertEqual(out["status"], "pass", out["blocked"])
+        self.assertEqual(self.dat_files(out)[rel]["fallback"],
+                         {"base": False, "cand": False})
 
     def test_real_format_fixture(self):
         c = dat.canonical(REAL_DAT)
