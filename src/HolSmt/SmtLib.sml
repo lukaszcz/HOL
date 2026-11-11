@@ -6507,8 +6507,8 @@ local
     val _ = emitted_term_sorts := []
     val {sets = set_terms, bags = bag_terms} =
       collect_query_collection_markers (t :: original_ts)
-    (* Num is an Int-valued SMT abs only beneath its integer coercion.  In an
-       opaque HOL-num position it must remain an uninterpreted function. *)
+    (* Num retains its HOL-num sort in opaque positions, including beneath
+       an uninterpreted integer coercion. *)
     val raw_num_terms = SmtLib_RawNumAnalysis.collect
       raw_num_operations bag_terms (t :: original_ts)
     (* A symbol has one fixed SMT domain sort.  A collection argument is
@@ -6907,6 +6907,36 @@ local
       (NUM_BINDERS_TO_INT_CONV,
        simpLib.SIMP_CONV pureSimps.pure_ss num_transfer_rewrites) tm
     handle Conv.UNCHANGED => Thm.REFL tm
+
+  (* Mixed word goals retain HOL num. Give their numerals an integer image
+     without rewriting the literal indices consumed by native operators. *)
+  fun NUMERAL_TO_INT_CONV tm =
+  let
+    val (head, arguments) = boolSyntax.strip_comb tm
+    val indexed = List.exists (same_const head)
+      [wordsSyntax.word_extract_tm, wordsSyntax.word_replicate_tm,
+       wordsSyntax.word_rol_tm, wordsSyntax.word_ror_tm, smtstr_char_tm,
+       smtstring_const "reglan_power", smtstring_const "reglan_loop"]
+  in
+    if intSyntax.is_int_literal tm orelse ratSyntax.is_literal tm orelse
+       realSyntax.is_real_literal tm orelse wordsSyntax.is_word_literal tm
+       orelse Lib.can native_string_literal tm then
+      raise Conv.UNCHANGED
+    else if indexed then
+      let
+        fun operand argument =
+          if numSyntax.is_numeral argument then Thm.REFL argument
+          else NUMERAL_TO_INT_CONV argument
+            handle Conv.UNCHANGED => Thm.REFL argument
+      in
+        List.foldl (fn (argument, theorem) =>
+          Thm.MK_COMB (theorem, operand argument)) (Thm.REFL head) arguments
+      end
+    else if numSyntax.is_numeral tm then
+      Thm.SYM (Thm.SPEC tm integerTheory.NUM_OF_INT)
+    else
+      Conv.SUB_CONV NUMERAL_TO_INT_CONV tm
+  end
 
   type native_float_transfer_info = {
     surface : string list,
@@ -7901,7 +7931,8 @@ local
   val SPEC_NUM_FREE_VARS_TAC =
     SPEC_NUM_FREE_VARS_TAC_EXCEPT (fn _ => false)
 
-  val thms_per_const = SmtLib_GraphNumericStock.for_head
+  val thms_per_const =
+    SmtLib_GraphNumericStock.for_head_preserving_num
 
   (* Prepends the conclusion of a theorem to the list of its hypothesis and
      returns the resulting list of terms *)
@@ -7923,8 +7954,8 @@ local
      terms in the goal. Since the resulting list of theorems might require more
      theorems to be added (for the SMT solvers to properly solve the goal), this
      function calls itself recursively until no new theorems are needed anymore. *)
-  fun get_thms ([], acc) = HOLset.listItems acc
-    | get_thms (terms, acc) =
+  fun get_thms preserve_num ([], acc) = HOLset.listItems acc
+    | get_thms preserve_num (terms, acc) =
       let
         (* Create a set of all the constants used in all the provided terms *)
         val atoms = Term.all_atomsl terms Term.empty_tmset
@@ -7932,16 +7963,18 @@ local
 
         (* Generate a set of all the theorems we want to add, based on these
            constants *)
-        fun const_thms (const, acc) = HOLset.addList (acc, thms_per_const const)
+        fun const_thms (const, acc) =
+          HOLset.addList (acc, thms_per_const preserve_num const)
         val wanted_thms = HOLset.foldl const_thms empty_thmset consts
 
-        (* Apply NUM_TO_INT_CONV to these theorems, to convert any num literals
-           they might have into int literals. We do this here because this
-           conversion introduces constants that might trigger new theorems to be
-           added in subsequent iterations *)
+        (* Retained naturals need the numeral-only conversion: the semantic
+           transfer would erase their bridge laws. Both conversions can
+           introduce constants requiring further theorem discovery. *)
+        val convert =
+          if preserve_num then NUMERAL_TO_INT_CONV else NUM_TO_INT_CONV
         fun conv_thm (thm, acc) =
           let
-            val thm = Conv.CONV_RULE NUM_TO_INT_CONV thm
+            val thm = Conv.CONV_RULE convert thm
             val (lhs, rhs) = boolSyntax.dest_eq (Thm.concl thm)
           in
             if Term.aconv lhs rhs then acc else HOLset.add (acc, thm)
@@ -7960,7 +7993,8 @@ local
         fun add_new_terms (thm, acc) = HOLset.addList (acc, thm_terms thm)
         val new_terms = HOLset.foldl add_new_terms Term.empty_tmset thms_to_add
       in
-        get_thms (HOLset.listItems new_terms, HOLset.union (acc, thms_to_add))
+        get_thms preserve_num
+          (HOLset.listItems new_terms, HOLset.union (acc, thms_to_add))
       end
 
 in
@@ -8694,7 +8728,8 @@ in
      get_thms this does not run a recursive expanded CONV_RULE pipeline.
      The caller must admit original constructor/type and each returned law;
      selector-internal fixed theorem operations remain explicit prerequisites. *)
-  val graph_preprocessing_theorems_for_head = thms_per_const
+  val graph_preprocessing_theorems_for_head =
+    SmtLib_GraphNumericStock.for_head
 
   (* Ordered ordinary stages, including the unlabelled conversion passes.
      This is an inventory, not an implementation or a completion flag. *)
@@ -8717,7 +8752,7 @@ in
 
     val thms_to_add =
       if !include_theorems then
-        get_thms (goal_terms, empty_thmset)
+        get_thms (goal_entangles_num_and_word g) (goal_terms, empty_thmset)
       else
         []
 
@@ -8734,6 +8769,7 @@ in
   let
     open Tactic Tactical
     val assumptions = #1 g
+    val preserve_num = goal_entangles_num_and_word g
     fun is_true tm =
       Term.aconv tm boolSyntax.T orelse
       (let val (_, body) = boolSyntax.dest_forall tm
@@ -8741,8 +8777,14 @@ in
        handle Feedback.HOL_ERR _ => false)
     fun cleanup thm =
     let
-      val thm = simpLib.SIMP_RULE pureSimps.pure_ss
-        (boolTheory.REFL_CLAUSE :: num_transfer_rewrites) thm
+      (* The transfer rewrites would erase the retained num bridge laws. *)
+      val thm =
+        if preserve_num then
+          simpLib.SIMP_RULE pureSimps.pure_ss [boolTheory.REFL_CLAUSE]
+            (Conv.CONV_RULE NUMERAL_TO_INT_CONV thm)
+        else
+          simpLib.SIMP_RULE pureSimps.pure_ss
+            (boolTheory.REFL_CLAUSE :: num_transfer_rewrites) thm
     in
       if is_true (Thm.concl thm) then
         ALL_TAC
@@ -8899,6 +8941,13 @@ in
     Tactic.CONV_TAC
       (Conv.DEPTH_CONV (fun_eq_preprocess_conv preserve_native_bags)) THEN
     stage "word-simp" Library.WORD_SIMP_TAC THEN
+    (* Word simplification still needs literal shift amounts and bit indices.
+       Normalize retained numerals only after it has lowered those forms. *)
+    stage "num-literals" (fn g =>
+      if goal_entangles_num_and_word g then
+        (Tactic.RULE_ASSUM_TAC (Conv.CONV_RULE NUMERAL_TO_INT_CONV) THEN
+         Tactic.CONV_TAC NUMERAL_TO_INT_CONV) g
+      else ALL_TAC g) THEN
     (* Checked set simplification normally uses the predicate encoding, but
        must retain complements: SET_SIMP_TAC lowers their membership to NOTIN,
        which does not have a native SMT Set translation. *)

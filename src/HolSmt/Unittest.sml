@@ -229,6 +229,30 @@ fun assert_concl_alpha (label, thm, expected) =
       term_with_types expected ^ "\nactual: " ^ term_with_types actual)
   end
 
+fun indexed_num_word_preprocessing_success () =
+let
+  val original : goal =
+    ([``(f:num -> word32) 0 = (x:word32)``],
+     ``((7 >< 0) ((f:num -> word32) 0):word8) =
+       (7 >< 0) (x:word32)``)
+  fun check (name,tactic) =
+    let
+      val (changed,validate) = SolverSpec.simplify tactic original
+      val simplified = Tactical.TAC_PROOF (changed,
+        Tactical.THEN (Rewrite.PURE_ONCE_ASM_REWRITE_TAC [],Tactic.REFL_TAC))
+      val theorem = validate [simplified]
+    in
+      assert_concl_alpha (name,theorem,#2 original);
+      assert (List.all (fn hypothesis =>
+        List.exists (Term.aconv hypothesis) (#1 original)) (Thm.hyp theorem),
+        name ^ " introduced a hypothesis");
+      check_oracle_tags name theorem
+    end
+in
+  List.app check [("Z3 indexed preprocessing",SmtLib.Z3_SIMP_TAC false),
+    ("CVC indexed preprocessing",SmtLib.CVC_SIMP_TAC false)]
+end
+
 fun assert_num_binder_conv (label, input, expected) =
   let
     val thm = SmtLib.NUM_BINDERS_TO_INT_CONV input
@@ -34347,6 +34371,8 @@ let
       smtlib_string_typed_reset_assertions_success),
     ("smtlib_string_typed_definitions_success",
       smtlib_string_typed_definitions_success),
+    ("indexed_num_word_preprocessing_success",
+      indexed_num_word_preprocessing_success),
     ("num_binder_transfer_lemmas_success",
       num_binder_transfer_lemmas_success),
     ("num_binder_relativization_forall_success",
