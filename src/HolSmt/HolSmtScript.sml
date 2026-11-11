@@ -2455,6 +2455,24 @@ Definition smt_emod_total_def:
   smt_emod_total a b = if b = 0 then a else emod a b
 End
 
+Theorem smt_ediv_reduction:
+  !a b. ediv a b = if b = 0 then ediv a 0 else smt_ediv_total a b
+Proof
+  rpt gen_tac >> Cases_on `b = 0` >> simp [smt_ediv_total_def]
+QED
+
+Theorem smt_emod_reduction:
+  !a b. emod a b = if b = 0 then emod a 0 else smt_emod_total a b
+Proof
+  rpt gen_tac >> Cases_on `b = 0` >> simp [smt_emod_total_def]
+QED
+
+Theorem smt_rdiv_reduction:
+  !a b. smt_rdiv a b = if b = 0 then smt_rdiv a 0 else a / b
+Proof
+  rpt gen_tac >> Cases_on `b = 0` >> simp [smt_rdiv_eq_div]
+QED
+
 Theorem smt_ediv_total_compute[compute]:
   smt_ediv_total a b =
     if b = 0 then 0 else if 0 < b then a / b else -(a / -b)

@@ -12147,61 +12147,22 @@ local
         (theorem, conjunction_free_semantic_provenance
           "arith_reduction unexpectedly produced a conjunction"
           (Thm.concl theorem))
-      fun guarded_conditional (a, b, total_term, equality) =
-        let
-          val condition = boolSyntax.mk_eq (b, intSyntax.zero_tm)
-          val target = boolSyntax.mk_eq
-            (reduction, boolSyntax.mk_cond
-              (condition, equality, total_term))
-        in
-          nonconjunction (Tactical.TAC_PROOF (([], target),
-             Tactical.THEN (Tactic.COND_CASES_TAC,
-               bossLib.ASM_SIMP_TAC bossLib.arith_ss
-                 [HolSmtTheory.smt_ediv_total_def,
-                  HolSmtTheory.smt_emod_total_def])))
-        end
       fun div_reduction () =
         (case operands of
-           [a, b] => guarded_conditional (a, b,
-             total (smt_ediv_total_tm, a, b),
-             SmtLib_Theories.mk_int_ediv (a, intSyntax.zero_tm))
+           [a, b] => nonconjunction
+             (Drule.SPECL [a, b] HolSmtTheory.smt_ediv_reduction)
          | _ => raise ERR "arith_reduction"
              "ediv reduction expects two operands")
       fun mod_reduction () =
         (case operands of
-           [a, b] =>
-             let
-               val condition = boolSyntax.mk_eq (b, intSyntax.zero_tm)
-               val target = boolSyntax.mk_eq
-                 (reduction, boolSyntax.mk_cond
-                   (condition,
-                    SmtLib_Theories.mk_int_emod
-                      (a, intSyntax.zero_tm),
-                    total (smt_emod_total_tm, a, b)))
-             in
-               nonconjunction (Tactical.TAC_PROOF (([], target),
-                  Tactical.THEN (Tactic.COND_CASES_TAC,
-                    bossLib.ASM_SIMP_TAC bossLib.arith_ss
-                      [HolSmtTheory.smt_emod_total_def])))
-             end
+           [a, b] => nonconjunction
+             (Drule.SPECL [a, b] HolSmtTheory.smt_emod_reduction)
          | _ => raise ERR "arith_reduction"
              "emod reduction expects two operands")
       fun real_div_reduction () =
         (case operands of
-           [a, b] =>
-             let
-               val condition = boolSyntax.mk_eq (b, realSyntax.zero_tm)
-               val target = boolSyntax.mk_eq
-                 (reduction, boolSyntax.mk_cond
-                   (condition,
-                    total (smt_rdiv_tm, a, realSyntax.zero_tm),
-                    realSyntax.mk_div (a, b)))
-             in
-               nonconjunction (Tactical.TAC_PROOF (([], target),
-                  Tactical.THEN (Tactic.COND_CASES_TAC,
-                    bossLib.ASM_SIMP_TAC bossLib.arith_ss
-                      [HolSmtTheory.smt_rdiv_eq_div])))
-             end
+           [a, b] => nonconjunction
+             (Drule.SPECL [a, b] HolSmtTheory.smt_rdiv_reduction)
          | _ => raise ERR "arith_reduction"
              "real division reduction expects two operands")
       fun total_div_reduction () =
@@ -12272,17 +12233,8 @@ local
               exact_binary_conjunction "bounds" bounds]))
         end
       fun abs_reduction () =
-        let
-          val value = intSyntax.dest_absval reduction
-          val target = boolSyntax.mk_eq (reduction,
-            boolSyntax.mk_cond (intSyntax.mk_less (value, intSyntax.zero_tm),
-              intSyntax.mk_negated value, value))
-        in
-          nonconjunction (Tactical.TAC_PROOF (([], target),
-             Tactical.THEN (Tactic.COND_CASES_TAC,
-               bossLib.ASM_SIMP_TAC bossLib.arith_ss
-                 [integerTheory.INT_ABS])))
-        end
+        nonconjunction (Thm.SPEC (intSyntax.dest_absval reduction)
+          integerTheory.INT_ABS)
     in
       if Term.aconv head intrealSyntax.INT_FLOOR_tm then floor_reduction ()
       else if Term.aconv head intSyntax.absval_tm then abs_reduction ()
