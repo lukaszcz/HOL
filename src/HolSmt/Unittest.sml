@@ -7409,7 +7409,7 @@ let
         CVC.goal_to_SmtLib_translation simplified
       val text = String.concat strings
     in
-      ignore (SmtLib_Parser.typecheck_script_string_with_options
+      (ignore (SmtLib_Parser.typecheck_script_string_with_options
         {dict_logic = NONE, solver = SOME "cvc5",
          elaborate_datatypes = false} text);
       if String.isPrefix "conditional " name then
@@ -7432,7 +7432,7 @@ let
               (term_has_subterm (Term.aconv selector)) parsed,
               name ^ ": parser lost the normalized selector")) selectors
         end
-      else ()
+      else ())
       handle Feedback.HOL_ERR holerr =>
         die (name ^ ": cvc5 sorts are inconsistent:\n" ^ text ^ "\n" ^
           Feedback.message_of holerr)
