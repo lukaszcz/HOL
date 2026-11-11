@@ -1521,6 +1521,45 @@ class Unsaved(Base):
         self.assertIn("the result is recorded", out)
         self.assertTrue((self.world.tmp / "x/downstream.json").is_file())
 
+    def test_a_signal_with_an_attempt_that_cannot_close_says_so(self):
+        real = a.save
+
+        def save(path, data, *rest):
+            if Path(path).name == "downstream.json":
+                os.kill(os.getpid(), signal.SIGTERM)
+                time.sleep(0.05)
+            return real(path, data, *rest)
+
+        append = dw.tg.ledger_append
+
+        def broken(path, **record):
+            if record["event"] in ("info-end", "close"):
+                raise OSError("ledger unwritable")
+            return append(path, **record)
+        with mock.patch.object(dw.tg, "ledger_append", broken):
+            code, out, err = self.cli("x", mock.patch.object(
+                a, "save", save))
+        self.assertEqual(code, 4)
+        self.assertIn("ATTEMPT-NOT-CLOSED", err)
+        self.assertNotIn("is closed", out)
+        self.assertNotIn("the result is recorded", out)
+        self.assertIn("no report was saved", out)
+        self.assertIn("(R-1)", out)
+
+    def test_a_signal_noted_on_another_failure_keeps_exit_3(self):
+        real = a.save
+
+        def save(path, data, *rest):
+            if Path(path).name == "downstream.json":
+                os.kill(os.getpid(), signal.SIGTERM)
+                time.sleep(0.05)
+                raise OSError("disk full")
+            return real(path, data, *rest)
+        code, out, err = self.cli("x", mock.patch.object(a, "save", save))
+        self.assertEqual(code, 3)
+        self.assertIn("REFUSED", err)
+        self.assertIn("SIGTERM", err)
+
     def test_a_signal_during_the_body_exits_4(self):
         w = self.world
         real = dw.run_verify
