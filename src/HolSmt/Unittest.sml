@@ -386,6 +386,53 @@ in
     ("bag count function relativization", input, expected)
 end
 
+(* Bag discovery runs at every cvc5 num-to-int stage, also on goals without
+   bags.  Applications nested in their first argument used to be walked once
+   per partial application, so the cost grew as arity^depth. *)
+fun cvc_native_bag_goal_nested_application_success () =
+let
+  val arity = 4
+  val head = Term.mk_var ("f",
+    List.foldl (fn (_, ty) => Type.bool --> ty) Type.bool
+      (List.tabulate (arity, fn _ => ())))
+  val other = Term.mk_var ("q", Type.bool)
+  val head2 = Term.mk_var ("g",
+    Type.--> (Type.bool, Type.--> (Type.bool, Type.bool)))
+  fun nest seed 0 = seed
+    | nest seed n =
+        Term.list_mk_comb (head,
+          nest seed (n - 1) :: List.tabulate (arity - 1, fn _ => other))
+  fun detects seed =
+    Timeout.apply (Time.fromSeconds 20)
+      (fn () => SmtLib.cvc_native_bag_goal ([], nest seed 24)) ()
+  val x = Term.mk_var ("x", Type.bool)
+  val bool_bag_ty = Type.--> (Type.bool, numSyntax.num)
+  val y_bag = bagSyntax.mk_insert (Term.mk_var ("y", Type.bool),
+    Term.inst [Type.alpha |-> Type.bool] bagSyntax.EMPTY_BAG_tm)
+  val bag_atom = Term.list_mk_comb (
+    Term.mk_thy_const {Thy = "bag", Name = "BAG_IN",
+      Ty = Type.--> (Type.bool, Type.--> (bool_bag_ty, Type.bool))},
+    [x, y_bag])
+  val b = Term.mk_var ("b", bool_bag_ty)
+  val c = Term.mk_var ("c", bool_bag_ty)
+  fun union_count (l, r) = Term.mk_comb (bagSyntax.mk_union (l, r), x)
+  val partial_union =
+    boolSyntax.mk_eq (union_count (b, c), union_count (c, b))
+  val p = Term.mk_var ("p", Type.bool)
+  val q = Term.mk_var ("q", Type.bool)
+in
+  assert (not (detects p),
+    "bag-free deeply nested application was reported to contain bags");
+  assert (detects bag_atom,
+    "native bag under nested applications was not found");
+  assert (SmtLib.cvc_native_bag_goal ([], partial_union),
+    "partially applied bag union was not found");
+  assert (not (SmtLib.cvc_native_bag_goal ([],
+    boolSyntax.mk_eq (Term.list_mk_comb (head2, [p, q]),
+      Term.list_mk_comb (head2, [q, p])))),
+    "bag-free goal was reported to contain bags")
+end
+
 fun num_to_int_under_abstraction_success () =
 let
   val input =
@@ -34261,6 +34308,8 @@ let
     ("z3_compact_selected_dispatch", Z3_CompactReplayTests.run),
     ("cpc_graph_typed_parser", fn () =>
       (CPC_GraphParserTests.run ();CPC_ConstructorAliasReviewTests.run ())),
+    ("cvc_native_bag_goal_nested_application_success",
+      cvc_native_bag_goal_nested_application_success),
     ("smt_resource_diagnostic_contract",
       smt_resource_diagnostic_contract),
     ("smt_resource_proof_pre_gate_precedes_parser",
