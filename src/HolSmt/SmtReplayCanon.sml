@@ -609,19 +609,46 @@ struct
     (List.concat (List.map schema_patterns strict_difference_laws))
     true false strict_difference_proposal
 
-  (* Ring normal form of each arithmetic operation, applied bottom-up, so
-     that operands Z3 re-associated, reordered or re-spelled (-x for
-     -1 * x, a - b for a + -1 * b) meet; other subterms (conditionals,
-     divisions) stay atoms.  This runs on the expanded DAG, not as a
-     compact schema: a schema exposes one constructor level with opaque
-     operand holes, across which the ring normal form cannot collect. *)
-  fun polynomial_operation_conv tm =
-    if intSyntax.is_plus tm orelse intSyntax.is_minus tm orelse
-       intSyntax.is_mult tm orelse intSyntax.is_negated tm orelse
-       realSyntax.is_plus tm orelse realSyntax.is_minus tm orelse
-       realSyntax.is_mult tm orelse realSyntax.is_negated tm
-    then polynomial_conv (Term.type_of tm) tm
+  (* Ring normal form of each maximal arithmetic subterm, so that operands
+     Z3 re-associated, reordered or re-spelled (-x for -1 * x, a - b for
+     a + -1 * b) meet; other subterms (conditionals, divisions) stay atoms
+     and are normalized inside first, bottom-up.  Only component roots are
+     normalized: the normal form of an inner arithmetic node would be
+     rescanned by every enclosing one, which is quadratic in a chain.  This
+     runs on the expanded DAG, not as a compact schema: a schema exposes
+     one constructor level with opaque operand holes, across which the
+     ring normal form cannot collect. *)
+  fun is_arithmetic tm =
+    intSyntax.is_plus tm orelse intSyntax.is_minus tm orelse
+    intSyntax.is_mult tm orelse intSyntax.is_negated tm orelse
+    realSyntax.is_plus tm orelse realSyntax.is_minus tm orelse
+    realSyntax.is_mult tm orelse realSyntax.is_negated tm
+
+  (* A partial application such as $+ a, the operator of a + b. *)
+  fun is_arithmetic_operator tm =
+    Term.is_comb tm andalso
+    List.exists (fn c => Term.same_const c (Term.rator tm))
+      [intSyntax.plus_tm, intSyntax.minus_tm, intSyntax.mult_tm,
+       realSyntax.plus_tm, realSyntax.minus_tm, realSyntax.mult_tm]
+
+  fun component_conv tm = polynomial_conv (Term.type_of tm) tm
+
+  fun component_root_conv tm =
+    if is_arithmetic tm orelse is_arithmetic_operator tm then
+      raise Conv.UNCHANGED
+    else if Term.is_comb tm andalso is_arithmetic (Term.rand tm) then
+      Conv.RAND_CONV component_conv tm
+    else if Term.is_abs tm andalso is_arithmetic (Term.body tm) then
+      Conv.ABS_CONV (fn body =>
+        let val theorem = component_conv body
+        in admit_body_result (boolSyntax.rhs (Thm.concl theorem));
+           theorem
+        end) tm
     else raise Conv.UNCHANGED
+
+  fun polynomial_components_conv tm =
+    Conv.THENC (dag_orientation_conv component_root_conv,
+      if is_arithmetic tm then component_conv else Conv.ALL_CONV) tm
 
   val z3_difference_rewrite_canon_conv = compose
     [z3_relation_dual_conv,
@@ -629,7 +656,7 @@ struct
        (fn _ => SOME z3_order_cond_polarity_conv),
      z3_cond_polarity_conv,
      z3_strict_difference_conv,
-     dag_orientation_conv polynomial_operation_conv,
+     polynomial_components_conv,
      additive_canon_conv,
      z3_primary_rewrite_canon_conv]
 

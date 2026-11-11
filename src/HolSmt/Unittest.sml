@@ -26026,8 +26026,28 @@ let
   val non_equality = ``p /\ q``
   val non_equality_reversed = ``q /\ p``
   val non_equality_canonical = canonical_target non_equality
+  (* A long sum, left-nested on one side and right-nested on the other.
+     Normalizing every node of the chain rescans it quadratically
+     (about 6 s at this length); normalizing its root takes well under
+     one. *)
+  val chain =
+    let
+      val variables = List.tabulate (800, fn i =>
+        Term.mk_var ("v" ^ Int.toString i, intSyntax.int_ty))
+      fun double v = intSyntax.mk_mult (v, ``2:int``)
+      val left = List.foldl
+        (fn (v, sum) => intSyntax.mk_plus (sum, double v))
+        (hd variables) (tl variables)
+      val right = List.foldr
+        (fn (v, sum) => intSyntax.mk_plus (double v, sum))
+        (hd variables) (tl variables)
+    in boolSyntax.mk_eq (left, right) end
+  val chain_start = Time.now ()
 in
   List.app closes closing_cases;
+  closes ("long-chain", chain);
+  assert (Time.< (Time.- (Time.now (), chain_start), Time.fromSeconds 3),
+    "ring normalization of a long chain was not linear");
   assert (not (Term.aconv guarded_left guarded_right),
     "difference-directed rewrite canonicalization closed a non-dual pair");
   assert (guarded ~~ incomplete orelse guarded ~~ incomplete_reversed,
