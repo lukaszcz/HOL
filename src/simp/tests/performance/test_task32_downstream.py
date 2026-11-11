@@ -1121,6 +1121,18 @@ class Processes(Base):
                                     "--gcthreads=1", "run"])
         self.assertEqual(cwd, root / "src/boss")
 
+    def test_a_theory_command_passes_no_prereqs(self):
+        root = self.world.roots["base"]
+        unit = cases.BY_NAME["logroot"]
+        argv, cwd = dw.unit_argv(unit, root, "/rep/T32Report.uo")
+        self.assertEqual(argv, [str(root / "bin/Holmake"), "--no-cache",
+                                "--no_prereqs", "-j1", "logrootTheory.uo"])
+        self.assertTrue(dw.unit_argv_shape(unit, root, "/rep/T32Report.uo",
+                                           argv))
+        self.assertFalse(dw.unit_argv_shape(
+            unit, root, "/rep/T32Report.uo",
+            [x for x in argv if x != "--no_prereqs"]))
+
     def test_scratch_is_removed_and_ledger_lines_are_chained(self):
         self.world.run("ok", self.world.spec(["logroot"]))
         self.assertFalse(list(self.world.tmp.glob("scratch/*")))

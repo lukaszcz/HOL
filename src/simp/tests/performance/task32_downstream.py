@@ -789,12 +789,19 @@ def parse_selftest(text, root, unit):
     return argv
 
 
+def theory_prefix(root):
+    """The Holmake command of a theory unit up to its target. `--no_prereqs`
+    builds only the target, never the INCLUDES directories (as in the other
+    harnesses here)."""
+    return [str(root / "bin/Holmake"), "--no-cache", "--no_prereqs", "-j1"]
+
+
 def unit_argv(unit, root, reporter_uo):
     """The command of a unit (and its working directory)."""
     folder = root / unit["dir"]
     if unit["kind"] == "theory":
-        return [str(root / "bin/Holmake"), "--no-cache", "-j1",
-                "%sTheory.uo" % unit["theory"]], folder
+        return theory_prefix(root) + [
+            "%sTheory.uo" % unit["theory"]], folder
     argv = parse_selftest((folder / "selftest.exe").read_text(), root, unit)
     return argv[:-1] + [reporter_uo, argv[-1]], folder
 
@@ -1923,8 +1930,8 @@ def check_receipt(folder, report, entry, refs):
 
 def unit_argv_shape(unit, root, uo, argv):
     if unit["kind"] == "theory":
-        return argv == [str(root / "bin/Holmake"), "--no-cache", "-j1",
-                        "%sTheory.uo" % unit["theory"]]
+        return argv == theory_prefix(root) + [
+            "%sTheory.uo" % unit["theory"]]
     return (len(argv) >= 6 and argv[0] == str(root / "bin/hol") and
             argv[2] == "run" and argv[-2:] == [uo, "selftest"] and
             argv[3] == "--holstate=" + str(root / unit["heap"]))

@@ -3128,7 +3128,10 @@ since HEAD may differ from C32 only below that directory.
 `task32_downstream.py` times fifteen units (`task32_cases.UNITS`) in the two
 snapshots. A unit is one fresh process tree with its dependencies prebuilt:
 a theory unit deletes exactly that target's products and runs
-`bin/Holmake --no-cache -j1 <name>Theory.uo` in its directory; a selftest
+`bin/Holmake --no-cache --no_prereqs -j1 <name>Theory.uo` in its
+directory (`--no_prereqs`: only the target is built and the INCLUDES
+directories are not built; Holmake still scans them for dependencies); a
+selftest
 unit runs the `hol run` line of the directory's four-line `selftest.exe`
 (`parse_selftest`, a fixed format that is checked).
 
