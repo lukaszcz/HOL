@@ -2455,6 +2455,24 @@ Definition smt_emod_total_def:
   smt_emod_total a b = if b = 0 then a else emod a b
 End
 
+Theorem smt_ediv_reduction:
+  !a b. ediv a b = if b = 0 then ediv a 0 else smt_ediv_total a b
+Proof
+  rpt gen_tac >> Cases_on `b = 0` >> simp [smt_ediv_total_def]
+QED
+
+Theorem smt_emod_reduction:
+  !a b. emod a b = if b = 0 then emod a 0 else smt_emod_total a b
+Proof
+  rpt gen_tac >> Cases_on `b = 0` >> simp [smt_emod_total_def]
+QED
+
+Theorem smt_rdiv_reduction:
+  !a b. smt_rdiv a b = if b = 0 then smt_rdiv a 0 else a / b
+Proof
+  rpt gen_tac >> Cases_on `b = 0` >> simp [smt_rdiv_eq_div]
+QED
+
 Theorem smt_ediv_total_compute[compute]:
   smt_ediv_total a b =
     if b = 0 then 0 else if 0 < b then a / b else -(a / -b)
@@ -2558,6 +2576,25 @@ Proof
   ASM_SIMP_TAC bossLib.arith_ss [integerTheory.EDIV_DEF,
     integerTheory.EMOD_DEF, integerTheory.INT_ABS] >>
   intLib.ARITH_TAC
+QED
+
+(* SMT-LIB's integer div/mod specification: the arithmetic th-lemma replay
+   instantiates it for each ediv/emod operation it meets. *)
+Theorem smt_ediv_emod_division:
+  !a b. b <> 0 ==>
+    (a = ediv a b * b + emod a b) /\ 0 <= emod a b /\ emod a b < ABS b
+Proof
+  rpt gen_tac >> strip_tac >>
+  `ABS b <> 0` by simp [integerTheory.INT_ABS_EQ0] >>
+  drule integerTheory.INT_DIVISION >>
+  disch_then (qspec_then `a` mp_tac) >>
+  REWRITE_TAC [integerTheory.EMOD_DEF, integerTheory.EDIV_DEF] >>
+  Cases_on `0 < b` >> ASM_REWRITE_TAC [] >| [
+    `(ABS b = b) /\ ~(b < 0)` by intLib.ARITH_TAC >> ASM_REWRITE_TAC [],
+    `(ABS b = -b) /\ ~(-b < 0)` by intLib.ARITH_TAC >>
+    ASM_REWRITE_TAC [integerTheory.INT_MUL_LNEG,
+      integerTheory.INT_MUL_RNEG] >>
+    intLib.ARITH_TAC]
 QED
 
 Theorem smt_ediv_bounds_pos_aux:

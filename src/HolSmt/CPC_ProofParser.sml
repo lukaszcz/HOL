@@ -1929,6 +1929,11 @@ local
         RawList
           [RawList [RawAtom "_", RawAtom "is", RawAtom constructor],
            normalize_cpc_testers indexed scrutinee]
+    | RawList [RawAtom "set.insert",
+        RawList (RawAtom "@list" :: (elements as _ :: _)), set] =>
+        (* CPC packs the variadic element operands in a syntax-only list. *)
+        RawList (RawAtom "set.insert" ::
+          List.map (normalize_cpc_testers indexed) (elements @ [set]))
     | RawList [RawAtom "and"] => RawAtom "true"
     | RawList [RawAtom "or"] => RawAtom "false"
     | RawList [RawAtom "and", operand] =>
@@ -2588,14 +2593,18 @@ local
             Term.mk_var
               ("cpc_decl_arg" ^ Int.toString index, ty) ::
             make_args (index + 1) rest
-      val signatures =
-        if List.null domain andalso Lib.can Type.dom_rng range then
-          let val (function_domain, function_range) =
-            boolSyntax.strip_fun range
-          in
-            [([], range), (function_domain, function_range)]
-          end
-        else [(domain, range)]
+      (* CPC may curry a source symbol's sort differently from the source
+         declaration (e.g. [(declare-fun f (A) (Array B Bool))] becomes
+         [(declare-const f (-> A (Array B Bool)))]), and HOL reads arrays
+         as functions.  The dictionary entry fixes the arity it accepts,
+         so try every split of the declared HOL type into arguments and
+         result. *)
+      val (all_domains, final_range) =
+        boolSyntax.strip_fun (boolSyntax.list_mk_fun (domain, range))
+      val signatures = List.tabulate (List.length all_domains + 1,
+        fn k => (List.take (all_domains, k),
+          boolSyntax.list_mk_fun (List.drop (all_domains, k),
+            final_range)))
       val candidates =
         case Redblackmap.peek (tmdict, key) of
           SOME parsefns => parsefns
@@ -2612,6 +2621,34 @@ local
         List.exists (compatible_signature parsefn) signatures
     in
       List.exists compatible candidates
+    end
+
+  (* A compatible redeclaration may apply the source symbol to more
+     arguments than its source entry takes (e.g. [(set_of a x)] for a
+     one-argument [set_of] with a set result).  Apply the source entry to
+     the longest argument prefix it accepts, and the result to the rest. *)
+  fun curried_source_parse sources token indices args =
+    let
+      fun try_sources _ [] = NONE
+        | try_sources prefix (parsefn :: rest) =
+            SOME (parsefn token indices prefix)
+            handle SmtLib_Theories.ParseDecline (Feedback.HOL_ERR _) =>
+              try_sources prefix rest
+      fun split k =
+        if k < 0 then
+          SmtLib_Theories.decline ("<" ^ token ^ ">")
+            "wrong number of arguments"
+        else
+          case try_sources (List.take (args, k)) sources of
+            SOME head =>
+              (Term.list_mk_comb (head, List.drop (args, k))
+               handle Feedback.HOL_ERR holerr =>
+                 SmtLib_Theories.decline ("<" ^ token ^ ">")
+                   ("ill-typed CPC application: " ^
+                    Feedback.message_of holerr))
+          | NONE => split (k - 1)
+    in
+      split (List.length args)
     end
 
   fun parse_or_keep_term_declaration parse_domain dicts_ref get_token =
@@ -2635,7 +2672,11 @@ local
         raise ERR "parse_declaration"
           ("duplicate CPC declaration of symbol " ^ name)
       else if source_symbol then
-        if declaration_compatible tmdict declaration then ()
+        if declaration_compatible tmdict declaration then
+          dicts_ref := (tydict, Library.extend_dict ((key,
+            curried_source_parse
+              (Option.getOpt (Redblackmap.peek (tmdict, key), []))),
+            tmdict))
         else incompatible ()
       else if Option.isSome (Redblackmap.peek (tmdict, key)) then
         incompatible ()
@@ -3477,30 +3518,39 @@ local
                       val _ = ignore_terms ()
                     in [polarity, pivot] end
                 end
+              fun parse_list_after_open () =
+                let
+                  fun entries acc =
+                    let val token = get_token () in
+                      if token = ")" then List.rev acc
+                      else entries (parse_located_term dicts_ref
+                        (Library.undo_look_ahead [token] get_token) :: acc)
+                    end
+                in entries [] end
+              fun parse_list token =
+                if token = "(" then
+                  let
+                    val _ = Library.expect_token "@list" (get_token ())
+                  in parse_list_after_open () end
+                else
+                  case lookup_cpc_list token of
+                    SOME terms => List.map
+                      (unavailable_term
+                        "expanded CPC resolution-list alias") terms
+                  | NONE => raise ERR "parse_step"
+                      ("undefined CPC resolution @list alias " ^ token)
+              fun chain_resolution_args () =
+                let
+                  val polarities = parse_list (get_token ())
+                  val pivots = parse_list (get_token ())
+                  val _ = Library.expect_token ")" (get_token ())
+                  val _ = if List.length polarities = List.length pivots
+                    then () else raise ERR "parse_step"
+                      "CPC chain_resolution annotation lengths differ"
+                in polarities @ pivots end
               fun macro_resolution_args () =
                 let
                   val first = get_token ()
-                  fun parse_list_after_open () =
-                    let
-                      fun entries acc =
-                        let val token = get_token () in
-                          if token = ")" then List.rev acc
-                          else entries (parse_located_term dicts_ref
-                            (Library.undo_look_ahead [token] get_token) :: acc)
-                        end
-                    in entries [] end
-                  fun parse_list token =
-                    if token = "(" then
-                      let
-                        val _ = Library.expect_token "@list" (get_token ())
-                      in parse_list_after_open () end
-                    else
-                      case lookup_cpc_list token of
-                        SOME terms => List.map
-                          (unavailable_term
-                            "expanded CPC resolution-list alias") terms
-                      | NONE => raise ERR "parse_step"
-                          ("undefined CPC resolution @list alias " ^ token)
                 in
                   if first = ")" then []
                   else
@@ -3631,6 +3681,11 @@ local
               fun terms acc =
                 let val token = get_token () in
                   if token = ")" then List.rev acc
+                  else if token = "@bv_empty" andalso
+                          rule_name = "bv-extract-concat-1" andalso
+                          List.length acc = 1 then
+                    terms (unavailable_term "empty CPC bit-vector list"
+                      (listSyntax.mk_nil Type.bool) :: acc)
                   else if token = "(" then
                     let val head = get_token () in
                       if head = "@list" then
@@ -3753,6 +3808,8 @@ local
             in
               if rule_name = "resolution" then
                 attrs seen_premises true premises (resolution_args ())
+              else if rule_name = "chain_resolution" then
+                attrs seen_premises true premises (chain_resolution_args ())
               else if #replay_handler rule = "resolution" then
                 (* Macro/chain resolution gives its result clause first;
                    the remaining arguments only describe its pivots. *)

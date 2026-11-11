@@ -13,6 +13,9 @@ local
 
   val ERR = Feedback.mk_HOL_ERR "CPC_ProofReplay"
 
+  val reglan_ty =
+    Type.mk_thy_type {Thy = "smtstring", Tyop = "reglan", Args = []}
+
   (* Actual CPC operation events only; never graph-node or P-edge proxies.
      Default NONE. Observation neither changes proof routes nor grants Work. *)
   type operation_statistics =
@@ -366,7 +369,28 @@ local
     in #1 (summarize provenance) end
 
   fun term_contains_conjunction term =
-    not (List.null (HolKernel.find_terms boolSyntax.is_conj term))
+    let
+      val seen = Array.array (2039, [] : Term.term list)
+      fun visit [] = false
+        | visit (term :: pending) =
+            let
+              val bucket = SmtReplayImport.pointer_bucket 4 2039 term
+              val prior = Array.sub (seen,bucket)
+            in
+              if List.exists (fn old => Portable.pointer_eq (term,old)) prior
+              then visit pending
+              else if boolSyntax.is_conj term then true
+              else
+                (Array.update (seen,bucket,term :: prior);
+                 case Lib.total Term.dest_comb term of
+                   SOME (operator,operand) =>
+                     visit (operator :: operand :: pending)
+                 | NONE =>
+                     (case Lib.total Term.dest_abs term of
+                        SOME (_,body) => visit (body :: pending)
+                      | NONE => visit pending))
+            end
+    in visit [term] end
 
   (* CPC's n-ary [and] elaborates to [list_mk_conj], hence to this
      right-associated HOL shape.  Unlike source-occurrence provenance, these
@@ -385,8 +409,8 @@ local
      its right-associated HOL encoding is checked directly above.  Keep every
      other shell unavailable.  In particular, do not rebuild equality or
      application trees from a large checked theorem: source-occurrence facts
-     are not recoverable from them, and retaining them defeats live-proof
-     compaction. *)
+     are not recoverable from them.  Exact source metadata is instead
+     retained by compact_live_provenance, including its AND boundaries. *)
   fun recovered_checked_provenance reason term =
     let
       fun recover term =
@@ -536,8 +560,7 @@ local
         | exact =>
             if not (use_compact_provenance term) andalso
                not (contains_binder_block_dag exact) then
-              UnavailableProvenance
-                "exact provenance exceeds the compact metadata budget"
+              compact_live_provenance exact
             else exact
     in
       {thm = theorem, located = {term = term, provenance = provenance},
@@ -1070,7 +1093,7 @@ local
     | NONE =>
         let val argument = expect_one_arg "refl" args in
           if Type.compare
-              (Term.type_of argument, Term.type_of ``reglan_none``) = EQUAL
+              (Term.type_of argument, reglan_ty) = EQUAL
           then replay_reglan_refl argument
           else Thm.REFL argument
         end
@@ -1090,9 +1113,18 @@ local
       (expect_one_arg "beta-reduce" args)
 
   fun replay_lambda_elim args =
-    conversion_equal "lambda-elim"
-      (Conv.TOP_DEPTH_CONV Drule.ETA_CONV)
-      (expect_one_arg "lambda-elim" args)
+    let
+      (* Contract the leading binders, preserving redexes in the function
+         being returned: CPC does not normalize its arguments here. *)
+      fun leading_eta_conv tm =
+        if Term.is_abs tm then
+          Conv.THENC (Conv.ABS_CONV leading_eta_conv,
+            Conv.TRY_CONV Drule.ETA_CONV) tm
+        else Thm.REFL tm
+    in
+      conversion_equal "lambda-elim" leading_eta_conv
+        (expect_one_arg "lambda-elim" args)
+    end
 
   (* CPC's HO_CONG omits both :args and its conclusion.  For an n-ary
      application cvc5 emits the function equality followed by one equality
@@ -2202,9 +2234,71 @@ local
                      (remove_index index remaining)
                  end)
 
+      fun positional_cong () =
+        let
+          val (operator, arguments) = boolSyntax.strip_comb (#term source)
+          val (children, rebuild) =
+            case #provenance source of
+              EqualityProvenance (left, right) =>
+                ([left, right], fn [left', right'] =>
+                    EqualityProvenance (left', right')
+                  | _ => raise ERR "cong_provenance"
+                      "positional equality has wrong arity")
+            | ApplicationProvenance (head, operands) =>
+                (operands, fn children => ApplicationProvenance
+                  (head, children))
+            | _ => ([], fn _ => #provenance source)
+          val aligned = not (List.null children) andalso
+            List.length arguments = List.length children andalso
+            List.length arguments = List.length premise_steps
+          fun orient (argument, provenance, premise_step) =
+            let
+              val theorem = step_theorem (expose_step premise_step)
+              val (left, right) = boolSyntax.dest_eq (Thm.concl theorem)
+              val (left_provenance, right_provenance) =
+                case step_provenance (expose_step premise_step) of
+                  EqualityProvenance pair => pair
+                | _ => raise ERR "cong_provenance"
+                    "positional premise lacks equality endpoints"
+              fun matches term endpoint = Term.aconv argument term andalso
+                provenance_topology_compatible provenance endpoint
+            in
+              if matches left left_provenance then
+                (SmtSkeletonProve.anchor_left argument theorem,
+                 right_provenance)
+              else if matches right right_provenance then
+                (SmtSkeletonProve.anchor_left argument (Thm.SYM theorem),
+                 left_provenance)
+              else raise ERR "cong_provenance"
+                "positional premise does not rewrite its immediate child"
+            end
+          fun pairs [] [] [] = []
+            | pairs (argument :: arguments) (child :: children)
+                (premise :: premises) =
+                orient (argument, child, premise) ::
+                  pairs arguments children premises
+            | pairs _ _ _ = raise ERR "cong_provenance"
+                "positional congruence has wrong arity"
+        in
+          if not aligned then NONE
+          else
+            let
+              val rewritten = pairs arguments children premise_steps
+              val theorem = List.foldl
+                (fn ((child, _), theorem) => Thm.MK_COMB (theorem, child))
+                (Thm.REFL operator) rewritten
+              val result = {term = boolSyntax.rhs (Thm.concl theorem),
+                provenance = rebuild (List.map #2 rewritten)}
+            in SOME (result, theorem) end
+            handle Feedback.HOL_ERR _ => NONE
+        end
+
       val indexed_steps = ListPair.zip
         (List.tabulate (List.length rewrite_steps, Lib.I), rewrite_steps)
       val (result, theorem) =
+        case positional_cong () of
+          SOME result => result
+        | NONE =>
         (structural_fold source (Thm.REFL (#term source)) indexed_steps
          handle Feedback.HOL_ERR structural_error =>
            (List.foldl compose
@@ -2237,15 +2331,19 @@ local
      reject some compound terms even when those terms are semantically opaque
      to the certificate step.  Abstract every maximal selected atom uniformly
      across premises and target, prove the resulting implication, and then
-     instantiate the fresh variables back.  INST and LIST_MP keep this wholly
-     proof-producing; the selector describes a term class, not recorded proof
-     shapes. *)
+     restore the original atoms through checked graph instantiation. The
+     selector describes a term class, not recorded proof shapes. *)
   fun prove_from_prems_abstracting prove is_atom prems target =
     let
-      fun insert tm atoms =
-        if List.exists (Term.aconv tm) atoms then atoms else tm :: atoms
+      val visited = Array.array (2039, [] : Term.term list)
       fun collect tm atoms =
-        if is_atom tm then insert tm atoms
+        let
+          val bucket = SmtReplayImport.pointer_bucket 4 2039 tm
+          val prior = Array.sub (visited,bucket)
+        in
+        if List.exists (fn old => Portable.pointer_eq (tm,old)) prior then atoms
+        else (Array.update (visited,bucket,tm :: prior);
+        if is_atom tm then tm :: atoms
         else
           (case Lib.total Term.dest_comb tm of
              SOME (operator, operand) =>
@@ -2253,31 +2351,17 @@ local
            | NONE =>
                (case Lib.total Term.dest_abs tm of
                   SOME (_, body) => collect body atoms
-                | NONE => atoms))
+                | NONE => atoms)))
+        end
       val atoms = List.foldl
         (fn (theorem, accumulated) =>
           collect (Thm.concl theorem) accumulated)
         (collect target []) prems
-      val _ = List.null atoms andalso
-        raise ERR "prove_from_prems_abstracting" "no selected atoms"
-      val replacements = List.map
-        (fn atom => (Term.genvar (Term.type_of atom), atom)) atoms
-      val abstraction = List.map
-        (fn (variable, atom) => {redex = atom, residue = variable})
-        replacements
-      fun abstract tm = Term.subst abstraction tm
-      val abstract_implication = boolSyntax.list_mk_imp
-        (List.map (abstract o Thm.concl) prems, abstract target)
-      val abstract_theorem = prove abstract_implication
-        handle Feedback.HOL_ERR holerr =>
-          raise ERR "prove_from_prems_abstracting"
-            ("could not prove abstract implication " ^
-             Library.term_to_string abstract_implication ^ "; " ^
-             Feedback.message_of holerr)
-      val concrete_theorem = observed_inst
-        (List.map (fn (variable, atom) =>
-          {redex = variable, residue = atom}) replacements)
-        abstract_theorem
+      val implication = boolSyntax.list_mk_imp
+        (List.map Thm.concl prems,target)
+      val concrete_theorem =
+        if List.null atoms then prove implication
+        else Library.prove_abstracting_atoms prove atoms implication
     in
       Drule.LIST_MP prems concrete_theorem
     end
@@ -2687,6 +2771,24 @@ local
       else Thm.ALPHA root canonical
     end
 
+  (* Apply only unconditional equations nodewise.  Conditional division
+     rewrites remain in the existing context-sensitive canonicalizer. *)
+  val cpc_dag_spelling_conv = SmtReplayCanon.dag_rewrite_conv
+    (Conv.FIRST_CONV (List.map Conv.REWR_CONV
+      (List.filter (boolSyntax.is_eq o Thm.concl)
+        (List.concat (List.map (Drule.CONJUNCTS o Drule.SPEC_ALL)
+          (SmtReplayCanon.cpc_alias_rewrites @
+           [boolTheory.IMP_DISJ_THM,
+            Conv.GSYM integerTheory.INT_NEG_LMUL,
+            integerTheory.INT_MUL_LID, integerTheory.INT_LT_LE1,
+            integerTheory.INT_ADD_LID,
+            integerTheory.EDIV_DEF, integerTheory.EMOD_DEF]))))))
+  val cpc_dag_orientation_conv = SmtReplayCanon.dag_orientation_conv
+    SmtReplayCanon.reorient_equality_conv
+  val cpc_dag_normal_form_conv = compose_normal_form_conv
+    cpc_dag_spelling_conv (compose_normal_form_conv cpc_dag_orientation_conv
+      canonical_term_conv)
+
   fun replay_trans prems =
     case prems of
       [] => raise ERR "trans" "expected CPC equality premises"
@@ -2743,9 +2845,8 @@ local
      such identities with a deliberately bounded kernel proof, so TRANS does
      not have to normalize an increasingly shared Boolean context merely to
      discover that the premise is logically neutral. *)
-  fun bounded_propositional_tautology theorem =
+  fun bounded_propositional_proof goal =
     let
-      val goal = Thm.concl theorem
       val node_limit = 256
       val atom_limit = 16
       val nodes = ref 0
@@ -2783,9 +2884,47 @@ local
           else add_atom term
         end
       val _ = visit goal
-      val _ = tautLib.TAUT_PROVE goal
-    in true end
+    in tautLib.TAUT_PROVE goal end
+
+  fun bounded_propositional_tautology theorem =
+    (ignore (bounded_propositional_proof (Thm.concl theorem)); true)
     handle Feedback.HOL_ERR _ => false
+
+  (* Canonical Boolean bodies may permute a quantified clause.  Lift the
+     checked body equality so TRANS keeps the next certificate endpoint. *)
+  fun quantified_boolean_equality (left, right) =
+    let
+      (* Check before free-variable scans or substitutions touch the prefix. *)
+      fun check_prefix remaining term =
+        if not (boolSyntax.is_forall term) then ()
+        else if remaining = 0 then
+          raise ERR "trans" "quantified Boolean prefix limit exceeded"
+        else check_prefix (remaining - 1)
+          (SmtReplayImport.count_body (Term.rand term))
+      val _ = check_prefix 256 left
+      val _ = check_prefix 256 right
+      fun prove (left, right) =
+        let
+          val (left_variable, left_body) = boolSyntax.dest_forall left
+          val (right_variable, right_body) = boolSyntax.dest_forall right
+          val variable = Term.variant
+            (Term.free_vars left @ Term.free_vars right) left_variable
+          fun rename bound body =
+            Term.subst [{redex = bound, residue = variable}] body
+          val left_body = rename left_variable left_body
+          val right_body = rename right_variable right_body
+          val body_equality =
+            if boolSyntax.is_forall left_body andalso
+               boolSyntax.is_forall right_body then
+              prove (left_body, right_body)
+            else bounded_propositional_proof
+              (boolSyntax.mk_eq (left_body, right_body))
+        in
+          Thm.AP_TERM (Term.rator left) (Thm.ABS variable body_equality)
+        end
+    in
+      prove (left, right)
+    end
 
   fun replay_trans_with_provenance
       (premise_steps : replayed_step list) =
@@ -2840,15 +2979,7 @@ local
                                 (Thm.SYM next))) of
                              SOME result => result
                            | NONE =>
-                               if bounded_propositional_tautology
-                                    accumulated then
-                                 (retain_support next accumulated,
-                                  next_provenance)
-                               else if bounded_propositional_tautology next
-                               then
-                                 (retain_support accumulated next,
-                                  accumulated_provenance)
-                               else raise ERR "trans"
+                               raise ERR "trans"
                                  "equality premises do not compose")))
         end
     in
@@ -2946,7 +3077,11 @@ local
                     in
                       if Term.aconv normalized_left normalized_right then
                         finish left_norm' right_norm'
-                      else refine rest (left_norm', right_norm')
+                      else case Lib.total quantified_boolean_equality
+                          (normalized_left, normalized_right) of
+                        SOME bridge =>
+                          finish (Thm.TRANS left_norm' bridge) right_norm'
+                      | NONE => refine rest (left_norm', right_norm')
                     end
             in
               refine
@@ -2976,7 +3111,13 @@ local
                unchanged. *)
             profile
               "CPC(rung:canonical_trans/provenance-canonical)"
-              canonical_orientations ()
+              (fn () => canonical_orientations ()
+                handle Feedback.HOL_ERR error =>
+                  if bounded_propositional_tautology accumulated then
+                    (retain_support next accumulated, next_provenance)
+                  else if bounded_propositional_tautology next then
+                    (retain_support accumulated next, accumulated_provenance)
+                  else raise Feedback.HOL_ERR error) ()
         end
     in
       case premise_steps of
@@ -2993,11 +3134,12 @@ local
         else if Term.aconv (Thm.concl right) boolSyntax.F then right
         else if is_reflexive_boolean_equality right then
           retain_support left right
-        else if is_reflexive_boolean_equality left then
-          retain_support right left
         else
           (Thm.EQ_MP right left
            handle Feedback.HOL_ERR _ =>
+           if is_reflexive_boolean_equality left then
+             retain_support right left
+           else
              (Thm.EQ_MP (Thm.SYM right) left
               handle Feedback.HOL_ERR _ =>
                 (Thm.EQ_MP left right
@@ -3051,13 +3193,14 @@ local
       else if is_reflexive_boolean_equality right andalso
               occurrence_reflexive right_step then
         (retain_support left right, step_provenance left_step)
-      else if is_reflexive_boolean_equality left andalso
-              occurrence_reflexive left_step then
-        (retain_support right left, step_provenance right_step)
       else
         ((Thm.EQ_MP right left,
           equality_side_provenance 1 (step_provenance right_step))
          handle Feedback.HOL_ERR _ =>
+         if is_reflexive_boolean_equality left andalso
+            occurrence_reflexive left_step then
+           (retain_support right left, step_provenance right_step)
+         else
            ((Thm.EQ_MP (Thm.SYM right) left,
              equality_side_provenance 0 (step_provenance right_step))
             handle Feedback.HOL_ERR _ =>
@@ -3689,15 +3832,16 @@ local
           end
     | _ => raise ERR "str-at-elim" "expected sequence and index arguments"
 
-  fun replay_sets_ext prems =
+  fun replay_ext name prems =
     case prems of
       [premise] =>
         let
           val (left, right) = boolSyntax.dest_eq
             (boolSyntax.dest_neg (Thm.concl premise))
           val (element, range) = Type.dom_rng (Term.type_of left)
-          val _ = Type.compare (range, Type.bool) = EQUAL orelse
-            raise ERR "sets_ext" "expected two Sets"
+          val _ = name <> "sets_ext" orelse
+            Type.compare (range, Type.bool) = EQUAL orelse
+            raise ERR name "expected two Sets"
           val variable = Term.variant (Term.all_varsl [left, right])
             (Term.mk_var ("sets_deq_diff_x", element))
           val witness = boolSyntax.mk_select (variable, boolSyntax.mk_neg
@@ -3714,7 +3858,7 @@ local
                    bossLib.METIS_TAC
                      [boolTheory.FUN_EQ_THM, boolTheory.SELECT_THM])))) ()
         end
-    | _ => raise ERR "sets_ext" "expected one disequality premise"
+    | _ => raise ERR name "expected one disequality premise"
 
   (* Set rewrites are deliberately driven by the certificate conclusion.
      Their names are closed explicitly in CPC_Proof's frozen inventory; this
@@ -3740,44 +3884,59 @@ local
                   (SmtResource.check_resource_goal "Set" "cardinality"
                      target;
                    Tactical.TAC_PROOF ((context, target), tactic))) ()
-            fun card_bound () =
-              case (name, args) of
-                ("sets-card-union", [left, right]) =>
-                  let
-                    val bound = numSyntax.mk_leq
-                      (pred_setSyntax.mk_card
-                         (pred_setSyntax.mk_inter (left, right)),
-                       numSyntax.mk_plus
-                         (pred_setSyntax.mk_card left,
-                          pred_setSyntax.mk_card right))
-                  in
-                    prove_tac context bound
-                      (bossLib.METIS_TAC
-                        [pred_setTheory.CARD_INTER_LESS_EQ,
-                         arithmeticTheory.LESS_EQ_ADD,
-                         arithmeticTheory.LESS_EQ_TRANS])
-                  end
-              | ("sets-card-minus", [left, right]) =>
-                  let
-                    val bound = numSyntax.mk_leq
-                      (pred_setSyntax.mk_card
-                         (pred_setSyntax.mk_inter (left, right)),
-                       pred_setSyntax.mk_card left)
-                  in
-                    prove_tac context bound
-                      (bossLib.ASM_SIMP_TAC (bossLib.srw_ss ())
-                        [pred_setTheory.CARD_INTER_LESS_EQ])
-                  end
+            val (left, right) =
+              case args of
+                [left, right] => (left, right)
               | _ => raise ERR name "wrong cardinality arguments"
-            val bound = card_bound ()
-            val context = Thm.concl bound :: context
-            val proof = prove_tac context target
+            val s = Term.genvar (Term.type_of left)
+            val t = Term.genvar (Term.type_of right)
+            val finite_sets =
+              if name = "sets-card-union" then [s, t] else [s]
+            val conditions = List.map pred_setSyntax.mk_finite finite_sets
+            val intersection = pred_setSyntax.mk_inter (s, t)
+            val bound_term = numSyntax.mk_leq
+              (pred_setSyntax.mk_card intersection,
+               if name = "sets-card-union" then
+                 numSyntax.mk_plus
+                   (pred_setSyntax.mk_card s, pred_setSyntax.mk_card t)
+               else pred_setSyntax.mk_card s)
+            val bound = prove_tac conditions bound_term
+              (bossLib.METIS_TAC
+                [pred_setTheory.CARD_INTER_LESS_EQ,
+                 arithmeticTheory.LESS_EQ_ADD,
+                 arithmeticTheory.LESS_EQ_TRANS])
+            val equation =
+              if name = "sets-card-union" then
+                boolSyntax.mk_eq (card (pred_setSyntax.mk_union (s, t)),
+                  intSyntax.mk_minus
+                    (intSyntax.mk_plus (card s, card t), card intersection))
+              else
+                boolSyntax.mk_eq (card (pred_setSyntax.mk_diff (s, t)),
+                  intSyntax.mk_minus (card s, card intersection))
+            (* Prove before instantiating: simplification of concrete sets
+               can otherwise hide CARD_DIFF_EQN and the subtraction bound. *)
+            val schematic = prove_tac (Thm.concl bound :: conditions) equation
               (bossLib.ASM_SIMP_TAC (bossLib.srw_ss ())
                 [pred_setTheory.CARD_UNION_EQN,
                  pred_setTheory.CARD_DIFF_EQN,
                  integerTheory.INT_OF_NUM_ADD,
                  integerTheory.INT_SUB])
-            val proof = Drule.PROVE_HYP bound proof
+            val substitution = [{redex = s, residue = left},
+                                {redex = t, residue = right}]
+            val instantiated = Thm.INST substitution
+              (Drule.PROVE_HYP bound schematic)
+            val finiteness = List.map
+              (fn condition => prove_tac context
+                (Term.subst substitution condition)
+                (bossLib.ASM_SIMP_TAC (bossLib.srw_ss ()) [])) conditions
+            val proof = List.foldl
+              (fn (finite, proved) => Drule.PROVE_HYP finite proved)
+              instantiated finiteness
+            val proof =
+              if Term.aconv (Thm.concl proof) target then proof
+              else Drule.PROVE_HYP proof
+                (prove_tac [Thm.concl proof] target
+                  (bossLib.ASM_SIMP_TAC (bossLib.srw_ss ()) []))
           in
             List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
               proof prems
@@ -4107,17 +4266,14 @@ local
     | ("bool-double-not-elim", [p]) =>
         let
           val variable = Term.genvar Type.bool
-          val law = tautLib.TAUT_PROVE (boolSyntax.mk_eq
-            (boolSyntax.mk_neg (boolSyntax.mk_neg variable), variable))
+          val law = Thm.SPEC variable (Thm.CONJUNCT1 boolTheory.NOT_CLAUSES)
         in observed_inst [{redex = variable, residue = p}] law end
     | ("bool-impl-elim", [left, right]) =>
         let
           val left_variable = Term.genvar Type.bool
           val right_variable = Term.genvar Type.bool
-          val law = tautLib.TAUT_PROVE (boolSyntax.mk_eq
-            (boolSyntax.mk_imp (left_variable, right_variable),
-             boolSyntax.mk_disj
-               (boolSyntax.mk_neg left_variable, right_variable)))
+          val law = Drule.SPECL [left_variable, right_variable]
+            boolTheory.IMP_DISJ_THM
         in
           observed_inst
             [{redex = left_variable, residue = left},
@@ -4126,15 +4282,14 @@ local
     | ("bool-eq-false", [p]) =>
         let
           val variable = Term.genvar Type.bool
-          val law = tautLib.TAUT_PROVE (boolSyntax.mk_eq
-            (boolSyntax.mk_eq (variable, boolSyntax.F),
-             boolSyntax.mk_neg variable))
+          val law = List.nth (Drule.CONJUNCTS
+            (Thm.SPEC variable boolTheory.EQ_CLAUSES), 3)
         in observed_inst [{redex = variable, residue = p}] law end
     | ("bool-eq-true", [p]) =>
         let
           val variable = Term.genvar Type.bool
-          val law = tautLib.TAUT_PROVE (boolSyntax.mk_eq
-            (boolSyntax.mk_eq (variable, boolSyntax.T), variable))
+          val law = List.nth (Drule.CONJUNCTS
+            (Thm.SPEC variable boolTheory.EQ_CLAUSES), 1)
         in observed_inst [{redex = variable, residue = p}] law end
     | ("bool-xor-comm", [left, right]) =>
         let
@@ -4724,11 +4879,8 @@ local
         let
           val (left, right) = boolSyntax.dest_eq target
           val (left_head, left_arguments) = boolSyntax.strip_comb left
-          val (right_head, right_arguments) = boolSyntax.strip_comb right
-          val _ = Term.same_const left_head right_head andalso
-                  List.length left_arguments = 2 andalso
-                  List.length right_arguments = 2 orelse
-            raise ERR "aci_norm" "different word AC operators"
+          val _ = List.length left_arguments = 2 orelse
+            raise ERR "aci_norm" "not a binary word operator"
           val {Thy, Name, ...} = Term.dest_thy_const left_head
           val _ = Thy = "words" andalso
                   List.exists (fn saved => Name = saved)
@@ -4754,6 +4906,8 @@ local
               if Term.same_const head left_head andalso
                  List.length arguments = 2 then
                 Term.list_mk_comb (head, List.map abstract arguments)
+              else if wordsSyntax.is_n2w term andalso
+                      numSyntax.is_numeral (Term.rand term) then term
               else atom term
             end
             handle Feedback.HOL_ERR _ => atom term
@@ -4768,8 +4922,15 @@ local
               (wordsTheory.WORD_OR_ASSOC, wordsTheory.WORD_OR_COMM)
             else
               (wordsTheory.WORD_XOR_ASSOC, wordsTheory.WORD_XOR_COMM)
-          val generic = Drule.EQT_ELIM
+          val generic = Drule.PART_MATCH Lib.I
+              (Lib.snd laws) generic_target
+            handle Feedback.HOL_ERR _ => Drule.EQT_ELIM
               (Conv.AC_CONV laws generic_target)
+            handle Feedback.HOL_ERR _ => simpLib.SIMP_PROVE
+              (simpLib.++ (boolSimps.bool_ss, wordsLib.WORD_UINT_MAX_ss))
+              [wordsTheory.WORD_NEG_1, wordsTheory.WORD_AND_CLAUSES,
+               wordsTheory.WORD_OR_CLAUSES, wordsTheory.WORD_XOR_CLAUSES]
+              generic_target
             handle Feedback.HOL_ERR _ =>
               wordsLib.WORD_ARITH_PROVE generic_target
           val substitutions = List.map
@@ -4809,6 +4970,87 @@ local
   fun replay_aci_norm args = replay_aci_norm_admitted
     (SmtDatatypeProve.default_admission ()) args
 
+  fun replay_bv_word_rewrite name args =
+    let
+      fun natural term = Arbint.toNat (intSyntax.int_of_term term)
+      fun extract high low word =
+        let
+          val hi = natural high
+          val lo = natural low
+          val _ = Arbnum.<= (lo, hi) orelse
+            raise ERR name "extraction lower bound exceeds upper bound"
+        in wordsSyntax.mk_word_extract
+          (numSyntax.mk_numeral hi, numSyntax.mk_numeral lo, word,
+           fcpLib.index_type (Arbnum.plus1 (Arbnum.- (hi, lo)))) end
+      fun literal value width = wordsSyntax.mk_word (value, width)
+      val zero_int = intSyntax.zero_tm
+      val target =
+        case (name, args) of
+          ("bv-extract-whole", [word, high]) =>
+            let
+              val width = fcpLib.index_to_num (wordsSyntax.dim_of word)
+              val _ = natural high = Arbnum.- (width, Arbnum.one) orelse
+                raise ERR name "whole extraction must preserve the width"
+            in boolSyntax.mk_eq (extract high zero_int word, word) end
+        | ("bv-extract-not", [word, low, high]) =>
+            let
+              val width = fcpLib.index_to_num (wordsSyntax.dim_of word)
+              val _ = Arbnum.< (natural high, width) orelse
+                raise ERR name "extraction exceeds the operand width"
+            in boolSyntax.mk_eq
+              (extract high low (wordsSyntax.mk_word_1comp word),
+               wordsSyntax.mk_word_1comp (extract high low word)) end
+        | ("bv-extract-concat-1", [word, prefix, upper, low, high]) =>
+            let
+              val _ = listSyntax.is_nil prefix orelse
+                raise ERR name "unsupported nonempty concatenation prefix"
+              val width = fcpLib.index_to_num (wordsSyntax.dim_of word)
+              val _ = Arbnum.< (natural high, width) orelse
+                raise ERR name "extraction reaches the upper concatenand"
+            in boolSyntax.mk_eq
+              (extract high low (wordsSyntax.mk_word_concat (upper, word)),
+               extract high low word) end
+        | (_, [word, amount, size, endpoint]) =>
+            let
+              val _ = name = "bv-shl-by-const-1" orelse
+                      name = "bv-lshr-by-const-1" orelse
+                raise ERR name "unsupported word rewrite"
+              val shift = natural amount
+              val width = fcpLib.index_to_num (wordsSyntax.dim_of word)
+              val left_shift = name = "bv-shl-by-const-1"
+              val _ = natural size = width andalso
+                      Arbnum.< (Arbnum.zero, shift) andalso
+                      Arbnum.< (shift, width) orelse
+                raise ERR name "invalid constant-shift width or amount"
+              val expected = if left_shift then
+                  Arbnum.- (width, Arbnum.plus1 shift)
+                else Arbnum.- (width, Arbnum.one)
+              val _ = natural endpoint = expected orelse
+                raise ERR name "incorrect constant-shift extraction endpoint"
+              val shifted =
+                (if left_shift then wordsSyntax.mk_word_lsl_bv
+                 else wordsSyntax.mk_word_lsr_bv)
+                  (word, literal shift width)
+              val zeros = literal Arbnum.zero shift
+              val sliced = if left_shift then
+                  wordsSyntax.mk_word_concat
+                    (extract endpoint zero_int word, zeros)
+                else wordsSyntax.mk_word_concat
+                    (zeros, extract endpoint amount word)
+            in boolSyntax.mk_eq (shifted, sliced) end
+        | _ => raise ERR name "unsupported word rewrite argument shape"
+    in
+      SmtResource.with_resource_step_time "BitVector" "word-rewrite"
+        (fn () =>
+          (SmtResource.check_resource_goal "BitVector" "word-rewrite" target;
+           Tactical.TAC_PROOF (([], target),
+             Tactical.THEN
+               (bossLib.SIMP_TAC (bossLib.srw_ss())
+                  [wordsTheory.word_lsl_bv_def,
+                   wordsTheory.word_lsr_bv_def],
+                wordsLib.WORD_DECIDE_TAC)))) ()
+    end
+
   fun replay_bv_xor_duplicate args =
     case args of
       word :: _ =>
@@ -4832,6 +5074,11 @@ local
       Tactical.TAC_PROOF (([], target),
         bossLib.SIMP_TAC (bossLib.srw_ss()) [wordsTheory.WORD_NOT_NOT])
     end
+
+  (* ((_ zero_extend 0) x) = x, i.e. w2w x = x at x's own width. *)
+  fun replay_bv_zero_extend_eliminate_0 args =
+    Drule.ISPEC (expect_one_arg "bv-zero-extend-eliminate-0" args)
+      wordsTheory.w2w_id
 
   fun replay_bv_shl_by_const_0 args =
     case args of
@@ -4962,6 +5209,18 @@ local
                  Time.toString (Timer.checkRealTimer (Option.valOf timer)))
             else ()
         in theorem end
+      fun singleton_bit word =
+        let
+          val (bit, then_word, else_word) = boolSyntax.dest_cond word
+          val then_value = wordsSyntax.dest_word_literal then_word
+          val else_value = wordsSyntax.dest_word_literal else_word
+        in
+          if fcpLib.index_to_num (wordsSyntax.dim_of word) = Arbnum.one
+             andalso then_value = Arbnum.one andalso
+             else_value = Arbnum.zero then SOME bit
+          else NONE
+        end
+        handle Feedback.HOL_ERR _ => NONE
       fun schematic_one_bit () =
         let
           val (_, bit_equality) = boolSyntax.dest_eq target
@@ -5029,18 +5288,6 @@ local
         let
           val (left_word, _) = boolSyntax.dest_eq target
           val _ = wordsSyntax.dim_of left_word
-          fun singleton_bit word =
-            let
-              val (bit, then_word, else_word) = boolSyntax.dest_cond word
-              val then_value = wordsSyntax.dest_word_literal then_word
-              val else_value = wordsSyntax.dest_word_literal else_word
-            in
-              if fcpLib.index_to_num (wordsSyntax.dim_of word) = Arbnum.one
-                 andalso then_value = Arbnum.one andalso
-                 else_value = Arbnum.zero then SOME bit
-              else NONE
-            end
-            handle Feedback.HOL_ERR _ => NONE
           datatype structural_key =
               StructuralVariable of string * Type.hol_type
             | StructuralConstant of Term.term
@@ -5095,31 +5342,35 @@ local
                     (term, identity) :: !structural_memo
                 in identity end
           val seen = ref ([] : Term.term list)
+          val collected = ref ([] : Term.term list)
+          fun add_bit bit =
+            if List.exists
+                 (fn saved => structural_id bit = structural_id saved)
+                 (!collected) then ()
+            else if List.length (!collected) = 16 then
+              raise ERR "bv_poly_norm"
+                "word constructor schema exceeds sixteen Boolean inputs"
+            else collected := bit :: !collected
           fun collect term =
             if List.exists
                  (fn saved => Portable.pointer_eq (term, saved)) (!seen) then
-              []
+              ()
             else
               let val _ = seen := term :: !seen in
                 case singleton_bit term of
-                  SOME bit => [bit]
+                  SOME bit => add_bit bit
                 | NONE =>
                     if Term.is_comb term then
                       let val (operator, operand) = Term.dest_comb term
-                      in collect operator @ collect operand end
-                    else []
+                      in collect operator; collect operand end
+                    else ()
               end
-          fun distinct (bit, bits) =
-            if List.exists
-                 (fn saved => structural_id bit = structural_id saved) bits then
-              bits
-            else bit :: bits
           val constructor_source =
             case singleton_bit left_word of
               SOME condition => condition
             | NONE => left_word
-          val bits = List.rev
-            (List.foldl distinct [] (collect constructor_source))
+          val _ = collect constructor_source
+          val bits = List.rev (!collected)
           val _ =
             case OS.Process.getEnv "HOL4_CPC_REPLAY_SHAPE" of
               SOME "1" => Feedback.HOL_MESG
@@ -5127,9 +5378,6 @@ local
             | _ => ()
           val _ = not (List.null bits) orelse raise ERR "bv_poly_norm"
             "word constructor schema found no Boolean constructors"
-          val _ = List.length bits <= 16 orelse
-            raise ERR "bv_poly_norm"
-              "word constructor schema exceeds sixteen Boolean inputs"
           val variables = List.map (fn _ => Term.genvar Type.bool) bits
           val replacements = ListPair.mapEq
             (fn (bit, variable) => (structural_id bit, variable))
@@ -5494,6 +5742,148 @@ local
         end
         handle HolSatLib.SAT_cex _ =>
           raise ERR "bv_poly_norm" "bitblast equivalence is not valid"
+      (* A polynomial identity between fixed-width words holds whatever its
+         non-ring subterms denote, so replace each of them by a fresh
+         variable and normalise the ring skeleton algebraically.  This
+         avoids bit-blasting wide multiplications. *)
+      fun schematic_word_ring () =
+        let
+          val (left, right) = boolSyntax.dest_eq target
+          fun is_ring_operation term =
+            wordsSyntax.is_word_add term orelse
+            wordsSyntax.is_word_sub term orelse
+            wordsSyntax.is_word_mul term orelse
+            wordsSyntax.is_word_2comp term
+          val _ = Lib.can fcpLib.index_to_num (wordsSyntax.dim_of left)
+            andalso (is_ring_operation left orelse is_ring_operation right)
+            orelse raise ERR "bv_poly_norm" "not a fixed-width ring identity"
+          val atoms = ref ([] : (Term.term * Term.term) list)
+          val memo = ref ([] : (Term.term * Term.term) list)
+          (* Each distinct ring node visited adds a template node, so the
+             skeleton limit also bounds this traversal and its list
+             lookups. *)
+          val visited = ref 0
+          fun visit () =
+            (visited := !visited + 1;
+             SmtResource.check_dag_size_with_limit
+               "BitVector" "word-ring-schema"
+               SmtResource.max_skeleton_replay_dag_nodes (!visited))
+          (* [abstract] memoises by pointer, so a shared leaf gets one
+             variable.  Comparing leaves structurally would walk opaque
+             subterms that no bound covers. *)
+          fun atom term =
+            let val variable = Term.genvar (Term.type_of term) in
+              atoms := (term, variable) :: !atoms;
+              variable
+            end
+          fun abstract term =
+            case List.find
+                (fn (saved, _) => Portable.pointer_eq (term, saved)) (!memo) of
+              SOME (_, result) => result
+            | NONE =>
+                let
+                  val result =
+                    if is_ring_operation term then
+                      let
+                        val () = visit ()
+                        val (operator, operands) = boolSyntax.strip_comb term
+                      in Term.list_mk_comb
+                        (operator, List.map abstract operands) end
+                    else if wordsSyntax.is_word_literal term then term
+                    else atom term
+                  val _ = memo := (term, result) :: !memo
+                in result end
+          val template = boolSyntax.mk_eq (abstract left, abstract right)
+          val _ = SmtResource.check_dag_size_with_limit
+            "BitVector" "word-ring-schema"
+            SmtResource.max_skeleton_replay_dag_nodes
+            (SmtResource.dag_nodes_up_to
+               SmtResource.max_skeleton_replay_dag_nodes template)
+          val normalized = SmtResource.with_resource_step_time
+              "BitVector" "word-ring-schema" wordsLib.WORD_ARITH_CONV template
+            handle Conv.UNCHANGED =>
+              raise ERR "bv_poly_norm"
+                "word ring normalisation made no progress"
+          val _ = Term.aconv (boolSyntax.rhs (Thm.concl normalized))
+              boolSyntax.T orelse
+            raise ERR "bv_poly_norm" "word ring sides normalise differently"
+          val substitutions = List.map
+            (fn (term, variable) => {redex = variable, residue = term})
+            (!atoms)
+        in Thm.INST substitutions (Drule.EQT_ELIM normalized) end
+      fun bitblast_equality_circuit () =
+        let
+          val (word_equality, bits) = boolSyntax.dest_eq target
+          val (left, right) = boolSyntax.dest_eq word_equality
+          val _ = wordsSyntax.is_word_type (Term.type_of left) andalso
+                  boolSyntax.is_conj bits orelse
+            raise ERR "bv_poly_norm" "not a bitblasted word equality"
+          val index = SmtResource.new_bounded_term_index
+            SmtResource.max_bv_replay_term_nodes
+          fun identity term =
+            case index term of
+              SOME id => id
+            | NONE => raise ERR "bv_poly_norm"
+                "bitblast operand indexing exhausted its source budget"
+          val _ = identity target
+          val atoms = ref (Redblackmap.mkDict Int.compare :
+            (int, Term.term * Term.term) Redblackmap.dict)
+          val seen = ref (Redblackmap.mkDict Int.compare)
+          fun collect term =
+            let val id = identity term in
+              if Option.isSome (Redblackmap.peek (!seen, id)) then ()
+              else
+                (seen := Redblackmap.insert (!seen, id, ());
+                 case singleton_bit term of
+                   SOME bit =>
+                     if Term.aconv bit boolSyntax.T orelse
+                        Term.aconv bit boolSyntax.F then ()
+                     else
+                       let val bit_id = identity bit in
+                         if Option.isSome
+                              (Redblackmap.peek (!atoms, bit_id)) then ()
+                         else atoms := Redblackmap.insert (!atoms, bit_id,
+                           (bit, Term.genvar Type.bool))
+                       end
+                 | NONE =>
+                     if Term.is_comb term then
+                       (collect (Term.rator term); collect (Term.rand term))
+                     else ())
+            end
+          val _ = collect left
+          val _ = collect right
+          val memo = ref (Redblackmap.mkDict Int.compare)
+          fun abstract term =
+            let val id = identity term in
+              case Redblackmap.peek (!atoms, id) of
+                SOME (_, variable) => variable
+              | NONE =>
+                  case Redblackmap.peek (!memo, id) of
+                    SOME result => result
+                  | NONE =>
+                      let
+                        val result =
+                          if Term.is_comb term then Term.mk_comb
+                            (abstract (Term.rator term),
+                             abstract (Term.rand term))
+                          else if Term.is_abs term then
+                            raise ERR "bv_poly_norm"
+                              "binder in bitblast equality circuit"
+                          else term
+                        val _ = memo := Redblackmap.insert
+                          (!memo, id, result)
+                      in result end
+            end
+          (* The bit values are arbitrary.  Prove only their constructor
+             equation, then restore the shared carry circuits by kernel INST. *)
+          val schematic = abstract target
+          val theorem = SmtWordGraph.prove schematic
+          val substitutions = List.map
+            (fn (_, (term, variable)) => {redex = variable, residue = term})
+            (Redblackmap.listItems (!atoms))
+        in Thm.INST substitutions theorem end
+        handle HolSatLib.SAT_cex _ =>
+          raise ERR "bv_poly_norm" "bitblast equality circuit is not valid"
       fun word_arithmetic () = wordsLib.WORD_ARITH_PROVE target
         handle HolSatLib.SAT_cex _ =>
           raise ERR "bv_poly_norm" "word arithmetic target is not valid"
@@ -5509,6 +5899,8 @@ local
         end
       fun diagnosed_graph () = graph_normalization ()
     in
+      traced "bitblast_equality_circuit" bitblast_equality_circuit ()
+      handle Feedback.HOL_ERR _ =>
       traced "schematic_one_bit"
         (profile "CPC(rung:word/poly_norm_schematic_one_bit)"
           schematic_one_bit) ()
@@ -5520,6 +5912,10 @@ local
       traced "schematic_bvite"
         (profile "CPC(rung:word/poly_norm_schematic_bvite)"
           schematic_bvite) ()
+      handle Feedback.HOL_ERR _ =>
+      traced "schematic_word_ring"
+        (profile "CPC(rung:word/poly_norm_schematic_word_ring)"
+          schematic_word_ring) ()
       handle Feedback.HOL_ERR _ =>
       traced "schematic_bvite_words"
         (profile "CPC(rung:word/poly_norm_schematic_bvite_words)"
@@ -5557,10 +5953,79 @@ local
              tautLib.TAUT_TAC))
     end
 
+  fun replay_bv_bitwise_slicing args =
+    let
+      val target = expect_one_arg "bv-bitwise-slicing" args
+      val (left, right) = boolSyntax.dest_eq target
+      val atoms = ref (Redblackmap.mkDict Term.compare :
+        (Term.term, Term.term) Redblackmap.dict)
+      fun atom term =
+        case Redblackmap.peek (!atoms, term) of
+          SOME variable => variable
+        | NONE =>
+            let
+              val variable = Term.genvar (Term.type_of term)
+              val _ = atoms := Redblackmap.insert (!atoms, term, variable)
+            in variable end
+      fun abstract term =
+        if not (wordsSyntax.is_word_type (Term.type_of term)) then term
+        else if wordsSyntax.is_n2w term andalso
+                numSyntax.is_numeral (Term.rand term) then term
+        else
+          let
+            val (head, operands) = boolSyntax.strip_comb term
+            val allowed =
+              case Lib.total Term.dest_thy_const head of
+                SOME {Thy = "words", Name, ...} =>
+                  List.exists (fn name => name = Name)
+                    ["word_and", "word_or", "word_xor", "word_1comp",
+                     "word_concat", "word_extract"]
+              | _ => false
+          in
+            if allowed then
+              Term.list_mk_comb (head, List.map abstract operands)
+            else atom term
+          end
+      (* Slicing is independent of the arithmetic producing each operand.
+         Keep that arithmetic schematic rather than expanding its bit circuit. *)
+      val schematic = boolSyntax.mk_eq (abstract left, abstract right)
+      val theorem = replay_bv_poly_norm [schematic]
+      val substitutions = List.map
+        (fn (term, variable) => {redex = variable, residue = term})
+        (Redblackmap.listItems (!atoms))
+    in Thm.INST substitutions theorem end
+
   fun replay_quant_unused_vars args =
     let val target = expect_one_arg "quant-unused-vars" args in
       Tactical.TAC_PROOF (([], target),
         bossLib.SIMP_TAC (bossLib.srw_ss()) [])
+    end
+
+  fun replay_quant_dt_split args =
+    let
+      val target = expect_one_arg "quant-dt-split" args
+      val (left, right) = boolSyntax.dest_eq target
+      val (variable, _) = boolSyntax.dest_forall left
+      val constructors =
+        SmtDatatypeProve.constructors_of (Term.type_of variable)
+      (* A nullary constructor's body may itself be a conjunction. *)
+      val cases = Drule.CONJ_LIST (List.length constructors)
+        (Thm.ASSUME right)
+      val forward = Thm.DISCH left
+        (Drule.LIST_CONJ (List.map
+          (fn branch => Tactical.TAC_PROOF (([left], Thm.concl branch),
+            Tactic.MATCH_ACCEPT_TAC (Thm.ASSUME left))) cases))
+      val backward = Thm.DISCH right
+        (Tactical.TAC_PROOF (([right], left),
+          Tactical.THEN
+            (Tactic.X_GEN_TAC variable,
+             Tactical.THEN
+               (Tactic.FULL_STRUCT_CASES_TAC
+                  (Drule.ISPEC variable
+                    (TypeBase.nchotomy_of (Term.type_of variable))),
+                Tactical.FIRST (List.map Tactic.MATCH_ACCEPT_TAC cases)))))
+    in
+      Drule.IMP_ANTISYM_RULE forward backward
     end
 
   fun replay_quant_rewrite name (located_args : located_term list) =
@@ -5738,6 +6203,25 @@ local
   fun mk_disj_terms [tm] = tm
     | mk_disj_terms (tm :: rest) = boolSyntax.mk_disj (tm, mk_disj_terms rest)
     | mk_disj_terms [] = boolSyntax.F
+
+  val equivalence_clause_laws =
+    let
+      val left = Term.genvar Type.bool
+      val right = Term.genvar Type.bool
+      val equality = boolSyntax.mk_eq (left, right)
+      val neg = boolSyntax.mk_neg
+      val clauses =
+        [("cnf_equiv_neg1", [left, right, equality]),
+         ("cnf_equiv_neg2", [neg left, neg right, equality]),
+         ("cnf_equiv_pos1", [neg left, right, neg equality]),
+         ("cnf_equiv_pos2", [left, neg right, neg equality])]
+      fun prove (name, literals) =
+        (name, Library.prove (mk_disj_terms literals,
+          Tactical.THEN
+            (Tactical.EVERY
+              [Tactic.BOOL_CASES_TAC left, Tactic.BOOL_CASES_TAC right],
+             boolLib.REWRITE_TAC [])))
+    in (left, right, List.map prove clauses) end
 
   (* The kernel comparison preserves physical DAG sharing and uses an
      operation-local identity memo.  Reuse it rather than retain a second
@@ -6507,7 +6991,17 @@ local
                   | SOME detail => detail
                 val _ = Feedback.HOL_MESG ("CPC endpoint mismatch " ^ detail)
               in TextIO.flushOut TextIO.stdOut end
-          fun canonical_pair left right =
+          val normal_forms = ref ([] : (Term.term * Thm.thm) list)
+          fun normal_form term =
+            case List.find (fn (saved, _) =>
+                Portable.pointer_eq (saved, term)) (!normal_forms) of
+              SOME (_, theorem) => theorem
+            | NONE =>
+                let
+                  val theorem = cpc_dag_normal_form_conv term
+                  val _ = normal_forms := (term, theorem) :: !normal_forms
+                in theorem end
+          fun canonical_pair allow_bridge left right =
             if same left right then
               (shared_phase "nodewise" (fn () =>
                  SmtSkeletonProve.bounded_nodewise_equality
@@ -6517,9 +7011,9 @@ local
             let
               val _ = diagnose_pair left right
               val left_theorem = shared_phase "canonical_term"
-                (fn () => canonical_term_conv left)
+                (fn () => normal_form left)
               val right_theorem = shared_phase "canonical_term"
-                (fn () => canonical_term_conv right)
+                (fn () => normal_form right)
               val left_canonical = boolSyntax.rhs (Thm.concl left_theorem)
               val right_canonical = boolSyntax.rhs (Thm.concl right_theorem)
               val canonical_same =
@@ -6527,6 +7021,12 @@ local
                 same left_canonical right_canonical
               val (left_theorem, right_theorem) =
                 if canonical_same then (left_theorem, right_theorem)
+                else case Lib.total quantified_boolean_equality
+                    (left_canonical, right_canonical) of
+                  SOME bridge =>
+                    (Thm.TRANS left_theorem bridge, right_theorem)
+                | NONE => if not allow_bridge then
+                  raise ERR "trans" "DAG equality normal forms differ"
                 else
                   let
                     val bridge_target = boolSyntax.mk_eq
@@ -6564,34 +7064,34 @@ local
                     (Thm.TRANS left_theorem bridge, right_theorem)
                   end
             in (left_theorem, right_theorem) end
-          fun right_left () =
+          fun right_left allow_bridge =
             let
               val (left_anchor, right_anchor) =
-                canonical_pair accumulated_right next_left
+                canonical_pair allow_bridge accumulated_right next_left
               val accumulated = Thm.TRANS accumulated left_anchor
               val next = Thm.TRANS (Thm.SYM right_anchor) next
             in result (Thm.TRANS accumulated next)
               (fn ((left, _), (_, right)) => (left, right)) end
-          fun right_right () =
+          fun right_right allow_bridge =
             let
               val (left_anchor, right_anchor) =
-                canonical_pair accumulated_right next_right
+                canonical_pair allow_bridge accumulated_right next_right
               val accumulated = Thm.TRANS accumulated left_anchor
               val next = Thm.TRANS (Thm.SYM right_anchor) (Thm.SYM next)
             in result (Thm.TRANS accumulated next)
               (fn ((left, _), (right, _)) => (left, right)) end
-          fun left_left () =
+          fun left_left allow_bridge =
             let
               val (left_anchor, right_anchor) =
-                canonical_pair accumulated_left next_left
+                canonical_pair allow_bridge accumulated_left next_left
               val accumulated = Thm.TRANS (Thm.SYM accumulated) left_anchor
               val next = Thm.TRANS (Thm.SYM right_anchor) next
             in result (Thm.TRANS accumulated next)
               (fn ((_, right), (_, next_right)) => (right, next_right)) end
-          fun left_right () =
+          fun left_right allow_bridge =
             let
               val (left_anchor, right_anchor) =
-                canonical_pair accumulated_left next_right
+                canonical_pair allow_bridge accumulated_left next_right
               val accumulated = Thm.TRANS (Thm.SYM accumulated) left_anchor
               val next = Thm.TRANS
                 (Thm.SYM right_anchor) (Thm.SYM next)
@@ -6602,27 +7102,32 @@ local
             result (Thm.TRANS accumulated next)
               (fn ((left, _), (_, right)) => (left, right))
           else if same accumulated_right next_left then
-            right_left ()
+            right_left false
           else if Portable.pointer_eq (accumulated_right, next_right) then
             result (Thm.TRANS accumulated (Thm.SYM next))
               (fn ((left, _), (right, _)) => (left, right))
           else if same accumulated_right next_right then
-            right_right ()
+            right_right false
           else if Portable.pointer_eq (accumulated_left, next_left) then
             result (Thm.TRANS (Thm.SYM accumulated) next)
               (fn ((_, right), (_, next_right)) => (right, next_right))
           else if same accumulated_left next_left then
-            left_left ()
+            left_left false
           else if Portable.pointer_eq (accumulated_left, next_right) then
             result (Thm.TRANS (Thm.SYM accumulated) (Thm.SYM next))
               (fn ((_, right), (next_left, _)) => (right, next_left))
           else if same accumulated_left next_right then
-            left_right ()
+            left_right false
           else
-            (right_left ()
-             handle Feedback.HOL_ERR _ => right_right ()
-             handle Feedback.HOL_ERR _ => left_left ()
-             handle Feedback.HOL_ERR _ => left_right ())
+            ((right_left false
+              handle Feedback.HOL_ERR _ => right_right false
+              handle Feedback.HOL_ERR _ => left_left false
+              handle Feedback.HOL_ERR _ => left_right false)
+             handle Feedback.HOL_ERR _ =>
+               (right_left true
+                handle Feedback.HOL_ERR _ => right_right true
+                handle Feedback.HOL_ERR _ => left_left true
+                handle Feedback.HOL_ERR _ => left_right true))
         end
       val (theorem, provenance) =
         case premise_steps of
@@ -6633,10 +7138,7 @@ local
     in
       case provenance of
         SOME (left, right) =>
-          if provenance_term_has_abs (Thm.concl theorem) then
-            exact_result (EqualityProvenance (left, right)) theorem
-          else raw_unavailable_result
-            "large transitivity result has no live binder" theorem
+          exact_result (EqualityProvenance (left, right)) theorem
       | NONE => raw_unavailable_result
           "transitivity with unavailable input provenance" theorem
     end
@@ -6828,25 +7330,11 @@ local
           [equality] =>
             let
               val (left, right) = boolSyntax.dest_eq equality
-              val left_variable = Term.genvar Type.bool
-              val right_variable = Term.genvar Type.bool
-              val generic_equality = boolSyntax.mk_eq
-                (left_variable, right_variable)
-              val clause =
-                case name of
-                  "cnf_equiv_neg1" => mk_disj_terms
-                    [left_variable, right_variable, generic_equality]
-                | "cnf_equiv_neg2" => mk_disj_terms
-                    [boolSyntax.mk_neg left_variable,
-                     boolSyntax.mk_neg right_variable, generic_equality]
-                | "cnf_equiv_pos1" => mk_disj_terms
-                    [boolSyntax.mk_neg left_variable, right_variable,
-                     boolSyntax.mk_neg generic_equality]
-                | "cnf_equiv_pos2" => mk_disj_terms
-                    [left_variable, boolSyntax.mk_neg right_variable,
-                     boolSyntax.mk_neg generic_equality]
-                | _ => raise ERR name "not an equivalence CNF rule"
-              val law = tautLib.TAUT_PROVE clause
+              val (left_variable, right_variable, laws) =
+                equivalence_clause_laws
+              val law = case List.find (fn (rule, _) => rule = name) laws of
+                  SOME (_, law) => law
+                | NONE => raise ERR name "not an equivalence CNF rule"
             in
               observed_inst
                 [{redex = left_variable, residue = left},
@@ -6892,26 +7380,27 @@ local
             case Lib.total destructor term of
               SOME (left, right) =>
                 let
-                  val (left_tree, left_leaves, left_instances) = build left
-                  val (right_tree, right_leaves, right_instances) = build right
+                  val (left_tree, left_instances) = build left
+                  val (right_tree, right_instances) = build right
                 in
                   (constructor (left_tree, right_tree),
-                   left_leaves @ right_leaves,
                    left_instances @ right_instances)
                 end
             | NONE =>
                 let val variable = Term.genvar Type.bool in
-                  (variable, [variable],
+                  (variable,
                    [{redex = variable, residue = term}])
                 end
-          val (tree, leaves, instances) = build aggregate
-          val clause =
-            if negated then
-              mk_disj_terms (tree :: List.map boolSyntax.mk_neg leaves)
-            else
-              mk_disj_terms (boolSyntax.mk_neg tree :: leaves)
+          val (tree, instances) = build aggregate
+          val first = if negated then tree else boolSyntax.mk_neg tree
+          val law = Thm.SPEC first boolTheory.EXCLUDED_MIDDLE
+          (* Keep the aggregate literal intact; flatten only its complement. *)
+          val law = Conv.CONV_RULE
+            (Conv.RAND_CONV (Rewrite.PURE_REWRITE_CONV
+              [boolTheory.DE_MORGAN_THM, boolTheory.NOT_CLAUSES,
+               Conv.GSYM boolTheory.DISJ_ASSOC])) law
         in
-          observed_inst instances (tautLib.TAUT_PROVE clause)
+          observed_inst instances law
         end
       fun cnf_and_pos_prove () =
         case args of
@@ -7053,6 +7542,21 @@ local
     handle Feedback.HOL_ERR _ =>
       profile "CPC(rung:arith/int_arith)" Tactical.TAC_PROOF
         (([], target), intLib.ARITH_TAC)
+    handle error as Feedback.HOL_ERR _ =>
+      (* The rungs above treat totalized div/mod as opaque atoms, but
+         cvc5 steps can rely on their definitions, e.g. that
+         smt_emod_total a 0 = a. *)
+      let
+        val unfolding = Rewrite.PURE_REWRITE_CONV
+          [HolSmtTheory.smt_ediv_total_def,
+           HolSmtTheory.smt_emod_total_def] target
+          handle Conv.UNCHANGED => raise error
+        val unfolded = boolSyntax.rhs (Thm.concl unfolding)
+      in
+        Thm.EQ_MP (Thm.SYM unfolding)
+          (profile "CPC(rung:arith/total_div_mod)" Tactical.TAC_PROOF
+            (([], unfolded), intLib.ARITH_TAC))
+      end
 
   val arith_prove_from_prems = prove_from_prems arith_prove
 
@@ -7568,6 +8072,19 @@ local
         end
     | _ => raise ERR "arith-max-geq1" "expected two arithmetic arguments"
 
+  fun replay_arith_max_geq2 args =
+    case args of
+      [left, right] =>
+        let
+          val maximum = boolSyntax.mk_cond
+            (arith_geq (left, right), left, right)
+          val target = boolSyntax.mk_eq
+            (arith_geq (maximum, right), boolSyntax.T)
+        in
+          arith_prove target
+        end
+    | _ => raise ERR "arith-max-geq2" "expected two arithmetic arguments"
+
   fun replay_arith_min_lt2 args =
     case args of
       [left, right] =>
@@ -7656,7 +8173,7 @@ local
       raise ERR "arith-int-geq-tighten" (Feedback.message_of holerr)
     | exn => raise ERR "arith-int-geq-tighten" (General.exnMessage exn)
 
-  fun replay_arith_rule name args =
+  fun replay_arith_rule_schema name args =
     if name = "arith-int-geq-tighten" then
       (case args of
          [integer, real_bound, rounded] =>
@@ -7711,11 +8228,25 @@ local
         profile "CPC(rung:arith/poly_norm_canonical)"
           SmtReplayCanon.arith_poly_norm_prove target
       else if name = "arith-leq-norm" then
-        simpLib.SIMP_PROVE (bossLib.srw_ss())
-          [integerTheory.int_ge, integerTheory.INT_NOT_LE,
-           integerTheory.INT_NOT_LT, integerTheory.INT_LE_LT1] target
+        let
+          val (left, right) = boolSyntax.dest_eq target
+          val le_lt = Conv.REWR_CONV integerTheory.INT_LE_LT1 left
+          val not_ge = Conv.THENC
+            (Conv.RAND_CONV (Conv.REWR_CONV integerTheory.int_ge),
+             Conv.REWR_CONV integerTheory.INT_NOT_LE) right
+        in Thm.TRANS le_lt (Thm.SYM not_ge) end
       else arith_prove target
     end
+
+  fun replay_arith_rule name args =
+    if name = "arith-int-geq-tighten" orelse name = "arith_poly_norm" then
+      replay_arith_rule_schema name args
+    else
+      let
+        val variables = List.map (Term.genvar o Term.type_of) args
+        val theorem = replay_arith_rule_schema name variables
+      in observed_inst (ListPair.mapEq (fn (variable,operand) =>
+        {redex=variable,residue=operand}) (variables,args)) theorem end
 
   (* Couple arithmetic relation rewrites to the exact syntax constructed by
      the successful semantic rule.  In particular, ARITH_EQ_ELIM_INT creates
@@ -7751,7 +8282,9 @@ local
   fun replay_arrays_select_const args =
     case args of
       [target] => Tactical.TAC_PROOF (([], target),
-        bossLib.SIMP_TAC boolSimps.bool_ss [])
+        bossLib.SIMP_TAC boolSimps.bool_ss
+          [pred_setTheory.EMPTY_DEF, pred_setTheory.UNIV_DEF,
+           combinTheory.K_THM])
     | _ => raise ERR "arrays-select-const" "expected one equality"
 
   (* Compact CPC omits the conclusion of the read-over-write rules and gives
@@ -7909,14 +8442,33 @@ local
   (* Eliminate Boolean enum cases without opening the actual mode source.
      Unlike the pack-based law, this shares exactly the one-hot atoms used
      by rounding_partition_law. *)
-  val rounding_boolean_case_law = Library.prove
-    (``(case mode : smt_rounding of
-          RNE => rne | RNA => rna | RTP => rtp | RTN => rtn | RTZ => rtz) =
-       (if mode = RNE then (rne : bool)
-        else if mode = RNA then rna else if mode = RTP then rtp
-        else if mode = RTN then rtn else rtz)``,
-     Tactical.THEN (bossLib.Cases_on `mode`,
-       simpLib.SIMP_TAC (bossLib.srw_ss()) []))
+  (* (case mode of RNE => rne | RNA => rna | RTP => rtp | RTN => rtn
+                  | RTZ => rtz) =
+     (if mode = RNE then rne else if mode = RNA then rna
+      else if mode = RTP then rtp else if mode = RTN then rtn else rtz),
+     built rather than parsed: a constant a client theory exports must not
+     capture mode or the five Boolean outcomes. *)
+  val rounding_boolean_case_law =
+    let
+      val mode = Term.mk_var ("mode",
+        Type.mk_thy_type {Thy = "smtfloat", Tyop = "smt_rounding", Args = []})
+      val names = ["RNE", "RNA", "RTP", "RTN", "RTZ"]
+      val modes =
+        List.map (fn name => Term.prim_mk_const {Thy = "smtfloat", Name = name})
+          names
+      val outcomes =
+        List.map (fn name => Term.mk_var (String.map Char.toLower name, Type.bool))
+          names
+      val rows = ListPair.zip (modes, outcomes)
+      fun chain ((rounding, outcome), rest) =
+        boolSyntax.mk_cond (boolSyntax.mk_eq (mode, rounding), outcome, rest)
+      val if_chain = List.foldr chain (List.last outcomes) (List.take (rows, 4))
+    in
+      Library.prove
+        (boolSyntax.mk_eq (TypeBase.mk_case (mode, rows), if_chain),
+         Tactical.THEN (bossLib.tmCases_on mode [],
+           simpLib.SIMP_TAC (bossLib.srw_ss()) []))
+    end
 
   fun word_circuit_leaf_rewrites () =
     List.map Conv.REWR_CONV
@@ -9480,12 +10032,71 @@ local
           val context =
             HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
             List.map Thm.concl prems
+          fun card_lower_bound () =
+            let
+              val (injected_card, lower) = intSyntax.dest_geq target
+              val number = intSyntax.dest_injected injected_card
+              val set = pred_setSyntax.dest_card number
+            in
+              if Term.aconv lower intSyntax.zero_tm then
+                let
+                  val n = Term.genvar numSyntax.num
+                  val proof = Tactical.TAC_PROOF
+                    (([], intSyntax.mk_geq
+                       (Term.mk_comb (intSyntax.int_injection, n), lower)),
+                     intLib.ARITH_TAC)
+                in Thm.INST [{redex = n, residue = number}] proof end
+              else
+                let
+                  val _ = Term.aconv lower intSyntax.one_tm orelse
+                    raise ERR "trust" "expected cardinality lower bound one"
+                  fun member_of_set tm =
+                    case Lib.total pred_setSyntax.dest_in tm of
+                      SOME (_, member_set) => Term.aconv member_set set
+                    | NONE => false
+                  val membership =
+                    case List.find member_of_set context of
+                      SOME tm => tm
+                    | NONE => raise ERR "trust" "missing Set membership premise"
+                  val (element, _) = pred_setSyntax.dest_in membership
+                  val finite = Tactical.TAC_PROOF
+                    ((context, pred_setSyntax.mk_finite set),
+                     bossLib.ASM_SIMP_TAC (bossLib.srw_ss ()) [])
+                  val s = Term.genvar (Term.type_of set)
+                  val x = Term.genvar (Term.type_of element)
+                  val member = pred_setSyntax.mk_in (x, s)
+                  val nonzero = boolSyntax.mk_neg
+                    (boolSyntax.mk_eq
+                      (pred_setSyntax.mk_card s, numSyntax.zero_tm))
+                  val nonzero_proof = Tactical.TAC_PROOF
+                    (([member, pred_setSyntax.mk_finite s], nonzero),
+                     bossLib.METIS_TAC
+                       [pred_setTheory.CARD_EQ_0,
+                        pred_setTheory.MEMBER_NOT_EMPTY])
+                  val positive = Tactical.TAC_PROOF
+                    (([nonzero], intSyntax.mk_geq
+                       (Term.mk_comb (intSyntax.int_injection,
+                          pred_setSyntax.mk_card s), intSyntax.one_tm)),
+                     intLib.ARITH_TAC)
+                  val instantiated = Thm.INST [{redex = s, residue = set},
+                       {redex = x, residue = element}]
+                    (Drule.PROVE_HYP nonzero_proof positive)
+                in
+                  Drule.PROVE_HYP finite instantiated
+                end
+            end
+          fun contextual () =
+            Tactical.TAC_PROOF ((context, target),
+              bossLib.ASM_SIMP_TAC (bossLib.srw_ss ()) [])
+            handle Feedback.HOL_ERR holerr =>
+              if SmtResource.is_resource_gate holerr then
+                raise Feedback.HOL_ERR holerr
+              else card_lower_bound ()
           val thm = SmtResource.with_resource_step_time "Set" "contextual"
             (fn () =>
               (List.app (SmtResource.check_resource_goal "Set" "contextual")
                  (target :: context);
-               Tactical.TAC_PROOF ((context, target),
-                 bossLib.ASM_SIMP_TAC (bossLib.srw_ss ()) []))) ()
+               contextual ())) ()
         in
           List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
             thm prems
@@ -10983,6 +11594,26 @@ local
                 (fn () => profile "CPC(rung:trust/fp)" replay_fp ())
                 (fn () => profile "CPC(rung:trust/fp_deferred)"
                   deferred_fp_trust ())))
+      else if (case Lib.total boolSyntax.dest_eq target of
+                 SOME (left, _) =>
+                   ((let
+                       val (variable, body) = boolSyntax.dest_forall left
+                       val condition = boolSyntax.dest_neg
+                         (Lib.fst (boolSyntax.dest_disj body))
+                       val (operand, value) = boolSyntax.dest_eq condition
+                     in wordsSyntax.is_word_type (Term.type_of variable)
+                       andalso Term.aconv operand
+                         (wordsSyntax.mk_word_1comp variable)
+                       andalso not (Term.free_in variable value)
+                     end) handle Feedback.HOL_ERR _ => false)
+               | NONE => false) then
+        profile "CPC(rung:trust/word-involution)"
+          (SmtResource.with_resource_step_time "BitVector" "word-involution"
+            (fn () =>
+              (SmtResource.check_resource_goal
+                 "BitVector" "word-involution" target;
+               Tactical.TAC_PROOF (([], target),
+                 metisLib.METIS_TAC [wordsTheory.WORD_NOT_NOT])))) ()
       else if SmtSeqProve.has_seq_type target then
         profile "CPC(rung:trust/seq)" replay_seq ()
       else if string_context () then
@@ -11454,6 +12085,106 @@ local
       exact_result provenance theorem
     end
 
+  (* arith_mult_pos and arith_mult_neg conclude
+     (k > 0 /\ a REL b) ==> k * a REL k * b, respectively
+     (k < 0 /\ a REL b) ==> k * a REL' k * b with REL' the converse of REL.
+     Instantiate the monotonicity of multiplication rather than search,
+     which does not finish on large factor terms; [target] is the
+     conclusion the rule states. *)
+  fun derive_arith_mult_monotone negative target =
+    let
+      val (antecedent, _) = boolSyntax.dest_imp target
+      val (sign_literal, relation) = boolSyntax.dest_conj antecedent
+      val coefficient =
+        if negative then #1 (arith_dest_less sign_literal)
+        else #1 (arith_dest_greater sign_literal)
+      val is_int = Term.type_of coefficient = intSyntax.int_ty
+      val zero = arith_zero coefficient
+      val greater = if is_int then integerTheory.INT_GT else realTheory.real_gt
+      val geq = if is_int then integerTheory.INT_GE else realTheory.real_ge
+      (* 0 < k ==> (k * a < k * b <=> a < b), and likewise for <=, or with
+         k < 0 the converse on the right *)
+      val (mono_less, mono_leq) =
+        if not negative then
+          if is_int then (integerTheory.INT_LT_MONO, integerTheory.INT_LE_MONO)
+          else (realTheory.REAL_LT_LMUL, realTheory.REAL_LE_LMUL)
+        else if not is_int then
+          (realTheory.REAL_LT_LMUL_NEG, realTheory.REAL_LE_LMUL_NEG)
+        else
+          let
+            val k = Term.genvar intSyntax.int_ty
+            val a = Term.genvar intSyntax.int_ty
+            val b = Term.genvar intSyntax.int_ty
+            fun negated monotone =
+              Thm.GENL [k, a, b] (Rewrite.PURE_REWRITE_RULE
+                [integerTheory.INT_MUL_LNEG, integerTheory.INT_NEG_GT0,
+                 integerTheory.INT_LT_NEG, integerTheory.INT_LE_NEG]
+                (Drule.SPECL [intSyntax.mk_negated k, b, a] monotone))
+          in
+            (negated integerTheory.INT_LT_MONO,
+             negated integerTheory.INT_LE_MONO)
+          end
+      val sign = Thm.ASSUME sign_literal
+      val positive =
+        if negative then sign
+        else Thm.EQ_MP (Drule.SPECL [coefficient, zero] greater) sign
+      val premise = Thm.ASSUME relation
+      fun unfold definition (left, right) theorem =
+        Thm.EQ_MP (Drule.SPECL [left, right] definition) theorem
+      fun fold definition (left, right) theorem =
+        Thm.EQ_MP (Thm.SYM (Drule.SPECL [left, right] definition)) theorem
+      (* from x REL y, k * x REL k * y (or the converse when negative) *)
+      fun scale monotone (x, y) theorem =
+        let val (left, right) = if negative then (y, x) else (x, y)
+        in
+          Thm.EQ_MP (Thm.SYM (Thm.MP
+            (Drule.SPECL [coefficient, left, right] monotone) positive))
+            theorem
+        end
+      fun times term = arith_mult (coefficient, term)
+      val result =
+        case Lib.total boolSyntax.dest_eq relation of
+          SOME _ => Thm.AP_TERM (Term.rator (times zero)) premise
+        | NONE =>
+        case Lib.total arith_dest_less relation of
+          SOME (a, b) =>
+            let val scaled = scale mono_less (a, b) premise
+            in
+              if negative then fold greater (times a, times b) scaled
+              else scaled
+            end
+        | NONE =>
+        case Lib.total arith_dest_leq relation of
+          SOME (a, b) =>
+            let val scaled = scale mono_leq (a, b) premise
+            in
+              if negative then fold geq (times a, times b) scaled
+              else scaled
+            end
+        | NONE =>
+        case Lib.total arith_dest_greater relation of
+          SOME (a, b) =>
+            let val scaled =
+              scale mono_less (b, a) (unfold greater (a, b) premise)
+            in
+              if negative then scaled
+              else fold greater (times a, times b) scaled
+            end
+        | NONE =>
+            let
+              val (a, b) = arith_dest_geq relation
+              val scaled = scale mono_leq (b, a) (unfold geq (a, b) premise)
+            in
+              if negative then scaled
+              else fold geq (times a, times b) scaled
+            end
+      val theorem = Thm.DISCH antecedent
+        (Drule.PROVE_HYP (Thm.CONJUNCT1 (Thm.ASSUME antecedent))
+          (Drule.PROVE_HYP (Thm.CONJUNCT2 (Thm.ASSUME antecedent)) result))
+    in
+      Thm.EQ_MP (Thm.ALPHA (Thm.concl theorem) target) theorem
+    end
+
   fun replay_arith_mult_neg args =
     case args of
       [coefficient, equality] =>
@@ -11490,7 +12221,10 @@ local
             (boolSyntax.mk_conj
              (arith_less (coefficient, arith_zero coefficient), equality),
              result)
-        in arith_prove target end
+        in
+          derive_arith_mult_monotone true target
+          handle Feedback.HOL_ERR _ => arith_prove target
+        end
     | _ => raise ERR "arith_mult_neg"
       "expected a coefficient and an arithmetic relation"
 
@@ -11527,18 +12261,198 @@ local
             (boolSyntax.mk_conj
              (arith_greater (coefficient, arith_zero coefficient), equality),
              result)
-        in arith_prove target end
+        in
+          derive_arith_mult_monotone false target
+          handle Feedback.HOL_ERR _ => arith_prove target
+        end
     | _ => raise ERR "arith_mult_pos"
       "expected a coefficient and a non-negative arithmetic literal"
 
-  (* CPC uses this rule to establish that two strictly positive factors have
-     a strictly positive product. *)
+  (* CPC uses this rule to establish the sign of a monomial from the signs
+     of its factors: the first argument is a conjunction of literals
+     x > 0, x < 0 or ~(x = 0) over the factors, and the conclusion is
+     F ==> m > 0 or F ==> m < 0.  Derive it from the sign cases of a
+     product rather than by arithmetic search, which does not finish on
+     large factor terms; factors known only to be nonzero are split into
+     their two signs, which must agree. *)
+  datatype mult_sign = MultPositive of Thm.thm | MultNegative of Thm.thm
+
+  val max_nonzero_splits = 8
+
+  fun derive_arith_mult_sign (positive_factors, product) =
+    let
+      val is_int = Term.type_of product = intSyntax.int_ty
+      val _ = is_int orelse Term.type_of product = realSyntax.real_ty orelse
+        raise ERR "arith_mult_sign" "expected an Int or Real monomial"
+      val zero = arith_zero product
+      val greater = if is_int then integerTheory.INT_GT else realTheory.real_gt
+      val total = if is_int then integerTheory.INT_LT_TOTAL
+        else realTheory.REAL_LT_TOTAL
+      fun is_mult term =
+        if is_int then intSyntax.is_mult term else realSyntax.is_mult term
+      fun dest_mult term =
+        if is_int then intSyntax.dest_mult term else realSyntax.dest_mult term
+      (* The Real form of INT_MUL_SIGN_CASES, derived over fresh variables
+         so that the rewrites cannot reach into the factors. *)
+      val mul_sign_cases =
+        if is_int then integerTheory.INT_MUL_SIGN_CASES
+        else
+          let
+            val p = Term.genvar realSyntax.real_ty
+            val q = Term.genvar realSyntax.real_ty
+            val positive = Drule.SPECL [p, q] realTheory.REAL_MUL_POS_LT
+            val negative = Rewrite.PURE_REWRITE_RULE
+              [realTheory.REAL_MUL_RNEG, realTheory.REAL_NEG_GT0,
+               realTheory.REAL_NEG_LT0]
+              (Drule.SPECL [p, realSyntax.mk_negated q]
+                realTheory.REAL_MUL_POS_LT)
+          in Thm.GENL [p, q] (Thm.CONJ positive negative) end
+      fun sign_cases (left, right) =
+        Drule.SPECL [left, right] mul_sign_cases
+      fun is_zero term = Term.aconv term zero
+      (* Each conjunct is a literal about one factor. *)
+      fun literal theorem =
+        let val term = Thm.concl theorem in
+          case Lib.total (boolSyntax.dest_eq o boolSyntax.dest_neg) term of
+            SOME (factor, z) =>
+              if is_zero z then (factor, NONE, SOME theorem)
+              else raise ERR "arith_mult_sign" "unsupported literal"
+          | NONE =>
+          case Lib.total arith_dest_greater term of
+            SOME (factor, z) =>
+              if is_zero z then
+                (factor, SOME (MultPositive
+                  (Thm.EQ_MP (Drule.SPECL [factor, z] greater) theorem)), NONE)
+              else if is_zero factor then
+                (z, SOME (MultNegative
+                  (Thm.EQ_MP (Drule.SPECL [factor, z] greater) theorem)), NONE)
+              else raise ERR "arith_mult_sign" "unsupported literal"
+          | NONE =>
+          case Lib.total arith_dest_less term of
+            SOME (factor, z) =>
+              if is_zero z then (factor, SOME (MultNegative theorem), NONE)
+              else if is_zero factor then
+                (z, SOME (MultPositive theorem), NONE)
+              else raise ERR "arith_mult_sign" "unsupported literal"
+          | NONE => raise ERR "arith_mult_sign" "unsupported literal"
+        end
+      val literals = List.map literal
+        (Drule.CONJUNCTS (Thm.ASSUME positive_factors))
+      fun combine (left_sign, right_sign) =
+        let
+          fun parts (MultPositive theorem) = theorem
+            | parts (MultNegative theorem) = theorem
+          val left = parts left_sign
+          val right = parts right_sign
+          fun operand theorem =
+            let val (l, r) = arith_dest_less (Thm.concl theorem)
+            in if is_zero l then r else l end
+          val cases = sign_cases (operand left, operand right)
+          val both = Thm.CONJ left right
+          fun choose equivalence first =
+            let
+              val (d1, d2) = boolSyntax.dest_disj
+                (boolSyntax.rhs (Thm.concl equivalence))
+              val disjunction =
+                if first then Thm.DISJ1 both d2 else Thm.DISJ2 d1 both
+            in Thm.EQ_MP (Thm.SYM equivalence) disjunction end
+        in
+          case (left_sign, right_sign) of
+            (MultPositive _, MultPositive _) =>
+              MultPositive (choose (Thm.CONJUNCT1 cases) true)
+          | (MultNegative _, MultNegative _) =>
+              MultPositive (choose (Thm.CONJUNCT1 cases) false)
+          | (MultPositive _, MultNegative _) =>
+              MultNegative (choose (Thm.CONJUNCT2 cases) true)
+          | (MultNegative _, MultPositive _) =>
+              MultNegative (choose (Thm.CONJUNCT2 cases) false)
+        end
+      fun sign_of signs term =
+        case List.find (fn (factor, _) => Term.aconv factor term) signs of
+          SOME (_, sign) => sign
+        | NONE =>
+            if is_mult term then
+              let val (left, right) = dest_mult term
+              in combine (sign_of signs left, sign_of signs right) end
+            else raise ERR "arith_mult_sign"
+              "monomial factor has no sign literal"
+      (* Split every factor known only to be nonzero into its two signs. *)
+      fun split signs nonzero =
+        case nonzero of
+          [] => sign_of signs product
+        | (factor, theorem) :: rest =>
+            let
+              val negative_term = arith_less (factor, zero)
+              val positive_term = arith_less (zero, factor)
+              val choice = boolSyntax.mk_disj (negative_term, positive_term)
+              val cases = Drule.SPECL [factor, zero] total
+              val equal = boolSyntax.dest_disj (Thm.concl cases)
+              val excluded = Drule.CONTR choice
+                (Thm.MP (Thm.NOT_ELIM theorem) (Thm.ASSUME (#1 equal)))
+              val nonzero_cases =
+                Thm.DISJ_CASES cases excluded (Thm.ASSUME choice)
+              val negative = split
+                ((factor, MultNegative (Thm.ASSUME negative_term)) :: signs)
+                rest
+              val positive = split
+                ((factor, MultPositive (Thm.ASSUME positive_term)) :: signs)
+                rest
+            in
+              case (negative, positive) of
+                (MultPositive n, MultPositive p) =>
+                  MultPositive (Thm.DISJ_CASES nonzero_cases n p)
+              | (MultNegative n, MultNegative p) =>
+                  MultNegative (Thm.DISJ_CASES nonzero_cases n p)
+              | _ => raise ERR "arith_mult_sign"
+                  "a nonzero factor leaves the product's sign open"
+            end
+      val signs = List.mapPartial
+        (fn (factor, sign, _) =>
+          Option.map (fn sign => (factor, sign)) sign) literals
+      (* How often [factor] is read as a factor of [term] by [sign_of]. *)
+      fun occurrences factor term =
+        if Term.aconv term factor then 1
+        else if List.exists (fn (known, _) => Term.aconv known term) signs
+        then 0
+        else if is_mult term then
+          let val (left, right) = dest_mult term
+          in occurrences factor left + occurrences factor right end
+        else 0
+      (* The splits below build a proof for every assignment of signs, so
+         split only the factors that occur in the product and have no sign
+         literal, and give up before expanding when one occurs an odd number
+         of times (its two signs would give opposite signs to the product) or
+         when there are more than [max_nonzero_splits] of them. *)
+      val nonzero = List.filter
+        (fn (factor, _) =>
+          occurrences factor product > 0 andalso
+          not (List.exists (fn (known, _) => Term.aconv known factor) signs))
+        (List.mapPartial
+          (fn (factor, _, theorem) =>
+            Option.map (fn theorem => (factor, theorem)) theorem) literals)
+      val _ = List.all
+        (fn (factor, _) => occurrences factor product mod 2 = 0) nonzero
+        orelse raise ERR "arith_mult_sign"
+          "a nonzero factor leaves the product's sign open"
+      val _ = length nonzero <= max_nonzero_splits orelse
+        raise ERR "arith_mult_sign" "too many nonzero factors to split"
+      val result =
+        case split signs nonzero of
+          MultPositive theorem =>
+            Thm.EQ_MP (Thm.SYM (Drule.SPECL [product, zero] greater)) theorem
+        | MultNegative theorem => theorem
+    in
+      Thm.DISCH positive_factors result
+    end
+
+  (* No arithmetic-search fallback: when the sign cases cannot establish the
+     sign, the product's sign is either open or needs more than
+     [max_nonzero_splits] splits, and arithmetic search does not finish on
+     such products either. *)
   fun replay_arith_mult_sign args =
     case args of
       [positive_factors, product] =>
-        arith_prove (boolSyntax.mk_imp
-          (positive_factors,
-           arith_greater (product, arith_zero product)))
+        derive_arith_mult_sign (positive_factors, product)
     | _ => raise ERR "arith_mult_sign"
       "expected a conjunction of positive factors and their product"
 
@@ -11735,61 +12649,22 @@ local
         (theorem, conjunction_free_semantic_provenance
           "arith_reduction unexpectedly produced a conjunction"
           (Thm.concl theorem))
-      fun guarded_conditional (a, b, total_term, equality) =
-        let
-          val condition = boolSyntax.mk_eq (b, intSyntax.zero_tm)
-          val target = boolSyntax.mk_eq
-            (reduction, boolSyntax.mk_cond
-              (condition, equality, total_term))
-        in
-          nonconjunction (Tactical.TAC_PROOF (([], target),
-             Tactical.THEN (Tactic.COND_CASES_TAC,
-               bossLib.ASM_SIMP_TAC bossLib.arith_ss
-                 [HolSmtTheory.smt_ediv_total_def,
-                  HolSmtTheory.smt_emod_total_def])))
-        end
       fun div_reduction () =
         (case operands of
-           [a, b] => guarded_conditional (a, b,
-             total (smt_ediv_total_tm, a, b),
-             SmtLib_Theories.mk_int_ediv (a, intSyntax.zero_tm))
+           [a, b] => nonconjunction
+             (Drule.SPECL [a, b] HolSmtTheory.smt_ediv_reduction)
          | _ => raise ERR "arith_reduction"
              "ediv reduction expects two operands")
       fun mod_reduction () =
         (case operands of
-           [a, b] =>
-             let
-               val condition = boolSyntax.mk_eq (b, intSyntax.zero_tm)
-               val target = boolSyntax.mk_eq
-                 (reduction, boolSyntax.mk_cond
-                   (condition,
-                    SmtLib_Theories.mk_int_emod
-                      (a, intSyntax.zero_tm),
-                    total (smt_emod_total_tm, a, b)))
-             in
-               nonconjunction (Tactical.TAC_PROOF (([], target),
-                  Tactical.THEN (Tactic.COND_CASES_TAC,
-                    bossLib.ASM_SIMP_TAC bossLib.arith_ss
-                      [HolSmtTheory.smt_emod_total_def])))
-             end
+           [a, b] => nonconjunction
+             (Drule.SPECL [a, b] HolSmtTheory.smt_emod_reduction)
          | _ => raise ERR "arith_reduction"
              "emod reduction expects two operands")
       fun real_div_reduction () =
         (case operands of
-           [a, b] =>
-             let
-               val condition = boolSyntax.mk_eq (b, realSyntax.zero_tm)
-               val target = boolSyntax.mk_eq
-                 (reduction, boolSyntax.mk_cond
-                   (condition,
-                    total (smt_rdiv_tm, a, realSyntax.zero_tm),
-                    realSyntax.mk_div (a, b)))
-             in
-               nonconjunction (Tactical.TAC_PROOF (([], target),
-                  Tactical.THEN (Tactic.COND_CASES_TAC,
-                    bossLib.ASM_SIMP_TAC bossLib.arith_ss
-                      [HolSmtTheory.smt_rdiv_eq_div])))
-             end
+           [a, b] => nonconjunction
+             (Drule.SPECL [a, b] HolSmtTheory.smt_rdiv_reduction)
          | _ => raise ERR "arith_reduction"
              "real division reduction expects two operands")
       fun total_div_reduction () =
@@ -11860,17 +12735,8 @@ local
               exact_binary_conjunction "bounds" bounds]))
         end
       fun abs_reduction () =
-        let
-          val value = intSyntax.dest_absval reduction
-          val target = boolSyntax.mk_eq (reduction,
-            boolSyntax.mk_cond (intSyntax.mk_less (value, intSyntax.zero_tm),
-              intSyntax.mk_negated value, value))
-        in
-          nonconjunction (Tactical.TAC_PROOF (([], target),
-             Tactical.THEN (Tactic.COND_CASES_TAC,
-               bossLib.ASM_SIMP_TAC bossLib.arith_ss
-                 [integerTheory.INT_ABS])))
-        end
+        nonconjunction (Thm.SPEC (intSyntax.dest_absval reduction)
+          integerTheory.INT_ABS)
     in
       if Term.aconv head intrealSyntax.INT_FLOOR_tm then floor_reduction ()
       else if Term.aconv head intSyntax.absval_tm then abs_reduction ()
@@ -11928,7 +12794,9 @@ local
     in
       case prems of
         [left, right] =>
-          (oriented SmtReplayCanon.cpc_operand_canon_conv left right
+          (oriented cpc_dag_normal_form_conv left right
+           handle Feedback.HOL_ERR _ =>
+             oriented SmtReplayCanon.cpc_operand_canon_conv left right
            handle Feedback.HOL_ERR _ =>
              oriented strong_canon left right)
       | _ => raise ERR "modus_ponens" "expected two CPC premises"
@@ -12437,7 +13305,7 @@ local
         raise ERR "resolution" "Boolean graph endpoint mismatch"
     in law end) ()
 
-  fun replay_resolution prems conclusion args =
+  fun replay_resolution stops prems conclusion args =
     let
       (* A proof of T is a neutral resolution premise regardless of which
          irrelevant assumptions were retained while producing it.  Rebuild
@@ -12657,11 +13525,14 @@ local
              | NONE => raise ERR "resolution"
                  "incompatible canonical CPC literals")
         end
-      fun strip_clause term =
-        (let val (left, right) = boolSyntax.dest_disj term in
-           left :: strip_clause right
-         end)
-        handle Feedback.HOL_ERR _ => [term]
+      fun strip_clause_until stop term =
+        if stop term then [term]
+        else
+          (let val (left, right) = boolSyntax.dest_disj term in
+             left :: strip_clause_until stop right
+           end)
+          handle Feedback.HOL_ERR _ => [term]
+      fun strip_clause term = strip_clause_until (fn _ => false) term
       fun remove_first_using _ _ [] = NONE
         | remove_first_using equal literal (candidate :: rest) =
             if equal literal candidate then SOME rest
@@ -15510,15 +16381,36 @@ local
         case prems of
           [first, second] =>
             let
-              val first_lits = strip_clause (Thm.concl first)
-              val second_lits = strip_clause (Thm.concl second)
               val first_pivot =
                 if Term.aconv polarity boolSyntax.T then pivot
                 else if Term.aconv polarity boolSyntax.F then
-                  boolSyntax.mk_neg pivot
+                  complement pivot
                 else raise ERR "resolution"
                   "CPC resolution polarity is not Boolean"
-              val second_pivot = boolSyntax.mk_neg first_pivot
+              val second_pivot = complement first_pivot
+              fun stop required term =
+                literal_equal required term orelse
+                List.exists (fn pivot =>
+                  literal_equal pivot term orelse
+                  literal_equal (complement pivot) term) stops
+              fun strip_for_pivot required term =
+                let
+                  val literals = strip_clause_until (stop required) term
+                in
+                  if List.exists (literal_equal required) literals then
+                    literals
+                  else
+                    case Lib.total boolSyntax.dest_disj term of
+                      SOME (left, right) => left ::
+                        (if literal_equal required left then
+                           strip_clause_until (stop required) right
+                         else strip_for_pivot required right)
+                    | NONE => literals
+                end
+              val first_lits = strip_for_pivot first_pivot
+                (Thm.concl first)
+              val second_lits = strip_for_pivot second_pivot
+                (Thm.concl second)
               val first_rest =
                 case remove_first first_pivot first_lits of
                   SOME rest => rest
@@ -15925,14 +16817,16 @@ local
                  listSyntax.is_nil chars
              | NONE => false)
         | _ => false
+      val smtstr_ty =
+        Type.mk_thy_type {Thy = "smtstring", Tyop = "smtstr", Args = []}
       fun substring_reduction_theorem substring =
         case boolSyntax.strip_comb substring of
           (head, [string, start, count]) =>
             if same_const "smtstring" "smtstr_substr" head then
               observed_inst
-                [{redex = ``s : smtstr``, residue = string},
-                 {redex = ``i : int``, residue = start},
-                 {redex = ``n : int``, residue = count}]
+                [{redex = Term.mk_var ("s", smtstr_ty), residue = string},
+                 {redex = Term.mk_var ("i", intSyntax.int_ty), residue = start},
+                 {redex = Term.mk_var ("n", intSyntax.int_ty), residue = count}]
                 smtstringTheory.smtstr_substr_reduction
             else raise ERR "string_reduction"
               "expected a substring argument"
@@ -17124,8 +18018,6 @@ local
     SmtLib_Logics.parsedicts_of_logic "ALL"
   val rare_source_tmdict = Library.union_dict rare_source_base_tmdict
     SmtLib_Theories.CVC5_Seq.tmdict
-  val rare_source_reglan_ty =
-    Type.mk_thy_type {Thy = "smtstring", Tyop = "reglan", Args = []}
 
   fun rare_source_empty carrier =
     if is_smtstr_type (Term.type_of carrier) then
@@ -17159,7 +18051,7 @@ local
   fun rare_source_fixed_type source =
     case source of
       RareSourceString => SOME (Term.type_of ``SmtStr []``)
-    | RareSourceRegex => SOME (Term.type_of ``reglan_none``)
+    | RareSourceRegex => SOME (reglan_ty)
     | RareSourceInt => SOME intSyntax.int_ty
     | RareSourceSeq => NONE
     | RareSourceElement => NONE
@@ -17442,7 +18334,7 @@ local
             if List.length operands < 2 then raise ERR name
               "declarative equality requires at least two operands"
             else if Type.compare
-                (Term.type_of (List.hd operands), rare_source_reglan_ty) =
+                (Term.type_of (List.hd operands), reglan_ty) =
                 EQUAL then
               boolSyntax.list_mk_conj
                 (adjacent (fn left => fn right =>
@@ -19553,8 +20445,31 @@ local
             case (conclusion, args) of
               (SOME target, _) => SOME target
             | (NONE, [_, _]) => NONE
-            | (NONE, target :: _) => SOME target
+            | (NONE, target :: _) =>
+                if #name rule = "chain_resolution" then NONE else SOME target
             | (NONE, []) => NONE
+          fun replay prems conclusion args =
+            if #name rule <> "chain_resolution" then
+              replay_resolution [] prems conclusion args
+            else
+              let
+                val count = List.length prems - 1
+                val _ = if count > 0 andalso List.length args = 2 * count
+                  then () else raise ERR "resolution"
+                    "CPC chain_resolution annotation arity mismatch"
+                fun fold result [] [] [] = result
+                  | fold result (next :: rest) (polarity :: polarities)
+                      (pivot :: pivots) =
+                      fold (replay_resolution pivots [result, next] NONE
+                        [polarity, pivot]) rest polarities pivots
+                  | fold _ _ _ _ = raise ERR "resolution"
+                      "CPC chain_resolution annotation arity mismatch"
+              in case conclusion of
+                  SOME target => replay_resolution [] prems conclusion
+                    (target :: args)
+                | NONE => fold (List.hd prems) (List.tl prems)
+                    (List.take (args, count)) (List.drop (args, count))
+              end
           fun restore theorem =
             case replay_target of
               NONE => theorem
@@ -19573,7 +20488,7 @@ local
                 Option.map canonical_operand conclusion
               val normalized_args = List.map canonical_operand args
             in
-              restore (replay_resolution normalized_prems
+              restore (replay normalized_prems
                 normalized_conclusion normalized_args)
             end
           fun integer_resolution () =
@@ -19587,7 +20502,7 @@ local
               val integer_args = List.map (fn argument =>
                 boolSyntax.rhs
                   (Thm.concl (cpc_integer_normal_form_conv argument))) args
-              val theorem = replay_resolution integer_prems
+              val theorem = replay integer_prems
                 integer_conclusion integer_args
             in
               restore_with cpc_integer_normal_form_conv
@@ -19595,7 +20510,7 @@ local
             end
         in
         (require_declared "resolution"
-           (replay_resolution prems conclusion args)
+           (replay prems conclusion args)
          handle Feedback.HOL_ERR _ =>
            (normalized_resolution ()
             handle Feedback.HOL_ERR _ =>
@@ -19615,9 +20530,9 @@ local
                     SOME target =>
                       if Term.aconv target boolSyntax.T then
                         retain_all boolTheory.TRUTH strong_prems
-                      else replay_resolution strong_prems
+                      else replay strong_prems
                         strong_conclusion strong_args
-                  | NONE => replay_resolution strong_prems
+                  | NONE => replay strong_prems
                       strong_conclusion strong_args
               in
                 restore_strong theorem
@@ -19767,10 +20682,32 @@ local
                             (SmtClause.theorem aligned))))
                   end
             end
+          fun targetless_chain premises =
+            let
+              val count = List.length premises - 1
+              fun fold result [] [] = finish NONE result
+                | fold result (next :: rest) (pivot :: pending) =
+                    (case SmtClause.resolve pivot result next of
+                       SOME resolved => fold resolved rest pending
+                     | NONE => decline "binary-pivot")
+                | fold _ _ _ = decline "annotation-arity"
+            in
+              if count < 1 orelse List.length args <> 2 * count then
+                decline "annotation-arity"
+              else case pivots (List.take (args, count))
+                  (List.drop (args, count)) of
+                  NONE => decline "polarity"
+                | SOME signed_pivots => fold (List.hd premises)
+                    (List.tl premises) signed_pivots
+            end
           fun run () = case clauses premise_steps of
             NONE => decline "premise-boundaries"
           | SOME clause_prems =>
-              case (located_args, args, clause_prems) of
+              if #name rule = "chain_resolution" then
+                (case located_conclusion of
+                   NONE => targetless_chain clause_prems
+                 | SOME target => chain target args clause_prems)
+              else case (located_args, args, clause_prems) of
                 ([_, _], [polarity, pivot], [first, second]) =>
                   (case signed polarity pivot of
                      NONE => decline "polarity"
@@ -19800,7 +20737,8 @@ local
             let
               val destination = case located_conclusion of
                   SOME target => SOME target
-                | NONE => if List.length args = 2 then NONE
+                | NONE => if #name rule = "chain_resolution" orelse
+                      List.length args = 2 then NONE
                     else Lib.total List.hd located_args
             in case destination of
                 NONE => NONE
@@ -19827,7 +20765,8 @@ local
           case run () of
             SOME result => SOME result
           | NONE => if not (!needs_normalization) then NONE
-            else if List.length args = 2 andalso
+            else if (#name rule = "chain_resolution" orelse
+                List.length args = 2) andalso
                 not (Option.isSome located_conclusion) then
               decline "normalization-without-target"
             else
@@ -19855,7 +20794,8 @@ local
               val recorded = case located_conclusion of
                   SOME target => SOME target
                 | NONE =>
-                    if List.length prems > 1 andalso
+                    if #name rule <> "chain_resolution" andalso
+                        List.length prems > 1 andalso
                         List.length located_args = 2 * List.length prems - 1
                     then Lib.total List.hd located_args else NONE
             in case recorded of
@@ -19904,8 +20844,18 @@ local
             (canonical_cong ())
         | NONE =>
             let
+              (* Premises correspond to immediate children in source order.
+                 Canonicalizing the parent may swap an equality's children. *)
+              fun source_canon term =
+                let val (operator, operands) = boolSyntax.strip_comb term in
+                  if List.length operands <> List.length prems then canon term
+                  else List.foldl
+                    (fn (operand, theorem) =>
+                      Thm.MK_COMB (theorem, canon operand))
+                    (Thm.REFL operator) operands
+                end
               fun normalized_term term =
-                boolSyntax.rhs (Thm.concl (canon term))
+                boolSyntax.rhs (Thm.concl (source_canon term))
               val normalized_args = List.map normalized_term args
               val normalized_prems =
                 List.map (Conv.CONV_RULE canon) prems
@@ -19913,7 +20863,7 @@ local
               case (located_args, normalized_args) of
                 ([source], [normalized_source]) =>
                   let
-                    val source_normalization = canon (#term source)
+                    val source_normalization = source_canon (#term source)
                     val normalized_located = {
                       term = normalized_source,
                       provenance = align_canonical_provenance
@@ -20380,7 +21330,7 @@ local
                               replay_reglan_cong_from_source source prems
                             else if Type.compare
                               (Term.type_of source,
-                               Term.type_of ``reglan_none``) = EQUAL then
+                               reglan_ty) = EQUAL then
                               replay_reglan_producer_cong_from_source
                                 source prems
                             else
@@ -20465,8 +21415,7 @@ local
                             if #name rule = "nary_cong" then
                               raw_unavailable_result
                                 "n-Cong n-ary congruence checked directly"
-                                (replay_direct_nary_cong
-                                  (#term source) prems)
+                                (replay_direct_nary_cong (#term source) prems)
                             else if #name rule = "cong" andalso
                                     not (has_binder_shell
                                       (#provenance source)) then
@@ -20716,6 +21665,17 @@ local
            | "ite_elim1" => opaque ( replay_ite_elim1 prems)
            | "ite_elim2" => opaque ( replay_ite_elim2 prems)
            | "quant_unused_vars" => opaque ( replay_quant_unused_vars args)
+           | "quant_dt_split" =>
+               let
+                 val theorem = replay_quant_dt_split args
+               in
+                 case located_args of
+                   [located] => located_result
+                     "quantified datatype split exact argument" theorem located
+                 | _ => unavailable_result
+                     "quantified datatype split lacks one equality argument"
+                     theorem
+               end
            | "quant_rewrite" =>
                let
                  val theorem = replay_quant_rewrite (#name rule) located_args
@@ -20783,6 +21743,7 @@ local
                  val (theorem, provenance) = replay_arith_reduction args
                in exact_result provenance theorem end
            | "arith_max_geq1" => opaque ( replay_arith_max_geq1 args)
+           | "arith_max_geq2" => opaque ( replay_arith_max_geq2 args)
            | "arith_min_lt2" => opaque ( replay_arith_min_lt2 args)
            | "int_tight_lb" => opaque ( replay_int_tight_lb prems)
            | "int_tight_ub" => opaque ( replay_int_tight_ub prems)
@@ -20829,12 +21790,23 @@ local
                 | _ => unavailable_result
                     "aci_norm lacks one exact target occurrence"
                     (replay_aci_norm_admitted datatype_admit args))
+           | "bv_word_rewrite" => opaque
+               (replay_bv_word_rewrite (#name rule) args)
            | "bv_xor_duplicate" => opaque ( replay_bv_xor_duplicate args)
            | "bv_not_idemp" => opaque ( replay_bv_not_idemp args)
+           | "bv_zero_extend_eliminate_0" =>
+               opaque (replay_bv_zero_extend_eliminate_0 args)
            | "bv_shl_by_const_0" => opaque ( replay_bv_shl_by_const_0 args)
            | "bv_shl_by_const_2" => opaque ( replay_bv_shl_by_const_2 args)
            | "bv_lshr_by_const_0" => opaque ( replay_bv_lshr_by_const_0 args)
            | "bv_ashr_by_const_0" => opaque ( replay_bv_ashr_by_const_0 args)
+           | "bv_bitwise_slicing" =>
+               let val theorem = replay_bv_bitwise_slicing args in
+                 case located_args of
+                   [target] => located_result
+                     "bitwise slicing exact target" theorem target
+                 | _ => opaque theorem
+               end
            | "bv_poly_norm" =>
                let val theorem = replay_bv_poly_norm args in
                  case located_args of
@@ -20863,7 +21835,12 @@ local
            | "seq_at_elim" => opaque
                (replay_seq_at_elim datatype_admit conclusion args)
            | "sets" => opaque ( replay_sets state (#name rule) prems conclusion args)
-           | "sets_ext" => opaque ( replay_sets_ext prems)
+           | "arrays_ext" =>
+               if List.null args then
+                 opaque (require_declared "arrays_ext"
+                   (replay_ext "arrays_ext" prems))
+               else raise ERR "arrays_ext" "expected no arguments"
+           | "sets_ext" => opaque ( replay_ext "sets_ext" prems)
            | "sets_rewrite" => opaque (
                replay_sets state (#name rule) prems conclusion args)
            | "rewrite" =>
@@ -21245,6 +22222,57 @@ local
            TextIO.flushOut TextIO.stdOut)
     in Portable.finally report (fn () => loop initial commands) () end
 
+  (* Replay heaps load without a current theory; derive these rules on use. *)
+  val array_set_echo_conv = Susp.delay (fn () =>
+    let
+      val element = Type.alpha
+      val x = Term.mk_var ("x", element)
+      val s = Term.mk_var ("s", Type.--> (element, Type.bool))
+      val applied = List.map
+        (Rewrite.PURE_REWRITE_RULE [pred_setTheory.SPECIFICATION])
+        [pred_setTheory.IN_INSERT, pred_setTheory.IN_DELETE]
+      fun prove (left, right) = Drule.GEN_ALL
+        (Tactical.TAC_PROOF (([], boolSyntax.mk_eq (left, right)),
+          Tactical.THEN
+            (Tactic.CONV_TAC (Conv.REWR_CONV boolTheory.FUN_EQ_THM),
+             Tactical.THEN (Tactic.GEN_TAC,
+               Tactical.THEN
+                 (Rewrite.PURE_REWRITE_TAC
+                    (applied @ [combinTheory.APPLY_UPDATE_THM,
+                      pred_setTheory.EMPTY_DEF, pred_setTheory.UNIV_DEF,
+                      combinTheory.K_THM]),
+                  Tactical.THEN
+                    (Tactic.CONV_TAC (Conv.DEPTH_CONV Thm.BETA_CONV),
+                     Tactical.THEN
+                       (Tactical.REPEAT boolLib.COND_CASES_TAC,
+                        bossLib.ASM_SIMP_TAC boolSimps.bool_ss
+                          [boolTheory.EQ_SYM_EQ])))))))
+      fun update value = Term.mk_comb (combinSyntax.mk_update (x, value), s)
+      val equations = List.map prove
+        [(pred_setSyntax.mk_insert (x, s), update boolSyntax.T),
+         (pred_setSyntax.mk_delete (s, x), update boolSyntax.F),
+         (pred_setSyntax.mk_empty element,
+          combinSyntax.mk_K_1 (boolSyntax.F, element)),
+         (pred_setSyntax.mk_univ element,
+          combinSyntax.mk_K_1 (boolSyntax.T, element))]
+      val diff_applied = Rewrite.PURE_REWRITE_RULE
+        [pred_setTheory.SPECIFICATION] pred_setTheory.IN_DIFF
+    in
+      Conv.QCONV (Conv.THENC
+        (Rewrite.PURE_REWRITE_CONV
+           (pred_setTheory.SPECIFICATION :: pred_setTheory.SUBSET_applied ::
+            diff_applied :: equations),
+         Conv.DEPTH_CONV Thm.BETA_CONV))
+    end)
+
+  fun contains_array_set_echo term =
+    Lib.can (HolKernel.find_term (fn tm =>
+      combinSyntax.is_update_comb tm orelse combinSyntax.is_K_1 tm orelse
+      pred_setSyntax.is_in tm orelse pred_setSyntax.is_insert tm orelse
+      pred_setSyntax.is_delete tm orelse pred_setSyntax.is_empty tm orelse
+      pred_setSyntax.is_univ tm orelse pred_setSyntax.is_subset tm orelse
+      pred_setSyntax.is_diff tm)) term
+
   (* cvc5's preprocessing can expose canonical arithmetic spellings, record
      and datatype eliminators, and FP bit representations in a proof
      assumption while the HOL goal retains its surface form.  Discharge only
@@ -21278,6 +22306,38 @@ local
         in
           Lib.tryfind match context
         end
+      val array_set_context = List.map
+        (fn assumption => Susp.delay (fn () =>
+          Thm.EQ_MP ((Susp.force array_set_echo_conv) assumption)
+            (Thm.ASSUME assumption))) context
+      fun prove_array_set_hyp hyp =
+        let
+          val _ = List.exists contains_array_set_echo (hyp :: context) orelse
+            raise ERR "remove_extra_hyps" "no array-set echo form"
+          val conv = Susp.force array_set_echo_conv
+          val hyp_eq = conv hyp
+          val normalized_hyp = boolSyntax.rhs (Thm.concl hyp_eq)
+          (* The translation's definition of a fresh set constant, mapped
+             back to the set it names, is an identity once both sides are
+             in array form. *)
+          fun identity () =
+            Drule.EQT_ELIM (Conv.QCONV (Conv.EVERY_CONV
+              [Conv.DEPTH_CONV Thm.BETA_CONV, conv,
+               Rewrite.REWRITE_CONV []]) hyp)
+          fun match assumption =
+            let
+              val normalized_assumption = Susp.force assumption
+              val _ = Term.aconv (Thm.concl normalized_assumption)
+                normalized_hyp orelse
+                raise ERR "remove_extra_hyps"
+                  "array-set assumption did not match extra hypothesis"
+            in
+              Thm.EQ_MP (Thm.SYM hyp_eq) normalized_assumption
+            end
+        in
+          identity () handle Feedback.HOL_ERR _ =>
+            Lib.tryfind match array_set_context
+        end
       fun prove_from_context hyp =
         Tactical.TAC_PROOF ((context, hyp),
           Tactical.THEN
@@ -21288,6 +22348,11 @@ local
       fun prove_hyp hyp =
         profile "CPC(remove_extra_hyps:canonical_assumption)"
           prove_canonical_hyp hyp
+        handle Feedback.HOL_ERR error =>
+          if SmtResource.is_resource_gate error then
+            raise Feedback.HOL_ERR error
+          else profile "CPC(remove_extra_hyps:array_set)"
+            prove_array_set_hyp hyp
         handle Feedback.HOL_ERR error =>
           if SmtResource.is_resource_gate error then
             raise Feedback.HOL_ERR error
@@ -21341,7 +22406,8 @@ local
           else raise ERR "remove_extra_hyps"
             ("extra hypothesis is not one of the enumerated cvc5 semantic " ^
              "bridges; hypothesis=" ^ Library.term_to_string hyp ^
-             "; attempted=[canonical assumption, FP special values, " ^
+             "; attempted=[canonical assumption, array-set echo, " ^
+             "FP special values, " ^
              "floor/ceiling negation, datatype normalization, conditional " ^
              "arithmetic]; " ^
              "underlying=" ^ Feedback.message_of holerr)
@@ -21353,6 +22419,8 @@ in
   type replay_operation_statistics = operation_statistics
   val with_operation_statistics = with_operation_statistics_internal
 
+  val remove_hyps_for_test = remove_extra_hyps
+
   val prove_boolean_circuit =
     prove_boolean_circuit_tautology
   val prove_boolean_circuit_stopping_for_test =
@@ -21361,6 +22429,7 @@ in
   val compact_word_target = compact_word_target
   val word_circuit_node_conversion = word_circuit_node_conversion
   val resolution_word_graph_for_test = new_resolution_word_graph
+  val quantified_boolean_equality_for_test = quantified_boolean_equality
   val replay_bv_poly_norm_for_test = replay_bv_poly_norm
   val retain_producer_conclusion_for_test = retain_producer_conclusion
   val replay_cong_for_test = replay_cong
@@ -21654,7 +22723,7 @@ in
             | source_type RareSourceString =
                 Type.mk_thy_type
                   {Thy = "smtstring", Tyop = "smtstr", Args = []}
-            | source_type RareSourceRegex = Term.type_of ``reglan_none``
+            | source_type RareSourceRegex = reglan_ty
             | source_type RareSourceInt = intSyntax.int_ty
             | source_type RareSourceElement = intSyntax.int_ty
           fun argument (_, RareSourceIndex, _) =
@@ -21756,6 +22825,12 @@ in
 
   fun replay_arith_mult_pos_for_test args =
     replay_arith_mult_pos args
+
+  fun replay_arith_mult_sign_for_test args =
+    replay_arith_mult_sign args
+
+  fun derive_arith_mult_sign_for_test args =
+    derive_arith_mult_sign args
 
   fun instantiate_cpc_fp_private_markers theorem =
     let

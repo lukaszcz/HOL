@@ -155,7 +155,15 @@ struct
           declaration= #declaration description}:term_declaration end
       val declarations = ListPair.mapEq declaration
         (symbols,M.declarations mapping)
-      val type_records = SmtLib.outbound_type_declaration_records regime types
+      fun declaration_text document =
+        let val chunks = ref []
+            fun keep chunk = ((#step context) ();chunks := chunk :: !chunks)
+            val _ = SmtLib_OutputFragments.render keep document
+        in String.concat (List.rev (!chunks)) end
+      val type_records = (#type_declaration_records backend) types
+        (List.concat (List.map
+          (fn ({declarations,...}:SmtLib_GraphDispatcher.root) =>
+            List.map declaration_text declarations) (#roots emission)))
       fun definition (encoding:encoding) =
         case #atomic_head encoding of NONE => NONE | SOME atom =>
           if not (Term.is_const atom) then NONE else Option.map

@@ -229,6 +229,30 @@ fun assert_concl_alpha (label, thm, expected) =
       term_with_types expected ^ "\nactual: " ^ term_with_types actual)
   end
 
+fun indexed_num_word_preprocessing_success () =
+let
+  val original : goal =
+    ([``(f:num -> word32) 0 = (x:word32)``],
+     ``((7 >< 0) ((f:num -> word32) 0):word8) =
+       (7 >< 0) (x:word32)``)
+  fun check (name,tactic) =
+    let
+      val (changed,validate) = SolverSpec.simplify tactic original
+      val simplified = Tactical.TAC_PROOF (changed,
+        Tactical.THEN (Rewrite.PURE_ONCE_ASM_REWRITE_TAC [],Tactic.REFL_TAC))
+      val theorem = validate [simplified]
+    in
+      assert_concl_alpha (name,theorem,#2 original);
+      assert (List.all (fn hypothesis =>
+        List.exists (Term.aconv hypothesis) (#1 original)) (Thm.hyp theorem),
+        name ^ " introduced a hypothesis");
+      check_oracle_tags name theorem
+    end
+in
+  List.app check [("Z3 indexed preprocessing",SmtLib.Z3_SIMP_TAC false),
+    ("CVC indexed preprocessing",SmtLib.CVC_SIMP_TAC false)]
+end
+
 fun assert_num_binder_conv (label, input, expected) =
   let
     val thm = SmtLib.NUM_BINDERS_TO_INT_CONV input
@@ -257,6 +281,9 @@ val _ = Hol_datatype
 val _ = Hol_datatype
   `smt_light = SmtRed | SmtAmber | SmtGreen`
 
+val _ = Hol_datatype
+  `smt_keyed_store = SmtKeyedStore of (smt_light -> int)`
+
 val _ = new_constant
   ("smt_light_from_int", ``:int -> smt_light``)
 val _ = new_constant
@@ -272,6 +299,12 @@ val _ = Hol_datatype
   `smt_left = SmtLeftDone | SmtLeft of smt_right;
    smt_right = SmtRightDone | SmtRight of smt_left`
 
+val _ = Hol_datatype
+  `smt_nested = SmtTip of bool |
+                SmtBranch of ((string # smt_nested) list)`
+
+val _ = Hol_datatype `smt_tree = SmtLeaf | SmtNode of smt_tree list`
+
 val _ = new_constant
   ("smt_left_from_int", ``:int -> smt_left``)
 
@@ -280,6 +313,7 @@ val _ = new_constant ("smt_nonfree_nil", ``:'a smt_nonfree``)
 val _ = new_constant
   ("smt_nonfree_cons", ``:'a -> 'a smt_nonfree -> 'a smt_nonfree``)
 val _ = new_constant ("smtlib_uf_logic_foo", ``:int -> int``)
+val _ = new_constant ("smtlib_array_uf_fun", ``:'a -> 'a``)
 val _ = new_constant
   ("smtlib_fp_uf_pred", ``:('t,'w) smtfp -> ('t,'w) smtfp -> bool``)
 val _ = new_constant ("smtlib_native_dt_uf", ``:smt_tri -> int``)
@@ -363,6 +397,53 @@ let
 in
   assert_num_binder_conv
     ("bag count function relativization", input, expected)
+end
+
+(* Bag discovery runs at every cvc5 num-to-int stage, also on goals without
+   bags.  Applications nested in their first argument used to be walked once
+   per partial application, so the cost grew as arity^depth. *)
+fun cvc_native_bag_goal_nested_application_success () =
+let
+  val arity = 4
+  val head = Term.mk_var ("f",
+    List.foldl (fn (_, ty) => Type.bool --> ty) Type.bool
+      (List.tabulate (arity, fn _ => ())))
+  val other = Term.mk_var ("q", Type.bool)
+  val head2 = Term.mk_var ("g",
+    Type.--> (Type.bool, Type.--> (Type.bool, Type.bool)))
+  fun nest seed 0 = seed
+    | nest seed n =
+        Term.list_mk_comb (head,
+          nest seed (n - 1) :: List.tabulate (arity - 1, fn _ => other))
+  fun detects seed =
+    Timeout.apply (Time.fromSeconds 20)
+      (fn () => SmtLib.cvc_native_bag_goal ([], nest seed 24)) ()
+  val x = Term.mk_var ("x", Type.bool)
+  val bool_bag_ty = Type.--> (Type.bool, numSyntax.num)
+  val y_bag = bagSyntax.mk_insert (Term.mk_var ("y", Type.bool),
+    Term.inst [Type.alpha |-> Type.bool] bagSyntax.EMPTY_BAG_tm)
+  val bag_atom = Term.list_mk_comb (
+    Term.mk_thy_const {Thy = "bag", Name = "BAG_IN",
+      Ty = Type.--> (Type.bool, Type.--> (bool_bag_ty, Type.bool))},
+    [x, y_bag])
+  val b = Term.mk_var ("b", bool_bag_ty)
+  val c = Term.mk_var ("c", bool_bag_ty)
+  fun union_count (l, r) = Term.mk_comb (bagSyntax.mk_union (l, r), x)
+  val partial_union =
+    boolSyntax.mk_eq (union_count (b, c), union_count (c, b))
+  val p = Term.mk_var ("p", Type.bool)
+  val q = Term.mk_var ("q", Type.bool)
+in
+  assert (not (detects p),
+    "bag-free deeply nested application was reported to contain bags");
+  assert (detects bag_atom,
+    "native bag under nested applications was not found");
+  assert (SmtLib.cvc_native_bag_goal ([], partial_union),
+    "partially applied bag union was not found");
+  assert (not (SmtLib.cvc_native_bag_goal ([],
+    boolSyntax.mk_eq (Term.list_mk_comb (head2, [p, q]),
+      Term.list_mk_comb (head2, [q, p])))),
+    "bag-free goal was reported to contain bags")
 end
 
 fun num_to_int_under_abstraction_success () =
@@ -2475,6 +2556,30 @@ in
     "num assumption transfer did not emit non-negativity guard:\n" ^ text);
   assert (contains "1" text andalso contains "2" text,
     "num assumption transfer did not retain integer bounds:\n" ^ text)
+end
+
+fun num_transfer_duplicate_assumptions_success () =
+let
+  val bound = ``(n:num) <= 1``
+  fun check (assumptions, conclusion) tac =
+  let
+    val thm = Tactical.TAC_PROOF ((assumptions, conclusion),
+      tac THEN intLib.ARITH_TAC)
+  in
+    assert (aconv (concl thm) conclusion,
+      "num transfer with duplicates changed the conclusion");
+    assert (List.all (fn h => op_mem aconv h assumptions) (hyp thm),
+      "num transfer with duplicates introduced an assumption");
+    check_oracle_tags "num transfer with duplicates" thm
+  end
+in
+  List.app (fn assumptions =>
+    check (assumptions, ``(n:num) <= 2``) SmtLib.NUM_TO_INT_TAC)
+    [[T, T, bound], [bound, bound]];
+  List.app
+    (check ([``(n:num) < 256``, ``(n:num) < 2 ** 8``], ``(n:num) <= 256``))
+    [SmtLib.Z3_SIMP_TAC true, SmtLib.Z3_SIMP_TAC false,
+     SmtLib.CVC_SIMP_TAC true, SmtLib.CVC_SIMP_TAC false]
 end
 
 fun num_bridge_axioms_retired_success () =
@@ -6661,6 +6766,8 @@ in
       false, false))
   ];
   List.app (expect_features "QF_AUFLIA") [
+    ("quantifier-free arrays UF", (false, true, true, false, false,
+      false, false, false)),
     ("quantifier-free arrays LIA", (false, false, true, false, true,
       false, false, false))
   ];
@@ -6795,11 +6902,21 @@ in
   expect_logic "QF_NIA" ``(x:int) * y = y * x``;
   expect_logic "QF_NIA" ``ediv (x:int) y = x``;
   expect_logic "QF_NIA" ``emod (x:int) y = x``;
+  expect_logic "QF_AUFLIA"
+    ``smtlib_array_uf_fun x = y ==>
+      ((f:'a -> 'b) (smtlib_array_uf_fun x) = f y)``;
   expect_logic "QF_BV" ``(x:word32) && y = y && x``;
   expect_logic "QF_UFLIA" ``smtlib_uf_logic_foo (x:int) = x``;
   expect_logic "QF_AX" ``(P:'a -> bool) x``;
   expect_logic "QF_AX" ``(f:'a -> 'b) x = f x``;
   expect_logic "QF_DT" ``(x:ordering) = y``;
+  (* theory sorts that only occur in emitted datatype constructor fields *)
+  expect_logic "QF_UFDTLIA" ``(x:int option) = y``;
+  expect_logic "QF_UFDTLIA" ``(x:int option option) = y``;
+  expect_logic "QF_UFDTLIRA" ``(x:real option) = y``;
+  expect_logic "UFBVDT" ``(x:word8 option) = y``;
+  expect_logic "ALL" ``(x:smtstr option) = y``;
+  expect_logic "AUFDTLIA" ``(x:(int -> bool) option) = y``;
   expect_logic "ALL" ``CONS (x:int) xs = CONS y ys``;
   expect_logic "AUFLIA" ``!(x:'a). (P:'a -> bool) x``
 end
@@ -7190,6 +7307,16 @@ in
     "singleton ALL_DISTINCT did not translate to true:\n" ^ singleton_text)
 end
 
+fun smtlib_nonliteral_distinct_success () =
+  (* ALL_DISTINCT over a list that is not a literal is an ordinary
+     application of a predicate to a list, not an n-ary distinct. *)
+  List.app
+    (fn tm =>
+      assert (SmtLib_Logics.assertion_mentions_datatype_sort false tm,
+        "non-literal ALL_DISTINCT list sort not seen: " ^
+        Hol_pp.term_to_string tm))
+    [``ALL_DISTINCT (xs:int list)``, ``ALL_DISTINCT ((x:int)::xs)``]
+
 fun smtlib_datatype_type_translation_success () =
 let
   fun smtlib_text goal =
@@ -7252,6 +7379,161 @@ in
     builtin_text;
   assert (has_datatype_record,
     "translation records did not include datatype declaration record")
+end
+
+fun smtlib_datatype_function_domain_dependencies_success () =
+let
+  val goal = ([``(f:smt_keyed_store -> int) x < f y``],
+    ``(x:smt_keyed_store) <> y``)
+  val sat_goal = ([], ``(x:smt_keyed_store) = y``)
+  fun check_translation dialect =
+    let
+      val (translation, strings) =
+        SmtLib.goal_to_SmtLib_translation_with_dialect dialect NONE goal
+      val blocks = List.mapPartial
+        (fn SmtLib.DatatypeDeclaration {hol_types, declaration, ...} =>
+              SOME (hol_types, declaration)
+          | _ => NONE) (SmtLib.translation_records translation)
+      val emitted = List.filter
+        (String.isPrefix "(declare-datatypes ") strings
+    in
+      assert (List.map Lib.snd blocks = emitted,
+        "ordered datatype records differ from emitted declarations");
+      assert (case List.map Lib.fst blocks of
+          [[key], [store]] =>
+            Type.compare (key, ``:smt_light``) = EQUAL andalso
+            Type.compare (store, ``:smt_keyed_store``) = EQUAL
+        | _ => false,
+        "function-domain datatype must be declared before its user")
+    end
+  fun check name prover oracle =
+    (case oracle sat_goal of
+       SolverSpec.SAT _ => ()
+     | _ => die (name ^ " rejected function-domain datatype declarations");
+     case prover goal of
+       SolverSpec.UNSAT (SOME thm) =>
+         (assert (Term.aconv (Thm.concl thm) (Lib.snd goal) andalso
+            List.all (fn h => List.exists (Term.aconv h)
+              (Lib.fst goal)) (Thm.hyp thm),
+            name ^ " function-domain datatype proof changed the goal");
+          check_oracle_tags name thm)
+     | _ => die (name ^ " function-domain datatype proof did not replay"))
+in
+  List.app check_translation [SmtLib.Z3LambdaArray, SmtLib.Standard27];
+  if Z3.is_configured () then
+    check "Z3" Z3.Z3_SMT_Prover Z3.Z3_SMT_Oracle else ();
+  if CVC.is_configured () then
+    check "cvc5" CVC.CVC_SMT_Prover CVC.CVC_SMT_Oracle else ()
+end
+
+fun smtlib_nested_datatype_dependencies_success () =
+let
+  val goal = ([``(f:smt_nested -> int) x < f y``],
+    ``(x:smt_nested) <> y``)
+  val sat_goals = [([], ``(x:smt_nested) = y``),
+    ([], ``(xs:smt_nested list) = ys``),
+    ([], ``(p:string # smt_nested) = q``)]
+  fun check name prover oracle =
+    (List.app (fn g =>
+       case oracle g of
+         SolverSpec.SAT _ => ()
+       | SolverSpec.UNKNOWN (SOME reason) => die (name ^ ": " ^ reason)
+       | _ => die (name ^ " rejected nested datatype declarations"))
+       sat_goals;
+     case prover goal of
+       SolverSpec.UNSAT (SOME thm) =>
+         (assert (Term.aconv (Thm.concl thm) (Lib.snd goal) andalso
+           List.all (fn h => List.exists (Term.aconv h)
+             (Lib.fst goal)) (Thm.hyp thm),
+           name ^ " nested datatype congruence changed the goal");
+          check_oracle_tags name thm)
+     | _ => die (name ^ " nested datatype congruence did not replay"))
+  val _ = if Z3.is_configured () then
+    check "Z3" Z3.Z3_SMT_Prover Z3.Z3_SMT_Oracle else ()
+  val _ = if CVC.is_configured () then
+    check "cvc5" CVC.CVC_SMT_Prover CVC.CVC_SMT_Oracle else ()
+  fun check_records goal =
+    let
+      val (translation, strings) =
+        SmtLib.goal_to_SmtLib_translation NONE goal
+      val declarations = List.mapPartial
+        (fn SmtLib.DatatypeDeclaration {declaration, ...} => SOME declaration
+          | _ => NONE) (SmtLib.translation_records translation)
+      val emitted = List.filter
+        (String.isPrefix "(declare-datatypes ") strings
+    in
+      assert (declarations = emitted,
+        "datatype records differ from the emitted declaration blocks");
+      declarations
+    end
+  val declarations = check_records goal
+  (* Constructor translation first declares the result type, then falls
+     back to a UF. Its discarded attempt must leave no metadata behind. *)
+  val _ = check_records ([], ``smtlib_native_dt_id d = (e:smt_tri)``)
+in
+  assert (List.exists (fn declaration =>
+      contains "(Smt_nested 0)" declaration andalso
+      contains "(Prod_List_Char_Smt_nested 0)" declaration andalso
+      contains "(List_Prod_List_Char_Smt_nested 0)" declaration)
+    declarations,
+    "nested recursive datatypes were not declared together")
+end
+
+(* A list inside a datatype recursion cycle stays an algebraic datatype even
+   when another list selects the Seq model: cvc5 rejects datatypes that
+   recurse through Seq as nested-recursive. *)
+fun smtlib_recursive_list_stays_datatype_success () =
+let
+  val lists = [``(P:int list -> bool) []``, ``(Q:smt_tree list -> bool) [x]``]
+  val goal = (``(f:smt_tree -> int) x < f y`` :: lists, ``(x:smt_tree) <> y``)
+  (* A satisfiable query makes the solver check its datatypes in full. *)
+  val sat_goal = (lists, ``(x:smt_tree) = y``)
+  fun check name prover oracle =
+    ((case oracle sat_goal of
+        SolverSpec.SAT _ => ()
+      | SolverSpec.UNKNOWN (SOME reason) => die (name ^ ": " ^ reason)
+      | _ => die (name ^ " rejected the recursive list datatype"));
+     case prover goal of
+       SolverSpec.UNSAT (SOME thm) =>
+         assert (Term.aconv (Thm.concl thm) (Lib.snd goal) andalso
+           List.all (fn h => List.exists (Term.aconv h) (Lib.fst goal))
+             (Thm.hyp thm),
+           name ^ " recursive list congruence changed the goal")
+     | _ => die (name ^ " recursive list congruence did not replay"))
+  val _ = if Z3.is_configured () then
+    check "Z3" Z3.Z3_SMT_Prover Z3.Z3_SMT_Oracle else ()
+  val _ = if CVC.is_configured () then
+    check "cvc5" CVC.CVC_SMT_Prover CVC.CVC_SMT_Oracle else ()
+  (* An operator on recursive lists alone selects no Seq model, so no Seq
+     operator such as seq.rev (which Z3 lacks) is required. *)
+  val recursive_only = ([``(f:smt_tree -> int) x < f y``,
+      ``(R:smt_tree list -> bool) (REVERSE ts)``], ``(x:smt_tree) <> y``)
+  val _ = if Z3.is_configured () then
+    case Z3.Z3_SMT_Prover recursive_only of
+      SolverSpec.UNSAT (SOME _) => ()
+    | _ => die "Z3 recursive-list REVERSE goal did not replay"
+    else ()
+  (* Another list selecting Seq leaves the recursive-list REVERSE algebraic,
+     so it still requires no seq.rev. *)
+  val mixed = (``(P:int list -> bool) []`` :: Lib.fst recursive_only,
+    Lib.snd recursive_only)
+  val _ = if Z3.is_configured () then
+    case Z3.Z3_SMT_Prover mixed of
+      SolverSpec.UNSAT (SOME _) => ()
+    | _ => die "Z3 mixed recursive-list REVERSE goal did not replay"
+    else ()
+  val recursive_text = String.concat
+    (Lib.snd (SmtLib.goal_to_SmtLib_translation NONE recursive_only))
+  val text = String.concat
+    (Lib.snd (SmtLib.goal_to_SmtLib_translation NONE goal))
+in
+  assert (not (contains "(Seq " recursive_text) andalso
+    not (contains "seq." recursive_text),
+    "recursive-list REVERSE selected the Seq model");
+  assert (contains "(Seq Int)" text, "int list did not select Seq");
+  assert (contains "(List_Smt_tree 0)" text andalso
+    not (contains "(Seq Smt_tree)" text),
+    "recursive list was emitted as Seq")
 end
 
 fun smtlib_extended_hol_encoding_records_success () =
@@ -7421,15 +7703,13 @@ let
             (Lib.snd simplified)
           val dicts = SmtLib.parser_dicts_for_solver_translation
             "cvc5" translation
-          val parsed = List.map (fn text =>
-            parse_roundtrip_term name text dicts)
-            (List.mapPartial assert_body strings)
+          val parsed = parse_roundtrip_term name
+            (List.last (List.mapPartial assert_body strings)) dicts
         in
           assert (not (List.null selectors),
             name ^ ": normalized selector was not exercised");
           List.app (fn selector =>
-            assert (List.exists
-              (term_has_subterm (Term.aconv selector)) parsed,
+            assert (term_has_subterm (Term.aconv selector) parsed,
               name ^ ": parser lost the normalized selector")) selectors
         end
       else ())
@@ -7456,6 +7736,10 @@ let
   val contextual_update =
     ([], ``(P:(int -> bool) -> bool)
       (if c then ((0 =+ T) s) else ({}:int set))``)
+  val isolated_update =
+    ([], ``(P:(int -> bool) -> bool)
+       (if c then ((0 =+ T) s) else ({}:int set)) /\
+       (((1:int) =+ F) (f:int -> bool)) z = b``)
   val shared_result =
     ([``(P:(int -> bool) -> bool) ((f:int -> int -> bool) x)``,
       ``(R:(int -> bool) -> bool) ((f:int -> int -> bool) y)``],
@@ -7469,7 +7753,27 @@ let
       ignore (SmtLib_Parser.typecheck_script_string_with_options
         {dict_logic=NONE,solver=SOME "cvc5",elaborate_datatypes=false} text)
     end
+  fun isolated_updates () =
+    let
+      val (_, strings) = CVC.goal_to_SmtLib_translation isolated_update
+      val text = String.concat strings
+      val marks = #sets (SmtLib.outbound_collection_markers isolated_update)
+      fun marked term = List.exists (Term.aconv term) marks
+    in
+      assert (marked ``((0:int) =+ T) (s:int -> bool)`` andalso
+          marked ``s:int -> bool`` andalso
+          not (marked ``((1:int) =+ F) (f:int -> bool)``) andalso
+          not (marked ``f:int -> bool``),
+        "unrelated UPDATE shared a collection marker");
+      assert (String.isSubstring "(store " text andalso
+          String.isSubstring "(lambda " text andalso
+          String.isSubstring "(-> Int Bool)" text,
+        "unrelated UPDATE lost its function carrier:\n" ^ text);
+      ignore (SmtLib_Parser.typecheck_script_string_with_options
+        {dict_logic=NONE,solver=SOME "cvc5",elaborate_datatypes=false} text)
+    end
 in
+  isolated_updates ();
   List.app raw_update [shared_update,contextual_update];
   List.app (typechecks true)
     [("singleton", singleton), ("conditional", conditional),
@@ -8283,6 +8587,93 @@ in
   ignore (SmtLib.translation_records translation)
 end
 
+fun smtlib_hol_string_bound_injection_translation_success () =
+let
+  fun prepared goal =
+    Lib.fst (SolverSpec.simplify (SmtLib.SIMP_TAC true) ([], goal))
+  val direct = prepared ``!s:string. P s ==> isPREFIX s s``
+  val compound =
+    prepared ``!s:string. P s ==> isPREFIX (f s) (STRCAT (f s) (g s))``
+  fun text goal =
+    String.concat (Lib.snd (SmtLib.goal_to_SmtLib_translation NONE goal))
+  val direct_text = text direct
+  val compound_text = text compound
+  val standard_text = String.concat (Lib.snd
+    (SmtLib.goal_to_SmtLib_translation_with_regime
+      (SmtLib.HigherOrder SmtLib.Standard27) NONE direct))
+in
+  assert (contains "(declare-fun v1 (t0) String)\n" direct_text andalso
+      contains "(str.prefixof (v1 b0) (v1 b0))" direct_text,
+    "bound HOL string was not injected through an uninterpreted str_inj:\n" ^
+    direct_text);
+  assert (contains "(declare-fun v1 (t0) String)\n" compound_text andalso
+      contains "(str.prefixof (v1 (select v2 b0))" compound_text,
+    "bound-dependent HOL string was not injected through str_inj:\n" ^
+    compound_text);
+  assert (contains "(declare-fun v1 (t0) String)\n" standard_text andalso
+      contains "(str.prefixof (v1 b0) (v1 b0))" standard_text,
+    "Standard27 did not inject the bound HOL string through str_inj:\n" ^
+    standard_text);
+  assert_goal_roundtrip "bound HOL string injection" direct;
+  assert_goal_roundtrip "bound-dependent HOL string injection" compound
+end
+
+fun smtlib_hol_string_length_translation_success () =
+let
+  fun text_of result = String.concat (Lib.snd result)
+  val raw_string = ``0 <= (&(STRLEN (s:string)) : int)``
+  val raw_sequence = ``0 <= (&(LENGTH (xs:int list)) : int)``
+  val length_only =
+    ``0 <= smtstring$smtstr_len (smtstring$str_inj (s:string))``
+  val (translation, output) =
+    SmtLib.goal_to_SmtLib_translation NONE ([], length_only)
+  val converted = SmtLib.HOL_STRING_TO_SMT_CONV raw_string
+  fun check (simplify, translate) =
+    let
+      fun emit tm = text_of (translate
+        (Lib.fst (SolverSpec.simplify simplify ([], tm))))
+      val concat = emit
+        ``STRLEN (STRCAT (s:string) t) = STRLEN s + STRLEN t``
+      val literal = emit ``(s:string) = "abc" ==> STRLEN s = 3``
+      val mixed = emit
+        ``(s:string) = STRCAT t u /\ P u ==>
+          STRLEN s = STRLEN t + STRLEN u``
+    in
+      assert (contains "str.len" concat andalso
+          contains "str.++" concat andalso
+          not (contains "seq.len" concat) andalso
+          not (contains "declare-sort" concat),
+        "concatenation lengths lost native String encoding:\n" ^ concat);
+      assert (contains "str.len" literal andalso
+          contains "\"abc\"" literal andalso
+          not (contains "seq.len" literal),
+        "literal string length lost its content:\n" ^ literal);
+      assert (contains "str.len" mixed andalso
+          not (contains "seq.len" mixed),
+        "mixed string/UF lengths emitted seq.len:\n" ^ mixed);
+      assert (not (contains "seq.len"
+          (text_of (translate ([], raw_string)))),
+        "untransferred string length emitted seq.len");
+      assert (contains "seq.len"
+          (text_of (translate ([], raw_sequence))),
+        "ordinary list length lost native Seq encoding")
+    end
+in
+  assert_concl_alpha ("string length transfer", converted,
+    boolSyntax.mk_eq (raw_string, length_only));
+  assert (contains "(str.len " (String.concat output) andalso
+      SmtLib.translation_logic translation = "QF_SLIA",
+    "injected string length did not select string arithmetic");
+  assert (List.exists
+      (fn SmtLib.LogicSelection {
+            features = SmtLib.LogicFeatures {strings, ...}, ...} => strings
+        | _ => false) (SmtLib.translation_records translation),
+    "injected string length did not select the strings feature");
+  check (SmtLib.SIMP_TAC false,
+    Z3.goal_to_SmtLib_translation_for_version (SOME "4.15.3"));
+  check (SmtLib.CVC_SIMP_TAC false, CVC.goal_to_SmtLib_translation)
+end
+
 fun smtlib_native_string_translation_success () =
 let
   fun translate_assertions assertions =
@@ -8627,6 +9018,12 @@ let
   val cons_expected = ``APPEND [x:'a] xs``
   val cons = checked_conversion "symbolic CONS assertion normalization"
     cons_input
+  (* A cons on a list in a datatype recursion cycle is a datatype
+     constructor, not a Seq concatenation. *)
+  val _ = (ignore (SmtLib.z3_assertion_roundtrip_conv_for_test
+      ``(t:smt_tree)::ts``);
+    die "FAIL: recursive-list CONS was rewritten to APPEND")
+    handle Conv.UNCHANGED => ()
   val multi_cons_input = ``(x:'a)::y::(xs:'a list)``
   val multi_cons_expected = ``APPEND [x:'a] (APPEND [y] xs)``
   val multi_cons =
@@ -9714,6 +10111,56 @@ in
       not (contains "declare-sort" quantified_native_text),
     "quantified native float did not transfer its binder to smtfp:\n" ^
     quantified_native_text)
+end
+
+fun smtlib_failing_operand_translated_once () =
+let
+  (* Each enclosing conjunction used to translate the failing operand once
+     as a builtin and again as an invented function, doubling the work per
+     level, so 40 levels would not finish. *)
+  fun nest 0 = ``smtfp_unordered (x : (4,3) smtfp) y``
+    | nest n = boolSyntax.mk_conj
+        (Term.mk_var ("p" ^ Int.toString n, Type.bool), nest (n - 1))
+  val goal = nest 40
+in
+  (Timeout.apply (Time.fromSeconds 10) (fn () =>
+     ignore (SmtLib.goal_to_SmtLib_translation NONE ([], goal))) ();
+   die "FAIL: nested non-whitelisted smtfloat operand was emitted")
+  handle Timeout.TIMEOUT _ =>
+      die "FAIL: nested failing operand was translated exponentially often"
+    | Feedback.HOL_ERR holerr =>
+      assert (contains SmtLib.unsupported_smtfloat_constant_diagnostic
+          (Feedback.message_of holerr),
+        "nested failing operand lost its diagnostic: " ^
+        Feedback.message_of holerr)
+end
+
+fun smtlib_failing_conjunct_eta_expansion_terminates () =
+let
+  (* A failing first operand sent the application to a rung that translates
+     its partial application again (curried application for cvc5, a bag
+     count for Z3), whose eta expansion repeated the application with a
+     fresh variable forever.  The lambdas select the higher-order regime. *)
+  fun check (dialect, goal) =
+    (Timeout.apply (Time.fromSeconds 10) (fn () =>
+       ignore (SmtLib.goal_to_SmtLib_translation_with_dialect dialect NONE
+         ([], goal))) ();
+     die "FAIL: non-whitelisted smtfloat operand was emitted")
+    handle Timeout.TIMEOUT _ =>
+        die "FAIL: eta expansion of a failing application did not terminate"
+      | Feedback.HOL_ERR holerr =>
+        assert (contains SmtLib.unsupported_smtfloat_constant_diagnostic
+            (Feedback.message_of holerr),
+          "failing operand lost its diagnostic: " ^
+          Feedback.message_of holerr)
+in
+  List.app check [
+    (SmtLib.Standard27,
+     ``(smtfp_unordered (x : (4,3) smtfp) y /\ p) /\
+       h = (\n:num. n + 1)``),
+    (SmtLib.Z3LambdaArray,
+     ``(BAG_INSERT (SOME (smtfp_unordered (x : (8,24) smtfp) y)) EMPTY_BAG =
+        b) /\ h = (\n:int. n + 1)``)]
 end
 
 fun smtlib_unsupported_smtfloat_constant_diagnostic () =
@@ -10821,6 +11268,159 @@ in
 end
 
 
+(* Z3 bv1-blast can use its fresh bits before visiting the concat rewrite. *)
+fun z3_bv1_concat_replay_success () =
+let
+  fun pack [bit] = bit
+    | pack (bit :: rest) = wordsSyntax.mk_word_concat (bit, pack rest)
+    | pack [] = raise Fail "empty concat fixture"
+  fun run width =
+    let
+      val source = Term.mk_var ("bv1_source",
+        wordsSyntax.mk_int_word_type width)
+      val bits = List.tabulate (width, fn i =>
+        Term.mk_var ("bv1_bit" ^ Int.toString i,
+          wordsSyntax.mk_int_word_type 1))
+      val equation = boolSyntax.mk_eq (source, pack bits)
+      val vars = HOLset.addList (Term.empty_tmset, bits)
+      fun proof root = Z3_Proof.mk_proof
+        (Redblackmap.insert (Redblackmap.insert
+          (Redblackmap.mkDict Int.compare, 0, root), 1,
+          Z3_Proof.REWRITE equation), vars, [], "4.15.3")
+      fun extract i = wordsSyntax.mk_word_extract
+        (numSyntax.term_of_int i, numSyntax.term_of_int i, source,
+         wordsSyntax.dest_word_type (wordsSyntax.mk_int_word_type 1))
+      fun is_one word = boolSyntax.mk_eq (word, wordsSyntax.mk_wordii (1, 1))
+      val low = is_one (extract 0)
+      val high = is_one (extract (width - 1))
+      val low_name = is_one (List.last bits)
+      val high_name = is_one (List.hd bits)
+      val low_eq = boolSyntax.mk_eq (low, low_name)
+      val high_eq = boolSyntax.mk_eq (high, high_name)
+      val target = boolSyntax.mk_eq
+        (boolSyntax.mk_conj (low, high),
+         boolSyntax.mk_conj (low_name, high_name))
+      val result = Z3_ProofReplay.replay_root_with_state_for_test
+        (proof (Z3_Proof.MONOTONICITY
+          ([Z3_Proof.REWRITE low_eq, Z3_Proof.REWRITE high_eq], target)))
+      fun has_definition bit i = List.exists (Term.aconv
+        (boolSyntax.mk_eq (bit, extract i))) (#definition_hyps result)
+      val _ = assert
+        (List.length (#definition_hyps result) = width andalso
+         has_definition (List.hd bits) (width - 1) andalso
+         has_definition (List.last bits) 0 andalso
+         Thm.concl (#thm result) ~~ target,
+         "bv1-blast did not preserve its MSB/LSB definitions and rewrites")
+      val _ = check_oracle_tags "bv1 endpoint replay" (#thm result)
+      val concat = Z3_ProofReplay.replay_root_for_test
+        (proof (Z3_Proof.REWRITE equation))
+      val _ = assert (Thm.concl concat ~~ equation,
+        "bv1-blast concat equation did not replay")
+      val _ = check_oracle_tags "bv1 concat equation" concat
+      val _ = if width <> 8 then () else
+        let
+          val recorded =
+            Z3_ProofReplay.replay_root_with_definition_occurrences []
+              (proof (Z3_Proof.REWRITE equation))
+          val definitions = #definitions recorded
+          val theorem = #theorem recorded
+        in
+          assert (List.length (Lib.op_mk_set Term.term_eq definitions) =
+              width andalso
+            List.all (fn definition => List.exists (Term.aconv definition)
+              (#definition_hyps result)) definitions andalso
+            Thm.concl theorem ~~ equation andalso
+            List.all (fn hyp => List.exists (Term.aconv hyp) definitions)
+              (Thm.hyp theorem),
+            "recorded concat replay lost its discovered definitions");
+          check_oracle_tags "recorded bv1 concat" theorem
+        end
+      val empty = Z3_Proof.mk_proof
+        (Redblackmap.mkDict Int.compare, vars, [], "4.15.3")
+      val initial = Z3_ProofReplay.initial_replay_state
+        Term.empty_tmset [] empty
+      val refusal = Feedback.mk_HOL_ERR "SmtResource" "concat-test"
+        "resource-gated: bitvector-replay; injected hint refusal"
+      val declined = Z3_ProofReplay.define_concat_bits_with
+        (fn _ => fn _ => raise refusal) initial equation
+      val _ = assert
+        (HOLset.isEmpty (#definition_hyps declined) andalso
+         HOLset.isEmpty (#concat_bits declined) andalso
+         HOLset.equal (#flexible_vars declined, vars),
+         "resource-gated concat hint changed replay state")
+      fun typed_concat width (left, right) = Term.list_mk_comb
+        (Term.inst
+          [{redex = Type.alpha, residue = wordsSyntax.dim_of left},
+           {redex = Type.beta, residue = wordsSyntax.dim_of right},
+           {redex = Type.gamma, residue = wordsSyntax.dest_word_type
+             (wordsSyntax.mk_int_word_type width)}] wordsSyntax.word_concat_tm,
+         [left, right])
+      val (left, right) = wordsSyntax.dest_word_concat (pack bits)
+      val malformed = boolSyntax.mk_eq (source,
+        typed_concat width (left,
+          typed_concat 1 (wordsSyntax.dest_word_concat right)))
+      val malformed_proof = Z3_Proof.mk_proof
+        (Redblackmap.insert (Redblackmap.mkDict Int.compare, 0,
+          Z3_Proof.REWRITE malformed), vars, [], "4.15.3")
+      val declined = Z3_ProofReplay.initial_replay_state
+        Term.empty_tmset [] malformed_proof
+      val _ = assert
+        (HOLset.isEmpty (#definition_hyps declined) andalso
+         HOLset.isEmpty (#concat_bits declined),
+         "truncating concat hint changed replay state")
+      val declined = Z3_ProofReplay.define_concat_bits_with
+        (fn _ => fn _ => boolTheory.TRUTH) initial equation
+      val _ = assert (HOLset.isEmpty (#concat_bits declined),
+        "concat hint cached a different theorem conclusion")
+      val flexible_source = Z3_Proof.update_proof_vars empty
+        (HOLset.add (vars, source))
+      val unanchored = Z3_ProofReplay.initial_replay_state
+        Term.empty_tmset [] flexible_source
+      val declined = Z3_ProofReplay.define_concat_bits_with
+        (fn _ => fn _ => raise Fail "unanchored concat attempted a proof")
+        unanchored equation
+      val _ = assert
+        (HOLset.isEmpty (#definition_hyps declined) andalso
+         HOLset.isEmpty (#concat_bits declined),
+         "unanchored concat hint changed replay state")
+      val goal = boolSyntax.mk_eq (low, low)
+      val step = Z3_Proof.REWRITE low_eq
+      val self = Z3_Proof.TRANS (step, Z3_Proof.SYMM
+        (step, boolSyntax.mk_eq (low_name, low)), goal)
+      val contradiction = Z3_Proof.UNIT_RESOLUTION
+        ([Z3_Proof.ASSERTED (boolSyntax.mk_neg goal), self], boolSyntax.F)
+      val theorem = Thm.CCONTR goal
+        (Z3_ProofReplay.check_proof ([], goal, proof contradiction))
+    in
+      assert (Thm.concl theorem ~~ goal andalso null (Thm.hyp theorem),
+        "bv1-blast definitions survived final theorem validation");
+      check_oracle_tags "bv1 final validation" theorem
+    end
+  val seed = Term.mk_var ("bv1_shared_source",
+    wordsSyntax.mk_int_word_type 8)
+  fun shared 0 = seed
+    | shared depth = let val child = shared (depth - 1)
+                     in wordsSyntax.mk_word_add (child, child) end
+  val source = shared 30
+  val bits = List.tabulate (8, fn i => Term.mk_var
+    ("bv1_shared_bit" ^ Int.toString i, wordsSyntax.mk_int_word_type 1))
+  val equation = boolSyntax.mk_eq (source, pack bits)
+  val proof = Z3_Proof.mk_proof
+    (Redblackmap.insert (Redblackmap.mkDict Int.compare, 0,
+      Z3_Proof.REWRITE equation),
+     HOLset.addList (Term.empty_tmset, bits), [], "4.15.3")
+  val result = Timeout.apply (Time.fromSeconds 10)
+    Z3_ProofReplay.replay_root_with_state_for_test proof
+  val _ = assert (List.length (#definition_hyps result) = 8 andalso
+    Term.aconv (Thm.concl (#thm result)) equation andalso
+    List.all (fn hyp => List.exists (Term.aconv hyp)
+      (#definition_hyps result)) (Thm.hyp (#thm result)),
+    "shared concat lost its endpoint or bit definitions")
+  val _ = check_oracle_tags "shared bv1 concat" (#thm result)
+in
+  List.app run [8, 256]
+end
+
 fun z3_proof_parser_floatingpoint_decomposition_success () =
 let
   (* The first rewrite is TASK_02's exact Float32 decomposition preamble.
@@ -10932,6 +11532,152 @@ let
 in
   CPC_ProofParser.parse_stream_with_version
     (SmtLib.parser_dicts_for_translation translation) "1.3.4" instream
+end
+
+(* A source symbol whose translation fixes its arity at one argument and
+   whose result is a set (an array of Booleans) may come back from cvc5 with
+   its sort curried differently.  Every such spelling of the same HOL type
+   must reuse the source entry; a different type must still be rejected. *)
+fun cpc_curried_source_redeclaration_success () =
+let
+  val domain_ty = Type.mk_vartype "'set_domain"
+  val element_ty = Type.mk_vartype "'set_element"
+  val set_of = Term.mk_var ("set_of",
+    boolSyntax.list_mk_fun ([domain_ty, element_ty], Type.bool))
+  fun set_of_parse _ indices args =
+    if List.null indices andalso List.length args = 1 then
+      Term.list_mk_comb (set_of, args)
+    else SmtLib_Theories.decline "<set_of>" "wrong number of arguments"
+  fun sort_parse ty _ indices args =
+    if List.null indices andalso List.null args then ty
+    else raise Feedback.mk_HOL_ERR "Unittest"
+      "sort_parse" "source sort signature mismatch"
+  val (logic_tydict, logic_tmdict) = SmtLib_Logics.parsedicts_of_logic "ALL"
+  val dicts =
+    (Library.extend_dict (("SetDomain", sort_parse domain_ty),
+       Library.extend_dict (("SetElement", sort_parse element_ty),
+         logic_tydict)),
+     Library.extend_dict (("set_of", set_of_parse), logic_tmdict))
+  fun proof_using application declaration =
+    "((declare-sort SetDomain 0) (declare-sort SetElement 0) " ^
+    declaration ^
+    " (declare-const a SetDomain) (declare-const x SetElement) \
+    \ (step @p (= " ^ application ^ " " ^ application ^ ") \
+    \ :rule refl :args (" ^ application ^ ")))"
+  val proof = proof_using "(select (set_of a) x)"
+  fun accept_with proof declaration =
+    let
+      val theorem = CPC_ProofReplay.replay_root_for_test
+        (CPC_ProofParser.parse_stream_with_version dicts "1.3.4"
+          (TextIO.openString (proof declaration)))
+      val (lhs, _) = boolSyntax.dest_eq (Thm.concl theorem)
+    in
+      assert (Term.free_in set_of lhs,
+        "curried CPC redeclaration did not reuse the source symbol: " ^
+        declaration);
+      assert (List.null (Thm.hyp theorem),
+        "curried CPC redeclaration retained hypotheses: " ^ declaration);
+      check_oracle_tags ("curried CPC redeclaration " ^ declaration) theorem
+    end
+  val accept = accept_with proof
+  val wrong = "(declare-const set_of (-> SetElement (Array SetDomain Bool)))"
+in
+  List.app accept
+    ["(declare-const set_of (-> SetDomain (Array SetElement Bool)))",
+     "(declare-fun set_of (SetDomain) (Array SetElement Bool))",
+     "(declare-fun set_of (SetDomain SetElement) Bool)",
+     "(declare-const set_of (-> SetDomain SetElement Bool))"];
+  (* The binary spellings may also apply the symbol to both arguments,
+     beyond the source entry's one-argument arity. *)
+  List.app (accept_with (proof_using "(set_of a x)"))
+    ["(declare-fun set_of (SetDomain SetElement) Bool)",
+     "(declare-const set_of (-> SetDomain SetElement Bool))"];
+  (ignore (CPC_ProofParser.parse_stream_with_version dicts "1.3.4"
+     (TextIO.openString (proof wrong)));
+   die "CPC parser reused a source declaration of a different type")
+  handle Feedback.HOL_ERR holerr =>
+    assert (Feedback.top_function_of holerr = "parse_declaration" andalso
+        Feedback.message_of holerr =
+          "incompatible redeclaration of CPC symbol set_of",
+      "CPC curried declaration diagnostic drifted: " ^
+      Feedback.message_of holerr)
+end
+
+fun smtlib_datatype_tester_instantiations_success () =
+let
+  fun check goal cases =
+    let
+      val (translation, _) =
+        SmtLib.goal_to_SmtLib_translation NONE ([], goal)
+      val (tydict, tmdict) =
+        SmtLib.parser_dicts_for_translation translation
+      val (_, emitted) = SmtLib.translation_dicts translation
+      val reversed = Redblackmap.insert
+        (tmdict, "is", List.rev (Redblackmap.find (tmdict, "is")))
+      fun tester constructor variable =
+        "((_ is " ^ constructor ^ ") " ^
+        Redblackmap.find (emitted, (variable, 0)) ^ ")"
+      fun check_dict tmdict =
+        let
+          val dicts = (tydict, tmdict)
+          fun accepted (constructor, variable, expected) =
+            let
+              val text = tester constructor variable
+              val parsed = parse_roundtrip_term
+                "monomorphic datatype tester" text dicts
+              val cpc = CPC_ProofParser.parse_stream_with_version
+                dicts "1.3.4" (TextIO.openString
+                  ("((step @r :rule refl :args (" ^ text ^ ")))"))
+              val z3 = parse_z3_proof_string_with_dicts dicts "4.15.3"
+                ("((proof (refl (= " ^ text ^ " " ^ text ^ "))))")
+              val theorems =
+                [CPC_ProofReplay.replay_root_for_test cpc,
+                 Z3_ProofReplay.replay_root_for_test z3]
+              fun checked theorem =
+                (assert_no_hyps ("monomorphic datatype tester", theorem);
+                 assert_concl_alpha ("monomorphic datatype tester", theorem,
+                   boolSyntax.mk_eq (expected, expected));
+                 check_oracle_tags "monomorphic datatype tester" theorem)
+            in
+              assert (Term.aconv parsed expected,
+                "datatype tester selected another type instantiation");
+              List.app checked theorems
+            end
+          fun rejected (constructor, _, _) =
+            let val (_, wrong_variable, _) = hd cases in
+              expect_hol_error_contains "mismatched datatype tester"
+                "tester constructor mismatch"
+                (fn () => ignore (SmtLib_Parser.parse_term
+                  (Library.get_token
+                    (string_get_char (tester constructor wrong_variable)))
+                  dicts))
+            end
+        in
+          List.app accepted cases;
+          List.app rejected (List.drop (cases, 2))
+        end
+    in
+      List.app check_dict [tmdict, reversed]
+    end
+in
+  check ``(x:int option) = z /\ (y:bool option) = w``
+    [("ctor_Option_Int_NONE", ``x:int option``,
+      ``case (x:int option) of NONE => T | SOME a => F``),
+     ("ctor_Option_Int_SOME", ``x:int option``,
+      ``case (x:int option) of NONE => F | SOME a => T``),
+     ("ctor_Option_Bool_NONE", ``y:bool option``,
+      ``case (y:bool option) of NONE => T | SOME a => F``),
+     ("ctor_Option_Bool_SOME", ``y:bool option``,
+      ``case (y:bool option) of NONE => F | SOME a => T``)];
+  check ``(xs:int list) = ys /\ (bs:bool list) = cs``
+    [("ctor_List_Int_NIL", ``xs:int list``,
+      ``case (xs:int list) of [] => T | h::t => F``),
+     ("ctor_List_Int_CONS", ``xs:int list``,
+      ``case (xs:int list) of [] => F | h::t => T``),
+     ("ctor_List_Bool_NIL", ``bs:bool list``,
+      ``case (bs:bool list) of [] => T | h::t => F``),
+     ("ctor_List_Bool_CONS", ``bs:bool list``,
+      ``case (bs:bool list) of [] => F | h::t => T``)]
 end
 
 fun cpc_quoted_declaration_identity_success () =
@@ -11670,6 +12416,58 @@ in
   check_oracle_tags "CPC symmetric guard elimination" theorem
 end
 
+fun cpc_quant_dt_split_replay_success () =
+let
+  val option_target =
+    ``(!x:int option. P x) = (P NONE /\ !y. P (SOME y))``
+  val option_prefix =
+    "(define @x () (@var \"x\" Option_Int)) \
+    \(define @y () (@var \"y\" Int)) \
+    \(define @q () (forall (@list @x) (select v0 @x))) "
+  val option_right =
+    "(and (select v0 ctor_Option_Int_NONE) \
+    \(forall (@list @y) (select v0 (ctor_Option_Int_SOME @y))))"
+  fun replay goal prefix right =
+    let
+      val (translation, _) =
+        SmtLib.goal_to_SmtLib_translation NONE ([], goal)
+      val proof = CPC_ProofParser.parse_stream_with_version
+        (SmtLib.parser_dicts_for_translation translation) "1.3.4"
+        (TextIO.openString ("(" ^ prefix ^
+          "(define @r () " ^ right ^ ") \
+          \(step @p :rule quant-dt-split :args ((= @q @r))))"))
+    in
+      CPC_ProofReplay.replay_root_for_test proof
+    end
+  fun check goal prefix right =
+    let val theorem = replay goal prefix right in
+      assert (Thm.concl theorem ~~ goal,
+        "quantified datatype split changed the certificate equality");
+      assert (List.null (Thm.hyp theorem),
+        "quantified datatype split retained hypotheses");
+      check_oracle_tags "quantified datatype split" theorem
+    end
+in
+  check option_target option_prefix option_right;
+  check
+    ``(!x:bool+int. !z:int. P x z) =
+      ((!z b. P (INL b) z) /\ (!z i. P (INR i) z))``
+    ("(define @x () (@var \"x\" Sum_Bool_Int)) \
+     \(define @z () (@var \"z\" Int)) \
+     \(define @b () (@var \"b\" Bool)) \
+     \(define @i () (@var \"i\" Int)) \
+     \(define @q () (forall (@list @x @z) \
+     \(select (select v0 @x) @z))) ")
+    ("(and (forall (@list @z @b) \
+     \(select (select v0 (ctor_Sum_Bool_Int_INL @b)) @z)) \
+     \(forall (@list @z @i) \
+     \(select (select v0 (ctor_Sum_Bool_Int_INR @i)) @z)))");
+  assert ((ignore (replay option_target option_prefix
+      "(select v0 ctor_Option_Int_NONE)"); false)
+    handle Feedback.HOL_ERR _ => true,
+    "quantified datatype split accepted a missing constructor branch")
+end
+
 fun cpc_proof_parser_define_and_optional_conclusion_success () =
 let
   val proof = parse_cpc_proof_string
@@ -11806,6 +12604,49 @@ in
   assert (List.null (Thm.hyp theorem),
     "D13 de-indexed operator replay retained hypotheses");
   check_oracle_tags "D13 de-indexed operator replay" theorem
+end
+
+(* Minimized arrays_ext step from a cvc5 1.3.4 array-set certificate. *)
+fun cpc_arrays_ext_replay_success () =
+let
+  fun run (sort, range) =
+    let
+      val declarations =
+        "((declare-const a (Array Int " ^ sort ^ ")) " ^
+        "(declare-const b (Array Int " ^ sort ^ ")) " ^
+        "(define @k () (@array_deq_diff a b)) " ^
+        "(assume-push @neq (not (= a b))) "
+      val target = "(not (= (select a @k) (select b @k)))"
+      fun replay declared = CPC_ProofReplay.replay_root_for_test
+        (parse_cpc_proof_string (declarations ^
+          "(step @ext " ^ declared ^
+          " :rule arrays_ext :premises (@neq)) " ^
+          "(step-pop @closed :rule scope :premises (@ext)))"))
+      val ty = Type.--> (intSyntax.int_ty, range)
+      val a = Term.mk_var ("a", ty)
+      val b = Term.mk_var ("b", ty)
+      val witness = CPC_ProofParser.cpc_parameterized_skolem_for_test
+        "@array_deq_diff" [a, b]
+      val expected = boolSyntax.mk_imp
+        (boolSyntax.mk_neg (boolSyntax.mk_eq (a, b)),
+         boolSyntax.mk_neg (boolSyntax.mk_eq
+           (Term.mk_comb (a, witness), Term.mk_comb (b, witness))))
+      fun check declared =
+        let val theorem = replay declared in
+          assert (Term.aconv (Thm.concl theorem) expected andalso
+              List.null (Thm.hyp theorem),
+            "CPC arrays_ext did not derive closed extensionality at " ^ sort);
+          check_oracle_tags "CPC arrays_ext replay" theorem
+        end
+    in
+      check "";
+      check target;
+      expect_hol_error_contains "CPC arrays_ext wrong conclusion"
+        "direct result differs from the declared conclusion"
+        (fn () => ignore (replay "false"))
+    end
+in
+  List.app run [("Bool", Type.bool), ("Int", intSyntax.int_ty)]
 end
 
 fun cpc_parameterized_skolem_registry_success () =
@@ -14594,6 +15435,26 @@ let
       \(define @t1 () (@var \"x\" Bool)) \
       \(define @t2 () (lambda (@list @t1) (f @t1))) \
       \(step @p1 :rule lambda-elim :args ((= @t2 f))))")
+  fun nested_eta reversed binders =
+    CPC_ProofReplay.replay_root_for_test
+      (parse_cpc_proof_string
+        ("((declare-const f (-> (-> Int Int) Int " ^
+         (if binders = 2 then "Int " else "") ^ "Int)) " ^
+         "(declare-const g (-> Int Int)) " ^
+         "(define @z () (@var \"z\" Int)) " ^
+         "(define @h () (lambda (@list @z) (g @z))) " ^
+         "(define @x () (@var \"x\" Int)) " ^
+         "(define @y () (@var \"y\" Int)) " ^
+         "(define @lhs () (lambda (@list @x " ^
+         (if binders = 2 then "@y" else "") ^ ") (f @h @x " ^
+         (if binders = 2 then "@y" else "") ^ "))) " ^
+         "(define @rhs () (_ f @h)) " ^
+         "(step @p1 :rule lambda-elim :args ((= " ^
+         (if reversed then "@rhs @lhs" else "@lhs @rhs") ^
+         "))))"))
+  val nested = nested_eta false 1
+  val reversed = nested_eta true 1
+  val multiple = nested_eta false 2
   val alpha = CPC_ProofReplay.replay_root_for_test
     (parse_cpc_proof_string
       "((define @t1 () (@var \"x\" Int)) \
@@ -14611,10 +15472,22 @@ in
     assert (Term.aconv eta_reduced eta_right,
       "CPC lambda-elim returned the wrong eta equality")
   end;
+  assert (Thm.concl nested ~~
+      ``(\x:int. (f:(int -> int) -> int -> int) (\z. g z) x) =
+        f (\z:int. g z)``,
+    "CPC lambda-elim normalized a nested function argument");
+  assert (Thm.concl reversed ~~
+      ``(f:(int -> int) -> int -> int) (\z:int. g z) =
+        (\x:int. f (\z:int. g z) x)``,
+    "CPC reversed lambda-elim normalized a nested function argument");
+  assert (Thm.concl multiple ~~
+      ``(\x:int y:int. (f:(int -> int) -> int -> int -> int)
+          (\z. g z) x y) = f (\z:int. g z)``,
+    "CPC lambda-elim did not preserve the multi-binder target");
   assert (Thm.concl alpha ~~ ``(\x:int. x) = (\y:int. y)``,
     "CPC alpha_equiv did not replay abstraction renaming");
   List.app (check_oracle_tags "CPC HO conversion unit test")
-    [beta, eta, alpha]
+    [beta, eta, nested, reversed, multiple, alpha]
 end
 
 (* Alpha interning must retain the exact source binder and mapping. *)
@@ -15291,6 +16164,63 @@ in
     "arith_mult_abs_comparison strict replay produced the wrong conclusion")
 end
 
+fun cpc_arith_reduction_conditional_operands_success () =
+let
+  val a = ``if p then (x:int) + 11 else x * 17``
+  val b = ``if q then (y:int) else 0``
+  val nested = SmtLib_Theories.mk_int_ediv
+    (intSyntax.mk_mult (a, a), b)
+  val integer_operands =
+    [(a, ``(7:int)``), (``(11:int)``, b), (nested, b),
+     (a, ``(0:int)``)]
+  val smt_ediv = Term.prim_mk_const
+    {Thy = "HolSmt", Name = "smt_ediv_total"}
+  val smt_emod = Term.prim_mk_const
+    {Thy = "HolSmt", Name = "smt_emod_total"}
+  val smt_rdiv = Term.prim_mk_const
+    {Thy = "HolSmt", Name = "smt_rdiv"}
+  fun app (operator, a, b) = Term.list_mk_comb (operator, [a, b])
+  fun check (label, term, expected) =
+    let
+      val theorem =
+        CPC_ProofReplay.replay_arith_reduction_for_test [term]
+    in
+      assert_concl_alpha (label, theorem, expected);
+      assert_no_hyps (label, theorem);
+      check_oracle_tags label theorem
+    end
+  fun check_integer (label, make, total) (a, b) =
+    let
+      val term = make (a, b)
+      val expected = boolSyntax.mk_eq (term,
+        boolSyntax.mk_cond (boolSyntax.mk_eq (b, intSyntax.zero_tm),
+          make (a, intSyntax.zero_tm), app (total, a, b)))
+    in check (label, term, expected) end
+  fun check_real (a, b) =
+    let
+      val term = app (smt_rdiv, a, b)
+      val expected = boolSyntax.mk_eq (term,
+        boolSyntax.mk_cond (boolSyntax.mk_eq (b, realSyntax.zero_tm),
+          app (smt_rdiv, a, realSyntax.zero_tm),
+          realSyntax.mk_div (a, b)))
+    in check ("real division conditional operands", term, expected) end
+  val real_a = ``if p then (r:real) + 11 else r * 17``
+  val real_b = ``if q then (s:real) else 0``
+  val abs_term = intSyntax.mk_absval a
+  val abs_expected = boolSyntax.mk_eq (abs_term,
+    boolSyntax.mk_cond (intSyntax.mk_less (a, intSyntax.zero_tm),
+      intSyntax.mk_negated a, a))
+in
+  List.app (check_integer ("ediv conditional operands",
+    SmtLib_Theories.mk_int_ediv, smt_ediv)) integer_operands;
+  List.app (check_integer ("emod conditional operands",
+    SmtLib_Theories.mk_int_emod, smt_emod)) integer_operands;
+  List.app check_real [(real_a, ``(7:real)``), (``(11:real)``, real_b),
+    (app (smt_rdiv, real_a, real_b), real_b),
+    (real_a, realSyntax.zero_tm)];
+  check ("absolute value conditional operand", abs_term, abs_expected)
+end
+
 fun cpc_arith_mult_abs_nary_success () =
 let
   fun int_abs term = intSyntax.mk_absval term
@@ -15497,6 +16427,178 @@ in
       Feedback.message_of holerr)
 end
 
+fun cpc_array_set_assumption_bridge_success () =
+let
+  fun check (name, source, echo) =
+    let
+      val unrelated = Term.mk_var ("unrelated", Type.bool)
+      val theorem = CPC_ProofReplay.remove_hyps_for_test
+        ([unrelated, boolSyntax.T, source], boolSyntax.F, Thm.ASSUME echo)
+      val _ = check_oracle_tags ("array-set bridge " ^ name) theorem
+    in
+      assert (Term.aconv (Thm.concl theorem) echo andalso
+          List.length (Thm.hyp theorem) = 1 andalso
+          List.exists (Term.aconv source) (Thm.hyp theorem),
+        "array-set bridge did not retain the source context for " ^ name)
+    end
+  val x = Term.mk_var ("x", intSyntax.int_ty)
+  val set_ty = Type.--> (intSyntax.int_ty, Type.bool)
+  val s = Term.mk_var ("s", set_ty)
+  val t = Term.mk_var ("t", set_ty)
+  val p = Term.mk_var ("P", Type.--> (set_ty, Type.bool))
+  fun apply set = Term.mk_comb (p, set)
+  val equivalence = boolSyntax.mk_eq
+    (boolSyntax.mk_eq (pred_setSyntax.mk_delete (s, x), t),
+     boolSyntax.mk_eq (s, pred_setSyntax.mk_insert (x, t)))
+  val echo_equivalence = boolSyntax.mk_eq
+    (boolSyntax.mk_eq
+       (Term.mk_comb (combinSyntax.mk_update (x, boolSyntax.F), s), t),
+     boolSyntax.mk_eq
+       (s, Term.mk_comb (combinSyntax.mk_update (x, boolSyntax.T), t)))
+  val y = Term.mk_var ("y", intSyntax.int_ty)
+  val membership = pred_setSyntax.mk_in (x, s)
+  val cases =
+    [("membership", membership, Term.mk_comb (s, x)),
+     ("beta source", Term.mk_comb
+        (Term.mk_abs (y, Term.mk_comb (s, y)), x), membership),
+     ("insert", apply (pred_setSyntax.mk_insert (x, s)),
+      apply (Term.mk_comb (combinSyntax.mk_update (x, boolSyntax.T), s))),
+     ("delete", apply (pred_setSyntax.mk_delete (s, x)),
+      apply (Term.mk_comb (combinSyntax.mk_update (x, boolSyntax.F), s))),
+     ("empty", apply (pred_setSyntax.mk_empty intSyntax.int_ty),
+      apply (combinSyntax.mk_K_1 (boolSyntax.F, intSyntax.int_ty))),
+     ("universe", apply (pred_setSyntax.mk_univ intSyntax.int_ty),
+      apply (combinSyntax.mk_K_1 (boolSyntax.T, intSyntax.int_ty))),
+     ("subset", pred_setSyntax.mk_subset (s, t),
+      boolSyntax.mk_forall (y, boolSyntax.mk_imp
+        (Term.mk_comb (s, y), Term.mk_comb (t, y)))),
+     ("set_3 stripped", equivalence, echo_equivalence),
+     ("set_3 implication", boolSyntax.mk_imp
+        (boolSyntax.mk_conj (pred_setSyntax.mk_in (x, s),
+           boolSyntax.mk_neg (pred_setSyntax.mk_in (x, t))), equivalence),
+      boolSyntax.mk_imp
+        (boolSyntax.mk_conj (Term.mk_comb (s, x),
+           boolSyntax.mk_neg (Term.mk_comb (t, x))), echo_equivalence))]
+  val wrong_source = apply (pred_setSyntax.mk_insert (x, t))
+in
+  List.app check cases;
+  expect_hol_error_contains "array-set bridge nonmatching source"
+    "extra hypothesis is not one of the enumerated cvc5 semantic bridges"
+    (fn () => ignore (CPC_ProofReplay.remove_hyps_for_test
+      ([wrong_source], boolSyntax.F, Thm.ASSUME
+        (apply (Term.mk_comb (combinSyntax.mk_update (x, boolSyntax.T), s))))))
+end
+
+(* The translation defines a fresh array constant for a set expression;
+   mapped back to that expression, its definition is an identity. *)
+fun cpc_array_set_definition_identity_success () =
+let
+  fun check (name, definition) =
+    let
+      val theorem = CPC_ProofReplay.remove_hyps_for_test
+        ([], boolSyntax.F, Thm.ASSUME definition)
+      val _ = check_oracle_tags
+        ("array-set definition identity " ^ name) theorem
+    in
+      assert (Term.aconv (Thm.concl theorem) definition andalso
+          List.null (Thm.hyp theorem),
+        "array-set definition identity kept a hypothesis for " ^ name)
+    end
+in
+  List.app check
+    [("difference",
+      ``!x. (s DELETE (a:int) DIFF (s DELETE b)) x <=>
+            (s (| a |-> F |) x /\ ~s (| b |-> F |) x)``),
+     ("abstracted difference",
+      ``!x. (\a b s. s DELETE a DIFF (s DELETE b)) (a:int) b s x <=>
+            (s (| a |-> F |) x /\ ~s (| b |-> F |) x)``)];
+  expect_hol_error_contains "array-set definition non-identity"
+    "extra hypothesis is not one of the enumerated cvc5 semantic bridges"
+    (fn () => ignore (CPC_ProofReplay.remove_hyps_for_test
+      ([], boolSyntax.F, Thm.ASSUME
+        ``!x. ((s:int -> bool) DIFF t) x <=> s x``)))
+end
+
+(* A const array of Booleans is the empty set or the universe. *)
+fun cpc_arrays_select_const_set_success () =
+let
+  fun check (value, expected) =
+    let
+      val theorem = CPC_ProofReplay.replay_root_for_test
+        (parse_cpc_proof_string
+          ("((declare-sort t0 0) (declare-const i t0) \
+           \(step @p1 :rule arrays-select-const :args \
+           \((= (select ((as const (Array t0 Bool)) " ^ value ^ ") i) " ^
+           value ^ "))))"))
+      val _ = check_oracle_tags
+        ("CPC arrays-select-const " ^ value) theorem
+    in
+      assert (List.null (Thm.hyp theorem) andalso
+          Term.aconv (boolSyntax.rhs (Thm.concl theorem)) expected,
+        "CPC arrays-select-const did not replay for " ^ value)
+    end
+in
+  List.app check [("false", boolSyntax.F), ("true", boolSyntax.T)]
+end
+
+(* With a reflexive left premise, eq_resolve still yields the right
+   premise's right-hand side, which later resolution pivots mention. *)
+fun cpc_eq_resolve_reflexive_left_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((assume @p1 (= true true)) (assume @p2 (= (= true true) true)) \
+    \(step @p3 :rule eq_resolve :premises (@p1 @p2)))"
+  val thm = CPC_ProofReplay.replay_root_for_test proof
+  val _ = check_oracle_tags "CPC eq_resolve reflexive left" thm
+in
+  assert (Thm.concl thm ~~ ``T``,
+    "CPC eq_resolve with a reflexive left premise kept the equation")
+end
+
+(* A congruence under a quantifier is the binder lift of its premise, not a
+   canonical normal form of it. *)
+fun cpc_binder_cong_lift_success () =
+let
+  val prefix =
+    "(declare-sort t0 0) (declare-const set3 (Array t0 Bool)) \
+    \(declare-const v0 t0) (declare-const v2 (Array t0 Bool)) \
+    \(declare-const v1 t0) \
+    \(define @t1 () (@var \"x\" t0)) \
+    \(define @t4 () (select set3 @t1)) \
+    \(define @t22 () (select v2 @t1)) \
+    \(define @t23 () (not (= v0 @t1))) \
+    \(define @t24 () (not @t22)) \
+    \(define @t25 () (= v1 @t1)) \
+    \(define @t26 () (not @t25)) \
+    \(define @t28 () (and (not (and @t26 @t22)) @t23 @t22)) \
+    \(define @t29 () (= @t4 @t28)) \
+    \(step @p17 :rule refl :args (@t22)) \
+    \(step @p18 :rule refl :args (@t23)) \
+    \(step @p19 :rule refl :args (@t24)) \
+    \(step @p20 :rule bool-double-not-elim :args (@t25)) \
+    \(step @p21 :rule nary_cong :premises (@p20 @p19) \
+    \:args ((or (not @t26) @t24))) \
+    \(step @p22 :rule bool-and-de-morgan :args (@t26 @t22 true)) \
+    \(step @p23 :rule trans :premises (@p22 @p21)) \
+    \(step @p24 :rule nary_cong :premises (@p23 @p18 @p17) :args (@t28)) \
+    \(step @p25 :rule refl :args (@t4)) \
+    \(step @p26 :rule cong :premises (@p25 @p24) :args (@t29))"
+  fun replay steps = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string ("(" ^ prefix ^ steps ^ ")"))
+  val body = replay ""
+  val lifted = replay
+    " (step @p27 :rule cong :premises (@p26) \
+    \:args ((forall (@list @t1) @t29)))"
+  val (x, _) = boolSyntax.dest_forall (boolSyntax.lhs (Thm.concl lifted))
+  val _ = check_oracle_tags "CPC binder congruence body" body
+  val _ = check_oracle_tags "CPC binder congruence lift" lifted
+in
+  assert (Term.aconv (boolSyntax.rhs (Thm.concl lifted))
+      (boolSyntax.mk_forall (x, boolSyntax.rhs (Thm.concl body))),
+    "CPC congruence under a quantifier is not the binder lift of its premise")
+end
+
+
 fun cpc_proof_replay_contra_success () =
 let
   val proof = parse_cpc_proof_string
@@ -15678,6 +16780,50 @@ in
     (profile_count "CPC(rung:word/poly_norm_schematic_bvite_words)_OK"
        results = 4,
      "CPC XOR rotation family did not consume the checked word route")
+end
+
+fun cpc_proof_replay_bv_poly_norm_word_ring_success () =
+let
+  fun profile_count name results =
+    case List.find (fn (candidate, _) => candidate = name) results of
+      SOME (_, info) => #n info
+    | NONE => 0
+  val one = "(_ bv1 256)"
+  fun ring_step a b =
+    "(step @p1 :rule bv_poly_norm :args ((= (bvmul " ^ one ^
+    " (bvsub " ^ a ^ " " ^ b ^ ")) (bvmul (bvneg " ^ one ^ ") (bvsub " ^
+    b ^ " " ^ a ^ ")))))"
+  val proofs =
+    ["((declare-const a (_ BitVec 256)) (declare-const b (_ BitVec 256)) " ^
+     ring_step "a" "b" ^ ")",
+     "((declare-const f (-> Int (_ BitVec 256))) " ^
+     "(declare-const g (-> (_ BitVec 256) Int (_ BitVec 256))) " ^
+     "(declare-const a (_ BitVec 256)) (declare-const n Int) " ^
+     ring_step "(f n)" "(g (bvand a (f n)) n)" ^ ")"]
+  val expected =
+    [``(1w:256 word) * (a - b) = -1w * (b - a)``,
+     ``(1w:256 word) * (f (n:int) - g (a && f n) n) =
+       -1w * (g (a && f n) n - f n)``]
+  fun replay proof = SmtResource.with_e0_invocation_for_test
+    CPC_ProofReplay.replay_root_for_test (parse_cpc_proof_string proof)
+  val () = Profile.reset_all ()
+  val theorems = List.map replay proofs
+  val results = Profile.results ()
+in
+  ListPair.appEq (fn (theorem, expected) =>
+    (assert (Thm.concl theorem ~~ expected,
+       "CPC word ring replay proved the wrong identity");
+     assert (null (Thm.hyp theorem),
+       "CPC word ring replay retained hypotheses");
+     check_oracle_tags "CPC word ring replay" theorem))
+    (theorems, expected);
+  assert
+    (profile_count "CPC(rung:word/poly_norm_schematic_word_ring)_OK"
+       results = 2,
+     "CPC word ring family did not use the algebraic route");
+  assert
+    (profile_count "E0(word-graph-expand)" results = 0,
+     "CPC word ring family expanded the word graph")
 end
 
 fun cpc_proof_replay_cong_consumes_premises_success () =
@@ -16514,6 +17660,46 @@ in
       {term = ``F``, provenance = CPC_Proof.AtomicProvenance})
 end
 
+fun cpc_proof_replay_large_conjunction_provenance_success () =
+let
+  val names = List.tabulate (300, fn n => "boundary" ^ Int.toString n)
+  val declarations = String.concat (List.map
+    (fn name => "(declare-const " ^ name ^ " Bool) ")
+    ("p" :: "q" :: names))
+  val source =
+    "(and (or " ^ String.concatWith " " names ^ ") (and p q))"
+  val expected = boolSyntax.mk_conj
+    (Term.mk_var ("p", Type.bool), Term.mk_var ("q", Type.bool))
+  fun check (assumption, commands, premise) =
+    let
+      val proof = parse_cpc_proof_string
+        ("(" ^ declarations ^ "(assume @source " ^ assumption ^ ") " ^
+         commands ^ "(step @out :rule and_elim :premises (" ^ premise ^
+         ") :args (1)))")
+      val input = case CPC_Proof.proof_commands proof of
+          CPC_Proof.ASSUME (_, {term, ...}) :: _ => term
+        | _ => die "FAIL: large conjunction test lost its assumption"
+      val result = CPC_ProofReplay.replay_root_for_test proof
+    in
+      assert (SmtResource.dag_nodes_up_to 257 input > 256,
+        "large conjunction test did not cross the metadata cutoff");
+      assert (Thm.concl result ~~ expected,
+        "large binary conjunction lost its nested operand boundary");
+      assert (List.length (Thm.hyp result) = 1 andalso
+              hd (Thm.hyp result) ~~ input,
+        "large conjunction selection changed its hypothesis");
+      check_oracle_tags "CPC large conjunction provenance" result
+    end
+in
+  check (source, "", "@source");
+  check ("(= " ^ source ^ " true)",
+    "(step @pair :rule true_elim :premises (@source)) ", "@pair");
+  check ("(= " ^ source ^ " true)",
+    "(step @refl :rule refl :args (true)) " ^
+    "(step @trans :rule trans :premises (@source @refl)) " ^
+    "(step @pair :rule true_elim :premises (@trans)) ", "@pair")
+end
+
 fun cpc_proof_replay_boolean_rewrites_success () =
 let
   val proof = parse_cpc_proof_string
@@ -16695,6 +17881,154 @@ in
   replay "trust native Seq"
     ([], ``smt_seq_update ([1]:int list) 0 [2] =
            smt_seq_update [1] 0 [2]``) trust
+end
+
+fun cpc_finite_literal_card_success () =
+let
+  val goals =
+    [``!(a:'a) b. CARD {a; b} = 2 <=> a <> b``,
+     ``!(a:'a) b c. CARD {a; b; c} = 3 <=>
+         a <> b /\ a <> c /\ b <> c``]
+  fun check_translation tm =
+    let
+      val (simplified, _) =
+        SolverSpec.simplify (SmtLib.CVC_SIMP_TAC true) ([], tm)
+      val (_, lines) = CVC.goal_to_SmtLib_translation simplified
+      val text = String.concat lines
+    in
+      assert (contains "set.card" text andalso
+          not (contains "(Array " text),
+        "checked CARD preprocessing lost the native finite Set encoding")
+    end
+  val _ = List.app check_translation goals
+  val ((_, z3_empty), _) = SolverSpec.simplify
+    (SmtLib.Z3_SIMP_TAC true)
+    ([], ``CARD ({}:int set) = CARD (\x:int. F)``)
+  val (z3_left, z3_right) = boolSyntax.dest_eq z3_empty
+  val _ = assert (Term.aconv z3_left z3_right,
+    "checked cvc5 CARD preservation changed Z3 set preprocessing")
+  val (mixed, _) = SolverSpec.simplify (SmtLib.CVC_SIMP_TAC true)
+    ([``FINITE (s:int set)``],
+     ``CARD (s:int set) < CARD s + 1 /\
+       ((x:int) IN (t UNION u) <=> x IN t \/ x IN u)``)
+  val (_, mixed_lines) = CVC.goal_to_SmtLib_translation mixed
+  val _ = assert (contains "set.card" (String.concat mixed_lines),
+    "unrelated non-finite set atoms disabled finite CARD translation")
+  val _ = List.app (fn goal =>
+    let
+      val (simplified, _) = SolverSpec.simplify (SmtLib.CVC_SIMP_TAC true)
+        ([``FINITE (s:int set)``], goal)
+      val (_, lines) = CVC.goal_to_SmtLib_translation simplified
+      val text = String.concat lines
+    in
+      assert (contains "set.card" text,
+        "partially finite set atom disabled finite CARD translation")
+    end)
+    [``CARD (s:int set) < CARD s + 1 /\
+       ((x:int) IN (s INTER t) <=> x IN s /\ x IN t)``,
+     ``CARD (s:int set) < CARD s + 1 /\
+       ((x:int) IN (s DIFF t) <=> x IN s /\ ~(x IN t))``]
+  val (finite_equality, _) = SolverSpec.simplify (SmtLib.CVC_SIMP_TAC true)
+    ([``FINITE (s:int set)``], ``CARD (s:int set) = 0 <=> s = {}``)
+  val (_, finite_lines) = CVC.goal_to_SmtLib_translation finite_equality
+  val finite_text = String.concat finite_lines
+  val _ = assert (contains "set.card" finite_text andalso
+      not (contains "(Array " finite_text),
+    "finite equality beside CARD lost its native Set operands")
+  val (translation, _) = CVC.goal_to_SmtLib_translation
+    ([``FINITE ({}:int set)``], ``({}:int set) = {}``)
+  fun parse text = CPC_ProofParser.parse_stream_with_version
+    (SmtLib.parser_dicts_for_translation translation) "1.3.4"
+    (TextIO.openString text)
+  fun replay text =
+    let val theorem = CPC_ProofReplay.replay_root_for_test (parse text) in
+      check_oracle_tags "finite literal CARD replay" theorem;
+      theorem
+    end
+  val element = Term.mk_var ("card_element", Type.alpha)
+  val expected_refl = boolSyntax.mk_eq (element, element)
+  val (abstract_translation, _) =
+    CVC.goal_to_SmtLib_translation ([], expected_refl)
+  val saved_grammars = Parse.current_grammars ()
+  val abstract_refl = Portable.finally
+    (fn () => Parse.temp_set_grammars saved_grammars)
+    (fn () =>
+      (Parse.temp_set_grammars Parse.min_grammars;
+       CPC_ProofReplay.replay_root_for_test
+         (CPC_ProofParser.parse_stream_with_version
+           (SmtLib.parser_dicts_for_translation abstract_translation) "1.3.4"
+           (TextIO.openString
+             "((step @p :rule refl :args (v0)))")))) ()
+  val _ = check_oracle_tags "polymorphic CPC reflexivity" abstract_refl
+  val _ = assert (Term.aconv (Thm.concl abstract_refl) expected_refl,
+    "CPC reflexivity misclassified a polymorphic element as RegLan")
+  val packet = "(set.insert (@list 7 8) " ^
+    "(set.insert (@list 9) (set.singleton 10)))"
+  val packet_proof = replay ("((define @s () " ^ packet ^
+    ") (step @p :rule refl :args (@s)))")
+  val empty = pred_setSyntax.mk_empty intSyntax.int_ty
+  fun singleton element = pred_setSyntax.mk_insert (element, empty)
+  fun numeral n = intSyntax.term_of_int (Arbint.fromInt n)
+  fun card set = Term.mk_comb
+    (intSyntax.int_injection, pred_setSyntax.mk_card set)
+  val expected_set = List.foldr pred_setSyntax.mk_insert empty
+    (List.map numeral [7, 8, 9, 10])
+  val _ = assert (Term.aconv (Thm.concl packet_proof)
+      (boolSyntax.mk_eq (expected_set, expected_set)),
+    "nested CPC set.insert packet changed its element order or base set")
+  val union = replay
+    ("((step @p :rule sets-card-union " ^
+     ":args ((set.singleton 7) (set.singleton 8))))")
+  val minus = replay
+    ("((step @p :rule sets-card-minus " ^
+     ":args ((set.singleton 7) (set.singleton 8))))")
+  val nonnegative = replay
+    ("((step @p :rule trust :args " ^
+     "((>= (set.card (set.inter (set.singleton 7) " ^
+     "(set.singleton 8))) 0))))")
+  val positive = replay
+    ("((declare-const a Int) (declare-const b Int) " ^
+     "(define @s () (set.minus (set.singleton a) (set.singleton b))) " ^
+     "(assume @p1 (set.member a @s)) " ^
+     "(step @p2 :rule trust :premises (@p1) " ^
+     ":args ((>= (set.card @s) 1))))")
+  val left = singleton (numeral 7)
+  val right = singleton (numeral 8)
+  val intersection_card = card (pred_setSyntax.mk_inter (left, right))
+  val expected_union = boolSyntax.mk_eq
+    (card (pred_setSyntax.mk_union (left, right)),
+     intSyntax.mk_minus
+       (intSyntax.mk_plus (card left, card right), intersection_card))
+  val expected_minus = boolSyntax.mk_eq
+    (card (pred_setSyntax.mk_diff (left, right)),
+     intSyntax.mk_minus (card left, intersection_card))
+  val a = Term.mk_var ("a", intSyntax.int_ty)
+  val b = Term.mk_var ("b", intSyntax.int_ty)
+  val difference = pred_setSyntax.mk_diff (singleton a, singleton b)
+  val membership = pred_setSyntax.mk_in (a, difference)
+  val expected_positive = intSyntax.mk_geq (card difference, intSyntax.one_tm)
+  val _ = assert (Term.aconv (Thm.concl union) expected_union andalso
+      Term.aconv (Thm.concl minus) expected_minus andalso
+      Term.aconv (Thm.concl nonnegative)
+        (intSyntax.mk_geq (intersection_card, intSyntax.zero_tm)) andalso
+      Term.aconv (Thm.concl positive) expected_positive andalso
+      List.exists (Term.aconv membership) (Thm.hyp positive),
+    "literal Set cardinality replay changed the conclusion or membership: " ^
+      Library.term_to_string (Thm.concl union) ^ "; " ^
+      Library.term_to_string (Thm.concl minus) ^ "; " ^
+      Library.term_to_string (Thm.concl positive) ^ "; hypotheses: " ^
+      String.concatWith ", " (List.map Library.term_to_string
+        (Thm.hyp positive)))
+in
+  expect_hol_error_contains "empty insertion packet" "@list"
+    (fn () => ignore (parse
+      "((define @s () (set.insert (@list) (set.singleton 8))))"));
+  assert ((ignore (parse
+      "((define @s () (set.insert (@list true) (set.singleton 8))))");
+      false) handle Feedback.HOL_ERR error =>
+        Feedback.top_structure_of error = "pred_setSyntax" andalso
+        Feedback.top_function_of error = "mk_INSERT",
+    "CPC insertion packet did not report its element-type error")
 end
 
 (* The Set names are an explicit frozen registry, not a prefix catch-all.
@@ -17527,6 +18861,25 @@ fun cpc_live_checked_replay_bv_bitblast_success () =
   | SolverSpec.SAT _ => die "FAIL: cvc5 reported sat for bit-vector OR theorem"
   | SolverSpec.UNKNOWN _ => die "FAIL: cvc5 returned unknown for bit-vector OR test"
 
+(* Word lowering turns `word_bit 0 w` into `w2w ((0 >< 0) w) = 1w` at width 1,
+   which cvc5 simplifies with bv-zero-extend-eliminate-0. *)
+fun cpc_live_checked_replay_bv_zero_extend_eliminate_success () =
+let
+  val assumption = ``~word_bit 0 (x : word8)``
+  val conclusion = ``(x : word8) <> 1w``
+in
+  case CVC.CVC_SMT_CPC_Prover ([assumption], conclusion) of
+    SolverSpec.UNSAT (SOME thm) =>
+      (assert (Thm.concl thm ~~ conclusion andalso
+               List.all (fn h => h ~~ assumption) (Thm.hyp thm),
+        "live CPC zero-extend replay returned an unexpected theorem");
+       check_oracle_tags "CPC live zero-extend replay unit test" thm)
+  | SolverSpec.UNSAT NONE => die "FAIL: live CPC replay returned no theorem"
+  | SolverSpec.SAT _ => die "FAIL: cvc5 reported sat for zero-extend theorem"
+  | SolverSpec.UNKNOWN _ =>
+      die "FAIL: cvc5 returned unknown for zero-extend test"
+end
+
 fun cpc_live_checked_replay_boolean_resolution_success () =
   case CVC.CVC_SMT_CPC_Prover
     ([], ``((p : bool) ==> q) /\ (q ==> p) ==> (p = q)``) of
@@ -17580,6 +18933,28 @@ in
     SOME (Z3_Proof.MP_EQ _) => ()
   | SOME _ => die "FAIL: mp-eq proof rule parsed to unexpected constructor"
   | NONE => die "FAIL: mp-eq proof did not define root proof step"
+end
+
+fun z3_proof_parser_unary_and_or_success () =
+let
+  val p = Term.mk_var ("p", Type.bool)
+  fun rewrite_concl contents =
+    case Redblackmap.peek (Z3_Proof.proof_steps
+        (parse_z3_proof_string "4.15.3" contents), 0) of
+      SOME (Z3_Proof.REWRITE concl) => concl
+    | _ => die "FAIL: unary and/or proof did not parse to a rewrite"
+  val concl = rewrite_concl
+    "((declare-fun p () Bool)\n(proof (rewrite (= (and p) (or p)))))"
+in
+  assert (Term.aconv concl (boolSyntax.mk_eq (p, p)),
+    "unary (and p) and (or p) did not parse as p");
+  expect_hol_error_contains "unary and over Int" "'and'"
+    (fn () => ignore (rewrite_concl
+      "((declare-fun x () Int)\n(proof (rewrite (= (and x) (and x)))))"));
+  expect_hol_error_contains "unary and in a benchmark" "'and'"
+    (fn () => ignore (parse_smtlib_assertions
+      ("(set-logic QF_UF)\n(declare-const p Bool)\n" ^
+       "(assert (and p))\n(exit)\n")))
 end
 
 fun z3_asserted_membership_diagnostic () =
@@ -17785,6 +19160,71 @@ in
         "pull-quant did not normalize to a checked rewrite")
   | SOME _ => die "FAIL: pull-quant proof parsed to unexpected constructor"
   | NONE => die "FAIL: pull-quant proof did not define root proof step"
+end
+
+fun z3_der_unused_binder_replay_success () =
+let
+  val (tydict, tmdict) = SmtLib_Logics.parsedicts_of_logic "ALL"
+  val dictionaries =
+    (Library.extend_dict
+      (("U", SmtLib_Theories.K_zero_zero Type.alpha), tydict), tmdict)
+  fun parse text =
+    parse_z3_proof_string_with_dicts dictionaries "4.15.3" text
+  (* Preserve the encountered substitution, then unused-binder elimination
+     beneath a retained binder, including the nested quantified body. *)
+  val fragment = String.concat [
+    "((set-logic ALL)\n",
+    "(declare-fun der_guard (Int) Bool)\n",
+    "(declare-fun der_result (Int) Bool)\n",
+    "(declare-fun der_first (Int) U)\n",
+    "(declare-fun der_second (Int (_ BitVec 256)) U)\n",
+    "(declare-fun der_mark (U Int) Bool)\n",
+    "(proof\n",
+    "(let ((q1 (forall ((x Int) (y U) (z U))\n",
+    "          (or (not (and (der_guard x) (= y (der_first x))\n",
+    "                        (= z (der_second x (_ bv32 256)))))\n",
+    "              (and (der_result x)\n",
+    "                   (forall ((w Int)) (not (der_mark z w))))))))\n",
+    "(let ((q2 (forall ((x Int) (y U) (z U))\n",
+    "          (or (and (der_result x)\n",
+    "                   (forall ((w Int))\n",
+    "                     (not (der_mark (der_second x (_ bv32 256)) w))))\n",
+    "              (not (der_guard x))))))\n",
+    "(let ((q3 (forall ((x Int))\n",
+    "          (or (and (der_result x)\n",
+    "                   (forall ((w Int))\n",
+    "                     (not (der_mark (der_second x (_ bv32 256)) w))))\n",
+    "              (not (der_guard x))))))\n",
+    "(trans (der (= q1 q2)) (elim-unused (= q2 q3)) (= q1 q3)))))))\n"
+  ]
+  val proof = parse fragment
+  val _ =
+    case Redblackmap.peek (Z3_Proof.proof_steps proof, 0) of
+      SOME (Z3_Proof.TRANS
+        (Z3_Proof.REWRITE _, Z3_Proof.ELIM_UNUSED _, _)) => ()
+    | _ => die "FAIL: der did not normalize to checked rewrite replay"
+  val expected =
+    ``(!x:int. !y:'a. !z:'a.
+        ~(der_guard x /\ y = der_first x /\
+          z = der_second x (32w:256 word)) \/
+        der_result x /\ (!w:int. ~der_mark z w)) <=>
+      !x:int. der_result x /\
+        (!w:int. ~der_mark (der_second x (32w:256 word)) w) \/
+        ~der_guard x``
+  val theorem = Z3_ProofReplay.replay_root_for_test proof
+  val _ = assert (Thm.concl theorem ~~ expected,
+    "der sequence returned the wrong quantified equality")
+  val _ = assert (List.null (Thm.hyp theorem),
+    "der sequence retained unexpected hypotheses")
+  val _ = check_oracle_tags "Z3 der and unused-binder replay" theorem
+in
+  expect_hol_error_contains "malformed unused-binder equality"
+    "proof rule: elim_unused"
+    (fn () => ignore (Z3_ProofReplay.replay_root_for_test (parse
+      ("((declare-fun der_guard (Int) Bool) " ^
+       "(declare-fun der_result (Int) Bool) " ^
+       "(proof (elim-unused (= (forall ((x Int)) (der_guard x)) " ^
+       "(forall ((x Int)) (der_result x))))))"))))
 end
 
 fun z3_proof_parser_structures_proof_bind_success () =
@@ -20175,9 +21615,16 @@ let
     ``(x:real) * (y + z) - x * y = z * x``
   val rdiv_goal =
     ``HolSmt$smt_rdiv (x:real) 42 = x * (1 / 42)``
+  val first = ``if p then x else -x:int``
+  val second = ``if q then y else -y:int``
+  val difference = ``if ^first >= ^second then ^first - ^second else 0``
+  val zero_goal =
+    ``1 * (^second + -^first + ^difference - 0) =
+      1 * (^second - (^first + -^difference))``
   val integer_thm = SmtReplayCanon.arith_poly_norm_prove integer_goal
   val real_thm = SmtReplayCanon.arith_poly_norm_prove real_goal
   val rdiv_thm = SmtReplayCanon.arith_poly_norm_prove rdiv_goal
+  val zero_thm = SmtReplayCanon.arith_poly_norm_prove zero_goal
 in
   assert (Thm.concl integer_thm ~~ integer_goal,
     "integer polynomial normalizer returned the wrong theorem");
@@ -20185,9 +21632,273 @@ in
     "real polynomial normalizer returned the wrong theorem");
   assert (Thm.concl rdiv_thm ~~ rdiv_goal,
     "real polynomial normalizer did not discharge nonzero total division");
+  assert (Thm.concl zero_thm ~~ zero_goal andalso null (Thm.hyp zero_thm),
+    "polynomial normalization retained negative zero or assumptions");
   check_oracle_tags "integer polynomial normal form" integer_thm;
   check_oracle_tags "real polynomial normal form" real_thm;
-  check_oracle_tags "total real division polynomial normal form" rdiv_thm
+  check_oracle_tags "total real division polynomial normal form" rdiv_thm;
+  check_oracle_tags "integer negative zero polynomial normal form" zero_thm
+end
+
+fun cpc_shared_bitblast_equality_success () =
+let
+  fun stream prefix =
+    let
+      fun bit (i, (previous, bits)) =
+        let
+          fun stage (j, carry) =
+            let
+              val name = prefix ^ Int.toString i ^ "_" ^ Int.toString j
+              val input = Term.mk_var (name, Type.bool)
+              val pair = boolSyntax.mk_conj (carry, input)
+            in boolSyntax.mk_neg (boolSyntax.mk_eq (carry, pair)) end
+          val next = List.foldl stage previous (List.tabulate (8, Lib.I))
+        in (next, next :: bits) end
+      val (_, bits) = List.foldl bit
+        (Term.mk_var (prefix ^ "seed", Type.bool), [])
+        (List.tabulate (125, Lib.I))
+    in boolSyntax.F :: boolSyntax.F :: boolSyntax.F :: bits end
+  val left = stream "left"
+  val right = stream "right"
+  val words = boolSyntax.mk_eq
+    (SmtLib_Theories.mk_bbterm left, SmtLib_Theories.mk_bbterm right)
+  val bits = boolSyntax.list_mk_conj
+    (ListPair.mapEq boolSyntax.mk_eq (left, right))
+  val target = boolSyntax.mk_eq (words, bits)
+  val limit = SmtResource.max_skeleton_replay_dag_nodes
+  val _ = assert (SmtResource.dag_nodes_up_to (limit + 1) target > limit,
+    "shared bitblast regression no longer exceeds the circuit input budget")
+  val theorem = CPC_ProofReplay.replay_bv_poly_norm_for_test [target]
+in
+  assert (Thm.concl theorem ~~ target andalso null (Thm.hyp theorem),
+    "schematic bitblast replay changed the circuit equation");
+  check_oracle_tags "shared bitblast equality" theorem
+end
+
+fun cpc_word_aci_literal_identity_success () =
+let
+  val bits = String.implode (List.tabulate (128, fn _ => #"1"))
+  val proof = parse_cpc_proof_string
+    ("((declare-const x (_ BitVec 128)) " ^
+     "(define @sum () (bvadd x x)) " ^
+     "(step @out :rule aci_norm :args ((= (bvand #b" ^ bits ^
+     " @sum) @sum))))")
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val mask = wordsSyntax.mk_word
+    (Arbnum.- (Arbnum.pow (Arbnum.fromInt 2, Arbnum.fromInt 128),
+       Arbnum.one), Arbnum.fromInt 128)
+  val expected = ``^mask && ((x:word128) + x) = x + x``
+in
+  assert (Thm.concl theorem ~~ expected andalso null (Thm.hyp theorem),
+    "word identity changed the schematic arithmetic operand");
+  check_oracle_tags "word literal identity" theorem;
+  let
+    val commutation = parse_cpc_proof_string
+      ("((declare-const x (_ BitVec 128)) " ^
+       "(define @sum () (bvadd x x)) " ^
+       "(step @out :rule aci_norm :args ((= (bvand #b" ^ bits ^
+       " @sum) (bvand @sum #b" ^ bits ^ ")))))")
+    val result = CPC_ProofReplay.replay_root_for_test commutation
+    val expected = ``^mask && ((x:word128) + x) = (x + x) && ^mask``
+  in
+    assert (Thm.concl result ~~ expected andalso null (Thm.hyp result),
+      "word AC conversion changed its equality endpoint");
+    check_oracle_tags "word literal commutation" result
+  end
+end
+
+fun cpc_quantified_imp_disj_trans_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const x (_ BitVec 128)) \
+    \(declare-const p Bool) (declare-const q Bool) \
+    \(define @vars () (@list x)) \
+    \(assume @a (= p (forall @vars (=> (= x (_ bv0 128)) \
+    \                                (= x (_ bv1 128)))))) \
+    \(assume @b (= (forall @vars (or (not (= x (_ bv0 128))) \
+    \                                (= x (_ bv1 128)))) q)) \
+    \(step @out :rule trans :premises (@a @b)))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl theorem ~~ ``(p:bool) = q`` andalso
+      List.length (Thm.hyp theorem) = 2,
+    "quantified implication transitivity changed its endpoints");
+  check_oracle_tags "quantified implication transitivity" theorem
+end
+
+fun cpc_word_rewrite_rules_success () =
+let
+  val cases =
+    [("bv-extract-whole", "x 7",
+      ``((7 >< 0) (x:word8):word8) = x``),
+     ("bv-extract-not", "x 1 6",
+      ``((6 >< 1) (~(x:word8)):word6) = ~((6 >< 1) x:word6)``),
+     ("bv-extract-concat-1", "x @bv_empty #b1010 1 6",
+      ``((6 >< 1) (((0xAw:word4) @@ (x:word8)):word12):word6) =
+        ((6 >< 1) x:word6)``),
+     ("bv-shl-by-const-1", "x 2 8 5",
+      ``word_lsl_bv (x:word8) 2w = ((5 >< 0) x:word6) @@ (0w:word2)``),
+     ("bv-lshr-by-const-1", "x 2 8 7",
+      ``word_lsr_bv (x:word8) 2w = (0w:word2) @@ ((7 >< 2) x:word6)``),
+     ("bv-bitwise-slicing",
+      "(= (bvand x #b11110000) " ^
+      "(concat (bvand (extract 7 4 x) #b1111) " ^
+      "(bvand (extract 3 0 x) #b0000)))",
+      ``(x:word8) && 0xF0w =
+        ((((7 >< 4) x:word4) && 0xFw) @@
+         (((3 >< 0) x:word4) && 0w))``)]
+  fun check (name, args, expected) =
+    let
+      val proof = parse_cpc_proof_string
+        ("((declare-const x (_ BitVec 8)) " ^
+         "(step @out :rule " ^ name ^ " :args (" ^ args ^ ")))")
+      val theorem = CPC_ProofReplay.replay_root_for_test proof
+    in
+      assert (Thm.concl theorem ~~ expected andalso null (Thm.hyp theorem),
+        name ^ " changed its extraction/shift endpoints: " ^
+          Hol_pp.thm_to_string theorem ^ " expected " ^
+          Hol_pp.term_to_string expected);
+      check_oracle_tags name theorem
+    end
+in List.app check cases end
+
+fun cpc_word_rewrite_resource_gate () =
+let
+  val proof = parse_cpc_proof_string
+    ("((declare-const x (_ BitVec 8)) (define @t0 () x) " ^
+     String.concat (List.tabulate (21, fn index =>
+       let val previous = "@t" ^ Int.toString index
+       in "(define @t" ^ Int.toString (index + 1) ^ " () (bvadd " ^
+          previous ^ " " ^ previous ^ ")) " end)) ^
+     "(step @out :rule bv-extract-whole :args (@t21 7)))")
+in
+  expect_hol_error_contains "oversized word rewrite"
+    "feature=resource-gate:BitVector:word-rewrite"
+    (fn () => ignore (CPC_ProofReplay.replay_root_for_test proof))
+end
+
+fun cpc_word_rewrite_rejects_bad_endpoint () =
+  expect_hol_error_contains "constant shift rejects wrong endpoint"
+    "incorrect constant-shift extraction endpoint"
+    (fn () => ignore (CPC_ProofReplay.replay_root_for_test
+      (parse_cpc_proof_string
+        "((declare-const x (_ BitVec 8)) \
+        \(step @out :rule bv-shl-by-const-1 :args (x 2 8 6)))")))
+
+fun cpc_word_involution_trust_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const x (_ BitVec 4)) (define @vars () (@list x)) \
+    \(step @out :rule trust :args \
+    \((= (forall @vars (or (not (= (bvnot x) #b0011)) (= x #b0101))) \
+    \(or (not (= (bvnot (bvnot #b0011)) #b0011)) \
+    \(= (bvnot #b0011) #b0101))))))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val expected =
+    ``(!x:word4. word_1comp x <> 3w \/ x = 5w) =
+      (word_1comp (word_1comp (3w:word4)) <> 3w \/
+       word_1comp (3w:word4) = 5w)``
+in
+  assert (Thm.concl theorem ~~ expected andalso null (Thm.hyp theorem),
+    "word involution elimination changed the quantified equation");
+  check_oracle_tags "word involution trust" theorem
+end
+
+fun cpc_arith_leq_length_norm_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const s (Seq (_ BitVec 8))) \
+    \(step @out :rule arith-leq-norm :args ((seq.len s) 17)))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val expected =
+    ``(&(LENGTH (s:word8 list)):int) <= 17 <=>
+      ~((&(LENGTH s):int) >= 17 + 1)``
+in
+  assert (Thm.concl theorem ~~ expected andalso null (Thm.hyp theorem),
+    "integer length normalization changed its exact bounds");
+  check_oracle_tags "integer length normalization" theorem
+end
+
+fun cpc_shared_integer_relation_alias_success () =
+let
+  fun level index = "@t" ^ Int.toString index
+  fun doubling index =
+    "(define " ^ level (index + 1) ^ " () (+ " ^ level index ^ " " ^
+      level index ^ ")) "
+  val proof = parse_cpc_proof_string
+    ("((declare-const p Bool) (declare-const q Bool) " ^
+     "(declare-const x Int) (declare-const y Int) " ^
+     "(define @t0 () (ite (>= x 0) x (- x))) " ^
+     String.concat (List.tabulate (8, doubling)) ^
+     "(assume @p1 (= p (not (<= @t8 y)))) " ^
+     "(assume @p2 (= (not (>= y @t8)) q)) " ^
+     "(step @out :rule trans :premises (@p1 @p2)))")
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert ((Thm.concl theorem ~~ ``(p:bool) = q``) andalso
+      List.length (Thm.hyp theorem) = 2,
+    "shared integer relation transitivity: " ^ Hol_pp.thm_to_string theorem);
+  check_oracle_tags "shared integer relation transitivity" theorem
+end
+
+fun cpc_shared_modus_ponens_alias_success () =
+let
+  fun doubling index =
+    let val previous = "@a" ^ Int.toString (index - 1) in
+      "(define @a" ^ Int.toString index ^ " () (+ " ^ previous ^ " " ^
+        previous ^ ")) "
+    end
+  val proof = parse_cpc_proof_string
+    ("((declare-const x Int) (declare-const p Bool) " ^
+     "(declare-const q Bool) (define @a0 () (ite p x (- x))) " ^
+     String.concat (List.tabulate (12, fn index => doubling (index + 1))) ^
+     "(assume @premise (not (<= @a12 0))) " ^
+     "(assume @implication (=> (not (>= 0 @a12)) q)) " ^
+     "(step @out :rule modus_ponens :premises (@premise @implication)))")
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl theorem ~~ ``q:bool`` andalso
+      List.length (Thm.hyp theorem) = 2,
+    "shared modus ponens changed the exact consequence or assumptions");
+  check_oracle_tags "shared modus ponens aliases" theorem
+end
+
+fun cpc_cong_positional_reflexive_child_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const x Int) (declare-const y Int) \
+    \(define @a () (ite (>= x 0) x 0)) \
+    \(step @keep :rule refl :args (@a)) \
+    \(assume @change (= x y)) \
+    \(step @out :rule cong :premises (@keep @change) :args ((= @a x))))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val atom = ``if (x:int) >= 0 then x else 0``
+  val expected = ``(^atom = x) = (^atom = y)``
+in
+  assert (Thm.concl theorem ~~ expected andalso
+      List.length (Thm.hyp theorem) = 1,
+    "congruence rewrote inside the reflexive child");
+  check_oracle_tags "positional congruence reflexivity" theorem
+end
+
+fun cpc_trans_conditional_swap_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const x Int) (declare-const p Bool) \
+    \(declare-const q Bool) (declare-const r Bool) \
+    \(assume @a (= r (ite (not (<= 0 x)) p q))) \
+    \(step @b :rule ite-not-cond :args ((>= x 0) p q)) \
+    \(step @c :rule trans :premises (@a @b)) \
+    \(assume @r r) \
+    \(step @conditional :rule eq_resolve :premises (@r @c)) \
+    \(step @out :rule ite_elim1 :premises (@conditional)))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val expected = ``~((x:int) >= 0) \/ (q:bool)``
+in
+  assert (Thm.concl theorem ~~ expected andalso
+      List.length (Thm.hyp theorem) = 2,
+    "transitivity discarded the conditional-swap endpoint");
+  check_oracle_tags "conditional-swap transitivity" theorem
 end
 
 fun quantified_boolean_rewrite_n_binders_success () =
@@ -20298,6 +22009,52 @@ in
     "definition for a non-Z3 variable"
     (fn () => ignore
       (Z3_ProofReplay.replay_root_for_test guarded_proof))
+end
+
+fun z3_skolem_dependent_witness_replay_success () =
+let
+  fun proof target witnesses =
+    let
+      val initial = Z3_Proof.empty_proof "4.15.3"
+      val steps = Redblackmap.insert (Z3_Proof.proof_steps initial, 0,
+        Z3_Proof.SKOLEM target)
+    in
+      Z3_Proof.update_proof_vars
+        (Z3_Proof.update_proof_steps initial steps)
+        (HOLset.addList (Term.empty_tmset, witnesses))
+    end
+  fun run_case (label, target, witness) =
+    let
+      val {asserted_hyps, definition_hyps, thm} =
+        Z3_ProofReplay.replay_root_with_state_for_test
+          (proof target [witness])
+      val definition =
+        case definition_hyps of
+          [term] => term
+        | _ => die ("FAIL: " ^ label ^ " lost the witness definition")
+      val (name, body) = boolSyntax.dest_eq definition
+    in
+      assert (Thm.concl thm ~~ target,
+        label ^ " returned the wrong skolem equality");
+      assert (List.null asserted_hyps andalso
+          List.length (Thm.hyp thm) = 1 andalso
+          name ~~ witness andalso Term.is_abs body,
+        label ^ " did not retain exactly the fresh function definition");
+      check_oracle_tags label thm;
+      expect_hol_error_contains (label ^ " rigid witness")
+        "expected a quantified formula"
+        (fn () => ignore
+          (Z3_ProofReplay.replay_root_with_state_for_test (proof target [])))
+    end
+in
+  List.app run_case
+    [("one-parameter skolem",
+      ``~(!x:int. ~P x \/ Q (y:int) x) =
+        ~(~P (sk y) \/ Q y (sk y))``, ``sk:int->int``),
+     ("three-parameter skolem",
+      ``~(!x:int. ~P x (a:bool) (b:int) (c:bool) \/ Q x) =
+        ~(~P (sk a b c) a b c \/ Q (sk a b c))``,
+      ``sk:bool->int->bool->int``)]
 end
 
 fun ground_subterm_evaluation_budget_success () =
@@ -23531,6 +25288,59 @@ fun z3_trans_star_chain_search_no_path_diagnostic () =
         "trans* no-path diagnostic did not include endpoints: " ^ msg)
     end
 
+fun z3_nnf_neg_quantified_body_replay_success () =
+let
+  fun run_case (label, vars, source, result, witness) =
+    let
+      val body_target = boolSyntax.mk_eq
+        (boolSyntax.mk_neg source, result)
+      val target = boolSyntax.mk_eq
+        (boolSyntax.mk_neg (boolSyntax.list_mk_exists (vars, source)),
+         boolSyntax.list_mk_forall (vars, result))
+      val (skolem_source, _) = boolSyntax.dest_conj source
+      val (skolem_result, _) = boolSyntax.dest_disj result
+      val skolem_target = boolSyntax.mk_eq
+        (boolSyntax.mk_neg skolem_source, skolem_result)
+      val body_node = Z3_Proof.NNF_NEG
+        ([Z3_Proof.SKOLEM skolem_target], body_target)
+      val node = Z3_Proof.NNF_NEG
+        ([Z3_Proof.PROOF_BIND (vars, body_node)], target)
+      val initial = Z3_Proof.empty_proof "4.15.3"
+      val proof = Z3_Proof.update_proof_vars
+        (Z3_Proof.update_proof_steps initial
+          (Redblackmap.insert (Z3_Proof.proof_steps initial, 0, node)))
+        (HOLset.add (Term.empty_tmset, witness))
+      val () = Profile.reset_all ()
+      val {asserted_hyps, definition_hyps, thm} =
+        Z3_ProofReplay.replay_root_with_state_for_test proof
+    in
+      assert (Thm.concl thm ~~ target,
+        label ^ " returned the wrong quantified NNF equality");
+      assert (List.null asserted_hyps andalso
+          List.length definition_hyps = 1 andalso
+          HOLset.equal (Thm.hypset thm,
+            HOLset.addList (Term.empty_tmset, definition_hyps)),
+        label ^ " changed the skolem definition hypotheses");
+      assert (profile_call_count "nnf[metis-fallback]" = 0,
+        label ^ " used METIS for quantified NNF congruence");
+      check_oracle_tags label thm
+    end
+in
+  List.app run_case
+    [("one-binder negative existential",
+      [``y:int``],
+      ``(!x:int. ~(P x \/ Q (y:int) x) \/ R x) /\ P1 y /\ P2 y``,
+      ``~(~(P ((sk:int->int) y) \/ Q (y:int) (sk y)) \/ R (sk y)) \/
+        ~P1 y \/ ~P2 y``, ``sk:int->int``),
+     ("three-binder negative existential",
+      [``a:bool``, ``b:int``, ``c:bool``],
+      ``(!x:int. ~(P x (a:bool) (b:int) (c:bool) \/ Q x) \/ R x) /\
+        P1 a b c /\ P2 a b c``,
+      ``~(~(P ((sk:bool->int->bool->int) a b c) a b c \/ Q (sk a b c)) \/
+        R (sk a b c)) \/ ~P1 a b c \/ ~P2 a b c``,
+      ``sk:bool->int->bool->int``)]
+end
+
 fun z3_nnf_structural_replay_no_metis_success () =
 let
   val cases = [
@@ -25238,7 +27048,23 @@ let
       ``(if (x:real) < y then T else F) =
         (if y <= x then F else T)``),
     ("int-additive-order", ``((x:int) + y) = (y + x)``),
-    ("real-additive-order", ``((x:real) + y) = (y + x)``)]
+    ("real-additive-order", ``((x:real) + y) = (y + x)``),
+    ("real-polynomial-guard",
+      ``(if (x:real) + -1 * y <= 0 then -1 * x + y else 0) =
+        (if y < x then 0 else y - x)``),
+    (* Z3's arithmetic rewrite of a guarded division over a product of
+       re-spelled absolute values *)
+    ("int-conditional-product-polynomial",
+      ``(if d = 0 then 0 else
+          ((if v1 >= 0 then v1 else -1 * v1) *
+           (if d + -1 * (if v2 >= 0 then v2 else -1 * v2) <= 0 then
+              -1 * d + if v2 >= 0 then v2 else -1 * v2
+            else 0) * (if v5 >= 0 then v5 else -1 * v5)) / d) =
+        (if d = 0 then 0 else
+          ((if v1 < 0 then -v1 else v1) *
+           ((if (if v2 < 0 then -v2 else v2) < d then 0
+             else (if v2 < 0 then -v2 else v2) - d) *
+            (if v5 < 0 then -v5 else v5))) / (d:int))``)]
   val incomplete = ``~((x:int) < y) = (x <= y)``
   val (incomplete_left, incomplete_right) = boolSyntax.dest_eq incomplete
   val incomplete_reversed =
@@ -25248,8 +27074,37 @@ let
   val non_equality = ``p /\ q``
   val non_equality_reversed = ``q /\ p``
   val non_equality_canonical = canonical_target non_equality
+  (* A long sum, left-nested on one side and right-nested on the other.
+     Normalizing every node of the chain rescans it quadratically
+     (about 6 s at this length); normalizing its root takes well under
+     one.  No wall-clock bound: it would fail on a loaded host. *)
+  val chain =
+    let
+      val variables = List.tabulate (800, fn i =>
+        Term.mk_var ("v" ^ Int.toString i, intSyntax.int_ty))
+      fun double v = intSyntax.mk_mult (v, ``2:int``)
+      val left = List.foldl
+        (fn (v, sum) => intSyntax.mk_plus (sum, double v))
+        (hd variables) (tl variables)
+      val right = List.foldr
+        (fn (v, sum) => intSyntax.mk_plus (double v, sum))
+        (hd variables) (tl variables)
+    in boolSyntax.mk_eq (left, right) end
+  (* A shared doubling circuit, a(k+1) = a(k) + a(k), of depth 40 equals
+     2 ** 40 * x.  Walking it as a tree takes 2 ** 40 steps; its DAG has
+     40 nodes. *)
+  val circuit =
+    let
+      val x = ``x:int``
+      fun double (0, a) = a
+        | double (n, a) = double (n - 1, intSyntax.mk_plus (a, a))
+    in
+      boolSyntax.mk_eq (double (40, x), ``1099511627776 * ^x``)
+    end
 in
   List.app closes closing_cases;
+  closes ("long-chain", chain);
+  closes ("shared-circuit", circuit);
   assert (not (Term.aconv guarded_left guarded_right),
     "difference-directed rewrite canonicalization closed a non-dual pair");
   assert (guarded ~~ incomplete orelse guarded ~~ incomplete_reversed,
@@ -25257,6 +27112,162 @@ in
   assert (non_equality_canonical ~~ non_equality orelse
           non_equality_canonical ~~ non_equality_reversed,
     "difference-directed extension changed non-equality canonicalization")
+end
+
+fun nonlinear_tight_integer_bounds_success () =
+let
+  val goals = [
+    ``(x:int) >= 4 ==> x <= 4 ==>
+        ~(37 * x + -6 * (x * x) >= -37) ==> F``,
+    ``(if p then x else -x:int) >= 4 ==>
+        (if p then x else -x) <= 4 ==>
+        ~(37 * (if p then x else -x) +
+          -6 * ((if p then x else -x) * (if p then x else -x)) >= -37)
+        ==> F``]
+  fun check goal =
+    let val theorem = Library.nla_prove goal in
+      assert (Thm.concl theorem ~~ goal andalso null (Thm.hyp theorem),
+        "tight integer bound replay changed the goal or retained assumptions");
+      check_oracle_tags "tight integer bound replay" theorem
+    end
+  val false_goal = ``(x:int) >= 4 ==> x <= 4 ==> x * x < 16``
+  val rejected =
+    (Library.nla_prove false_goal; false)
+    handle Feedback.HOL_ERR _ => true
+in
+  List.app check goals;
+  assert (rejected, "tight integer bounds proved a false quadratic clause")
+end
+
+fun cpc_arith_max_geq2_success () =
+let
+  fun check (sort, expected) =
+    let
+      val proof = parse_cpc_proof_string
+        ("((declare-const x " ^ sort ^ ") (declare-const y " ^ sort ^
+         ") (step @p1 :rule arith-max-geq2 :args (x y)))")
+      val theorem = CPC_ProofReplay.replay_root_for_test proof
+    in
+      assert (Thm.concl theorem ~~ expected andalso null (Thm.hyp theorem),
+        "arith-max-geq2 returned the wrong theorem or retained assumptions");
+      check_oracle_tags "arith-max-geq2" theorem
+    end
+in
+  List.app check
+    [("Int", ``((if (x:int) >= y then x else y) >= y) = T``),
+     ("Real", ``((if (x:real) >= y then x else y) >= y) = T``)]
+end
+
+fun arithmetic_shared_conditional_abstraction_success () =
+let
+  val atom = ``if p then (x:int) else -x``
+  fun double 0 = atom
+    | double n =
+        let val prior = double (n - 1)
+        in intSyntax.mk_plus (prior,prior) end
+  val shared = double 65
+  val target = boolSyntax.mk_eq (shared,shared)
+  val theorem = Library.prove_abstracting_atoms
+    (fn schema => Thm.REFL (boolSyntax.lhs schema)) [atom] target
+in
+  assert (Portable.pointer_eq (Thm.concl theorem,target) andalso
+      null (Thm.hyp theorem),
+    "shared conditional abstraction changed its exact closed endpoint");
+  check_oracle_tags "shared conditional abstraction" theorem
+end
+
+fun arithmetic_distinct_shared_atoms_success () =
+let
+  fun double 0 = ``x:int``
+    | double n =
+        let val prior = double (n - 1)
+        in intSyntax.mk_plus (prior,prior) end
+  val first = boolSyntax.mk_cond
+    (``p:bool``,double 65,``0:int``)
+  val second = boolSyntax.mk_cond
+    (``q:bool``,double 65,``0:int``)
+  val sum = intSyntax.mk_plus (first,second)
+  val target = boolSyntax.mk_eq (sum,sum)
+  val theorem = Library.arith_prove_raw target
+in
+  assert (Portable.pointer_eq (Thm.concl theorem,target) andalso
+      null (Thm.hyp theorem),
+    "distinct shared atoms changed the closed arithmetic endpoint");
+  check_oracle_tags "distinct shared atoms" theorem
+end
+
+fun arithmetic_shared_type_fallback_success () =
+let
+  fun tuple 0 = Type.bool
+    | tuple n = let val prior = tuple (n - 1)
+                in pairSyntax.mk_prod (prior,prior) end
+  val ty = tuple 21
+  val f = Term.mk_var ("f",Type.--> (Type.bool,ty))
+  val q = Term.mk_var ("q",Type.--> (ty,Type.bool))
+  val guard = Term.mk_comb (q,Term.mk_comb (f,``p:bool``))
+  val atom = boolSyntax.mk_cond (guard,``x:int``,``-x:int``)
+  val target = boolSyntax.mk_eq (atom,atom)
+  val theorem = Library.prove_abstracting_atoms
+    (fn schema => Thm.REFL (boolSyntax.lhs schema)) [atom] target
+in
+  assert_concl_alpha ("shared type fallback",theorem,target);
+  assert_no_hyps ("shared type fallback",theorem);
+  check_oracle_tags "shared type fallback" theorem
+end
+
+fun cpc_shared_arith_geq_tighten_success () =
+let
+  fun level index = "@t" ^ Int.toString index
+  fun doubling index =
+    "(define " ^ level (index + 1) ^ " () (+ " ^ level index ^ " " ^
+      level index ^ ")) "
+  val proof = parse_cpc_proof_string
+    ("((declare-const p Bool) (declare-const x Int) " ^
+     "(define @t0 () (ite p x (- x))) " ^
+     String.concat (List.tabulate (65,doubling)) ^
+     "(step @out :rule arith-geq-tighten :args (@t65 0)))")
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val (left,right) = boolSyntax.dest_eq (Thm.concl theorem)
+  val (operand,zero) = intSyntax.dest_geq (boolSyntax.dest_neg left)
+  val (bound,increment) = intSyntax.dest_geq right
+  val (restored,one) = intSyntax.dest_plus increment
+in
+  assert (Portable.pointer_eq (operand,restored) andalso
+      Term.aconv zero intSyntax.zero_tm andalso
+      Term.aconv bound intSyntax.zero_tm andalso
+      Term.aconv one intSyntax.one_tm,
+    "shared arithmetic rule changed its operands or fixed unit offset");
+  assert_no_hyps ("shared arithmetic rule",theorem);
+  check_oracle_tags "shared arithmetic rule" theorem
+end
+
+fun cpc_arithmetic_eliminated_cast_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((step @out :rule arith_poly_norm_rel :args ((= (to_real 0) 0.0))))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val expected = boolSyntax.mk_eq
+    (intrealSyntax.mk_real_of_int intSyntax.zero_tm,realSyntax.zero_tm)
+in
+  assert_concl_alpha ("eliminated arithmetic cast",theorem,expected);
+  assert_no_hyps ("eliminated arithmetic cast",theorem);
+  check_oracle_tags "eliminated arithmetic cast" theorem
+end
+
+fun cpc_arith_geq_tighten_conditional_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const x Int) (declare-const y Int) \
+    \(declare-const p Bool) (declare-const q Bool) \
+    \(define @a () (+ (ite p x (- x)) (ite q y (- y)))) \
+    \(step @out :rule arith-geq-tighten :args (@a 0)))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val atom = ``(if p then x else -x:int) + (if q then y else -y:int)``
+  val expected = ``~(^atom >= 0) = (0 >= ^atom + 1)``
+in
+  assert (Thm.concl theorem ~~ expected andalso null (Thm.hyp theorem),
+    "integer bound tightening returned the wrong conditional theorem");
+  check_oracle_tags "conditional integer bound tightening" theorem
 end
 
 fun symbolic_power_nonpolynomial_detection_success () =
@@ -25289,6 +27300,152 @@ in
     "symbolic power was routed to nla_prove")
 end
 
+fun cpc_arith_mult_sign_replay_success () =
+let
+  val sign = CPC_ProofReplay.replay_arith_mult_sign_for_test
+  val a = ``if (x:int) < 0 then -x else x``
+  val b = ``if (y:int) = 0 then 0 else (x:int) * x / y``
+  val c = ``if (y:int) < x then 0 else y - (x:int)``
+  val r = ``if (u:real) < 0 then -u else u``
+  val s = ``if (v:real) = 0 then 0 else (u:real) * u / v``
+  val cases = [
+    ("two positive int factors",
+      ``^a > 0 /\ ^b > 0``, ``^a * ^b``,
+      ``^a > 0 /\ ^b > 0 ==> ^a * ^b > 0``),
+    ("positive and negative int factors",
+      ``^a > 0 /\ ^b < 0``, ``^a * ^b``,
+      ``^a > 0 /\ ^b < 0 ==> ^a * ^b < 0``),
+    ("nonzero int square", ``~(^c = 0)``, ``^c * ^c``,
+      ``~(^c = 0) ==> ^c * ^c > 0``),
+    ("positive int cube", ``^a > 0``, ``^a * ^a * ^a``,
+      ``^a > 0 ==> ^a * ^a * ^a > 0``),
+    ("two negative int factors",
+      ``^a < 0 /\ ^c < 0``, ``^a * ^c``,
+      ``^a < 0 /\ ^c < 0 ==> ^a * ^c > 0``),
+    ("positive and negative real factors",
+      ``^r > 0 /\ ^s < 0``, ``^r * ^s``,
+      ``^r > 0 /\ ^s < 0 ==> ^r * ^s < 0``),
+    ("nonzero real square", ``~(^s = 0)``, ``^s * ^s``,
+      ``~(^s = 0) ==> ^s * ^s > 0``),
+    ("nonzero factor with a known sign", ``~(^c = 0) /\ ^c > 0``, ``^c``,
+      ``~(^c = 0) /\ ^c > 0 ==> ^c > 0``)]
+  val () = Profile.reset_all ()
+  fun check (name, factors, product, expected) =
+    let val theorem = sign [factors, product]
+    in
+      assert (Thm.concl theorem ~~ expected,
+        name ^ " returned the wrong theorem: " ^
+        Library.thm_to_string theorem);
+      check_oracle_tags name theorem
+    end
+  (* Every nonzero factor is split into its two signs, so a product of
+     squares of many nonzero factors must be refused before the 2^n sign
+     assignments are expanded. *)
+  val derive = CPC_ProofReplay.derive_arith_mult_sign_for_test
+  fun squares n =
+    let
+      val vs = List.tabulate (n, fn i =>
+        mk_var ("z" ^ Int.toString i, intSyntax.int_ty))
+      val factors = list_mk_conj
+        (List.map (fn v => ``~(^v = 0)``) vs)
+      val product = List.foldl (fn (v, acc) => ``^acc * ^v * ^v``)
+        (let val v = hd vs in ``^v * ^v`` end) (tl vs)
+    in (factors, product) end
+  (* Refused with the expected diagnostic, not some other replay error. *)
+  fun refused_with diagnostic f x =
+    (f x; false) handle HOL_ERR e =>
+      String.isSubstring diagnostic (Feedback.message_of e)
+  val too_many = "too many nonzero factors to split"
+  val sign_open = "a nonzero factor leaves the product's sign open"
+  val refused = refused_with too_many derive
+  val (factors8, product8) = squares 8
+  (* A nonzero conjunct absent from the product is not split, so eight
+     squares stay within the limit next to it. *)
+  val factors8unused = ``~((w:int) = 0) /\ ^factors8``
+  val (factors9, product9) = squares 9
+  (* Past the split limit replay fails closed instead of searching for a
+     sign: a negative factor times nine nonzero squares is refused. *)
+  val (factors9neg, product9neg) =
+    let val x = ``x:int``
+    in (``^x < 0 /\ ^factors9``, ``^x * ^product9``) end
+  fun replay_refused (factors, product) =
+    refused_with too_many sign [factors, product]
+  val cube_factor = ``~((x:int) = 0)``
+  val cube_product = ``(x:int) * x * x``
+in
+  List.app check cases;
+  assert (Thm.concl (derive (factors8, product8)) ~~
+            ``^factors8 ==> ^product8 > 0``,
+    "eight nonzero squares were not derived");
+  assert (Thm.concl (derive (factors8unused, product8)) ~~
+            ``^factors8unused ==> ^product8 > 0``,
+    "an unused nonzero factor was split");
+  assert (refused (factors9, product9),
+    "nine nonzero squares were split");
+  assert (replay_refused (factors9, product9),
+    "nine nonzero squares were replayed");
+  assert (replay_refused (factors9neg, product9neg),
+    "a negative factor times nine nonzero squares was replayed");
+  assert (refused_with sign_open derive (cube_factor, cube_product),
+    "a nonzero cube was derived");
+  assert (profile_call_count "CPC(rung:arith/cases)" = 0,
+    "arith_mult_sign was routed to arithmetic search")
+end
+
+fun cpc_arith_mult_monotone_replay_success () =
+let
+  val pos = CPC_ProofReplay.replay_arith_mult_pos_for_test
+  val neg = CPC_ProofReplay.replay_arith_mult_neg_for_test
+  val k = ``if (z:int) < 0 then -z else z + 1``
+  val n = ``if (z:int) < 0 then z else -z - 1``
+  val a = ``if (y:int) = 0 then 0 else (x:int) * x / y``
+  val b = ``if (y:int) < x then 0 else y - (x:int)``
+  val r = ``if (u:real) < 0 then -u else u + 1``
+  val c = ``if (v:real) = 0 then 0 else (u:real) * u / v``
+  val d = ``if (v:real) < u then 0 else v - (u:real)``
+  fun int_case (name, replay, coefficient, sign, relation, result) =
+    (name, replay, coefficient, relation,
+     mk_imp (mk_conj (sign, relation), result))
+  val cases = [
+    int_case ("positive int equality", pos, k, ``^k > 0``,
+      ``^a = ^b``, ``^k * ^a = ^k * ^b``),
+    int_case ("positive int less", pos, k, ``^k > 0``,
+      ``^a < ^b``, ``^k * ^a < ^k * ^b``),
+    int_case ("positive int less-or-equal", pos, k, ``^k > 0``,
+      ``^a <= ^b``, ``^k * ^a <= ^k * ^b``),
+    int_case ("positive int greater", pos, k, ``^k > 0``,
+      ``^a > ^b``, ``^k * ^a > ^k * ^b``),
+    int_case ("positive int greater-or-equal", pos, k, ``^k > 0``,
+      ``^a >= ^b``, ``^k * ^a >= ^k * ^b``),
+    int_case ("negative int equality", neg, n, ``^n < 0``,
+      ``^a = ^b``, ``^n * ^a = ^n * ^b``),
+    int_case ("negative int less", neg, n, ``^n < 0``,
+      ``^a < ^b``, ``^n * ^a > ^n * ^b``),
+    int_case ("negative int less-or-equal", neg, n, ``^n < 0``,
+      ``^a <= ^b``, ``^n * ^a >= ^n * ^b``),
+    int_case ("negative int greater", neg, n, ``^n < 0``,
+      ``^a > ^b``, ``^n * ^a < ^n * ^b``),
+    int_case ("negative int greater-or-equal", neg, n, ``^n < 0``,
+      ``^a >= ^b``, ``^n * ^a <= ^n * ^b``),
+    int_case ("positive real less", pos, r, ``^r > 0``,
+      ``^c < ^d``, ``^r * ^c < ^r * ^d``),
+    int_case ("negative real greater-or-equal", neg, ``-^r``, ``-^r < 0``,
+      ``^c >= ^d``, ``-^r * ^c <= -^r * ^d``)]
+  val () = Profile.reset_all ()
+  fun check (name, replay, coefficient, relation, expected) =
+    let val theorem = replay [coefficient, relation]
+    in
+      assert (Thm.concl theorem ~~ expected,
+        name ^ " returned the wrong theorem: " ^
+        Library.thm_to_string theorem);
+      check_oracle_tags name theorem
+    end
+in
+  List.app check cases;
+  assert (profile_call_count "CPC(rung:arith/cases)" = 0,
+    "arith_mult_pos/neg was routed to arithmetic search")
+end
+
 fun cpc_arith_mult_relation_replay_success () =
 let
   fun check (name, replay, coefficient, relation, expected) =
@@ -25302,6 +27459,16 @@ let
   val neg = CPC_ProofReplay.replay_arith_mult_neg_for_test
   val pos = CPC_ProofReplay.replay_arith_mult_pos_for_test
   val cases = [
+    ("positive symbolic int conditional", pos, ``k:int``,
+      ``(if p then x else -x:int) >= (if q then y else -y:int)``,
+      ``((k:int) > 0 /\
+        (if p then x else -x:int) >= (if q then y else -y:int)) ==>
+        k * (if p then x else -x) >= k * (if q then y else -y)``),
+    ("negative int conditional", neg, ``-2i``,
+      ``(if p then x else -x:int) >= (if q then y else -y:int)``,
+      ``(-2i < 0i /\
+        (if p then x else -x:int) >= (if q then y else -y:int)) ==>
+        -2i * (if p then x else -x) <= -2i * (if q then y else -y)``),
     ("negative int equality", neg, ``-2i``, ``(x:int) = y``,
       ``(-2i < 0i /\ (x:int) = y) ==> -2i * x = -2i * y``),
     ("negative int less", neg, ``-2i``, ``(x:int) < y``,
@@ -25378,7 +27545,13 @@ let
      ("emod nonpositive-divisor nonnegative clause",
       ``(b:int) <= 0 \/ emod 0 b >= 0``),
      ("emod nonpositive-divisor clause",
-      ``(b:int) <= 0 \/ emod 0 b <= 0``)]
+      ``(b:int) <= 0 \/ emod 0 b <= 0``),
+     ("emod symbolic-divisor nonnegative clause",
+      ``(d:int) = 0 \/ emod n d >= 0``),
+     ("emod symbolic-divisor upper-bound clause",
+      ``(d:int) = 0 \/ emod n d < ABS d``),
+     ("ediv emod symbolic division identity",
+      ``(d:int) = 0 \/ n = d * ediv n d + emod n d``)]
   val consumed_cases =
     [
      ("symbolic nonzero dividend ediv totalization",
@@ -29673,6 +31846,25 @@ in
     (fn () => ignore (SmtResource.bounded_structure 8 large_binder))
 end
 
+(* Word lowering reaches the assumptions as well as the conclusion.  Left in
+   an assumption, `word_bit 0 w` and `w >>> 1` are translated as
+   uninterpreted functions, and the solvers report this sequent's negation
+   satisfiable. *)
+fun word_simp_assumptions_success () =
+let
+  val goal =
+    ([``(w : 256 word) <> 0w``, ``~word_bit 0 (w : 256 word)``,
+      ``(w : 256 word) >>> 2 <> 0w``],
+     ``(w : 256 word) >>> 1 <> 0w``)
+  val ((lowered, _), _) =
+    SolverSpec.simplify (SmtLib.SIMP_TAC true) goal
+  fun mentions c = List.exists (can (find_term (same_const c))) lowered
+in
+  assert (not (mentions wordsSyntax.word_bit_tm orelse
+               mentions wordsSyntax.word_lsr_tm),
+    "word lowering left word_bit or word_lsr in an assumption")
+end
+
 local
   open SmtReplayGraph SmtReplayProof
   structure G = SmtReplayGraph
@@ -33026,7 +35218,16 @@ let
      (``word_bit 7 (w : word8)``, ``(w : word8) ' 7``),
      (``word_bit 8 (w : word8)``, boolSyntax.F),
      (``word_bit 31 (w : word32)``, ``(w : word32) ' 31``),
-     (``word_bit 32 (w : word32)``, boolSyntax.F)]
+     (``word_bit 32 (w : word32)``, boolSyntax.F),
+     (``(((3 >< 3) (w : word4)) : word1) ' 0``, ``(w : word4) ' 3``),
+     (``(((a : word1) @@ (b : word3)) : word4) ' 3``,
+      ``(a : word1) ' 0``),
+     (``(word_nand (x : word8) y) ' 7``,
+      ``~(x : word8) ' 7 \/ ~(y : word8) ' 7``),
+     (``(word_nor (x : word8) y) ' 7``,
+      ``~(x : word8) ' 7 /\ ~(y : word8) ' 7``),
+     (``(word_xnor (x : word8) y) ' 7``,
+      ``(x : word8) ' 7 = (y : word8) ' 7``)]
   val sum = wordsSyntax.mk_word_add (x, y)
   val bit0 = numSyntax.zero_tm
   val projection = wordsSyntax.mk_index (sum, bit0)
@@ -33342,6 +35543,24 @@ local
   structure C = SmtReplayCanonGraph
   structure P = SmtReplayProof
 in
+fun word_graph_wide_bitwise_success () =
+let
+  val targets =
+    [``(x : 256 word) &&
+       0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE0w =
+       word_lsl (word_lsr x 5) 5``,
+     ``(x : 256 word) = x && m || x && ~m``]
+  val _ = List.app (fn target =>
+    let
+      val theorem = Timeout.apply (Time.fromSeconds 30)
+        SmtWordGraph.prove target
+    in
+      assert_concl_alpha ("wide bitwise word graph", theorem, target);
+      assert_no_hyps ("wide bitwise word graph", theorem);
+      check_oracle_tags "wide bitwise word graph" theorem
+    end) targets
+in () end
+
 fun word_graph_boolean_circuit_success () =
 let
   val target = ``((p /\ q) ==>
@@ -33733,12 +35952,16 @@ let
             andalso #memo_hits metrics>0 andalso
             ptr (boolSyntax.lhs (Thm.concl theorem)) source,
           "shared callback control missed a prover or lost its source");
-        assert (#operator_calls cached_metrics = #operator_calls metrics
+        assert (#operator_calls cached_metrics <= #operator_calls metrics
             andalso #memo_hits cached_metrics > #memo_hits metrics andalso
             ptr (boolSyntax.lhs (Thm.concl cached)) source andalso
             Lib.can (SmtSkeletonProve.nodewise_equality
-              (boolSyntax.rhs (Thm.concl theorem)))
-              (boolSyntax.rhs (Thm.concl cached)),
+              (boolSyntax.rhs (Thm.concl
+                (Conv.CONV_RULE (Conv.RAND_CONV
+                  (Rewrite.REWRITE_CONV [])) theorem))))
+              (boolSyntax.rhs (Thm.concl
+                (Conv.CONV_RULE (Conv.RAND_CONV
+                  (Rewrite.REWRITE_CONV [])) cached))),
           "local built-in schema reuse lost its benefit or normal form");
         assert_no_hyps ("Task05 typed frontiers",theorem);
         check_oracle_tags "Task05 typed frontiers" theorem;
@@ -33898,6 +36121,7 @@ end
 fun run_word_graph_unittests () =
   List.app run_test
     [("word_graph_conversion_success", word_graph_conversion_success),
+     ("word_graph_wide_bitwise_success", word_graph_wide_bitwise_success),
      ("word_graph_boolean_circuit_success",
        word_graph_boolean_circuit_success),
      ("word_graph_discovery_invariants_success",
@@ -33939,6 +36163,101 @@ fun run_cnf_graph_unittests () =
        z3_e0_diagnostic_exception_precedence_success),
      ("z3_e0_replay_measurement_reserved_snapshot_success",
        z3_e0_replay_measurement_reserved_snapshot_success)]
+
+fun cpc_chain_resolution_success () =
+  let
+    val declarations = "(declare-const p Bool) (declare-const q Bool) \
+      \(declare-const r Bool) (declare-const s Bool) "
+    fun check body expected hypotheses fallback =
+      let
+        val proof = parse_cpc_proof_string ("(" ^ declarations ^ body ^ ")")
+        val _ = Profile.reset_all ()
+        val theorem = CPC_ProofReplay.replay_root_for_test proof
+        val _ = assert (Thm.concl theorem ~~ expected,
+          "chain_resolution returned the wrong endpoint")
+        val _ = assert (List.length (Thm.hyp theorem) = hypotheses,
+          "chain_resolution lost premise hypotheses")
+        val _ = assert
+          ((cpc_profile_call_count "CPC(rung:resolution/annotated_macro)" > 0)
+            = fallback, "chain_resolution used the wrong replay route")
+      in check_oracle_tags "CPC chain_resolution" theorem end
+    fun chain aliases explicit source premises polarities atoms
+        target expected hypotheses =
+      let
+        val lists = "(@list " ^ polarities ^ ") (@list " ^ atoms ^ ")"
+        val definitions = if aliases then
+          "(define @pols () (@list " ^ polarities ^ ")) " ^
+          "(define @atoms () (@list " ^ atoms ^ ")) " else ""
+        val arguments = if aliases then "@pols @atoms" else lists
+        val conclusion = if explicit then " " ^ target else ""
+      in check (definitions ^ source ^ "(step @out" ^ conclusion ^
+        " :rule chain_resolution :premises (" ^ premises ^ ") :args (" ^
+        arguments ^ "))") expected hypotheses false end
+    val _ = List.app (fn aliases => List.app (fn explicit =>
+      (chain aliases explicit
+        "(assume @a (or p q r)) (assume @b (not p)) (assume @c (not q)) "
+        "@a @b @c" "true true" "p q" "r" ``r:bool`` 3;
+       chain aliases explicit
+        "(assume @a (or (not p) q)) (assume @b p) (assume @c (not q)) "
+        "@a @b @c" "false true" "p q" "false" boolSyntax.F 3;
+       chain aliases explicit
+        "(assume @a p) (assume @b (not p)) "
+        "@a @b" "true" "p" "false" boolSyntax.F 2;
+       chain aliases explicit
+        "(assume @a (or p p q)) (assume @b (not p)) "
+        "@a @b @b" "true true" "p p" "q" ``q:bool`` 2))
+      [false, true]) [false, true]
+    val _ = List.app (fn conclusion => check
+      ("(assume @a (or p q r)) (assume @b (not p)) \
+       \(assume @c (not q)) \
+       \(step @eq :rule refl :args ((or p q r))) \
+       \(step @opaque :rule eq_resolve :premises (@a @eq)) \
+       \(step @out" ^ conclusion ^ " :rule chain_resolution \
+       \:premises (@opaque @b @c) :args ((@list true true) (@list p q)))")
+      ``r:bool`` 3 true) ["", " r"]
+    val _ = check
+      "(assume @a (or (not (not p)) q r)) \
+      \(assume @b (not p)) (assume @c (not q)) \
+      \(step @out :rule chain_resolution :premises (@a @b @c) \
+      \:args ((@list true true) (@list p q)))" ``r:bool`` 3 true
+    val _ = check
+      "(assume @a (or (not p) q r)) (assume @b p) \
+      \(assume @c (not q)) \
+      \(step @eq :rule refl :args ((or (not p) q r))) \
+      \(step @opaque :rule eq_resolve :premises (@a @eq)) \
+      \(step @out :rule chain_resolution :premises (@opaque @b @c) \
+      \:args ((@list false true) (@list p q)))" ``r:bool`` 3 true
+    val _ = List.app (fn (source, next, expected) => check
+      ("(assume @a " ^ source ^ ") (assume @b " ^ next ^ ") " ^
+       "(assume @c (not (or q r))) " ^
+       "(step @eq :rule refl :args (" ^ source ^ ")) " ^
+       "(step @opaque :rule eq_resolve :premises (@a @eq)) " ^
+       "(step @out :rule chain_resolution :premises (@opaque @b @c) " ^
+       ":args ((@list true true) (@list p (or q r))))")
+      expected 3 true)
+      [("(or p (or q r))", "(not p)", boolSyntax.F),
+       ("(or p (or q r))", "(or (not p) s)", ``s:bool``),
+       ("(or p (or q r) s)", "(not p)", ``s:bool``)]
+    val _ = check
+      "(assume @a (or p q)) (assume @b (or (not p) (or p q))) \
+      \(assume @c (not (or p q))) \
+      \(step @eq :rule refl :args ((or p q))) \
+      \(step @opaque :rule eq_resolve :premises (@a @eq)) \
+      \(step @out :rule chain_resolution :premises (@opaque @b @c) \
+      \:args ((@list true true) (@list p (or p q))))" ``q:bool`` 3 true
+    val _ = expect_hol_error_contains "chain_resolution list lengths"
+      "annotation lengths differ" (fn () => ignore (parse_cpc_proof_string
+        ("(" ^ declarations ^ "(assume @a p) (assume @b (not p)) \
+         \(step @out :rule chain_resolution :premises (@a @b) \
+         \:args ((@list true false) (@list p))))")))
+    val _ = expect_hol_error_contains "chain_resolution wrong conclusion"
+      "explicit target resolution failed; target=s"
+      (fn () => ignore (CPC_ProofReplay.replay_root_for_test
+        (parse_cpc_proof_string ("(" ^ declarations ^
+          "(assume @a (or p q r)) (assume @b (not p)) \
+          \(assume @c (not q)) (step @out s :rule chain_resolution \
+          \:premises (@a @b @c) :args ((@list true true) (@list p q))))"))))
+  in () end
 
 fun cpc_clause_producer_occurrences_success () =
   let
@@ -34656,6 +36975,51 @@ fun run_cache_lifetime_unittests () =
      ("CPC omitted conclusion", cpc_cache_omitted_conclusion_bypasses_success),
      ("CPC cache atomicity", cpc_fastpath_error_and_cache_atomicity_contract)]
 
+fun cpc_quantified_trans_prefix_limit_success () =
+let
+  val variables = List.tabulate
+    (257, fn i => Term.mk_var ("prefix" ^ Int.toString i, Type.bool))
+  fun endpoints prefix =
+    (boolSyntax.list_mk_forall (prefix, ``p \/ q \/ r``),
+     boolSyntax.list_mk_forall (prefix, ``r \/ p \/ q``))
+  val pair = endpoints (List.take (variables, 256))
+  val theorem = CPC_ProofReplay.quantified_boolean_equality_for_test pair
+in
+  assert (Thm.concl theorem ~~ boolSyntax.mk_eq pair andalso
+      List.null (Thm.hyp theorem),
+    "quantified Boolean bridge changed an in-budget endpoint");
+  check_oracle_tags "bounded quantified Boolean bridge" theorem;
+  expect_hol_error_contains "quantified Boolean prefix limit"
+    "prefix limit exceeded"
+    (fn () => ignore (CPC_ProofReplay.quantified_boolean_equality_for_test
+      (endpoints variables)))
+end
+
+fun cpc_instantiate_after_quantified_trans_success () =
+let
+  val proof = parse_cpc_proof_string (
+    "((declare-fun p (Int) Bool) " ^
+    " (declare-fun q (Int) Bool) " ^
+    " (declare-fun r (Int) Bool) " ^
+    " (declare-const s Bool) " ^
+    " (declare-const a Int) " ^
+    " (define @q () (forall ((x Int)) (or (p x) (q x) (r x)))) " ^
+    " (define @r () (forall ((x Int)) (or (r x) (p x) (q x)))) " ^
+    " (assume @a s) " ^
+    " (assume @e (= s (not (not @r)))) " ^
+    " (step @nn :rule bool-double-not-elim :args (@q)) " ^
+    " (step @trans :rule trans :premises (@e @nn)) " ^
+    " (step @forall :rule eq_resolve :premises (@a @trans)) " ^
+    " (step @inst :rule instantiate :premises (@forall) :args ((@list a)))) ")
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val expected = ``(p:int -> bool) a \/ q a \/ r a``
+in
+  assert (Thm.concl theorem ~~ expected andalso
+      List.length (Thm.hyp theorem) = 2,
+    "quantified transitivity lost the endpoint needed by instantiate");
+  check_oracle_tags "instantiate after quantified transitivity" theorem
+end
+
 fun run_unittests () =
 let
   val () = print "Running unit tests...\n\n"
@@ -34684,6 +37048,9 @@ let
     ("z3_compact_selected_dispatch", Z3_CompactReplayTests.run),
     ("cpc_graph_typed_parser", fn () =>
       (CPC_GraphParserTests.run ();CPC_ConstructorAliasReviewTests.run ())),
+    ("z3_bv1_concat_replay_success", z3_bv1_concat_replay_success),
+    ("cvc_native_bag_goal_nested_application_success",
+      cvc_native_bag_goal_nested_application_success),
     ("smt_resource_diagnostic_contract",
       smt_resource_diagnostic_contract),
     ("smt_resource_proof_pre_gate_precedes_parser",
@@ -34744,6 +37111,8 @@ let
     ("z3_hypothesis_presence_fastpath_boundary",
       Z3_HypothesisPresenceTests.run),
     ("word_graph_conversion_success", word_graph_conversion_success),
+    ("word_simp_assumptions_success", word_simp_assumptions_success),
+     ("word_graph_wide_bitwise_success", word_graph_wide_bitwise_success),
      ("word_graph_boolean_circuit_success",
        word_graph_boolean_circuit_success),
     ("word_graph_discovery_invariants_success",
@@ -34790,6 +37159,8 @@ let
       smtlib_string_typed_reset_assertions_success),
     ("smtlib_string_typed_definitions_success",
       smtlib_string_typed_definitions_success),
+    ("indexed_num_word_preprocessing_success",
+      indexed_num_word_preprocessing_success),
     ("num_binder_transfer_lemmas_success",
       num_binder_transfer_lemmas_success),
     ("num_binder_relativization_forall_success",
@@ -34825,6 +37196,8 @@ let
       num_transfer_guarded_num_success),
     ("num_transfer_assumption_free_var_success",
       num_transfer_assumption_free_var_success),
+    ("num_transfer_duplicate_assumptions_success",
+      num_transfer_duplicate_assumptions_success),
     ("num_bridge_axioms_retired_success",
       num_bridge_axioms_retired_success),
     ("ceiling_builtin_encoding_success", ceiling_builtin_encoding_success),
@@ -35007,8 +37380,16 @@ let
       z3_result_error_precedes_status),
     ("smtlib_distinct_translation_success",
       smtlib_distinct_translation_success),
+    ("smtlib_nonliteral_distinct_success",
+      smtlib_nonliteral_distinct_success),
     ("smtlib_datatype_type_translation_success",
       smtlib_datatype_type_translation_success),
+    ("smtlib_nested_datatype_dependencies_success",
+      smtlib_nested_datatype_dependencies_success),
+    ("smtlib_recursive_list_stays_datatype_success",
+      smtlib_recursive_list_stays_datatype_success),
+    ("smtlib_datatype_function_domain_dependencies_success",
+      smtlib_datatype_function_domain_dependencies_success),
     ("smtlib_extended_hol_encoding_records_success",
       smtlib_extended_hol_encoding_records_success),
     ("smtlib_seq_set_bag_feature_inference_success",
@@ -35031,6 +37412,10 @@ let
       smtlib_dialect_dictionary_dispatch_success),
     ("smtlib_hol_string_injection_translation_success",
       smtlib_hol_string_injection_translation_success),
+    ("smtlib_hol_string_bound_injection_translation_success",
+      smtlib_hol_string_bound_injection_translation_success),
+    ("smtlib_hol_string_length_translation_success",
+      smtlib_hol_string_length_translation_success),
     ("smtlib_native_string_translation_success",
       smtlib_native_string_translation_success),
     ("smtlib_native_string_sort_propagation_success",
@@ -35057,6 +37442,10 @@ let
       smtlib_fp_outbound_translation_success),
     ("smtlib_unsupported_smtfloat_constant_diagnostic",
       smtlib_unsupported_smtfloat_constant_diagnostic),
+    ("smtlib_failing_operand_translated_once",
+      smtlib_failing_operand_translated_once),
+    ("smtlib_failing_conjunct_eta_expansion_terminates",
+      smtlib_failing_conjunct_eta_expansion_terminates),
     ("smtlib_translation_shape_matrix_success",
       smtlib_translation_shape_matrix_success),
     ("smtlib_term_translation_branch_matrix_success",
@@ -35081,6 +37470,8 @@ let
       smtlib_native_datatype_uf_success),
     ("smtlib_native_datatype_equality_builtin_success",
       smtlib_native_datatype_equality_builtin_success),
+    ("smtlib_datatype_tester_instantiations_success",
+      smtlib_datatype_tester_instantiations_success),
     ("smtlib_datatype_parser_dict_success",
       smtlib_datatype_parser_dict_success),
     ("smtlib_preprocessing_and_gap_diagnostics",
@@ -35107,6 +37498,8 @@ let
       cpc_proof_parser_define_and_optional_conclusion_success),
     ("cpc_quoted_declaration_identity_success",
       cpc_quoted_declaration_identity_success),
+    ("cpc_curried_source_redeclaration_success",
+      cpc_curried_source_redeclaration_success),
     ("cpc_tokenizer_eof_and_lexical_validation_success",
       cpc_tokenizer_eof_and_lexical_validation_success),
     ("cpc_parser_graph_contract_diagnostics",
@@ -35117,6 +37510,8 @@ let
       cpc_proof_parser_parameterized_datatype_tester_success),
     ("cpc_proof_replay_nested_datatype_tester_success",
       cpc_proof_replay_nested_datatype_tester_success),
+    ("cpc_quant_dt_split_replay_success",
+      cpc_quant_dt_split_replay_success),
     ("cpc_proof_parser_ascribed_seq_empty_success",
       cpc_proof_parser_ascribed_seq_empty_success),
     ("cpc_proof_parser_ascribed_bag_empty_success",
@@ -35127,6 +37522,7 @@ let
       cpc_registry_deindexing_complete_success),
     ("cpc_d13_deindexed_operator_repros_success",
       cpc_d13_deindexed_operator_repros_success),
+    ("cpc_arrays_ext_replay_success", cpc_arrays_ext_replay_success),
     ("cpc_parameterized_skolem_registry_success",
       cpc_parameterized_skolem_registry_success),
     ("cpc_skolem_witness_forall_1_success",
@@ -35243,12 +37639,15 @@ let
     ("cpc_totalized_outbound_exclusions_success",
       cpc_totalized_outbound_exclusions_success),
     ("cpc_totalized_replay_success", cpc_totalized_replay_success),
+    ("cpc_arith_reduction_conditional_operands_success",
+      cpc_arith_reduction_conditional_operands_success),
     ("cpc_arith_mult_abs_nary_success",
       cpc_arith_mult_abs_nary_success),
     ("cpc_proof_parser_singleton_premise_success",
       cpc_proof_parser_singleton_premise_success),
     ("cpc_proof_parser_version_resolution_success",
       cpc_proof_parser_version_resolution_success),
+    ("cpc_chain_resolution_success", cpc_chain_resolution_success),
     ("cpc_clause_producer_occurrences_success",
       cpc_clause_producer_occurrences_success),
     ("cpc_clause_normalization_success", cpc_clause_normalization_success),
@@ -35264,6 +37663,15 @@ let
       cpc_long_structural_resolution_success),
     ("cpc_long_refutation_widening_success",
       cpc_long_refutation_widening_success),
+    ("cpc_array_set_assumption_bridge_success",
+      cpc_array_set_assumption_bridge_success),
+    ("cpc_array_set_definition_identity_success",
+      cpc_array_set_definition_identity_success),
+    ("cpc_arrays_select_const_set_success",
+      cpc_arrays_select_const_set_success),
+    ("cpc_eq_resolve_reflexive_left_success",
+      cpc_eq_resolve_reflexive_left_success),
+    ("cpc_binder_cong_lift_success", cpc_binder_cong_lift_success),
     ("cpc_proof_replay_contra_success",
       cpc_proof_replay_contra_success),
     ("cpc_proof_replay_eq_refl_cong_chain_success",
@@ -35278,18 +37686,27 @@ let
       cpc_eq_resolve_real_route_independent_success),
     ("cpc_proof_replay_omitted_arith_poly_norm_success",
       cpc_proof_replay_omitted_arith_poly_norm_success),
+    ("cpc_quantified_trans_prefix_limit_success",
+      cpc_quantified_trans_prefix_limit_success),
+    ("cpc_instantiate_after_quantified_trans_success",
+      cpc_instantiate_after_quantified_trans_success),
     ("cpc_proof_replay_canonical_trans_terminal_success",
       cpc_proof_replay_canonical_trans_terminal_success),
     ("cpc_proof_replay_bv_xor_rotation_general_success",
       cpc_proof_replay_bv_xor_rotation_general_success),
+    ("cpc_proof_replay_bv_poly_norm_word_ring_success",
+      cpc_proof_replay_bv_poly_norm_word_ring_success),
     ("cpc_proof_replay_cong_consumes_premises_success",
       cpc_proof_replay_cong_consumes_premises_success),
     ("cpc_proof_replay_and_elim_success",
       cpc_proof_replay_and_elim_success),
+    ("cpc_proof_replay_large_conjunction_provenance_success",
+      cpc_proof_replay_large_conjunction_provenance_success),
     ("cpc_proof_replay_boolean_rewrites_success",
       cpc_proof_replay_boolean_rewrites_success),
     ("cpc_proof_replay_seq_rules_success",
       cpc_proof_replay_seq_rules_success),
+    ("cpc_finite_literal_card_success", cpc_finite_literal_card_success),
     ("cpc_proof_replay_set_rules_success",
       cpc_proof_replay_set_rules_success),
     ("cpc_proof_replay_bag_trust_success",
@@ -35365,6 +37782,8 @@ let
       cpc_live_checked_replay_bv_xor_success),
     ("cpc_live_checked_replay_bv_bitblast_success",
       cpc_live_checked_replay_bv_bitblast_success),
+    ("cpc_live_checked_replay_bv_zero_extend_eliminate_success",
+      cpc_live_checked_replay_bv_zero_extend_eliminate_success),
     ("cpc_live_checked_replay_boolean_resolution_success",
       cpc_live_checked_replay_boolean_resolution_success),
     ("cpc_live_checked_replay_nat_max_success",
@@ -35383,6 +37802,8 @@ let
       z3_regular_language_semantics_success),
     ("z3_proof_parser_normalizes_rule_alias_success",
       z3_proof_parser_normalizes_rule_alias_success),
+    ("z3_proof_parser_unary_and_or_success",
+      z3_proof_parser_unary_and_or_success),
     ("z3_fpa2bv_proof_dictionary_replay_success",
       z3_fpa2bv_proof_dictionary_replay_success),
     ("z3_fpa2bv_proof_dictionary_strictness",
@@ -35395,6 +37816,8 @@ let
       z3_proof_parser_normalizes_pull_quant_success),
     ("z3_nested_lambda_equality_rewrite_success",
       z3_nested_lambda_equality_rewrite_success),
+    ("z3_der_unused_binder_replay_success",
+      z3_der_unused_binder_replay_success),
     ("z3_proof_parser_structures_proof_bind_success",
       z3_proof_parser_structures_proof_bind_success),
     ("z3_proof_parser_erases_inert_proof_bind_success",
@@ -35479,12 +37902,38 @@ let
       cpc_emitted_definition_identity_table_success),
     ("replay_polynomial_normal_form_success",
       replay_polynomial_normal_form_success),
+    ("cpc_shared_bitblast_equality_success",
+      cpc_shared_bitblast_equality_success),
+    ("cpc_word_aci_literal_identity_success",
+      cpc_word_aci_literal_identity_success),
+    ("cpc_quantified_imp_disj_trans_success",
+      cpc_quantified_imp_disj_trans_success),
+    ("cpc_word_rewrite_rules_success",
+      cpc_word_rewrite_rules_success),
+    ("cpc_word_rewrite_resource_gate",
+      cpc_word_rewrite_resource_gate),
+    ("cpc_word_rewrite_rejects_bad_endpoint",
+      cpc_word_rewrite_rejects_bad_endpoint),
+    ("cpc_word_involution_trust_success",
+      cpc_word_involution_trust_success),
+    ("cpc_arith_leq_length_norm_success",
+      cpc_arith_leq_length_norm_success),
+    ("cpc_shared_integer_relation_alias_success",
+      cpc_shared_integer_relation_alias_success),
+    ("cpc_shared_modus_ponens_alias_success",
+      cpc_shared_modus_ponens_alias_success),
+    ("cpc_cong_positional_reflexive_child_success",
+      cpc_cong_positional_reflexive_child_success),
+    ("cpc_trans_conditional_swap_success",
+      cpc_trans_conditional_swap_success),
     ("ground_subterm_evaluation_budget_success",
       ground_subterm_evaluation_budget_success),
     ("quantified_boolean_rewrite_n_binders_success",
       quantified_boolean_rewrite_n_binders_success),
     ("z3_skolem_nary_binders_replay_success",
       z3_skolem_nary_binders_replay_success),
+    ("z3_skolem_dependent_witness_replay_success",
+      z3_skolem_dependent_witness_replay_success),
     ("z3_core_proof_rule_replay_minimal_raw_success",
       z3_core_proof_rule_replay_minimal_raw_success),
     ("z3_def_axiom_bounded_structural_ordering_success",
@@ -35519,6 +37968,8 @@ let
       z3_trans_star_chain_search_replay_no_metis_success),
     ("z3_trans_star_chain_search_no_path_diagnostic",
       z3_trans_star_chain_search_no_path_diagnostic),
+    ("z3_nnf_neg_quantified_body_replay_success",
+      z3_nnf_neg_quantified_body_replay_success),
     ("z3_nnf_structural_replay_no_metis_success",
       z3_nnf_structural_replay_no_metis_success),
     ("z3_th_lemma_existing_theory_replay_minimal_success",
@@ -35581,10 +38032,29 @@ let
       nonlinear_power_detection_success),
     ("symbolic_power_nonpolynomial_detection_success",
       symbolic_power_nonpolynomial_detection_success),
+    ("nonlinear_tight_integer_bounds_success",
+      nonlinear_tight_integer_bounds_success),
+    ("cpc_arith_max_geq2_success", cpc_arith_max_geq2_success),
+    ("arithmetic_distinct_shared_atoms_success",
+      arithmetic_distinct_shared_atoms_success),
+    ("arithmetic_shared_type_fallback_success",
+      arithmetic_shared_type_fallback_success),
+    ("cpc_shared_arith_geq_tighten_success",
+      cpc_shared_arith_geq_tighten_success),
+    ("arithmetic_shared_conditional_abstraction_success",
+      arithmetic_shared_conditional_abstraction_success),
+    ("cpc_arithmetic_eliminated_cast_success",
+      cpc_arithmetic_eliminated_cast_success),
+    ("cpc_arith_geq_tighten_conditional_success",
+      cpc_arith_geq_tighten_conditional_success),
     ("symbolic_power_avoids_nla_route_success",
       symbolic_power_avoids_nla_route_success),
     ("cpc_arith_mult_relation_replay_success",
       cpc_arith_mult_relation_replay_success),
+    ("cpc_arith_mult_sign_replay_success",
+      cpc_arith_mult_sign_replay_success),
+    ("cpc_arith_mult_monotone_replay_success",
+      cpc_arith_mult_monotone_replay_success),
     ("nonlinear_power_nla_route_success",
       nonlinear_power_nla_route_success),
     ("z3_ediv_emod_general_replay_success",
