@@ -668,15 +668,11 @@ local
     fun native_string_literal tm =
       let
         val (constructor, representation) = dest_comb tm
-        val _ =
-          if known_same_const
-              (smtstring_const "SmtStr") constructor then ()
+        val injected = known_same_const str_inj_tm constructor
+        val _ = if injected orelse
+            known_same_const (smtstring_const "SmtStr") constructor then ()
           else raise ERR "native_string_literal" "not an SMT String"
         val (elements, element_ty) = (#dest_list builtin) representation
-        val _ =
-          if Type.compare (element_ty, numSyntax.num) = EQUAL then ()
-          else raise ERR "native_string_literal"
-            "String representation is not a num list"
         fun code_point element =
           let val numeral = (#dest_numeral builtin) element in
             Arbnum.toInt
@@ -684,7 +680,24 @@ local
             handle SmtLib_String_Literal.InvalidCodePoint detail =>
               raise ERR "native_string_literal" detail
           end
-        val code_points = List.map code_point elements
+        fun hol_character element =
+          let
+            val (head, value) = dest_comb element
+            val _ = if known_same_const stringSyntax.chr_tm head then ()
+              else raise ERR "native_string_literal" "not a HOL character"
+            val code = (#dest_numeral builtin) value
+          in
+            if Arbnum.< (code, Arbnum.fromInt 256) then Arbnum.toInt code
+            else raise ERR "native_string_literal" "HOL character out of range"
+          end
+        val code_points =
+          if injected andalso
+             Type.compare (element_ty, stringSyntax.char_ty) = EQUAL then
+            List.map hol_character elements
+          else if known_same_const (smtstring_const "SmtStr") constructor
+              andalso Type.compare (element_ty, numSyntax.num) = EQUAL then
+            List.map code_point elements
+          else raise ERR "native_string_literal" "not an SMT String literal"
       in
         "\"" ^ SmtLib_String_Literal.encode_string_literal code_points ^ "\""
       end
@@ -2122,8 +2135,11 @@ local
           ((same_const rator intSyntax.int_injection orelse
             same_const rator int_of_num_tm) andalso
            (case rands of
-              [arg] => same_const (Lib.fst (strip_comb arg))
-                seq_length_tm
+              [arg] =>
+                (case strip_comb arg of
+                   (head, [seq]) => same_const head seq_length_tm andalso
+                     is_native_sequence_type (type_of seq)
+                 | _ => false)
             | _ => false)) orelse
           Option.isSome (optional dest_string_nth_shape tm) orelse
           Option.isSome (optional dest_seq_extract_shape tm) orelse
@@ -2520,7 +2536,7 @@ local
       ("higher-order", higher_order)
     ]))
 
-  fun infer_logic_from_features_for_regime regime
+  fun infer_logic_from_features_for_regime regime has_nonnullary_uf
       (features as LogicFeatures {
       quantifiers, uninterpreted, arrays, bitvectors, integers, reals,
       floating_point, strings, sequences, sets, bags, datatypes, nonlinear,
@@ -2606,7 +2622,9 @@ local
           else
             qf ^ (if nonlinear then "NRA" else "LRA")
         else if arrays then
-          if quantifiers then quantified_array_arith_logic () else "QF_AX"
+          if quantifiers then quantified_array_arith_logic ()
+          else if has_nonnullary_uf then "QF_AUFLIA"
+          else "QF_AX"
         else
           qf ^ "UF"
       fun bitvector_datatype_logic () =
@@ -2695,6 +2713,8 @@ local
 
   val emitted_term_sorts =
     ref ([] : ((Term.term * int) * (string list * string)) list)
+
+  val emitted_datatypes = ref ([] : translation_record list)
 
   fun record_emitted_term_sorts key sorts =
     emitted_term_sorts := (key, sorts) :: !emitted_term_sorts
@@ -3133,22 +3153,6 @@ local
       String.concatWith " " datatype_decls ^ "))\n"
     end
 
-  fun datatype_decl_record regime tydict ty =
-    case datatype_family ty of
-      NONE => NONE
-    | SOME family =>
-      let
-        val names = List.map (fn fam_ty => Redblackmap.find (tydict, fam_ty))
-          family
-        val declaration = datatype_declaration_text
-          (smt_sort_of_type regime tydict) family names
-      in
-        SOME (DatatypeDeclaration {hol_types = family, smt_names = names,
-          declaration = declaration}, family)
-      end
-      handle Redblackmap.NotFound => NONE
-           | Feedback.HOL_ERR _ => NONE
-
   (* The same feature grammar serves native terms and borrowed graph DATA.
      State observations are thunks to preserve the native scan's read order.
      Graph callers supply immutable snapshots of the actual emission state. *)
@@ -3266,24 +3270,46 @@ local
         let
           fun subterm_types predicate =
             List.exists (fn tm => predicate (type_of tm)) all_subterms
+          (* A native datatype declaration gives the sort of every
+             constructor field, so a theory sort can reach the query through
+             a field alone.  Field datatypes are type dictionary entries
+             themselves. *)
+          fun constructor_field_types ty =
+            case TypeBase.fetch ty of
+              SOME tyinfo =>
+                List.concat (List.map (fn constructor =>
+                  Lib.fst (boolSyntax.strip_fun
+                    (Term.type_of (TypeBasePure.cinst ty constructor))))
+                  (TypeBasePure.constructors_of tyinfo))
+            | NONE => []
+          fun field_types_have predicate =
+            type_exists (fn ty =>
+              case datatype_family ty of
+                SOME family =>
+                  List.exists
+                    (List.exists predicate o constructor_field_types) family
+              | NONE => false)
+          fun emitted_types predicate =
+            subterm_types predicate orelse field_types_have predicate
           val quantifiers = (#generated_forall state) () orelse
             List.exists has_quantifier terms
           val bitvectors = List.exists has_nonconstructor_bitvector terms
+            orelse field_types_have type_contains_word
           val integers =
-            subterm_types type_contains_int orelse
+            emitted_types type_contains_int orelse
             List.exists (fn tm => (test_constant is_int_arith_const)
               (Lib.fst (strip_comb tm))) all_subterms
           val reals =
-            subterm_types type_contains_real orelse
+            emitted_types type_contains_real orelse
             List.exists (fn tm => (test_constant is_real_arith_const)
               (Lib.fst (strip_comb tm))) all_subterms
           val floating_point =
-            subterm_types type_contains_fp orelse
+            emitted_types type_contains_fp orelse
             List.exists (fn tm => (test_constant is_fp_const)
               (Lib.fst (strip_comb tm))) all_subterms
           val strings =
-            subterm_types type_contains_string orelse
-            subterm_types
+            emitted_types type_contains_string orelse
+            emitted_types
               (Library.type_contains
                 (fn ty => Type.compare (ty, reglan_ty) = EQUAL)) orelse
             List.exists (fn tm => (test_constant is_string_const)
@@ -3422,7 +3448,8 @@ local
                   is_var tm andalso
                   type_contains_function (type_of tm)) all_subterms orelse
                 term_exists (fn (tm, arity) => arity = 0 andalso
-                  type_contains_function (type_of tm))
+                  type_contains_function (type_of tm)) orelse
+                field_types_have type_contains_function
             | HigherOrder _ => false
           val arrays =
             function_arrays orelse
@@ -3519,8 +3546,8 @@ local
       val string_record =
         HOLTheoryEncoding {
           feature =
-            "HOL strings: str_inj images of STRCAT, isPREFIX, string_lt, " ^
-            "string_le and string equality",
+            "HOL strings: str_inj images of STRCAT, STRLEN, isPREFIX, " ^
+            "string_lt, string_le and string equality",
           smt_theory = "UnicodeStrings",
           mode = NativeSMTLIB,
           parse = true,
@@ -3529,7 +3556,8 @@ local
           replay = false,
           notes =
             "HOL strings are rewritten through the proved str_inj transfer " ^
-            "kit; injected occurrences are generalized to SMT-LIB String.  " ^
+            "kit; literals retain their content and other injected " ^
+            "occurrences are generalized to SMT-LIB String.  " ^
             "The HOL :string type itself is not the SMT String sort: a " ^
             "residual occurrence is emitted as an uninterpreted sort.  " ^
             "Ground native smtstr goals do replay; the oracle tactics " ^
@@ -3680,34 +3708,37 @@ local
         {has_hol_strings = has_strings} features
     end
 
-  (* Preserve the native dictionary fold and datatype-family suppression.
-     These records contain only type/declaration metadata, never a query
-     carrier or a borrowed graph closure. *)
-  fun type_declaration_records regime tydict =
+  (* Only final emitted datatype blocks authorize grouped type records. *)
+  fun type_declaration_records tydict datatype_records =
     let
-      fun add_type_record (ty, name, (seen, acc)) =
-        if member_type ty seen then
-          (seen, acc)
-        else
-          case datatype_decl_record regime tydict ty of
-            SOME (record, family) =>
-              (List.foldl (fn (fam_ty, seen) => add_type fam_ty seen)
-                seen family, record :: acc)
-          | NONE =>
-              (add_type ty seen, type_decl_record (ty, name) :: acc)
-      val (_, type_records) = Redblackmap.foldl add_type_record ([], []) tydict
-    in
-      List.rev type_records
-    end
+      val datatype_types = List.concat (List.map
+        (fn DatatypeDeclaration {hol_types, ...} => hol_types | _ => [])
+        datatype_records)
+      fun add_type_record (ty, name, acc) =
+        if member_type ty datatype_types then acc
+        else type_decl_record (ty, name) :: acc
+      val type_records = Redblackmap.foldl add_type_record [] tydict
+    in List.rev type_records @ datatype_records end
+
+  fun emitted_datatype_records tydict declarations =
+    let
+      fun record text = List.find
+        (fn DatatypeDeclaration {declaration,hol_types,smt_names} =>
+              declaration = text andalso
+              ListPair.allEq (fn (ty,name) =>
+                Redblackmap.peek (tydict,ty) = SOME name)
+                (hol_types,smt_names)
+          | _ => false) (!emitted_datatypes)
+    in List.mapPartial record declarations end
 
   fun build_translation_records regime regime_reason terms logic reason
-      features tydict tmdict =
+      features tydict tmdict datatype_records =
     let
       val regime_record =
         RegimeSelection {regime = regime, reason = regime_reason}
       val logic_record = LogicSelection {logic = logic, reason = reason,
         features = features}
-      val type_records = type_declaration_records regime tydict
+      val type_records = type_declaration_records tydict datatype_records
       val term_records = Redblackmap.foldl (fn (key, name, acc) =>
         term_decl_for_tmdict regime tydict (key, name) :: acc)
         [] tmdict
@@ -3902,14 +3933,15 @@ local
               ([index], [arg]) =>
                 let
                   val index_matches_constructor =
-                    Term.same_const index constructor
+                    Term.aconv index constructor
                     handle Feedback.HOL_ERR _ => false
                   val index_name =
                     Lib.fst (Term.dest_var index)
                     handle Feedback.HOL_ERR _ =>
                       #Name (Term.dest_thy_const index)
                 in
-                  if index_name = cname orelse index_matches_constructor then
+                  if same_type (Term.type_of arg, ty) andalso
+                     (index_name = cname orelse index_matches_constructor) then
                     datatype_tester_term ty constructor arg
                   else
                     SmtLib_Theories.decline
@@ -4009,6 +4041,12 @@ local
         ();
       (Redblackmap.insert (tydict, ty, name), ([decl], name))
     end
+  structure DatatypeGraph = Graph(
+    type key = Type.hol_type
+    val ord = Type.compare
+    val pp = HOLPP.add_string o Hol_pp.type_to_string
+  )
+
   fun translate_type regime (tydict, ty) =
     if !current_native_sequence_emission andalso
        is_native_sequence_type ty then
@@ -4068,8 +4106,55 @@ local
   and translate_datatype_type regime (tydict, ty) =
     case datatype_family ty of
       NONE => NONE
-    | SOME family =>
+    | SOME _ =>
       let
+        fun constructor_doms ty = List.concat (List.map
+          (Lib.fst o boolSyntax.strip_fun o Term.type_of o
+           TypeBasePure.cinst ty) (TypeBase.constructors_of ty))
+        fun known ty types = member_type ty types orelse
+          Option.isSome (Redblackmap.peek (tydict, ty))
+        (* A nested container can refer back to its parent datatype without
+           appearing in the parent's induction theorem. Collect the whole
+           dependency closure before partitioning its recursive components. *)
+        fun collect (ty, types) =
+          if known ty types then types
+          else if !current_native_sequence_emission andalso
+                  is_native_sequence_type ty then
+            collect (listSyntax.dest_list_type ty, types)
+          else if is_function_type ty then
+            let val (dom, rng) = Type.dom_rng ty
+            in collect (rng, collect (dom, types)) end
+          else if has_type_builtin ty then types
+          else case datatype_family ty of
+            NONE => types
+          | SOME family =>
+              let
+                val fresh = List.filter (fn ty => not (known ty types)) family
+                val types = List.foldl (fn (ty, acc) => add_type ty acc)
+                  types fresh
+              in
+                List.foldl (fn (ty, acc) =>
+                  List.foldl collect acc (constructor_doms ty)) types fresh
+              end
+        val family = List.rev (collect (ty, []))
+        fun field_dependencies ty =
+          if !current_native_sequence_emission andalso
+             is_native_sequence_type ty then
+            field_dependencies (listSyntax.dest_list_type ty)
+          else if is_function_type ty then
+            let val (dom, rng) = Type.dom_rng ty
+            in field_dependencies dom @ field_dependencies rng end
+          else if member_type ty family then [ty]
+          else []
+        val graph = List.foldl (fn (ty, graph) =>
+          DatatypeGraph.new_node (ty, ()) graph) DatatypeGraph.empty family
+        fun add_dependencies (ty, graph) =
+          List.foldl (fn (field, graph) =>
+            List.foldl (fn (dependency, graph) =>
+              DatatypeGraph.add_edge (dependency, ty) graph) graph
+              (field_dependencies field)) graph (constructor_doms ty)
+        val components = DatatypeGraph.strong_conn
+          (List.foldl add_dependencies graph family)
         val used0 = dict_type_names tydict @ smt_reserved_type_names
         fun add_name (fam_ty, (used, acc)) =
           let
@@ -4085,28 +4170,16 @@ local
           tydict (family, names)
         fun translate_constructor_doms (fam_ty, (dict, decls, sorts)) =
           let
-            val tyinfo =
-              case TypeBase.fetch fam_ty of
-                SOME info => info
-              | NONE => raise ERR "translate_datatype_type"
-                  "missing TypeBase entry"
-            fun translate_one (constructor, (dict, decls, sorts)) =
+            fun translate_dom (dom, (dict, decls, sorts)) =
               let
-                val constructor = TypeBasePure.cinst fam_ty constructor
-                val (doms, _) = boolSyntax.strip_fun (Term.type_of constructor)
-                fun translate_dom (dom, (dict, decls, sorts)) =
-                  let
-                    val (dict, (new_decls, sort)) =
-                      translate_type regime (dict, dom)
-                  in
-                    (dict, decls @ new_decls, (dom, sort) :: sorts)
-                  end
+                val (dict, (new_decls, sort)) =
+                  translate_type regime (dict, dom)
               in
-                List.foldl translate_dom (dict, decls, sorts) doms
+                (dict, decls @ new_decls, (dom, sort) :: sorts)
               end
           in
-            List.foldl translate_one (dict, decls, sorts)
-              (TypeBasePure.constructors_of tyinfo)
+            List.foldl translate_dom (dict, decls, sorts)
+              (constructor_doms fam_ty)
           end
         val (tydict, dependency_decls, field_sorts) =
           List.foldl translate_constructor_doms
@@ -4116,13 +4189,26 @@ local
               field_sorts of
             SOME (_, sort) => sort
           | NONE => smt_sort_of_type regime tydict ty
-        val declaration = datatype_declaration_text field_sort family names
+        (* An acyclic datatype used as an Array index must already be
+           declared: Z3 rejects it as non-covariant in a mutual block. *)
+        fun declare_component types =
+          let
+            val names = List.map (fn ty => Redblackmap.find (tydict, ty))
+              types
+            val declaration = datatype_declaration_text field_sort types names
+            val _ = emitted_datatypes :=
+              DatatypeDeclaration {hol_types = types, smt_names = names,
+                declaration = declaration} :: !emitted_datatypes
+          in
+            declaration
+          end
+        val declarations = List.map declare_component components
         val name =
           case Redblackmap.peek (tydict, ty) of
             SOME n => n
           | NONE => raise ERR "translate_datatype_type" "unregistered type"
       in
-        SOME (tydict, (dependency_decls @ [declaration], name))
+        SOME (tydict, (dependency_decls @ declarations, name))
       end
       handle Feedback.HOL_ERR _ => NONE
            | Redblackmap.NotFound => NONE
@@ -4135,6 +4221,9 @@ local
      nested Array/select.  Both dialects eta-expand partially applied ranked
      constants when omission would lose their built-in semantics. *)
 
+  (* returns an updated accumulator, a (possibly empty) list of
+     SMT-LIB (type and term) declarations, and the SMT-LIB
+     representation of the given term *)
   (* Keep ordered lexical names and declaration keys separate from
      semantic dispatch. Fallback keys need not manufacture syntax.
      Find callbacks signal absence with Redblackmap.NotFound, as expected
@@ -6340,10 +6429,11 @@ local
      declared rank, or zero for a function-valued variable, so partial and
      full applications share one symbol. *)
   (* Native and graph query boundaries use the same final logic policy. *)
-  fun outbound_select_logic regime (policy:logic_selection_policy) features =
+  fun outbound_select_logic_with_uf regime has_nonnullary_uf
+      (policy:logic_selection_policy) features =
     let
       val (feature_logic, feature_reason) =
-        infer_logic_from_features_for_regime regime features
+        infer_logic_from_features_for_regime regime has_nonnullary_uf features
       (* Z3's array-lambda extension is accepted uniformly under ALL, while
        narrower FO array logics reject lambda as quantified syntax on some
        supported Z3 versions.  The C1 replay corpus also uses ALL, so keeping
@@ -6361,6 +6451,10 @@ local
           NONE => (inferred_logic, reason)
         | SOME {logic, reason} => (logic, reason)
     in {logic=selected_logic,reason=reason} end
+
+  fun outbound_select_logic regime policy
+      (features as LogicFeatures {uninterpreted,...}) =
+    outbound_select_logic_with_uf regime uninterpreted policy features
 
   (* Only command assembly is parameterized. Semantic translation remains
      the existing shared dispatcher; declarations stay interleaved with
@@ -6390,10 +6484,11 @@ local
     val _ = current_native_sequence_emission := emit_sequences
     val _ = current_generated_forall_emissions := 0
     val _ = emitted_term_sorts := []
+    val _ = emitted_datatypes := []
     val ((set_terms,set_parameters),(bag_terms,bag_parameters)) =
       query_collection_closure (t :: original_ts)
-    (* Num is an Int-valued SMT abs only beneath its integer coercion.  In an
-       opaque HOL-num position it must remain an uninterpreted function. *)
+    (* Num retains its HOL-num sort in opaque positions, including beneath
+       an uninterpreted integer coercion. *)
     val raw_num_terms = SmtLib_RawNumAnalysis.collect
       raw_num_operations bag_terms (t :: original_ts)
     (* A symbol has one fixed SMT domain sort.  A collection argument is
@@ -6490,8 +6585,11 @@ local
     val (tydict, tmdict) = acc
     val features =
       infer_features regime terms tydict tmdict
+    (* QF_AX allows constants and free sorts, but no non-nullary UF. *)
+    val has_nonnullary_uf = Redblackmap.foldl
+      (fn ((_,arity),_,found) => found orelse arity > 0) false tmdict
     val {logic=selected_logic,reason} =
-      outbound_select_logic regime policy features
+      outbound_select_logic_with_uf regime has_nonnullary_uf policy features
     (* Metadata is public lazily, so retain the query's collection state for
        its eventual construction instead of consulting the restored ambient
        state. *)
@@ -6501,6 +6599,8 @@ local
     val record_set_backend = !current_set_backend
     val record_bag_backend = !current_bag_backend
     val record_emitted_term_sorts = !emitted_term_sorts
+    val datatype_records = emitted_datatype_records tydict
+      (List.concat (List.map Lib.fst smtlibs))
     fun records () =
       let
         val restorers = [
@@ -6520,7 +6620,7 @@ local
            current_bag_backend := record_bag_backend;
            emitted_term_sorts := record_emitted_term_sorts;
            build_translation_records regime regime_reason terms
-             selected_logic reason features tydict tmdict)
+             selected_logic reason features tydict tmdict datatype_records)
         fun restore () = restore_cells restorers
       in
         Portable.finally restore work ()
@@ -6539,6 +6639,7 @@ local
       save_cell current_native_sequence_emission,
       save_cell current_generated_forall_emissions,
       save_cell emitted_term_sorts,
+      save_cell emitted_datatypes,
       save_cell current_set_backend,
       save_cell current_set_terms,
       save_cell current_raw_num_terms,
@@ -6565,7 +6666,9 @@ local
        (Type.hol_type,string) Redblackmap.dict * Type.hol_type ->
        (Type.hol_type,string) Redblackmap.dict * (string list * string),
      sort_of_type:regime -> (Type.hol_type,string) Redblackmap.dict ->
-       Type.hol_type -> string}
+       Type.hol_type -> string,
+     type_declaration_records:(Type.hol_type,string) Redblackmap.dict ->
+       string list -> translation_record list}
 
   (* The store, dispatcher and metadata producer run inside one fixed
      installation. No raw marker Terms are fabricated for graph syntax.
@@ -6582,6 +6685,7 @@ local
         val _ = current_native_sequence_emission := sequence_emission
         val _ = current_generated_forall_emissions := 0
         val _ = emitted_term_sorts := []
+        val _ = emitted_datatypes := []
         val _ = current_set_backend := set_backend
         val _ = current_set_terms := []
         val _ = current_raw_num_terms := []
@@ -6620,7 +6724,10 @@ local
            translate_type=fn regime => fn input =>
              observe (fn () => translate_type regime input),
            sort_of_type=fn regime => fn dictionary => fn ty =>
-             observe (fn () => smt_sort_of_type regime dictionary ty)}
+             observe (fn () => smt_sort_of_type regime dictionary ty),
+           type_declaration_records=fn dictionary => fn declarations =>
+             observe (fn () => type_declaration_records dictionary
+               (emitted_datatype_records dictionary declarations))}
         val _ = active := false
       in Exn.release outcome end)
 
@@ -6792,6 +6899,36 @@ local
       (NUM_BINDERS_TO_INT_CONV,
        simpLib.SIMP_CONV pureSimps.pure_ss num_transfer_rewrites) tm
     handle Conv.UNCHANGED => Thm.REFL tm
+
+  (* Mixed word goals retain HOL num. Give their numerals an integer image
+     without rewriting the literal indices consumed by native operators. *)
+  fun NUMERAL_TO_INT_CONV tm =
+  let
+    val (head, arguments) = boolSyntax.strip_comb tm
+    val indexed = List.exists (same_const head)
+      [wordsSyntax.word_extract_tm, wordsSyntax.word_replicate_tm,
+       wordsSyntax.word_rol_tm, wordsSyntax.word_ror_tm, smtstr_char_tm,
+       smtstring_const "reglan_power", smtstring_const "reglan_loop"]
+  in
+    if intSyntax.is_int_literal tm orelse ratSyntax.is_literal tm orelse
+       realSyntax.is_real_literal tm orelse wordsSyntax.is_word_literal tm
+       orelse Lib.can native_string_literal tm then
+      raise Conv.UNCHANGED
+    else if indexed then
+      let
+        fun operand argument =
+          if numSyntax.is_numeral argument then Thm.REFL argument
+          else NUMERAL_TO_INT_CONV argument
+            handle Conv.UNCHANGED => Thm.REFL argument
+      in
+        List.foldl (fn (argument, theorem) =>
+          Thm.MK_COMB (theorem, operand argument)) (Thm.REFL head) arguments
+      end
+    else if numSyntax.is_numeral tm then
+      Thm.SYM (Thm.SPEC tm integerTheory.NUM_OF_INT)
+    else
+      Conv.SUB_CONV NUMERAL_TO_INT_CONV tm
+  end
 
   type native_float_transfer_info = {
     surface : string list,
@@ -7143,6 +7280,7 @@ local
 
   val hol_string_transfer_rewrites = [
     Conv.GSYM smtstringTheory.str_inj_11,
+    Conv.GSYM smtstringTheory.str_inj_STRLEN,
     smtstringTheory.str_inj_STRCAT,
     smtstringTheory.str_inj_isPREFIX,
     smtstringTheory.str_inj_string_lt,
@@ -7786,7 +7924,8 @@ local
   val SPEC_NUM_FREE_VARS_TAC =
     SPEC_NUM_FREE_VARS_TAC_EXCEPT (fn _ => false)
 
-  val thms_per_const = SmtLib_GraphNumericStock.for_head
+  val thms_per_const =
+    SmtLib_GraphNumericStock.for_head_preserving_num
 
   (* Prepends the conclusion of a theorem to the list of its hypothesis and
      returns the resulting list of terms *)
@@ -7808,8 +7947,8 @@ local
      terms in the goal. Since the resulting list of theorems might require more
      theorems to be added (for the SMT solvers to properly solve the goal), this
      function calls itself recursively until no new theorems are needed anymore. *)
-  fun get_thms ([], acc) = HOLset.listItems acc
-    | get_thms (terms, acc) =
+  fun get_thms preserve_num ([], acc) = HOLset.listItems acc
+    | get_thms preserve_num (terms, acc) =
       let
         (* Create a set of all the constants used in all the provided terms *)
         val atoms = Term.all_atomsl terms Term.empty_tmset
@@ -7817,16 +7956,18 @@ local
 
         (* Generate a set of all the theorems we want to add, based on these
            constants *)
-        fun const_thms (const, acc) = HOLset.addList (acc, thms_per_const const)
+        fun const_thms (const, acc) =
+          HOLset.addList (acc, thms_per_const preserve_num const)
         val wanted_thms = HOLset.foldl const_thms empty_thmset consts
 
-        (* Apply NUM_TO_INT_CONV to these theorems, to convert any num literals
-           they might have into int literals. We do this here because this
-           conversion introduces constants that might trigger new theorems to be
-           added in subsequent iterations *)
+        (* Retained naturals need the numeral-only conversion: the semantic
+           transfer would erase their bridge laws. Both conversions can
+           introduce constants requiring further theorem discovery. *)
+        val convert =
+          if preserve_num then NUMERAL_TO_INT_CONV else NUM_TO_INT_CONV
         fun conv_thm (thm, acc) =
           let
-            val thm = Conv.CONV_RULE NUM_TO_INT_CONV thm
+            val thm = Conv.CONV_RULE convert thm
             val (lhs, rhs) = boolSyntax.dest_eq (Thm.concl thm)
           in
             if Term.aconv lhs rhs then acc else HOLset.add (acc, thm)
@@ -7845,7 +7986,8 @@ local
         fun add_new_terms (thm, acc) = HOLset.addList (acc, thm_terms thm)
         val new_terms = HOLset.foldl add_new_terms Term.empty_tmset thms_to_add
       in
-        get_thms (HOLset.listItems new_terms, HOLset.union (acc, thms_to_add))
+        get_thms preserve_num
+          (HOLset.listItems new_terms, HOLset.union (acc, thms_to_add))
       end
 
 in
@@ -7919,6 +8061,7 @@ in
   type 'doc outbound_output_operations = 'doc output_operations
   val outbound_string_output_operations = string_output_operations
   val outbound_select_logic = outbound_select_logic
+  val outbound_select_logic_with_uf = outbound_select_logic_with_uf
   val outbound_query_script = outbound_query_script
   val outbound_query_tail = outbound_query_tail
   val outbound_translate_term_step_with_output =
@@ -8107,10 +8250,11 @@ in
   val parser_datatype_selector_template = datatype_selector_term
   fun parser_dicts_for_solver_translation solver =
     parser_dicts_for_translation_aux (SOME solver)
+  fun infer_logic_from_features_with_regime regime
+      (features as LogicFeatures {uninterpreted,...}) =
+    infer_logic_from_features_for_regime regime uninterpreted features
   fun infer_logic_from_features features =
-    infer_logic_from_features_for_regime FirstOrder features
-  val infer_logic_from_features_with_regime =
-    infer_logic_from_features_for_regime
+    infer_logic_from_features_with_regime FirstOrder features
   val goal_requires_ho = goal_requires_ho_aux
   fun regime_for_goal dialect goal =
     select_regime (AutomaticRegime dialect) goal
@@ -8440,6 +8584,7 @@ in
       | SOME {Thy = "realax", Name = "NUM_CEILING", ...} => true
       | SOME {Thy = "pred_set", Name = "CARD", ...} => true
       | SOME {Thy = "bag", Name = "BAG_CARD", ...} => true
+      | SOME {Thy = "list", Name = "LENGTH", ...} => true
       | _ => false
 
   fun atom_needs_num_transfer atom =
@@ -8511,10 +8656,9 @@ in
   fun NUM_TO_INT_TAC_EXCEPT exclude g =
   let
     open Tactic Tactical
-    val undisch_assums = MAP_EVERY UNDISCH_TAC (#1 g)
   in
     if goal_mentions_num g andalso not (goal_entangles_num_and_word g) then
-      (undisch_assums THEN
+      (MAP_EVERY UNDISCH_TAC (Lib.op_mk_set Term.term_eq (#1 g)) THEN
        SPEC_NUM_FREE_VARS_TAC_EXCEPT exclude THEN
        CONV_TAC NUM_TO_INT_CONV THEN
        REPEAT (GEN_TAC ORELSE DISCH_TAC) THEN
@@ -8557,7 +8701,8 @@ in
      get_thms this does not run a recursive expanded CONV_RULE pipeline.
      The caller must admit original constructor/type and each returned law;
      selector-internal fixed theorem operations remain explicit prerequisites. *)
-  val graph_preprocessing_theorems_for_head = thms_per_const
+  val graph_preprocessing_theorems_for_head =
+    SmtLib_GraphNumericStock.for_head
 
   (* Ordered ordinary stages, including the unlabelled conversion passes.
      This is an inventory, not an implementation or a completion flag. *)
@@ -8580,7 +8725,7 @@ in
 
     val thms_to_add =
       if !include_theorems then
-        get_thms (goal_terms, empty_thmset)
+        get_thms (goal_entangles_num_and_word g) (goal_terms, empty_thmset)
       else
         []
 
@@ -8597,6 +8742,7 @@ in
   let
     open Tactic Tactical
     val assumptions = #1 g
+    val preserve_num = goal_entangles_num_and_word g
     fun is_true tm =
       Term.aconv tm boolSyntax.T orelse
       (let val (_, body) = boolSyntax.dest_forall tm
@@ -8604,8 +8750,14 @@ in
        handle Feedback.HOL_ERR _ => false)
     fun cleanup thm =
     let
-      val thm = simpLib.SIMP_RULE pureSimps.pure_ss
-        (boolTheory.REFL_CLAUSE :: num_transfer_rewrites) thm
+      (* The transfer rewrites would erase the retained num bridge laws. *)
+      val thm =
+        if preserve_num then
+          simpLib.SIMP_RULE pureSimps.pure_ss [boolTheory.REFL_CLAUSE]
+            (Conv.CONV_RULE NUMERAL_TO_INT_CONV thm)
+        else
+          simpLib.SIMP_RULE pureSimps.pure_ss
+            (boolTheory.REFL_CLAUSE :: num_transfer_rewrites) thm
     in
       if is_true (Thm.concl thm) then
         ALL_TAC
@@ -8755,6 +8907,7 @@ in
        HolSmtTheory.num_ceiling_zero, arithmeticTheory.MAX_0,
        arithmeticTheory.MIN_0, boolTheory.REFL_CLAUSE]) THEN
     stage "num-to-int" num_to_int THEN
+    stage "hol-string" HOL_STRING_TO_SMT_TAC THEN
     stage "let-simp"
       (if simp_let then Library.LET_SIMP_TAC else ALL_TAC) THEN
     Tactic.CONV_TAC (Conv.DEPTH_CONV REAL_POW_NUMERAL_CONV) THEN
@@ -8785,6 +8938,13 @@ in
     Tactic.CONV_TAC
       (Conv.DEPTH_CONV (fun_eq_preprocess_conv preserve_native_bags)) THEN
     stage "word-simp" Library.WORD_SIMP_TAC THEN
+    (* Word simplification still needs literal shift amounts and bit indices.
+       Normalize retained numerals only after it has lowered those forms. *)
+    stage "num-literals" (fn g =>
+      if goal_entangles_num_and_word g then
+        (Tactic.RULE_ASSUM_TAC (Conv.CONV_RULE NUMERAL_TO_INT_CONV) THEN
+         Tactic.CONV_TAC NUMERAL_TO_INT_CONV) g
+      else ALL_TAC g) THEN
     (* Checked set simplification normally uses the predicate encoding, but
        must retain complements: SET_SIMP_TAC lowers their membership to NOTIN,
        which does not have a native SMT Set translation. *)
@@ -8795,6 +8955,7 @@ in
     Tactic.CONV_TAC (Conv.DEPTH_CONV INT_DIVIDES_LITERAL_MOD_CONV) THEN
     Tactic.BETA_TAC THEN
     stage "num-to-int" num_to_int THEN
+    stage "hol-string" HOL_STRING_TO_SMT_TAC THEN
     stage "add-theorems" ADD_THEOREMS_TAC THEN
     stage "cleanup-assumptions" CLEANUP_ASSUMPTIONS_TAC THEN
     (* The theorem-discovery pass may expose a fresh num-valued occurrence.
@@ -8802,6 +8963,7 @@ in
        assumptions even when they no longer mention num themselves. *)
     stage "num-to-int" num_to_int THEN
     stage "cleanup-assumptions" CLEANUP_ASSUMPTIONS_TAC THEN
+    stage "hol-string" HOL_STRING_TO_SMT_TAC THEN
     stage "datatype-to-smt" DATATYPE_TO_SMT_TAC
   end
 

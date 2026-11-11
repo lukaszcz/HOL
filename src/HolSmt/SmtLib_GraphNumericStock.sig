@@ -5,6 +5,8 @@ sig
   val select : Term.term -> selection
   val selection_data : selection -> {head : Term.term,laws : Thm.thm list}
   val for_head : Term.term -> Thm.thm list
+  (* Retain the natural arithmetic bridge when semantic transfer is skipped. *)
+  val for_head_preserving_num : bool -> Term.term -> Thm.thm list
   val rewrites : Thm.thm list
   (* Shared old helper values; initialization occurs once, not per producer. *)
   val exp_one_rewrites : Thm.thm list

@@ -30,8 +30,10 @@ sig
      mark : 'term -> 'term list -> (unit -> 'term list) -> 'term list}
 
   (* Set and Bag preserve different traversal policies. Set markers flow
-     from let-local variables back to binding values. Bag markers also visit
-     immediate application prefixes, as well as the flattened arguments.
+     from let-local variables back to binding values. Bag markers also
+     classify every application prefix with its own arguments and walk the
+     head, as well as the flattened arguments. Without binding propagation
+     this gives the markers, in order, of walking every prefix in full.
      Body/binding/prefix discovery retains the legacy HOL_ERR fallbacks.
      Each hook receives the current term, exact immutable incoming marker
      list and a synchronous computation. A graph caller keys separate walk

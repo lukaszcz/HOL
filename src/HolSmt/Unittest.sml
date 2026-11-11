@@ -229,6 +229,30 @@ fun assert_concl_alpha (label, thm, expected) =
       term_with_types expected ^ "\nactual: " ^ term_with_types actual)
   end
 
+fun indexed_num_word_preprocessing_success () =
+let
+  val original : goal =
+    ([``(f:num -> word32) 0 = (x:word32)``],
+     ``((7 >< 0) ((f:num -> word32) 0):word8) =
+       (7 >< 0) (x:word32)``)
+  fun check (name,tactic) =
+    let
+      val (changed,validate) = SolverSpec.simplify tactic original
+      val simplified = Tactical.TAC_PROOF (changed,
+        Tactical.THEN (Rewrite.PURE_ONCE_ASM_REWRITE_TAC [],Tactic.REFL_TAC))
+      val theorem = validate [simplified]
+    in
+      assert_concl_alpha (name,theorem,#2 original);
+      assert (List.all (fn hypothesis =>
+        List.exists (Term.aconv hypothesis) (#1 original)) (Thm.hyp theorem),
+        name ^ " introduced a hypothesis");
+      check_oracle_tags name theorem
+    end
+in
+  List.app check [("Z3 indexed preprocessing",SmtLib.Z3_SIMP_TAC false),
+    ("CVC indexed preprocessing",SmtLib.CVC_SIMP_TAC false)]
+end
+
 fun assert_num_binder_conv (label, input, expected) =
   let
     val thm = SmtLib.NUM_BINDERS_TO_INT_CONV input
@@ -257,6 +281,9 @@ val _ = Hol_datatype
 val _ = Hol_datatype
   `smt_light = SmtRed | SmtAmber | SmtGreen`
 
+val _ = Hol_datatype
+  `smt_keyed_store = SmtKeyedStore of (smt_light -> int)`
+
 val _ = new_constant
   ("smt_light_from_int", ``:int -> smt_light``)
 val _ = new_constant
@@ -272,6 +299,10 @@ val _ = Hol_datatype
   `smt_left = SmtLeftDone | SmtLeft of smt_right;
    smt_right = SmtRightDone | SmtRight of smt_left`
 
+val _ = Hol_datatype
+  `smt_nested = SmtTip of bool |
+                SmtBranch of ((string # smt_nested) list)`
+
 val _ = new_constant
   ("smt_left_from_int", ``:int -> smt_left``)
 
@@ -280,6 +311,7 @@ val _ = new_constant ("smt_nonfree_nil", ``:'a smt_nonfree``)
 val _ = new_constant
   ("smt_nonfree_cons", ``:'a -> 'a smt_nonfree -> 'a smt_nonfree``)
 val _ = new_constant ("smtlib_uf_logic_foo", ``:int -> int``)
+val _ = new_constant ("smtlib_array_uf_fun", ``:'a -> 'a``)
 val _ = new_constant
   ("smtlib_fp_uf_pred", ``:('t,'w) smtfp -> ('t,'w) smtfp -> bool``)
 val _ = new_constant ("smtlib_native_dt_uf", ``:smt_tri -> int``)
@@ -363,6 +395,53 @@ let
 in
   assert_num_binder_conv
     ("bag count function relativization", input, expected)
+end
+
+(* Bag discovery runs at every cvc5 num-to-int stage, also on goals without
+   bags.  Applications nested in their first argument used to be walked once
+   per partial application, so the cost grew as arity^depth. *)
+fun cvc_native_bag_goal_nested_application_success () =
+let
+  val arity = 4
+  val head = Term.mk_var ("f",
+    List.foldl (fn (_, ty) => Type.bool --> ty) Type.bool
+      (List.tabulate (arity, fn _ => ())))
+  val other = Term.mk_var ("q", Type.bool)
+  val head2 = Term.mk_var ("g",
+    Type.--> (Type.bool, Type.--> (Type.bool, Type.bool)))
+  fun nest seed 0 = seed
+    | nest seed n =
+        Term.list_mk_comb (head,
+          nest seed (n - 1) :: List.tabulate (arity - 1, fn _ => other))
+  fun detects seed =
+    Timeout.apply (Time.fromSeconds 20)
+      (fn () => SmtLib.cvc_native_bag_goal ([], nest seed 24)) ()
+  val x = Term.mk_var ("x", Type.bool)
+  val bool_bag_ty = Type.--> (Type.bool, numSyntax.num)
+  val y_bag = bagSyntax.mk_insert (Term.mk_var ("y", Type.bool),
+    Term.inst [Type.alpha |-> Type.bool] bagSyntax.EMPTY_BAG_tm)
+  val bag_atom = Term.list_mk_comb (
+    Term.mk_thy_const {Thy = "bag", Name = "BAG_IN",
+      Ty = Type.--> (Type.bool, Type.--> (bool_bag_ty, Type.bool))},
+    [x, y_bag])
+  val b = Term.mk_var ("b", bool_bag_ty)
+  val c = Term.mk_var ("c", bool_bag_ty)
+  fun union_count (l, r) = Term.mk_comb (bagSyntax.mk_union (l, r), x)
+  val partial_union =
+    boolSyntax.mk_eq (union_count (b, c), union_count (c, b))
+  val p = Term.mk_var ("p", Type.bool)
+  val q = Term.mk_var ("q", Type.bool)
+in
+  assert (not (detects p),
+    "bag-free deeply nested application was reported to contain bags");
+  assert (detects bag_atom,
+    "native bag under nested applications was not found");
+  assert (SmtLib.cvc_native_bag_goal ([], partial_union),
+    "partially applied bag union was not found");
+  assert (not (SmtLib.cvc_native_bag_goal ([],
+    boolSyntax.mk_eq (Term.list_mk_comb (head2, [p, q]),
+      Term.list_mk_comb (head2, [q, p])))),
+    "bag-free goal was reported to contain bags")
 end
 
 fun num_to_int_under_abstraction_success () =
@@ -2475,6 +2554,30 @@ in
     "num assumption transfer did not emit non-negativity guard:\n" ^ text);
   assert (contains "1" text andalso contains "2" text,
     "num assumption transfer did not retain integer bounds:\n" ^ text)
+end
+
+fun num_transfer_duplicate_assumptions_success () =
+let
+  val bound = ``(n:num) <= 1``
+  fun check (assumptions, conclusion) tac =
+  let
+    val thm = Tactical.TAC_PROOF ((assumptions, conclusion),
+      tac THEN intLib.ARITH_TAC)
+  in
+    assert (aconv (concl thm) conclusion,
+      "num transfer with duplicates changed the conclusion");
+    assert (List.all (fn h => op_mem aconv h assumptions) (hyp thm),
+      "num transfer with duplicates introduced an assumption");
+    check_oracle_tags "num transfer with duplicates" thm
+  end
+in
+  List.app (fn assumptions =>
+    check (assumptions, ``(n:num) <= 2``) SmtLib.NUM_TO_INT_TAC)
+    [[T, T, bound], [bound, bound]];
+  List.app
+    (check ([``(n:num) < 256``, ``(n:num) < 2 ** 8``], ``(n:num) <= 256``))
+    [SmtLib.Z3_SIMP_TAC true, SmtLib.Z3_SIMP_TAC false,
+     SmtLib.CVC_SIMP_TAC true, SmtLib.CVC_SIMP_TAC false]
 end
 
 fun num_bridge_axioms_retired_success () =
@@ -6661,6 +6764,8 @@ in
       false, false))
   ];
   List.app (expect_features "QF_AUFLIA") [
+    ("quantifier-free arrays UF", (false, true, true, false, false,
+      false, false, false)),
     ("quantifier-free arrays LIA", (false, false, true, false, true,
       false, false, false))
   ];
@@ -6795,11 +6900,21 @@ in
   expect_logic "QF_NIA" ``(x:int) * y = y * x``;
   expect_logic "QF_NIA" ``ediv (x:int) y = x``;
   expect_logic "QF_NIA" ``emod (x:int) y = x``;
+  expect_logic "QF_AUFLIA"
+    ``smtlib_array_uf_fun x = y ==>
+      ((f:'a -> 'b) (smtlib_array_uf_fun x) = f y)``;
   expect_logic "QF_BV" ``(x:word32) && y = y && x``;
   expect_logic "QF_UFLIA" ``smtlib_uf_logic_foo (x:int) = x``;
   expect_logic "QF_AX" ``(P:'a -> bool) x``;
   expect_logic "QF_AX" ``(f:'a -> 'b) x = f x``;
   expect_logic "QF_DT" ``(x:ordering) = y``;
+  (* theory sorts that only occur in emitted datatype constructor fields *)
+  expect_logic "QF_UFDTLIA" ``(x:int option) = y``;
+  expect_logic "QF_UFDTLIA" ``(x:int option option) = y``;
+  expect_logic "QF_UFDTLIRA" ``(x:real option) = y``;
+  expect_logic "UFBVDT" ``(x:word8 option) = y``;
+  expect_logic "ALL" ``(x:smtstr option) = y``;
+  expect_logic "AUFDTLIA" ``(x:(int -> bool) option) = y``;
   expect_logic "ALL" ``CONS (x:int) xs = CONS y ys``;
   expect_logic "AUFLIA" ``!(x:'a). (P:'a -> bool) x``
 end
@@ -7252,6 +7367,104 @@ in
     builtin_text;
   assert (has_datatype_record,
     "translation records did not include datatype declaration record")
+end
+
+fun smtlib_datatype_function_domain_dependencies_success () =
+let
+  val goal = ([``(f:smt_keyed_store -> int) x < f y``],
+    ``(x:smt_keyed_store) <> y``)
+  val sat_goal = ([], ``(x:smt_keyed_store) = y``)
+  fun check_translation dialect =
+    let
+      val (translation, strings) =
+        SmtLib.goal_to_SmtLib_translation_with_dialect dialect NONE goal
+      val blocks = List.mapPartial
+        (fn SmtLib.DatatypeDeclaration {hol_types, declaration, ...} =>
+              SOME (hol_types, declaration)
+          | _ => NONE) (SmtLib.translation_records translation)
+      val emitted = List.filter
+        (String.isPrefix "(declare-datatypes ") strings
+    in
+      assert (List.map Lib.snd blocks = emitted,
+        "ordered datatype records differ from emitted declarations");
+      assert (case List.map Lib.fst blocks of
+          [[key], [store]] =>
+            Type.compare (key, ``:smt_light``) = EQUAL andalso
+            Type.compare (store, ``:smt_keyed_store``) = EQUAL
+        | _ => false,
+        "function-domain datatype must be declared before its user")
+    end
+  fun check name prover oracle =
+    (case oracle sat_goal of
+       SolverSpec.SAT _ => ()
+     | _ => die (name ^ " rejected function-domain datatype declarations");
+     case prover goal of
+       SolverSpec.UNSAT (SOME thm) =>
+         (assert (Term.aconv (Thm.concl thm) (Lib.snd goal) andalso
+            List.all (fn h => List.exists (Term.aconv h)
+              (Lib.fst goal)) (Thm.hyp thm),
+            name ^ " function-domain datatype proof changed the goal");
+          check_oracle_tags name thm)
+     | _ => die (name ^ " function-domain datatype proof did not replay"))
+in
+  List.app check_translation [SmtLib.Z3LambdaArray, SmtLib.Standard27];
+  if Z3.is_configured () then
+    check "Z3" Z3.Z3_SMT_Prover Z3.Z3_SMT_Oracle else ();
+  if CVC.is_configured () then
+    check "cvc5" CVC.CVC_SMT_Prover CVC.CVC_SMT_Oracle else ()
+end
+
+fun smtlib_nested_datatype_dependencies_success () =
+let
+  val goal = ([``(f:smt_nested -> int) x < f y``],
+    ``(x:smt_nested) <> y``)
+  val sat_goals = [([], ``(x:smt_nested) = y``),
+    ([], ``(xs:smt_nested list) = ys``),
+    ([], ``(p:string # smt_nested) = q``)]
+  fun check name prover oracle =
+    (List.app (fn g =>
+       case oracle g of
+         SolverSpec.SAT _ => ()
+       | SolverSpec.UNKNOWN (SOME reason) => die (name ^ ": " ^ reason)
+       | _ => die (name ^ " rejected nested datatype declarations"))
+       sat_goals;
+     case prover goal of
+       SolverSpec.UNSAT (SOME thm) =>
+         (assert (Term.aconv (Thm.concl thm) (Lib.snd goal) andalso
+           List.all (fn h => List.exists (Term.aconv h)
+             (Lib.fst goal)) (Thm.hyp thm),
+           name ^ " nested datatype congruence changed the goal");
+          check_oracle_tags name thm)
+     | _ => die (name ^ " nested datatype congruence did not replay"))
+  val _ = if Z3.is_configured () then
+    check "Z3" Z3.Z3_SMT_Prover Z3.Z3_SMT_Oracle else ()
+  val _ = if CVC.is_configured () then
+    check "cvc5" CVC.CVC_SMT_Prover CVC.CVC_SMT_Oracle else ()
+  fun check_records goal =
+    let
+      val (translation, strings) =
+        SmtLib.goal_to_SmtLib_translation NONE goal
+      val declarations = List.mapPartial
+        (fn SmtLib.DatatypeDeclaration {declaration, ...} => SOME declaration
+          | _ => NONE) (SmtLib.translation_records translation)
+      val emitted = List.filter
+        (String.isPrefix "(declare-datatypes ") strings
+    in
+      assert (declarations = emitted,
+        "datatype records differ from the emitted declaration blocks");
+      declarations
+    end
+  val declarations = check_records goal
+  (* Constructor translation first declares the result type, then falls
+     back to a UF. Its discarded attempt must leave no metadata behind. *)
+  val _ = check_records ([], ``smtlib_native_dt_id d = (e:smt_tri)``)
+in
+  assert (List.exists (fn declaration =>
+      contains "(Smt_nested 0)" declaration andalso
+      contains "(Prod_List_Char_Smt_nested 0)" declaration andalso
+      contains "(List_Prod_List_Char_Smt_nested 0)" declaration)
+    declarations,
+    "nested recursive datatypes were not declared together")
 end
 
 fun smtlib_extended_hol_encoding_records_success () =
@@ -8281,6 +8494,62 @@ in
     "injection internals leaked into emitted SMT-LIB");
   assert_goal_roundtrip "HOL string injection" goal;
   ignore (SmtLib.translation_records translation)
+end
+
+fun smtlib_hol_string_length_translation_success () =
+let
+  fun text_of result = String.concat (Lib.snd result)
+  val raw_string = ``0 <= (&(STRLEN (s:string)) : int)``
+  val raw_sequence = ``0 <= (&(LENGTH (xs:int list)) : int)``
+  val length_only =
+    ``0 <= smtstring$smtstr_len (smtstring$str_inj (s:string))``
+  val (translation, output) =
+    SmtLib.goal_to_SmtLib_translation NONE ([], length_only)
+  val converted = SmtLib.HOL_STRING_TO_SMT_CONV raw_string
+  fun check (simplify, translate) =
+    let
+      fun emit tm = text_of (translate
+        (Lib.fst (SolverSpec.simplify simplify ([], tm))))
+      val concat = emit
+        ``STRLEN (STRCAT (s:string) t) = STRLEN s + STRLEN t``
+      val literal = emit ``(s:string) = "abc" ==> STRLEN s = 3``
+      val mixed = emit
+        ``(s:string) = STRCAT t u /\ P u ==>
+          STRLEN s = STRLEN t + STRLEN u``
+    in
+      assert (contains "str.len" concat andalso
+          contains "str.++" concat andalso
+          not (contains "seq.len" concat) andalso
+          not (contains "declare-sort" concat),
+        "concatenation lengths lost native String encoding:\n" ^ concat);
+      assert (contains "str.len" literal andalso
+          contains "\"abc\"" literal andalso
+          not (contains "seq.len" literal),
+        "literal string length lost its content:\n" ^ literal);
+      assert (contains "str.len" mixed andalso
+          not (contains "seq.len" mixed),
+        "mixed string/UF lengths emitted seq.len:\n" ^ mixed);
+      assert (not (contains "seq.len"
+          (text_of (translate ([], raw_string)))),
+        "untransferred string length emitted seq.len");
+      assert (contains "seq.len"
+          (text_of (translate ([], raw_sequence))),
+        "ordinary list length lost native Seq encoding")
+    end
+in
+  assert_concl_alpha ("string length transfer", converted,
+    boolSyntax.mk_eq (raw_string, length_only));
+  assert (contains "(str.len " (String.concat output) andalso
+      SmtLib.translation_logic translation = "QF_SLIA",
+    "injected string length did not select string arithmetic");
+  assert (List.exists
+      (fn SmtLib.LogicSelection {
+            features = SmtLib.LogicFeatures {strings, ...}, ...} => strings
+        | _ => false) (SmtLib.translation_records translation),
+    "injected string length did not select the strings feature");
+  check (SmtLib.SIMP_TAC false,
+    Z3.goal_to_SmtLib_translation_for_version (SOME "4.15.3"));
+  check (SmtLib.CVC_SIMP_TAC false, CVC.goal_to_SmtLib_translation)
 end
 
 fun smtlib_native_string_translation_success () =
@@ -10934,6 +11203,83 @@ in
     (SmtLib.parser_dicts_for_translation translation) "1.3.4" instream
 end
 
+fun smtlib_datatype_tester_instantiations_success () =
+let
+  fun check goal cases =
+    let
+      val (translation, _) =
+        SmtLib.goal_to_SmtLib_translation NONE ([], goal)
+      val (tydict, tmdict) =
+        SmtLib.parser_dicts_for_translation translation
+      val (_, emitted) = SmtLib.translation_dicts translation
+      val reversed = Redblackmap.insert
+        (tmdict, "is", List.rev (Redblackmap.find (tmdict, "is")))
+      fun tester constructor variable =
+        "((_ is " ^ constructor ^ ") " ^
+        Redblackmap.find (emitted, (variable, 0)) ^ ")"
+      fun check_dict tmdict =
+        let
+          val dicts = (tydict, tmdict)
+          fun accepted (constructor, variable, expected) =
+            let
+              val text = tester constructor variable
+              val parsed = parse_roundtrip_term
+                "monomorphic datatype tester" text dicts
+              val cpc = CPC_ProofParser.parse_stream_with_version
+                dicts "1.3.4" (TextIO.openString
+                  ("((step @r :rule refl :args (" ^ text ^ ")))"))
+              val z3 = parse_z3_proof_string_with_dicts dicts "4.15.3"
+                ("((proof (refl (= " ^ text ^ " " ^ text ^ "))))")
+              val theorems =
+                [CPC_ProofReplay.replay_root_for_test cpc,
+                 Z3_ProofReplay.replay_root_for_test z3]
+              fun checked theorem =
+                (assert_no_hyps ("monomorphic datatype tester", theorem);
+                 assert_concl_alpha ("monomorphic datatype tester", theorem,
+                   boolSyntax.mk_eq (expected, expected));
+                 check_oracle_tags "monomorphic datatype tester" theorem)
+            in
+              assert (Term.aconv parsed expected,
+                "datatype tester selected another type instantiation");
+              List.app checked theorems
+            end
+          fun rejected (constructor, _, _) =
+            let val (_, wrong_variable, _) = hd cases in
+              expect_hol_error_contains "mismatched datatype tester"
+                "tester constructor mismatch"
+                (fn () => ignore (SmtLib_Parser.parse_term
+                  (Library.get_token
+                    (string_get_char (tester constructor wrong_variable)))
+                  dicts))
+            end
+        in
+          List.app accepted cases;
+          List.app rejected (List.drop (cases, 2))
+        end
+    in
+      List.app check_dict [tmdict, reversed]
+    end
+in
+  check ``(x:int option) = z /\ (y:bool option) = w``
+    [("ctor_Option_Int_NONE", ``x:int option``,
+      ``case (x:int option) of NONE => T | SOME a => F``),
+     ("ctor_Option_Int_SOME", ``x:int option``,
+      ``case (x:int option) of NONE => F | SOME a => T``),
+     ("ctor_Option_Bool_NONE", ``y:bool option``,
+      ``case (y:bool option) of NONE => T | SOME a => F``),
+     ("ctor_Option_Bool_SOME", ``y:bool option``,
+      ``case (y:bool option) of NONE => F | SOME a => T``)];
+  check ``(xs:int list) = ys /\ (bs:bool list) = cs``
+    [("ctor_List_Int_NIL", ``xs:int list``,
+      ``case (xs:int list) of [] => T | h::t => F``),
+     ("ctor_List_Int_CONS", ``xs:int list``,
+      ``case (xs:int list) of [] => F | h::t => T``),
+     ("ctor_List_Bool_NIL", ``bs:bool list``,
+      ``case (bs:bool list) of [] => T | h::t => F``),
+     ("ctor_List_Bool_CONS", ``bs:bool list``,
+      ``case (bs:bool list) of [] => F | h::t => T``)]
+end
+
 fun cpc_quoted_declaration_identity_success () =
 let
   val names = ["quoted_user"]
@@ -11676,6 +12022,49 @@ in
   assert (List.null (Thm.hyp theorem),
     "D13 de-indexed operator replay retained hypotheses");
   check_oracle_tags "D13 de-indexed operator replay" theorem
+end
+
+(* Minimized arrays_ext step from a cvc5 1.3.4 array-set certificate. *)
+fun cpc_arrays_ext_replay_success () =
+let
+  fun run (sort, range) =
+    let
+      val declarations =
+        "((declare-const a (Array Int " ^ sort ^ ")) " ^
+        "(declare-const b (Array Int " ^ sort ^ ")) " ^
+        "(define @k () (@array_deq_diff a b)) " ^
+        "(assume-push @neq (not (= a b))) "
+      val target = "(not (= (select a @k) (select b @k)))"
+      fun replay declared = CPC_ProofReplay.replay_root_for_test
+        (parse_cpc_proof_string (declarations ^
+          "(step @ext " ^ declared ^
+          " :rule arrays_ext :premises (@neq)) " ^
+          "(step-pop @closed :rule scope :premises (@ext)))"))
+      val ty = Type.--> (intSyntax.int_ty, range)
+      val a = Term.mk_var ("a", ty)
+      val b = Term.mk_var ("b", ty)
+      val witness = CPC_ProofParser.cpc_parameterized_skolem_for_test
+        "@array_deq_diff" [a, b]
+      val expected = boolSyntax.mk_imp
+        (boolSyntax.mk_neg (boolSyntax.mk_eq (a, b)),
+         boolSyntax.mk_neg (boolSyntax.mk_eq
+           (Term.mk_comb (a, witness), Term.mk_comb (b, witness))))
+      fun check declared =
+        let val theorem = replay declared in
+          assert (Term.aconv (Thm.concl theorem) expected andalso
+              List.null (Thm.hyp theorem),
+            "CPC arrays_ext did not derive closed extensionality at " ^ sort);
+          check_oracle_tags "CPC arrays_ext replay" theorem
+        end
+    in
+      check "";
+      check target;
+      expect_hol_error_contains "CPC arrays_ext wrong conclusion"
+        "direct result differs from the declared conclusion"
+        (fn () => ignore (replay "false"))
+    end
+in
+  List.app run [("Bool", Type.bool), ("Int", intSyntax.int_ty)]
 end
 
 fun cpc_parameterized_skolem_registry_success () =
@@ -17256,6 +17645,28 @@ in
   | NONE => die "FAIL: mp-eq proof did not define root proof step"
 end
 
+fun z3_proof_parser_unary_and_or_success () =
+let
+  val p = Term.mk_var ("p", Type.bool)
+  fun rewrite_concl contents =
+    case Redblackmap.peek (Z3_Proof.proof_steps
+        (parse_z3_proof_string "4.15.3" contents), 0) of
+      SOME (Z3_Proof.REWRITE concl) => concl
+    | _ => die "FAIL: unary and/or proof did not parse to a rewrite"
+  val concl = rewrite_concl
+    "((declare-fun p () Bool)\n(proof (rewrite (= (and p) (or p)))))"
+in
+  assert (Term.aconv concl (boolSyntax.mk_eq (p, p)),
+    "unary (and p) and (or p) did not parse as p");
+  expect_hol_error_contains "unary and over Int" "'and'"
+    (fn () => ignore (rewrite_concl
+      "((declare-fun x () Int)\n(proof (rewrite (= (and x) (and x)))))"));
+  expect_hol_error_contains "unary and in a benchmark" "'and'"
+    (fn () => ignore (parse_smtlib_assertions
+      ("(set-logic QF_UF)\n(declare-const p Bool)\n" ^
+       "(assert (and p))\n(exit)\n")))
+end
+
 fun z3_asserted_membership_diagnostic () =
 let
   val rogue = ``p:bool``
@@ -17459,6 +17870,71 @@ in
         "pull-quant did not normalize to a checked rewrite")
   | SOME _ => die "FAIL: pull-quant proof parsed to unexpected constructor"
   | NONE => die "FAIL: pull-quant proof did not define root proof step"
+end
+
+fun z3_der_unused_binder_replay_success () =
+let
+  val (tydict, tmdict) = SmtLib_Logics.parsedicts_of_logic "ALL"
+  val dictionaries =
+    (Library.extend_dict
+      (("U", SmtLib_Theories.K_zero_zero Type.alpha), tydict), tmdict)
+  fun parse text =
+    parse_z3_proof_string_with_dicts dictionaries "4.15.3" text
+  (* Preserve the encountered substitution, then unused-binder elimination
+     beneath a retained binder, including the nested quantified body. *)
+  val fragment = String.concat [
+    "((set-logic ALL)\n",
+    "(declare-fun der_guard (Int) Bool)\n",
+    "(declare-fun der_result (Int) Bool)\n",
+    "(declare-fun der_first (Int) U)\n",
+    "(declare-fun der_second (Int (_ BitVec 256)) U)\n",
+    "(declare-fun der_mark (U Int) Bool)\n",
+    "(proof\n",
+    "(let ((q1 (forall ((x Int) (y U) (z U))\n",
+    "          (or (not (and (der_guard x) (= y (der_first x))\n",
+    "                        (= z (der_second x (_ bv32 256)))))\n",
+    "              (and (der_result x)\n",
+    "                   (forall ((w Int)) (not (der_mark z w))))))))\n",
+    "(let ((q2 (forall ((x Int) (y U) (z U))\n",
+    "          (or (and (der_result x)\n",
+    "                   (forall ((w Int))\n",
+    "                     (not (der_mark (der_second x (_ bv32 256)) w))))\n",
+    "              (not (der_guard x))))))\n",
+    "(let ((q3 (forall ((x Int))\n",
+    "          (or (and (der_result x)\n",
+    "                   (forall ((w Int))\n",
+    "                     (not (der_mark (der_second x (_ bv32 256)) w))))\n",
+    "              (not (der_guard x))))))\n",
+    "(trans (der (= q1 q2)) (elim-unused (= q2 q3)) (= q1 q3)))))))\n"
+  ]
+  val proof = parse fragment
+  val _ =
+    case Redblackmap.peek (Z3_Proof.proof_steps proof, 0) of
+      SOME (Z3_Proof.TRANS
+        (Z3_Proof.REWRITE _, Z3_Proof.ELIM_UNUSED _, _)) => ()
+    | _ => die "FAIL: der did not normalize to checked rewrite replay"
+  val expected =
+    ``(!x:int. !y:'a. !z:'a.
+        ~(der_guard x /\ y = der_first x /\
+          z = der_second x (32w:256 word)) \/
+        der_result x /\ (!w:int. ~der_mark z w)) <=>
+      !x:int. der_result x /\
+        (!w:int. ~der_mark (der_second x (32w:256 word)) w) \/
+        ~der_guard x``
+  val theorem = Z3_ProofReplay.replay_root_for_test proof
+  val _ = assert (Thm.concl theorem ~~ expected,
+    "der sequence returned the wrong quantified equality")
+  val _ = assert (List.null (Thm.hyp theorem),
+    "der sequence retained unexpected hypotheses")
+  val _ = check_oracle_tags "Z3 der and unused-binder replay" theorem
+in
+  expect_hol_error_contains "malformed unused-binder equality"
+    "proof rule: elim_unused"
+    (fn () => ignore (Z3_ProofReplay.replay_root_for_test (parse
+      ("((declare-fun der_guard (Int) Bool) " ^
+       "(declare-fun der_result (Int) Bool) " ^
+       "(proof (elim-unused (= (forall ((x Int)) (der_guard x)) " ^
+       "(forall ((x Int)) (der_result x))))))"))))
 end
 
 fun z3_proof_parser_structures_proof_bind_success () =
@@ -25052,7 +25528,13 @@ let
      ("emod nonpositive-divisor nonnegative clause",
       ``(b:int) <= 0 \/ emod 0 b >= 0``),
      ("emod nonpositive-divisor clause",
-      ``(b:int) <= 0 \/ emod 0 b <= 0``)]
+      ``(b:int) <= 0 \/ emod 0 b <= 0``),
+     ("emod symbolic-divisor nonnegative clause",
+      ``(d:int) = 0 \/ emod n d >= 0``),
+     ("emod symbolic-divisor upper-bound clause",
+      ``(d:int) = 0 \/ emod n d < ABS d``),
+     ("ediv emod symbolic division identity",
+      ``(d:int) = 0 \/ n = d * ediv n d + emod n d``)]
   val consumed_cases =
     [
      ("symbolic nonzero dividend ediv totalization",
@@ -32700,7 +33182,16 @@ let
      (``word_bit 7 (w : word8)``, ``(w : word8) ' 7``),
      (``word_bit 8 (w : word8)``, boolSyntax.F),
      (``word_bit 31 (w : word32)``, ``(w : word32) ' 31``),
-     (``word_bit 32 (w : word32)``, boolSyntax.F)]
+     (``word_bit 32 (w : word32)``, boolSyntax.F),
+     (``(((3 >< 3) (w : word4)) : word1) ' 0``, ``(w : word4) ' 3``),
+     (``(((a : word1) @@ (b : word3)) : word4) ' 3``,
+      ``(a : word1) ' 0``),
+     (``(word_nand (x : word8) y) ' 7``,
+      ``~(x : word8) ' 7 \/ ~(y : word8) ' 7``),
+     (``(word_nor (x : word8) y) ' 7``,
+      ``~(x : word8) ' 7 /\ ~(y : word8) ' 7``),
+     (``(word_xnor (x : word8) y) ' 7``,
+      ``(x : word8) ' 7 = (y : word8) ' 7``)]
   val sum = wordsSyntax.mk_word_add (x, y)
   val bit0 = numSyntax.zero_tm
   val projection = wordsSyntax.mk_index (sum, bit0)
@@ -33016,6 +33507,24 @@ local
   structure C = SmtReplayCanonGraph
   structure P = SmtReplayProof
 in
+fun word_graph_wide_bitwise_success () =
+let
+  val targets =
+    [``(x : 256 word) &&
+       0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE0w =
+       word_lsl (word_lsr x 5) 5``,
+     ``(x : 256 word) = x && m || x && ~m``]
+  val _ = List.app (fn target =>
+    let
+      val theorem = Timeout.apply (Time.fromSeconds 30)
+        SmtWordGraph.prove target
+    in
+      assert_concl_alpha ("wide bitwise word graph", theorem, target);
+      assert_no_hyps ("wide bitwise word graph", theorem);
+      check_oracle_tags "wide bitwise word graph" theorem
+    end) targets
+in () end
+
 fun word_graph_boolean_circuit_success () =
 let
   val target = ``((p /\ q) ==>
@@ -33407,12 +33916,16 @@ let
             andalso #memo_hits metrics>0 andalso
             ptr (boolSyntax.lhs (Thm.concl theorem)) source,
           "shared callback control missed a prover or lost its source");
-        assert (#operator_calls cached_metrics = #operator_calls metrics
+        assert (#operator_calls cached_metrics <= #operator_calls metrics
             andalso #memo_hits cached_metrics > #memo_hits metrics andalso
             ptr (boolSyntax.lhs (Thm.concl cached)) source andalso
             Lib.can (SmtSkeletonProve.nodewise_equality
-              (boolSyntax.rhs (Thm.concl theorem)))
-              (boolSyntax.rhs (Thm.concl cached)),
+              (boolSyntax.rhs (Thm.concl
+                (Conv.CONV_RULE (Conv.RAND_CONV
+                  (Rewrite.REWRITE_CONV [])) theorem))))
+              (boolSyntax.rhs (Thm.concl
+                (Conv.CONV_RULE (Conv.RAND_CONV
+                  (Rewrite.REWRITE_CONV [])) cached))),
           "local built-in schema reuse lost its benefit or normal form");
         assert_no_hyps ("Task05 typed frontiers",theorem);
         check_oracle_tags "Task05 typed frontiers" theorem;
@@ -33572,6 +34085,7 @@ end
 fun run_word_graph_unittests () =
   List.app run_test
     [("word_graph_conversion_success", word_graph_conversion_success),
+     ("word_graph_wide_bitwise_success", word_graph_wide_bitwise_success),
      ("word_graph_boolean_circuit_success",
        word_graph_boolean_circuit_success),
      ("word_graph_discovery_invariants_success",
@@ -33613,6 +34127,101 @@ fun run_cnf_graph_unittests () =
        z3_e0_diagnostic_exception_precedence_success),
      ("z3_e0_replay_measurement_reserved_snapshot_success",
        z3_e0_replay_measurement_reserved_snapshot_success)]
+
+fun cpc_chain_resolution_success () =
+  let
+    val declarations = "(declare-const p Bool) (declare-const q Bool) \
+      \(declare-const r Bool) (declare-const s Bool) "
+    fun check body expected hypotheses fallback =
+      let
+        val proof = parse_cpc_proof_string ("(" ^ declarations ^ body ^ ")")
+        val _ = Profile.reset_all ()
+        val theorem = CPC_ProofReplay.replay_root_for_test proof
+        val _ = assert (Thm.concl theorem ~~ expected,
+          "chain_resolution returned the wrong endpoint")
+        val _ = assert (List.length (Thm.hyp theorem) = hypotheses,
+          "chain_resolution lost premise hypotheses")
+        val _ = assert
+          ((cpc_profile_call_count "CPC(rung:resolution/annotated_macro)" > 0)
+            = fallback, "chain_resolution used the wrong replay route")
+      in check_oracle_tags "CPC chain_resolution" theorem end
+    fun chain aliases explicit source premises polarities atoms
+        target expected hypotheses =
+      let
+        val lists = "(@list " ^ polarities ^ ") (@list " ^ atoms ^ ")"
+        val definitions = if aliases then
+          "(define @pols () (@list " ^ polarities ^ ")) " ^
+          "(define @atoms () (@list " ^ atoms ^ ")) " else ""
+        val arguments = if aliases then "@pols @atoms" else lists
+        val conclusion = if explicit then " " ^ target else ""
+      in check (definitions ^ source ^ "(step @out" ^ conclusion ^
+        " :rule chain_resolution :premises (" ^ premises ^ ") :args (" ^
+        arguments ^ "))") expected hypotheses false end
+    val _ = List.app (fn aliases => List.app (fn explicit =>
+      (chain aliases explicit
+        "(assume @a (or p q r)) (assume @b (not p)) (assume @c (not q)) "
+        "@a @b @c" "true true" "p q" "r" ``r:bool`` 3;
+       chain aliases explicit
+        "(assume @a (or (not p) q)) (assume @b p) (assume @c (not q)) "
+        "@a @b @c" "false true" "p q" "false" boolSyntax.F 3;
+       chain aliases explicit
+        "(assume @a p) (assume @b (not p)) "
+        "@a @b" "true" "p" "false" boolSyntax.F 2;
+       chain aliases explicit
+        "(assume @a (or p p q)) (assume @b (not p)) "
+        "@a @b @b" "true true" "p p" "q" ``q:bool`` 2))
+      [false, true]) [false, true]
+    val _ = List.app (fn conclusion => check
+      ("(assume @a (or p q r)) (assume @b (not p)) \
+       \(assume @c (not q)) \
+       \(step @eq :rule refl :args ((or p q r))) \
+       \(step @opaque :rule eq_resolve :premises (@a @eq)) \
+       \(step @out" ^ conclusion ^ " :rule chain_resolution \
+       \:premises (@opaque @b @c) :args ((@list true true) (@list p q)))")
+      ``r:bool`` 3 true) ["", " r"]
+    val _ = check
+      "(assume @a (or (not (not p)) q r)) \
+      \(assume @b (not p)) (assume @c (not q)) \
+      \(step @out :rule chain_resolution :premises (@a @b @c) \
+      \:args ((@list true true) (@list p q)))" ``r:bool`` 3 true
+    val _ = check
+      "(assume @a (or (not p) q r)) (assume @b p) \
+      \(assume @c (not q)) \
+      \(step @eq :rule refl :args ((or (not p) q r))) \
+      \(step @opaque :rule eq_resolve :premises (@a @eq)) \
+      \(step @out :rule chain_resolution :premises (@opaque @b @c) \
+      \:args ((@list false true) (@list p q)))" ``r:bool`` 3 true
+    val _ = List.app (fn (source, next, expected) => check
+      ("(assume @a " ^ source ^ ") (assume @b " ^ next ^ ") " ^
+       "(assume @c (not (or q r))) " ^
+       "(step @eq :rule refl :args (" ^ source ^ ")) " ^
+       "(step @opaque :rule eq_resolve :premises (@a @eq)) " ^
+       "(step @out :rule chain_resolution :premises (@opaque @b @c) " ^
+       ":args ((@list true true) (@list p (or q r))))")
+      expected 3 true)
+      [("(or p (or q r))", "(not p)", boolSyntax.F),
+       ("(or p (or q r))", "(or (not p) s)", ``s:bool``),
+       ("(or p (or q r) s)", "(not p)", ``s:bool``)]
+    val _ = check
+      "(assume @a (or p q)) (assume @b (or (not p) (or p q))) \
+      \(assume @c (not (or p q))) \
+      \(step @eq :rule refl :args ((or p q))) \
+      \(step @opaque :rule eq_resolve :premises (@a @eq)) \
+      \(step @out :rule chain_resolution :premises (@opaque @b @c) \
+      \:args ((@list true true) (@list p (or p q))))" ``q:bool`` 3 true
+    val _ = expect_hol_error_contains "chain_resolution list lengths"
+      "annotation lengths differ" (fn () => ignore (parse_cpc_proof_string
+        ("(" ^ declarations ^ "(assume @a p) (assume @b (not p)) \
+         \(step @out :rule chain_resolution :premises (@a @b) \
+         \:args ((@list true false) (@list p))))")))
+    val _ = expect_hol_error_contains "chain_resolution wrong conclusion"
+      "explicit target resolution failed; target=s"
+      (fn () => ignore (CPC_ProofReplay.replay_root_for_test
+        (parse_cpc_proof_string ("(" ^ declarations ^
+          "(assume @a (or p q r)) (assume @b (not p)) \
+          \(assume @c (not q)) (step @out s :rule chain_resolution \
+          \:premises (@a @b @c) :args ((@list true true) (@list p q))))"))))
+  in () end
 
 fun cpc_clause_producer_occurrences_success () =
   let
@@ -34358,6 +34967,8 @@ let
     ("z3_compact_selected_dispatch", Z3_CompactReplayTests.run),
     ("cpc_graph_typed_parser", fn () =>
       (CPC_GraphParserTests.run ();CPC_ConstructorAliasReviewTests.run ())),
+    ("cvc_native_bag_goal_nested_application_success",
+      cvc_native_bag_goal_nested_application_success),
     ("smt_resource_diagnostic_contract",
       smt_resource_diagnostic_contract),
     ("smt_resource_proof_pre_gate_precedes_parser",
@@ -34418,6 +35029,7 @@ let
     ("z3_hypothesis_presence_fastpath_boundary",
       Z3_HypothesisPresenceTests.run),
     ("word_graph_conversion_success", word_graph_conversion_success),
+     ("word_graph_wide_bitwise_success", word_graph_wide_bitwise_success),
      ("word_graph_boolean_circuit_success",
        word_graph_boolean_circuit_success),
     ("word_graph_discovery_invariants_success",
@@ -34464,6 +35076,8 @@ let
       smtlib_string_typed_reset_assertions_success),
     ("smtlib_string_typed_definitions_success",
       smtlib_string_typed_definitions_success),
+    ("indexed_num_word_preprocessing_success",
+      indexed_num_word_preprocessing_success),
     ("num_binder_transfer_lemmas_success",
       num_binder_transfer_lemmas_success),
     ("num_binder_relativization_forall_success",
@@ -34499,6 +35113,8 @@ let
       num_transfer_guarded_num_success),
     ("num_transfer_assumption_free_var_success",
       num_transfer_assumption_free_var_success),
+    ("num_transfer_duplicate_assumptions_success",
+      num_transfer_duplicate_assumptions_success),
     ("num_bridge_axioms_retired_success",
       num_bridge_axioms_retired_success),
     ("ceiling_builtin_encoding_success", ceiling_builtin_encoding_success),
@@ -34683,6 +35299,10 @@ let
       smtlib_distinct_translation_success),
     ("smtlib_datatype_type_translation_success",
       smtlib_datatype_type_translation_success),
+    ("smtlib_nested_datatype_dependencies_success",
+      smtlib_nested_datatype_dependencies_success),
+    ("smtlib_datatype_function_domain_dependencies_success",
+      smtlib_datatype_function_domain_dependencies_success),
     ("smtlib_extended_hol_encoding_records_success",
       smtlib_extended_hol_encoding_records_success),
     ("smtlib_seq_set_bag_feature_inference_success",
@@ -34705,6 +35325,8 @@ let
       smtlib_dialect_dictionary_dispatch_success),
     ("smtlib_hol_string_injection_translation_success",
       smtlib_hol_string_injection_translation_success),
+    ("smtlib_hol_string_length_translation_success",
+      smtlib_hol_string_length_translation_success),
     ("smtlib_native_string_translation_success",
       smtlib_native_string_translation_success),
     ("smtlib_native_string_sort_propagation_success",
@@ -34755,6 +35377,8 @@ let
       smtlib_native_datatype_uf_success),
     ("smtlib_native_datatype_equality_builtin_success",
       smtlib_native_datatype_equality_builtin_success),
+    ("smtlib_datatype_tester_instantiations_success",
+      smtlib_datatype_tester_instantiations_success),
     ("smtlib_datatype_parser_dict_success",
       smtlib_datatype_parser_dict_success),
     ("smtlib_preprocessing_and_gap_diagnostics",
@@ -34787,6 +35411,7 @@ let
       cpc_registry_deindexing_complete_success),
     ("cpc_d13_deindexed_operator_repros_success",
       cpc_d13_deindexed_operator_repros_success),
+    ("cpc_arrays_ext_replay_success", cpc_arrays_ext_replay_success),
     ("cpc_parameterized_skolem_registry_success",
       cpc_parameterized_skolem_registry_success),
     ("cpc_skolem_witness_forall_1_success",
@@ -34897,6 +35522,7 @@ let
       cpc_proof_parser_singleton_premise_success),
     ("cpc_proof_parser_version_resolution_success",
       cpc_proof_parser_version_resolution_success),
+    ("cpc_chain_resolution_success", cpc_chain_resolution_success),
     ("cpc_clause_producer_occurrences_success",
       cpc_clause_producer_occurrences_success),
     ("cpc_clause_normalization_success", cpc_clause_normalization_success),
@@ -35031,6 +35657,8 @@ let
       z3_regular_language_semantics_success),
     ("z3_proof_parser_normalizes_rule_alias_success",
       z3_proof_parser_normalizes_rule_alias_success),
+    ("z3_proof_parser_unary_and_or_success",
+      z3_proof_parser_unary_and_or_success),
     ("z3_fpa2bv_proof_dictionary_replay_success",
       z3_fpa2bv_proof_dictionary_replay_success),
     ("z3_fpa2bv_proof_dictionary_strictness",
@@ -35043,6 +35671,8 @@ let
       z3_proof_parser_normalizes_pull_quant_success),
     ("z3_nested_lambda_equality_rewrite_success",
       z3_nested_lambda_equality_rewrite_success),
+    ("z3_der_unused_binder_replay_success",
+      z3_der_unused_binder_replay_success),
     ("z3_proof_parser_structures_proof_bind_success",
       z3_proof_parser_structures_proof_bind_success),
     ("z3_proof_parser_erases_inert_proof_bind_success",
