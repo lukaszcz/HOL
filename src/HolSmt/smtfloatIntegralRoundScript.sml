@@ -769,6 +769,13 @@ Proof
   metis_tac []
 QED
 
+(* realLib.REAL_ASM_ARITH_TAC feeds the whole assumption list to the
+   arithmetic procedure, which case-splits on every abs and if in it and
+   gets exponential in the goals below.  Pass it only the assumptions
+   matching the given patterns. *)
+fun real_arith_from pats =
+  MAP_EVERY (fn p => qpat_x_assum p mp_tac) pats >> realLib.REAL_ARITH_TAC
+
 Theorem even_integral_closest_unique[local]:
   is_closest float_is_integral x (y : ('t,'w) float) /\
   (?n. EVEN n /\ abs (float_to_real y) = &n) /\
@@ -789,12 +796,18 @@ Proof
     (qspec_then `float_to_real y - x`
        (qspec_then `x - float_to_real z` mp_tac)
        realTheory.ABS_TRIANGLE >>
-     simp [] >> realLib.REAL_ASM_ARITH_TAC) >>
+     simp [] >> realLib.REAL_ARITH_TAC) >>
   `float_to_real y = float_to_real z` by
     (CCONTR_TAC >>
      `2 <= abs (float_to_real y - float_to_real z)` by
        (irule even_absolute_reals_separated >> simp []) >>
-     realLib.REAL_ASM_ARITH_TAC) >>
+     real_arith_from
+       [`2 <= abs (float_to_real y - float_to_real z)`,
+        `abs (float_to_real y - float_to_real z) <=
+         abs (float_to_real y - x) + abs (float_to_real z - x)`,
+        `abs (float_to_real y - x) <= abs (float_to_real z - x)`,
+        `abs (float_to_real z - x) <= abs (float_to_real y - x)`,
+        `2 * abs (float_to_real y - x) <= 1`]) >>
   mp_tac (Q.SPECL [`y`, `z`]
     binary_ieeeTheory.float_to_real_eq) >>
   simp []
@@ -852,19 +865,24 @@ Proof
             (qspec_then `lo` mp_tac) >>
           mp_tac (Q.SPECL [`lo`, `z`]
             binary_ieeeTheory.float_to_real_eq) >>
-          simp [realTheory.abs] >> rpt strip_tac >> sym_tac >>
+          simp [] >> rpt strip_tac >> sym_tac >>
           qpat_x_assum
             `float_to_real lo = float_to_real z <=> lo = z`
             (irule o iffLR) >>
-          Cases_on `0 <= float_to_real z - x` >>
-          Cases_on `0 <= float_to_real lo - x` >>
-          fs [] >> realLib.REAL_ASM_ARITH_TAC)
+          real_arith_from
+            [`abs (float_to_real lo - x) <= abs (float_to_real z - x)`,
+             `abs (float_to_real z - x) <= abs (float_to_real lo - x)`,
+             `float_to_real z <= x`, `float_to_real lo <= x`])
       >- (qpat_x_assum
             `!b. float_is_integral b /\ float_to_real b >= x ==> _`
             (qspec_then `z` mp_tac) >>
           qpat_x_assum `!b. float_is_integral b ==> _`
             (qspec_then `lo` mp_tac) >>
-          simp [] >> realLib.REAL_ASM_ARITH_TAC)) >>
+          simp [] >>
+          real_arith_from
+            [`~(float_to_real z <= x)`, `float_is_integral z`,
+             `float_is_integral lo`,
+             `abs (float_to_real lo - x) < abs (float_to_real hi - x)`])) >>
   (fs [binary_ieeeTheory.is_closest_def, IN_DEF] >>
    rpt strip_tac >>
    Cases_on `float_to_real b <= x`
@@ -875,7 +893,10 @@ Proof
    >- (qpat_x_assum
          `!c. float_is_integral c /\ float_to_real c >= x ==> _`
          (qspec_then `b` mp_tac) >>
-       simp [] >> realLib.REAL_ASM_ARITH_TAC))
+       simp [] >>
+       real_arith_from
+         [`~(float_to_real b <= x)`, `float_is_integral b`,
+          `abs (float_to_real lo - x) < abs (float_to_real hi - x)`]))
 QED
 
 Theorem integral_round_RNE_from_directed_upper:
@@ -906,30 +927,39 @@ Proof
             (qspec_then `hi` mp_tac) >>
           mp_tac (Q.SPECL [`hi`, `z`]
             binary_ieeeTheory.float_to_real_eq) >>
-          simp [realTheory.abs] >> rpt strip_tac >> sym_tac >>
+          simp [realTheory.real_ge] >> rpt strip_tac >> sym_tac >>
           qpat_x_assum
             `float_to_real hi = float_to_real z <=> hi = z`
             (irule o iffLR) >>
-          Cases_on `0 <= float_to_real z - x` >>
-          Cases_on `0 <= float_to_real hi - x` >>
-          fs [] >> realLib.REAL_ASM_ARITH_TAC)
+          real_arith_from
+            [`abs (float_to_real hi - x) <= abs (float_to_real z - x)`,
+             `abs (float_to_real z - x) <= abs (float_to_real hi - x)`,
+             `x <= float_to_real z`, `float_to_real hi >= x`])
       >- (qpat_x_assum
             `!b. float_is_integral b /\ float_to_real b <= x ==> _`
             (qspec_then `z` mp_tac) >>
           qpat_x_assum `!b. float_is_integral b ==> _`
             (qspec_then `hi` mp_tac) >>
-          simp [] >> realLib.REAL_ASM_ARITH_TAC)) >>
+          simp [] >>
+          real_arith_from
+            [`~(x <= float_to_real z)`, `float_is_integral z`,
+             `float_is_integral hi`,
+             `abs (float_to_real hi - x) < abs (float_to_real lo - x)`])) >>
   (fs [binary_ieeeTheory.is_closest_def, IN_DEF] >>
    rpt strip_tac >>
    Cases_on `x <= float_to_real b`
    >- (qpat_x_assum
          `!c. float_is_integral c /\ float_to_real c >= x ==> _`
          (qspec_then `b` mp_tac) >>
-       simp [] >> rpt strip_tac >> realLib.REAL_ASM_ARITH_TAC)
+       simp [] >>
+       real_arith_from [`x <= float_to_real b`, `float_is_integral b`])
    >- (qpat_x_assum
          `!c. float_is_integral c /\ float_to_real c <= x ==> _`
          (qspec_then `b` mp_tac) >>
-       simp [] >> rpt strip_tac >> realLib.REAL_ASM_ARITH_TAC))
+       simp [] >>
+       real_arith_from
+         [`~(x <= float_to_real b)`, `float_is_integral b`,
+          `abs (float_to_real hi - x) < abs (float_to_real lo - x)`]))
 QED
 
 Theorem integral_float_is_finite[local]:
