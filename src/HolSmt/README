@@ -290,6 +290,14 @@ Definitions for translator-emitted operators are selected from the exact
 `EncodedSymbol` records of the current translation, never from constant
 names.  In particular, `bvcomp` replay unfolds its recorded definition and
 then uses the general word decision procedures.
+CPC word replay supports whole-word extraction (`bv-extract-whole`),
+extraction from the lower word of a concatenation (`bv-extract-concat-1`),
+literal logical shifts (`bv-shl-by-const-1`, `bv-lshr-by-const-1`) and
+`bv-bitwise-slicing`. It also eliminates quantified word variables in
+conditions of the form `!x. word_1comp x <> a \/ P x`, when `a` does not
+contain `x`.
+Extraction and constant-shift replay use the existing BitVector size and
+step-time limits.
 
 Unicode-string and regular-expression replay covers goals stated over the
 native `smtstr` carrier.  A goal stated over HOL's `:string` reaches the
