@@ -1689,6 +1689,8 @@ struct
     mk_rule RareRewrite ("bv-bitwise-slicing", "bv_bitwise_slicing"),
     mk_rule RareRewrite ("bv-xor-duplicate", "bv_xor_duplicate"),
     mk_rule RareRewrite ("bv-not-idemp", "bv_not_idemp"),
+    mk_rule RareRewrite ("bv-zero-extend-eliminate-0",
+      "bv_zero_extend_eliminate_0"),
     mk_rule RareRewrite ("bv-shl-by-const-0", "bv_shl_by_const_0"),
     mk_rule RareRewrite ("bv-shl-by-const-2", "bv_shl_by_const_2"),
     mk_rule RareRewrite ("bv-lshr-by-const-0", "bv_lshr_by_const_0"),

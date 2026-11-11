@@ -18264,6 +18264,25 @@ fun cpc_live_checked_replay_bv_bitblast_success () =
   | SolverSpec.SAT _ => die "FAIL: cvc5 reported sat for bit-vector OR theorem"
   | SolverSpec.UNKNOWN _ => die "FAIL: cvc5 returned unknown for bit-vector OR test"
 
+(* Word lowering turns `word_bit 0 w` into `w2w ((0 >< 0) w) = 1w` at width 1,
+   which cvc5 simplifies with bv-zero-extend-eliminate-0. *)
+fun cpc_live_checked_replay_bv_zero_extend_eliminate_success () =
+let
+  val assumption = ``~word_bit 0 (x : word8)``
+  val conclusion = ``(x : word8) <> 1w``
+in
+  case CVC.CVC_SMT_CPC_Prover ([assumption], conclusion) of
+    SolverSpec.UNSAT (SOME thm) =>
+      (assert (Thm.concl thm ~~ conclusion andalso
+               List.all (fn h => h ~~ assumption) (Thm.hyp thm),
+        "live CPC zero-extend replay returned an unexpected theorem");
+       check_oracle_tags "CPC live zero-extend replay unit test" thm)
+  | SolverSpec.UNSAT NONE => die "FAIL: live CPC replay returned no theorem"
+  | SolverSpec.SAT _ => die "FAIL: cvc5 reported sat for zero-extend theorem"
+  | SolverSpec.UNKNOWN _ =>
+      die "FAIL: cvc5 returned unknown for zero-extend test"
+end
+
 fun cpc_live_checked_replay_boolean_resolution_success () =
   case CVC.CVC_SMT_CPC_Prover
     ([], ``((p : bool) ==> q) /\ (q ==> p) ==> (p = q)``) of
@@ -31039,6 +31058,25 @@ in
     (fn () => ignore (SmtResource.bounded_structure 8 large_binder))
 end
 
+(* Word lowering reaches the assumptions as well as the conclusion.  Left in
+   an assumption, `word_bit 0 w` and `w >>> 1` are translated as
+   uninterpreted functions, and the solvers report this sequent's negation
+   satisfiable. *)
+fun word_simp_assumptions_success () =
+let
+  val goal =
+    ([``(w : 256 word) <> 0w``, ``~word_bit 0 (w : 256 word)``,
+      ``(w : 256 word) >>> 2 <> 0w``],
+     ``(w : 256 word) >>> 1 <> 0w``)
+  val ((lowered, _), _) =
+    SolverSpec.simplify (SmtLib.SIMP_TAC true) goal
+  fun mentions c = List.exists (can (find_term (same_const c))) lowered
+in
+  assert (not (mentions wordsSyntax.word_bit_tm orelse
+               mentions wordsSyntax.word_lsr_tm),
+    "word lowering left word_bit or word_lsr in an assumption")
+end
+
 local
   open SmtReplayGraph SmtReplayProof
   structure G = SmtReplayGraph
@@ -36240,6 +36278,7 @@ let
     ("z3_hypothesis_presence_fastpath_boundary",
       Z3_HypothesisPresenceTests.run),
     ("word_graph_conversion_success", word_graph_conversion_success),
+    ("word_simp_assumptions_success", word_simp_assumptions_success),
      ("word_graph_wide_bitwise_success", word_graph_wide_bitwise_success),
      ("word_graph_boolean_circuit_success",
        word_graph_boolean_circuit_success),
@@ -36869,6 +36908,8 @@ let
       cpc_live_checked_replay_bv_xor_success),
     ("cpc_live_checked_replay_bv_bitblast_success",
       cpc_live_checked_replay_bv_bitblast_success),
+    ("cpc_live_checked_replay_bv_zero_extend_eliminate_success",
+      cpc_live_checked_replay_bv_zero_extend_eliminate_success),
     ("cpc_live_checked_replay_boolean_resolution_success",
       cpc_live_checked_replay_boolean_resolution_success),
     ("cpc_live_checked_replay_nat_max_success",
