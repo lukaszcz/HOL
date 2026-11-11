@@ -1429,6 +1429,57 @@ class Launch(unittest.TestCase):
             signal.signal(signal.SIGHUP, old)
 
 
+class Unsaved(Base):
+    """A report that cannot be saved still closes the attempt, with no seal,
+    and the chained ledger stays readable."""
+
+    def judged_closes(self):
+        found = dw.read_ledger(self.world.ledger())[1]
+        why = dw.reasons(found)
+        return found, why
+
+    def test_a_failed_save_closes_unsealed_and_counts_as_judged(self):
+        w = self.world
+        real = a.save
+
+        def save(path, data, *rest):
+            if Path(path).name == "downstream.json":
+                raise OSError("disk full")
+            return real(path, data, *rest)
+        w.fault = lambda u, s, n: "exit"
+        with mock.patch.object(a, "save", save):
+            with self.assertRaisesRegex(OSError, "disk full"):
+                w.run("x", w.spec(["logroot"]))
+        found, why = self.judged_closes()
+        (key, row), = found.items()
+        self.assertIsNone(row["closes"][0]["seal"])
+        self.assertIn("no seal", why[key])
+        self.assertIsNotNone(why[key])  # judged, not void
+
+    def test_a_signal_during_the_save_lets_it_and_the_close_finish(self):
+        w = self.world
+        real = a.save
+        seen = []
+
+        def save(path, data, *rest):
+            if Path(path).name == "downstream.json":
+                os.kill(os.getpid(), signal.SIGTERM)
+                time.sleep(0.05)
+                seen.append("saving")
+            return real(path, data, *rest)
+        with mock.patch.object(a, "save", save):
+            with self.assertRaises(snap.Terminated):
+                w.run("x", w.spec(["logroot"]))
+        self.assertEqual(seen, ["saving"])
+        self.assertTrue((w.tmp / "x" / "downstream.json").is_file())
+        found, why = self.judged_closes()
+        (key, row), = found.items()
+        self.assertEqual(len(row["closes"]), 1)
+        self.assertEqual(row["closes"][0]["seal"],
+                         a.seal(w.tmp / "x" / "downstream.json")["sha256"])
+        self.assertIsNotNone(why[key])  # judged, not void
+
+
 class Replay(Base):
     def stage(self, scale=1.05, noise=0.001, name="r"):
         self.world.profile["logroot"] = (scale, noise)
@@ -1901,6 +1952,24 @@ class Chain(Base):
         redrawn = dw.redraws(attempts, infos)
         self.assertEqual(sorted(r["kind"] for r in redrawn),
                          ["decision first", "smoke"])
+
+
+class HeapAnchorParsing(unittest.TestCase):
+    def test_assignments_replace_or_append(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp, "src/h")
+            folder.mkdir(parents=True)
+            (folder / "Holmakefile").write_text(
+                "A_DEPS = one two \\\n  three\n"
+                "A_DEPS += four ../x/five $(skip)\n"
+                "B_DEPS := six\n"
+                "B_DEPS := seven\n"
+                "C_DEPS +=eight\n"
+                "DEPS = nope\nOTHER = nope2\n")
+            self.assertEqual(
+                dw.heap_anchors(tmp, "src/h/heap"),
+                {"one", "two", "three", "four", "five", "seven", "eight"})
+            self.assertIsNone(dw.heap_anchors(tmp, "bin/hol.state"))
 
 
 class CasesAgreeWithS1(unittest.TestCase):

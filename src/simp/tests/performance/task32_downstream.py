@@ -1204,7 +1204,8 @@ STR_OR_NONE = (str, type(None))
 EVENT_FIELDS = {
     "open": dict(attempt=str, stage=str, key=str, seed=str, output=str,
                  checkout=str, first_attempt=STR_OR_NONE, counts=STR_OR_NONE),
-    "close": dict(attempt=str, stage=str, status=str, seal=str, output=str),
+    "close": dict(attempt=str, stage=str, status=str, seal=STR_OR_NONE,
+                  output=str),
     "info": dict(attempt=str, mode=str, key=str, seed=str, output=str,
                  checkout=str),
     "info-end": dict(attempt=str, success=bool, seal=STR_OR_NONE)}
@@ -1272,12 +1273,16 @@ def judged_because(attempt, stage, row):
     its own output (exactly one close, status failed; the output's
     downstream.json of that seal and attempt, success false, no blocked
     finding, and every archived measuring process rejected). Otherwise why
-    it counts as the draw."""
+    it counts as the draw. A close with no seal (its downstream.json could
+    not be saved: a failed write, a signal during the save) is never void:
+    nothing shows that no measurement was admitted, so it counts."""
     if len(row["closes"]) != 1:
         return "no close line" if not row["closes"] else "several closes"
     close = row["closes"][0]
     if close["status"] != FAILED:
         return "closed " + close["status"]
+    if close["seal"] is None:
+        return "its close has no seal: the report was not saved"
     folder = Path(close["output"])
     if close["output"] != row["opens"][0]["output"]:
         return "its close names another output"
@@ -1477,14 +1482,16 @@ def heap_anchors(root, heap):
     if not makefile.is_file() or Path(heap).parent == Path("bin"):
         return None
     text = makefile.read_text().replace("\\\n", " ")
-    names = set()
+    values = {}
     for line in text.splitlines():
-        found = re.match(r"\s*([A-Z_]*DEPS)\s*=(.*)", line)
+        found = re.match(r"\s*([A-Z_]*DEPS)\s*([+:]?)=(.*)", line)
         if found and found.group(1) != "DEPS":
-            for word in found.group(2).split():
-                if "$" not in word:
-                    names.add(Path(word).name)
-    return names
+            if found.group(2) != "+":
+                values[found.group(1)] = set()  # `=` and `:=` replace
+            values.setdefault(found.group(1), set()).update(
+                Path(word).name for word in found.group(3).split()
+                if "$" not in word)
+    return set().union(*values.values()) if values else set()
 
 
 def probe_facts(report, receipts):
@@ -1721,18 +1728,22 @@ def run_stage(args, spec):
                 if isinstance(error, Blocked):
                     report["blocked"] = str(error)
             finally:
-                try:
-                    shutil.rmtree(scratch, ignore_errors=True)
-                    with contextlib.suppress(OSError):
-                        Path(args.scratch).rmdir()  # only if empty
-                    if journal.exists() and not pending_journals_in(journal):
-                        shutil.rmtree(journal, ignore_errors=True)
-                    elif journal.exists():
-                        report["journal"] = str(journal)
-                    a.save(output / "downstream.json", report)
-                    saved = True
-                finally:
-                    end_attempt(ledger, report, output, saved)
+                # a signal here is only recorded: the save and the close
+                # complete, and `terminating` raises it afterwards
+                with snap.deferred(raise_pending=False):
+                    try:
+                        shutil.rmtree(scratch, ignore_errors=True)
+                        with contextlib.suppress(OSError):
+                            Path(args.scratch).rmdir()  # only if empty
+                        if journal.exists() and \
+                                not pending_journals_in(journal):
+                            shutil.rmtree(journal, ignore_errors=True)
+                        elif journal.exists():
+                            report["journal"] = str(journal)
+                        a.save(output / "downstream.json", report)
+                        saved = True
+                    finally:
+                        end_attempt(ledger, report, output, saved)
     return report
 
 
