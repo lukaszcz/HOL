@@ -8499,6 +8499,37 @@ in
   ignore (SmtLib.translation_records translation)
 end
 
+fun smtlib_hol_string_bound_injection_translation_success () =
+let
+  fun prepared goal =
+    Lib.fst (SolverSpec.simplify (SmtLib.SIMP_TAC true) ([], goal))
+  val direct = prepared ``!s:string. P s ==> isPREFIX s s``
+  val compound =
+    prepared ``!s:string. P s ==> isPREFIX (f s) (STRCAT (f s) (g s))``
+  fun text goal =
+    String.concat (Lib.snd (SmtLib.goal_to_SmtLib_translation NONE goal))
+  val direct_text = text direct
+  val compound_text = text compound
+  val standard_text = String.concat (Lib.snd
+    (SmtLib.goal_to_SmtLib_translation_with_regime
+      (SmtLib.HigherOrder SmtLib.Standard27) NONE direct))
+in
+  assert (contains "(declare-fun v1 (t0) String)\n" direct_text andalso
+      contains "(str.prefixof (v1 b0) (v1 b0))" direct_text,
+    "bound HOL string was not injected through an uninterpreted str_inj:\n" ^
+    direct_text);
+  assert (contains "(declare-fun v1 (t0) String)\n" compound_text andalso
+      contains "(str.prefixof (v1 (select v2 b0))" compound_text,
+    "bound-dependent HOL string was not injected through str_inj:\n" ^
+    compound_text);
+  assert (contains "(declare-fun v1 (t0) String)\n" standard_text andalso
+      contains "(str.prefixof (v1 b0) (v1 b0))" standard_text,
+    "Standard27 did not inject the bound HOL string through str_inj:\n" ^
+    standard_text);
+  assert_goal_roundtrip "bound HOL string injection" direct;
+  assert_goal_roundtrip "bound-dependent HOL string injection" compound
+end
+
 fun smtlib_hol_string_length_translation_success () =
 let
   fun text_of result = String.concat (Lib.snd result)
@@ -36447,6 +36478,8 @@ let
       smtlib_dialect_dictionary_dispatch_success),
     ("smtlib_hol_string_injection_translation_success",
       smtlib_hol_string_injection_translation_success),
+    ("smtlib_hol_string_bound_injection_translation_success",
+      smtlib_hol_string_bound_injection_translation_success),
     ("smtlib_hol_string_length_translation_success",
       smtlib_hol_string_length_translation_success),
     ("smtlib_native_string_translation_success",

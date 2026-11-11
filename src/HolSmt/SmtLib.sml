@@ -3562,8 +3562,10 @@ local
           replay = false,
           notes =
             "HOL strings are rewritten through the proved str_inj transfer " ^
-            "kit; literals retain their content and other injected " ^
-            "occurrences are generalized to SMT-LIB String.  " ^
+            "kit; literals retain their content, other closed injected " ^
+            "occurrences are generalized to SMT-LIB String, and " ^
+            "bound-dependent ones apply str_inj as an uninterpreted " ^
+            "function into String.  " ^
             "The HOL :string type itself is not the SMT String sort: a " ^
             "residual occurrence is emitted as an uninterpreted sort.  " ^
             "Ground native smtstr goals do replay; the oracle tactics " ^
@@ -5403,39 +5405,20 @@ local
       let val (tydict, (decls, name)) = metadata_translate_type regime
         (tydict, ty)
       in (((tydict, tmdict), decls), name) end
+    fun mentions_bound_variable t =
+      List.exists (fn v => Option.isSome (bound_peek (bounds, v)))
+        (carrier_free_vars t)
     fun translate_injected_string acc =
-      let
-        val string = carrier_dest_injected_string tm
-      in
-        case bound_peek (bounds, string) of
-          SOME name => (acc, ([], output_text name))
-        | NONE =>
-          let
-            val depends_on_bound =
-              List.exists
-                (fn v => Option.isSome (bound_peek (bounds, v)))
-                (carrier_free_vars string)
-            val _ =
-              if depends_on_bound then
-                raise ERR "translate_injected_string"
-                  "non-atomic injected term depends on a bound variable"
-              else
-                ()
-          in
-            case term_peek (tmdict, (ordinary_key (tm, 0))) of
-              SOME name => (acc, ([], output_text name))
-            | NONE =>
-              let
-                val name =
-                  tm_prefix ^ Int.toString (term_count tmdict)
-                val tmdict = term_insert (tmdict, (ordinary_key (tm, 0)), name)
-                val declaration =
-                  output_term_declaration regime name [] "String"
-              in
-                ((tydict, tmdict), ([declaration], output_text name))
-              end
-          end
-      end
+      case term_peek (tmdict, (ordinary_key (tm, 0))) of
+        SOME name => (acc, ([], output_text name))
+      | NONE =>
+        let
+          val name = tm_prefix ^ Int.toString (term_count tmdict)
+          val tmdict = term_insert (tmdict, (ordinary_key (tm, 0)), name)
+          val declaration = output_term_declaration regime name [] "String"
+        in
+          ((tydict, tmdict), ([declaration], output_text name))
+        end
     fun translate_injected_float acc =
       let
         val float = carrier_dest_injected_float tm
@@ -5771,10 +5754,14 @@ local
     (acc, ([], output_text (bound_find (bounds, tm))))
     handle Redblackmap.NotFound =>
 
-    (* Each str_inj image is generalized to an SMT String value.  Proving the
-       strengthened SMT formula over every Unicode string and then using the
-       tactic validation at this image is the sound direction. *)
-    (if carrier_is_injected_string tm then
+    (* Each closed str_inj image is generalized to an SMT String value.
+       Proving the strengthened SMT formula over every Unicode string and
+       then using the tactic validation at this image is the sound
+       direction.  An image whose argument mentions a bound variable is
+       left to the application case below, which emits str_inj as an
+       uninterpreted function from the argument's sort to String. *)
+    (if carrier_is_injected_string tm andalso
+        not (mentions_bound_variable (carrier_dest_injected_string tm)) then
        translate_injected_string acc
        handle DispatchFailure e => raise (#commit_error operations) e
      else

@@ -451,6 +451,15 @@ val graph_expect_thm = expect_thm
     (``isPREFIX (s:string) s``, [thm_Z3]),
     (``~((s:string) < s)``, [thm_Z3]),
     (``(s:string) <= s``, [thm_Z3]),
+    (* A str_inj image of a bound string, or of a term mentioning one, is an
+       application of str_inj as an uninterpreted function, so the bound
+       string may also occur outside the injection. *)
+    (``!s:string. isPREFIX s s``, [thm_Z3, thm_CVC]),
+    (``(!s:string t. P s /\ isPREFIX s t ==> P t) ==>
+       !s t u. P s /\ isPREFIX s t /\ isPREFIX t u ==> P u``,
+      [thm_Z3, thm_CVC]),
+    (``!s:string. P s ==> isPREFIX (f s) (STRCAT (f s) (g s))``,
+      [thm_Z3, thm_CVC]),
 
     (``(s:string) = STRCAT t u ==> STRLEN s = STRLEN t + STRLEN u``,
       [thm_Z3, thm_CVC]),
