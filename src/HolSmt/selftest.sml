@@ -66544,7 +66544,7 @@ local
 in
   val _ = run_postlude 377 "checked-backend-marker-transport-7" (fn () =>
     let
-      val _ = List.app (fn goal =>
+      val _ = List.app (fn (unmarked,goal) =>
         test "Array updates emit well-sorted graph stores"
         (fn () => fixture [] goal (fn e =>
           let
@@ -66563,13 +66563,21 @@ in
             val text = String.concat (List.rev (!fragments))
             val _ = require "marked graph UPDATE did not use store"
               (String.isSubstring "(store " text)
+            val _ = if unmarked then
+                require "unrelated graph UPDATE lost its function carrier"
+                  (String.isSubstring "(lambda " text andalso
+                   String.isSubstring "(-> Int Bool)" text)
+              else ()
           in ignore (SmtLib_Parser.typecheck_script_string_with_options
             {dict_logic=NONE,solver=SOME "cvc5",elaborate_datatypes=false}
             text) end)))
-        [``f (s:bool set) /\ T IN s /\ f (\x:bool. x) ==>
-            f ((T =+ T) s)``,
-         ``(P:(int -> bool) -> bool)
-            (if c then ((0 =+ T) s) else ({}:int set))``]
+        [(false,``f (s:bool set) /\ T IN s /\ f (\x:bool. x) ==>
+            f ((T =+ T) s)``),
+         (false,``(P:(int -> bool) -> bool)
+            (if c then ((0 =+ T) s) else ({}:int set))``),
+         (true,``(P:(int -> bool) -> bool)
+            (if c then ((0 =+ T) s) else ({}:int set)) /\
+            (((1:int) =+ F) (f:int -> bool)) z = b``)]
       val _ = test "Checked erasure keeps modes and marks rebuilt conditional"
         (fn () => fixture [bag_fact] goal (fn e =>
           let

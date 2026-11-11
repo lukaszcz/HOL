@@ -1990,6 +1990,7 @@ local
         orelse same_const head boolSyntax.conditional orelse
         same_const head boolSyntax.equality orelse
         same_const head boolSyntax.let_tm orelse
+        same_const head combinSyntax.update_tm orelse
         is_native_set_head head orelse is_native_bag_head head)
     end
 
