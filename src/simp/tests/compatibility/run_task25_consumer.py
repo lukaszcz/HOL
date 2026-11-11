@@ -11,6 +11,25 @@ Reuse explicitly supplied, already configured scratch (not a fresh-build claim):
   ... --existing-core /tmp/task25-core \
       --existing-consumer /tmp/task25-isolated
 
+Other simplifier revision (TASK32 style; explicit private alias and scratch,
+nothing in /tmp)::
+
+  python3 -B src/simp/tests/compatibility/run_task25_consumer.py \
+    --consumer-patch src/simp/tests/compatibility/consumer/consumer.patch \
+    --simplifier-revision C32 --alias /dev/shm/t32-alias \
+    --scratch /dev/shm/t32-consumer --jobs 8 --skip-routine \
+    --output .agent-files/evidence/task32/consumer
+
+--simplifier-revision must descend from the TASK25 pin; the core is that
+revision plus the consumer's own listScript.sml. --alias (absolute) replaces
+the alias derived from the caller's configuration and must equal the HOLDIR
+the core is configured with. --scratch must not exist; it is created, never
+placed in /tmp, and removed on exit. Inside the caller checkout it is accepted
+only when ignored and untracked, and the same holds for --output. The patch
+sha256 must equal the pin (--patch-sha256 overrides it for a reviewed
+refresh). --jobs N passes -jN to bin/build; --skip-routine omits the
+bootstrap's extra -t pass.
+
 --prepare-only checks archives/patch and emits source inventories, without
 configuring or building. Task-owned staging is removed even on failure. Output
 must be new; patch, logs and compressed inventories survive there. Existing
@@ -39,6 +58,9 @@ import time
 
 MAIN = "4a0ad8e9160dd911393385d748b3535fc5ce65ba"
 CONSUMER = "442009a1f7f04366573dc2b649d31650ea7b113b"
+PATCH_SHA256 = (
+    "6a0a8f54dcb1af06a1b824f56453619195a11d321f97851bcc7b61149166ad1a")
+BANNED_SCRATCH = (Path("/tmp"), Path("/var/tmp"))
 LIST = "src/list/src/listScript.sml"
 PARSER = "tools/parsing/HOLSourceParser.sml"
 DRIVER = "tools/quote-filter/poly-unquote.ML"
@@ -110,6 +132,110 @@ def verify_consumer(root, expected, exceptions=()):
                     "unarchived consumer source: " + str(path))
 
 
+def git_call(repo, *args):
+    # Git binary output is kept separate from stderr/log framing.
+    command = ["git", "--no-optional-locks", "-C", str(repo), *args]
+    return command, subprocess.run(
+        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
+
+
+def commit_of(repo, revision):
+    require(isinstance(revision, str) and revision and
+            not revision.startswith("-"), "bad revision: " + repr(revision))
+    _, process = git_call(repo, "rev-parse", "--verify", "--quiet",
+                          revision + "^{commit}")
+    full = process.stdout.decode().strip()
+    require(process.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", full),
+            "unknown revision: " + revision)
+    return full
+
+
+def descends_from(repo, ancestor, revision):
+    _, process = git_call(repo, "merge-base", "--is-ancestor", ancestor,
+                          revision)
+    require(process.returncode in (0, 1), "git merge-base failed")
+    return process.returncode == 0
+
+
+def outside_tracked(repo, path, what):
+    """Refuse a path in the caller checkout unless ignored and untracked."""
+    path = Path(os.path.realpath(path))
+    repo = Path(os.path.realpath(repo))
+    require(not repo.is_relative_to(path), what + " contains caller checkout")
+    if not path.is_relative_to(repo):
+        return
+    relative = str(path.relative_to(repo))
+    existing = path
+    while not existing.exists():
+        existing = existing.parent
+    _, tracked = git_call(repo, "ls-files", "--",
+                          str(existing.relative_to(repo)))
+    if existing == repo:
+        tracked.stdout = b""  # a new top-level name; only ignore status counts
+    require(tracked.returncode == 0 and not tracked.stdout.strip(),
+            what + " inside a tracked tree: " + str(path))
+    _, ignored = git_call(repo, "check-ignore", "-q", "--no-index", "--",
+                          relative + "/x")
+    require(ignored.returncode == 0,
+            what + " inside caller checkout and not ignored: " + str(path))
+
+
+def plan(args, repo):
+    """Validate every option that needs no build; returns resolved values."""
+    out = {}
+    require(args.consumer_patch.is_file(), "missing consumer patch")
+    out["patch_sha256"] = sha(args.consumer_patch.read_bytes())
+    expected = args.patch_sha256 or PATCH_SHA256
+    require(re.fullmatch(r"[0-9a-f]{64}", expected), "bad --patch-sha256")
+    require(out["patch_sha256"] == expected,
+            "consumer patch sha256 mismatch: " + out["patch_sha256"])
+    out["patch_pin_overridden"] = expected != PATCH_SHA256
+    main = commit_of(repo, MAIN)
+    require(main == MAIN, "pinned simplifier revision is not " + MAIN)
+    simplifier = commit_of(repo, args.simplifier_revision)
+    require(descends_from(repo, MAIN, simplifier),
+            "simplifier revision does not descend from the pin: " +
+            args.simplifier_revision)
+    require(commit_of(repo, args.consumer_revision) == CONSUMER,
+            "revision is not the pinned prerequisite: " +
+            args.consumer_revision)
+    out["simplifier"] = simplifier
+    require(args.jobs is None or args.jobs >= 1, "--jobs must be positive")
+    if args.scratch is not None:
+        require(args.scratch.is_absolute(), "--scratch must be absolute")
+        scratch = Path(os.path.abspath(args.scratch))
+        real = Path(os.path.realpath(scratch))
+        require(not any(real.is_relative_to(b) or
+                        real.is_relative_to(Path(os.path.realpath(b)))
+                        for b in BANNED_SCRATCH),
+                "scratch must not be in /tmp")
+        outside_tracked(repo, scratch, "scratch")
+        require(not os.path.lexists(scratch), "scratch already exists")
+        out["scratch"] = scratch
+    if args.alias is not None:
+        alias = args.alias
+        require(alias.is_absolute() and str(alias) == os.path.normpath(alias)
+                and alias != Path("/"), "--alias must be a normalized "
+                "absolute path")
+        out["alias"] = alias
+    return out
+
+
+def build_commands(jobs, skip_routine):
+    flag = [] if jobs is None else ["-j" + str(jobs)]
+    commands = [("bootstrap", ["bin/build", *flag, SEQUENCE])]
+    if not skip_routine:
+        commands.append(("routine", ["bin/build", "-t", *flag, SEQUENCE]))
+    return commands
+
+
+def check_configured_alias(core, alias):
+    configured = (core / "tools/Holmake/Systeml.sml").read_text()
+    require('val HOLDIR = "' + str(alias) + '"' in configured,
+            "core is configured with a different alias")
+
+
 class Runner:
     def __init__(self, repo, output, scratch, alias, core, consumer):
         self.repo, self.output, self.scratch = repo, output, scratch
@@ -175,14 +301,9 @@ class Runner:
         return text
 
     def git(self, *args):
-        # Git binary output is kept separate from stderr/log framing.
-        command = ["git", "--no-optional-locks", "-C", str(self.repo), *args]
+        command, process = git_call(self.repo, *args)
         record = {"command": command, "cwd": str(self.repo)}
         self.manifest.setdefault("git", []).append(record)
-        process = subprocess.run(command, stdout=subprocess.PIPE,
-                                 stderr=subprocess.PIPE, check=False,
-                                 env={k: v for k, v in os.environ.items()
-                                      if not k.startswith("GIT_")})
         record.update(exit=process.returncode, stdout_sha256=sha(process.stdout),
                       stderr=process.stderr.decode(errors="replace"))
         require(process.returncode == 0, "git failed: " + repr(args))
@@ -204,10 +325,11 @@ class Runner:
                "--unshare-net", "--ro-bind", "/", "/", "--dev", "/dev",
                "--proc", "/proc", "--tmpfs", "/tmp",
                "--tmpfs", str(self.alias_mask),
-               "--bind", str(self.scratch), str(self.scratch),
-               "--bind", str(self.core), alias,
                "--ro-bind", str(self.repo), str(self.repo),
-               "--ro-bind", str(self.git_common), str(self.git_common)]
+               "--ro-bind", str(self.git_common), str(self.git_common),
+               # After the read-only repo: scratch may live inside it.
+               "--bind", str(self.scratch), str(self.scratch),
+               "--bind", str(self.core), alias]
         if mounted:
             cmd += ["--bind", str(self.consumer / "src/auto"), alias + "/src/auto",
                     "--ro-bind", str(self.consumer / "help/Docfiles"),
@@ -476,26 +598,42 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--consumer-patch", type=Path, required=True)
+    ap.add_argument("--patch-sha256")
     ap.add_argument("--output", type=Path, required=True)
     ap.add_argument("--consumer-revision", default=CONSUMER)
     ap.add_argument("--simplifier-revision", default=MAIN)
+    ap.add_argument("--alias", type=Path)
+    ap.add_argument("--scratch", type=Path)
+    ap.add_argument("--jobs", type=int)
+    ap.add_argument("--skip-routine", action="store_true")
     ap.add_argument("--existing-core", type=Path)
     ap.add_argument("--existing-consumer", type=Path)
     ap.add_argument("--prepare-only", action="store_true")
     args = ap.parse_args()
     repo = Path(__file__).resolve().parents[4]
     output = args.output.resolve()
-    require(not output.is_relative_to(repo), "output must be outside caller checkout")
-    require(args.consumer_patch.is_file(), "missing consumer patch")
+    if args.scratch is None:
+        require(not output.is_relative_to(repo),
+                "output must be outside caller checkout")
+    else:
+        outside_tracked(repo, output, "output")
     require(bool(args.existing_core) == bool(args.existing_consumer),
             "reuse requires both --existing-core and --existing-consumer")
+    planned = plan(args, repo)
     config = repo / "sigobj/Systeml.sml"
-    match = re.search(r'^val HOLDIR = "([^"]+)"', config.read_text(), re.M)
-    require(match is not None, "cannot derive configured Systeml.HOLDIR")
-    alias = Path(match[1])  # Do NOT resolve: alias may be absent or a symlink.
+    if "alias" in planned:
+        alias = planned["alias"]
+    else:
+        match = re.search(r'^val HOLDIR = "([^"]+)"', config.read_text(), re.M)
+        require(match is not None, "cannot derive configured Systeml.HOLDIR")
+        alias = Path(match[1])  # Do NOT resolve: may be absent or a symlink.
     require(alias.is_absolute() and alias != repo, "need a private configured alias")
     output.mkdir(parents=True, exist_ok=False)
-    scratch = Path(tempfile.mkdtemp(prefix="task25-run-", dir="/tmp"))
+    if "scratch" in planned:
+        scratch = planned["scratch"]
+        scratch.mkdir(parents=True)
+    else:
+        scratch = Path(tempfile.mkdtemp(prefix="task25-run-", dir="/tmp"))
     core = args.existing_core.resolve() if args.existing_core else scratch / "core"
     consumer = (args.existing_consumer.resolve() if args.existing_consumer
                 else scratch / "consumer")
@@ -515,21 +653,30 @@ def main():
                         "reuse refuses an unmarked checkout")
         require(core != consumer and not core.is_relative_to(consumer) and
                 not consumer.is_relative_to(core), "overlapping scratch trees")
-        for flag, expected in ((args.simplifier_revision, MAIN),
-                               (args.consumer_revision, CONSUMER)):
-            require(runner.git("rev-parse", flag + "^{commit}").decode().strip()
-                    == expected, "revision is not the pinned prerequisite: " + flag)
+        revision = planned["simplifier"]
         runner.git_common = Path(runner.git("rev-parse", "--path-format=absolute",
                                  "--git-common-dir").decode().strip())
-        m.update(simplifier_revision=MAIN, consumer_revision=CONSUMER,
+        m.update(simplifier_revision=revision, consumer_revision=CONSUMER,
+                 simplifier_pin=MAIN, simplifier_is_pin=revision == MAIN,
+                 simplifier_requested=args.simplifier_revision,
+                 patch_sha256=planned["patch_sha256"],
+                 patch_pin=PATCH_SHA256,
+                 patch_pin_overridden=planned["patch_pin_overridden"],
+                 alias_explicit="alias" in planned,
+                 scratch_explicit="scratch" in planned,
+                 jobs=args.jobs, skip_routine=args.skip_routine,
                  configured_alias=str(alias), core=str(core), consumer=str(consumer),
                  scope="prepare-only" if args.prepare_only else
                  "reused core; consumer execution" if args.existing_core else
-                 "fresh core bootstrap + routine + consumer execution",
+                 "fresh core bootstrap + " +
+                 ("" if args.skip_routine else "routine + ") +
+                 "consumer execution",
                  python=sys.version,
                  python_executable={"path": sys.executable,
                                     **fingerprint(Path(sys.executable))},
-                 alias_configuration={"path": str(config), **fingerprint(config)},
+                 alias_configuration=(
+                     {"explicit_alias": str(alias)} if "alias" in planned else
+                     {"path": str(config), **fingerprint(config)}),
                  platform=os.uname()._asdict()
                  if hasattr(os.uname(), "_asdict") else list(os.uname()))
         patch = output / "consumer.patch"
@@ -537,12 +684,18 @@ def main():
         m["consumer_patch"] = fingerprint(patch)
         canonical_core = scratch / "canonical-core"
         canonical = scratch / "canonical-consumer"
-        main_sources = runner.archive(MAIN, canonical_core)
+        main_sources = runner.archive(revision, canonical_core)
         list_original = main_sources[LIST]
         list_data = runner.git("show", CONSUMER + ":" + LIST)
+        list_blob = runner.git("rev-parse",
+                               CONSUMER + ":" + LIST).decode().strip()
+        list_original_blob = runner.git("rev-parse",
+                                        revision + ":" + LIST).decode().strip()
         (canonical_core / LIST).write_bytes(list_data)
         main_sources[LIST] = fingerprint(canonical_core / LIST)
         m["core_prerequisite"] = {"path": LIST, "revision": CONSUMER,
+                                  "blob": list_blob,
+                                  "simplifier_blob": list_original_blob,
                                   "main_original": list_original,
                                   **main_sources[LIST]}
         m["core_sources"] = runner.dump("core-sources.json.gz", main_sources)
@@ -581,12 +734,12 @@ def main():
             # Native sanity fixtures inspect Git provenance/baseline blobs.
             # This metadata belongs only to the disposable archive; objects
             # are read-only shared inputs, never caller-owned build products.
-            (core / ".task25-scratch").write_text(MAIN + "\n")
+            (core / ".task25-scratch").write_text(revision + "\n")
             runner.run("core-git-init", ["git", "init", "-q", str(core)])
             (core / ".git/objects/info/alternates").write_text(
                 str(runner.git_common / "objects") + "\n")
             runner.run("core-git-head", ["git", "-C", str(core),
-                       "update-ref", "HEAD", MAIN])
+                       "update-ref", "HEAD", revision])
             runner.run("core-git-index", ["git", "-C", str(core),
                        "reset", "--mixed", "-q", "HEAD"])
         if args.prepare_only:
@@ -602,15 +755,14 @@ def main():
             if not args.existing_core:
                 runner.inside("configure", ["sh", "-c",
                                "exec poly < tools/smart-configure.sml"])
-                runner.inside("bootstrap", ["bin/build", SEQUENCE],
-                              marker="Hol built successfully.")
-                runner.inside("routine", ["bin/build", "-t", SEQUENCE],
-                              marker="Hol built successfully.")
+                check_configured_alias(core, alias)
+                for label, command in build_commands(args.jobs,
+                                                     args.skip_routine):
+                    runner.inside(label, command,
+                                  marker="Hol built successfully.")
             else:
                 m["core_build_skipped"] = "explicit reuse; no fresh-build claim"
-                configured = (core / "tools/Holmake/Systeml.sml").read_text()
-                require('val HOLDIR = "' + str(alias) + '"' in configured,
-                        "reused core has a different configured alias")
+                check_configured_alias(core, alias)
             translated = runner.parser(canonical)
             verify(core, main_sources)
             verify_consumer(consumer, consumer_sources, translated)
