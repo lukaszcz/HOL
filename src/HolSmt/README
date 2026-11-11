@@ -114,6 +114,15 @@ rejected.  Equivalent nonreserved spellings such as `@p` and `|@p|` share one
 key for uniqueness, scope, premise lookup, normalized scoped reuse, and replay.
 Quoted reserved-symbol spellings retain their distinct symbol identity.
 
+CPC `@const` sort operands use the sort dictionary, including source datatypes
+and proof-local declared sorts; legacy term-valued markers remain accepted.
+In native proof replay, purification equalities involving these fresh
+constants remain exact proof obligations across scope pops. Replay instantiates
+fresh constants with kernel `INST` and removes reflexive obligations with
+`REFL`; any remaining obligation still needs a checked proof before the final
+hypothesis audit accepts the result. Variables in the original goal or assumptions are
+never instantiated by this closure.
+
 CPC higher-order `(_ f x)` applications are accepted recursively in proof
 conclusions and arguments, including congruence sources. Indexed sort markers,
 literals and operator heads retain their SMT-LIB interpretation.
@@ -703,7 +712,16 @@ heap and drivers with:
   bin/Holmake -C src/HolSmt
 
 The external validation runner should invoke the drivers directly through
-the HOL heap.  From `src/HolSmt`, the typechecker command is equivalent to:
+the own-build `smtreplayheap`, as do the Holmake selftest shards. On Poly/ML,
+`.uo` files are source-loading manifests: starting from `smtheap` recompiles
+the replay libraries in every process. Build `smtreplayheap` incrementally
+in each tree/kernel; never copy a heap from another build. It preloads only
+libraries, not solver entry points, workload goals or completed replay
+contexts. Solver executable/version detection still runs in the consumer.
+For performance comparisons, report heap preparation separately from the
+complete fresh consumer process (including restoration, solver execution
+and all checks); source-build-plus-first-use cost is not deployment cost.
+From `src/HolSmt`, the typechecker command is equivalent to:
 
   extra=$(printf '%s\n%s' "$input" "$logic")
   "$HOL4_ROOT/bin/hol" --gcthreads=1 run \
