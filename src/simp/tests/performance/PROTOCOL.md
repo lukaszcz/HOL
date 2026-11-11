@@ -507,7 +507,9 @@ that pins the history constant is edited with it:
   are the `history` of `task31_attributed.json`, which `pin_history` reads;
 - the TASK31 disposition (`task31_dispose.HISTORY`);
 - the TASK32 driver (`task32_downstream.HISTORY`): the seal of the code
-  that made the TASK32 smoke and pilot (`b545d1fd0e`).
+  that made the TASK32 smoke and pilot (`b545d1fd0e`); the entry for
+  `task32_downstream.py` also holds the seal of the code that made the
+  counts file and runs the first decision stage.
 
 A file whose seal no record carries needs no entry (usage text, style). The
 cascade, with a worked example, is in the bullet "Seal histories" of "TASK30
@@ -3384,7 +3386,14 @@ information run and every successful one that the first-stage counts do not
 cite (an information run not cited by the first-stage counts) are listed
 in the disposition and are reported to the owner; each such row carries
 the run's gate key and, for a control, its decision and whether it was
-detected (None when its report is unreadable).
+detected (None when its report is unreadable). The report is accepted
+only if it is the attempt's own: at the output the `info` line recorded,
+with that attempt's name and the seal its `info-end` line recorded;
+otherwise decision and detected are None and the row says so. An output
+that was moved is named to `dispose` with `--relocated ATTEMPT=DIR`
+(repeatable; the report is then `DIR/downstream.json`, under the same
+check, a mismatch, a repeat or an attempt not in the ledger being a
+refusal).
 A stage whose close line could not be written stays open and counts as
 judged.
 

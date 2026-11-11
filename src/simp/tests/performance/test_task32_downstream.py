@@ -2357,9 +2357,11 @@ class Sealed(unittest.TestCase):
 
     def test_the_history_lists_the_seal_of_the_code_the_runs_were_made_by(
             self):
-        self.assertEqual(dw.HISTORY, {"task32_downstream.py": [dict(
-            sha256="a5cc94d14ff37fa0586803153ab155dfa4c1564e6dc3bd2aef93c210"
-                   "663eb5a7", bytes=133766)]})
+        self.assertEqual(dw.HISTORY, {"task32_downstream.py": [
+            dict(sha256="08465bf86ce7cef1b991e396a78cb03e6f857ed392215769236"
+                        "582f3888f064f", bytes=137307),
+            dict(sha256="a5cc94d14ff37fa0586803153ab155dfa4c1564e6dc3bd2aef9"
+                        "3c210663eb5a7", bytes=133766)]})
 
     def test_a_record_carries_the_current_seal_or_one_the_history_lists(self):
         now = dw.code_seals()
@@ -2772,6 +2774,54 @@ class Chain(Base):
                    if r["mode"] == "control"][0]
         self.assertIsNone(control["detected"])
         self.assertIsNone(control["decision"])
+
+    def test_a_report_of_another_attempt_is_not_the_runs_own(self):
+        w = self.world
+        pilot(w)
+        w.ignore_busy = True
+        for name in ("c1", "c2"):
+            args, spec = w.info(name, "control", pilot=w.tmp / "pilot")
+            self.assertTrue(dw.run_stage(args, spec)["success"])
+        state, found = dw.read_ledger(w.ledger())
+        first, second = [r for r in dw.info_runs(state)
+                         if r["mode"] == "control"]
+        self.assertIs(first["detected"], False)
+        self.assertIn("downstream.json", first["report"])
+        # the first output was moved and another attempt's report now
+        # stands at the recorded path
+        moved = w.tmp / "c1-attempt"
+        (w.tmp / "c1").rename(moved)
+        shutil.copytree(w.tmp / "c2", w.tmp / "c1")
+        row = [r for r in dw.info_runs(state)
+               if r["attempt"] == first["attempt"]][0]
+        self.assertIsNone(row["decision"])
+        self.assertIsNone(row["detected"])
+        self.assertIn("not at its recorded output", row["report"])
+        # the relocation names the archived report
+        row = [r for r in dw.info_runs(state, {first["attempt"]: moved})
+               if r["attempt"] == first["attempt"]][0]
+        self.assertIs(row["detected"], False)
+        self.assertEqual(row["report"], str(moved / "downstream.json"))
+        # a relocated report of another attempt or seal is a refusal
+        with self.assertRaisesRegex(dw.Refusal, "not that attempt's own"):
+            dw.info_runs(state, {first["attempt"]: w.tmp / "c2"})
+        report = a.load(moved / "downstream.json")
+        report["note"] = "changed"
+        (moved / "downstream.json").write_text(dw.dumps(report))
+        with self.assertRaisesRegex(dw.Refusal, "not that attempt's own"):
+            dw.info_runs(state, {first["attempt"]: moved})
+        with self.assertRaisesRegex(dw.Refusal, "no information run"):
+            dw.info_runs(state, {"control-nope": moved})
+        # the entries of --relocated
+        self.assertEqual(dw.parse_relocated(["x=" + str(moved), "y=/z"]),
+                         {"x": moved, "y": Path("/z")})
+        for bad in (["x"], ["=d"], ["x="], ["x=a", "x=b"]):
+            with self.assertRaises(dw.Refusal):
+                dw.parse_relocated(bad)
+        ns = dw.build_parser().parse_args(
+            ["dispose", "--stage", "x", "--out", "o", "--relocated", "a=b",
+             "--relocated", "c=d"])
+        self.assertEqual(ns.relocated, ["a=b", "c=d"])
 
     def test_redraws_list_void_attempts_and_failed_information_runs(self):
         w = self.world

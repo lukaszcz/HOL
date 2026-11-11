@@ -37,7 +37,9 @@ argument (selftests) and writes one JSON line to $T32_STATS at exit.
              alone first;
   replay     recomputes every decision of an archive; runs no process;
   dispose    the per-unit and overall disposition of the stage chain, with
-             every attempt, information run and redraw (rule R-1);
+             every attempt, information run and redraw (rule R-1); a
+             control report moved from its recorded output is named with
+             --relocated ATTEMPT=DIR;
   recover    puts back what a killed or failed restore left in a journal.
 
 A theory process is protected by a restore journal under
@@ -123,6 +125,8 @@ CODE = ("task32_cases.py", "task32_downstream.py", "task32_snapshots.py",
 # current seal or one listed here; a run needs the current one.
 HISTORY = {
     "task32_downstream.py": [
+        {"sha256": "08465bf86ce7cef1b991e396a78cb03e6f857ed392215769236582f"
+                   "3888f064f", "bytes": 137307},
         {"sha256": "a5cc94d14ff37fa0586803153ab155dfa4c1564e6dc3bd2aef93c2"
                    "10663eb5a7", "bytes": 133766}],
 }
@@ -1565,34 +1569,72 @@ def judged(rows, stage, why):
     return sorted(i for i in rows if why[i, stage] is not None)
 
 
-def info_runs(state):
+def info_runs(state, relocated=None):
     """Every information run (smoke, pilot, control) of the table with how
     it ended; a control also with its decision and whether it was detected,
-    from the run's report when that is readable (else None)."""
+    from its report. The report is taken only where the run recorded its
+    output, or from `relocated[attempt]` (a directory the operator
+    asserts), and only when it is that attempt's own (its `attempt`, and
+    its seal the `info-end` line recorded); otherwise decision and detected
+    are None and `report` says why, a relocated report that is not the
+    attempt's being a refusal."""
+    relocated = dict(relocated or {})
     ends = {r["attempt"]: r for r in table_lines(state)
             if r["event"] == "info-end"}
+    starts = [r for r in table_lines(state) if r["event"] == "info"]
+    unknown = sorted(set(relocated) - {r["attempt"] for r in starts})
+    require(not unknown, "--relocated names no information run of the "
+            "ledger: %s" % ", ".join(unknown))
 
     def found(r, status):
+        moved = r["attempt"] in relocated
         if r["mode"] != "control" or status != "success":
+            require(not moved, "--relocated %s: not a successful control, "
+                    "it has no report" % r["attempt"])
             return {}
+        path = (relocated[r["attempt"]] if moved else Path(r["output"])) / \
+            "downstream.json"
+        why = "unreadable"
         try:
-            result = a.load(Path(r["output"]) / "downstream.json")[
-                "outcome"]["negative_control"]
-            return dict(decision=result["decision"],
-                        detected=result["detected"])
+            report = a.load(path)
+            own = report.get("attempt") == r["attempt"] and \
+                ends[r["attempt"]]["seal"] is not None and \
+                a.seal(path)["sha256"] == ends[r["attempt"]]["seal"]
+            if not own:
+                why = "not at its recorded output" if not moved else \
+                    "another attempt or a changed report"
+            if own:
+                result = report["outcome"]["negative_control"]
+                return dict(decision=result["decision"],
+                            detected=result["detected"], report=str(path))
         except Exception:
-            return dict(decision=None, detected=None)
+            pass
+        require(not moved, "--relocated %s: %s is not that attempt's own "
+                "report (%s)" % (r["attempt"], path, why))
+        return dict(decision=None, detected=None,
+                    report="%s: %s" % (path, why))
 
     rows = []
-    for r in table_lines(state):
-        if r["event"] != "info":
-            continue
+    for r in starts:
         status = "unclosed" if r["attempt"] not in ends else \
             "success" if ends[r["attempt"]]["success"] else "failed"
         rows.append(dict(attempt=r["attempt"], mode=r["mode"], key=r["key"],
                          output=r["output"], checkout=r["checkout"],
                          status=status, **found(r, status)))
     return rows
+
+
+def parse_relocated(entries):
+    """`--relocated ATTEMPT=DIR` entries -> {attempt: absolute Path}."""
+    found = {}
+    for entry in entries or ():
+        attempt, sep, folder = entry.partition("=")
+        require(sep and attempt and folder, "--relocated %r is not "
+                "ATTEMPT=DIR" % entry)
+        require(attempt not in found, "--relocated names %s twice" %
+                attempt)
+        found[attempt] = Path(folder).resolve()
+    return found
 
 
 def attempts_table(found, why):
@@ -2491,12 +2533,13 @@ def predeclare_followup(args):
             "code": code_seals()}
 
 
-def disposition(chain, ledger, counts_path=None):
+def disposition(chain, ledger, counts_path=None, relocated=None):
     """Per workload and overall: pass, fail or blocked (the R-1 table of
     every attempt of the gate, the information runs and the redraws
     included). `counts_path` names the first-stage counts file, as in
     replay (default: the committed COUNTS); its seal must be the one the
-    first stage used."""
+    first stage used. `relocated` maps an information run to the directory
+    its report was moved to (see `info_runs`)."""
     chains = workload_chains(chain)
     require(sorted(chains) == sorted(cases.NAMES), "not all workloads")
     rows = {}
@@ -2516,7 +2559,7 @@ def disposition(chain, ledger, counts_path=None):
         "pass" if set(statuses) == {"pass"} else "blocked"
     state, found = read_ledger(ledger)
     attempts = attempts_table(found, reasons(found))
-    infos = info_runs(state)
+    infos = info_runs(state, relocated)
     use = chain[0]["report"]["counts"]
     path = counts_file_for(chain[0]["report"], counts_path, None)
     require(a.seal(path) == use["seal"], "%s is not the counts file the "
@@ -2777,6 +2820,9 @@ def build_parser():
     dis.add_argument("--counts", type=Path)
     dis.add_argument("--followup-counts", type=Path)
     dis.add_argument("--repo", type=Path)
+    dis.add_argument("--relocated", action="append", default=[],
+                     metavar="ATTEMPT=DIR", help="the information run "
+                     "ATTEMPT's report is DIR/downstream.json (moved)")
     return parser
 
 
@@ -2857,10 +2903,11 @@ def dispatch(args):
         return 0
     else:
         require_ledger(args)
+        relocated = parse_relocated(args.relocated)
         chain = replay_chain(args.stage, args.ledger, args.counts,
                              args.followup_counts, args.repo)
         data = disposition(chain, args.ledger or ledger_path(
-            chain[0]["report"]["repo"]), args.counts)
+            chain[0]["report"]["repo"]), args.counts, relocated)
         with args.out.open("x") as stream:
             stream.write(dumps(data))
         print("TASK32 disposition: %s %s" % (data["status"],
