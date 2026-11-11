@@ -12286,6 +12286,136 @@ in
   check_oracle_tags "nested CPC datatype tester replay" theorem
 end
 
+fun cpc_quant_var_reordering_replay_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const P (-> Int Int Bool)) \
+    \(define @x () (@var \"x\" Int)) \
+    \(define @y () (@var \"y\" Int)) \
+    \(define @vars () (@list @x @y)) \
+    \(define @body () (P @x @y)) \
+    \(define @rhs () (forall (@list @y @x) @body)) \
+    \(step @p :rule quant_var_reordering \
+    \ :args ((= (forall @vars @body) @rhs))))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl theorem ~~
+    ``(!x y:int. P x y) = (!y x:int. P x y)``,
+    "CPC quantifier reordering changed its binders or body");
+  assert (List.null (Thm.hyp theorem),
+    "CPC quantifier reordering retained hypotheses");
+  check_oracle_tags "CPC quantifier reordering" theorem
+end
+
+fun cpc_quant_merge_prenex_replay_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const P (-> Int Int Bool)) \
+    \(define @x () (@var \"x\" Int)) \
+    \(define @y () (@var \"y\" Int)) \
+    \(define @body () (P @x @y)) \
+    \(define @nested () (forall (@list @x) \
+    \ (forall (@list @y) @body))) \
+    \(step @p :rule quant-merge-prenex \
+    \ :args ((= @nested (forall (@list @x @y) @body)))))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl theorem ~~
+    ``(!x:int. !y:int. P x y) = (!x y:int. P x y)``,
+    "CPC prenex merge changed its binders or body");
+  assert (List.null (Thm.hyp theorem),
+    "CPC prenex merge retained hypotheses");
+  check_oracle_tags "CPC prenex merge" theorem
+end
+
+fun cpc_bool_or_taut2_replay_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const p Bool) \
+    \(step @p :rule bool-or-taut2 :args (false p false false)))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl theorem ~~ ``(~p \/ p) = T``,
+    "CPC disjunction tautology changed its operand");
+  assert (List.null (Thm.hyp theorem),
+    "CPC disjunction tautology retained hypotheses");
+  check_oracle_tags "CPC disjunction tautology" theorem
+end
+
+fun cpc_bool_and_de_morgan_tail_replay_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) \
+    \(step @p :rule bool-and-de-morgan :args (p q (and r))))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl theorem ~~ ``~(p /\ q /\ r) = (~p \/ ~(q /\ r))``,
+    "CPC conjunction De Morgan rewrite dropped its tail");
+  assert (List.null (Thm.hyp theorem),
+    "CPC conjunction De Morgan rewrite retained hypotheses");
+  check_oracle_tags "CPC conjunction De Morgan tail" theorem
+end
+
+fun cpc_bool_or_de_morgan_tail_replay_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const p Bool) (declare-const q Bool) \
+    \(declare-const r Bool) \
+    \(step @p :rule bool-or-de-morgan :args (p q (or r))))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl theorem ~~ ``~(p \/ q \/ r) = (~p /\ ~(q \/ r))``,
+    "CPC disjunction De Morgan rewrite dropped its tail");
+  assert (List.null (Thm.hyp theorem),
+    "CPC disjunction De Morgan rewrite retained hypotheses");
+  check_oracle_tags "CPC disjunction De Morgan tail" theorem
+end
+
+fun cpc_quant_var_elim_repeated_guard_replay_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const a Bool) (declare-const t Int) \
+    \(declare-const B (-> Int Bool)) \
+    \(define @x () (@var \"x\" Int)) \
+    \(define @vars () (@list @x)) \
+    \(define @body () (or (not (= @x t)) a (not (= @x t)) (B @x))) \
+    \(define @rhs () (or a (not (= t t)) (B t))) \
+    \(step @p :rule quant-var-elim-eq \
+    \ :args ((= (forall @vars @body) @rhs))))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl theorem ~~
+    ``(!x:int. ~(x = t) \/ a \/ ~(x = t) \/ B x) =
+      (a \/ ~(t = t) \/ B t)``,
+    "CPC quantifier elimination changed its repeated guard target");
+  assert (List.null (Thm.hyp theorem),
+    "CPC repeated guard elimination retained hypotheses");
+  check_oracle_tags "CPC repeated guard elimination" theorem
+end
+
+fun cpc_quant_var_elim_symmetric_guard_replay_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const t Int) (declare-const P (-> Int Bool)) \
+    \(declare-const Q (-> Int Bool)) \
+    \(define @x () (@var \"x\" Int)) \
+    \(define @vars () (@list @x)) \
+    \(define @body () (or (not (= @x t)) (not (= t @x)) (P @x) (Q @x))) \
+    \(define @rhs () (or (not (= t t)) (P t) (Q t))) \
+    \(step @p :rule quant-var-elim-eq \
+    \ :args ((= (forall @vars @body) @rhs))))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl theorem ~~
+    ``(!x:int. ~(x = t) \/ ~(t = x) \/ P x \/ Q x) =
+      (~(t = t) \/ P t \/ Q t)``,
+    "CPC quantifier elimination changed its symmetric guard target");
+  assert (List.null (Thm.hyp theorem),
+    "CPC symmetric guard elimination retained hypotheses");
+  check_oracle_tags "CPC symmetric guard elimination" theorem
+end
+
 fun cpc_quant_dt_split_replay_success () =
 let
   val option_target =
@@ -16482,6 +16612,15 @@ end
 
 fun cpc_proof_replay_eq_refl_cong_chain_success () =
 let
+  val congruence_proof = parse_cpc_proof_string
+    "((step @p1 :rule eq-refl :args (0)) \
+    \(step @p2 :rule cong :premises (@p1) :args ((not (= 0 0)))))"
+  val congruence = CPC_ProofReplay.replay_root_for_test congruence_proof
+  val _ = assert (Thm.concl congruence ~~ ``~((0:int) = 0) = ~T``,
+    "CPC congruence discarded eq-refl's equality to true")
+  val _ = assert (null (Thm.hyp congruence),
+    "CPC eq-refl congruence introduced hypotheses")
+  val _ = check_oracle_tags "CPC eq-refl congruence" congruence
   val proof = parse_cpc_proof_string
     "((define @t1 () (not (= true true))) (assume @p1 @t1) \
     \(step @p2 :rule evaluate :args ((not true))) \
@@ -16492,7 +16631,8 @@ let
   val thm = CPC_ProofReplay.replay_root_for_test proof
 in
   assert (Thm.concl thm ~~ ``F``,
-    "CPC eq-refl/cong/trans/eq_resolve chain did not replay to false")
+    "CPC eq-refl/cong/trans/eq_resolve chain did not replay to false");
+  check_oracle_tags "CPC eq-refl chain" thm
 end
 
 fun assert_cpc_eq_resolve_route_pin label expected_route prems expected =
@@ -37340,6 +37480,20 @@ let
       smtlib_roundtrip_current_theories_success),
     ("smtlib_roundtrip_known_gap_matrix_success",
       smtlib_roundtrip_known_gap_matrix_success),
+    ("cpc_quant_var_reordering_replay_success",
+      cpc_quant_var_reordering_replay_success),
+    ("cpc_quant_merge_prenex_replay_success",
+      cpc_quant_merge_prenex_replay_success),
+    ("cpc_quant_var_elim_repeated_guard_replay_success",
+      cpc_quant_var_elim_repeated_guard_replay_success),
+    ("cpc_quant_var_elim_symmetric_guard_replay_success",
+      cpc_quant_var_elim_symmetric_guard_replay_success),
+    ("cpc_bool_and_de_morgan_tail_replay_success",
+      cpc_bool_and_de_morgan_tail_replay_success),
+    ("cpc_bool_or_de_morgan_tail_replay_success",
+      cpc_bool_or_de_morgan_tail_replay_success),
+    ("cpc_bool_or_taut2_replay_success",
+      cpc_bool_or_taut2_replay_success),
     ("cpc_proof_parser_define_and_optional_conclusion_success",
       cpc_proof_parser_define_and_optional_conclusion_success),
     ("cpc_quoted_declaration_identity_success",

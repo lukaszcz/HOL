@@ -3668,46 +3668,6 @@ local
                     "CPC exists-elim argument reconstructed from metadata"
                     (boolSyntax.mk_eq (lhs, rhs))]
                 end
-              fun quant_rewrite_args () =
-                let val first = get_token () in
-                  if first <> "(" then
-                    let
-                      val proposition = parse_located_term dicts_ref
-                        (Library.undo_look_ahead [first] get_token)
-                      val _ = Library.expect_token ")" (get_token ())
-                    in [proposition] end
-                  else
-                    let
-                      val _ = Library.expect_token "=" (get_token ())
-                      val _ = Library.expect_token "(" (get_token ())
-                      val quantifier = get_token ()
-                      val binder_name = get_token ()
-                      val binders =
-                        case lookup_cpc_list binder_name of
-                          SOME vars => vars
-                        | NONE => raise ERR "parse_step"
-                            ("undefined CPC @list alias " ^ binder_name)
-                      val body = parse_located_term dicts_ref get_token
-                      val _ = Library.expect_token ")" (get_token ())
-                      val rhs = parse_located_term dicts_ref get_token
-                      val _ = Library.expect_token ")" (get_token ())
-                      val _ = Library.expect_token ")" (get_token ())
-                      val lhs = if quantifier = "forall" then
-                        boolSyntax.list_mk_forall (binders, #term body)
-                        else if quantifier = "exists" then
-                          boolSyntax.list_mk_exists (binders, #term body)
-                        else raise ERR "parse_step"
-                          "expected quantified left side for CPC quantifier rewrite"
-                      val _ = record_cpc_binder_block
-                        (quantifier, List.length binders, lhs)
-                      val binder_provenance = exact_binders quantifier binders
-                        (#provenance body)
-                    in
-                      [{term = boolSyntax.mk_eq (lhs, #term rhs),
-                        provenance = EqualityProvenance
-                          (binder_provenance, #provenance rhs)}]
-                    end
-                end
               (* CPC Set rules carry their set sort as an argument, e.g.
                  [(Set Int)].  This is proof metadata, not a HOL term; retain
                  it only as a variable of the parsed sort so rule-specific
@@ -3861,8 +3821,6 @@ local
                 attrs seen_premises true premises (not_or_elim_index ())
               else if #replay_handler rule = "exists_elim" then
                 attrs seen_premises true premises (exists_elim_args ())
-              else if #replay_handler rule = "quant_rewrite" then
-                attrs seen_premises true premises (quant_rewrite_args ())
               else if rule_name = "cnf_and_pos" then
                 attrs seen_premises true premises (cnf_and_pos_args ())
               else if rule_name = "cnf_or_neg" then

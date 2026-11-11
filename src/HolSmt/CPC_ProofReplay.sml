@@ -1231,6 +1231,14 @@ local
 
   fun contains_abs_dag root = provenance_term_has_abs root
 
+  fun is_reflexive_equality theorem =
+    case Lib.total dest_reglan_equiv (Thm.concl theorem) of
+      SOME (left, right) => Term.aconv left right
+    | NONE =>
+        (case Lib.total boolSyntax.dest_eq (Thm.concl theorem) of
+           SOME (left, right) => Term.aconv left right
+         | NONE => false)
+
   fun expose_true_equality premise =
     let
       val (left, right) = boolSyntax.dest_eq (Thm.concl premise)
@@ -1248,7 +1256,8 @@ local
       val source = expect_one_arg "cong" args
       fun expose_congruence premise =
         let val exposed = expose_true_equality premise in
-          if boolSyntax.is_eq (Thm.concl exposed) then exposed
+          if boolSyntax.is_eq (Thm.concl exposed) andalso
+             not (is_reflexive_equality exposed) then exposed
           else premise
         end
       fun nontrivial premise =
@@ -2024,7 +2033,8 @@ local
             | _ => false
           val exposed = if preserve_reflexive_occurrence then theorem
             else expose_true_equality theorem
-          val use_exposed = boolSyntax.is_eq (Thm.concl exposed)
+          val use_exposed = boolSyntax.is_eq (Thm.concl exposed) andalso
+            not (is_reflexive_equality exposed)
           val provenance =
             if not use_exposed then step_provenance premise_step
             else
@@ -2743,14 +2753,6 @@ local
   fun retain_all theorem supports =
     List.foldl (fn (support, kept) => retain_support kept support)
       theorem supports
-
-  fun is_reflexive_equality theorem =
-    case Lib.total dest_reglan_equiv (Thm.concl theorem) of
-      SOME (left, right) => Term.aconv left right
-    | NONE =>
-        (case Lib.total boolSyntax.dest_eq (Thm.concl theorem) of
-           SOME (left, right) => Term.aconv left right
-         | NONE => false)
 
   fun is_reflexive_boolean_equality theorem =
     case Lib.total boolSyntax.dest_eq (Thm.concl theorem) of
@@ -4388,14 +4390,35 @@ local
         arith_ite_lift arith_leq operands
     | ("arith-geq-ite-lift", operands) =>
         arith_ite_lift arith_geq operands
-    | ("bool-or-de-morgan", [left, right, _]) =>
-        tautology name (boolSyntax.mk_eq
-          (boolSyntax.mk_neg (boolSyntax.mk_disj (left, right)),
-           boolSyntax.mk_conj (boolSyntax.mk_neg left, boolSyntax.mk_neg right)))
-    | ("bool-and-de-morgan", [left, right, _]) =>
-        tautology name (boolSyntax.mk_eq
-          (boolSyntax.mk_neg (boolSyntax.mk_conj (left, right)),
-           boolSyntax.mk_disj (boolSyntax.mk_neg left, boolSyntax.mk_neg right)))
+    | ("bool-or-taut2", [prefix, atom, middle, suffix]) =>
+        let
+          fun disjuncts term =
+            if Term.aconv term boolSyntax.F then []
+            else boolSyntax.strip_disj term
+          val operands = disjuncts prefix @ [boolSyntax.mk_neg atom] @
+            disjuncts middle @ [atom] @ disjuncts suffix
+        in
+          tautology name (boolSyntax.mk_eq
+            (boolSyntax.list_mk_disj operands, boolSyntax.T))
+        end
+    | ("bool-or-de-morgan", [left, right, rest]) =>
+        let
+          val tail = if Term.aconv rest boolSyntax.F then right
+            else boolSyntax.mk_disj (right, rest)
+        in
+          tautology name (boolSyntax.mk_eq
+            (boolSyntax.mk_neg (boolSyntax.mk_disj (left, tail)),
+             boolSyntax.mk_conj (boolSyntax.mk_neg left, boolSyntax.mk_neg tail)))
+        end
+    | ("bool-and-de-morgan", [left, right, rest]) =>
+        let
+          val tail = if Term.aconv rest boolSyntax.T then right
+            else boolSyntax.mk_conj (right, rest)
+        in
+          tautology name (boolSyntax.mk_eq
+            (boolSyntax.mk_neg (boolSyntax.mk_conj (left, tail)),
+             boolSyntax.mk_disj (boolSyntax.mk_neg left, boolSyntax.mk_neg tail)))
+        end
     | ("bool-implies-de-morgan", [left, right]) =>
         tautology name (boolSyntax.mk_eq
           (boolSyntax.mk_neg (boolSyntax.mk_imp (left, right)),
@@ -6005,11 +6028,42 @@ local
       Drule.IMP_ANTISYM_RULE forward backward
     end
 
-  fun replay_quant_rewrite name args =
+  fun replay_quant_rewrite name (located_args : located_term list) =
     let
-      val target = expect_one_arg name args
+      val target = expect_one_arg name (List.map #term located_args)
     in
-      if name = "quant-miniscope-and" then
+      if name = "quant_var_reordering" then
+        let
+          val (lhs, rhs) = boolSyntax.dest_eq target
+          val count =
+            case located_args of
+              [{provenance = EqualityProvenance
+                (BinderBlockProvenance ("forall", left, _),
+                 BinderBlockProvenance ("forall", right, _)), ...}] =>
+                if left = right andalso left > 0 then left
+                else raise ERR name "quantifier block sizes do not match"
+            | _ => raise ERR name "expected exact FORALL block provenance"
+          fun strip 0 term = ([], term)
+            | strip n term =
+                let
+                  val (variable, body) = boolSyntax.dest_forall term
+                  val (variables, rest) = strip (n - 1) body
+                in (variable :: variables, rest) end
+          val (left_vars, left_body) = strip count lhs
+          val (right_vars, right_body) = strip count rhs
+          val _ = Term.aconv left_body right_body andalso
+            HOLset.equal (HOLset.fromList Term.compare left_vars,
+              HOLset.fromList Term.compare right_vars) orelse
+            raise ERR name "expected a permutation of the same binders"
+          val forward = Thm.DISCH lhs
+            (Thm.GENL right_vars (Drule.SPECL left_vars (Thm.ASSUME lhs)))
+          val backward = Thm.DISCH rhs
+            (Thm.GENL left_vars (Drule.SPECL right_vars (Thm.ASSUME rhs)))
+        in Drule.IMP_ANTISYM_RULE forward backward end
+      else if name = "quant-merge-prenex" then
+        let val (lhs, rhs) = boolSyntax.dest_eq target
+        in Thm.ALPHA lhs rhs end
+      else if name = "quant-miniscope-and" then
         Tactical.TAC_PROOF (([], target),
           bossLib.SIMP_TAC bossLib.bool_ss [boolTheory.FORALL_AND_THM])
       else if name = "quant-miniscope-or" then
@@ -6019,7 +6073,7 @@ local
       else if name = "quant-var-elim-eq" then
         Tactical.TAC_PROOF (([], target),
           bossLib.SIMP_TAC bossLib.bool_ss
-            [Thm.SYM boolTheory.IMP_DISJ_THM,
+            [Conv.GSYM boolTheory.IMP_DISJ_THM,
              boolTheory.UNWIND_FORALL_THM1,
              boolTheory.UNWIND_FORALL_THM2])
       else Tactical.TAC_PROOF (([], target),
@@ -21170,7 +21224,9 @@ local
                  val provenance =
                    case located_args of
                      [located] => EqualityProvenance
-                       (#provenance located, #provenance located)
+                       (EqualityProvenance
+                          (#provenance located, #provenance located),
+                        AtomicProvenance)
                    | _ => UnavailableProvenance
                        "eq_refl lacks one exact operand occurrence"
                in exact_result provenance theorem end
@@ -21622,7 +21678,7 @@ local
                end
            | "quant_rewrite" =>
                let
-                 val theorem = replay_quant_rewrite (#name rule) args
+                 val theorem = replay_quant_rewrite (#name rule) located_args
                in
                  case located_args of
                    [located] => located_result
