@@ -13,7 +13,6 @@ struct
        Q.carrier SmtLib.outbound_carrier_parser_case option,
      datatype_selector_term:Type.hol_type -> Term.term -> int ->
        Q.carrier -> Q.carrier,
-     closed_constructor_destructor_residual:Q.carrier -> bool,
      is_case:Q.carrier -> bool,
      term_to_string:Q.carrier -> string}
 
@@ -174,11 +173,6 @@ struct
         end
       fun leaf observe default term = case (#view context) term of
           Q.ConstantView atom => observe atom | _ => default
-      val domain_policy = SmtLib.outbound_native_datatype_policy
-        {constant_leaf=fn term => case (#view context) term of
-           Q.ConstantView atom => SOME atom | _ => NONE,
-         term_to_string=checked (#term_to_string callbacks),
-         syntax_error=syntax_error,metadata_error=metadata_error}
       fun declared_arity term = case (#view context) term of
           Q.ConstantView atom => SmtLib.outbound_constant_arity atom
         | _ => failure "declared_const_arity" "constant expected"
@@ -225,10 +219,6 @@ struct
                   guard scrutinee
               | SOME (SmtLib.CarrierTester {scrutinee,...}) => guard scrutinee
         in answer end
-      fun reject_domain term types =
-        (guard term;
-         (#reject_invented domain_policy) term types;
-         guard term)
       val collections = T.outbound_query_collection_recognizers context
         {sequence_emission=sequence_emission}
     in
@@ -277,8 +267,6 @@ struct
        encode_builtin=encode_builtin,builtin_encoding=builtin_encoding,
        is_constructor=leaf (#is_constructor native) false,
        parser_case=parser_case,datatype_selector_term=selector,
-       closed_constructor_destructor_residual=
-         checked (#closed_constructor_destructor_residual callbacks),
        has_ranked_semantics=leaf (#has_ranked_semantics native) false,
        is_case=checked (#is_case callbacks),
        is_update_comb=accepts (fn term =>
@@ -289,13 +277,12 @@ struct
          in (binary combinSyntax.update_tm prefix,argument) end,
        reject_unsupported_smtfloat_constant=
          leaf (#reject_unsupported_smtfloat_constant native) (),
-       reject_invented_native_datatype_domain=reject_domain,
        collection_recognizers=collections,syntax_error=syntax_error,
        is_fallback_error=is_syntax_error,is_optional_error=is_syntax_error,
        metadata_error=metadata_error,commit_error=SmtLib.NestedTranslation}
     end
 
-  (* Complete production datatype and residual policies. The formatter is
+  (* Complete production datatype callbacks. The formatter is
      still supplied by the caller; it may not unfold a large Query term.
      These callbacks produce syntax DATA, not preprocessing proof transport. *)
   fun make_with_datatypes (context:Q.outbound_context) options
@@ -303,18 +290,11 @@ struct
     let
       val builtin = T.outbound_builtin_operations context
       val syntax_error = #syntax_error builtin
-      fun metadata_error primary = case primary of
-          Feedback.HOL_ERR error => syntax_error
-            (Feedback.top_function_of error) (Feedback.message_of error)
-        | _ => primary
       val datatype_hooks = SmtLib_GraphCarrierDatatype.make context
         {syntax_error=syntax_error,is_mismatch= #is_syntax_error builtin}
-      val residual = SmtLib_GraphCarrierResidual.make context
-        {syntax_error=syntax_error,metadata_error=metadata_error}
     in make context options
       {parser_case= #parser_case datatype_hooks,
        datatype_selector_term= #datatype_selector_term datatype_hooks,
        is_case= #is_case datatype_hooks,
-       closed_constructor_destructor_residual=residual,
        term_to_string=term_to_string} end
 end

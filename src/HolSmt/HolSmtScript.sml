@@ -2578,6 +2578,25 @@ Proof
   intLib.ARITH_TAC
 QED
 
+(* SMT-LIB's integer div/mod specification: the arithmetic th-lemma replay
+   instantiates it for each ediv/emod operation it meets. *)
+Theorem smt_ediv_emod_division:
+  !a b. b <> 0 ==>
+    (a = ediv a b * b + emod a b) /\ 0 <= emod a b /\ emod a b < ABS b
+Proof
+  rpt gen_tac >> strip_tac >>
+  `ABS b <> 0` by simp [integerTheory.INT_ABS_EQ0] >>
+  drule integerTheory.INT_DIVISION >>
+  disch_then (qspec_then `a` mp_tac) >>
+  REWRITE_TAC [integerTheory.EMOD_DEF, integerTheory.EDIV_DEF] >>
+  Cases_on `0 < b` >> ASM_REWRITE_TAC [] >| [
+    `(ABS b = b) /\ ~(b < 0)` by intLib.ARITH_TAC >> ASM_REWRITE_TAC [],
+    `(ABS b = -b) /\ ~(-b < 0)` by intLib.ARITH_TAC >>
+    ASM_REWRITE_TAC [integerTheory.INT_MUL_LNEG,
+      integerTheory.INT_MUL_RNEG] >>
+    intLib.ARITH_TAC]
+QED
+
 Theorem smt_ediv_bounds_pos_aux:
   !q r v:int. 0 < v /\ 0 <= r /\ r < v ==>
     v * q <= q * v + r /\ q * v + r < v * (q + 1)
