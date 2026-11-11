@@ -2758,7 +2758,8 @@ local
       (List.filter (boolSyntax.is_eq o Thm.concl)
         (List.concat (List.map (Drule.CONJUNCTS o Drule.SPEC_ALL)
           (SmtReplayCanon.cpc_alias_rewrites @
-           [Conv.GSYM integerTheory.INT_NEG_LMUL,
+           [boolTheory.IMP_DISJ_THM,
+            Conv.GSYM integerTheory.INT_NEG_LMUL,
             integerTheory.INT_MUL_LID, integerTheory.INT_LT_LE1,
             integerTheory.INT_ADD_LID,
             integerTheory.EDIV_DEF, integerTheory.EMOD_DEF]))))))
@@ -4806,11 +4807,8 @@ local
         let
           val (left, right) = boolSyntax.dest_eq target
           val (left_head, left_arguments) = boolSyntax.strip_comb left
-          val (right_head, right_arguments) = boolSyntax.strip_comb right
-          val _ = Term.same_const left_head right_head andalso
-                  List.length left_arguments = 2 andalso
-                  List.length right_arguments = 2 orelse
-            raise ERR "aci_norm" "different word AC operators"
+          val _ = List.length left_arguments = 2 orelse
+            raise ERR "aci_norm" "not a binary word operator"
           val {Thy, Name, ...} = Term.dest_thy_const left_head
           val _ = Thy = "words" andalso
                   List.exists (fn saved => Name = saved)
@@ -4836,6 +4834,8 @@ local
               if Term.same_const head left_head andalso
                  List.length arguments = 2 then
                 Term.list_mk_comb (head, List.map abstract arguments)
+              else if wordsSyntax.is_n2w term andalso
+                      numSyntax.is_numeral (Term.rand term) then term
               else atom term
             end
             handle Feedback.HOL_ERR _ => atom term
@@ -4850,8 +4850,15 @@ local
               (wordsTheory.WORD_OR_ASSOC, wordsTheory.WORD_OR_COMM)
             else
               (wordsTheory.WORD_XOR_ASSOC, wordsTheory.WORD_XOR_COMM)
-          val generic = Drule.EQT_ELIM
+          val generic = Drule.PART_MATCH Lib.I
+              (Lib.snd laws) generic_target
+            handle Feedback.HOL_ERR _ => Drule.EQT_ELIM
               (Conv.AC_CONV laws generic_target)
+            handle Feedback.HOL_ERR _ => simpLib.SIMP_PROVE
+              (simpLib.++ (boolSimps.bool_ss, wordsLib.WORD_UINT_MAX_ss))
+              [wordsTheory.WORD_NEG_1, wordsTheory.WORD_AND_CLAUSES,
+               wordsTheory.WORD_OR_CLAUSES, wordsTheory.WORD_XOR_CLAUSES]
+              generic_target
             handle Feedback.HOL_ERR _ =>
               wordsLib.WORD_ARITH_PROVE generic_target
           val substitutions = List.map
@@ -4890,6 +4897,79 @@ local
 
   fun replay_aci_norm args = replay_aci_norm_admitted
     (SmtDatatypeProve.default_admission ()) args
+
+  fun replay_bv_word_rewrite name args =
+    let
+      fun natural term = Arbint.toNat (intSyntax.int_of_term term)
+      fun extract high low word =
+        let
+          val hi = natural high
+          val lo = natural low
+          val _ = Arbnum.<= (lo, hi) orelse
+            raise ERR name "extraction lower bound exceeds upper bound"
+        in wordsSyntax.mk_word_extract
+          (numSyntax.mk_numeral hi, numSyntax.mk_numeral lo, word,
+           fcpLib.index_type (Arbnum.plus1 (Arbnum.- (hi, lo)))) end
+      fun literal value width = wordsSyntax.mk_word (value, width)
+      val zero_int = intSyntax.zero_tm
+      val target =
+        case (name, args) of
+          ("bv-extract-whole", [word, high]) =>
+            let
+              val width = fcpLib.index_to_num (wordsSyntax.dim_of word)
+              val _ = natural high = Arbnum.- (width, Arbnum.one) orelse
+                raise ERR name "whole extraction must preserve the width"
+            in boolSyntax.mk_eq (extract high zero_int word, word) end
+        | ("bv-extract-concat-1", [word, prefix, upper, low, high]) =>
+            let
+              val _ = listSyntax.is_nil prefix orelse
+                raise ERR name "unsupported nonempty concatenation prefix"
+              val width = fcpLib.index_to_num (wordsSyntax.dim_of word)
+              val _ = Arbnum.< (natural high, width) orelse
+                raise ERR name "extraction reaches the upper concatenand"
+            in boolSyntax.mk_eq
+              (extract high low (wordsSyntax.mk_word_concat (upper, word)),
+               extract high low word) end
+        | (_, [word, amount, size, endpoint]) =>
+            let
+              val _ = name = "bv-shl-by-const-1" orelse
+                      name = "bv-lshr-by-const-1" orelse
+                raise ERR name "unsupported word rewrite"
+              val shift = natural amount
+              val width = fcpLib.index_to_num (wordsSyntax.dim_of word)
+              val left_shift = name = "bv-shl-by-const-1"
+              val _ = natural size = width andalso
+                      Arbnum.< (Arbnum.zero, shift) andalso
+                      Arbnum.< (shift, width) orelse
+                raise ERR name "invalid constant-shift width or amount"
+              val expected = if left_shift then
+                  Arbnum.- (width, Arbnum.plus1 shift)
+                else Arbnum.- (width, Arbnum.one)
+              val _ = natural endpoint = expected orelse
+                raise ERR name "incorrect constant-shift extraction endpoint"
+              val shifted =
+                (if left_shift then wordsSyntax.mk_word_lsl_bv
+                 else wordsSyntax.mk_word_lsr_bv)
+                  (word, literal shift width)
+              val zeros = literal Arbnum.zero shift
+              val sliced = if left_shift then
+                  wordsSyntax.mk_word_concat
+                    (extract endpoint zero_int word, zeros)
+                else wordsSyntax.mk_word_concat
+                    (zeros, extract endpoint amount word)
+            in boolSyntax.mk_eq (shifted, sliced) end
+        | _ => raise ERR name "unsupported word rewrite argument shape"
+    in
+      SmtResource.with_resource_step_time "BitVector" "word-rewrite"
+        (fn () =>
+          (SmtResource.check_resource_goal "BitVector" "word-rewrite" target;
+           Tactical.TAC_PROOF (([], target),
+             Tactical.THEN
+               (bossLib.SIMP_TAC (bossLib.srw_ss())
+                  [wordsTheory.word_lsl_bv_def,
+                   wordsTheory.word_lsr_bv_def],
+                wordsLib.WORD_DECIDE_TAC)))) ()
+    end
 
   fun replay_bv_xor_duplicate args =
     case args of
@@ -5044,6 +5124,18 @@ local
                  Time.toString (Timer.checkRealTimer (Option.valOf timer)))
             else ()
         in theorem end
+      fun singleton_bit word =
+        let
+          val (bit, then_word, else_word) = boolSyntax.dest_cond word
+          val then_value = wordsSyntax.dest_word_literal then_word
+          val else_value = wordsSyntax.dest_word_literal else_word
+        in
+          if fcpLib.index_to_num (wordsSyntax.dim_of word) = Arbnum.one
+             andalso then_value = Arbnum.one andalso
+             else_value = Arbnum.zero then SOME bit
+          else NONE
+        end
+        handle Feedback.HOL_ERR _ => NONE
       fun schematic_one_bit () =
         let
           val (_, bit_equality) = boolSyntax.dest_eq target
@@ -5111,18 +5203,6 @@ local
         let
           val (left_word, _) = boolSyntax.dest_eq target
           val _ = wordsSyntax.dim_of left_word
-          fun singleton_bit word =
-            let
-              val (bit, then_word, else_word) = boolSyntax.dest_cond word
-              val then_value = wordsSyntax.dest_word_literal then_word
-              val else_value = wordsSyntax.dest_word_literal else_word
-            in
-              if fcpLib.index_to_num (wordsSyntax.dim_of word) = Arbnum.one
-                 andalso then_value = Arbnum.one andalso
-                 else_value = Arbnum.zero then SOME bit
-              else NONE
-            end
-            handle Feedback.HOL_ERR _ => NONE
           datatype structural_key =
               StructuralVariable of string * Type.hol_type
             | StructuralConstant of Term.term
@@ -5577,6 +5657,79 @@ local
         end
         handle HolSatLib.SAT_cex _ =>
           raise ERR "bv_poly_norm" "bitblast equivalence is not valid"
+      fun bitblast_equality_circuit () =
+        let
+          val (word_equality, bits) = boolSyntax.dest_eq target
+          val (left, right) = boolSyntax.dest_eq word_equality
+          val _ = wordsSyntax.is_word_type (Term.type_of left) andalso
+                  boolSyntax.is_conj bits orelse
+            raise ERR "bv_poly_norm" "not a bitblasted word equality"
+          val index = SmtResource.new_bounded_term_index
+            SmtResource.max_bv_replay_term_nodes
+          fun identity term =
+            case index term of
+              SOME id => id
+            | NONE => raise ERR "bv_poly_norm"
+                "bitblast operand indexing exhausted its source budget"
+          val _ = identity target
+          val atoms = ref (Redblackmap.mkDict Int.compare :
+            (int, Term.term * Term.term) Redblackmap.dict)
+          val seen = ref (Redblackmap.mkDict Int.compare)
+          fun collect term =
+            let val id = identity term in
+              if Option.isSome (Redblackmap.peek (!seen, id)) then ()
+              else
+                (seen := Redblackmap.insert (!seen, id, ());
+                 case singleton_bit term of
+                   SOME bit =>
+                     if Term.aconv bit boolSyntax.T orelse
+                        Term.aconv bit boolSyntax.F then ()
+                     else
+                       let val bit_id = identity bit in
+                         if Option.isSome
+                              (Redblackmap.peek (!atoms, bit_id)) then ()
+                         else atoms := Redblackmap.insert (!atoms, bit_id,
+                           (bit, Term.genvar Type.bool))
+                       end
+                 | NONE =>
+                     if Term.is_comb term then
+                       (collect (Term.rator term); collect (Term.rand term))
+                     else ())
+            end
+          val _ = collect left
+          val _ = collect right
+          val memo = ref (Redblackmap.mkDict Int.compare)
+          fun abstract term =
+            let val id = identity term in
+              case Redblackmap.peek (!atoms, id) of
+                SOME (_, variable) => variable
+              | NONE =>
+                  case Redblackmap.peek (!memo, id) of
+                    SOME result => result
+                  | NONE =>
+                      let
+                        val result =
+                          if Term.is_comb term then Term.mk_comb
+                            (abstract (Term.rator term),
+                             abstract (Term.rand term))
+                          else if Term.is_abs term then
+                            raise ERR "bv_poly_norm"
+                              "binder in bitblast equality circuit"
+                          else term
+                        val _ = memo := Redblackmap.insert
+                          (!memo, id, result)
+                      in result end
+            end
+          (* The bit values are arbitrary.  Prove only their constructor
+             equation, then restore the shared carry circuits by kernel INST. *)
+          val schematic = abstract target
+          val theorem = SmtWordGraph.prove schematic
+          val substitutions = List.map
+            (fn (_, (term, variable)) => {redex = variable, residue = term})
+            (Redblackmap.listItems (!atoms))
+        in Thm.INST substitutions theorem end
+        handle HolSatLib.SAT_cex _ =>
+          raise ERR "bv_poly_norm" "bitblast equality circuit is not valid"
       fun word_arithmetic () = wordsLib.WORD_ARITH_PROVE target
         handle HolSatLib.SAT_cex _ =>
           raise ERR "bv_poly_norm" "word arithmetic target is not valid"
@@ -5592,6 +5745,8 @@ local
         end
       fun diagnosed_graph () = graph_normalization ()
     in
+      traced "bitblast_equality_circuit" bitblast_equality_circuit ()
+      handle Feedback.HOL_ERR _ =>
       traced "schematic_one_bit"
         (profile "CPC(rung:word/poly_norm_schematic_one_bit)"
           schematic_one_bit) ()
@@ -5639,6 +5794,48 @@ local
                 wordsLib.WORD_BIT_EQ_ss)) [boolTheory.EQ_SYM_EQ],
              tautLib.TAUT_TAC))
     end
+
+  fun replay_bv_bitwise_slicing args =
+    let
+      val target = expect_one_arg "bv-bitwise-slicing" args
+      val (left, right) = boolSyntax.dest_eq target
+      val atoms = ref (Redblackmap.mkDict Term.compare :
+        (Term.term, Term.term) Redblackmap.dict)
+      fun atom term =
+        case Redblackmap.peek (!atoms, term) of
+          SOME variable => variable
+        | NONE =>
+            let
+              val variable = Term.genvar (Term.type_of term)
+              val _ = atoms := Redblackmap.insert (!atoms, term, variable)
+            in variable end
+      fun abstract term =
+        if not (wordsSyntax.is_word_type (Term.type_of term)) then term
+        else if wordsSyntax.is_n2w term andalso
+                numSyntax.is_numeral (Term.rand term) then term
+        else
+          let
+            val (head, operands) = boolSyntax.strip_comb term
+            val allowed =
+              case Lib.total Term.dest_thy_const head of
+                SOME {Thy = "words", Name, ...} =>
+                  List.exists (fn name => name = Name)
+                    ["word_and", "word_or", "word_xor", "word_1comp",
+                     "word_concat", "word_extract"]
+              | _ => false
+          in
+            if allowed then
+              Term.list_mk_comb (head, List.map abstract operands)
+            else atom term
+          end
+      (* Slicing is independent of the arithmetic producing each operand.
+         Keep that arithmetic schematic rather than expanding its bit circuit. *)
+      val schematic = boolSyntax.mk_eq (abstract left, abstract right)
+      val theorem = replay_bv_poly_norm [schematic]
+      val substitutions = List.map
+        (fn (term, variable) => {redex = variable, residue = term})
+        (Redblackmap.listItems (!atoms))
+    in Thm.INST substitutions theorem end
 
   fun replay_quant_unused_vars args =
     let val target = expect_one_arg "quant-unused-vars" args in
@@ -7830,9 +8027,13 @@ local
         profile "CPC(rung:arith/poly_norm_canonical)"
           SmtReplayCanon.arith_poly_norm_prove target
       else if name = "arith-leq-norm" then
-        simpLib.SIMP_PROVE (bossLib.srw_ss())
-          [integerTheory.int_ge, integerTheory.INT_NOT_LE,
-           integerTheory.INT_NOT_LT, integerTheory.INT_LE_LT1] target
+        let
+          val (left, right) = boolSyntax.dest_eq target
+          val le_lt = Conv.REWR_CONV integerTheory.INT_LE_LT1 left
+          val not_ge = Conv.THENC
+            (Conv.RAND_CONV (Conv.REWR_CONV integerTheory.int_ge),
+             Conv.REWR_CONV integerTheory.INT_NOT_LE) right
+        in Thm.TRANS le_lt (Thm.SYM not_ge) end
       else arith_prove target
     end
 
@@ -11125,6 +11326,26 @@ local
                 (fn () => profile "CPC(rung:trust/fp)" replay_fp ())
                 (fn () => profile "CPC(rung:trust/fp_deferred)"
                   deferred_fp_trust ())))
+      else if (case Lib.total boolSyntax.dest_eq target of
+                 SOME (left, _) =>
+                   ((let
+                       val (variable, body) = boolSyntax.dest_forall left
+                       val condition = boolSyntax.dest_neg
+                         (Lib.fst (boolSyntax.dest_disj body))
+                       val (operand, value) = boolSyntax.dest_eq condition
+                     in wordsSyntax.is_word_type (Term.type_of variable)
+                       andalso Term.aconv operand
+                         (wordsSyntax.mk_word_1comp variable)
+                       andalso not (Term.free_in variable value)
+                     end) handle Feedback.HOL_ERR _ => false)
+               | NONE => false) then
+        profile "CPC(rung:trust/word-involution)"
+          (SmtResource.with_resource_step_time "BitVector" "word-involution"
+            (fn () =>
+              (SmtResource.check_resource_goal
+                 "BitVector" "word-involution" target;
+               Tactical.TAC_PROOF (([], target),
+                 metisLib.METIS_TAC [wordsTheory.WORD_NOT_NOT])))) ()
       else if SmtSeqProve.has_seq_type target then
         profile "CPC(rung:trust/seq)" replay_seq ()
       else if string_context () then
@@ -21061,12 +21282,21 @@ local
                 | _ => unavailable_result
                     "aci_norm lacks one exact target occurrence"
                     (replay_aci_norm_admitted datatype_admit args))
+           | "bv_word_rewrite" => opaque
+               (replay_bv_word_rewrite (#name rule) args)
            | "bv_xor_duplicate" => opaque ( replay_bv_xor_duplicate args)
            | "bv_not_idemp" => opaque ( replay_bv_not_idemp args)
            | "bv_shl_by_const_0" => opaque ( replay_bv_shl_by_const_0 args)
            | "bv_shl_by_const_2" => opaque ( replay_bv_shl_by_const_2 args)
            | "bv_lshr_by_const_0" => opaque ( replay_bv_lshr_by_const_0 args)
            | "bv_ashr_by_const_0" => opaque ( replay_bv_ashr_by_const_0 args)
+           | "bv_bitwise_slicing" =>
+               let val theorem = replay_bv_bitwise_slicing args in
+                 case located_args of
+                   [target] => located_result
+                     "bitwise slicing exact target" theorem target
+                 | _ => opaque theorem
+               end
            | "bv_poly_norm" =>
                let val theorem = replay_bv_poly_norm args in
                  case located_args of
@@ -21482,6 +21712,54 @@ local
            TextIO.flushOut TextIO.stdOut)
     in Portable.finally report (fn () => loop initial commands) () end
 
+  (* Replay heaps load without a current theory; derive these rules on use. *)
+  val array_set_echo_conv = Susp.delay (fn () =>
+    let
+      val element = Type.alpha
+      val x = Term.mk_var ("x", element)
+      val s = Term.mk_var ("s", Type.--> (element, Type.bool))
+      val applied = List.map
+        (Rewrite.PURE_REWRITE_RULE [pred_setTheory.SPECIFICATION])
+        [pred_setTheory.IN_INSERT, pred_setTheory.IN_DELETE]
+      fun prove (left, right) = Drule.GEN_ALL
+        (Tactical.TAC_PROOF (([], boolSyntax.mk_eq (left, right)),
+          Tactical.THEN
+            (Tactic.CONV_TAC (Conv.REWR_CONV boolTheory.FUN_EQ_THM),
+             Tactical.THEN (Tactic.GEN_TAC,
+               Tactical.THEN
+                 (Rewrite.PURE_REWRITE_TAC
+                    (applied @ [combinTheory.APPLY_UPDATE_THM,
+                      pred_setTheory.EMPTY_DEF, pred_setTheory.UNIV_DEF,
+                      combinTheory.K_THM]),
+                  Tactical.THEN
+                    (Tactic.CONV_TAC (Conv.DEPTH_CONV Thm.BETA_CONV),
+                     Tactical.THEN
+                       (Tactical.REPEAT boolLib.COND_CASES_TAC,
+                        bossLib.ASM_SIMP_TAC boolSimps.bool_ss
+                          [boolTheory.EQ_SYM_EQ])))))))
+      fun update value = Term.mk_comb (combinSyntax.mk_update (x, value), s)
+      val equations = List.map prove
+        [(pred_setSyntax.mk_insert (x, s), update boolSyntax.T),
+         (pred_setSyntax.mk_delete (s, x), update boolSyntax.F),
+         (pred_setSyntax.mk_empty element,
+          combinSyntax.mk_K_1 (boolSyntax.F, element)),
+         (pred_setSyntax.mk_univ element,
+          combinSyntax.mk_K_1 (boolSyntax.T, element))]
+    in
+      Conv.QCONV (Conv.THENC
+        (Rewrite.PURE_REWRITE_CONV
+           (pred_setTheory.SPECIFICATION :: pred_setTheory.SUBSET_applied ::
+            equations),
+         Conv.DEPTH_CONV Thm.BETA_CONV))
+    end)
+
+  fun contains_array_set_echo term =
+    Lib.can (HolKernel.find_term (fn tm =>
+      combinSyntax.is_update_comb tm orelse combinSyntax.is_K_1 tm orelse
+      pred_setSyntax.is_in tm orelse pred_setSyntax.is_insert tm orelse
+      pred_setSyntax.is_delete tm orelse pred_setSyntax.is_empty tm orelse
+      pred_setSyntax.is_univ tm orelse pred_setSyntax.is_subset tm)) term
+
   (* cvc5's preprocessing can expose canonical arithmetic spellings, record
      and datatype eliminators, and FP bit representations in a proof
      assumption while the HOL goal retains its surface form.  Discharge only
@@ -21515,6 +21793,30 @@ local
         in
           Lib.tryfind match context
         end
+      val array_set_context = List.map
+        (fn assumption => Susp.delay (fn () =>
+          Thm.EQ_MP ((Susp.force array_set_echo_conv) assumption)
+            (Thm.ASSUME assumption))) context
+      fun prove_array_set_hyp hyp =
+        let
+          val _ = List.exists contains_array_set_echo (hyp :: context) orelse
+            raise ERR "remove_extra_hyps" "no array-set echo form"
+          val conv = Susp.force array_set_echo_conv
+          val hyp_eq = conv hyp
+          val normalized_hyp = boolSyntax.rhs (Thm.concl hyp_eq)
+          fun match assumption =
+            let
+              val normalized_assumption = Susp.force assumption
+              val _ = Term.aconv (Thm.concl normalized_assumption)
+                normalized_hyp orelse
+                raise ERR "remove_extra_hyps"
+                  "array-set assumption did not match extra hypothesis"
+            in
+              Thm.EQ_MP (Thm.SYM hyp_eq) normalized_assumption
+            end
+        in
+          Lib.tryfind match array_set_context
+        end
       fun prove_from_context hyp =
         Tactical.TAC_PROOF ((context, hyp),
           Tactical.THEN
@@ -21525,6 +21827,11 @@ local
       fun prove_hyp hyp =
         profile "CPC(remove_extra_hyps:canonical_assumption)"
           prove_canonical_hyp hyp
+        handle Feedback.HOL_ERR error =>
+          if SmtResource.is_resource_gate error then
+            raise Feedback.HOL_ERR error
+          else profile "CPC(remove_extra_hyps:array_set)"
+            prove_array_set_hyp hyp
         handle Feedback.HOL_ERR error =>
           if SmtResource.is_resource_gate error then
             raise Feedback.HOL_ERR error
@@ -21578,7 +21885,8 @@ local
           else raise ERR "remove_extra_hyps"
             ("extra hypothesis is not one of the enumerated cvc5 semantic " ^
              "bridges; hypothesis=" ^ Library.term_to_string hyp ^
-             "; attempted=[canonical assumption, FP special values, " ^
+             "; attempted=[canonical assumption, array-set echo, " ^
+             "FP special values, " ^
              "floor/ceiling negation, datatype normalization, conditional " ^
              "arithmetic]; " ^
              "underlying=" ^ Feedback.message_of holerr)
@@ -21589,6 +21897,8 @@ local
 in
   type replay_operation_statistics = operation_statistics
   val with_operation_statistics = with_operation_statistics_internal
+
+  val remove_hyps_for_test = remove_extra_hyps
 
   val prove_boolean_circuit =
     prove_boolean_circuit_tautology

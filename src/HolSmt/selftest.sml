@@ -378,6 +378,12 @@ val graph_expect_thm = expect_thm
       [thm_CVCp]),
 
     (* propositional logic *)
+    (``!w:word16. w && 0xFFF8w = word_lsl (word_lsr w 3) 3``,
+      [thm_CVCp_arith]),
+    (``!w:word16. word_1comp w = 0w ==> w = -1w``,
+      [thm_CVCp_arith]),
+    (``LENGTH (xs:word8 list) <= 19 ==> 4 * LENGTH xs < 65536``,
+      [thm_CVCp_arith]),
     (``T``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
 
     (* Seq/Set/Bag checked-replay smoke tests.  `bool` has finite carrier,
@@ -535,6 +541,11 @@ val graph_expect_thm = expect_thm
     (``(v:num) <= v + 1``, [thm_Z3p, thm_CVC, thm_CVCp]),
     (``!n:num. v <= n + v``, [thm_Z3p, thm_CVC, thm_CVCp]),
     (``(v:num) - (w + 1) <= v``, [thm_Z3p, thm_CVC, thm_CVCp]),
+
+    (* Rational-bound normalization can eliminate every integer-to-real
+       cast before the arithmetic replay step abstracts its atoms. *)
+    (``LENGTH (xs:bool list) < 10 ==> 7 * LENGTH xs < 100``,
+      [thm_CVCp_arith]),
 
     (``(x:num) - 0 = x``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
@@ -2186,6 +2197,12 @@ val graph_expect_thm = expect_thm
       [(*thm_AUTO,*) thm_CVC, thm_Z3_v4, thm_Z3p_v4]),
 
     (* regression tests *)
+
+    (* Z3 bv1-blast may visit fresh bits before their concat definition. *)
+    (``(w:word8) <> 0w /\ ~word_bit 0 w ==> w >>> 1 <> 0w``,
+      [thm_Z3p_v4]),
+    (``(w:256 word) <> 0w /\ ~word_bit 0 w ==> w >>> 1 <> 0w``,
+      [thm_Z3p_v4]),
 
     (``!(n:num) z y a. (3 * n + 1) * z <= y * a ==> 3 * (n * z) <= 2 * (y * a)``,
       [thm_AUTO, (*thm_CVC,*) thm_Z3(*, thm_Z3p*)]),
