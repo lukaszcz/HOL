@@ -323,7 +323,7 @@ struct
     in
       fn t =>
         (* E1(a): direct BBLAST decides the finite fixed-width BV residue. *)
-        (blastLib.BBLAST_PROVE t
+        (Library.replay_BBLAST_PROVE t
          handle Feedback.HOL_ERR _ =>
            let
              (* E1(a): semantics-preserving word normalization followed by
@@ -337,7 +337,7 @@ struct
                else tautLib.TAUT_PROVE residue
                  handle Feedback.HOL_ERR _ =>
                    Tactical.prove (residue, Tactical.THEN
-                     (COND_REWRITE_TAC, blastLib.BBLAST_TAC))
+                     (COND_REWRITE_TAC, Library.replay_BBLAST_TAC))
            in
              Thm.EQ_MP (Thm.SYM normalized) residue_thm
            end)

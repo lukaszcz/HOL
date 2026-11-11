@@ -40,7 +40,10 @@ struct
       val z = Term.mk_var ("literal_cancel_z",ty)
       val source = boolSyntax.mk_eq
         (wordsSyntax.mk_word_add (x,z),wordsSyntax.mk_word_add (y,z))
-      val law = wordsLib.WORD_CANCEL_CONV source
+      val law = WordCancelLiteral.WORD_CANCEL_CONV source
+      val _ = require "classified cancellation differs from wordsLib"
+        (Term.aconv (Thm.concl law)
+           (Thm.concl (wordsLib.WORD_CANCEL_CONV source)))
       val _ = require "cancellation source changed"
         (Term.aconv source (boolSyntax.lhs (Thm.concl law)))
       val _ = require "cancellation retained hypotheses" (null (Thm.hyp law))
@@ -61,6 +64,48 @@ struct
          Parse.term_to_string (boolSyntax.rhs (Thm.concl law)) ^
          " expected=" ^ Parse.term_to_string expected)
          (Term.aconv expected (boolSyntax.rhs (Thm.concl law))) end
+
+  (* The classified copies must agree with the unchanged originals: same
+     conclusion, or both fail with the same message. *)
+  fun agree (classified,native) term =
+    let
+      fun result conv = (SOME (Thm.concl (conv term)), "")
+        handle HOL_ERR e =>
+          (NONE, String.concat [Feedback.top_structure_of e, ".",
+                                Feedback.top_function_of e, ": ",
+                                Feedback.message_of e])
+      val (c,cm) = result classified
+      val (n,nm) = result native
+    in
+      require ("classified conversion differs from original on " ^
+               Parse.term_to_string term)
+        (cm = nm andalso
+         (case (c,n) of
+             (SOME a,SOME b) => Term.aconv a b
+           | (NONE,NONE) => true
+           | _ => false))
+    end
+  fun equations width =
+    let
+      val dim = fcpSyntax.mk_int_numeric_type width
+      val ty = wordsSyntax.mk_word_type dim
+      val x = Term.mk_var ("x",ty) and y = Term.mk_var ("y",ty)
+      val modulus = Arbnum.pow (Arbnum.two,Arbnum.fromInt width)
+      val half = Arbnum.div2 modulus
+      val coefficients = List.map (fn n => wordsSyntax.mk_n2w
+        (numSyntax.mk_numeral n,dim))
+        [Arbnum.one,Arbnum.two,Arbnum.- (half,Arbnum.one),half,
+         Arbnum.+ (half,Arbnum.one),Arbnum.- (modulus,Arbnum.one)]
+      fun mul c v = wordsSyntax.mk_word_mul (c,v)
+      fun add (a,b) = wordsSyntax.mk_word_add (a,b)
+    in
+      List.concat (List.map (fn c => List.concat (List.map (fn d =>
+        [boolSyntax.mk_eq (add (mul c x,y),add (mul d x,y)),
+         boolSyntax.mk_eq (add (mul c x,mul d y),x),
+         boolSyntax.mk_eq (mul c x,add (mul d y,c)),
+         boolSyntax.mk_eq (add (x,c),add (y,d))]) coefficients))
+        coefficients)
+    end
 
   fun run () =
     let
@@ -96,5 +141,13 @@ struct
         [wordsSyntax.mk_int_word_type 1,ty,
          wordsSyntax.mk_int_word_type 32,wordsSyntax.mk_int_word_type 33,
          wordsSyntax.mk_word_type Type.alpha]
+      val _ = OK ()
+      val _ = tprint "Classified cancellation and WORD_SIMP match originals"
+      fun all widths = List.concat (List.map equations widths)
+      val _ = List.app (agree (WordCancelLiteral.WORD_CANCEL_CONV,
+                               wordsLib.WORD_CANCEL_CONV))
+                (all [1,2,3,7,8,16,31,32,33,64])
+      val _ = List.app (agree (blastLib.WORD_SIMP_CANCEL_LITERAL_CONV,
+                               blastLib.WORD_SIMP_CONV)) (all [1,8,32,33])
     in OK () end
 end

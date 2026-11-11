@@ -5,6 +5,10 @@ sig
        inputs (for example, small schematic terms). *)
     val WORD_SIMP_CONV   : Conv.conv
     val BIT_BLAST_CONV   : Conv.conv
+    (* WORD_SIMP_CONV whose cancellation step consults
+       WordCancelLiteral.classify; same theorems, used by the replay
+       workers below. *)
+    val WORD_SIMP_CANCEL_LITERAL_CONV : Conv.conv
     val BBLAST_CONV      : Conv.conv
     val BBLAST_CONV_WITH_PROFILES :
       (Conv.conv -> Conv.conv) -> (Conv.conv -> Conv.conv) -> Conv.conv

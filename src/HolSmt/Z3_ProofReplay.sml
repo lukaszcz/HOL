@@ -4247,7 +4247,7 @@ local
            Tactical.prove (target,
              Tactical.REPEAT Tactic.COND_CASES_TAC THEN
              Tactical.REPEAT (POP_ASSUM MP_TAC) THEN
-             Tactic.CONV_TAC blastLib.BBLAST_CONV))) target
+             Tactic.CONV_TAC Library.replay_BBLAST_CONV))) target
     end
 
   fun def_axiom_guarded_conditional target =
@@ -7922,7 +7922,7 @@ local
             if Term.aconv generic_observed (extract generic_field) then
               SmtSkeletonProve.exact_conclusion wire
                 (Thm.REFL generic_observed)
-            else blastLib.BBLAST_PROVE wire)
+            else Library.replay_BBLAST_PROVE wire)
           val wire_actual=SmtSkeletonProve.exact_conclusion
             (boolSyntax.mk_eq (observed,extract field))
             (Thm.INST [variable |-> base] wire_law)
@@ -8465,7 +8465,7 @@ local
            Int.toString (SmtResource.dag_nodes_up_to 10001 schematic));
          TextIO.flushOut TextIO.stdOut)
         else ()
-      val law = blastLib.BBLAST_PROVE schematic
+      val law = Library.replay_BBLAST_PROVE schematic
         handle Feedback.HOL_ERR holerr =>
           (if OS.Process.getEnv "HOL4_Z3_REPLAY_TRACE" = SOME "1" then
              (Feedback.HOL_MESG
@@ -10149,7 +10149,7 @@ local
                (word_decider_attempt
                  "remove_definitions:self-word-identity"
                  (Feedback.trace ("print blast counterexamples", 0)
-                   blastLib.BBLAST_PROVE)) definition) definition)
+                   Library.replay_BBLAST_PROVE)) definition) definition)
      else NONE)
     handle Feedback.HOL_ERR holerr =>
       if SmtResource.is_resource_gate holerr then
@@ -10275,7 +10275,7 @@ local
                       ((definitions, conclusion),
                        Tactical.THEN
                          (bossLib.ASM_SIMP_TAC (bossLib.srw_ss()) [],
-                          blastLib.BBLAST_TAC))
+                          Library.replay_BBLAST_TAC))
                     val theorem = Thm.INST [word_var |-> word] theorem
                     val theorem =
                       if vector_on_right then theorem else Thm.SYM theorem

@@ -1703,7 +1703,7 @@ struct
         else raise ERR "char_prove" "no char decomposition atom"
       val normalized = char_word_normalization_core t
       val t' = boolSyntax.rhs (Thm.concl normalized)
-      val thm = Tactical.prove (t', blastLib.BBLAST_TAC)
+      val thm = Tactical.prove (t', Library.replay_BBLAST_TAC)
     in
       Thm.EQ_MP (Thm.SYM normalized) thm
     end
@@ -1722,7 +1722,7 @@ struct
             "String" "char-bitblast" normalized_target
           val proved =
             profile "char(1)(bitblast)"
-              (fn t => Tactical.prove (t, blastLib.BBLAST_TAC))
+              (fn t => Tactical.prove (t, Library.replay_BBLAST_TAC))
               normalized_target
             handle Feedback.HOL_ERR holerr =>
               (rethrow_resource holerr;

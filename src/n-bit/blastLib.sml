@@ -591,6 +591,33 @@ in
       THENC Conv.DEPTH_CONV wordsLib.SIZES_CONV
       THENC Conv.DEPTH_CONV SMART_MUL_LSL_CONV
       THENC Conv.DEPTH_CONV WORD_DIV_LSR_CONV
+   (* Separate replay normalizer: WORD_SIMP_CONV with
+      WordCancelLiteral.WORD_CANCEL_ss in place of wordsLib.WORD_CANCEL_ss.
+      It is built on first use, not when blastLib is loaded. *)
+   local
+      val classified = ref (NONE : conv option)
+      fun classified_conv () =
+         case !classified of
+            SOME c => c
+          | NONE =>
+            let
+               val cancel_ss =
+                  std_ss++wordsLib.SIZES_ss++wordsLib.WORD_ARITH_ss++
+                  wordsLib.WORD_LOGIC_ss++wordsLib.WORD_SHIFT_ss++
+                  WordCancelLiteral.WORD_CANCEL_ss
+               val c =
+                  SIMP_CONV cancel_ss bit_rwts
+                  THENC Conv.TRY_CONV WORD_SUM_ZERO_CONV
+                  THENC REWRITE_CONV order_rwts
+                  THENC Conv.DEPTH_CONV wordsLib.SIZES_CONV
+                  THENC Conv.DEPTH_CONV SMART_MUL_LSL_CONV
+                  THENC Conv.DEPTH_CONV WORD_DIV_LSR_CONV
+            in
+               classified := SOME c; c
+            end
+   in
+      fun WORD_SIMP_CANCEL_LITERAL_CONV tm = classified_conv () tm
+   end
 end
 
 (* ------------------------------------------------------------------------
@@ -1134,7 +1161,8 @@ in
         val _ = Term.type_of tm = Type.bool orelse
                 raise ERR "BBLAST_CONV" "not a bool term"
         val (vars,tm') = boolSyntax.strip_forall tm
-        val thm = Conv.QCONV (word_simp_profile WORD_SIMP_CONV) tm'
+        val thm =
+          Conv.QCONV (word_simp_profile WORD_SIMP_CANCEL_LITERAL_CONV) tm'
         val tms =
             Lib.op_mk_set aconv (HolKernel.find_terms is_blastable (rhsc thm))
         val thms = Lib.mapfilter BIT_BLAST_CONV tms
@@ -1154,7 +1182,7 @@ in
         val _ = Term.type_of tm = Type.bool orelse
                 raise ERR "BBLAST_CONV" "not a bool term"
         val (vars,tm') = boolSyntax.strip_forall tm
-        val thm = Conv.QCONV (word_simp WORD_SIMP_CONV) tm'
+        val thm = Conv.QCONV (word_simp WORD_SIMP_CANCEL_LITERAL_CONV) tm'
         val tms =
             Lib.op_mk_set aconv (HolKernel.find_terms is_blastable (rhsc thm))
         val thms = bit_blast BIT_BLAST_CONV tms

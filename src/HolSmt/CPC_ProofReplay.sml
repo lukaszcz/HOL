@@ -4977,7 +4977,7 @@ local
                   val _ = memo := (term, result) :: !memo
                 in result end
           val template = abstract target
-          val theorem = blastLib.BBLAST_PROVE template
+          val theorem = Library.replay_BBLAST_PROVE template
           val substitutions = List.map
             (fn (term, variable) => {redex = variable, residue = term})
             (!atoms)
@@ -5414,7 +5414,7 @@ local
             [HolSmtTheory.xor_def] target
             handle Conv.UNCHANGED => Thm.REFL target
           val residue = boolSyntax.rhs (Thm.concl normalized)
-          val residue_theorem = blastLib.BBLAST_PROVE residue
+          val residue_theorem = Library.replay_BBLAST_PROVE residue
         in
           Thm.EQ_MP (Thm.SYM normalized) residue_theorem
         end
@@ -8805,7 +8805,7 @@ local
                           in
                             SmtResource.with_bitblast_step_time
                               "cpc-trust-fp-fcp-word-operation"
-                              blastLib.BBLAST_CONV current
+                              Library.replay_BBLAST_CONV current
                           end
                         else
                           let
@@ -12285,7 +12285,7 @@ local
                     "Skeleton" "word-graph-input"
                     (SmtResource.dag_nodes_up_to maximum term)
                 in #1 (SmtWordGraph.graph_normalize_using_with_metrics
-                  {word_conversion=blastLib.WORD_SIMP_CONV,
+                  {word_conversion=blastLib.WORD_SIMP_CANCEL_LITERAL_CONV,
                    bit_conversion=blastLib.BIT_BLAST_CONV,
                    node_conversion=xor_conversion}
                   graph scope (syntax term)) end

@@ -101,12 +101,20 @@ struct
     Conv.QCONV (Conv.DEPTH_CONV replay_minus_one_mul_conv)
 
   val replay_word_simp_conv =
-    Conv.THENC (replay_word_normalize_conv, blastLib.WORD_SIMP_CONV)
+    Conv.THENC (replay_word_normalize_conv,
+                blastLib.WORD_SIMP_CANCEL_LITERAL_CONV)
+
+  (* blastLib's BBLAST_CONV, BBLAST_PROVE and BBLAST_TAC, but normalizing
+     with blastLib.WORD_SIMP_CANCEL_LITERAL_CONV; same theorems. *)
+  val replay_BBLAST_CONV = blastLib.BBLAST_CONV_WITH_PROFILES Lib.I Lib.I
+  val replay_BBLAST_PROVE =
+    blastLib.BBLAST_PROVE_WITH_CONVERSION replay_BBLAST_CONV
+  val replay_BBLAST_TAC = Tactic.CONV_TAC replay_BBLAST_CONV
 
   fun replay_bblast_prove target =
     let
       val normalization = replay_word_normalize_conv target
-      val theorem = blastLib.BBLAST_PROVE
+      val theorem = replay_BBLAST_PROVE
         (boolSyntax.rhs (Thm.concl normalization))
     in
       Thm.EQ_MP (Thm.SYM normalization) theorem
