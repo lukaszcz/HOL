@@ -23,16 +23,22 @@ nothing in /tmp)::
 --simplifier-revision must descend from the TASK25 pin; the core is that
 revision plus the consumer's own listScript.sml. --alias (absolute) replaces
 the alias derived from the caller's configuration and must equal the HOLDIR
-the core is configured with. --scratch must not exist; it is created, never
-placed in /tmp, and removed on exit. Inside the caller checkout it is accepted
-only when ignored and untracked, and the same holds for --output. The patch
-sha256 must equal the pin (--patch-sha256 overrides it for a reviewed
-refresh). --jobs N passes -jN to bin/build; --skip-routine omits the
-bootstrap's extra -t pass.
+the core is configured with; it must not equal, contain or lie inside the
+scratch, output, reused core or consumer. --scratch is REQUIRED when
+--simplifier-revision differs from the pin or --alias is given (only the exact
+TASK25 reproduction may fall back to a private /tmp directory). It must be
+absolute, new, in an existing parent directory, outside the caller checkout
+(it is neither inside nor containing it, symlinks resolved) and not under /tmp
+or /var/tmp; it is created with mkdir and removed on exit or on SIGTERM/SIGHUP.
+--output must be new; inside the caller checkout it is accepted only when
+git-ignored and with no tracked files in its nearest existing ancestor. The
+patch sha256 must equal the pin (--patch-sha256 overrides it for a reviewed
+refresh). --jobs N passes -jN to bin/build; --skip-routine omits the routine
+`bin/build -t` pass after the bootstrap.
 
 --prepare-only checks archives/patch and emits source inventories, without
-configuring or building. Task-owned staging is removed even on failure. Output
-must be new; patch, logs and compressed inventories survive there. Existing
+configuring or building. Task-owned staging is removed even on failure.
+Patch, compressed logs and compressed inventories survive there. Existing
 scratch is source-checked, rebuilt/tested, and NOT removed. Its four translated
 Scripts are verified against the canonical sources before being replaced;
 theory Script mtimes are advanced to force execution, not merely cache hits.
@@ -40,6 +46,7 @@ Requires Linux bwrap, Python >= 3.12, git, Poly/ML (poly + polyc), C++ toolchain
 No changes to production parsers, canonical inputs, caller checkout or its heaps.
 """
 import argparse
+import contextlib
 import gzip
 import hashlib
 import io
@@ -158,10 +165,26 @@ def descends_from(repo, ancestor, revision):
     return process.returncode == 0
 
 
+def real(path):
+    return Path(os.path.realpath(path))
+
+
+def overlap(first, second):
+    return (first == second or first.is_relative_to(second) or
+            second.is_relative_to(first))
+
+
+def alias_mask(alias):
+    mask = alias.parent
+    while not mask.is_dir() or mask.is_symlink():
+        mask = mask.parent
+    return mask
+
+
 def outside_tracked(repo, path, what):
     """Refuse a path in the caller checkout unless ignored and untracked."""
-    path = Path(os.path.realpath(path))
-    repo = Path(os.path.realpath(repo))
+    path = real(path)
+    repo = real(repo)
     require(not repo.is_relative_to(path), what + " contains caller checkout")
     if not path.is_relative_to(repo):
         return
@@ -181,11 +204,10 @@ def outside_tracked(repo, path, what):
             what + " inside caller checkout and not ignored: " + str(path))
 
 
-def plan(args, repo):
-    """Validate every option that needs no build; returns resolved values."""
-    out = {}
+def plan_revisions(args, repo, out):
     require(args.consumer_patch.is_file(), "missing consumer patch")
-    out["patch_sha256"] = sha(args.consumer_patch.read_bytes())
+    data = args.consumer_patch.read_bytes()  # the only read of the patch
+    out["patch_bytes"], out["patch_sha256"] = data, sha(data)
     expected = args.patch_sha256 or PATCH_SHA256
     require(re.fullmatch(r"[0-9a-f]{64}", expected), "bad --patch-sha256")
     require(out["patch_sha256"] == expected,
@@ -202,24 +224,107 @@ def plan(args, repo):
             args.consumer_revision)
     out["simplifier"] = simplifier
     require(args.jobs is None or args.jobs >= 1, "--jobs must be positive")
-    if args.scratch is not None:
-        require(args.scratch.is_absolute(), "--scratch must be absolute")
-        scratch = Path(os.path.abspath(args.scratch))
-        real = Path(os.path.realpath(scratch))
-        require(not any(real.is_relative_to(b) or
-                        real.is_relative_to(Path(os.path.realpath(b)))
-                        for b in BANNED_SCRATCH),
-                "scratch must not be in /tmp")
-        outside_tracked(repo, scratch, "scratch")
-        require(not os.path.lexists(scratch), "scratch already exists")
-        out["scratch"] = scratch
+    require(bool(args.existing_core) == bool(args.existing_consumer),
+            "reuse requires both --existing-core and --existing-consumer")
+
+
+def plan_scratch(args, repo, out):
+    require(args.scratch is not None or
+            (out["simplifier"] == MAIN and args.alias is None),
+            "--scratch is required with --simplifier-revision other than "
+            "the pin or with --alias")
+    out["scratch"] = None
+    if args.scratch is None:
+        return
+    require(args.scratch.is_absolute(), "--scratch must be absolute")
+    scratch = real(args.scratch)
+    require(not any(scratch.is_relative_to(b) or
+                    scratch.is_relative_to(real(b)) for b in BANNED_SCRATCH),
+            "scratch must not be in /tmp")
+    require(not overlap(scratch, real(repo)),
+            "scratch must not be inside or contain the caller checkout")
+    require(not os.path.lexists(scratch), "scratch already exists")
+    require(scratch.parent.is_dir(), "scratch parent directory must exist")
+    out["scratch"] = scratch
+
+
+def plan_alias(args, repo, out):
     if args.alias is not None:
         alias = args.alias
         require(alias.is_absolute() and str(alias) == os.path.normpath(alias)
                 and alias != Path("/"), "--alias must be a normalized "
                 "absolute path")
-        out["alias"] = alias
+    else:
+        config = repo / "sigobj/Systeml.sml"
+        require(config.is_file(), "cannot derive configured Systeml.HOLDIR")
+        match = re.search(r'^val HOLDIR = "([^"]+)"', config.read_text(),
+                          re.M)
+        require(match is not None, "cannot derive configured Systeml.HOLDIR")
+        alias = Path(match[1])  # Do NOT resolve: may be absent or a symlink.
+        out["alias_config"] = config
+    require(alias.is_absolute() and alias != Path("/"),
+            "need a private configured alias")
+    require(not overlap(alias, real(repo)) and not overlap(alias, repo),
+            "configured alias overlaps caller checkout")
+    require(alias_mask(alias) != Path("/"), "unsafe configured alias parent")
+    others = {"scratch": out["scratch"], "output": out["output"],
+              "core": out["core"], "consumer": out["consumer"]}
+    for name, path in others.items():
+        if path is not None:
+            for candidate in (alias, real(alias)):
+                require(not overlap(candidate, path),
+                        "alias overlaps " + name + ": " + str(path))
+    if out["scratch"] is None:
+        # The fallback scratch is created under /tmp: keep it out of reach.
+        for path in BANNED_SCRATCH:
+            for banned in (path, real(path)):
+                require(not banned.is_relative_to(alias) and
+                        not banned.is_relative_to(real(alias)),
+                        "alias overlaps " + str(banned))
+    out["alias"] = alias
+
+
+def plan(args, repo):
+    """Validate every option and path that needs no build; returns values.
+
+    This is the single place for path and overlap validation; nothing has
+    been created when it returns or raises.
+    """
+    out = {}
+    plan_revisions(args, repo, out)
+    plan_scratch(args, repo, out)
+    output = real(args.output)
+    outside_tracked(repo, output, "output")
+    require(not os.path.lexists(output), "output already exists")
+    require(out["scratch"] is None or not overlap(output, out["scratch"]),
+            "output overlaps scratch")
+    out["output"] = output
+    out["core"] = out["consumer"] = None
+    if args.existing_core:
+        out["core"], out["consumer"] = real(args.existing_core), real(
+            args.existing_consumer)
+        core, consumer = out["core"], out["consumer"]
+        for path in (core, consumer):
+            require(not overlap(path, output), "output overlaps scratch tree")
+            require(not overlap(path, real(repo)),
+                    "scratch must not overlap caller checkout")
+            require(out["scratch"] is None or
+                    not overlap(path, out["scratch"]),
+                    "reused tree overlaps scratch")
+            if (path / ".git").exists():
+                require((path / ".task25-scratch").is_file(),
+                        "reuse refuses an unmarked checkout")
+        require(not overlap(core, consumer), "overlapping scratch trees")
+    plan_alias(args, repo, out)
     return out
+
+
+def dump(output, name, value):
+    data = (json.dumps(value, indent=2, sort_keys=True) + "\n").encode()
+    path = output / name
+    path.write_bytes(gzip.compress(data, mtime=0) if name.endswith(".gz")
+                     else data)
+    return {"file": name, **fingerprint(path)}
 
 
 def build_commands(jobs, skip_routine):
@@ -237,25 +342,30 @@ def check_configured_alias(core, alias):
 
 
 class Runner:
-    def __init__(self, repo, output, scratch, alias, core, consumer):
+    def __init__(self, repo, output, scratch, alias, core, consumer,
+                 manifest=None):
         self.repo, self.output, self.scratch = repo, output, scratch
         self.alias, self.core, self.consumer = alias, core, consumer
-        self.alias_mask = alias.parent
-        while not self.alias_mask.is_dir() or self.alias_mask.is_symlink():
-            self.alias_mask = self.alias_mask.parent
-        self.manifest = {"schema": 1, "success": False, "runs": [],
-                         "runner": fingerprint(Path(__file__))}
+        self.alias_mask = alias_mask(alias)
+        self.manifest = {} if manifest is None else manifest
+        self.manifest.update(schema=1, success=False,
+                             runner=fingerprint(Path(__file__)))
+        self.manifest.setdefault("runs", [])
 
     def dump(self, name, value):
-        data = (json.dumps(value, indent=2, sort_keys=True) + "\n").encode()
-        path = self.output / name
-        path.write_bytes(gzip.compress(data, mtime=0) if name.endswith(".gz")
-                         else data)
-        return {"file": name, **fingerprint(path)}
+        return dump(self.output, name, value)
+
+    def child_env(self):
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith("GIT_")}
+        # A scratch may sit inside some other repository: never look above it.
+        return {**env, "LC_ALL": "C", "GIT_OPTIONAL_LOCKS": "0",
+                "GIT_CEILING_DIRECTORIES": str(self.scratch)}
 
     def run(self, label, command, *, cwd=None, data=None, marker=None,
             timeout=7200, scan=True):
-        log = self.output / (f"{len(self.manifest['runs']):03d}-" + label + ".log")
+        log = self.output / (f"{len(self.manifest['runs']):03d}-" + label +
+                             ".log")
         record = {"label": label, "command": list(map(str, command)),
                   "cwd": str(cwd or self.repo), "log": log.name,
                   "timeout_seconds": timeout}
@@ -263,17 +373,15 @@ class Runner:
             record["stdin_sha256"] = sha(data)
         self.manifest["runs"].append(record)
         start = time.monotonic()
+        raw = b""
         try:
             with log.open("wb") as stream:
-                process = subprocess.Popen(record["command"], cwd=cwd or self.repo,
-                                           stdin=subprocess.PIPE if data is not None
-                                           else subprocess.DEVNULL,
-                                           stdout=stream, stderr=subprocess.STDOUT,
-                                           start_new_session=True,
-                                           env={**{k: v for k, v in os.environ.items()
-                                                   if not k.startswith("GIT_")},
-                                                "LC_ALL": "C",
-                                                "GIT_OPTIONAL_LOCKS": "0"})
+                process = subprocess.Popen(
+                    record["command"], cwd=cwd or self.repo,
+                    stdin=(subprocess.PIPE if data is not None
+                           else subprocess.DEVNULL),
+                    stdout=stream, stderr=subprocess.STDOUT,
+                    start_new_session=True, env=self.child_env())
                 try:
                     process.communicate(data, timeout=timeout)
                 except subprocess.TimeoutExpired:
@@ -288,8 +396,15 @@ class Runner:
                 record["exit"] = process.returncode
         finally:
             record["seconds"] = round(time.monotonic() - start, 3)
-            record["output"] = fingerprint(log)
-        text = ANSI.sub("", log.read_text(errors="replace"))
+            raw = log.read_bytes()
+            # Hash the uncompressed log, then keep only the compressed copy.
+            record["output"] = {"sha256": sha(raw), "bytes": len(raw)}
+            packed = log.with_name(log.name + ".gz")
+            packed.write_bytes(gzip.compress(raw, mtime=0))
+            log.unlink()
+            record["log"] = packed.name
+            record["log_gz"] = fingerprint(packed)
+        text = ANSI.sub("", raw.decode(errors="replace"))
         record["counts"] = {"lines": len(text.splitlines()),
                             "OK": len(re.findall(r"\bOK\b", text)),
                             "static_errors": len(ERROR.findall(text))}
@@ -325,11 +440,10 @@ class Runner:
                "--unshare-net", "--ro-bind", "/", "/", "--dev", "/dev",
                "--proc", "/proc", "--tmpfs", "/tmp",
                "--tmpfs", str(self.alias_mask),
-               "--ro-bind", str(self.repo), str(self.repo),
-               "--ro-bind", str(self.git_common), str(self.git_common),
-               # After the read-only repo: scratch may live inside it.
                "--bind", str(self.scratch), str(self.scratch),
-               "--bind", str(self.core), alias]
+               "--bind", str(self.core), alias,
+               "--ro-bind", str(self.repo), str(self.repo),
+               "--ro-bind", str(self.git_common), str(self.git_common)]
         if mounted:
             cmd += ["--bind", str(self.consumer / "src/auto"), alias + "/src/auto",
                     "--ro-bind", str(self.consumer / "help/Docfiles"),
@@ -594,9 +708,10 @@ class Runner:
                 list(mapped.values()))
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+def parse_args():
+    ap = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--consumer-patch", type=Path, required=True)
     ap.add_argument("--patch-sha256")
     ap.add_argument("--output", type=Path, required=True)
@@ -609,199 +724,225 @@ def main():
     ap.add_argument("--existing-core", type=Path)
     ap.add_argument("--existing-consumer", type=Path)
     ap.add_argument("--prepare-only", action="store_true")
-    args = ap.parse_args()
-    repo = Path(__file__).resolve().parents[4]
-    output = args.output.resolve()
-    if args.scratch is None:
-        require(not output.is_relative_to(repo),
-                "output must be outside caller checkout")
+    return ap.parse_args()
+
+
+@contextlib.contextmanager
+def terminating_signals():
+    """Turn SIGTERM/SIGHUP into SystemExit so the cleanup always runs."""
+    def handler(signum, frame):
+        raise SystemExit("terminated by " + signal.Signals(signum).name)
+    previous = {n: signal.signal(n, handler)
+                for n in (signal.SIGTERM, signal.SIGHUP)}
+    try:
+        yield
+    finally:
+        for number, old in previous.items():
+            signal.signal(number, old)
+
+
+def record_provenance(m, args, planned, trees):
+    alias, revision = planned["alias"], planned["simplifier"]
+    config = planned.get("alias_config")
+    m.update(simplifier_revision=revision, consumer_revision=CONSUMER,
+             simplifier_pin=MAIN, simplifier_is_pin=revision == MAIN,
+             simplifier_requested=args.simplifier_revision,
+             patch_sha256=planned["patch_sha256"],
+             patch_pin=PATCH_SHA256,
+             patch_pin_overridden=planned["patch_pin_overridden"],
+             alias_explicit=args.alias is not None,
+             scratch_explicit=args.scratch is not None,
+             jobs=args.jobs, skip_routine=args.skip_routine,
+             configured_alias=str(alias), core=str(trees[0]),
+             consumer=str(trees[1]),
+             scope="prepare-only" if args.prepare_only else
+             "reused core; consumer execution" if args.existing_core else
+             "fresh core bootstrap + " +
+             ("" if args.skip_routine else "routine + ") +
+             "consumer execution",
+             python=sys.version,
+             python_executable={"path": sys.executable,
+                                **fingerprint(Path(sys.executable))},
+             alias_configuration=(
+                 {"explicit_alias": str(alias)} if config is None else
+                 {"path": str(config), **fingerprint(config)}),
+             platform=os.uname()._asdict()
+             if hasattr(os.uname(), "_asdict") else list(os.uname()))
+
+
+def stage_sources(runner, args, planned):
+    """Archive and patch the sources; returns (core sources, consumer
+    sources, canonical consumer tree, numeric Scripts)."""
+    m, scratch = runner.manifest, runner.scratch
+    revision = planned["simplifier"]
+    core, consumer = runner.core, runner.consumer
+    patch = runner.output / "consumer.patch"
+    patch.write_bytes(planned["patch_bytes"])  # exactly the hashed bytes
+    m["consumer_patch"] = fingerprint(patch)
+    canonical_core = scratch / "canonical-core"
+    canonical = scratch / "canonical-consumer"
+    main_sources = runner.archive(revision, canonical_core)
+    list_original = main_sources[LIST]
+    list_data = runner.git("show", CONSUMER + ":" + LIST)
+    list_blob = runner.git("rev-parse", CONSUMER + ":" + LIST).decode().strip()
+    list_original_blob = runner.git("rev-parse",
+                                    revision + ":" + LIST).decode().strip()
+    (canonical_core / LIST).write_bytes(list_data)
+    main_sources[LIST] = fingerprint(canonical_core / LIST)
+    m["core_prerequisite"] = {"path": LIST, "revision": CONSUMER,
+                              "blob": list_blob,
+                              "simplifier_blob": list_original_blob,
+                              "main_original": list_original,
+                              **main_sources[LIST]}
+    m["core_sources"] = runner.dump("core-sources.json.gz", main_sources)
+    before = runner.archive(CONSUMER, canonical, ("src/auto", "help/Docfiles"))
+    m["consumer_unpatched"] = runner.dump("consumer-unpatched.json.gz", before)
+    # git apply is rooted in an isolated non-repository; --numstat exposes
+    # every affected path. Do not permit patches to any other subtree.
+    paths = runner.run("patch-paths",
+                       ["git", "apply", "--numstat", str(patch)],
+                       cwd=canonical, scan=False)
+    changed = [line.split("\t")[-1] for line in paths.splitlines()]
+    require(changed and all((p.startswith("src/auto/") or
+                             p.startswith("help/Docfiles/")) and
+                            ".." not in PurePosixPath(p).parts and
+                            not p.startswith('"') for p in changed),
+            "patch escapes consumer prerequisite")
+    runner.run("patch-check", ["git", "apply", "--check", str(patch)],
+               cwd=canonical)
+    runner.run("patch-apply", ["git", "apply", str(patch)], cwd=canonical)
+    consumer_sources = inventory(canonical)
+    require(all("symlink" not in info or before.get(name) == info
+                for name, info in consumer_sources.items()),
+            "patch introduces or changes a consumer symlink")
+    m["consumer_canonical"] = runner.dump("consumer-canonical.json.gz",
+                                           consumer_sources)
+    numeric = {str(p.relative_to(canonical)) for p in
+               (canonical / "src/auto").rglob("*Script.sml")
+               if NUMERIC.search(p.read_bytes())}
+    require(len(numeric) == 4, "numeric prerequisite is not four Scripts")
+    if args.existing_core:
+        verify(core, main_sources)
+        verify_consumer(consumer, consumer_sources, numeric)
     else:
-        outside_tracked(repo, output, "output")
-    require(bool(args.existing_core) == bool(args.existing_consumer),
-            "reuse requires both --existing-core and --existing-consumer")
-    planned = plan(args, repo)
-    config = repo / "sigobj/Systeml.sml"
-    if "alias" in planned:
-        alias = planned["alias"]
+        canonical_core.rename(core)
+        shutil.copytree(canonical, consumer, symlinks=True)
+        # Native sanity fixtures inspect Git provenance/baseline blobs.
+        # This metadata belongs only to the disposable archive; objects
+        # are read-only shared inputs, never caller-owned build products.
+        (core / ".task25-scratch").write_text(revision + "\n")
+        runner.run("core-git-init", ["git", "init", "-q", str(core)])
+        (core / ".git/objects/info/alternates").write_text(
+            str(runner.git_common / "objects") + "\n")
+        runner.run("core-git-head", ["git", "-C", str(core),
+                   "update-ref", "HEAD", revision])
+        runner.run("core-git-index", ["git", "-C", str(core),
+                   "reset", "--mixed", "-q", "HEAD"])
+    return main_sources, consumer_sources, canonical
+
+
+def build_and_test(runner, args, sources):
+    m, core, consumer = runner.manifest, runner.core, runner.consumer
+    alias = runner.alias
+    main_sources, consumer_sources, canonical = sources
+    for tool in ("bwrap", "poly", "polyc", "git", "g++", "ld", "polyimport",
+                 "python3"):
+        path = shutil.which(tool)
+        require(path is not None, "missing tool: " + tool)
+        m.setdefault("tools", {})[tool] = {
+            "path": path, **fingerprint(Path(path).resolve())}
+    runner.inside("poly-version", ["poly", "-v"], scan=False)
+    if not args.existing_core:
+        runner.inside("configure", ["sh", "-c",
+                       "exec poly < tools/smart-configure.sml"])
+        check_configured_alias(core, alias)
+        for label, command in build_commands(args.jobs, args.skip_routine):
+            runner.inside(label, command, marker="Hol built successfully.")
     else:
-        match = re.search(r'^val HOLDIR = "([^"]+)"', config.read_text(), re.M)
-        require(match is not None, "cannot derive configured Systeml.HOLDIR")
-        alias = Path(match[1])  # Do NOT resolve: may be absent or a symlink.
-    require(alias.is_absolute() and alias != repo, "need a private configured alias")
-    output.mkdir(parents=True, exist_ok=False)
-    if "scratch" in planned:
+        m["core_build_skipped"] = "explicit reuse; no fresh-build claim"
+        check_configured_alias(core, alias)
+    translated = runner.parser(canonical)
+    verify(core, main_sources)
+    verify_consumer(consumer, consumer_sources, translated)
+    m["consumer_build_sources"] = runner.dump(
+        "consumer-build-sources.json.gz",
+        inventory_sources(consumer, consumer_sources))
+    roots = runner.consumers()
+    roots += runner.fixture()
+    runner.closure(roots)
+    m["core_runtime"] = {name: fingerprint(core / name) for name in
+                         ("bin/hol", "bin/Holmake", "bin/build",
+                          "bin/hol.state0", "bin/hol.state",
+                          "tools/Holmake/Systeml.sml")}
+    runner.libraries("core-runtime-libraries", alias / "bin/Holmake")
+    runner.libraries("hol-runtime-libraries", alias / "bin/hol")
+    library_match = re.search(r'^val POLYMLLIBDIR = "([^"]+)"',
+                              (core / "tools/Holmake/Systeml.sml").read_text(),
+                              re.M)
+    require(library_match is not None, "missing Poly/ML library location")
+    library = Path(library_match[1]) / "libpolymain.a"
+    m["runtime_libraries"][str(library)] = fingerprint(library)
+    verify(core, main_sources)
+    verify_consumer(consumer, consumer_sources, translated)
+    for name, info in m["expansions"].items():
+        require(fingerprint(consumer / name)["sha256"] ==
+                info["expanded_sha256"], "expanded source changed: " + name)
+
+
+def execute(args, repo, planned, m, created):
+    """Everything after planning; `created` collects what must be cleaned."""
+    planned["output"].mkdir(parents=True)
+    created["output"] = True
+    if planned["scratch"] is not None:
+        planned["scratch"].mkdir()  # no parents: cleanup removes it all
         scratch = planned["scratch"]
-        scratch.mkdir(parents=True)
     else:
         scratch = Path(tempfile.mkdtemp(prefix="task25-run-", dir="/tmp"))
-    core = args.existing_core.resolve() if args.existing_core else scratch / "core"
-    consumer = (args.existing_consumer.resolve() if args.existing_consumer
-                else scratch / "consumer")
-    runner = Runner(repo, output, scratch, alias, core, consumer)
-    m = runner.manifest
-    try:
-        require(runner.alias_mask != Path("/"), "unsafe configured alias parent")
-        require(not alias.is_relative_to(repo) and not repo.is_relative_to(alias),
-                "configured alias overlaps caller checkout")
-        for path in (core, consumer):
-            require(not path.is_relative_to(output) and not output.is_relative_to(path),
-                    "output overlaps scratch tree")
-            require(not path.is_relative_to(repo) and not repo.is_relative_to(path),
-                    "scratch must not overlap caller checkout")
-            if (path / ".git").exists():
-                require((path / ".task25-scratch").is_file(),
-                        "reuse refuses an unmarked checkout")
-        require(core != consumer and not core.is_relative_to(consumer) and
-                not consumer.is_relative_to(core), "overlapping scratch trees")
-        revision = planned["simplifier"]
-        runner.git_common = Path(runner.git("rev-parse", "--path-format=absolute",
-                                 "--git-common-dir").decode().strip())
-        m.update(simplifier_revision=revision, consumer_revision=CONSUMER,
-                 simplifier_pin=MAIN, simplifier_is_pin=revision == MAIN,
-                 simplifier_requested=args.simplifier_revision,
-                 patch_sha256=planned["patch_sha256"],
-                 patch_pin=PATCH_SHA256,
-                 patch_pin_overridden=planned["patch_pin_overridden"],
-                 alias_explicit="alias" in planned,
-                 scratch_explicit="scratch" in planned,
-                 jobs=args.jobs, skip_routine=args.skip_routine,
-                 configured_alias=str(alias), core=str(core), consumer=str(consumer),
-                 scope="prepare-only" if args.prepare_only else
-                 "reused core; consumer execution" if args.existing_core else
-                 "fresh core bootstrap + " +
-                 ("" if args.skip_routine else "routine + ") +
-                 "consumer execution",
-                 python=sys.version,
-                 python_executable={"path": sys.executable,
-                                    **fingerprint(Path(sys.executable))},
-                 alias_configuration=(
-                     {"explicit_alias": str(alias)} if "alias" in planned else
-                     {"path": str(config), **fingerprint(config)}),
-                 platform=os.uname()._asdict()
-                 if hasattr(os.uname(), "_asdict") else list(os.uname()))
-        patch = output / "consumer.patch"
-        patch.write_bytes(args.consumer_patch.read_bytes())
-        m["consumer_patch"] = fingerprint(patch)
-        canonical_core = scratch / "canonical-core"
-        canonical = scratch / "canonical-consumer"
-        main_sources = runner.archive(revision, canonical_core)
-        list_original = main_sources[LIST]
-        list_data = runner.git("show", CONSUMER + ":" + LIST)
-        list_blob = runner.git("rev-parse",
-                               CONSUMER + ":" + LIST).decode().strip()
-        list_original_blob = runner.git("rev-parse",
-                                        revision + ":" + LIST).decode().strip()
-        (canonical_core / LIST).write_bytes(list_data)
-        main_sources[LIST] = fingerprint(canonical_core / LIST)
-        m["core_prerequisite"] = {"path": LIST, "revision": CONSUMER,
-                                  "blob": list_blob,
-                                  "simplifier_blob": list_original_blob,
-                                  "main_original": list_original,
-                                  **main_sources[LIST]}
-        m["core_sources"] = runner.dump("core-sources.json.gz", main_sources)
-        before = runner.archive(CONSUMER, canonical, ("src/auto", "help/Docfiles"))
-        m["consumer_unpatched"] = runner.dump("consumer-unpatched.json.gz", before)
-        # git apply is rooted in an isolated non-repository; --numstat exposes
-        # every affected path. Do not permit patches to any other subtree.
-        paths = runner.run("patch-paths", ["git", "apply", "--numstat", str(patch)],
-                           cwd=canonical, scan=False)
-        changed = [line.split("\t")[-1] for line in paths.splitlines()]
-        require(changed and all((p.startswith("src/auto/") or
-                                p.startswith("help/Docfiles/")) and
-                               ".." not in PurePosixPath(p).parts and
-                               not p.startswith('"') for p in changed),
-                "patch escapes consumer prerequisite")
-        runner.run("patch-check", ["git", "apply", "--check", str(patch)],
-                   cwd=canonical)
-        runner.run("patch-apply", ["git", "apply", str(patch)], cwd=canonical)
-        consumer_sources = inventory(canonical)
-        require(all("symlink" not in info or before.get(name) == info
-                    for name, info in consumer_sources.items()),
-                "patch introduces or changes a consumer symlink")
-        m["consumer_canonical"] = runner.dump("consumer-canonical.json.gz",
-                                               consumer_sources)
-        numeric = {str(p.relative_to(canonical)) for p in
-                   (canonical / "src/auto").rglob("*Script.sml")
-                   if NUMERIC.search(p.read_bytes())}
-        require(len(numeric) == 4, "numeric prerequisite is not four Scripts")
-        if args.existing_core:
-            verify(core, main_sources)
-            verify_consumer(consumer, consumer_sources, numeric)
-        else:
-            canonical_core.rename(core)
-            canonical_core = core
-            shutil.copytree(canonical, consumer, symlinks=True)
-            # Native sanity fixtures inspect Git provenance/baseline blobs.
-            # This metadata belongs only to the disposable archive; objects
-            # are read-only shared inputs, never caller-owned build products.
-            (core / ".task25-scratch").write_text(revision + "\n")
-            runner.run("core-git-init", ["git", "init", "-q", str(core)])
-            (core / ".git/objects/info/alternates").write_text(
-                str(runner.git_common / "objects") + "\n")
-            runner.run("core-git-head", ["git", "-C", str(core),
-                       "update-ref", "HEAD", revision])
-            runner.run("core-git-index", ["git", "-C", str(core),
-                       "reset", "--mixed", "-q", "HEAD"])
-        if args.prepare_only:
-            m["prepared"] = True
-        else:
-            for tool in ("bwrap", "poly", "polyc", "git", "g++", "ld", "polyimport",
-                         "python3"):
-                path = shutil.which(tool)
-                require(path is not None, "missing tool: " + tool)
-                m.setdefault("tools", {})[tool] = {"path": path,
-                                                   **fingerprint(Path(path).resolve())}
-            runner.inside("poly-version", ["poly", "-v"], scan=False)
-            if not args.existing_core:
-                runner.inside("configure", ["sh", "-c",
-                               "exec poly < tools/smart-configure.sml"])
-                check_configured_alias(core, alias)
-                for label, command in build_commands(args.jobs,
-                                                     args.skip_routine):
-                    runner.inside(label, command,
-                                  marker="Hol built successfully.")
-            else:
-                m["core_build_skipped"] = "explicit reuse; no fresh-build claim"
-                check_configured_alias(core, alias)
-            translated = runner.parser(canonical)
-            verify(core, main_sources)
-            verify_consumer(consumer, consumer_sources, translated)
-            m["consumer_build_sources"] = runner.dump(
-                "consumer-build-sources.json.gz",
-                inventory_sources(consumer, consumer_sources))
-            roots = runner.consumers()
-            roots += runner.fixture()
-            runner.closure(roots)
-            m["core_runtime"] = {name: fingerprint(core / name) for name in
-                                 ("bin/hol", "bin/Holmake", "bin/build",
-                                  "bin/hol.state0", "bin/hol.state",
-                                  "tools/Holmake/Systeml.sml")}
-            runner.libraries("core-runtime-libraries", alias / "bin/Holmake")
-            runner.libraries("hol-runtime-libraries", alias / "bin/hol")
-            library_match = re.search(r'^val POLYMLLIBDIR = "([^"]+)"',
-                                     (core / "tools/Holmake/Systeml.sml").read_text(),
-                                     re.M)
-            require(library_match is not None, "missing Poly/ML library location")
-            library = Path(library_match[1]) / "libpolymain.a"
-            m["runtime_libraries"][str(library)] = fingerprint(library)
-            verify(core, main_sources)
-            verify_consumer(consumer, consumer_sources, translated)
-            for name, info in m["expansions"].items():
-                require(fingerprint(consumer / name)["sha256"] ==
-                        info["expanded_sha256"], "expanded source changed: " + name)
-        m["success"] = True
-    except BaseException as exc:
-        m["failure"] = type(exc).__name__ + ": " + str(exc)
-    finally:
+    created["scratch"] = scratch
+    core = planned["core"] or scratch / "core"
+    consumer = planned["consumer"] or scratch / "consumer"
+    runner = Runner(repo, planned["output"], scratch, planned["alias"], core,
+                    consumer, m)
+    runner.git_common = Path(runner.git(
+        "rev-parse", "--path-format=absolute",
+        "--git-common-dir").decode().strip())
+    record_provenance(m, args, planned, (core, consumer))
+    sources = stage_sources(runner, args, planned)
+    if args.prepare_only:
+        m["prepared"] = True
+    else:
+        build_and_test(runner, args, sources)
+    m["success"] = True
+
+
+def finish(args, planned, m, created):
+    scratch = created.get("scratch")
+    if scratch is not None:
         try:
             shutil.rmtree(scratch)
         except OSError as exc:
             m["success"] = False
             m["failure"] = "scratch cleanup failed: " + str(exc)
-        m["task_scratch_removed"] = not scratch.exists()
-        m["existing_scratch_preserved"] = bool(args.existing_core)
-        runner.dump("manifest.json", m)
-    print(output / "manifest.json")
+    m["task_scratch_removed"] = scratch is None or not scratch.exists()
+    m["existing_scratch_preserved"] = bool(args.existing_core)
+    if created.get("output"):
+        dump(planned["output"], "manifest.json", m)
+
+
+def main():
+    args = parse_args()
+    repo = Path(__file__).resolve().parents[4]
+    planned = plan(args, repo)
+    m, created = {"schema": 1, "success": False, "runs": []}, {}
+    with terminating_signals():
+        try:
+            execute(args, repo, planned, m, created)
+        except BaseException as exc:
+            m["success"] = False
+            m["failure"] = type(exc).__name__ + ": " + str(exc)
+        finally:
+            finish(args, planned, m, created)
+    print(planned["output"] / "manifest.json")
     if not m["success"]:
         raise SystemExit(m["failure"])
 

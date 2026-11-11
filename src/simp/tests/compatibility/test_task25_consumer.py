@@ -2,15 +2,20 @@
 """Fail-closed controls for the isolated consumer driver (no HOL stubs)."""
 import argparse
 import contextlib
+import gzip
 import io
 import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+from unittest import mock
 
 DRIVER = Path(__file__).with_name("run_task25_consumer.py")
 spec = importlib.util.spec_from_file_location("task25", DRIVER)
@@ -29,7 +34,8 @@ class Controls(unittest.TestCase):
         self.temp.cleanup()
 
     def run_command(self, body, **kwargs):
-        return self.runner.run("control", [sys.executable, "-c", body], **kwargs)
+        return self.runner.run("control", [sys.executable, "-c", body],
+                               **kwargs)
 
     def test_failed_process_rejected(self):
         with self.assertRaisesRegex(RuntimeError, "command failed"):
@@ -64,6 +70,30 @@ class Controls(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             task25.verify(self.root, {"missing.sml": {"sha256": "none"}})
 
+    def test_logs_compressed_with_both_hashes(self):
+        self.run_command("print('TASK25_DONE')", marker="TASK25_DONE")
+        record = self.runner.manifest["runs"][0]
+        packed = self.root / record["log"]
+        self.assertTrue(record["log"].endswith(".log.gz"))
+        self.assertTrue(packed.is_file())
+        self.assertFalse(packed.with_suffix("").exists())
+        raw = gzip.decompress(packed.read_bytes())
+        self.assertEqual(record["output"]["sha256"], task25.sha(raw))
+        self.assertEqual(record["output"]["bytes"], len(raw))
+        self.assertEqual(record["log_gz"], task25.fingerprint(packed))
+        self.assertIn(b"TASK25_DONE", raw)
+
+    def test_failed_command_log_also_compressed(self):
+        with self.assertRaises(RuntimeError):
+            self.run_command("raise SystemExit(3)")
+        record = self.runner.manifest["runs"][0]
+        self.assertTrue((self.root / record["log"]).is_file())
+        self.assertEqual(list(self.root.glob("*.log")), [])
+
+    def test_git_ceiling_is_the_scratch(self):
+        self.run_command("import os; print(os.environ["
+                         "'GIT_CEILING_DIRECTORIES'])", marker=str(self.root))
+
     def test_nonstandard_launcher_rejected(self):
         launcher = self.root / "selftest.exe"
         launcher.write_text("#!/bin/sh\nexit 0\n")
@@ -72,12 +102,16 @@ class Controls(unittest.TestCase):
 
 
 SHM = Path("/dev/shm")
+NO_SHM = "no /dev/shm: the fixtures must not fall back to /tmp"
+TERMINATING = (signal.SIGTERM, signal.SIGHUP)
 
 
 def git(root, *args):
     done = subprocess.run(["git", "-C", str(root), *args], check=True,
                           capture_output=True, text=True,
-                          env={**os.environ, "GIT_AUTHOR_NAME": "t",
+                          env={**os.environ, "GIT_CONFIG_GLOBAL": "/dev/null",
+                               "GIT_CONFIG_NOSYSTEM": "1",
+                               "GIT_AUTHOR_NAME": "t",
                                "GIT_AUTHOR_EMAIL": "t@example.invalid",
                                "GIT_COMMITTER_NAME": "t",
                                "GIT_COMMITTER_EMAIL": "t@example.invalid"})
@@ -94,18 +128,19 @@ def commit(root, message, files):
     return git(root, "rev-parse", "HEAD")
 
 
+@unittest.skipUnless(SHM.is_dir(), NO_SHM)
 class FakeRepo(unittest.TestCase):
     """Tiny repository standing in for the pins: MAIN <- CAND, CONS, OTHER."""
 
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(
-            prefix="task25-plan-", dir=SHM if SHM.is_dir() else None)
-        self.repo = Path(self.temp.name) / "repo"
+        self.temp = tempfile.TemporaryDirectory(prefix="task25-plan-",
+                                                dir=SHM)
+        self.base = Path(self.temp.name)
+        self.repo = self.base / "repo"
         self.repo.mkdir()
         git(self.repo, "init", "-q", "-b", "main")
-        (self.repo / ".gitignore").write_text("ignored/\n")
-        scripts = {"src/auto/rules/n%dScript.sml" % i: "val x = [a = %d];\n" % i
-                   for i in range(4)}
+        scripts = {"src/auto/rules/n%dScript.sml" % i: "val x = [a = %d];\n"
+                   % i for i in range(4)}
         self.main = commit(self.repo, "main", {
             task25.LIST: "main list\n", "tracked/f": "x\n",
             "src/auto/placeholder": "x\n", ".gitignore": "ignored/\n"})
@@ -119,7 +154,9 @@ class FakeRepo(unittest.TestCase):
         git(self.repo, "rm", "-rfq", ".")
         self.other = commit(self.repo, "other", {"o": "o\n"})
         git(self.repo, "checkout", "-q", "main")
-        self.patch = Path(self.temp.name) / "consumer.patch"
+        self.config = self.repo / "sigobj/Systeml.sml"  # untracked, as real
+        self.set_configured_alias("/dev/shm/t32-s3-derived")
+        self.patch = self.base / "consumer.patch"
         self.patch.write_text(
             "diff --git a/src/auto/rules/Holmakefile "
             "b/src/auto/rules/Holmakefile\n"
@@ -134,16 +171,27 @@ class FakeRepo(unittest.TestCase):
         task25.MAIN, task25.CONSUMER, task25.PATCH_SHA256 = self.saved
         self.temp.cleanup()
 
+    def set_configured_alias(self, alias):
+        self.config.parent.mkdir(exist_ok=True)
+        self.config.write_text('val HOLDIR = "%s"\n' % alias)
+
     def args(self, **over):
         values = dict(consumer_patch=self.patch, patch_sha256=None,
                       consumer_revision=self.consumer,
                       simplifier_revision=self.main, alias=None,
-                      scratch=None, jobs=None, skip_routine=False)
+                      scratch=None, jobs=None, skip_routine=False,
+                      output=self.base / "out", existing_core=None,
+                      existing_consumer=None)
         values.update(over)
         return argparse.Namespace(**values)
 
     def plan(self, **over):
         return task25.plan(self.args(**over), self.repo)
+
+    def link(self, name, target):
+        path = self.base / name
+        path.symlink_to(target)
+        return path
 
 
 class Plan(FakeRepo):
@@ -151,11 +199,13 @@ class Plan(FakeRepo):
         got = self.plan()
         self.assertEqual(got["simplifier"], self.main)
         self.assertFalse(got["patch_pin_overridden"])
-        self.assertNotIn("scratch", got)
-        self.assertNotIn("alias", got)
+        self.assertIsNone(got["scratch"])
+        self.assertEqual(got["alias"], Path("/dev/shm/t32-s3-derived"))
+        self.assertEqual(got["alias_config"], self.config)
 
     def test_descendant_resolved_to_full_hash(self):
-        got = self.plan(simplifier_revision=self.cand[:12])
+        got = self.plan(simplifier_revision=self.cand[:12],
+                        scratch=self.base / "s")
         self.assertEqual(got["simplifier"], self.cand)
 
     def test_missing_revision_refused(self):
@@ -187,6 +237,12 @@ class Plan(FakeRepo):
         with self.assertRaisesRegex(RuntimeError, "bad --patch-sha256"):
             self.plan(patch_sha256="abc")
 
+    def test_plan_returns_the_hashed_bytes(self):
+        got = self.plan()
+        self.assertEqual(task25.sha(got["patch_bytes"]),
+                         got["patch_sha256"])
+        self.assertEqual(got["patch_bytes"], self.patch.read_bytes())
+
     def test_missing_patch_refused(self):
         with self.assertRaisesRegex(RuntimeError, "missing consumer patch"):
             self.plan(consumer_patch=self.patch.with_name("none"))
@@ -200,45 +256,110 @@ class Plan(FakeRepo):
             self.plan(jobs=0)
 
     def test_alias_must_be_explicit_normalized(self):
-        self.assertEqual(self.plan(alias=Path("/dev/shm/a"))["alias"],
+        scratch = self.base / "s"
+        self.assertEqual(self.plan(alias=Path("/dev/shm/a"),
+                                   scratch=scratch)["alias"],
                          Path("/dev/shm/a"))
         for bad in ("rel/alias", "/dev/shm/a/../b", "/"):
             with self.assertRaisesRegex(RuntimeError, "--alias"):
-                self.plan(alias=Path(bad))
+                self.plan(alias=Path(bad), scratch=scratch)
+
+    def test_scratch_required_unless_exact_task25(self):
+        for over in (dict(simplifier_revision=self.cand),
+                     dict(alias=Path("/dev/shm/a"))):
+            with self.subTest(over=over):
+                with self.assertRaisesRegex(RuntimeError,
+                                            "--scratch is required"):
+                    self.plan(**over)
+        self.plan()  # the exact reproduction keeps the /tmp fallback
 
     def test_scratch_refusals(self):
+        (self.repo / "ignored").mkdir()
+        to_repo = self.link("to-ignored", self.repo / "ignored")
+        to_tmp = self.link("to-tmp", "/tmp")
         for bad, why in ((Path("rel/scratch"), "absolute"),
                          (Path("/tmp/t32-s3-x"), "/tmp"),
                          (Path("/var/tmp/t32-s3-x"), "/tmp"),
-                         (self.repo / "tracked/new", "tracked tree"),
-                         (self.repo / "untracked-unignored", "not ignored")):
+                         (to_tmp / "t32-s3-x", "/tmp"),
+                         (self.repo / "tracked/new", "inside or contain"),
+                         (self.repo / "ignored/s", "inside or contain"),
+                         (self.repo / "untracked-unignored",
+                          "inside or contain"),
+                         (self.repo, "inside or contain"),
+                         (to_repo / "s", "inside or contain"),
+                         (self.base, "inside or contain"),
+                         (self.base / "no-parent/s", "parent directory")):
             with self.subTest(bad=str(bad)):
                 with self.assertRaisesRegex(RuntimeError, why):
-                    self.plan(scratch=bad)
+                    self.plan(scratch=bad, simplifier_revision=self.cand)
 
     def test_scratch_existing_refused(self):
+        (self.base / "there").mkdir()
         with self.assertRaisesRegex(RuntimeError, "already exists"):
-            (self.repo / "ignored").mkdir()
-            self.plan(scratch=self.repo / "ignored")
+            self.plan(scratch=self.base / "there")
 
-    def test_scratch_containing_repo_refused(self):
-        with self.assertRaisesRegex(RuntimeError, "contains caller"):
-            self.plan(scratch=self.repo.parent)
+    def test_scratch_outside_checkout_accepted_and_resolved(self):
+        real_base = Path(os.path.realpath(self.base))
+        got = self.plan(scratch=self.link("ok", real_base) / "s")
+        self.assertEqual(got["scratch"], real_base / "s")
 
-    @unittest.skipUnless(SHM.is_dir(), "no /dev/shm")
-    def test_scratch_in_shm_and_in_ignored_accepted(self):
-        got = self.plan(scratch=SHM / "t32-s3-unit-none")
-        self.assertEqual(got["scratch"], SHM / "t32-s3-unit-none")
-        got = self.plan(scratch=self.repo / "ignored/deep/scratch")
-        self.assertEqual(got["scratch"], self.repo / "ignored/deep/scratch")
+    def test_alias_overlaps_refused(self):
+        core, consumer = self.base / "core", self.base / "consumer"
+        core.mkdir()
+        consumer.mkdir()
+        scratch = self.base / "s"
+        self.link("alink", scratch)
+        cases = [(scratch, {}), (scratch / "in", {}), (self.base, {}),
+                 (SHM, {}), (self.base / "alink", {}),
+                 (self.base / "out", {}), (self.base / "out/x", {}),
+                 (core, dict(existing_core=core, existing_consumer=consumer)),
+                 (core / "x", dict(existing_core=core,
+                                   existing_consumer=consumer)),
+                 (consumer, dict(existing_core=core,
+                                 existing_consumer=consumer)),
+                 (self.repo / "x", {}), (self.repo, {})]
+        for alias, extra in cases:
+            with self.subTest(alias=str(alias)):
+                with self.assertRaisesRegex(RuntimeError, "alias overlaps|"
+                                            "configured alias"):
+                    self.plan(alias=alias, scratch=scratch, **extra)
 
-    def test_output_inside_tracked_tree_refused(self):
+    def test_alias_covering_tmp_refused_in_default_mode(self):
+        self.set_configured_alias("/var/tmp")
+        with self.assertRaisesRegex(RuntimeError, "alias overlaps"):
+            self.plan()
+
+    def test_unsafe_alias_parent_refused(self):
+        with self.assertRaisesRegex(RuntimeError, "unsafe configured alias"):
+            self.plan(alias=Path("/t32-s3-top"), scratch=self.base / "s")
+
+    def test_output_rule_in_default_mode(self):
+        self.assertEqual(self.plan(output=self.repo / "ignored/o")["output"],
+                         self.repo / "ignored/o")
+        for bad, why in ((self.repo / "tracked/o", "tracked tree"),
+                         (self.repo / "untracked-unignored", "not ignored"),
+                         (self.repo.parent, "contains caller")):
+            with self.subTest(bad=str(bad)):
+                with self.assertRaisesRegex(RuntimeError, why):
+                    self.plan(output=bad)
+
+    def test_output_symlink_into_tracked_refused(self):
         with self.assertRaisesRegex(RuntimeError, "tracked tree"):
-            task25.outside_tracked(self.repo, self.repo / "tracked/o", "output")
-        task25.outside_tracked(self.repo, self.repo / "ignored/o", "output")
+            self.plan(output=self.link("o", self.repo / "tracked") / "o")
+
+    def test_output_existing_or_in_scratch_refused(self):
+        (self.base / "out").mkdir()
+        with self.assertRaisesRegex(RuntimeError, "output already exists"):
+            self.plan()
+        with self.assertRaisesRegex(RuntimeError, "output overlaps scratch"):
+            self.plan(output=self.base / "s/out", scratch=self.base / "s")
+
+    def test_reuse_needs_both_trees(self):
+        with self.assertRaisesRegex(RuntimeError, "reuse requires both"):
+            self.plan(existing_core=self.base)
 
     def test_alias_mismatch_refused(self):
-        core = self.repo.parent / "core"
+        core = self.base / "core"
         (core / "tools/Holmake").mkdir(parents=True)
         (core / "tools/Holmake/Systeml.sml").write_text(
             'val HOLDIR = "/dev/shm/one"\n')
@@ -263,43 +384,59 @@ class Commands(unittest.TestCase):
 
 
 class Sandbox(FakeRepo):
-    def test_scratch_bound_after_repo_readonly(self):
-        runner = task25.Runner(self.repo, self.repo, self.repo / "ignored/s",
-                               Path("/dev/shm/a"), self.repo / "ignored/s/core",
-                               self.repo / "ignored/s/consumer")
+    def test_binds_in_exact_order(self):
+        scratch = self.base / "s"
+        runner = task25.Runner(self.repo, self.base / "out", scratch,
+                               Path("/dev/shm/a"), scratch / "core",
+                               scratch / "consumer")
         runner.git_common = self.repo / ".git"
         cmd = runner.sandbox(["true"])
-        ro = cmd.index(str(self.repo), cmd.index("--ro-bind", 8))
-        scratch = cmd.index(str(self.repo / "ignored/s"))
-        self.assertLess(ro, scratch)
+        triples = [tuple(cmd[i:i + 3]) for i, word in enumerate(cmd)
+                   if word in ("--bind", "--ro-bind")]
+        self.assertEqual(triples, [
+            ("--ro-bind", "/", "/"),
+            ("--bind", str(scratch), str(scratch)),
+            ("--bind", str(scratch / "core"), "/dev/shm/a"),
+            ("--ro-bind", str(self.repo), str(self.repo)),
+            ("--ro-bind", str(self.repo / ".git"), str(self.repo / ".git"))])
 
 
-@unittest.skipUnless(SHM.is_dir(), "no /dev/shm")
 class PrepareOnly(FakeRepo):
     """Whole driver, prepare-only: no build process, real git and patch."""
 
-    def run_main(self, *extra, revision=None):
-        out = Path(self.temp.name) / "out"
-        scratch = SHM / ("t32-s3-unit-%d" % os.getpid())
-        self.addCleanup(lambda: scratch.exists() and
-                        __import__("shutil").rmtree(scratch))
+    runs = 0
+
+    def scratch_path(self):
+        return SHM / ("t32-s3-unit-%d-%s" % (os.getpid(), self.id()[-24:]))
+
+    def run_main(self, *extra, revision=None, scratch=None,
+                 expect_exit=False):
+        PrepareOnly.runs += 1
+        self.out = self.base / ("out%d" % PrepareOnly.runs)
+        scratch = scratch or self.scratch_path()
+        self.addCleanup(lambda: scratch.exists() and shutil.rmtree(scratch))
         argv = ["driver", "--consumer-patch", str(self.patch),
-                "--output", str(out), "--prepare-only",
+                "--output", str(self.out), "--prepare-only",
                 "--simplifier-revision", revision or self.cand,
                 "--alias", "/dev/shm/t32-s3-unit-alias",
                 "--scratch", str(scratch), *extra]
         saved = (sys.argv, task25.__file__)
         sys.argv = argv
         fake = self.repo / "a/b/c/d/driver.py"
-        fake.parent.mkdir(parents=True)
+        fake.parent.mkdir(parents=True, exist_ok=True)
         fake.write_text("#\n")
         task25.__file__ = str(fake)
+        self.exit = None
         try:
             with contextlib.redirect_stdout(io.StringIO()):
                 task25.main()
+        except SystemExit as exc:
+            if not expect_exit:
+                raise
+            self.exit = exc
         finally:
             sys.argv, task25.__file__ = saved
-        manifest = json.loads((out / "manifest.json").read_text())
+        manifest = json.loads((self.out / "manifest.json").read_text())
         return manifest, scratch
 
     def test_provenance_and_cleanup(self):
@@ -315,11 +452,104 @@ class PrepareOnly(FakeRepo):
         self.assertTrue(m["task_scratch_removed"])
         self.assertFalse(scratch.exists())
 
+    def test_logs_are_compressed_and_hashed(self):
+        m, _ = self.run_main()
+        self.assertEqual(list(self.out.glob("*.log")), [])
+        self.assertTrue(m["runs"])
+        for record in m["runs"]:
+            packed = self.out / record["log"]
+            self.assertTrue(record["log"].endswith(".log.gz"))
+            self.assertEqual(record["output"]["sha256"],
+                             task25.sha(gzip.decompress(
+                                 packed.read_bytes())))
+            self.assertEqual(record["log_gz"], task25.fingerprint(packed))
+
+    def test_patch_read_once_and_written_as_hashed(self):
+        reads = []
+        original = task25.Path.read_bytes
+
+        def counting(path):
+            reads.append(str(path))
+            return original(path)
+        with mock.patch.object(task25.Path, "read_bytes", counting):
+            m, _ = self.run_main()
+        self.assertEqual(reads.count(str(self.patch)), 1)
+        written = (self.out / "consumer.patch").read_bytes()
+        self.assertEqual(task25.sha(written), m["patch_sha256"])
+
     def test_wrong_revision_leaves_no_output(self):
-        out = Path(self.temp.name) / "out"
         with self.assertRaisesRegex(RuntimeError, "does not descend"):
             self.run_main(revision=self.other)
-        self.assertFalse(out.exists())
+        self.assertFalse(self.out.exists())
+
+    def test_in_repo_scratch_refused_nothing_created(self):
+        (self.repo / "ignored").mkdir()
+        through = self.link("through", self.repo / "ignored")
+        for scratch in (self.repo / "ignored/s", through / "s"):
+            with self.subTest(scratch=str(scratch)):
+                with self.assertRaisesRegex(RuntimeError,
+                                            "inside or contain"):
+                    self.run_main(scratch=scratch)
+                self.assertFalse(self.out.exists())
+                self.assertFalse((self.repo / "ignored/s").exists())
+
+    def test_git_ceiling_passed_to_patch_commands(self):
+        seen, popen = [], subprocess.Popen
+
+        def spy(command, *a, **kw):
+            seen.append((list(command), kw.get("cwd"), kw.get("env")))
+            return popen(command, *a, **kw)
+        with mock.patch.object(task25.subprocess, "Popen", spy):
+            _, scratch = self.run_main()
+        ceiling = str(Path(os.path.realpath(scratch)))
+        applies = [(cwd, env) for command, cwd, env in seen
+                   if command[:2] == ["git", "apply"]]
+        self.assertEqual(len(applies), 3)
+        for cwd, env in applies:
+            self.assertTrue(Path(cwd).is_relative_to(scratch))
+            self.assertEqual(env["GIT_CEILING_DIRECTORIES"], ceiling)
+
+    def test_terminating_signal_cleans_scratch(self):
+        for number in TERMINATING:
+            with self.subTest(signal=number.name):
+                previous = signal.getsignal(number)
+                scratch = self.scratch_path()
+                seen = []
+
+                def archive(runner, revision, target, paths=()):
+                    seen.append(scratch.is_dir())
+                    os.kill(os.getpid(), number)
+                    time.sleep(5)
+                with mock.patch.object(task25.Runner, "archive", archive):
+                    m, _ = self.run_main(expect_exit=True)
+                self.assertEqual(seen, [True])
+                self.assertIn("terminated by " + number.name, m["failure"])
+                self.assertFalse(m["success"])
+                self.assertTrue(m["task_scratch_removed"])
+                self.assertFalse(scratch.exists())
+                self.assertIsNotNone(self.exit)
+                self.assertEqual(signal.getsignal(number), previous)
+
+    def test_failure_after_scratch_exists_cleans_and_reports(self):
+        self.patch.write_text(self.patch.read_text().replace(
+            "@@ -1 +1,2 @@\n \n", "@@ -1 +1,2 @@\n x\n"))
+        digest = task25.sha(self.patch.read_bytes())
+        m, scratch = self.run_main("--patch-sha256", digest,
+                                   expect_exit=True)
+        self.assertFalse(m["success"])
+        self.assertIn("command failed: patch-check", m["failure"])
+        self.assertTrue(m["task_scratch_removed"])
+        self.assertFalse(scratch.exists())
+        self.assertIn("command failed", str(self.exit))
+
+    def test_runner_construction_failure_cleans_and_reports(self):
+        with mock.patch.object(task25, "Runner",
+                               side_effect=RuntimeError("boom")):
+            m, scratch = self.run_main(expect_exit=True)
+        self.assertIn("boom", m["failure"])
+        self.assertFalse(m["success"])
+        self.assertFalse(scratch.exists())
+        self.assertTrue(m["task_scratch_removed"])
 
 
 if __name__ == "__main__":
