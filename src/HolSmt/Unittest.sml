@@ -15598,6 +15598,69 @@ in
       Feedback.message_of holerr)
 end
 
+fun cpc_array_set_assumption_bridge_success () =
+let
+  fun check (name, source, echo) =
+    let
+      val unrelated = Term.mk_var ("unrelated", Type.bool)
+      val theorem = CPC_ProofReplay.remove_hyps_for_test
+        ([unrelated, boolSyntax.T, source], boolSyntax.F, Thm.ASSUME echo)
+      val _ = check_oracle_tags ("array-set bridge " ^ name) theorem
+    in
+      assert (Term.aconv (Thm.concl theorem) echo andalso
+          List.length (Thm.hyp theorem) = 1 andalso
+          List.exists (Term.aconv source) (Thm.hyp theorem),
+        "array-set bridge did not retain the source context for " ^ name)
+    end
+  val x = Term.mk_var ("x", intSyntax.int_ty)
+  val set_ty = Type.--> (intSyntax.int_ty, Type.bool)
+  val s = Term.mk_var ("s", set_ty)
+  val t = Term.mk_var ("t", set_ty)
+  val p = Term.mk_var ("P", Type.--> (set_ty, Type.bool))
+  fun apply set = Term.mk_comb (p, set)
+  val equivalence = boolSyntax.mk_eq
+    (boolSyntax.mk_eq (pred_setSyntax.mk_delete (s, x), t),
+     boolSyntax.mk_eq (s, pred_setSyntax.mk_insert (x, t)))
+  val echo_equivalence = boolSyntax.mk_eq
+    (boolSyntax.mk_eq
+       (Term.mk_comb (combinSyntax.mk_update (x, boolSyntax.F), s), t),
+     boolSyntax.mk_eq
+       (s, Term.mk_comb (combinSyntax.mk_update (x, boolSyntax.T), t)))
+  val y = Term.mk_var ("y", intSyntax.int_ty)
+  val membership = pred_setSyntax.mk_in (x, s)
+  val cases =
+    [("membership", membership, Term.mk_comb (s, x)),
+     ("beta source", Term.mk_comb
+        (Term.mk_abs (y, Term.mk_comb (s, y)), x), membership),
+     ("insert", apply (pred_setSyntax.mk_insert (x, s)),
+      apply (Term.mk_comb (combinSyntax.mk_update (x, boolSyntax.T), s))),
+     ("delete", apply (pred_setSyntax.mk_delete (s, x)),
+      apply (Term.mk_comb (combinSyntax.mk_update (x, boolSyntax.F), s))),
+     ("empty", apply (pred_setSyntax.mk_empty intSyntax.int_ty),
+      apply (combinSyntax.mk_K_1 (boolSyntax.F, intSyntax.int_ty))),
+     ("universe", apply (pred_setSyntax.mk_univ intSyntax.int_ty),
+      apply (combinSyntax.mk_K_1 (boolSyntax.T, intSyntax.int_ty))),
+     ("subset", pred_setSyntax.mk_subset (s, t),
+      boolSyntax.mk_forall (y, boolSyntax.mk_imp
+        (Term.mk_comb (s, y), Term.mk_comb (t, y)))),
+     ("set_3 stripped", equivalence, echo_equivalence),
+     ("set_3 implication", boolSyntax.mk_imp
+        (boolSyntax.mk_conj (pred_setSyntax.mk_in (x, s),
+           boolSyntax.mk_neg (pred_setSyntax.mk_in (x, t))), equivalence),
+      boolSyntax.mk_imp
+        (boolSyntax.mk_conj (Term.mk_comb (s, x),
+           boolSyntax.mk_neg (Term.mk_comb (t, x))), echo_equivalence))]
+  val wrong_source = apply (pred_setSyntax.mk_insert (x, t))
+in
+  List.app check cases;
+  expect_hol_error_contains "array-set bridge nonmatching source"
+    "extra hypothesis is not one of the enumerated cvc5 semantic bridges"
+    (fn () => ignore (CPC_ProofReplay.remove_hyps_for_test
+      ([wrong_source], boolSyntax.F, Thm.ASSUME
+        (apply (Term.mk_comb (combinSyntax.mk_update (x, boolSyntax.T), s))))))
+end
+
+
 fun cpc_proof_replay_contra_success () =
 let
   val proof = parse_cpc_proof_string
@@ -36102,6 +36165,8 @@ let
       cpc_long_structural_resolution_success),
     ("cpc_long_refutation_widening_success",
       cpc_long_refutation_widening_success),
+    ("cpc_array_set_assumption_bridge_success",
+      cpc_array_set_assumption_bridge_success),
     ("cpc_proof_replay_contra_success",
       cpc_proof_replay_contra_success),
     ("cpc_proof_replay_eq_refl_cong_chain_success",
