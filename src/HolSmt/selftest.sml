@@ -742,12 +742,11 @@ val graph_expect_thm = expect_thm
     (``(y:int) <> 0 ==>
        emod 0 y = 0``,
       [thm_CVC, thm_CVCp, thm_Z3, thm_Z3p]),
-    (* Symbolic remainder bounds.  thm_CVCp omitted: CPC replay fails at
-       a trans middle-equality step on these. *)
+    (* Symbolic remainder bounds. *)
     (``(y:int) = 0 \/ emod x y >= 0``,
-      [thm_CVC, thm_Z3, thm_Z3p]),
+      [thm_CVC, thm_CVCp_arith, thm_Z3, thm_Z3p]),
     (``(y:int) = 0 \/ emod x y < ABS y``,
-      [thm_CVC, thm_Z3, thm_Z3p]),
+      [thm_CVC, thm_CVCp_arith, thm_Z3, thm_Z3p]),
     (``(y:real) <> 0 ==> ((x:real) / y) * y = x``,
       [thm_CVC, thm_CVCp, thm_Z3, thm_Z3p]),
     (``ediv (~7) (~2) = (4:int)``,
@@ -2228,7 +2227,7 @@ val graph_expect_thm = expect_thm
          and r = emod m n
          in
            (m = n * q + r /\ 0 <= r /\ r <= (ABS n) - 1)``,
-      [(*thm_AUTO,*) thm_CVC, thm_Z3_v4, thm_Z3p_v4]),
+      [(*thm_AUTO,*) thm_CVC, thm_CVCp_arith, thm_Z3_v4, thm_Z3p_v4]),
 
     (* regression tests *)
 
