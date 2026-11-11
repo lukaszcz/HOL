@@ -495,6 +495,39 @@ class PrepareOnly(FakeRepo):
         written = (self.out / "consumer.patch").read_bytes()
         self.assertEqual(task25.sha(written), m["patch_sha256"])
 
+    def test_scratch_run_holds_the_serial_lock(self):
+        events = []
+
+        @contextlib.contextmanager
+        def lock(repo):
+            events.append(("take", Path(repo).resolve(),
+                           self.scratch_path().exists()))
+            try:
+                yield
+            finally:
+                events.append(("release", self.scratch_path().exists()))
+        with mock.patch.object(task25, "serial_lock", lock):
+            self.run_main()
+        # Taken on the caller checkout before the scratch exists, released
+        # only after it was removed.
+        self.assertEqual(events, [("take", self.repo.resolve(), False),
+                                  ("release", False)])
+
+    def test_busy_serial_lock_refuses_and_creates_nothing(self):
+        with task25.serial_lock(self.repo):
+            with self.assertRaisesRegex(SystemExit, "refusing to run.*busy"):
+                self.run_main()
+        self.assertFalse(self.out.exists())
+        self.assertFalse(self.scratch_path().exists())
+
+    def test_no_scratch_does_not_take_the_lock(self):
+        taken = []
+        with mock.patch.object(task25, "serial_lock",
+                               lambda repo: taken.append(repo)):
+            with task25.run_lock(self.args(scratch=None), self.repo):
+                pass
+        self.assertEqual(taken, [])
+
     def test_wrong_revision_leaves_no_output(self):
         with self.assertRaisesRegex(RuntimeError, "does not descend"):
             self.run_main(revision=self.other)

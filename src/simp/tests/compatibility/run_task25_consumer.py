@@ -37,6 +37,12 @@ patch sha256 must equal the pin (--patch-sha256 overrides it for a reviewed
 refresh). --jobs N passes -jN to bin/build; --skip-routine omits the routine
 `bin/build -t` pass after the bootstrap.
 
+With --scratch the run holds TASK32's advisory serial performance/build lock
+(acceptance.serial_lock on the caller checkout) from before the scratch is
+created until it is removed, so the bootstrap build never overlaps a timing
+measurement; a busy lock refuses the run with a nonzero exit. The exact
+TASK25 reproduction (no --scratch) does not take it.
+
 --prepare-only checks archives/patch and emits source inventories, without
 configuring or building. Task-owned staging is removed even on failure.
 Patch, compressed logs and compressed inventories survive there. Existing
@@ -68,6 +74,8 @@ MAIN = "4a0ad8e9160dd911393385d748b3535fc5ce65ba"
 CONSUMER = "442009a1f7f04366573dc2b649d31650ea7b113b"
 PATCH_SHA256 = (
     "dbb8da2b73100b9e484c2737f08d9599b83393e2677f98def5029035a43757cc")
+# Fixed at import: tests rebind __file__ while calling main().
+PERFORMANCE = Path(__file__).resolve().parents[1] / "performance"
 BANNED_SCRATCH = (Path("/tmp"), Path("/var/tmp"))
 LIST = "src/list/src/listScript.sml"
 PARSER = "tools/parsing/HOLSourceParser.sml"
@@ -995,10 +1003,43 @@ def finish(args, planned, m, created):
     STATE.mode = IGNORE
 
 
+def serial_lock(repo):
+    """TASK32's advisory performance/build lock for the caller checkout.
+
+    The sibling performance directory is put at the END of sys.path so
+    that it cannot shadow anything; `acceptance` is imported only when a
+    --scratch run needs the lock."""
+    sys.path.append(str(PERFORMANCE))
+    import acceptance
+    return acceptance.serial_lock(repo)
+
+
+@contextlib.contextmanager
+def run_lock(args, repo):
+    """Hold the serial lock for a whole --scratch (TASK32-style) run: it is
+    taken before anything is created and released after the scratch is
+    removed. A busy lock refuses the run (nonzero exit, nothing created).
+    The exact TASK25 reproduction (no --scratch) does not take it."""
+    if args.scratch is None:
+        yield
+        return
+    with contextlib.ExitStack() as stack:
+        try:
+            stack.enter_context(serial_lock(repo))
+        except ValueError as exc:  # acceptance.Blocked
+            raise SystemExit("refusing to run: " + str(exc))
+        yield
+
+
 def main():
     args = parse_args()
     repo = Path(__file__).resolve().parents[4]
     planned = plan(args, repo)
+    with run_lock(args, repo):
+        run(args, repo, planned)
+
+
+def run(args, repo, planned):
     m, created = {"schema": 1, "success": False, "runs": []}, {}
     with terminating_signals():
         try:

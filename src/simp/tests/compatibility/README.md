@@ -30,6 +30,11 @@ runs are not stored in the repository: every runner takes an explicit
   The patch calls `Cond_rewrExt.is_var_perm`, the extension engine's
   audited copy, because develop's `Cond_rewr` interface does not export
   `is_var_perm`.
+  The driver takes TASK32's advisory serial performance/build lock
+  (`acceptance.serial_lock` on the caller checkout) for any `--scratch` run,
+  from before the scratch exists until it is removed, and refuses to run
+  when the lock is busy; the exact TASK25 reproduction (no `--scratch`)
+  does not take it.
 - `tools/root-wrapper.sh`: runs a command in a checkout whose configured root
   (`HOLDIR` in `tools/Holmake/Systeml.sml`) differs from its real location,
   using `bwrap` to map the checkout at the configured root.  It needs no
