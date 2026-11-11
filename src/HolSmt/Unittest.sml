@@ -14634,6 +14634,83 @@ in
   check_oracle_tags "CPC n-ary HO congruence unit test" theorem
 end
 
+fun cpc_nested_ho_application_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const f (-> Int Int)) \
+    \(declare-const g (-> Int Int)) (declare-const x Int) \
+    \(assume @p1 (= f g)) \
+    \(step @p2 (= (+ (_ f x) 1) (+ (_ g x) 1)) \
+    \:rule cong :premises (@p1) :args ((+ (_ f x) 1))))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val expected = ``(f:int->int) x + 1 = g x + 1``
+  val first_order = CPC_ProofReplay.replay_root_for_test
+    (CPC_ProofParser.parse_stream_with_version
+      (SmtLib_Logics.parsedicts_of_logic "QF_UF") "1.3.4"
+      (TextIO.openString
+        "((declare-const f (-> Bool Bool)) (declare-const x Bool) \
+        \(step @p :rule refl :args ((= (_ f x) x))))"))
+  val first_order_source = ``(f:bool->bool) x = x``
+  val coerced = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((declare-const f (-> Real Real)) \
+      \(step @p :rule refl :args ((@ f 1))))")
+  val coerced_source = Term.mk_comb
+    (``f:real->real``, intrealSyntax.mk_real_of_int ``1:int``)
+  val named_literal = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((declare-const bv5 (-> Int Int)) (declare-const x Int) \
+      \(step @p :rule refl :args ((_ bv5 x))))")
+  val named_literal_source = ``(bv5:int->int) x``
+  fun reflexive source expected =
+    let
+      val theorem = CPC_ProofReplay.replay_root_for_test
+        (parse_cpc_proof_string
+          ("((declare-const f (-> Int Int)) \
+           \(declare-const g (-> Int Int)) (declare-const x Int) \
+           \(declare-const h (-> (_ BitVec 8) (_ BitVec 8))) \
+           \(declare-const c Bool) \
+           \(step @p :rule refl :args (" ^ source ^ ")))"))
+    in
+      assert (Thm.concl theorem ~~ boolSyntax.mk_eq (expected, expected),
+        "CPC higher-order application changed its source term");
+      check_oracle_tags "CPC nested higher-order reflexivity" theorem
+    end
+in
+  assert (Thm.concl theorem ~~ expected,
+    "CPC nested higher-order congruence has the wrong conclusion");
+  assert (List.length (Thm.hyp theorem) = 1 andalso
+      List.hd (Thm.hyp theorem) ~~ ``(f:int->int) = g``,
+    "CPC nested higher-order congruence changed its premise");
+  check_oracle_tags "CPC nested higher-order congruence" theorem;
+  assert (Thm.concl first_order ~~
+      boolSyntax.mk_eq (first_order_source, first_order_source),
+    "CPC higher-order application needs a higher-order source logic");
+  check_oracle_tags "CPC higher-order first-order dictionary" first_order;
+  assert (Thm.concl coerced ~~
+      boolSyntax.mk_eq (coerced_source, coerced_source),
+    "explicit CPC application lost integer-to-real coercion");
+  check_oracle_tags "CPC integer-to-real application coercion" coerced;
+  assert (Thm.concl named_literal ~~
+      boolSyntax.mk_eq (named_literal_source, named_literal_source),
+    "declared CPC function was mistaken for an indexed literal");
+  check_oracle_tags "CPC declared function application" named_literal;
+  reflexive "(+ (_ (ite c f g) x) 1)"
+    ``(if c then (f:int->int) else g) x + 1``;
+  reflexive "(_ (lambda (@list (@var x Int)) x) 1)"
+    ``(\x:int. x) 1``;
+  reflexive "(_ (@const 0 (-> Int Bool)) x)"
+    (Term.mk_comb (Term.mk_var ("@cpc.const.0", ``:int->bool``), ``x:int``));
+  reflexive "(_ bv5 8)" ``5w:word8``;
+  reflexive "((_ extract 3 0) (_ bv5 8))" ``(3 >< 0) (5w:word8):word4``;
+  reflexive "((_ extract 3 0) (_ h (_ bv5 8)))"
+    ``(3 >< 0) ((h:word8->word8) 5w):word4``;
+  reflexive "(_ +zero 3 5)" ``smtfp_pzero:(4,3) smtfp``;
+  reflexive "(_ BitVec 8)" (Term.mk_var ("@cpc.BitVec", ``:word8``));
+  reflexive "(_ FloatingPoint 3 5)"
+    (Term.mk_var ("@cpc.FloatingPoint", ``:(4,3) smtfp``))
+end
+
 fun cpc_proof_replay_ho_rare_rewrites_success () =
 let
   val proof = parse_cpc_proof_string
@@ -34862,6 +34939,8 @@ let
       cpc_proof_replay_ho_cong_and_ite_success),
     ("cpc_proof_replay_ho_cong_nary_success",
       cpc_proof_replay_ho_cong_nary_success),
+    ("cpc_nested_ho_application_success",
+      cpc_nested_ho_application_success),
     ("cpc_proof_replay_ho_rare_rewrites_success",
       cpc_proof_replay_ho_rare_rewrites_success),
     ("cpc_proof_parser_declarations_success",
