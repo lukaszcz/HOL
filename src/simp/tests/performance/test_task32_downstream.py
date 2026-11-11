@@ -223,10 +223,8 @@ class World:
                 (cwd / ".hol/make-deps/other.d").write_text("changed\n")
             if fault == "cache":
                 (cwd / ".hol/make-deps/FooTheory.sig.d").write_text("d\n")
-                (cwd / ".hol/make-deps/sub/.hol/make-deps").mkdir(
-                    parents=True)
-                (cwd / ".hol/make-deps/sub/.hol/make-deps/B.sml.d"
-                 ).write_text("d\n")
+                (cwd / "sub/.hol/make-deps").mkdir(parents=True)
+                (cwd / "sub/.hol/make-deps/B.sml.d").write_text("d\n")
             deps = cwd.parents[2] / "src/integer/.hol/make-deps"
             if fault == "xcache":
                 (deps / "IncTheory.sig.d").write_text("d\n")
@@ -234,6 +232,12 @@ class World:
                 made = cwd.parents[2] / "src/boss/.hol/make-deps"
                 made.mkdir()
                 (made / "BTheory.sml.d").write_text("d\n")
+            if fault == "xsubdir":
+                (deps / "sub").mkdir()
+                (deps / "sub/x.d").write_text("d\n")
+            if fault == "xbare":
+                (cwd.parent / ".hol/make-deps").mkdir(parents=True)
+                (cwd.parent / ".hol/make-deps/x.d").write_text("d\n")
             if fault == "xother":
                 (deps / "inc.txt").write_text("x")
             if fault == "xmodify":
@@ -678,7 +682,7 @@ class Pieces(unittest.TestCase):
         usage = dict(exit=0, timed_out=False, wall=1.0, utime=1.0,
                      stime=0.0, maxrss=1)
         rec = dict(usage=usage, stats=self.good, stray=[], modified=[],
-                   digest="d")
+                   churn=[], digest="d")
         unit = cases.BY_NAME["logroot"]
         dw.validate(rec, unit, Path("/r"), "/rep", "d", False)
         for change, text in (
@@ -688,6 +692,10 @@ class Pieces(unittest.TestCase):
                 (dict(stray=["a.txt"]), "stray write"),
                 (dict(stray=["a.sml"], modified=["a.sml"]),
                  "snapshot must be rebuilt"),
+                (dict(churn=["x.d"]), "churn that is not Holmake's"),
+                (dict(churn=[".hol/make-deps/sub/x.d"]), "churn that is"),
+                (dict(churn=["../../../../x/.hol/make-deps/a.d"]),
+                 "churn that is"),
                 (dict(digest="e"), "differs")):
             with self.assertRaisesRegex(dw.Refusal, text):
                 dw.validate(dict(rec, **change), unit, Path("/r"), "/rep",
@@ -695,6 +703,9 @@ class Pieces(unittest.TestCase):
         with self.assertRaises(dw.Blocked):
             dw.validate(dict(rec, digest="e"), unit, Path("/r"), "/rep",
                         "d", True)
+        dw.validate(dict(rec, churn=[".hol/make-deps/A.sig.d",
+                                     "../../integer/.hol/make-deps/B.d"]),
+                    unit, Path("/r"), "/rep", "d", False)
 
     def test_probe_facts_need_the_reporter_in_every_process(self):
         report = self.probe_report()
@@ -798,7 +809,7 @@ class Refusals(Base):
             ".hol/objs/part.dumpedheap"]))
         for rel in receipt["moved"]:
             self.assertTrue((Path(report["output"]) / "stray" / label /
-                             rel).is_file(), rel)
+                             "inside" / rel).is_file(), rel)
 
     def test_missing_stats_are_refused(self):
         self.assertIn("missing stats", self.attempt("nostats")["failure"])
@@ -841,7 +852,7 @@ class Refusals(Base):
             "receipt"])
         self.assertEqual(receipt["churn"], [
             ".hol/make-deps/FooTheory.sig.d",
-            ".hol/make-deps/sub/.hol/make-deps/B.sml.d"])
+            "sub/.hol/make-deps/B.sml.d"])
         self.assertEqual(receipt["stray"], [])
 
     def test_new_files_outside_make_deps_are_still_stray(self):
@@ -885,10 +896,42 @@ class Refusals(Base):
                       "../../integer/.hol/make-deps/other.d",
                       report["failure"])
 
+    def test_a_new_directory_in_another_make_deps_is_stray(self):
+        report = self.attempt("xsubdir")
+        self.assertIn("stray write: ../../integer/.hol/make-deps/sub",
+                      report["failure"])
+
+    def test_a_new_dot_hol_in_a_directory_without_one_is_stray(self):
+        report = self.attempt("xbare")
+        self.assertIn("stray write: ../.hol", report["failure"])
+
+    def test_churn_must_be_the_same_on_both_arms(self):
+        self.world.fault = lambda u, s, n: "xcache" if s == "base" else None
+        report = self.world.run("y", self.world.spec(["logroot"]))
+        self.assertFalse(report["success"])
+        self.assertIn("Holmake cache churn differs between the processes "
+                      "(or arms) of: logroot", report["failure"])
+        self.assertIn("IncTheory.sig.d'] on base", report["failure"])
+
+    def test_check_churn(self):
+        one = dict(workload="u", side="base", churn=["a/.hol/make-deps/x.d"])
+        two = dict(one, side="cand")
+        dw.check_churn([one, two, dict(one, workload="v", churn=[])])
+        dw.check_churn([])
+        with self.assertRaisesRegex(dw.Refusal, "differs.*of: u"):
+            dw.check_churn([one, dict(two, churn=[])])
+        with self.assertRaisesRegex(dw.Refusal, "differs"):
+            dw.check_churn([one, dict(one, churn=[])])
+
     def test_the_cache_predicate(self):
         yes = dw.is_holmake_cache
         self.assertTrue(yes(".hol/make-deps/XTheory.sig.d"))
-        self.assertTrue(yes("a/.hol/make-deps/x/Y.d"))
+        self.assertTrue(yes("a/.hol/make-deps/Y.d"))
+        self.assertTrue(yes("../a/.hol/make-deps/Y.d"))
+        self.assertFalse(yes("a/.hol/make-deps/x/Y.d"))
+        self.assertFalse(yes("a/.hol/make-deps/x/.hol/make-deps/y/Y.d"))
+        self.assertFalse(yes("make-deps/Y.d"))
+        self.assertFalse(yes(".hol/make-deps/Y"))
         self.assertFalse(yes("foo.d"))
         self.assertFalse(yes(".hol/make-deps/x.txt"))
         self.assertFalse(yes(".hol/other/x.d"))
@@ -1358,7 +1401,7 @@ class Journal(Base):
         self.assertEqual(main, 0)
         self.assertEqual(self.world.snapshot(), before)
         kept = list((self.world.repo / dw.JOURNALS).glob(
-            "*/strays/.hol/objs/leftover.uo"))
+            "*/strays/inside/.hol/objs/leftover.uo"))
         self.assertEqual(len(kept), 1)
 
     def test_recover_removes_cache_churn_in_other_directories(self):
@@ -1371,6 +1414,70 @@ class Journal(Base):
         kept = list((self.world.repo / dw.JOURNALS).glob(
             "*/strays/outside/src/integer/.hol/make-deps/inc.txt"))
         self.assertEqual(len(kept), 1)
+
+    def test_recover_refuses_an_untrustworthy_journal(self):
+        self.fatal()
+        (folder,) = dw.pending_journals(self.world.repo)
+        good = dw.journal_read(folder)
+        for change, text in (
+                (dict(root=str(self.world.tmp / "elsewhere")), "hold"),
+                (dict(dirs=["../x"]), "bad directory"),
+                (dict(dirs=["/etc"]), "bad directory"),
+                (dict(bare=["a/./b"]), "bad directory"),
+                (dict(before={"x/.hol/make-deps/a.d": ["f", 1, 2]}),
+                 "bad listing")):
+            data = json.loads(json.dumps(good))
+            data["pending"]["outside"].update(change)
+            dw.journal_write(folder, data)
+            with self.assertRaisesRegex(dw.Refusal, text):
+                dw.recover(self.world.repo)
+        dw.journal_write(folder, good)
+        self.assertEqual(dw.recover(self.world.repo), 0)
+
+    def test_recover_removes_in_folder_cache_churn(self):
+        before, report = self.fatal()
+        folder = self.world.roots["base"] / "src/num/extra_theories"
+        (folder / ".hol/make-deps/XTheory.sig.d").write_text("d\n")
+        self.assertEqual(dw.recover(self.world.repo), 0)
+        self.assertEqual(self.world.snapshot(), before)
+        self.assertEqual(list((self.world.repo / dw.JOURNALS).glob(
+            "*/strays/inside/.hol/make-deps/*")), [])
+
+    def test_a_failing_settle_does_not_mask_a_fatal_restore(self):
+        def boom(*args):
+            raise RuntimeError("boom")
+        with mock.patch.object(dw, "settle_outside", boom):
+            before, report = self.fatal()
+        self.assertIn("Fatal: could not restore the products of logroot",
+                      report["failure"])
+        self.assertIn("(also: RuntimeError: boom)", report["failure"])
+        self.assertEqual(len(dw.pending_journals(self.world.repo)), 1)
+        self.assertEqual(dw.recover(self.world.repo), 0)
+        self.assertEqual(self.world.snapshot(), before)
+
+    def test_a_failing_settle_is_a_note_on_the_signal(self):
+        def boom(*args):
+            raise RuntimeError("boom")
+        self.world.fault = lambda u, s, n: "terminate"
+        before = self.world.snapshot()
+        with mock.patch.object(dw, "settle_outside", boom):
+            with self.assertRaises(snap.Terminated) as caught:
+                self.world.run("t", self.world.spec(["logroot"]))
+        self.assertTrue(any("boom" in n for n in
+                            caught.exception.__notes__))
+        # the journal stays for `recover`, which puts everything back
+        self.assertEqual(len(dw.pending_journals(self.world.repo)), 1)
+        self.assertEqual(dw.recover(self.world.repo), 0)
+        self.assertEqual(self.world.snapshot(), before)
+
+    def test_a_failing_settle_alone_is_the_error_and_keeps_the_journal(self):
+        def boom(*args):
+            raise RuntimeError("boom")
+        with mock.patch.object(dw, "settle_outside", boom):
+            report = self.world.run("b", self.world.spec(["logroot"]))
+        self.assertFalse(report["success"])
+        self.assertIn("RuntimeError: boom", report["failure"])
+        self.assertEqual(len(dw.pending_journals(self.world.repo)), 1)
 
     def test_recover_with_nothing_pending_is_a_noop(self):
         self.assertEqual(dw.recover(self.world.repo), 0)

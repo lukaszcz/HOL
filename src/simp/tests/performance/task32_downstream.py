@@ -511,8 +511,9 @@ def settle(folder, stops, before, meta, store, name, stray_dir):
     remove the new Holmake dependency-cache files (`is_holmake_cache`,
     returned as `churn`), move every other new file (Holmake intermediates
     a failed process leaves, anything a selftest writes) into `stray_dir`,
-    and remove the directories the process made. Returns the moved rel
-    paths, the churn rel paths, the existing
+    and remove the directories the process made (one that cannot be removed
+    is recorded as moved, so as stray). Returns the moved rel paths, the
+    churn rel paths, the existing
     files outside the products that changed or vanished (`modified`), the
     products the process rewrote (`rewritten`: the Holmake churn of the
     target, e.g. its make-deps files) and whether the products are back as
@@ -534,8 +535,10 @@ def settle(folder, stops, before, meta, store, name, stray_dir):
         moved.append(rel)
     for rel in sorted((p for p, e in now.items()
                        if p not in before and e[0] == "d"), reverse=True):
-        with contextlib.suppress(OSError):
+        try:
             (Path(folder) / rel).rmdir()
+        except OSError:
+            moved.append(rel)
     final = scan(folder, stops)
     ok = all(final.get(r) == before.get(r) for r in meta) and not any(
         r in final and r not in before for r in targets)
@@ -549,11 +552,12 @@ def settle(folder, stops, before, meta, store, name, stray_dir):
 
 
 def hol_dirs(root):
-    """The rel paths of the directories below `root` (it included, as "")
-    that have a `.hol` subdirectory: where Holmake keeps `.hol/make-deps`.
-    One walk of a snapshot, which does not change during a run; neither
-    `.git` nor `.hol` nor symlinks are entered."""
-    found = []
+    """The rel paths (`"" ` is the root) of the directories below `root`,
+    as (those with a `.hol` subdirectory, where Holmake keeps
+    `.hol/make-deps`; those without). One walk of a snapshot, which does
+    not change during a run; neither `.git` nor `.hol` nor symlinks are
+    entered."""
+    with_hol, bare = [], []
 
     def walk(path, rel):
         try:
@@ -561,19 +565,19 @@ def hol_dirs(root):
         except OSError:
             return
         names = {e.name for e in entries if e.is_dir(follow_symlinks=False)}
-        if ".hol" in names:
-            found.append(rel)
+        (with_hol if ".hol" in names else bare).append(rel)
         for name in sorted(names - {".hol", ".git"}):
             walk(os.path.join(path, name),
                  os.path.join(rel, name) if rel else name)
     walk(str(root), "")
-    return found
+    return with_hol, bare
 
 
 def outside_dirs(dirs, unit_dir, stops):
-    """The inventoried directories the scan of a unit's folder does not
-    cover: everything but the folder and what is below it (the `stops`
-    below it belong to other units and are not scanned)."""
+    """The directories of the inventory `dirs` (a list) that the scan of a
+    unit's folder does not cover: everything but the folder and what is
+    below it (the `stops` below it belong to other units and are not
+    scanned)."""
     def covered(d):
         if d != unit_dir and not d.startswith(unit_dir + "/"):
             return False
@@ -603,48 +607,63 @@ def list_make_deps(root, dirs):
     return found
 
 
-def settle_outside(root, folder, dirs, before, stray_dir):
+def settle_outside(root, folder, dirs, before, bare, stray_dir):
     """The `settle` of the make-deps directories `dirs` outside the unit's
-    folder, `before` being their `list_make_deps` before the process.
-    Holmake scans the INCLUDES directories even with `--no_prereqs` and
-    writes the missing dependency caches there. A new `*.d` file
-    (`is_holmake_cache`) is removed and is `churn`, any other new file is
-    moved to `<stray_dir>/outside/` (`moved`), a `make-deps` directory the
-    process made is removed once empty, and an existing entry that changed
-    or vanished is `modified`. The paths returned are relative to `folder`,
-    as `settle`'s."""
+    folder, `before` being their `list_make_deps` before the process, and
+    of the directories `bare` that had no `.hol`. Holmake scans the
+    INCLUDES directories even with `--no_prereqs` and writes the missing
+    dependency caches there. A new `*.d` file (`is_holmake_cache`) is
+    removed and is `churn`; any other new entry (a file, or a directory
+    with all it holds) is moved to `stray_dir` by its path from `root`
+    (`moved`), as is a `.hol` that appeared in a bare directory; a
+    `make-deps` directory the process made is removed once empty (or
+    recorded as moved when it cannot be); an existing entry that changed
+    or vanished is `modified`. The paths returned are relative to
+    `folder`, as `settle`'s."""
+    def shown(rel):
+        return os.path.relpath(os.path.join(root, rel), folder)
+
+    def move(rel):
+        dst = Path(stray_dir) / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(Path(root) / rel), str(dst))
+        moved.append(shown(rel))
+
+    deps = {os.path.join(d, ".hol/make-deps") for d in dirs}
     now = list_make_deps(root, dirs)
-    moved, churn = [], []
-    for rel in sorted(p for p, e in now.items()
-                      if p not in before and e[0] != "d"):
-        shown = os.path.relpath(os.path.join(root, rel), folder)
-        if now[rel][0] == "f" and is_holmake_cache(rel):
+    moved, churn, made = [], [], []
+    for rel in sorted(p for p in now if p not in before):
+        if rel in deps:
+            made.append(rel)
+        elif now[rel][0] == "f" and is_holmake_cache(rel):
             (Path(root) / rel).unlink()
-            churn.append(shown)
+            churn.append(shown(rel))
         else:
-            dst = Path(stray_dir) / "outside" / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(Path(root) / rel), str(dst))
-            moved.append(shown)
-    for rel in sorted((p for p, e in now.items()
-                       if p not in before and e[0] == "d"), reverse=True):
-        with contextlib.suppress(OSError):
+            move(rel)
+    for rel in reversed(made):
+        try:
             (Path(root) / rel).rmdir()
+        except OSError:
+            moved.append(shown(rel))
+    for d in bare:
+        if os.path.lexists(os.path.join(root, d, ".hol")):
+            move(os.path.join(d, ".hol"))
     final = list_make_deps(root, dirs)
-    modified = sorted(os.path.relpath(os.path.join(root, p), folder)
-                      for p in before if before[p][0] != "d" and
-                      before[p] != final.get(p))
+    modified = sorted(shown(p) for p in before
+                      if before[p][0] != "d" and before[p] != final.get(p))
     return dict(moved=moved, churn=churn, modified=modified)
 
 
 def outside_for(ctx, side, unit, stops):
     """The directories of a snapshot whose make-deps are watched for a
-    unit: the inventory (one walk per side and run, kept in `ctx`) less
-    what the scan of the unit's folder covers."""
+    unit, and the bare ones (no `.hol`) watched not to get one: the
+    inventory (one walk per side and run, kept in `ctx`) less what the scan
+    of the unit's folder covers."""
     inventory = ctx.setdefault("inventory", {})
     if side not in inventory:
         inventory[side] = hol_dirs(ctx["roots"][side])
-    return outside_dirs(inventory[side], unit["dir"], stops)
+    return tuple(outside_dirs(part, unit["dir"], stops)
+                 for part in inventory[side])
 
 
 def normalize_text(data, root):
@@ -971,10 +990,12 @@ def validate(receipt, unit, root, reporter_dir, expected, candidate):
     require(not receipt["modified"], "modified existing file(s) outside "
             "the products: %s; the snapshot must be rebuilt" %
             ", ".join(receipt["modified"][:5]))
-    churn = receipt.get("churn", [])  # absent from older receipts
-    require(all(is_holmake_cache(p) for p in churn),
-            "churn that is not Holmake's dependency cache: " +
-            ", ".join(churn[:5]))
+    base = root / unit["dir"]
+    bad = [p for p in receipt["churn"] if not (
+        is_holmake_cache(p) and Path(os.path.normpath(base / p)
+                                     ).is_relative_to(root))]
+    require(not bad, "churn that is not Holmake's dependency cache in the "
+            "snapshot: " + ", ".join(bad[:5]))
     require(not receipt["stray"], "stray write: " + ", ".join(
         receipt["stray"][:5]))
     check_digest(receipt["digest"], expected, candidate)
@@ -1053,13 +1074,14 @@ def execute_unit(ctx, unit, side, label, layout, busy, expected):
     started = time.perf_counter()
     before = scan(folder, stops)
     sigobj_before = scan(root / "sigobj")
-    outside = outside_for(ctx, side, unit, stops)
+    outside, bare = outside_for(ctx, side, unit, stops)
     outside_before = list_make_deps(root, outside)
+    stray_dir = Path(ctx["evidence"]) / "stray" / label
     scans = time.perf_counter() - started
     rels = snap.theory_target_files(folder, name) if theory else []
     store = Path(ctx["journal"]) / "backup" / label
     produced = {}
-    settled = None
+    settled = settled_outside = None
     # From the backup to the restore a signal is only recorded (DEFER);
     # only the process wait in launch can raise it. So the restore always
     # runs and completes, a Fatal stays the primary error (a recorded
@@ -1073,7 +1095,7 @@ def execute_unit(ctx, unit, side, label, layout, busy, expected):
                 name=name, stops=list(stops), meta=meta,
                 unit=unit["name"], before=sorted(
                     p for p, e in before.items() if e[0] != "d"),
-                outside=dict(root=str(root), dirs=outside,
+                outside=dict(root=str(root), dirs=outside, bare=bare,
                              before=outside_before)))
         try:
             for rel in rels:
@@ -1083,28 +1105,48 @@ def execute_unit(ctx, unit, side, label, layout, busy, expected):
             if theory:
                 produced = read_products(folder, name)
         finally:
+            # Each step has its own try: an error of one must not skip
+            # the other nor the Fatal check, and the primary error (an
+            # error of the process wait, e.g. Terminated) stays primary.
+            pending = sys.exc_info()[1]
+            errors = []
             started = time.perf_counter()
-            settled = settle(folder, stops, before, meta, store, name,
-                             Path(ctx["evidence"]) / "stray" / label)
-            outer = settle_outside(root, folder, outside, outside_before,
-                                   Path(ctx["evidence"]) / "stray" / label)
+            try:
+                settled = settle(folder, stops, before, meta, store, name,
+                                 stray_dir / "inside")
+            except BaseException as error:
+                errors.append(error)
+            try:
+                settled_outside = settle_outside(
+                    root, folder, outside, outside_before, bare,
+                    stray_dir / "outside")
+            except BaseException as error:
+                errors.append(error)
             scans += time.perf_counter() - started
-            if theory:
-                if not settled["ok"]:
-                    raise Fatal(
-                        "could not restore the products of %s in %s: the "
-                        "backups and the journal are kept in %s (`recover` "
-                        "puts them back)" % (unit["name"], folder,
-                                             ctx["journal"]))
+            fatal = None
+            if theory and settled is not None and not settled["ok"]:
+                fatal = Fatal(
+                    "could not restore the products of %s in %s: the "
+                    "backups and the journal are kept in %s (`recover` "
+                    "puts them back)" % (unit["name"], folder,
+                                         ctx["journal"]))
+            if theory and fatal is None and not errors:
                 journal_end(ctx)
                 shutil.rmtree(store, ignore_errors=True)
+            every = [e for e in [fatal, pending] + errors if e is not None]
+            if every:
+                for other in every[1:]:
+                    every[0].add_note("also: %s: %s" % (
+                        type(other).__name__, other))
+                if every[0] is not pending:
+                    raise every[0]
     started = time.perf_counter()
     sigobj = ["sigobj/" + p for p in changed(sigobj_before,
                                              scan(root / "sigobj"))]
     receipt["scan_seconds"] = scans + time.perf_counter() - started
-    receipt.update(moved=settled["moved"] + outer["moved"],
-                   churn=settled["churn"] + outer["churn"],
-                   modified=settled["modified"] + outer["modified"],
+    receipt.update(moved=settled["moved"] + settled_outside["moved"],
+                   churn=settled["churn"] + settled_outside["churn"],
+                   modified=settled["modified"] + settled_outside["modified"],
                    rewritten=settled["rewritten"])
     receipt["stray"] = receipt["modified"] + receipt["moved"] + sigobj
     data = b""
@@ -1578,6 +1620,25 @@ def stems_of(receipt):
     return set(stats["loaded_before"]) | set(stats["loaded"])
 
 
+def check_churn(receipts):
+    """Both arms pay the same Holmake dependency scans: the churn of every
+    process of a unit (the caches it wrote and `settle` removed, relative
+    to the unit's folder) is one and the same set, whatever the side. The
+    snapshot build primes the caches, so it is normally empty; a snapshot
+    that lacks some on one arm only would bias the timing and is refused."""
+    found = {}
+    for r in receipts:
+        found.setdefault(r["workload"], {}).setdefault(
+            tuple(sorted(r["churn"])), set()).add(r["side"])
+    odd = sorted(w for w, sets in found.items() if len(sets) != 1)
+    require(not odd, "Holmake cache churn differs between the processes "
+            "(or arms) of: " + ", ".join(
+                "%s (%s)" % (w, "; ".join(
+                    "%s on %s" % (list(c), "/".join(sorted(sides)))
+                    for c, sides in sorted(found[w].items())))
+                for w in odd))
+
+
 def check_new_stems(receipts):
     """loading.check_new_stems for these processes: what a candidate process
     loads, minus what any baseline process of the workload loads, is empty
@@ -1702,6 +1763,7 @@ def outcome(report, receipts):
         bad = sorted(w for w in found if refs[w] != found[w])
         require(not bad, "outputs differ from the references: " +
                 ", ".join(bad))
+    check_churn(receipts)
     check_new_stems(receipts)
     out = dict(digests=found)
     if mode == "smoke":
@@ -2688,10 +2750,31 @@ def require_ledger(args):
             getattr(args, "repo", None) or HERE.parents[3]))
 
 
+def check_outside(out, unit_dir):
+    """The `outside` of a journal entry is trusted only if it is sane: its
+    root holds the unit's folder, and every directory is a normalized
+    relative path without `..` (`""` is the root) whose make-deps listing
+    entries are the ones listed."""
+    root = Path(out["root"])
+    require(root.is_absolute() and Path(unit_dir).is_relative_to(root),
+            "journal: the snapshot root does not hold the unit's folder")
+    for d in out["dirs"] + out["bare"]:
+        require(isinstance(d, str) and not os.path.isabs(d) and
+                (d == "" or os.path.normpath(d) == d) and
+                ".." not in d.split("/"), "journal: bad directory " +
+                repr(d))
+    known = {os.path.join(d, ".hol/make-deps") for d in out["dirs"]}
+    for rel in out["before"]:
+        require(rel in known or os.path.dirname(rel) in known,
+                "journal: bad listing entry " + repr(rel))
+
+
 def recover(repo):
     """Restore every pending journal: the products of the interrupted
-    theory unit from the backups, the files the process left moved into the
-    journal's `strays`; then clear the journal. Takes the serial lock."""
+    theory unit from the backups, the new Holmake caches removed, the other
+    files the process left moved into the journal's `strays/inside` (and
+    `strays/outside` for the rest of the snapshot); then clear the
+    journal. Takes the serial lock."""
     repo = Path(repo).resolve(strict=True)
     with a.serial_lock(repo):
         pending = pending_journals(repo)
@@ -2706,13 +2789,17 @@ def recover(repo):
                     [p for p in now if p in targets])
             for rel, e in sorted(now.items()):
                 if e[0] != "d" and rel not in before and rel not in targets:
-                    dst = folder / "strays" / rel
+                    if e[0] == "f" and is_holmake_cache(rel):
+                        (unit_dir / rel).unlink()
+                        continue
+                    dst = folder / "strays/inside" / rel
                     dst.parent.mkdir(parents=True, exist_ok=True)
                     shutil.move(str(unit_dir / rel), str(dst))
-            out = entry.get("outside")
-            if out:
-                settle_outside(out["root"], unit_dir, out["dirs"],
-                               out["before"], folder / "strays")
+            out = entry["outside"]
+            check_outside(out, unit_dir)
+            settle_outside(out["root"], unit_dir, out["dirs"],
+                           out["before"], out["bare"],
+                           folder / "strays/outside")
             for rel, m in entry["meta"].items():
                 path = unit_dir / rel
                 require(path.is_file() and sha(path.read_bytes()) ==

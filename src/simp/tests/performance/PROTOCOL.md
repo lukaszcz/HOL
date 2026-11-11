@@ -2978,8 +2978,9 @@ environment, stdin hash, start and end ns, exit and log seal (logs go to
 - `build_interval_ns` (configure start to the last prime end), `primed`
   (the caches the prime commands wrote) and `products`: every file git
   lists as untracked or ignored after priming (directories followed), each
-  sealed by sha256, size and mtime, except `.hol/locks`, `.hol/build-logs` and non-selftest
-  `.hol/logs`. Inodes are not recorded; they are read live.
+  sealed by sha256, size and mtime, except `.hol/locks`,
+  `.hol/build-logs` and non-selftest `.hol/logs`. Inodes are not
+  recorded; they are read live.
 - `REQUIRED_PRODUCTS`: the theories (`rat`, `integer`, `integer_word`,
   `real`, `real_sigma`, `lim`, `arithmetic`, `logroot`, `rich_list`,
   `pred_set`), `realheap` and the six selftest logs the workloads need. A
@@ -3211,17 +3212,32 @@ puts the products back, moves files the process left into the journal's
 
 Holmake cache churn. A second Holmake run in a built directory writes
 `.hol/make-deps/<X>Theory.{sig,sml}.d` for the theories there, which
-`bin/build` never wrote, and even with `--no_prereqs` it scans the INCLUDES
-directories and writes the missing caches there too. So the rule covers
-every `.hol/make-deps` in the snapshot: a new `*.d` file there
-(`is_holmake_cache`) is removed, recorded in the receipt as `churn` (paths
-relative to the unit's folder) and is not a stray write, so every process
-starts from the identical snapshot. The unit's folder is scanned in full;
-the other directories with a `.hol` (`hol_dirs`, one walk per side and run)
-have their `.hol/make-deps` listed before and after each process
-(`settle_outside`, journaled for `recover`), and a `make-deps` directory the
-process made is removed. Any other new file is stray, and a changed or
-vanished existing one is `modified`.
+`bin/build` never wrote (the snapshot build now primes them, see above),
+and even with `--no_prereqs` it scans the INCLUDES directories and writes
+the missing caches there too. So the rule covers every `.hol/make-deps` of
+the snapshot: a new `*.d` file directly in one (`is_holmake_cache`) is
+removed and recorded in the receipt as `churn` (paths relative to the
+unit's folder), not as a stray write, so every process starts from the
+identical snapshot. The unit's folder is scanned in full. The other
+directories (`hol_dirs`: one walk per side and run, kept in the run's
+context) have their `.hol/make-deps` listed before and after each process
+(`settle_outside`); every other new entry there (a file, or a directory
+whole) is stray, a changed or vanished existing one is `modified`, a
+`make-deps` directory the process made is removed (stray if it cannot
+be), and so is a `.hol` that appears in a directory that had none. The
+cleanup runs after every process whatever its end, each step under its own
+try so that an error of one neither skips the other nor masks the primary
+error (the others are notes on it). For a theory unit it is journaled (the
+listing, the directories and the root are in the journal entry, checked by
+`recover` before use): `recover` deletes the caches and moves the rest to
+`strays/outside`; selftest units are watched but not journaled. Evidence of
+a stray is `stray/<label>/inside/<path>` for the unit's folder and
+`stray/<label>/outside/<path from the snapshot root>` for the rest (a
+receipt path starting with `..` is that path joined to the unit's
+directory and normalized). `outcome` refuses a run in which the churn of
+the processes of a unit is not one and the same set on both arms
+(`check_churn`): a cache one arm lacks would bias the timing. Receipts made
+before `--no_prereqs` (and without `churn`) cannot be replayed.
 
 Margin and validity. `POLICY` is `acceptance.EQUIVALENCE_POLICY`: a 3%
 margin on inclusive CPU and wall. For a unit and metric, `low > 1.03` is
