@@ -300,6 +300,9 @@ New features
 Bugs fixed
 ----------
 
+-   HolSmt's natural-number preprocessing now tolerates duplicate assumptions,
+    including assumptions made identical by numeral normalization.
+
 -   `HolSmt` now gives Z3 4.14.1 full tested support.  Z3 4.14.* queries in
     the seven affected array-bearing inferred logics are widened to `ALL` at
     the Z3 boundary, and Z3 `(error ...)` output can no longer be skipped
