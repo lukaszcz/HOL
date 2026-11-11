@@ -2198,6 +2198,12 @@ val graph_expect_thm = expect_thm
 
     (* regression tests *)
 
+    (* Z3 bv1-blast may visit fresh bits before their concat definition. *)
+    (``(w:word8) <> 0w /\ ~word_bit 0 w ==> w >>> 1 <> 0w``,
+      [thm_Z3p_v4]),
+    (``(w:256 word) <> 0w /\ ~word_bit 0 w ==> w >>> 1 <> 0w``,
+      [thm_Z3p_v4]),
+
     (``!(n:num) z y a. (3 * n + 1) * z <= y * a ==> 3 * (n * z) <= 2 * (y * a)``,
       [thm_AUTO, (*thm_CVC,*) thm_Z3(*, thm_Z3p*)]),
 

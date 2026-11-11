@@ -11034,6 +11034,159 @@ in
 end
 
 
+(* Z3 bv1-blast can use its fresh bits before visiting the concat rewrite. *)
+fun z3_bv1_concat_replay_success () =
+let
+  fun pack [bit] = bit
+    | pack (bit :: rest) = wordsSyntax.mk_word_concat (bit, pack rest)
+    | pack [] = raise Fail "empty concat fixture"
+  fun run width =
+    let
+      val source = Term.mk_var ("bv1_source",
+        wordsSyntax.mk_int_word_type width)
+      val bits = List.tabulate (width, fn i =>
+        Term.mk_var ("bv1_bit" ^ Int.toString i,
+          wordsSyntax.mk_int_word_type 1))
+      val equation = boolSyntax.mk_eq (source, pack bits)
+      val vars = HOLset.addList (Term.empty_tmset, bits)
+      fun proof root = Z3_Proof.mk_proof
+        (Redblackmap.insert (Redblackmap.insert
+          (Redblackmap.mkDict Int.compare, 0, root), 1,
+          Z3_Proof.REWRITE equation), vars, [], "4.15.3")
+      fun extract i = wordsSyntax.mk_word_extract
+        (numSyntax.term_of_int i, numSyntax.term_of_int i, source,
+         wordsSyntax.dest_word_type (wordsSyntax.mk_int_word_type 1))
+      fun is_one word = boolSyntax.mk_eq (word, wordsSyntax.mk_wordii (1, 1))
+      val low = is_one (extract 0)
+      val high = is_one (extract (width - 1))
+      val low_name = is_one (List.last bits)
+      val high_name = is_one (List.hd bits)
+      val low_eq = boolSyntax.mk_eq (low, low_name)
+      val high_eq = boolSyntax.mk_eq (high, high_name)
+      val target = boolSyntax.mk_eq
+        (boolSyntax.mk_conj (low, high),
+         boolSyntax.mk_conj (low_name, high_name))
+      val result = Z3_ProofReplay.replay_root_with_state_for_test
+        (proof (Z3_Proof.MONOTONICITY
+          ([Z3_Proof.REWRITE low_eq, Z3_Proof.REWRITE high_eq], target)))
+      fun has_definition bit i = List.exists (Term.aconv
+        (boolSyntax.mk_eq (bit, extract i))) (#definition_hyps result)
+      val _ = assert
+        (List.length (#definition_hyps result) = width andalso
+         has_definition (List.hd bits) (width - 1) andalso
+         has_definition (List.last bits) 0 andalso
+         Thm.concl (#thm result) ~~ target,
+         "bv1-blast did not preserve its MSB/LSB definitions and rewrites")
+      val _ = check_oracle_tags "bv1 endpoint replay" (#thm result)
+      val concat = Z3_ProofReplay.replay_root_for_test
+        (proof (Z3_Proof.REWRITE equation))
+      val _ = assert (Thm.concl concat ~~ equation,
+        "bv1-blast concat equation did not replay")
+      val _ = check_oracle_tags "bv1 concat equation" concat
+      val _ = if width <> 8 then () else
+        let
+          val recorded =
+            Z3_ProofReplay.replay_root_with_definition_occurrences []
+              (proof (Z3_Proof.REWRITE equation))
+          val definitions = #definitions recorded
+          val theorem = #theorem recorded
+        in
+          assert (List.length (Lib.op_mk_set Term.term_eq definitions) =
+              width andalso
+            List.all (fn definition => List.exists (Term.aconv definition)
+              (#definition_hyps result)) definitions andalso
+            Thm.concl theorem ~~ equation andalso
+            List.all (fn hyp => List.exists (Term.aconv hyp) definitions)
+              (Thm.hyp theorem),
+            "recorded concat replay lost its discovered definitions");
+          check_oracle_tags "recorded bv1 concat" theorem
+        end
+      val empty = Z3_Proof.mk_proof
+        (Redblackmap.mkDict Int.compare, vars, [], "4.15.3")
+      val initial = Z3_ProofReplay.initial_replay_state
+        Term.empty_tmset [] empty
+      val refusal = Feedback.mk_HOL_ERR "SmtResource" "concat-test"
+        "resource-gated: bitvector-replay; injected hint refusal"
+      val declined = Z3_ProofReplay.define_concat_bits_with
+        (fn _ => fn _ => raise refusal) initial equation
+      val _ = assert
+        (HOLset.isEmpty (#definition_hyps declined) andalso
+         HOLset.isEmpty (#concat_bits declined) andalso
+         HOLset.equal (#flexible_vars declined, vars),
+         "resource-gated concat hint changed replay state")
+      fun typed_concat width (left, right) = Term.list_mk_comb
+        (Term.inst
+          [{redex = Type.alpha, residue = wordsSyntax.dim_of left},
+           {redex = Type.beta, residue = wordsSyntax.dim_of right},
+           {redex = Type.gamma, residue = wordsSyntax.dest_word_type
+             (wordsSyntax.mk_int_word_type width)}] wordsSyntax.word_concat_tm,
+         [left, right])
+      val (left, right) = wordsSyntax.dest_word_concat (pack bits)
+      val malformed = boolSyntax.mk_eq (source,
+        typed_concat width (left,
+          typed_concat 1 (wordsSyntax.dest_word_concat right)))
+      val malformed_proof = Z3_Proof.mk_proof
+        (Redblackmap.insert (Redblackmap.mkDict Int.compare, 0,
+          Z3_Proof.REWRITE malformed), vars, [], "4.15.3")
+      val declined = Z3_ProofReplay.initial_replay_state
+        Term.empty_tmset [] malformed_proof
+      val _ = assert
+        (HOLset.isEmpty (#definition_hyps declined) andalso
+         HOLset.isEmpty (#concat_bits declined),
+         "truncating concat hint changed replay state")
+      val declined = Z3_ProofReplay.define_concat_bits_with
+        (fn _ => fn _ => boolTheory.TRUTH) initial equation
+      val _ = assert (HOLset.isEmpty (#concat_bits declined),
+        "concat hint cached a different theorem conclusion")
+      val flexible_source = Z3_Proof.update_proof_vars empty
+        (HOLset.add (vars, source))
+      val unanchored = Z3_ProofReplay.initial_replay_state
+        Term.empty_tmset [] flexible_source
+      val declined = Z3_ProofReplay.define_concat_bits_with
+        (fn _ => fn _ => raise Fail "unanchored concat attempted a proof")
+        unanchored equation
+      val _ = assert
+        (HOLset.isEmpty (#definition_hyps declined) andalso
+         HOLset.isEmpty (#concat_bits declined),
+         "unanchored concat hint changed replay state")
+      val goal = boolSyntax.mk_eq (low, low)
+      val step = Z3_Proof.REWRITE low_eq
+      val self = Z3_Proof.TRANS (step, Z3_Proof.SYMM
+        (step, boolSyntax.mk_eq (low_name, low)), goal)
+      val contradiction = Z3_Proof.UNIT_RESOLUTION
+        ([Z3_Proof.ASSERTED (boolSyntax.mk_neg goal), self], boolSyntax.F)
+      val theorem = Thm.CCONTR goal
+        (Z3_ProofReplay.check_proof ([], goal, proof contradiction))
+    in
+      assert (Thm.concl theorem ~~ goal andalso null (Thm.hyp theorem),
+        "bv1-blast definitions survived final theorem validation");
+      check_oracle_tags "bv1 final validation" theorem
+    end
+  val seed = Term.mk_var ("bv1_shared_source",
+    wordsSyntax.mk_int_word_type 8)
+  fun shared 0 = seed
+    | shared depth = let val child = shared (depth - 1)
+                     in wordsSyntax.mk_word_add (child, child) end
+  val source = shared 30
+  val bits = List.tabulate (8, fn i => Term.mk_var
+    ("bv1_shared_bit" ^ Int.toString i, wordsSyntax.mk_int_word_type 1))
+  val equation = boolSyntax.mk_eq (source, pack bits)
+  val proof = Z3_Proof.mk_proof
+    (Redblackmap.insert (Redblackmap.mkDict Int.compare, 0,
+      Z3_Proof.REWRITE equation),
+     HOLset.addList (Term.empty_tmset, bits), [], "4.15.3")
+  val result = Timeout.apply (Time.fromSeconds 10)
+    Z3_ProofReplay.replay_root_with_state_for_test proof
+  val _ = assert (List.length (#definition_hyps result) = 8 andalso
+    Term.aconv (Thm.concl (#thm result)) equation andalso
+    List.all (fn hyp => List.exists (Term.aconv hyp)
+      (#definition_hyps result)) (Thm.hyp (#thm result)),
+    "shared concat lost its endpoint or bit definitions")
+  val _ = check_oracle_tags "shared bv1 concat" (#thm result)
+in
+  List.app run [8, 256]
+end
+
 fun z3_proof_parser_floatingpoint_decomposition_success () =
 let
   (* The first rewrite is TASK_02's exact Float32 decomposition preamble.
@@ -35592,6 +35745,7 @@ let
     ("z3_compact_selected_dispatch", Z3_CompactReplayTests.run),
     ("cpc_graph_typed_parser", fn () =>
       (CPC_GraphParserTests.run ();CPC_ConstructorAliasReviewTests.run ())),
+    ("z3_bv1_concat_replay_success", z3_bv1_concat_replay_success),
     ("cvc_native_bag_goal_nested_application_success",
       cvc_native_bag_goal_nested_application_success),
     ("smt_resource_diagnostic_contract",
