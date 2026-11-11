@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """TASK32 proof-build timing driver (task32_downstream.py), on fake trees and
-fake processes: synthetic rows, refusals, restore, schedule, counts commit
-rules, replay, and a whole smoke -> pilot -> counts -> first stage -> second
-stage -> follow-up -> disposition chain."""
+fake processes: synthetic rows, refusals, restore and its journal, signals,
+schedule, counts commit rules, replay, the verify interface of
+task32_snapshots, and a whole smoke -> pilot -> control -> counts -> first
+stage -> second stage -> follow-up -> disposition chain."""
 import argparse
 import gzip
 import json
 import os
 from pathlib import Path
 import random
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -19,6 +22,8 @@ import acceptance as a
 import loading
 import task32_cases as cases
 import task32_downstream as dw
+import task32_snapshots as snap
+from test_task32_snapshots import mk_dat
 
 _cache = {}
 _real_statistics = a.paired_statistics
@@ -46,12 +51,13 @@ def git(repo, *args):
 
 
 STAT_FIELDS = dict(gc_full=1, gc_partial=3, gc_share=0, size_heap=1 << 20)
+BUILD_LOG = "selftest ok (0.0s)\n"
 
 
 class World:
     """Two fake snapshots with the 15 units' directories and prebuilt
-    products, a git repository for the ledger and the counts commits, and a
-    fake `launch` that plays the processes."""
+    products, a git repository for the ledger, the journals and the counts
+    commits, and a fake `launch` that plays the processes."""
 
     def __init__(self, tmp):
         self.tmp = Path(tmp)
@@ -69,21 +75,27 @@ class World:
         self.base_pin = "1" * 40
         self.roots = {"base": self.tmp / "base", "cand": self.tmp / "cand"}
         for side, root in self.roots.items():
-            self.build_tree(side, root)
+            self.build_tree(root)
         self.manifest = self.tmp / "snapshots.json"
-        self.manifest.write_text(json.dumps({
-            "schema": "task32-independent-build-v2",
-            "sides": {s: dict(root=str(r), pin=pin, tree=pin)
-                      for (s, r), pin in zip(
-                          self.roots.items(),
-                          (self.base_pin, self.cand_pin))}}))
+        self.write_manifest()
         self.profile = {}  # workload -> (candidate scale, noise)
         self.default = (1.0, 0.001)
         self.counter = 0
         self.fault = None  # (unit, side, n) -> kind or None
         self.calls = []
+        self.ignore_busy = False
 
-    def build_tree(self, side, root):
+    def write_manifest(self, **change):
+        sides = {}
+        for (label, root), pin in zip(self.roots.items(),
+                                      (self.base_pin, self.cand_pin)):
+            sides[label] = dict(root=str(root), pin=pin, tree=pin,
+                                label=label, incomplete=False)
+            sides[label].update(change.get(label, {}))
+        self.manifest.write_text(json.dumps(dict(
+            schema=change.get("schema", snap.SCHEMA), sides=sides)))
+
+    def build_tree(self, root):
         (root / "bin").mkdir(parents=True)
         for n in ("Holmake", "hol", "hol.state0"):
             (root / "bin" / n).write_text("x")
@@ -91,9 +103,9 @@ class World:
         (root / "sigobj/Lib.ui").symlink_to(root / "bin/hol")
         for unit in cases.UNITS:
             folder = root / unit["dir"]
-            (folder / ".hol/objs").mkdir(parents=True, exist_ok=True)
-            (folder / ".hol/docs").mkdir(parents=True, exist_ok=True)
-            (folder / ".hol/logs").mkdir(parents=True, exist_ok=True)
+            for sub in (".hol/objs", ".hol/docs", ".hol/logs",
+                        ".hol/make-deps", ".hol/locks"):
+                (folder / sub).mkdir(parents=True, exist_ok=True)
             if unit["kind"] == "theory":
                 self.write_products(folder, unit["theory"], root, "sig")
             else:
@@ -101,17 +113,27 @@ class World:
                     "#!/bin/sh\nset -e\n%s/bin/hol --gcthreads=1 run "
                     "--holstate=%s  selftest\nexit 0\n" % (
                         root, root / unit["heap"]))
+                (folder / (".hol/logs/%s.log" % unit["name"])).write_text(
+                    BUILD_LOG)
             (folder / "other.sml").write_text("val x = 1\n")
             os.utime(folder / "other.sml", ns=(10 ** 18, 10 ** 18))
+            (folder / ".hol/make-deps/other.d").write_text("deps\n")
 
     @staticmethod
     def write_products(folder, name, root, sig):
+        """The products a theory target writes: real-format .dat, root in the
+        .sig and .sml, the make-deps files the run rewrites."""
+        text = dict(sig="%s %s %s\n" % (sig, name, root),
+                    dat=mk_dat(name), sml="sml %s %s\n" % (name, root))
         for ext in ("sig", "dat", "uo", "ui", "sml", "cachekey"):
             path = folder / ".hol/objs" / ("%sTheory.%s" % (name, ext))
-            path.write_text("%s %s %s\n" % (
-                sig if ext == "sig" else ext, name, root))
+            path.write_text(text.get(ext, "%s %s\n" % (ext, name)))
             os.utime(path, ns=(2 * 10 ** 18, 2 * 10 ** 18))
         (folder / ".hol/docs" / ("%sTheory.html" % name)).write_text("h\n")
+        for rel in (".hol/make-deps/%sTheory.sig.d" % name,
+                    ".hol/make-deps/%sScript.sml.d" % name):
+            (folder / rel).write_text("deps %s\n" % name)
+            os.utime(folder / rel, ns=(3 * 10 ** 18, 3 * 10 ** 18))
 
     def snapshot(self):
         return {s: dw.scan(r) for s, r in self.roots.items()}
@@ -136,27 +158,46 @@ class World:
         rng = random.Random(self.counter)
         factor = (scale if side == "cand" else 1.0) * (
             1 + noise * rng.uniform(-1, 1))
-        if "T32_BUSY" in env:
-            factor *= 1 + float(env["T32_BUSY"])
         cpu = unit["serial"] * factor
+        if "T32_BUSY" in env and not self.ignore_busy:
+            cpu += float(env["T32_BUSY"])  # absolute seconds
         fault = self.fault and self.fault(unit, side, self.counter)
+        uo = env.get("POLY_CLINE_OPTIONS") or argv[-2]
         stats = dict(schema=dw.STATS_SCHEMA, nongc_usr=cpu * 0.9,
                      nongc_sys=cpu * 0.05, gc_usr=cpu * 0.04,
                      gc_sys=cpu * 0.01, gc_time=cpu * 0.05 * (
                          1 + 0.2 * rng.random()), holdir=str(root),
                      loaded_before=["Lib", "Thm"], loaded=["Foo"],
-                     files=[["Foo.sml", str(root / "src/foo")]],
+                     files=[["Foo.sml", str(root / "src/foo")],
+                            ["T32Report.sml", str(Path(uo).parent)]],
                      **STAT_FIELDS)
+        if fault == "noreporter":
+            stats["files"] = stats["files"][:1]
+        if fault == "newstem":
+            stats["loaded"] = ["Foo", "Zed"]
+        code = 0
         if theory:
-            folder = cwd
             sig = "bad" if fault == "mismatch" else "sig"
-            self.write_products(folder, unit["theory"], root, sig)
+            self.write_products(cwd, unit["theory"], root, sig)
+            for rel in (".hol/make-deps/%sTheory.sig.d" % unit["theory"],
+                        ".hol/make-deps/%sScript.sml.d" % unit["theory"]):
+                os.utime(cwd / rel, ns=(4 * 10 ** 18, 4 * 10 ** 18))
             if fault == "stray":
-                (folder / "stray.txt").write_text("x")
+                (cwd / "stray.txt").write_text("x")
+            if fault in ("exit", "leftover"):
+                (cwd / (".hol/objs/%sScript.uo" % unit["theory"])
+                 ).write_text("junk")
+                (cwd / (unit["theory"] + "Script")).write_text("junk")
+                (cwd / ".hol/objs/part.dumpedheap").write_text("junk")
+            if fault == "churn":
+                (cwd / ".hol/make-deps/other.d").write_text("changed\n")
+            if fault == "modify":
+                (cwd / "other.sml").write_text("val x = 2\n")
             out = "Holmake: built %s in %.2fs\n" % (unit["name"],
                                                     rng.random())
         else:
-            out = "selftest ok (%.1fs)\n" % rng.uniform(1, 5)
+            tag = "[GC = 0.015] " if rng.random() < 0.5 else ""
+            out = "%sselftest ok (%.1fs)\n" % (tag, rng.uniform(1, 5))
             if fault == "mismatch":
                 out += "different\n"
             if fault == "stray":
@@ -167,12 +208,15 @@ class World:
             stats["files"].append(["Bar.sml", "/elsewhere"])
         if fault == "holdir":
             stats["holdir"] = "/elsewhere"
+        if fault == "terminate":
+            raise snap.Terminated("SIGTERM")
+        if fault == "exit":
+            code = 1
         Path(out_path).write_text(out)
         if fault != "nostats":
             Path(env["T32_STATS"]).write_text(json.dumps(stats) + "\n")
-        return dict(exit=1 if fault == "exit" else 0, timed_out=False,
-                    wall=cpu * 1.03, utime=cpu * 0.9, stime=cpu * 0.1,
-                    maxrss=10 ** 8)
+        return dict(exit=code, timed_out=False, wall=cpu * 1.03,
+                    utime=cpu * 0.9, stime=cpu * 0.1, maxrss=10 ** 8)
 
     @staticmethod
     def reporter(root, folder, env, timeout, fds):
@@ -195,25 +239,35 @@ class World:
         values = dict(
             repo=self.repo, base_root=self.roots["base"],
             cand_root=self.roots["cand"], manifest=self.manifest,
-            ledger=None, counts=None, output=self.tmp / name,
+            counts=None, output=self.tmp / name,
             scratch=self.tmp / "scratch", timeout=60,
             verify_argv=[sys.executable, "-c", "pass"], no_verify=False,
             authorize_measurements=True, only=[], reps=1,
-            followup_counts=None)
+            followup_counts=None, pilot=None, smoke=None, control=None,
+            ledger=None)
         values.update(extra)
         return argparse.Namespace(**values)
 
-    def spec(self, names, pairs=10, stage="first", seed=None, reps=1):
+    def spec(self, names, pairs=10, stage="first", seed=None, reps=1,
+             busy=None):
         return dict(mode=stage, stage=stage, names=names,
                     pairs={w: pairs for w in names},
                     reps={w: reps for w in names},
-                    seed=seed or dw.SEEDS[stage], references=None)
+                    seed=seed or dw.SEEDS[stage], references=None,
+                    busy=busy)
+
+    def info(self, name, mode, names=None, **extra):
+        args = self.args(name, only=names or [], **extra)
+        return args, dw.info_spec(args, mode)
 
     def run(self, name, spec, **extra):
         return dw.run_stage(self.args(name, **extra), spec)
 
+    def ledger(self):
+        return dw.ledger_path(self.repo)
+
     def status(self):
-        found = dw.read_ledger(dw.ledger_path(self.repo))[1]
+        found = dw.read_ledger(self.ledger())[1]
         return [(k, [c["status"] for c in r["closes"]])
                 for k, r in found.items()]
 
@@ -294,6 +348,12 @@ class Statistics(unittest.TestCase):
         self.assertEqual(res["second_stage_pairs"],
                          loading.second_stage_count(res["control"], 20))
         self.assertGreaterEqual(res["second_stage_pairs"], 40)
+        self.assertLessEqual(res["second_stage_pairs"], 120)
+
+    def test_followup_pairs_are_the_first_stages_second_stage_rule(self):
+        first = {"a": dict(second_stage_pairs=40),
+                 "b": dict(second_stage_pairs=70)}
+        self.assertEqual(dw.followup_pairs(first, ["b"]), {"b": 70})
 
     def test_statistics_refuse_a_reordered_or_rejected_schedule(self):
         good = rows(lambda i: 5.0, lambda i: 5.0)
@@ -304,33 +364,34 @@ class Statistics(unittest.TestCase):
         with self.assertRaises(dw.Refusal):
             dw.statistics(bad, 20, 1)
 
-    def test_classification_table(self):
+    def test_classification_follows_the_task31_routing(self):
         def res(decision, valid):
             return dict(decision=decision, control_valid=valid)
         c = dw.classify
         self.assertEqual(c([("first", res("pass", True))])[0], "pass")
         self.assertEqual(c([("first", res("fail", False))])[0], "fail")
-        self.assertEqual(c([("first", res("inconclusive", False))])[0],
-                         "blocked")
+        # control-limited: the second stage
+        self.assertEqual(c([("first", res("inconclusive", False))]),
+                         ("blocked", dw.NOTE_SECOND))
+        # inconclusive with a valid control: the follow-up, after the
+        # first stage already
         self.assertEqual(c([("first", res("inconclusive", True))])[0],
-                         "blocked")
+                         "followup")
         chain = [("first", res("inconclusive", False)),
                  ("second", res("inconclusive", True))]
         self.assertEqual(c(chain)[0], "followup")
-        self.assertEqual(c(chain[:1] + [("second",
-                                         res("inconclusive", False))])[0],
-                         "blocked")
-        self.assertEqual(c(chain + [("followup",
-                                     res("inconclusive", True))])[0],
-                         "blocked")
-        self.assertEqual(c(chain + [("followup", res("pass", True))])[0],
+        self.assertEqual(c(chain[:1] + [("second", res(
+            "inconclusive", False))])[0], "blocked")
+        for last in ("inconclusive", "fail", "pass"):
+            got = c(chain + [("followup", res(last, True))])[0]
+            self.assertEqual(got, last if last != "inconclusive"
+                             else "blocked")
+        self.assertEqual(c(chain[:1] + [("second", res("pass", True))])[0],
                          "pass")
-        self.assertEqual(c(chain + [("followup", res("fail", True))])[0],
-                         "fail")
 
 
 class Schedule(unittest.TestCase):
-    def test_round_robin_with_ab_ba_pairs(self):
+    def test_round_robin_with_ab_ba_pairs_and_alternating_phases(self):
         names = ["x", "y"]
         pairs, reps = dict(x=3, y=2), dict(x=2, y=1)
         order = dw.expected_runs(names, pairs, reps, dw.PROCESS_PHASES)
@@ -350,9 +411,12 @@ class Schedule(unittest.TestCase):
                          ["baseline", "candidate"] * 2)
         self.assertEqual([o[3] for o in second],
                          ["candidate", "baseline"] * 2)
-        # the control pair of a round precedes its candidate pair
-        self.assertLess(order.index(("x", "control", 0, "baseline", 0)),
-                        order.index(("x", "candidate", 0, "baseline", 0)))
+        # control first on even rounds, candidate first on odd rounds
+        for i, before, after in ((0, "control", "candidate"),
+                                 (1, "candidate", "control"),
+                                 (2, "control", "candidate")):
+            phases = [o[1] for o in order if o[0] == "x" and o[2] == i]
+            self.assertEqual(phases, [before] * 4 + [after] * 4)
 
     def test_control_processes_run_in_the_base_snapshot(self):
         self.assertEqual(dw.side_of("control", "candidate"), "base")
@@ -360,6 +424,7 @@ class Schedule(unittest.TestCase):
         self.assertEqual(dw.side_of("candidate", "candidate"), "cand")
         self.assertEqual(dw.side_of("pilot", "candidate"), "base")
         self.assertEqual(dw.side_of("smoke", "candidate"), "cand")
+        self.assertEqual(dw.side_of("candidate", "candidate", True), "base")
 
     def test_the_layout_is_that_of_loading_and_seeded(self):
         got = dw.layout_for("task32-1", 3, "candidate", 1)
@@ -372,7 +437,6 @@ class Schedule(unittest.TestCase):
              for p in range(20)],
             [dw.layout_for(dw.SEEDS["second"], p, "baseline", 0)
              for p in range(20)])
-        self.assertEqual(len({dw.SEEDS.values()} | set()), 1)
         self.assertEqual(len(set(dw.SEEDS.values())), len(dw.SEEDS))
 
 
@@ -398,6 +462,7 @@ class Pieces(unittest.TestCase):
                        "gcPartialGCs", "sizeHeap", "checkGCTime",
                        "Systeml.HOLDIR", "Meta.fileDirMap"):
             self.assertIn(needle, text)
+        self.assertIn("cpu () + seconds", text)  # absolute busy seconds
         self.assertEqual(dw.REPORTER_SEAL,
                          dw.hashlib.sha256(text.encode()).hexdigest())
         self.assertFalse(any(len(x) > 79 for x in text.splitlines()))
@@ -430,18 +495,57 @@ class Pieces(unittest.TestCase):
             dw.check_loaded(dict(self.good, loaded=["fooExt"]), root,
                             "/rep", True)
 
-    def test_normalization_masks_root_durations_and_colour(self):
-        text = "\x1b[1mok\x1b[0m /r/x took 12.5s and 3 ms (4s)\n"
-        self.assertEqual(dw.normalize_text(text, "/r"),
-                         "ok $(HOLDIR)/x took <T> and 3 ms (<T>)\n".replace(
-                             "3 ms", "<T>"))
+    def test_selftest_normalization_is_the_snapshots_rule_set(self):
+        root = "/r"
+        text = ("\x1b[1mok\x1b[0m /r/x took 12.5s [GC = 0.015] done "
+                "(0.003s) runtime: 3.2s\n").encode()
+        self.assertEqual(dw.normalize_text(text, root),
+                         snap.normalize_log(text, root))
+        # a GC tag in one process and none in another: the same digest
+        one = b"Testing x ...  [GC = 0.015] (0.003s) OK\n"
+        two = b"Testing x ...  (0.9s) OK\n"
+        self.assertEqual(dw.text_digest(one, root),
+                         dw.text_digest(two, root))
+        self.assertNotEqual(dw.text_digest(one, root),
+                            dw.text_digest(b"Testing y ...\n", root))
+        self.assertEqual(
+            dw.normalize_text(text, root),
+            "ok $(HOLDIR)/x took 12.5s done (<TIME>) runtime: <TIME>\n")
 
-    def test_theory_digest_masks_the_root_and_needs_both_files(self):
-        one = dw.theory_digest(dict(sig=b"a /r1 b", dat=b"/r1"), "/r1")
-        two = dw.theory_digest(dict(sig=b"a /r2 b", dat=b"/r2"), "/r2")
-        self.assertEqual(one, two)
-        with self.assertRaises(dw.Refusal):
-            dw.theory_digest(dict(sig=b"a"), "/r1")
+    def test_theory_digest_uses_the_canonical_dat_sig_and_sml(self):
+        root = Path("/r1")
+        files = dict(sig=b"s /r1", sml=b"m /r1", dat=mk_dat("x").encode())
+        base = dw.theory_digest(files, root)
+        # the same theory with its tables in another order, in another root
+        other = mk_dat("x", strings=["x", "c", "bool", "min"],
+                       types=["bool", "alpha"], terms=["c", "x", "ap"])
+        files2 = dict(sig=b"s /r2", sml=b"m /r2", dat=other.encode())
+        self.assertEqual(dw.theory_digest(files2, Path("/r2")), base)
+        # a changed theorem, .sig or generated .sml is another digest
+        for change in (dict(dat=mk_dat("x", tags=("OTHER",)).encode()),
+                       dict(sig=b"s2 /r1"), dict(sml=b"m2 /r1")):
+            self.assertNotEqual(dw.theory_digest(dict(files, **change), root),
+                                base, change)
+        for ext in ("sig", "dat", "sml"):
+            with self.assertRaises(dw.Refusal):
+                dw.theory_digest({k: v for k, v in files.items()
+                                  if k != ext}, root)
+        with self.assertRaisesRegex(dw.Refusal, "unparsable"):
+            dw.theory_digest(dict(files, dat=b"z"), root)
+
+    def test_the_build_log_digest_of_a_selftest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            unit = cases.BY_NAME["arith-selftest"]
+            with self.assertRaisesRegex(dw.Refusal, "no build log"):
+                dw.build_log_digest(folder, unit, "/r")
+            (folder / ".hol/logs").mkdir(parents=True)
+            (folder / ".hol/logs/x-selftest.log").write_bytes(
+                b"ok [GC = 0.1] (1.5s)\n")
+            first = dw.build_log_digest(folder, unit, "/r")  # the only log
+            (folder / ".hol/logs/arith-selftest.log").write_bytes(
+                b"ok (0.0s)\n")
+            self.assertEqual(dw.build_log_digest(folder, unit, "/r"), first)
 
     def test_selftest_exe_format_is_checked(self):
         root = Path("/r")
@@ -456,45 +560,73 @@ class Pieces(unittest.TestCase):
             with self.assertRaises(dw.Refusal):
                 dw.parse_selftest(bad, root, unit)
 
-    def test_product_pattern_covers_exactly_the_target(self):
-        entries = {p: ["f", 1, 1, "x"] for p in (
-            ".hol/objs/ratTheory.dat", ".hol/objs/ratTheory.uo",
-            ".hol/docs/ratTheory.html", ".hol/docs/ratScript.html",
-            ".hol/objs/ratScript.uo", ".hol/objs/integerTheory.dat",
-            ".hol/objs/rat_xTheory.dat", ".hol/objs/ratTheory.dat.bak",
-            "ratTheory.sig")}
-        self.assertEqual(dw.products(entries, "rat"), [
-            ".hol/docs/ratScript.html", ".hol/docs/ratTheory.html",
-            ".hol/objs/ratTheory.dat", ".hol/objs/ratTheory.uo",
-            "ratTheory.sig"])
+    def test_scans_use_the_snapshots_exclusions_and_stop_at_units(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            for rel in (".hol/locks/a", ".hol/build-logs/b", ".hol/logs/c",
+                        ".hol/logs/d-selftest.log", ".hol/objs/e",
+                        "analysis/f", "g"):
+                (folder / rel).parent.mkdir(parents=True, exist_ok=True)
+                (folder / rel).write_text("x")
+            got = {p for p, e in dw.scan(folder, ("analysis",)).items()
+                   if e[0] == "f"}
+            self.assertEqual(got, {".hol/logs/d-selftest.log",
+                                   ".hol/objs/e", "g"})
+            for rel in (".hol/locks/a", ".hol/build-logs/b", ".hol/logs/c"):
+                self.assertTrue(snap.excluded(rel))
+            self.assertEqual(
+                dw.stops_for(cases.BY_NAME["real"]), ("analysis",))
+            self.assertEqual(
+                dw.stops_for(cases.BY_NAME["integer"]), ("testing",))
+            self.assertEqual(dw.stops_for(cases.BY_NAME["lim"]), ())
 
-    def test_scan_restore_round_trip_keeps_bytes_and_mtimes(self):
+    def test_settle_restores_products_moves_new_files_and_names_changes(self):
         with tempfile.TemporaryDirectory() as tmp:
             folder, store = Path(tmp, "d"), Path(tmp, "s")
+            stray = Path(tmp, "stray")
             (folder / ".hol/objs").mkdir(parents=True)
-            (folder / ".hol/logs").mkdir()
+            (folder / ".hol/make-deps").mkdir()
             path = folder / ".hol/objs/xTheory.dat"
             path.write_bytes(b"abc")
             os.utime(path, ns=(5 * 10 ** 18, 5 * 10 ** 18))
-            (folder / ".hol/logs/x").write_text("log")
-            before = dw.scan(folder, dw.TRANSIENT)
-            rels = dw.products(before, "x")
+            dep = folder / ".hol/make-deps/xTheory.sig.d"
+            dep.write_text("d")
+            (folder / "keep.sml").write_text("k")
+            before = dw.scan(folder)
+            rels = snap.theory_target_files(folder, "x")
+            self.assertEqual(sorted(rels),
+                             [".hol/make-deps/xTheory.sig.d",
+                              ".hol/objs/xTheory.dat"])
             meta = dw.back_up(folder, rels, store)
-            path.unlink()
+            for rel in rels:
+                (folder / rel).unlink()
+            # the process: rewrites its products, leaves intermediates,
+            # makes a docs product that did not exist, edits keep.sml
             path.write_bytes(b"new")
-            (folder / ".hol/objs/xTheory.uo").write_text("extra")
-            (folder / ".hol/logs/x").write_text("other log")
-            now = dw.products(dw.scan(folder, dw.TRANSIENT), "x")
-            self.assertNotEqual(dw.scan(folder, dw.TRANSIENT), before)
-            dw.restore(folder, meta, store, now)
-            self.assertEqual(dw.scan(folder, dw.TRANSIENT), before)
+            dep.write_text("changed")
+            (folder / ".hol/objs/xScript.uo").write_text("junk")
+            (folder / ".hol/docs").mkdir()
+            (folder / ".hol/docs/xTheory.html").write_text("h")
+            (folder / "keep.sml").write_text("edited")
+            got = dw.settle(folder, (), before, meta, store, "x", stray)
+            self.assertTrue(got["ok"])
+            self.assertEqual(got["moved"], [".hol/objs/xScript.uo"])
+            self.assertEqual(got["modified"], ["keep.sml"])
+            self.assertEqual(got["rewritten"],
+                             [".hol/docs/xTheory.html",
+                              ".hol/make-deps/xTheory.sig.d",
+                              ".hol/objs/xTheory.dat"])
+            self.assertEqual((stray / ".hol/objs/xScript.uo").read_text(),
+                             "junk")
+            self.assertFalse((folder / ".hol/docs").exists())
             self.assertEqual(path.read_bytes(), b"abc")
             self.assertEqual(path.stat().st_mtime_ns, 5 * 10 ** 18)
 
     def test_validate_names_each_refusal(self):
         usage = dict(exit=0, timed_out=False, wall=1.0, utime=1.0,
                      stime=0.0, maxrss=1)
-        rec = dict(usage=usage, stats=self.good, stray=[], digest="d")
+        rec = dict(usage=usage, stats=self.good, stray=[], modified=[],
+                   digest="d")
         unit = cases.BY_NAME["logroot"]
         dw.validate(rec, unit, Path("/r"), "/rep", "d", False)
         for change, text in (
@@ -502,6 +634,8 @@ class Pieces(unittest.TestCase):
                 (dict(usage=dict(usage, timed_out=True)), "timed out"),
                 (dict(stats=None), "missing stats"),
                 (dict(stray=["a.txt"]), "stray write"),
+                (dict(stray=["a.sml"], modified=["a.sml"]),
+                 "snapshot must be rebuilt"),
                 (dict(digest="e"), "differs")):
             with self.assertRaisesRegex(dw.Refusal, text):
                 dw.validate(dict(rec, **change), unit, Path("/r"), "/rep",
@@ -510,11 +644,32 @@ class Pieces(unittest.TestCase):
             dw.validate(dict(rec, digest="e"), unit, Path("/r"), "/rep",
                         "d", True)
 
+    def test_probe_facts_need_the_reporter_in_every_process(self):
+        report = dict(workloads=list(cases.NAMES), reporter={
+            s: dict(dir="/rep-" + s) for s in ("base", "cand")})
+
+        def receipt(name, side, seen=True):
+            files = [["T32Report.sml", "/rep-" + side]] if seen else []
+            return dict(workload=name, side=side, rewritten=[], stats=dict(
+                loaded_before=["a"], loaded=[], files=files))
+        full = [receipt(w, s) for w in cases.NAMES
+                for s in ("base", "cand")]
+        facts = dw.probe_facts(report, full)
+        self.assertTrue(facts["ok"])
+        self.assertEqual(facts["heaps"], list(cases.HEAPS))
+        full[3] = receipt(cases.NAMES[1], "base", seen=False)
+        self.assertFalse(dw.probe_facts(report, full)["ok"])
+        part = dict(report, workloads=["logroot"])
+        one = [receipt("logroot", s) for s in ("base", "cand")]
+        self.assertTrue(dw.probe_facts(part, one)["ok"])
+        self.assertFalse(dw.probe_facts(part, one)["complete"])
+
 
 class Refusals(Base):
     """Every per-process refusal, through the whole pipeline: the row is
     archived as rejected, the attempt closes failed (or blocked) and the
-    snapshots are byte-identical afterwards."""
+    snapshots are byte-identical afterwards (a stray file is moved to the
+    evidence, not left)."""
 
     def attempt(self, kind, name="logroot", side=None, at=1, stage="first"):
         self.world.fault = lambda unit, s, n: (
@@ -524,8 +679,6 @@ class Refusals(Base):
         report = self.world.run("out-" + kind, self.world.spec(
             [name], stage=stage))
         self.assertFalse(report["success"], kind)
-        for stray in self.world.tmp.glob("*/**/stray.txt"):
-            stray.unlink()  # a stray write is refused, not undone
         self.assertEqual(self.world.snapshot(), before, kind)
         self.assertFalse(report["runs"][-1]["accepted"])
         return report
@@ -533,6 +686,18 @@ class Refusals(Base):
     def test_a_failed_process_is_refused(self):
         report = self.attempt("exit")
         self.assertIn("process failed: exit 1", report["failure"])
+
+    def test_the_intermediates_of_a_failed_theory_are_moved_to_evidence(self):
+        report = self.attempt("exit")
+        label = report["runs"][-1]["receipt"][:-len(".json.gz")]
+        receipt = a.load(Path(report["output"]) / report["runs"][-1][
+            "receipt"])
+        self.assertEqual(sorted(receipt["moved"]), sorted([
+            ".hol/objs/logrootScript.uo", "logrootScript",
+            ".hol/objs/part.dumpedheap"]))
+        for rel in receipt["moved"]:
+            self.assertTrue((Path(report["output"]) / "stray" / label /
+                             rel).is_file(), rel)
 
     def test_missing_stats_are_refused(self):
         self.assertIn("missing stats", self.attempt("nostats")["failure"])
@@ -550,6 +715,37 @@ class Refusals(Base):
         report = self.attempt("stray", name="reduce-selftest")
         self.assertIn("stray write", report["failure"])
 
+    def test_a_modified_existing_file_says_rebuild_and_stays(self):
+        self.world.fault = lambda u, s, n: "modify"
+        report = self.world.run("m", self.world.spec(["logroot"]))
+        self.assertFalse(report["success"])
+        self.assertIn("modified existing file(s) outside the products: "
+                      "other.sml; the snapshot must be rebuilt",
+                      report["failure"])
+        folder = self.world.roots["base"] / "src/num/extra_theories"
+        self.assertEqual((folder / "other.sml").read_text(), "val x = 2\n")
+
+    def test_make_deps_churn_outside_the_target_fails_closed(self):
+        report = self.attempt_nowrite("churn")
+        self.assertIn("other.d", report["failure"])
+        self.assertIn("must be rebuilt", report["failure"])
+
+    def attempt_nowrite(self, kind):
+        self.world.fault = lambda u, s, n: kind
+        report = self.world.run("c", self.world.spec(["logroot"]))
+        self.assertFalse(report["success"])
+        return report
+
+    def test_the_targets_own_make_deps_are_rewritten_and_restored(self):
+        before = self.world.snapshot()
+        report = self.world.run("ok", self.world.spec(["logroot"]))
+        self.assertTrue(report["success"])
+        self.assertEqual(self.world.snapshot(), before)
+        receipt = a.load(Path(report["output"]) / report["runs"][0][
+            "receipt"])
+        self.assertIn(".hol/make-deps/logrootTheory.sig.d",
+                      receipt["rewritten"])
+
     def test_an_extension_module_is_refused(self):
         report = self.attempt("extension", side="base")
         self.assertIn("extension module(s) loaded: simpExt",
@@ -559,9 +755,10 @@ class Refusals(Base):
     def test_a_loaded_path_outside_the_root_is_refused(self):
         self.assertIn("outside the root",
                       self.attempt("outside")["failure"])
-        self.assertIn("runs in /elsewhere", self.attempt(
-            "holdir", at=1000)["failure"] if False else
-            self.attempt("holdir", name="reduce-selftest")["failure"])
+
+    def test_a_process_running_in_another_root_is_refused(self):
+        report = self.attempt("holdir", name="reduce-selftest")
+        self.assertIn("runs in /elsewhere", report["failure"])
 
     def test_a_candidate_finding_blocks_and_is_judged(self):
         report = self.attempt("extension", side="cand")
@@ -574,9 +771,17 @@ class Refusals(Base):
         report = self.attempt("mismatch", side="cand")
         self.assertIn("blocked", report)
 
+    def test_a_candidate_loading_a_new_module_is_blocked(self):
+        self.world.fault = lambda u, s, n: "newstem" if s == "cand" else None
+        report = self.world.run("n", self.world.spec(["logroot"]))
+        self.assertFalse(report["success"])
+        self.assertIn("candidate loaded what no baseline process loaded",
+                      report["blocked"])
+        self.assertIn("Zed", report["blocked"])
+
     def test_a_failure_before_any_measurement_is_void_and_may_be_redone(self):
         self.attempt("exit", at=1)
-        found = dw.read_ledger(dw.ledger_path(self.world.repo))[1]
+        found = dw.read_ledger(self.world.ledger())[1]
         (key,) = found
         self.assertIsNone(dw.judged_because(key[0], key[1], found[key]))
         self.world.fault = None
@@ -586,7 +791,7 @@ class Refusals(Base):
     def test_a_failure_after_admitted_processes_is_a_judged_draw(self):
         report = self.attempt("exit", at=6)
         self.assertGreater(len(report["runs"]), 1)
-        found = dw.read_ledger(dw.ledger_path(self.world.repo))[1]
+        found = dw.read_ledger(self.world.ledger())[1]
         (key,) = found
         self.assertIn("admitted", dw.judged_because(key[0], key[1],
                                                     found[key]))
@@ -608,6 +813,16 @@ class Refusals(Base):
         with self.assertRaisesRegex(dw.Refusal, "needs the snapshot"):
             self.world.run("n", self.world.spec(["logroot"]),
                            no_verify=True)
+        with self.assertRaisesRegex(dw.Refusal, "needs the snapshot"):
+            args, spec = self.world.info("n2", "smoke", no_verify=True)
+            dw.run_stage(args, spec)  # not a subset: it feeds the counts
+
+    def test_no_verify_is_for_an_information_subset_only(self):
+        args, spec = self.world.info("s", "smoke", names=["logroot"],
+                                     no_verify=True)
+        report = dw.run_stage(args, spec)
+        self.assertTrue(report["success"], report.get("failure"))
+        self.assertNotIn("verify", report)
 
     def test_unauthorized_runs_do_not_start(self):
         with self.assertRaises(dw.Refusal):
@@ -615,10 +830,120 @@ class Refusals(Base):
                            authorize_measurements=False)
         self.assertFalse(self.world.calls)
 
-    def test_the_manifest_must_name_the_given_roots(self):
+    def test_the_ledger_must_be_ignored_by_git(self):
+        (self.world.repo / ".gitignore").write_text("")
+        with self.assertRaisesRegex(ValueError, "tracked by git"):
+            self.world.run("i", self.world.spec(["logroot"]))
+        self.assertFalse(self.world.calls)
+
+
+class Manifest(Base):
+    def load(self, **change):
+        self.world.write_manifest(**change)
+        return dw.load_manifest(self.world.manifest,
+                                self.world.roots["base"],
+                                self.world.roots["cand"])
+
+    def test_a_complete_manifest_is_read(self):
+        sides, seal = self.load()
+        self.assertEqual(sides["base"]["pin"], self.world.base_pin)
+        self.assertEqual(seal, a.seal(self.world.manifest))
+
+    def test_wrong_schema_incomplete_or_mislabelled_sides_are_refused(self):
+        for change, text in (
+                (dict(schema="task32-independent-build-v1"), "not a snap"),
+                (dict(cand=dict(incomplete=True)), "incomplete or mis"),
+                (dict(base=dict(label="cand")), "incomplete or mis"),
+                (dict(cand=dict(pin="abc")), "")):
+            with self.assertRaisesRegex((dw.Refusal, ValueError), text):
+                self.load(**change)
+        data = json.loads(self.world.manifest.read_text())
+        del data["sides"]["cand"]
+        self.world.manifest.write_text(json.dumps(data))
+        with self.assertRaisesRegex(dw.Refusal, "no complete base"):
+            dw.load_manifest(self.world.manifest, self.world.roots["base"],
+                             self.world.roots["cand"])
+
+    def test_a_root_is_named_after_its_label(self):
+        other = self.world.tmp / "other"
+        other.mkdir()
+        self.world.write_manifest(base=dict(root=str(other)))
+        with self.assertRaisesRegex(dw.Refusal, "named after its label"):
+            dw.load_manifest(self.world.manifest, other,
+                             self.world.roots["cand"])
+
+    def test_roots_must_be_the_given_ones_and_not_nested(self):
+        with self.assertRaises(dw.Refusal):
+            dw.load_manifest(self.world.manifest, self.world.roots["cand"],
+                             self.world.roots["cand"])
+        self.world.write_manifest()
         with self.assertRaises(dw.Refusal):
             self.world.run("m", self.world.spec(["logroot"]),
                            cand_root=self.world.tmp / "base")
+
+    def test_the_gate_key_is_the_two_pins_only(self):
+        sides, old = self.load()
+        key = dw.gate_key(sides)
+        self.world.manifest.write_text(self.world.manifest.read_text() +
+                                       "\n")
+        again, seal = dw.load_manifest(self.world.manifest,
+                                       self.world.roots["base"],
+                                       self.world.roots["cand"])
+        self.assertEqual(dw.gate_key(again), key)
+        self.assertNotEqual(seal, old)  # recorded beside, not in the key
+        other = dict(sides, cand=dict(sides["cand"], pin="2" * 40))
+        self.assertNotEqual(dw.gate_key(other), key)
+
+
+class VerifyInterface(Base):
+    def test_the_verify_argv_is_parsed_by_the_snapshots_own_parser(self):
+        sides, _ = dw.load_manifest(self.world.manifest,
+                                    self.world.roots["base"],
+                                    self.world.roots["cand"])
+        argv = dw.default_verify(self.world.repo, self.world.manifest, sides)
+        self.assertEqual(Path(argv[2]).name, "task32_snapshots.py")
+        seen = []
+
+        def fake(manifest, base_pin, cand_pin, c31=None, probe=None,
+                 poly=None):
+            seen.append((manifest["schema"], base_pin, cand_pin, c31))
+            return dict(status="pass")
+        with mock.patch.object(snap, "verify", fake):
+            self.assertEqual(snap.main(argv[3:]), 0)
+        self.assertEqual(seen, [(snap.SCHEMA, self.world.base_pin,
+                                 self.world.cand_pin, snap.C31)])
+        self.assertEqual(argv[argv.index("--manifest") + 1],
+                         str(self.world.manifest.resolve()))
+        self.assertEqual(argv[argv.index("--repo") + 1],
+                         str(self.world.repo.resolve()))
+
+    def test_verify_inherits_the_serial_lock(self):
+        child = [sys.executable, "-B", "-c", (
+            "import sys; sys.path.insert(0, %r)\n"
+            "import acceptance as a\n"
+            "with a.serial_lock(sys.argv[1]): pass\n" % str(dw.HERE)),
+            str(self.world.repo)]
+        with a.serial_lock(self.world.repo) as fds:
+            done = dw.run_verify(child, self.world.repo, fds)
+            self.assertEqual(done["exit"], 0)
+            self.assertGreaterEqual(done["seconds"], 0)
+            bare = loading.execute(child, self.world.repo, dict(os.environ),
+                                   60, fds)
+            self.assertNotEqual(bare["exit"], 0)  # the lock is busy
+            self.assertIn("lock busy", bare["stdout"])
+
+    def test_the_verification_runs_before_and_after_a_stage(self):
+        report = self.world.run("ok", self.world.spec(["logroot"]))
+        for key in ("before", "after"):
+            self.assertEqual(report["verify"][key]["exit"], 0)
+            self.assertIn("seconds", report["verify"][key])
+
+
+def pilot(world, names=("logroot",), name="pilot"):
+    args, spec = world.info(name, "pilot", names=list(names))
+    report = dw.run_stage(args, spec)
+    assert report["success"], report.get("failure")
+    return report
 
 
 class Processes(Base):
@@ -629,6 +954,7 @@ class Processes(Base):
         self.assertEqual(self.world.snapshot(), before)
         self.assertEqual(len(report["runs"]), 40)
         self.assertEqual(report["outcome"]["digests"].keys(), {"logroot"})
+        self.assertEqual(report["prebuilt"].keys(), {"logroot"})
 
     def test_commands_and_environment_of_the_units(self):
         self.world.run("c", self.world.spec(["logroot", "reduce-selftest"],
@@ -645,8 +971,7 @@ class Processes(Base):
                     if c[0] == "reduce-selftest")
         self.assertEqual(test[2]["HOLSELFTESTLEVEL"], dw.SELFTEST_LEVEL)
         self.assertNotIn("POLY_CLINE_OPTIONS", test[2])
-        sides = {c[1] for c in self.world.calls}
-        self.assertEqual(sides, {"base", "cand"})
+        self.assertEqual({c[1] for c in self.world.calls}, {"base", "cand"})
 
     def test_the_selftest_command_puts_the_reporter_before_the_last_argument(
             self):
@@ -661,54 +986,250 @@ class Processes(Base):
     def test_scratch_is_removed_and_ledger_lines_are_chained(self):
         self.world.run("ok", self.world.spec(["logroot"]))
         self.assertFalse(list(self.world.tmp.glob("scratch/*")))
-        state = dw.tg.Ledger(dw.ledger_path(self.world.repo))
+        self.assertFalse(list((self.world.repo / dw.JOURNALS).glob("*")))
+        state = dw.tg.Ledger(self.world.ledger())
         self.assertEqual([r["event"] for r in state.records],
                          ["open", "close"])
 
+    def test_selftests_compare_with_the_builds_own_normalized_log(self):
+        unit = cases.BY_NAME["boss-selftest"]
+        args, spec = self.world.info("s", "smoke", names=[unit["name"]])
+        report = dw.run_stage(args, spec)
+        self.assertTrue(report["success"], report.get("failure"))
+        root = self.world.roots["base"]
+        self.assertEqual(report["prebuilt"][unit["name"]],
+                         dw.text_digest(BUILD_LOG.encode(), root))
+        self.assertEqual(report["outcome"]["digests"][unit["name"]],
+                         report["prebuilt"][unit["name"]])
+        # a live output that differs from the build's log is refused
+        self.world.fault = lambda u, s, n: "mismatch"
+        args, spec = self.world.info("s2", "smoke", names=[unit["name"]])
+        self.assertFalse(dw.run_stage(args, spec)["success"])
+
+    def test_smoke_runs_both_sides_and_records_probe_and_overheads(self):
+        args, spec = self.world.info("s", "smoke",
+                                     names=["logroot", "boss-selftest"])
+        report = dw.run_stage(args, spec)
+        self.assertTrue(report["success"], report.get("failure"))
+        self.assertEqual(len(report["runs"]), 4)
+        out = report["outcome"]
+        self.assertEqual(sorted(out["digests"]),
+                         ["boss-selftest", "logroot"])
+        self.assertTrue(out["probe"]["ok"])
+        self.assertFalse(out["probe"]["complete"])
+        self.assertEqual(out["probe"]["units"]["logroot"]["base"][
+            "stats_lines"], 1)
+        self.assertEqual(sorted(out["overheads"]["scan_seconds"]),
+                         ["boss-selftest", "logroot"])
+        self.assertEqual(sorted(out["overheads"]["verify_seconds"]),
+                         ["after", "before"])
+
+    def test_a_subset_may_be_measured_in_information_runs_only(self):
+        args = self.world.args("o", only=["logroot"])
+        self.assertEqual(dw.info_spec(args, "smoke")["names"], ["logroot"])
+
+    def test_a_smoke_that_misses_the_reporter_fails_the_probe(self):
+        self.world.fault = lambda u, s, n: "noreporter"
+        args, spec = self.world.info("s", "smoke", names=["logroot"])
+        report = dw.run_stage(args, spec)
+        self.assertTrue(report["success"])
+        self.assertFalse(report["outcome"]["probe"]["ok"])
+
+
+class NegativeControl(Base):
+    def control(self, name="ctl"):
+        pilot(self.world)
+        args, spec = self.world.info(name, "control",
+                                     pilot=self.world.tmp / "pilot")
+        return args, spec, dw.run_stage(args, spec)
+
+    def test_the_busy_time_is_six_percent_of_the_pilots_whole_tree_cpu(self):
+        args, spec, report = self.control()
+        pilot_report = a.load(self.world.tmp / "pilot/downstream.json")
+        cpu = pilot_report["outcome"]["pilot"]["logroot"]["median_cpu"]
+        self.assertEqual(spec["busy"]["seconds"], round(0.06 * cpu, 6))
+        self.assertEqual(spec["busy"]["median_cpu"], cpu)
+        # the whole tree: wait4 CPU, about the unit's serial time
+        self.assertAlmostEqual(cpu, cases.BY_NAME["logroot"]["serial"],
+                               delta=0.5)
+        self.assertTrue(report["success"], report.get("failure"))
+
     def test_the_negative_control_detects_the_busy_reporter(self):
-        spec = dw.info_spec(self.world.args("n", reps=1), "control")
-        report = dw.run_stage(self.world.args("n", reps=1), spec)
+        args, spec, report = self.control()
         self.assertTrue(report["success"], report.get("failure"))
         control = report["outcome"]["negative_control"]
         self.assertTrue(control["detected"], control)
         self.assertEqual(control["unit"], "logroot")
         busy = [c for c in self.world.calls if "T32_BUSY" in c[2]]
         self.assertEqual(len(busy), 10)
-        self.assertEqual({c[1] for c in self.world.calls}, {"base"})
-        info = dw.tg.Ledger(dw.ledger_path(self.world.repo)).records
-        self.assertEqual([r["event"] for r in info], ["info", "info-end"])
+        self.assertEqual({float(c[2]["T32_BUSY"]) for c in busy},
+                         {spec["busy"]["seconds"]})
+        control_calls = self.world.calls[40:]  # after the pilot
+        self.assertEqual({c[1] for c in control_calls}, {"base"})
+        infos = dw.tg.Ledger(self.world.ledger()).records
+        self.assertEqual([r["event"] for r in infos],
+                         ["info", "info-end"] * 2)
         self.assertEqual(dw.exit_of(report), 0)
+        # and the replay recomputes the busy time from the pilot's CPU
+        info, again = dw.replay_one(self.world.tmp / "ctl")
+        self.assertEqual(dw.dumps(again), dw.dumps(report))
 
     def test_the_negative_control_is_missed_without_the_busy_loop(self):
-        self.world.launch_plain = self.world.launch
-
-        def plain(argv, cwd, env, timeout, out, fds=()):
-            env = {k: v for k, v in env.items() if k != "T32_BUSY"}
-            return self.world.launch_plain(argv, cwd, env, timeout, out, fds)
-        with mock.patch.object(dw, "launch", plain):
-            report = dw.run_stage(self.world.args("n"), dw.info_spec(
-                self.world.args("n", reps=1), "control"))
-        self.assertFalse(report["outcome"]["negative_control"]["detected"])
+        pilot(self.world)
+        self.world.ignore_busy = True
+        args, spec = self.world.info("n", "control",
+                                     pilot=self.world.tmp / "pilot")
+        report = dw.run_stage(args, spec)
+        self.assertTrue(report["success"])
+        found = report["outcome"]["negative_control"]
+        self.assertFalse(found["detected"])
         self.assertEqual(dw.exit_of(report), 1)
 
-    def test_smoke_runs_both_sides_and_compares_outputs(self):
-        args = self.world.args("s", only=["logroot", "boss-selftest"])
-        report = dw.run_stage(args, dw.info_spec(args, "smoke"))
-        self.assertTrue(report["success"], report.get("failure"))
-        self.assertEqual(len(report["runs"]), 4)
-        self.assertEqual(sorted(report["outcome"]["digests"]),
-                         ["boss-selftest", "logroot"])
-        self.world.fault = lambda u, s, n: (
-            "mismatch" if s == "cand" and u["kind"] == "selftest" else None)
-        args = self.world.args("s2", only=["boss-selftest"])
-        report = dw.run_stage(args, dw.info_spec(args, "smoke"))
-        self.assertFalse(report["success"])
+    def test_a_forged_busy_time_does_not_replay(self):
+        args, spec, report = self.control()
+        path = self.world.tmp / "ctl/downstream.json"
+        forged = a.load(path)
+        forged["busy"]["seconds"] *= 0.5
+        path.write_text(json.dumps(forged))
+        with self.assertRaises(dw.Refusal):
+            dw.replay_one(self.world.tmp / "ctl")
 
-    def test_decision_stages_refuse_a_subset_of_the_workloads(self):
-        args = self.world.args("o", only=["logroot"])
-        self.assertEqual(dw.info_spec(args, "smoke")["names"], ["logroot"])
-        self.assertEqual(dw.info_spec(args, "control")["names"],
-                         [cases.CONTROL_UNIT])
+    def test_a_control_needs_a_pilot_of_this_gate(self):
+        args = self.world.args("c", pilot=self.world.tmp / "missing")
+        with self.assertRaises(OSError):
+            dw.info_spec(args, "control")
+
+
+class Journal(Base):
+    """The restore journal, recovery, kill and signal handling."""
+
+    def test_the_journal_and_backups_exist_before_a_product_is_deleted(self):
+        seen = []
+        real = self.world.launch
+
+        def check(argv, cwd, env, timeout, out, fds=()):
+            (folder,) = dw.pending_journals(self.world.repo)
+            entry = dw.journal_read(folder)["pending"]
+            seen.append((entry["unit"], sorted(entry["meta"])))
+            for rel in entry["meta"]:
+                self.assertTrue((Path(entry["store"]) / rel).is_file())
+                self.assertFalse((Path(entry["folder"]) / rel).exists())
+            return real(argv, cwd, env, timeout, out, fds)
+        with mock.patch.object(dw, "launch", check):
+            report = self.world.run("j", self.world.spec(["logroot"]))
+        self.assertTrue(report["success"])
+        self.assertEqual(seen[0][0], "logroot")
+        self.assertIn(".hol/make-deps/logrootTheory.sig.d", seen[0][1])
+        self.assertEqual(dw.pending_journals(self.world.repo), [])
+
+    def fatal(self):
+        before = self.world.snapshot()
+        with mock.patch.object(dw, "restore", lambda *x, **k: None):
+            report = self.world.run("f", self.world.spec(["logroot"]))
+        return before, report
+
+    def test_a_failed_restore_is_fatal_and_keeps_backups_and_journal(self):
+        before, report = self.fatal()
+        self.assertFalse(report["success"])
+        self.assertIn("Fatal: could not restore the products of logroot",
+                      report["failure"])
+        (folder,) = dw.pending_journals(self.world.repo)
+        self.assertEqual(report["journal"], str(folder))
+        self.assertTrue(str(folder).startswith(str(
+            self.world.repo / ".agent-files/scratch/task32")))
+        entry = dw.journal_read(folder)["pending"]
+        self.assertTrue(entry["meta"])
+        for rel, meta in entry["meta"].items():
+            data = (Path(entry["store"]) / rel).read_bytes()
+            self.assertEqual(dw.sha(data), meta["sha256"])
+        self.assertIn(str(folder), report["failure"])
+
+    def test_a_pending_journal_blocks_new_runs_until_recover(self):
+        before, report = self.fatal()
+        with self.assertRaisesRegex(dw.Refusal, "restore journal is pend"):
+            self.world.run("g", self.world.spec(["logroot"]))
+        self.assertEqual(dw.recover(self.world.repo), 0)
+        self.assertEqual(self.world.snapshot(), before)
+        self.assertEqual(dw.pending_journals(self.world.repo), [])
+        report = self.world.run("h", self.world.spec(["logroot"]))
+        self.assertTrue(report["success"], report.get("failure"))
+
+    def test_recover_moves_the_files_the_killed_process_left(self):
+        before, report = self.fatal()
+        folder = self.world.roots["base"] / "src/num/extra_theories"
+        (folder / ".hol/objs/leftover.uo").write_text("x")
+        main = dw.main(["recover", "--repo", str(self.world.repo)])
+        self.assertEqual(main, 0)
+        self.assertEqual(self.world.snapshot(), before)
+        kept = list((self.world.repo / dw.JOURNALS).glob(
+            "*/strays/.hol/objs/leftover.uo"))
+        self.assertEqual(len(kept), 1)
+
+    def test_recover_with_nothing_pending_is_a_noop(self):
+        self.assertEqual(dw.recover(self.world.repo), 0)
+
+    def test_an_unreadable_journal_counts_as_pending(self):
+        folder = self.world.repo / dw.JOURNALS / "x"
+        folder.mkdir(parents=True)
+        (folder / "journal.json").write_text("{")
+        self.assertEqual(dw.pending_journals(self.world.repo), [folder])
+
+    def test_a_signal_restores_closes_the_attempt_and_leaves_no_journal(self):
+        self.world.fault = lambda u, s, n: "terminate" if n >= 3 else None
+        before = self.world.snapshot()
+        report = self.world.run("t", self.world.spec(["logroot"]))
+        self.assertFalse(report["success"])
+        self.assertIn("Terminated: SIGTERM", report["failure"])
+        self.assertEqual(self.world.snapshot(), before)
+        self.assertEqual(dw.pending_journals(self.world.repo), [])
+        status = self.world.status()
+        self.assertEqual(status[-1][1], ["failed"])
+        self.assertEqual(report["runs"][-1]["accepted"], True)
+
+
+class Launch(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory(prefix="t32-launch-")
+        self.addCleanup(self.dir.cleanup)
+        self.tmp = Path(self.dir.name)
+
+    def test_a_process_that_ends_in_time_is_not_timed_out(self):
+        got = dw.launch(["true"], self.tmp, dict(os.environ), 30,
+                        self.tmp / "o")
+        self.assertEqual((got["exit"], got["timed_out"]), (0, False))
+        self.assertGreater(got["wall"], 0)
+
+    def test_the_deadline_kills_the_whole_group(self):
+        pidfile = self.tmp / "pid"
+        got = dw.launch(["sh", "-c", "echo $$ > %s; sleep 30 & wait" %
+                         pidfile], self.tmp, dict(os.environ), 0.5,
+                        self.tmp / "o")
+        self.assertEqual((got["exit"], got["timed_out"]), (-9, True))
+        with self.assertRaises(ProcessLookupError):
+            os.killpg(int(pidfile.read_text()), 0)
+
+    def test_a_signal_kills_the_group_and_waits_for_it(self):
+        pidfile = self.tmp / "pid"
+        timer = threading.Timer(0.5, os.kill, (os.getpid(), signal.SIGTERM))
+        with snap.terminating():
+            timer.start()
+            with self.assertRaises(snap.Terminated):
+                dw.launch(["sh", "-c", "echo $$ > %s; sleep 30" % pidfile],
+                          self.tmp, dict(os.environ), 60, self.tmp / "o")
+        timer.cancel()
+        with self.assertRaises(ProcessLookupError):
+            os.killpg(int(pidfile.read_text()), 0)
+
+    def test_handlers_do_not_override_an_ignored_signal(self):
+        old = signal.signal(signal.SIGHUP, signal.SIG_IGN)
+        try:
+            with snap.terminating():
+                self.assertEqual(signal.getsignal(signal.SIGHUP),
+                                 signal.SIG_IGN)
+                self.assertNotEqual(signal.getsignal(signal.SIGTERM),
+                                    signal.SIG_IGN)
+        finally:
+            signal.signal(signal.SIGHUP, old)
 
 
 class Replay(Base):
@@ -723,7 +1244,7 @@ class Replay(Base):
         self.assertEqual(report["outcome"]["results"]["logroot"]["decision"],
                          "fail")
         info, again = dw.replay_one(self.world.tmp / "r",
-                                    ledger=dw.ledger_path(self.world.repo))
+                                    ledger=self.world.ledger())
         self.assertEqual(info["exit"], "fail")
         self.assertEqual(info["attempts"], dict(attempts=1, judged=1))
         self.assertEqual(dw.dumps(again), dw.dumps(report))
@@ -735,7 +1256,7 @@ class Replay(Base):
     def test_replay_refuses_a_changed_receipt_or_report(self):
         self.stage()
         folder = self.world.tmp / "r"
-        ledger = dw.ledger_path(self.world.repo)
+        ledger = self.world.ledger()
         path = folder / "logroot-candidate-000-baseline-00.json.gz"
         original = path.read_bytes()
         receipt = json.loads(gzip.decompress(original))
@@ -763,12 +1284,12 @@ class Replay(Base):
         report["runs"][5]["seal"] = a.seal(path)
         (folder / "downstream.json").write_text(dw.dumps(report))
         with self.assertRaisesRegex(dw.Refusal, "changed measurement"):
-            dw.replay_one(folder, ledger=dw.ledger_path(self.world.repo))
+            dw.replay_one(folder, ledger=self.world.ledger())
 
     def test_replay_checks_the_ledger_close_and_the_draw_count(self):
         self.stage()
         folder = self.world.tmp / "r"
-        ledger = dw.ledger_path(self.world.repo)
+        ledger = self.world.ledger()
         with self.assertRaises(dw.Refusal):
             dw.replay_one(folder, ledger=self.world.tmp / "none.jsonl")
         report = a.load(folder / "downstream.json")
@@ -780,15 +1301,39 @@ class Replay(Base):
     def test_replay_runs_no_process(self):
         self.stage()
         calls = len(self.world.calls)
-        dw.replay_one(self.world.tmp / "r",
-                      ledger=dw.ledger_path(self.world.repo))
+        dw.replay_one(self.world.tmp / "r", ledger=self.world.ledger())
         self.assertEqual(len(self.world.calls), calls)
 
     def test_a_pass_replays_as_a_pass(self):
         self.stage(scale=1.0, name="p")
         info, _ = dw.replay_one(self.world.tmp / "p",
-                                ledger=dw.ledger_path(self.world.repo))
+                                ledger=self.world.ledger())
         self.assertEqual(info["exit"], "pass")
+
+    def test_an_information_run_replays_against_the_prebuilt_digest(self):
+        args, spec = self.world.info("s", "smoke", names=["logroot"])
+        dw.run_stage(args, spec)
+        info, report = dw.replay_one(self.world.tmp / "s")
+        self.assertEqual(info["mode"], "smoke")
+        path = self.world.tmp / "s/downstream.json"
+        forged = a.load(path)
+        forged["prebuilt"]["logroot"] = "0" * 64
+        path.write_text(json.dumps(forged))
+        with self.assertRaises(dw.Refusal):
+            dw.replay_one(self.world.tmp / "s")
+
+    def test_replay_checks_a_selftests_stored_output_against_its_digest(self):
+        args, spec = self.world.info("s", "smoke", names=["arith-selftest"])
+        report = dw.run_stage(args, spec)
+        entry = report["runs"][0]
+        path = self.world.tmp / "s" / entry["receipt"]
+        receipt = json.loads(gzip.decompress(path.read_bytes()))
+        receipt["stdout"] += "more\n"
+        path.write_bytes(gzip.compress(dw.dumps(receipt).encode(), mtime=0))
+        report["runs"][0]["seal"] = a.seal(path)
+        (self.world.tmp / "s/downstream.json").write_text(dw.dumps(report))
+        with self.assertRaisesRegex(dw.Refusal, "stored output"):
+            dw.replay_one(self.world.tmp / "s")
 
 
 class CountsCommit(unittest.TestCase):
@@ -852,158 +1397,273 @@ class CountsCommit(unittest.TestCase):
             dw.check_counts_commit(self.repo, self.path, self.cand)
 
 
-class Chain(Base):
-    """smoke -> pilot -> counts -> first stage -> second stage -> follow-up
-    -> disposition, on fake processes: logroot is noisy in the first stage
-    (a control outside the window), borderline at 3% in the second, and
-    passes in the follow-up; every other workload passes in the first."""
+class Sealed(unittest.TestCase):
+    def test_the_code_is_sealed_with_the_snapshots_and_dat_modules(self):
+        for name in ("task32_snapshots.py", "task32_dat.py",
+                     "startup_gate.py", "task32_cases.py",
+                     "task32_downstream.py", "loading.py"):
+            self.assertIn(name, dw.CODE)
+        self.assertEqual(sorted(dw.code_seals()), sorted(dw.CODE))
 
-    @classmethod
-    def commit_counts(cls, world, path):
-        rel = os.path.relpath(path, world.repo)
-        git(world.repo, "add", rel)
-        git(world.repo, "commit", "-q", "-m", "counts " + path.name)
+    def test_the_history_is_empty_until_a_record_exists(self):
+        self.assertEqual(dw.HISTORY, {})
+
+    def test_a_record_carries_the_current_seal_or_one_the_history_lists(self):
+        now = dw.code_seals()
+        dw.check_code(now)
+        old = dict(now, **{"task32_dat.py": dict(bytes=1, sha256="0" * 64)})
+        with self.assertRaisesRegex(dw.Refusal, "task32_dat.py.*HISTORY"):
+            dw.check_code(old)
+        with mock.patch.object(dw, "HISTORY", {
+                "task32_dat.py": [old["task32_dat.py"]]}):
+            dw.check_code(old)
+        with self.assertRaises(dw.Refusal):
+            dw.check_code({k: v for k, v in now.items()
+                           if k != "loading.py"})
+
+
+class Cli(unittest.TestCase):
+    def parse(self, *argv):
+        return dw.build_parser().parse_args(list(argv))
+
+    def common(self):
+        return ["--repo", "r", "--base-root", "b", "--cand-root", "c",
+                "--manifest", "m"]
+
+    def test_run_commands_take_no_ledger(self):
+        for command in ("smoke", "pilot", "run", "extend", "followup"):
+            extra = ["--first", "f"] if command == "extend" else []
+            argv = [command, *self.common(), "--output", "o", *extra]
+            self.parse(*argv)
+            with self.assertRaises(SystemExit), \
+                    mock.patch("sys.stderr"):
+                self.parse(*argv, "--ledger", "x")
+
+    def test_read_only_commands_take_a_ledger(self):
+        self.parse("replay", "x", "--ledger", "l")
+        self.parse("dispose", "--stage", "x", "--out", "o", "--ledger", "l")
+        self.parse("predeclare", *self.common(), "--out", "o", "--ledger",
+                   "l", "--control", "c")
+
+    def test_control_needs_a_pilot_and_recover_a_repository(self):
+        with self.assertRaises(SystemExit), mock.patch("sys.stderr"):
+            self.parse("control", *self.common(), "--output", "o")
+        self.parse("control", *self.common(), "--output", "o", "--pilot",
+                   "p")
+        self.parse("recover", "--repo", "r")
+
+    def test_the_pilot_is_ten_pairs_and_r_has_a_cap(self):
+        self.assertEqual(dw.PILOT_PAIRS, 10)
+        self.assertGreaterEqual(dw.R_CAP, 1)
+
+
+class Chain(Base):
+    """smoke -> pilot -> control -> counts -> first stage -> second stage ->
+    follow-up -> disposition, on fake processes. logroot is noisy in the
+    first stage (a control outside the window: the second stage) and
+    borderline in the second (a valid control, inconclusive: follow-up);
+    rat has a valid control and is borderline already in the first stage
+    (a follow-up without a second stage); everything else passes."""
+
+    def commit_counts(self, path):
+        w = self.world
+        git(w.repo, "add", os.path.relpath(path, w.repo))
+        git(w.repo, "commit", "-q", "-m", "counts " + path.name)
 
     def test_the_whole_chain(self):
         w = self.world
-        ledger = dw.ledger_path(w.repo)
+        ledger = w.ledger()
         perf = w.repo / "src/simp/tests/performance"
-        all_args = w.args("smoke")
-        smoke = dw.run_stage(all_args, dw.info_spec(all_args, "smoke"))
+        args, spec = w.info("smoke", "smoke")
+        smoke = dw.run_stage(args, spec)
         self.assertTrue(smoke["success"], smoke.get("failure"))
         self.assertEqual(len(smoke["runs"]), 30)
-        args = w.args("pilot")
-        pilot = dw.run_stage(args, dw.info_spec(args, "pilot"))
-        self.assertTrue(pilot["success"], pilot.get("failure"))
-        self.assertEqual(len(pilot["runs"]), 150)
-        self.assertTrue(pilot["outcome"]["covered"])
+        self.assertTrue(smoke["outcome"]["probe"]["ok"])
+        self.assertTrue(smoke["outcome"]["probe"]["complete"])
+        self.assertEqual(smoke["outcome"]["probe"]["heaps"],
+                         list(cases.HEAPS))
+        args, spec = w.info("pilot", "pilot")
+        pilot_run = dw.run_stage(args, spec)
+        self.assertTrue(pilot_run["success"], pilot_run.get("failure"))
+        self.assertEqual(len(pilot_run["runs"]), 300)
+        self.assertTrue(pilot_run["outcome"]["covered"])
         self.assertEqual({p["reps"] for p in
-                          pilot["outcome"]["pilot"].values()}, {1})
+                          pilot_run["outcome"]["pilot"].values()}, {1})
         self.assertEqual({c[1] for c in w.calls[30:]}, {"base"})
-        # predeclare
-        counts = dw.predeclare_first(w.args("x", pilot=w.tmp / "pilot",
-                                            smoke=w.tmp / "smoke"))
+        args, spec = w.info("control", "control", pilot=w.tmp / "pilot")
+        control = dw.run_stage(args, spec)
+        self.assertTrue(control["success"], control.get("failure"))
+        self.assertTrue(control["outcome"]["negative_control"]["detected"])
+        # predeclare: replays the three, writes the counts
+        pargs = w.args("x", pilot=w.tmp / "pilot", smoke=w.tmp / "smoke",
+                       control=w.tmp / "control")
+        counts = dw.predeclare_first(pargs)
         self.assertEqual(set(counts["reps"]), set(cases.NAMES))
+        self.assertEqual(counts["r_cap"], dw.R_CAP)
+        self.assertTrue(counts["control"]["detected"])
+        self.assertGreater(counts["time_estimate_seconds"]["total"], 0)
+        self.assertIn("scan_seconds", counts["smoke"]["overheads"])
+        self.assertEqual(sorted(counts["smoke"]["overheads"][
+            "verify_seconds"]), ["after", "before"])
         counts_path = perf / "counts.json"
-        with self.patch_code():
-            counts_path.write_text(dw.dumps(counts))
-            with self.assertRaisesRegex(dw.Refusal, "not committed"):
-                dw.first_spec(w.args("a", counts=counts_path))
-            self.commit_counts(w, counts_path)
-            # first stage
-            for name in cases.NAMES:
-                w.profile[name] = (1.0, 0.001)
-            w.profile["logroot"] = (1.0, 0.06)
-            spec = dw.first_spec(w.args("first", counts=counts_path))
-            first = dw.run_stage(w.args("first", counts=counts_path), spec)
-            self.assertTrue(first["success"], first.get("failure"))
-            self.assertEqual(len(first["runs"]), 15 * 20 * 4)
-            res = first["outcome"]["results"]
-            self.assertEqual(
-                [n for n in cases.NAMES if res[n]["decision"] != "pass"],
-                ["logroot"])
-            self.assertFalse(res["logroot"]["control_valid"])
-            self.assertTrue(all(res[n]["control_valid"]
-                                for n in cases.NAMES if n != "logroot"))
-            self.assertEqual(dw.exit_of(first), 2)
-            # a second first stage is refused, and so is replaying wrong
-            with self.assertRaisesRegex(dw.Refusal, "judged attempt"):
-                w.run("first-again", spec, counts=counts_path)
-            chain = dw.replay_chain(w.tmp / "first", ledger,
-                                    counts=counts_path, repo=w.repo)
-            self.assertEqual([e["stage"] for e in chain], ["first"])
-            owed = dw.disposition(chain, ledger)
-            self.assertEqual(owed["status"], "blocked")
-            self.assertEqual(owed["workloads"]["logroot"]["note"],
-                             "second stage owed")
-            # second stage: only logroot, the pairs the grid's rule gives
-            w.profile["logroot"] = (1.03, 0.01)
-            sargs = w.args("second", first=w.tmp / "first",
-                           counts=counts_path)
-            spec2 = dw.second_spec(sargs)
-            self.assertEqual(spec2["names"], ["logroot"])
-            self.assertEqual(spec2["pairs"]["logroot"],
-                             res["logroot"]["second_stage_pairs"])
-            second = dw.run_stage(sargs, spec2)
-            self.assertTrue(second["success"], second.get("failure"))
-            sres = second["outcome"]["results"]["logroot"]
-            self.assertEqual(sres["decision"], "inconclusive")
-            self.assertTrue(sres["control_valid"])
-            chain = dw.replay_chain(w.tmp / "second", ledger,
-                                    counts=counts_path, repo=w.repo)
-            self.assertEqual([e["stage"] for e in chain],
-                             ["first", "second"])
-            disp = dw.disposition(chain, ledger)
-            self.assertEqual(disp["workloads"]["logroot"]["status"],
-                             "followup")
-            self.assertEqual(disp["status"], "blocked")
-            self.assertEqual(disp["counts"]["followup"], 1)
-            with self.assertRaises(dw.Refusal):  # at most one second stage
-                w.run("second-again", spec2)
-            # follow-up: the same driver, its own counts, committed alone
-            fargs = w.args("fu", stage=w.tmp / "second", followup=True,
-                           counts=counts_path)
-            fcounts = dw.predeclare_followup(fargs)
-            self.assertEqual(fcounts["workloads"], ["logroot"])
-            self.assertEqual(fcounts["pairs"]["logroot"],
-                             2 * sres["pairs"])
-            self.assertNotEqual(fcounts["seed"], dw.EXTENSION_SEED)
-            fpath = perf / "followup.json"
-            fpath.write_text(dw.dumps(fcounts))
-            fa = w.args("followup", followup_counts=fpath,
-                        counts=counts_path)
-            with self.assertRaisesRegex(dw.Refusal, "not committed"):
-                dw.followup_spec(fa)
-            self.commit_counts(w, fpath)
-            w.profile["logroot"] = (1.0, 0.01)
-            fspec = dw.followup_spec(fa)
-            follow = dw.run_stage(fa, fspec)
-            self.assertTrue(follow["success"], follow.get("failure"))
-            self.assertEqual(follow["outcome"]["results"]["logroot"][
+        counts_path.write_text(dw.dumps(counts))
+        with self.assertRaisesRegex(dw.Refusal, "not committed"):
+            dw.first_spec(w.args("a", counts=counts_path))
+        self.commit_counts(counts_path)
+        # first stage
+        for name in cases.NAMES:
+            w.profile[name] = (1.0, 0.001)
+        w.profile["logroot"] = (1.0, 0.06)
+        w.profile["rat"] = (1.03, 0.003)
+        spec = dw.first_spec(w.args("first", counts=counts_path))
+        first = dw.run_stage(w.args("first", counts=counts_path), spec)
+        self.assertTrue(first["success"], first.get("failure"))
+        self.assertEqual(len(first["runs"]), 15 * 20 * 4)
+        res = first["outcome"]["results"]
+        self.assertEqual(
+            sorted(n for n in cases.NAMES if res[n]["decision"] != "pass"),
+            ["logroot", "rat"])
+        self.assertFalse(res["logroot"]["control_valid"])
+        self.assertEqual(res["rat"]["decision"], "inconclusive")
+        self.assertTrue(res["rat"]["control_valid"])
+        self.assertEqual(dw.exit_of(first), 2)
+        with self.assertRaisesRegex(dw.Refusal, "judged attempt"):
+            w.run("first-again", spec, counts=counts_path)
+        chain = dw.replay_chain(w.tmp / "first", ledger,
+                                counts=counts_path, repo=w.repo)
+        self.assertEqual([e["stage"] for e in chain], ["first"])
+        disp = dw.disposition(chain, ledger)
+        self.assertEqual(disp["workloads"]["logroot"]["note"],
+                         dw.NOTE_SECOND)
+        self.assertEqual(disp["workloads"]["rat"]["status"], "followup")
+        # a follow-up is refused while a workload is owed its second stage
+        with self.assertRaisesRegex(dw.Refusal, "second stage"):
+            dw.followup_plan(chain)
+        # second stage: only the control-limited logroot, the grid's pairs
+        w.profile["logroot"] = (1.03, 0.01)
+        sargs = w.args("second", first=w.tmp / "first", counts=counts_path)
+        spec2 = dw.second_spec(sargs)
+        self.assertEqual(spec2["names"], ["logroot"])
+        self.assertEqual(spec2["pairs"]["logroot"],
+                         res["logroot"]["second_stage_pairs"])
+        second = dw.run_stage(sargs, spec2)
+        self.assertTrue(second["success"], second.get("failure"))
+        sres = second["outcome"]["results"]["logroot"]
+        self.assertEqual(sres["decision"], "inconclusive")
+        self.assertTrue(sres["control_valid"])
+        chain = dw.replay_chain(w.tmp / "second", ledger,
+                                counts=counts_path, repo=w.repo)
+        self.assertEqual([e["stage"] for e in chain], ["first", "second"])
+        disp = dw.disposition(chain, ledger)
+        self.assertEqual(disp["workloads"]["logroot"]["status"],
+                         "followup")
+        self.assertEqual(disp["counts"]["followup"], 2)
+        with self.assertRaises(dw.Refusal):  # at most one second stage
+            w.run("second-again", spec2)
+        # follow-up: pairs from the first stage's control, own seed and
+        # counts, committed alone first
+        fargs = w.args("fu", stage=w.tmp / "second", followup=True,
+                       counts=counts_path)
+        fcounts = dw.predeclare_followup(fargs)
+        self.assertEqual(sorted(fcounts["workloads"]),
+                         ["logroot", "rat"])
+        for name in fcounts["workloads"]:
+            self.assertEqual(fcounts["pairs"][name],
+                             res[name]["second_stage_pairs"])
+            self.assertGreaterEqual(fcounts["pairs"][name], 40)
+            self.assertLessEqual(fcounts["pairs"][name], 120)
+        self.assertNotEqual(fcounts["seed"], dw.EXTENSION_SEED)
+        self.assertEqual(fcounts["seed"], dw.FOLLOWUP_SEED)
+        fpath = perf / "followup.json"
+        fpath.write_text(dw.dumps(fcounts))
+        fa = w.args("followup", followup_counts=fpath, counts=counts_path)
+        with self.assertRaisesRegex(dw.Refusal, "not committed"):
+            dw.followup_spec(fa)
+        self.commit_counts(fpath)
+        w.profile["logroot"] = (1.0, 0.01)
+        w.profile["rat"] = (1.0, 0.001)
+        fspec = dw.followup_spec(fa)
+        follow = dw.run_stage(fa, fspec)
+        self.assertTrue(follow["success"], follow.get("failure"))
+        for name in ("logroot", "rat"):
+            self.assertEqual(follow["outcome"]["results"][name][
                 "decision"], "pass")
-            self.assertEqual(dw.exit_of(follow), 0)
-            chain = dw.replay_chain(w.tmp / "followup", ledger,
-                                    counts=counts_path,
-                                    followup_counts=fpath, repo=w.repo)
-            self.assertEqual([e["stage"] for e in chain],
-                             ["first", "second", "followup"])
-            self.assertEqual(dw.dumps(chain[-1]["report"]),
-                             dw.dumps(follow))
-            disp = dw.disposition(chain, ledger)
-            self.assertEqual(disp["status"], "pass")
-            self.assertEqual(disp["counts"]["pass"], 15)
-            self.assertEqual(len(disp["attempts"]), 3)
-            self.assertFalse(any(r["void"] for r in disp["attempts"]))
-            # the follow-up cannot be repeated
-            with self.assertRaises(dw.Refusal):
-                w.run("followup-again", fspec, counts=counts_path)
-            # the drivers' main entry points reach the same results
-            out = w.tmp / "disposition.json"
-            code = dw.main(["dispose", "--stage", str(w.tmp / "followup"),
-                            "--out", str(out), "--ledger", str(ledger),
-                            "--counts", str(counts_path),
-                            "--followup-counts", str(fpath),
-                            "--repo", str(w.repo)])
-            self.assertEqual(code, 0)
-            self.assertEqual(json.loads(out.read_text())["status"], "pass")
-            code = dw.main(["replay", str(w.tmp / "followup"), "--ledger",
-                            str(ledger), "--counts", str(counts_path),
-                            "--followup-counts", str(fpath), "--repo",
-                            str(w.repo)])
-            self.assertEqual(code, 0)
+        self.assertEqual(dw.exit_of(follow), 0)
+        chain = dw.replay_chain(w.tmp / "followup", ledger,
+                                counts=counts_path,
+                                followup_counts=fpath, repo=w.repo)
+        self.assertEqual([e["stage"] for e in chain],
+                         ["first", "second", "followup"])
+        self.assertEqual(dw.dumps(chain[-1]["report"]), dw.dumps(follow))
+        disp = dw.disposition(chain, ledger)
+        self.assertEqual(disp["status"], "pass")
+        self.assertEqual(disp["counts"]["pass"], 15)
+        self.assertEqual(len(disp["attempts"]), 3)
+        self.assertFalse(any(r["void"] for r in disp["attempts"]))
+        self.assertEqual([r["mode"] for r in disp["info_runs"]],
+                         ["smoke", "pilot", "control"])
+        self.assertEqual({r["status"] for r in disp["info_runs"]},
+                         {"success"})
+        self.assertEqual(disp["redraws"], [])
+        self.assertTrue(all(r["checkout"] == str(w.repo)
+                            for r in disp["attempts"] + disp["info_runs"]))
+        with self.assertRaises(dw.Refusal):  # the follow-up is one draw
+            w.run("followup-again", fspec, counts=counts_path)
+        # the entry points reach the same results
+        out = w.tmp / "disposition.json"
+        code = dw.main(["dispose", "--stage", str(w.tmp / "followup"),
+                        "--out", str(out), "--ledger", str(ledger),
+                        "--counts", str(counts_path),
+                        "--followup-counts", str(fpath),
+                        "--repo", str(w.repo)])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out.read_text())["status"], "pass")
+        code = dw.main(["replay", str(w.tmp / "followup"), "--ledger",
+                        str(ledger), "--counts", str(counts_path),
+                        "--followup-counts", str(fpath), "--repo",
+                        str(w.repo)])
+        self.assertEqual(code, 0)
         # the code the counts are bound to cannot change under them
+        sides, _ = dw.pins_of(w.args("z"))
         with mock.patch.object(dw, "code_seals",
                                lambda: dict(counts["code"], x="y")):
             with self.assertRaisesRegex(dw.Refusal, "code changed"):
-                dw.load_counts(counts_path, *dw.pins_of(w.args("z")),
-                               "first", w.repo)
+                dw.load_counts(counts_path, sides, "first", w.repo)
+        # a counts file of another gate, or over the R cap, is refused
+        other = dict(sides, cand=dict(sides["cand"], pin="2" * 40))
+        with self.assertRaisesRegex(dw.Refusal, "another gate"):
+            dw.load_counts(counts_path, other, "first", w.repo)
 
-    def patch_code(self):
-        """The counts commits sit in the temporary repository, while the
-        sealed code is that of this checkout: nothing to patch there; the
-        repository check of the candidate is already replaced."""
-        return mock.patch.object(dw, "COUNTS_SCOPE",
-                                 "src/simp/tests/performance/")
+    def test_predeclare_refuses_without_a_detected_control_or_over_the_cap(
+            self):
+        w = self.world
+        names = ["logroot"]
+        for mode in ("smoke", "pilot"):
+            args, spec = w.info(mode, mode, names=names)
+            self.assertTrue(dw.run_stage(args, spec)["success"])
+        args, spec = w.info("control", "control", pilot=w.tmp / "pilot")
+        w.ignore_busy = True
+        self.assertTrue(dw.run_stage(args, spec)["success"])
+        pargs = w.args("x", pilot=w.tmp / "pilot", smoke=w.tmp / "smoke",
+                       control=w.tmp / "control")
+        # not all workloads: refused before anything else
+        with self.assertRaisesRegex(dw.Refusal, "workloads the counts"):
+            dw.predeclare_first(pargs)
+
+    def test_redraws_list_void_attempts_and_failed_information_runs(self):
+        w = self.world
+        w.fault = lambda u, s, n: "exit"
+        args, spec = w.info("s", "smoke", names=["logroot"])
+        self.assertFalse(dw.run_stage(args, spec)["success"])
+        self.assertFalse(w.run("v", w.spec(["logroot"]))["success"])
+        state, found = dw.read_ledger(w.ledger())
+        attempts = dw.attempts_table(found, dw.reasons(found))
+        infos = dw.info_runs(state)
+        self.assertEqual([r["status"] for r in infos], ["failed"])
+        self.assertTrue(attempts[0]["void"])
+        redrawn = dw.redraws(attempts, infos)
+        self.assertEqual(sorted(r["kind"] for r in redrawn),
+                         ["decision first", "smoke"])
 
 
 if __name__ == "__main__":
