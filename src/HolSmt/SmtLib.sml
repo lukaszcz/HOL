@@ -669,15 +669,11 @@ local
     fun native_string_literal tm =
       let
         val (constructor, representation) = dest_comb tm
-        val _ =
-          if known_same_const
-              (smtstring_const "SmtStr") constructor then ()
+        val injected = known_same_const str_inj_tm constructor
+        val _ = if injected orelse
+            known_same_const (smtstring_const "SmtStr") constructor then ()
           else raise ERR "native_string_literal" "not an SMT String"
         val (elements, element_ty) = (#dest_list builtin) representation
-        val _ =
-          if Type.compare (element_ty, numSyntax.num) = EQUAL then ()
-          else raise ERR "native_string_literal"
-            "String representation is not a num list"
         fun code_point element =
           let val numeral = (#dest_numeral builtin) element in
             Arbnum.toInt
@@ -685,7 +681,24 @@ local
             handle SmtLib_String_Literal.InvalidCodePoint detail =>
               raise ERR "native_string_literal" detail
           end
-        val code_points = List.map code_point elements
+        fun hol_character element =
+          let
+            val (head, value) = dest_comb element
+            val _ = if known_same_const stringSyntax.chr_tm head then ()
+              else raise ERR "native_string_literal" "not a HOL character"
+            val code = (#dest_numeral builtin) value
+          in
+            if Arbnum.< (code, Arbnum.fromInt 256) then Arbnum.toInt code
+            else raise ERR "native_string_literal" "HOL character out of range"
+          end
+        val code_points =
+          if injected andalso
+             Type.compare (element_ty, stringSyntax.char_ty) = EQUAL then
+            List.map hol_character elements
+          else if known_same_const (smtstring_const "SmtStr") constructor
+              andalso Type.compare (element_ty, numSyntax.num) = EQUAL then
+            List.map code_point elements
+          else raise ERR "native_string_literal" "not an SMT String literal"
       in
         "\"" ^ SmtLib_String_Literal.encode_string_literal code_points ^ "\""
       end
@@ -1695,6 +1708,9 @@ local
       fun native_set current = memoize "native-set" [] current (fn () =>
         is_variable current orelse is_empty_set current orelse
         is_univ_set current orelse
+        (case dest boolSyntax.conditional 3 current of
+           SOME [_,left,right] => native_set left andalso native_set right
+         | _ =>
         (case binary pred_setSyntax.insert_tm current of
            SOME (_,set) => native_set set
          | NONE => (case binary pred_setSyntax.delete_tm current of
@@ -1707,7 +1723,7 @@ local
                    SOME (left,right) =>
                      native_set left andalso native_set right
                  | NONE => (case unary pred_setSyntax.compl_tm current of
-                     SOME set => native_set set | NONE => false)))))))
+                     SOME set => native_set set | NONE => false))))))))
       fun finite_set evidence current =
         memoize "finite-set" [evidence] current (fn () =>
           let
@@ -2115,9 +2131,11 @@ local
           ((same_const rator intSyntax.int_injection orelse
             same_const rator int_of_num_tm) andalso
            (case rands of
-              [arg] => same_const (Lib.fst (strip_comb arg))
-                seq_length_tm andalso
-                is_native_sequence_type (type_of (Lib.snd (dest_comb arg)))
+              [arg] =>
+                (case strip_comb arg of
+                   (head, [seq]) => same_const head seq_length_tm andalso
+                     is_native_sequence_type (type_of seq)
+                 | _ => false)
             | _ => false)) orelse
           Option.isSome (optional dest_string_nth_shape tm) orelse
           Option.isSome (optional dest_seq_extract_shape tm) orelse
@@ -2521,7 +2539,7 @@ local
       ("higher-order", higher_order)
     ]))
 
-  fun infer_logic_from_features_for_regime regime
+  fun infer_logic_from_features_for_regime regime has_nonnullary_uf
       (features as LogicFeatures {
       quantifiers, uninterpreted, arrays, bitvectors, integers, reals,
       floating_point, strings, sequences, sets, bags, datatypes, nonlinear,
@@ -2607,7 +2625,9 @@ local
           else
             qf ^ (if nonlinear then "NRA" else "LRA")
         else if arrays then
-          if quantifiers then quantified_array_arith_logic () else "QF_AX"
+          if quantifiers then quantified_array_arith_logic ()
+          else if has_nonnullary_uf then "QF_AUFLIA"
+          else "QF_AX"
         else
           qf ^ "UF"
       fun bitvector_datatype_logic () =
@@ -3532,8 +3552,8 @@ local
       val string_record =
         HOLTheoryEncoding {
           feature =
-            "HOL strings: str_inj images of STRCAT, isPREFIX, string_lt, " ^
-            "string_le and string equality",
+            "HOL strings: str_inj images of STRCAT, STRLEN, isPREFIX, " ^
+            "string_lt, string_le and string equality",
           smt_theory = "UnicodeStrings",
           mode = NativeSMTLIB,
           parse = true,
@@ -3542,7 +3562,8 @@ local
           replay = false,
           notes =
             "HOL strings are rewritten through the proved str_inj transfer " ^
-            "kit; injected occurrences are generalized to SMT-LIB String.  " ^
+            "kit; literals retain their content and other injected " ^
+            "occurrences are generalized to SMT-LIB String.  " ^
             "The HOL :string type itself is not the SMT String sort: a " ^
             "residual occurrence is emitted as an uninterpreted sort.  " ^
             "Ground native smtstr goals do replay; the oracle tactics " ^
@@ -3918,14 +3939,15 @@ local
               ([index], [arg]) =>
                 let
                   val index_matches_constructor =
-                    Term.same_const index constructor
+                    Term.aconv index constructor
                     handle Feedback.HOL_ERR _ => false
                   val index_name =
                     Lib.fst (Term.dest_var index)
                     handle Feedback.HOL_ERR _ =>
                       #Name (Term.dest_thy_const index)
                 in
-                  if index_name = cname orelse index_matches_constructor then
+                  if same_type (Term.type_of arg, ty) andalso
+                     (index_name = cname orelse index_matches_constructor) then
                     datatype_tester_term ty constructor arg
                   else
                     SmtLib_Theories.decline
@@ -4812,8 +4834,10 @@ local
       end
     fun fallback_application name dependencies =
       sexpr name (List.map (output_text o Lib.snd) dependencies)
+    (* [definition] gives the defining body for a binder; with NONE the
+       symbol stays uninterpreted. *)
     fun fallback_array_definition prefix range_sort element_type
-        acc expression args body =
+        acc expression definition =
       let
         val dependencies = fallback_dependencies expression
         val dependency_vars = List.map Lib.fst dependencies
@@ -4861,18 +4885,22 @@ local
             val application = fallback_application name dependencies
             val quantified_decls = dependency_decls @
               ["(" ^ binder ^ " " ^ element_sort ^ ")"]
-            val definition = output_concat
-              [output_text "(assert ",
-               output_generated_forall quantified_decls
-                 (seal (tmdict, output_concat
-                   [output_text "(= (select ", application,
-                    output_text (" " ^ binder ^ ") "),
-                    body (output_text binder) args, output_text ")"])),
-               output_text ")\n"]
+            val definitions =
+              case definition of
+                NONE => []
+              | SOME body =>
+                  [output_concat
+                    [output_text "(assert ",
+                     output_generated_forall quantified_decls
+                       (seal (tmdict, output_concat
+                         [output_text "(= (select ", application,
+                          output_text (" " ^ binder ^ ") "),
+                          body (output_text binder), output_text ")"])),
+                     output_text ")\n"]]
           in
             ((tydict, tmdict),
              (typedecls @ List.concat dependency_typedecls @
-                [output_text declaration, definition],
+                output_text declaration :: definitions,
               application))
           end
       end
@@ -4881,7 +4909,7 @@ local
        quantified definition, rather than cvc5's finite set operators. *)
     fun fallback_set_definition acc set args body =
       fallback_array_definition "set" "Bool" (carrier_set_element_type set)
-        acc set args body
+        acc set (SOME (fn binder => body binder args))
     fun native_sequence_builtin (rator, rands) =
       let
         fun translate_args_from start args =
@@ -5197,7 +5225,7 @@ local
       end
     fun fallback_bag_definition acc bag args body =
       fallback_array_definition "bag" "Int" (carrier_bag_element_type bag)
-        acc bag args body
+        acc bag (SOME (fn binder => body binder args))
     fun z3_bag_helper terms name definition =
       let val (terms,fresh) = reserve_helper (terms,name)
       in (terms,if fresh then [output_text definition] else []) end
@@ -5458,6 +5486,42 @@ local
     fun translate_lambda acc =
       let val (v, body) = carrier_dest_abs tm in
         emit_binder {head = "lambda", nest_errors = true} acc [v] body
+      end
+    (* Standard27 emits abstractions, selectors and partially applied
+       constants as functions, but the Array backends give a marked
+       collection an Array sort. *)
+    fun array_collection t =
+      regime = HigherOrder Standard27 andalso
+      (!current_set_backend = CVC5ArraySet andalso
+       carrier_is_marked_set_term t orelse
+       !current_bag_backend = CVC5ArrayBag andalso
+       carrier_is_marked_bag_term t)
+    fun partial_array_collection () =
+      let val (rator, rands) = carrier_strip_comb tm in
+        array_collection tm andalso carrier_is_const rator andalso
+        List.length rands < carrier_declared_const_arity rator
+      end
+    (* A constant body is a const array; any other body is left
+       uninterpreted, keyed by the abstraction, so equal abstractions get
+       one symbol. *)
+    fun translate_array_abstraction acc =
+      let
+        val body = Lib.snd (carrier_dest_abs tm)
+        fun constant (tydict, result) = ((tydict, Lib.snd acc), result)
+        val is_set = carrier_is_marked_set_term tm
+      in
+        if is_set andalso carrier_same_const body boolSyntax.F then
+          constant (set_constant (Lib.fst acc) tm "false")
+        else if is_set andalso carrier_same_const body boolSyntax.T then
+          constant (set_constant (Lib.fst acc) tm "true")
+        else if is_set then
+          fallback_array_definition "set" "Bool"
+            (carrier_set_element_type tm) acc tm NONE
+        else if carrier_same_const body numSyntax.zero_tm then
+          constant (bag_constant (Lib.fst acc) tm)
+        else
+          fallback_array_definition "bag" "Int"
+            (carrier_bag_element_type tm) acc tm NONE
       end
     fun eta_expand_ranked_constant acc applied rator rank rands_count =
       let
@@ -5746,7 +5810,9 @@ local
      else
        case regime of
          FirstOrder => raise ERR "translate_term" "not first-order"
-       | HigherOrder _ => translate_lambda acc)
+       | HigherOrder _ =>
+           if array_collection tm then translate_array_abstraction acc
+           else translate_lambda acc)
     handle DispatchFailure _ =>
 
     (* translate the entire term (e.g., for numerals), using the dictionary of
@@ -5768,7 +5834,9 @@ local
       translate_constructor_application acc rator rands
     handle DispatchFailure _ =>
 
-      translate_selector_case acc
+      (if partial_array_collection () then
+         raise ERR "translate_term" "Array-valued selector"
+       else translate_selector_case acc)
     handle DispatchFailure _ =>
 
       translate_tester_case acc
@@ -5864,7 +5932,10 @@ local
         val _ =
           case regime of
             HigherOrder Standard27 =>
-              if symbol_head then
+              (* A marked collection head is applied by membership below. *)
+              if symbol_head andalso
+                 not (carrier_is_marked_set_term function orelse
+                      carrier_is_marked_bag_term function) then
                 raise ERR "translate_term" "symbol-headed application"
               else
                 ()
@@ -5956,8 +6027,10 @@ local
           case regime of
             FirstOrder => rands_count
           | HigherOrder _ =>
-              if carrier_is_const rator then carrier_declared_const_arity
-                rator else 0
+              if partial_array_collection () then rands_count
+              else if carrier_is_const rator then
+                carrier_declared_const_arity rator
+              else 0
       in
         if declaration_arity > rands_count andalso
            (regime = HigherOrder Z3LambdaArray orelse
@@ -6332,10 +6405,11 @@ local
      declared rank, or zero for a function-valued variable, so partial and
      full applications share one symbol. *)
   (* Native and graph query boundaries use the same final logic policy. *)
-  fun outbound_select_logic regime (policy:logic_selection_policy) features =
+  fun outbound_select_logic_with_uf regime has_nonnullary_uf
+      (policy:logic_selection_policy) features =
     let
       val (feature_logic, feature_reason) =
-        infer_logic_from_features_for_regime regime features
+        infer_logic_from_features_for_regime regime has_nonnullary_uf features
       (* Z3's array-lambda extension is accepted uniformly under ALL, while
        narrower FO array logics reject lambda as quantified syntax on some
        supported Z3 versions.  The C1 replay corpus also uses ALL, so keeping
@@ -6353,6 +6427,10 @@ local
           NONE => (inferred_logic, reason)
         | SOME {logic, reason} => (logic, reason)
     in {logic=selected_logic,reason=reason} end
+
+  fun outbound_select_logic regime policy
+      (features as LogicFeatures {uninterpreted,...}) =
+    outbound_select_logic_with_uf regime uninterpreted policy features
 
   (* Only command assembly is parameterized. Semantic translation remains
      the existing shared dispatcher; declarations stay interleaved with
@@ -6385,8 +6463,8 @@ local
     val _ = emitted_datatypes := []
     val {sets = set_terms, bags = bag_terms} =
       collect_query_collection_markers (t :: original_ts)
-    (* Num is an Int-valued SMT abs only beneath its integer coercion.  In an
-       opaque HOL-num position it must remain an uninterpreted function. *)
+    (* Num retains its HOL-num sort in opaque positions, including beneath
+       an uninterpreted integer coercion. *)
     val raw_num_terms = SmtLib_RawNumAnalysis.collect
       raw_num_operations bag_terms (t :: original_ts)
     (* A symbol has one fixed SMT domain sort.  A collection argument is
@@ -6482,8 +6560,11 @@ local
     val (tydict, tmdict) = acc
     val features =
       infer_features regime terms tydict tmdict
+    (* QF_AX allows constants and free sorts, but no non-nullary UF. *)
+    val has_nonnullary_uf = Redblackmap.foldl
+      (fn ((_,arity),_,found) => found orelse arity > 0) false tmdict
     val {logic=selected_logic,reason} =
-      outbound_select_logic regime policy features
+      outbound_select_logic_with_uf regime has_nonnullary_uf policy features
     (* Metadata is public lazily, so retain the query's collection state for
        its eventual construction instead of consulting the restored ambient
        state. *)
@@ -6793,6 +6874,36 @@ local
       (NUM_BINDERS_TO_INT_CONV,
        simpLib.SIMP_CONV pureSimps.pure_ss num_transfer_rewrites) tm
     handle Conv.UNCHANGED => Thm.REFL tm
+
+  (* Mixed word goals retain HOL num. Give their numerals an integer image
+     without rewriting the literal indices consumed by native operators. *)
+  fun NUMERAL_TO_INT_CONV tm =
+  let
+    val (head, arguments) = boolSyntax.strip_comb tm
+    val indexed = List.exists (same_const head)
+      [wordsSyntax.word_extract_tm, wordsSyntax.word_replicate_tm,
+       wordsSyntax.word_rol_tm, wordsSyntax.word_ror_tm, smtstr_char_tm,
+       smtstring_const "reglan_power", smtstring_const "reglan_loop"]
+  in
+    if intSyntax.is_int_literal tm orelse ratSyntax.is_literal tm orelse
+       realSyntax.is_real_literal tm orelse wordsSyntax.is_word_literal tm
+       orelse Lib.can native_string_literal tm then
+      raise Conv.UNCHANGED
+    else if indexed then
+      let
+        fun operand argument =
+          if numSyntax.is_numeral argument then Thm.REFL argument
+          else NUMERAL_TO_INT_CONV argument
+            handle Conv.UNCHANGED => Thm.REFL argument
+      in
+        List.foldl (fn (argument, theorem) =>
+          Thm.MK_COMB (theorem, operand argument)) (Thm.REFL head) arguments
+      end
+    else if numSyntax.is_numeral tm then
+      Thm.SYM (Thm.SPEC tm integerTheory.NUM_OF_INT)
+    else
+      Conv.SUB_CONV NUMERAL_TO_INT_CONV tm
+  end
 
   type native_float_transfer_info = {
     surface : string list,
@@ -7144,6 +7255,7 @@ local
 
   val hol_string_transfer_rewrites = [
     Conv.GSYM smtstringTheory.str_inj_11,
+    Conv.GSYM smtstringTheory.str_inj_STRLEN,
     smtstringTheory.str_inj_STRCAT,
     smtstringTheory.str_inj_isPREFIX,
     smtstringTheory.str_inj_string_lt,
@@ -7787,7 +7899,8 @@ local
   val SPEC_NUM_FREE_VARS_TAC =
     SPEC_NUM_FREE_VARS_TAC_EXCEPT (fn _ => false)
 
-  val thms_per_const = SmtLib_GraphNumericStock.for_head
+  val thms_per_const =
+    SmtLib_GraphNumericStock.for_head_preserving_num
 
   (* Prepends the conclusion of a theorem to the list of its hypothesis and
      returns the resulting list of terms *)
@@ -7809,8 +7922,8 @@ local
      terms in the goal. Since the resulting list of theorems might require more
      theorems to be added (for the SMT solvers to properly solve the goal), this
      function calls itself recursively until no new theorems are needed anymore. *)
-  fun get_thms ([], acc) = HOLset.listItems acc
-    | get_thms (terms, acc) =
+  fun get_thms preserve_num ([], acc) = HOLset.listItems acc
+    | get_thms preserve_num (terms, acc) =
       let
         (* Create a set of all the constants used in all the provided terms *)
         val atoms = Term.all_atomsl terms Term.empty_tmset
@@ -7818,16 +7931,18 @@ local
 
         (* Generate a set of all the theorems we want to add, based on these
            constants *)
-        fun const_thms (const, acc) = HOLset.addList (acc, thms_per_const const)
+        fun const_thms (const, acc) =
+          HOLset.addList (acc, thms_per_const preserve_num const)
         val wanted_thms = HOLset.foldl const_thms empty_thmset consts
 
-        (* Apply NUM_TO_INT_CONV to these theorems, to convert any num literals
-           they might have into int literals. We do this here because this
-           conversion introduces constants that might trigger new theorems to be
-           added in subsequent iterations *)
+        (* Retained naturals need the numeral-only conversion: the semantic
+           transfer would erase their bridge laws. Both conversions can
+           introduce constants requiring further theorem discovery. *)
+        val convert =
+          if preserve_num then NUMERAL_TO_INT_CONV else NUM_TO_INT_CONV
         fun conv_thm (thm, acc) =
           let
-            val thm = Conv.CONV_RULE NUM_TO_INT_CONV thm
+            val thm = Conv.CONV_RULE convert thm
             val (lhs, rhs) = boolSyntax.dest_eq (Thm.concl thm)
           in
             if Term.aconv lhs rhs then acc else HOLset.add (acc, thm)
@@ -7846,7 +7961,8 @@ local
         fun add_new_terms (thm, acc) = HOLset.addList (acc, thm_terms thm)
         val new_terms = HOLset.foldl add_new_terms Term.empty_tmset thms_to_add
       in
-        get_thms (HOLset.listItems new_terms, HOLset.union (acc, thms_to_add))
+        get_thms preserve_num
+          (HOLset.listItems new_terms, HOLset.union (acc, thms_to_add))
       end
 
 in
@@ -7920,6 +8036,7 @@ in
   type 'doc outbound_output_operations = 'doc output_operations
   val outbound_string_output_operations = string_output_operations
   val outbound_select_logic = outbound_select_logic
+  val outbound_select_logic_with_uf = outbound_select_logic_with_uf
   val outbound_query_script = outbound_query_script
   val outbound_query_tail = outbound_query_tail
   val outbound_translate_term_step_with_output =
@@ -8107,10 +8224,11 @@ in
   val parser_datatype_selector_template = datatype_selector_term
   fun parser_dicts_for_solver_translation solver =
     parser_dicts_for_translation_aux (SOME solver)
+  fun infer_logic_from_features_with_regime regime
+      (features as LogicFeatures {uninterpreted,...}) =
+    infer_logic_from_features_for_regime regime uninterpreted features
   fun infer_logic_from_features features =
-    infer_logic_from_features_for_regime FirstOrder features
-  val infer_logic_from_features_with_regime =
-    infer_logic_from_features_for_regime
+    infer_logic_from_features_with_regime FirstOrder features
   val goal_requires_ho = goal_requires_ho_aux
   fun regime_for_goal dialect goal =
     select_regime (AutomaticRegime dialect) goal
@@ -8444,6 +8562,7 @@ in
       | SOME {Thy = "realax", Name = "NUM_CEILING", ...} => true
       | SOME {Thy = "pred_set", Name = "CARD", ...} => true
       | SOME {Thy = "bag", Name = "BAG_CARD", ...} => true
+      | SOME {Thy = "list", Name = "LENGTH", ...} => true
       | _ => false
 
   fun atom_needs_num_transfer atom =
@@ -8515,10 +8634,9 @@ in
   fun NUM_TO_INT_TAC_EXCEPT exclude g =
   let
     open Tactic Tactical
-    val undisch_assums = MAP_EVERY UNDISCH_TAC (#1 g)
   in
     if goal_mentions_num g andalso not (goal_entangles_num_and_word g) then
-      (undisch_assums THEN
+      (MAP_EVERY UNDISCH_TAC (Lib.op_mk_set Term.term_eq (#1 g)) THEN
        SPEC_NUM_FREE_VARS_TAC_EXCEPT exclude THEN
        CONV_TAC NUM_TO_INT_CONV THEN
        REPEAT (GEN_TAC ORELSE DISCH_TAC) THEN
@@ -8561,7 +8679,8 @@ in
      get_thms this does not run a recursive expanded CONV_RULE pipeline.
      The caller must admit original constructor/type and each returned law;
      selector-internal fixed theorem operations remain explicit prerequisites. *)
-  val graph_preprocessing_theorems_for_head = thms_per_const
+  val graph_preprocessing_theorems_for_head =
+    SmtLib_GraphNumericStock.for_head
 
   (* Ordered ordinary stages, including the unlabelled conversion passes.
      This is an inventory, not an implementation or a completion flag. *)
@@ -8584,7 +8703,7 @@ in
 
     val thms_to_add =
       if !include_theorems then
-        get_thms (goal_terms, empty_thmset)
+        get_thms (goal_entangles_num_and_word g) (goal_terms, empty_thmset)
       else
         []
 
@@ -8601,6 +8720,7 @@ in
   let
     open Tactic Tactical
     val assumptions = #1 g
+    val preserve_num = goal_entangles_num_and_word g
     fun is_true tm =
       Term.aconv tm boolSyntax.T orelse
       (let val (_, body) = boolSyntax.dest_forall tm
@@ -8608,8 +8728,14 @@ in
        handle Feedback.HOL_ERR _ => false)
     fun cleanup thm =
     let
-      val thm = simpLib.SIMP_RULE pureSimps.pure_ss
-        (boolTheory.REFL_CLAUSE :: num_transfer_rewrites) thm
+      (* The transfer rewrites would erase the retained num bridge laws. *)
+      val thm =
+        if preserve_num then
+          simpLib.SIMP_RULE pureSimps.pure_ss [boolTheory.REFL_CLAUSE]
+            (Conv.CONV_RULE NUMERAL_TO_INT_CONV thm)
+        else
+          simpLib.SIMP_RULE pureSimps.pure_ss
+            (boolTheory.REFL_CLAUSE :: num_transfer_rewrites) thm
     in
       if is_true (Thm.concl thm) then
         ALL_TAC
@@ -8653,8 +8779,31 @@ in
     else
       raise Conv.UNCHANGED
 
+  (* Set simplification rewrites the assumptions too.  An assumption left
+     with IN or a bare EMPTY would mark a set as an SMT Array while the
+     simplified conclusion uses the same set as a function. *)
   val NATIVE_SET_SIMP_TAC =
-    Tactic.CONV_TAC (Conv.TOP_DEPTH_CONV native_set_preprocess_conv)
+    let val conv = Conv.TOP_DEPTH_CONV native_set_preprocess_conv in
+      Tactical.THEN
+        (Tactic.RULE_ASSUM_TAC (Conv.CONV_RULE conv), Tactic.CONV_TAC conv)
+    end
+
+  (* The predicate encoding of checked mode, on the assumptions as well.
+     Applied EMPTY and UNIV unfold, but the sets themselves stay (and
+     constant predicates become) EMPTY and UNIV: {e} stays e INSERT EMPTY,
+     because an SMT Array store cannot take a lambda. *)
+  val PREDICATE_SET_SIMP_TAC =
+    let
+      val ss = simpLib.mk_simpset [pred_setSimps.SET_SPEC_ss]
+      val thms = [pred_setTheory.SPECIFICATION, pred_setTheory.GSPEC_ETA,
+        pred_setTheory.EMPTY_applied,
+        Drule.EQT_INTRO (Drule.SPEC_ALL pred_setTheory.UNIV_applied),
+        Conv.GSYM pred_setTheory.EMPTY_DEF, Conv.GSYM pred_setTheory.UNIV_DEF,
+        pred_setTheory.UNION_DEF, pred_setTheory.INTER_DEF]
+    in
+      Tactical.THEN (Tactic.RULE_ASSUM_TAC (simpLib.SIMP_RULE ss thms),
+        simpLib.SIMP_TAC ss thms)
+    end
 
   fun CHECKED_SET_SIMP_TAC g =
     let
@@ -8666,7 +8815,7 @@ in
       if List.exists has_complement (#1 g @ [#2 g]) then
         NATIVE_SET_SIMP_TAC g
       else
-        Library.SET_SIMP_TAC g
+        PREDICATE_SET_SIMP_TAC g
     end
 
   (* Preserve equality on native collections.  FUN_EQ_THM would turn it into
@@ -8736,6 +8885,7 @@ in
        HolSmtTheory.num_ceiling_zero, arithmeticTheory.MAX_0,
        arithmeticTheory.MIN_0, boolTheory.REFL_CLAUSE]) THEN
     stage "num-to-int" num_to_int THEN
+    stage "hol-string" HOL_STRING_TO_SMT_TAC THEN
     stage "let-simp"
       (if simp_let then Library.LET_SIMP_TAC else ALL_TAC) THEN
     Tactic.CONV_TAC (Conv.DEPTH_CONV REAL_POW_NUMERAL_CONV) THEN
@@ -8766,6 +8916,13 @@ in
     Tactic.CONV_TAC
       (Conv.DEPTH_CONV (fun_eq_preprocess_conv preserve_native_bags)) THEN
     stage "word-simp" Library.WORD_SIMP_TAC THEN
+    (* Word simplification still needs literal shift amounts and bit indices.
+       Normalize retained numerals only after it has lowered those forms. *)
+    stage "num-literals" (fn g =>
+      if goal_entangles_num_and_word g then
+        (Tactic.RULE_ASSUM_TAC (Conv.CONV_RULE NUMERAL_TO_INT_CONV) THEN
+         Tactic.CONV_TAC NUMERAL_TO_INT_CONV) g
+      else ALL_TAC g) THEN
     (* Checked set simplification normally uses the predicate encoding, but
        must retain complements: SET_SIMP_TAC lowers their membership to NOTIN,
        which does not have a native SMT Set translation. *)
@@ -8776,6 +8933,7 @@ in
     Tactic.CONV_TAC (Conv.DEPTH_CONV INT_DIVIDES_LITERAL_MOD_CONV) THEN
     Tactic.BETA_TAC THEN
     stage "num-to-int" num_to_int THEN
+    stage "hol-string" HOL_STRING_TO_SMT_TAC THEN
     stage "add-theorems" ADD_THEOREMS_TAC THEN
     stage "cleanup-assumptions" CLEANUP_ASSUMPTIONS_TAC THEN
     (* The theorem-discovery pass may expose a fresh num-valued occurrence.
@@ -8783,6 +8941,7 @@ in
        assumptions even when they no longer mention num themselves. *)
     stage "num-to-int" num_to_int THEN
     stage "cleanup-assumptions" CLEANUP_ASSUMPTIONS_TAC THEN
+    stage "hol-string" HOL_STRING_TO_SMT_TAC THEN
     stage "datatype-to-smt" DATATYPE_TO_SMT_TAC
   end
 

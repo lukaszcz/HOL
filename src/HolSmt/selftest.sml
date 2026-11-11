@@ -310,11 +310,20 @@ fun mk_CVCp expect_fun =
     "cvc5 (proofs)" HolSmtLib.CVC_TAC
 
 val thm_CVCp = mk_CVCp (expect_thm true)
+
+(* These small higher-order regressions need checked replay even though
+   their function domains contain integers. *)
+val thm_CVCp_ho =
+  mk_test_fun (CVC.is_configured ()) (expect_thm true)
+    "cvc5 (higher-order proofs)"
+    (REPEAT STRIP_TAC THEN HolSmtLib.CVC_TAC)
 val sat_CVCp = mk_CVCp expect_sat
 
 (*****************************************************************************)
 (* HOL definitions (e.g., user-defined data types)                           *)
 (*****************************************************************************)
+
+val _ = new_constant ("array_uf_fun", ``:'b -> 'b``)
 
 val _ = bossLib.Hol_datatype `dt1 = foo | bar | baz`
 
@@ -359,6 +368,9 @@ val graph_expect_thm = expect_thm
 
   val tests = [
 
+    (``(~P (s:'a) \/ ((x:'b) = y)) ==> P s ==> (y = x)``,
+      [thm_CVCp]),
+
     (* propositional logic *)
     (``T``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
 
@@ -378,6 +390,13 @@ val graph_expect_thm = expect_thm
     (* Z3 proves this through an array lemma outside its checked Bag replay
        ladder; cvc5 supplies the native checked Bag certificate. *)
     (``BAG_IN (x : bool) (BAG_INSERT y EMPTY_BAG) <=> x = y``, [thm_CVCp]),
+    (* Sets in cvc5's array encoding: a singleton, an applied set and an
+       applied bound set must all stay Arrays, in the assumptions too. *)
+    (``(x : num) = y /\ P {x} ==> (P : (num -> bool) -> bool) {y}``,
+      [thm_CVC, thm_CVCp]),
+    (``(a : num) IN s ==> s a``, [thm_CVC, thm_CVCp]),
+    (``(!x : num. x IN s ==> x IN t) /\ s b ==> t b``, [thm_CVC, thm_CVCp]),
+    (``(a : num) IN (if c then s else t) /\ c ==> a IN s``, [thm_CVC]),
 
     (``F``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
     (``p = (p:bool)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
@@ -406,6 +425,15 @@ val graph_expect_thm = expect_thm
     (``isPREFIX (s:string) s``, [thm_Z3]),
     (``~((s:string) < s)``, [thm_Z3]),
     (``(s:string) <= s``, [thm_Z3]),
+
+    (``(s:string) = STRCAT t u ==> STRLEN s = STRLEN t + STRLEN u``,
+      [thm_Z3, thm_CVC]),
+    (``STRLEN (STRCAT (s:string) t) = STRLEN s + STRLEN t``,
+      [thm_Z3, thm_CVC]),
+    (``(s:string) = "abc" ==> STRLEN s = 3``, [thm_Z3, thm_CVC]),
+    (``0 <= (&(STRLEN (s:string)) : int)``, [thm_Z3, thm_CVC]),
+    (``(s:string) = STRCAT t u /\ P u ==>
+        STRLEN s = STRLEN t + STRLEN u``, [thm_Z3, thm_CVC]),
 
     (* Native SMT-LIB Unicode strings exercise checked Z3 replay end to end. *)
     (``smtstring$smtstr_len
@@ -673,6 +701,12 @@ val graph_expect_thm = expect_thm
     (``(y:int) <> 0 ==>
        emod 0 y = 0``,
       [thm_CVC, thm_CVCp, thm_Z3, thm_Z3p]),
+    (* Symbolic remainder bounds.  thm_CVCp omitted: CPC replay fails at
+       a trans middle-equality step on these. *)
+    (``(y:int) = 0 \/ emod x y >= 0``,
+      [thm_CVC, thm_Z3, thm_Z3p]),
+    (``(y:int) = 0 \/ emod x y < ABS y``,
+      [thm_CVC, thm_Z3, thm_Z3p]),
     (``(y:real) <> 0 ==> ((x:real) / y) * y = x``,
       [thm_CVC, thm_CVCp, thm_Z3, thm_Z3p]),
     (``ediv (~7) (~2) = (4:int)``,
@@ -1425,6 +1459,15 @@ val graph_expect_thm = expect_thm
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
     (``(f x = f y) ==> (x = y)``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
 
+    (* Arrays mixed with a non-nullary UF require more than QF_AX. *)
+    (``(array_uf_fun (array_uf_fun ((f:'a -> 'b) a)) = f a) /\
+      (array_uf_fun (array_uf_fun (array_uf_fun
+        (array_uf_fun (array_uf_fun (f a))))) = f a)
+      ==> (array_uf_fun (f a) = f a)``,
+      [thm_Z3, thm_Z3p_v4, thm_CVC, thm_CVCp]),
+    (``(f:'a -> 'b) a = f a``,
+      [thm_Z3, thm_Z3p_v4, thm_CVC, thm_CVCp]),
+
     (* arrays as function updates *)
 
     (``i <> j ==> ((i =+ e) (a :int -> int)) j = a j``,
@@ -1796,6 +1839,18 @@ val graph_expect_thm = expect_thm
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3(*, thm_Z3p*)]),
     (``~ 0w >=+ 0w:word32``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
 
+    (* Entangled naturals retain their arithmetic and coercion laws.
+       Check CVC replay explicitly here: this is the original replay failure. *)
+    (``w2i (w:256 word) = &w2n w ==> Num (w2i w) = w2n w``,
+      [thm_CVC, thm_Z3, thm_Z3p,
+       mk_test_fun (CVC.is_configured ()) (expect_thm true)
+         "cvc5 (proofs, mixed num/word)" HolSmtLib.CVC_TAC]),
+    (``x = n2w (w2n (x:256 word)) ==> w2n x MOD 32 <= w2n x``,
+      [thm_CVC, thm_Z3]),
+    (``(x:256 word) &&
+         0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE0w =
+       word_lsl (word_lsr x 5) 5``, [thm_CVC, thm_Z3]),
+
     (* A word atom must not stop the num-to-int transfer when the naturals it
        guards never meet the word theory: `DIV` is only in the SMT-LIB
        fragment once `x` has been transferred to an integer. *)
@@ -1886,6 +1941,9 @@ val graph_expect_thm = expect_thm
     (``(x::xs = y::ys) <=> (x = y) /\ (xs = ys)``,
       [thm_AUTO, thm_YO, thm_Z3p, thm_Z3p_v4]),
     (``(SOME x = SOME y) <=> (x = y)``, [thm_AUTO]),
+    (* Z3 rewrites an equation between one-field constructor applications
+       to a unary conjunction in its proof. *)
+    (``SOME (0 + x:int) = SOME x``, [thm_Z3p, thm_Z3p_v4]),
 
     (* data types: case constants *)
 
@@ -2121,7 +2179,7 @@ val graph_expect_thm = expect_thm
          and r = emod m n
          in
            (m = n * q + r /\ 0 <= r /\ r <= (ABS n) - 1)``,
-      [(*thm_AUTO,*) thm_CVC, thm_Z3_v4(*, thm_Z3p*)]),
+      [(*thm_AUTO,*) thm_CVC, thm_Z3_v4, thm_Z3p_v4]),
 
     (* regression tests *)
 
@@ -2133,7 +2191,13 @@ val graph_expect_thm = expect_thm
 
     (``!(x:real). 2 <= x /\ x <= 3 ==>
       0 < x - (x pow 3) / 6 + (x pow 5) / 120 - (x pow 7) / 5040``,
-        [(*thm_AUTO, thm_CVC,*) thm_Z3_v4(*, thm_Z3p_v4*)])
+        [(*thm_AUTO, thm_CVC,*) thm_Z3_v4(*, thm_Z3p_v4*)]),
+
+    (* Nested CPC applications in congruence sources. *)
+    (``(if c then (f:int->int) else g) a = 1 ==> c ==> f a = 1``,
+      [thm_CVCp_ho]),
+    (``(r:smt_fun_rec).smt_fun a b = 1 ==> r = q ==>
+       (q:smt_fun_rec).smt_fun a b = 1``, [thm_CVCp_ho])
 
 
   ]  (* tests *)
@@ -59252,15 +59316,15 @@ in
 
   val _ = run_postlude 346 "automatic-graph-raw-number-analysis-9" (fn () =>
     let
-      val _ = test "Integer coercion leaves Num outside raw-num positions"
+      val _ = test "Integer coercion retains the natural sort of Num"
         (fn () =>
           let val goal = coerced integer
           in owned goal [] (fn e =>
             let val result = native e
-            in require "coercion argument unexpectedly became raw Num"
+            in require "coerced Num lost its raw natural sort"
               (number_oracle e [] [] goal result andalso
-               null (#raw_numbers result)) end) end)
-      val _ = test "Shared Num distinguishes NONE from numeric expected type"
+               length (#raw_numbers result) = 1) end) end)
+      val _ = test "Shared coerced and direct Num retain one natural sort"
         (fn () =>
           let val goal = boolSyntax.mk_conj
                 (coerced integer,direct integer)
@@ -59272,6 +59336,19 @@ in
               (number_oracle e [] [] goal result andalso
                length (#raw_numbers result) = 1 andalso
                #node (hd (#raw_numbers result)) = original) end) end)
+      val _ = test "Integer coercion keeps Bag cardinality outside raw num"
+        (fn () =>
+          let val bag_type = Type.--> (Type.bool,numSyntax.num)
+              val bag = Term.mk_var ("graph_coerced_num_bag",bag_type)
+              val cardinality = bagSyntax.mk_card bag
+              val goal = boolSyntax.mk_eq
+                (apply intSyntax.int_injection cardinality,integer)
+          in owned goal [] (fn e =>
+            let val result = native e
+            in require "coerced Bag cardinality became raw Num"
+              (number_oracle e [] [] goal result andalso
+               length (#bags result) = 1 andalso
+               null (#raw_numbers result)) end) end)
       val _ = test "Automatic Bag markers classify cardinality and bag count"
         (fn () =>
           let val bag_type = Type.--> (Type.bool,numSyntax.num)
@@ -60370,13 +60447,11 @@ in
                       val dispatch = graph context SmtLib.FirstOrder
                       val prepared = (#prepare dispatch) current
                       val selected = kind ((#application prepared) ())
-                      val result = if raw then private context (fn () =>
-                          (#builtin dispatch) current input)
-                        else (case (#builtin dispatch) current input of
-                          SOME (name,[_]) => name = "abs" | _ => false)
-                  in require "Num bypassed opaque raw sort or lost coercion"
+                      val result = private context (fn () =>
+                        (#builtin dispatch) current input)
+                  in require "Num bypassed its opaque natural sort"
                     (selected = "builtin" andalso result andalso
-                     (#is_raw_number context) current = raw) end)) end
+                     (#is_raw_number context) current) end)) end
           in check true;check false end)
       val _ = test "Prepared native candidates authenticate after expiry"
         (fn () => owned (boolSyntax.mk_eq (integer,three)) [] (fn e =>

@@ -90,6 +90,19 @@ with `--proof-granularity=dsl-rewrite`; the CPC parser version-gates every
 rule and the replay engine reconstructs a HOL theorem before `CVC.sml` checks
 its hypotheses, conclusion, and oracle tags.  Set `HOL4_CVC_EXECUTABLE` to
 select cvc5.  CPC is the sole checked cvc5 replay format.
+Array extensionality (`arrays_ext`) derives the differing choice-index
+reads from the array disequality premise in HOL, including array-encoded
+sets; the certificate conclusion is checked against that theorem.
+
+CPC `chain_resolution` accepts parallel polarity and pivot lists, including
+proof-local list aliases. Its conclusion may be omitted; checked replay then
+derives the resolvent one pivot occurrence at a time, falling back to
+checked canonical binary resolution when occurrence replay declines.
+
+CPC `quant-dt-split` rewrites a universal datatype quantifier into a
+conjunction of constructor cases. Replay proves the certificate's equality
+using the datatype's TypeBase exhaustiveness theorem and universal
+specialization, preserving the remaining binders and constructor fields.
 
 For a cvc5 upgrade, test the official release binary against the checked
 matrix rather than accepting proof-format drift.  The matrix commands are in
@@ -113,6 +126,10 @@ CPC's simple-symbol `@`-ID production; String tokens and non-`@` symbols are
 rejected.  Equivalent nonreserved spellings such as `@p` and `|@p|` share one
 key for uniqueness, scope, premise lookup, normalized scoped reuse, and replay.
 Quoted reserved-symbol spellings retain their distinct symbol identity.
+
+CPC higher-order `(_ f x)` applications are accepted recursively in proof
+conclusions and arguments, including congruence sources. Indexed sort markers,
+literals and operator heads retain their SMT-LIB interpretation.
 
 CPC accepts exactly one outer proof wrapper and requires true EOF immediately
 after its close; a second wrapper and every other trailing token are errors.
@@ -160,6 +177,10 @@ construction; neither logic nor command selection scans rendered SMT-LIB.
 Quantifier-free checked queries and every oracle query retain `(check-sat)`.
 The verifier writes its five-version report to
 `.holsmt-z3-version-matrix/report.json` in the validation checkout.
+
+Z3's `der` equality steps use checked HOL rewrite replay.  Subsequent
+`elim-unused` steps use Boolean simplification, including unused binders
+underneath retained binders; both rules must prove their recorded equality.
 
 Seq, Set, and Bag are solver extensions rather than SMT-LIB standard
 theories.  The coverage matrix at
@@ -457,8 +478,10 @@ For a theorem-producing result, the trusted path is:
   representation are trusted translation code, with deterministic round-trip
   and range checks in `Unittest.sml`.
 - Native HOL strings are first rewritten through the proved `str_inj`
-  injectivity and operator-transfer theorems.  Each resulting injection image
-  is generalized to an unconstrained SMT-LIB `String` value.  A solver result
+  injectivity and operator-transfer theorems, including `STRLEN` after
+  natural-to-integer transfer. Injected HOL string literals retain their
+  character codes as SMT-LIB string literals. Other injection images
+  are generalized to unconstrained SMT-LIB `String` values. A solver result
   proved for every well-formed Unicode string therefore specializes soundly
   to the injection image, while tactic validation carries the exact HOL-side
   rewrite back to the original goal.  This is the only route from HOL string
