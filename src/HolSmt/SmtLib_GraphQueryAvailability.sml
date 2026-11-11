@@ -36,7 +36,8 @@ struct
         let val _ = guard current
             (* The native occurrence probe is directional Term.same_const;
                its HOL_ERR catch encloses only these atomic observations. *)
-            val answer = Term.same_const atom expected
+            val answer = (Term.same_const atom expected andalso
+                SmtLib.counts_for_operator_availability atom)
               handle Feedback.HOL_ERR _ => false
             val _ = guard current
         in answer end) (!constants)
