@@ -698,16 +698,17 @@ BASE_OBJECT = "cccaa27d7099"
 REPO = Path(__file__).resolve().parents[4]
 
 
-def seq_entries(read, name):
+def seq_entries(read, name, bang=False):
     """The directories of sequence file `name` (relative to tools/) in
     order, as buildutils.read_buildsequence expands them: `#include`
     against <root>/tools, `[sys]`/`(knl)` selectors (poly, stdknl),
-    leading `!`. `read(path)` returns the text of a repo path."""
+    leading `!` (kept only when `bang`). `read(path)` returns the text of
+    a repo path."""
     out = []
     for raw in read(posixpath.normpath("tools/" + name)).splitlines():
         line = raw.strip()
         if line.startswith("#include "):
-            out += seq_entries(read, line[len("#include "):].strip())
+            out += seq_entries(read, line[len("#include "):].strip(), bang)
             continue
         line = line.split("#", 1)[0].strip()
         if not line:
@@ -715,7 +716,7 @@ def seq_entries(read, name):
         m = re.match(r"(\[(\w+)\])?(\((\w+)\))?(!*)(.*)", line)
         if m.group(2) in (None, "poly") and \
                 m.group(4) in (None, "stdknl"):
-            out.append(m.group(6))
+            out.append((m.group(5) if bang else "") + m.group(6))
     return out
 
 
@@ -754,6 +755,13 @@ def holmake_includes(read, directory, strict=True):
     return out
 
 
+def links_to_sigobj(read, directory):
+    """Whether the Holmakefile of `directory` links its own products into
+    sigobj (`link-to-sigobj` / $(HOL_LNSIGOBJ), under `ifdef HOLBUILD`)."""
+    text = read(directory + "/Holmakefile") or ""
+    return "HOL_LNSIGOBJ" in text or "link-to-sigobj" in text
+
+
 def check_closure(read, exists):
     """Problems of the directories task32.seq adds to upto-parallel:
     each must exist, and each INCLUDES must be an upto-parallel directory,
@@ -777,6 +785,19 @@ def check_closure(read, exists):
                                 (d, inc))
         known.add(d)
     assert own
+    # `!` (built at -t, never uploaded by bin/build) exactly for the
+    # directories that link themselves to sigobj, else bin/build's upload
+    # fails with "File exists"; and for test directories (a `testing`
+    # directory has nothing to upload and only runs at -t).
+    marked = {d[1:] for d in
+              seq_entries(read, "../" + s.SEQUENCE_REL, True)[len(base):]
+              if d.startswith("!")}
+    for d in added:
+        want = links_to_sigobj(read, d) or posixpath.basename(d) == "testing"
+        if want and d not in marked:
+            problems.append("%s: needs a leading `!`" % d)
+        if marked >= {d} and not want:
+            problems.append("%s: has `!` but no link-to-sigobj rule" % d)
     return added, problems
 
 

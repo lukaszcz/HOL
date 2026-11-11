@@ -5,32 +5,36 @@
 # src/parallel_builds/core is not used: with -t it also builds many
 # example directories.  bin/build never passes --no_prereqs, so Holmake
 # builds INCLUDES prerequisites itself; the intermediate directories are
-# listed so that their selftests run and their products are uploaded to
-# sigobj, as parallel_builds/core would, not to make the targets
-# buildable.  A leading `!` marks a directory built only when -t is given.
+# listed so that their selftests run, not to make the targets buildable.
+# A leading `!` marks a directory built only at selftest level >= 1 (-t,
+# which task32_snapshots always passes) and never uploaded by bin/build.
+# It is used for every directory whose Holmakefile links its own products
+# into sigobj (`all: link-to-sigobj`, $(HOL_LNSIGOBJ); bin/build passes
+# HOLBUILD=1): a plain entry would be uploaded a second time and fail
+# with "File exists".  A plain entry (src/algebra) has no such rule.
 #include sequences/upto-parallel
 
 # libraries below integer
-src/sort
-src/string
-src/n-bit
-src/bag
-src/res_quan/src
-src/TeX
-src/finite_maps
+!src/sort
+!src/string
+!src/n-bit
+!src/bag
+!src/res_quan/src
+!src/TeX
+!src/finite_maps
 # integer (integer, integer_word) and rational (rat)
-src/integer
-src/rational
+!src/integer
+!src/rational
 # parents of real
-src/hol88
-src/transfer
-src/pred_set/src/more_theories
-src/algebra/base
-src/algebra/construction
+!src/hol88
+!src/transfer
+!src/pred_set/src/more_theories
+!src/algebra/base
+!src/algebra/construction
 src/algebra
 # real (real, real_sigma, selftest) and real/analysis (lim; realheap)
-src/real
-src/real/analysis
+!src/real
+!src/real/analysis
 # integer/testing (integer2): needs src/TeX (mungedeps.hmf) and
 # tools/cmp (INCLUDES; built as a Holmake prerequisite)
 !src/integer/testing
