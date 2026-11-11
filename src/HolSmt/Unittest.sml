@@ -8329,6 +8329,62 @@ in
   ignore (SmtLib.translation_records translation)
 end
 
+fun smtlib_hol_string_length_translation_success () =
+let
+  fun text_of result = String.concat (Lib.snd result)
+  val raw_string = ``0 <= (&(STRLEN (s:string)) : int)``
+  val raw_sequence = ``0 <= (&(LENGTH (xs:int list)) : int)``
+  val length_only =
+    ``0 <= smtstring$smtstr_len (smtstring$str_inj (s:string))``
+  val (translation, output) =
+    SmtLib.goal_to_SmtLib_translation NONE ([], length_only)
+  val converted = SmtLib.HOL_STRING_TO_SMT_CONV raw_string
+  fun check (simplify, translate) =
+    let
+      fun emit tm = text_of (translate
+        (Lib.fst (SolverSpec.simplify simplify ([], tm))))
+      val concat = emit
+        ``STRLEN (STRCAT (s:string) t) = STRLEN s + STRLEN t``
+      val literal = emit ``(s:string) = "abc" ==> STRLEN s = 3``
+      val mixed = emit
+        ``(s:string) = STRCAT t u /\ P u ==>
+          STRLEN s = STRLEN t + STRLEN u``
+    in
+      assert (contains "str.len" concat andalso
+          contains "str.++" concat andalso
+          not (contains "seq.len" concat) andalso
+          not (contains "declare-sort" concat),
+        "concatenation lengths lost native String encoding:\n" ^ concat);
+      assert (contains "str.len" literal andalso
+          contains "\"abc\"" literal andalso
+          not (contains "seq.len" literal),
+        "literal string length lost its content:\n" ^ literal);
+      assert (contains "str.len" mixed andalso
+          not (contains "seq.len" mixed),
+        "mixed string/UF lengths emitted seq.len:\n" ^ mixed);
+      assert (not (contains "seq.len"
+          (text_of (translate ([], raw_string)))),
+        "untransferred string length emitted seq.len");
+      assert (contains "seq.len"
+          (text_of (translate ([], raw_sequence))),
+        "ordinary list length lost native Seq encoding")
+    end
+in
+  assert_concl_alpha ("string length transfer", converted,
+    boolSyntax.mk_eq (raw_string, length_only));
+  assert (contains "(str.len " (String.concat output) andalso
+      SmtLib.translation_logic translation = "QF_SLIA",
+    "injected string length did not select string arithmetic");
+  assert (List.exists
+      (fn SmtLib.LogicSelection {
+            features = SmtLib.LogicFeatures {strings, ...}, ...} => strings
+        | _ => false) (SmtLib.translation_records translation),
+    "injected string length did not select the strings feature");
+  check (SmtLib.SIMP_TAC false,
+    Z3.goal_to_SmtLib_translation_for_version (SOME "4.15.3"));
+  check (SmtLib.CVC_SIMP_TAC false, CVC.goal_to_SmtLib_translation)
+end
+
 fun smtlib_native_string_translation_success () =
 let
   fun translate_assertions assertions =
@@ -34818,6 +34874,8 @@ let
       smtlib_dialect_dictionary_dispatch_success),
     ("smtlib_hol_string_injection_translation_success",
       smtlib_hol_string_injection_translation_success),
+    ("smtlib_hol_string_length_translation_success",
+      smtlib_hol_string_length_translation_success),
     ("smtlib_native_string_translation_success",
       smtlib_native_string_translation_success),
     ("smtlib_native_string_sort_propagation_success",

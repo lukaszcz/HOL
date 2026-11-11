@@ -421,6 +421,15 @@ val graph_expect_thm = expect_thm
     (``~((s:string) < s)``, [thm_Z3]),
     (``(s:string) <= s``, [thm_Z3]),
 
+    (``(s:string) = STRCAT t u ==> STRLEN s = STRLEN t + STRLEN u``,
+      [thm_Z3, thm_CVC]),
+    (``STRLEN (STRCAT (s:string) t) = STRLEN s + STRLEN t``,
+      [thm_Z3, thm_CVC]),
+    (``(s:string) = "abc" ==> STRLEN s = 3``, [thm_Z3, thm_CVC]),
+    (``0 <= (&(STRLEN (s:string)) : int)``, [thm_Z3, thm_CVC]),
+    (``(s:string) = STRCAT t u /\ P u ==>
+        STRLEN s = STRLEN t + STRLEN u``, [thm_Z3, thm_CVC]),
+
     (* Native SMT-LIB Unicode strings exercise checked Z3 replay end to end. *)
     (``smtstring$smtstr_len
          (smtstring$smtstr_concat
