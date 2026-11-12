@@ -74,27 +74,32 @@ struct
 
   (* Live words: the garbage collector's own marked live total.  The
      probe runs under `--debug gc --logfile $T33_GCLOG` (the driver sets
-     both), and every full GC writes a header and a line
+     both), and every full GC writes a header, a total and a closing line
 
        GC: Full GC, <n> words required <k> spaces
        GC: Mark: Total live data <N> words
+       GC: Completed successfully
 
      (Poly/ML 5.9.2; PolyML.fullGC says "0 words required", a full GC
      the run time sets off itself says "<n> words required" with n > 0;
-     a minor GC writes neither).  A reading takes the log size
-     (log_start) immediately before its own three full GCs, and after
-     them and getLocalStats reads the log from log_start: its words are
-     the total of the THIRD "Total live data" line there, and log_end is
-     the offset just past that line's newline.  Anything the run time
-     logs between log_start and the first own GC, or after the third
-     own total (a full GC set off by reading the log, whose total would
-     include the read buffers), is not the reading's: the third total
-     is not the last one.  A reading with fewer than three totals fails
-     loudly.  The line formats, the slice and the checks are the
-     driver's replay again in task33_records.py (LOG_TOTAL,
-     FULL_GC_HEAD, OWN_FULL_GCS, check_gc_log): every record's words
-     must be the third total of its slice, and a slice that is not
-     exactly three own full GCs is a redraw.
+     a retried mark writes a second total after a "GC: Count error"
+     line; a minor GC writes only a closing line).  A full GC is the
+     lines from a header to the next closing line.  A reading takes the
+     log size (log_start) immediately before its own three full GCs, and
+     after them and getLocalStats reads the log from log_start: its
+     words are the last total inside the THIRD full GC there, and
+     log_end is the offset just past that GC's closing line.  Anything
+     the run time logs between log_start and the first own GC, or after
+     the third own GC (a full GC set off by reading the log, whose total
+     would include the read buffers), is not the reading's: the third
+     full GC is not the last one.  A reading with fewer than three
+     complete full GCs, or no total in the third, fails loudly.  The
+     line formats, the slice and the checks are the driver's replay
+     again in task33_records.py (LOG_TOTAL, FULL_GC_HEAD, CLOSING,
+     OWN_FULL_GCS, check_gc_log): every record's words must be the last
+     total of the third full GC of its slice, and a slice with a full
+     GC that is not an own one with exactly one total (a foreign GC, a
+     retried mark) is a redraw.
 
      This is not the heap extent (size_heap - free_full - alloc) / 8, which
      earlier probes reported: the extent is live data plus holes.  The copy
@@ -113,6 +118,9 @@ struct
   val own_gcs = 3  (* task33_records.OWN_FULL_GCS *)
   val log_marker = "GC: Mark: Total live data "
   val log_unit = " words"
+  val log_head = "GC: Full GC, "
+  val log_closing = ["GC: Completed successfully",
+                     "GC: Completed with insufficient space"]
   val log_stop = ref 0  (* the end of the previous reading *)
   fun log_fail path = Fail ("T33: cannot read GC log " ^ path)
   fun log_size path =
@@ -129,7 +137,9 @@ struct
     val parts = (Posix.IO.lseek (fd, Position.fromInt from,
                                  Posix.IO.SEEK_SET);
                  loop [])
-      handle e => (Posix.IO.close fd; raise e)
+      handle e => (Posix.IO.close fd;
+                   raise (case e of OS.SysErr _ => log_fail path
+                                  | _ => e))
     val _ = Posix.IO.close fd
   in String.concat parts end
   fun log_total line =
@@ -146,21 +156,37 @@ struct
         else NONE
       end
     else NONE
-  (* The total of the own_gcs-th total line of text (complete lines
-     only) and the offset in text just past that line's newline. *)
-  fun nth_total text = let
+  (* The last total inside the own_gcs-th full GC of text (a full GC
+     runs from a header line to the next closing line; complete lines
+     only) and the offset in text just past that GC's closing line. *)
+  fun nth_gc text = let
     val n = size text
     fun line_end i = if i >= n then NONE
       else if String.sub (text, i) = #"\n" then SOME i
       else line_end (i + 1)
-    fun scan pos seen = case line_end pos of
+    (* closed: the full GCs closed so far; open_: NONE outside a full
+       GC, else the last total seen in it *)
+    fun scan pos closed open_ = case line_end pos of
         NONE => NONE
-      | SOME e =>
-          (case log_total (String.substring (text, pos, e - pos)) of
-               NONE => scan (e + 1) seen
-             | SOME w => if seen + 1 = own_gcs then SOME (w, e + 1)
-                         else scan (e + 1) (seen + 1))
-  in scan 0 0 end
+      | SOME e => let
+          val line = String.substring (text, pos, e - pos)
+          val next = e + 1
+        in
+          if String.isPrefix log_head line then scan next closed (SOME NONE)
+          else case open_ of
+              NONE => scan next closed NONE
+            | SOME last =>
+                (case log_total line of
+                     SOME w => scan next closed (SOME (SOME w))
+                   | NONE =>
+                       if not (List.exists (fn c => c = line) log_closing)
+                       then scan next closed open_
+                       else if closed + 1 < own_gcs
+                       then scan next (closed + 1) NONE
+                       else (case last of SOME w => SOME (w, next)
+                                        | NONE => NONE))
+        end
+  in scan 0 0 NONE end
   fun live phase = let
     val path = need gclog_env
     val start = log_size path
@@ -169,11 +195,11 @@ struct
     val _ = List.app (fn _ => PolyML.fullGC ())
                      (List.tabulate (own_gcs, fn i => i))
     val s = PolyML.Statistics.getLocalStats ()
-    val (words, stop) = case nth_total (log_from path start) of
+    val (words, stop) = case nth_gc (log_from path start) of
         SOME (w, off) => (w, start + off)
       | NONE => raise Fail ("T33: fewer than " ^ Int.toString own_gcs ^
-                            " full GC totals in the GC log " ^ path ^
-                            " for " ^ phase)
+                            " complete full GCs with a total in the GC log " ^
+                            path ^ " for " ^ phase)
     val extent = (#sizeHeap s - #sizeHeapFreeLastFullGC s -
                   #sizeAllocation s) div 8
   in

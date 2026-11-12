@@ -3871,31 +3871,39 @@ diagnostic runs.
 
 - `T33.live` reads the log's size (`log_start`) immediately before its
   three own full GCs (`T33.own_gcs`, `task33_records.OWN_FULL_GCS`, tied by
-  `Ties`), takes the statistics, then reads the log from `log_start` and
-  takes the THIRD `Total live data` line there: `words` is that total and
-  `log_end` the offset just past its line. Not the last total: a full GC
-  the run time sets off by the read itself (counting its buffers) comes
-  after the third own total, and one set off before the own GCs would
-  shift a count from the end. It fails loudly (`Fail`) when the log cannot
-  be read or holds fewer than three totals from `log_start`. The record
-  carries `words`, `log_start`, `log_end` and, report only, `extent`,
-  `size_heap`, `free_full` and `alloc_free`; `alloc` and `gc_share` are
-  recorded and decide comparability (below).
+  `Ties`), takes the statistics, then reads the log from `log_start`. A
+  full GC is the log from its `GC: Full GC, ...` header to the next
+  closing line (`GC: Completed successfully` or `... with insufficient
+  space`; a minor GC writes a closing line but no header). `words` is the
+  last `Total live data` line inside the THIRD full GC there and
+  `log_end` the offset just past that GC's closing line. Not the last
+  total of the log: a full GC the run time sets off by the read itself
+  (counting its buffers) comes after the third own GC, one set off before
+  the own GCs would shift a count from the end, and a retried mark (a
+  `GC: Count error` line, then a second total) in the third GC is inside
+  its slice. It fails loudly (`Fail`) when the log cannot be read (open,
+  seek or read), or holds fewer than three complete full GCs from
+  `log_start`, or no total in the third. The record carries `words`,
+  `log_start`, `log_end` and, report only, `extent`, `size_heap`,
+  `free_full` and `alloc_free`; `alloc` and `gc_share` are recorded and
+  decide comparability (below).
 - The receipt of a storage probe keeps the log (`gclog`, in the compressed
   receipt like `stdout`) and `gclog_sha256`. The shared validator
-  (`d.validate`: run and replay) requires the stored log to give the digest
-  and `records.validate(..., gclog)` (the one Python parser of the log,
-  `gc_log_totals` and `check_gc_log`, which documents the line formats)
-  checks every `live` record's slice `log[log_start:log_end]`: `prev
-  log_end <= log_start < log_end <= len(log)`, line boundaries at both
-  ends, exactly three totals with the last line a total, and `words` the
-  third (else `RecordError`). A slice that is not exactly three `Full GC, 0
-  words required` headers (an RTS full GC, `N > 0`, between `log_start` and
-  the first own GC, or a repeated mark: a Count-error retry) is
-  `NotComparable`, a redraw; that is decided after every record is checked,
-  so a later malformed record is still refused. RTS GCs before `log_start`
-  and any after the third own total are outside the slice. A process with
-  `live` records and no log is refused, not redrawn.
+  (`d.validate`: run and replay, of a redraw too) requires the stored log
+  to give the digest and `records.validate(..., gclog)` (the one Python
+  parser of the log, `gc_blocks`, `gc_log_totals` and `check_gc_log`,
+  which documents the line formats) checks every `live` record's slice
+  `log[log_start:log_end]`: `prev log_end <= log_start < log_end <=
+  len(log)`, line boundaries at both ends, exactly three complete full
+  GCs with the last line the closing line of the third, a total in it and
+  `words` equal to its last (else `RecordError`). A slice with a full GC
+  that is not `0 words required` (an RTS full GC, `N > 0`, between
+  `log_start` and the first own GC) or has not exactly one total (a
+  Count-error retry) is `NotComparable`, a redraw; that is decided after
+  every record is checked, so a later malformed record is still refused.
+  RTS GCs before `log_start` and any after the third own GC are outside
+  the slice. A process with `live` records and no log is refused, not
+  redrawn.
 - Comparability is the share-pass rule of design 8.9 alone (above): equal
   `alloc` and a non-shrinking `gc_share` decide it. There is no allocation
   *freshness* condition, no `comparable` field and no settle retry. Only

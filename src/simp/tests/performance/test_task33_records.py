@@ -18,7 +18,7 @@ SML = HERE / "task33"
 GOLDEN = HERE / "task33_golden"
 ROOT = "/snap/base"
 SWITCHES = dict(graph_extra=False, leak=False, hook=False)
-SEG = 1 << 20  # a plausible allocation area, bytes (report-only data)
+SEG = 1 << 20  # a plausible allocation area, bytes (alloc is judged)
 
 
 def rec(name, probe, kind, **fields):
@@ -54,6 +54,10 @@ GC: Completed successfully
 FULL_GC = FULL_GC_HEAD + FULL_GC_TAIL
 # A full GC the run time sets off itself (N words required, N > 0).
 RTS_GC = FULL_GC.replace("0 words required 1", "3 words required 5")
+# A full GC whose mark is retried (gc.cpp): two totals, both %W%.
+RETRY_GC = (FULL_GC_HEAD.replace("%T%", "%W%") +
+            "GC: Count error mark count 5, bitCount 6\n" +
+            "GC: Mark: Total live data %W% words\n" + FULL_GC_TAIL)
 MINOR_GC = """\
 GC: Non-GC time: CPU user: 0.002 system: 0.001 real: 0.003 page faults: 0
 GC: Beginning quick GC
@@ -66,11 +70,12 @@ def fake_log(records, extra=0, full=3, plan=None):
     """The GC log a probe with these records would leave, and the records
     with their `log_start` and `log_end`. Per reading: `window` (default
     two minor GCs), the start of the slice, `between` (default nothing),
-    `full` full GCs, `after`; the totals in the order of the log are the
-    record's words + `extra` twice, then its words (the third total is the
-    reading's), then words + 7. `plan[phase]` gives window, between and
-    after of that reading; end is just past the third total's line (or the
-    end of the full GCs when fewer)."""
+    `blocks` (default `full` full GCs), `after`; the %T% totals in the order
+    of the log are the record's words + `extra` twice, then its words (the
+    third total is the reading's), then words + 7, and %W% is its words.
+    `plan[phase]` gives window, between, blocks and after of that reading;
+    end is just past the closing line of the third full GC (or the end of
+    the blocks when fewer)."""
     records, log = copy.deepcopy(records), ""
     for x in records:
         if x["record"] != "live":
@@ -83,10 +88,15 @@ def fake_log(records, extra=0, full=3, plan=None):
             count[0] += 1
             return str(x["words"] + (extra if count[0] < 3 else
                                      0 if count[0] == 3 else 7))
-        own = re.sub("%T%", total, opts.get("between", "") + FULL_GC * full)
-        text_ = own + re.sub("%T%", total, opts.get("after", ""))
-        found = list(re.finditer(r"Total live data [0-9]+ words\n", text_))
-        stop = found[2].end() if len(found) >= 3 else len(own)
+        def fill(part):
+            return re.sub("%T%", total, part).replace("%W%", str(x["words"]))
+        own = fill(opts.get("between", "") +
+                   opts.get("blocks", FULL_GC * full))
+        text_ = own + fill(opts.get("after", ""))
+        lines = text_.split("\n")
+        blocks = r.gc_blocks(lines)
+        stop = (sum(len(line) + 1 for line in lines[:blocks[2][2] + 1])
+                if len(blocks) >= 3 else len(own))
         x["log_start"] = len(log)
         x["log_end"] = len(log) + stop
         log += text_
@@ -1375,8 +1385,8 @@ class GCLog(Bad, unittest.TestCase):
 
     def test_too_few_full_gcs_are_refused(self):
         # a reading's slice holds exactly its own three totals
-        self.bad(text(release_run(4), full=2), "full GC total")
-        self.bad(text(release_run(4), full=1), "full GC total")
+        self.bad(text(release_run(4), full=2), "complete full GC")
+        self.bad(text(release_run(4), full=1), "complete full GC")
         self.bad(text(release_run(4), full=0))
         # the fourth is outside the slice (after the third own total)
         val(text(release_run(4), full=4))
@@ -1408,10 +1418,17 @@ class GCLog(Bad, unittest.TestCase):
             "noop.before": dict(between=RTS_GC * 2)}), "noop.before")
 
     def test_a_repeated_mark_is_a_redraw(self):
-        # a Count-error retry: a second mark of one own GC
-        again = "GC: Mark: Total live data %T% words\n"
-        plan = {"cong.before": dict(between=FULL_GC_HEAD + again)}
-        self.redraw(text(release_run(4), plan=plan), "cong.before")
+        # a Count-error retry writes a second total in one full GC: in the
+        # first, the second or the third own GC (a slice ending at the
+        # first total would hide the last)
+        plain = FULL_GC.replace("%T%", "%W%")
+        for blocks in (RETRY_GC + plain * 2,
+                       plain + RETRY_GC + plain,
+                       plain * 2 + RETRY_GC):
+            plan = {"cong.before": dict(blocks=blocks)}
+            body = text(release_run(4), plan=plan)
+            self.redraw(body, "cong.before")
+            self.assertIn("Count error", body.log)
 
     def test_a_gap_before_the_start_is_accepted(self):
         # quiet readings and GCs of any kind between two readings
@@ -1433,9 +1450,9 @@ class GCLog(Bad, unittest.TestCase):
         recs = live_records(body)
         phase = recs[3]["phase"]
         start, end = recs[3]["log_start"], recs[3]["log_end"]
-        lines = body.log
-        self.assertEqual(lines[end - 1], "\n")
-        inside = start + lines[start:].index("\n") + 2
+        log = body.log
+        self.assertEqual(log[end - 1], "\n")
+        inside = start + log[start:].index("\n") + 2
         for fields in (dict(log_end=0), dict(log_start=end),
                        dict(log_start=end + 1),
                        dict(log_end=len(body.log) + 1),
@@ -1448,11 +1465,11 @@ class GCLog(Bad, unittest.TestCase):
         # one that starts before the previous reading's end
         self.bad(with_live(body, recs[4]["phase"],
                            log_start=recs[3]["log_end"] - 1))
-        # beyond the log, on a line end
-        longer = Text(str(body))
-        longer.log = body.log + FULL_GC.replace("%T%", "1")
-        self.bad(with_live(longer, "cong.held", log_end=len(longer.log)
-                           + len(FULL_GC)), "cong.held")
+        # beyond the log, on a line end of a longer log
+        longer = body.log + FULL_GC.replace("%T%", "1")
+        self.assertEqual(longer[-1], "\n")
+        self.bad(with_live(body, "cong.held", log_end=len(longer)),
+                 "cong.held")
         # a field that is not an unsigned integer
         for bad in (None, 1.5, "7", True, -1):
             self.bad(with_live(body, phase, log_start=bad))
@@ -1532,7 +1549,12 @@ class Ties(unittest.TestCase):
         # runs that many collections and takes that total
         self.assertIn("val own_gcs = %d  (*" % r.OWN_FULL_GCS, sml)
         self.assertIn("List.tabulate (own_gcs, fn i => i)", sml)
-        self.assertIn("seen + 1 = own_gcs", sml)
+        self.assertIn("closed + 1 < own_gcs", sml)
+        self.assertIn('val log_head = "GC: Full GC, "', sml)
+        for line in ("GC: Completed successfully",
+                     "GC: Completed with insufficient space"):
+            self.assertIn('"%s"' % line, sml)
+            self.assertTrue(r.CLOSING.fullmatch(line))
         self.assertNotIn("[1, 2, 3]", sml)
         marker, unit = re.search(r'val log_marker = "(.*?)"\s+val log_unit '
                                  r'= "(.*?)"', sml, re.S).groups()

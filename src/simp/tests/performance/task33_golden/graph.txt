@@ -1,5 +1,5 @@
 @@T33 {"record":"probe","probe":"graph","kind":"graph","holdir":"@ROOT@","switches":{"graph_extra":false,"leak":false,"hook":false},"params":{"sizes":[0,1,10]}}
-@@T33 {"record":"live","probe":"graph","kind":"graph","phase":"start","size_heap":6291456,"free_full":1366808,"alloc":1048576,"alloc_free":1048576,"gc_share":0,"extent":484509,"log_start":21591,"log_end":22979,"words":480209}
+@@T33 {"record":"live","probe":"graph","kind":"graph","phase":"start","size_heap":6291456,"free_full":1366808,"alloc":1048576,"alloc_free":1048576,"gc_share":0,"extent":484509,"log_start":21591,"log_end":23244,"words":480209}
 @@T33 {"record":"check","probe":"graph","kind":"graph","check":"fragment 0","ok":true,"value":"n=0 fragment 0 merged 0"}
 @@T33 {"record":"check","probe":"graph","kind":"graph","check":"compiled 0","ok":true,"value":"n=0 â¢ T â T"}
 @@T33 {"record":"check","probe":"graph","kind":"graph","check":"compiled_bool 0","ok":true,"value":"n=0 "}
@@ -21,7 +21,7 @@
 @@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"cong","n":0,"anchor":2359808,"anchor_post":2359808,"union":2359873,"words":65,"share":0,"canon_anchor":2359808,"canon_anchor_post":2359808,"canon_union":2359834,"canon_words":26,"canon_share":0}
 @@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"cells_cons","n":0,"anchor":2359806,"anchor_post":2359806,"union":2359806,"words":0,"share":0,"canon_anchor":2359806,"canon_anchor_post":2359806,"canon_union":2359806,"canon_words":0,"canon_share":0}
 @@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"cells_ref","n":0,"anchor":2359806,"anchor_post":2359806,"union":2359806,"words":0,"share":0,"canon_anchor":2359806,"canon_anchor_post":2359806,"canon_union":2359806,"canon_words":0,"canon_share":0}
-@@T33 {"record":"live","probe":"graph","kind":"graph","phase":"graph.0","size_heap":6291456,"free_full":1361784,"alloc":1048576,"alloc_free":1048576,"gc_share":0,"extent":485137,"log_start":28754,"log_end":30142,"words":480901}
+@@T33 {"record":"live","probe":"graph","kind":"graph","phase":"graph.0","size_heap":6291456,"free_full":1361784,"alloc":1048576,"alloc_free":1048576,"gc_share":0,"extent":485137,"log_start":28754,"log_end":30407,"words":480901}
 @@T33 {"record":"phase","probe":"graph","kind":"graph","n":0,"share_start":0,"share_built":0,"share_shared":0,"share_canon":0,"share_tries":2,"converged":true,"build":{"reset_ok":true,"rss_before":110288896,"hwm_before":113442816,"rss_reset":110366720,"hwm_reset":110366720,"rss_after":112803840,"hwm_after":112803840,"status":"ok"},"rows":{"reset_ok":true,"rss_before":112803840,"hwm_before":112803840,"rss_reset":112881664,"hwm_reset":112881664,"rss_after":111357952,"hwm_after":113115136,"status":"unsupported"}}
 @@T33 {"record":"check","probe":"graph","kind":"graph","check":"fragment 1","ok":true,"value":"n=1 fragment 1 merged 1"}
 @@T33 {"record":"check","probe":"graph","kind":"graph","check":"compiled 1","ok":true,"value":"n=1  [.] â¢ t33_g0 â T;  [.] â¢ t33_g0 â T"}
@@ -44,7 +44,7 @@
 @@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"cong","n":1,"anchor":2359839,"anchor_post":2359839,"union":2359934,"words":95,"share":0,"canon_anchor":2359839,"canon_anchor_post":2359839,"canon_union":2359895,"canon_words":56,"canon_share":0}
 @@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"cells_cons","n":1,"anchor":2359806,"anchor_post":2359806,"union":2359809,"words":3,"share":0,"canon_anchor":2359806,"canon_anchor_post":2359806,"canon_union":2359809,"canon_words":3,"canon_share":0}
 @@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"cells_ref","n":1,"anchor":2359806,"anchor_post":2359806,"union":2359811,"words":5,"share":0,"canon_anchor":2359806,"canon_anchor_post":2359806,"canon_union":2359811,"canon_words":5,"canon_share":0}
-@@T33 {"record":"live","probe":"graph","kind":"graph","phase":"graph.1","size_heap":6291456,"free_full":1358768,"alloc":1048576,"alloc_free":1048576,"gc_share":0,"extent":485514,"log_start":36115,"log_end":37503,"words":481269}
+@@T33 {"record":"live","probe":"graph","kind":"graph","phase":"graph.1","size_heap":6291456,"free_full":1358768,"alloc":1048576,"alloc_free":1048576,"gc_share":0,"extent":485514,"log_start":36115,"log_end":37768,"words":481269}
 @@T33 {"record":"phase","probe":"graph","kind":"graph","n":1,"share_start":0,"share_built":0,"share_shared":0,"share_canon":0,"share_tries":2,"converged":true,"build":{"reset_ok":true,"rss_before":111276032,"hwm_before":113115136,"rss_reset":111353856,"hwm_reset":111353856,"rss_after":127942656,"hwm_after":127942656,"status":"ok"},"rows":{"reset_ok":true,"rss_before":127942656,"hwm_before":127942656,"rss_reset":127942656,"hwm_reset":127942656,"rss_after":111386624,"hwm_after":127627264,"status":"unsupported"}}
 @@T33 {"record":"check","probe":"graph","kind":"graph","check":"fragment 10","ok":true,"value":"n=10 fragment 10 merged 10"}
 @@T33 {"record":"check","probe":"graph","kind":"graph","check":"compiled 10","ok":true,"value":"n=10  [.] â¢ t33_g0 â T;  [.] â¢ t33_g9 â T"}
@@ -67,7 +67,7 @@
 @@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"cong","n":10,"anchor":2360118,"anchor_post":2360118,"union":2360454,"words":336,"share":0,"canon_anchor":2360118,"canon_anchor_post":2360118,"canon_union":2360415,"canon_words":297,"canon_share":0}
 @@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"cells_cons","n":10,"anchor":2359806,"anchor_post":2359806,"union":2359836,"words":30,"share":0,"canon_anchor":2359806,"canon_anchor_post":2359806,"canon_union":2359836,"canon_words":30,"canon_share":0}
 @@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"cells_ref","n":10,"anchor":2359806,"anchor_post":2359806,"union":2359856,"words":50,"share":0,"canon_anchor":2359806,"canon_anchor_post":2359806,"canon_union":2359856,"canon_words":50,"canon_share":0}
-@@T33 {"record":"live","probe":"graph","kind":"graph","phase":"graph.10","size_heap":6291456,"free_full":1343520,"alloc":1048576,"alloc_free":1048576,"gc_share":0,"extent":487420,"log_start":43476,"log_end":44864,"words":483156}
+@@T33 {"record":"live","probe":"graph","kind":"graph","phase":"graph.10","size_heap":6291456,"free_full":1343520,"alloc":1048576,"alloc_free":1048576,"gc_share":0,"extent":487420,"log_start":43476,"log_end":45129,"words":483156}
 @@T33 {"record":"phase","probe":"graph","kind":"graph","n":10,"share_start":0,"share_built":0,"share_shared":0,"share_canon":0,"share_tries":2,"converged":true,"build":{"reset_ok":true,"rss_before":111292416,"hwm_before":127627264,"rss_reset":111370240,"hwm_reset":111370240,"rss_after":129617920,"hwm_after":129617920,"status":"ok"},"rows":{"reset_ok":true,"rss_before":129617920,"hwm_before":129617920,"rss_reset":129695744,"hwm_reset":129695744,"rss_after":111386624,"hwm_after":129351680,"status":"unsupported"}}
 @@T33 {"record":"step","probe":"graph","kind":"graph","graph":"fragment","mode":"built","first":6,"rest":54,"span":9}
 @@T33 {"record":"step","probe":"graph","kind":"graph","graph":"compiled","mode":"built","first":49,"rest":493,"span":9}
@@ -93,5 +93,5 @@
 @@T33 {"record":"step","probe":"graph","kind":"graph","graph":"cong","mode":"canonical","first":30,"rest":241,"span":9}
 @@T33 {"record":"step","probe":"graph","kind":"graph","graph":"cells_cons","mode":"canonical","first":3,"rest":27,"span":9}
 @@T33 {"record":"step","probe":"graph","kind":"graph","graph":"cells_ref","mode":"canonical","first":5,"rest":45,"span":9}
-@@T33 {"record":"live","probe":"graph","kind":"graph","phase":"end","size_heap":6291456,"free_full":1369192,"alloc":1048576,"alloc_free":1048576,"gc_share":0,"extent":484211,"log_start":45129,"log_end":46517,"words":479917}
+@@T33 {"record":"live","probe":"graph","kind":"graph","phase":"end","size_heap":6291456,"free_full":1369192,"alloc":1048576,"alloc_free":1048576,"gc_share":0,"extent":484211,"log_start":45129,"log_end":46782,"words":479917}
 @@T33 {"record":"done","probe":"graph","kind":"graph"}

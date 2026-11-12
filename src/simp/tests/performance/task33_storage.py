@@ -927,6 +927,9 @@ def check_run(folder, report, entry):
         require(incomparable(receipt, unit, root, reporter["dir"])
                 is not None, "a rejected process that is not a redraw: " +
                 entry["receipt"])
+        # the admission checks of the run (the GC log's digest included)
+        d.validate(receipt, unit, root, reporter["dir"], None,
+                   side == "cand")
     return receipt
 
 

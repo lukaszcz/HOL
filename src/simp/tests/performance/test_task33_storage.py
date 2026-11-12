@@ -1098,7 +1098,7 @@ class GCLog34(Chain34):
     def test_too_few_full_gc_totals_are_refused(self):
         self.refused(lambda log: log.replace("Total live data",
                                              "Total live dat_"),
-                     "full GC total")
+                     "in the third full GC")
 
     def test_a_log_that_disagrees_with_the_words_is_refused(self):
         bump = lambda m: "Total live data %d words" % (int(m.group(1)) + 1)
@@ -1449,6 +1449,23 @@ class Redraws(Chain34):
                          [(0, False), (1, True)])
         self.assertIn("run-time GC", runs[0]["superseded"])
         st.replay_chain(Path(report["output"]))
+
+    def test_the_replay_of_a_redraw_checks_its_log_digest(self):
+        self.foreign_gc(True)
+        args, report = self.run_stage("smoke", "smoke")
+        folder = Path(report["output"])
+        entry = self.tries(report, "release", "cand")[0]
+        path = folder / entry["receipt"]
+        saved = path.read_bytes()
+        receipt = json.loads(gzip.decompress(saved))
+        self.assertFalse(receipt["accepted"])
+        # unchanged, the redraw replays
+        st.check_run(folder, report, entry)
+        data = dict(receipt, gclog_sha256="0" * 64)
+        path.write_bytes(gzip.compress(dw.dumps(data).encode(), mtime=0))
+        entry["seal"] = acc.seal(path)
+        with self.assertRaisesRegex(dw.Refusal, "does not give its digest"):
+            st.check_run(folder, report, entry)
 
     def test_a_run_time_gc_that_persists_is_a_refusal(self):
         self.foreign_gc(False)

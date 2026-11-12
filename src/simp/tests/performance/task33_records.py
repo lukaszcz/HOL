@@ -108,13 +108,19 @@ judge).
 
 The GC log. A storage probe runs under `--debug gc --logfile $T33_GCLOG`
 (GCLOG_ENV; the driver sets both, and a timing process has neither). Poly/ML
-5.9.2 writes one line per full GC (and none for a minor GC) of the form
+5.9.2 writes, per full GC (and none of these for a minor GC), a header, a
+total line and a closing line (a retried mark, after a `GC: Count error`
+line, writes a second total line):
 
     GC: Full GC, <n> words required <k> spaces  (FULL_GC_HEAD)
     GC: Mark: Total live data <N> words        (LOG_TOTAL, N decimal digits)
+    GC: Completed successfully                  (CLOSING; or `with
+                                                insufficient space`)
 
 (n and k decimal; PolyML.fullGC says `0 words required`, a full GC set off
-by the run time says `n words required`, n > 0.)
+by the run time says `n words required`, n > 0. A minor GC also writes a
+`GC: Completed successfully`, but no header: a full GC is the lines from a
+header to the next closing line.)
 
 The marked live total is exact, while the heap extent includes holes: the
 copy phase places immutable data by the first object it copies and a later
@@ -123,18 +129,21 @@ GC can move it, leaving a counted hole, and new objects fill old holes (the
 .agent-files/evidence/task33/noop-offset-diagnosis.md). T33.sml `live` takes
 the total of the third of its own full GCs: it records the log length
 `log_start` just before them, reads the log from there after them, takes the
-third total line and records the offset `log_end` just past it. A full GC
-the run time sets off between `log_start` and the first own one, or after
-the third own total (e.g. by reading the log, whose buffers it would count),
-is not the third total. `gc_log_totals` and `check_gc_log` are the one place
-that parses the log in Python: `validate(..., gclog)` takes the slice
-`log[log_start:log_end]` of every record and requires prev log_end <=
-log_start < log_end <= len(log), line boundaries at both ends, exactly
-OWN_FULL_GCS (three) totals with the last line a total, and `words` equal
-to the third. A slice that is not exactly three FULL_GC_HEAD lines, all
-`0 words required`, is NotComparable (a redraw): a foreign run-time GC in
-the slice, or more totals than headers (a repeated mark: a retry after a
-Count error). The NotComparable reasons are raised after every record is
+third full GC there (header to closing line) and records the offset
+`log_end` just past its closing line; `words` is the last total inside it.
+A full GC the run time sets off between `log_start` and the first own one
+makes the third GC there a foreign or shifted one (a redraw, below), and one
+after the third own GC (e.g. by reading the log, whose buffers it would
+count) is outside the slice. `gc_blocks`, `gc_log_totals` and `check_gc_log`
+are the one place that parses the log in Python: `validate(..., gclog)` takes
+the slice `log[log_start:log_end]` of every record and requires prev log_end
+<= log_start < log_end <= len(log), line boundaries at both ends, exactly
+OWN_FULL_GCS (three) complete full GCs with the last line the closing line of
+the third, a total in the third, and `words` equal to its last. A slice
+whose full GCs are not all `0 words required`, or one of whose full GCs has
+not exactly one total (a retried mark after a Count error), is NotComparable
+(a redraw): a foreign run-time GC in the slice, or a repeated mark. The
+NotComparable reasons are raised after every record is
 checked, so that a later malformed record is not taken for a redraw. The
 gap between a record's log_end and the next log_start (quiet readings, GCs
 in between) is not examined.
@@ -263,6 +272,9 @@ LOG_TOTAL = re.compile(r"GC: Mark: Total live data ([0-9]+) words")
 # `0 words required`; a full GC the run time sets off says `n > 0`.
 FULL_GC_HEAD = re.compile(
     r"GC: Full GC, ([0-9]+) words required [0-9]+ spaces")
+# The line that closes a full GC (T33.sml log_closing; a minor GC writes the
+# first of them too, without a header).
+CLOSING = re.compile(r"GC: Completed (?:successfully|with insufficient space)")
 OWN_FULL_GCS = 3  # the full GCs of one reading (T33.sml own_gcs)
 WEAK_MIN_FULL_GCS = 4  # one explicit collection, then three
 
@@ -272,9 +284,11 @@ class RecordError(ValueError):
 
 
 class NotComparable(ValueError):
-    """A well-formed process whose readings cannot be compared (alloc or
-    gc_share changed inside a release kind, see check_comparable). The
-    process is redrawn; it is not a result and not a malformed record."""
+    """A well-formed process whose readings cannot be compared: alloc or
+    gc_share changed inside a release kind (check_comparable), a foreign
+    run-time GC or a repeated mark in the slice of a GC-log reading
+    (check_gc_log), or an unconverged pre-anchor (validate). The process
+    is redrawn; it is not a result and not a malformed record."""
 
 
 def fail(message):
@@ -542,23 +556,49 @@ def check_live(record):
         fail("live %s: words %d" % (record["phase"], record["words"]))
 
 
+def _matches(regex, lines):
+    """The regex matches of the lines that match it exactly."""
+    return [m for line in lines for m in [regex.fullmatch(line)] if m]
+
+
 def gc_log_totals(text):
-    """The marked live totals of the full GCs in a piece of GC log, in
-    order: one per line that is exactly `GC: Mark: Total live data <N>
-    words`."""
-    return [int(m.group(1)) for line in text.split("\n")
-            for m in [LOG_TOTAL.fullmatch(line)] if m]
+    """The marked live totals in a piece of GC log, in order: one per line
+    that is exactly `GC: Mark: Total live data <N> words`."""
+    return [int(m.group(1))
+            for m in _matches(LOG_TOTAL, text.split("\n"))]
+
+
+def gc_blocks(lines):
+    """The complete full GCs in the lines of a GC log, in order: from a
+    FULL_GC_HEAD line to the next CLOSING line, as (words required, totals
+    inside, index of the closing line). A header restarts an open block;
+    an open block at the end is not complete."""
+    blocks, open_ = [], None
+    for i, line in enumerate(lines):
+        head = FULL_GC_HEAD.fullmatch(line)
+        if head:
+            open_ = (int(head.group(1)), [])
+        elif open_ is not None:
+            total = LOG_TOTAL.fullmatch(line)
+            if total:
+                open_[1].append(int(total.group(1)))
+            elif CLOSING.fullmatch(line):
+                blocks.append(open_ + (i,))
+                open_ = None
+    return blocks
 
 
 def check_gc_log(live, log):
     """Check every `live` record (`live`: the records in output order)
     against the GC log `log`, the slice log[log_start:log_end] of each (see
     The GC log). RecordError when `prev <= log_start < log_end <= len(log)`
-    fails (prev: the previous record's log_end, 0 at first), a slice
-    does not start and end on line boundaries, does not end with a total
-    line, does not hold exactly OWN_FULL_GCS totals, or words is not the
-    last. NotComparable, raised after all records are checked, when a
-    slice is not exactly OWN_FULL_GCS headers `0 words required`."""
+    fails (prev: the previous record's log_end, 0 at first), a slice does
+    not start and end on line boundaries, does not hold exactly
+    OWN_FULL_GCS complete full GCs with its last line the closing line of
+    the third, has no total in the third, or words is not the last total of
+    the third. NotComparable, raised after all records are checked, when
+    a full GC of a slice is not `0 words required` or has not exactly one
+    total."""
     if not isinstance(log, str):
         fail("missing GC log")
     prev = 0
@@ -575,23 +615,26 @@ def check_gc_log(live, log):
         if log[end - 1] != "\n":
             fail("live %s: log_end %d is not a line end" % (name, end))
         lines = log[start:end - 1].split("\n")
-        totals = gc_log_totals("\n".join(lines))
-        if len(totals) != OWN_FULL_GCS or not LOG_TOTAL.fullmatch(lines[-1]):
-            fail("live %s: %d full GC total(s) in its GC log slice, not "
-                 "exactly %d with the last line a total" % (
-                     name, len(totals), OWN_FULL_GCS))
-        if r["words"] != totals[-1]:
+        blocks = gc_blocks(lines)
+        if len(blocks) != OWN_FULL_GCS or blocks[-1][2] != len(lines) - 1:
+            fail("live %s: %d complete full GC(s) in its GC log slice, not "
+                 "exactly %d with the last line the closing line of the "
+                 "last" % (name, len(blocks), OWN_FULL_GCS))
+        if not blocks[-1][1]:
+            fail("live %s: no total in the third full GC of its GC log "
+                 "slice" % name)
+        if r["words"] != blocks[-1][1][-1]:
             fail("live %s: words %d, the GC log's marked total (of the "
                  "slice's third full GC) is %d" % (
-                     name, r["words"], totals[-1]))
-        heads = [int(m.group(1)) for line in lines
-                 for m in [FULL_GC_HEAD.fullmatch(line)] if m]
-        if len(heads) != OWN_FULL_GCS or any(heads):
+                     name, r["words"], blocks[-1][1][-1]))
+        required = [b[0] for b in blocks]
+        counts = [len(b[1]) for b in blocks]
+        if any(required) or counts != [1] * len(blocks):
             redraws.append(
-                "live %s: the GC log slice has full GC headers with "
-                "words required %s, not %d own ones (0): a run-time GC "
-                "or a repeated mark in the reading" % (
-                    name, heads, OWN_FULL_GCS))
+                "live %s: the GC log slice has full GCs with words "
+                "required %s and totals %s, not own ones (0 each, one "
+                "each): a run-time GC or a repeated mark in the reading"
+                % (name, required, counts))
         prev = end
     if redraws:
         raise NotComparable("; ".join(redraws))
