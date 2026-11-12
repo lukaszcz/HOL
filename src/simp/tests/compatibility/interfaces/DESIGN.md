@@ -387,8 +387,8 @@ module `M'`:
 
 - a value entry asserts `PolyML.pointerEq (M.x, M'.x)`: type-checking forces
   the two types to unify, and pointer equality proves the extension exports
-  the very object the develop module does, not a copy;
-  because immediate values (an `int`, say) compare equal by pointer
+  the very object the develop module does, not a copy.
+  Because immediate values (an `int`, say) compare equal by pointer
   whatever their origin, a value entry must have a function type (a
   top-level `->` in its spec), else it needs a row;
 - a type entry is the coercion `fn (v : P M.x) => (v : P M'.x)` and its
@@ -421,9 +421,11 @@ The Python side keeps only cheap pre-filters: every entry names a shared
 export; a value entry's develop and extension specs are equal after
 normalisation (spaces around `: , ; ( ) { } * = ->` and a trailing `;` aside)
 and are a plain `val` (an exception or constructor is not an object to
-compare); a type entry has the same arity in both signatures; names are plain
-identifiers. The compiler decides the rest. The TASK_34 ledger records the
-shared modules as unchanged apart from its listed differences.
+compare); a value entry has a function type (a top-level `->`), since
+pointer equality cannot tell immediates apart, so this rule is not left to
+the compiler; a type entry has the same arity in both signatures; names are
+plain identifiers. The compiler decides the rest. The TASK_34 ledger records
+the shared modules as unchanged apart from its listed differences.
 
 Assumptions that still apply (fail closed; a row is always available):
 

@@ -379,7 +379,9 @@ def shared_entries(shared=None, develop=INPUTS, root=ROOT):
     allowlist entry, in a fixed order.  Cheap pre-filters only; the compiled
     check is the authority.  Every entry names a shared export; a value
     entry's develop and extension specs are equal and are plain `val`
-    specs (an exception or constructor is not an object to compare); a type
+    specs (an exception or constructor is not an object to compare); a value
+    entry has a function type (a top-level `->`; pointer equality cannot tell
+    immediates apart, so this rule is not left to the compiler); a type
     entry has one arity in both signatures; names are plain identifiers."""
     if shared is None:
         shared = read_shared()

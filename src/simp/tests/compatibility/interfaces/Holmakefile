@@ -23,5 +23,5 @@ check: selftest.exe sharedExportsCheck.exe
 	./sharedExportsCheck.exe
 
 design-check:
-	python3 -B -m unittest discover -s . -p 'test_*.py' 2>&1
-	python3 -B check_design.py --run --negative-controls 2>&1
+	python3 -B -m unittest discover -s . -p 'test_*.py'
+	python3 -B check_design.py --run --negative-controls
