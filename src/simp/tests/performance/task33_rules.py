@@ -58,6 +58,15 @@ sys.dont_write_bytecode = True
 import acceptance as a
 import task33_records as records
 
+
+
+class Inadmissible(ValueError):
+    """The data a rule is given violates an admission condition the rule
+    relies on (an unadmissible share-pass bound, no declared S2 delta
+    covering a computed U, ...). The storage driver turns it, and only it,
+    into a refusal (`task33_storage.refusing`)."""
+
+
 PASS, FAIL, INCONCLUSIVE, BLOCKED = "pass", "fail", "inconclusive", "blocked"
 REPORTED, UNSUPPORTED = "reported", "unsupported"
 GATES = (PASS, FAIL, INCONCLUSIVE, BLOCKED)
@@ -289,11 +298,11 @@ def total_deltas(declared):
 
 def declared_delta(entries, heap, kind):
     """The one entry covering (heap, kind): its value. None or several is
-    a Refusal's business (the caller's): `ValueError`."""
+    a Refusal's business (the caller's): `Inadmissible`."""
     found = [e for e in entries if e["heap"] == heap and
              (e["kinds"] is None or kind in e["kinds"])]
     if len(found) != 1:
-        raise ValueError("%d declared total_delta entries cover %s on %s, "
+        raise Inadmissible("%d declared total_delta entries cover %s on %s, "
                          "not one" % (len(found), kind, heap))
     return found[0]["value"]
 
@@ -327,7 +336,7 @@ def s2_kind(base, cand, kind, delta, paired=False):
                    "side only (a structure is missing on the other)",
                    **detail)
     if delta is None:
-        raise ValueError("S2 %s: U is computed but no total_delta covers "
+        raise Inadmissible("S2 %s: U is computed but no total_delta covers "
                          "it" % kind)
     if not all(x["repeat_ok"] for x in ab + ac):
         return row("S2", kind, INCONCLUSIVE, "the repeats of a process "
@@ -467,15 +476,16 @@ def r1_kind(base, cand, kind, case="R1"):
     floor = noop_floor(procs)
     rb = [p["residual"][kind] for p in base]
     rc = [p["residual"][kind] for p in cand]
-    # the validator's invariant; a violation is a ValueError, which the
-    # storage driver turns into a refusal (`refusing`)
+    # the validator's invariant; a violation is `Inadmissible`, which the
+    # storage driver turns into a refusal (`refusing`) in `decide` and in
+    # `control_outcome`, the only callers of the R1 rows
     for p in procs:
         if p["residual_bound"][kind] and p["residual"][kind] < records.HALF:
-            raise ValueError("%s: a residual bound under 1/2 was admitted"
+            raise Inadmissible("%s: a residual bound under 1/2 was admitted"
                              % kind)
         if p["held_bound"][kind] and p["held_comparable"][kind] and \
                 p["held"][kind] < records.H_MIN:
-            raise ValueError("%s: a held bound under %d was admitted as "
+            raise Inadmissible("%s: a held bound under %d was admitted as "
                              "comparable" % (kind, records.H_MIN))
     detail = dict(floor=[num(x) for x in floor],
                   floor_range=num(spread(floor)),

@@ -3662,10 +3662,9 @@ kind `noop` is the in-process noise floor, the floor kind: defined in
 `T33.sml` (`T33.floor_kind`), mirrored by `task33_records.FLOOR_KIND` and
 tied by `Ties.test_kinds`; `T33_LEAK` does not retain its objects.
 Comparisons use exact fractions, no rounding. The kinds are `simpset`,
-`conversion`, `tactic`,
-`traversedata`, `exclusion`, `removed` and `cong`, plus the `weak` row
-(`RuntimeMetrics.release`: a weak reference to a discarded simpset must be
-collected).
+`conversion`, `tactic`, `traversedata`, `exclusion`, `removed` and `cong`,
+plus the `weak` row (`RuntimeMetrics.release`: a weak reference to a
+discarded simpset must be collected).
 
 - Resolved: the no-op floor's range across the kind's processes (both
   sides) is at most 1/4 word per object (`RESOLUTION`). Unresolved is
@@ -3701,28 +3700,29 @@ collected).
   process without a comparable reading is `NotComparable`: a redraw, never a
   result.
 
-M is sized by the pilot from the raw noise (range <= 0.25 M words) and
-clamped to a cap derived from a declared CPU budget (`RELEASE_BUDGET_S` =
-60 s per release or `ext` process): the budget divided by the larger CPU per
-object of the pilot's release processes and of the smoke's `ext` process
-(whole-process CPU over M times the kinds released, start-up included, so an
-upper bound; the smoke's `ext` per-object CPU, measured at its small M and
-sizes, is an upper bound of the cost at the decision M only while the
-graph's cost at the decision sizes stays under about (M / smoke M - 1) times
-the start-up, likely and not checked; the pilot is sized from a given
-smoke, `--smoke`). A process reporting no CPU time is a refusal. The counts
-record `required_m` and `capped` as TASK32 records `required_reps`, and
-`object_cpu` and `ext_object_cpu`; `check_sizing` recomputes the cap, M and
-`capped` from them at `run`, `replay` and `dispose`. The sizing assumes that
-the raw noise in words of a release process does not depend on M, so that
-the required M is that noise over 1/4; the decision stages check it by the
-no-op floor (an unresolved floor is inconclusive, hence a follow-up). The
-follow-up M is max(4 M, ceil(M x floor range / 1/4)), capped by 4 times the
-budget (`FOLLOWUP_FACTOR`). The driver requires `FOLLOWUP_FACTOR` x the
-budget to be under the process timeout (`TIMEOUT`, 900 s), at import,
-whenever a cap is computed and, with the run's own `--timeout`, before any
-run command launches a process, and refuses with that message otherwise: a
-capped follow-up process would always time out.
+M is sized by the pilot from the raw noise of the exact residuals (range <=
+0.25 M words) and clamped to a cap derived from a declared CPU budget
+(`RELEASE_BUDGET_S` = 60 s per release or `ext` process): the budget divided
+by the larger CPU per object of the pilot's release processes and of the
+smoke's `ext` process (whole-process CPU over M times the kinds released,
+start-up included, so an upper bound; the smoke's `ext` per-object CPU,
+measured at its small M and sizes, is an upper bound of the cost at the
+decision M only while the graph's cost at the decision sizes stays under
+about (M / smoke M - 1) times the start-up, likely and not checked; the
+pilot is sized from a given smoke, `--smoke`). A process reporting no CPU
+time is a refusal. The counts record `required_m` and `capped` as TASK32
+records `required_reps`, and `object_cpu` and `ext_object_cpu`;
+`check_sizing` recomputes the cap, M and `capped` from them at `run`,
+`replay` and `dispose`. The sizing assumes that the raw noise in words of a
+release process does not depend on M, so that the required M is that noise
+over 1/4; the decision stages check it by the no-op floor (an unresolved
+floor is inconclusive, hence a follow-up). The follow-up M is max(4 M,
+ceil(M x floor range / 1/4)), capped by 4 times the budget
+(`FOLLOWUP_FACTOR`). The driver requires `FOLLOWUP_FACTOR` x the budget to
+be under the process timeout (`TIMEOUT`, 900 s), at import, whenever a cap
+is computed and, with the run's own `--timeout`, before any run command
+launches a process, and refuses with that message otherwise: a capped
+follow-up process would always time out.
 
 Extension cases (E2), on the candidate only; no develop counterpart exists
 for (b). The `ext` probe loads `simpExtLib`, uses tracked construction,

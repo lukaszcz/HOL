@@ -59,18 +59,12 @@ class WorldS(t33.World33):
         if probe == "graph":
             return rt.graph_run(sizes, **sw)
         if probe == "release":
-            return self.release(m, sw)
+            return rt.release_run(m, **sw)
         if probe == "ext":
             return ext_records(m, sizes)
         if name.startswith("trivial-"):
             return rt.trivial_run(probe)
         return rt.load_run("registry", probe, **sw)
-
-    @staticmethod
-    def release(m, sw):
-        """A release run; a leaked kind keeps every discarded object, but
-        the no-op kind has nothing to keep (`rt.release_run`)."""
-        return rt.release_run(m, **sw)
 
     def output(self, unit, root, probe_dir, differ=False):
         if unit["name"] not in cases33.NAMES:
@@ -274,15 +268,22 @@ class S1(unittest.TestCase):
                          "blocked")
 
 
+def floor_leak(run, words=1):
+    """A release run whose no-op kind retains `words` per object."""
+    i = rt.find(run, "live", phase="noop.before")
+    j = rt.find(run, "release", release="noop")
+    m = run[rt.find(run, "probe")]["params"]["m"]
+    run[i:j + 1] = rt.release_rows("release", "release", ("noop",), m,
+                                   words)
+    return run
+
+
 def release_of(m=M, noop_leak=0, leak=False):
-    run = rt.release_run(m)
-    if noop_leak or leak:
-        i, j = rt.find(run, "live", phase="noop.before"), rt.find(
-            run, "release", release="noop")
-        run[i:j + 1] = rt.release_rows("release", "release", ("noop",), m,
-                                       noop_leak)
-        if leak:
-            run = WorldS.release(m, dict(leak=True))
+    """The summary of a release run; `leak`: the leak control (the floor
+    kind never leaks), `noop_leak`: the floor kind alone retains words."""
+    run = rt.release_run(m, leak=leak)
+    if noop_leak:
+        run = floor_leak(run, noop_leak)
     return summ(run, ("leak",) if leak else ())
 
 
@@ -291,6 +292,7 @@ def share_pass(run, kind, per_object=Fraction(1, 2)):
     after readings of release kind `kind`, which retains `per_object`
     words per object: its residual is a share-pass bound."""
     m = run[rt.find(run, "probe")]["params"]["m"]
+    assert (per_object * m).denominator == 1, (per_object, m)
     words = int(per_object * m)
     run = rt.reading(run, kind, "after", 5000 + words, share=1)
     return rt.reading(run, kind, "held", 5000 + words + 600 * m, share=1)
@@ -312,8 +314,18 @@ def live_leak_run(m=M, per_object=300):
     return run
 
 
-def release_of_run(m=M):
-    return rt.release_run(m)
+def control_groups(base, leak):
+    """The groups `control_outcome` reads, with the given release groups."""
+    reg = "registry-state-empty"
+    return {st.GRAPH: dict(base=[summ(graph_of())] * 3),
+            st.GRAPH + "+graph_extra": dict(base=[summ(
+                graph_of(graph_extra=True), ("graph_extra",))] * 3),
+            st.RELEASE: dict(base=base), st.RELEASE + "+leak": dict(
+                base=leak),
+            reg: dict(base=[summ(rt.load_run("registry",
+                                             "state-empty"))] * 3),
+            reg + "+hook": dict(base=[summ(rt.load_run(
+                "registry", "state-empty", hook=True), ("hook",))] * 3)}
 
 
 class ShareBoundRules(unittest.TestCase):
@@ -346,23 +358,13 @@ class ShareBoundRules(unittest.TestCase):
         self.assertEqual(r["residual_bound"]["base"], [False] * 3)
         self.assertEqual(row_of(rows, "simpset")["held_bound"],
                          [False] * 3 + [True] * 3)
-        groups = {st.GRAPH: dict(base=[summ(graph_of())] * 3),
-                  st.GRAPH + "+graph_extra": dict(base=[summ(
-                      graph_of(graph_extra=True), ("graph_extra",))] * 3),
-                  st.RELEASE: dict(base=base),
-                  st.RELEASE + "+leak": dict(base=leak)}
-        reg = "registry-state-empty"
-        groups[reg] = dict(base=[summ(rt.load_run("registry",
-                                                  "state-empty"))] * 3)
-        groups[reg + "+hook"] = dict(base=[summ(rt.load_run(
-            "registry", "state-empty", hook=True), ("hook",))] * 3)
-        out = st.control_outcome({}, [], groups)
+        out = st.control_outcome({}, [], control_groups(base, leak))
         self.assertTrue(out["controls"]["leak"]["detected"])
         self.assertEqual(out["controls"]["leak"]["decisions"]["removed"],
                          "fail")
 
     def test_a_candidate_bound_of_exactly_half_fails(self):
-        run = share_pass(release_of_run(), "simpset")
+        run = share_pass(rt.release_run(M), "simpset")
         s = summ(run)
         self.assertTrue(s["residual_bound"]["simpset"])
         self.assertEqual(s["residual"]["simpset"], Fraction(1, 2))
@@ -371,7 +373,7 @@ class ShareBoundRules(unittest.TestCase):
         self.assertEqual(r["residual_bound"]["cand"], [True] * 3)
 
     def test_a_baseline_bound_of_exactly_half_is_inconclusive(self):
-        s = summ(share_pass(release_of_run(), "simpset"))
+        s = summ(share_pass(rt.release_run(M), "simpset"))
         r = rules.r1_kind([s] * 3, [release_of()] * 3, "simpset")
         self.assertEqual((r["decision"], r["owed"]),
                          ("inconclusive", "followup"), r["reason"])
@@ -379,19 +381,20 @@ class ShareBoundRules(unittest.TestCase):
 
     def test_a_baseline_bound_is_never_a_pass(self):
         base = [summ(live_leak_run(per_object=1), ("leak",))] * 3
-        for k in ("simpset", "removed"):
-            r = rules.r1_kind(base, [release_of()] * 3, k)
-            self.assertNotEqual(r["decision"], "pass", (k, r["reason"]))
+        self.assertTrue(all(p["residual_bound"]["removed"] for p in base))
+        r = rules.r1_kind(base, [release_of()] * 3, "removed")
+        self.assertEqual((r["decision"], r["owed"]),
+                         ("inconclusive", "followup"), r["reason"])
 
     def test_an_inadmissible_bound_is_refused_by_the_rule(self):
         run = release_of()
         bad = dict(run, residual_bound=dict(run["residual_bound"],
                                             simpset=True))
-        with self.assertRaises(ValueError):
+        with self.assertRaises(rules.Inadmissible):
             rules.r1_kind([run], [bad], "simpset")
         held = dict(run, held_bound=dict(run["held_bound"], simpset=True),
                     held=dict(run["held"], simpset=Fraction(5)))
-        with self.assertRaises(ValueError):
+        with self.assertRaises(rules.Inadmissible):
             rules.r1_kind([run], [held], "simpset")
 
     def test_an_inadmissible_bound_is_a_refusal_in_a_decision(self):
@@ -403,6 +406,43 @@ class ShareBoundRules(unittest.TestCase):
         with self.assertRaises(dw.Refusal):
             st.refusing(rules.e2b, [dict(ext_of(), residual_bound=dict(
                 ext_of()["residual_bound"], ext_views=True))])
+
+    def test_an_inadmissible_error_is_a_refusal_in_decide_and_control(self):
+        base = [release_of()] * 3
+        groups = {st.RELEASE: dict(base=base, cand=base)}
+        report = dict(workloads=[st.RELEASE], decides=None)
+        controls = control_groups(base, [release_of(leak=True)] * 3)
+        with mock.patch.object(rules, "r1_kind",
+                               side_effect=rules.Inadmissible("bound")):
+            with self.assertRaises(dw.Refusal):
+                st.decide(report, groups, False)
+            with self.assertRaises(dw.Refusal):
+                st.control_outcome({}, [], controls)
+
+    def test_other_errors_are_not_converted_to_refusals(self):
+        base = [release_of()] * 3
+        groups = {st.RELEASE: dict(base=base, cand=base)}
+        report = dict(workloads=[st.RELEASE], decides=None)
+        controls = control_groups(base, [release_of(leak=True)] * 3)
+        for error in (ValueError("plain"), dw.Blocked("blocked"),
+                      KeyError("bug")):
+            with mock.patch.object(rules, "r1_kind", side_effect=error):
+                for call in (lambda: st.decide(report, groups, False),
+                             lambda: st.control_outcome({}, [], controls)):
+                    with self.assertRaises(type(error)) as caught:
+                        call()
+                    self.assertIs(caught.exception, error)  # unchanged
+
+    def test_an_s2_inadmissible_is_a_refusal_in_decide(self):
+        run = registry_of()
+        name = "registry-state-empty"
+        report = dict(workloads=[name], decides=None, roots=dict(
+            base=str(rt.ROOT), cand=str(rt.ROOT)), reporter=dict(
+                base=dict(dir="/p"), cand=dict(dir="/p")),
+            units={name: dict(heap="bin/other")})
+        groups = {name: dict(base=[run] * 3, cand=[run] * 3)}
+        with self.assertRaisesRegex(dw.Refusal, "total_delta"):
+            st.decide(report, groups, False)
 
 
 class R1(unittest.TestCase):
@@ -544,18 +584,18 @@ class S2L(unittest.TestCase):
         r = rules.s2_kind(b, b, "state-empty", None)
         self.assertEqual(r["decision"], "reported")
 
-    def test_a_total_without_a_declared_delta_is_a_value_error(self):
+    def test_a_total_without_a_declared_delta_is_inadmissible(self):
         b = [registry_of()] * 3
-        with self.assertRaises(ValueError):
+        with self.assertRaises(rules.Inadmissible):
             rules.s2_kind(b, b, "state-empty", None)
 
     def test_each_total_needs_exactly_one_declared_entry(self):
         entries = rules.total_deltas(DECLARED)
         self.assertEqual(rules.declared_delta(
             entries, "bin/hol.state", "state-empty"), 0)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(rules.Inadmissible):
             rules.declared_delta(entries, "bin/other", "state-empty")
-        with self.assertRaises(ValueError):
+        with self.assertRaises(rules.Inadmissible):
             rules.declared_delta(entries + entries, "bin/hol.state",
                                  "state-empty")
 
@@ -899,16 +939,6 @@ class Smoke(Base34):
         self.assertEqual(len(report["runs"]), 2 * len(st.UNITS) - 1)
 
 
-def noop_leak(run, words=1):
-    """A release run whose no-op kind retains `words` per object."""
-    i = rt.find(run, "live", phase="noop.before")
-    j = rt.find(run, "release", release="noop")
-    m = run[rt.find(run, "probe")]["params"]["m"]
-    run[i:j + 1] = rt.release_rows("release", "release", ("noop",), m,
-                                   words)
-    return run
-
-
 class Stages(Chain34):
     def test_the_chain_to_a_pass(self):
         smoke, pilot, control = self.info_stages()
@@ -1042,7 +1072,7 @@ class Stages(Chain34):
 
     def followup_data(self, leak, **patched):
         self.prepared()
-        self.world.edits["release", "cand"] = lambda run: noop_leak(
+        self.world.edits["release", "cand"] = lambda run: floor_leak(
             run, leak)
         a, first = self.decide()
         self.world.edits.clear()
@@ -1081,7 +1111,7 @@ class Stages(Chain34):
 
     def test_an_unresolved_floor_is_followed_up_at_a_larger_m(self):
         self.prepared()
-        self.world.edits["release", "cand"] = noop_leak
+        self.world.edits["release", "cand"] = floor_leak
         a, first = self.decide()
         self.assertTrue(first["success"], first.get("failure"))
         rows = first["outcome"]["results"]
@@ -1123,7 +1153,7 @@ class Followup34(Chain34):
         follow-up with the counts file named on its command line, wherever
         that is."""
         self.prepared()
-        self.world.edits["release", "cand"] = noop_leak
+        self.world.edits["release", "cand"] = floor_leak
         self.once("graph", "cand", lambda run: grow(run, "fragment", 100))
         a, first = self.decide()
         owed = {x[0] for x in first["outcome"]["owed"]}
@@ -1506,13 +1536,9 @@ class Controls34(Chain34):
 
     def world_noise(self, run):
         """A release run whose no-op floor moves by a million words."""
-        i = rt.find(run, "live", phase="noop.before")
-        j = rt.find(run, "release", release="noop")
         m = run[rt.find(run, "probe")]["params"]["m"]
         self.noise = getattr(self, "noise", 0) + 10 ** 6
-        run[i:j + 1] = rt.release_rows("release", "release", ("noop",), m,
-                                       self.noise // m)
-        return run
+        return floor_leak(run, self.noise // m)
 
     def test_a_bound_is_left_out_of_the_pilot_noise(self):
         self.stage("smoke", "smoke")
@@ -2274,7 +2300,7 @@ class Disposition(Chain34):
         """A run whose no-op floor is unresolved (R1 owes a follow-up),
         then the follow-up, which is still unresolved (the edit stays)."""
         self.prepared()
-        self.world.edits["release", "cand"] = noop_leak
+        self.world.edits["release", "cand"] = floor_leak
         a, first = self.decide()
         pre = self.args("pre2", storage_counts=a.storage_counts,
                         timing_counts=a.timing_counts,

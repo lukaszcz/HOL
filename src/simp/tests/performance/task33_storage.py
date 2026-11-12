@@ -691,7 +691,7 @@ def control_outcome(report, loaded, groups):
         if switch == "graph_extra":
             rows = [rules.s1_kind(base, cand, g) for g in rules.GRAPH_GATED]
         elif switch == "leak":
-            rows = rules.r1_rows(base, cand)
+            rows = refusing(rules.r1_rows, base, cand)
         else:
             rows = [rules.l3_kind(base, cand, plain[len("registry-"):])]
         decisions = {r["kind"]: r["decision"] for r in rows}
@@ -711,11 +711,12 @@ def control_outcome(report, loaded, groups):
 
 
 def refusing(rule, *args):
-    """`rule(*args)`, a violated invariant of the rules (a ValueError: an
-    inadmissible share-pass bound reached R1) as a refusal."""
+    """`rule(*args)`; `rules.Inadmissible` (data that violates an admission
+    condition the rule relies on) becomes a refusal. Nothing else is
+    caught: a Blocked, a Refusal or a programming error propagates."""
     try:
         return rule(*args)
-    except ValueError as error:
+    except rules.Inadmissible as error:
         raise d.Refusal(str(error))
 
 
@@ -745,13 +746,10 @@ def decide(report, groups, paired):
             heap = report["units"][name]["heap"]
             found.append(rules.l1_kind(base, cand, kind, masked))
             found.append(rules.l3_kind(base, cand, kind))
-            try:
-                delta = rules.declared_delta(deltas, heap, kind) if \
-                    all(rules.applicable(base + cand)) else None
-                found.append(rules.s2_kind(base, cand, kind, delta,
-                                           paired))
-            except ValueError as error:
-                raise d.Refusal(str(error))
+            found.append(refusing(
+                lambda: rules.s2_kind(base, cand, kind, rules.declared_delta(
+                    deltas, heap, kind) if all(rules.applicable(
+                        base + cand)) else None, paired)))
         elif name == GRAPH:
             found += [rules.s1_kind(base, cand, g, paired)
                       for g in rules.GRAPH_GATED]
