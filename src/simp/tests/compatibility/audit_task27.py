@@ -30,12 +30,14 @@ import source_manifest as prior
 HERE, ROOT, SRC = prior.HERE, prior.ROOT, prior.SRC
 BASE, START = prior.BASE, prior.START
 REVIEW = 'c707baca802d7e0d22e7e8045a0dc5d3567bd7a9'
-# TASK31: one rewrite-tracking extent, owned by develop's Cond_rewr and
-# shared by both engines through the one added Cond_rewr.note_rewrite spec;
-# Cond_rewr.sml itself is pinned develop again, and Cond_rewrExt keeps its own
-# is_var_perm.  The files below are sealed by content (git blob id), not by
-# the id of a commit, so the seal survives rebases and squashes.  A change to
-# one of them needs a new blob and a new reason here.
+# Reviewed deltas of TASK31 and TASK34.  TASK31: one rewrite-tracking extent,
+# owned by develop's Cond_rewr and shared by both engines through the one
+# added Cond_rewr.note_rewrite spec; Cond_rewr.sml itself is pinned develop
+# again, and Cond_rewrExt keeps its own is_var_perm.  TASK34: the abstract
+# TraverseExt.reducer, and ThmAttribute.attribute_fns_of only.  The files
+# below are sealed by content (git blob id), not by the id of a commit, so
+# the seal survives rebases and squashes.  A change to one of them needs a
+# new blob and a new reason here.
 REVIEWED_31 = {
     SRC + 'Cond_rewr.sig': dict(
         blob='7ab7bafd0ea45756b6f4ac2a35447e7da33fe085',
@@ -56,7 +58,7 @@ REVIEWED_31 = {
     # TASK34: TraverseExt.reducer becomes abstract (no LIFTED reverse
     # adapter); CONTEXT_REDUCER and CONFIG_REDUCER are constructor functions.
     SRC + 'TraverseExt.sig': dict(
-        blob='3a232428aac227e008c78f885b2459a2263c3c8f',
+        blob='d3829da16e472913fc10fd41e00f92eb033a5355',
         reason='TASK17-22 configured traversal and policy callback contract; '
                'TASK34 abstract reducer type with explicit constructor '
                'functions and reducer_kind, no reverse adapter'),
@@ -118,8 +120,8 @@ DELTAS = {
     SRC + 'simpExtLib.sml': REVIEWED_31[SRC + 'simpExtLib.sml']['reason'],
     SRC + 'simpExtLib.sig': REVIEWED_31[SRC + 'simpExtLib.sig']['reason'],
     SRC + 'TraverseExt.sml': REVIEWED_31[SRC + 'TraverseExt.sml']['reason'],
-    SRC + 'congExtLib.sml': REVIEWED_31[SRC + 'congExtLib.sml']['reason'],
     SRC + 'TraverseExt.sig': REVIEWED_31[SRC + 'TraverseExt.sig']['reason'],
+    SRC + 'congExtLib.sml': REVIEWED_31[SRC + 'congExtLib.sml']['reason'],
     SRC + 'Cond_rewrExt.sml': REVIEWED_31[SRC + 'Cond_rewrExt.sml']['reason'],
     SRC + 'simpMarkerLib.sml':
         'TASK20 qualified directives and lossless nested actual bounds',
@@ -272,7 +274,7 @@ def reference_source(path, live):
     once its content matches the recorded blob id."""
     if path in REVIEWED_31:
         require(blob_id(live) == REVIEWED_31[path]['blob'],
-                'TASK31 reviewed extension/control source bytes changed: ' +
+                'reviewed extension/control source bytes changed: ' +
                 path)
         return live
     return git_source(reference_revision(path), path)

@@ -23,6 +23,8 @@ sig
   val lift : Traverse.reducer -> reducer
   val CONTEXT_REDUCER : reducer_context_data -> reducer
   val CONFIG_REDUCER : reducer_config_data -> reducer
+  datatype reducer_kind = LiftedReducer | ContextReducer | ConfigReducer
+  val reducer_kind : reducer -> reducer_kind
   val reducer_config_data : reducer -> reducer_config_data
   val reducer_data : reducer -> reducer_context_data
   val addctxt : thm list -> reducer -> reducer

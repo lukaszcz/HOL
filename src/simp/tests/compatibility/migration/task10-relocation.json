@@ -138,8 +138,8 @@
         },
         {
           "path": "src/simp/src/selftest.sml",
-          "line": 6048,
-          "text": "  fun ordinary reducer ="
+          "line": 6049,
+          "text": "    Traverse.reducer_kind reducer = Traverse.LiftedReducer"
         },
         {
           "path": "src/simp/src/selftest.sml",

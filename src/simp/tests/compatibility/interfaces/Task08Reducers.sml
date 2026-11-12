@@ -23,6 +23,10 @@ struct
                    | CONTEXT_REDUCER of reducer_context_data
                    | CONFIG_REDUCER of reducer_config_data
   val lift = LIFTED
+  datatype reducer_kind = LiftedReducer | ContextReducer | ConfigReducer
+  fun reducer_kind (LIFTED _) = LiftedReducer
+    | reducer_kind (CONTEXT_REDUCER _) = ContextReducer
+    | reducer_kind (CONFIG_REDUCER _) = ConfigReducer
   fun reducer_config_data (CONFIG_REDUCER r) = r
     | reducer_config_data (LIFTED r) =
       let val {name,initial,addcontext,apply} = Traverse.dest_reducer r

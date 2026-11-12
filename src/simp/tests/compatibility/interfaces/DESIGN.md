@@ -43,11 +43,12 @@ and signature. The extension reducer type is abstract: it is built by
 `CONFIG_REDUCER` (option depth); these two are functions, not constructors.
 `TraverseExt.lift` is explicit; no reverse conversion exists. An ordinary-looking
 extension factory can use `lift (Traverse.REDUCER {...})`; a configured factory
-uses the extension constructor directly. `reducer_data` adapts an explicit int
+calls `CONFIG_REDUCER` directly. `reducer_data` adapts an explicit int
 to `SOME`; `reducer_config_data` preserves `NONE` for CONFIG and samples the shared
 live depth only immediately before a CONTEXT callback. Ordinary `dest_reducer`
 stays ordinary; extension inspections use `reducer_config_data` (no extension
-API that manufactures an ordinary reducer). There is no source field on LIFTED.
+API that manufactures an ordinary reducer). There is no source field on a
+lifted reducer.
 
 Lift construction/extraction calls no collector/apply callback. It preserves
 the original context exception payload, closure, solver/conv/relation and stack.

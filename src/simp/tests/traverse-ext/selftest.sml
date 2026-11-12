@@ -78,6 +78,9 @@ val _ = let
     (!collections = 0 andalso !applications = 0 andalso
      #name rd = SOME "opaque ordinary" andalso #name rc = #name rd)
   val added = T.addctxt supplied lifted
+  val _ = if T.reducer_kind lifted = T.LiftedReducer andalso
+             T.reducer_kind added = T.LiftedReducer then ()
+          else raise Fail "lift or addctxt changed the lifted kind"
   val _ = check "explicit addctxt invokes original collector exactly once"
     (!collections = 1 andalso !applications = 0 andalso
      ListPair.allEq (fn (x,y) => same x y) (!observed,supplied))
@@ -183,6 +186,26 @@ val _ = let
   val _ = check "integer view of CONFIG passes SOME, not live NONE"
     (same (invoke contextual (SOME 5)) (REFL a) andalso
      !depths = [NONE,SOME 23,SOME 5] andalso !calls = 3)
+  (* Silent: reducer_kind reports provenance for all three builders and
+     addctxt preserves it; it is not a behavioural predicate. *)
+  val _ = let
+    val ctx = Private (ref (),[])
+    fun keep (c,_) = c
+    fun unused _ = raise Fail "unused"
+    val ord = T.lift (Traverse.REDUCER
+      {name=NONE,initial=ctx,addcontext=keep,apply=unused})
+    val cfg = T.CONFIG_REDUCER
+      {name=NONE,initial=ctx,addcontext=keep,apply=unused}
+    val cxt = T.CONTEXT_REDUCER (T.reducer_data cfg)
+    fun kind k r = T.reducer_kind r = k andalso
+                   T.reducer_kind (T.addctxt [] r) = k
+  in
+    if kind T.LiftedReducer ord andalso kind T.ConfigReducer cfg andalso
+       kind T.ContextReducer cxt andalso
+       T.reducer_kind (T.CONFIG_REDUCER (T.reducer_config_data ord)) =
+         T.ConfigReducer
+    then () else raise Fail "reducer_kind changed"
+  end
 in () end
 
 (* Atomic terms isolate initial collection from congruence additions. *)

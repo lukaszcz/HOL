@@ -10,9 +10,9 @@ simpExtLib.xtraversedata_for_ss :
 ------------------------------------------------------------------------
 
 Extracts a configured extension traversal description paired with subgoaler,
-unsafe solvers, condition depth and term order. Its native rewriter is a
-`TraverseExt.CONFIG_REDUCER`; supplied extension decision procedures are
-unchanged. The data contains equality, traversal rules and the set's limit.
+unsafe solvers, condition depth and term order. Its native rewriter is
+built by `TraverseExt.CONFIG_REDUCER`; supplied extension decision
+procedures are unchanged. The data contains equality, traversal rules and the set's limit.
 
 Pass the pair to `TraverseExt.XTRAVERSE`. For configured reducer data alone,
 use `#1 (simpExtLib.xtraversedata_for_ss ss)`. The extension default projection
@@ -35,8 +35,8 @@ Construction or application can fail as for the selected traversal.
 ``` hol4
 >>_ val ss = simpExtLib.set_cond_depth 2 boolSimpsExt.bool_ss;
 >>_ val pair = simpExtLib.xtraversedata_for_ss ss;
->> val {name, ...} = TraverseExt.reducer_config_data
->>   (hd (#rewriters (#1 pair)));
+>> val TraverseExt.ConfigReducer =
+     TraverseExt.reducer_kind (hd (#rewriters (#1 pair)));
 >> TraverseExt.XTRAVERSE pair [] “T ∧ p”;
 ```
 
