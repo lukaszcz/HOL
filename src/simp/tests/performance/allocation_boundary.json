@@ -48,12 +48,12 @@
     {
       "path": "src/1/ThmAttribute.sig",
       "blob": "0277788be43d67ed8724d677c562d61e125a9e69",
-      "reason": "adds two read-only lookups; no value changes"
+      "reason": "adds one read-only lookup (attribute_fns_of); no value changes"
     },
     {
       "path": "src/1/ThmAttribute.sml",
       "blob": "b2161e0effd516e2bfffdbfba81bcd5c5a708e21",
-      "reason": "adds two lookups; existing functions unchanged"
+      "reason": "adds one lookup; existing functions unchanged"
     },
     {
       "path": "src/1/selftest.sml",

@@ -13,13 +13,20 @@ ifndef MATRIX_SMOKE_SCOPE
 MATRIX_SMOKE_SCOPE = small
 endif
 .PHONY: need-check-out need-out python-tests check-tests diagnostic-tests
-.PHONY: diagnostic check
+.PHONY: diagnostic check boundary-tests
 .PHONY: matrix-completeness controls smoke
 .PHONY: runtime-smoke client-smoke profiler-loss-control driver-staging-control
 PY_TESTS = PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover \
   -s . -p 'test*.py' && \
   PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover \
   -s ../compatibility -p test_runner.py
+
+# The allocation-boundary tests alone, for the routine simp build
+# (src/simp/src performance-boundary-tests); they include the completeness
+# check of the reviewed manifest against this checkout.
+boundary-tests:
+	PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest \
+	  test_allocation_boundary
 
 # A bare Holmake runs the Python tests.
 python-tests:
@@ -97,7 +104,8 @@ check: check-tests
 	  --candidate $(PERFORMANCE_CANDIDATE) --scope small \
 	  --output "$(PERFORMANCE_CHECK_OUTPUT)/client-smoke.json"
 
-# One recipe keeps baseline variability before reviewed observations even
+# One recipe keeps baseline variability before candidate (HEAD)
+# observations even
 # when invoked by a parallel caller. Never benchmark alongside other builds.
 diagnostic: diagnostic-tests
 	python3 -B ../compatibility/run_paired.py \
@@ -108,7 +116,9 @@ diagnostic: diagnostic-tests
 	python3 -B summarize.py "$(PERFORMANCE_OUTPUT)"/baseline-control \
 	  --output "$(PERFORMANCE_OUTPUT)"/baseline-summary.json
 	python3 -B ../compatibility/run_paired.py --negative-controls \
+	  --candidate HEAD --candidate-signature pass \
+	  --candidate-behavior baseline \
 	  --performance-pairs 6 --samples 5 --batch-seconds 0.25 \
-	  --output "$(PERFORMANCE_OUTPUT)"/reviewed
-	python3 -B summarize.py "$(PERFORMANCE_OUTPUT)"/reviewed \
-	  --output "$(PERFORMANCE_OUTPUT)"/reviewed-summary.json
+	  --output "$(PERFORMANCE_OUTPUT)"/candidate
+	python3 -B summarize.py "$(PERFORMANCE_OUTPUT)"/candidate \
+	  --output "$(PERFORMANCE_OUTPUT)"/candidate-summary.json

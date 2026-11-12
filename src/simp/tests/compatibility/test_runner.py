@@ -254,44 +254,72 @@ class VersionQueryTests(unittest.TestCase):
 
 
 class HolmakefileWiringTests(unittest.TestCase):
-    """The run_paired.py defaults reproduce a historic revision; no target
-    may rely on them (a stale default fails negative controls for the wrong
-    reason), so every driver invocation names its candidate."""
+    """run_paired.py requires its candidate flags; the Holmakefile recipes
+    that call it must pass HEAD with a passing signature and baseline
+    behaviour wherever the target judges the current tree."""
 
-    def commands(self):
-        text = (Path(__file__).parent / "Holmakefile").read_text()
-        text = text.replace("\\\n", " ")
+    TESTS = Path(__file__).resolve().parents[1]
+    # HEAD_TARGETS judge the current tree: some call selects HEAD, and
+    # every call passes with baseline behaviour.
+    # Every target that calls run_paired.py, as (Holmakefile dir, target).
+    EXPECTED = {
+        ("compatibility", "check"), ("compatibility", "prior-contracts"),
+        ("compatibility", "prior-baseline-control"),
+        ("compatibility", "public-contracts"),
+        ("compatibility", "public-baseline-control"),
+        ("compatibility", "staging-contracts"),
+        ("compatibility", "staging-baseline-control"),
+        ("performance", "diagnostic"),
+        ("tactics", "check"),
+    }
+    HEAD_TARGETS = {
+        ("compatibility", "check"), ("compatibility", "prior-contracts"),
+        ("compatibility", "public-contracts"),
+        ("compatibility", "staging-contracts"),
+        ("performance", "diagnostic"),
+    }
+
+    def invocations(self):
+        """{(directory, target): [argv, ...]}, every run_paired.py call of
+        every recipe, with --x=y split into two tokens."""
         found = {}
-        target = None
-        for line in text.splitlines():
-            if line and not line[0] in "\t #" and ":" in line:
-                target = line.split(":")[0]
-            elif line.startswith("\t") and "run_paired.py" in line:
-                found[target] = line.split()
+        for path in sorted(self.TESTS.glob("*/Holmakefile")):
+            text = path.read_text().replace("\\\n", " ")
+            target = None
+            for line in text.splitlines():
+                if line and line[0] not in "\t #" and ":" in line:
+                    target = line.split(":")[0]
+                elif line.startswith("\t") and "run_paired.py" in line:
+                    words = []
+                    for word in line.split():
+                        words += word.split("=", 1) if word.startswith(
+                            "--") else [word]
+                    found.setdefault((path.parent.name, target),
+                                     []).append(words)
         return found
 
+    def value(self, words, flag):
+        return words[words.index(flag) + 1]
+
     def test_every_run_paired_target_names_its_candidate(self):
-        found = self.commands()
-        self.assertTrue(found)
-        for target, words in found.items():
-            self.assertIn("--candidate", words, target)
-
-    def test_head_targets_select_signature_and_behavior(self):
-        found = self.commands()
-        for target in ("check", "prior-contracts", "public-contracts",
-                       "staging-contracts"):
-            words = found[target]
-            self.assertEqual(words[words.index("--candidate") + 1], "HEAD")
-            self.assertEqual(
-                words[words.index("--candidate-behavior") + 1], "baseline")
-            self.assertEqual(
-                words[words.index("--candidate-signature") + 1], "pass")
-
-    def test_negative_control_targets_use_an_explicit_candidate(self):
-        for target, words in self.commands().items():
-            if "--negative-controls" in words:
-                self.assertIn("--candidate", words, target)
-                self.assertIn("--candidate-behavior", words, target)
+        found = self.invocations()
+        self.assertEqual(set(found), self.EXPECTED)
+        for key, calls in found.items():
+            for words in calls:
+                for flag in ("--candidate", "--candidate-signature",
+                             "--candidate-behavior"):
+                    self.assertIn(flag, words, key)
+                if key in self.HEAD_TARGETS:
+                    self.assertEqual(
+                        self.value(words, "--candidate-signature"), "pass",
+                        key)
+                    self.assertEqual(
+                        self.value(words, "--candidate-behavior"),
+                        "baseline", key)
+            if key in self.HEAD_TARGETS:
+                # the diagnostic's first call is its baseline control
+                self.assertIn("HEAD", [self.value(w, "--candidate")
+                                       for w in calls], key)
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -20,6 +21,7 @@ from unittest import mock
 import allocation_boundary as bd
 import allocation_matrix as m
 import allocation_schema as sc
+from run_paired import require_revisions
 
 SEQUENCE = "tools/sequences/seq"
 KERNEL = "tools/sequences/kernel"
@@ -57,7 +59,17 @@ def manifest(prefixes=("doc/", "src/late/"), files=()):
                 files=[dict(path=p, blob=b, reason="r") for p, b in files])
 
 
+def require_git():
+    """Skip the calling class when there is no git binary."""
+    if shutil.which("git") is None:
+        raise unittest.SkipTest("git is not available")
+
+
 class Repo(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        require_git()
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -348,8 +360,23 @@ class Manifest(Repo):
             self.resolve(cand)
 
 
+def require_checkout(root):
+    """Skip the calling class unless `root` is a git work tree with a git
+    binary at hand (a tarball, or a sandbox without git)."""
+    require_git()
+    found = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if found.returncode != 0:
+        raise unittest.SkipTest("not inside a git work tree: " + str(root))
+
+
 class Committed(unittest.TestCase):
     """The reviewed manifest of this checkout, as committed."""
+
+    @classmethod
+    def setUpClass(cls):
+        require_checkout(m.HERE.parents[3])
 
     def test_it_is_well_formed_and_its_files_are_listed_once(self):
         data = bd.load_manifest(m.BOUNDARY)
@@ -377,6 +404,19 @@ class Committed(unittest.TestCase):
             i["path"] for i in data["files"]])
         self.assertEqual(found, {i["path"]: i["blob"]
                                  for i in data["files"]})
+
+    def test_every_changed_shared_file_is_covered(self):
+        """Completeness: the baseline-to-HEAD difference outside the
+        subject is all covered by the manifest (a prefix, or a listed
+        blob); resolve() refuses a changed file that is not listed."""
+        root = m.HERE.parents[3]
+        require_revisions(m.a.BASE, repo=root)
+        found = bd.resolve(root, m.a.BASE, "HEAD", m.pr.HOL_SEQUENCE,
+                           m.BOUNDARY)
+        self.assertEqual(found["candidate"], "HEAD")
+        listed = {i["path"] for i in
+                  bd.load_manifest(m.BOUNDARY)["files"]}
+        self.assertLessEqual({i["path"] for i in found["files"]}, listed)
 
 
 class HarnessFiles(unittest.TestCase):

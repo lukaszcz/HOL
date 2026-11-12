@@ -382,9 +382,14 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--repo", type=Path, default=HERE.parents[3])
     p.add_argument("--baseline", default=BASE)
-    p.add_argument("--candidate", default=REVIEWED)
-    p.add_argument("--candidate-signature", choices=("reject", "pass"), default="reject")
-    p.add_argument("--candidate-behavior", choices=("reviewed", "baseline"), default="reviewed")
+    # No defaults: a default candidate goes stale (REVIEWED no longer
+    # builds against the current tree) and fails controls for the wrong
+    # reason, so every invocation names its candidate.
+    p.add_argument("--candidate", required=True)
+    p.add_argument("--candidate-signature", choices=("reject", "pass"),
+                   required=True)
+    p.add_argument("--candidate-behavior", choices=("reviewed", "baseline"),
+                   required=True)
     p.add_argument("--negative-controls", action="store_true")
     p.add_argument("--staging-contracts", action="store_true",
                    help="execute construction/use/proof stage contracts")

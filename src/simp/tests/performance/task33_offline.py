@@ -1385,7 +1385,7 @@ LOG_RULES = {
                                             r"checks")),
     "literal-exclusions": ("unittest", {}),
     "ordinary-tactics": ("unittest", {}),
-    # These three logs are not in LOGS_REQUIRED and have no `log_counts`
+    # These four logs are not in LOGS_REQUIRED and have no `log_counts`
     # entry (count_problems rejects unknown entries, and the sealed
     # task33_declared.json must not change), so they are judged by the
     # marker: a positive `Ran N tests` line plus the unittest OK footer.
@@ -1396,6 +1396,8 @@ LOG_RULES = {
     "compiled-core-python-tests": ("unittest", marker(
         r"Ran ([1-9]\d*) tests? in")),
     "interfaces-design-check": ("unittest", marker(
+        r"Ran ([1-9]\d*) tests? in")),
+    "performance-boundary-tests": ("unittest", marker(
         r"Ran ([1-9]\d*) tests? in")),
     "compiled-core": ("manifest", {}),
     "fragment-contracts": ("manifest", {}),

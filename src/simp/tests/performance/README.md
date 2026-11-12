@@ -176,8 +176,8 @@ bin/Holmake --no-project --no-cache --no_prereqs \
 
 The output directory must not exist from an earlier run. This now executes
 maintained Python discovery (see TASK28 above), then six baseline/baseline
-fresh-process pairs, their summary, then six baseline/reviewed pairs and their
-summary. Independent signature/staging checks and
+fresh-process pairs, their summary, then six baseline/candidate (`HEAD`)
+pairs and their summary. Independent signature/staging checks and
 all six negative controls execute on both selections before timings. Builds
 finish before observations. Launcher/runtime/heap/dependency isolation is
 provided by `../compatibility/run_paired.py`; its full schemas still apply.

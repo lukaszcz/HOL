@@ -126,13 +126,17 @@ bin/Holmake --no-project --no-cache --no_prereqs \
 repository.  This runs the Python validator tests (`checked-tests`, after the
 `output-dir` check), then private Holmake-built SML launchers for the baseline
 and for `HEAD` (selected explicitly, with `--candidate-signature pass
---candidate-behavior baseline`), including all six negative controls. No SML is piped
-to `bin/hol`. Expected reviewed-candidate staging/signature regressions are
-explicitly **expected-red**, not compatibility passes.
+--candidate-behavior baseline`), including all six negative controls. No SML
+is piped to `bin/hol`. Expected reviewed-candidate staging/signature
+regressions are explicitly **expected-red**, not compatibility passes; that
+applies only when the reviewed flavour is explicitly selected
+(`--candidate-behavior reviewed`).
 
-Direct driver (the bare defaults reproduce the historic reviewed candidate
-`cf1f863b4e`, which is stale against the current tree and is not used by any
-Holmake target) and baseline-versus-baseline control:
+Direct driver. `--candidate`, `--candidate-signature` and
+`--candidate-behavior` are required, with no defaults (the historic reviewed
+candidate `cf1f863b4e` is stale against the current tree), and every Holmake
+target passes them explicitly. A direct run, and a baseline-versus-baseline
+control:
 
 ```sh
 python3 -B src/simp/tests/compatibility/run_paired.py \

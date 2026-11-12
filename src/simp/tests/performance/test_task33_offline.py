@@ -1102,7 +1102,8 @@ class LogTest(unittest.TestCase):
         ok = "....\n---\nRan 4 tests in 0.1s\n\nOK\n"
         for name in ("fragments-python-tests",
                      "compiled-core-python-tests",
-                     "interfaces-design-check"):
+                     "interfaces-design-check",
+                     "performance-boundary-tests"):
             self.assertTrue(self.judge(name, ok)[0], name)
             for bad in (ok.replace("Ran 4", "Ran 0"),
                         ok.replace("OK", "FAILED (errors=1)"),
@@ -1227,6 +1228,7 @@ class HarvestTest(unittest.TestCase):
         "fragments-python-tests": "Ran 1 tests in 1s\n\nOK\n",
         "compiled-core-python-tests": "Ran 1 tests in 1s\n\nOK\n",
         "interfaces-design-check": "Ran 1 tests in 1s\n\nOK\n",
+        "performance-boundary-tests": "Ran 1 tests in 1s\n\nOK\n",
         "compiled-core": "x/manifest.json\n",
         "fragment-contracts": "x/manifest.json\n",
     }

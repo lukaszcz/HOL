@@ -18,9 +18,8 @@ output-dir:
 checked-tests: output-dir
 	python3 -B -m unittest discover -s . -p 'test_*.py'
 
-# Every target selects its candidate explicitly: the run_paired.py defaults
-# reproduce the historic reviewed revision, which goes stale whenever shared
-# code changes (and then fails the negative controls for the wrong reason).
+# run_paired.py requires --candidate, --candidate-signature and
+# --candidate-behavior (no defaults), so every target selects them.
 check: checked-tests
 	python3 -B run_paired.py --negative-controls \
 	  --candidate HEAD --candidate-signature pass \
@@ -62,4 +61,5 @@ staging-contracts: checked-tests
 staging-baseline-control: checked-tests
 	python3 -B run_paired.py --staging-contracts --staging-only \
 	  --candidate cccaa27d7099cbadc886983020cbe745db7793f3 \
-	  --candidate-behavior baseline --output "$(PAIRED_OUTPUT)"
+	  --candidate-signature pass --candidate-behavior baseline \
+	  --output "$(PAIRED_OUTPUT)"

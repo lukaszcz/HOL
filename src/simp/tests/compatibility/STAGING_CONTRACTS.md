@@ -181,14 +181,17 @@ To run the strict gate **without executing either old reproducer**:
 ```sh
 python3 -B src/simp/tests/compatibility/run_paired.py \
   --staging-contracts --staging-only --candidate HEAD \
-  --candidate-behavior baseline --output /tmp/staging-strict
+  --candidate-signature pass --candidate-behavior baseline \
+  --output /tmp/staging-strict
 ```
 
 That command must exit **0** on restored sources and exits **1** on a candidate
 that regresses the staging contracts. The `staging-contracts` target explicitly
 selects baseline behavior and a passing signature too. Diagnostic
 `--candidate-behavior reviewed` is the expected-red mode, not a compatibility
-pass. Select
-`--candidate cf1f863b4e5a9712ce1b179f18274eb3451f3954` to recheck the reviewed
-pin. `--staging-only` intentionally excludes old signature/behavior probes and
+pass. Rechecking the reviewed pin
+`cf1f863b4e5a9712ce1b179f18274eb3451f3954` (`--candidate` with that revision)
+needs a checkout of that revision, because the pin no longer builds against
+the current tree. `--staging-only` intentionally excludes old
+signature/behavior probes and
 cannot combine with performance, public clients or old negative controls.

@@ -2,7 +2,7 @@ HOLHEAP = $(HOLDIR)/bin/hol.state0
 EXTRA_CLEANS = selftest.exe simp-selftest.log fresh-load-selftest.exe \
   fragment-contracts.log compiled-core.log literal-exclusions.log \
   fragments-python-tests.log compiled-core-python-tests.log \
-  interfaces-design-check.log \
+  interfaces-design-check.log performance-boundary-tests.log \
   ../tests/compatibility/interfaces/selftest.exe \
   ../tests/compatibility/interfaces/sharedExportsCheck.exe \
   ../tests/compatibility/interfaces/.hol/ \
@@ -184,8 +184,13 @@ cond-rewr-ext: Cond_rewrExt.uo
 # compiled-core tests need no built products; design-check also builds and
 # runs the Task08 prototypes against this directory, so it depends on the
 # modules they use. The paired runs themselves stay explicit.
+# performance-boundary-tests runs the TASK29B allocation-boundary tests
+# against this checkout (the manifest must cover every shared file that
+# differs from the baseline). The listed files (CLAUDE.md, holproject.toml,
+# tools/sequences/base-hol, ...) are a tripwire: an edit to one of them turns
+# the routine build red until the manifest is refreshed. That is intended.
 .PHONY: fragments-python-tests compiled-core-python-tests \
-  interfaces-design-check
+  interfaces-design-check performance-boundary-tests
 fragments-python-tests:
 	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
 	  -C ../tests/fragments python-tests,fragments-python-tests.log)
@@ -193,6 +198,10 @@ fragments-python-tests:
 compiled-core-python-tests:
 	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
 	  -C ../tests/compiled-core python-tests,compiled-core-python-tests.log)
+
+performance-boundary-tests:
+	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
+	  -C ../tests/performance boundary-tests,performance-boundary-tests.log)
 
 INTERFACES = ../tests/compatibility/interfaces
 interfaces-design-check: Cond_rewr.uo Cond_rewrExt.uo Opening.uo \
@@ -207,6 +216,7 @@ all: simp-selftest.log traversal-contracts exclusion-contracts traverse-ext \
   literal-exclusions ordinary-tactics standard-recipes legacy-contracts \
   native-extension api-audit fragments-python-tests \
   compiled-core-python-tests interfaces-design-check \
+  performance-boundary-tests \
   fresh-load-regressions split-registration split-persistence split-lifecycle
 
 simp-selftest.log: selftest.exe
