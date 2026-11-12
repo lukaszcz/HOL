@@ -384,7 +384,11 @@ baseline outside `src/simp/src`: prefixes and individually pinned files
 2 s). It is not part of the routine build, because the boundary describes
 this branch's measurement baseline. Run it whenever a shared file outside
 `src/simp/src` changes; the TASK35 and TASK37 gates run it. It is a
-tripwire: it fails on any committed change from the baseline to HEAD
-outside `src/simp/src` and the manifest prefixes, including an edit to any
-listed file, until the manifest is refreshed. The tests that need a git
-work tree skip in a tarball or a checkout nested in another repository.
+tripwire: it fails when HEAD differs from the baseline (committed trees
+only) at any path outside `src/simp/src` and the manifest prefixes, unless
+that path is a listed file at its pinned blob. So any further edit to a
+listed file, or any unrelated develop change outside the prefixes, trips
+it until the manifest is refreshed. It also fails if a prefix overlaps a
+directory built before `src/simp/src` in HEAD's build sequence. The tests
+that need git skip in a tarball, a checkout nested in another repository,
+or a clone without the baseline commit.

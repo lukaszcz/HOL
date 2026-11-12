@@ -469,17 +469,17 @@ class WarmupScheduleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "unused"
             needs = "--batch-schedule requires --batch-iterations"
-            power = "batch iterations must be in 1.."
+            bounds = "batch iterations must be in 1.."
             for flags, message in ((["--batch-schedule", "warmup"], needs),
                                    (["--batch-schedule", "ramp"], needs),
                                    (["--batch-schedule", "other",
                                      "--batch-iterations", "3"],
                                     "invalid choice"),
                                    (["--batch-schedule", "warmup",
-                                     "--batch-iterations", "0"], power),
+                                     "--batch-iterations", "0"], bounds),
                                    (["--batch-schedule", "warmup",
                                      "--batch-iterations",
-                                     str(2 ** 30 + 1)], power)):
+                                     str(2 ** 30 + 1)], bounds)):
                 command = [sys.executable, "-B", str(runner),
                            "--candidate", "HEAD",
                            "--candidate-signature", "pass",

@@ -124,11 +124,14 @@ class Binding(unittest.TestCase):
         runner = a.HERE.parent / "compatibility/run_paired.py"
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "unused"
-            for flags in (["--layout-seed", "s1"],
-                          ["--matrix-performance", "--performance-pairs", "1",
-                           "--performance-case", "frag_create",
-                           "--performance-size", "0",
-                           "--layout-seed", "bad seed"]):
+            for flags, message in ((
+                    ["--layout-seed", "s1"],
+                    "--layout-seed requires --matrix-performance"), (
+                    ["--matrix-performance", "--performance-pairs", "1",
+                     "--performance-case", "frag_create",
+                     "--performance-size", "0",
+                     "--layout-seed", "bad seed"],
+                    "layout seed must match")):
                 command = [sys.executable, "-B", str(runner),
                            "--candidate", "HEAD",
                            "--candidate-signature", "pass",
@@ -138,9 +141,7 @@ class Binding(unittest.TestCase):
                                         text=True, timeout=10)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertNotIn("are required", result.stderr)
-                if flags[0] == "--layout-seed":
-                    self.assertIn("--layout-seed requires "
-                                  "--matrix-performance", result.stderr)
+                self.assertIn(message, result.stderr)
                 self.assertFalse(output.exists())
 
     def test_runner_pads_before_any_dependency(self):
