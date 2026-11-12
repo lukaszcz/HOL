@@ -150,10 +150,7 @@ TASK32_HISTORY = {
 # accept them (`task33_offline.check_code`): TASK32's history is unchanged.
 TASK33_DRIVER_SEALS = (
     {"sha256": "e3169e265e13cf55a18045fdebc5845f198ff8f9d1d15f9529076915"
-               "dbc23516", "bytes": 179579},
-    # the driver of 2e043b6bf4, before TASK34 touched this history
-    {"sha256": "8d05e058fa2fba44ba2a717e7b362a47ef379a850d91c25484fc60f5"
-               "e43c1224", "bytes": 180533})
+               "dbc23516", "bytes": 179579},)
 # The TASK33 table's history: the driver above, the offline checks that
 # made the kept reports, and the storage driver before its cap was divided
 # by the kinds (`task33_storage.UNDIVIDED_CAP`).
@@ -161,10 +158,7 @@ TASK33_HISTORY = {
     "task32_downstream.py": list(TASK33_DRIVER_SEALS),
     "task33_offline.py": [
         {"sha256": "4d5a51e01704b51b2c0099704744e7c7404f29a0039094fe3a6736"
-                   "49b75f7d41", "bytes": 90838},
-        # the offline checks of 2e043b6bf4, before the TASK34 log rules
-        {"sha256": "1223bd31f2f4a176f96cbd2394b39b55a2a25c4c006d8807d41d"
-                   "0eea7cef6f90", "bytes": 91144}],
+                   "49b75f7d41", "bytes": 90838}],
     "task33_storage.py": [
         {"sha256": "069b87eea6287685ff50715d4dc07db797163767c0e5f5bf475cf1"
                    "adf94f2ab5", "bytes": 79375}],

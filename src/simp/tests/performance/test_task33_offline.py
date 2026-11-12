@@ -1098,6 +1098,18 @@ class LogTest(unittest.TestCase):
             "exclusion-contracts",
             good + "OBS setup.result=ready\nOBS assertion.result=pass\n")[0])
 
+    def test_marker_python_suites(self):
+        ok = "....\n---\nRan 4 tests in 0.1s\n\nOK\n"
+        for name in ("fragments-python-tests",
+                     "compiled-core-python-tests",
+                     "interfaces-design-check"):
+            self.assertTrue(self.judge(name, ok)[0], name)
+            for bad in (ok.replace("Ran 4", "Ran 0"),
+                        ok.replace("OK", "FAILED (errors=1)"),
+                        ok.replace("OK", "FAILED (failures=1)"),
+                        ok.replace("\nOK\n", "\n")):
+                self.assertFalse(self.judge(name, bad)[0], name + bad)
+
     def test_unittest_and_audit(self):
         ok = "....\n---\nRan 4 tests in 0.1s\n\nOK\n"
         self.assertTrue(self.judge("ordinary-tactics", ok)[0])
@@ -1212,6 +1224,9 @@ class HarvestTest(unittest.TestCase):
         "traversal-contracts": "a ... OK\n",
         "literal-exclusions": "Ran 1 tests in 1s\n\nOK\n",
         "ordinary-tactics": "Ran 1 tests in 1s\n\nOK\n",
+        "fragments-python-tests": "Ran 1 tests in 1s\n\nOK\n",
+        "compiled-core-python-tests": "Ran 1 tests in 1s\n\nOK\n",
+        "interfaces-design-check": "Ran 1 tests in 1s\n\nOK\n",
         "compiled-core": "x/manifest.json\n",
         "fragment-contracts": "x/manifest.json\n",
     }

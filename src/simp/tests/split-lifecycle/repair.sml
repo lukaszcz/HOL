@@ -59,14 +59,17 @@ val _ = ThmAttribute.register_attribute
 val replaced = Context.snapshot ()
 val replaced_result = Exn.capture init ()
 val replaced_exclusion =
-  Exn.capture splitLib.exclude_split "split_listener_repair$local"
-fun conflict_of f (Exn.Exn (HOL_ERR e)) =
+  Exn.capture SplitData.exclude "split_listener_repair$local"
+fun conflict_of f msg (Exn.Exn (HOL_ERR e)) =
       Feedback.top_structure_of e = "splitLib" andalso
-      Feedback.top_function_of e = f
-  | conflict_of _ _ = false
+      Feedback.top_function_of e = f andalso
+      Feedback.message_of e = msg
+  | conflict_of _ _ _ = false
 val _ = check "ownership checks never call a replacement handler"
-  (conflict_of "enable_split_attribute" replaced_result andalso
-   conflict_of "exclude_split" replaced_exclusion andalso
+  (conflict_of "enable_split_attribute"
+      "settype or attribute split already exists" replaced_result andalso
+   conflict_of "exclude_split"
+      "persistent split registration not owned" replaced_exclusion andalso
    null (SplitData.named_rules ()) andalso
    Portable.pointer_eq (replaced,Context.snapshot ()) andalso
    !replacement_calls = 0)

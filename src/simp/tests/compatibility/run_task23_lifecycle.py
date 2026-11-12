@@ -174,6 +174,17 @@ def main():
                     "negative did not fail the intended assertion")
             require("OBS repair.loaded.path=" + str(neg / "SplitData.sml") +
                     "\n" in log, "negative did not execute private SplitData")
+            foreign = sorted(
+                line for line in log.splitlines()
+                if line.startswith("OBS repair.loaded.path=" + str(src) + "/")
+                and Path(line.split("=", 1)[1]).name not in (
+                    "SplitData.sig", "SplitData.sml"))
+            require(not foreign, "negative loaded a production src/simp/src "
+                    "module besides the private SplitData: " +
+                    "; ".join(foreign[:3]))
+            require("OBS repair.loaded.path=" + str(src / "SplitData.sml") +
+                    "\n" not in log,
+                    "negative loaded the production SplitData")
             for name in ("SplitData", "repair"):
                 ui = neg / ".hol/objs" / (name + ".ui")
                 manifest["negative"].setdefault("loaded_ui", {})[name] = {
