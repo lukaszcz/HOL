@@ -53,9 +53,10 @@ of the probe's `@@T33` check records (the table's `probe_digest`, for task33
 probe directory masked). A table is
 the `Table` record (`TABLES`, `use_table`): what differs (units, counts
 files, seeds, ledger table and directory, code and its HISTORY, the unit
-floor MIN_UNIT_CPU, R_CAP, the sample floor SAMPLE_CPU that makes R at least
-ceil(SAMPLE_CPU / median CPU), the cross-side L1 rule). A record of a table
-other than task32 carries `table`; replay needs the same `--table`. The
+floor MIN_UNIT_CPU and where it applies UNIT_FLOOR, R_CAP, the sample
+target SAMPLE_CPU that makes R at least ceil(SAMPLE_CPU / median CPU), the
+cross-side L1 rule). A record of a table other than task32 carries
+`table`; replay needs the same `--table`. The
 interface other drivers (TASK33 S4) call: `Table`, `use_table`,
 `build_reporter`, `build_probes`, `make_ctx`, `launch_probe` (with
 `execute_unit`, `admit`, `archive`), `open_attempt` and `table_lines` with
@@ -195,9 +196,10 @@ class Table:
     the others append -smoke, -control, -pilot, -ext, -fu), `journals`
     (restore journals, relative to the checkout), `scratch` (default
     --scratch), `code` (the files its counts and runs are bound to) and
-    `history`, `min_unit_cpu` (a unit under it sizes no R), `unit_floor`
-    (where that floor applies: "process", the median CPU of one process, or
-    "sample", the median CPU of the declared sample, min(R, r_cap) times
+    `history`, `min_unit_cpu` (the least CPU, where `unit_floor` says, for a
+    unit to be covered), `unit_floor` (where that floor applies: "process",
+    the median CPU of one process, or "sample", the median CPU of the
+    declared sample, min(R, r_cap) times
     that of a process), `r_cap` (the most fresh processes per sample),
     `sample_cpu` (seconds of CPU a sample should reach: R is at least
     ceil(sample_cpu / median CPU); 0 for none), `claims`,
@@ -1709,7 +1711,8 @@ def pilot_summary(rows_by_unit, reps_floor=1):
     """The pilot of each unit: B/B pairs only. loading.jitter at R = 1, the
     proposed R (n * R the sd bound asks for, over the stage's pairs), the
     median CPU and wall of a process and whether it reaches the unit floor
-    (MIN_UNIT_CPU; the table's SAMPLE_CPU, if any, also floors R). Under
+    (MIN_UNIT_CPU; the table's sample target SAMPLE_CPU, if any, also
+    floors R). Under
     the "sample" unit floor the compared value is the declared sample's
     median CPU, min(R, R_CAP) times a process's, recorded as `floor_cpu`."""
     out = {}
@@ -1720,7 +1723,7 @@ def pilot_summary(rows_by_unit, reps_floor=1):
         raw = [r["measurement"]["raw"] for r in rows]
         need = jitter["required_units"]
         cpu = median([m["cpu"] for m in raw])
-        # a table with a sample floor (SAMPLE_CPU) asks for at least
+        # a table with a sample target (SAMPLE_CPU) asks for at least
         # ceil(SAMPLE_CPU / median CPU) processes per sample
         floor = math.ceil(SAMPLE_CPU / cpu) if SAMPLE_CPU and cpu > 0 \
             else 1
@@ -1743,6 +1746,46 @@ def floor_text():
                                UNIT_FLOOR == "sample" else "per process")
 
 
+def uncovered_units(pilot_outcome):
+    """(under, unsized): the pilot units under the unit floor that sized an
+    R, and those whose jitter sized no R (reps None), each as
+    (name, median_cpu, floor_cpu or None, reps)."""
+    under, unsized = [], []
+    for name, p in pilot_outcome.get("pilot", {}).items():
+        found = (name, p.get("median_cpu"), p.get("floor_cpu"),
+                 p.get("reps"))
+        if found[3] is None:
+            unsized.append(found)
+        elif not p.get("long_enough"):
+            under.append(found)
+    return under, unsized
+
+
+def uncovered_text(pilot_outcome):
+    """Why a pilot is not covered: the two causes, each with its units and
+    their median CPU, floor CPU (where the table has one) and R."""
+    def show(found):
+        return "%s (median_cpu %s s%s, reps %s)" % (
+            found[0], "?" if found[1] is None else "%.3g" % found[1],
+            "" if found[2] is None else
+            ", floor_cpu %.3g s" % found[2], found[3])
+    under, unsized = uncovered_units(pilot_outcome)
+    parts = []
+    if under:
+        parts.append("under %s: %s" % (
+            floor_text(), ", ".join(map(show, under))))
+    if unsized:
+        parts.append("jitter sized no R: " + ", ".join(map(show, unsized)))
+    return "; ".join(parts) or (
+        "no unit sized an R under %s" % floor_text())
+
+
+def pilot_refusal(what, pilot_outcome):
+    """The refusal text of a pilot that is not covered, `what` being the
+    pilot as the caller names it."""
+    return "%s is not usable: %s" % (what, uncovered_text(pilot_outcome))
+
+
 def declared_reps(pilot_outcome):
     """unit -> the R a decision stage (and the negative control) runs at:
     the pilot's R, clamped to R_CAP. The pilot reports what its data asks
@@ -1752,8 +1795,7 @@ def declared_reps(pilot_outcome):
     units = pilot_outcome["pilot"]
     require(pilot_outcome.get("covered") and units and all(
         isinstance(p.get("reps"), int) for p in units.values()),
-        "the pilot is not usable: a unit is under %s, so it "
-        "sized no R" % floor_text())
+        pilot_refusal("the pilot", pilot_outcome))
     return {w: min(R_CAP, p["reps"]) for w, p in units.items()}
 
 
@@ -3083,8 +3125,8 @@ def predeclare_first(args):
     control_info, control = info_run(args.control, key, "control",
                                      args.ledger, [cases.CONTROL_UNIT],
                                      mseal=mseal)
-    require(pilot["outcome"]["covered"], "the pilot is not usable: a unit "
-            "is under %s" % floor_text())
+    require(pilot["outcome"]["covered"],
+            pilot_refusal("the pilot", pilot["outcome"]))
     require(smoke["outcome"]["probe"]["ok"] and
             smoke["outcome"]["probe"]["complete"],
             "the smoke run did not pass the probe facts (reporter in "
@@ -3239,8 +3281,8 @@ def busy_spec(args, key, mseal):
             cases.CONTROL_UNIT in pilot["workloads"],
             "--pilot is not a pilot of this gate with %s" %
             cases.CONTROL_UNIT)
-    require(pilot["outcome"]["covered"], "--pilot is not usable: a unit "
-            "is under %s" % floor_text())
+    require(pilot["outcome"]["covered"],
+            pilot_refusal("--pilot", pilot["outcome"]))
     require(pilot["manifest"] == mseal, "--pilot was made on other "
             "snapshots (the manifest seal differs)")
     cpu = pilot["outcome"]["pilot"][cases.CONTROL_UNIT]["median_cpu"]
@@ -3352,7 +3394,9 @@ def exit_of(report):
     a negative control that was detected, a smoke run); 1 failed (a failing
     stage, an undetected control); 2 an inconclusive stage, a blocked run
     (a finding about the candidate: `report["blocked"]`) or a pilot with a
-    unit under the CPU minimum; 3 the run failed or was refused;
+    unit under the table's unit floor (`floor_text()`: MIN_UNIT_CPU per
+    process or per declared sample) or whose jitter sized no R; 3 the run
+    failed or was refused;
     4 (TERMINATED, from `main`, never from a report) the signal itself
     ended the run (SIGTERM or SIGHUP): the result, if the report was saved
     and the attempt closed, is recorded and printed all the same. A signal
@@ -3383,6 +3427,8 @@ def summary_line(report):
             "  %-18s %-12s control_valid=%s next=%s" % (
                 w, r["decision"], r["control_valid"],
                 r["second_stage_pairs"]) for w, r in out["results"].items())
+    if report["mode"] == "pilot" and not out.get("covered", True):
+        return head + "\nnot covered: " + uncovered_text(out)
     return head
 
 

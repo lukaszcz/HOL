@@ -4028,8 +4028,8 @@ Notes on the order.
   declared as `min(8, R)` (`R_CAP`). The target is 1 s of CPU per sample
   (`SAMPLE_CPU`); the cap may cut it, but the declared sample's median CPU,
   `min(R, 8) x` a process's, must still be at least 0.2 s (recorded per kind
-  as `floor_cpu`), so a startup kind of 0.069 s per process is covered
-  (8 x 0.069 = 0.55 s) while one of 0.02 s is not. A kind above the cap is
+  as `floor_cpu`), so a startup kind of 0.07 s per process is covered
+  (8 x 0.07 = 0.56 s) while one of 0.02 s is not. A kind above the cap is
   clamped, not refused (`required_reps` and `capped` recorded).
 - Steps 7 and 8 are two separate commits, the timing counts first (the storage
   `predeclare` loads them and requires them committed). Between step 7 and the
@@ -4159,8 +4159,9 @@ either table and for `task33_storage.py`:
   `recover`, a pass disposition, `dispose-snapshots`.
 - 1 fail: a failing stage, an undetected control, a failing disposition.
 - 2 an inconclusive stage; a blocked run (a finding about the candidate,
-  `report["blocked"]`) or disposition; the timing pilot with a kind whose
-  declared sample is under 0.2 s of CPU; a storage smoke whose probe
+  `report["blocked"]`) or disposition; the timing pilot with a kind
+  under its table's unit floor (TASK33: 0.2 s per declared sample; TASK32:
+  1 s per process) or whose jitter sized no R; a storage smoke whose probe
   facts are not `ok`.
 - 3 the run failed or was refused, or a usage error of the command line
   (`--table` abbreviation included: 3, not the parser's 2).

@@ -707,12 +707,23 @@ class Sizing(unittest.TestCase):
             self.assertTrue(got["long_enough"])
             self.assertTrue(got["within_cap"])
 
+    def unsized(self, name, cpu):
+        """A pilot unit whose jitter sized no R (no gated metric had a
+        usable log ratio, so `required_units` is None)."""
+        real = loading.jitter
+
+        def jitter(*args):
+            return dict(real(*args), required_units=None)
+        with mock.patch.object(loading, "jitter", jitter):
+            return dw.pilot_summary({name: rows(
+                lambda i: cpu, lambda i: cpu, pairs=10)})[name]
+
     def test_the_floor_applies_to_the_declared_sample(self):
-        # a 0.069 s kind at R 15 is declared at 8: 8 * 0.069 = 0.552 s
-        got = self.pilot(0.069)
+        # a 0.07 s kind at R 15 is declared at 8: 8 * 0.07 = 0.56 s
+        got = self.pilot(0.07)
         self.assertEqual(got["reps"], 15)
         self.assertTrue(got["long_enough"])
-        self.assertAlmostEqual(got["floor_cpu"], 0.552)
+        self.assertAlmostEqual(got["floor_cpu"], 0.56)
         outcome = dict(covered=True, pilot=dict(u=got))
         self.assertEqual(dw.declared_reps(outcome), dict(u=8))
 
@@ -723,8 +734,57 @@ class Sizing(unittest.TestCase):
         self.assertFalse(got["long_enough"])
         self.assertAlmostEqual(got["floor_cpu"], 0.16)
         self.assertTrue(self.pilot(0.025)["long_enough"])
-        with self.assertRaisesRegex(Exception, "per declared sample"):
+        with self.assertRaisesRegex(
+                dw.Refusal, r"under 0\.2 s of CPU per declared sample: u "
+                r"\(median_cpu 0\.02 s, floor_cpu 0\.16 s, reps 50\)"):
             dw.declared_reps(dict(covered=False, pilot=dict(u=got)))
+
+    def test_a_unit_whose_jitter_sized_no_r_is_not_covered(self):
+        for table, keys in (("task33", True), ("task32", False)):
+            with dw.using_table(table):
+                got = self.unsized("u", 0.5)
+                self.assertIsNone(got["reps"])
+                self.assertFalse(got["long_enough"])
+                self.assertFalse(got["within_cap"])
+                self.assertEqual("floor_cpu" in got, keys)
+                if keys:
+                    self.assertIsNone(got["floor_cpu"])
+                outcome = dict(covered=False, pilot=dict(u=got))
+                self.assertTrue(dw.uncovered_units(outcome)[1])
+                with self.assertRaisesRegex(
+                        dw.Refusal, r"jitter sized no R: u \(median_cpu "
+                        r"0\.5 s.*reps None\)"):
+                    dw.declared_reps(outcome)
+
+    def test_both_causes_are_named_with_their_units(self):
+        short = self.pilot(0.02)
+        none = self.unsized("v", 0.5)
+        outcome = dict(covered=False, pilot=dict(u=short, v=none))
+        text = dw.pilot_refusal("--pilot", outcome)
+        self.assertTrue(text.startswith("--pilot is not usable: under "
+                                        "0.2 s of CPU per declared sample"))
+        self.assertIn("u (median_cpu 0.02 s, floor_cpu 0.16 s, reps 50)",
+                      text)
+        self.assertIn("; jitter sized no R: v (median_cpu 0.5 s, reps None)",
+                      text)
+
+    def test_the_summary_line_names_an_uncovered_pilot(self):
+        report = dict(mode="pilot", stage=None, attempt=1, runs=[],
+                      success=True, outcome=dict(covered=False, pilot=dict(
+                          u=self.pilot(0.02))))
+        with dw.using_table("task32"):
+            report["outcome"]["pilot"]["u"] = self.pilot(0.5)
+            text = dw.summary_line(report)
+        self.assertIn("not covered: under 1 s of CPU per process: u "
+                      "(median_cpu 0.5 s, reps 1)", text)
+        report["outcome"] = dict(covered=True, pilot={})
+        self.assertNotIn("not covered", dw.summary_line(report))
+
+    def test_the_pilot_dict_of_a_process_floor_table_keeps_its_keys(self):
+        with dw.using_table("task32"):
+            self.assertEqual(set(self.pilot(1.5)), {
+                "jitter", "median_cpu", "median_wall", "reps",
+                "long_enough", "within_cap"})
 
     def test_the_refusals_name_the_kind_of_the_floor(self):
         self.assertEqual(dw.floor_text(), "0.2 s of CPU per declared sample")
@@ -1495,6 +1555,45 @@ class Chain33(Base33):
         # a second draw of the gate needs a policy decision
         with self.assertRaisesRegex(dw.Refusal, "judged attempt"):
             dw.run_stage(w.args("again", counts=counts_path), spec)
+
+
+class ShortKindChain33(Base33):
+    """A kind of about 0.07 s per process: pilot, exit, replay, control and
+    predeclare, with R declared at the cap."""
+
+    def test_a_short_startup_kind_is_covered_by_its_sample(self):
+        w = self.world
+        ledger = w.ledger()
+        unit = cases33.BY_NAME["state0-empty"]
+        with mock.patch.dict(unit, serial=0.07):
+            args, spec = w.info("pilot", "pilot")
+            pilot = dw.run_stage(args, spec)
+            self.assertTrue(pilot["success"], pilot.get("failure"))
+            self.assertEqual(dw.exit_of(pilot), 0)
+            found = pilot["outcome"]["pilot"]["state0-empty"]
+            self.assertAlmostEqual(found["median_cpu"], 0.07, places=2)
+            self.assertLess(found["median_cpu"], dw.MIN_UNIT_CPU)
+            self.assertGreater(found["reps"], dw.R_CAP)
+            self.assertAlmostEqual(found["floor_cpu"], 0.56, places=1)
+            self.assertTrue(pilot["outcome"]["covered"])
+            info, again = dw.replay_one(w.tmp / "pilot", ledger=ledger)
+            self.assertEqual(dw.dumps(again["outcome"]),
+                             dw.dumps(pilot["outcome"]))
+            self.assertAlmostEqual(
+                again["outcome"]["pilot"]["state0-empty"]["floor_cpu"],
+                found["floor_cpu"])
+            for mode, extra in (("smoke", {}),
+                                ("control", dict(pilot=w.tmp / "pilot"))):
+                args, spec = w.info(mode, mode, **extra)
+                run = dw.run_stage(args, spec)
+                self.assertTrue(run["success"], run.get("failure"))
+            counts = dw.predeclare_first(w.args(
+                "x", pilot=w.tmp / "pilot", smoke=w.tmp / "smoke",
+                control=w.tmp / "control"))
+            self.assertIn("state0-empty", counts["capped"])
+            self.assertEqual(counts["reps"]["state0-empty"], dw.R_CAP)
+            self.assertGreater(counts["required_reps"]["state0-empty"],
+                               dw.R_CAP)
 
 
 class Task32Unchanged(Base):
