@@ -654,6 +654,7 @@ def pilot_outcome(report, groups):
     cost = object_cpu(release, m0)
     ext_cost = report["smoke"]["object_cpu"]
     cap = cap_of(cost, ext_cost, m0)
+    # reported only; a value may be a share-pass lower bound (`held_bound`)
     held = {k: rules.num(min(p["held"][k] for p in release))
             for k in rules.ORDINARY_RELEASE}
     return dict(

@@ -16,9 +16,10 @@ fun apply cv rs = fn () => ignore (Conv.QCONV cv (first rs))
 fun conv_kind tag mk = (tag, fn i => let val rs = rules tag i
   in apply (mk rs) rs end)
 
-(* The leading no-op kind is the in-process noise floor of the residuals. *)
+(* The leading no-op kind is the in-process noise floor of the residuals
+   (T33.floor_kind); T33_LEAK does not retain its objects. *)
 val kinds =
-  [("noop", fn _ => fn () => ()),
+  [(T33.floor_kind, fn _ => fn () => ()),
    ("simpset", fn i => T33.hold (boolSimps.bool_ss ++ rewrites (rules "s" i))),
    conv_kind "conversion" (fn rs => SIMP_CONV (pure ++ rewrites rs) []),
    ("tactic", fn i => let

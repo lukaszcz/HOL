@@ -16,7 +16,7 @@ local
     (X.prepare_rewrite_bundle ss rs) [] ss
   fun conv ss rs = fn () => ignore (X.SIMP_CONV ss [] (first rs))
   val kinds =
-    [("noop", fn _ => fn () => ()),
+    [(T33.floor_kind, fn _ => fn () => ()),
      ("ext_tracked", fn i => let val rs = rules "et" i in
         conv (tracked rs) rs end),
      ("ext_views", fn i => let val rs = rules "ev" i in

@@ -174,6 +174,21 @@ def release_rows(probe, kind, kinds, m, leak=0):
     return out
 
 
+def reading(run, kind, which, words, share=None, alloc=None):
+    """`run` with the `which` (before, after, held) reading of release kind
+    `kind` set to `words` live words, optionally with another gc_share or
+    alloc (kept consistent with the release record)."""
+    run = copy.deepcopy(run)
+    i = find(run, "live", phase="%s.%s" % (kind, which))
+    x = run[i]
+    a = x["alloc"] if alloc is None else alloc
+    x.update(words=words, alloc=a, alloc_free=a,
+             size_heap=8 * words + x["free_full"] + a,
+             gc_share=x["gc_share"] if share is None else share)
+    run[find(run, "release", release=kind)][which] = words
+    return run
+
+
 def release_run(m=4, **switches):
     return ([head("release", "release", dict(m=m), **switches),
              live("release", "release", "start")] +
@@ -722,6 +737,112 @@ class Malformed(unittest.TestCase):
         self.bad(text(bad), "total and the anchored")
 
 
+class ShareBounds(unittest.TestCase):
+    """GC share passes between the readings of a release kind: the
+    residual is a lower bound (admitted when >= HALF, never for the floor
+    kind), the held size is compared with the `after` reading."""
+    M = 4
+
+    def run_of(self, kind="simpset", before=0, after=0, held=0, extra=0):
+        """A release run where `kind` has the given gc_share at each
+        reading and `extra` words/object more after than before."""
+        run = release_run(self.M)
+        run = reading(run, kind, "before", 5000, share=before)
+        run = reading(run, kind, "after", 5000 + extra * self.M,
+                      share=after)
+        return reading(run, kind, "held", 5000 + (extra + 600) * self.M,
+                       share=held)
+
+    def test_an_exact_pair_is_exact(self):
+        s = r.validate(text(self.run_of(before=2, after=2, held=2,
+                                        extra=3)))
+        self.assertEqual(s["residual"]["simpset"], 3)
+        self.assertFalse(s["residual_bound"]["simpset"])
+        self.assertFalse(s["held_bound"]["simpset"])
+        self.assertTrue(s["held_comparable"]["simpset"])
+        self.assertTrue(not any(s["residual_bound"].values()))
+
+    def test_a_bound_of_at_least_half_is_admitted_and_flagged(self):
+        # exactly 1/2 word per object (m = 4: 2 words), and far above
+        for words, want in ((2, Fraction(1, 2)), (1200, 300)):
+            run = reading(self.run_of(before=0, after=1, held=1), "simpset",
+                          "after", 5000 + words, share=1)
+            run = reading(run, "simpset", "held", 5000 + words + 2400,
+                          share=1)
+            s = r.validate(text(run))
+            self.assertEqual(s["residual"]["simpset"], want)
+            self.assertTrue(s["residual_bound"]["simpset"])
+            self.assertFalse(s["residual_bound"]["cong"])
+
+    def test_a_bound_under_half_is_not_comparable(self):
+        run = reading(self.run_of(after=1, held=1), "simpset", "after",
+                      5001, share=1)
+        run = reading(run, "simpset", "held", 5001 + 2400, share=1)
+        with self.assertRaises(r.NotComparable) as caught:
+            r.validate(text(run))
+        self.assertIn("simpset", str(caught.exception))
+        self.assertIn("under", str(caught.exception))
+        # a pass with no difference at all is a bound of 0: also refused
+        with self.assertRaises(r.NotComparable):
+            r.validate(text(self.run_of(after=1, held=1)))
+
+    def test_a_bound_on_the_floor_kind_is_not_comparable(self):
+        run = reading(release_run(self.M), r.FLOOR_KIND, "after", 5000 + 400,
+                      share=1)
+        run = reading(run, r.FLOOR_KIND, "held", 5000 + 400 + 2400,
+                      share=1)
+        with self.assertRaises(r.NotComparable) as caught:
+            r.validate(text(run))
+        self.assertIn("floor", str(caught.exception))
+        # exact, the floor may have any residual
+        r.validate(text(reading(reading(release_run(self.M), r.FLOOR_KIND,
+                                        "after", 5400), r.FLOOR_KIND,
+                                "held", 7800)))
+
+    def test_a_differing_alloc_or_a_shrinking_count_is_not_comparable(self):
+        run = self.run_of(extra=300)
+        with self.assertRaises(r.NotComparable):
+            r.validate(text(reading(run, "simpset", "after", 6200,
+                                    share=1, alloc=2 * SEG)))
+        run = reading(self.run_of(before=3, after=3, extra=300), "simpset",
+                      "after", 6200, share=2)
+        with self.assertRaises(r.NotComparable):
+            r.validate(text(run))
+
+    def test_held_is_compared_with_after_not_before(self):
+        # a pass between before and after (a bound of 300) but none after:
+        # the held reading shares `after`'s pair, so it is exact
+        run = self.run_of(before=0, after=1, held=1, extra=300)
+        s = r.validate(text(run))
+        self.assertTrue(s["held_comparable"]["simpset"])
+        self.assertFalse(s["held_bound"]["simpset"])
+        self.assertEqual(s["held"]["simpset"], 600)
+        # a pass between after and held: a bound, comparable at h >= H_MIN
+        run = self.run_of(before=1, after=1, held=2, extra=0)
+        s = r.validate(text(run))
+        self.assertTrue(s["held_bound"]["simpset"])
+        self.assertTrue(s["held_comparable"]["simpset"])
+
+    def test_a_held_bound_under_h_min_is_not_comparable(self):
+        small = lambda h: reading(self.run_of(before=1, after=1, held=2),
+                                  "simpset", "held", 5000 + h * self.M,
+                                  share=2)
+        s = r.validate(text(small(r.H_MIN)))
+        self.assertTrue(s["held_comparable"]["simpset"])
+        s = r.validate(text(small(r.H_MIN - 1)))
+        self.assertTrue(s["held_bound"]["simpset"])
+        self.assertFalse(s["held_comparable"]["simpset"])
+        # an exact small held reading is comparable (R1 then blocks it)
+        s = r.validate(text(reading(self.run_of(), "simpset", "held",
+                                    5000 + 5 * self.M)))
+        self.assertTrue(s["held_comparable"]["simpset"])
+
+    def test_the_thresholds_have_one_definition(self):
+        import task33_rules as rules
+        self.assertEqual((r.HALF, r.H_MIN), (Fraction(1, 2), 20))
+        self.assertFalse(hasattr(rules, "HALF") or hasattr(rules, "H_MIN"))
+
+
 class Comparable(unittest.TestCase):
     def raises(self, run, kind):
         with self.assertRaises(r.NotComparable) as caught:
@@ -757,8 +878,10 @@ class Comparable(unittest.TestCase):
         self.assertEqual(sorted(s["held_comparable"]),
                          sorted(r.RELEASE_KINDS))
         run = release_run(4)
-        i = find(run, "live", phase="removed.held")
-        s = r.validate(text(edit(run, i, gc_share=3)))
+        # a share pass before the held reading, but a held size under
+        # H_MIN: only a bound that small, so it proves nothing
+        run = reading(run, "removed", "held", 5000 + 4 * 5, share=3)
+        s = r.validate(text(run))
         self.assertFalse(s["held_comparable"]["removed"])
         self.assertTrue(s["held_comparable"]["cong"])
         big = 2 * SEG
@@ -1157,12 +1280,17 @@ class Ties(unittest.TestCase):
     def test_kinds(self):
         body = self.src("T33Release.sml")
         kinds = body[body.index("val kinds"):body.index("val m =")]
-        got = [a or b for a, b in re.findall(
-            r'\("(\w+)", fn|conv_kind "(\w+)"', kinds)]
+        named = lambda x: r.FLOOR_KIND if x == "T33.floor_kind" else x
+        got = [named(a or b) for a, b in re.findall(
+            r'\(("[\w]+"|T33\.floor_kind), fn|conv_kind "(\w+)"', kinds)]
+        got = [x.strip('"') for x in got]
         self.assertEqual(tuple(got), r.RELEASE_KINDS)
         ext = self.src("T33ExtUse.ML")
-        got = re.findall(r'\("((?:ext_)?\w+)", fn', ext)
+        got = [named(x).strip('"') for x in re.findall(
+            r'\(("(?:ext_)?\w+"|T33\.floor_kind), fn', ext)]
         self.assertEqual(tuple(got), r.EXT_RELEASE_KINDS)
+        self.assertIn('val floor_kind = "%s"' % r.FLOOR_KIND,
+                      self.src("T33.sml"))
         self.assertEqual(tuple(re.findall(r'proof "(ext \w+)"', ext)),
                          r.EXT_CHECKS)
 

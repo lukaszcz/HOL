@@ -293,6 +293,94 @@ def release_of(m=M, noop_leak=0, leak=False):
     return summ(run, ("leak",) if leak else ())
 
 
+def live_leak_run(m=M, per_object=300, quiet=()):
+    """The release run of the leak control as measured live: the floor kind
+    does not leak (exact, 0), every other kind retains `per_object` words
+    per object, and Poly/ML's GC share passes fall between readings
+    (simpset, ...: after 0, held 1; removed: before 4, after 5), so the
+    residuals are share-pass bounds. `quiet` kinds have no passes."""
+    run = rt.release_run(m, leak=True)
+    i, j = rt.find(run, "live", phase="noop.before"), rt.find(
+        run, "release", release="noop")
+    run[i:j + 1] = rt.release_rows("release", "release", ("noop",), m)
+    for k in rules.ORDINARY_RELEASE:
+        after = 5000 + per_object * m
+        passes = (0, 0, 0) if k in quiet else (
+            (4, 5, 5) if k == "removed" else (0, 0, 1))
+        run = rt.reading(run, k, "before", 5000, share=passes[0])
+        run = rt.reading(run, k, "after", after, share=passes[1])
+        run = rt.reading(run, k, "held", after + 600 * m, share=passes[2])
+    return run
+
+
+class ShareBoundRules(unittest.TestCase):
+    """R1 on residuals that are GC share-pass lower bounds (design 8.9)."""
+
+    def test_the_live_leak_shape_has_bounds_and_the_floor_exact(self):
+        s = summ(live_leak_run(), ("leak",))
+        self.assertEqual(s["residual"]["noop"], 0)
+        self.assertFalse(s["residual_bound"]["noop"])
+        self.assertEqual(s["residual"]["simpset"], 300)
+        self.assertFalse(s["residual_bound"]["simpset"])  # 0 -> 0
+        self.assertTrue(s["residual_bound"]["removed"])  # 4 -> 5
+        self.assertTrue(s["held_bound"]["simpset"])
+        self.assertTrue(s["held_comparable"]["simpset"])
+
+    def test_no_redraw_for_the_live_leak_shape(self):
+        s = summ(live_leak_run(), ("leak",))
+        self.assertEqual(st.held_gap("release+leak", [s]), [])
+        self.assertEqual(st.held_gap("release", [s]), [])
+
+    def test_the_leak_control_is_detected_with_share_passes(self):
+        base = [release_of()] * 3
+        leak = [summ(live_leak_run(), ("leak",))] * 3
+        rows = rules.r1_rows(base, leak)
+        for k in rules.ORDINARY_RELEASE:
+            r = row_of(rows, k)
+            self.assertEqual(r["decision"], "fail", (k, r["reason"]))
+        r = row_of(rows, "removed")
+        self.assertEqual(r["residual_bound"]["cand"], [True] * 3)
+        self.assertEqual(r["residual_bound"]["base"], [False] * 3)
+        self.assertEqual(row_of(rows, "simpset")["held_bound"],
+                         [False] * 3 + [True] * 3)
+        groups = {st.GRAPH: dict(base=[summ(graph_of())] * 3),
+                  st.GRAPH + "+graph_extra": dict(base=[summ(
+                      graph_of(graph_extra=True), ("graph_extra",))] * 3),
+                  st.RELEASE: dict(base=base),
+                  st.RELEASE + "+leak": dict(base=leak)}
+        reg = "registry-state-empty"
+        groups[reg] = dict(base=[summ(rt.load_run("registry",
+                                                  "state-empty"))] * 3)
+        groups[reg + "+hook"] = dict(base=[summ(rt.load_run(
+            "registry", "state-empty", hook=True), ("hook",))] * 3)
+        out = st.control_outcome({}, [], groups)
+        self.assertTrue(out["controls"]["leak"]["detected"])
+        self.assertEqual(out["controls"]["leak"]["decisions"]["removed"],
+                         "fail")
+
+    def test_a_baseline_bound_of_half_is_inconclusive_not_a_pass(self):
+        base = [summ(live_leak_run(per_object=1), ("leak",))] * 3
+        cand = [release_of()] * 3
+        for k in ("simpset", "removed"):
+            r = rules.r1_kind(base, cand, k)
+            self.assertEqual((r["decision"], r["owed"]),
+                             ("inconclusive", "followup"), (k, r["reason"]))
+
+    def test_a_bound_is_never_judged_stable(self):
+        # a candidate bound at exactly 1/2 fails; it is not a spread test
+        cand = [summ(live_leak_run(per_object=2, quiet=("simpset",)),
+                     ("leak",))] * 3
+        self.assertEqual(rules.r1_kind([release_of()] * 3, cand,
+                                       "removed")["decision"], "fail")
+
+    def test_an_inadmissible_bound_is_refused_by_the_rule(self):
+        run = release_of()
+        bad = dict(run, residual_bound=dict(run["residual_bound"],
+                                            simpset=True))
+        with self.assertRaises(ValueError):
+            rules.r1_kind([run], [bad], "simpset")
+
+
 class R1(unittest.TestCase):
     def test_equal_releases_pass(self):
         b = [release_of()] * 3
@@ -490,6 +578,13 @@ class E(unittest.TestCase):
         r = rules.e2b([ext_of()] * 3)
         self.assertEqual((r["case"], r["kind"], r["decision"]),
                          ("E2", "b", "pass"), r["reason"])
+
+    def test_e2b_rows_show_the_bounds(self):
+        r = rules.e2b([ext_of()] * 3)
+        for kind_row in r["kinds"].values():
+            self.assertEqual(kind_row["residual_bound"]["cand"],
+                             [False] * 3)
+            self.assertEqual(kind_row["held_bound"], [False] * 3)
 
     def test_e2a_compares_the_ordinary_rows(self):
         graph = [summ(graph_of())] * 3
@@ -1028,9 +1123,9 @@ def incomparable(run):
 
 
 def held_incomparable(run):
-    """A release run whose `held` reading alone is not comparable."""
-    i = rt.find(run, "live", phase="simpset.held")
-    return rt.edit(run, i, gc_share=1)
+    """A release run whose `held` reading alone is not comparable (its
+    allocation area is not fresh)."""
+    return rt.stale(run, "simpset.held")
 
 
 def anchor_moved(run):

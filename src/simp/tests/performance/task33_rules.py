@@ -27,8 +27,9 @@ show: "unstable" values are not judged, they are owed the next stage.
       exactly the declared `total_delta`, no exclusive part grows, and
       every process has `repeat_ok`; absolute sizes and live words are
       reported (§8.3).
-  R1  per release kind (§8.1, 8.6): the no-op floor gives the resolution
-      (its range across all processes <= RESOLUTION words per object);
+  R1  per release kind (§8.1, 8.6, 8.9): the no-op floor gives the resolution
+      (its range across all processes <= RESOLUTION words per object, exact:
+      it is the harness floor, T33_LEAK does not retain its objects);
       then, per process on exact fractions: the candidate fails when any of
       its processes has a residual >= 1/2 word per object while every
       baseline process is under 1/2 in magnitude; a baseline process at or
@@ -37,7 +38,11 @@ show: "unstable" values are not judged, they are owed the next stage.
       inconclusive (a larger M); a held size under H_MIN words per object,
       no comparable held reading or a weak probe that did not collect on
       the baseline is blocked (the probe cannot see, a larger M cannot
-      help); the weak probe must have collected on the candidate.
+      help); the weak probe must have collected on the candidate. A
+      residual or held value may be a GC share-pass lower bound; the
+      validator admits only bounds >= 1/2 (residual) and >= H_MIN (held),
+      which these rules use soundly (see `r1_kind`); the rows show them
+      (`residual_bound`, `held_bound`), E2 (b) included.
   L1, L3  per registry kind: the masked sets and the ordered lists equal.
   E2  (a) the ordinary rows in an `ext` process equal the candidate's
       (exact, or paired in the 10-pair stage), (b) the residual of the
@@ -57,14 +62,17 @@ PASS, FAIL, INCONCLUSIVE, BLOCKED = "pass", "fail", "inconclusive", "blocked"
 REPORTED, UNSUPPORTED = "reported", "unsupported"
 GATES = (PASS, FAIL, INCONCLUSIVE, BLOCKED)
 RESOLUTION = Fraction(1, 4)  # words per object: the no-op floor's range
-HALF = Fraction(1, 2)  # a residual of this much is a retained word
-H_MIN = 20  # words per object a held object must have (R1 sensitivity)
+# HALF (a residual of this much is a retained word) and H_MIN (words per
+# object a held object must have: R1 sensitivity) are records.HALF and
+# records.H_MIN: the validator admits share-pass bounds by them.
 BUILT_MIN_SIZE = 100  # the as-built rows need a gateable size this big
 EXTEND_PAIRS = 10  # the least that paired_statistics accepts
 GRAPH_GATED = tuple(g for g in records.GRAPH_KINDS
                     if not g.startswith("cells"))
-ORDINARY_RELEASE = tuple(k for k in records.RELEASE_KINDS if k != "noop")
-EXT_RELEASE = tuple(k for k in records.EXT_RELEASE_KINDS if k != "noop")
+ORDINARY_RELEASE = tuple(k for k in records.RELEASE_KINDS
+                         if k != records.FLOOR_KIND)
+EXT_RELEASE = tuple(k for k in records.EXT_RELEASE_KINDS
+                    if k != records.FLOOR_KIND)
 ALLOCATION_NOTE = (
     "cumulative allocation is not measurable on the stock Poly/ML 5.9.2 "
     "runtime of the snapshots (no counter; heap and allocation-area sizes "
@@ -409,8 +417,9 @@ def l3_kind(base, cand, kind):
 # --- R1 ------------------------------------------------------------------
 
 def noop_floor(procs):
-    """The no-op kind's residual (words per object) of every process."""
-    return [p["residual"]["noop"] for p in procs]
+    """The floor kind's residual (words per object) of every process
+    (exact: the validator never admits a bound for it)."""
+    return [p["residual"][records.FLOOR_KIND] for p in procs]
 
 
 def resolved(procs):
@@ -430,9 +439,9 @@ def held_problem(procs, kind):
     held = [p["held"][kind] for p in procs if comparable_held(p, kind)]
     if not held:
         return "no comparable held reading"
-    if min(held) < H_MIN:
+    if min(held) < records.H_MIN:
         return ("a held object has under %d words (%s): the probe cannot "
-                "see a retained word" % (H_MIN, num(min(held))))
+                "see a retained word" % (records.H_MIN, num(min(held))))
     return None
 
 
@@ -443,16 +452,34 @@ def spread(values):
 def r1_kind(base, cand, kind, case="R1"):
     """The R1 row of a release kind (per process, exact fractions); with
     no baseline (`base` empty: E2 (b), the extension kinds) the candidate's
-    residuals must all be under 1/2 word per object."""
+    residuals must all be under 1/2 word per object.
+
+    A residual or held value may be a GC share-pass lower bound
+    (`residual_bound`, `held_bound`, task33_records "Release readings and
+    share passes"). The validator admits a residual bound only when it is
+    >= HALF, and a held bound only when it is >= H_MIN, so every use below
+    is sound: a candidate residual >= 1/2 fails (the true value is at least
+    that); a baseline one is inconclusive (not under 1/2); the held
+    sensitivity test `min(held) < H_MIN` cannot be wrongly failed by a
+    bound; the floor is never a bound; and the spread checks only run when
+    no residual is >= 1/2, i.e. when none is a bound."""
     procs = base + cand
     floor = noop_floor(procs)
     rb = [p["residual"][kind] for p in base]
     rc = [p["residual"][kind] for p in cand]
+    for p in procs:
+        if p["residual_bound"][kind] and p["residual"][kind] < records.HALF:
+            raise ValueError("%s: a residual bound under 1/2 was admitted"
+                             % kind)
     detail = dict(floor=[num(x) for x in floor],
                   floor_range=num(spread(floor)),
                   residual=dict(base=[num(x) for x in rb],
                                 cand=[num(x) for x in rc]),
-                  held=[num(p["held"][kind]) for p in procs])
+                  held=[num(p["held"][kind]) for p in procs],
+                  residual_bound=dict(
+                      base=[p["residual_bound"][kind] for p in base],
+                      cand=[p["residual_bound"][kind] for p in cand]),
+                  held_bound=[p["held_bound"][kind] for p in procs])
     if not resolved(procs):
         return row(case, kind, INCONCLUSIVE, "the no-op floor's range %s "
                    "exceeds the resolution %s words per object" % (
@@ -463,11 +490,11 @@ def r1_kind(base, cand, kind, case="R1"):
         if problem:
             return row(case, kind, BLOCKED, "%s: %s" % (side, problem),
                        **detail)
-    if any(abs(x) >= HALF for x in rb):
+    if any(abs(x) >= records.HALF for x in rb):
         return row(case, kind, INCONCLUSIVE, "a baseline process's "
                    "residual is %s words per object, not under 1/2" % (
                        [num(x) for x in rb],), "followup", **detail)
-    if any(x >= HALF for x in rc):
+    if any(x >= records.HALF for x in rc):
         return row(case, kind, FAIL, "a candidate process retains %s "
                    "words per object (1/2 or more)" % (
                        [num(x) for x in rc],), **detail)

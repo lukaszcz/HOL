@@ -3658,7 +3658,9 @@ R1 release rule. The `release` probe warms up once, then per kind reads live
 words (after three full GCs) before, creates and discards M objects, reads
 again (`after`), and holds M objects alive (`held`). Residual = (after -
 before) / M words per object; held size h = (held - after) / M. The leading
-kind `noop` is the in-process noise floor. Comparisons use exact fractions,
+kind `noop` (`FLOOR_KIND`, defined once in `T33.sml` and
+`task33_records.py`) is the in-process noise floor; `T33_LEAK` does not
+retain its objects. Comparisons use exact fractions,
 no rounding. The kinds are `simpset`, `conversion`, `tactic`,
 `traversedata`, `exclusion`, `removed` and `cong`, plus the `weak` row
 (`RuntimeMetrics.release`: a weak reference to a discarded simpset must be
@@ -3677,10 +3679,24 @@ collected).
   held readings, or the weak probe not collected on the baseline. The weak
   probe not collected on the candidate fails.
 - Otherwise pass.
-- Release comparability is required of `before` and `after` (equal `alloc`
-  and `gc_share`, a fresh allocation area); `held` carries
-  `held_comparable`. A process without a comparable reading is
-  `NotComparable`: a redraw, never a result.
+- Release comparability (design 8.9). A GC share pass merges equal immutable
+  cells and never adds a word, and Poly/ML runs them on its own (more as a
+  leaked heap grows), so with equal `alloc` a reading with more passes gives
+  a lower bound of the difference. Per kind other than `noop`: the residual
+  is exact when (`alloc`, `gc_share`) of `before` and `after` are equal; a
+  bound (`residual_bound`) when `alloc` is equal and `gc_share` grew,
+  admitted only when it is >= 1/2 (`HALF`), else the process is
+  `NotComparable`; a differing `alloc` (or a shrinking count) is
+  `NotComparable`. The `noop` residual must be exact. `held` is compared
+  with `after`: `held_comparable` is a fresh reading that is exact or a bound
+  (`held_bound`) >= `H_MIN`. `HALF` and `H_MIN` are defined once, in
+  `task33_records.py`, and used by validator and rules. An admitted bound is
+  >= 1/2, so a candidate bound fails and a baseline bound is inconclusive
+  (never a pass); the spread checks are never reached with a bound. The rows
+  show `residual_bound` and `held_bound` (E2 (b) included). Run and replay
+  share the validator, so replay re-derives the same summaries. Any other
+  process without a comparable reading is `NotComparable`: a redraw, never a
+  result.
 
 M is sized by the pilot from the raw noise (range <= 0.25 M words) and
 clamped to a cap derived from a declared CPU budget (`RELEASE_BUDGET_S` =
@@ -3805,8 +3821,9 @@ production sources; each acts in the probes of `CONTROL_PROBES`:
 - `T33_GRAPH_EXTRA=1`. effect: one extra cons retained per rule in the
   measured object (an extra rewrite fragment for the simpset kinds, a closure
   capturing the extra data for closure kinds). probe: `graph`. must fail: S1
-- `T33_LEAK=1`. effect: every discarded object kept in a global list. probe:
-  `release`. must fail: R1
+- `T33_LEAK=1`. effect: every discarded object kept in a global list, except
+  those of the no-op floor kind (`T33.floor_kind` = `FLOOR_KIND`, the noise
+  floor is not code under test). probe: `release`. must fail: R1
 - `T33_HOOK=1`. effect: one extra `Theory.register_hook`. probe: `registry`.
   must fail: L3
 
@@ -3912,7 +3929,8 @@ the chain is replayed (the report must be the attempt's own, with the seal its
 
 Process redraws (storage stages). A process whose output is well formed but
 whose readings cannot be compared (`NotComparable`: a non-fresh allocation
-area, differing `alloc` or `gc_share` in one release kind, no comparable
+area, differing `alloc` or a share-pass residual bound under 1/2 (or on
+`noop`) in one release kind, no comparable
 `held` reading in a group, a probe that did not converge, an anchor that
 moved in one process) is not a measurement: it is rerun at the same position
 of the plan (up to `MAX_REDRAWS` = 3 tries after the first), the rejected try

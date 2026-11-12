@@ -89,7 +89,9 @@ the fields below, no more and no fewer:
             reports `match` (rest = span * first), the verdict is S4's.
   release   release:str, m:uint, before, after, held:uint live words;
             residual (after - before) / m; held size (held - after) / m.
-            The leading kind `noop` is the in-process noise floor.
+            The leading kind (FLOOR_KIND, `noop`) is the in-process noise
+            floor: T33_LEAK does not retain its objects, and its residual
+            must be exact (see Share passes).
   weak      scope:str, retained, collected:bool, full_gcs:uint>=4, status
   done      (last record)
 
@@ -105,12 +107,30 @@ equal the canonical post-anchor whatever share passes ran, and the as-built
 post-anchor must equal it where no pass ran. A moved anchor is data, not a
 malformed record: it is listed in `summary["anchor_moved"]` as {kind, n,
 mode, pre, post} (a retention finding about the candidate, for S4 to
-judge). Readings of one release kind with different alloc or gc_share
-before and after, and any live reading that is not comparable (but a
-`.held` one), are not comparable (NotComparable, not a RecordError: the
-process is a redraw, not a malformed record); `summary["held_comparable"]`
-says whether the `held` reading of a kind has the same (alloc, gc_share) and
-is itself comparable.
+judge).
+
+Release readings and share passes. A GC share pass merges equal
+immutable cells and never adds a word, so for two readings x, y with the
+same `alloc` and more share passes at y, `y - x` is a lower bound of the
+difference without the passes. Poly/ML runs the passes on its own (more as a
+leaked heap grows), so requiring equal gc_share would redraw every leaking
+process. Per release kind, the residual (after - before) / m is exact when
+(alloc, gc_share) are equal, a bound (`residual_bound[kind]`) when alloc is
+equal and gc_share grew, and then admitted only when >= HALF, else the
+process is NotComparable (a redraw). A differing alloc, a gc_share that
+shrank, and a bound on the floor kind (the noise floor must be exact) are
+NotComparable. Invariant relied on by task33_rules (R1, E2 (b)): an admitted
+bound is positive and >= HALF, so a candidate bound fails the kind (a lower
+bound >= 1/2 is a retained word), a baseline bound is inconclusive (a
+baseline at or over 1/2), and the stability checks (spread <= RESOLUTION),
+which a lower bound would not support, are never reached with a bound. The
+held size (held - after) / m is compared with the `after` reading (the one
+it is a difference of): `held_comparable[kind]` is the held reading being
+fresh and either exact or a bound (`held_bound[kind]`) >= H_MIN (a lower
+bound >= H_MIN proves the sensitivity requirement; one below it proves
+nothing and is not used). Any live reading that is not comparable (but a
+`.held` one) is NotComparable too (not a RecordError: the process is a
+redraw, not a malformed record).
 
 The exact sequence of records of a process is fixed by its probe, kind and
 params (`expected_keys`), so a missing, extra or reordered record is an
@@ -171,10 +191,20 @@ GRAPH_KINDS = ("fragment", "compiled", "compiled_bool", "merge",
                "projection", "conversion", "tactic", "exclusion", "removed",
                "cong", "cells_cons", "cells_ref")
 STEP_MODES = ("built", "canonical")
-RELEASE_KINDS = ("noop", "simpset", "conversion", "tactic", "traversedata",
+# The release kind that is the harness's noise floor, not code under test:
+# T33_LEAK does not retain its objects and its residual must be exact. The
+# SML probes define it once (T33.floor_kind; a test compares the two).
+FLOOR_KIND = "noop"
+# A GC share-pass lower bound of a residual is admitted only when it is at
+# least HALF (words per object): the least residual R1 treats as retained.
+# A held size (R1 sensitivity) needs H_MIN words per object. One definition,
+# used by `validate` and by task33_rules (`records.HALF`, `records.H_MIN`).
+HALF = Fraction(1, 2)
+H_MIN = 20
+RELEASE_KINDS = (FLOOR_KIND, "simpset", "conversion", "tactic", "traversedata",
                  "exclusion", "removed", "cong")
 EXT_CHECKS = ("ext tracked", "ext views", "ext bundle")
-EXT_RELEASE_KINDS = ("noop", "ext_tracked", "ext_views", "ext_bundle",
+EXT_RELEASE_KINDS = (FLOOR_KIND, "ext_tracked", "ext_views", "ext_bundle",
                      "ext_projection", "ext_xprojection")
 SIZED = ("ThmAttribute", "Cond_rewr", "simpLib", "Traverse", "Travrules",
          "Opening", "boolSimps", "pureSimps")
@@ -726,6 +756,7 @@ def validate(text, controls=(), root=None):
                    params=params, holdir=head["holdir"], checks=[],
                    times={}, live={}, share={}, alloc={}, graph={},
                    release={}, residual={}, held={}, phase={}, step={},
+                   residual_bound={}, held_bound={},
                    gateable={}, gateable_coverage={}, anchor_moved=[],
                    held_comparable={}, unconverged=[], weak=None,
                    registry=None, anchored=None)
@@ -784,8 +815,7 @@ def validate(text, controls=(), root=None):
     for n in summary["phase"]:
         if "graph.%d" % n not in summary["live"]:
             fail("phase %d without its live record" % n)
-    check_comparable(summary["release"], records,
-                     summary["held_comparable"])
+    check_comparable(summary["release"], records, summary)
     if summary["unconverged"]:
         raise NotComparable(
             "the canonical pre-anchor did not converge at size(s) %s (after "
@@ -796,13 +826,15 @@ def validate(text, controls=(), root=None):
     return summary
 
 
-def check_comparable(release, records, held_comparable):
-    """Every live reading must be comparable, except the `held` readings
-    of the release kinds, and the before and after readings of one release
-    kind need the same allocation area and the same GC share-pass count
-    (the residual is their difference). The `held` reading only sets
-    `held_comparable[kind]`: comparable itself and with the same pair as
-    the before reading."""
+def check_comparable(release, records, summary):
+    """Every live reading must be comparable, except the `held` readings of
+    the release kinds. Per release kind (the module docstring, Release
+    readings and share passes): the before and after readings must have the
+    same allocation area and a non-shrinking GC share-pass count; with more
+    passes the residual is a lower bound, admitted only when >= HALF and not
+    for the floor kind. Fills `residual_bound`, `held_bound` and
+    `held_comparable` of the summary. The share-pass rule lives here, in the
+    one validator that a run and its replay share."""
     live = {r["phase"]: r for r in records if r["record"] == "live"}
     held = {name + ".held" for name in release}
     for phase, r in live.items():
@@ -812,13 +844,30 @@ def check_comparable(release, records, held_comparable):
                 % (phase, r["alloc_free"], r["alloc"]))
     for name in release:
         pair = lambda p: (live[name + p]["alloc"], live[name + p]["gc_share"])
-        seen = {pair(".before"), pair(".after")}
-        if len(seen) != 1:
+        (ba, bs), (aa, as_), (ha, hs) = (pair(".before"), pair(".after"),
+                                         pair(".held"))
+        if ba != aa or as_ < bs:
             raise NotComparable(
-                "release %s: (alloc, gc_share) differ across its readings: "
-                "%s" % (name, sorted(seen)))
-        held_comparable[name] = (live[name + ".held"]["comparable"] and
-                                 pair(".held") == pair(".before"))
+                "release %s: the allocation area differs or the GC share "
+                "count shrank between its before and after readings: %s" % (
+                    name, [(ba, bs), (aa, as_)]))
+        bound = as_ != bs
+        if bound:
+            if name == FLOOR_KIND:
+                raise NotComparable(
+                    "release %s: a GC share pass between the readings of "
+                    "the noise floor (it must be exact)" % name)
+            if summary["residual"][name] < HALF:
+                raise NotComparable(
+                    "release %s: a GC share pass between the readings and "
+                    "the residual bound %s is under %s" % (
+                        name, summary["residual"][name], HALF))
+        summary["residual_bound"][name] = bound
+        held_bound = hs != as_
+        summary["held_bound"][name] = held_bound
+        summary["held_comparable"][name] = (
+            live[name + ".held"]["comparable"] and ha == aa and hs >= as_
+            and (not held_bound or summary["held"][name] >= H_MIN))
 
 
 # --- masking ------------------------------------------------------------

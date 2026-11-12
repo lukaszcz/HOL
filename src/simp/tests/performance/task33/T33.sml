@@ -115,7 +115,11 @@ struct
 
   (* A closure that keeps x reachable (a store is not optimised away). *)
   fun hold x = let val r = ref x in fn () => r := !r end
-  (* T33_LEAK: every discarded object is kept in a global list. *)
+  (* T33_LEAK: every discarded object is kept in a global list, except
+     those of the floor kind: the no-op kind is the harness's noise floor,
+     not code under test, and must not leak.  The name is mirrored by
+     task33_records.FLOOR_KIND (a test compares them). *)
+  val floor_kind = "noop"
   val sink : (unit -> unit) list ref = ref []
   fun retain u = if leak then sink := u :: !sink else ()
   fun rname i = "t33_r" ^ Int.toString i
@@ -123,7 +127,9 @@ struct
   (* R1: after one warm cycle, m build/use/discard cycles; then m objects
      held alive.  Each reading is after three full GCs. *)
   fun release m (name, make) = let
-    fun cycle i = let val u = make i in retain u; u () end
+    fun cycle i = let
+      val u = make i
+    in (if name = floor_kind then () else retain u); u () end
     fun go i = if i > m then () else (cycle i; go (i + 1))
     val _ = cycle 0
     val first = live (name ^ ".before")
