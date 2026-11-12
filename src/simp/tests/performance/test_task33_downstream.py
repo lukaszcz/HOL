@@ -282,11 +282,14 @@ class TableSelection(unittest.TestCase):
             self.assertIn(unit["name"], cases33.records.LOAD_KINDS)
         self.assertNotIn("T33_MODULE", cases33.BY_NAME["first-use"]["env"])
 
-    def test_the_history_of_task32_keeps_every_entry_and_task33_has_none(
-            self):
-        self.assertEqual(len(dw.TABLES["task32"].history[
-            "task32_downstream.py"]), 3)
-        self.assertEqual(dw.TABLES["task33"].history, {})
+    def test_the_histories_of_task32_and_task33(self):
+        old = dw.TABLES["task32"].history["task32_downstream.py"]
+        self.assertEqual(len(old), 4)
+        history = dw.TABLES["task33"].history
+        self.assertEqual(set(history), {
+            "task32_downstream.py", "task33_storage.py"})
+        self.assertEqual(history["task32_downstream.py"], old[-1:])
+        self.assertEqual(len(history["task33_storage.py"]), 1)
 
     def test_a_counts_file_of_another_table_is_refused(self):
         with tempfile_dir() as tmp:

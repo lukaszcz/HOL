@@ -3707,9 +3707,12 @@ reference to a discarded simpset must be collected).
 M is sized by the pilot from the raw noise of the exact residuals (range <=
 0.25 M words) and clamped to a cap derived from a declared CPU budget
 (`RELEASE_BUDGET_S` = 60 s per release or `ext` process): the budget divided
-by the larger CPU per object of the pilot's release processes and of the
-smoke's `ext` process (whole-process CPU over M times the kinds released,
-start-up included, so an upper bound; the smoke's `ext` per-object CPU,
+by the larger of the process CPU per object per kind times the number of
+kinds the process releases (8 `RELEASE_KINDS` for a release process, 6
+`EXT_RELEASE_KINDS` for `ext`; M is objects per kind, and the CPU per
+object, whole-process CPU over M times the kinds released, start-up
+included, is per kind), of the pilot's release processes and of the smoke's
+`ext` process (an upper bound; the smoke's `ext` per-object CPU,
 measured at its small M and sizes, is an upper bound of the cost at the
 decision M only while the graph's cost at the decision sizes stays under
 about (M / smoke M - 1) times the start-up, likely and not checked; the
@@ -3717,7 +3720,10 @@ pilot is sized from a given smoke, `--smoke`). A process reporting no CPU
 time is a refusal. The counts record `required_m` and `capped` as TASK32
 records `required_reps`, and `object_cpu` and `ext_object_cpu`;
 `check_sizing` recomputes the cap, M and `capped` from them at `run`,
-`replay` and `dispose`. The sizing assumes that the raw noise in words of a
+`replay` and `dispose`; the first counts and pilot, made before the cap
+was divided by the kinds, record the undivided `m_cap` (1102), which is
+accepted only where M and `capped` come out the same (here M = 200). The
+sizing assumes that the raw noise in words of a
 release process does not depend on M, so that the required M is that noise
 over 1/4; the decision stages check it by the no-op floor (an unresolved
 floor is inconclusive, hence a follow-up). The follow-up M is max(4 M,
@@ -3955,9 +3961,12 @@ below `src/simp/tests/performance`):
   timing follow-up
 - `task33_storage_counts.json`. by: `task33_storage.py predeclare`. holds: k,
   sizes, M (`m0`, `required_m`, `m_cap`, `capped`, `budget_s`, `object_cpu`,
-  `ext_object_cpu`), seeds, the two contingencies, seals of the replayed
-  smoke, pilot and control and the three offline reports, manifest and
-  declaration seals, `CODE` seals, and the seal and commit of
+  `ext_object_cpu`), a time estimate (per-process walls, the `ext` one
+  from the pilot's graph wall plus the smoke's `ext` over `graph` wall
+  scaled by M; `total` and `extend_total` seconds, absent from the first
+  counts, which nothing requires), seeds, the two contingencies, seals of
+  the replayed smoke, pilot and control and the three offline reports,
+  manifest and declaration seals, `CODE` seals, and the seal and commit of
   `task33_counts.json`
 - `task33_storage_followup_counts.json`. by: `task33_storage.py predeclare
   --followup`. holds: the units owed, M, the stage it replaces
@@ -4285,10 +4294,13 @@ file, recorded by the counts files, runs, reports and replays):
 `T33Ext.sml`, `T33CheckSimp.ML`, `T33CheckCong.ML`, `T33CheckFirst.ML`,
 `T33ExtUse.ML`, `RuntimeMetrics.sml`, `task33_records.py`,
 `task33_rules.py`, `task33_storage.py`, `task33_dispose.py` and
-`task33_offline.py`. The table's `HISTORY` (`history` of `Table`) is empty:
-it holds only seals of driver versions whose kept records must replay, and a
-change to a CODE file after a record exists adds the old seal to the history
-in the same commit (see "Seals and seal histories"). The offline reports
+`task33_offline.py`. The table's `HISTORY` (`history` of `Table`) holds
+only seals of versions whose kept records must replay (a change to a CODE
+file after a record exists adds the old seal in the same commit, see "Seals
+and seal histories"): one each for `task32_downstream.py` (also the last entry of
+the TASK32 history, which the S3 reports use) and `task33_storage.py`, as
+they were when the smoke, pilot, controls and counts were made, before the
+cap divided by the kinds a process releases. The offline reports
 carry their own `code` (`task33_offline.py`, `task33_declared.json` and the
 TASK32 code they reuse, which they bind to the `task32` table explicitly).
 

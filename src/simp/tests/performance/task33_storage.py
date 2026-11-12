@@ -91,10 +91,11 @@ SMOKE_SIZES = (0, 1, 10)
 SMOKE_M = 50
 M0 = 200  # the pilot's release size
 # CPU seconds one release or extension process may take at the decision M
-# (design 8.6, 8.7): the cap on M is this budget over the larger CPU per
-# released object of the pilot's release processes and of the smoke's
-# extension process (`cap_of`; the start-up counts, so the cost is an upper
-# bound); a follow-up may take FOLLOWUP_FACTOR times as much, which must
+# (design 8.6, 8.7): the cap on M (objects per kind) is this budget over
+# the larger CPU of a process per object per kind, times its number of
+# kinds, of the pilot's release processes and of the smoke's extension
+# process (`cap_of`; the start-up counts, so the cost is an upper bound);
+# a follow-up may take FOLLOWUP_FACTOR times as much, which must
 # stay under the process timeout (`check_budget`). The required M assumes
 # that the raw noise in words of a release process does not depend on M
 # (the pilot measures it at M0; the follow-up's scaling by the floor range
@@ -628,16 +629,26 @@ def ext_object_cpu(smoke):
     return cpu / (smoke["params"]["m"] * len(records.EXT_RELEASE_KINDS))
 
 
-def cap_of(cost, ext_cost, m0, factor=1):
-    """The most objects per release kind whose release process (at `cost`
-    CPU seconds per object) and extension process (at `ext_cost`) both fit
-    `factor` times RELEASE_BUDGET_S, never under the pilot's own M0."""
+def cap_of(cost, ext_cost, m0, factor=1, per_kind=True):
+    """The most objects per release kind M whose release process and
+    extension process both fit `factor` times RELEASE_BUDGET_S, never
+    under the pilot's own M0. `cost` and `ext_cost` are CPU seconds per
+    object per kind (`object_cpu`, `ext_object_cpu`), and a process
+    releases M objects of every kind it releases, so a process costs
+    M x kinds x cost: the release process (RELEASE_KINDS) and the
+    extension process (EXT_RELEASE_KINDS) each divide by their own count
+    of kinds. `per_kind=False` is the earlier sizing, which did not divide
+    by the kinds (`check_sizing` accepts its `m_cap` in the first counts,
+    made before the fix)."""
     check_budget()
     require(cost > 0 and ext_cost > 0, "a release process reports no CPU "
             "time (%s, %s s per object): the cap cannot be sized" % (
                 cost, ext_cost))
-    return max(m0, min(math.floor(Fraction(RELEASE_BUDGET_S * factor) /
-                                  Fraction(c)) for c in (cost, ext_cost)))
+    budget = Fraction(RELEASE_BUDGET_S * factor)
+    return max(m0, min(
+        math.floor(budget / (Fraction(c) * (len(kinds) if per_kind else 1)))
+        for c, kinds in ((cost, records.RELEASE_KINDS),
+                         (ext_cost, records.EXT_RELEASE_KINDS))))
 
 
 def pilot_outcome(report, groups):
@@ -673,6 +684,14 @@ def pilot_outcome(report, groups):
     cost = object_cpu(release, m0)
     ext_cost = report["smoke"]["object_cpu"]
     cap = cap_of(cost, ext_cost, m0)
+    # a pilot made before the cap was divided by the kinds records the
+    # undivided one, kept where M and `capped` come out the same (`replay`
+    # recomputes the outcome of the report)
+    old = cap_of(cost, ext_cost, m0, per_kind=False)
+    if ((report.get("outcome") or {}).get("m_cap") == old and
+            min(old, required) == min(cap, required) and
+            (required > old) == (required > cap)):
+        cap = old
     # reported only: the least held size over the comparable readings (a
     # share-pass lower bound >= H_MIN counts), None when there is none
     held = {}
@@ -1148,7 +1167,15 @@ def check_sizing(data):
         require(required == data["required_m"], "the follow-up counts' "
                 "required M is not the base M scaled by the floor range")
     want = data["decision"] if kind == "run" else data["followup"]
-    require(data["budget_s"] == RELEASE_BUDGET_S and data["m_cap"] == cap
+    # the first counts record the `m_cap` of the sizing before the cap was
+    # divided by the kinds; it is accepted only where M and `capped`,
+    # which are what the stages use, come out the same
+    old = cap_of(data["object_cpu"], data["ext_object_cpu"], data["m0"],
+                 factor, per_kind=False)
+    same = (min(old, required) == min(cap, required) and
+            (required > old) == (required > cap))
+    require(data["budget_s"] == RELEASE_BUDGET_S and (
+        data["m_cap"] == cap or (same and data["m_cap"] == old))
             and want["k"] == K and want["m"] == min(cap, required)
             and data["capped"] == (required > cap),
             "the counts file's budget, cap, M, required_m and capped "
@@ -1328,6 +1355,53 @@ def offline_seals(paths):
     return found
 
 
+def smoke_walls(folder, report):
+    """{unit: {side: wall seconds}} of the smoke's archived processes (the
+    smoke runs each unit once per side, so no median is taken); the
+    outcome keeps only their CPU."""
+    walls = {}
+    for entry in report["runs"]:
+        if entry["accepted"]:
+            walls.setdefault(entry["workload"], {})[entry["side"]] = a.load(
+                a.safe_child(Path(folder), entry["receipt"]))["usage"]["wall"]
+    return walls
+
+
+def time_estimate(pilot, smoke, smoke_folder, m):
+    """The predeclared wall time of the decision stages: per process, the
+    pilot's median wall of `graph` and `release` (the release one scaled
+    by M / M0, an upper bound: the start-up counts), and of `ext` the
+    pilot's graph wall plus what the smoke's `ext` process took over its
+    `graph` candidate process (the simpExtLib load and the extension
+    kinds), scaled by M / smoke M. `total` is the processes of the run
+    (the plan's) times their wall, the registry and trivial units at the
+    smoke's wall, plus the verifications; `extend_total` is the same for
+    the extension stage of one owed unit (the slowest, an upper bound)."""
+    out, params = pilot["outcome"], smoke["params"]
+    walls = smoke_walls(smoke_folder, smoke)
+    wall = dict(out["median_wall"])
+    extra = max(0, walls[EXT]["cand"] - walls[GRAPH]["cand"])
+    wall[EXT] = wall[GRAPH] + extra * m / params["m"]
+    wall[RELEASE] = wall[RELEASE] * m / out["m0"]
+    wall = {u: wall[u] for u in (GRAPH, RELEASE, EXT)}
+
+    def per_process(unit, side):
+        return wall[unit] if unit in wall else walls[unit][side]
+
+    def total(plan):
+        return sum(per_process(p["unit"], p["side"]) for p in plan)
+
+    verify = sum(v["seconds"] for v in (smoke.get("verify") or {}).values())
+    run = plan_for("run", list(UNITS), dict(k=K))
+    extend = max((paired_plan([u], EXTEND_PAIRS) for u in UNITS),
+                 key=total)
+    return dict(
+        per_process_wall=wall, m=m, processes=dict(
+            run=len(run), extend=len(extend)),
+        verify_seconds=verify, total=total(run) + verify,
+        extend_total=total(extend) + verify)
+
+
 def predeclare_run(args):
     """The counts file of the decision stages, from a smoke, a pilot and a
     control that all ran, verified, on this gate, bound to the committed
@@ -1363,16 +1437,7 @@ def predeclare_run(args):
             "a control was not detected: " + ", ".join(
                 sorted(k for k, c in found.items() if not c["detected"])))
     refs = {u: smoke["outcome"]["digests"][u] for u in REGISTRY + TRIVIAL}
-    wall = dict(pilot["outcome"]["median_wall"])
-    scale = Fraction(decision["m"], out["m0"])
-    # the release process scales with M (an upper bound: start-up
-    # counts); the extension probe is a graph and a release process
-    wall[EXT] = (wall[RELEASE] * float(scale) + wall[GRAPH])
-    wall[RELEASE] = wall[RELEASE] * float(scale)
-    estimate = dict(per_process_wall=wall, m=decision["m"], processes=dict(
-        run=2 * K * (len(REGISTRY) + len(TRIVIAL) + 2) + K,
-        extend=2 * EXTEND_PAIRS), verify_seconds=sum(
-            v["seconds"] for v in (smoke.get("verify") or {}).values()))
+    estimate = time_estimate(pilot, smoke, args.smoke, decision["m"])
     return {
         "schema": COUNTS_SCHEMA, "kind": "run", "base": pilot["base"],
         "cand": pilot["cand"], "manifest": mseal, "seed": SEED,

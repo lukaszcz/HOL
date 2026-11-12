@@ -143,7 +143,19 @@ TASK32_HISTORY = {
                    "10663eb5a7", "bytes": 133766},
         # the last driver before the tables (a2a7d3c487)
         {"sha256": "a3f949829ffa88ea799dd4016cbb1bbbaa5d50210b69c126fce32e"
-                   "6afa3179b5", "bytes": 141455}],
+                   "6afa3179b5", "bytes": 141455},
+        # the driver before the TASK33 storage cap changed (281599302d);
+        # the TASK33 records and the S3 reports carry it
+        {"sha256": "e3169e265e13cf55a18045fdebc5845f198ff8f9d1d15f9529076"
+                   "915dbc23516", "bytes": 179579}],
+}
+# TASK33: the driver and the storage driver as the kept records carry them
+# (the storage cap divided by the kinds a process releases since)
+TASK33_HISTORY = {
+    "task32_downstream.py": TASK32_HISTORY["task32_downstream.py"][-1:],
+    "task33_storage.py": [
+        {"sha256": "069b87eea6287685ff50715d4dc07db797163767c0e5f5bf475cf1"
+                   "adf94f2ab5", "bytes": 79375}],
 }
 
 
@@ -278,7 +290,7 @@ TABLES = {
         scratch="/dev/shm/t33",
         code=("task33_cases.py", "task32_downstream.py") + COMMON_CODE +
         task33_cases.CODE_FILES + STORAGE_CODE,
-        history={}, min_unit_cpu=0.2, unit_floor="sample", r_cap=8,
+        history=TASK33_HISTORY, min_unit_cpu=0.2, unit_floor="sample", r_cap=8,
         sample_cpu=1.0,
         claims="NOT release acceptance: startup and load timing only",
         cross_side=True, env_prefix="T33_",

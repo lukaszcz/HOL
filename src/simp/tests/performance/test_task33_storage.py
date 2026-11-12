@@ -1712,27 +1712,48 @@ class Controls34(Chain34):
                 "c", pilot=self.world.tmp / "pilot"), "control")
         self.assertEqual(spec["params"]["m"], out["m_cap"])
 
-    def test_the_cap_is_the_budget_over_the_cpu_per_object(self):
-        with mock.patch.object(st, "RELEASE_BUDGET_S", 100):
-            self.assertEqual(st.cap_of(0.5, 0.5, 4), 200)
-            self.assertEqual(st.cap_of(0.5, 0.5, 4, 4), 800)
+    def test_the_cap_is_the_budget_over_the_cpu_per_object_and_kind(self):
+        rel, ext = len(records.RELEASE_KINDS), len(records.EXT_RELEASE_KINDS)
+        self.assertEqual((rel, ext), (8, 6))
+        with mock.patch.object(st, "RELEASE_BUDGET_S", 120):
+            # a process releases M objects of each kind: M x kinds x cost
+            self.assertEqual(st.cap_of(0.5, 0.01, 4), 120 // (rel * 0.5))
+            self.assertEqual(st.cap_of(0.01, 0.5, 4), 120 // (ext * 0.5))
+            self.assertEqual(st.cap_of(0.5, 0.01, 4, 4), 4 * 120 //
+                             (rel * 0.5))
             self.assertEqual(st.cap_of(1000, 1000, 7), 7)  # never under M0
             # the dearer of the release and the extension process caps
-            self.assertEqual(st.cap_of(0.5, 1.0, 4), 100)
-            self.assertEqual(st.cap_of(1.0, 0.5, 4), 100)
+            self.assertEqual(st.cap_of(0.5, 0.5, 4), 30)
+            self.assertEqual(st.cap_of(0.5, 0.9, 4), 22)
+            self.assertEqual(st.cap_of(0.7, 0.5, 4), 21)
+            # the process's own CPU at the cap fits the budget
+            cap = st.cap_of(0.5, 0.01, 4)
+            self.assertLessEqual(cap * rel * 0.5, 120)
         procs = [dict(usage=dict(utime=2.0, stime=0.0))] * 3
-        self.assertEqual(st.object_cpu(procs, 10), 2.0 / (
-            10 * len(records.RELEASE_KINDS)))
+        self.assertEqual(st.object_cpu(procs, 10), 2.0 / (10 * rel))
+
+    def test_the_first_counts_keep_the_cap_of_the_undivided_sizing(self):
+        # task33_storage_counts.json: m_cap 1102 was sized without the
+        # division by the kinds, but M = 200 and `capped` are the same
+        data = st.a.load(st.STORAGE_COUNTS)
+        self.assertEqual(data["m_cap"], 1102)
+        self.assertEqual(st.cap_of(data["object_cpu"],
+                                   data["ext_object_cpu"], data["m0"]),
+                         data["m0"])
+        st.check_sizing(data)
+        with self.assertRaisesRegex(dw.Refusal, "disagree"):
+            st.check_sizing(dict(data, m_cap=1103))
 
     def test_the_extension_process_caps_m_as_well(self):
         self.stage("smoke", "smoke")
         with mock.patch.object(st, "RELEASE_BUDGET_S", 100):
             out = self.pilot()["outcome"]
-        ext_cap = math.floor(Fraction(100) / Fraction(out["ext_object_cpu"]))
-        release_cap = math.floor(Fraction(100) / Fraction(
-            out["object_cpu"]))
-        self.assertLess(ext_cap, release_cap)  # 6 kinds against 8
-        self.assertEqual(out["m_cap"], ext_cap)
+        ext_cap = math.floor(Fraction(100) / (Fraction(
+            out["ext_object_cpu"]) * len(records.EXT_RELEASE_KINDS)))
+        release_cap = math.floor(Fraction(100) / (Fraction(
+            out["object_cpu"]) * len(records.RELEASE_KINDS)))
+        self.assertEqual(out["m_cap"], max(out["m0"], min(ext_cap,
+                                                         release_cap)))
 
     def test_a_run_refuses_a_timeout_the_followup_budget_does_not_fit(self):
         limit = st.FOLLOWUP_FACTOR * st.RELEASE_BUDGET_S
@@ -1772,6 +1793,34 @@ class Controls34(Chain34):
                                 ("control", dict(pilot=args.pilot))):
             st.info_spec(self.args("x", manifest=moved, m0=M,
                                    **spec_args), mode)
+
+    def test_the_time_estimate_sizes_the_extension_from_the_smoke(self):
+        self.info_stages()
+        w = self.world
+        _, data, _ = self.predeclare()
+        estimate = data["time_estimate"]
+        pilot = st.a.load(w.tmp / "pilot" / "downstream.json")
+        smoke = st.a.load(w.tmp / "smoke" / "downstream.json")
+        walls = st.smoke_walls(w.tmp / "smoke", smoke)
+        m, m0 = data["decision"]["m"], pilot["outcome"]["m0"]
+        med = pilot["outcome"]["median_wall"]
+        per = estimate["per_process_wall"]
+        self.assertEqual(set(per), {st.GRAPH, st.RELEASE, st.EXT})
+        self.assertAlmostEqual(per[st.RELEASE], med[st.RELEASE] * m / m0)
+        extra = max(0, walls[st.EXT]["cand"] - walls[st.GRAPH]["cand"])
+        self.assertAlmostEqual(per[st.EXT], med[st.GRAPH] +
+                               extra * m / smoke["params"]["m"])
+        k = st.K
+        self.assertEqual(estimate["processes"]["run"],
+                         2 * k * (len(st.REGISTRY) + len(st.TRIVIAL) + 2)
+                         + k)
+        light = sum(sum(walls[u].values()) for u in st.REGISTRY +
+                    st.TRIVIAL)
+        run = k * (light + 2 * per[st.GRAPH] + 2 * per[st.RELEASE] +
+                   per[st.EXT]) + estimate["verify_seconds"]
+        self.assertAlmostEqual(estimate["total"], run)
+        self.assertGreater(estimate["extend_total"],
+                           estimate["verify_seconds"])
 
     def test_the_followup_budget_must_fit_the_process_timeout(self):
         st.check_budget()
