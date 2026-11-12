@@ -1389,6 +1389,8 @@ LOG_RULES = {
     # entry (count_problems rejects unknown entries, and the sealed
     # task33_declared.json must not change), so they are judged by the
     # marker: a positive `Ran N tests` line plus the unittest OK footer.
+    # (With a declaration, judge_log demands a reviewed count for count kinds
+    # that have no marker, so these rules need one.)
     "fragments-python-tests": ("unittest", marker(
         r"Ran ([1-9]\d*) tests? in")),
     "compiled-core-python-tests": ("unittest", marker(

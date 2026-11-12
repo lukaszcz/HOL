@@ -141,8 +141,10 @@ Additional coverage here (not a replacement for those suites):
   assertion, not a deferred static error.
   A final check replaces the direct `split` attribute with a counting handler
   (the foreign dispatcher removed first) and requires initialization to fail
-  as a conflict with that handler, never calling it, and persistent removal
-  to refuse with "persistent split registration not owned".
+  as a conflict with that handler and persistent removal to refuse with
+  "persistent split registration not owned"; neither calls the handler.
+  `repair.sml` imports only `SplitData` from `src/simp/src`: the negative
+  rejects any other `src/simp/src` module.
 
 The launcher statically imports only kernel/test helpers. A library build
 prerequisite is not a linked import. `Meta.loaded` **and** the runtime global

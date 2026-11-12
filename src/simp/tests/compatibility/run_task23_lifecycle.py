@@ -11,6 +11,30 @@ import tempfile
 from run_paired import HERE, execute, fingerprint, git, physical, require
 
 
+def negative_isolation_problems(log_text, src, private_dir):
+    """Problems with the negative run's `OBS repair.loaded.path=` lines: the
+    private SplitData.sig/.sml must both be loaded from `private_dir`, and no
+    loaded path may lie under the production `src` (src/simp/src). Paths are
+    compared by non-strict realpath, so spelling or symlinks cannot hide a
+    production module."""
+    prefix = "OBS repair.loaded.path="
+    real = lambda x: Path(os.path.realpath(x))
+    loaded = [real(line[len(prefix):]) for line in log_text.splitlines()
+              if line.startswith(prefix)]
+    problems = []
+    src_real, private_real = real(src), real(private_dir)
+    missing = [n for n in ("SplitData.sig", "SplitData.sml")
+               if private_real / n not in loaded]
+    if missing:
+        problems.append("negative did not load private " +
+                        ", ".join(missing) + " from " + str(private_dir))
+    foreign = sorted(str(x) for x in loaded if x.is_relative_to(src_real))
+    if foreign:
+        problems.append("negative loaded production src/simp/src "
+                        "module(s): " + ", ".join(foreign[:5]))
+    return problems
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
@@ -40,13 +64,15 @@ def main():
     make = [str(repo / "bin/Holmake"), "--no-project", "--no-cache",
             "--holstate=" + str(repo / "bin/hol.state0"), "-j1"]
 
-    def run(label, command, cwd, expected=0):
+    def run(label, command, cwd, expected=0, inspect=None):
         receipt = execute(command, cwd, env, 900)
         path = label + ".json.gz"
         (output / path).write_bytes(gzip.compress(
             (json.dumps(receipt, indent=2) + "\n").encode(), mtime=0))
         manifest["runs"].append({"label": label, "exit": receipt["exit"],
                                  "receipt": path})
+        if inspect is not None:
+            inspect(receipt["stdout"])
         require(not receipt["timed_out"] and receipt["exit"] == expected,
                 label + ": unexpected process outcome")
         require("error:" not in receipt["stdout"], label + ": static error")
@@ -168,23 +194,15 @@ def main():
                 "inputs": {p.name: fingerprint(p) for p in neg.iterdir()}}
             run("negative-build", make + ["--no_prereqs", "-C", str(neg),
                                            "repair.exe"], repo)
-            log = run("negative-run", [str(neg / "repair.exe")], neg, 1)
+            def isolated(out):
+                problems = negative_isolation_problems(out, src, neg)
+                require(not problems, "; ".join(problems))
+
+            log = run("negative-run", [str(neg / "repair.exe")], neg, 1,
+                      inspect=isolated)
             require("explicit initialization repairs missing dispatcher "
                     "identity" in log and "FAILED!" in log,
                     "negative did not fail the intended assertion")
-            require("OBS repair.loaded.path=" + str(neg / "SplitData.sml") +
-                    "\n" in log, "negative did not execute private SplitData")
-            foreign = sorted(
-                line for line in log.splitlines()
-                if line.startswith("OBS repair.loaded.path=" + str(src) + "/")
-                and Path(line.split("=", 1)[1]).name not in (
-                    "SplitData.sig", "SplitData.sml"))
-            require(not foreign, "negative loaded a production src/simp/src "
-                    "module besides the private SplitData: " +
-                    "; ".join(foreign[:3]))
-            require("OBS repair.loaded.path=" + str(src / "SplitData.sml") +
-                    "\n" not in log,
-                    "negative loaded the production SplitData")
             for name in ("SplitData", "repair"):
                 ui = neg / ".hol/objs" / (name + ".ui")
                 manifest["negative"].setdefault("loaded_ui", {})[name] = {
