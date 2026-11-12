@@ -19,10 +19,10 @@ sig
               stack : term list, cond_depth : int,
               term_ord : term * term -> order,
               relation : term * (term -> thm)} -> conv}
-  datatype reducer = LIFTED of Traverse.reducer
-                   | CONTEXT_REDUCER of reducer_context_data
-                   | CONFIG_REDUCER of reducer_config_data
+  type reducer
   val lift : Traverse.reducer -> reducer
+  val CONTEXT_REDUCER : reducer_context_data -> reducer
+  val CONFIG_REDUCER : reducer_config_data -> reducer
   val reducer_config_data : reducer -> reducer_config_data
   val reducer_data : reducer -> reducer_context_data
   val addctxt : thm list -> reducer -> reducer

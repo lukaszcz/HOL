@@ -48,10 +48,11 @@ class SignatureTests(unittest.TestCase):
         symbols = gate.signature_symbols(
             (gate.ROOT / gate.SIGNATURES["TraverseExt"]).read_text(),
             {"Abbrev": {"conv"}})
-        self.assertTrue({"CONFIG_REDUCER", "CONTEXT_REDUCER", "LIFTED",
+        self.assertTrue({"CONFIG_REDUCER", "CONTEXT_REDUCER",
                          "ParentFirst", "ChildFirst", "reducer",
                          "simp_prover_ctxt", "xtraverse_data"} <= symbols)
         self.assertNotIn("REDUCER", symbols)
+        self.assertNotIn("LIFTED", symbols)  # reducer is abstract
         self.assertNotIn("apply", symbols)  # record field, not qualified API
 
 

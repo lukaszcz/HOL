@@ -14,8 +14,8 @@
         "bytes": 270598
       },
       "current": {
-        "sha256": "fea5caee9ba8a9c0d0375ed88711874101382934528c2cc2916716cc90772c52",
-        "bytes": 274909
+        "sha256": "e626becc66c36a652f2418fc471f5d7fd3379856940bed8a784c819c2ebdc007",
+        "bytes": 274921
       },
       "decision": "tracked native constructors and explicit ordinary pins; TASK_11 baseline datatype cutover and one-way configured projection checks; branch-only configured/paired constructors explicitly import Cond_rewrExt without assertion changes; TASK_14 explicitly prepares directives before inventory inspection, retaining original source_metadata assertions; TASK_16 replaces retired ordinary optional/configured eligibility with inert total baseline getters, preserving tracked settings checks and all labels/streams",
       "old_anchors": [
@@ -139,7 +139,7 @@
         {
           "path": "src/simp/src/selftest.sml",
           "line": 6048,
-          "text": "  fun ordinary (Traverse.LIFTED (OrdinaryTraverse.REDUCER _)) = true"
+          "text": "  fun ordinary reducer ="
         },
         {
           "path": "src/simp/src/selftest.sml",

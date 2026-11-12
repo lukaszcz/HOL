@@ -38,8 +38,9 @@ The final public names corresponding to prototype structures are:
 | `Default` | `trackedSimpDefaults` | Explicit later-layer seed/update provider |
 
 `Traverse.reducer` returns to the **exact** pinned single-constructor datatype
-and signature. Extension reducers are `LIFTED of Traverse.reducer`,
-`CONTEXT_REDUCER` (integer depth), or `CONFIG_REDUCER` (option depth).
+and signature. The extension reducer type is abstract: it is built by
+`lift` of a `Traverse.reducer`, by `CONTEXT_REDUCER` (integer depth) or by
+`CONFIG_REDUCER` (option depth); these two are functions, not constructors.
 `TraverseExt.lift` is explicit; no reverse conversion exists. An ordinary-looking
 extension factory can use `lift (Traverse.REDUCER {...})`; a configured factory
 uses the extension constructor directly. `reducer_data` adapts an explicit int

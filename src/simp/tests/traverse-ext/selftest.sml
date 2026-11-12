@@ -72,8 +72,6 @@ val _ = let
            (same (conv [c,b] a) ab)
        in REFL tm end}
   val lifted = T.lift ordinary
-  val _ = case lifted of T.LIFTED _ => ()
-                       | _ => raise Fail "lift did not construct LIFTED"
   val rd = T.reducer_data lifted
   val rc = T.reducer_config_data lifted
   val _ = check "lift and record extraction run no callbacks"

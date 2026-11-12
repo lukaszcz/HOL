@@ -12,8 +12,8 @@ class DesignTests(unittest.TestCase):
         self.graph = json.loads((design.HERE / "graph.json").read_text())
         self.table = design.TABLE.read_text()
 
-    def test_all_193_api_decisions(self):
-        self.assertEqual(design.validate_table(self.table), 193)
+    def test_all_192_api_decisions(self):
+        self.assertEqual(design.validate_table(self.table), 192)
 
     def test_missing_api_is_not_a_pass(self):
         lines = self.table.splitlines(keepends=True)

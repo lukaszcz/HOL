@@ -6045,11 +6045,11 @@ local
      Both getters are total. Quota/proof/maker checks below are unchanged.
      Optional eligibility and the literal ordinary REDUCER client remain
      separately tested against OrdinarySimp, with ordinary pointer checks. *)
-  fun ordinary (Traverse.LIFTED (OrdinaryTraverse.REDUCER _)) = true
-    | ordinary _ = false
+  fun ordinary reducer =
+    Traverse.reducer_kind reducer = Traverse.LiftedReducer
   fun configured_rewriter data =
     case #rewriters (data : Traverse.traverse_data) of
-        [Traverse.CONFIG_REDUCER _] => true
+        [r] => Traverse.reducer_kind r = Traverse.ConfigReducer
       | _ => false
   fun native_shape data =
     not (null (#rewriters (data : Traverse.traverse_data))) andalso
@@ -6239,7 +6239,7 @@ local
     val public = traversedata_for_ss ss
     val extended = #1 (xtraversedata_for_ss ss)
     val native = case #rewriters public of
-        [Traverse.LIFTED (OrdinaryTraverse.REDUCER _)] => true
+        [r] => Traverse.reducer_kind r = Traverse.LiftedReducer
       | _ => false
   in
     native andalso
@@ -6375,7 +6375,7 @@ local
             else die "fallback refreshed contexts at the wrong stage"
   in
     (case #rewriters native of
-         [Traverse.LIFTED (OrdinaryTraverse.REDUCER _)] => true
+         [r] => Traverse.reducer_kind r = Traverse.LiftedReducer
        | _ => false) andalso
     Portable.pointer_eq (#dprocs native,#dprocs (#1 configured)) andalso
     configured_rewriter (#1 configured) andalso

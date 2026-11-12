@@ -5,12 +5,12 @@
   "from": "src/simp/src/selftest.sml",
   "to": "src/simp/tests/native-extension/selftest.sml",
   "source": {
-    "sha256": "fea5caee9ba8a9c0d0375ed88711874101382934528c2cc2916716cc90772c52",
-    "bytes": 274909
+    "sha256": "e626becc66c36a652f2418fc471f5d7fd3379856940bed8a784c819c2ebdc007",
+    "bytes": 274921
   },
   "typed_mapping": {
-    "sha256": "4a5ea057019f6d1bd5a3bb50bb8e3f45bb4c447a2e759e33587a425228a855f7",
-    "bytes": 366578
+    "sha256": "eeae87628cf521ba8f77dad4417ba6904daa71cef2c043648c6e25ab8442cacb",
+    "bytes": 366534
   },
   "original": {
     "sha256": "f3618db1b09fa05d0212bc4e4f3a3b1309d50acbc726389148e58f841d8cf7a9",

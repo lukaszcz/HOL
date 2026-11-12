@@ -23,11 +23,16 @@ sig
 
   (* Lifting is explicit and opaque: no source inventory is recovered.
      Only ordinary REDUCERs are a supported input during the mixed cutover.
-     No reverse adapter into Traverse is provided. *)
-  datatype reducer = LIFTED of Traverse.reducer
-                   | CONTEXT_REDUCER of reducer_context_data
-                   | CONFIG_REDUCER of reducer_config_data
+     The type is abstract and no reverse adapter into Traverse is provided:
+     a reducer is built by lift, CONTEXT_REDUCER or CONFIG_REDUCER, and read
+     back only as extension record data (reducer_config_data, reducer_data). *)
+  type reducer
   val lift : Traverse.reducer -> reducer
+  val CONTEXT_REDUCER : reducer_context_data -> reducer
+  val CONFIG_REDUCER : reducer_config_data -> reducer
+  (* Which constructor built the reducer; it exposes no payload. *)
+  datatype reducer_kind = LiftedReducer | ContextReducer | ConfigReducer
+  val reducer_kind : reducer -> reducer_kind
   (* These projections do not invoke collectors or apply callbacks.
      NONE stays live for CONFIG_REDUCER, and is sampled immediately before
      a CONTEXT_REDUCER callback using the shared Cond_rewr.stack_limit. *)

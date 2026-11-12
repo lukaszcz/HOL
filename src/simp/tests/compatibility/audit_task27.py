@@ -53,6 +53,21 @@ REVIEWED_31 = {
         blob='247f6a892c57f90a74035b2186fbab6bac174aea',
         reason='TASK17-24 explicit tracked API; TASK31 documents the one '
                'tracking extent shared with simpLib.track'),
+    # TASK34: TraverseExt.reducer becomes abstract (no LIFTED reverse
+    # adapter); CONTEXT_REDUCER and CONFIG_REDUCER are constructor functions.
+    SRC + 'TraverseExt.sig': dict(
+        blob='3a232428aac227e008c78f885b2459a2263c3c8f',
+        reason='TASK17-22 configured traversal and policy callback contract; '
+               'TASK34 abstract reducer type with explicit constructor '
+               'functions and reducer_kind, no reverse adapter'),
+    SRC + 'TraverseExt.sml': dict(
+        blob='1d370733b1bd28886dbc31566adfe094faad3bc4',
+        reason='TASK17-22 child-first staging, aborts and configured '
+               'traversal; TASK34 reducer_kind for the abstract reducer'),
+    SRC + 'congExtLib.sml': dict(
+        blob='42e535d4924e82a7aa55804673fa3a8e27220852',
+        reason='TASK34 eq_reducer_wrapper reads any reducer through '
+               'reducer_config_data; the reducer type is abstract'),
     # TASK34 removes the ambient attribute_fns; only attribute_fns_of stays.
     # SplitData.preflight uses ThmAttribute.is_attribute, develop's lookup.
     SRC + 'SplitData.sml': dict(
@@ -101,10 +116,9 @@ SHARED_ADDED = frozenset()
 DELTAS = {
     SRC + 'simpExtLib.sml': REVIEWED_31[SRC + 'simpExtLib.sml']['reason'],
     SRC + 'simpExtLib.sig': REVIEWED_31[SRC + 'simpExtLib.sig']['reason'],
-    SRC + 'TraverseExt.sml':
-        'TASK17-22 child-first staging, aborts and configured traversal',
-    SRC + 'TraverseExt.sig':
-        'TASK17-22 configured traversal and policy callback contract',
+    SRC + 'TraverseExt.sml': REVIEWED_31[SRC + 'TraverseExt.sml']['reason'],
+    SRC + 'congExtLib.sml': REVIEWED_31[SRC + 'congExtLib.sml']['reason'],
+    SRC + 'TraverseExt.sig': REVIEWED_31[SRC + 'TraverseExt.sig']['reason'],
     SRC + 'Cond_rewrExt.sml': REVIEWED_31[SRC + 'Cond_rewrExt.sml']['reason'],
     SRC + 'simpMarkerLib.sml':
         'TASK20 qualified directives and lossless nested actual bounds',

@@ -35,7 +35,8 @@ Construction or application can fail as for the selected traversal.
 ``` hol4
 >>_ val ss = simpExtLib.set_cond_depth 2 boolSimpsExt.bool_ss;
 >>_ val pair = simpExtLib.xtraversedata_for_ss ss;
->> val TraverseExt.CONFIG_REDUCER _ = hd (#rewriters (#1 pair));
+>> val {name, ...} = TraverseExt.reducer_config_data
+>>   (hd (#rewriters (#1 pair)));
 >> TraverseExt.XTRAVERSE pair [] “T ∧ p”;
 ```
 
