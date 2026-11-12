@@ -3411,9 +3411,10 @@ Exit codes (`exit_of`, `main`): 0 pass (a pilot covering every unit, a
 detected control, a smoke run, `predeclare`, `replay`, `recover`); 1 fail
 (a failing stage, an undetected control, a failing disposition); 2
 an inconclusive stage, a blocked run (a finding about the candidate), a
-pilot with a unit under 1 s of CPU, or a blocked disposition; 3 the run
-failed or was refused (a usage error of the command line, `--table`
-abbreviation included, is a refusal: 3, not the parser's 2);
+pilot with a unit under 1 s of CPU or whose jitter sized no R, or a
+blocked disposition; 3 the run failed or was refused (a usage error of
+the command line, `--table` abbreviation included, is a refusal: 3, not
+the parser's 2);
 4 SIGTERM or SIGHUP ended the run. After a signal
 the child's group is killed, the products are restored and the attempt is
 closed; with status 4 the saved result, if any, is still printed, else
@@ -4155,8 +4156,8 @@ The TASK32 codes (`exit_of`, `main`), for `task32_downstream.py` under
 either table and for `task33_storage.py`:
 
 - 0 pass: a decision stage that passes, a detected control, a smoke run
-  that passes its facts, a pilot that succeeded, `predeclare`, `replay`,
-  `recover`, a pass disposition, `dispose-snapshots`.
+  that passes its facts, a pilot that covers every kind, `predeclare`,
+  `replay`, `recover`, a pass disposition, `dispose-snapshots`.
 - 1 fail: a failing stage, an undetected control, a failing disposition.
 - 2 an inconclusive stage; a blocked run (a finding about the candidate,
   `report["blocked"]`) or disposition; the timing pilot with a kind

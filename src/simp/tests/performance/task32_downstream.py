@@ -56,8 +56,8 @@ files, seeds, ledger table and directory, code and its HISTORY, the unit
 floor MIN_UNIT_CPU and where it applies UNIT_FLOOR, R_CAP, the sample
 target SAMPLE_CPU that makes R at least ceil(SAMPLE_CPU / median CPU), the
 cross-side L1 rule). A record of a table other than task32 carries
-`table`; replay needs the same `--table`. The
-interface other drivers (TASK33 S4) call: `Table`, `use_table`,
+`table`; replay needs the same `--table`. The interface other drivers
+(TASK33 S4) call: `Table`, `use_table`,
 `build_reporter`, `build_probes`, `make_ctx`, `launch_probe` (with
 `execute_unit`, `admit`, `archive`), `open_attempt` and `table_lines` with
 their ledger `table`.
@@ -199,15 +199,15 @@ class Table:
     `history`, `min_unit_cpu` (the least CPU, where `unit_floor` says, for a
     unit to be covered), `unit_floor` (where that floor applies: "process",
     the median CPU of one process, or "sample", the median CPU of the
-    declared sample, min(R, r_cap) times
-    that of a process), `r_cap` (the most fresh processes per sample),
+    declared sample, min(R, r_cap) times that of a process), `r_cap` (the
+    most fresh processes per sample),
     `sample_cpu` (seconds of CPU a sample should reach: R is at least
-    ceil(sample_cpu / median CPU); 0 for none), `claims`,
-    `cross_side` (the L1 rule: per unit the loaded
-    modules and the files the process added to fileDirMap, root-masked,
-    are equal on both sides, a difference blocks; the part of fileDirMap
-    the heap preloaded is compared only through the `loaded_before`
-    names, and S4's `registry` case owes the comparison of the full map),
+    ceil(sample_cpu / median CPU); 0 for none), `claims`, `cross_side` (the
+    L1 rule: per unit the loaded modules and the files the process added
+    to fileDirMap, root-masked, are equal on both sides, a difference
+    blocks; the part of fileDirMap the heap preloaded is compared only
+    through the `loaded_before` names, and S4's `registry` case owes the
+    comparison of the full map),
     `env_prefix` (the prefix of the variables a unit may add to its
     process, None when units add none), `probe_sources` (the files, relative
     to this directory, that `build_probes` copies into the probe directory
@@ -1712,9 +1712,9 @@ def pilot_summary(rows_by_unit, reps_floor=1):
     proposed R (n * R the sd bound asks for, over the stage's pairs), the
     median CPU and wall of a process and whether it reaches the unit floor
     (MIN_UNIT_CPU; the table's sample target SAMPLE_CPU, if any, also
-    floors R). Under
-    the "sample" unit floor the compared value is the declared sample's
-    median CPU, min(R, R_CAP) times a process's, recorded as `floor_cpu`."""
+    floors R). Under the "sample" unit floor the compared value is the
+    declared sample's median CPU, min(R, R_CAP) times a process's, recorded
+    as `floor_cpu`."""
     out = {}
     for name, rows in rows_by_unit.items():
         pairs = len(rows) // 2
@@ -1725,9 +1725,9 @@ def pilot_summary(rows_by_unit, reps_floor=1):
         cpu = median([m["cpu"] for m in raw])
         # a table with a sample target (SAMPLE_CPU) asks for at least
         # ceil(SAMPLE_CPU / median CPU) processes per sample
-        floor = math.ceil(SAMPLE_CPU / cpu) if SAMPLE_CPU and cpu > 0 \
+        target = math.ceil(SAMPLE_CPU / cpu) if SAMPLE_CPU and cpu > 0 \
             else 1
-        reps = max(reps_floor, floor, math.ceil(need / PAIRS)) \
+        reps = max(reps_floor, target, math.ceil(need / PAIRS)) \
             if need is not None else None
         out[name] = dict(jitter=jitter, median_cpu=cpu,
                          median_wall=median([m["wall"] for m in raw]),
@@ -1746,17 +1746,25 @@ def floor_text():
                                UNIT_FLOOR == "sample" else "per process")
 
 
+def floor_needs_r():
+    """Whether the unit floor can only be judged once R is sized (the
+    "sample" floor); the "process" floor is judged on the median CPU."""
+    return UNIT_FLOOR != "process"
+
+
 def uncovered_units(pilot_outcome):
-    """(under, unsized): the pilot units under the unit floor that sized an
-    R, and those whose jitter sized no R (reps None), each as
-    (name, median_cpu, floor_cpu or None, reps)."""
+    """(under, unsized): the pilot units under the unit floor, and those
+    whose jitter sized no R (reps None), each as (name, median_cpu,
+    floor_cpu or None, reps). The causes are independent: a unit with no R
+    is also under the floor when the floor needs no R to be judged."""
     under, unsized = [], []
     for name, p in pilot_outcome.get("pilot", {}).items():
         found = (name, p.get("median_cpu"), p.get("floor_cpu"),
                  p.get("reps"))
         if found[3] is None:
             unsized.append(found)
-        elif not p.get("long_enough"):
+        if not p.get("long_enough") and (found[3] is not None or
+                                         not floor_needs_r()):
             under.append(found)
     return under, unsized
 
@@ -1777,7 +1785,7 @@ def uncovered_text(pilot_outcome):
     if unsized:
         parts.append("jitter sized no R: " + ", ".join(map(show, unsized)))
     return "; ".join(parts) or (
-        "no unit sized an R under %s" % floor_text())
+        "the pilot has no covered unit (unit floor: %s)" % floor_text())
 
 
 def pilot_refusal(what, pilot_outcome):

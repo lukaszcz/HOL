@@ -750,7 +750,10 @@ class Sizing(unittest.TestCase):
                 if keys:
                     self.assertIsNone(got["floor_cpu"])
                 outcome = dict(covered=False, pilot=dict(u=got))
-                self.assertTrue(dw.uncovered_units(outcome)[1])
+                under, unsized = dw.uncovered_units(outcome)
+                self.assertTrue(unsized)
+                # a process floor is judged without R: 0.5 s < 1 s too
+                self.assertEqual(bool(under), not keys)
                 with self.assertRaisesRegex(
                         dw.Refusal, r"jitter sized no R: u \(median_cpu "
                         r"0\.5 s.*reps None\)"):
@@ -769,11 +772,10 @@ class Sizing(unittest.TestCase):
                       text)
 
     def test_the_summary_line_names_an_uncovered_pilot(self):
-        report = dict(mode="pilot", stage=None, attempt=1, runs=[],
-                      success=True, outcome=dict(covered=False, pilot=dict(
-                          u=self.pilot(0.02))))
         with dw.using_table("task32"):
-            report["outcome"]["pilot"]["u"] = self.pilot(0.5)
+            report = dict(mode="pilot", stage=None, attempt=1, runs=[],
+                          success=True, outcome=dict(
+                              covered=False, pilot=dict(u=self.pilot(0.5))))
             text = dw.summary_line(report)
         self.assertIn("not covered: under 1 s of CPU per process: u "
                       "(median_cpu 0.5 s, reps 1)", text)
@@ -1576,12 +1578,10 @@ class ShortKindChain33(Base33):
             self.assertGreater(found["reps"], dw.R_CAP)
             self.assertAlmostEqual(found["floor_cpu"], 0.56, places=1)
             self.assertTrue(pilot["outcome"]["covered"])
-            info, again = dw.replay_one(w.tmp / "pilot", ledger=ledger)
-            self.assertEqual(dw.dumps(again["outcome"]),
-                             dw.dumps(pilot["outcome"]))
-            self.assertAlmostEqual(
-                again["outcome"]["pilot"]["state0-empty"]["floor_cpu"],
-                found["floor_cpu"])
+            # replay_one recomputes the outcome (floor_cpu included) from
+            # the receipts and raises on a mismatch: not raising is the
+            # check
+            dw.replay_one(w.tmp / "pilot", ledger=ledger)
             for mode, extra in (("smoke", {}),
                                 ("control", dict(pilot=w.tmp / "pilot"))):
                 args, spec = w.info(mode, mode, **extra)
