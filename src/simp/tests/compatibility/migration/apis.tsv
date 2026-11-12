@@ -93,7 +93,6 @@ I1	SplitData.exclude	val	SplitData.exclude	23,27
 I1	SplitData.initialize	val	SplitData.initialize	23,27
 I1	SplitData.named_rules	val	SplitData.named_rules	23,27
 I1	SplitData.theory_data	val	SplitData.theory_data	23,27
-I1	ThmAttribute.attribute_fns	val	ThmAttribute.attribute_fns	23,27
 I1	ThmAttribute.attribute_fns_of	val	ThmAttribute.attribute_fns_of	23,27
 I1	splitLib.split_rule	type	splitLib.split_rule	23,27
 I1	splitLib.SPLIT_ASM_TAC	val	splitLib.SPLIT_ASM_TAC	23,27

@@ -18,7 +18,7 @@ all 642 native checks and 11 aggregate vectors.
 separately sealed typed mapping.
 The original ledger and IDs are unchanged: its 630 native checks map in order
 to 642 current checks, with exactly 12 extension-registry R4 repeats. The
-verifier checks old Git blobs and current hashes/anchors for the four explicitly
+verifier checks old Git blobs and current hashes/anchors for the nine explicitly
 relocated sources; all other sources and non-native streams remain exact.
 Ordinary destructor/R6/R7/reflexivity pins remain ordinary. Type-driven tracked
 projection/optional-eligibility predicate changes are explicit, not hidden by

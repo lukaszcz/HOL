@@ -1632,14 +1632,17 @@ val _ =
     val absent = Context.snapshot ()
     val _ = tprint "attribute_fns_of reads supplied context without callbacks or mutation"
     val _ = require (check_result I) (fn () =>
-      not (Option.isSome (ThmAttribute.attribute_fns "lookup_test")) andalso
+      not (Option.isSome (ThmAttribute.attribute_fns_of (Context.snapshot ())
+                            "lookup_test")) andalso
       Portable.pointer_eq (handlers,
         valOf (ThmAttribute.attribute_fns_of owned "lookup_test")) andalso
       Portable.pointer_eq (absent,Context.snapshot ()) andalso !calls = 0) ()
     val _ = Context.restore owned
-    val _ = tprint "attribute_fns follows restored ambient context"
+    val _ = tprint "attribute_fns_of snapshot follows restored context"
     val _ = require (check_result I) (fn () =>
-      Portable.pointer_eq (handlers,valOf (ThmAttribute.attribute_fns "lookup_test"))
+      Portable.pointer_eq (handlers,
+        valOf (ThmAttribute.attribute_fns_of (Context.snapshot ())
+                 "lookup_test"))
       andalso not (Option.isSome (ThmAttribute.attribute_fns_of entry "lookup_test"))
       andalso Portable.pointer_eq (owned,Context.snapshot ()) andalso !calls = 0) ()
   in

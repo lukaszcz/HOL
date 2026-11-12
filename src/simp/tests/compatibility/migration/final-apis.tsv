@@ -93,7 +93,6 @@ I1	SplitData.exclude	SplitData.exclude	shared singleton; no type migration	retai
 I1	SplitData.initialize	SplitData.initialize	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
 I1	SplitData.named_rules	SplitData.named_rules	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
 I1	SplitData.theory_data	SplitData.theory_data	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
-I1	ThmAttribute.attribute_fns	ThmAttribute.attribute_fns	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
 I1	ThmAttribute.attribute_fns_of	ThmAttribute.attribute_fns_of	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
 I1	splitLib.split_rule	splitLib.split_rule	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27
 I1	splitLib.SPLIT_ASM_TAC	splitLib.SPLIT_ASM_TAC	shared singleton; no type migration	retain singleton owner; split persistence explicitly initialized	shared	23,27;27

@@ -112,7 +112,7 @@ fun initialize {validate} =
     fun conflict () = raise apiERR "enable_split_attribute"
       "settype or attribute split already exists"
     fun preflight () =
-      if Option.isSome (ThmAttribute.attribute_fns "split") orelse
+      if ThmAttribute.is_attribute "split" orelse
          Option.isSome (ThmSetData.data_exportfns {settype="split"}) orelse
          List.exists (equal "split") (ThmSetData.all_set_types ()) orelse
          List.exists (fn {abbrev,...} => abbrev = "split")

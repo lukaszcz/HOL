@@ -1,3 +1,6 @@
+fun split_attribute_now () =
+  ThmAttribute.attribute_fns_of (Context.snapshot ()) "split"
+
 (* Link only the launcher: each scenario starts with an unclaimed namespace
    and no splitter, opt-in module, or fixture theory loaded. *)
 open HolKernel testutils
@@ -50,7 +53,7 @@ val _ = if scenario = "foreign-attribute" then
 val _ = if scenario = "owned" then
           (Meta.load "splitLib"; Meta.qquse "optIn.ML")
         else ()
-val before_attribute = ThmAttribute.attribute_fns "split"
+val before_attribute = split_attribute_now ()
 val before_exporter = ThmSetData.data_exportfns {settype="split"}
 val target = case scenario of "parent" => "splitParentTheory"
                            | "child" => "splitChildTheory"
@@ -75,7 +78,7 @@ val _ = check "import never replaces handlers or emits warnings"
 val _ = if scenario <> "owned" then () else
   check "exported initializer preserves already-owned handlers"
     (Portable.pointer_eq (valOf before_attribute,
-       valOf (ThmAttribute.attribute_fns "split")) andalso
+       valOf (split_attribute_now ())) andalso
      not (Option.isSome (ThmSetData.data_exportfns {settype="split"})))
 
 val _ = if not foreign then
@@ -95,7 +98,7 @@ val _ = if not foreign then
             if scenario = "foreign-attribute" then
               (check "foreign attribute identity preserved"
                  (Portable.pointer_eq
-                   (handlers,valOf (ThmAttribute.attribute_fns "split")));
+                   (handlers,valOf (split_attribute_now ())));
                check "no partial exporter registration"
                  (not (List.exists (equal "split")
                          (ThmSetData.all_set_types ())));
@@ -109,7 +112,7 @@ val _ = if not foreign then
                     valOf (ThmSetData.data_exportfns {settype="split"})));
                check "foreign set attribute identity preserved"
                  (Portable.pointer_eq (valOf before_attribute,
-                    valOf (ThmAttribute.attribute_fns "split")));
+                    valOf (split_attribute_now ())));
                check "foreign set data untouched"
                  (case ThmSetData.current_data {settype="split"} of
                       [ThmSetData.ADD ({Thy,Name},th)] =>

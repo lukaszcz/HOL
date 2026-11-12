@@ -1,3 +1,6 @@
+fun split_attribute_now () =
+  ThmAttribute.attribute_fns_of (Context.snapshot ()) "split"
+
 (* The launcher must have NO static simplifier dependency. *)
 open HolKernel testutils
 fun check label ok = (tprint label; if ok then OK () else die label)
@@ -64,7 +67,7 @@ val handlers = {localf=fn _ => calls := !calls @ ["local"],
 val exporters = {add=fn _ => calls := !calls @ ["add"],
                  remove=fn _ => calls := !calls @ ["remove"]}
 val kind = env "API_AUDIT_KIND"
-val owned_attribute = ref (ThmAttribute.attribute_fns "split")
+val owned_attribute = ref (split_attribute_now ())
 val owned_exporter = ref (ThmSetData.data_exportfns {settype="split"})
 fun install () =
   ((case kind of
@@ -75,12 +78,12 @@ fun install () =
               {settype="split",efns=exporters}
         in export "foreign" end
     | _ => raise Fail "unknown foreign owner");
-   owned_attribute := ThmAttribute.attribute_fns "split";
+   owned_attribute := split_attribute_now ();
    owned_exporter := ThmSetData.data_exportfns {settype="split"};
    calls := [])
 fun verify_owner () = let
   val _ = check "foreign attribute exact record (or absence)"
-    (same_option (!owned_attribute,ThmAttribute.attribute_fns "split"))
+    (same_option (!owned_attribute,split_attribute_now ()))
   val _ = check "foreign exporter exact record (or absence)"
     (same_option (!owned_exporter,
        ThmSetData.data_exportfns {settype="split"}))
@@ -118,7 +121,7 @@ val order = env "API_AUDIT_ORDER"
 val timing = env "API_AUDIT_OWNER"
 val _ = print ("OBS case=" ^ order ^ "/" ^ kind ^ "/" ^ timing ^ "\n")
 val _ = if timing = "before" then (install (); verify_owner ()) else ()
-val attribute = ThmAttribute.attribute_fns "split"
+val attribute = split_attribute_now ()
 val exporter = ThmSetData.data_exportfns {settype="split"}
 val initial_hooks = hooks ()
 val warnings = ref ([] : string list)
@@ -148,7 +151,7 @@ val _ = check "only unchanged ordinary listener additions"
    List.filter (fn n => not (member n (map #1 initial_hooks)))
      legacy_listeners)
 val _ = check "ordinary imports preserve exact registry records"
-  (same_option (attribute,ThmAttribute.attribute_fns "split") andalso
+  (same_option (attribute,split_attribute_now ()) andalso
    same_option (exporter,ThmSetData.data_exportfns {settype="split"}))
 val _ = if timing = "after" then install () else ()
 val _ = verify_owner ()

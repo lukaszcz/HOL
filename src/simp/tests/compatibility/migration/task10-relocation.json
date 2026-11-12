@@ -251,8 +251,8 @@
         "bytes": 22191
       },
       "current": {
-        "sha256": "ff8a5e41b5981d180eadb70953c471666f1d8567ec922c897fc1df75d058aec2",
-        "bytes": 22197
+        "sha256": "28391ba12c2707de165894e3024c10bbb910ee2642b761366cbf111dfad8dcbe",
+        "bytes": 22334
       },
       "decision": "extension-typed focused registry/persistence consumer; assertions and stream unchanged",
       "old_anchors": [
@@ -265,7 +265,7 @@
       "current_anchors": [
         {
           "path": "src/simp/tests/split-registration/selftest.sml",
-          "line": 1,
+          "line": 4,
           "text": "open HolKernel Parse boolLib boolSimpsExt simpExtLib splitLib testutils"
         }
       ]
@@ -277,8 +277,8 @@
         "bytes": 6304
       },
       "current": {
-        "sha256": "16d191539256a20fb9e11d925b71a4de8df7df5c595f5042a20b90f80008e02e",
-        "bytes": 6310
+        "sha256": "0d7d3102e0af259b2cc42607481f8a2544bfdebbe1d343363aea33c916ed054f",
+        "bytes": 6354
       },
       "decision": "extension-typed focused registry/persistence consumer; assertions and stream unchanged",
       "old_anchors": [
@@ -291,7 +291,7 @@
       "current_anchors": [
         {
           "path": "src/simp/tests/split-persistence/selftest.sml",
-          "line": 84,
+          "line": 87,
           "text": "           Meta.load \"boolSimpsExt\"; Meta.load \"simpExtLib\";"
         }
       ]
@@ -319,6 +319,110 @@
           "path": "src/simp/tests/split-persistence/verify.ML",
           "line": 1,
           "text": "open Parse boolLib boolSimpsExt simpExtLib splitLib;"
+        }
+      ]
+    },
+    "src/simp/tests/fresh-load/identity-before.ML": {
+      "old_revision": "397a10fab770eb4d4188612a19401b8f71625d03",
+      "old": {
+        "sha256": "5b815ef172a69c4d55f6a9e188c29e09cb97dd3e42f7b2cbf2508090bd0224a5",
+        "bytes": 279
+      },
+      "current": {
+        "sha256": "de7cef0e1d9e78b93b9efb313aba02a680c7d975052d88c7266c7f37241743b0",
+        "bytes": 359
+      },
+      "decision": "TASK34 spells the split attribute lookup through attribute_fns_of; assertions and stream unchanged",
+      "old_anchors": [
+        {
+          "path": "src/simp/tests/fresh-load/identity-before.ML",
+          "line": 1,
+          "text": "(* Native ownership inspection only; never a pinned-develop dependency. *)"
+        }
+      ],
+      "current_anchors": [
+        {
+          "path": "src/simp/tests/fresh-load/identity-before.ML",
+          "line": 4,
+          "text": "(* Native ownership inspection only; never a pinned-develop dependency. *)"
+        }
+      ]
+    },
+    "src/simp/tests/fresh-load/identity-after.ML": {
+      "old_revision": "397a10fab770eb4d4188612a19401b8f71625d03",
+      "old": {
+        "sha256": "e129382676ca05e74e06e18c5545e220ce0fa8127d5876fdda5ed246df5e4c82",
+        "bytes": 1679
+      },
+      "current": {
+        "sha256": "9c4e34d4529a50b12510200ffafffd13f194965e4fa3b94d2b3075049e4d7583",
+        "bytes": 1759
+      },
+      "decision": "TASK34 spells the split attribute lookup through attribute_fns_of; assertions and stream unchanged",
+      "old_anchors": [
+        {
+          "path": "src/simp/tests/fresh-load/identity-after.ML",
+          "line": 1,
+          "text": "fun same_option (NONE,NONE) = true"
+        }
+      ],
+      "current_anchors": [
+        {
+          "path": "src/simp/tests/fresh-load/identity-after.ML",
+          "line": 4,
+          "text": "fun same_option (NONE,NONE) = true"
+        }
+      ]
+    },
+    "src/simp/tests/split-persistence/heapSave.ML": {
+      "old_revision": "397a10fab770eb4d4188612a19401b8f71625d03",
+      "old": {
+        "sha256": "1488f8c8be127695c93a93aa486b37222d0f19b120440364a63f1dee5f0f850f",
+        "bytes": 914
+      },
+      "current": {
+        "sha256": "ea66abe1637ff6e3cb24c0d84378ac863926e656834c8c3d6db39523e6600598",
+        "bytes": 994
+      },
+      "decision": "TASK34 spells the split attribute lookup through attribute_fns_of; assertions and stream unchanged",
+      "old_anchors": [
+        {
+          "path": "src/simp/tests/split-persistence/heapSave.ML",
+          "line": 1,
+          "text": "(* Saved snapshots include three different registry owners. All bindings"
+        }
+      ],
+      "current_anchors": [
+        {
+          "path": "src/simp/tests/split-persistence/heapSave.ML",
+          "line": 4,
+          "text": "(* Saved snapshots include three different registry owners. All bindings"
+        }
+      ]
+    },
+    "src/simp/tests/split-persistence/heapVerify.ML": {
+      "old_revision": "397a10fab770eb4d4188612a19401b8f71625d03",
+      "old": {
+        "sha256": "ebe9a5e1a461ad2d2e228ea684a753c836f78966f1332d2936a3d1893fe1ce7f",
+        "bytes": 3879
+      },
+      "current": {
+        "sha256": "78e05a0d71625436b9a48b038d91c57bab5be1133195eadc64095bcb9aeca2a6",
+        "bytes": 3947
+      },
+      "decision": "TASK34 spells the split attribute lookup through attribute_fns_of; assertions and stream unchanged",
+      "old_anchors": [
+        {
+          "path": "src/simp/tests/split-persistence/heapVerify.ML",
+          "line": 1,
+          "text": "open HolKernel testutils splitLib;"
+        }
+      ],
+      "current_anchors": [
+        {
+          "path": "src/simp/tests/split-persistence/heapVerify.ML",
+          "line": 4,
+          "text": "open HolKernel testutils splitLib;"
         }
       ]
     }
@@ -5723,7 +5827,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 53,
+        "line": 56,
         "literal": "ordinary loading installs no private listener"
       }
     },
@@ -5735,7 +5839,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 65,
+        "line": 68,
         "literal": "persistent removal never implicitly opts in"
       }
     },
@@ -5747,7 +5851,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 66,
+        "line": 69,
         "literal": "ordinary static loading leaves split unclaimed"
       }
     },
@@ -5759,7 +5863,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 67,
+        "line": 70,
         "literal": "uninitialized queries return no rules"
       }
     },
@@ -5771,7 +5875,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 75,
+        "line": 78,
         "literal": "pure conversion works before initialization"
       }
     },
@@ -5783,7 +5887,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 77,
+        "line": 80,
         "literal": "local Split works before initialization"
       }
     },
@@ -5795,7 +5899,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 79,
+        "line": 82,
         "literal": "TypeBase split_ss works before initialization"
       }
     },
@@ -5807,7 +5911,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 81,
+        "line": 84,
         "literal": "extended case exclusion works before initialization"
       }
     },
@@ -5819,7 +5923,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 86,
+        "line": 89,
         "literal": "extended named exclusion removes local Split before opt-in"
       }
     },
@@ -5831,7 +5935,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 88,
+        "line": 91,
         "literal": "extended named exclusion preserves TypeBase before opt-in"
       }
     },
@@ -5843,7 +5947,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 95,
+        "line": 98,
         "literal": "unmatched explicit exclusion fails without registration"
       }
     },
@@ -5855,7 +5959,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 101,
+        "line": 104,
         "literal": "local and TypeBase use claim no namespace"
       }
     },
@@ -5867,7 +5971,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 117,
+        "line": 120,
         "literal": "failed ancestor validation rolls back allocation and new listener"
       }
     },
@@ -5879,7 +5983,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 132,
+        "line": 135,
         "literal": "malformed private stream fails and rolls back"
       }
     },
@@ -5891,7 +5995,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 20,
+        "line": 23,
         "literal": "operation emits no warnings"
       }
     },
@@ -5903,7 +6007,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 141,
+        "line": 144,
         "literal": "explicit initialization claims attribute without a generic set"
       }
     },
@@ -5915,7 +6019,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 144,
+        "line": 147,
         "literal": "initialization preserves all unrelated listener identities and order"
       }
     },
@@ -5927,7 +6031,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 148,
+        "line": 151,
         "literal": "unrelated theory-data hook still receives loads"
       }
     },
@@ -5939,7 +6043,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 157,
+        "line": 160,
         "literal": "stored attribute adds named rule and persistent ADD"
       }
     },
@@ -5951,7 +6055,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 164,
+        "line": 167,
         "literal": "persistent removal resolves unqualified names at write time"
       }
     },
@@ -5963,7 +6067,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 170,
+        "line": 173,
         "literal": "restore recovers pre-removal data and private removal handle"
       }
     },
@@ -5975,7 +6079,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 174,
+        "line": 177,
         "literal": "persistent removal accepts qualified names"
       }
     },
@@ -5987,7 +6091,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 178,
+        "line": 181,
         "literal": "malformed persistent removal leaves entire Context unchanged"
       }
     },
@@ -5999,7 +6103,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 182,
+        "line": 185,
         "literal": "idempotent opt-in leaves the entire Context unchanged"
       }
     },
@@ -6011,7 +6115,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 184,
+        "line": 187,
         "literal": "idempotence preserves handlers and data"
       }
     },
@@ -6023,7 +6127,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 190,
+        "line": 193,
         "literal": "private persistent REMOVE updates queries"
       }
     },
@@ -6035,7 +6139,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 193,
+        "line": 196,
         "literal": "restore after opt-in recovers handle and data"
       }
     },
@@ -6047,7 +6151,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 195,
+        "line": 198,
         "literal": "restore before opt-in discards handle and registries"
       }
     },
@@ -6059,7 +6163,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 199,
+        "line": 202,
         "literal": "can initialize again after rewind"
       }
     },
@@ -6071,7 +6175,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 203,
+        "line": 206,
         "literal": "reinitialized theory-data hook uses its own witness"
       }
     },
@@ -6083,7 +6187,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 210,
+        "line": 213,
         "literal": "local attribute works without recording an ADD"
       }
     },
@@ -6095,7 +6199,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 215,
+        "line": 218,
         "literal": "restore selects original handle and theory-data witness"
       }
     },
@@ -6107,7 +6211,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 231,
+        "line": 234,
         "literal": "invalid declaration leaves exact context and stream unchanged"
       }
     },
@@ -6119,7 +6223,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 241,
+        "line": 244,
         "literal": "deleted binding invalidates recorded ADD but preserves REMOVE"
       }
     },
@@ -6131,7 +6235,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 243,
+        "line": 246,
         "literal": "recorded invalidation preserves prior live rule behavior"
       }
     },
@@ -6143,7 +6247,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 257,
+        "line": 260,
         "literal": "type retirement export hooks succeed"
       }
     },
@@ -6155,7 +6259,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 259,
+        "line": 262,
         "literal": "type retirement removes invalidated recorded ADD"
       }
     },
@@ -6167,7 +6271,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 271,
+        "line": 274,
         "literal": "constant retirement export hooks succeed"
       }
     },
@@ -6179,7 +6283,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 273,
+        "line": 276,
         "literal": "constant retirement removes invalidated recorded ADD"
       }
     },
@@ -6191,7 +6295,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 284,
+        "line": 287,
         "literal": "persistent removal rejects foreign attribute"
       }
     },
@@ -6203,7 +6307,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 27,
+        "line": 30,
         "literal": "conflict leaves the entire Context unchanged"
       }
     },
@@ -6215,7 +6319,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 30,
+        "line": 33,
         "literal": "explicit conflict has library error identity"
       }
     },
@@ -6227,7 +6331,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 286,
+        "line": 289,
         "literal": "attribute conflict does not partially create a set"
       }
     },
@@ -6239,7 +6343,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 292,
+        "line": 295,
         "literal": "foreign attribute behavior survives"
       }
     },
@@ -6251,7 +6355,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 294,
+        "line": 297,
         "literal": "owned state still usable"
       }
     },
@@ -6263,7 +6367,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 296,
+        "line": 299,
         "literal": "restore to foreign attribute never uses stale handle"
       }
     },
@@ -6275,7 +6379,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 319,
+        "line": 322,
         "literal": "foreign set data is neither adopted nor mutated"
       }
     },
@@ -6287,7 +6391,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 323,
+        "line": 326,
         "literal": "restore to foreign set returns no library rules"
       }
     },
@@ -6299,7 +6403,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 330,
+        "line": 333,
         "literal": "attribute replacement invalidates existing handle"
       }
     },
@@ -6311,7 +6415,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 331,
+        "line": 334,
         "literal": "persistent removal rejects foreign attribute replacement"
       }
     },
@@ -6323,7 +6427,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 335,
+        "line": 340,
         "literal": "foreign exporter callbacks survive conflicts"
       }
     },
@@ -6335,7 +6439,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 345,
+        "line": 350,
         "literal": "foreign ancestry data is not adopted"
       }
     },
@@ -6347,7 +6451,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 351,
+        "line": 356,
         "literal": "local override changes live rule without recording removal"
       }
     },
@@ -6359,7 +6463,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 354,
+        "line": 359,
         "literal": "TheoryLoaded dispatch has no stale-witness exceptions"
       }
     },
@@ -6371,7 +6475,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 358,
+        "line": 363,
         "literal": "restored library hook replays its own ADD"
       }
     },
@@ -6383,7 +6487,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 362,
+        "line": 367,
         "literal": "restored foreign ancestry hook keeps foreign data"
       }
     },
@@ -6395,7 +6499,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 378,
+        "line": 383,
         "literal": "failed retry preserves existing dispatcher and entry context"
       }
     },
@@ -6407,7 +6511,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 384,
+        "line": 389,
         "literal": "retry after failed replay succeeds without listener replacement"
       }
     },
@@ -6419,7 +6523,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 396,
+        "line": 401,
         "literal": "foreign listener rejected without partial Context mutation"
       }
     },
@@ -6431,7 +6535,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 406,
+        "line": 411,
         "literal": "owned initialization also rejects a replaced private listener"
       }
     },
@@ -6443,7 +6547,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 415,
+        "line": 420,
         "literal": "opt-in succeeds after foreign listener removal"
       }
     },
@@ -6455,7 +6559,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 417,
+        "line": 422,
         "literal": "final restoration recovers library rules"
       }
     },
@@ -6467,7 +6571,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 422,
+        "line": 427,
         "literal": "reserved word conflict creates neither registry"
       }
     },
@@ -6479,7 +6583,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 427,
+        "line": 432,
         "literal": "abbreviation conflict creates neither registry"
       }
     },
@@ -6491,7 +6595,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 433,
+        "line": 438,
         "literal": "cyclic abbreviation rejected without expansion"
       }
     },
@@ -6503,7 +6607,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 437,
+        "line": 442,
         "literal": "pinned queries select owned snapshot"
       }
     },
@@ -6515,7 +6619,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 438,
+        "line": 443,
         "literal": "pinned owned initialization rejects"
       }
     },
@@ -6527,7 +6631,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 440,
+        "line": 445,
         "literal": "pinned removal rejects without changing pinned view"
       }
     },
@@ -6539,7 +6643,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 441,
+        "line": 446,
         "literal": "pinned opt-in/removal do not mutate entire live context"
       }
     },
@@ -6551,7 +6655,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 447,
+        "line": 452,
         "literal": "pinned pre-opt-in queries ignore live owned handle"
       }
     },
@@ -6563,7 +6667,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 452,
+        "line": 457,
         "literal": "new initialization rejects pinned context"
       }
     },
@@ -6575,7 +6679,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-registration/selftest.sml",
-        "line": 458,
+        "line": 463,
         "literal": "rejected pinned initialization leaves live ownership intact"
       }
     },
@@ -6587,7 +6691,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-persistence/selftest.sml",
-        "line": 15,
+        "line": 18,
         "literal": "clean registries in fresh executable"
       }
     },
@@ -6599,7 +6703,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-persistence/selftest.sml",
-        "line": 18,
+        "line": 21,
         "literal": "not preloaded: "
       }
     },
@@ -6611,7 +6715,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-persistence/selftest.sml",
-        "line": 20,
+        "line": 23,
         "literal": "splitPersistLib"
       }
     },
@@ -6623,7 +6727,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-persistence/selftest.sml",
-        "line": 20,
+        "line": 23,
         "literal": "splitParentTheory"
       }
     },
@@ -6635,7 +6739,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-persistence/selftest.sml",
-        "line": 55,
+        "line": 58,
         "literal": "splitParentTheory"
       }
     },
@@ -6647,7 +6751,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-persistence/selftest.sml",
-        "line": 89,
+        "line": 92,
         "literal": "splitParentTheory"
       }
     },
@@ -6659,7 +6763,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-persistence/selftest.sml",
-        "line": 21,
+        "line": 24,
         "literal": "splitChildTheory"
       }
     },
@@ -6671,7 +6775,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-persistence/selftest.sml",
-        "line": 56,
+        "line": 59,
         "literal": "splitChildTheory"
       }
     },
@@ -6683,7 +6787,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-persistence/selftest.sml",
-        "line": 21,
+        "line": 24,
         "literal": "splitDescendantTheory"
       }
     },
@@ -6695,7 +6799,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-persistence/selftest.sml",
-        "line": 57,
+        "line": 60,
         "literal": "splitDescendantTheory"
       }
     },
@@ -6707,7 +6811,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-persistence/selftest.sml",
-        "line": 63,
+        "line": 66,
         "literal": "fresh import has expected success/failure"
       }
     },
@@ -6719,7 +6823,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-persistence/selftest.sml",
-        "line": 73,
+        "line": 76,
         "literal": "import never replaces handlers or emits warnings"
       }
     },
@@ -6731,7 +6835,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-persistence/selftest.sml",
-        "line": 82,
+        "line": 85,
         "literal": "persistent import does not load simpLib"
       }
     },
@@ -6875,7 +6979,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-persistence/selftest.sml",
-        "line": 76,
+        "line": 79,
         "literal": "exported initializer preserves already-owned handlers"
       }
     },
@@ -6887,7 +6991,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-persistence/selftest.sml",
-        "line": 66,
+        "line": 69,
         "literal": "import rejected at explicit registration, not decoding/replay"
       }
     },
@@ -6899,7 +7003,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-persistence/selftest.sml",
-        "line": 88,
+        "line": 91,
         "literal": "failed import did not finish parent theory"
       }
     },
@@ -6911,7 +7015,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-persistence/selftest.sml",
-        "line": 90,
+        "line": 93,
         "literal": "failed import did not call foreign handlers"
       }
     },
@@ -6923,7 +7027,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-persistence/selftest.sml",
-        "line": 96,
+        "line": 99,
         "literal": "foreign attribute identity preserved"
       }
     },
@@ -6935,7 +7039,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-persistence/selftest.sml",
-        "line": 99,
+        "line": 102,
         "literal": "no partial exporter registration"
       }
     },
@@ -6947,7 +7051,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-persistence/selftest.sml",
-        "line": 104,
+        "line": 107,
         "literal": "foreign attribute callbacks still work"
       }
     },
@@ -6959,7 +7063,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-persistence/selftest.sml",
-        "line": 107,
+        "line": 110,
         "literal": "foreign exporter identity preserved"
       }
     },
@@ -6971,7 +7075,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-persistence/selftest.sml",
-        "line": 110,
+        "line": 113,
         "literal": "foreign set attribute identity preserved"
       }
     },
@@ -6983,7 +7087,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-persistence/selftest.sml",
-        "line": 113,
+        "line": 116,
         "literal": "foreign set data untouched"
       }
     },
@@ -6995,7 +7099,7 @@
       },
       "current": {
         "path": "src/simp/tests/split-persistence/selftest.sml",
-        "line": 124,
+        "line": 127,
         "literal": "foreign exporter callbacks still work"
       }
     },
@@ -7021,6 +7125,258 @@
         "path": "src/simp/tests/fresh-load/syntax.ML",
         "line": 21,
         "literal": "qualified marker constant remains available: "
+      }
+    },
+    {
+      "old": {
+        "path": "src/simp/tests/fresh-load/identity-after.ML",
+        "line": 4,
+        "literal": "ordinary load preserves exact foreign handler records"
+      },
+      "current": {
+        "path": "src/simp/tests/fresh-load/identity-after.ML",
+        "line": 7,
+        "literal": "ordinary load preserves exact foreign handler records"
+      }
+    },
+    {
+      "old": {
+        "path": "src/simp/tests/fresh-load/identity-after.ML",
+        "line": 10,
+        "literal": "ordinary load preserves listener functions and order"
+      },
+      "current": {
+        "path": "src/simp/tests/fresh-load/identity-after.ML",
+        "line": 13,
+        "literal": "ordinary load preserves listener functions and order"
+      }
+    },
+    {
+      "old": {
+        "path": "src/simp/tests/fresh-load/identity-after.ML",
+        "line": 29,
+        "literal": "ordinary load adds only unchanged legacy marker listeners"
+      },
+      "current": {
+        "path": "src/simp/tests/fresh-load/identity-after.ML",
+        "line": 32,
+        "literal": "ordinary load adds only unchanged legacy marker listeners"
+      }
+    },
+    {
+      "old": {
+        "path": "src/simp/tests/fresh-load/identity-after.ML",
+        "line": 31,
+        "literal": "ordinary load installs no private persistence listener"
+      },
+      "current": {
+        "path": "src/simp/tests/fresh-load/identity-after.ML",
+        "line": 34,
+        "literal": "ordinary load installs no private persistence listener"
+      }
+    },
+    {
+      "old": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 33,
+        "literal": "splitPersistLib"
+      },
+      "current": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 36,
+        "literal": "splitPersistLib"
+      }
+    },
+    {
+      "old": {
+        "path": "src/simp/tests/split-persistence/heapSave.ML",
+        "line": 18,
+        "literal": "heap saves descendant rules and initialized registries"
+      },
+      "current": {
+        "path": "src/simp/tests/split-persistence/heapSave.ML",
+        "line": 21,
+        "literal": "heap saves descendant rules and initialized registries"
+      }
+    },
+    {
+      "old": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 10,
+        "literal": "heap reload restores named descendant rules"
+      },
+      "current": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 13,
+        "literal": "heap reload restores named descendant rules"
+      }
+    },
+    {
+      "old": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 12,
+        "literal": "heap reload preserves direct attribute identity and no generic set"
+      },
+      "current": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 15,
+        "literal": "heap reload preserves direct attribute identity and no generic set"
+      }
+    },
+    {
+      "old": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 18,
+        "literal": "heap DB theorem identity: "
+      },
+      "current": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 21,
+        "literal": "heap DB theorem identity: "
+      }
+    },
+    {
+      "old": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 23,
+        "literal": "heap opt-in remains idempotent"
+      },
+      "current": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 26,
+        "literal": "heap opt-in remains idempotent"
+      }
+    },
+    {
+      "old": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 26,
+        "literal": "heap removal handle is live"
+      },
+      "current": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 29,
+        "literal": "heap removal handle is live"
+      }
+    },
+    {
+      "old": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 29,
+        "literal": "heap restore before initialization discards registration"
+      },
+      "current": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 32,
+        "literal": "heap restore before initialization discards registration"
+      }
+    },
+    {
+      "old": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 34,
+        "literal": "cached opt-in module does not silently reclaim namespace"
+      },
+      "current": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 37,
+        "literal": "cached opt-in module does not silently reclaim namespace"
+      }
+    },
+    {
+      "old": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 37,
+        "literal": "heap can explicitly initialize after rewind"
+      },
+      "current": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 40,
+        "literal": "heap can explicitly initialize after rewind"
+      }
+    },
+    {
+      "old": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 41,
+        "literal": "heap foreign conflict is before any Context mutation"
+      },
+      "current": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 44,
+        "literal": "heap foreign conflict is before any Context mutation"
+      }
+    },
+    {
+      "old": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 48,
+        "literal": "heap foreign restore preserves owner and empty queries"
+      },
+      "current": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 51,
+        "literal": "heap foreign restore preserves owner and empty queries"
+      }
+    },
+    {
+      "old": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 53,
+        "literal": "heap foreign handler remains callable"
+      },
+      "current": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 56,
+        "literal": "heap foreign handler remains callable"
+      }
+    },
+    {
+      "old": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 59,
+        "literal": "heap parent replay restores ancestor key temporarily"
+      },
+      "current": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 62,
+        "literal": "heap parent replay restores ancestor key temporarily"
+      }
+    },
+    {
+      "old": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 63,
+        "literal": "heap TheoryLoaded routing has no stale witnesses"
+      },
+      "current": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 66,
+        "literal": "heap TheoryLoaded routing has no stale witnesses"
+      }
+    },
+    {
+      "old": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 66,
+        "literal": "heap restored dispatcher replays ADDs and REMOVEs"
+      },
+      "current": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 69,
+        "literal": "heap restored dispatcher replays ADDs and REMOVEs"
+      }
+    },
+    {
+      "old": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 68,
+        "literal": "heap lifecycle has no replacement warnings"
+      },
+      "current": {
+        "path": "src/simp/tests/split-persistence/heapVerify.ML",
+        "line": 71,
+        "literal": "heap lifecycle has no replacement warnings"
       }
     }
   ],

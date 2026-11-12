@@ -1,3 +1,6 @@
+fun split_attribute_now () =
+  ThmAttribute.attribute_fns_of (Context.snapshot ()) "split"
+
 (* A small independently mutable regression for explicit dispatcher repair. *)
 open HolKernel testutils
 fun check label ok = (tprint label; if ok then OK () else die label)
@@ -5,7 +8,7 @@ val _ = Theory.new_theory "split_listener_repair"
 val name = "splitLib.persistence.onload"
 fun init () = SplitData.initialize {validate=fn _ => ()}
 val _ = init ()
-val attribute = valOf (ThmAttribute.attribute_fns "split")
+val attribute = valOf (split_attribute_now ())
 val _ = ThmAttribute.local_attribute
   {name="local",attrname="split",args=[],thm=boolTheory.TRUTH}
 val entry = Context.snapshot ()
@@ -22,7 +25,7 @@ val _ = check "explicit initialization repairs missing dispatcher identity"
 val _ = check "dispatcher repair preserves exact Context and live rules"
   (Portable.pointer_eq (entry,Context.snapshot ()) andalso
    Portable.pointer_eq (attribute,
-     valOf (ThmAttribute.attribute_fns "split")) andalso
+     valOf (split_attribute_now ())) andalso
    (case SplitData.named_rules () of
         [(key,th)] => key = "split_listener_repair$local" andalso
           Portable.pointer_eq (th,boolTheory.TRUTH)

@@ -1,3 +1,6 @@
+fun split_attribute_now () =
+  ThmAttribute.attribute_fns_of (Context.snapshot ()) "split"
+
 open HolKernel testutils splitLib;
 fun check label ok = (tprint label; if ok then OK () else die label);
 fun free () = not (ThmAttribute.is_attribute "split") andalso
@@ -11,7 +14,7 @@ val _ = check "heap reload restores named descendant rules"
   (map #1 (named_split_thms ()) = SplitHeapState.names);
 val _ = check "heap reload preserves direct attribute identity and no generic set"
   (Portable.pointer_eq (SplitHeapState.attribute,
-     valOf (ThmAttribute.attribute_fns "split")) andalso
+     valOf (split_attribute_now ())) andalso
    not (List.exists (equal "split") (ThmSetData.all_set_types ())));
 val _ = List.app (fn (key,th) =>
   case String.fields (equal #"$") key of
@@ -47,7 +50,7 @@ val _ = check "heap foreign conflict is before any Context mutation"
     | NONE => false));
 val _ = check "heap foreign restore preserves owner and empty queries"
   (empty () andalso Portable.pointer_eq (SplitHeapState.foreign_handlers,
-    valOf (ThmAttribute.attribute_fns "split")));
+    valOf (split_attribute_now ())));
 val _ = ThmAttribute.local_attribute
   {name="foreign",attrname="split",args=[],thm=boolTheory.TRUTH};
 val _ = check "heap foreign handler remains callable"

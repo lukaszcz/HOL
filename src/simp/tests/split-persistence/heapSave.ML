@@ -1,10 +1,13 @@
+fun split_attribute_now () =
+  ThmAttribute.attribute_fns_of (Context.snapshot ()) "split"
+
 (* Saved snapshots include three different registry owners. All bindings
    are in the saved global namespace for the separate reload verifier. *)
 structure SplitHeapState =
 struct
   val before_init = initial_context
   val owned = Context.snapshot ()
-  val attribute = valOf (ThmAttribute.attribute_fns "split")
+  val attribute = valOf (split_attribute_now ())
   val names = map #1 (splitLib.named_split_thms ())
   val calls = ref 0
   val foreign_handlers =

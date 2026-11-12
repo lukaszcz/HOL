@@ -193,7 +193,9 @@ class LiveSourceGate(unittest.TestCase):
                          'ce013625030ba8dba906f756967f9e9ca394464a')
         self.assertEqual(set(audit.REVIEWED_31), {
             audit.SRC + n for n in ('Cond_rewr.sig', 'Cond_rewrExt.sml',
-                                    'simpExtLib.sml', 'simpExtLib.sig')})
+                                    'simpExtLib.sml', 'simpExtLib.sig',
+                                    'SplitData.sml')} | {
+            'src/1/ThmAttribute.sig', 'src/1/ThmAttribute.sml'})
         for path, record in audit.REVIEWED_31.items():
             with self.subTest(path=path):
                 self.assertTrue(record['reason'])

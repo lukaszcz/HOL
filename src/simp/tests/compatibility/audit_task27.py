@@ -53,6 +53,20 @@ REVIEWED_31 = {
         blob='247f6a892c57f90a74035b2186fbab6bac174aea',
         reason='TASK17-24 explicit tracked API; TASK31 documents the one '
                'tracking extent shared with simpLib.track'),
+    # TASK34 removes the ambient attribute_fns; only attribute_fns_of stays.
+    # SplitData.preflight uses ThmAttribute.is_attribute, develop's lookup.
+    SRC + 'SplitData.sml': dict(
+        blob='eb703ea016b3c2d7c7778ccf707b9d9c096a3071',
+        reason='TASK23 context-owned transactional persistence and pointer '
+               'ownership; TASK34 preflight uses develop is_attribute'),
+    'src/1/ThmAttribute.sig': dict(
+        blob='0277788be43d67ed8724d677c562d61e125a9e69',
+        reason='read-only exact installed attrfuns lookup API in a '
+               'supplied Context; no second registry'),
+    'src/1/ThmAttribute.sml': dict(
+        blob='b2161e0effd516e2bfffdbfba81bcd5c5a708e21',
+        reason='one read-only lookup function over the original Context '
+               'registry'),
 }
 TOOL = ROOT / 'bin/holdeptool.exe'
 ORDINARY_SENTINELS = tuple(directory + name + suffix
@@ -74,9 +88,9 @@ EXTENSIONS = tuple(sorted(set(prior.EXTENSIONS) | {
 # Cond_rewr.sml included.
 SHARED_DELTAS = {
     'src/1/ThmAttribute.sig':
-        'read-only exact installed attrfuns lookup API; no second registry',
+        REVIEWED_31['src/1/ThmAttribute.sig']['reason'],
     'src/1/ThmAttribute.sml':
-        'two read-only lookup functions over the original Context registry',
+        REVIEWED_31['src/1/ThmAttribute.sml']['reason'],
     SRC + 'Cond_rewr.sig': REVIEWED_31[SRC + 'Cond_rewr.sig']['reason'],
 }
 SHARED_ADDED = frozenset()
@@ -96,8 +110,7 @@ DELTAS = {
         'TASK20 qualified directives and lossless nested actual bounds',
     SRC + 'simpMarkerLib.sig':
         'TASK20 explicit prepared directive interface',
-    SRC + 'SplitData.sml':
-        'TASK23 context-owned transactional persistence and pointer ownership',
+    SRC + 'SplitData.sml': REVIEWED_31[SRC + 'SplitData.sml']['reason'],
     SRC + 'splitLib.sig':
         'TASK23 explicit persistence API documentation',
     SRC + 'combinSimpsExt.sml':

@@ -60,7 +60,11 @@ def verify(ledger, supplement=None):
             "src/simp/tests/split-registration/selftest.sml",
             "src/simp/tests/split-persistence/selftest.sml",
             "src/simp/tests/split-persistence/verify.ML",
-            "src/simp/tests/fresh-load/syntax.ML"},
+            "src/simp/tests/fresh-load/syntax.ML",
+            "src/simp/tests/fresh-load/identity-before.ML",
+            "src/simp/tests/fresh-load/identity-after.ML",
+            "src/simp/tests/split-persistence/heapSave.ML",
+            "src/simp/tests/split-persistence/heapVerify.ML"},
             "unexpected TASK_10 relocation source")
     old_text, current_text = {}, {}
     for path, record in sources.items():

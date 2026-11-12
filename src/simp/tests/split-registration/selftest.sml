@@ -1,3 +1,6 @@
+fun split_attribute_now () =
+  ThmAttribute.attribute_fns_of (Context.snapshot ()) "split"
+
 open HolKernel Parse boolLib boolSimpsExt simpExtLib splitLib testutils
 
 val _ = Theory.new_theory "split_registration"
@@ -148,7 +151,7 @@ val _ = check "initialization preserves all unrelated listener identities and or
 val _ = check "unrelated theory-data hook still receives loads"
   (null (Listener.call_listener Theory.delta_hook (TheoryDelta.TheoryLoaded thy))
    andalso hd (!unrelated_calls) = thy)
-val attribute = valOf (ThmAttribute.attribute_fns "split")
+val attribute = valOf (split_attribute_now ())
 val _ = ThmAttribute.store_at_attribute attrarg
 fun has_rule () =
   case named_split_thms () of
@@ -184,7 +187,7 @@ val _ = check "idempotent opt-in leaves the entire Context unchanged"
 val _ = check "idempotence preserves handlers and data"
   (has_rule () andalso
    Portable.pointer_eq
-     (attribute,valOf (ThmAttribute.attribute_fns "split")) andalso
+     (attribute,valOf (split_attribute_now ())) andalso
    length (SplitData.current_data ()) = 1)
 val _ = exclude_split (thy ^ ".rule")
 val _ = check "private persistent REMOVE updates queries" (empty ())
@@ -287,7 +290,7 @@ val _ = check "attribute conflict does not partially create a set"
   (empty () andalso
    not (List.exists (equal "split") (ThmSetData.all_set_types ())) andalso
    Portable.pointer_eq
-     (foreign_handlers,valOf (ThmAttribute.attribute_fns "split")))
+     (foreign_handlers,valOf (split_attribute_now ())))
 val _ = ThmAttribute.local_attribute attrarg
 val _ = check "foreign attribute behavior survives" (!calls = 1)
 val _ = Context.restore owned
@@ -330,6 +333,8 @@ val _ = ThmAttribute.register_attribute ("split",foreign_handlers)
 val _ = check "attribute replacement invalidates existing handle" (empty ())
 val _ = rejected_exclusion "persistent removal rejects foreign attribute replacement"
 val _ = silent conflict
+val _ = check "ownership checks never call a replacement handler"
+  (!calls = 1)
 val _ = #add foreign_efns {thy=thy,named_thm=(name,rule)}
 val _ = #remove foreign_efns {thy=thy,remove="foreign"}
 val _ = check "foreign exporter callbacks survive conflicts"
