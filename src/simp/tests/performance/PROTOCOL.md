@@ -3452,6 +3452,726 @@ the consumer scratch under `/dev/shm/t32-consumer`. Committed: the tools
 and tests above, `task32.seq`, and the two counts files, each in a commit
 of its own. No result, log, date of a run or handoff is committed.
 
+## TASK33 independent loading, storage and release
+
+TASK33 asks of the two TASK32 snapshots (the develop pin B and the
+candidate C32, built with the same toolchain) what a fresh ordinary process
+loads, how long startup and first use take, what an ordinary client's heap
+retains, and whether discarded ordinary objects are released. It also checks
+that explicit extension use works and that its state stays apart from
+ordinary objects. It is machinery and procedure: results, logs and dates of
+runs live outside the repository (see "Evidence and what is committed").
+Like everything in this file it is not release acceptance.
+
+Tools (all under `src/simp/tests/performance/`):
+
+- `task32_downstream.py --table task33`: the timing driver for the five
+  startup and load kinds (L4) and the L1 cross-side rule; `smoke`, `pilot`,
+  `control`, `run`, `extend`, `followup`, `predeclare`, `recover`, `replay`,
+  `dispose`
+- `task33_cases.py`: the five timing units (data, the table's output
+  digest, control units)
+- `task33_storage.py`: the storage and release driver (L1, L3, S1, S2,
+  S3, R1, E1, E2, S4): `smoke`, `pilot`, `control`, `run`, `extend`,
+  `followup`, `audit`, `predeclare`, `replay`, `dispose`, `dispose-snapshots`
+- `task33_rules.py`: the decisions of the storage cases, as pure
+  functions
+- `task33_records.py`: the strict parser and validator of the probes'
+  `@@T33` records
+- `task33_offline.py`: the checks that run no process: `archive`,
+  `audit`, `harvest`
+- `task33_dispose.py`: `dispose` and `dispose-snapshots` (called through
+  `task33_storage.py`)
+- `task33_declared.json`: the reviewed declaration
+- `task33/*.sml`, `task33/*.ML`, `RuntimeMetrics.sml`: the sealed probes
+- `test_task33_*.py`: tests
+
+The processes, locking, ledger, receipts and admission rules are the TASK32
+driver's ("Downstream timing driver"): `task33_storage.py` calls its
+`run_stage`, `launch_probe` and ledger functions. Two ledger tables share
+one file, `.agent-files/evidence/task33/attempts.jsonl` (hash-chained,
+git-ignored): `task33-loading` (the timing driver) and `task33-storage`.
+Every process runs a snapshot's own `bin/hol` on its own heap and its own
+`sigobj`; nothing runs on a worktree build. HEAD may differ from C32 only
+below `src/simp/tests/performance` (`check_counts_commit`), so everything
+TASK33 adds lives there.
+
+### Scope, and what is not measured
+
+Measured: Linux aarch64 on one shared 16-core host, Poly/ML 5.9.2 native,
+the default stdknl kernel, `--gcthreads=1`, a warm page cache, one saved
+state per heap and side. The heaps are `bin/hol.state0` and `bin/hol.state`
+(loads, startup, graph, release, registry); the other two TASK32 heaps
+(`numheap`, `realheap`) appear only through the 15 TASK32 units (case L1,
+offline).
+
+Not measured: other platforms and runtimes (x86_64, macOS, MoscowML,
+compact32, other Poly/ML versions), `--mt`, interactive and LSP sessions.
+Cumulative allocation on the stock runtime is not measured (case S4: the
+runtime has no counter, and heap and allocation-area sizes are not
+allocation). Live words exclude code spaces and saved-state data. VmHWM is
+the process-lifetime peak; a per-phase peak needs the `clear_refs` reset and
+is reported `unsupported` where that fails. A graph-word count is not RSS,
+bytes or an allocation rate. Release (R1) detects retention of one word or
+more per object for the listed kinds; it does not prove the absence of every
+root for every client closure. Image variation (a few tens of words per
+structure, a few hundred bytes per saved state) is inside the measured
+delta; no tolerance is applied to an exact metric.
+
+### Cases
+
+A decision is per case, per kind (and per size or metric). There is no
+aggregate; a fail blocks, and inconclusive is not a pass. "Exact" means
+deterministic: k = 3 fresh processes per side (order B C C B B C, the
+`loading.schedule`) must repeat within a side, and then one comparison
+decides. A value that does not repeat within a side is owed the 10-pair
+stage (`extend`, below). "Paired" is the TASK32 statistics (median paired
+ratio, bootstrap, B/B control).
+
+- L1. case: load paths and modules. metric, unit: `Meta.loaded` names and the
+  `fileDirMap` (file, directory) pairs, root- and probe-directory-masked.
+  decision: exact: every path inside its side's root, no extension module
+  (`check_loaded`), candidate stems minus baseline stems empty
+  (`check_new_stems`), masked sets equal B against C: per timing kind
+  (`cross_side`), per registry kind (full map), and for the 15 TASK32 units
+  (offline, `archive`)
+- L2. case: static closure. metric, unit: transitive `.uo`/`.ui` lists of
+  simpLib, congLib, bossLib and the heap DEPS in each `sigobj`; git source
+  blobs of the closure. decision: exact (offline `audit`): no extension
+  module, names equal B against C, differing files exactly the declared set
+- L3. case: callbacks and registries. metric, unit: `Theory.delta_hook`
+  listener names (ordered), attributes, set types, structure, signature and
+  functor names. decision: exact per registry kind: lists equal (the listeners
+  in order). `api-audit/run.py`, 8 cases PASS with a sealed receipt, in the
+  candidate only (the baseline has no audit), so listener identity there is
+  checked on the candidate
+- L4. case: startup and first-load time. metric, unit: whole-process CPU (usr
+  plus sys, process tree) and wall, s, five kinds; GC CPU, GC counts and
+  maxrss reported. decision: paired, 3% margin, TASK32 rules (`POLICY`, the
+  B/B control window)
+- S1. case: retained graph size and slope. metric, unit: anchored `objSize`
+  words per object kind at 0, 1, 10, 100, 1000 and 10000 rules; slopes
+  (adjacent sizes) in words per rule. decision: exact, zero margin: cand <=
+  base at every size and slope, on the canonical rows; the as-built rows only
+  where gateable
+- S2. case: heap content. metric, unit: closure total U of the declared
+  structures, words; saved-state bytes; live words. decision: U changes by
+  exactly the declared scoped delta, no exclusive part grows
+- S3. case: totals, peaks, GC. metric, unit: live words per phase, sizeHeap,
+  VmRSS and VmHWM, per-phase peak, maxrss, GC counts and time. decision:
+  reported; an interval wholly above 1.03 owes a written attribution
+- S4. case: allocation. metric, unit: cumulative words. decision: reported
+  `unsupported`
+- R1. case: release of discarded ordinary objects. metric, unit: live-word
+  residual per discarded object, words/object, per kind. decision: per
+  process, with the no-op floor (below)
+- R2. case: hidden roots (static). metric, unit: additions of top-level `ref`,
+  `Array`, hash tables, `Weak`, `Listener.add_listener`, `register_hook`,
+  attribute or set-type registration in the differing closure files. decision:
+  exact (offline `audit`): none undeclared
+- R3. case: record and layout. metric, unit: type, datatype, exception and
+  record declarations of the differing closure files. decision: exact (offline
+  `audit`): spec- or val-only declared differences, no type change
+- E1. case: explicit extension use works. metric, unit: the candidate's `-t`
+  suite logs, the `ext` probe's kernel checks, api-audit. decision: all
+  present and passing
+- E2. case: extension lifetime separate. metric, unit: (a) ordinary rows in an
+  `ext` process, (b) residual of extension objects, (c) registries after use.
+  decision: (a) canonical rows equal the ordinary candidate's; (b) residual
+  under 1/2 word per object; (c) L3 lists equal apart from the declared
+  additions
+
+L1 compares the fileDirMap part the heap preloaded only through the
+`loaded_before` names in the timing kinds; the registry kinds compare the
+full map.
+
+Canonical and as-built rows (S1). Poly/ML's GC share pass deduplicates equal
+immutable data, is timing-driven and cannot be switched off. At each size
+the probe measures the rows as built, then calls `PolyML.shareCommonData` on
+one tuple of every root and measures the canonical rows, and records the
+share count at the start of the size and at each measurement
+(`share_start`, `share_built`, `share_shared`, `share_canon`).
+
+- Canonical rows (`canon_words`) are gateable when `share_shared =
+  share_canon` (strict: safety over redraws). They are the S1 gate: exact
+  within a side over k, and cand <= base at every size and every adjacent
+  slope, per kind.
+- As-built rows (`words`) are gated the same way only at sizes where no
+  process of either side had a share pass in the window (`gateable_coverage`
+  of the kind lists them); the kind needs at least one such size >= 100 in
+  the intersection of all processes, else its as-built result is
+  inconclusive and routed like a non-repeatable value. Otherwise they are
+  reported.
+- Every anchor and union tuple carries a per-process `code0` tuple (a
+  simpset, conversion, tactic, traversal data and congruence conversion
+  built from one unrelated rule), so rows count per-object data only. The
+  step 0 to 1 against the per-object step 1 to 10 is reported (`step`),
+  never gated: it differs identically on both sides for `compiled`,
+  `exclusion` and `cong` (first-rule cost inside the simpset).
+- Anchors are measured before the size-n objects are built (canonical
+  pre-anchor, after sharing the anchor inputs, `share_tries` rounds until
+  they stop changing) and again after the rows; the record requires
+  released = anchor. A move is data: `summary["anchor_moved"]` lists {kind,
+  n, mode, pre, post}. Moved on the candidate is an S1 fail (retention into
+  the shared base); moved on the baseline is a refusal (a harness fault); a
+  move in one process of a pair is first redrawn (below). A probe that did
+  not converge is `NotComparable`.
+- Graph kinds: fragment, compiled (`pure_ss ++ f`), compiled_bool (`bool_ss
+  ++ f`), merge, projection (`traversedata_for_ss`), conversion, tactic,
+  exclusion history (`ss -* names`, k = n/10 names), removed
+  (`remove_ssfrags`), cong; the `cells_cons` and `cells_ref` kinds are the
+  cells control (3 and 2 words per input) and are not gated.
+- Paired mode (the 10-pair stage): `acceptance.paired_statistics` at zero
+  margin per series; equal values pass, a zero baseline with a larger
+  candidate fails.
+
+Structure sizes (S2). The absolute `objSize` per structure (ThmAttribute,
+Cond_rewr structure and signature, simpLib, Traverse, Travrules, Opening,
+boolSimps, pureSimps) is reported only. The gate is anchored. D is the tuple
+of the declared structures (ThmAttribute and Cond_rewr, structure and
+signature) plus `Context.snapshot ()`. Two rules:
+
+- (a) the closure total U = objSize((D, X1, ..., Xn)) over the other
+  structures changes B to C by exactly the declared `s2.total_delta` value
+  of the entry covering that (heap, kind) (the closure-total rule; scoped
+  entries {heap, kinds, value, observed, mechanism});
+- (b) no structure's exclusive part objSize((D, X)) - objSize((D, D)) grows
+  (cand <= base).
+
+Together they detect private growth anywhere outside D. The exclusive parts
+are not comparable B against C in absolute terms (D's growth reaches objects
+that only X reached on B), hence the total rule. The probe repeats each
+measurement three times in one image (`repeat_ok` must hold). U is computed
+only where every structure is loaded: on `hol.state` (kinds `state-empty`
+and `first-use`); on `hol.state0` it is null and S2 is reported, not
+applicable. A (heap, kind) that computes U and is covered by no entry, or by
+more than one, is refused (undeclared). A U computed on one side only fails.
+The roots of the two sides and their probe directories must have equal
+lengths (path strings reach `objSize`); `run` asserts it before any
+structure comparison. Saved-state file bytes come from the sealed snapshot
+manifest and are reported (`outcome["reported"]`).
+
+R1 release rule. The `release` probe warms up once, then per kind reads live
+words (after three full GCs) before, creates and discards M objects, reads
+again (`after`), and holds M objects alive (`held`). Residual = (after -
+before) / M words per object; held size h = (held - after) / M. The leading
+kind `noop` is the in-process noise floor. Comparisons use exact fractions,
+no rounding. The kinds are `simpset`, `conversion`, `tactic`,
+`traversedata`, `exclusion`, `removed` and `cong`, plus the `weak` row
+(`RuntimeMetrics.release`: a weak reference to a discarded simpset must be
+collected).
+
+- Resolved: the no-op floor's range across the kind's processes (both
+  sides) is at most 1/4 word per object (`RESOLUTION`). Unresolved is
+  inconclusive and goes to the larger-M follow-up.
+- Fail: some candidate process has residual >= 1/2 while every baseline
+  process is under 1/2 in magnitude. A baseline process at or above 1/2 is
+  inconclusive (follow-up); so is a side whose residuals range over more
+  than 1/4 (a leak in some processes only); a base outlier never raises the
+  candidate's threshold.
+- Blocked (the probe cannot see; a larger M does not help): no comparable
+  `held` reading, h under 20 words per object (`H_MIN`) on the comparable
+  held readings, or the weak probe not collected on the baseline. The weak
+  probe not collected on the candidate fails.
+- Otherwise pass.
+- Release comparability is required of `before` and `after` (equal `alloc`
+  and `gc_share`, a fresh allocation area); `held` carries
+  `held_comparable`. A process without a comparable reading is
+  `NotComparable`: a redraw, never a result.
+
+M is sized by the pilot from the raw noise (range <= 0.25 M words) and
+clamped to a cap derived from a declared CPU budget (`RELEASE_BUDGET_S` =
+600 s per release process divided by the pilot's CPU per object); the counts
+record `required_m` and `capped` as TASK32 records `required_reps`. The
+follow-up M is max(4 M, ceil(M x floor range / 1/4)), capped by 4 times the
+budget.
+
+Extension cases (E2), on the candidate only; no develop counterpart exists
+for (b). The `ext` probe loads `simpExtLib`, uses tracked construction,
+views, bundles and projections (kernel checks `ext tracked`, `ext views`,
+`ext bundle`), runs the release cycles of the extension kinds
+(`ext_tracked`, `ext_views`, `ext_bundle`, `ext_projection`,
+`ext_xprojection`), then the `graph` work in the same process.
+
+- (a) the canonical rows of every graph kind and size in an `ext` process
+  equal the ordinary candidate's `graph` rows (exact; paired in the 10-pair
+  stage; routed like S1, an anchor moved in an `ext` process fails).
+- (b) R1's rule for each extension kind with no baseline: every `ext`
+  process under 1/2 word per object, with the floor resolved.
+- (c) the L3 lists (listeners, attributes, set types, structures,
+  signatures, functors; never `loaded` or `files`, the probe modules differ
+  by design) after explicit use against `registry-state-empty` of the
+  candidate. The `e2c.extension_state` entries of the declaration are
+  structured: `registers` {list: [exact names]}, `required`, `observable`
+  (prose-only state such as `Context.Data` slots is `observable: false` and
+  satisfies nothing). Per list, added names are among the union of the
+  observable `registers` and the probe's own `probe_support`; every name of
+  a `required` entry is added; no ordinary name is removed; the ordinary
+  listeners keep their relative order; all `ext` processes agree.
+- Reported (`E2:u`, not a gate): the closure total U and the exclusive parts
+  of an `ext` process less the ordinary candidate's. The `ext` probe is
+  excluded from the S2 gate.
+
+Reported items and attribution. S3 (live words per phase, build-window
+peaks) is reported. The `rows` peak window is reported only and is
+`unsupported` when the build already ended at its peak. A peak is verified
+only if the `clear_refs` write succeeded, VmHWM exceeded VmRSS by more than
+the slack before the reset and is within the slack after it. The timing
+chain's GC CPU and maxrss paired intervals and the `archive` report's
+(`gc_full`, `gc_partial`, `gc_share`, `gc_time`, `size_heap`, maxrss of the
+15 TASK32 units, paired where paired) are scanned: an interval whose low
+bound is above 1 is listed, and one wholly above 1.03 (`ABOVE`) is entered in
+`attribution_needed` of the disposition. That is a duty, not a gate and not
+a waiver: the handoff owes a written attribution for each (`dispose-
+snapshots` refuses while one is outstanding). The `archive` report carries
+the data for the TASK32 `lim` GC CPU interval. GC counts and heap size are
+not deterministic (Poly/ML sizes its heap from GC timing); they are never
+gated.
+
+S4 is reported `unsupported` with the note that TASK31 gate 5 measured exact
+allocation words of the same compiled sources on independent clean images
+with the private counter, and the TASK29B matrix reports it. The
+`matrix.json` blockers `rss_prerequisite`, `lifetime_prerequisite` and
+`allocation_prerequisite` are not edited here; their reconciliation belongs
+to the final matrix evidence.
+
+### Probes and control switches
+
+Probes are SML, harness-only and use develop APIs only (except `ext`). They
+are copied into each side's probe directory, `<scratch>/probe-<side>`
+(default `/dev/shm/t33/probe-base`, `.../probe-cand`; outside the snapshot),
+and built there, in their final directory, by that side's own Holmake
+(`build_probes`, which checks their seals). Each process is
+
+    <root>/bin/hol --gcthreads=1 run --holstate=<root>/<heap> \
+        <reporter>.uo <ProbeModule>
+
+with the probe directory as cwd and the probe a bare module name (the
+compiled unit lives in `.hol/objs/`; nothing tests the physical `.uo`
+path). The probes print `@@T33<TAB>{json}` records; the TASK32 reporter's
+stats line still goes to `$T32_STATS`. Locale variables are pinned in the
+driver's process environment, so printed checks cannot vary with the
+caller's. Check records carry evidence (the printed theorem, or a term hash
+and hypothesis count), so the output digest depends on results.
+
+- `T33Load`. unit: `state0-empty`, `state-empty`, `load-simpLib`,
+  `load-congLib`, `first-use` (the five timing units; kind from `T33_KIND`,
+  module from `T33_MODULE`). heap: state0, state, state0, state0, state. does:
+  nothing; nothing; `load "simpLib"` and one `SIMP_CONV` check; `load
+  "congLib"` and one congruence check; first and second `SIMP_CONV` and
+  `SIMP_TAC`
+- `T33Trivial`. unit: `trivial-state0-empty`, `trivial-state-empty`. heap: as
+  above. does: a trivial probe with no T33 support code; the residual compile
+  cost of the timed probe is measured once and stated
+- `T33Registry`. unit: `registry-<kind>` for the five kinds. heap: as the
+  kind. does: after the kind's work: full `fileDirMap`, `Meta.loaded`,
+  registries, structure names, per-structure `objSize`, anchored U, live words
+- `T33Graph`. unit: `graph`. heap: `hol.state`. does: retained graph words at
+  the six sizes, canonical and as built, anchors, share counts, per-phase
+  peaks
+- `T33Release`. unit: `release`. heap: `hol.state`. does: the R1 cycles; uses
+  the sealed `RuntimeMetrics.sml` unchanged and calls `release ()` once
+- `T33Ext`. unit: `ext` (candidate only). heap: `hol.state`. does: E1 and E2
+  work, then the `graph` work again
+
+The timing kinds run a minimal probe with no T33 support code (`T33Load`
+compiles only itself, `T33Kind.ML` and one check file), so the measured
+process compiles a few lines only. Rules are `ASSUME` equations over fresh
+variables, so theory state does not grow. `T33Load` takes the module name
+only from `T33_MODULE`, so Holdep sees no static simplifier dependency.
+
+Harness-only control switches, read from the environment, never in
+production sources; each acts in the probes of `CONTROL_PROBES`:
+
+- `T33_GRAPH_EXTRA=1`. effect: one extra cons retained per rule in the
+  measured object (an extra rewrite fragment for the simpset kinds, a closure
+  capturing the extra data for closure kinds). probe: `graph`. must fail: S1
+- `T33_LEAK=1`. effect: every discarded object kept in a global list. probe:
+  `release`. must fail: R1
+- `T33_HOOK=1`. effect: one extra `Theory.register_hook`. probe: `registry`.
+  must fail: L3
+
+The timing control uses the reporter's existing `T32_BUSY`. A control is a
+separate unit (`control_unit`, e.g. `graph+graph_extra`): a receipt's
+environment must equal its unit's. A set switch other than `"1"` or `"0"` is
+refused, and the validator takes the expected set of switches, not a
+boolean. The unit `ext+ordinary` (the extension probe presented as an
+ordinary process) must be refused with an extension-module finding.
+
+### Declaration
+
+`task33_declared.json` (schema `task33-declared-v4`) is reviewed data, not
+output of a run. It holds:
+
+- `base`, `cand`: the pins;
+- `l2`: one entry per differing closure file (path, base and candidate
+  blobs, mechanism, justification, `allowed_kinds`, `type_change`,
+  `new_root`), the R2 and R3 evidence;
+- `allowlist`: modified tracked files that are not compiled or loaded by
+  any heap (path, blobs, justification);
+- `s2.structures` (D, with mechanism and forbidden kinds) and
+  `s2.total_delta`, the scoped closure-total deltas of S2 (rule text,
+  value, unit, the live observation, mechanism); the `ext` probe is named as
+  excluded from the S2 gate;
+- `e2c`: the rule text, `probe_support` and the structured
+  `extension_state` entries of E2 (c);
+- `log_counts`: the reviewed counts of the suites that print no completion
+  line (E1 harvest).
+
+It is committed and reviewed before the pilot. The offline reports carry its
+seal in their `code`, and the storage counts file records it (`declared`);
+`run`, `replay` and `dispose` refuse a changed one. A new declaration, or a
+changed value in it, is a reviewed change that invalidates the decision run:
+`predeclare` is repeated and the runs after it are drawn again. An
+undeclared S2 or L2 difference fails; it is not explained after the fact. A
+`total_delta` value is measured live (k = 2 per side, deterministic) before
+the declaration is committed.
+
+### Counts, ledger, redraws
+
+Counts files (each committed alone: `check_counts_commit`, exactly one
+commit touches the file and nothing else, and HEAD differs from C32 only
+below `src/simp/tests/performance`):
+
+- `task33_counts.json`. by: `task32_downstream.py --table task33 predeclare`.
+  holds: R per timing kind (`declared_reps`), `required_reps`, sorted
+  `capped`, reference digests, seals of the replayed timing smoke, pilot and
+  control, overheads, time estimate, manifest seal, `CODE` seals
+- `task33_followup_counts.json`. by: the same with `--followup`. holds: the
+  timing follow-up
+- `task33_storage_counts.json`. by: `task33_storage.py predeclare`. holds: k,
+  sizes, M (`m0`, `required_m`, `m_cap`, `capped`, `budget_s`, `object_cpu`),
+  seeds, the two contingencies, seals of the replayed smoke, pilot and control
+  and the three offline reports, manifest and declaration seals, `CODE` seals,
+  and the seal and commit of `task33_counts.json`
+- `task33_storage_followup_counts.json`. by: `task33_storage.py predeclare
+  --followup`. holds: the units owed, M, the stage it replaces
+
+The storage counts bind the committed timing counts (their seal is
+recorded and `run`, `replay` and `dispose` verify it against the timing
+chain's counts), and both bind the same `CODE` seals. `predeclare` refuses
+a control that did not run at the decision configuration (pairs, R, k, M as
+declared; for the storage controls the pilot's sizes and M, and the
+control must name the pilot it was sized from), a smoke that did not pass
+the probe facts, an information run of another gate or manifest, and
+offline reports that are not exactly one each of `archive`, `audit` and
+`harvest`.
+
+Layout seeds. Timing: `task33-1` (first stage) with `-smoke`, `-pilot`,
+`-control`, `-ext` and `-fu`. Storage: `task33-s4-<stage>` for `smoke`,
+`pilot`, `control`, `run`, `extend`, `followup` and `audit`.
+
+No CODE file changes between the first `predeclare` and the end of both
+decision runs (the timing `run` and the storage `run` with their
+contingencies, `audit` and the replays). The counts, every run and every
+replay carry the `CODE` seals and refuse a mismatch. A fix found meanwhile
+lands after the runs, with a seal-history entry (below). `api-audit/run.py`
+is not in `CODE`; it is covered by the snapshot manifest.
+
+Ledger and R-1 (the TASK32 rules, "Downstream timing driver"). A decision
+stage writes `open` before its first process and `close` after saving; smoke,
+pilot and control write `info` and `info-end`. An attempt is void, and may be
+drawn again, only if it admitted no measurement (R-1: exactly one `failed`
+close, a sealed report with `success` false and no blocked finding, every
+measuring process rejected). The audit stage records the `run.py` execution as
+a measuring entry, so a refused audit is a judged attempt and not an endless
+redraw. Information-run outputs are never reused: a rerun writes a new
+directory. Every unsuccessful information run, every redraw of a void attempt
+and every successful information run the first-stage counts do not cite is
+listed in the disposition with the rows described under "Ledger" in the TASK32
+section. An archived output is named to `dispose` with `--relocated
+ATTEMPT=DIR`, which both `dispose` commands accept and which is checked before
+the chain is replayed (the report must be the attempt's own, with the seal its
+`info-end` recorded).
+
+Process redraws (storage stages). A process whose output is well formed but
+whose readings cannot be compared (`NotComparable`: a non-fresh allocation
+area, differing `alloc` or `gc_share` in one release kind, no comparable
+`held` reading in a group, a probe that did not converge, an anchor that
+moved in one process) is not a measurement: it is rerun at the same position
+of the plan (up to `MAX_REDRAWS` = 3 tries after the first), the rejected try
+stays in the archive as `superseded`, and `dispose` lists it in
+`process_redraws`. A redraw is allowed only when every other admission check
+passes on that receipt, and replay checks that it has the same (unit, side,
+pair, selection) as the rejected try and consecutive redraw numbers. An
+anchor move that persists through the redraws is an S1 fail on the
+candidate and a refusal on the baseline. Distinguish these from R-1 redraws
+(an attempt) and from outcomes: `NotComparable` redraws never produce a
+pass, fail or held row; h under 20 or an uncollected baseline weak probe is
+blocked, not redrawn. Anchor movement is diagnosed once (`objSize` per
+anchor component around a move) and the cause is written in the handoff.
+
+### Run recipe and order
+
+All runs are serial under `acceptance.serial_lock`, with stdin from
+`/dev/null` and `TMPDIR=/dev/shm/t33/tmp`; a run command takes the lock
+and `--authorize-measurements` is required. Confirm first that no foreign
+build or measurement of ours is running (the lock plus `pgrep`). The
+snapshots are verified before and after every run command
+(`task32_snapshots.py verify`; `--no-verify` is allowed only with `--only`
+on an information run, and a run feeding the counts needs the audit). Run
+from the repository root; the shell variables below stand for the snapshot
+and evidence paths of TASK32:
+
+    P=src/simp/tests/performance
+    E=.agent-files/evidence/task33
+    S=.agent-files/snapshots/task32
+    M=.agent-files/evidence/task32/snapshots.json
+    mkdir -p /dev/shm/t33/tmp $E
+    export TMPDIR=/dev/shm/t33/tmp
+    C="--repo . --base-root $S/base --cand-root $S/cand --manifest $M"
+    T="python3 -B $P/task32_downstream.py --table task33"
+    Q="python3 -B $P/task33_storage.py"
+
+`--table` precedes the command. Every command below is run with
+`</dev/null` as its standard input.
+
+Steps, in this order (each run command also takes `--timeout`, default
+900, and `--scratch`, default `/dev/shm/t33`):
+
+    # 0. offline (no process; reports are never overwritten, each has a
+    #    .seal; archive reads the TASK32 first-stage archive and replays
+    #    it, --no-replay skips that and the report is then inconclusive
+    #    and refused by predeclare; --ledger names a copy of the TASK32
+    #    ledger)
+    python3 -B $P/task33_offline.py audit --out $E/offline --manifest $M \
+        --base-root $S/base --cand-root $S/cand
+    python3 -B $P/task33_offline.py harvest --out $E/offline \
+        --manifest $M --cand-root $S/cand
+    python3 -B $P/task33_offline.py archive --out $E/offline \
+        --archive .agent-files/evidence/task32/first
+    # 1-2. smoke, timing and storage (information runs)
+    $T smoke $C --output $E/t-smoke --authorize-measurements
+    $Q smoke $C --output $E/s-smoke --authorize-measurements
+    # 3-4. pilots, base only (storage: --sizes, --m, --m0 override the
+    #      sizes and the release size)
+    $T pilot $C --output $E/t-pilot --authorize-measurements
+    $Q pilot $C --output $E/s-pilot --authorize-measurements
+    # 5-6. controls at the decision configuration, sized from the pilot
+    $T control $C --pilot $E/t-pilot --output $E/t-control \
+        --authorize-measurements
+    $Q control $C --pilot $E/s-pilot --output $E/s-control \
+        --authorize-measurements
+    # 7. predeclare the timing counts, then commit the file ALONE
+    $T predeclare $C --pilot $E/t-pilot --smoke $E/t-smoke \
+        --control $E/t-control --out $P/task33_counts.json
+    # 8. predeclare the storage counts, then commit the file ALONE
+    $Q predeclare $C --pilot $E/s-pilot --smoke $E/s-smoke \
+        --control $E/s-control --offline $E/offline/audit.json \
+        --offline $E/offline/harvest.json \
+        --offline $E/offline/archive.json \
+        --out $P/task33_storage_counts.json
+    # 9-10. decision runs
+    $T run $C --output $E/t-run --authorize-measurements
+    $Q run $C --output $E/s-run --authorize-measurements
+    $Q audit $C --output $E/s-audit --authorize-measurements
+    # 11. routing: only the stages owed (below)
+    # 12. replays (no process); --ledger, --repo and the counts options
+    #     as needed
+    $T replay $E/t-run
+    $Q replay $E/s-run $E/s-audit
+    python3 -B $P/task32_downstream.py replay \
+        .agent-files/evidence/task32/first
+    # 13. disposition
+    $Q dispose --stage $E/s-run --stage $E/s-audit \
+        --timing-stage $E/t-run --offline $E/offline/audit.json \
+        --offline $E/offline/harvest.json \
+        --offline $E/offline/archive.json --out $E/disposition.json
+    # 14. dispose of the snapshots (after the handoff, and only then)
+    $Q dispose-snapshots --evidence $E --manifest $M --repo .
+
+Notes on the order.
+
+- Steps 1 to 6 are information runs. The two pilots come before the controls
+  (they size the busy time, R and M); the controls run at the decision
+  configuration of their case: the timing control is `PAIRS` (20) pairs of
+  `load-simpLib` (`CONTROL_UNIT`) at that unit's declared R, the candidate
+  side busy-looping `BUSY` (6%) of the unit's pilot median CPU (`T32_BUSY`) on
+  the base snapshot, and must be judged `fail`; the storage controls are
+  `T33_GRAPH_EXTRA`, `T33_LEAK` and `T33_HOOK`, each against its plain unit on
+  the base snapshot at the pilot's sizes and M, k = 3 per side, and must fail
+  S1, R1 and L3, plus the `ext+ordinary` refusal. An undetected control exits
+  1. Controls are ledgered as controls, never as decisions.
+- The timing pilot is base against base, 10 pairs per kind (`PILOT_PAIRS`), at
+  least 0.2 s of CPU per kind (`MIN_UNIT_CPU`); R is `max(1,
+  ceil(required_units / 20), ceil(1 s / median CPU))` reported unclamped, and
+  declared as `min(8, R)` (`R_CAP`); a kind above the cap is clamped, not
+  refused (`required_reps` and `capped` recorded).
+- Steps 7 and 8 are two separate commits, the timing counts first (the storage
+  `predeclare` loads them and requires them committed). Between step 7 and the
+  end of step 12 no `CODE` file changes.
+- A timing smoke checks the harness (one stats line, the reporter in
+  `Meta.fileDirMap`, heap fingerprints) and records the scan overheads. The
+  storage smoke runs every unit once per side (`ext`: candidate only) at sizes
+  0, 1, 10 and M = 50, and records the probe facts; the pilot measures the
+  baseline alone: 3 `graph` and 3 `release` processes at the decision sizes
+  and M0 = 200, for graph repeatability, release noise, the required M, and
+  the CPU per object that gives the cap. The pilot always exits 0 when it
+  succeeds.
+- `run` of the timing table is 20 pairs per kind at the declared R, round
+  robin, AB/BA alternation, TASK32's statistics and margin (`POLICY`: low >
+  1.03 fails, high <= 1.03 with a valid B/B control passes, else inconclusive;
+  control outside the window makes the kind control-limited). The storage
+  `run` executes `registry-<kind>` for the five kinds, `graph` and `release`
+  (k = 3 per side) and `ext` (k = 3, candidate only). Its `trivial-*` units
+  measure the residual compile cost.
+- `audit` runs `src/simp/tests/api-audit/run.py` in the candidate snapshot: 8
+  PASS, `head` equal to the candidate pin, a sealed receipt and logs under its
+  output; decisions `E1:api-audit` and `L3:api-audit`.
+- `recover --repo .` of the timing driver (`$T recover --repo .`) puts back
+  what a failed restore left. The probe units touch no product, so there is
+  nothing to restore; the whole-snapshot watch applies all the same: make-deps
+  churn, a stray write, a missing stats line, an extension module or a set
+  mismatch refuses the process.
+
+Routing (`classify`; a stage's decision is never combined with another's;
+the storage chains are linear, each contingency naming its predecessor, and
+`dispose` refuses a branch).
+
+- any `fail`: blocks; no retry, no waiver
+- timing: control-limited, not failed: `$T extend --first $E/t-run
+  ...`, the second stage with `second_stage_pairs` of that kind's control and
+  seed `task33-1-ext`; control-limited after it blocks
+- timing: inconclusive with a valid control: `$T predeclare ...
+  --followup --stage DIR --out $P/task33_followup_counts.json`, commit alone,
+  then `$T followup ... --output DIR2` (seed `task33-1-fu`); inconclusive
+  after it blocks
+- storage: a value not repeatable within a side (S1, S2, E2 (a), as-built
+  coverage short): `$Q extend $C --first $E/s-run --output DIR
+  --authorize-measurements`: 10 aligned pairs, `paired_statistics` at zero
+  margin, for the units owed (no counts file of its own; it uses
+  `task33_storage_counts.json`)
+- storage: R1 or E2 (b) unresolved or inconclusive: `$Q predeclare ...
+  --followup --stage $E/s-run --out $P/task33_storage_followup_counts.json`,
+  commit alone, then `$Q followup $C --stage $E/s-run --output DIR
+  --authorize-measurements`, at the larger M
+- owed or inconclusive after the last allowed stage: blocked (the
+  TASK32 convention)
+
+A timing follow-up is owed only after any owed second stage. `followup`
+refuses while a second stage is owed. The disposition's overall status is
+`fail` if any gate fails, `pass` only if every gate passes, else
+`blocked`; it is never inconclusive.
+
+### Replay and disposition
+
+`replay` recomputes every decision of finished runs from their archives and
+runs no process: `$T replay RUN... [--counts F] [--followup-counts F]
+[--ledger L] [--repo .]` (`--table task33` before it) and `$Q replay RUN...
+[--storage-counts F] [--followup-counts F] [--timing-counts F] [--ledger L]
+[--repo .]`. A run is replayed with its whole chain. Replay requires
+exactly `PAIRS` pairs of a timing control, checks a receipt's environment
+against its unit, and refuses a record made by a code version neither the
+current one nor in the table's history. Receipts of a table other than
+`task32` carry `table`, and replay needs the same `--table`.
+
+`$Q dispose` writes one sealed `disposition.json` (and `.seal`) joining the
+timing disposition (`task32_downstream.py --table task33 dispose`), the
+three offline reports (the sealed ones named in the storage counts) and the
+storage stages. Flags: `--stage` (once for the storage `run` or its last
+contingency, once for the `audit` stage), `--timing-stage`, `--offline`
+(three), `--timing-counts`, `--storage-counts`, `--timing-followup-counts`,
+`--storage-followup-counts`, `--ledger`, `--repo`, `--relocated ATTEMPT=DIR`
+(repeatable; either ledger table's information runs), `--out`. It contains
+one decision per case id and kind (L1, L2, L3, L4 per timing kind, S1, S2,
+R1 including `weak`, R2, R3, E1, E2 a, b, c, and the api-audit rows;
+S3, S4 and `E2:u` as reported or unsupported), every attempt, information
+run and redraw of both ledger tables, `process_redraws`, `owed`,
+`reported`, and `attribution_needed`. A row still owed or inconclusive after
+the last stage is blocked, a case with no evidence is blocked. The
+timing-only disposition `$T dispose --stage LAST --out FILE [--relocated
+...]` writes the timing part alone.
+
+### Exit codes
+
+The TASK32 codes (`exit_of`, `main`), for `task32_downstream.py` under
+either table and for `task33_storage.py`:
+
+- 0 pass: a decision stage that passes, a detected control, a smoke run
+  that passes its facts, a pilot that succeeded, `predeclare`, `replay`,
+  `recover`, a pass disposition, `dispose-snapshots`.
+- 1 fail: a failing stage, an undetected control, a failing disposition.
+- 2 an inconclusive stage; a blocked run (a finding about the candidate,
+  `report["blocked"]`) or disposition; the timing pilot with a kind under
+  0.2 s of CPU; a storage smoke whose probe facts are not `ok`.
+- 3 the run failed or was refused, or a usage error of the command line
+  (`--table` abbreviation included: 3, not the parser's 2).
+- 4 SIGTERM or SIGHUP ended the run: the child's group is killed, the
+  products restored and the attempt closed; the saved result, if any, is
+  still printed, else the ledger and the output decide whether the attempt
+  is judged or void (R-1). A signal noted on another failure keeps status 3.
+
+Status 1 is reserved for fail. `task33_offline.py` has its own: 0 pass, 2
+inconclusive (a check skipped, as in `archive --no-replay`), 3 fail or
+refused (including a report that cannot be written); there is no 1. A
+`dispose` exits 0, 1 or 2, `dispose-snapshots` 0 or 3.
+
+### Seals and seal histories
+
+The task33 `CODE` list (`Table.code` of `--table task33`; seals of every
+file, recorded by the counts files, runs, reports and replays):
+`task33_cases.py`, `task32_downstream.py`, `task32_snapshots.py`,
+`task32_dat.py`, `startup_gate.py`, `loading.py`, `acceptance.py`,
+`timing_grid.py`, `performance_schema.py`, `summarize.py`, the probe files
+`task33/T33.sml`, `T33Kind.ML`, `T33Load.sml`, `T33Trivial.sml`,
+`T33Registry.sml`, `T33GraphLib.sml`, `T33Graph.sml`, `T33Release.sml`,
+`T33Ext.sml`, `T33CheckSimp.ML`, `T33CheckCong.ML`, `T33CheckFirst.ML`,
+`T33ExtUse.ML`, `RuntimeMetrics.sml`, `task33_records.py`,
+`task33_rules.py`, `task33_storage.py`, `task33_dispose.py` and
+`task33_offline.py`. The table's `HISTORY` (`history` of `Table`) is empty:
+it holds only seals of driver versions whose kept records must replay, and a
+change to a CODE file after a record exists adds the old seal to the history
+in the same commit (see "Seals and seal histories"). The offline reports
+carry their own `code` (`task33_offline.py`, `task33_declared.json` and the
+TASK32 code they reuse, which they bind to the `task32` table explicitly).
+
+The TASK32 `HISTORY` entry for `task32_downstream.py` holds the seals of
+the code that made the TASK32 smoke and pilot, the counts and first stage,
+and the last driver before it became a driver of tables (`a2a7d3c487`).
+That is what lets TASK32's records replay with the table-aware driver. Since
+the TASK32 driver changed, one `replay` of the TASK32 first-stage archive at
+the new head (step 12) is part of the protocol.
+
+### Retention and disposal
+
+TASK33 is the last use of both snapshots: later tasks measure a final
+candidate whose pin differs from C32, and `check_counts_commit` and
+`COMPILED_REF` tie these trees to C31 and C32. Kept in the evidence directory
+(never in git): the ledger, run archives, counts copies, `disposition.json`,
+the harvest, the api-audit receipt, the offline reports, the handoff. TASK32
+evidence is untouched (needed for its replay). `/dev/shm/t33`, each run's
+`run-<attempt>` scratch and the probe directories are removed when their last
+use ends.
+
+`dispose-snapshots` requires, in `--evidence`: exactly one successful
+sealed `harvest.json`, exactly one successful `audit` stage with its sealed
+receipt (a pass), and exactly one sealed `disposition.json` of the current
+schema that owes nothing (no `owed` row, no `attribution_needed`). It
+refuses a scratch root other than `/dev/shm/t33` and any path the manifest
+does not name where the snapshot driver puts it (roots under
+`.agent-files/snapshots/task32/{base,cand}`, HOMEs
+`scratch/task32/home-<side>-a<n>`, the `task32-<sha>.seq` copy), a link or a
+pending restore journal. Then, under the serial lock, it runs `verify` (exit
+0 recorded), writes an intent journal
+(`snapshot-disposal.intent.json`; a repeated command resumes it), removes
+exactly those paths, the scratch root and the then empty parents, and writes
+`snapshot-disposal.json` with the manifest seal, sizes, the final verify,
+the removed paths, the sealed evidence and the recreate recipe
+(`task32_snapshots.py build --side ... --pin ...`, then `verify` and
+`compare`). It never uses `task32_snapshots.py discard`: that rewrites
+`snapshots.json`, whose seal the committed TASK32 counts carry. TASK32
+replay is offline and reads no tree.
+
+### Evidence and what is committed
+
+Under `.agent-files/evidence/task33/`, never in git: the ledger, every
+run's output directory and compressed receipts, the offline reports and
+their seals, the sealed harvest of the candidate's `-t` suite logs, the
+api-audit receipt, `disposition.json`, `snapshot-disposal.json` and the
+handoff. Committed: the tools and tests above, the probes, the declaration,
+and the counts files, each counts file in a commit of its own. No result,
+log, date of a run or handoff is committed.
+
 ## Matrix boundaries and final evidence
 
 [`MATRIX.md`](MATRIX.md) and the frozen schema define the requirements and

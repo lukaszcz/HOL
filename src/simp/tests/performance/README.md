@@ -38,6 +38,14 @@ is `allocation_matrix.py run --task task30` (all 24 cases, 144 cells; in
 `history_theory_change` the allocation fixture makes no `new_theory`
 transition, see `PROTOCOL.md` and `ALLOCATION_COUNTER.md`).
 
+`task32_downstream.py` (TASK32) times downstream proof-build units in two
+independent snapshots; its `--table task33` selects the TASK33 startup and
+first-load timing kinds, and `task33_storage.py` (with `task33_offline.py`,
+`task33_declared.json` and the probes in `task33/`) decides loading,
+retained-storage and release cases on the same snapshots. Procedure, cases,
+counts files, ledger, exit codes and snapshot disposal are in `PROTOCOL.md`,
+"TASK33 independent loading, storage and release".
+
 Fresh post-workload actual object/code/pool diagnostics are documented in
 [`RUNTIME_LAYOUT.md`](RUNTIME_LAYOUT.md) and
 [`RUNTIME_POOLS.md`](RUNTIME_POOLS.md).
