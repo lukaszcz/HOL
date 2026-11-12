@@ -144,7 +144,8 @@ Additional coverage here (not a replacement for those suites):
   as a conflict with that handler and persistent removal to refuse with
   "persistent split registration not owned"; neither calls the handler.
   `repair.sml` imports only `SplitData` from `src/simp/src`: the negative
-  rejects any other `src/simp/src` module.
+  loads a private `SplitData` copy and rejects every loaded `src/simp/src`
+  path, including the production `SplitData`.
 
 The launcher statically imports only kernel/test helpers. A library build
 prerequisite is not a linked import. `Meta.loaded` **and** the runtime global

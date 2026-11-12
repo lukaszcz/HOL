@@ -72,6 +72,34 @@ class IsolationTest(unittest.TestCase):
             self.assertTrue(any("production" in f
                                 for f in self.problems(text, link)))
 
+    def test_private_sig_replaced_by_production_fails(self):
+        text = REAL.replace(str(PRIVATE / "SplitData.sig"),
+                            str(SRC / "SplitData.sig"))
+        found = self.problems(text)
+        self.assertEqual(len(found), 2)
+        self.assertIn("private SplitData.sig", found[0])
+        self.assertIn("production src/simp/src", found[1])
+
+    def test_symlinked_private_dir_passes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            real_dir = Path(temp) / "negative"
+            real_dir.mkdir()
+            link = Path(temp) / "link"
+            os.symlink(real_dir, link)
+            text = lines(str(real_dir / "SplitData.sig"),
+                         str(real_dir / "SplitData.sml"))
+            self.assertEqual(
+                negative_isolation_problems(text, SRC, link), [])
+
+    def test_component_boundary(self):
+        text = REAL + lines(REPO + "/src/simp/src2/x.sml")
+        self.assertEqual(self.problems(text), [])
+
+    def test_relative_path_reported(self):
+        found = self.problems(REAL + lines("src/simp/src/splitLib.sml"))
+        self.assertEqual(len(found), 1)
+        self.assertIn("non-absolute", found[0])
+
 
 if __name__ == "__main__":
     unittest.main()

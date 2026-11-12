@@ -2,7 +2,7 @@ HOLHEAP = $(HOLDIR)/bin/hol.state0
 EXTRA_CLEANS = selftest.exe simp-selftest.log fresh-load-selftest.exe \
   fragment-contracts.log compiled-core.log literal-exclusions.log \
   fragments-python-tests.log compiled-core-python-tests.log \
-  interfaces-design-check.log \
+  interfaces-design-check.log compatibility-python-tests.log \
   ../tests/compatibility/interfaces/selftest.exe \
   ../tests/compatibility/interfaces/.hol/ \
   ordinary-tactics.log standard-recipes.log legacy-contracts.log \
@@ -183,7 +183,7 @@ cond-rewr-ext: Cond_rewrExt.uo
 # directory, so it depends on the modules they use. The paired runs
 # themselves stay explicit.
 .PHONY: fragments-python-tests compiled-core-python-tests \
-  interfaces-design-check
+  interfaces-design-check compatibility-python-tests
 fragments-python-tests:
 	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
 	  -C ../tests/fragments python-tests,fragments-python-tests.log)
@@ -191,6 +191,10 @@ fragments-python-tests:
 compiled-core-python-tests:
 	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
 	  -C ../tests/compiled-core python-tests,compiled-core-python-tests.log)
+
+compatibility-python-tests:
+	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
+	  -C ../tests/compatibility python-tests,compatibility-python-tests.log)
 
 INTERFACES = ../tests/compatibility/interfaces
 interfaces-design-check: Cond_rewr.uo Cond_rewrExt.uo Opening.uo \
@@ -204,6 +208,7 @@ all: simp-selftest.log traversal-contracts exclusion-contracts traverse-ext \
   literal-exclusions ordinary-tactics standard-recipes legacy-contracts \
   native-extension api-audit fragments-python-tests \
   compiled-core-python-tests interfaces-design-check \
+  compatibility-python-tests \
   fresh-load-regressions split-registration split-persistence split-lifecycle
 
 simp-selftest.log: selftest.exe

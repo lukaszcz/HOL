@@ -1397,6 +1397,8 @@ LOG_RULES = {
         r"Ran ([1-9]\d*) tests? in")),
     "interfaces-design-check": ("unittest", marker(
         r"Ran ([1-9]\d*) tests? in")),
+    "compatibility-python-tests": ("unittest", marker(
+        r"Ran ([1-9]\d*) tests? in")),
     "compiled-core": ("manifest", {}),
     "fragment-contracts": ("manifest", {}),
     "boolSimpsContextTheory": ("theory", dict(theory="boolSimpsContext")),

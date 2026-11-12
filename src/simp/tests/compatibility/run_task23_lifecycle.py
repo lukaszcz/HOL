@@ -18,17 +18,25 @@ def negative_isolation_problems(log_text, src, private_dir):
     compared by non-strict realpath, so spelling or symlinks cannot hide a
     production module."""
     prefix = "OBS repair.loaded.path="
-    real = lambda x: Path(os.path.realpath(x))
-    loaded = [real(line[len(prefix):]) for line in log_text.splitlines()
-              if line.startswith(prefix)]
+    raws = [line[len(prefix):] for line in log_text.splitlines()
+            if line.startswith(prefix)]
+
+    def real(x):
+        return Path(os.path.realpath(x))
+
     problems = []
+    relative = sorted({r for r in raws if not os.path.isabs(r)})
+    if relative:
+        problems.append("negative reported non-absolute loaded path(s): " +
+                        ", ".join(relative[:5]))
+    loaded = [real(r) for r in raws if os.path.isabs(r)]
     src_real, private_real = real(src), real(private_dir)
     missing = [n for n in ("SplitData.sig", "SplitData.sml")
                if private_real / n not in loaded]
     if missing:
         problems.append("negative did not load private " +
                         ", ".join(missing) + " from " + str(private_dir))
-    foreign = sorted(str(x) for x in loaded if x.is_relative_to(src_real))
+    foreign = sorted({str(x) for x in loaded if x.is_relative_to(src_real)})
     if foreign:
         problems.append("negative loaded production src/simp/src "
                         "module(s): " + ", ".join(foreign[:5]))
@@ -71,7 +79,7 @@ def main():
             (json.dumps(receipt, indent=2) + "\n").encode(), mtime=0))
         manifest["runs"].append({"label": label, "exit": receipt["exit"],
                                  "receipt": path})
-        if inspect is not None:
+        if inspect is not None and not receipt["timed_out"]:
             inspect(receipt["stdout"])
         require(not receipt["timed_out"] and receipt["exit"] == expected,
                 label + ": unexpected process outcome")
@@ -194,6 +202,7 @@ def main():
                 "inputs": {p.name: fingerprint(p) for p in neg.iterdir()}}
             run("negative-build", make + ["--no_prereqs", "-C", str(neg),
                                            "repair.exe"], repo)
+
             def isolated(out):
                 problems = negative_isolation_problems(out, src, neg)
                 require(not problems, "; ".join(problems))
