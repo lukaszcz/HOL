@@ -10,7 +10,7 @@ from unittest.mock import patch
 import normal_integration
 import task10_relocation as typed
 import task26_relocation as physical
-from run_paired import BASE, HERE, InvalidRun, require_revisions
+from run_paired import HERE, InvalidRun, require_revisions
 
 spec = importlib.util.spec_from_file_location(
     "native_legacy_runner", HERE.parent / "legacy-contracts/run.py")
@@ -83,7 +83,8 @@ def printed_vector_sizes(sml):
 class PhysicalTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        require_revisions(BASE, *typed.pinned_revisions())
+        require_revisions(json.loads(
+            physical.SUPPLEMENT.read_text())["baseline"])
 
     def test_exact_move_and_original(self):
         original = json.loads(typed.SUPPLEMENT.read_text())

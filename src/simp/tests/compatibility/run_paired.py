@@ -274,18 +274,18 @@ def git(repo, *args):
 
 def require_revisions(*objects, repo=None):
     """Skip the calling test or class when a pinned git object (a revision,
-    tree or blob id, or a name) is absent
-    (a shallow clone or tarball). On a measured host with full history these
-    tests still run; the TASK33 judge's strict skip policy is unchanged, so
-    a skip there is a real failure."""
+    tree or blob id, or a name) is absent, as in a shallow clone or tarball.
+    On a measured host with full history these tests still run; the TASK33
+    judge's strict skip policy is unchanged, so a skip there is a real
+    failure."""
     import unittest
     repo = HERE.parents[3] if repo is None else repo
-    for rev in objects:
+    for obj in objects:
         found = subprocess.run(
-            ["git", "-C", str(repo), "cat-file", "-e", rev],
+            ["git", "-C", str(repo), "cat-file", "-e", obj],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if found.returncode != 0:
-            raise unittest.SkipTest("pinned git object absent: " + rev)
+            raise unittest.SkipTest("pinned git object absent: " + obj)
 
 
 def extract(repo, rev, dst, public=False):

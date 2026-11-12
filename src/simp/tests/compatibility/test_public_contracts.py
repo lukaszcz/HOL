@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Public-client installation and fail-closed observation controls."""
 import copy
+import json
 from pathlib import Path
 import shutil
 import tempfile
@@ -123,7 +124,8 @@ class PublicTests(unittest.TestCase):
                                   runner.require, runner.fingerprint)
 
     def test_original_signature_installation_is_exact(self):
-        runner.require_revisions(runner.BASE)
+        runner.require_revisions(*{s["revision"] for s in json.loads(
+            (runner.HERE / "public/references.json").read_text()).values()})
         with tempfile.TemporaryDirectory(prefix="public-install-") as tmp:
             dst = Path(tmp)
             (dst / "Holmakefile").write_text("")

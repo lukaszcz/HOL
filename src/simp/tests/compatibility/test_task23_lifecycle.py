@@ -99,6 +99,7 @@ class IsolationTest(unittest.TestCase):
         found = self.problems(REAL + lines("src/simp/src/splitLib.sml"))
         self.assertEqual(len(found), 1)
         self.assertIn("non-absolute", found[0])
+        self.assertIn("'src/simp/src/splitLib.sml'", found[0])
 
 
 if __name__ == "__main__":
