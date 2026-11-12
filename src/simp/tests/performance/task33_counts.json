@@ -1,0 +1,353 @@
+{
+  "schema": "task32-counts-v2",
+  "table": "task33",
+  "kind": "first",
+  "base": "cccaa27d7099cbadc886983020cbe745db7793f3",
+  "cand": "e436752631f54a563679bd184a64c3d4ed249c23",
+  "manifest": {
+    "sha256": "2170a05029a7a238d96742494c3dd92bec43a96ec1abd7c2c49adb4ab547607f",
+    "bytes": 4385990
+  },
+  "pairs": 20,
+  "seed": "task33-1",
+  "extension_seed": "task33-1-ext",
+  "reps": {
+    "state0-empty": 8,
+    "state-empty": 8,
+    "load-simpLib": 5,
+    "load-congLib": 3,
+    "first-use": 8
+  },
+  "r_cap": 8,
+  "required_reps": {
+    "state0-empty": 15,
+    "state-empty": 10,
+    "load-simpLib": 5,
+    "load-congLib": 3,
+    "first-use": 8
+  },
+  "capped": [
+    "state-empty",
+    "state0-empty"
+  ],
+  "time_estimate_seconds": {
+    "total": 1065.0951038876956,
+    "per_unit": {
+      "state0-empty": 89.94336609728634,
+      "state-empty": 109.99644207302481,
+      "load-simpLib": 415.4691187955905,
+      "load-congLib": 317.2360277414555,
+      "first-use": 127.20680304337293
+    },
+    "scan_seconds": 166.07937266293447,
+    "verify_seconds": 5.243346136965556
+  },
+  "references": {
+    "first-use": "6605458e0e49f0d463b5454e639f79e2a2cfe5a41dd6e09bc8d0f1d98e0a914f",
+    "load-congLib": "666a14f8ced7262eea89b01180773e99657086e4a65f4ceaacb1070351709842",
+    "load-simpLib": "1576d8dc81cdbe0a0787b60ffa67f3e8789caf1599d27f92f422161f534a6f88",
+    "state-empty": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "state0-empty": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "pilot": {
+    "attempt": "pilot-27277e4cb756",
+    "seal": {
+      "sha256": "19ce9347c0578eaaf1104840a6f2cfadedfb7fc073660f0d7d887407be010059",
+      "bytes": 55425
+    }
+  },
+  "smoke": {
+    "attempt": "smoke-e94e484dd664",
+    "seal": {
+      "sha256": "e555c1ccf1ac503468c126ed51f687d292f5b654cd0fba64bf6be044fb892476",
+      "bytes": 21708
+    },
+    "overheads": {
+      "scan_seconds": {
+        "state0-empty": {
+          "base": 0.07185768301133066,
+          "cand": 0.07679093501064926
+        },
+        "state-empty": {
+          "base": 0.0605051780003123,
+          "cand": 0.06429914300679229
+        },
+        "load-simpLib": {
+          "base": 0.06084330199519172,
+          "cand": 0.06477780395653099
+        },
+        "load-congLib": {
+          "base": 0.0651909589942079,
+          "cand": 0.06430870800977573
+        },
+        "first-use": {
+          "base": 0.06105513600050472,
+          "cand": 0.06462909700348973
+        }
+      },
+      "verify_seconds": {
+        "before": 2.613479503983399,
+        "after": 2.629866632982157
+      }
+    }
+  },
+  "control": {
+    "attempt": "control-6bfbfd46f198",
+    "seal": {
+      "sha256": "6bb3571a3a6a8708f6a49b9f1d26ad0a51793791b816e291c265b4344e77acef",
+      "bytes": 188200
+    },
+    "busy_seconds": 0.058619,
+    "detected": true
+  },
+  "jitter": {
+    "state0-empty": {
+      "wall": {
+        "gated": true,
+        "paired_log_ratio_sd": 0.05760792270504022,
+        "unit_sd": 0.05760792270504022,
+        "unit_sd_upper": 0.09477641470022195,
+        "required_units": 241,
+        "process_log_sd": null
+      },
+      "cpu": {
+        "gated": true,
+        "paired_log_ratio_sd": 0.05471913824172042,
+        "unit_sd": 0.05471913824172042,
+        "unit_sd_upper": 0.09002379350822051,
+        "required_units": 218,
+        "process_log_sd": null
+      },
+      "gc_cpu": {
+        "gated": false,
+        "paired_log_ratio_sd": 0.14198158333180566,
+        "unit_sd": 0.14198158333180566,
+        "unit_sd_upper": 0.23358775650613767,
+        "required_units": 1464,
+        "process_log_sd": null
+      }
+    },
+    "state-empty": {
+      "wall": {
+        "gated": true,
+        "paired_log_ratio_sd": 0.042096216615281803,
+        "unit_sd": 0.042096216615281803,
+        "unit_sd_upper": 0.06925659346663535,
+        "required_units": 129,
+        "process_log_sd": null
+      },
+      "cpu": {
+        "gated": true,
+        "paired_log_ratio_sd": 0.04076856235768006,
+        "unit_sd": 0.04076856235768006,
+        "unit_sd_upper": 0.06707233990239479,
+        "required_units": 121,
+        "process_log_sd": null
+      },
+      "gc_cpu": {
+        "gated": false,
+        "paired_log_ratio_sd": 0.17797569411691677,
+        "unit_sd": 0.17797569411691677,
+        "unit_sd_upper": 0.29280518026227936,
+        "required_units": 2300,
+        "process_log_sd": null
+      }
+    },
+    "load-simpLib": {
+      "wall": {
+        "gated": true,
+        "paired_log_ratio_sd": 0.03659795839692264,
+        "unit_sd": 0.03659795839692264,
+        "unit_sd_upper": 0.06021087238239775,
+        "required_units": 98,
+        "process_log_sd": null
+      },
+      "cpu": {
+        "gated": true,
+        "paired_log_ratio_sd": 0.03659216171219798,
+        "unit_sd": 0.03659216171219798,
+        "unit_sd_upper": 0.06020133569074921,
+        "required_units": 98,
+        "process_log_sd": null
+      },
+      "gc_cpu": {
+        "gated": false,
+        "paired_log_ratio_sd": 0.09086349557261171,
+        "unit_sd": 0.09086349557261171,
+        "unit_sd_upper": 0.14948840251704085,
+        "required_units": 600,
+        "process_log_sd": null
+      }
+    },
+    "load-congLib": {
+      "wall": {
+        "gated": true,
+        "paired_log_ratio_sd": 0.02445169029404414,
+        "unit_sd": 0.02445169029404414,
+        "unit_sd_upper": 0.040227861561600145,
+        "required_units": 44,
+        "process_log_sd": null
+      },
+      "cpu": {
+        "gated": true,
+        "paired_log_ratio_sd": 0.02461427786696418,
+        "unit_sd": 0.02461427786696418,
+        "unit_sd_upper": 0.04049535024219484,
+        "required_units": 44,
+        "process_log_sd": null
+      },
+      "gc_cpu": {
+        "gated": false,
+        "paired_log_ratio_sd": 0.05551474589001033,
+        "unit_sd": 0.05551474589001033,
+        "unit_sd_upper": 0.09133272528135655,
+        "required_units": 224,
+        "process_log_sd": null
+      }
+    },
+    "first-use": {
+      "wall": {
+        "gated": true,
+        "paired_log_ratio_sd": 0.03159201625149221,
+        "unit_sd": 0.03159201625149221,
+        "unit_sd_upper": 0.051975108507177806,
+        "required_units": 73,
+        "process_log_sd": null
+      },
+      "cpu": {
+        "gated": true,
+        "paired_log_ratio_sd": 0.0289828087363514,
+        "unit_sd": 0.0289828087363514,
+        "unit_sd_upper": 0.04768244663217697,
+        "required_units": 61,
+        "process_log_sd": null
+      },
+      "gc_cpu": {
+        "gated": false,
+        "paired_log_ratio_sd": 0.10576977179846762,
+        "unit_sd": 0.10576977179846762,
+        "unit_sd_upper": 0.17401217200706925,
+        "required_units": 813,
+        "process_log_sd": null
+      }
+    }
+  },
+  "code": {
+    "task33_cases.py": {
+      "sha256": "05665fd9c9d717fae75c097e1f40c79838867bbb629105a1201be10061b4e13e",
+      "bytes": 7407
+    },
+    "task32_downstream.py": {
+      "sha256": "e3169e265e13cf55a18045fdebc5845f198ff8f9d1d15f9529076915dbc23516",
+      "bytes": 179579
+    },
+    "task32_snapshots.py": {
+      "sha256": "444e5f40c62d8529bceb87e8086d13de5ea54127559063987d45520a89806ac7",
+      "bytes": 60760
+    },
+    "task32_dat.py": {
+      "sha256": "93a5084d944d40ee1ac58ed8425c8f9b7911252c57c9bff407edf6a397c4d0a0",
+      "bytes": 16414
+    },
+    "startup_gate.py": {
+      "sha256": "8ba1ed6b0be471956f53c59423e4604803b26fde2928f262c6620f73891398b4",
+      "bytes": 68984
+    },
+    "loading.py": {
+      "sha256": "c8d740773983a62af72e3ad4af728bc2f893e0bbc4a555d74f50eec8d7ba2440",
+      "bytes": 85232
+    },
+    "acceptance.py": {
+      "sha256": "b17503214bc235115376e27f3e9b90ad5797bf12b5d62934a7381c00fd2e424c",
+      "bytes": 40828
+    },
+    "timing_grid.py": {
+      "sha256": "38a87d57b87acea8da744e85e9ed04611bece90e8dcb6a2aa180085ed9af860b",
+      "bytes": 190314
+    },
+    "performance_schema.py": {
+      "sha256": "a294e485de0730238b3241e23939bc3cdda134410aa8071e90a130a259764ec9",
+      "bytes": 13055
+    },
+    "summarize.py": {
+      "sha256": "fd2c9cbce1c334bcc8bdd98e0a905d54ecdd3ed50eab7632ba1d9923279d4d24",
+      "bytes": 4637
+    },
+    "task33/T33.sml": {
+      "sha256": "e74e5f67be2a77370046c503b97741e949817c829884642b806c48afabbfeb8d",
+      "bytes": 15608
+    },
+    "task33/T33Kind.ML": {
+      "sha256": "619d4708ac81a0a6ebb031e8a2aae7203339022859ee79f0bbc8ed2e42a9efd9",
+      "bytes": 2860
+    },
+    "task33/T33Load.sml": {
+      "sha256": "f0d721a7baa3a424b3b206ba8477b350e3cd35095a6d46582d0e51ae019008fa",
+      "bytes": 232
+    },
+    "task33/T33Trivial.sml": {
+      "sha256": "a210403c18058fe3fce80285334f47d46fce1d63519f7128cb58192e638a2034",
+      "bytes": 610
+    },
+    "task33/T33Registry.sml": {
+      "sha256": "4754b6ff0e330e18539684870a8553ae52308a55fdca277fd012075ee528a823",
+      "bytes": 282
+    },
+    "task33/T33GraphLib.sml": {
+      "sha256": "2a9bbb173ea624e0d21b1379f64c392fcbc9852f9f705901214f16184083bc6d",
+      "bytes": 14616
+    },
+    "task33/T33Graph.sml": {
+      "sha256": "5b198be5fa0daafcee896b35856b7c50ec798b20fc16adbac4bb19d454d5c956",
+      "bytes": 214
+    },
+    "task33/T33Release.sml": {
+      "sha256": "82bf9b842a3fc22c15dabb1726d4e05f4ce9b7a031fa96ae46bda22251440707",
+      "bytes": 2517
+    },
+    "task33/T33Ext.sml": {
+      "sha256": "68dea6c5c6542f878ee47fc5a38582766b87382866f2797320f1d04928d9e3ff",
+      "bytes": 406
+    },
+    "task33/T33CheckSimp.ML": {
+      "sha256": "8690d2eb7b1986e8e2804b9e37ccc2dec1f1ae886279ebf16f1eaef7c39c007e",
+      "bytes": 349
+    },
+    "task33/T33CheckCong.ML": {
+      "sha256": "e739b06a038f56a98e9736a33d5485c6df4dd5005afec81b55e983f2c14a7430",
+      "bytes": 419
+    },
+    "task33/T33CheckFirst.ML": {
+      "sha256": "6a7c36ee0e257d616024f36009f4c92a6c922262b418c124ee123399fddd59aa",
+      "bytes": 827
+    },
+    "task33/T33ExtUse.ML": {
+      "sha256": "f16c82af40bbb766c174b5754172cc202b116da2d7fc78aea1b3dd709e9f37a9",
+      "bytes": 1868
+    },
+    "RuntimeMetrics.sml": {
+      "sha256": "7b5ac22e6bbbe56fbe9401ae0b6a30c8f3d3d79fcc7a0eff3bbcfa09521a0dbd",
+      "bytes": 7326
+    },
+    "task33_records.py": {
+      "sha256": "07c0a28381c21771b3eb98c8f91f14565e3dc62086a4bbe1401ea5269284258f",
+      "bytes": 49129
+    },
+    "task33_rules.py": {
+      "sha256": "fa34fd48bb9489f68457fdabf7e9b025a0059643573e8b201a582159d9115bd8",
+      "bytes": 34186
+    },
+    "task33_storage.py": {
+      "sha256": "069b87eea6287685ff50715d4dc07db797163767c0e5f5bf475cf1adf94f2ab5",
+      "bytes": 79375
+    },
+    "task33_dispose.py": {
+      "sha256": "61d0cef407ef789867d1ef06574d99e33ffe883cdfc8f6b181735536e12cabb6",
+      "bytes": 26854
+    },
+    "task33_offline.py": {
+      "sha256": "4d5a51e01704b51b2c0099704744e7c7404f29a0039094fe3a673649b75f7d41",
+      "bytes": 90838
+    }
+  }
+}
