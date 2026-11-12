@@ -172,14 +172,15 @@ def check_unit_env(unit, table=None):
     """The environment a unit adds to its process is the probe's own: every
     key starts with the table's `env_prefix` (T33_ for TASK33, so a unit can
     never set T32_STATS, T32_LAYOUT or T32_BUSY, which belong to the
-    driver, nor POLY_CLINE_OPTIONS or PATH), every value a string. A table
-    with no `env_prefix` (TASK32) has units with no environment. `table`
-    is the active one by default."""
+    driver, nor POLY_CLINE_OPTIONS or PATH), every value a string, and none
+    is the GC log variable (records.GCLOG_ENV, the driver's). A table with
+    no `env_prefix` (TASK32) has units with no environment. `table` is the
+    active one by default."""
     prefix = (table or ACTIVE).env_prefix
     env = unit.get("env") or {}
     bad = sorted(str(k) for k, v in env.items() if not (
         prefix and isinstance(k, str) and k.startswith(prefix) and
-        isinstance(v, str)))
+        isinstance(v, str) and k != task33_cases.records.GCLOG_ENV))
     require(not bad, "unit %s: environment key(s) that are not %s* "
             "strings: %s" % (unit.get("name"), prefix or "allowed (none)",
                              ", ".join(bad)))
@@ -930,13 +931,14 @@ def text_digest(data, root):
     return sha(normalize_text(data, root).encode("latin-1", "replace"))
 
 
-def probe_digest(text, root, probe_dir, unit):
-    """The active table's output digest of a `probe` unit, with an
-    unreadable, malformed or misplaced-path output a Refusal."""
+def probe_digest(text, root, probe_dir, unit, gclog=None):
+    """The active table's output digest of a `probe` unit (`gclog`: the
+    process's GC log, None for a unit with none), with an unreadable,
+    malformed or misplaced-path output a Refusal."""
     require(ACTIVE.probe_digest is not None,
             "table %s has no probe units" % ACTIVE.name)
     try:
-        return ACTIVE.probe_digest(text, root, probe_dir, unit)
+        return ACTIVE.probe_digest(text, root, probe_dir, unit, gclog)
     except ValueError as error:
         if isinstance(error, Refusal):
             raise
@@ -1238,15 +1240,22 @@ def parse_selftest(text, root, unit):
     return argv
 
 
-def unit_argv(unit, root, reporter_uo):
+def unit_argv(unit, root, reporter_uo, gclog=None):
     """The command of a unit (and its working directory). A `probe` unit
     runs `hol run` on its heap with the reporter, then its probe module by
     its bare name, with the reporter's directory (where `build_probes` built
-    the module) as cwd."""
+    the module) as cwd. A probe unit with `gclog` (the storage probes) also
+    runs under `--debug gc --logfile <gclog>`, the log of its full GCs'
+    marked live totals; the path is then required, and a timing unit's
+    command has neither option."""
     if unit["kind"] == "probe":
-        return [str(root / "bin/hol"), "--gcthreads=1", "run",
-                "--holstate=" + str(root / unit["heap"]), reporter_uo,
-                unit["probe"]], Path(reporter_uo).parent
+        log = []
+        if unit.get("gclog"):
+            require(gclog, "unit %s needs a GC log path" % unit["name"])
+            log = ["--debug", "gc", "--logfile", str(gclog)]
+        return [str(root / "bin/hol"), "--gcthreads=1"] + log + [
+            "run", "--holstate=" + str(root / unit["heap"]), reporter_uo,
+            unit["probe"]], Path(reporter_uo).parent
     folder = root / unit["dir"]
     if unit["kind"] == "theory":
         return cases.theory_argv(root, unit["theory"]), folder
@@ -1254,10 +1263,13 @@ def unit_argv(unit, root, reporter_uo):
     return argv[:-1] + [reporter_uo, argv[-1]], folder
 
 
-def unit_env(ctx, unit, reporter_uo, stats, layout, busy):
+def unit_env(ctx, unit, reporter_uo, stats, layout, busy, gclog=None):
     check_unit_env(unit)
     extra = dict(unit.get("env") or {})
     extra.update(T32_STATS=str(stats), T32_LAYOUT=str(layout))
+    if unit.get("gclog"):
+        require(gclog, "unit %s needs a GC log path" % unit["name"])
+        extra[task33_cases.records.GCLOG_ENV] = str(gclog)
     if unit["kind"] == "theory":
         extra["POLY_CLINE_OPTIONS"] = reporter_uo
     if busy:
@@ -1386,7 +1398,20 @@ def validate(receipt, unit, root, reporter_dir, expected, candidate):
             ", ".join(receipt["churn"][:5]))
     require(not receipt["stray"], "stray write: " + ", ".join(
         receipt["stray"][:5]))
+    if unit.get("gclog"):
+        check_gclog(receipt)
     check_digest(receipt["digest"], expected, candidate)
+
+
+def check_gclog(receipt):
+    """A storage probe's receipt keeps its GC log (`gclog`, a str) and the
+    log's sha256 (`gclog_sha256`); the digest must be of the stored text.
+    That the records' words are the log's totals is checked with the
+    records, by the table's `probe_digest`."""
+    log = receipt.get("gclog")
+    require(isinstance(log, str), "missing GC log")
+    require(receipt.get("gclog_sha256") == sha(log.encode("latin-1")),
+            "the stored GC log does not give its digest")
 
 
 JOURNAL_SCHEMA = "task32-journal-v2"
@@ -1475,8 +1500,10 @@ def execute_unit(ctx, unit, side, label, layout, busy, expected):
     work = Path(ctx["scratch"]) / "out"
     stats_path = work / (label + ".stats")
     out_path = work / (label + ".out")
-    argv, cwd = unit_argv(unit, root, reporter["uo"])
-    env = unit_env(ctx, unit, reporter["uo"], stats_path, layout, busy)
+    log_path = work / (label + ".gclog") if unit.get("gclog") else None
+    argv, cwd = unit_argv(unit, root, reporter["uo"], log_path)
+    env = unit_env(ctx, unit, reporter["uo"], stats_path, layout, busy,
+                   log_path)
     receipt = dict(argv=argv, cwd=str(cwd), layout=layout, busy=busy or None,
                    env={k: v for k, v in env.items() if k.startswith(
                        ("T32_", "POLY_") + (
@@ -1575,14 +1602,25 @@ def execute_unit(ctx, unit, side, label, layout, busy, expected):
     text = data.decode("latin-1")
     receipt["stdout"] = text[-4000:] if theory else text
     receipt["stdout_sha256"] = sha(data)
+    if log_path is not None:
+        # The GC log (latin-1 like stdout, with its digest), read from the
+        # process's output area next to the stats.
+        log_data = None
+        with contextlib.suppress(OSError):
+            log_data = log_path.read_bytes()
+        receipt["gclog"] = None if log_data is None else \
+            log_data.decode("latin-1")
+        receipt["gclog_sha256"] = None if log_data is None else \
+            sha(log_data)
     try:
         receipt["digest"] = theory_digest(
             produced, root, where_of(unit, folder)) if theory else \
-            probe_digest(text, root, folder, unit) if probe else \
-            text_digest(data, root)
+            probe_digest(text, root, folder, unit, receipt.get("gclog")) \
+            if probe else text_digest(data, root)
     except Refusal as error:
         receipt["digest_error"] = str(error)
-    for path in (stats_path, out_path):
+    for path in (stats_path, out_path) + (
+            (log_path,) if log_path is not None else ()):
         with contextlib.suppress(OSError):
             path.unlink()
     try:
@@ -2828,7 +2866,8 @@ def check_receipt(folder, report, entry, refs):
     require(receipt["side"] == side, "wrong snapshot: " + label)
     root = Path(report["roots"][side])
     reporter = report["reporter"][side]
-    want = unit_argv_shape(unit, root, reporter["uo"], receipt["argv"])
+    want = unit_argv_shape(unit, root, reporter["uo"], receipt["argv"],
+                           receipt_gclog(unit, receipt, label))
     require(want, "unexpected command: " + label)
     layout = layout_for(report["layout_seed"], entry["pair"],
                         entry["selection"], entry["rep"])
@@ -2881,9 +2920,29 @@ def check_probe_sources(report):
             "the %s probe modules are not among the sealed sources" % side)
 
 
-def unit_argv_shape(unit, root, uo, argv):
+def receipt_gclog(unit, receipt, label):
+    """The GC log path of a receipt: its environment names one exactly for
+    a unit with a GC log, in the process's output area (`<label>.gclog`),
+    and for no other unit. Returns the path or None."""
+    name = task33_cases.records.GCLOG_ENV
+    path = receipt["env"].get(name)
+    if not unit.get("gclog"):
+        require(name not in receipt["env"],
+                "a process without a GC log names one: " + label)
+        return None
+    require(isinstance(path, str) and Path(path).name == label + ".gclog"
+            and Path(path).parent.name == "out",
+            "wrong GC log path: " + label)
+    return path
+
+
+def unit_argv_shape(unit, root, uo, argv, gclog=None):
+    """Whether `argv` is the unit's command; `gclog` is the log path the
+    receipt's environment names (a unit with a GC log needs it)."""
     if unit["kind"] == "probe":
-        return argv == unit_argv(unit, root, uo)[0]
+        if unit.get("gclog") and not gclog:
+            return False
+        return argv == unit_argv(unit, root, uo, gclog)[0]
     if unit["kind"] == "theory":
         return argv == cases.theory_argv(root, unit["theory"])
     return (len(argv) >= 6 and argv[0] == str(root / "bin/hol") and

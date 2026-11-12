@@ -18,7 +18,7 @@ SML = HERE / "task33"
 GOLDEN = HERE / "task33_golden"
 ROOT = "/snap/base"
 SWITCHES = dict(graph_extra=False, leak=False, hook=False)
-SEG = r.SEGMENT
+SEG = 1 << 20  # a plausible allocation area, bytes (report-only data)
 
 
 def rec(name, probe, kind, **fields):
@@ -26,17 +26,59 @@ def rec(name, probe, kind, **fields):
 
 
 def live(probe, kind, phase, words=1000, share=0, alloc=SEG):
+    """A live record; log_end is set by `text`, which writes the GC log."""
     return rec("live", probe, kind, phase=phase,
                size_heap=8 * words + 3000 + alloc, free_full=3000,
                alloc=alloc, alloc_free=alloc, gc_share=share,
-               comparable=True, words=words)
+               extent=words, log_end=0, words=words)
 
 
-def stale(run, phase):
-    """`run` with the allocation area of a live reading not fresh (the
-    probe's retries ran out): comparable false."""
-    i = find(run, "live", phase=phase)
-    return edit(run, i, alloc_free=SEG // 2, comparable=False)
+# The lines of one full GC in the GC log, as Poly/ML 5.9.2 writes them
+# (copied from a real run); %d is the marked live total.
+FULL_GC = """\
+GC: Full GC, 0 words required 1 spaces
+GC: (Mark) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: (Bitmap) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Mark: Total live data %d words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0 page faults 0
+GC: Completed successfully
+"""
+MINOR_GC = """\
+GC: Non-GC time: CPU user: 0.002 system: 0.001 real: 0.003 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0 page faults 0
+GC: Completed successfully
+"""
+
+
+def fake_log(records, extra=0, full=3):
+    """The GC log a probe with these records would leave, and the records
+    with their `log_end`: per reading some minor GCs, then three full GCs
+    whose totals are the record's words (the first two `extra` higher: only
+    the last of a reading counts); `full` full GCs per reading."""
+    records, log = copy.deepcopy(records), ""
+    for x in records:
+        if x["record"] == "live":
+            log += MINOR_GC * 2
+            for k in reversed(range(full)):
+                log += FULL_GC % (x["words"] + k * extra)
+            x["log_end"] = len(log)
+    return records, log
+
+
+class Text(str):
+    """A probe's stdout, with the GC log it left (`log`)."""
+    log = None
+
+
+def val(body, **kw):
+    """`validate` of a `text` result with its own GC log (or `gclog`)."""
+    kw.setdefault("gclog", getattr(body, "log", None))
+    return r.validate(body, **kw)
 
 
 def check(probe, kind, label, value="v"):
@@ -182,7 +224,7 @@ def reading(run, kind, which, words, share=None, alloc=None):
     i = find(run, "live", phase="%s.%s" % (kind, which))
     x = run[i]
     a = x["alloc"] if alloc is None else alloc
-    x.update(words=words, alloc=a, alloc_free=a,
+    x.update(words=words, extent=words, alloc=a, alloc_free=a,
              size_heap=8 * words + x["free_full"] + a,
              gc_share=x["gc_share"] if share is None else share)
     run[find(run, "release", release=kind)][which] = words
@@ -213,13 +255,18 @@ def ext_run(m=2, sizes=(0, 1)):
             [live(p, k, "registry"), registry(p, k), rec("done", p, k)])
 
 
-def text(records, noise=True):
+def text(records, noise=True, log=None, full=3):
+    """The stdout of a process with these records and, as `.log`, the GC
+    log that gives their words (`fake_log`; `log` replaces it)."""
+    records, fake = fake_log(records, extra=5, full=full)
     lines = []
     for i, x in enumerate(records):
         if noise and i % 3 == 0:
             lines.append("compiler chatter %d" % i)
         lines.append(r.PREFIX + json.dumps(x))
-    return "\n".join(lines) + "\n"
+    out = Text("\n".join(lines) + "\n")
+    out.log = fake if log is None else log
+    return out
 
 
 def edit(records, index, **fields):
@@ -240,24 +287,24 @@ class WellFormed(unittest.TestCase):
     def test_load_and_registry_kinds(self):
         for probe in ("load", "registry"):
             for kind in r.LOAD_KINDS:
-                summary = r.validate(text(load_run(probe, kind)), root=ROOT)
+                summary = val(text(load_run(probe, kind)), root=ROOT)
                 self.assertEqual((summary["probe"], summary["kind"]),
                                  (probe, kind))
-        s = r.validate(text(load_run("registry", "first-use")))
+        s = val(text(load_run("registry", "first-use")))
         self.assertEqual(s["checks"], list(r.FIRST_USE))
         self.assertEqual(sorted(s["times"]), sorted(r.FIRST_USE))
         self.assertEqual(len(s["registry"]["sizes"]), len(r.SIZED))
 
     def test_trivial_kinds(self):
         for kind in r.STARTUP_KINDS:
-            s = r.validate(text(trivial_run(kind)))
+            s = val(text(trivial_run(kind)))
             self.assertEqual((s["probe"], s["checks"]), ("trivial", []))
         bad = trivial_run("load-simpLib")
         with self.assertRaises(r.RecordError):
-            r.validate(text(bad))
+            val(text(bad))
 
     def test_graph(self):
-        s = r.validate(text(graph_run((0, 1, 10))))
+        s = val(text(graph_run((0, 1, 10))))
         self.assertEqual(sorted(s["graph"]), sorted(r.GRAPH_KINDS))
         self.assertEqual(s["graph"]["cells_ref"][10]["words"], 50)
         self.assertEqual(s["live"]["graph.10"], 1010)
@@ -267,20 +314,20 @@ class WellFormed(unittest.TestCase):
         self.assertEqual(s["alloc"]["start"], SEG)
 
     def test_default_sizes(self):
-        s = r.validate(text(graph_run(r.DEFAULT_SIZES)))
+        s = val(text(graph_run(r.DEFAULT_SIZES)))
         self.assertEqual(sorted(s["phase"]), list(r.DEFAULT_SIZES))
 
     def test_steps(self):
-        s = r.validate(text(graph_run((0, 1, 10))))
+        s = val(text(graph_run((0, 1, 10))))
         step = s["step"]["compiled"]["built"]
         self.assertEqual((step["first"], step["rest"], step["span"]),
                          (7, 63, 9))
         self.assertTrue(step["match"])
         self.assertEqual(sorted(s["step"]), sorted(r.GRAPH_KINDS))
         # without sizes 0, 1 and 10 there are no step records
-        s = r.validate(text(graph_run((0, 1, 100))))
+        s = val(text(graph_run((0, 1, 100))))
         self.assertEqual(s["step"], {})
-        s = r.validate(text(graph_run((1, 10))))
+        s = val(text(graph_run((1, 10))))
         self.assertEqual(s["step"], {})
 
     def test_step_mismatch_is_reported_not_refused(self):
@@ -296,7 +343,7 @@ class WellFormed(unittest.TestCase):
         for x in run:
             if x["record"] == "step" and x["graph"] == "compiled":
                 x["first"] += 20
-        s = r.validate(text(run))
+        s = val(text(run))
         self.assertFalse(s["step"]["compiled"]["built"]["match"])
         self.assertTrue(s["step"]["merge"]["built"]["match"])
 
@@ -305,7 +352,7 @@ class WellFormed(unittest.TestCase):
         run = ([head("graph", "graph", dict(sizes=[0, 1, 10]))] +
                graph_rows("graph", "graph", (0, 1, 10), shares=shares) +
                [rec("done", "graph", "graph")])
-        s = r.validate(text(run))
+        s = val(text(run))
         self.assertEqual(s["gateable"], {
             0: dict(built=True, canonical=True),
             1: dict(built=False, canonical=True),
@@ -322,13 +369,13 @@ class WellFormed(unittest.TestCase):
         return run
 
     def test_a_moved_anchor_is_data_not_an_error(self):
-        s = r.validate(text(self.graph_with((0, 1), anchor_post=1004)))
+        s = val(text(self.graph_with((0, 1), anchor_post=1004)))
         self.assertEqual(s["anchor_moved"], [dict(
             kind="compiled", n=0, mode="built", pre=1000, post=1004)])
         self.assertEqual(s["gateable_coverage"]["compiled"], [1])
         self.assertEqual(s["gateable_coverage"]["merge"], [0, 1])
         self.assertTrue(s["gateable"][0]["built"])
-        s = r.validate(text(self.graph_with((0, 1), canon_anchor_post=999)))
+        s = val(text(self.graph_with((0, 1), canon_anchor_post=999)))
         self.assertEqual(s["anchor_moved"], [dict(
             kind="compiled", n=0, mode="canonical", pre=1000, post=999)])
         self.assertEqual(s["gateable_coverage"]["compiled"], [0, 1])
@@ -338,10 +385,10 @@ class WellFormed(unittest.TestCase):
         return edit(run, find(run, "phase", n=1), **fields)
 
     def test_a_share_that_did_not_converge_is_not_comparable(self):
-        s = r.validate(text(self.phase_with(share_tries=3)))
+        s = val(text(self.phase_with(share_tries=3)))
         self.assertEqual(s["unconverged"], [])
         with self.assertRaises(r.NotComparable) as why:
-            r.validate(text(self.phase_with(converged=False,
+            val(text(self.phase_with(converged=False,
                                             share_tries=r.SHARE_TRIES_MAX)))
         self.assertIn("converge", str(why.exception))
         self.assertIn("after %d sharing rounds" % r.SHARE_TRIES_MAX,
@@ -352,7 +399,7 @@ class WellFormed(unittest.TestCase):
             with self.subTest(tries):
                 with self.assertRaisesRegex(r.RecordError,
                                             "not converged after"):
-                    r.validate(text(self.phase_with(converged=False,
+                    val(text(self.phase_with(converged=False,
                                                     share_tries=tries)))
 
     def test_the_share_tries_are_bounded_and_the_fields_typed(self):
@@ -361,10 +408,10 @@ class WellFormed(unittest.TestCase):
                     dict(converged="yes"), dict(share_tries=True)):
             with self.subTest(bad):
                 with self.assertRaises(r.RecordError):
-                    r.validate(text(self.phase_with(**bad)))
+                    val(text(self.phase_with(**bad)))
 
     def test_no_move_is_an_empty_list(self):
-        s = r.validate(text(graph_run((0, 1, 10))))
+        s = val(text(graph_run((0, 1, 10))))
         self.assertEqual(s["anchor_moved"], [])
         self.assertEqual(set(s["gateable_coverage"]), set(r.GRAPH_KINDS))
         self.assertTrue(all(v == [0, 1, 10]
@@ -375,7 +422,7 @@ class WellFormed(unittest.TestCase):
         # the canonical one are not compared, but the canonical anchor of
         # the rows must still be the canonical pre-anchor
         shares = {0: (0, 1, 1, 2)}
-        s = r.validate(text(self.graph_with(
+        s = val(text(self.graph_with(
             (0,), shares=shares, anchor_post=1004, canon_anchor_post=999)))
         self.assertEqual(s["anchor_moved"], [])
         self.assertEqual(s["gateable_coverage"]["compiled"], [])
@@ -383,17 +430,17 @@ class WellFormed(unittest.TestCase):
         run = self.graph_with((0,), shares=shares, canon_anchor=999,
                               canon_union=999 + 7 * 0 + 10 - 0,
                               canon_words=10 - 0)
-        s = r.validate(text(run))
+        s = val(text(run))
         self.assertEqual(s["anchor_moved"], [dict(
             kind="compiled", n=0, mode="canonical", pre=1000, post=999)])
 
     def test_a_pass_inside_the_window_leaves_the_size_out_of_coverage(self):
         shares = {0: (0, 0, 0, 0), 1: (0, 1, 1, 1)}
-        s = r.validate(text(graph_run_shares((0, 1), shares)))
+        s = val(text(graph_run_shares((0, 1), shares)))
         self.assertEqual(s["gateable_coverage"]["tactic"], [0])
 
     def test_release(self):
-        s = r.validate(text(release_run(4)))
+        s = val(text(release_run(4)))
         self.assertEqual(sorted(s["release"]), sorted(r.RELEASE_KINDS))
         self.assertEqual(s["weak"]["status"], "pass")
         self.assertEqual(r.RELEASE_KINDS[0], "noop")
@@ -401,43 +448,35 @@ class WellFormed(unittest.TestCase):
         self.assertEqual(s["held"]["tactic"], 600)
 
     def test_release_residual_is_exact(self):
-        run = release_run(4)
-        i = find(run, "release", release="simpset")
-        j = find(run, "live", phase="simpset.after")
-        run[i]["after"] += 2
-        run[j].update(words=run[j]["words"] + 2,
-                      size_heap=run[j]["size_heap"] + 16)
-        run[i]["held"] += 2
-        k = find(run, "live", phase="simpset.held")
-        run[k].update(words=run[k]["words"] + 2,
-                      size_heap=run[k]["size_heap"] + 16)
-        s = r.validate(text(run))
+        run = reading(reading(release_run(4), "simpset", "after", 5002),
+                      "simpset", "held", 7402)
+        s = val(text(run))
         self.assertEqual(s["residual"]["simpset"], Fraction(1, 2))
 
     def test_ext(self):
-        s = r.validate(text(ext_run()))
+        s = val(text(ext_run()))
         self.assertEqual(sorted(s["release"]), sorted(r.EXT_RELEASE_KINDS))
         self.assertEqual(s["checks"][:3], list(r.EXT_CHECKS))
         self.assertIsNotNone(s["registry"])
 
     def test_anchored_summary(self):
-        s = r.validate(text(load_run("registry", "state-empty")))
+        s = val(text(load_run("registry", "state-empty")))
         self.assertTrue(s["anchored"]["repeat_ok"])
         self.assertEqual(s["anchored"]["rows"]["simpLib"], [5, 5, 5])
         self.assertEqual(s["anchored"]["total"], [1028] * 3)
         run = load_run("registry", "state-empty")
         i = find(run, "registry")
         run[i]["anchored"] = anchored(reps=(5, 6, 5))
-        s = r.validate(text(run))
+        s = val(text(run))
         self.assertFalse(s["anchored"]["repeat_ok"])
         run[i] = registry("registry", "state-empty", missing=("simpLib",))
-        s = r.validate(text(run))
+        s = val(text(run))
         self.assertIsNone(s["anchored"]["rows"]["simpLib"])
         self.assertTrue(s["anchored"]["repeat_ok"])
         # D not loaded: not applicable, neither repeatable nor not
         run[i] = registry("registry", "state-empty",
                           anchored=anchored(d=False))
-        s = r.validate(text(run))
+        s = val(text(run))
         self.assertIsNone(s["anchored"]["repeat_ok"])
         self.assertIsNone(s["anchored"]["total"])
         self.assertIsNone(s["anchored"]["d"])
@@ -448,23 +487,25 @@ class WellFormed(unittest.TestCase):
         run = graph_run((0,))
         i = find(run, "phase")
         weak = window(gap=100)
-        s = r.validate(text(edit(run, i, build=weak)))
+        s = val(text(edit(run, i, build=weak)))
         self.assertEqual(s["phase"][0]["build"]["status"], "unsupported")
         failed = window(ok=False)
-        r.validate(text(edit(run, i, build=failed)))
+        val(text(edit(run, i, build=failed)))
         null = dict(window(), hwm_after=None, status="unsupported")
-        r.validate(text(edit(run, i, build=null)))
+        val(text(edit(run, i, build=null)))
 
     def test_noise_is_ignored(self):
         run = graph_run((0,))
-        body = text(run) + "@@MATRIX_RELEASE\t{}\n@@T3\tx\n"
-        r.validate(body)
+        body = text(run)
+        noisy = Text(body + "@@MATRIX_RELEASE\t{}\n@@T3\tx\n")
+        noisy.log = body.log
+        val(noisy)
 
 
 class Malformed(unittest.TestCase):
     def bad(self, body, fragment=None, **kw):
         with self.assertRaises(r.RecordError) as caught:
-            r.validate(body, **kw)
+            val(body, **kw)
         if fragment:
             self.assertIn(fragment, str(caught.exception))
 
@@ -574,21 +615,20 @@ class Malformed(unittest.TestCase):
     def test_live(self):
         run = graph_run((0,))
         i = find(run, "live", phase="graph.0")
-        # the flag must say what the allocation area says
-        self.bad(text(edit(run, i, alloc_free=SEG - 1)), "comparable")
-        self.bad(text(edit(run, i, comparable=False)), "comparable")
-        self.bad(text(edit(run, i, comparable=1)), "comparable")
-        self.bad(text(edit(run, i, words=run[i]["words"] + 1)), "formula")
-        self.bad(text(edit(run, i, size_heap=100, words=-300)), "formula")
+        # the extent is the formula of its parts (report only); the old
+        # `comparable` flag does not exist any more
+        self.bad(text(edit(run, i, extent=run[i]["extent"] + 1)), "extent")
+        self.bad(text(edit(run, i, comparable=True)), "fields")
+        self.bad(text(edit(run, i, size_heap=100, extent=-300)), "extent")
+        self.bad(text(edit(run, i, size_heap=100, extent=-300,
+                           words=-300)), "extent")
         self.bad(text(edit(run, i, gc_share=-1)), "gc_share")
-        half = SEG // 2
-        self.bad(text(edit(run, i, alloc=half, alloc_free=half,
-                           size_heap=run[i]["size_heap"] - half)),
-                 "comparable")
-        double = 2 * SEG
-        ok = edit(run, i, alloc=double, alloc_free=double,
-                  size_heap=run[i]["size_heap"] + SEG)
-        r.validate(text(ok))
+        self.bad(text(edit(run, i, words=1.5)), "words")
+        # any allocation area is accepted
+        for alloc in (SEG // 2, 2 * SEG, SEG + 8):
+            ok = edit(run, i, alloc=alloc, alloc_free=alloc // 2,
+                      size_heap=run[i]["size_heap"] - SEG + alloc)
+            val(text(ok))
 
     def test_graph_arithmetic(self):
         run = graph_run((1,))
@@ -621,7 +661,7 @@ class Malformed(unittest.TestCase):
         run = ([head("graph", "graph", dict(sizes=[0]))] +
                graph_rows("graph", "graph", (0,), shares=shares) +
                [rec("done", "graph", "graph")])
-        r.validate(text(run))
+        val(text(run))
         p = find(run, "phase")
         self.bad(text(edit(run, p, share_built=6, share_shared=5)),
                  "share counts decrease")
@@ -662,7 +702,7 @@ class Malformed(unittest.TestCase):
         gap = r.RESET_SLACK
         self.bad(text(edit(run, i, build=dict(
             build, hwm_before=build["rss_before"] + gap))), "status")
-        r.validate(text(edit(run, i, build=dict(
+        val(text(edit(run, i, build=dict(
             build, hwm_before=build["rss_before"] + gap + 1))))
         # the reset did not take
         self.bad(text(edit(run, i, build=dict(
@@ -683,7 +723,7 @@ class Malformed(unittest.TestCase):
         self.bad(text(edit(run, w, retained=False)), "weak")
         for n in (0, 3):
             self.bad(text(edit(run, w, full_gcs=n)), "at least 4")
-        r.validate(text(edit(run, w, full_gcs=r.WEAK_MIN_FULL_GCS)))
+        val(text(edit(run, w, full_gcs=r.WEAK_MIN_FULL_GCS)))
 
     def test_registry(self):
         run = load_run("registry", "state-empty")
@@ -724,14 +764,14 @@ class Malformed(unittest.TestCase):
                  "repeat_ok")
         self.bad(with_(total=[1004] * 3), "between the largest")
         self.bad(with_(total=[1018 + 31] * 3), "between the largest")
-        r.validate(text(edit(run, i, anchored=dict(
+        val(text(edit(run, i, anchored=dict(
             good, total=[1018 + 5] * 3))))
-        r.validate(text(edit(run, i, anchored=dict(
+        val(text(edit(run, i, anchored=dict(
             good, total=[1018 + 30] * 3))))
         # a structure that is missing has no anchored values
         miss = load_run("registry", "state-empty")
         miss[i] = registry("registry", "state-empty", missing=("simpLib",))
-        r.validate(text(miss))
+        val(text(miss))
         bad = copy.deepcopy(miss)
         bad[i]["anchored"]["rows"][0]["vals"] = [5, 5, 5]
         self.bad(text(bad), "disagree")
@@ -757,7 +797,7 @@ class ShareBounds(unittest.TestCase):
                        share=held)
 
     def test_an_exact_pair_is_exact(self):
-        s = r.validate(text(self.run_of(before=2, after=2, held=2,
+        s = val(text(self.run_of(before=2, after=2, held=2,
                                         extra=3)))
         self.assertEqual(s["residual"]["simpset"], 3)
         self.assertFalse(s["residual_bound"]["simpset"])
@@ -772,7 +812,7 @@ class ShareBounds(unittest.TestCase):
                           "after", 5000 + words, share=1)
             run = reading(run, "simpset", "held", 5000 + words + 2400,
                           share=1)
-            s = r.validate(text(run))
+            s = val(text(run))
             self.assertEqual(s["residual"]["simpset"], want)
             self.assertTrue(s["residual_bound"]["simpset"])
             self.assertFalse(s["residual_bound"]["cong"])
@@ -782,12 +822,12 @@ class ShareBounds(unittest.TestCase):
                       5001, share=1)
         run = reading(run, "simpset", "held", 5001 + 2400, share=1)
         with self.assertRaises(r.NotComparable) as caught:
-            r.validate(text(run))
+            val(text(run))
         self.assertIn("simpset", str(caught.exception))
         self.assertIn("under", str(caught.exception))
         # a pass with no difference at all is a bound of 0: also refused
         with self.assertRaises(r.NotComparable):
-            r.validate(text(self.run_of(after=1, held=1)))
+            val(text(self.run_of(after=1, held=1)))
 
     def test_a_bound_on_the_floor_kind_is_not_comparable(self):
         run = reading(release_run(self.M), r.FLOOR_KIND, "after", 5000 + 400,
@@ -795,34 +835,34 @@ class ShareBounds(unittest.TestCase):
         run = reading(run, r.FLOOR_KIND, "held", 5000 + 400 + 2400,
                       share=1)
         with self.assertRaises(r.NotComparable) as caught:
-            r.validate(text(run))
+            val(text(run))
         self.assertIn("floor", str(caught.exception))
         # exact, the floor may have any residual
-        r.validate(text(reading(reading(release_run(self.M), r.FLOOR_KIND,
+        val(text(reading(reading(release_run(self.M), r.FLOOR_KIND,
                                         "after", 5400), r.FLOOR_KIND,
                                 "held", 7800)))
 
     def test_a_differing_alloc_or_a_shrinking_count_is_not_comparable(self):
         run = self.run_of(extra=300)
         with self.assertRaises(r.NotComparable):
-            r.validate(text(reading(run, "simpset", "after", 6200,
+            val(text(reading(run, "simpset", "after", 6200,
                                     share=1, alloc=2 * SEG)))
         run = reading(self.run_of(before=3, after=3, extra=300), "simpset",
                       "after", 6200, share=2)
         with self.assertRaises(r.NotComparable):
-            r.validate(text(run))
+            val(text(run))
 
     def test_held_is_compared_with_after_not_before(self):
         # a pass between before and after (a bound of 300) but none after:
         # the held reading shares `after`'s pair, so it is exact
         run = self.run_of(before=0, after=1, held=1, extra=300)
-        s = r.validate(text(run))
+        s = val(text(run))
         self.assertTrue(s["held_comparable"]["simpset"])
         self.assertFalse(s["held_bound"]["simpset"])
         self.assertEqual(s["held"]["simpset"], 600)
         # a pass between after and held: a bound, comparable at h >= H_MIN
         run = self.run_of(before=1, after=1, held=2, extra=0)
-        s = r.validate(text(run))
+        s = val(text(run))
         self.assertTrue(s["held_bound"]["simpset"])
         self.assertTrue(s["held_comparable"]["simpset"])
 
@@ -830,19 +870,19 @@ class ShareBounds(unittest.TestCase):
         small = lambda h: reading(self.run_of(before=1, after=1, held=2),
                                   "simpset", "held", 5000 + h * self.M,
                                   share=2)
-        s = r.validate(text(small(r.H_MIN)))
+        s = val(text(small(r.H_MIN)))
         self.assertTrue(s["held_comparable"]["simpset"])
-        s = r.validate(text(small(r.H_MIN - 1)))
+        s = val(text(small(r.H_MIN - 1)))
         self.assertTrue(s["held_bound"]["simpset"])
         self.assertFalse(s["held_comparable"]["simpset"])
         # an exact small held reading is comparable (R1 then blocks it)
-        s = r.validate(text(reading(self.run_of(), "simpset", "held",
+        s = val(text(reading(self.run_of(), "simpset", "held",
                                     5000 + 5 * self.M)))
         self.assertTrue(s["held_comparable"]["simpset"])
 
     def test_a_shrinking_held_count_is_neither_comparable_nor_a_bound(self):
         run = self.run_of(before=2, after=2, held=1)
-        s = r.validate(text(run))
+        s = val(text(run))
         self.assertFalse(s["held_comparable"]["simpset"])
         self.assertFalse(s["held_bound"]["simpset"])
 
@@ -855,7 +895,7 @@ class ShareBounds(unittest.TestCase):
 class Comparable(unittest.TestCase):
     def raises(self, run, kind):
         with self.assertRaises(r.NotComparable) as caught:
-            r.validate(text(run))
+            val(text(run))
         self.assertIn(kind, str(caught.exception))
         self.assertNotIsInstance(caught.exception, r.RecordError)
 
@@ -872,17 +912,38 @@ class Comparable(unittest.TestCase):
                       size_heap=run[i]["size_heap"] + SEG)
         self.raises(run, "noop")
 
-    def test_a_stale_allocation_area_is_not_comparable(self):
-        # emitted with comparable false, not a failed process
-        for phase in ("start", "tactic.before", "tactic.after"):
-            self.raises(stale(release_run(4), phase), phase)
-        self.raises(stale(graph_run((0, 1)), "graph.1"), "graph.1")
-        self.raises(stale(load_run("registry", "state-empty"), "registry"),
-                    "registry")
-        self.raises(stale(ext_run(), "ext_views.after"), "ext_views.after")
+    def test_the_allocation_area_is_no_comparability_condition(self):
+        # the words are the marked live total: a reading whose allocation
+        # area is not a whole segment (or not fresh) is as good as another
+        for run, phase in ((release_run(4), "start"),
+                           (graph_run((0, 1)), "graph.1"),
+                           (load_run("registry", "state-empty"),
+                            "registry"),
+                           (ext_run(), "ext.start")):
+            i = find(run, "live", phase=phase)
+            val(text(edit(run, i, alloc=SEG // 2, alloc_free=SEG // 4,
+                          size_heap=run[i]["size_heap"] - SEG // 2)))
+
+    def test_the_extent_does_not_matter(self):
+        # a floor jump (a hole), a held deficit (a filled hole): the
+        # extent varies, the marked totals stay exact, and so do the
+        # residual, the held size and the comparability
+        run = release_run(4)
+        for phase, by in (("noop.after", 509), ("simpset.before", 3034),
+                          ("simpset.held", -400), ("cong.held", -2400)):
+            i = find(run, "live", phase=phase)
+            x = run[i]
+            x.update(extent=x["extent"] + by,
+                     size_heap=x["size_heap"] + 8 * by)
+        s = val(text(run))
+        self.assertEqual(s["residual"]["noop"], 0)
+        self.assertEqual(s["residual"]["simpset"], 0)
+        self.assertEqual(s["held"]["simpset"], 600)
+        self.assertEqual(s["held"]["cong"], 600)
+        self.assertTrue(all(s["held_comparable"].values()))
 
     def test_the_held_reading_only_clears_held_comparable(self):
-        s = r.validate(text(release_run(4)))
+        s = val(text(release_run(4)))
         self.assertTrue(all(s["held_comparable"].values()))
         self.assertEqual(sorted(s["held_comparable"]),
                          sorted(r.RELEASE_KINDS))
@@ -890,21 +951,22 @@ class Comparable(unittest.TestCase):
         # a share pass before the held reading, but a held size under
         # H_MIN: only a bound that small, so it proves nothing
         run = reading(run, "removed", "held", 5000 + 4 * 5, share=3)
-        s = r.validate(text(run))
+        s = val(text(run))
         self.assertFalse(s["held_comparable"]["removed"])
         self.assertTrue(s["held_comparable"]["cong"])
         big = 2 * SEG
         j = find(run, "live", phase="noop.held")
         run[j].update(alloc=big, alloc_free=big,
                       size_heap=run[j]["size_heap"] + SEG)
-        s = r.validate(text(run))
+        s = val(text(run))
         self.assertFalse(s["held_comparable"]["noop"])
-        s = r.validate(text(stale(release_run(4), "tactic.held")))
+        s = val(text(reading(release_run(4), "tactic", "held", 7400,
+                             alloc=3 * SEG // 2)))
         self.assertFalse(s["held_comparable"]["tactic"])
         self.assertEqual(s["held"]["tactic"], 600)
 
     def test_graph_and_registry_probes_have_no_held_comparable(self):
-        self.assertEqual(r.validate(text(graph_run((0,))))[
+        self.assertEqual(val(text(graph_run((0,))))[
             "held_comparable"], {})
 
     def test_differences_between_kinds_are_comparable(self):
@@ -913,7 +975,7 @@ class Comparable(unittest.TestCase):
             for phase in (".before", ".after", ".held"):
                 i = find(run, "live", phase=k + phase)
                 run[i]["gc_share"] = 2 if k == "cong" else 1
-        r.validate(text(run))
+        val(text(run))
 
     def test_ext_release_kinds_are_checked_too(self):
         run = ext_run()
@@ -926,7 +988,7 @@ class Comparable(unittest.TestCase):
         run = edit(run, i, gc_share=1)
         j = find(run, "release", release="cong")
         with self.assertRaises(r.RecordError):
-            r.validate(text(edit(run, j, m=9)))
+            val(text(edit(run, j, m=9)))
 
 
 class Controls(unittest.TestCase):
@@ -936,63 +998,63 @@ class Controls(unittest.TestCase):
             run = make((0,), **{name: True}) if name == "graph_extra" \
                 else make(4, **{name: True})
             with self.assertRaises(r.RecordError) as caught:
-                r.validate(text(run))
+                val(text(run))
             self.assertIn(name, str(caught.exception))
-            s = r.validate(text(run), controls=(name,))
+            s = val(text(run), controls=(name,))
             self.assertTrue(s["switches"][name])
             self.assertEqual(sum(s["switches"].values()), 1)
 
     def test_an_expected_control_must_be_active(self):
         for run in (graph_run((0,)), release_run(4)):
             with self.assertRaises(r.RecordError) as caught:
-                r.validate(text(run), controls=("leak",))
+                val(text(run), controls=("leak",))
             self.assertIn("expected leak", str(caught.exception))
 
     def test_a_different_control_is_refused(self):
         run = release_run(4, leak=True)
         with self.assertRaises(r.RecordError):
-            r.validate(text(run), controls=("graph_extra",))
+            val(text(run), controls=("graph_extra",))
         with self.assertRaises(r.RecordError):
-            r.validate(text(run), controls=("leak", "hook"))
+            val(text(run), controls=("leak", "hook"))
         with self.assertRaises(r.RecordError):
-            r.validate(text(run), controls=("nonesuch",))
+            val(text(run), controls=("nonesuch",))
 
     def test_an_inert_control_is_refused(self):
         # T33_LEAK in a graph run, T33_GRAPH_EXTRA in a release run: the
         # probe records the switch but the probe never uses it
         graph = graph_run((0,), leak=True)
         with self.assertRaises(r.RecordError) as caught:
-            r.validate(text(graph), controls=("leak",))
+            val(text(graph), controls=("leak",))
         self.assertIn("inert", str(caught.exception))
         release = release_run(4, graph_extra=True)
         with self.assertRaises(r.RecordError) as caught:
-            r.validate(text(release), controls=("graph_extra",))
+            val(text(release), controls=("graph_extra",))
         self.assertIn("inert", str(caught.exception))
         run = load_run("load", "state-empty", hook=True)
         with self.assertRaises(r.RecordError):
-            r.validate(text(run), controls=("hook",))
+            val(text(run), controls=("hook",))
 
     def test_leak_in_release_rows(self):
-        s = r.validate(text(release_run(4, leak=True)), controls=("leak",))
+        s = val(text(release_run(4, leak=True)), controls=("leak",))
         self.assertEqual(s["residual"]["tactic"], 1)
         self.assertEqual(s["residual"]["noop"], 0)
-        clean = r.validate(text(release_run(4)))
+        clean = val(text(release_run(4)))
         self.assertEqual(clean["residual"]["tactic"], 0)
 
     def test_hook_in_registry(self):
         run = load_run("registry", "state-empty", hook=True)
-        s = r.validate(text(run), controls=("hook",))
+        s = val(text(run), controls=("hook",))
         self.assertIn(r.HOOK_NAME, s["registry"]["listeners"])
         self.assertTrue(s["switches"]["hook"])
-        self.assertNotIn(r.HOOK_NAME, r.validate(text(load_run(
+        self.assertNotIn(r.HOOK_NAME, val(text(load_run(
             "registry", "state-empty")))["registry"]["listeners"])
-        s = r.validate(text(ext_run()))
+        s = val(text(ext_run()))
         self.assertFalse(s["switches"]["hook"])
 
     def test_graph_extra_in_rows(self):
-        s = r.validate(text(graph_run((0, 10), graph_extra=True)),
+        s = val(text(graph_run((0, 10), graph_extra=True)),
                        controls=("graph_extra",))
-        plain = r.validate(text(graph_run((0, 10))))
+        plain = val(text(graph_run((0, 10))))
         self.assertEqual(s["graph"]["compiled"][10]["words"] -
                          plain["graph"]["compiled"][10]["words"], 30)
         self.assertEqual(s["graph"]["cells_cons"][10]["words"], 30)
@@ -1111,9 +1173,15 @@ def golden(name):
     return "\n".join(out).encode("utf-8").decode("latin-1") + "\n"
 
 
+def golden_log(name):
+    """The GC log (task33_golden/NAME.gclog) the real run of the golden
+    output left, as the driver reads it (latin-1)."""
+    return (GOLDEN / (name + ".gclog")).read_bytes().decode("latin-1")
+
+
 class Golden(unittest.TestCase):
     def test_graph(self):
-        s = r.validate(golden("graph"), root=ROOT)
+        s = val(golden("graph"), root=ROOT, gclog=golden_log("graph"))
         self.assertEqual(s["params"]["sizes"], [0, 1, 10])
         self.assertEqual(sorted(s["step"]), sorted(r.GRAPH_KINDS))
         self.assertTrue(all(g["built"] and g["canonical"]
@@ -1131,17 +1199,19 @@ class Golden(unittest.TestCase):
         self.assertEqual(s["gateable_coverage"]["tactic"], [0, 1, 10])
 
     def test_release(self):
-        s = r.validate(golden("release"), root=ROOT)
-        self.assertEqual(s["params"], {"m": 3})
+        s = val(golden("release"), root=ROOT, gclog=golden_log("release"))
+        self.assertEqual(s["params"], {"m": 50})
         self.assertEqual(sorted(s["release"]), sorted(r.RELEASE_KINDS))
         self.assertEqual(s["residual"]["noop"], 0)
         self.assertEqual(s["weak"]["status"], "pass")
-        self.assertEqual(set(s["alloc"].values()), {SEG})
         self.assertTrue(all(s["held_comparable"].values()))
+        self.assertTrue(all(s["residual"][k] == 0 or k == "traversedata"
+                            or abs(s["residual"][k]) < 1
+                            for k in s["residual"]))
 
     def test_first_use(self):
         text_ = golden("first-use")
-        s = r.validate(text_, root=ROOT)
+        s = val(text_, root=ROOT)
         self.assertEqual(s["checks"], list(r.FIRST_USE))
         for label in r.FIRST_USE:
             self.assertGreater(s["times"][label]["cpu"], 0)
@@ -1163,9 +1233,9 @@ class Golden(unittest.TestCase):
         record["words"] += 1
         lines[i] = r.PREFIX + json.dumps(record)
         with self.assertRaises(r.RecordError):
-            r.validate("\n".join(lines) + "\n")
+            val("\n".join(lines) + "\n")
         with self.assertRaises(r.RecordError):
-            r.validate("\n".join(body.splitlines()[:-1]) + "\n")
+            val("\n".join(body.splitlines()[:-1]) + "\n")
 
     def test_real_real_formats(self):
         # Real.fmt (SCI (SOME 12)) with `~` mapped to `-`, as the probes
@@ -1176,7 +1246,125 @@ class Golden(unittest.TestCase):
         self.assertIn("E-5", golden("first-use"))
         body = text(load_run("load", "load-simpLib"))
         body = body.replace('"cpu": 0.5', '"cpu": 0.000000000000E00')
-        r.validate(body)
+        val(body)
+
+
+def with_log_end(body, phase, end):
+    """The output `body` of `text` with the `log_end` of one live record
+    replaced (the log is kept)."""
+    lines = body.splitlines()
+    for k, line in enumerate(lines):
+        if line.startswith(r.PREFIX):
+            x = json.loads(line[len(r.PREFIX):])
+            if x["record"] == "live" and x["phase"] == phase:
+                x["log_end"] = end
+                lines[k] = r.PREFIX + json.dumps(x)
+    out = Text("\n".join(lines) + "\n")
+    out.log = body.log
+    return out
+
+
+class GCLog(Malformed):
+    """The words of a reading are the GC log's marked total (the log's
+    format and its split per reading: task33_records.check_gc_log)."""
+
+    def test_the_real_format_is_parsed(self):
+        log = golden_log("release")
+        lines = log.split("\n")
+        marks = [x for x in lines if "Total live data" in x]
+        self.assertTrue(marks)
+        self.assertTrue(all(re.fullmatch(
+            r"GC: Mark: Total live data [0-9]+ words", x) for x in marks))
+        totals = r.gc_log_totals(log)
+        self.assertEqual(totals, [int(x.split()[5]) for x in marks])
+        self.assertEqual(r.gc_log_totals(
+            "GC: Full GC, 0 words required 1 spaces\n"
+            "GC: Mark: Total live data 2614 words\n"
+            "GC: Beginning quick GC\n"), [2614])
+        for other in ("GC: Mark: Total live data words",
+                      "GC: Mark: Total live data 12 words.",
+                      "GC: Mark: Total live data -12 words",
+                      "GC: Mark: Total live data 1 2 words",
+                      " GC: Mark: Total live data 12 words",
+                      "GC: Mark: Total live data 12 words ",
+                      "GC (Total): Mark: Total live data 12 words",
+                      "GC: Total live data 12 words"):
+            self.assertEqual(r.gc_log_totals(other + "\n"), [], other)
+
+    def test_every_reading_has_its_three_full_gcs_in_the_real_log(self):
+        body, log = golden("release"), golden_log("release")
+        live = [x for x in r.parse(body) if x["record"] == "live"]
+        start = 0
+        for x in live:
+            totals = r.gc_log_totals(log[start:x["log_end"]])
+            self.assertGreaterEqual(len(totals), r.MIN_FULL_GCS)
+            self.assertEqual(totals[-1], x["words"])
+            start = x["log_end"]
+        self.assertTrue(log[start:].strip())  # the process's exit
+
+    def test_words_are_the_log_total(self):
+        run = release_run(4)
+        body = text(run)
+        s = val(body)
+        self.assertEqual(s["live"]["simpset.after"], 5000)
+        # only the last full GC of a reading counts
+        i = body.log.index("Total live data 5005 words")
+        j = body.log.index("Total live data 5000 words", i)
+        other = body.log[:i] + body.log[i:].replace("5005", "6006", 1)
+        val(body, gclog=other)
+        self.assertLess(i, j)
+        last = body.log[:j] + "Total live data 5001 words" + body.log[
+            j + len("Total live data 5000 words"):]
+        self.bad(body, "marked total", gclog=last)
+        self.bad(text(run), "marked total", gclog=body.log.replace(
+            "Total live data 5000 words", "Total live data 4999 words"))
+
+    def test_a_missing_log_is_refused(self):
+        for run in (release_run(4), graph_run((0,)),
+                    load_run("registry", "state-empty")):
+            self.bad(text(run), "missing GC log", gclog=None)
+        # a process without live records has no log
+        val(text(trivial_run()), gclog=None)
+        val(text(load_run("load", "load-simpLib")), gclog=None)
+
+    def test_too_few_full_gcs_are_refused(self):
+        # a reading's slice holds its own full GCs only
+        self.bad(text(release_run(4), full=2), "full GC total")
+        self.bad(text(release_run(4), full=0), "full GC total")
+        val(text(release_run(4), full=4))
+        # minor GCs and the log of other readings do not count
+        body = text(release_run(4))
+        self.assertGreaterEqual(len(r.gc_log_totals(body.log)), 3 * 25)
+
+    def test_the_log_ends_of_the_readings_are_checked(self):
+        body = text(release_run(4))
+        ends = [x["log_end"] for x in r.parse(body)
+                if x["record"] == "live"]
+        phase = "noop.before"
+        for end, why in ((0, "not a line end"),
+                         (ends[0], "not a line end"),
+                         (len(body.log) + 1, "not a line end"),
+                         (ends[3] - 3, "not a line end"),
+                         (ends[3] + 5, "not a line end")):
+            self.bad(with_log_end(body, phase, end), "log_end", )
+        # beyond the log, on a line end
+        longer = Text(str(body))
+        longer.log = body.log + FULL_GC % 1
+        self.bad(with_log_end(longer, "cong.held", len(longer.log) + 1),
+                 "log_end")
+
+    def test_a_leak_is_still_seen_in_the_marked_totals(self):
+        s = val(text(release_run(4, leak=True)), controls=("leak",))
+        self.assertEqual(s["residual"]["noop"], 0)
+        self.assertEqual(s["residual"]["simpset"], 1)
+
+    def test_a_forged_total_is_not_a_residual(self):
+        # the extent (hole, jump) may be anything: the verdict follows the
+        # marked totals, which must equal the log's
+        run = reading(release_run(4), "noop", "after", 5002)
+        s = val(text(run))
+        self.assertEqual(s["residual"]["noop"], Fraction(1, 2))
+        self.bad(text(run), "marked total", gclog=text(release_run(4)).log)
 
 
 class Ties(unittest.TestCase):
@@ -1221,7 +1409,12 @@ class Ties(unittest.TestCase):
     def test_constants(self):
         self.assertIn("val slack = %d" % r.RESET_SLACK,
                       self.src("T33GraphLib.sml"))
-        self.assertIn("val segment = %d" % r.SEGMENT, self.src("T33.sml"))
+        sml = self.src("T33.sml")
+        self.assertIn('val gclog_env = "%s"' % r.GCLOG_ENV, sml)
+        marker, unit = re.search(r'val log_marker = "(.*?)"\s+val log_unit '
+                                 r'= "(.*?)"', sml, re.S).groups()
+        self.assertEqual(r.LOG_TOTAL.pattern,
+                         marker + "([0-9]+)" + unit)
         self.assertIn("val default_sizes = [%s]" % ", ".join(
             map(str, r.DEFAULT_SIZES)), self.src("T33GraphLib.sml"))
         self.assertIn('("span", T33.ji %d)' % r.STEP_SPAN,
@@ -1347,7 +1540,7 @@ class Ties(unittest.TestCase):
         self.assertEqual(sorted(probes), sorted(r.PROBE_KINDS))
 
     def test_schema_name(self):
-        self.assertEqual(r.SCHEMA, "task33-records-v5")
+        self.assertEqual(r.SCHEMA, "task33-records-v6")
 
 
 if __name__ == "__main__":

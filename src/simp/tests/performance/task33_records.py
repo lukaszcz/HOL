@@ -30,17 +30,12 @@ the fields below, no more and no fewer:
             value is evidence: the printed theorems)
   time      label:str, cpu:real s, wall:real s  (in-process bracket)
   live      phase:str, size_heap, free_full, alloc, alloc_free:uint bytes,
-            gc_share:uint, comparable:bool, words:int. words = (size_heap -
-            free_full - alloc) // 8 after three full GCs. comparable: the
-            allocation area is fresh (alloc_free = alloc and alloc a whole
-            number of 1 MB allocation segments, SEGMENT; see T33.sml `live`
-            for why the formula then does not depend on the allocation-area
-            size) after the probe's retries; the validator requires the flag
-            to say so. alloc_free = alloc alone says nothing about that:
-            after a GC both counters get the same value. A reading that is
-            not comparable is not a malformed record: the process is
-            NotComparable (a redraw), except a `.held` reading of a release
-            kind, which only clears `held_comparable`.
+            gc_share:uint, extent:int, log_end:uint, words:int. words is the
+            garbage collector's marked live total of the reading's last full
+            GC, read by the probe from the GC log (see The GC log); extent =
+            (size_heap - free_full - alloc) // 8 is the heap extent, live
+            data plus holes, reported only (the validator recomputes it);
+            log_end is the byte length of the log through the reading.
   registry  loaded, listeners, attributes, set_types, structures,
             signatures, functors:[str]; files:[[file,dir]];
             sizes:[{name,struct:uint|null,sig:uint|null}] (absolute
@@ -109,6 +104,26 @@ malformed record: it is listed in `summary["anchor_moved"]` as {kind, n,
 mode, pre, post} (a retention finding about the candidate, for S4 to
 judge).
 
+The GC log. A storage probe runs under `--debug gc --logfile $T33_GCLOG`
+(GCLOG_ENV; the driver sets both, and a timing process has neither). Poly/ML
+5.9.2 writes one line per full GC (and none for a minor GC) of the form
+
+    GC: Mark: Total live data <N> words        (LOG_TOTAL, N decimal digits)
+
+The marked live total is exact, while the heap extent includes holes: the
+copy phase places immutable data by the first object it copies and a later
+GC can move it, leaving a counted hole, and new objects fill old holes (the
+~509-word jump of the no-op kind, the held deficits;
+.agent-files/evidence/task33/noop-offset-diagnosis.md). T33.sml `live` takes
+the last total of the full GCs it ran, among the lines appended since the
+previous reading (it requires at least three), and records the log length
+`log_end` (always at the end of a line). `gc_log_totals` and `check_gc_log`
+are the one place that parses the log in Python: `validate(..., gclog)`
+splits the log at the records' `log_end` and checks that every reading's
+`words` is the last total of its slice, with at least three totals in it.
+The log is a receipt field with its sha256 (task32_downstream `validate`
+checks the digest). A process with `live` records and no log is refused.
+
 Release readings and share passes. A GC share pass merges equal
 immutable cells and never adds a word, so for two readings x, y with the
 same `alloc` and more share passes at y, `y - x` is a lower bound of the
@@ -126,11 +141,12 @@ baseline at or over 1/2), and the stability checks (spread <= RESOLUTION),
 which a lower bound would not support, are never reached with a bound. The
 held size (held - after) / m is compared with the `after` reading (the one
 it is a difference of): `held_comparable[kind]` is the held reading being
-fresh and either exact or a bound (`held_bound[kind]`) >= H_MIN (a lower
-bound >= H_MIN proves the sensitivity requirement; one below it proves
-nothing and is not used). Any live reading that is not comparable (but a
-`.held` one) is NotComparable too (not a RecordError: the process is a
-redraw, not a malformed record).
+either exact or a bound (`held_bound[kind]`) >= H_MIN (a lower bound >=
+H_MIN proves the sensitivity requirement; one below it proves nothing and
+is not used). That share-pass rule is the whole of a reading's
+comparability: the words are the marked live total, so no allocation-area
+condition applies. A NotComparable process is a redraw, not a malformed
+record.
 
 The exact sequence of records of a process is fixed by its probe, kind and
 params (`expected_keys`), so a missing, extra or reordered record is an
@@ -146,12 +162,13 @@ and refuse a failed check.
 """
 import hashlib
 import json
+import re
 import sys
 from fractions import Fraction
 
 sys.dont_write_bytecode = True
 
-SCHEMA = "task33-records-v5"
+SCHEMA = "task33-records-v6"
 PREFIX = "@@T33\t"
 
 # Files a probe directory needs (copied from task33/ and from the
@@ -168,6 +185,9 @@ PROBE_TARGETS = dict(load="T33Load.uo", trivial="T33Trivial.uo",
                      ext="T33Ext.uo")  # ext: candidate only
 # The probe module (the bare name `hol run` is given) -> the record probe.
 PROBE_OF_MODULE = {t[:-3]: p for p, t in PROBE_TARGETS.items()}
+# The variable that names the GC log of a storage probe (T33.sml gclog_env;
+# a test compares the two).
+GCLOG_ENV = "T33_GCLOG"
 CONTROLS = ("T33_GRAPH_EXTRA", "T33_LEAK", "T33_HOOK")
 SWITCHES = ("graph_extra", "leak", "hook")
 # The probes in which a control switch is visible in the records.
@@ -220,8 +240,9 @@ HOOK_NAME = "t33.hook"
 # before it and is within it of VmRSS after it (a few pages);
 # T33GraphLib.sml uses the same constant.
 RESET_SLACK = 65536
-# Poly/ML's allocation segment, bytes (memmgr.cpp: 1 MB); T33.sml `segment`.
-SEGMENT = 1048576
+# The line a full GC writes to the GC log (T33.sml log_marker, log_unit).
+LOG_TOTAL = re.compile(r"GC: Mark: Total live data ([0-9]+) words")
+MIN_FULL_GCS = 3  # the full GCs of one reading
 WEAK_MIN_FULL_GCS = 4  # one explicit collection, then three
 
 
@@ -231,8 +252,8 @@ class RecordError(ValueError):
 
 class NotComparable(ValueError):
     """A well-formed process whose readings cannot be compared (alloc or
-    gc_share changed inside a release kind). The process is redrawn; it is
-    not a result and not a malformed record."""
+    gc_share changed inside a release kind, see check_comparable). The
+    process is redrawn; it is not a result and not a malformed record."""
 
 
 def fail(message):
@@ -318,7 +339,7 @@ FIELDS = dict(
     time=dict(label=is_str, cpu=is_real, wall=is_real),
     live=dict(phase=is_str, size_heap=is_uint, free_full=is_uint,
               alloc=is_uint, alloc_free=is_uint, gc_share=is_uint,
-              comparable=is_bool, words=is_int),
+              extent=is_int, log_end=is_uint, words=is_int),
     registry=dict(loaded=is_list(is_str), files=is_list(is_pair),
                   listeners=is_list(is_str), attributes=is_list(is_str),
                   set_types=is_list(is_str), structures=is_list(is_str),
@@ -487,24 +508,47 @@ def check_params(probe, kind, params):
 
 # --- invariants ---------------------------------------------------------
 
-def fresh_area(record):
-    return (record["alloc_free"] == record["alloc"] and
-            record["alloc"] % SEGMENT == 0)
-
-
 def check_live(record):
-    """The formula and the comparable flag (a reading whose area is not
-    fresh says so; it is judged by `check_comparable`, not rejected)."""
-    if record["comparable"] != fresh_area(record):
-        fail("live %s: comparable %s, the allocation area (%d free of %d) "
-             "says %s" % (record["phase"], record["comparable"],
-                          record["alloc_free"], record["alloc"],
-                          fresh_area(record)))
-    words = (record["size_heap"] - record["free_full"] -
-             record["alloc"]) // 8
-    if record["words"] != words or words < 0:
-        fail("live %s: words %d, formula gives %d" % (
-            record["phase"], record["words"], words))
+    """The extent is the formula of its fields (reported only), words is a
+    non-negative count (the log check compares it with the log)."""
+    extent = (record["size_heap"] - record["free_full"] -
+              record["alloc"]) // 8
+    if record["extent"] != extent:
+        fail("live %s: extent %d, formula gives %d" % (
+            record["phase"], record["extent"], extent))
+    if record["words"] < 0:
+        fail("live %s: words %d" % (record["phase"], record["words"]))
+
+
+def gc_log_totals(text):
+    """The marked live totals of the full GCs in a piece of GC log, in
+    order: one per line that is exactly `GC: Mark: Total live data <N>
+    words`."""
+    return [int(m.group(1)) for line in text.split("\n")
+            for m in [LOG_TOTAL.fullmatch(line)] if m]
+
+
+def check_gc_log(live, log):
+    """Every `live` record's words (`live`: the records in output order)
+    equals the last full-GC total in the slice of the GC log `log` since
+    the previous record's `log_end`. A slice has at least MIN_FULL_GCS
+    totals; the ends increase, lie inside the log and on line ends."""
+    if not isinstance(log, str):
+        fail("missing GC log")
+    start = 0
+    for r in live:
+        end = r["log_end"]
+        if not start < end <= len(log) or log[end - 1] != "\n":
+            fail("live %s: log_end %d is not a line end after %d inside "
+                 "the %d-byte GC log" % (r["phase"], end, start, len(log)))
+        totals = gc_log_totals(log[start:end])
+        if len(totals) < MIN_FULL_GCS:
+            fail("live %s: %d full GC total(s) in its GC log slice, not "
+                 "%d" % (r["phase"], len(totals), MIN_FULL_GCS))
+        if r["words"] != totals[-1]:
+            fail("live %s: words %d, the GC log's marked total is %d" % (
+                r["phase"], r["words"], totals[-1]))
+        start = end
 
 
 def check_graph(record):
@@ -720,13 +764,14 @@ def check_controls(probe, active, controls):
             fail("control %s is inert in the %s probe" % (name, probe))
 
 
-def validate(text, controls=(), root=None):
+def validate(text, controls=(), root=None, gclog=None):
     """Parse and validate the stdout of one probe process; return the
     summary. `controls`: the control switches (names of SWITCHES) the
     process is expected to run with, exactly. `root`: the snapshot root the
-    process must report as holdir. Raises RecordError for a malformed run
-    and NotComparable for a well-formed one whose readings cannot be
-    compared."""
+    process must report as holdir. `gclog`: the process's GC log (a str),
+    required when it has `live` records (check_gc_log). Raises RecordError
+    for a malformed run and NotComparable for a well-formed one whose
+    readings cannot be compared."""
     records = parse(text)
     if not records or records[0]["record"] != "probe":
         fail("the first record is not the probe header")
@@ -815,6 +860,9 @@ def validate(text, controls=(), root=None):
     for n in summary["phase"]:
         if "graph.%d" % n not in summary["live"]:
             fail("phase %d without its live record" % n)
+    live = [r for r in records if r["record"] == "live"]
+    if live:
+        check_gc_log(live, gclog)
     check_comparable(summary["release"], records, summary)
     if summary["unconverged"]:
         raise NotComparable(
@@ -827,21 +875,14 @@ def validate(text, controls=(), root=None):
 
 
 def check_comparable(release, records, summary):
-    """Every live reading must be comparable, except the `held` readings of
-    the release kinds. Per release kind (the module docstring, Release
-    readings and share passes): the before and after readings must have the
-    same allocation area and a non-shrinking GC share-pass count; with more
-    passes the residual is a lower bound, admitted only when >= HALF and not
-    for the floor kind. Fills `residual_bound`, `held_bound` and
-    `held_comparable` of the summary. The share-pass rule lives here, in the
-    one validator that a run and its replay share."""
+    """Per release kind (the module docstring, Release readings and share
+    passes): the before and after readings must have the same allocation
+    area and a non-shrinking GC share-pass count; with more passes the
+    residual is a lower bound, admitted only when >= HALF and not for the
+    floor kind. Fills `residual_bound`, `held_bound` and `held_comparable`
+    of the summary. The share-pass rule lives here, in the one validator
+    that a run and its replay share."""
     live = {r["phase"]: r for r in records if r["record"] == "live"}
-    held = {name + ".held" for name in release}
-    for phase, r in live.items():
-        if not r["comparable"] and phase not in held:
-            raise NotComparable(
-                "live %s: the allocation area is not fresh (%d free of %d)"
-                % (phase, r["alloc_free"], r["alloc"]))
     for name in release:
         pair = lambda p: (live[name + p]["alloc"], live[name + p]["gc_share"])
         (ba, bs), (aa, as_), (ha, hs) = (pair(".before"), pair(".after"),
@@ -866,7 +907,7 @@ def check_comparable(release, records, summary):
         held_bound = hs > as_
         summary["held_bound"][name] = held_bound
         summary["held_comparable"][name] = (
-            live[name + ".held"]["comparable"] and ha == aa and hs >= as_
+            ha == aa and hs >= as_
             and (not held_bound or summary["held"][name] >= H_MIN))
 
 

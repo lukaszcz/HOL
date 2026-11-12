@@ -8,10 +8,12 @@ import argparse
 import contextlib
 import copy
 from fractions import Fraction
+import gzip
 import io
 import json
 import math
 from pathlib import Path
+import re
 import shutil
 import sys
 import unittest
@@ -48,6 +50,8 @@ class WorldS(t33.World33):
     def __init__(self, tmp):
         super().__init__(tmp)
         self.edits = {}  # (unit, side) -> function on the record list
+        self.log_edit = None  # None: the log of the records, False: no log,
+                              # else a function on the log text
 
     def records_of(self, name, env, side):
         sw = dict(graph_extra="T33_GRAPH_EXTRA" in env,
@@ -95,8 +99,13 @@ class WorldS(t33.World33):
             stats["loaded"].append("simpExtLib")
         if self.fault and self.fault(name, side, self.counter) == "stray":
             (Path(cwd) / "stray.txt").write_text("x")
-        text = retext(rt.text(run, noise=False), root)
+        body = rt.text(run, noise=False)
+        text = retext(body, root)
         Path(out_path).write_text("banner\n" + text)
+        if "T33_GCLOG" in env and self.log_edit is not False:
+            Path(env["T33_GCLOG"]).write_text(
+                body.log if self.log_edit is None else self.log_edit(
+                    body.log))
         Path(env["T32_STATS"]).write_text(json.dumps(stats) + "\n")
         return dict(exit=0, timed_out=False, wall=1.03, utime=0.9,
                     stime=0.1, maxrss=10 ** 8, survivors=[])
@@ -166,8 +175,9 @@ class Base34(t33.Base33):
 
 
 def summ(run, controls=()):
-    return records.validate(rt.text(run, noise=False), controls=controls,
-                            root=rt.ROOT)
+    body = rt.text(run, noise=False)
+    return records.validate(body, controls=controls, root=rt.ROOT,
+                            gclog=body.log)
 
 
 def graph_of(sizes=SIZES, **extra):
@@ -939,6 +949,198 @@ class Smoke(Base34):
         self.assertEqual(len(report["runs"]), 2 * len(st.UNITS) - 1)
 
 
+class ProbeCommand34(Base34):
+    """The storage probes run under the GC log; the timing probes and
+    TASK32 do not."""
+
+    ROOT = Path("/r")
+    UO = "/rep/T32Report.uo"
+    LOG = "/s/out/graph-00-baseline.gclog"
+
+    def storage(self, name="graph"):
+        return st.unit_of(name, dict(sizes=list(SIZES), m=M))
+
+    def test_a_storage_probe_has_the_debug_options_and_a_timing_probe_not(
+            self):
+        heap = "--holstate=" + str(self.ROOT / cases33.STATE)
+        timing = cases33.BY_NAME["state-empty"]
+        self.assertEqual(
+            dw.unit_argv(timing, self.ROOT, self.UO)[0],
+            [str(self.ROOT / "bin/hol"), "--gcthreads=1", "run", heap,
+             self.UO, "T33Load"])
+        want = [str(self.ROOT / "bin/hol"), "--gcthreads=1", "--debug",
+                "gc", "--logfile", self.LOG, "run", heap, self.UO,
+                "T33Graph"]
+        argv, cwd = dw.unit_argv(self.storage(), self.ROOT, self.UO,
+                                 self.LOG)
+        self.assertEqual((argv, cwd), (want, Path("/rep")))
+        for name in st.UNITS:
+            unit = st.unit_of(name, dict(sizes=list(SIZES), m=M))
+            self.assertTrue(unit["gclog"], name)
+            self.assertIn("--logfile", dw.unit_argv(
+                unit, self.ROOT, self.UO, self.LOG)[0], name)
+        with self.assertRaisesRegex(dw.Refusal, "needs a GC log"):
+            dw.unit_argv(self.storage(), self.ROOT, self.UO)
+        # a path given to a timing unit is not used
+        self.assertEqual(dw.unit_argv(timing, self.ROOT, self.UO, self.LOG),
+                         dw.unit_argv(timing, self.ROOT, self.UO))
+
+    def test_the_command_check_accepts_exactly_the_new_shape(self):
+        unit, timing = self.storage(), cases33.BY_NAME["state-empty"]
+        argv = dw.unit_argv(unit, self.ROOT, self.UO, self.LOG)[0]
+        shape = lambda u, a, log=self.LOG: dw.unit_argv_shape(
+            u, self.ROOT, self.UO, a, log)
+        self.assertTrue(shape(unit, argv))
+        old = [x for x in argv if x not in ("--debug", "gc")]
+        old = old[:old.index("--logfile")] + old[old.index("--logfile") + 2:]
+        self.assertFalse(shape(unit, old))  # the old shape
+        self.assertFalse(shape(unit, argv, None))  # no path named
+        self.assertFalse(shape(unit, argv, "/s/out/other.gclog"))
+        self.assertFalse(shape(unit, argv + ["--debug", "gcdetail"]))
+        self.assertFalse(shape(unit, [argv[0], "--debug", "gc"] + argv[1:]))
+        self.assertFalse(shape(unit, argv[:2] + ["--debug", "gcdetail"] +
+                               argv[4:]))
+        plain = dw.unit_argv(timing, self.ROOT, self.UO)[0]
+        self.assertTrue(shape(timing, plain, None))
+        self.assertFalse(shape(timing, argv))
+
+    def test_the_gc_log_path_of_a_receipt_is_checked(self):
+        unit, timing = self.storage(), cases33.BY_NAME["state-empty"]
+        name = records.GCLOG_ENV
+        good = dict(env={name: "/s/out/x.gclog"})
+        self.assertEqual(dw.receipt_gclog(unit, good, "x"),
+                         "/s/out/x.gclog")
+        for bad in ({}, {name: "/s/out/y.gclog"}, {name: "/s/x.gclog"},
+                    {name: 3}):
+            with self.assertRaisesRegex(dw.Refusal, "GC log path"):
+                dw.receipt_gclog(unit, dict(env=bad), "x")
+        self.assertIsNone(dw.receipt_gclog(timing, dict(env={}), "x"))
+        with self.assertRaisesRegex(dw.Refusal, "without a GC log"):
+            dw.receipt_gclog(timing, good, "x")
+
+    def test_a_unit_may_not_name_the_log_itself(self):
+        unit = dict(self.storage(), env=dict(T33_GCLOG="/evil"))
+        with self.assertRaisesRegex(dw.Refusal, "environment key"):
+            dw.check_unit_env(unit)
+
+    def test_the_probe_names_its_log_in_its_environment(self):
+        unit = self.storage()
+        env = dw.unit_env(dict(scratch=str(self.world.tmp)), unit, self.UO,
+                          Path("/s/x.stats"), 1, None, self.LOG)
+        self.assertEqual(env[records.GCLOG_ENV], self.LOG)
+        env = dw.unit_env(dict(scratch=str(self.world.tmp)),
+                          cases33.BY_NAME["state-empty"], self.UO,
+                          Path("/s/x.stats"), 1, None, self.LOG)
+        self.assertNotIn(records.GCLOG_ENV, env)
+
+
+class GCLog34(Chain34):
+    """The log in the process's output area, in the receipt, and checked
+    by the shared validator."""
+
+    def smoke_run(self):
+        args, report = self.run_stage("smoke", "smoke")
+        return report
+
+    def receipts(self, report):
+        return [(e, acc.load(Path(report["output"]) / e["receipt"]))
+                for e in report["runs"]]
+
+    def test_the_log_is_in_the_output_area_and_not_a_stray_write(self):
+        report = self.smoke_run()
+        self.assertTrue(report["success"], report.get("failure"))
+        seen = set()
+        for entry, receipt in self.receipts(report):
+            self.assertTrue(receipt["accepted"], entry["receipt"])
+            self.assertEqual(receipt["stray"], [])
+            path = Path(receipt["env"][records.GCLOG_ENV])
+            self.assertEqual(receipt["argv"][2:6],
+                             ["--debug", "gc", "--logfile", str(path)])
+            self.assertEqual(path.parent, Path(self.world.tmp) / "scratch" /
+                             path.parent.parent.name / "out")
+            self.assertEqual(path.name, entry["receipt"].replace(
+                ".json.gz", ".gclog"))
+            for root in report["roots"].values():
+                self.assertFalse(path.is_relative_to(root))
+            for side in report["reporter"].values():
+                self.assertFalse(path.is_relative_to(side["dir"]))
+            self.assertFalse(path.exists())  # a scratch file, removed
+            self.assertEqual(receipt["gclog_sha256"], dw.sha(
+                receipt["gclog"].encode("latin-1")))
+            seen.add(entry["workload"])
+        self.assertEqual(seen, set(st.UNITS))
+
+    def test_the_words_of_every_reading_are_the_logs_totals(self):
+        report = self.smoke_run()
+        for entry, receipt in self.receipts(report):
+            if entry["workload"] != "release":
+                continue
+            summary = st.summarize(receipt, report["units"]["release"],
+                                   report["roots"][entry["side"]])
+            body = receipt["stdout"]
+            totals = records.gc_log_totals(receipt["gclog"])
+            self.assertEqual(summary["live"]["simpset.after"], 5000)
+            self.assertIn(5000, totals)
+            self.assertIn('"words": 5000', body)
+
+    def refused(self, log_edit, fragment):
+        self.world.log_edit = log_edit
+        report = self.smoke_run()
+        self.assertFalse(report["success"])
+        self.assertIn(fragment, report["failure"])
+        self.assertEqual(report["runs"][-1]["superseded"], None)
+
+    def test_a_missing_log_is_refused(self):
+        self.refused(False, "missing GC log")
+
+    def test_too_few_full_gc_totals_are_refused(self):
+        self.refused(lambda log: log.replace("Total live data",
+                                             "Total live dat_"),
+                     "full GC total")
+
+    def test_a_log_that_disagrees_with_the_words_is_refused(self):
+        bump = lambda m: "Total live data %d words" % (int(m.group(1)) + 1)
+        self.refused(lambda log: re.sub(
+            r"Total live data ([0-9]+) words", bump, log), "marked total")
+
+    def test_the_replay_checks_the_log_and_its_digest(self):
+        a, report = self.go()
+        folder = Path(report["output"])
+        entry = next(e for e in report["runs"]
+                     if e["workload"] == "release")
+        path = folder / entry["receipt"]
+        saved = path.read_bytes()
+        receipt = json.loads(gzip.decompress(saved))
+
+        def put(**change):
+            data = dict(receipt, **change)
+            path.write_bytes(gzip.compress(dw.dumps(data).encode(),
+                                           mtime=0))
+            entry["seal"] = acc.seal(path)
+            return st.check_run(folder, report, entry)
+
+        self.assertEqual(put()["gclog_sha256"], receipt["gclog_sha256"])
+        # a changed log with its old digest
+        with self.assertRaisesRegex(dw.Refusal, "does not give its digest"):
+            put(gclog=receipt["gclog"] + "GC: more\n")
+        # a digest of another log
+        with self.assertRaisesRegex(dw.Refusal, "does not give its digest"):
+            put(gclog_sha256="0" * 64)
+        # a changed total with a matching digest: words differ from it
+        forged = receipt["gclog"].replace("Total live data 5000 words",
+                                          "Total live data 5001 words")
+        self.assertNotEqual(forged, receipt["gclog"])
+        with self.assertRaisesRegex(dw.Refusal, "marked total"):
+            put(gclog=forged, gclog_sha256=dw.sha(forged.encode("latin-1")))
+        # no log at all
+        with self.assertRaisesRegex(dw.Refusal, "missing GC log"):
+            put(gclog=None, gclog_sha256=None)
+        # another path in the environment
+        env = dict(receipt["env"], T33_GCLOG="/elsewhere/x.gclog")
+        with self.assertRaisesRegex(dw.Refusal, "GC log path"):
+            put(env=env)
+
+
 class Stages(Chain34):
     def test_the_chain_to_a_pass(self):
         smoke, pilot, control = self.info_stages()
@@ -1193,8 +1395,9 @@ def incomparable(run):
 
 def held_incomparable(run):
     """A release run whose `held` reading alone is not comparable (its
-    allocation area is not fresh)."""
-    return rt.stale(run, "simpset.held")
+    allocation area differs from that of `after`)."""
+    return rt.reading(run, "simpset", "held", 5000 + 4 * 600,
+                      alloc=2 * rt.SEG)
 
 
 def anchor_moved(run):

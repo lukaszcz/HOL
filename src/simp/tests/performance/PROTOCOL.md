@@ -3510,14 +3510,16 @@ Not measured: other platforms and runtimes (x86_64, macOS, MoscowML,
 compact32, other Poly/ML versions), `--mt`, interactive and LSP sessions.
 Cumulative allocation on the stock runtime is not measured (case S4: the
 runtime has no counter, and heap and allocation-area sizes are not
-allocation). Live words exclude code spaces and saved-state data. VmHWM is
-the process-lifetime peak; a per-phase peak needs the `clear_refs` reset and
-is reported `unsupported` where that fails. A graph-word count is not RSS,
-bytes or an allocation rate. Release (R1) detects retention of one word or
-more per object for the listed kinds; it does not prove the absence of every
-root for every client closure. Image variation (a few tens of words per
-structure, a few hundred bytes per saved state) is inside the measured
-delta; no tolerance is applied to an exact metric.
+allocation). Live words (the GC's marked live total, "Live words" under
+"Probes and control switches") exclude code spaces and saved-state data and
+are not the heap extent. VmHWM is the process-lifetime peak; a per-phase
+peak needs the `clear_refs` reset and is reported `unsupported` where that
+fails. A graph-word count is not RSS, bytes or an allocation rate. Release
+(R1) detects retention of one word or more per object for the listed kinds;
+it does not prove the absence of every root for every client closure. Image
+variation (a few tens of words per structure, a few hundred bytes per saved
+state) is inside the measured delta; no tolerance is applied to an exact
+metric.
 
 ### Cases
 
@@ -3655,16 +3657,16 @@ structure comparison. Saved-state file bytes come from the sealed snapshot
 manifest and are reported (`outcome["reported"]`).
 
 R1 release rule. The `release` probe warms up once, then per kind reads live
-words (after three full GCs) before, creates and discards M objects, reads
-again (`after`), and holds M objects alive (`held`). Residual = (after -
-before) / M words per object; held size h = (held - after) / M. The leading
-kind `noop` is the in-process noise floor, the floor kind: defined in
-`T33.sml` (`T33.floor_kind`), mirrored by `task33_records.FLOOR_KIND` and
-tied by `Ties.test_kinds`; `T33_LEAK` does not retain its objects.
-Comparisons use exact fractions, no rounding. The kinds are `simpset`,
-`conversion`, `tactic`, `traversedata`, `exclusion`, `removed` and `cong`,
-plus the `weak` row (`RuntimeMetrics.release`: a weak reference to a
-discarded simpset must be collected).
+words (the marked live total after three full GCs, see "Live words") before,
+creates and discards M objects, reads again (`after`), and holds M objects
+alive (`held`). Residual = (after - before) / M words per object; held size
+h = (held - after) / M. The leading kind `noop` is the in-process noise
+floor, the floor kind: defined in `T33.sml` (`T33.floor_kind`), mirrored by
+`task33_records.FLOOR_KIND` and tied by `Ties.test_kinds`; `T33_LEAK` does
+not retain its objects. Comparisons use exact fractions, no rounding. The
+kinds are `simpset`, `conversion`, `tactic`, `traversedata`, `exclusion`,
+`removed` and `cong`, plus the `weak` row (`RuntimeMetrics.release`: a weak
+reference to a discarded simpset must be collected).
 
 - Resolved: the no-op floor's range across the kind's processes (both
   sides) is at most 1/4 word per object (`RESOLUTION`). Unresolved is
@@ -3688,7 +3690,7 @@ discarded simpset must be collected).
   admitted only when it is >= 1/2 (`HALF`), else the process is
   `NotComparable`; a differing `alloc` (or a shrinking count) is
   `NotComparable`. The `noop` residual must be exact. `held` is compared
-  with `after`: `held_comparable` is a fresh reading that is exact or a bound
+  with `after`: `held_comparable` is a reading that is exact or a bound
   (`held_bound`) >= `H_MIN`. `HALF` and `H_MIN` are defined once, in
   `task33_records.py`, and used by validator and rules. An admitted bound is
   >= 1/2, so a candidate bound fails and a baseline bound is inconclusive
@@ -3696,9 +3698,11 @@ discarded simpset must be collected).
   pilot sizes M from the exact residuals only (a bound is recorded in
   `bounds`; a kind with no exact residual refuses the pilot). The rows
   show `residual_bound` and `held_bound` (E2 (b) included). Run and replay
-  share the validator, so replay re-derives the same summaries. Any other
-  process without a comparable reading is `NotComparable`: a redraw, never a
-  result.
+  share the validator, so replay re-derives the same summaries. This
+  share-pass rule is the whole comparability of a reading (design 8.10): the
+  earlier allocation-area freshness condition and the probe's settle retries
+  belonged to the heap-extent formula and are removed. A process without a
+  comparable reading is `NotComparable`: a redraw, never a result.
 
 M is sized by the pilot from the raw noise of the exact residuals (range <=
 0.25 M words) and clamped to a cap derived from a declared CPU budget
@@ -3779,13 +3783,26 @@ Probes are SML, harness-only and use develop APIs only (except `ext`). They
 are copied into each side's probe directory, `<scratch>/probe-<side>`
 (default `/dev/shm/t33/probe-base`, `.../probe-cand`; outside the snapshot),
 and built there, in their final directory, by that side's own Holmake
-(`build_probes`, which checks their seals). Each process is
+(`build_probes`, which checks their seals). Each timing process is
 
     <root>/bin/hol --gcthreads=1 run --holstate=<root>/<heap> \
         <reporter>.uo <ProbeModule>
 
-with the probe directory as cwd and the probe a bare module name (the
-compiled unit lives in `.hol/objs/`; nothing tests the physical `.uo`
+and each storage probe process (the `probe` kind of the storage table, every
+unit of `task33_storage.UNITS`, marked `gclog` in its unit) is
+
+    <root>/bin/hol --gcthreads=1 --debug gc --logfile <log> \
+        run --holstate=<root>/<heap> <reporter>.uo <ProbeModule>
+
+with `$T33_GCLOG=<log>` (`task33_records.GCLOG_ENV`) in its environment. The
+log is `<scratch>/.../out/<label>.gclog`, in the process's output area next
+to the stats file, so it is neither in the probe directory nor in a snapshot
+root and the stray-write watch does not see it. `unit_argv_shape` accepts
+exactly these two shapes (a storage receipt must name its log, with that
+file name, in its environment, and the argv must carry the same path); a
+unit may not set `T33_GCLOG`; the timing commands and TASK32's are
+unchanged. The probe directory is the cwd and the probe a bare module name
+(the compiled unit lives in `.hol/objs/`; nothing tests the physical `.uo`
 path). The probes print `@@T33<TAB>{json}` records; the TASK32 reporter's
 stats line still goes to `$T32_STATS`. Locale variables are pinned in the
 driver's process environment, so printed checks cannot vary with the
@@ -3836,6 +3853,43 @@ environment must equal its unit's. A set switch other than `"1"` or `"0"` is
 refused, and the validator takes the expected set of switches, not a
 boolean. The unit `ext+ordinary` (the extension probe presented as an
 ordinary process) must be refused with an extension-module finding.
+
+### Live words (design 8.10)
+
+The probes' `words` is the garbage collector's marked live total, not the
+heap extent `(sizeHeap - sizeHeapFreeLastFullGC - sizeAllocation) / 8`. The
+extent is live data plus holes: Poly/ML 5.9.2's copy phase places immutable
+objects by the first object it copies, so immutable data can be stranded in
+a mutable space and moved out by a later GC, leaving a counted hole (the
+~509-word jump of the no-op floor), and new objects fill old holes, so the
+extent grows by less than the live data (the held deficits and, for R1, a
+retained word that is invisible); see
+`.agent-files/evidence/task33/noop-offset-diagnosis.md`. The marked total
+(`GC: Mark: Total live data <N> words`, one line per full GC, none for a
+minor GC, written under `--debug gc --logfile`) was exact in all 36
+diagnostic runs.
+
+- `T33.live` runs three full GCs and takes the last total among the log
+  lines appended since the previous reading (it remembers the log's length
+  at the end of its last reading, a line end). It fails loudly
+  (`Fail`) when the log is missing or has fewer than three totals in that
+  part. The record carries `words` (that total), `log_end` (the log's
+  length through the reading) and, report only, `extent`, `size_heap`,
+  `free_full`, `alloc`, `alloc_free` and `gc_share`.
+- The receipt of a storage probe keeps the log (`gclog`, in the compressed
+  receipt like `stdout`) and `gclog_sha256`. The shared validator
+  (`d.validate`: run and replay) requires the stored log to give the digest
+  and `records.validate(..., gclog)` (the one Python parser of the log,
+  `gc_log_totals` and `check_gc_log`, which documents the line format)
+  requires every `live` record's `words` to equal the last full-GC total of
+  its slice of the log, at least three in the slice. A process with `live`
+  records and no log is refused, not redrawn.
+- Comparability is the share-pass rule of design 8.9 alone (above): there
+  is no allocation-area condition, no `comparable` field and no settle
+  retry. Graph rows come from `objSize` and are unaffected; only the
+  report-only live readings changed meaning.
+- The placement sentinel of the diagnosis is not adopted: it does not fix
+  the hole filling and depends on GC placement internals.
 
 ### Declaration
 
@@ -3931,8 +3985,8 @@ the chain is replayed (the report must be the attempt's own, with the seal its
 `info-end` recorded).
 
 Process redraws (storage stages). A process whose output is well formed but
-whose readings cannot be compared (`NotComparable`: a non-fresh allocation
-area, differing `alloc`, a shrinking `gc_share` or a share-pass residual
+whose readings cannot be compared (`NotComparable`: differing `alloc`,
+a shrinking `gc_share` or a share-pass residual
 bound under 1/2 (or on `noop`) in one release kind, no comparable
 `held` reading in a group (a held bound under `H_MIN` is not comparable),
 a probe that did not converge, an anchor that

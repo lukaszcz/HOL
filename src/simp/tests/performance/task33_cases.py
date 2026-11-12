@@ -13,7 +13,12 @@ is
 reporter's directory, outside the snapshot, where the sealed probe sources
 of `task33/` are built by that side's own Holmake in their final
 directory: the compiled unit lives in `.hol/objs/`, so nothing names or
-tests the physical `PROBE.uo`). A unit carries `probe`, the probe module;
+tests the physical `PROBE.uo`). These timing units run exactly that
+command. The storage driver (task33_storage.py `unit_of`) marks its units
+`gclog`: their command is `root/bin/hol --gcthreads=1 --debug gc --logfile
+LOG run ...` with $T33_GCLOG=LOG, the GC log that gives the probes' live
+words (task33_records.py, "The GC log"). A unit carries `probe`, the probe
+module;
 `env`, the variables that select its work (the probe reads them, so one
 module serves every kind: T33_KIND is the unit's name, the `kind` of its
 records, and a `load-*` kind has T33_MODULE, the module it loads); `heap`,
@@ -101,7 +106,7 @@ def control_unit(unit, switch):
                 env=dict(unit["env"], **{name: "1"}))
 
 
-def digest(text, root, probe_dir, unit):
+def digest(text, root, probe_dir, unit, gclog=None):
     """The table's output digest of a `probe` unit (`Table.probe_digest`):
     the sha256 of the normalized kernel checks of the process
     (records.digest), computed from the output with the snapshot root and
@@ -111,10 +116,11 @@ def digest(text, root, probe_dir, unit):
     be this unit's (its probe module and T33_KIND). Raises
     ValueError (records.RecordError) for an unreadable, malformed or
     misplaced-path output, and for fewer than `unit["min_checks"]`
-    checks."""
+    checks. `gclog` is the process's GC log (a storage probe's, whose live
+    records are checked against it, records.validate)."""
     masked = records.mask_text(text, root, probe_dir)
     summary = records.validate(masked, controls=controls_of(unit),
-                               root=records.ROOT_MASK)
+                               root=records.ROOT_MASK, gclog=gclog)
     want = (records.PROBE_OF_MODULE.get(unit["probe"]),
             (unit.get("env") or {}).get("T33_KIND"))
     if (summary["probe"], summary["kind"]) != want:

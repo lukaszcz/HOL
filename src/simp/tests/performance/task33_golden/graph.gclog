@@ -1,0 +1,849 @@
+GC: Non-GC time: CPU user: 0.043 system: 0.025 real: 0.060 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.003 system: 0.000 real: 0.003 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.002 system: 0.000 real: 0.002 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.001 system: 0.001 real: 0.003 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.003 system: 0.000 real: 0.003 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.002 system: 0.001 real: 0.003 page faults: 0
+GC: Full GC, 8 words required 8 spaces
+GC: (Mark) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 53417 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: CPU user: 0.003 system: 0.000 real: 0.004 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.002 system: 0.000 real: 0.002 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.004 system: 0.000 real: 0.004 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.001 system: 0.001 real: 0.002 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.003 system: 0.000 real: 0.003 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.001 system: 0.000 real: 0.001 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.003 system: 0.000 real: 0.003 speed up 1.0 page faults 0
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 3 words required 5 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 356416 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.002 system: 0.000 real: 0.002 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.001 system: 0.001 real: 0.002 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.002 system: 0.000 real: 0.002 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.002 system: 0.001 real: 0.002 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.002 system: 0.001 real: 0.003 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.002 system: 0.001 real: 0.003 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.004 system: 0.000 real: 0.004 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.004 system: 0.000 real: 0.004 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.003 system: 0.001 real: 0.004 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.003 system: 0.000 real: 0.003 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.001 system: 0.001 real: 0.002 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.006 system: 0.001 real: 0.007 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.006 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 3 words required 10 spaces
+GC: (Mark) CPU user: 0.004 system: 0.001 real: 0.005 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 486560 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.010 system: 0.001 real: 0.011 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.002 system: 0.002 real: 0.004 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.005 system: 0.002 real: 0.007 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.005 system: 0.000 real: 0.005 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.002 system: 0.002 real: 0.004 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.003 system: 0.000 real: 0.004 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.001 system: 0.002 real: 0.002 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.003 system: 0.000 real: 0.003 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.005 system: 0.000 real: 0.005 page faults: 0
+GC: Full GC, 3 words required 24 spaces
+GC: (Mark) CPU user: 0.005 system: 0.000 real: 0.005 speed up 1.0
+GC: (Bitmap) CPU user: 0.003 system: 0.000 real: 0.003 speed up 1.0
+GC: Mark: Total live data 583030 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.003 system: 0.000 real: 0.003 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.013 system: 0.001 real: 0.015 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.005 system: 0.002 real: 0.007 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.003 system: 0.000 real: 0.003 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.006 system: 0.001 real: 0.007 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.006 system: 0.000 real: 0.006 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.007 system: 0.000 real: 0.007 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.007 system: 0.000 real: 0.007 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.004 system: 0.001 real: 0.005 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.004 system: 0.001 real: 0.005 page faults: 0
+GC: Full GC, 3 words required 28 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.003 system: 0.000 real: 0.003 speed up 1.0
+GC: Mark: Total live data 501233 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.003 system: 0.000 real: 0.003 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.013 system: 0.002 real: 0.014 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.006 system: 0.003 real: 0.009 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.004 system: 0.001 real: 0.005 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.007 system: 0.001 real: 0.008 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.004 system: 0.001 real: 0.005 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.011 system: 0.000 real: 0.011 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.002 system: 0.001 real: 0.003 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.005 system: 0.002 real: 0.007 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.007 system: 0.001 real: 0.008 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.010 system: 0.000 real: 0.010 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.003 system: 0.000 real: 0.003 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.337 system: 0.001 real: 0.338 page faults: 0
+GC: Full GC, 0 words required 20 spaces
+GC: (Mark) CPU user: 0.004 system: 0.001 real: 0.006 speed up 1.0
+GC: (Bitmap) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: Mark: Total live data 479339 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.010 system: 0.002 real: 0.012 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.094 system: 0.002 real: 0.096 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479048 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479048 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479048 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.334 system: 0.000 real: 0.334 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.003 system: 0.001 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479057 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.006 system: 0.001 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.095 system: 0.000 real: 0.095 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479048 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.003 system: 0.001 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479048 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.005 system: 0.001 real: 0.006 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479048 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: CPU user: 0.006 system: 0.000 real: 0.006 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.334 system: 0.001 real: 0.335 page faults: 0
+GC: Full GC, 0 words required 8 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479343 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.008 system: 0.000 real: 0.008 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.668 system: 0.000 real: 0.668 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479439 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 1.095 system: 0.004 real: 1.099 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479542 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479542 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479542 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: CPU user: 0.006 system: 0.000 real: 0.006 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 478859 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 478859 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 478859 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.006 system: 0.000 real: 0.006 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.334 system: 0.000 real: 0.334 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479067 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.095 system: 0.000 real: 0.095 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479051 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479051 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.006 system: 0.000 real: 0.006 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479051 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.006 system: 0.000 real: 0.006 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.334 system: 0.000 real: 0.334 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479060 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.095 system: 0.000 real: 0.095 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479051 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479051 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479051 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.335 system: 0.001 real: 0.336 page faults: 0
+GC: Full GC, 0 words required 8 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479346 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.008 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.668 system: 0.001 real: 0.668 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479442 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 1.099 system: 0.001 real: 1.100 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479548 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479548 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479548 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.334 system: 0.000 real: 0.334 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479351 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.095 system: 0.001 real: 0.096 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479282 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.003 system: 0.001 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479282 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.006 system: 0.001 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479282 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.006 system: 0.000 real: 0.006 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.333 system: 0.000 real: 0.333 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479291 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.094 system: 0.001 real: 0.095 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479282 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479282 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479282 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.006 system: 0.000 real: 0.006 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.339 system: 0.003 real: 0.342 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.003 system: 0.000 real: 0.003 page faults: 0
+GC: Full GC, 0 words required 21 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: Mark: Total live data 479802 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.010 system: 0.001 real: 0.011 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.669 system: 0.000 real: 0.669 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479898 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 1.098 system: 0.001 real: 1.099 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479919 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479919 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 479919 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.006 system: 0.000 real: 0.006 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.334 system: 0.001 real: 0.334 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 480963 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.093 system: 0.002 real: 0.095 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.005 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 480417 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.008 system: 0.000 real: 0.008 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 480417 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 480417 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.334 system: 0.000 real: 0.334 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 480426 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.095 system: 0.001 real: 0.096 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 480417 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 480417 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 480417 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.006 system: 0.000 real: 0.006 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.338 system: 0.004 real: 0.342 page faults: 0
+GC: Beginning quick GC
+GC: CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.003 system: 0.001 real: 0.004 page faults: 0
+GC: Full GC, 0 words required 23 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.003 system: 0.000 real: 0.003 speed up 1.0
+GC: Mark: Total live data 482667 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.009 system: 0.002 real: 0.011 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.669 system: 0.000 real: 0.669 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 482763 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 1.098 system: 0.001 real: 1.099 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 481806 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 481806 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 481806 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.003 system: 0.001 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 478567 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.006 system: 0.001 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 478567 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC: Non-GC time: CPU user: 0.000 system: 0.000 real: 0.000 page faults: 0
+GC: Full GC, 0 words required 6 spaces
+GC: (Mark) CPU user: 0.004 system: 0.000 real: 0.004 speed up 1.0
+GC: (Bitmap) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
+GC: Mark: Total live data 478567 words
+GC: Check weak refs
+GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
+GC: Update
+GC: (Update) CPU user: 0.002 system: 0.000 real: 0.002 speed up 1.0
+GC: CPU user: 0.007 system: 0.000 real: 0.007 speed up 1.0 page faults 0
+GC: Completed successfully
+GC (Total): Non-GC time: CPU user: 12.047 system: 0.076 real: 12.115
+GC (Total): GC time: CPU user: 0.517 system: 0.022 real: 0.539

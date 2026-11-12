@@ -72,43 +72,96 @@ struct
   fun solve tac goal = let val (gl, vf) = tac goal (Context.snapshot ())
     in if null gl then vf [] else raise Fail "T33: tactic left goals" end
 
-  (* Live words after three full GCs: (size_heap - free_full - alloc) / 8.
-     free_full is the free space of the local spaces when the last full GC
-     ended; that GC deletes every space it emptied (memmgr.cpp
-     RemoveEmptyLocals), and the allocation spaces present afterwards were
-     created later, so they are counted in size_heap and alloc but not in
-     free_full: the formula then does not depend on how many allocation
-     segments there are.  A space that kept data through the GC would be
-     counted in free_full as well, and the formula would be low by its free
-     words.  Such a space is not a whole 1 MB segment (memmgr.cpp:136), so
-     a reading is comparable only when alloc is a whole number of segments,
-     and is retried a few times and otherwise emitted with comparable = false
-     (the validator refuses such a process as not comparable: a redraw, not
-     a failure of the probe).  alloc_free = alloc says nothing about this:
-     after a GC both counters are incremented with the same free value
-     (gc.cpp:295), and it differs only when the 1 s periodic update
-     (statistics.cpp:646) ran in between.  The record keeps alloc and
-     gc_share, so that readings can be checked to be comparable. *)
-  val segment = 1048576 : LargeInt.int
-  fun live phase = let
-    fun settle tries = let
-      val _ = List.app (fn _ => PolyML.fullGC ()) [1, 2, 3]
-      val s = PolyML.Statistics.getLocalStats ()
-      val fresh = #sizeAllocationFree s = #sizeAllocation s andalso
-                  LargeInt.mod (#sizeAllocation s, segment) = 0
-    in
-      if fresh orelse tries <= 0 then (s, fresh) else settle (tries - 1)
-    end
-    val (s, fresh) = settle 8
-    val words = (#sizeHeap s - #sizeHeapFreeLastFullGC s -
-                 #sizeAllocation s) div 8
+  (* Live words: the garbage collector's own marked live total.  The
+     probe runs under `--debug gc --logfile $T33_GCLOG` (the driver sets
+     both), and every full GC writes a line
+
+       GC: Mark: Total live data <N> words
+
+     (Poly/ML 5.9.2, gc_mark_phase; a minor GC writes none).  The words of
+     a reading are the total of the last of its own three full GCs, read
+     from the part of the log written since the previous reading
+     (log_end, a byte offset on a line boundary: a reading is cut at the
+     last complete line).  The reading must find at least three totals
+     there, else it fails loudly.  The line format and the per-reading
+     split are parsed again by task33_records.py (gc_log_totals,
+     check_gc_log), the one parser of the driver's replay, which checks
+     that every record's words are the log's total for that reading.
+
+     This is not the heap extent (size_heap - free_full - alloc) / 8, which
+     earlier probes reported: the extent is live data plus holes.  The copy
+     phase places immutable objects by the first object it copies, so
+     immutable data can be left in a mutable space and moved out by a later
+     full GC, leaving a counted hole (the ~509-word jump of the no-op
+     kind), and new objects fill old holes, so the extent grows by less
+     than the live data (the held deficits); see
+     .agent-files/evidence/task33/noop-offset-diagnosis.md.  The extent
+     and its parts stay in the record (extent, size_heap, free_full, alloc,
+     alloc_free), reported only.  gc_share is the share-pass count at the
+     reading; the share-pass rule of task33_records.py judges whether two
+     readings can be compared. *)
+  val gclog_env = "T33_GCLOG"  (* task33_records.GCLOG_ENV *)
+  val log_marker = "GC: Mark: Total live data "
+  val log_unit = " words"
+  val log_end = ref 0
+  (* The bytes of the file from `from` to the last newline: (text, stop). *)
+  fun log_since path from = let
+    val fd = Posix.FileSys.openf (path, Posix.FileSys.O_RDONLY,
+                                  Posix.FileSys.O.flags [])
+    fun loop acc = let val v = Posix.IO.readVec (fd, 65536) in
+      if Word8Vector.length v = 0 then rev acc
+      else loop (Byte.bytesToString v :: acc) end
+    val parts = (Posix.IO.lseek (fd, Position.fromInt from,
+                                 Posix.IO.SEEK_SET);
+                 loop [])
+      handle e => (Posix.IO.close fd; raise e)
+    val _ = Posix.IO.close fd
+    val text = String.concat parts
+    fun last_newline i = if i < 0 then NONE
+      else if String.sub (text, i) = #"\n" then SOME i
+      else last_newline (i - 1)
   in
+    case last_newline (size text - 1) of
+        NONE => ("", from)
+      | SOME i => (String.substring (text, 0, i + 1), from + i + 1)
+  end
+  fun log_total line =
+    if String.isPrefix log_marker line then
+      let val rest = String.extract (line, size log_marker, NONE)
+          val n = size rest - size log_unit
+      in
+        if n > 0 andalso String.extract (rest, n, NONE) = log_unit then
+          (case LargeInt.fromString (String.substring (rest, 0, n)) of
+               SOME w => if CharVector.all Char.isDigit
+                              (String.substring (rest, 0, n))
+                         then SOME w else NONE
+             | NONE => NONE)
+        else NONE
+      end
+    else NONE
+  fun log_totals text =
+    List.mapPartial log_total (String.fields (fn c => c = #"\n") text)
+  fun live phase = let
+    val _ = List.app (fn _ => PolyML.fullGC ()) [1, 2, 3]
+    val s = PolyML.Statistics.getLocalStats ()
+    val path = need gclog_env
+    val (text, stop) = log_since path (!log_end)
+    val totals = log_totals text
+    val _ = if length totals >= 3 then ()
+            else raise Fail ("T33: " ^ Int.toString (length totals) ^
+                             " full GC total(s) in the GC log " ^ path ^
+                             " for " ^ phase ^ ", not at least 3")
+    val words = List.last totals
+    val extent = (#sizeHeap s - #sizeHeapFreeLastFullGC s -
+                  #sizeAllocation s) div 8
+  in
+    log_end := stop;
     emit "live" [("phase", js phase), ("size_heap", jn (#sizeHeap s)),
                  ("free_full", jn (#sizeHeapFreeLastFullGC s)),
                  ("alloc", jn (#sizeAllocation s)),
                  ("alloc_free", jn (#sizeAllocationFree s)),
                  ("gc_share", ji (#gcSharePasses s)),
-                 ("comparable", jb fresh),
+                 ("extent", jn extent), ("log_end", ji stop),
                  ("words", jn words)];
     words
   end

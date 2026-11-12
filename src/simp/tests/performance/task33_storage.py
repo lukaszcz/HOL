@@ -2,6 +2,9 @@
 """TASK33 storage and release driver (slice S4): the stages that measure
 what a fresh process holds (cases L1, L3, S1, S2, S3, R1, E1, E2) with the
 probes of task33/ on the two TASK32 snapshots, and the commands around them.
+Every storage process runs under `--debug gc --logfile <log>` (the log in its
+output area, named to the probe by $T33_GCLOG): the probes' live words are the
+GC's marked live total, and a receipt keeps the log and its digest.
 
   smoke      every unit once per side (`ext`: candidate only), at small
              sizes and M: the harness works (digests, reporter registered,
@@ -145,7 +148,13 @@ def sizes_text(sizes):
 
 def unit_of(name, params):
     """The unit (the dict `task32_downstream.launch_probe` takes) of a
-    storage unit name, for the parameters `params` (`sizes`, `m`)."""
+    storage unit name, for the parameters `params` (`sizes`, `m`). Every
+    storage unit runs under the GC log (`gclog`), whose marked live totals
+    are the probes' live words; the timing units do not."""
+    return dict(plain_unit(name, params), gclog=True)
+
+
+def plain_unit(name, params):
     sizes, m = list(params["sizes"]), params["m"]
     if name in REGISTRY:
         kind = name[len("registry-"):]
@@ -284,7 +293,7 @@ def incomparable(receipt, unit, root, probe_dir):
     try:
         masked = d.mask_text(receipt["stdout"], root, probe_dir)
         records.validate(masked, controls=cases33.controls_of(unit),
-                         root=records.ROOT_MASK)
+                         root=records.ROOT_MASK, gclog=receipt.get("gclog"))
     except records.NotComparable as error:
         return str(error)
     except ValueError:
@@ -495,7 +504,7 @@ def summarize(receipt, unit, root):
     the side's own)."""
     return records.validate(receipt["stdout"],
                             controls=cases33.controls_of(unit),
-                            root=str(root))
+                            root=str(root), gclog=receipt.get("gclog"))
 
 
 def grouped(report, loaded):
@@ -878,7 +887,9 @@ def check_run(folder, report, entry):
     side = entry["side"]
     root = Path(report["roots"][side])
     reporter = report["reporter"][side]
-    require(d.unit_argv_shape(unit, root, reporter["uo"], receipt["argv"]),
+    label = label_of(entry)
+    require(d.unit_argv_shape(unit, root, reporter["uo"], receipt["argv"],
+                              d.receipt_gclog(unit, receipt, label)),
             "unexpected command: " + entry["receipt"])
     layout = d.layout_for(report["layout_seed"], entry["pair"],
                           entry["selection"], 0)
@@ -887,7 +898,8 @@ def check_run(folder, report, entry):
             not receipt["busy"] and "T32_BUSY" not in receipt["env"],
             "wrong layout or busy setting: " + entry["receipt"])
     require({k: v for k, v in receipt["env"].items()
-             if k.startswith(d.ACTIVE.env_prefix)} == unit["env"],
+             if k.startswith(d.ACTIVE.env_prefix) and
+             k != records.GCLOG_ENV} == unit["env"],
             "wrong probe environment: " + entry["receipt"])
     expected = None if entry["expect"] or "+" in unit["name"] else (
         report["references"] or {}).get(unit["name"])
@@ -895,7 +907,8 @@ def check_run(folder, report, entry):
         d.validate(receipt, unit, root, reporter["dir"], expected,
                    side == "cand")
         require(d.probe_digest(receipt["stdout"], root, reporter["dir"],
-                               unit) == receipt["digest"],
+                               unit, receipt.get("gclog")) ==
+                receipt["digest"],
                 "the stored output does not give the digest: " +
                 entry["receipt"])
         require(d.same(d.measure(receipt), receipt["measurement"]["raw"]),

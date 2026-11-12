@@ -364,8 +364,9 @@ class Probe(Base33):
                          {"state-empty": "d" * 64})
         self.assertEqual(hook.call_count, 2)
         for call, side in zip(hook.call_args_list, ("base", "cand")):
-            text, root, probe_dir, unit = call.args
+            text, root, probe_dir, unit, gclog = call.args
             self.assertIn("@@T33", text)
+            self.assertIsNone(gclog)  # a timing unit has no GC log
             self.assertEqual(root, self.world.roots[side])
             self.assertEqual(Path(probe_dir).name, "probe-" + side)
             self.assertEqual(unit["name"], "state-empty")
@@ -1465,9 +1466,11 @@ class Controls33(unittest.TestCase):
             if record["record"] == "probe":
                 record["holdir"] = "/s/b"
         text = rt.text(run)
-        cases33.digest(text, "/s/b", "/s/p", hook)
+        cases33.digest(text, "/s/b", "/s/p", hook, text.log)
         with self.assertRaisesRegex(ValueError, "control switches"):
-            cases33.digest(text, "/s/b", "/s/p", reg)
+            cases33.digest(text, "/s/b", "/s/p", reg, text.log)
+        with self.assertRaisesRegex(ValueError, "missing GC log"):
+            cases33.digest(text, "/s/b", "/s/p", hook)
 
 
 class Messages(Base33):
