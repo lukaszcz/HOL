@@ -4,12 +4,14 @@ import unittest
 
 import coverage_ledger as coverage
 import task10_relocation as relocation
-from run_paired import InvalidRun
+from run_paired import BASE, InvalidRun, require_revisions
+from source_manifest import START
 
 
 class RelocationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        require_revisions(BASE, START)
         cls.ledger = coverage.receipt(relocation.LEDGER)
         cls.supplement = relocation.load()
 

@@ -28,7 +28,7 @@ def negative_isolation_problems(log_text, src, private_dir):
     relative = sorted({r for r in raws if not os.path.isabs(r)})
     if relative:
         problems.append("negative reported non-absolute loaded path(s): " +
-                        ", ".join(relative[:5]))
+                        ", ".join(map(repr, relative[:5])))
     loaded = [real(r) for r in raws if os.path.isabs(r)]
     src_real, private_real = real(src), real(private_dir)
     missing = [n for n in ("SplitData.sig", "SplitData.sml")
@@ -79,8 +79,11 @@ def main():
             (json.dumps(receipt, indent=2) + "\n").encode(), mtime=0))
         manifest["runs"].append({"label": label, "exit": receipt["exit"],
                                  "receipt": path})
-        if inspect is not None and not receipt["timed_out"]:
-            inspect(receipt["stdout"])
+        problems = (inspect(receipt["stdout"])
+                    if inspect is not None and not receipt["timed_out"]
+                    else [])
+        require(not problems, "%s isolation failed (exit %s, expected %s): "
+                % (label, receipt["exit"], expected) + "; ".join(problems))
         require(not receipt["timed_out"] and receipt["exit"] == expected,
                 label + ": unexpected process outcome")
         require("error:" not in receipt["stdout"], label + ": static error")
@@ -204,8 +207,7 @@ def main():
                                            "repair.exe"], repo)
 
             def isolated(out):
-                problems = negative_isolation_problems(out, src, neg)
-                require(not problems, "; ".join(problems))
+                return negative_isolation_problems(out, src, neg)
 
             log = run("negative-run", [str(neg / "repair.exe")], neg, 1,
                       inspect=isolated)

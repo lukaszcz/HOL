@@ -13,6 +13,7 @@ import unittest
 from unittest.mock import patch
 
 import audit_task27 as audit
+from run_paired import require_revisions
 
 
 class RuntimeReceiptControls(unittest.TestCase):
@@ -58,6 +59,7 @@ class RuntimeReceiptControls(unittest.TestCase):
 class LiveSourceGate(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        require_revisions(audit.BASE, audit.START, audit.REVIEW)
         cls.sources = audit.read_sources()
         cls.manifest = audit.read_manifest()
         # Deliberately exercise the default LIVE entry, not a historical map.

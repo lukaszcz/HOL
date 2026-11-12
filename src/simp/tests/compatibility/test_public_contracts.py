@@ -123,6 +123,7 @@ class PublicTests(unittest.TestCase):
                                   runner.require, runner.fingerprint)
 
     def test_original_signature_installation_is_exact(self):
+        runner.require_revisions(runner.BASE)
         with tempfile.TemporaryDirectory(prefix="public-install-") as tmp:
             dst = Path(tmp)
             (dst / "Holmakefile").write_text("")
