@@ -45,7 +45,8 @@ runs are not stored in the repository: every runner takes an explicit
   command's status.
 - `tools/require_output.py`: the Holmakefile's output-directory check.
 - `interfaces/`, `migration/`: design prototypes and the API mapping tables
-  (`apis.tsv`, `final-apis.tsv`) and relocation overlays; see
+  (`apis.tsv`, `final-apis.tsv`, `shared-exports.tsv`) and relocation
+  overlays; see
   `interfaces/README.md`.
 
 `inputs/develop/prior-streams.json.gz` is the oracle of the prior contracts:
@@ -55,7 +56,9 @@ how it is produced.
 
 `inputs/develop/selftest.sml` is the **unchanged original** develop selftest,
 recovered with `git show <develop>:src/simp/src/selftest.sml`, and
-`inputs/develop/Traverse.sig` is likewise the exact original public signature.
+`inputs/develop/Traverse.sig` is likewise the exact original public signature;
+the other `.sig` files there are byte-identical to the base revision and are
+the develop side of the `interfaces/` completeness rule.
 Keep both immutable; add new contracts alongside them, not inside them.
 
 Pins: develop is `cccaa27d7099cbadc886983020cbe745db7793f3`.

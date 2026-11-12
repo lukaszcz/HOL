@@ -333,8 +333,21 @@ this is the necessary branch-only API change, not an unresolved promise.
 [migration/final-apis.tsv](../migration/final-apis.tsv) resolves **every**
 API row (`migration/apis.tsv`) with final module/type, construction decision,
 prototype witness and owner. The final table is additive over `apis.tsv`.
-Existing APIs in B1/C2 explicitly retain their
-ordinary versions; only branch extension callers move to the parallel types.
+Existing APIs in B1/C2, the `existing` rows of T1, and the `existing` rows of
+F1 (below) explicitly retain their ordinary versions; only branch extension
+callers move to the parallel types.
+
+F1 covers the extension counterparts of the develop `*Simps`/`*Reduce`/
+`integer_wordLib` libraries that the other groups do not reach: `boolSimps`,
+`combinSimps`, `pureSimps`, `intReduce`, `listSimps`, `numSimps`,
+`pred_setSimps`, `realSimps` and their `...Ext` modules (`integer_wordLib` has
+`integer_wordLibExt` but shares no name with it). Each row maps `M.name` to
+`MExt.name`, an opt-in value of type `simpExtLib.ssfrag`/`simpset` (or a
+`thm`/`term -> thm` with a distinct definition) whose loading changes no
+default simpset. The witness is the extension's own signature. Owners are the
+stages that introduced the modules in `graph.json`: 10 for `boolSimpsExt` and
+`pureSimpsExt`, 24 for the rest (the stage-24 commit "Complete explicit
+tracked recipes" added them; there is no earlier TASK prefix in the log).
 
 Special resolutions: delete `legacy_traversedata_for_ss` (no replacement optional
 promotion); extended `traversedata_for_ss` returns T data; external output/helper
@@ -343,14 +356,21 @@ SplitData/ThmAttribute/simpMarkerLib/splitLib keep one identity and their
 current owning modules. No legacy client must change.
 
 Completeness does not depend on hand-picking. For each pair of develop module
-M and extension module M' (M different from M') used by the existing, val,
-type, datatype and constructor rows, every name that develop's `M.sig` (pinned
+M and extension module M' listed in `MODULES` in `check_design.py` (which also
+names the extension signature in the repo), every name that develop's `M.sig` (pinned
 in `inputs/develop/`, from the base revision) exports and that the extension's
 `M'.sig` also declares needs either a row with old name `M.name`, or an entry
 in [migration/shared-exports.tsv](../migration/shared-exports.tsv) with a
 one-line justification that the extension binds the identical value or type.
 `check_design.py` enforces this: a missing name fails, and an entry that also
 has a row or is not a shared export (stale) fails. Names are read from the
-signatures by the comment-stripping parser of `check_task27_docs.py`.
+signatures by the comment-stripping parser of `check_task27_docs.py`, per
+namespace (a type and a value of the same name are different declarations).
+Names that `include Abbrev` brings in are excluded: they are the shared basic
+types, identical in both signatures. `MODULES` itself is checked: a tracked
+extension signature (`MExt.sig`, or `pExtLib.sig` for `pLib`, outside `tests`
+directories) whose develop `M.sig` exists at the base revision, and which
+`MODULES` does not list, fails. The pinned develop signatures of every listed
+module are in `inputs/develop/`.
 
 No free retrospective metadata promise remains in this design.

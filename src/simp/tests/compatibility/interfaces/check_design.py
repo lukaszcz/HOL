@@ -16,19 +16,39 @@ import tempfile
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[4]
 sys.path.insert(0, str(HERE.parent))
-from check_task27_docs import signature_symbols  # noqa: E402
+from check_task27_docs import (NAME, signature_symbols,  # noqa: E402
+                               strip_sml_comments)
 # The Holmake check builds and runs the design gate; one hour bounds it, and
 # its children read /dev/null, not the caller's standard input.
 TIMEOUT = 3600
 MIGRATION = HERE.parent / "migration"
 TABLE = MIGRATION / "final-apis.tsv"
 SHARED = MIGRATION / "shared-exports.tsv"
-EXTENSIONS = ROOT / "src" / "simp" / "src"
+BASE = "cccaa27d70"
 FIELDS = ["group", "old_api", "replacement", "domain", "construction",
           "witness", "owners"]
-MODULES = {"Traverse": "TraverseExt", "Cond_rewr": "Cond_rewrExt",
-           "Opening": "OpeningExt", "Travrules": "TravrulesExt",
-           "simpLib": "simpExtLib", "congLib": "congExtLib"}
+# Develop module -> (extension module, extension signature in the repo).
+# Every extension signature of a develop module must be listed; see
+# validate_extension_coverage.
+MODULES = {
+    "Traverse": ("TraverseExt", "src/simp/src/TraverseExt.sig"),
+    "Cond_rewr": ("Cond_rewrExt", "src/simp/src/Cond_rewrExt.sig"),
+    "Opening": ("OpeningExt", "src/simp/src/OpeningExt.sig"),
+    "Travrules": ("TravrulesExt", "src/simp/src/TravrulesExt.sig"),
+    "simpLib": ("simpExtLib", "src/simp/src/simpExtLib.sig"),
+    "congLib": ("congExtLib", "src/simp/src/congExtLib.sig"),
+    "boolSimps": ("boolSimpsExt", "src/simp/src/boolSimpsExt.sig"),
+    "combinSimps": ("combinSimpsExt", "src/simp/src/combinSimpsExt.sig"),
+    "pureSimps": ("pureSimpsExt", "src/simp/src/pureSimpsExt.sig"),
+    "intReduce": ("intReduceExt", "src/integer/intReduceExt.sig"),
+    "integer_wordLib": ("integer_wordLibExt",
+                        "src/integer/integer_wordLibExt.sig"),
+    "listSimps": ("listSimpsExt", "src/list/src/listSimpsExt.sig"),
+    "numSimps": ("numSimpsExt", "src/num/arith/src/numSimpsExt.sig"),
+    "pred_setSimps": ("pred_setSimpsExt",
+                      "src/pred_set/src/pred_setSimpsExt.sig"),
+    "realSimps": ("realSimpsExt", "src/real/realSimpsExt.sig"),
+}
 BOUNDARIES = {
     "T1": "extension reducer factory; explicit ordinary lift; no inventory",
     "R1": "tracked rule installation; paired preparation once",
@@ -37,6 +57,8 @@ BOUNDARIES = {
     "B1": "extension EMPTY/PURE/BOOL before relevant maker/rule/dproc",
     "P1": "already tracked object; shallow extraction shares actual controls",
     "S1": "typed extension base before strategy installation",
+    "F1": ("opt-in extension fragment/simpset values of a develop library; "
+           "no default simpset update"),
     "M1": ("pure marker construction/classification; "
            "typed engine at processing"),
     "E1": "already tracked input; reset versus preserving replay explicit",
@@ -50,7 +72,7 @@ BOUNDARIES = {
 }
 WITNESS = {"T1": "T", "R1": "C", "C1": "R", "C2": "G",
            "B1": "S", "P1": "S", "S1": "S", "M1": "S",
-           "E1": "S", "V1": "S", "A1": "S", "H1": "S",
+           "E1": "S", "F1": "Ext", "V1": "S", "A1": "S", "H1": "S",
            "D1": "Default", "I1": "shared"}
 NEGATIVES = ["reducer-to-legacy", "reducer-from-legacy", "set-to-legacy",
              "set-from-legacy", "fragment-to-legacy", "fragment-from-legacy",
@@ -69,7 +91,7 @@ def expected_rows(old=None):
     for row in old:
         group, api = row["group"], row["old_api"]
         module, name = api.split(".", 1)
-        replacement = MODULES.get(module, module) + "." + name
+        replacement = MODULES.get(module, (module,))[0] + "." + name
         domain = "extension; ordinary API unchanged"
         witness = WITNESS[group]
         if module == "simpLib":
@@ -84,7 +106,7 @@ def expected_rows(old=None):
             if module == "seedCollections":
                 domain = ("ordinary producer retained; "
                           "explicit extension recipe if selected")
-        elif group == "B1" or group == "C2":
+        elif group in {"B1", "C2"}:
             domain = ("parallel ordinary and extension APIs; "
                       "no ordinary migration")
         if name == "legacy_traversedata_for_ss":
@@ -98,14 +120,45 @@ INPUTS = HERE.parent / "inputs" / "develop"
 PAIRED_KINDS = {"existing", "val", "type", "datatype", "constructor"}
 
 
+# Names `include Abbrev` brings in are the shared basic types, identical in
+# a develop module and its extension; they never need a row.
+INCLUDES = {"Abbrev": set(), "Task08ReducerTypes": set()}
+
+
 @lru_cache(maxsize=None)
 def declared(text):
     """Names a signature text declares: not comments or `signature X = sig`.
 
     Abbrev only adds the shared basic types, never a module's own names;
     Task08ReducerTypes is concatenated with its includer where it is used."""
-    return frozenset(signature_symbols(
-        text, {"Abbrev": set(), "Task08ReducerTypes": set()}))
+    return frozenset(signature_symbols(text, INCLUDES))
+
+
+@lru_cache(maxsize=None)
+def namespaced(text):
+    """(namespace, name) pairs a signature declares: "type" for type, eqtype
+    and datatype names, "value" for val, exception and datatype constructors.
+    A name may be in both namespaces, so a flat name set is not enough."""
+    text = strip_sml_comments(text)
+    params = r"(?:\([^)]*\)\s*|'[A-Za-z_0-9]+\s+)?"
+    declaration = re.compile(
+        rf"\b(val|type|eqtype|datatype|exception)\s+{params}(?:op\s+)?"
+        rf"({NAME})")
+    matches = list(declaration.finditer(text))
+    types, values = set(), set()
+    for i, match in enumerate(matches):
+        kind, name = match.groups()
+        if kind in {"val", "exception"}:
+            values.add(name)
+            continue
+        types.add(name)
+        if kind == "datatype":
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+            body = text[match.end():end]
+            if not re.match(r"\s*=\s*datatype\b", body):
+                values.update(re.findall(rf"(?:=|\|)\s*({NAME})", body))
+    return frozenset({("type", n) for n in types} |
+                     {("value", n) for n in values})
 
 
 def exports(text, name):
@@ -130,13 +183,72 @@ def validate_existing(old_rows=None):
 
 
 def read_shared():
+    result = {}
     with SHARED.open() as stream:
-        return {row["old_api"]: row["justification"]
-                for row in csv.DictReader(stream, delimiter="\t")}
+        for row in csv.DictReader(stream, delimiter="\t"):
+            api, why = row["old_api"], (row["justification"] or "").strip()
+            if api in result:
+                raise ValueError("repeated shared-exports entry: " + api)
+            if not why:
+                raise ValueError("empty shared-exports justification: " +
+                                 api)
+            result[api] = why
+    return result
+
+
+def repo_files():
+    """Tracked files of the checkout, or every file if git is unusable."""
+    try:
+        out = subprocess.run(["git", "ls-files"], cwd=ROOT, text=True,
+                             capture_output=True, check=True,
+                             stdin=subprocess.DEVNULL).stdout
+        return out.splitlines()
+    except (OSError, subprocess.CalledProcessError):
+        return [str(p.relative_to(ROOT)) for p in (ROOT / "src").rglob("*")
+                if p.is_file()]
+
+
+def base_basenames():
+    """Basenames of the files at the base revision; the current tracked
+    files if the revision is not available."""
+    try:
+        out = subprocess.run(["git", "ls-tree", "-r", "--name-only", BASE],
+                             cwd=ROOT, text=True, capture_output=True,
+                             check=True, stdin=subprocess.DEVNULL).stdout
+        files = out.splitlines()
+    except (OSError, subprocess.CalledProcessError):
+        files = repo_files()
+    return {f.rsplit("/", 1)[-1] for f in files}
+
+
+EXT_SIG = re.compile(r"(\w+?)Ext(Lib)?\.sig")
+
+
+def validate_extension_coverage(files=None, develop=None):
+    """Every extension signature of a develop module is in MODULES.
+
+    An extension signature is M's `MExt.sig`, or `pExtLib.sig` for `pLib`,
+    where develop has M.sig (or pLib.sig) at the base revision. Signatures
+    under a tests directory do not count."""
+    if files is None:
+        files = repo_files()
+    if develop is None:
+        develop = base_basenames()
+    covered = {path for _, path in MODULES.values()}
+    for path in files:
+        if "/tests/" in "/" + path:
+            continue
+        match = EXT_SIG.fullmatch(path.rsplit("/", 1)[-1])
+        if not match:
+            continue
+        counterpart = match.group(1) + (match.group(2) or "")
+        if counterpart + ".sig" in develop and path not in covered:
+            raise ValueError("extension signature not covered by MODULES: " +
+                             path)
 
 
 def validate_completeness(old_rows=None, shared=None,
-                          develop=INPUTS, extension=EXTENSIONS):
+                          develop=INPUTS, root=ROOT):
     """Every name develop's M exports that extension M' also declares has
     either a row or a shared-exports justification, never both."""
     if old_rows is None:
@@ -144,15 +256,14 @@ def validate_completeness(old_rows=None, shared=None,
     if shared is None:
         shared = read_shared()
     rows = {row["old_api"] for row in old_rows}
-    modules = sorted({row["old_api"].split(".", 1)[0] for row in old_rows
-                      if row["kind"] in PAIRED_KINDS} & MODULES.keys())
     common = set()
-    for module in modules:
-        if MODULES[module] == module:
-            continue
-        old = declared((develop / (module + ".sig")).read_text())
-        new = declared((extension / (MODULES[module] + ".sig")).read_text())
-        for name in sorted(old & new):
+    for module, (_, path) in sorted(MODULES.items()):
+        old_text = (develop / (module + ".sig")).read_text()
+        new_text = (root / path).read_text()
+        # A name may be a type in one signature and a value in the other;
+        # compare per namespace, then name the shared exports.
+        for name in sorted({n for _, n in namespaced(old_text) &
+                            namespaced(new_text)}):
             api = module + "." + name
             common.add(api)
             if api in shared and api in rows:
@@ -181,6 +292,7 @@ def validate_table(text):
     old = read_old_rows()
     expected = expected_rows(old)
     validate_existing(old)
+    validate_extension_coverage()
     validate_completeness(old)
     if rows != expected:
         raise ValueError("missing/stale final API decision; "
@@ -200,6 +312,13 @@ def validate_table(text):
             if not all(exports(blocks["Default"], n) for n in
                        ["recipe", "provider", "build", "get_of", "Update"]):
                 raise ValueError("missing typed external provider boundary")
+        elif witness == "Ext":
+            # The extension's own signature in the repo, not a prototype.
+            module = row["old_api"].split(".")[0]
+            source = (ROOT / MODULES[module][1]).read_text()
+            if (row["replacement"].split(".")[0] != MODULES[module][0] or
+                    not exports(source, name)):
+                raise ValueError("missing extension export: " + name)
         elif witness == "shared":
             module = row["old_api"].split(".")[0]
             directory = "src/1" if module == "ThmAttribute" else "src/simp/src"
@@ -339,6 +458,19 @@ def execute(negative_controls):
     return receipts, output
 
 
+def source_paths():
+    """The sources of the verdict: this directory, the final table, and the
+    inputs the verdict reads (the shared-exports and apis tables, the pinned
+    develop signatures and the signature parser)."""
+    return sorted([p for p in HERE.rglob("*")
+                   if p.is_file() and ".hol" not in p.parts and
+                   p.suffix in {".sml", ".ML", ".md", ".py", ".json"}]
+                  + [HERE / "Holmakefile", TABLE, SHARED,
+                     MIGRATION / "apis.tsv",
+                     HERE.parent / "check_task27_docs.py"]
+                  + list(INPUTS.glob("*.sig")))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write-table", action="store_true")
@@ -358,10 +490,7 @@ def main():
             args.output.mkdir(parents=True, exist_ok=True)
             (args.output / "interfaces.log").write_text(output)
         result["log_sha256"] = hashlib.sha256(output.encode()).hexdigest()
-    paths = sorted([p for p in HERE.rglob("*")
-                    if p.is_file() and ".hol" not in p.parts and
-                    p.suffix in {".sml", ".ML", ".md", ".py", ".json"}]
-                   + [HERE / "Holmakefile", TABLE])
+    paths = source_paths()
     result["source_sha256"] = {str(p.relative_to(ROOT)):
         hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
     if args.output:

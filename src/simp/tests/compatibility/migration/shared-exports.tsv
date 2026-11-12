@@ -10,9 +10,9 @@ simpLib.ExclSF	both bind markerLib.ExclSF
 simpLib.Req0	both bind markerLib.mk_Req0
 simpLib.ReqD	both bind markerLib.mk_ReqD
 simpLib.controlled_thm	identical alias of BoundedRewrites.controlled_thm
-simpLib.convdata	structurally identical record type
-simpLib.relsimpdata	structurally identical record type
-simpLib.simptac_config	structurally identical record type
-simpLib.stdconvdata	structurally identical record type
+simpLib.convdata	same type: abbreviation of an identical record type
+simpLib.relsimpdata	same type: abbreviation of an identical record type
+simpLib.simptac_config	same type: abbreviation of an identical record type
+simpLib.stdconvdata	same type: abbreviation of an identical record type
 simpLib.thname	identical alias of KernelSig.kernelname
 simpLib.track	both bind Cond_rewr.with_tracking

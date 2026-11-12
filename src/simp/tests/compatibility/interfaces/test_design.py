@@ -1,5 +1,7 @@
 import copy
 import json
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -12,8 +14,8 @@ class DesignTests(unittest.TestCase):
         self.graph = json.loads((design.HERE / "graph.json").read_text())
         self.table = design.TABLE.read_text()
 
-    def test_all_240_api_decisions(self):
-        self.assertEqual(design.validate_table(self.table), 240)
+    def test_all_275_api_decisions(self):
+        self.assertEqual(design.validate_table(self.table), 275)
 
     def test_existing_rows_are_develop_exports(self):
         design.validate_existing()
@@ -62,6 +64,106 @@ class DesignTests(unittest.TestCase):
         short = {k: v for k, v in shared.items() if k != "simpLib.Cong"}
         with self.assertRaisesRegex(ValueError, "neither row"):
             design.validate_completeness(old, short)
+
+    def test_new_extension_pairs_are_covered(self):
+        old = design.read_old_rows()
+        names = {r["old_api"] for r in old if r["group"] == "F1"}
+        for api in ["boolSimps.bool_ss", "combinSimps.COMBIN_ss",
+                    "pureSimps.PURE_ss", "intReduce.INT_REDUCE_ss",
+                    "listSimps.LIST_EQ_ss", "numSimps.MOD_ss",
+                    "pred_setSimps.SET_SPEC_ss", "realSimps.REAL_REDUCE_ss"]:
+            self.assertIn(api, names)
+        # integer_wordLib shares no name with its extension.
+        self.assertIn("integer_wordLib", design.MODULES)
+        rows = [r for r in old if r["old_api"] != "numSimps.MOD_ss"]
+        with self.assertRaisesRegex(ValueError, "neither row"):
+            design.validate_completeness(rows, design.read_shared())
+
+    def test_every_extension_signature_is_covered(self):
+        design.validate_extension_coverage()
+        develop = {"foo.sig", "bar.sig", "fooLib.sig", "IntExtra.sig"}
+        design.validate_extension_coverage(
+            ["src/simp/src/simpExtLib.sig"],
+            develop | {"simpLib.sig"})
+        for path in ["src/x/fooExt.sig", "src/x/fooExtLib.sig"]:
+            with self.assertRaisesRegex(ValueError, "not covered"):
+                design.validate_extension_coverage([path], develop)
+        # Decoys, tests directories and signatures without a develop
+        # counterpart are not extension signatures.
+        design.validate_extension_coverage(
+            ["src/x/IntExtra.sig", "src/x/BoolExtractShared.sig",
+             "src/x/ParseExtras.sig", "src/x/intExtensionLib.sig",
+             "src/x/Extract.sig", "src/x/LSPExtension.sig",
+             "src/x/GraphExtra.sig", "src/x/tests/fooExt.sig",
+             "src/x/bazExt.sig"], develop)
+        # Every module's extension signature exists and every pinned
+        # develop signature is present.
+        for module, (_, path) in design.MODULES.items():
+            self.assertTrue((design.ROOT / path).is_file(), path)
+            self.assertTrue((design.INPUTS / (module + ".sig")).is_file())
+
+    def test_new_develop_pins_are_base_bytes(self):
+        paths = {"boolSimps": "src/simp/src", "combinSimps": "src/simp/src",
+                 "pureSimps": "src/simp/src", "intReduce": "src/integer",
+                 "integer_wordLib": "src/integer",
+                 "listSimps": "src/list/src", "numSimps": "src/num/arith/src",
+                 "pred_setSimps": "src/pred_set/src",
+                 "realSimps": "src/real"}
+        for module, directory in paths.items():
+            result = subprocess.run(
+                ["git", "show", design.BASE + ":" + directory + "/" +
+                 module + ".sig"], cwd=design.ROOT, capture_output=True,
+                stdin=subprocess.DEVNULL)
+            if result.returncode != 0:
+                self.skipTest("base revision not available")
+            self.assertEqual(
+                (design.INPUTS / (module + ".sig")).read_bytes(),
+                result.stdout, module)
+
+    def test_shared_exports_reject_repeats_and_empty_reasons(self):
+        original = design.SHARED
+        try:
+            with tempfile.TemporaryDirectory() as temp:
+                path = Path(temp) / "shared.tsv"
+                design.SHARED = path
+                path.write_text("old_api\tjustification\na.b\tx\na.b\ty\n")
+                with self.assertRaisesRegex(ValueError, "repeated"):
+                    design.read_shared()
+                for body in ["a.b\t\n", "a.b\t  \n", "a.b\n"]:
+                    path.write_text("old_api\tjustification\n" + body)
+                    with self.assertRaisesRegex(ValueError, "empty"):
+                        design.read_shared()
+                path.write_text("old_api\tjustification\na.b\tx\n")
+                self.assertEqual(design.read_shared(), {"a.b": "x"})
+        finally:
+            design.SHARED = original
+
+    def test_namespaces_are_distinguished(self):
+        text = ("sig val runners : int\n type runners\n"
+                "datatype t = A | B\n type u\n val u : int\nend")
+        self.assertEqual(design.namespaced(text), {
+            ("value", "runners"), ("type", "runners"), ("type", "t"),
+            ("value", "A"), ("value", "B"), ("type", "u"),
+            ("value", "u")})
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "m.sig").write_text("sig type x\nend")
+            (root / "mExt.sig").write_text("sig val x : int\nend")
+            with patch.object(design, "MODULES",
+                              {"m": ("mExt", "mExt.sig")}):
+                # A type in one and a value in the other is not shared.
+                design.validate_completeness([], {}, root, root)
+                (root / "mExt.sig").write_text("sig val x : int\ntype x\nend")
+                with self.assertRaisesRegex(ValueError, "neither row"):
+                    design.validate_completeness([], {}, root, root)
+
+    def test_receipt_hashes_the_verdict_inputs(self):
+        names = {p.name for p in design.source_paths()}
+        for name in ["shared-exports.tsv", "apis.tsv", "final-apis.tsv",
+                     "check_task27_docs.py", "check_design.py",
+                     "Cond_rewr.sig", "boolSimps.sig", "realSimps.sig"]:
+            self.assertIn(name, names)
+        self.assertNotIn("prior-streams.json.gz", names)
 
     def test_missing_api_is_not_a_pass(self):
         lines = self.table.splitlines(keepends=True)
