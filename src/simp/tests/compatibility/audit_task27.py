@@ -97,9 +97,10 @@ EXTENSIONS = tuple(sorted(set(prior.EXTENSIONS) | {
         'splitPersistLib.sml')} | {
             'src/boss/trackedSimpDefaults' + s for s in ('.sml', '.sig')}))
 
-# Exactly three shared-identity inputs differ from pinned develop. TASK16
-# sealed the first two at START; Cond_rewr.sig is sealed by REVIEWED_31 (TASK31
-# adds one spec). Everything else in the ordinary closure is exactly BASE,
+# Exactly three shared-identity inputs differ from pinned develop:
+# ThmAttribute.sig, ThmAttribute.sml (TASK16, resealed by TASK34) and
+# Cond_rewr.sig (TASK31). All three are sealed by REVIEWED_31 blob ids, not
+# by a revision. Everything else in the ordinary closure is exactly BASE,
 # Cond_rewr.sml included.
 SHARED_DELTAS = {
     'src/1/ThmAttribute.sig':

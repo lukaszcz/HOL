@@ -1,8 +1,9 @@
+(* Only this launcher is linked: all simplifier imports happen at runtime. *)
+open HolKernel testutils
+
 fun split_attribute_now () =
   ThmAttribute.attribute_fns_of (Context.snapshot ()) "split"
 
-(* Only this launcher is linked: all simplifier imports happen at runtime. *)
-open HolKernel testutils
 fun check label ok = (tprint label; if ok then OK () else die label)
 fun env name = valOf (OS.Process.getEnv name)
 fun loaded name = List.exists (equal name) (Meta.loaded ()) orelse

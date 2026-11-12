@@ -51,11 +51,8 @@ D1	clasimpLib.add_supplied_views	clasimpLib.add_supplied_views	external typed ex
 D1	clasimpLib.asm_full_simp	clasimpLib.asm_full_simp	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
 D1	clasimpLib.bottom_up_fragment	clasimpLib.bottom_up_fragment	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
 D1	clasimpLib.bound_simplification_simpset	clasimpLib.bound_simplification_simpset	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
-D1	clasimpLib.clasimp_bu_head_ss	clasimpLib.clasimp_bu_head_ss	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
-D1	clasimpLib.clasimp_bu_reduce	clasimpLib.clasimp_bu_reduce	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
 D1	clasimpLib.clasimp_ss	clasimpLib.clasimp_ss	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
 D1	clasimpLib.derive_clasimp_ss	clasimpLib.derive_clasimp_ss	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
-D1	clasimpLib.derive_simpset	clasimpLib.derive_simpset	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
 D1	clasimpLib.extend_invocation	clasimpLib.extend_invocation	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
 D1	clasimpLib.install_supplied_rules	clasimpLib.install_supplied_rules	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
 D1	clasimpLib.install_supplied_views	clasimpLib.install_supplied_views	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27

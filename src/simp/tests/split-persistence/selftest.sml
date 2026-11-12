@@ -1,9 +1,9 @@
-fun split_attribute_now () =
-  ThmAttribute.attribute_fns_of (Context.snapshot ()) "split"
-
 (* Link only the launcher: each scenario starts with an unclaimed namespace
    and no splitter, opt-in module, or fixture theory loaded. *)
 open HolKernel testutils
+
+fun split_attribute_now () =
+  ThmAttribute.attribute_fns_of (Context.snapshot ()) "split"
 
 fun check label ok = (tprint label; if ok then OK () else die label)
 fun env name = valOf (OS.Process.getEnv name)

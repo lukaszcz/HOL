@@ -1,7 +1,8 @@
+open HolKernel testutils splitLib;
+
 fun split_attribute_now () =
   ThmAttribute.attribute_fns_of (Context.snapshot ()) "split"
 
-open HolKernel testutils splitLib;
 fun check label ok = (tprint label; if ok then OK () else die label);
 fun free () = not (ThmAttribute.is_attribute "split") andalso
   not (List.exists (equal "split") (ThmSetData.all_set_types ()));

@@ -294,7 +294,7 @@ class FragmentProtocolTests(unittest.TestCase):
             root = Path(tmp)
             fake_dependencies(root)
             snapshot = probe.supplement_snapshot(root, root / "snapshot")
-            self.assertEqual(len(snapshot), 13)
+            self.assertEqual(len(snapshot), 11)
             self.assertNotIn("Cond_rewrExt", probe.MATCHED_MODULES)
             self.assertFalse(any("simpExtLib" in s["source_path"]
                                  for s in snapshot))
@@ -314,8 +314,8 @@ class FragmentProtocolTests(unittest.TestCase):
             self.assertEqual(probe.paired.fingerprint(ordinary), ordinary_seal)
             self.assertTrue(all("Cond_rewr." not in s["private_path"]
                                 for s in a))
-            self.assertEqual(len(a), 12)
-            self.assertEqual(len(b), 13)
+            self.assertEqual(len(a), 10)
+            self.assertEqual(len(b), 11)
             self.assertNotIn(str(existing), [s["private_path"] for s in a])
             self.assertTrue(all(s["source_path"] != s["private_path"]
                                 for s in a + b))

@@ -42,6 +42,44 @@ class RelocationTests(unittest.TestCase):
         changed["sources"][path]["current"]["sha256"] = "wrong"
         self.reject(changed, "destination")
 
+    # TASK34: the four sources below carry the split_attribute_now helper
+    # (3 lines) after their header, so later case anchors move by that many
+    # lines (4 where the file also gained a blank separator).
+    TASK34_SOURCES = {
+        "src/simp/tests/fresh-load/identity-before.ML": 0,
+        "src/simp/tests/fresh-load/identity-after.ML": 3,
+        "src/simp/tests/split-persistence/heapSave.ML": 4,
+        "src/simp/tests/split-persistence/heapVerify.ML": 4}
+
+    def test_task34_sources_old_records_and_anchor_offsets(self):
+        for path, offset in self.TASK34_SOURCES.items():
+            with self.subTest(path=path):
+                record = self.supplement["sources"][path]
+                self.assertEqual(record["old"], self.ledger["sources"][path])
+                rows = [r for r in self.supplement["anchors"]
+                        if r["old"]["path"] == path]
+                self.assertEqual(bool(rows), offset != 0)
+                for row in rows:
+                    self.assertEqual(row["old"]["literal"],
+                                     row["current"]["literal"])
+                    self.assertEqual(
+                        row["current"]["line"] - row["old"]["line"], offset)
+
+    def test_task34_sources_cannot_be_dropped(self):
+        for path in self.TASK34_SOURCES:
+            with self.subTest(path=path):
+                changed = self.changed()
+                del changed["sources"][path]
+                self.reject(changed, "unexpected TASK_10 relocation source")
+
+    def test_task34_shifted_anchor_is_not_a_wildcard(self):
+        changed = self.changed()
+        path = "src/simp/tests/split-persistence/heapVerify.ML"
+        row = next(r for r in changed["anchors"]
+                   if r["current"]["path"] == path)
+        row["current"]["line"] -= 1
+        self.reject(changed, "literal anchor")
+
     def test_fresh_syntax_anchor_is_not_a_wildcard(self):
         changed = self.changed()
         row = next(r for r in changed["anchors"]

@@ -1,8 +1,9 @@
+(* The launcher must have NO static simplifier dependency. *)
+open HolKernel testutils
+
 fun split_attribute_now () =
   ThmAttribute.attribute_fns_of (Context.snapshot ()) "split"
 
-(* The launcher must have NO static simplifier dependency. *)
-open HolKernel testutils
 fun check label ok = (tprint label; if ok then OK () else die label)
 fun env name = valOf (OS.Process.getEnv name)
 fun member x = List.exists (equal x)

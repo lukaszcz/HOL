@@ -1,7 +1,7 @@
+open HolKernel Parse boolLib boolSimpsExt simpExtLib splitLib testutils
+
 fun split_attribute_now () =
   ThmAttribute.attribute_fns_of (Context.snapshot ()) "split"
-
-open HolKernel Parse boolLib boolSimpsExt simpExtLib splitLib testutils
 
 val _ = Theory.new_theory "split_registration"
 fun check label ok = (tprint label; if ok then OK () else die label)
@@ -333,8 +333,6 @@ val _ = ThmAttribute.register_attribute ("split",foreign_handlers)
 val _ = check "attribute replacement invalidates existing handle" (empty ())
 val _ = rejected_exclusion "persistent removal rejects foreign attribute replacement"
 val _ = silent conflict
-val _ = check "ownership checks never call a replacement handler"
-  (!calls = 1)
 val _ = #add foreign_efns {thy=thy,named_thm=(name,rule)}
 val _ = #remove foreign_efns {thy=thy,remove="foreign"}
 val _ = check "foreign exporter callbacks survive conflicts"

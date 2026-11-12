@@ -1,8 +1,9 @@
+(* A small independently mutable regression for explicit dispatcher repair. *)
+open HolKernel testutils
+
 fun split_attribute_now () =
   ThmAttribute.attribute_fns_of (Context.snapshot ()) "split"
 
-(* A small independently mutable regression for explicit dispatcher repair. *)
-open HolKernel testutils
 fun check label ok = (tprint label; if ok then OK () else die label)
 val _ = Theory.new_theory "split_listener_repair"
 val name = "splitLib.persistence.onload"
@@ -45,5 +46,22 @@ val _ = check "repair never replaces a foreign dispatcher"
       (Listener.listeners Theory.delta_hook) of
         SOME (_,f) => Portable.pointer_eq (f,foreign)
       | _ => false) andalso !foreign_calls = 0)
+(* Ownership checks (initialize preflight, rule queries) only read the
+   handler record: a replacement "split" handler is never called. *)
+val replacement_calls = ref 0
+fun replacement_attr _ = replacement_calls := !replacement_calls + 1
+val _ = Context.restore entry
+val _ = ThmAttribute.register_attribute
+  ("split",{localf=replacement_attr,storedf=replacement_attr})
+val replaced = Context.snapshot ()
+val replaced_result = Exn.capture init ()
+val _ = check "ownership checks never call a replacement handler"
+  ((case replaced_result of
+        Exn.Exn (HOL_ERR e) =>
+          Feedback.top_function_of e = "enable_split_attribute"
+      | _ => false) andalso
+   null (SplitData.named_rules ()) andalso
+   Portable.pointer_eq (replaced,Context.snapshot ()) andalso
+   !replacement_calls = 0)
 val _ = print "OBS repair=pass\n"
 val _ = OS.Process.exit OS.Process.success

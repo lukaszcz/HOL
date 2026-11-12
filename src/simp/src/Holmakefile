@@ -1,6 +1,8 @@
 HOLHEAP = $(HOLDIR)/bin/hol.state0
 EXTRA_CLEANS = selftest.exe simp-selftest.log fresh-load-selftest.exe \
   fragment-contracts.log compiled-core.log literal-exclusions.log \
+  fragments-python-tests.log compiled-core-python-tests.log \
+  interfaces-design-check.log \
   ordinary-tactics.log standard-recipes.log legacy-contracts.log \
   api-audit.log ../tests/api-audit/selftest.exe ../tests/api-audit/.hol/ \
   native-extension.log ../tests/native-extension/selftest.exe \
@@ -173,11 +175,29 @@ cond-rewr-ext: Cond_rewrExt.uo
 	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
 	  -C ../tests/cond-rewr-ext check,cond-rewr-ext.log)
 
+# Baseline-free unit tests of the paired-harness code (no pinned baseline,
+# snapshot or built products). The paired runs themselves stay explicit.
+.PHONY: fragments-python-tests compiled-core-python-tests \
+  interfaces-design-check
+fragments-python-tests:
+	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
+	  -C ../tests/fragments python-tests,fragments-python-tests.log)
+
+compiled-core-python-tests:
+	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
+	  -C ../tests/compiled-core python-tests,compiled-core-python-tests.log)
+
+INTERFACES = ../tests/compatibility/interfaces
+interfaces-design-check:
+	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
+	  -C $(INTERFACES) design-check,interfaces-design-check.log)
+
 ifdef HOLSELFTESTLEVEL
 all: simp-selftest.log traversal-contracts exclusion-contracts traverse-ext \
   simp-ext cond-rewr-ext congruence-ext fragment-contracts compiled-core \
   literal-exclusions ordinary-tactics standard-recipes legacy-contracts \
-  native-extension api-audit \
+  native-extension api-audit fragments-python-tests \
+  compiled-core-python-tests interfaces-design-check \
   fresh-load-regressions split-registration split-persistence split-lifecycle
 
 simp-selftest.log: selftest.exe

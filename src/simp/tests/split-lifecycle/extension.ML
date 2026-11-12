@@ -1,7 +1,8 @@
+open Parse boolLib boolSimpsExt simpExtLib splitLib;
+
 fun split_attribute_now () =
   ThmAttribute.attribute_fns_of (Context.snapshot ()) "split"
 
-open Parse boolLib boolSimpsExt simpExtLib splitLib;
 val rule = type_split_of bool;
 val tm = “P (if b then x:'a else y) : bool”;
 val cv = SPLIT_CONV [rule] tm;

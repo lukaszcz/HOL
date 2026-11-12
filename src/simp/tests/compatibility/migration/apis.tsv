@@ -51,11 +51,8 @@ D1	clasimpLib.add_supplied_views	external-output	clasimpLib.add_supplied_views	2
 D1	clasimpLib.asm_full_simp	external-output	clasimpLib.asm_full_simp	25
 D1	clasimpLib.bottom_up_fragment	external-output	clasimpLib.bottom_up_fragment	25
 D1	clasimpLib.bound_simplification_simpset	external-output	clasimpLib.bound_simplification_simpset	25
-D1	clasimpLib.clasimp_bu_head_ss	external-output	clasimpLib.clasimp_bu_head_ss	25
-D1	clasimpLib.clasimp_bu_reduce	external-output	clasimpLib.clasimp_bu_reduce	25
 D1	clasimpLib.clasimp_ss	external-output	clasimpLib.clasimp_ss	25
 D1	clasimpLib.derive_clasimp_ss	external-output	clasimpLib.derive_clasimp_ss	25
-D1	clasimpLib.derive_simpset	external-output	clasimpLib.derive_simpset	25
 D1	clasimpLib.extend_invocation	external-output	clasimpLib.extend_invocation	25
 D1	clasimpLib.install_supplied_rules	external-output	clasimpLib.install_supplied_rules	25
 D1	clasimpLib.install_supplied_views	external-output	clasimpLib.install_supplied_views	25
