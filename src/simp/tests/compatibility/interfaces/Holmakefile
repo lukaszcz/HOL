@@ -1,6 +1,6 @@
 HOLHEAP = $(HOLDIR)/bin/hol.state0
 INCLUDES = ../../../src
-EXTRA_CLEANS = selftest.exe
+EXTRA_CLEANS = selftest.exe sharedExportsCheck.exe
 
 # Signature-only clients still require executable elaboration.
 Task08TraverseExt.uo: Task08ReducerTypes.uo
@@ -11,9 +11,16 @@ selftest.exe: selftest.uo Task08Clients.uo Task08Cutovers.uo \
   Task08Reducers.uo Task08Controls.uo
 	$(HOLMOSMLC) -o $@ $<
 
+# The generated identity check of the allowlisted shared exports: building
+# it type-checks the type coercions and runs the pointer comparisons; the
+# executable runs them again, so a failure fails the build either way.
+sharedExportsCheck.exe: sharedExportsCheck.uo
+	$(HOLMOSMLC) -o $@ $<
+
 .PHONY: check design-check
-check: selftest.exe
+check: selftest.exe sharedExportsCheck.exe
 	./selftest.exe
+	./sharedExportsCheck.exe
 
 design-check:
 	python3 -B -m unittest discover -s . -p 'test_*.py'

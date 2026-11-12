@@ -4,6 +4,7 @@ EXTRA_CLEANS = selftest.exe simp-selftest.log fresh-load-selftest.exe \
   fragments-python-tests.log compiled-core-python-tests.log \
   interfaces-design-check.log \
   ../tests/compatibility/interfaces/selftest.exe \
+  ../tests/compatibility/interfaces/sharedExportsCheck.exe \
   ../tests/compatibility/interfaces/.hol/ \
   ordinary-tactics.log standard-recipes.log legacy-contracts.log \
   api-audit.log ../tests/api-audit/selftest.exe ../tests/api-audit/.hol/ \
@@ -195,7 +196,8 @@ compiled-core-python-tests:
 
 INTERFACES = ../tests/compatibility/interfaces
 interfaces-design-check: Cond_rewr.uo Cond_rewrExt.uo Opening.uo \
-  OpeningExt.uo Traverse.uo Travrules.uo TravrulesExt.uo congLib.uo
+  OpeningExt.uo Traverse.uo TraverseExt.uo Travrules.uo TravrulesExt.uo \
+  congLib.uo simpLib.uo simpExtLib.uo boolSimps.uo boolSimpsExt.uo
 	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
 	  -C $(INTERFACES) design-check,interfaces-design-check.log)
 

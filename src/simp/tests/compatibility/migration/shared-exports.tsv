@@ -1,18 +1,18 @@
-old_api	binding	justification
-Opening.congproc	Opening.congproc	OpeningExt.congproc is an alias of Opening.congproc
-Traverse.context	exn	identical type, context = exn in both
-Travrules.preorder	Travrules.preorder	TravrulesExt.preorder is an alias of Travrules.preorder
-Travrules.travrules	Travrules.travrules	TravrulesExt.travrules is an alias of Travrules.travrules
-simpLib.AC	markerLib.AC	both bind markerLib.AC
-simpLib.Cong	markerLib.Cong	both bind markerLib.Cong
-simpLib.Excl	markerLib.Excl	both bind markerLib.Excl
-simpLib.ExclSF	markerLib.ExclSF	both bind markerLib.ExclSF
-simpLib.Req0	markerLib.mk_Req0	both bind markerLib.mk_Req0
-simpLib.ReqD	markerLib.mk_ReqD	both bind markerLib.mk_ReqD
-simpLib.controlled_thm	BoundedRewrites.controlled_thm	identical alias of BoundedRewrites.controlled_thm
-simpLib.convdata	{name:string,key:(term list*term)option,trace:int,conv:(term list->term->thm)->term list->conv}	same type: abbreviation of an identical record type
-simpLib.relsimpdata	{refl:thm,trans:thm,weakenings:thm list,subsets:thm list,rewrs:thm list}	same type: abbreviation of an identical record type
-simpLib.simptac_config	{strip:bool,elimvars:bool,droptrues:bool,oldestfirst:bool}	same type: abbreviation of an identical record type
-simpLib.stdconvdata	{name:string,pats:term list,conv:conv}	same type: abbreviation of an identical record type
-simpLib.thname	KernelSig.kernelname	identical alias of KernelSig.kernelname
-simpLib.track	Cond_rewr.with_tracking	both bind Cond_rewr.with_tracking
+old_api	justification
+Opening.congproc	OpeningExt.congproc is an alias of Opening.congproc
+Traverse.context	identical type, context = exn in both
+Travrules.preorder	TravrulesExt.preorder is an alias of Travrules.preorder
+Travrules.travrules	TravrulesExt.travrules is an alias of Travrules.travrules
+simpLib.AC	both bind markerLib.AC
+simpLib.Cong	both bind markerLib.Cong
+simpLib.Excl	both bind markerLib.Excl
+simpLib.ExclSF	both bind markerLib.ExclSF
+simpLib.Req0	both bind markerLib.mk_Req0
+simpLib.ReqD	both bind markerLib.mk_ReqD
+simpLib.controlled_thm	identical alias of BoundedRewrites.controlled_thm
+simpLib.convdata	same type: abbreviation of an identical record type
+simpLib.relsimpdata	same type: abbreviation of an identical record type
+simpLib.simptac_config	same type: abbreviation of an identical record type
+simpLib.stdconvdata	same type: abbreviation of an identical record type
+simpLib.thname	identical alias of KernelSig.kernelname
+simpLib.track	both bind Cond_rewr.with_tracking

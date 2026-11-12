@@ -172,88 +172,24 @@ class DesignTests(unittest.TestCase):
                 cwd=design.ROOT, capture_output=True, check=True,
                 stdin=subprocess.DEVNULL)
             self.assertEqual(pin.read_bytes(), result.stdout, pin.name)
-        # Develop sources pinned for value entries are base bytes too.
-        sources = sorted(design.INPUTS.glob("*.sml"))
-        self.assertIn("simpLib.sml", {p.name for p in sources})
-        for pin in sources:
-            if pin.name == "selftest.sml":
-                continue
-            paths = [f for f in listing
-                     if f.rsplit("/", 1)[-1] == pin.name and
-                     "/tests/" not in "/" + f]
-            self.assertEqual(len(paths), 1, pin.name)
-            result = subprocess.run(
-                ["git", "show", design.BASE + ":" + paths[0]],
-                cwd=design.ROOT, capture_output=True, check=True,
-                stdin=subprocess.DEVNULL)
-            self.assertEqual(pin.read_bytes(), result.stdout, pin.name)
-
-    def test_value_entries_pin_their_develop_source_and_qualifier(self):
-        require_revisions(design.BASE)
-        listing = subprocess.run(
-            ["git", "ls-tree", "-r", "--name-only", design.BASE],
-            cwd=design.ROOT, capture_output=True, text=True, check=True,
-            stdin=subprocess.DEVNULL).stdout.splitlines()
-        names = {f.rsplit("/", 1)[-1] for f in listing}
-        shared = design.read_shared()
-        for api, entry in shared.items():
-            module = api.split(".", 1)[0]
-            if "." in entry["binding"] and entry["binding"].split(
-                    ".", 1)[0] != module:
-                qualifier = entry["binding"].split(".", 1)[0]
-                self.assertIn(qualifier + ".sml", names, api)
-        values = [a for a in shared
-                  if ("value", a.split(".", 1)[1]) in design.namespaced(
-                      (design.INPUTS / (a.split(".", 1)[0] + ".sig"))
-                      .read_text())]
-        self.assertTrue(values)
-        for api in values:
-            self.assertTrue((design.INPUTS / (api.split(".", 1)[0] +
-                                              ".sml")).is_file(), api)
-
-    def test_value_entry_without_pinned_develop_source_fails(self):
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            (root / "m.sig").write_text("sig val x : int end")
-            (root / "mExt.sig").write_text("sig val x : int end")
-            shared = {"m.x": self.entry("Lib.y")}
-            with patch.object(design, "MODULES",
-                              {"m": ("mExt", "mExt.sig")}):
-                with self.assertRaisesRegex(ValueError,
-                                            "without a pinned develop"):
-                    design.validate_completeness([], shared, root, root)
-                (root / "m.sml").write_text("val x = Lib.y\n")
-                design.validate_completeness([], shared, root, root)
 
     def test_shared_exports_reject_repeats_and_empty_fields(self):
         original = design.SHARED
-        head = "old_api\tbinding\tjustification\n"
+        head = "old_api\tjustification\n"
         try:
             with tempfile.TemporaryDirectory() as temp:
                 path = Path(temp) / "shared.tsv"
                 design.SHARED = path
-                path.write_text(head + "a.b\tM.x\tx\na.b\tM.x\ty\n")
+                path.write_text(head + "a.b\tx\na.b\ty\n")
                 with self.assertRaisesRegex(ValueError, "repeated"):
                     design.read_shared()
-                for body in ["a.b\tM.x\t\n", "a.b\tM.x\t  \n",
-                             "a.b\tM.x\n"]:
+                for body in ["a.b\t\n", "a.b\t  \n", "a.b\n"]:
                     path.write_text(head + body)
                     with self.assertRaisesRegex(ValueError,
                                                 "empty.*justification"):
                         design.read_shared()
-                for body in ["a.b\t\tx\n", "a.b\t \tx\n", "a.b\n"]:
-                    path.write_text(head + body)
-                    with self.assertRaisesRegex(ValueError,
-                                                "empty.*binding"):
-                        design.read_shared()
-                # A table without the binding column fails.
-                path.write_text("old_api\tjustification\na.b\tx\n")
-                with self.assertRaisesRegex(ValueError, "empty.*binding"):
-                    design.read_shared()
-                path.write_text(head + "a.b\tM.x\tx\n")
-                self.assertEqual(
-                    design.read_shared(),
-                    {"a.b": {"binding": "M.x", "justification": "x"}})
+                path.write_text(head + "a.b\tx\n")
+                self.assertEqual(design.read_shared(), {"a.b": "x"})
         finally:
             design.SHARED = original
 
@@ -313,260 +249,122 @@ class DesignTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "malformed owner"):
                 design.expected_rows([dict(row, owners=owners)])
 
-    def test_live_allowlist_bindings_hold(self):
+    def test_generated_check_is_in_sync(self):
         shared = design.read_shared()
         self.assertEqual(len(shared), 17)
-        design.validate_bindings(shared)
+        self.assertEqual(design.SHARED_CHECK.read_text(),
+                         design.shared_check_text())
+        design.validate_shared_check_file()
+        # An entry added to the table makes the committed file stale.
+        mutated = dict(shared, **{"simpLib.ssfrag": "x"})
+        with patch.object(design, "read_shared", return_value=mutated):
+            with self.assertRaisesRegex(ValueError, "stale"):
+                design.validate_shared_check_file()
 
-    def entry(self, binding):
-        return {"binding": binding, "justification": "j"}
+    def test_generated_check_text(self):
+        entries = design.shared_entries()
+        kinds = [e[0] for e in entries]
+        self.assertEqual((kinds.count("type"), kinds.count("value")),
+                         (10, 7))
+        text = design.SHARED_CHECK.read_text()
+        self.assertIn('same_value "simpLib.AC" simpLib.AC simpExtLib.AC',
+                      text)
+        self.assertIn("fn (v : Opening.congproc) => "
+                      "(v : OpeningExt.congproc)", text)
+        self.assertIn("fn (v : OpeningExt.congproc) => "
+                      "(v : Opening.congproc)", text)
+        for entry, want in [
+                (("type", "M", "N", "t", "'a"),
+                 "fn (v : 'a M.t) => (v : 'a N.t)"),
+                (("type", "M", "N", "t", "('a,'b)"),
+                 "fn (v : ('a,'b) N.t) => (v : ('a,'b) M.t)")]:
+            self.assertIn(want, design.entry_check(entry))
+        self.assertIn('same_value "M.x" M.x N.x',
+                      design.entry_check(("value", "M", "N", "x", "")))
 
-    def check_pair(self, shared, dev_sig, ext_sig, ext_sml, dev_sml=None):
+    def test_type_params_from_the_develop_spec(self):
+        for spec, want in [("type t", ""), ("type t=int", ""),
+                           ("type 'a t", "'a"), ("eqtype ''a t", "''a"),
+                           ("type('a,'b)t", "('a,'b)"),
+                           ("datatype 'a t=A of 'a", "'a")]:
+            self.assertEqual(design.type_params(spec), want, spec)
+
+    def entry_pair(self, shared, dev, ext):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            if dev_sml is not None:
-                (root / "m.sml").write_text(dev_sml)
-            (root / "m.sig").write_text("sig\n" + dev_sig + "\nend\n")
-            (root / "mExt.sig").write_text("sig\n" + ext_sig + "\nend\n")
-            (root / "mExt.sml").write_text(ext_sml)
+            (root / "m.sig").write_text("sig\n" + dev + "\nend\n")
+            (root / "mExt.sig").write_text("sig\n" + ext + "\nend\n")
             with patch.object(design, "MODULES",
                               {"m": ("mExt", "mExt.sig")}):
-                design.validate_bindings(shared, root, root)
+                return design.shared_entries(shared, root, root)
 
-    def value_case(self, sml, binding="Lib.y", dev="val x : int",
-                   ext="val x : int", dev_sml=None):
-        if dev_sml is None:
-            dev_sml = f"val x = {binding}\n"
-        self.check_pair({"m.x": self.entry(binding)}, dev, ext,
-                        "structure mExt = struct\n" + sml + "end\n",
-                        "structure m = struct\n" + dev_sml + "end\n")
+    def test_entry_prefilters(self):
+        self.assertEqual(
+            self.entry_pair({"m.x": "j", "m.t": "j"},
+                            "val x : int\ntype 'a t",
+                            "val x : int\ntype 'a t = 'a list"),
+            [("type", "m", "mExt", "t", "'a"),
+             ("value", "m", "mExt", "x", "")])
+        for shared, dev, ext, why in [
+                ({"m.y": "j"}, "val x : int", "val x : int", "no shared"),
+                ({"m.x": "j"}, "val x : int", "val x : bool",
+                 "distinct specs"),
+                ({"m.E": "j"}, "exception E", "exception E", "not a val"),
+                ({"m.A": "j"}, "datatype t = A", "datatype t = A",
+                 "not a val"),
+                ({"m.t": "j"}, "type 'a t", "type t", "arities")]:
+            with self.assertRaisesRegex(ValueError, why, msg=str(shared)):
+                self.entry_pair(shared, dev, ext)
 
-    def test_value_entries_are_strict_declared_claims(self):
-        good = "val x = Lib.y\nval z = 1\n"
-        self.value_case(good)
-        self.value_case("val x = Lib.y;\nval z = 1\n")
-        self.value_case("val x = Lib.y (* c *)\n(* d *)\n\nval z = 1\n")
-        self.value_case("val x = Lib.y\n")
-        self.value_case("val x = Lib.y\nfun f a = a\n")
-        self.value_case("local\nval x = Lib.y\nin\nval z = x\nend\n")
-        self.value_case("val x = Lib.y\nend\n")
-        for sml, binding, why in [
-                ("val x = Lib.f\n  arg\nval z = 1\n", "Lib.f",
-                 "continues"),
-                ("val x = Lib.f\n  o g\n", "Lib.f", "continues"),
-                ("val x = Lib.y\nval x = Lib.y\n", "Lib.y", "2 binding"),
-                ("val x = Lib.y\nfun x a = a\n", "Lib.y", "2 binding"),
-                ("val x = Lib.y\nand x = 1\n", "Lib.y", "2 binding"),
-                ("val x = Lib.y\nval (a, x) = (1, 2)\n", "Lib.y",
-                 "2 binding"),
-                ("val x = Lib.y\nexception x\n", "Lib.y", "2 binding"),
-                ("val x = Lib.y\ndatatype d = A | x of int\n", "Lib.y",
-                 "2 binding"),
-                ("val x = Lib.y\ndatatype d = x | B\n", "Lib.y",
-                 "2 binding"),
-                ("val x = Lib.y\ndatatype d = A\n  | B\n  | x\n",
-                 "Lib.y", "2 binding"),
-                ("val x = Lib.y\nopen Foo\n", "Lib.y", "`open` follows"),
-                ("val x = Lib.y\nval z = 1\nopen Foo\n", "Lib.y",
-                 "`open` follows"),
-                ("let\n  val x = Lib.y\nin\n  x\nend\n", "Lib.y",
-                 "column-0"),
-                ("local\n  val x = Lib.y\nin\nend\n", "Lib.y",
-                 "column-0"),
-                ("val x = Lib.y\nval {x = x} = r\n", "Lib.y",
-                 "2 binding"),
-                ("val z = 1\n", "Lib.y", "0 binding"),
-                ("val x = Lib.f y\n", "Lib.y", "strict column-0"),
-                ("val x = fn a => a\n", "Lib.y", "strict column-0"),
-                ("val x : int = Lib.y\n", "Lib.y", "strict column-0"),
-                ("val x = y\n", "y", "not a qualified"),
-                ("structure Lib = struct val y = 1 end\nval x = Lib.y\n",
-                 "Lib.y", "defines"),
-                ("val x = Cond_rewrExt.y\n", "Cond_rewrExt.y",
-                 "extension module"),
-                ("val x = fooExtLib.y\n", "fooExtLib.y",
-                 "extension module"),
-                ("val x = mExt.y\n", "mExt.y", "extension module")]:
-            with self.assertRaisesRegex(ValueError, why, msg=sml):
-                self.value_case(sml, binding)
-        # A datatype body that merely mentions the name is not a binding.
-        self.value_case("val x = Lib.y\ndatatype d = A of x\n")
-        # Develop side: pinned, bound to the same thing, strict.
-        self.value_case(good, dev_sml="val x = Lib.y\nval z = 1\n")
-        self.value_case(good, dev_sml="val x = Lib.y;\n")
-        for dev_sml, why in [
-                ("val x = Other.y\n", "different value"),
-                ("val x = Lib.z\n", "different value"),
-                ("val x = y\n", "does not open"),
-                ("val x = Lib.y\nval x = Lib.y\n", "develop source has 2"),
-                ("val z = 1\n", "develop source has 0"),
-                ("val x = Lib.y\n  o f\n", "develop binding line"),
-                ("structure Lib = struct val y = 1 end\nval x = Lib.y\n",
-                 "develop defines"),
-                ("open Lib\nval x = y\nopen Foo\n", "develop an `open`"),
-                ("  val x = Lib.y\n", "develop binding is not")]:
-            with self.assertRaisesRegex(ValueError, why, msg=dev_sml):
-                self.value_case(good, dev_sml=dev_sml)
-        # The develop open form (`track`): `open ... Lib ...` before it.
-        for dev_sml in ["open A Lib B\nval x = y\n",
-                        "open A\nopen Lib\nval x = y\nval z = 1\n",
-                        "open Lib\nopen Lib\nval x = y\n",
-                        "open A\n  Lib\nval x = y\n",
-                        "open Lib\nval w = 1\nval x = y\n"]:
-            self.value_case(good, dev_sml=dev_sml)
-        for dev_sml, why in [
-                ("open Lib Shadow\nval x = y\nval z = 1\n", None),
-                ("open Lib\nopen Shadow\nval x = y\n", "shadow"),
-                ("open Lib\nopen A B\nval x = y\n", "shadow"),
-                ("open Lib\nval y = 1\nval x = y\n", "before the"),
-                ("open Lib\nfun y a = a\nval x = y\n", "before the"),
-                ("open A\nval x = y\n", "does not open"),
-                ("local open Lib in\nval x = y\nend\n", "does not open")]:
-            if why is None:
-                self.value_case(good, dev_sml=dev_sml)
-                continue
-            with self.assertRaisesRegex(ValueError, why, msg=dev_sml):
-                self.value_case(good, dev_sml=dev_sml)
-        # No pinned develop source: the entry cannot be checked.
-        with self.assertRaisesRegex(ValueError, "no pinned develop"):
-            self.check_pair({"m.x": self.entry("Lib.y")}, "val x : int",
-                            "val x : int", good)
-        # Branch-new qualifier and same-type swap: the develop source
-        # binds the live name to another module.
-        for ext_binding, dev_binding in [("simpMarkerLib.ExclX",
-                                          "markerLib.Excl"),
-                                         ("markerLib.ExclSF",
-                                          "markerLib.Excl")]:
-            with self.assertRaisesRegex(ValueError, "different value"):
-                self.value_case(f"val x = {ext_binding}\n", ext_binding,
-                                dev_sml=f"val x = {dev_binding}\n")
-        # A value whose spec names an extension type needs a row, unless
-        # that type has its own type entry.
-        with self.assertRaisesRegex(ValueError, "names extension type t"):
-            self.value_case(good, dev="val x : t\ntype t",
-                            ext="val x : t\ntype t")
-        # The column must agree with the source; it may not be empty.
-        with self.assertRaisesRegex(ValueError, "disagrees"):
-            self.value_case(good, "Lib.z")
-        with self.assertRaisesRegex(ValueError, "disagrees"):
-            self.value_case(good, "Other.y")
-        with self.assertRaisesRegex(ValueError, "not a qualified"):
-            self.value_case(good, "")
-        # An extension module of MODULES is refused by name.
-        with patch.object(design, "MODULES", {"m": ("weird", "mExt.sig")}):
-            self.assertRegex(design.value_binding_problem(
-                "x", "weird.y", "val x:int", "val x:int", ""),
-                "extension module")
-        # Differing specs are a distinct binding: a row, not an entry.
-        with self.assertRaisesRegex(ValueError, "distinct spec"):
-            self.value_case(good, dev="val x : int", ext="val x : bool")
-        # An allowlist entry whose name is no shared export is unchecked.
-        with self.assertRaisesRegex(ValueError, "not checked"):
-            self.check_pair({"m.w": self.entry("Lib.y")}, "val x : int",
-                            "val x : int", "val x = Lib.y\n")
+    def test_live_entry_for_a_distinct_type_passes_the_prefilter(self):
+        # The text pre-filter is not the authority: a distinct opaque type
+        # is only refused by the compiler, which the negative controls and
+        # the build exercise.  The generated text names both types.
+        shared = dict(design.read_shared(), **{"simpLib.ssfrag": "x"})
+        entries = design.shared_entries(shared)
+        self.assertIn("fn (v : simpLib.ssfrag) => (v : simpExtLib.ssfrag)",
+                      design.shared_check_text(entries=entries))
 
-    def type_case(self, binding, dev="type t", ext="type t = m.t",
-                  extra=""):
-        self.check_pair({"m.t": self.entry(binding)}, dev + extra,
-                        ext + extra, "")
+    def test_negative_controls_are_generated(self):
+        texts = design.negative_shared_texts()
+        self.assertEqual(set(texts), set(design.NEGATIVE_SHARED_EXPECT))
+        self.assertIn("(v : simpExtLib.ssfrag)",
+                      texts["sharedExportsNegType"])
+        self.assertIn('same_value "boolSimps.SimpL" boolSimps.SimpL '
+                      "boolSimpsExt.SimpL", texts["sharedExportsNegValue"])
+        for text in texts.values():
+            self.assertTrue(text.startswith(design.CHECK_HEAD))
+            self.assertEqual(text.count("SHARED_EXPORTS_CHECK_OK"), 1)
 
-    def test_type_entries_are_manifest_and_declared(self):
-        # (b) the develop module's own type, whatever its develop spec.
-        self.type_case("m.t")
-        self.type_case("m.t", dev="datatype t = A")
-        # (a) identical manifest specs, the binding is the rhs.
-        self.type_case("'a list", ext="type 'a t = 'a list",
-                       dev="type 'a t = 'a list")
-        self.type_case("''a list", ext="type ''a t = ''a list",
-                       dev="type ''a t = ''a list")
-        self.type_case("exn", dev="type t = exn", ext="type t = exn")
-        self.type_case("Lib.t", dev="type t = Lib.t", ext="type t = Lib.t")
-        self.type_case("{a : int}", dev="type t = {a : int}",
-                       ext="type t = {a:int}")
-        # A value entry may name an extension type that has an entry.
-        self.check_pair({"m.x": self.entry("Lib.y"),
-                         "m.t": self.entry("m.t")},
-                        "val x : t\ntype t", "val x : t\ntype t = m.t",
-                        "val x = Lib.y\n", "val x = Lib.y\n")
-        for kwargs, why in [
-                (dict(ext="type t"), "not a manifest"),
-                (dict(ext="eqtype t"), "not a manifest"),
-                (dict(ext="datatype t = A"), "not a manifest"),
-                (dict(ext="type t = m.t", binding="m.u"), "disagrees"),
-                (dict(ext="type t = m.t", binding=""), "disagrees"),
-                # Now rejected: a develop type with a foreign alias, or an
-                # alias of a type of another module.
-                (dict(ext="type t = Lib.t", binding="Lib.t"), "neither"),
-                (dict(ext="type t = Lib.t", binding="Lib.t",
-                      dev="datatype t = A"), "neither"),
-                (dict(ext="type t = SplitData.t", binding="SplitData.t"),
-                 "neither"),
-                (dict(ext="type t = m.u", binding="m.u"), "neither"),
-                (dict(ext="type t = int", binding="int", dev="type t = bool"),
-                 "neither"),
-                (dict(ext="type 'a t = 'a list", binding="'a list",
-                      dev="type t = 'a list"), "neither"),
-                (dict(ext="type t = fooExt.t", binding="fooExt.t",
-                      dev="type t = fooExt.t"),
-                 "extension module"),
-                (dict(ext="type t = mExt.u", binding="mExt.u",
-                      dev="type t = mExt.u"),
-                 "extension module"),
-                (dict(ext="type t = u", binding="u", dev="type t = u",
-                      extra="\ntype u"),
-                 "declares"),
-                (dict(ext="type t = u list", binding="u list",
-                      dev="type t = u list",
-                      extra="\ndatatype u = A"), "declares"),
-                (dict(binding="=manifest", dev="type t = int",
-                      ext="type t = int"), "disagrees")]:
-            kwargs.setdefault("binding", "m.t")
-            with self.assertRaisesRegex(ValueError, why, msg=str(kwargs)):
-                self.type_case(**kwargs)
+    def test_output_validation(self):
+        entries = design.shared_entries()
+        ok = "".join("shared export ok: %s%s.%s\n" % (
+            "type " if e[0] == "type" else "", e[1], e[3])
+            for e in entries) + "SHARED_EXPORTS_CHECK_OK entries=17\n"
+        design.validate_shared_output(ok, entries)
+        for bad in [ok.replace("SHARED_EXPORTS_CHECK_OK", "x"),
+                    ok.replace("entries=17", "entries=16"),
+                    ok.replace("shared export ok: simpLib.AC\n", ""),
+                    ok + "SHARED_EXPORT_FAILED: x\n"]:
+            with self.assertRaises(ValueError):
+                design.validate_shared_output(bad, entries)
 
-    def test_live_negative_allowlist_moves(self):
-        shared = design.read_shared()
-        for api, why in [
-                ("simpLib.ssfrag", "not a manifest"),
-                ("congLib.congset", "not a manifest")]:
-            for binding in ["Lib.t", "=manifest"]:
-                with self.assertRaisesRegex(ValueError, why, msg=api):
-                    design.validate_bindings(
-                        dict(shared, **{api: self.entry(binding)}))
-        # A live row moved to the allowlist, a binding changed, an entry
-        # with its binding removed, and a shared value turned type-like.
-        for api in ["boolSimps.BOOL_ss", "boolSimps.SimpL",
-                    "simpLib.SIMP_TAC"]:
-            with self.assertRaises(ValueError, msg=api):
-                design.validate_bindings(
-                    dict(shared, **{api: self.entry("Lib.x")}))
-        for api, binding in [("simpLib.Cong", "markerLib.AC"),
-                             ("simpLib.track", "Cond_rewrExt.track"),
-                             ("simpLib.thname", "KernelSig.other"),
-                             ("simpLib.convdata", "Lib.convdata")]:
-            with self.assertRaises(ValueError, msg=api):
-                design.validate_bindings(
-                    dict(shared, **{api: self.entry(binding)}))
-
-    def test_rows_are_not_textually_checked(self):
-        # A row for an allowlistable name only over-documents: the live
-        # table plus a row for a shared, allowlisted name fails only on
-        # completeness (row and entry), never on a source binding.
-        old, shared = design.read_old_rows(), design.read_shared()
-        extra = dict(group="F1", old_api="simpLib.Cong", kind="val",
-                     owners="08")
-        with self.assertRaisesRegex(ValueError, "has a row"):
-            design.validate_completeness(old + [extra], shared)
-        # With the entry removed, a row alone is complete.
-        short = {k: v for k, v in shared.items() if k != "simpLib.Cong"}
-        design.validate_completeness(old + [extra], short)
-        self.assertFalse(hasattr(design, "binding_problem"))
-        self.assertFalse(hasattr(design, "directly_binds"))
+    def test_build_wiring_lists_every_checked_module(self):
+        text = (design.ROOT / "src/simp/src/Holmakefile").read_text()
+        start = text.index("\ninterfaces-design-check:")
+        recipe = text[start:text.index("\n\t", start)]
+        modules = {m for e in design.shared_entries() for m in e[1:3]}
+        modules |= {"boolSimps", "boolSimpsExt"}
+        for module in modules:
+            self.assertRegex(recipe, rf"\b{module}\.uo\b")
+        make = (design.HERE / "Holmakefile").read_text()
+        self.assertIn("./sharedExportsCheck.exe", make)
 
     def test_validate_table_runs_every_validator(self):
         design.validate_table(self.table)
         for name in ["validate_existing", "validate_extension_coverage",
-                     "validate_completeness", "validate_bindings"]:
+                     "validate_completeness", "validate_entries",
+                     "validate_shared_check_file"]:
             with patch.object(design, name,
                               side_effect=ValueError("x-" + name)):
                 with self.assertRaisesRegex(ValueError, "x-" + name):
@@ -663,7 +461,8 @@ class DesignTests(unittest.TestCase):
                      "check_task27_docs.py", "check_design.py",
                      "Cond_rewr.sig", "boolSimps.sig", "realSimps.sig"]:
             self.assertIn(name, names)
-        self.assertIn(design.INPUTS / "simpLib.sml", paths)
+        self.assertIn(design.SHARED_CHECK, paths)
+        self.assertFalse((design.INPUTS / "simpLib.sml").exists())
         self.assertNotIn("prior-streams.json.gz", names)
 
     def test_missing_api_is_not_a_pass(self):

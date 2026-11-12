@@ -369,8 +369,8 @@ names the extension signature in the repo), every name that develop's `M.sig`
 (pinned in `inputs/develop/`, from the base revision) exports and that the
 extension's `M'.sig` also declares needs either a row with old name `M.name`,
 or an entry in [migration/shared-exports.tsv](../migration/shared-exports.tsv)
-with a `binding` and a one-line justification that the extension binds the
-identical value or type. `check_design.py` enforces this: a missing name
+(columns `old_api`, `justification`) claiming that the extension re-exports
+the identical value or type. `check_design.py` enforces this: a missing name
 fails, and an entry that also has a row or is not a shared export (stale)
 fails. Names are read from the signatures by a comment-stripping reader, per
 namespace (a type and a value of the same name are different declarations);
@@ -378,80 +378,58 @@ it fails on `structure`, `functor`, `sharing`, `withtype`, `where`,
 `abstype`, spec-level `and` and unknown includes. Names that `include Abbrev`
 brings in are excluded: they are the shared basic types.
 
-Rows are the default and are never checked against the sources: a row for
-a name that could have been allowlisted only over-documents a migration. An
-allowlist entry is a strict, declared claim. Its `binding` column (columns:
-`old_api`, `binding`, `justification`) names the identical shared value or
-type, and `check_design.py` verifies it, or fails.
+Rows are the default and are never checked against the sources. The authority
+for an allowlist entry is the **compiled identity check**
+[sharedExportsCheck.sml](sharedExportsCheck.sml), generated from the table by
+`check_design.py --write-shared-check` (the Python tests require it to be
+byte-identical to the generator's output). For an entry `M.x` with extension
+module `M'`:
 
-A value entry must satisfy all of:
+- a value entry asserts `PolyML.pointerEq (M.x, M'.x)`: type-checking forces
+  the two types to unify, and pointer equality proves the extension exports
+  the very object the develop module does, not a copy;
+- a type entry is the coercion `fn (v : P M.x) => (v : P M'.x)` and its
+  converse, with the parameters `P` of the develop spec; it compiles only if
+  the two types are equal, so an abstract, opaque or datatype-distinct type
+  fails to compile.
 
-- the develop and extension specs are equal after normalisation (spaces
-  around `: , ; ( ) { } * = ->` and a trailing `;` aside; differing specs
-  mean a row), and the spec names no type that the extension signature
-  declares, unless that type has a type entry of its own (else a row);
-- the `binding` is a qualified identifier `Q.y` whose `Q` is not an
-  extension module (not a `MODULES` extension and not named
-  `\w+Ext(Lib)?`), and the extension source defines no structure `Q`;
-- the extension `.sml` has exactly one binding occurrence of the name, and
-  it is the line `val name = Q.y` starting at column 0, optionally followed
-  by `;` and a comment. Binding occurrences are counted generously: `fun
-  name` and `and name`, a name inside a `val ... =` pattern, `exception
-  name`, and a datatype constructor `= name` or `| name` in a datatype body
-  (the text up to the next line that starts at column 0 with neither `|` nor
-  `and`). Column 0 is the top level of the struct body (the live bindings,
-  `simpExtLib.sml` 2218-2225 and 3169, are there); an indented line may sit
-  in a `let` or `local`, so it is refused;
-- the next non-blank, non-comment line starts with `val`, `fun`, `type`,
-  `datatype`, `exception`, `structure`, `local`, `infix`, `infixr`,
-  `nonfix`, `end` or `in`, or the file ends, so no continuation line can
-  apply the value; and no column-0 `open` appears anywhere after the
-  binding, since it could shadow the names a later line uses;
-- the written `binding` equals the `Q.y` in the source;
-- the pinned develop `.sml` (`inputs/develop/M.sml`, base bytes of the base
-  revision; the completeness check fails if a value entry's develop module
-  has none) binds the name to the same thing, under the same strictness
-  (one binding occurrence, column 0, no continuation, no later `open`), in
-  one of two ways: the line `val name = Q.y`, or `val name = y` where a
-  column-0 `open` before it lists `Q`, no later column-0 `open` before the
-  binding names a module other than `Q` (it could shadow `y`), the develop
-  source defines no structure `Q`, and `y` has no binding occurrence before
-  the binding (`track`: `val track = with_tracking` under `open ... Cond_rewr
-  ...`). Modules named after `Q` in the same `open` are not examined. The
-  develop match implies `Q` is a module at the base revision; the selftest
-  also checks that each live qualifier `Q` has a `Q.sml` at the base
-  revision.
+The build runs it: the `check` target of this directory's `Holmake`
+(`sharedExportsCheck.exe`, run after `selftest.exe`) is part of `design-check`,
+which `interfaces-design-check` runs at `HOLSELFTESTLEVEL` 1. In this build a
+`.uo` is only a dependency stub, so the executable both compiles the source
+(a static error fails it) and runs it (a failed pointer comparison prints
+`SHARED_EXPORT_FAILED: <entry>` and raises); either way the target fails.
+Reading the source text for the binding was abandoned because it can never be
+complete: every review round found another fail-open form (`open` lists,
+`local` blocks, arity, rebinding), whereas the compiler resolves them all.
 
-A type entry is accepted only when the extension `.sig` spec is a manifest
-`type params name = rhs` (not a `datatype`, `eqtype` or abstract type), the
-normalised `binding` equals the normalised `rhs`, and either (a) the develop
-spec is also manifest, with the same parameters and normalised `rhs`; or (b)
-the `rhs` is exactly `M.name`, where `M` is the develop module itself and
-`name` the entry's own name (an alias of the develop module's type, whatever
-its develop spec). The `rhs` names no type the extension signature itself
-declares and no type of an extension module. The `binding` records the `rhs`
-(for the record abbreviations `convdata`, `stdconvdata`, `relsimpdata` and
-`simptac_config` the whole normalised record type).
+`design-check --negative-controls` generates two entries from the same
+generator and requires each to fail in the expected way. `simpLib.ssfrag`
+against `simpExtLib.ssfrag` (two opaque types) must fail with a static type
+error (`Can't unify simpLib.ssfrag ... with simpExtLib.ssfrag`), so a distinct
+type cannot be allowlisted. `boolSimps.SimpL` against `boolSimpsExt.SimpL`
+(equal types, but the extension evaluates its own copy) must compile and then
+fail with `SHARED_EXPORT_FAILED: boolSimps.SimpL is not the develop object`,
+so a copy of a develop value cannot be allowlisted.
 
-Every entry must be checked: an entry whose name is not a shared export
-fails. These checks are textual, not a semantic equivalence proof, and the
-TASK_34 ledger records the shared modules as unchanged apart from its listed
-differences.
+The Python side keeps only cheap pre-filters: every entry names a shared
+export; a value entry's develop and extension specs are equal after
+normalisation (spaces around `: , ; ( ) { } * = ->` and a trailing `;` aside)
+and are a plain `val` (an exception or constructor is not an object to
+compare); a type entry has the same arity in both signatures; names are plain
+identifiers. The compiler decides the rest. The TASK_34 ledger records the
+shared modules as unchanged apart from its listed differences.
 
-Strictness assumptions (fail closed; a row is always available):
+Assumptions that still apply (fail closed; a row is always available):
 
 - The tokenizer treats `'a`, `''a` as type parameters and reads record labels
   inside `{...}` as part of the normalised text; it has no other grammar.
-- Datatype replication (`datatype t = datatype M.t`) is rejected for
-  allowlisting: a datatype is never a manifest type, so it needs a row.
-- `val op`, `val rec`, several declarations on one line, and a following
-  `and` fail the strict line form or the occurrence count.
 - The UNSUPPORTED scan (`structure`, `functor`, `sharing`, `and`,
   `withtype`, `where`, `abstype`) covers the whole signature, comments
   excepted.
-- Bindings must start at column 0 (the top level of the struct body); the
-  develop `open` form is read only at column 0 too, and `local open ... in`
-  is not an `open`.
+- A pointer comparison proves identity of the object a module exports; it
+  says nothing about mutable state behind it, which the shared modules'
+  ledger covers.
 
 `MODULES` itself is checked without git: the scan walks the repository tree
 (pruning every dot-directory such as `.git`, `.hol` and `.agent-files`,
