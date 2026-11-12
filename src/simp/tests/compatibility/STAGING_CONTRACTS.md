@@ -193,5 +193,5 @@ pass. Rechecking the reviewed pin
 `cf1f863b4e5a9712ce1b179f18274eb3451f3954` (`--candidate` with that revision)
 needs a checkout of that revision, because the pin no longer builds against
 the current tree. `--staging-only` intentionally excludes old
-signature/behavior probes and
-cannot combine with performance, public clients or old negative controls.
+signature/behavior probes and cannot combine with performance, public
+clients or old negative controls.

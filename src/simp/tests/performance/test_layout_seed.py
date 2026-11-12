@@ -130,10 +130,17 @@ class Binding(unittest.TestCase):
                            "--performance-size", "0",
                            "--layout-seed", "bad seed"]):
                 command = [sys.executable, "-B", str(runner),
+                           "--candidate", "HEAD",
+                           "--candidate-signature", "pass",
+                           "--candidate-behavior", "baseline",
                            "--output", str(output), *flags]
                 result = subprocess.run(command, capture_output=True,
                                         text=True, timeout=10)
                 self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("are required", result.stderr)
+                if flags[0] == "--layout-seed":
+                    self.assertIn("--layout-seed requires "
+                                  "--matrix-performance", result.stderr)
                 self.assertFalse(output.exists())
 
     def test_runner_pads_before_any_dependency(self):

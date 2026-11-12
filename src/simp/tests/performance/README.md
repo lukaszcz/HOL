@@ -375,3 +375,16 @@ deltas, final sink and process/pair auditing follow the traversal conventions.
 `storage=False` deliberately omits the standard simpset storage rows. Retained
 matcher graph/allocation auditing is separate; these batches make no
 allocation or final performance acceptance claim.
+
+## Allocation boundary
+
+`allocation_boundary.json` lists what may differ from the measurement
+baseline outside `src/simp/src`: prefixes and individually pinned files
+(by blob). `Holmake boundary-tests` here is the cheap explicit check (about
+2 s). It is not part of the routine build, because the boundary describes
+this branch's measurement baseline. Run it whenever a shared file outside
+`src/simp/src` changes; the TASK35 and TASK37 gates run it. It is a
+tripwire: it fails on any committed change from the baseline to HEAD
+outside `src/simp/src` and the manifest prefixes, including an edit to any
+listed file, until the manifest is refreshed. The tests that need a git
+work tree skip in a tarball or a checkout nested in another repository.

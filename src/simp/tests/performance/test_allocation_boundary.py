@@ -361,22 +361,22 @@ class Manifest(Repo):
 
 
 def require_checkout(root):
-    """Skip the calling class unless `root` is a git work tree with a git
-    binary at hand (a tarball, or a sandbox without git)."""
+    """Skip the calling test unless `root` is itself the top of a git work
+    tree, with a git binary at hand (a tarball, or a sandbox without git,
+    or a tarball nested in another repository's work tree)."""
     require_git()
     found = subprocess.run(
-        ["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    if found.returncode != 0:
-        raise unittest.SkipTest("not inside a git work tree: " + str(root))
+        ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    top = found.stdout.strip()
+    if found.returncode != 0 or not top or \
+            os.path.realpath(top) != os.path.realpath(str(root)):
+        raise unittest.SkipTest("not the top of a git work tree: " +
+                                str(root))
 
 
 class Committed(unittest.TestCase):
     """The reviewed manifest of this checkout, as committed."""
-
-    @classmethod
-    def setUpClass(cls):
-        require_checkout(m.HERE.parents[3])
 
     def test_it_is_well_formed_and_its_files_are_listed_once(self):
         data = bd.load_manifest(m.BOUNDARY)
@@ -388,6 +388,7 @@ class Committed(unittest.TestCase):
 
     def test_no_prefix_touches_what_is_built_before_the_subject(self):
         root = m.HERE.parents[3]
+        require_checkout(root)
         data = bd.load_manifest(m.BOUNDARY)
         built = bd.check_manifest(root, "HEAD", data, m.pr.HOL_SEQUENCE)
         # the libraries the fixture loads from sigobj after the heap are
@@ -399,6 +400,7 @@ class Committed(unittest.TestCase):
 
     def test_every_listed_file_exists_with_its_blob(self):
         root = m.HERE.parents[3]
+        require_checkout(root)
         data = bd.load_manifest(m.BOUNDARY)
         found = bd.candidate_blobs(root, "HEAD", [
             i["path"] for i in data["files"]])
@@ -410,6 +412,7 @@ class Committed(unittest.TestCase):
         subject is all covered by the manifest (a prefix, or a listed
         blob); resolve() refuses a changed file that is not listed."""
         root = m.HERE.parents[3]
+        require_checkout(root)
         require_revisions(m.a.BASE, repo=root)
         found = bd.resolve(root, m.a.BASE, "HEAD", m.pr.HOL_SEQUENCE,
                            m.BOUNDARY)

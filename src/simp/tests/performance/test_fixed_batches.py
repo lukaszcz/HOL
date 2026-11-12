@@ -149,16 +149,24 @@ class FixedBatchTests(unittest.TestCase):
         runner = a.HERE.parent / "compatibility/run_paired.py"
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "unused"
-            for flags in (["--batch-iterations", "4"],
-                          ["--matrix-performance", "--performance-pairs", "1",
-                           "--performance-case", "frag_create",
-                           "--performance-size", "0",
-                           "--batch-iterations", "3"]):
+            for flags, message in ((
+                    ["--batch-iterations", "4"],
+                    "--batch-iterations requires --matrix-performance"), (
+                    ["--matrix-performance", "--performance-pairs", "1",
+                     "--performance-case", "frag_create",
+                     "--performance-size", "0",
+                     "--batch-iterations", "3"],
+                    "batch iterations must be a power of two")):
                 command = [sys.executable, "-B", str(runner),
+                           "--candidate", "HEAD",
+                           "--candidate-signature", "pass",
+                           "--candidate-behavior", "baseline",
                            "--output", str(output), *flags]
                 result = subprocess.run(command, capture_output=True,
                                         text=True, timeout=10)
                 self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("are required", result.stderr)
+                self.assertIn(message, result.stderr)
                 self.assertFalse(output.exists())
 
 
@@ -460,19 +468,28 @@ class WarmupScheduleTests(unittest.TestCase):
                 "--performance-size", "0"]
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "unused"
-            for flags in (["--batch-schedule", "warmup"],
-                          ["--batch-schedule", "ramp"],
-                          ["--batch-schedule", "other",
-                           "--batch-iterations", "3"],
-                          ["--batch-schedule", "warmup",
-                           "--batch-iterations", "0"],
-                          ["--batch-schedule", "warmup",
-                           "--batch-iterations", str(2 ** 30 + 1)]):
+            needs = "--batch-schedule requires --batch-iterations"
+            power = "batch iterations must be in 1.."
+            for flags, message in ((["--batch-schedule", "warmup"], needs),
+                                   (["--batch-schedule", "ramp"], needs),
+                                   (["--batch-schedule", "other",
+                                     "--batch-iterations", "3"],
+                                    "invalid choice"),
+                                   (["--batch-schedule", "warmup",
+                                     "--batch-iterations", "0"], power),
+                                   (["--batch-schedule", "warmup",
+                                     "--batch-iterations",
+                                     str(2 ** 30 + 1)], power)):
                 command = [sys.executable, "-B", str(runner),
+                           "--candidate", "HEAD",
+                           "--candidate-signature", "pass",
+                           "--candidate-behavior", "baseline",
                            "--output", str(output), *base, *flags]
                 result = subprocess.run(command, capture_output=True,
                                         text=True, timeout=10)
                 self.assertNotEqual(result.returncode, 0, flags)
+                self.assertNotIn("are required", result.stderr)
+                self.assertIn(message, result.stderr, flags)
                 self.assertFalse(output.exists())
 
 

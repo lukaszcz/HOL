@@ -21,9 +21,10 @@ PY_TESTS = PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover \
   PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover \
   -s ../compatibility -p test_runner.py
 
-# The allocation-boundary tests alone, for the routine simp build
-# (src/simp/src performance-boundary-tests); they include the completeness
-# check of the reviewed manifest against this checkout.
+# The allocation-boundary tests alone (about 2 s); they include the
+# completeness check of the reviewed manifest against this checkout. Explicit
+# only: the TASK35/TASK37 gates run it, and so must anyone who changes a
+# shared file outside src/simp/src (see README.md, "Allocation boundary").
 boundary-tests:
 	PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest \
 	  test_allocation_boundary
@@ -105,8 +106,8 @@ check: check-tests
 	  --output "$(PERFORMANCE_CHECK_OUTPUT)/client-smoke.json"
 
 # One recipe keeps baseline variability before candidate (HEAD)
-# observations even
-# when invoked by a parallel caller. Never benchmark alongside other builds.
+# observations even when invoked by a parallel caller. Never benchmark
+# alongside other builds.
 diagnostic: diagnostic-tests
 	python3 -B ../compatibility/run_paired.py \
 	  --candidate cccaa27d7099cbadc886983020cbe745db7793f3 \

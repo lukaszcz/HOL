@@ -259,8 +259,6 @@ class HolmakefileWiringTests(unittest.TestCase):
     behaviour wherever the target judges the current tree."""
 
     TESTS = Path(__file__).resolve().parents[1]
-    # HEAD_TARGETS judge the current tree: some call selects HEAD, and
-    # every call passes with baseline behaviour.
     # Every target that calls run_paired.py, as (Holmakefile dir, target).
     EXPECTED = {
         ("compatibility", "check"), ("compatibility", "prior-contracts"),
@@ -272,18 +270,22 @@ class HolmakefileWiringTests(unittest.TestCase):
         ("performance", "diagnostic"),
         ("tactics", "check"),
     }
+    # HEAD_TARGETS judge the current tree: some call selects HEAD, and
+    # every call passes with baseline behaviour.
     HEAD_TARGETS = {
         ("compatibility", "check"), ("compatibility", "prior-contracts"),
         ("compatibility", "public-contracts"),
         ("compatibility", "staging-contracts"),
         ("performance", "diagnostic"),
+        ("tactics", "check"),
     }
 
     def invocations(self):
         """{(directory, target): [argv, ...]}, every run_paired.py call of
-        every recipe, with --x=y split into two tokens."""
+        every recipe, with --x=y split into two tokens. The directory is
+        the Holmakefile's path relative to the tests directory."""
         found = {}
-        for path in sorted(self.TESTS.glob("*/Holmakefile")):
+        for path in sorted(self.TESTS.rglob("Holmakefile")):
             text = path.read_text().replace("\\\n", " ")
             target = None
             for line in text.splitlines():
@@ -294,7 +296,8 @@ class HolmakefileWiringTests(unittest.TestCase):
                     for word in line.split():
                         words += word.split("=", 1) if word.startswith(
                             "--") else [word]
-                    found.setdefault((path.parent.name, target),
+                    found.setdefault((path.parent.relative_to(
+                        self.TESTS).as_posix(), target),
                                      []).append(words)
         return found
 

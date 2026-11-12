@@ -151,12 +151,13 @@ python3 -B src/simp/tests/compatibility/run_paired.py \
 
 For future repairs explicitly select `--candidate HEAD` (or another Git ref)
 and choose `--candidate-signature pass` / `--candidate-behavior baseline` only
-when those contracts are intended to pass. Defaults reproduce the reviewed
-candidate, NOT an implicit dirty-worktree snapshot. Dirty sources are never
-silently substituted for a selected Git object. Resolved revisions, exact
-Git blobs/source bytes, generated products, inputs, runtime/heap/config
-fingerprints, commands, exits and complete ordered source/observation streams
-are retained in compact JSON/gzip receipts. The output folder is never reused.
+when those contracts are intended to pass. There is no default candidate;
+a selected ref is never an implicit dirty-worktree snapshot. Dirty sources
+are never silently substituted for a selected Git object. Resolved
+revisions, exact Git blobs/source bytes, generated products, inputs,
+runtime/heap/config fingerprints, commands, exits and complete ordered
+source/observation streams are retained in compact JSON/gzip receipts.
+The output folder is never reused.
 
 See [`SCHEMA.md`](SCHEMA.md) for ordered event/result contracts and controls.
 `paired/Holmakefile` is an installation template, not a standalone
