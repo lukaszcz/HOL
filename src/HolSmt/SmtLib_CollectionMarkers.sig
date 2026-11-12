@@ -3,7 +3,7 @@ signature SmtLib_CollectionMarkers =
 sig
   (* Classification is supplied by the existing theory registry. These
      roles describe argument positions, not operator names or proof rules. *)
-  datatype role = Membership | UnaryObservation | Insert | Delete
+  datatype role = Membership | UnaryObservation | Insert | Delete | Update
                 | BinaryConstruction | UnaryConstruction | Inclusion
                 | Empty | Equality | Other
 
@@ -18,13 +18,22 @@ sig
      is_collection_type : 'term -> bool,
      classify : 'term * 'term -> role}
 
+  (* compare is a total order on symbol identities in the supplied inventory;
+     its equality must agree with operations.member and operations.add. *)
+  type 'term closure_operations =
+    {compare : 'term * 'term -> order,
+     share_symbol : 'term -> bool,
+     let_body : 'term -> 'term}
+
   type 'term memo_hooks =
     {walk : 'term -> 'term list -> (unit -> 'term list) -> 'term list,
      mark : 'term -> 'term list -> (unit -> 'term list) -> 'term list}
 
   (* Set and Bag preserve different traversal policies. Set markers flow
-     from let-local variables back to binding values. Bag markers also visit
-     immediate application prefixes, as well as the flattened arguments.
+     from let-local variables back to binding values. Bag markers also
+     classify every application prefix with its own arguments and walk the
+     head, as well as the flattened arguments. Without binding propagation
+     this gives the markers, in order, of walking every prefix in full.
      Body/binding/prefix discovery retains the legacy HOL_ERR fallbacks.
      Each hook receives the current term, exact immutable incoming marker
      list and a synchronous computation. A graph caller keys separate walk
@@ -46,6 +55,19 @@ sig
     (exn -> bool) -> 'term memo_hooks ->
     {propagate_bindings : bool, visit_prefix : bool} ->
     'term -> 'term list -> 'term list
+
+  (* Seed once, then close conditional/let/update and same-symbol
+     argument/result carriers. The term-list arguments are the inventory,
+     followed by the initial seed markers. Return the closed markers and
+     (head, zero-based argument index, marked argument) tuples, with one
+     representative per marked argument group for contextual
+     lookup. Result groups propagate markers but do not add tuples. The caller
+     supplies its existing typed add and term identity. add must be idempotent
+     and preserve existing markers. Only selected syntax mismatches are
+     ignored; other failures escape. *)
+  val close : 'term operations -> 'term closure_operations ->
+    (exn -> bool) -> 'term list -> 'term list ->
+    'term list * ('term * int * 'term) list
 
   (* The legacy entry uses direct synchronous hooks, preserving its exact
      traversal, result ordering and HOL_ERR fallback behavior. The ordinary

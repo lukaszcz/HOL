@@ -768,6 +768,8 @@ local
        hypotheses: fp(3)(bit-decomposition) must prove a definition before
        adding it through [state_define]. *)
     bit_decompositions : bit_decomposition list,
+    (* Fresh word1 names defined from bv1-blast concat hints. *)
+    concat_bits : Term.term HOLset.set,
     (* Exact per-translation operator provenance.  Only definitions selected
        by SmtLib's EncodedSymbol records may be unfolded during replay. *)
     translation_definitions : SmtLib.emitted_definition list,
@@ -797,6 +799,7 @@ local
       large_thm_cache = #large_thm_cache s,
       var_set = #var_set s,
       bit_decompositions = #bit_decompositions s,
+      concat_bits = #concat_bits s,
       translation_definitions = #translation_definitions s,
       skeleton_context = #skeleton_context s,
       word_context = #word_context s,
@@ -821,7 +824,7 @@ local
   fun oriented_definition_name var_set definition =
     Option.map Lib.fst (oriented_definition_parts var_set definition)
 
-  fun state_define (s : state) (terms : Term.term list) : state =
+  fun state_define_with_concat_bits (s : state) terms concat_bits : state =
     let
       val newly_rigid = List.mapPartial
         (oriented_definition_name (#var_set s)) terms
@@ -842,6 +845,7 @@ local
       large_thm_cache = #large_thm_cache s,
       var_set = #var_set s,
       bit_decompositions = #bit_decompositions s,
+      concat_bits = concat_bits,
       translation_definitions = #translation_definitions s,
       skeleton_context = #skeleton_context s,
       word_context = #word_context s,
@@ -850,6 +854,9 @@ local
       string_index_cache = #string_index_cache s,
       z3_version = #z3_version s
     } end
+
+  fun state_define (s : state) terms =
+    state_define_with_concat_bits s terms (#concat_bits s)
 
   (* Net indexing walks the unfolded term.  A large shared conclusion is
      cheap as a DAG but can be prohibitively expensive to index.  Keep such
@@ -873,6 +880,7 @@ local
         else #large_thm_cache s,
       var_set = #var_set s,
       bit_decompositions = #bit_decompositions s,
+      concat_bits = #concat_bits s,
       translation_definitions = #translation_definitions s,
       skeleton_context = #skeleton_context s,
       word_context = #word_context s,
@@ -1647,37 +1655,59 @@ local
       else
         profile "nnf[metis-fallback]" metis_prove (thms, t)
 
+  (* The terms the proofs below name are built, not parsed: a constant a
+     client theory exports must not capture them. *)
+  local
+    val a = Term.mk_var ("a", intSyntax.int_ty)
+    val b = Term.mk_var ("b", intSyntax.int_ty)
+    val n = Term.mk_var ("n", intSyntax.int_ty)
+  in
   val INT_LE_RMUL_EXP = Library.prove(
     ``!a b n:int. 0 <= n ==> a <= b ==> a * n <= b * n``,
+    (* GEN_TAC renames a bound variable away from a constant of its name,
+       so fix the names before the steps that use them. *)
+    MAP_EVERY X_GEN_TAC [a, b, n] THEN
     REPEAT STRIP_TAC THEN
-    bossLib.Cases_on `n = 0` THENL [
+    bossLib.tmCases_on (boolSyntax.mk_eq (n, intSyntax.zero_tm)) [] THENL [
       bossLib.ASM_SIMP_TAC intLib.int_ss [],
-      SUBGOAL_THEN ``0i < n`` ASSUME_TAC THENL [intLib.ARITH_TAC, ALL_TAC] THEN
-      bossLib.Cases_on `a = b` THENL [
+      SUBGOAL_THEN (intSyntax.mk_less (intSyntax.zero_tm, n)) ASSUME_TAC THENL
+        [intLib.ARITH_TAC, ALL_TAC] THEN
+      bossLib.tmCases_on (boolSyntax.mk_eq (a, b)) [] THENL [
         bossLib.ASM_SIMP_TAC intLib.int_ss [],
-        SUBGOAL_THEN ``a < b:int`` ASSUME_TAC THENL
+        SUBGOAL_THEN (intSyntax.mk_less (a, b)) ASSUME_TAC THENL
           [intLib.ARITH_TAC, ALL_TAC] THEN
-        Tactic.MP_TAC (Q.SPECL [`a:int`, `b:int`, `n:int`]
+        Tactic.MP_TAC (Drule.SPECL [a, b, n]
           intExtensionTheory.INT_LT_RMUL_EXP) THEN
         intLib.ARITH_TAC
       ]
     ])
+  end
 
   val INT_LE_LMUL_EXP = Library.prove(
     ``!a b n:int. 0 <= n ==> a <= b ==> n * a <= n * b``,
     metisLib.METIS_TAC [INT_LE_RMUL_EXP, integerTheory.INT_MUL_COMM])
 
+  local
+    val x1 = Term.mk_var ("x1", intSyntax.int_ty)
+    val x2 = Term.mk_var ("x2", intSyntax.int_ty)
+    val y1 = Term.mk_var ("y1", intSyntax.int_ty)
+    val y2 = Term.mk_var ("y2", intSyntax.int_ty)
+    fun product_le ((p, q), (r, s)) =
+      intSyntax.mk_leq (intSyntax.mk_mult (p, q), intSyntax.mk_mult (r, s))
+  in
   val INT_LE_MUL2 = Library.prove(
     ``!x1 x2 y1 y2:int.
         0 <= x1 /\ 0 <= y1 /\ x1 <= x2 /\ y1 <= y2 ==>
         x1 * y1 <= x2 * y2``,
+    MAP_EVERY X_GEN_TAC [x1, x2, y1, y2] THEN
     REPEAT STRIP_TAC THEN
-    SUBGOAL_THEN ``x1 * y1 <= x2 * y1:int`` ASSUME_TAC THENL
+    SUBGOAL_THEN (product_le ((x1, y1), (x2, y1))) ASSUME_TAC THENL
       [metisLib.METIS_TAC [INT_LE_RMUL_EXP], ALL_TAC] THEN
-    SUBGOAL_THEN ``x2 * y1 <= x2 * y2:int`` ASSUME_TAC THENL
+    SUBGOAL_THEN (product_le ((x2, y1), (x2, y2))) ASSUME_TAC THENL
       [metisLib.METIS_TAC [INT_LE_LMUL_EXP, integerTheory.INT_LE_TRANS],
        ALL_TAC] THEN
     metisLib.METIS_TAC [integerTheory.INT_LE_TRANS])
+  end
 
   fun int_product_bound_tac (asl, w) =
   let
@@ -1722,15 +1752,26 @@ local
        ORELSE
        REPEAT STRIP_TAC THEN int_product_bound_tac))
 
+  local
+    val x = Term.mk_var ("x", realSyntax.real_ty)
+    val y = Term.mk_var ("y", realSyntax.real_ty)
+    val zero = realSyntax.zero_tm
+  in
   val REAL_ZERO_FACTOR_NONNEG = Library.prove(
     ``!x:real. !y:real. x <= 0 ==> x >= 0 ==> 0 <= x * y``,
+    MAP_EVERY X_GEN_TAC [x, y] THEN
     Tactical.REPEAT STRIP_TAC THEN
+    (* x >= 0 ==> x <= 0 ==> x = 0 *)
     Tactic.MP_TAC
-      (RealField.REAL_ARITH ``x >= 0:real ==> x <= 0 ==> x = 0``) THEN
+      (RealField.REAL_ARITH
+        (boolSyntax.mk_imp (realSyntax.mk_geq (x, zero),
+           boolSyntax.mk_imp (realSyntax.mk_leq (x, zero),
+                              boolSyntax.mk_eq (x, zero))))) THEN
     ASM_REWRITE_TAC [] THEN
     DISCH_TAC THEN
     ASM_REWRITE_TAC
       [realTheory.REAL_MUL_LZERO, realTheory.REAL_LE_REFL])
+  end
 
   val REAL_ZERO_FACTOR_NONNEG_CLAUSE = Library.prove(
     ``!x:real. !y:real. 0 <= x * y \/ ~(x <= 0) \/ ~(x >= 0)``,
@@ -1820,41 +1861,58 @@ local
   val ediv_tm = Term.prim_mk_const {Thy = "integer", Name = "ediv"}
   val emod_tm = Term.prim_mk_const {Thy = "integer", Name = "emod"}
 
-  (* Collect divisors from the whole integer div/mod family.  Canonical
-     totalization may expose raw [ediv]/[emod], so this is deliberately keyed
-     by operation identity and arity rather than by a recorded clause shape. *)
-  fun ediv_emod_divisors target =
+  (* Collect the (dividend, divisor) operands of the whole integer div/mod
+     family.  Canonical totalization may expose raw [ediv]/[emod], so this is
+     deliberately keyed by operation identity and arity rather than by a
+     recorded clause shape. *)
+  fun ediv_emod_operations target =
     let
-      fun divisor term =
+      fun operation term =
         case boolSyntax.strip_comb term of
-          (head, [_, denominator]) =>
+          (head, [numerator, denominator]) =>
             if List.exists (Term.same_const head)
                  [ediv_tm, emod_tm,
                   SmtReplayCanon.smt_ediv_total_tm,
                   SmtReplayCanon.smt_emod_total_tm] then
-              SOME denominator
+              SOME (numerator, denominator)
             else NONE
         | _ => NONE
-      fun add (denominator, denominators) =
-        if List.exists (Term.aconv denominator) denominators then denominators
-        else denominator :: denominators
+      fun same (n, d) (n', d') = Term.aconv n n' andalso Term.aconv d d'
+      fun add (operands, operations) =
+        if List.exists (same operands) operations then operations
+        else operands :: operations
     in
       List.foldl add []
-        (List.mapPartial divisor (Library.subterms target))
+        (List.mapPartial operation (Library.subterms target))
     end
 
+  (* Built, not parsed: a constant a client theory exports must not
+     capture x, y or k. *)
+  local
+    open boolSyntax
+    val x = Term.mk_var ("x", realSyntax.real_ty)
+    val y = Term.mk_var ("y", realSyntax.real_ty)
+    val k = Term.mk_var ("k", realSyntax.real_ty)
+    val y_is_zero = mk_eq (y, realSyntax.zero_tm)
+    val x_rdiv_y =
+      Term.list_mk_comb
+        (Term.prim_mk_const {Thy = "HolSmt", Name = "smt_rdiv"}, [x, y])
+  in
+  (* y = 0 \/ x = y * smt_rdiv x y *)
   val SMT_RDIV_CANCEL_CLAUSE = Library.prove(
-    ``(y:real) = 0 \/ x = y * HolSmt$smt_rdiv x y``,
-    Tactic.ASM_CASES_TAC ``(y:real) = 0`` THENL [
+    mk_disj (y_is_zero, mk_eq (x, realSyntax.mk_mult (y, x_rdiv_y))),
+    Tactic.ASM_CASES_TAC y_is_zero THENL [
       ASM_REWRITE_TAC [],
       bossLib.ASM_SIMP_TAC (bossLib.srw_ss())
         [HolSmtTheory.smt_rdiv_eq_div, realTheory.REAL_DIV_LMUL]
     ])
 
+  (* smt_rdiv x y = k ==> y = 0 \/ y * k = x *)
   val SMT_RDIV_INTRO_CANCEL_CLAUSE = Library.prove(
-    ``HolSmt$smt_rdiv (x:real) y = k ==>
-      y = 0 \/ y * k = x``,
+    mk_imp (mk_eq (x_rdiv_y, k),
+            mk_disj (y_is_zero, mk_eq (realSyntax.mk_mult (y, k), x))),
     bossLib.METIS_TAC [SMT_RDIV_CANCEL_CLAUSE])
+  end
 
   val ground_subterm_eval_max_nodes = 4096
   val ground_subterm_eval_max_calls = 8
@@ -1998,7 +2056,11 @@ local
       val aliases = SmtReplayCanon.cpc_term_canon_conv unfolded
       val normalization = Thm.TRANS totalization aliases
       val normalized = boolSyntax.rhs (Thm.concl normalization)
-      val divisors = ediv_emod_divisors normalized
+      val operations = ediv_emod_operations normalized
+      fun add_divisor ((_, denominator), denominators) =
+        if List.exists (Term.aconv denominator) denominators then denominators
+        else denominator :: denominators
+      val divisors = List.foldr add_divisor [] operations
       val _ = not (List.null divisors) orelse
         raise ERR "arith_prove_ediv_emod" "no integer div/mod operation"
       (* Three sign branches are complete for each divisor but multiply
@@ -2037,7 +2099,14 @@ local
                       [intLib.ARITH_TAC,
                        Tactical.TRY intLib.ARITH_TAC THEN split rest]]]
             end
-      val proof = Tactical.TAC_PROOF (([], normalized), split divisors)
+      (* The decision procedures treat each operation with a symbolic
+         divisor as an opaque atom; its division identity and remainder
+         bounds are what Z3's arithmetic lemmas rely on. *)
+      fun division_fact (numerator, denominator) =
+        Tactic.MP_TAC (Drule.SPECL [numerator, denominator]
+          HolSmtTheory.smt_ediv_emod_division)
+      val proof = Tactical.TAC_PROOF (([], normalized),
+        Tactical.MAP_EVERY division_fact operations THEN split divisors)
     in
       Thm.EQ_MP (Thm.SYM normalization) proof
     end
@@ -5605,44 +5674,11 @@ local
       else
       (state, def_axiom_case_split t)
 
-  (* (!x. ?y. !z. P) = P *)
+  (* Unused binders can occur beneath retained, used binders. *)
   fun z3_elim_unused (state, t) =
-  let
-    val (lhs, rhs) = boolSyntax.dest_eq t
-    fun get_forall_thms term : term * thm * thm =
-    let
-      val (var, body) = boolSyntax.dest_forall term
-      val th1 = Thm.DISCH term (Thm.SPEC var (Thm.ASSUME term))
-      val th2 = Thm.DISCH body (Thm.GEN var (Thm.ASSUME body))
-    in
-      (body, th1, th2)
-    end
-    fun get_exists_thms term : term * thm * thm =
-    let
-      val (var, body) = boolSyntax.dest_exists term
-      val th1 = Thm.DISCH term (Thm.CHOOSE (var, Thm.ASSUME term)
-        (Thm.ASSUME body))
-      val th2 = Thm.DISCH body (Thm.EXISTS (term, var) (Thm.ASSUME body))
-    in
-      (body, th1, th2)
-    end
-    fun strip_some_quants term =
-    let
-      val (body, th1, th2) =
-        if boolSyntax.is_forall term then
-          get_forall_thms term
-        else
-          get_exists_thms term
-      val strip_th = Drule.IMP_ANTISYM_RULE th1 th2
-    in
-      if body ~~ rhs then
-        strip_th  (* stripped enough quantifiers *)
-      else
-        Thm.TRANS strip_th (strip_some_quants body)
-      end
-  in
-    (state, strip_some_quants lhs)
-  end
+    (state, simpLib.SIMP_PROVE boolSimps.bool_ss [] t)
+    handle Conv.UNCHANGED =>
+      raise ERR "z3_elim_unused" "unused-binder equality did not simplify"
 
   (* introduces a local hypothesis (which must be discharged by
      'z3_lemma' at some later point in the proof) *)
@@ -6096,7 +6132,43 @@ local
             [thm, lifted]
           end
           handle Feedback.HOL_ERR _ => [thm]
+    (* Normalize only the annotated prefix. Rewriting the body first can
+       destroy the pointwise premise before a negated quantifier exposes it. *)
+    fun prefix_conv 0 tm = Thm.REFL tm
+      | prefix_conv depth tm =
+          if boolSyntax.is_forall tm orelse boolSyntax.is_exists tm then
+            Conv.BINDER_CONV (prefix_conv (depth - 1)) tm
+          else
+            Conv.THENC
+              (Conv.ORELSEC (Conv.NOT_FORALL_CONV, Conv.NOT_EXISTS_CONV),
+               prefix_conv depth) tm
+    fun exact_premise ([], _) =
+          raise ERR "z3_nnf_bound" "no annotated binders"
+      | exact_premise (vars, thm) =
+          let
+            val (l, r) = boolSyntax.dest_eq t
+            val left = prefix_conv (List.length vars) l
+            val right = prefix_conv (List.length vars) r
+            val nl = boolSyntax.rhs (Thm.concl left)
+            val nr = boolSyntax.rhs (Thm.concl right)
+            fun close quant_eq =
+              let
+                val lifted = List.foldr
+                  (fn (var, result) => quant_eq var result) thm vars
+                val (pl, pr) = boolSyntax.dest_eq (Thm.concl lifted)
+                val aligned =
+                  if pl ~~ nl andalso pr ~~ nr then lifted
+                  else if pl ~~ nr andalso pr ~~ nl then Thm.SYM lifted
+                  else raise ERR "z3_nnf_bound" "prefix does not match"
+              in
+                Thm.TRANS left (Thm.TRANS aligned (Thm.SYM right))
+              end
+          in
+            Lib.tryfind close [Drule.FORALL_EQ, Drule.EXISTS_EQ]
+          end
     val thms = List.concat (List.map lift bound_thms)
+    val thms = Lib.tryfind exact_premise bound_thms :: thms
+      handle Feedback.HOL_ERR _ => thms
   in
     z3_nnf (state, thms, t)
   end
@@ -6528,9 +6600,65 @@ local
     bv_rewrite_prove_with_pre_bblast rewrite_profile direct_bv lowered_bv
       no_pre_bblast definitions target
 
+  (* Preserve contiguous slices as one extraction instead of expanding a
+     separate word-width schema for every node in a long concat spine. *)
+  fun concat_extract_conv term =
+    let
+      val (left, right) = wordsSyntax.dest_word_concat term
+      val (high, left_low, source, _) = wordsSyntax.dest_word_extract left
+      val (middle, low, other_source, _) = wordsSyntax.dest_word_extract right
+      val _ = Term.aconv source other_source andalso
+        numSyntax.dest_numeral left_low =
+          Arbnum.plus1 (numSyntax.dest_numeral middle) orelse
+        raise Conv.UNCHANGED
+      (* Simplify only the bounded schema, before inserting a shared word. *)
+      val variable = Term.genvar (Term.type_of source)
+      val theorem = Drule.ISPECL [high, middle, low, variable]
+        (Thm.INST_TYPE
+          [{redex = Type.beta, residue = wordsSyntax.dim_of left},
+           {redex = Type.gamma, residue = wordsSyntax.dim_of right},
+           {redex = Type.delta, residue = wordsSyntax.dim_of term}]
+          wordsTheory.CONCAT_EXTRACT)
+      val theorem = simpLib.SIMP_RULE
+        (simpLib.++ (bossLib.arith_ss, wordsLib.SIZES_ss)) [] theorem
+      val theorem = Thm.INST [{redex = variable, residue = source}] theorem
+      val _ = Term.aconv (boolSyntax.lhs (Thm.concl theorem)) term orelse
+        raise Conv.UNCHANGED
+    in theorem end
+    handle Feedback.HOL_ERR _ => raise Conv.UNCHANGED
+
+  fun concat_compact_conv term =
+    let val (left, right) = wordsSyntax.dest_word_concat term
+    in
+      if wordsSyntax.is_word_literal left andalso
+         wordsSyntax.is_word_literal right then wordsLib.WORD_EVAL_CONV term
+      else concat_extract_conv term
+    end
+    handle Feedback.HOL_ERR _ => raise Conv.UNCHANGED
+
+  fun concat_word_prove context target =
+    let
+      val normalized = if SmtResource.contains
+          wordsSyntax.is_word_concat target then
+        SmtReplayCanon.dag_rewrite_conv concat_compact_conv target
+      else Thm.REFL target
+      val theorem = SmtWordGraph.prove_in context
+        (boolSyntax.rhs (Thm.concl normalized))
+    in Thm.EQ_MP (Thm.SYM normalized) theorem end
+
+  fun concat_definition_prove context definitions equation =
+    SmtFpProve.definition_bitblast_prove_with
+      (concat_word_prove context) definitions equation
+    handle HolSatLib.SAT_cex _ =>
+        raise ERR "concat_definition_prove" "concat identity is false"
+      | HolSatLib.SAT_satisfiable _ =>
+        raise ERR "concat_definition_prove" "concat identity is false"
+
   fun bv_rewrite_prove rewrite_profile pre_bblast (state : state) =
     bv_rewrite_prove_with_word_prover
-      (SmtWordGraph.prove_in (#word_context state)) rewrite_profile has_word_atom
+      (if HOLset.isEmpty (#concat_bits state) then
+         SmtWordGraph.prove_in (#word_context state)
+       else concat_word_prove (#word_context state)) rewrite_profile has_word_atom
       (has_allocated_fp_bv_atom state) pre_bblast
       (#translation_definitions state)
 
@@ -7430,10 +7558,13 @@ local
        which final replay eliminates as usual. *)
     (let
        val free_vars = replay_free_variables "z3_rewrite" t
-       val packed_vars = fp_packed_vars state
+       val has_concat_bit = not (HOLset.isEmpty
+         (HOLset.intersection (free_vars, #concat_bits state)))
+       val packed_vars = fp_packed_vars state @
+         HOLset.listItems (#concat_bits state)
        val _ = List.exists
            (fn var => HOLset.member (free_vars, var)) packed_vars orelse
-         raise ERR "z3_rewrite" "no FP packed word in rewrite"
+         raise ERR "z3_rewrite" "no packed word or concat bit in rewrite"
        val definitions = fp_per_bit_definitions state @
          HOLset.listItems (#definition_hyps state)
        (* E1(a): checked definitions reduce this fragment to BV blasting. *)
@@ -7441,7 +7572,8 @@ local
          (rewrite_profile "floating-point/bit-vectors"
             "rewrite(15)(fp-packed-bits)"
             (SmtFpProve.definition_bitblast_prove_with
-              (SmtWordGraph.prove_in (#word_context state)) definitions) t
+              (if has_concat_bit then concat_word_prove (#word_context state)
+               else SmtWordGraph.prove_in (#word_context state)) definitions) t
           handle Feedback.HOL_ERR holerr =>
             if SmtResource.is_resource_gate holerr then
               raise Feedback.HOL_ERR holerr
@@ -7765,19 +7897,39 @@ local
             else
               raise ERR "z3_skolem" "expected a quantified formula"
         | NONE => raise ERR "z3_skolem" "expected a quantified formula"
+    fun definition {redex, residue} =
+      if HOLset.member (#var_set state, redex) then
+        redex |-> Thm.ASSUME (boolSyntax.mk_eq (redex, residue))
+      else
+        raise ERR "z3_skolem"
+          "match produced a definition for a non-Z3 variable"
     fun instantiate accumulated substs =
       let
-        fun definition {redex, residue} =
-          if HOLset.member (#var_set state, redex) then
-            redex |-> Thm.SYM
-              (Thm.ASSUME (boolSyntax.mk_eq (redex, residue)))
-          else
-            raise ERR "z3_skolem"
-              "match produced a definition for a non-Z3 variable"
-        val conversion = Drule.SUBST_CONV (List.map definition substs) t
+        fun reverse {redex, residue} = redex |-> Thm.SYM residue
+        val conversion = Drule.SUBST_CONV
+          (List.map (reverse o definition) substs) t
           (Thm.concl accumulated)
       in
         Thm.EQ_MP conversion accumulated
+      end
+    fun higher_order accumulated =
+      let
+        val rigid = HOLset.difference
+          (Term.FVL [t] Term.empty_tmset, #var_set state)
+        val (substs, tyins) =
+          HolKernel.ho_match_term [] rigid t (Thm.concl accumulated)
+        val _ = List.null tyins orelse
+          raise ERR "z3_skolem" "match instantiated a fixed type variable"
+        (* Applied witnesses need lambda definitions.  Check their beta
+           instance against the SELECT theorem before recording them. *)
+        val conversion = Drule.SUBST_CONV
+          (List.map definition substs) t t
+        val conversion = Conv.CONV_RULE
+          (Conv.RAND_CONV (Conv.TOP_DEPTH_CONV Thm.BETA_CONV)) conversion
+        val accumulated = Conv.CONV_RULE
+          (Conv.TOP_DEPTH_CONV Thm.BETA_CONV) accumulated
+      in
+        Thm.EQ_MP (Thm.SYM conversion) accumulated
       end
     (* Z3 may skolemize all or only a prefix of a binder block.  Peel at
        least one binder (this is the [sk] rule), then stop at the first
@@ -7790,7 +7942,7 @@ local
         fun matched theorem =
           case Lib.total (Term.match_term t) (Thm.concl theorem) of
             SOME (substs, _) => SOME (instantiate theorem substs)
-          | NONE => NONE
+          | NONE => Lib.total higher_order theorem
       in
         case matched accumulated of
           SOME theorem => theorem
@@ -10977,7 +11129,65 @@ in
     recursive_rewrite_outer_for_test
       RecursiveAbstraction recurse fallback input
 
-  fun initial_replay_state_admitted admit
+  (* bv1-blast uses a bit before replay visits the concat rewrite that
+     names it.  Discover those definitions first; an unusable hint changes
+     no state.  Soundness still comes from final definition elimination. *)
+  fun define_concat_bits_with prove (state : state) equation =
+    let
+      val (source, packed) = boolSyntax.dest_eq equation
+      val _ = wordsSyntax.is_word_concat packed orelse
+        raise ERR "define_concat_bits" "not a concat decomposition"
+      val source_vars = replay_free_variables "define_concat_bits" source
+      val _ = HOLset.isEmpty
+        (HOLset.intersection (source_vars, #flexible_vars state)) orelse
+        raise ERR "define_concat_bits" "source has a flexible proof variable"
+      val word1 = wordsSyntax.mk_int_word_type 1
+      val seen = ref Term.empty_tmset
+      fun collect term tail =
+        if wordsSyntax.is_word_concat term then
+          let val (left, right) = wordsSyntax.dest_word_concat term
+          in collect left (collect right tail) end
+        else if Term.is_var term andalso Term.type_of term = word1 andalso
+                HOLset.member (#flexible_vars state, term) andalso
+                not (HOLset.member (!seen, term)) then
+          (seen := HOLset.add (!seen, term); term :: tail)
+        else raise ERR "define_concat_bits" "not distinct fresh word1 names"
+      val bits = collect packed []
+      val width = List.length bits
+      val _ = wordsSyntax.size_of source = Arbnum.fromInt width orelse
+        raise ERR "define_concat_bits" "concat width differs from source"
+      val definitions = Lib.mapi (fn offset => fn bit =>
+        let val index = numSyntax.term_of_int (width - offset - 1)
+        in boolSyntax.mk_eq (bit, wordsSyntax.mk_word_extract
+          (index, index, source, wordsSyntax.dest_word_type word1)) end) bits
+      val theorem = profile "concat(definition-proof)"
+        (prove definitions) equation
+      val _ = Term.aconv (Thm.concl theorem) equation orelse
+        raise ERR "define_concat_bits" "concat proof has a different conclusion"
+    in
+      state_define_with_concat_bits (state_cache_thm state theorem)
+        definitions (HOLset.union (#concat_bits state, !seen))
+    end
+    (* No proof node has requested this equation yet.  A shape, semantic or
+       resource refusal must leave its original replay path available. *)
+    handle Feedback.HOL_ERR _ => state
+
+  fun discover_concat_bits proof state =
+    let
+      fun collect (node, state) =
+        let
+          val state = case node of
+              REWRITE equation => define_concat_bits_with
+                (concat_definition_prove (#word_context state))
+                state equation
+            | _ => state
+        in List.foldl collect state (proofterm_premises node) end
+    in
+      Redblackmap.foldl (fn (_, node, state) => collect (node, state))
+        state (proof_steps proof)
+    end
+
+  fun new_replay_state_admitted admit
       allowed_asserted_hyps definitions proof : state = {
     datatype_admit = admit,
     allowed_asserted_hyps = allowed_asserted_hyps,
@@ -10989,6 +11199,7 @@ in
     large_thm_cache = [],
     var_set = proof_vars proof,
     bit_decompositions = proof_bit_decompositions proof,
+    concat_bits = Term.empty_tmset,
     translation_definitions = definitions,
     skeleton_context = SmtSkeletonDispatch.new_context arith_prove,
     word_context = SmtWordGraph.new_context (),
@@ -10998,6 +11209,10 @@ in
     string_index_cache = SmtStringProve.new_contextual_index_cache (),
     z3_version = proof_version proof
   }
+
+  fun initial_replay_state_admitted admit allowed definitions proof =
+    discover_concat_bits proof
+      (new_replay_state_admitted admit allowed definitions proof)
 
   fun initial_replay_state allowed definitions proof =
     initial_replay_state_admitted (SmtDatatypeProve.default_admission ())
@@ -11819,6 +12034,7 @@ in
     definition_occurrences_rev = SOME [],flexible_vars = #flexible_vars s,
     thm_cache = #thm_cache s,large_thm_cache = #large_thm_cache s,
     var_set = #var_set s,bit_decompositions = #bit_decompositions s,
+    concat_bits = #concat_bits s,
     translation_definitions = #translation_definitions s,
     skeleton_context = #skeleton_context s,word_context = #word_context s,
     frontier_context = #frontier_context s,
@@ -11829,9 +12045,10 @@ in
   fun replay_root_with_definition_occurrences_admitted admit definitions proof =
     SmtSeqProve.with_admission_errors (fn () =>
     let
-      val initial = record_definition_occurrences
-        (initial_replay_state_admitted admit
-          (proof_asserted_hyps proof) definitions proof)
+      val initial = discover_concat_bits proof
+        (record_definition_occurrences
+          (new_replay_state_admitted admit
+            (proof_asserted_hyps proof) definitions proof))
       val ((state,_),theorem) =
         thm_of_proofterm ((initial,proof),ID 0) Lib.I
     in {theorem = theorem,

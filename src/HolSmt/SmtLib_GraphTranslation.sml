@@ -688,7 +688,9 @@ struct
         in SmtLib.outbound_bag_marker_role (Library.same_const atom)
           (fn () => atomic andalso bagSyntax.is_empty atom) () end
     in
-      {set_role=set_role,bag_role=bag_role,
+      {collection_symbol=fn node =>
+         SmtLib.outbound_collection_symbol (constant node),
+       set_role=set_role,bag_role=bag_role,
        is_set_type=SmtLib.outbound_is_set_type,
        is_bag_type=SmtLib.outbound_is_bag_type,
        is_cond=fn node => matches node boolSyntax.conditional,

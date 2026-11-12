@@ -308,6 +308,12 @@ New features
 
 Bugs fixed
 ----------
+-   HolSmt translates HOL string lengths with `str.len`, preserving string
+    literal content and avoiding ill-sorted `seq.len` applications.
+
+
+-   HolSmt's natural-number preprocessing now tolerates duplicate assumptions,
+    including assumptions made identical by numeral normalization.
 
 -   `HolSmt` now gives Z3 4.14.1 full tested support.  Z3 4.14.* queries in
     the seven affected array-bearing inferred logics are widened to `ALL` at

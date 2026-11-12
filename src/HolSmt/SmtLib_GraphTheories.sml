@@ -40,7 +40,8 @@ struct
   exception IndexLimit
   fun source_index_raw backend frame maximum dictionary
       ({tokens,binding_type,heads,callbacks,sorts,symbol_key,type_symbol_key,
-        parse_choice,parse_lambda,binder_lists,fixed,literal,diagnostic}
+        parse_choice,parse_lambda,parse_cpc_const,binder_lists,fixed,literal,
+        diagnostic}
         : 'a P.index_source) =
     let
       val _ = B.frame_scope backend frame
@@ -119,7 +120,7 @@ struct
                  (List.find (fn (name,_) => name=token) binder_lists),
              record_binder_block=fn _ => (),symbol_key=symbol_key,
              type_symbol_key=type_symbol_key,parse_choice=parse_choice,
-             parse_lambda=parse_lambda}
+             parse_lambda=parse_lambda,parse_cpc_const=parse_cpc_const}
           val term = admit
             (P.parse_term_with_cfg cfg get_token (sorts,dictionary)
              handle Feedback.HOL_ERR _ =>
@@ -506,6 +507,12 @@ struct
            (#2 (L.parsedicts_of_logic "ALL")) token indices))
   fun select backend limits options =
     select_with backend limits (fn _ => NONE) options
+
+  fun bind_sources backend frame sources dictionary =
+    List.foldl (fn ((key, original), dictionary) =>
+      Library.extend_dict
+        ((key, P.construction_value_parsefn backend
+           (B.source backend frame original)), dictionary)) dictionary sources
 
   val integer_hole = Term.mk_var ("__smt_recipe_integer", intSyntax.int_ty)
   val integer_to_real = B.compile_recipe

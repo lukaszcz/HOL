@@ -121,6 +121,50 @@ struct
       val hash = Word.+ (Word.* (0w37,left),right)
     in Word.toInt (Word.mod (hash,Word.fromInt modulus)) end
 
+  (* Application sharing is context independent. Leave binders to the
+     kernel's free-variable traversal rather than opening them with names.
+     Advance an ordinary traversal at each cache comparison so collisions
+     cannot make the identity cache slower than that traversal. *)
+  fun FVL_dag roots initial =
+    let
+      exception TreeComplete of Term.term HOLset.set
+      val tree_pending = ref roots
+      val tree_free = ref initial
+      fun tree_step () = case !tree_pending of
+          [] => raise TreeComplete (!tree_free)
+        | term :: rest =>
+            if Term.is_var term then
+              (tree_pending := rest;
+               tree_free := HOLset.add (!tree_free, term))
+            else if Term.is_comb term then
+              let val (operator, operand) = Term.dest_comb term
+              in tree_pending := operator :: operand :: rest end
+            else (tree_pending := rest;
+              if Term.is_abs term then
+                tree_free := Term.FVL [term] (!tree_free) else ())
+      val buckets = Array.array (4093, [] : Term.term list)
+      fun seen term =
+        let
+          val _ = tree_step ()
+          val slot = pointer_bucket 4 (Array.length buckets) term
+          val saved = Array.sub (buckets, slot)
+        in
+          if List.exists (fn other =>
+              (tree_step ();Portable.pointer_eq (term, other))) saved
+          then true
+          else (Array.update (buckets, slot, term :: saved); false)
+        end
+      fun walk [] free = free
+        | walk (term :: rest) free =
+            if Term.is_var term then walk rest (HOLset.add (free, term))
+            else if Term.is_comb term then
+              if seen term then walk rest free
+              else let val (operator, operand) = Term.dest_comb term
+                   in walk (operator :: operand :: rest) free end
+            else if Term.is_abs term then walk rest (Term.FVL [term] free)
+            else walk rest free
+    in walk roots initial handle TreeComplete free => free end
+
   (* Stock standard dest_abs rebuilds its body. Beta on an atomic argument
      exposes the same syntax lazily, including when the input is a closure.
      Experimental dest_abs already returns its body without rebuilding it.
