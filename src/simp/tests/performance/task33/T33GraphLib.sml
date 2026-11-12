@@ -140,14 +140,18 @@ struct
        ("cells_ref", fn () => PolyML.objSize (c0, e))]
     fun anchors () = map (fn (_, a) => a ()) anchor_rows
     (* on fully shared inputs: one sharing call need not reach the fixed
-       point, so the inputs are shared until the anchors stop changing *)
-    fun shared prev tries = let
+       point, so the inputs are shared until the anchors stop changing.
+       Returns the anchors, the rounds run and whether they stopped
+       changing (the record says: a probe that did not is not comparable) *)
+    fun shared prev tries rounds = let
       val _ = PolyML.shareCommonData (c0, base, bs, rs, f, pss, named, e)
       val _ = List.app (fn _ => PolyML.fullGC ()) [1, 2, 3]
       val now = anchors ()
-    in if now = prev orelse tries <= 0 then now else shared now (tries - 1)
+    in if now = prev then (now, rounds + 1, true)
+       else if tries <= 0 then (now, rounds + 1, false)
+       else shared now (tries - 1) (rounds + 1)
     end
-    val pre = shared (anchors ()) 8
+    val (pre, share_tries, converged) = shared (anchors ()) 8 0
     val share_start = T33.share ()
     (* the measured objects, in the build peak window *)
     val st0 = status ()
@@ -257,6 +261,7 @@ struct
        ("share_built", T33.ji share_built),
        ("share_shared", T33.ji share_shared),
        ("share_canon", T33.ji share_canon),
+       ("share_tries", T33.ji share_tries), ("converged", T33.jb converged),
        ("build", window reset_ok st0 reset1 st2),
        ("rows", window reset2_ok st2 reset2 rows_end)];
     (n, ListPair.zip (labels, ListPair.zip (ListPair.map op- (built, pre),

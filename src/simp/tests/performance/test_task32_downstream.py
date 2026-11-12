@@ -2364,9 +2364,7 @@ class Sealed(unittest.TestCase):
             dict(sha256="a5cc94d14ff37fa0586803153ab155dfa4c1564e6dc3bd2aef9"
                         "3c210663eb5a7", bytes=133766),
             dict(sha256="a3f949829ffa88ea799dd4016cbb1bbbaa5d50210b69c126fce"
-                        "32e6afa3179b5", bytes=141455),
-            dict(sha256="5d624a37756b33000051888f770e7ecdf9e4242afcdb0210c41"
-                        "6bd64b78e89bf", bytes=168045)]})
+                        "32e6afa3179b5", bytes=141455)]})
 
     def test_a_record_carries_the_current_seal_or_one_the_history_lists(self):
         now = dw.code_seals()

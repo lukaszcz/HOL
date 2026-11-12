@@ -132,7 +132,8 @@ def graph_rows(probe, kind, sizes, extra=0, shares=None, canon_delta=0):
         out += [live(probe, kind, "graph.%d" % n, 1000 + n),
                 rec("phase", probe, kind, n=n, share_start=s0,
                     share_built=s1, share_shared=s2, share_canon=s3,
-                    build=window(), rows=window(gap=0))]
+                    share_tries=1, converged=True, build=window(),
+                    rows=window(gap=0))]
     if all(n in sizes for n in r.STEP_SIZES):
         for mode in r.STEP_MODES:
             for g in r.GRAPH_KINDS:
@@ -313,6 +314,26 @@ class WellFormed(unittest.TestCase):
         self.assertEqual(s["anchor_moved"], [dict(
             kind="compiled", n=0, mode="canonical", pre=1000, post=999)])
         self.assertEqual(s["gateable_coverage"]["compiled"], [0, 1])
+
+    def phase_with(self, **fields):
+        run = graph_run((0, 1))
+        return edit(run, find(run, "phase", n=1), **fields)
+
+    def test_a_share_that_did_not_converge_is_not_comparable(self):
+        s = r.validate(text(self.phase_with(share_tries=3)))
+        self.assertEqual(s["unconverged"], [])
+        with self.assertRaises(r.NotComparable) as why:
+            r.validate(text(self.phase_with(converged=False,
+                                            share_tries=r.SHARE_TRIES_MAX)))
+        self.assertIn("converge", str(why.exception))
+
+    def test_the_share_tries_are_bounded_and_the_fields_typed(self):
+        for bad in (dict(share_tries=0),
+                    dict(share_tries=r.SHARE_TRIES_MAX + 1),
+                    dict(converged="yes"), dict(share_tries=True)):
+            with self.subTest(bad):
+                with self.assertRaises(r.RecordError):
+                    r.validate(text(self.phase_with(**bad)))
 
     def test_no_move_is_an_empty_list(self):
         s = r.validate(text(graph_run((0, 1, 10))))
@@ -1174,7 +1195,7 @@ class Ties(unittest.TestCase):
         self.assertEqual(sorted(probes), sorted(r.PROBE_KINDS))
 
     def test_schema_name(self):
-        self.assertEqual(r.SCHEMA, "task33-records-v4")
+        self.assertEqual(r.SCHEMA, "task33-records-v5")
 
 
 if __name__ == "__main__":

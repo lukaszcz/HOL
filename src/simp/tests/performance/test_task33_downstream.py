@@ -56,6 +56,20 @@ class World33(World):
             (root / d / ".hol/make-deps/a.d").write_text("deps\n")
         (root / "src/bare").mkdir()
 
+    def write_manifest(self, **change):
+        """The manifest lists the heaps among its products, with their
+        sizes (the storage driver reports the saved-state bytes from
+        them)."""
+        super().write_manifest(**change)
+        data = json.loads(self.manifest.read_text())
+        for side in data["sides"].values():
+            root = Path(side["root"])
+            side["products"] = {
+                str(p.relative_to(root)): dict(
+                    bytes=p.stat().st_size, kind="file")
+                for p in (root / "bin").glob("hol.state*")}
+        self.manifest.write_text(json.dumps(data))
+
     def launch(self, argv, cwd, env, timeout, out_path, fds=()):
         side = "cand" if str(self.roots["cand"]) in argv[0] else "base"
         root = self.roots[side]
@@ -271,7 +285,7 @@ class TableSelection(unittest.TestCase):
     def test_the_history_of_task32_keeps_every_entry_and_task33_has_none(
             self):
         self.assertEqual(len(dw.TABLES["task32"].history[
-            "task32_downstream.py"]), 4)
+            "task32_downstream.py"]), 3)
         self.assertEqual(dw.TABLES["task33"].history, {})
 
     def test_a_counts_file_of_another_table_is_refused(self):

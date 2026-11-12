@@ -142,11 +142,7 @@ TASK32_HISTORY = {
                    "10663eb5a7", "bytes": 133766},
         # the last driver before the tables (a2a7d3c487)
         {"sha256": "a3f949829ffa88ea799dd4016cbb1bbbaa5d50210b69c126fce32e"
-                   "6afa3179b5", "bytes": 141455},
-        # the driver of the integrated tables, before the storage driver's
-        # interface (9b3b4bb3c6)
-        {"sha256": "5d624a37756b33000051888f770e7ecdf9e4242afcdb0210c416bd"
-                   "64b78e89bf", "bytes": 168045}],
+                   "6afa3179b5", "bytes": 141455}],
 }
 
 
@@ -240,7 +236,7 @@ class Table:
 # The storage driver (S4) and its rules, bound by the table's seals like
 # the loading driver's code.
 STORAGE_CODE = ("task33_rules.py", "task33_storage.py",
-                "task33_dispose.py")
+                "task33_dispose.py", "task33_offline.py")
 COMMON_CODE = ("task32_snapshots.py", "task32_dat.py", "startup_gate.py",
                "loading.py", "acceptance.py", "timing_grid.py",
                "performance_schema.py", "summarize.py")

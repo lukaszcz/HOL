@@ -57,7 +57,7 @@ import task32_downstream as d
 import task33_records as records
 
 SCHEMA = "task33-offline-v1"
-DECLARED_SCHEMA = "task33-declared-v3"
+DECLARED_SCHEMA = "task33-declared-v4"
 DECLARED = HERE / "task33_declared.json"
 PASS, INCONCLUSIVE, FAIL = 0, 2, 3
 STATUSES = ("pass", "fail", "skipped")
@@ -346,21 +346,61 @@ def shape_problems(declared):
         if not ok:
             bad.append("s2 entry: %s" % (
                 e.get("structure") if isinstance(e, dict) else e))
-    e2c = declared["e2c"]
+    bad += e2c_problems(declared["e2c"])
+    bad += count_problems(declared)
+    return bad
+
+
+def register_problems(where, registers):
+    """`registers` is {list: [exact names]} over the L3 lists of the
+    registry records (records.L3_LISTS): non-empty, each name once."""
+    if not isinstance(registers, dict) or not registers:
+        return [where + ": registers is not a non-empty map"]
+    bad = []
+    for f, names in registers.items():
+        if f not in records.L3_LISTS or not isinstance(names, list) or \
+                not names or not all(nonempty(x) for x in names) or \
+                len(set(names)) != len(names):
+            bad.append("%s: registers.%s is not a list of distinct names "
+                       "of one of %s" % (where, f, records.L3_LISTS))
+    return bad
+
+
+def e2c_problems(e2c):
+    """The shape of `e2c` (design 8.6): a rule, `probe_support` (exact
+    names the probe's own work adds, with its justification) and
+    `extension_state` entries each with `required` and `observable`
+    flags. An observable entry names exact registry names; a prose-only
+    one (not observable in the registry lists) names none and cannot be
+    required."""
     if not isinstance(e2c, dict) or not nonempty(e2c.get("rule")) or \
             not isinstance(e2c.get("extension_state"), list) or \
             not e2c["extension_state"]:
-        bad.append("e2c lacks rule or extension_state")
-        e2c = dict(extension_state=[])
+        return ["e2c lacks rule or extension_state"]
+    bad = []
+    support = e2c.get("probe_support")
+    if not isinstance(support, dict) or not nonempty(
+            support.get("justification")):
+        bad.append("e2c.probe_support lacks a justification")
+    else:
+        bad += register_problems("e2c.probe_support",
+                                 support.get("registers"))
     for e in e2c["extension_state"]:
+        name = e.get("name") if isinstance(e, dict) else e
         ok = isinstance(e, dict) and all(
             nonempty(e.get(k)) for k in ("name", "created_by", "where",
                                          "source")) and \
-            isinstance(e.get("required"), bool)
+            isinstance(e.get("required"), bool) and \
+            isinstance(e.get("observable"), bool)
         if not ok:
-            bad.append("e2c entry: %s" % (
-                e.get("name") if isinstance(e, dict) else e))
-    bad += count_problems(declared)
+            bad.append("e2c entry: %s" % (name,))
+            continue
+        if e["observable"]:
+            bad += register_problems("e2c entry " + name,
+                                     e.get("registers"))
+        elif e.get("registers") or e["required"]:
+            bad.append("e2c entry %s: a state that is not observable "
+                       "registers nothing and cannot be required" % name)
     return bad
 
 

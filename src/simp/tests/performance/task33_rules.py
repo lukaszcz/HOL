@@ -27,20 +27,26 @@ show: "unstable" values are not judged, they are owed the next stage.
       exactly the declared `total_delta`, no exclusive part grows, and
       every process has `repeat_ok`; absolute sizes and live words are
       reported (§8.3).
-  R1  per release kind (§8.1): the no-op floor gives the resolution (its
-      range across all processes <= RESOLUTION words per object); then the
-      candidate passes when round(residual) = 0 and fails when it is
-      nonzero while the baseline rounds to 0; a nonzero baseline, an
-      unresolved floor or a held size under H_MIN words per object is
-      inconclusive (a larger M); the weak probe must have collected on
-      both sides.
+  R1  per release kind (§8.1, 8.6): the no-op floor gives the resolution
+      (its range across all processes <= RESOLUTION words per object);
+      then, per process on exact fractions: the candidate fails when any of
+      its processes has a residual >= 1/2 word per object while every
+      baseline process is under 1/2 in magnitude; a baseline process at or
+      over 1/2, an unresolved floor or a kind whose residuals range over
+      more than RESOLUTION on a side (a leak in some processes only) is
+      inconclusive (a larger M); a held size under H_MIN words per object,
+      no comparable held reading or a weak probe that did not collect on
+      the baseline is blocked (the probe cannot see, a larger M cannot
+      help); the weak probe must have collected on the candidate.
   L1, L3  per registry kind: the masked sets and the ordered lists equal.
-  E2  (a) the ordinary rows in an `ext` process equal the candidate's, (b)
-      the residual of the extension objects rounds to 0, (c) the registries
-      equal the ordinary ones apart from the extension's own additions.
+  E2  (a) the ordinary rows in an `ext` process equal the candidate's
+      (exact, or paired in the 10-pair stage), (b) the residual of the
+      extension objects is under 1/2 word per object, (c) the L3 lists
+      equal the ordinary ones apart from what the declaration says the
+      extension registers; the extension's U against the ordinary
+      candidate's is reported (the ext probe is not part of the S2 gate).
 """
 from fractions import Fraction
-import statistics
 import sys
 
 sys.dont_write_bytecode = True
@@ -51,6 +57,7 @@ PASS, FAIL, INCONCLUSIVE, BLOCKED = "pass", "fail", "inconclusive", "blocked"
 REPORTED, UNSUPPORTED = "reported", "unsupported"
 GATES = (PASS, FAIL, INCONCLUSIVE, BLOCKED)
 RESOLUTION = Fraction(1, 4)  # words per object: the no-op floor's range
+HALF = Fraction(1, 2)  # a residual of this much is a retained word
 H_MIN = 20  # words per object a held object must have (R1 sensitivity)
 BUILT_MIN_SIZE = 100  # the as-built rows need a gateable size this big
 EXTEND_PAIRS = 10  # the least that paired_statistics accepts
@@ -66,9 +73,7 @@ ALLOCATION_NOTE = (
     "private TASK29B counter, and the TASK29B matrix reports it")
 # Registry lists of L3 and what each is: the ordered listeners, the sorted
 # rest (T33.sml sorts them).
-L3_LISTS = ("listeners", "attributes", "set_types", "structures",
-            "signatures", "functors")
-EXT_LISTS_ONLY = ("listeners", "attributes", "set_types")
+L3_LISTS = records.L3_LISTS
 
 
 def num(x):
@@ -161,37 +166,31 @@ def slopes(by_size):
             for n1, n2 in zip(sizes, sizes[1:])}
 
 
-def free_of_share(procs, mode):
-    """Every window of every process was free of GC share passes."""
-    return all(all(w[mode] for w in p["gateable"].values())
-               for p in procs)
-
-
 def gateable(procs, n, mode):
     return all(p["gateable"][n][mode] for p in procs)
 
 
-def series_of(base, cand, g, mode, paired, only=None):
+def series_of(base, cand, g, mode, paired, keep=None):
     """({name: (status, detail)}, the sizes left out) of kind g in the mode
-    "canonical" or "built".  `only(procs, n, mode)` limits the sizes to
-    those gateable in every process of both sides (a slope needs both its
+    "canonical" or "built". `keep(procs, n)` limits the sizes to those it
+    accepts for every process of both sides (a slope needs both its
     sizes)."""
     field = "canon_words" if mode == "canonical" else "words"
     bv, cv = graph_values(base, g, field), graph_values(cand, g, field)
     if sorted(bv) != sorted(cv):
         return None, []
     sizes = sorted(bv)
-    keep = [n for n in sizes if only is None or only(base + cand, n, mode)]
+    kept = [n for n in sizes if keep is None or keep(base + cand, n)]
     out = {}
-    for n in keep:
+    for n in kept:
         out["size %d" % n] = compare(bv[n], cv[n], paired)
     for n1, n2 in zip(sizes, sizes[1:]):
-        if n1 in keep and n2 in keep:
+        if n1 in kept and n2 in kept:
             out["slope %d-%d" % (n1, n2)] = compare(
                 [Fraction(y - x, n2 - n1) for x, y in zip(bv[n1], bv[n2])],
                 [Fraction(y - x, n2 - n1) for x, y in zip(cv[n1], cv[n2])],
                 paired)
-    return out, [n for n in sizes if n not in keep]
+    return out, [n for n in sizes if n not in kept]
 
 
 def step_report(procs, g):
@@ -212,12 +211,6 @@ def coverage(p, g):
     return sorted(n for n, w in p["gateable"].items() if w["built"])
 
 
-def covered(procs, g):
-    """Every process has a gateable as-built size >= BUILT_MIN_SIZE."""
-    return all(any(n >= BUILT_MIN_SIZE for n in coverage(p, g))
-               for p in procs)
-
-
 def moved_anchors(procs, g):
     """The anchor movements (design 8.5) of kind g in the processes: a
     retention into the shared base, a finding about the side."""
@@ -233,20 +226,22 @@ def s1_kind(base, cand, g, paired=False):
         return row("S1", g, FAIL, "the anchor moved while the candidate's "
                    "rows were measured (retention into the shared base)",
                    moved=moved)
-    canon, left = series_of(base, cand, g, "canonical", paired, gateable)
+    canon, left = series_of(base, cand, g, "canonical", paired,
+                            lambda procs, n: gateable(procs, n, "canonical"))
     if not canon and not left:
         return row("S1", g, BLOCKED, "the two sides measured different "
                    "sizes")
     statuses = [s for s, _ in canon.values()]
     if left:  # a GC share pass fell inside a canonical window
         statuses.append("unstable")
-    built = None
-    if covered(base + cand, g):
-        built, _ = series_of(base, cand, g, "built", paired, gateable)
-    # as-built rows are gated only where gateable on both sides: a stable
-    # failure there fails, an unstable one is owed the next stage; a kind
-    # with no gateable size >= BUILT_MIN_SIZE on a side is inconclusive
-    gated_built = bool(built)
+    # as-built rows: only the sizes gateable (no share pass, no moved
+    # anchor) in every process of both sides are compared, and the kind
+    # needs one of them of at least BUILT_MIN_SIZE (design 8.6)
+    built, left_built = series_of(
+        base, cand, g, "built", paired,
+        lambda procs, n: all(n in coverage(p, g) for p in procs))
+    kept = sorted(set(graph_values(base, g, "words")) - set(left_built))
+    gated_built = bool(built) and any(n >= BUILT_MIN_SIZE for n in kept)
     if gated_built:
         statuses += [s for s, _ in built.values()]
     else:
@@ -258,8 +253,8 @@ def s1_kind(base, cand, g, paired=False):
         why += "; canonical size(s) %s not gateable (a GC share pass)" % (
             left,)
     if not gated_built:
-        why += "; no gateable as-built size >= %d on every process" % (
-            BUILT_MIN_SIZE)
+        why += ("; no as-built size >= %d is gateable in every process "
+                "(kept: %s)" % (BUILT_MIN_SIZE, kept))
     return row("S1", g, decision, why.strip("; ") if decision != PASS else
                "canonical and as-built rows equal or smaller at every "
                "gateable size and slope",
@@ -269,7 +264,7 @@ def s1_kind(base, cand, g, paired=False):
                canonical_left_out=left,
                as_built=None if not built else {
                    k: dict(status=s, **d) for k, (s, d) in built.items()},
-               as_built_gated=gated_built,
+               as_built_kept=kept, as_built_gated=gated_built,
                step=dict(base=step_report(base, g),
                          cand=step_report(cand, g)))
 
@@ -278,15 +273,10 @@ def s1_kind(base, cand, g, paired=False):
 
 def total_deltas(declared):
     """The declared closure-total changes as scoped entries {heap, kinds,
-    value}: the list of design 8.5, or (the earlier form) the one entry of
-    `s2.total_delta`, of the heap hol.state. `declared` is
-    task33_offline.load_declared()."""
-    given = declared["s2"]["total_delta"]
-    if isinstance(given, dict):
-        return [dict(heap="bin/hol.state", kinds=None,
-                     value=given["value"])]
+    value} (design 8.5): `s2.total_delta` of the declaration
+    (task33_offline.load_declared())."""
     return [dict(heap=e["heap"], kinds=e.get("kinds"), value=e["value"])
-            for e in given]
+            for e in declared["s2"]["total_delta"]]
 
 
 def declared_delta(entries, heap, kind):
@@ -428,18 +418,15 @@ def resolved(procs):
     return max(floor) - min(floor) <= RESOLUTION
 
 
-def rounded(values):
-    return int(round(statistics.median(values)))
-
-
 def comparable_held(p, kind):
-    return p["release"][kind].get("held_comparable", True)
+    return p["held_comparable"][kind]
 
 
 def held_problem(procs, kind):
     """None, or why the sensitivity requirement (h >= H_MIN words per
     object on the comparable held readings, at least one per side) is
-    not met."""
+    not met. Neither a larger M nor a redraw of the rows helps with the
+    second: the probe cannot see a retained word."""
     held = [p["held"][kind] for p in procs if comparable_held(p, kind)]
     if not held:
         return "no comparable held reading"
@@ -449,47 +436,59 @@ def held_problem(procs, kind):
     return None
 
 
+def spread(values):
+    return max(values) - min(values)
+
+
 def r1_kind(base, cand, kind, case="R1"):
-    """The R1 row of a release kind; with no baseline (`base` empty: E2
-    (b), the extension kinds) the candidate's residual must round to 0."""
+    """The R1 row of a release kind (per process, exact fractions); with
+    no baseline (`base` empty: E2 (b), the extension kinds) the candidate's
+    residuals must all be under 1/2 word per object."""
     procs = base + cand
     floor = noop_floor(procs)
+    rb = [p["residual"][kind] for p in base]
+    rc = [p["residual"][kind] for p in cand]
     detail = dict(floor=[num(x) for x in floor],
-                  floor_range=num(max(floor) - min(floor)),
-                  residual=dict(
-                      base=[num(p["residual"][kind]) for p in base],
-                      cand=[num(p["residual"][kind]) for p in cand]),
+                  floor_range=num(spread(floor)),
+                  residual=dict(base=[num(x) for x in rb],
+                                cand=[num(x) for x in rc]),
                   held=[num(p["held"][kind]) for p in procs])
     if not resolved(procs):
         return row(case, kind, INCONCLUSIVE, "the no-op floor's range %s "
                    "exceeds the resolution %s words per object" % (
-                       num(max(floor) - min(floor)), RESOLUTION),
-                   "followup", **detail)
+                       num(spread(floor)), RESOLUTION), "followup",
+                   **detail)
     for side, group in (("base", base), ("cand", cand)):
         problem = group and held_problem(group, kind)
         if problem:
-            return row(case, kind, INCONCLUSIVE, "%s: %s" % (side, problem),
-                       "followup", **detail)
-    rc = rounded([p["residual"][kind] for p in cand])
-    detail["rounded_cand"] = rc
-    if not base:
-        return row(case, kind, PASS if rc == 0 else FAIL,
-                   "residual rounds to %d" % rc, **detail)
-    rb = rounded([p["residual"][kind] for p in base])
-    detail["rounded_base"] = rb
-    if rb != 0:
-        return row(case, kind, INCONCLUSIVE, "the baseline's residual "
-                   "rounds to %d, not 0" % rb, "followup", **detail)
-    return row(case, kind, PASS if rc == 0 else FAIL,
-               "residual rounds to %d" % rc, **detail)
+            return row(case, kind, BLOCKED, "%s: %s" % (side, problem),
+                       **detail)
+    if any(abs(x) >= HALF for x in rb):
+        return row(case, kind, INCONCLUSIVE, "a baseline process's "
+                   "residual is %s words per object, not under 1/2" % (
+                       [num(x) for x in rb],), "followup", **detail)
+    if any(x >= HALF for x in rc):
+        return row(case, kind, FAIL, "a candidate process retains %s "
+                   "words per object (1/2 or more)" % (
+                       [num(x) for x in rc],), **detail)
+    unstable = [side for side, v in (("base", rb), ("cand", rc))
+                if v and spread(v) > RESOLUTION]
+    if unstable:
+        return row(case, kind, INCONCLUSIVE, "the residuals of the %s "
+                   "processes range over more than %s words per object" % (
+                       " and ".join(unstable), RESOLUTION), "followup",
+                   **detail)
+    return row(case, kind, PASS, "every residual is under 1/2 word per "
+               "object", **detail)
 
 
 def weak_row(base, cand):
     detail = dict(base=[p["weak"]["status"] for p in base],
                   cand=[p["weak"]["status"] for p in cand])
     if not all(p["weak"]["status"] == "pass" for p in base):
-        return row("R1", "weak", INCONCLUSIVE, "the weak probe was not "
-                   "collected on the baseline", "followup", **detail)
+        return row("R1", "weak", BLOCKED, "the weak probe was not "
+                   "collected on the baseline: the probe cannot show "
+                   "a discarded simpset is collected", **detail)
     if not all(p["weak"]["status"] == "pass" for p in cand):
         return row("R1", "weak", FAIL, "the weak probe was not collected "
                    "on the candidate: the discarded simpset is retained",
@@ -514,27 +513,50 @@ def e1_ext(ext):
                len(ext) if ok else "no extension check records")
 
 
-def e2a(ext, ordinary):
+def e2a(ext, ordinary, paired=False):
     """The ordinary rows (canonical words of every graph kind and size) in
-    an extension process equal those of the ordinary candidate."""
-    bad, unstable = [], False
+    an extension process equal those of the ordinary candidate, routed as
+    S1 is: an anchor that moved in an extension process fails; a size whose
+    canonical window held a GC share pass in some process, or a value not
+    repeatable within a side, is owed the 10-pair stage (`paired`: the
+    pairs agree both ways at zero margin)."""
+    moved = [m for g in GRAPH_GATED for m in moved_anchors(ext, g)]
+    if moved:
+        return row("E2", "a", FAIL, "the anchor moved in an extension "
+                   "process (retention into the shared base)", moved=moved)
+    bad, statuses, left = [], [], {}
     for g in GRAPH_GATED:
         ev = graph_values(ext, g, "canon_words")
         ov = graph_values(ordinary, g, "canon_words")
         if sorted(ev) != sorted(ov):
             return row("E2", "a", BLOCKED, "different sizes")
         for n in ev:
-            if not (constant(ev[n]) and constant(ov[n])):
-                unstable = True
+            if not gateable(ext + ordinary, n, "canonical"):
+                left.setdefault(g, []).append(n)
+                statuses.append("unstable")
+            elif paired:
+                one = worst([zero_margin(list(zip(ev[n], ov[n]))),
+                             zero_margin(list(zip(ov[n], ev[n])))])
+                statuses.append(one)
+                if one == FAIL:
+                    bad.append("%s %d: %s vs %s" % (g, n, ev[n], ov[n]))
+            elif not (constant(ev[n]) and constant(ov[n])):
+                statuses.append("unstable")
             elif ev[n][0] != ov[n][0]:
+                statuses.append(FAIL)
                 bad.append("%s %d: %s vs %s" % (g, n, ev[n][0], ov[n][0]))
-    if bad:
+    decision, owed = settle(statuses, paired)
+    detail = dict(mode="paired" if paired else "exact", differences=bad,
+                  not_gateable=left)
+    if decision == FAIL:
         return row("E2", "a", FAIL, "ordinary rows differ in an extension "
-                   "process: " + "; ".join(bad[:5]), differences=bad)
-    if unstable:
-        return row("E2", "a", INCONCLUSIVE, "rows are not repeatable")
+                   "process: " + "; ".join(bad[:5]), **detail)
+    if decision != PASS:
+        return row("E2", "a", decision, "rows are not repeatable, or a GC "
+                   "share pass fell in a canonical window (%s)" % (
+                       sorted(left) or "none"), owed, **detail)
     return row("E2", "a", PASS, "the canonical rows equal the ordinary "
-               "candidate's at every kind and size")
+               "candidate's at every kind and size", **detail)
 
 
 def e2b(ext):
@@ -547,33 +569,97 @@ def e2b(ext):
                kinds={r["kind"]: r for r in out})
 
 
-def e2c(ext, ordinary, declared_text):
-    """The registries after explicit use equal the ordinary candidate's
-    (same heap, nothing used): no ordinary entry is gone, and a listener,
-    attribute or set type the extension registered is named by the
-    declaration (`declared_text`, the e2c extension_state entries as
-    text); its own modules, structures and files are additions, listed."""
-    added, removed = {}, {}
-    for f in L3_LISTS + ("loaded", "files"):
-        e = [tuple(x) if f == "files" else x
-             for x in ext[0]["registry"][f]]
-        o = [tuple(x) if f == "files" else x
-             for x in ordinary[0]["registry"][f]]
+def agreed(procs, field, view):
+    """(the one value of `field` in every process, None) or (None, why)."""
+    values = [view(p["registry"][field]) for p in procs]
+    if not all(v == values[0] for v in values):
+        return None, "the processes disagree on %s" % field
+    return values[0], None
+
+
+def declared_names(declared):
+    """({list: set of names}, {list: set of names of required entries},
+    set of the probe's own) of the declared e2c state: the observable
+    entries' `registers` and the `probe_support` ones."""
+    allowed = {f: set() for f in L3_LISTS}
+    required = {f: set() for f in L3_LISTS}
+    for e in declared["extension_state"]:
+        if not e["observable"]:
+            continue  # prose-only state satisfies nothing
+        for f, names in e["registers"].items():
+            allowed[f] |= set(names)
+            if e["required"]:
+                required[f] |= set(names)
+    for f, names in declared["probe_support"]["registers"].items():
+        allowed[f] |= set(names)
+    return allowed, required
+
+
+def in_order(sub, whole):
+    it = iter(whole)
+    return all(x in it for x in sub)
+
+
+def e2c(ext, ordinary, declared):
+    """The L3 lists after explicit use equal the ordinary candidate's (same
+    heap, nothing used) apart from what the declaration (`declared`: the
+    e2c part) says: per list the names the extension processes add are
+    among those the observable entries register (or the probe's own
+    support), every name of a required entry is added, no ordinary name is
+    gone and the ordinary listeners keep their relative order. All
+    extension processes agree, and so do the ordinary ones. `loaded` and
+    `files` are not compared: the probe modules differ by design."""
+    allowed, required = declared_names(declared)
+    added, removed, undeclared, missing, reorder = {}, {}, {}, {}, []
+    for f in L3_LISTS:
+        e, why = agreed(ext, f, list)
+        o, why_o = agreed(ordinary, f, list)
+        if why or why_o:
+            return row("E2", "c", FAIL, why or why_o)
         added[f] = [x for x in e if x not in o]
         removed[f] = [x for x in o if x not in e]
-    gone = {f: v for f, v in removed.items() if v}
-    new = {f: [x for x in added[f] if x not in declared_text]
-           for f in EXT_LISTS_ONLY}
-    new = {f: v for f, v in new.items() if v}
-    detail = dict(added={f: v for f, v in added.items() if v},
-                  removed=gone)
-    if gone or new:
-        return row("E2", "c", FAIL, "ordinary registry entries removed %s, "
-                   "undeclared entries registered by the extension %s" % (
-                       sorted(gone), new), **detail)
-    return row("E2", "c", PASS, "the registries equal the ordinary ones "
-               "apart from the extension's own modules, structures, files "
-               "and the declared state", **detail)
+        undeclared[f] = [x for x in added[f] if x not in allowed[f]]
+        missing[f] = sorted(required[f] - set(added[f]))
+        if f == "listeners" and not removed[f] and not in_order(o, e):
+            reorder.append(f)
+    flat = lambda d: {f: v for f, v in d.items() if v}
+    detail = dict(added=flat(added), removed=flat(removed),
+                  undeclared=flat(undeclared), required_missing=flat(
+                      missing), reordered=reorder)
+    problems = ["%s %s" % (text, value) for text, value in (
+        ("ordinary entries removed:", detail["removed"]),
+        ("undeclared entries added by the extension:",
+         detail["undeclared"]),
+        ("required declared entries not added:", detail["required_missing"]),
+        ("ordinary lists reordered:", reorder)) if value]
+    if problems:
+        return row("E2", "c", FAIL, "; ".join(problems), **detail)
+    return row("E2", "c", PASS, "the L3 lists equal the ordinary ones "
+               "apart from the declared additions", **detail)
+
+
+def e2u(ext, ordinary):
+    """Reported (E2, not S2: the ext probe is outside the S2 gate): the
+    closure total U of an extension process against the ordinary
+    candidate's on the same heap, and the exclusive parts. Growth of
+    ordinary structures after explicit use is E2-relevant."""
+    xe, xo = [p["anchored"] for p in ext], [p["anchored"] for p in ordinary]
+    if not all(x["total"] is not None for x in xe + xo):
+        return row("E2", "u", REPORTED, "no closure total in an extension "
+                   "or an ordinary process (a structure is not loaded)")
+    detail = dict(
+        total=dict(ext=[x["total"][0] for x in xe],
+                   cand=[x["total"][0] for x in xo],
+                   change=xe[0]["total"][0] - xo[0]["total"][0]),
+        d=dict(ext=[x["d"][0] for x in xe], cand=[x["d"][0] for x in xo],
+               change=xe[0]["d"][0] - xo[0]["d"][0]),
+        exclusive={n: dict(ext=[x["rows"][n][0] for x in xe],
+                           cand=[x["rows"][n][0] for x in xo],
+                           change=xe[0]["rows"][n][0] - xo[0]["rows"][n][0])
+                   for n in sorted(xe[0]["rows"])})
+    return row("E2", "u", REPORTED, "closure total U after explicit "
+               "extension use, less the ordinary candidate's: %+d words" %
+               detail["total"]["change"], **detail)
 
 
 # --- S3 and S4 (reported) --------------------------------------------------

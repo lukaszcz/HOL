@@ -1,5 +1,5 @@
 {
-  "schema": "task33-declared-v3",
+  "schema": "task33-declared-v4",
   "note": [
     "Reviewed data. Changing it invalidates a decision run: the",
     "counts file seals it before the pilot."
@@ -136,7 +136,10 @@
           "`value` words. Gate (b): no structure's exclusive part",
           "objSize((D, X)) - objSize((D, D)) grows (candidate <= base).",
           "Every (heap, kind) whose registry record computes U must be",
-          "covered by exactly one entry."
+          "covered by exactly one entry. The `ext` probe (explicit",
+          "extension use, candidate only) is excluded from this gate: its",
+          "U less the ordinary candidate's and its exclusive parts are an",
+          "E2 reported row (`E2:u`), not an S2 decision."
         ],
         "value": 754,
         "unit": "words",
@@ -225,10 +228,101 @@
   },
   "e2c": {
     "rule": [
-      "registries after explicit extension use equal the ordinary",
-      "ones, except the state that only an explicit call creates"
+      "Compared: the L3 lists (listeners, attributes, set types,",
+      "structures, signatures, functors) of the `ext` process, after",
+      "explicit extension use, against the ordinary candidate's",
+      "registry-state-empty on the same heap. Per list the names the",
+      "extension processes add are among the `registers` of the",
+      "observable extension_state entries or of probe_support; every name",
+      "of a `required` entry is added; no ordinary name is removed; the",
+      "ordinary listeners keep their relative order; every ext process",
+      "agrees. `loaded` and `files` are not compared (the probe modules",
+      "differ by design). State that is not observable in these lists",
+      "(`observable: false`) satisfies nothing."
     ],
+    "probe_support": {
+      "registers": {
+        "structures": [
+          "RuntimeMetrics",
+          "T33GraphLib",
+          "congLib"
+        ],
+        "signatures": [
+          "congLib"
+        ]
+      },
+      "justification": [
+        "Added by the ext probe's own graph work, not by the extension:",
+        "T33GraphLib (the probe module) and RuntimeMetrics (its helper)",
+        "are defined in the probe directory, and congLib, an ordinary",
+        "library of both sides, is loaded by the probe's code anchor",
+        "(congLib.mk_congset). Live registry runs of the ext probe and of",
+        "registry-state-empty on the candidate (hol.state) differ in these",
+        "and in the extension modules only."
+      ]
+    },
     "extension_state": [
+      {
+        "name": "extension-modules",
+        "created_by": [
+          "Meta.load \"simpExtLib\": the module and the extension modules",
+          "it loads, which an ordinary build never loads"
+        ],
+        "where": [
+          "the structure and signature lists of the registry (the names",
+          "in `registers`; observed live: exactly these nine structures",
+          "and nine signatures are added by the load)"
+        ],
+        "source": "src/simp/src/simpExtLib.sml",
+        "required": true,
+        "observable": true,
+        "registers": {
+          "structures": [
+            "Cond_rewrExt",
+            "OpeningExt",
+            "SplitData",
+            "TraverseExt",
+            "TravrulesExt",
+            "simpExtLib",
+            "simpMarkerLib",
+            "simpMarkerTheory",
+            "splitLib"
+          ],
+          "signatures": [
+            "Cond_rewrExt",
+            "OpeningExt",
+            "SplitData",
+            "TraverseExt",
+            "TravrulesExt",
+            "simpExtLib",
+            "simpMarkerLib",
+            "simpMarkerTheory",
+            "splitLib"
+          ]
+        }
+      },
+      {
+        "name": "split-registration",
+        "created_by": "SplitData.initialize (explicit call only)",
+        "where": [
+          "ThmAttribute attribute `split` and the Theory.delta_hook",
+          "listener splitLib.persistence.onload (observed live by one",
+          "explicit initialize call after loading simpExtLib: exactly",
+          "these two are added, no set type); the `ext` probe does not",
+          "call it"
+        ],
+        "source": "src/simp/src/SplitData.sml",
+        "required": false,
+        "observable": true,
+        "registers": {
+          "listeners": [
+            "splitLib.persistence.onload"
+          ],
+          "attributes": [
+            "split"
+          ]
+        }
+      },
       {
         "name": "named-fragments",
         "created_by": [
@@ -237,21 +331,12 @@
         ],
         "where": [
           "Context.Data slot simpExtLib.ssfragDB (a Symtab of ssfrag",
-          "by name), distinct from the simpLib registry"
+          "by name), distinct from the simpLib registry: not in any",
+          "registry list"
         ],
         "source": "src/simp/src/simpExtLib.sml",
-        "required": true
-      },
-      {
-        "name": "split-registration",
-        "created_by": "SplitData.initialize (explicit call only)",
-        "where": [
-          "ThmAttribute attribute `split`, Theory.delta_hook listener",
-          "splitLib.persistence.onload, Context.Data slots of",
-          "SplitData"
-        ],
-        "source": "src/simp/src/SplitData.sml",
-        "required": false
+        "required": false,
+        "observable": false
       },
       {
         "name": "tracked-defaults-provider",
@@ -259,11 +344,12 @@
           "trackedSimpDefaults.install (explicit call only)"
         ],
         "where": [
-          "the trackedSimpDefaults.provider slot, written by the",
-          "explicit install"
+          "the trackedSimpDefaults.provider Context.Data slot, written",
+          "by the explicit install: not in any registry list"
         ],
         "source": "src/boss/trackedSimpDefaults.sml",
-        "required": false
+        "required": false,
+        "observable": false
       },
       {
         "name": "context-data-slots",
@@ -274,10 +360,11 @@
         ],
         "where": [
           "Context.Data.new slots of simpExtLib, SplitData and",
-          "trackedSimpDefaults"
+          "trackedSimpDefaults: not in any registry list"
         ],
         "source": "src/simp/src/simpExtLib.sml",
-        "required": true
+        "required": false,
+        "observable": false
       },
       {
         "name": "source-serial",
@@ -285,10 +372,12 @@
           "loading simpExtLib: its top-level source_serial ref"
         ],
         "where": [
-          "simpExtLib.source_serial, a ref allocated at load"
+          "simpExtLib.source_serial, a ref allocated at load: not in any",
+          "registry list"
         ],
         "source": "src/simp/src/simpExtLib.sml",
-        "required": true
+        "required": false,
+        "observable": false
       }
     ]
   },

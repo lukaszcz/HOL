@@ -8,8 +8,9 @@ probes of task33/ on the two TASK32 snapshots, and the commands around them.
              heap facts); information run
   pilot      base only: 3 `graph` and 3 `release` processes at the decision
              sizes and a pilot M0: repeatability and the noise that sizes M
-             (required M, clamped to M_CAP, `required`/`capped`);
-             information run
+             (required M, clamped to the cap RELEASE_BUDGET_S gives over
+             the pilot's CPU per object: `required`/`capped`); information
+             run
   control    the negative controls at the decision configuration (sizes and
              M of the pilot): T33_GRAPH_EXTRA, T33_LEAK and T33_HOOK, each
              against its plain unit on the base snapshot, must fail S1, R1
@@ -22,19 +23,26 @@ probes of task33/ on the two TASK32 snapshots, and the commands around them.
   extend     the contingency: 10 aligned pairs (`paired_statistics` at zero
              margin) for the units a `run` owes (a value not repeatable
              within a side)
-  followup   the contingency: R1 / E2 (b) at a larger M, for the units a
-             stage owes (resolution not reached), counts committed alone
+  followup   the contingency: R1 / E2 (b) at a larger M (the greater of
+             4 M and M x floor range / resolution, capped by 4 times the
+             budget), for the units a stage owes (resolution not reached),
+             counts committed alone
   audit      `src/simp/tests/api-audit/run.py` in the candidate snapshot:
-             8 PASS, its receipt sealed under the stage's output
+             8 PASS, its receipt sealed under the stage's output (the
+             execution is the stage's measuring entry, so that a refused
+             audit is a judged attempt)
   predeclare task33_storage_counts.json (or, with --followup, the
-             follow-up's) from the replayed smoke, pilot and control, bound
-             to the committed timing counts
+             follow-up's) from the replayed smoke, pilot and control and the
+             three S3 reports (--offline), bound to the committed timing
+             counts
   replay     recompute every decision of finished runs from their archives
              (no process runs)
   dispose    one disposition.json: the timing disposition, the offline
-             reports and these stages' decisions, one per case and kind
+             reports (the sealed ones) and these stages' decisions, one per
+             case and kind, with the process redraws
   dispose-snapshots
-             remove the snapshots after the last use (design section 5)
+             remove the snapshots after the last use (design section 5),
+             given a sealed disposition.json with nothing owed
 
 The processes, locking, ledger, receipts and their checks are the timing
 driver's (task32_downstream.py, the `task33` table of it; its `run_stage`,
@@ -44,11 +52,8 @@ ledger table is `task33-storage` (same attempts.jsonl as the loading
 driver). Exit status as the timing driver's: 0 pass, 1 fail, 2
 inconclusive or blocked, 3 refused or a usage error, 4 a signal.
 """
-import argparse
-import contextlib
 import json
 import math
-import os
 from pathlib import Path
 import shlex
 import statistics
@@ -81,12 +86,19 @@ EXTEND_PAIRS = rules.EXTEND_PAIRS
 SMOKE_SIZES = (0, 1, 10)
 SMOKE_M = 50
 M0 = 200  # the pilot's release size
-M_CAP = 5000  # the most objects per release cycle of the decision runs
-M_CAP_FOLLOWUP = 40000
-FOLLOWUP_FACTOR = 4
-MAX_REDRAWS = 3
+# CPU seconds one release process may take at the decision M (design
+# 8.6): the cap on M is this budget over the pilot's CPU per released
+# object (`cap_of`); a follow-up may take FOLLOWUP_FACTOR times as much.
+# A base release process at M0 takes about 0.9 s CPU (measured live, start-up
+# included), so about 0.5 ms per object and kind: the budget allows a cap
+# of about 10^6 objects per kind, far above the sizes that are required
+RELEASE_BUDGET_S = 600
+FOLLOWUP_FACTOR = 4  # the least growth of M in a follow-up, and its budget
+MAX_REDRAWS = 3  # tries after the first at one position of a plan
 SCRATCH_ROOT = Path("/dev/shm/t33")
 AUDIT_CASES = 8
+AUDIT_UNIT = "api-audit"
+OFFLINE_COMMANDS = ("archive", "audit", "harvest")  # the S3 reports
 
 REGISTRY = tuple("registry-" + k for k in records.LOAD_KINDS)
 TRIVIAL = tuple("trivial-" + k for k in records.STARTUP_KINDS)
@@ -213,22 +225,23 @@ def label_of(entry):
         "" if not entry["redraw"] else "-r%d" % entry["redraw"])
 
 
-def row_unit(r):
-    """The unit a decision row is measured by."""
+REGISTRY_PLAIN = "registry-state-empty"  # the ordinary candidate E2 uses
+E2_UNITS = dict(a=(EXT, GRAPH), b=(EXT,), c=(EXT, REGISTRY_PLAIN),
+                u=(EXT, REGISTRY_PLAIN))
+
+
+def row_units(r):
+    """The units a decision row is measured by (a stage that owes the row
+    runs all of them: E2 (a) compares the extension probe's rows with the
+    ordinary candidate's)."""
     case, kind = r["case"], r["kind"]
-    return {"S1": GRAPH, "R1": RELEASE, "E2": EXT, "E1": EXT}.get(
-        case, "registry-" + kind)
+    if case == "E2":
+        return E2_UNITS[kind]
+    return ({"S1": (GRAPH,), "R1": (RELEASE,), "E1": (EXT,)}.get(case) or
+            ("registry-" + kind,))
 
 
 # ----------------------------------------------------------- the processes
-
-def mask_function():
-    return getattr(d, "mask_path", None) or records.mask_path
-
-
-def mask_text_function():
-    return getattr(d, "mask_text", None) or records.mask_text
-
 
 def check_lengths(report):
     """Path strings reach `objSize` through structure values: both roots
@@ -242,26 +255,36 @@ def check_lengths(report):
             "length (%s)" % probes)
 
 
-def not_comparable(receipt, unit, root, probe_dir):
-    """The rejected process's output is well-formed but its readings cannot
-    be compared (records.NotComparable): a redraw, not a failure."""
+def incomparable(receipt, unit, root, probe_dir):
+    """Why a rejected process is a redraw, or None: its output is well
+    formed but its readings cannot be compared (records.NotComparable) and
+    that is its whole rejection (the digest of the output, which cannot be
+    made, is the only check it failed)."""
+    if receipt["accepted"] or receipt.get("digest_error") is None or \
+            receipt["rejection"] != receipt["digest_error"]:
+        return None
     try:
-        masked = mask_text_function()(receipt["stdout"], root, probe_dir)
+        masked = d.mask_text(receipt["stdout"], root, probe_dir)
         records.validate(masked, controls=cases33.controls_of(unit),
                          root=records.ROOT_MASK)
-    except records.NotComparable:
-        return True
+    except records.NotComparable as error:
+        return str(error)
     except ValueError:
-        return False
-    return False
+        return None
+    return None
 
 
-def heap_bytes(report, sides):
+def heap_bytes(report, manifest):
+    """{side: {heap: bytes}} of the heaps the units run on, from the sealed
+    snapshot manifest (the products it lists)."""
+    heaps = sorted({u["heap"] for u in report["units"].values()})
     out = {}
     for side in ("base", "cand"):
-        heaps = sorted({u["heap"] for u in report["units"].values()})
-        out[side] = {h: (Path(report["roots"][side]) / h).stat().st_size
-                     for h in heaps}
+        products = manifest["sides"][side]["products"]
+        missing = [h for h in heaps if h not in products]
+        require(not missing, "the manifest lists no %s: %s" % (
+            ", ".join(missing), side))
+        out[side] = {h: products[h]["bytes"] for h in heaps}
     return out
 
 
@@ -272,7 +295,7 @@ def run_item(ctx, report, entry_item, unit, redraw, references):
     entry = dict(workload=unit["name"], phase="candidate",
                  pair=entry_item["pair"], selection=entry_item["selection"],
                  rep=0, side=side, redraw=redraw,
-                 expect=entry_item["expect"])
+                 expect=entry_item["expect"], superseded=None)
     label = label_of(entry)
     layout = d.layout_for(report["layout_seed"], entry["pair"],
                           entry["selection"], 0)
@@ -286,35 +309,116 @@ def run_item(ctx, report, entry_item, unit, redraw, references):
     return entry, receipt
 
 
+def release_kinds(name):
+    """The release kinds a unit's `held` readings are needed for."""
+    return {RELEASE: rules.ORDINARY_RELEASE,
+            EXT: rules.EXT_RELEASE}.get(name, ())
+
+
+def held_gap(name, summaries):
+    """The release kinds of unit `name` for which no process of the group
+    has a comparable `held` reading (the sensitivity requirement has
+    nothing to look at: a redraw, never a result)."""
+    return [k for k in release_kinds(name)
+            if not any(p["held_comparable"][k] for p in summaries)]
+
+
+def summary_of(report, planned, receipt):
+    """The summary of a process that is a measurement (accepted, not an
+    expected rejection), else None."""
+    if not receipt["accepted"] or planned["expect"]:
+        return None
+    return summarize(receipt, report["units"][planned["unit"]],
+                     report["roots"][planned["side"]])
+
+
+def redraw_reason(report, planned, receipt, summary, prior, last):
+    """None, or why this try of a plan position is redrawn (the same
+    function a run and its replay apply). A redraw happens only when every
+    other admission check passed on the receipt:
+    - the output is not comparable (`incomparable`);
+    - an anchor moved in the process (either side);
+    - at the last position of a (unit, side), no process of the group
+      (`prior`: the summaries of the earlier positions, `summary` this
+      try) has a comparable `held` reading of a release kind.
+    Raises the Refusal/Blocked of an admission check the receipt also
+    fails."""
+    if planned["expect"]:
+        return None
+    side = planned["side"]
+    if not receipt["accepted"]:
+        root, probe_dir = report["roots"][side], report["reporter"][side][
+            "dir"]
+        reason = incomparable(receipt, report["units"][planned["unit"]],
+                              root, probe_dir)
+        if reason is not None:
+            d.validate(receipt, report["units"][planned["unit"]],
+                       Path(root), probe_dir, None, side == "cand")
+        return reason
+    if summary.get("anchor_moved"):
+        return "an anchor moved: %s" % (summary["anchor_moved"],)
+    if last:
+        gap = held_gap(planned["unit"], prior + [summary])
+        if gap:
+            return "no comparable held reading of %s" % ", ".join(gap)
+    return None
+
+
+def last_positions(plan):
+    """For each position of the plan, whether it is the last of its
+    (unit, side)."""
+    final = {(p["unit"], p["side"]): i for i, p in enumerate(plan)}
+    return [final[(p["unit"], p["side"])] == i for i, p in enumerate(plan)]
+
+
+def refuse_try(report, entry, receipt, error=None):
+    """The refusal of a process that is not admitted (and not a redraw);
+    a finding about the candidate also marks the report blocked."""
+    blocked = receipt.get("blocked") or isinstance(error, d.Blocked)
+    reason = str(error) if error else receipt["rejection"]
+    if blocked:
+        report["blocked"] = reason
+    return d.Refusal("process rejected: %s: %s" % (label_of(entry), reason))
+
+
 def body(args, spec, report, sides, scratch, fds, verify, journal):
     """The processes of a stage, in the plan's order (`d.run_stage`'s
-    `body_fn`)."""
+    `body_fn`), a position redrawn while `redraw_reason` says so, at most
+    MAX_REDRAWS times."""
     ctx = d.prepare(args, report, sides, scratch, fds, verify, journal,
                     modules=lambda side: probe_modules(report, side))
     check_lengths(report)
-    report["heap_bytes"] = heap_bytes(report, sides)
-    loaded = []
-    for planned in report["plan"]:
+    report["heap_bytes"] = heap_bytes(report, a.load(args.manifest))
+    loaded, finals = [], {}
+    for planned, last in zip(report["plan"], last_positions(report["plan"])):
         unit = report["units"][planned["unit"]]
+        prior = finals.setdefault((planned["unit"], planned["side"]), [])
         for redraw in range(MAX_REDRAWS + 1):
             entry, receipt = run_item(ctx, report, planned, unit, redraw,
                                       report["references"])
             report["runs"].append(entry)
-            if planned["expect"] == "reject":
-                loaded.append((entry, receipt))
+            summary = None
+            try:
+                summary = summary_of(report, planned, receipt)
+                reason = redraw_reason(report, planned, receipt, summary,
+                                       prior, last)
+            except d.Refusal as error:
+                if receipt["accepted"]:
+                    raise
+                raise refuse_try(report, entry, receipt, error)
+            if reason is None or redraw == MAX_REDRAWS:
                 break
-            if receipt["accepted"]:
-                loaded.append((entry, receipt))
-                break
-            root = report["roots"][planned["side"]]
-            if redraw < MAX_REDRAWS and not_comparable(
-                    receipt, unit, root,
-                    report["reporter"][planned["side"]]["dir"]):
-                continue  # an R-1 redraw: the receipt stays, flagged
-            if receipt.get("blocked"):
-                report["blocked"] = receipt["rejection"]
-            raise d.Refusal("process rejected: %s: %s" % (
-                label_of(entry), receipt["rejection"]))
+            entry["superseded"] = reason  # the receipt stays, flagged
+        if not receipt["accepted"] and planned["expect"] != "reject":
+            raise refuse_try(report, entry, receipt)
+        if reason is not None and not (
+                summary is not None and summary.get("anchor_moved") and
+                planned["side"] == "cand"):
+            raise d.Refusal("%s still a redraw after %d: %s" % (
+                label_of(entry), MAX_REDRAWS, reason))
+        loaded.append((entry, receipt))
+        if summary is not None:
+            prior.append(summary)
     if verify is not None:
         report["verify"]["after"] = d.run_verify(verify, report["repo"],
                                                  fds)
@@ -323,7 +427,10 @@ def body(args, spec, report, sides, scratch, fds, verify, journal):
 
 def audit_body(args, spec, report, sides, scratch, fds, verify, journal):
     """The api-audit stage: run.py of the candidate snapshot, its receipt
-    (and logs) under the stage's output, sealed in the report."""
+    (and logs) under the stage's output, sealed in the report. run.py
+    itself is not among the driver's code seals: it is a file of the
+    candidate snapshot, which the snapshot manifest (verified before and
+    after the stage) covers."""
     scratch.mkdir(parents=True, exist_ok=False)
     if verify is not None:
         report["verify"] = {"before": d.run_verify(verify, report["repo"],
@@ -339,6 +446,16 @@ def audit_body(args, spec, report, sides, scratch, fds, verify, journal):
     report["audit"] = dict(command=done["command"], exit=done["exit"],
                            stdout_sha256=done["stdout_sha256"],
                            output="api-audit")
+    # the execution is the stage's one measuring entry: a refused audit
+    # is a judged attempt, not a void one (`d.judged_because`)
+    receipt = dict(report["audit"], accepted=True, phase="candidate",
+                   workload=AUDIT_UNIT, side="cand", pair=0,
+                   selection="candidate", rep=0)
+    report["runs"].append(dict(
+        workload=AUDIT_UNIT, phase="candidate", pair=0,
+        selection="candidate", rep=0, side="cand", redraw=0, expect=None,
+        superseded=None, accepted=True,
+        **d.archive(Path(report["output"]), AUDIT_UNIT, receipt)))
     receipts = sorted(out.glob("*/receipt.json")) if out.is_dir() else []
     require(len(receipts) == 1, "the audit left %d receipts, not one" %
             len(receipts))
@@ -363,8 +480,8 @@ def summarize(receipt, unit, root):
 
 def grouped(report, loaded):
     """{unit: {side: [summary]}} of the accepted processes, in the plan's
-    order; an anchor moved on a baseline process is a refusal (a harness
-    fault, design 8.5)."""
+    order; an anchor moved on a baseline process (after the redraws) is a
+    refusal (a harness fault, design 8.5)."""
     groups = {}
     for entry, receipt in loaded:
         if not receipt["accepted"]:
@@ -372,8 +489,7 @@ def grouped(report, loaded):
         unit = report["units"][entry["workload"]]
         side = entry["side"]
         summary = summarize(receipt, unit, report["roots"][side])
-        if side == "base" and entry["selection"] == "baseline" and \
-                summary.get("anchor_moved"):
+        if side == "base" and summary.get("anchor_moved"):
             raise d.Refusal("an anchor moved on a baseline process of %s: "
                             "%s" % (unit["name"], summary["anchor_moved"]))
         summary["usage"] = receipt["usage"]
@@ -437,9 +553,10 @@ def outcome(report, loaded, folder=None):
                                              stage == "extend")
     out["reported"]["s3"] = rules.s3_report(groups)
     out["reported"]["times"] = times_of(groups)
+    out["reported"]["heap_bytes"] = report["heap_bytes"]
     out["owed"] = [list(x) for x in sorted({
-        (r["owed"], row_unit(r)) for r in out["results"].values()
-        if r["owed"]})]
+        (r["owed"], u) for r in out["results"].values() if r["owed"]
+        for u in row_units(r)})]
     return out
 
 
@@ -463,8 +580,26 @@ def smoke_facts(report, loaded):
     return dict(units=facts, ok=ok)
 
 
+def object_cpu(procs, m):
+    """CPU seconds per released object of the pilot's release processes:
+    the median whole-process CPU over the objects of all the kinds the
+    process releases (an upper bound: the start-up counts)."""
+    return statistics.median(cpu_of(procs)) / (
+        m * len(records.RELEASE_KINDS))
+
+
+def cap_of(cost, m0, factor=1):
+    """The most objects per release kind whose process fits `factor` times
+    RELEASE_BUDGET_S at `cost` CPU seconds per object, never under the
+    pilot's own M0."""
+    return max(m0, math.floor(Fraction(RELEASE_BUDGET_S * factor) /
+                              Fraction(cost)))
+
+
 def pilot_outcome(report, groups):
-    """Graph repeatability, the release noise and the M it needs."""
+    """Graph repeatability, the release noise and the M it needs: the
+    required M, clamped to the cap the budget gives (never a refusal over
+    the cap: `required` and `capped` say what the clamp did)."""
     graph, release = groups[GRAPH]["base"], groups[RELEASE]["base"]
     repeat = {g: all(rules.constant([p["graph"][g][n]["canon_words"]
                                      for p in graph])
@@ -478,12 +613,14 @@ def pilot_outcome(report, groups):
     worst = max(noise.values())
     m0 = report["params"]["m"]
     required = max(m0, math.ceil(Fraction(worst) / rules.RESOLUTION))
+    cost = object_cpu(release, m0)
+    cap = cap_of(cost, m0)
     held = {k: rules.num(min(p["held"][k] for p in release))
             for k in rules.ORDINARY_RELEASE}
     return dict(
         graph_repeatable=repeat, noise_words=noise, m0=m0,
-        required_m=required, m=min(M_CAP, required), m_cap=M_CAP,
-        capped=required > M_CAP, covered=required <= M_CAP,
+        required_m=required, m=min(cap, required), m_cap=cap,
+        capped=required > cap, budget_s=RELEASE_BUDGET_S, object_cpu=cost,
         held_per_object=held, resolution=rules.num(rules.RESOLUTION),
         median_wall={u: statistics.median(p["usage"]["wall"] for p in g)
                      for u, g in ((GRAPH, graph), (RELEASE, release))})
@@ -527,12 +664,10 @@ def decide(report, groups, paired):
     names = report["workloads"]
     declared = offline.load_declared()
     deltas = rules.total_deltas(declared)
-    extension_text = json.dumps(declared.get("e2c", {}))
-    mask = mask_function()
 
     def masked(side, path):
-        return mask(path, report["roots"][side],
-                    report["reporter"][side]["dir"])
+        return d.mask_path(path, report["roots"][side],
+                           report["reporter"][side]["dir"])
 
     found = []
     for name in names:
@@ -560,10 +695,11 @@ def decide(report, groups, paired):
             found.append(rules.e2b(cand))
             ordinary = groups.get(GRAPH, {}).get("cand")
             if ordinary:
-                found.append(rules.e2a(cand, ordinary))
-            plain = groups.get("registry-state-empty", {}).get("cand")
+                found.append(rules.e2a(cand, ordinary, paired))
+            plain = groups.get(REGISTRY_PLAIN, {}).get("cand")
             if plain:
-                found.append(rules.e2c(cand, plain, extension_text))
+                found.append(rules.e2c(cand, plain, declared["e2c"]))
+                found.append(rules.e2u(cand, plain))
     found.append(rules.s4_row())
     gated, reported = {}, {}
     for r in found:
@@ -706,35 +842,94 @@ def check_run(folder, report, entry):
             raise d.Refusal("a process that was refused validates: " +
                             entry["receipt"])
     else:
-        require(not_comparable(receipt, unit, root, reporter["dir"]),
-                "a rejected process that is not a redraw: " +
+        require(incomparable(receipt, unit, root, reporter["dir"])
+                is not None, "a rejected process that is not a redraw: " +
                 entry["receipt"])
     return receipt
 
 
+def tries_by_position(report):
+    """The runs grouped by plan position: the first try (redraw 0) and its
+    redraws."""
+    groups = []
+    for e in report["runs"]:
+        if e["redraw"] == 0:
+            groups.append([e])
+        else:
+            require(groups, "a redraw before any process")
+            groups[-1].append(e)
+    return groups
+
+
 def check_plan(report):
-    """The runs are the plan's, in order, each followed by its redraws
-    (a rejected try of the same position), and the plan is the stage's
-    own for the units and parameters."""
+    """The runs are the plan's, in order, each position's tries the same
+    (workload, side, pair, selection) with consecutive redraw numbers,
+    every try but the last one superseded (the reason is recomputed by
+    `check_redraws`), and the plan is the stage's own for the units and
+    parameters. Returns the tries by position."""
     stage = report["stage"] or report["mode"]
     require(report["plan"] == plan_for(stage, report["workloads"],
                                        report["params"]),
             "the plan is not the stage's")
-    found, at = [], -1
-    for e in report["runs"]:
-        if e["redraw"] == 0:
-            at += 1
-            found.append(e)
-        else:
-            require(at >= 0 and not report["runs"][report["runs"].index(
-                e) - 1]["accepted"] and e["redraw"] <= MAX_REDRAWS,
-                "a redraw that follows no rejected process")
-    require(len(found) == len(report["plan"]) and all(
-        (e["workload"], e["side"], e["pair"], e["selection"],
-         e["expect"]) == (p["unit"], p["side"], p["pair"], p["selection"],
-                          p["expect"])
-        for e, p in zip(found, report["plan"])),
-        "missing, extra or reordered processes")
+    groups = tries_by_position(report)
+    require(len(groups) == len(report["plan"]),
+            "missing, extra or reordered processes")
+    for tries, p in zip(groups, report["plan"]):
+        require(all((e["workload"], e["side"], e["pair"], e["selection"],
+                     e["expect"]) == (p["unit"], p["side"], p["pair"],
+                                      p["selection"], p["expect"])
+                    for e in tries), "missing, extra or reordered "
+                "processes")
+        require([e["redraw"] for e in tries] == list(range(len(tries))) and
+                len(tries) <= MAX_REDRAWS + 1,
+                "redraws are not consecutive or too many: " + p["unit"])
+        require(all(e["superseded"] for e in tries[:-1]) and
+                not tries[-1]["superseded"],
+                "a redrawn try that is not superseded, or the last one is")
+    return groups
+
+
+def check_redraws(report, groups, receipts):
+    """Every superseded try is a redraw by `redraw_reason`, recomputed from
+    the receipts; the last try of a position is redrawn no longer only
+    when the redraws ran out (and a redraw that persists is an anchor that
+    moved on the candidate). Returns the final tries [(entry, receipt)]."""
+    loaded, finals = [], {}
+    lasts = last_positions(report["plan"])
+    for tries, p, last in zip(groups, report["plan"], lasts):
+        prior = finals.setdefault((p["unit"], p["side"]), [])
+        for i, e in enumerate(tries):
+            receipt = receipts[e["receipt"]]
+            summary = summary_of(report, p, receipt)
+            reason = redraw_reason(report, p, receipt, summary, prior, last)
+            if i + 1 < len(tries):
+                require(reason is not None and e["superseded"] == reason,
+                        "a superseded try that is not a redraw: " +
+                        e["receipt"])
+        require(reason is None or (len(tries) == MAX_REDRAWS + 1 and
+                                   summary is not None and
+                                   summary.get("anchor_moved") and
+                                   p["side"] == "cand"),
+                "a try that should have been redrawn: " + e["receipt"])
+        loaded.append((e, receipt))
+        if summary is not None:
+            prior.append(summary)
+    return loaded
+
+
+def check_audit_entry(folder, report):
+    """The audit stage's one measuring entry is the sealed receipt of the
+    execution the report records."""
+    runs = report["runs"]
+    require(len(runs) == 1 and runs[0]["workload"] == AUDIT_UNIT and
+            runs[0]["accepted"] is True, "the audit stage has not its one "
+            "measuring entry")
+    path = a.safe_child(folder, runs[0]["receipt"])
+    require(a.seal(path) == runs[0]["seal"], "changed audit entry")
+    receipt = a.load(path)
+    require(all(receipt[k] == v for k, v in report["audit"].items() if k in
+                ("command", "exit", "stdout_sha256", "output")),
+            "the audit entry is not the recorded execution")
 
 
 def decision_params(pilot):
@@ -744,7 +939,8 @@ def decision_params(pilot):
     return dict(sizes=pilot["params"]["sizes"], m=out["m"], k=K)
 
 
-def replay_one(folder, ledger=None, repo=None, counts=None):
+def replay_one(folder, ledger=None, repo=None, counts=None,
+               timing_counts=None):
     """Recompute every observation, check and decision of one finished
     storage stage from its archived receipts (no process runs). Returns
     (info, report)."""
@@ -769,26 +965,31 @@ def replay_one(folder, ledger=None, repo=None, counts=None):
                 "a decision stage ran without the snapshot verification")
     if mode != "audit":
         d.check_probe_sources(report)
-        check_plan(report)
-        loaded = [(e, check_run(folder, report, e)) for e in report["runs"]]
+        groups = check_plan(report)
+        receipts = {e["receipt"]: check_run(folder, report, e)
+                    for e in report["runs"]}
+        loaded = check_redraws(report, groups, receipts)
     else:
+        check_audit_entry(folder, report)
         loaded = []
     require(d.same(outcome(report, loaded, folder), report["outcome"]),
             "recomputed outcome differs from the report")
-    info = dict(replayed=len(loaded), mode=mode, stage=stage, seal=seal)
+    info = dict(replayed=len(report["runs"]), mode=mode, stage=stage,
+                seal=seal)
     if mode in DECISIVE:
         info["exit"] = d.stage_status(report["outcome"]["results"])
         info["attempts"] = d.check_ledger(
             ledger or d.ledger_path(report["repo"]), report, seal,
             info["exit"], LEDGER_TABLE)
-        check_counts_use(report, counts, repo)
+        check_counts_use(report, counts, repo, timing_counts)
     return info, report
 
 
-def check_counts_use(report, path, repo):
+def check_counts_use(report, path, repo, timing_path=None):
     """The stage used this counts file: its seal, the values it declares
-    (the parameters and the references) and the commit rule where the
-    repository is at hand."""
+    (the parameters and the references), the sizing of M, the timing
+    counts it binds (their seal is the timing chain's counts file's) and
+    the commit rule where the repository is at hand."""
     used = report["counts"]
     stage = report["stage"]
     file = Path(path or (FOLLOWUP_COUNTS if stage == "followup" else
@@ -798,6 +999,8 @@ def check_counts_use(report, path, repo):
             "the counts file is not the one the stage used: %s" % file)
     data = a.load(file)
     d.check_code(data["code"])
+    check_timing_seal(data, timing_path)
+    check_sizing(data)
     if stage != "audit":
         require(data["references"] == report["references"],
                 "changed references")
@@ -810,26 +1013,58 @@ def check_counts_use(report, path, repo):
                 used["commit"], "changed counts commit")
 
 
+def check_timing_seal(data, timing_path=None):
+    """The storage counts bind the timing chain's counts file: its seal is
+    the one recorded."""
+    path = Path(timing_path or d.COUNTS)
+    require(path.is_file() and data["timing_counts"]["seal"] ==
+            a.seal(path), "the storage counts were made with other timing "
+            "counts than %s" % path)
+
+
+def check_sizing(data):
+    """M is what the budget, the pilot's CPU per object and the noise
+    give: min(cap, required), `capped` and, for a follow-up, `required`
+    from the base M and the floor range of the rows that owe it."""
+    kind = data["kind"]
+    factor = 1 if kind == "run" else FOLLOWUP_FACTOR
+    cap = cap_of(data["object_cpu"], data["m0"], factor)
+    required = data["required_m"]
+    if kind == "followup":
+        required = max(FOLLOWUP_FACTOR * data["base_m"], math.ceil(
+            data["base_m"] * Fraction(str(data["floor_range"])) /
+            rules.RESOLUTION))
+        require(required == data["required_m"], "the follow-up counts' "
+                "required M is not the base M scaled by the floor range")
+    want = data["decision"] if kind == "run" else data["followup"]
+    require(data["budget_s"] == RELEASE_BUDGET_S and data["m_cap"] == cap
+            and want["k"] == K and want["m"] == min(cap, required)
+            and data["capped"] == (required > cap),
+            "the counts file's budget, cap, M, required_m and capped "
+            "disagree")
+
+
 def parents(report):
     return report.get("first_stage") or report.get("replaces")
 
 
 def replay_chain(folder, ledger=None, repo=None, counts=None,
-                 followup_counts=None):
+                 followup_counts=None, timing_counts=None):
     """The stage chain ending in `folder`: [{stage, report, info, folder}].
     A contingency stage (extend, followup) names its parent run, which is
     replayed and tied to it (same gate, manifest, units owed)."""
     folder = Path(folder).resolve(strict=True)
     stage = a.load(folder / "downstream.json")["stage"]
     info, report = replay_one(folder, ledger, repo, followup_counts if
-                              stage == "followup" else counts)
+                              stage == "followup" else counts,
+                              timing_counts)
     here = dict(stage=report["stage"], report=report, info=info,
                 folder=folder)
     link = parents(report)
     if link is None:
         return [here]
     parent = replay_chain(link["run"], ledger, repo, counts,
-                          followup_counts)
+                          followup_counts, timing_counts)
     last = parent[-1]
     require(a.seal(Path(link["run"]) / "downstream.json") == link["seal"]
             and link["attempt"] == last["report"]["attempt"],
@@ -857,12 +1092,16 @@ def final_rows(chain):
     return found
 
 
+def owed_rows(chain, kind):
+    """The rows owed `kind` ("extend" or "followup") after the chain, by
+    the stages that decide them last."""
+    return [r for r in final_rows(chain).values() if r["owed"] == kind]
+
+
 def owed_units(chain, kind):
-    """The units whose rows are owed `kind` ("extend" or "followup") after
-    the chain, by the rows that decide them last."""
-    rows = final_rows(chain)
-    return [u for u in UNITS if any(
-        r["owed"] == kind and row_unit(r) == u for r in rows.values())]
+    """The units whose measurements the rows owed `kind` need."""
+    needed = {u for r in owed_rows(chain, kind) for u in row_units(r)}
+    return [u for u in UNITS if u in needed]
 
 
 # ------------------------------------------------------- counts, predeclare
@@ -880,11 +1119,11 @@ def storage_counts_path(args, followup=False):
     return Path(getattr(args, "storage_counts", None) or STORAGE_COUNTS)
 
 
-def load_storage_counts(path, sides, kind, repo, mseal, committed=True):
+def load_storage_counts(path, sides, kind, repo, mseal, timing_path,
+                        committed=True):
     """A storage counts file, checked against this gate: schema, pins,
     manifest, the code and declaration it is bound to, the timing counts'
-    seal it binds, the clamp of M (`required`/`capped`) and the commit
-    rule."""
+    seal it binds, the sizing of M (`check_sizing`) and the commit rule."""
     data = a.load(path)
     require(data.get("schema") == COUNTS_SCHEMA and data.get("kind") ==
             kind, "not a storage %s counts file" % kind)
@@ -897,11 +1136,8 @@ def load_storage_counts(path, sides, kind, repo, mseal, committed=True):
             "counts file was made")
     require(data["declared"] == a.seal(offline.DECLARED),
             "the declaration changed since the counts file was made")
-    want = data["decision"] if kind == "run" else data["followup"]
-    cap = data["m_cap"]
-    require(want["k"] == K and want["m"] == min(cap, data["required_m"])
-            and data["capped"] == (data["required_m"] > cap),
-            "the counts file's M, required_m and capped disagree")
+    check_timing_seal(data, timing_path)
+    check_sizing(data)
     if committed:
         data["commit"] = d.check_counts_commit(repo, path,
                                                sides["cand"]["pin"])
@@ -918,8 +1154,9 @@ def info_run(folder, key, mode, names, ledger, mseal):
 
 
 def offline_seals(paths):
-    """The seals of the S3 reports, each checked as `dispose` checks them:
-    its schema, its seal file and the code it was made by."""
+    """The seals of the three S3 reports (OFFLINE_COMMANDS), each checked
+    as `dispose` checks them: its schema, its seal file and the code it was
+    made by."""
     found = {}
     for path in paths or ():
         path = Path(path).resolve(strict=True)
@@ -932,6 +1169,9 @@ def offline_seals(paths):
         require(report["command"] not in found, "two %s reports" %
                 report["command"])
         found[report["command"]] = dict(path=str(path), seal=recorded)
+    require(set(found) == set(OFFLINE_COMMANDS), "the S3 reports (--offline) "
+            "are %s, not exactly %s" % (sorted(found),
+                                        sorted(OFFLINE_COMMANDS)))
     return found
 
 
@@ -951,8 +1191,6 @@ def predeclare_run(args):
     control_info, control = info_run(args.control, key, "control",
                                      control_names(), args.ledger, mseal)
     out = pilot["outcome"]
-    require(out["covered"], "the pilot is not usable: the release noise "
-            "needs M %d, over the cap %d" % (out["required_m"], M_CAP))
     require(smoke["outcome"]["facts"]["ok"], "the smoke run did not pass "
             "the probe facts (reporter in fileDirMap, every process loads "
             "what its kind claims)")
@@ -968,8 +1206,13 @@ def predeclare_run(args):
             "a control was not detected: " + ", ".join(
                 sorted(k for k, c in found.items() if not c["detected"])))
     refs = {u: smoke["outcome"]["digests"][u] for u in REGISTRY + TRIVIAL}
-    wall = pilot["outcome"]["median_wall"]
-    estimate = dict(per_process_wall=wall, processes=dict(
+    wall = dict(pilot["outcome"]["median_wall"])
+    scale = Fraction(decision["m"], out["m0"])
+    # the release process scales with M (an upper bound: start-up
+    # counts); the extension probe is a graph and a release process
+    wall[EXT] = (wall[RELEASE] * float(scale) + wall[GRAPH])
+    wall[RELEASE] = wall[RELEASE] * float(scale)
+    estimate = dict(per_process_wall=wall, m=decision["m"], processes=dict(
         run=2 * K * (len(REGISTRY) + len(TRIVIAL) + 2) + K,
         extend=2 * EXTEND_PAIRS), verify_seconds=sum(
             v["seconds"] for v in (smoke.get("verify") or {}).values()))
@@ -977,15 +1220,18 @@ def predeclare_run(args):
         "schema": COUNTS_SCHEMA, "kind": "run", "base": pilot["base"],
         "cand": pilot["cand"], "manifest": mseal, "seed": SEED,
         "seeds": SEEDS, "decision": decision, "m0": out["m0"],
-        "required_m": out["required_m"], "m_cap": M_CAP,
-        "capped": out["capped"], "resolution": out["resolution"],
+        "required_m": out["required_m"], "m_cap": out["m_cap"],
+        "capped": out["capped"], "budget_s": out["budget_s"],
+        "object_cpu": out["object_cpu"], "resolution": out["resolution"],
         "contingencies": dict(
             extend=dict(pairs=EXTEND_PAIRS, rule="paired_statistics at "
                         "zero margin, for a unit whose value is not "
                         "repeatable within a side"),
-            followup=dict(rule="R1 / E2 (b) at M x %d (cap %d), counts "
-                          "committed alone" % (FOLLOWUP_FACTOR,
-                                               M_CAP_FOLLOWUP))),
+            followup=dict(rule="R1 / E2 (b) at max(M x %d, M x floor "
+                          "range / %s), capped by %d times the budget, "
+                          "counts committed alone" % (
+                              FOLLOWUP_FACTOR, rules.RESOLUTION,
+                              FOLLOWUP_FACTOR))),
         "timing_counts": dict(path=str(timing_path),
                               seal=a.seal(timing_path),
                               commit=timing["commit"]),
@@ -1000,29 +1246,50 @@ def predeclare_run(args):
         "time_estimate": estimate, "code": d.code_seals()}
 
 
+def floor_range_of(r):
+    """The no-op floor's range (a Fraction) of an R1 row, or the widest of
+    an E2 (b) row's kinds."""
+    rows = r["kinds"].values() if "kinds" in r else [r]
+    return max(Fraction(str(x["floor_range"])) for x in rows)
+
+
 def predeclare_followup(args):
     """The counts file of a follow-up: the units owed it after the chain
-    ending in --stage, at M times FOLLOWUP_FACTOR (capped, `required` and
-    `capped` recorded as the first counts do)."""
+    ending in --stage, at M = max(M x FOLLOWUP_FACTOR, M x floor range /
+    resolution) (capped by FOLLOWUP_FACTOR times the budget; `required_m`
+    and `capped` recorded as the first counts do)."""
     sides, mseal = d.pins_of(args)
+    timing_path = table_counts_path(args).resolve(strict=True)
+    run_counts = load_storage_counts(
+        storage_counts_path(args).resolve(strict=True), sides, "run",
+        args.repo, mseal, timing_path, committed=False)
     chain = replay_chain(args.stage, args.ledger, args.repo,
-                         args.storage_counts, args.followup_counts)
+                         args.storage_counts, args.followup_counts,
+                         args.timing_counts)
     owed = owed_units(chain, "followup")
     require(owed, "no unit is owed a follow-up")
-    first, last = chain[0]["report"], chain[-1]
+    first = chain[0]["report"]
     base_m = first["params"]["m"]
-    required = base_m * FOLLOWUP_FACTOR
+    floor = max(floor_range_of(r) for r in owed_rows(chain, "followup"))
+    required = max(FOLLOWUP_FACTOR * base_m,
+                   math.ceil(base_m * floor / rules.RESOLUTION))
+    cap = cap_of(run_counts["object_cpu"], run_counts["m0"],
+                 FOLLOWUP_FACTOR)
     return {
         "schema": COUNTS_SCHEMA, "kind": "followup", "base": first["base"],
         "cand": first["cand"], "manifest": mseal, "seed": SEEDS[
             "followup"], "workloads": owed, "required_m": required,
-        "m_cap": M_CAP_FOLLOWUP, "capped": required > M_CAP_FOLLOWUP,
+        "base_m": base_m, "floor_range": rules.num(floor),
+        "m0": run_counts["m0"], "object_cpu": run_counts["object_cpu"],
+        "budget_s": RELEASE_BUDGET_S, "m_cap": cap,
+        "capped": required > cap,
         "followup": dict(sizes=first["params"]["sizes"],
-                         m=min(M_CAP_FOLLOWUP, required), k=K),
+                         m=min(cap, required), k=K),
         "references": first["references"],
-        "replaces": dict(run=str(last["folder"]),
-                         attempt=last["report"]["attempt"],
-                         seal=last["info"]["seal"]),
+        "timing_counts": run_counts["timing_counts"],
+        "replaces": dict(run=str(chain[-1]["folder"]),
+                         attempt=chain[-1]["report"]["attempt"],
+                         seal=chain[-1]["info"]["seal"]),
         "declared": a.seal(offline.DECLARED), "code": d.code_seals()}
 
 
@@ -1062,8 +1329,6 @@ def info_spec(args, mode):
             sizes=list(sizes), m=args.m0 or M0, k=K))
     info, pilot = info_run(args.pilot, key, "pilot", list(PILOT_UNITS),
                            None, mseal)
-    require(pilot["outcome"]["covered"], "--pilot is not usable: M %d "
-            "over the cap" % pilot["outcome"]["required_m"])
     return spec_of(mode, control_names(), decision_params(pilot),
                    pilot=dict(attempt=pilot["attempt"], seal=info["seal"]))
 
@@ -1072,7 +1337,8 @@ def counts_spec(args, stage, followup=False):
     sides, mseal = d.pins_of(args)
     path = storage_counts_path(args, followup).resolve(strict=True)
     counts = load_storage_counts(path, sides, "followup" if followup else
-                                 "run", args.repo, mseal)
+                                 "run", args.repo, mseal,
+                                 table_counts_path(args))
     use = d.counts_use(path, counts)
     return sides, counts, use
 
@@ -1093,7 +1359,8 @@ def link_of(chain):
 
 def extend_spec(args):
     sides, counts, use = counts_spec(args, "extend")
-    chain = replay_chain(args.first, None, args.repo, args.storage_counts)
+    chain = replay_chain(args.first, None, args.repo, args.storage_counts,
+                         None, args.timing_counts)
     owed = owed_units(chain, "extend")
     require(owed, "no unit is owed the %d-pair stage" % EXTEND_PAIRS)
     return spec_of("extend", owed, dict(
@@ -1104,7 +1371,7 @@ def extend_spec(args):
 def followup_spec(args):
     sides, counts, use = counts_spec(args, "followup", True)
     chain = replay_chain(args.stage, None, args.repo, args.storage_counts,
-                         args.followup_counts)
+                         args.followup_counts, args.timing_counts)
     owed = owed_units(chain, "followup")
     require(owed and owed == counts["workloads"], "the follow-up counts "
             "are not of the units owed: %s" % owed)
@@ -1131,7 +1398,7 @@ def exit_of(report):
     if mode == "control":
         return 0 if out["negative_control"]["detected"] else 1
     if mode == "pilot":
-        return 0 if out["covered"] else 2
+        return 0
     if mode == "smoke":
         return 0 if out["facts"]["ok"] else 2
     return {"pass": 0, "fail": 1}.get(d.stage_status(out["results"]), 2)
@@ -1219,6 +1486,7 @@ def build_parser():
     rep.add_argument("--repo", type=Path)
     rep.add_argument("--storage-counts", type=Path)
     rep.add_argument("--followup-counts", type=Path)
+    rep.add_argument("--timing-counts", type=Path)
     dis = cmd["dispose"]
     dis.add_argument("--stage", type=Path, action="append", required=True,
                      help="the last stage of the storage chain(s): run, "
@@ -1234,7 +1502,8 @@ def build_parser():
     dis.add_argument("--ledger", type=Path)
     dis.add_argument("--timing-counts", type=Path)
     dis.add_argument("--storage-counts", type=Path)
-    dis.add_argument("--followup-counts", type=Path)
+    dis.add_argument("--timing-followup-counts", type=Path)
+    dis.add_argument("--storage-followup-counts", type=Path)
     dis.add_argument("--relocated", action="append", default=[],
                      metavar="ATTEMPT=DIR")
     dis.add_argument("--out", type=Path, required=True)
@@ -1246,7 +1515,8 @@ def build_parser():
                        "task32_snapshots.py verify)")
     snaps.add_argument("--manifest", type=Path, required=True)
     snaps.add_argument("--repo", type=Path, required=True)
-    snaps.add_argument("--scratch-root", type=Path, default=SCRATCH_ROOT)
+    snaps.add_argument("--scratch-root", type=Path, default=SCRATCH_ROOT,
+                       help="must be the declared %s" % SCRATCH_ROOT)
     return parser
 
 
@@ -1276,7 +1546,8 @@ def dispatch(args):
         for folder in args.runs:
             print(json.dumps(replay_chain(
                 folder, args.ledger, args.repo, args.storage_counts,
-                args.followup_counts)[-1]["info"], sort_keys=True))
+                args.followup_counts, args.timing_counts)[-1]["info"],
+                sort_keys=True))
         return 0
     else:
         import task33_dispose as dispose

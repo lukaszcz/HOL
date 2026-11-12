@@ -58,8 +58,11 @@ S2 = dict(
             "Opening": [1, 1], "boolSimps": [1, 1], "pureSimps": [1, 1]}),
         paths=["p.sig"], allowed_kinds=["code"],
         forbidden_kinds=["state", "per-object"])])
-E2C = dict(rule="r", extension_state=[dict(
-    name="n", created_by="c", where="w", source="s", required=True)])
+E2C = dict(rule="r", probe_support=dict(
+    justification="j", registers=dict(structures=["P"])),
+    extension_state=[dict(
+        name="n", created_by="c", where="w", source="s", required=True,
+        observable=True, registers=dict(structures=["X"]))])
 # every marker-less required log has the one OK line, `Ran` block or
 # manifest line that HarvestTest writes
 COUNTS = {n: 1 for n in t.LOGS_REQUIRED if t.needs_count(n)}
@@ -1806,6 +1809,28 @@ class DeclaredTest(unittest.TestCase):
                      required="yes")),
                 ("e2c missing",
                  lambda x: x["e2c"]["extension_state"][0].pop("source")),
+                ("e2c observable flag",
+                 lambda x: x["e2c"]["extension_state"][0].pop(
+                     "observable")),
+                ("e2c observable without names",
+                 lambda x: x["e2c"]["extension_state"][0].update(
+                     registers={})),
+                ("e2c unknown list",
+                 lambda x: x["e2c"]["extension_state"][0].update(
+                     registers=dict(nothing=["a"]))),
+                ("e2c duplicate name",
+                 lambda x: x["e2c"]["extension_state"][0].update(
+                     registers=dict(structures=["a", "a"]))),
+                ("e2c unobservable required",
+                 lambda x: x["e2c"]["extension_state"][-1].update(
+                     required=True)),
+                ("e2c unobservable with names",
+                 lambda x: x["e2c"]["extension_state"][-1].update(
+                     registers=dict(structures=["a"]))),
+                ("probe support missing",
+                 lambda x: x["e2c"].pop("probe_support")),
+                ("probe support empty",
+                 lambda x: x["e2c"]["probe_support"].update(registers={})),
                 ("allowlist blob",
                  lambda x: x["allowlist"][0].update(cand_blob="abc")),
                 ("allowlist text",

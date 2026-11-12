@@ -6,14 +6,20 @@
                      S3 offline reports (audit, harvest, archive; their
                      seals, schemas and code seals verified) and the
                      storage stages' decisions, one decision per case id
-                     and kind. Pass only if every gate passes; the reported
-                     items and the attributions still owed are listed.
+                     and kind. Pass only if every gate passes; a row still
+                     owed or inconclusive after the last allowed stage is
+                     blocked; the reported items, the process redraws and
+                     the attributions still owed are listed. The file is
+                     sealed (disposition.json.seal).
   dispose-snapshots  after the last use: verify the snapshots, check that
                      the harvest and the api-audit receipt are sealed under
-                     the evidence directory, remove exactly the paths the
-                     snapshot manifest names (the two roots, their HOMEs,
-                     the sequence copy, the scratch directory when no
-                     journal is pending, /dev/shm/t33, the then empty
+                     the evidence directory and that a sealed
+                     disposition.json owes nothing, write an intent journal
+                     (snapshot-disposal.intent.json; a repeated command
+                     resumes it), remove exactly the paths the snapshot
+                     manifest names (the two roots, their HOMEs, the
+                     sequence copy, the scratch directory when no journal
+                     is pending, the declared scratch root, the then empty
                      parents) and write snapshot-disposal.json. It never
                      uses `task32_snapshots.py discard` (that rewrites the
                      manifest whose seal the committed TASK32 counts carry)
@@ -36,9 +42,11 @@ import task33_offline as offline
 import task33_rules as rules
 import task33_storage as storage
 
-SCHEMA = "task33-disposition-v1"
+SCHEMA = "task33-disposition-v2"
 DISPOSAL_SCHEMA = "task33-snapshot-disposal-v1"
-OFFLINE = ("archive", "audit", "harvest")
+INTENT_SCHEMA = "task33-snapshot-disposal-intent-v1"
+OFFLINE = storage.OFFLINE_COMMANDS
+ATTRIBUTED = ("gc_cpu", "maxrss")  # the timing intervals scanned
 LABELS = ("base", "cand")
 GATE_ORDER = (rules.FAIL, rules.BLOCKED, rules.INCONCLUSIVE)
 TIMING = {"pass": rules.PASS, "fail": rules.FAIL,
@@ -141,6 +149,28 @@ def same_gate(chains):
             "the stages are of different gates")
 
 
+def reported_rows(chains):
+    """{key: row} of the reported and unsupported rows (the outcomes'
+    `reported` items that are decisions), the last stage's winning."""
+    found = {}
+    for chain in chains:
+        for entry in chain:
+            for key, r in entry["report"]["outcome"].get(
+                    "reported", {}).items():
+                if isinstance(r, dict) and "decision" in r:
+                    found[key] = dict(r, stage=entry["stage"],
+                                      attempt=entry["report"]["attempt"])
+    return found
+
+
+def closed(r):
+    """The status of a gated row once no stage is left: a row still owed
+    a contingency or inconclusive is blocked (the TASK32 convention)."""
+    if r["owed"] or r["decision"] == rules.INCONCLUSIVE:
+        return rules.BLOCKED
+    return r["decision"]
+
+
 def storage_decisions(chains):
     """The decision of every (case, kind): the last stage that decided it;
     missing ones are blocked. Also the reported items per stage."""
@@ -153,32 +183,99 @@ def storage_decisions(chains):
             for k, v in entry["report"]["outcome"].get("reported",
                                                        {}).items():
                 reported.setdefault(entry["stage"], {})[k] = v
+    side_rows = reported_rows(chains)
     out = []
     for case, kind in expected_storage():
         key = rules.key_of(case, kind)
         r = rows.pop(key, None)
         if r is None:
-            if case == "S2" and any(
-                    key in v for v in reported.values()):
-                r = next(v[key] for v in reported.values() if key in v)
-                out.append(decision(case, kind, rules.REPORTED,
-                                    "storage:run", r["reason"]))
+            r = side_rows.pop(key, None)
+            if r is not None:
+                out.append(decision(case, kind, r["decision"],
+                                    "storage:" + r["stage"], r["reason"],
+                                    attempt=r["attempt"]))
                 continue
             out.append(decision(case, kind, rules.BLOCKED, "storage",
-                                "no evidence: the stage that decides it "
+                                "no evidence: the stage that decided it "
                                 "did not run"))
             continue
-        status = r["decision"]
-        if r["owed"]:
-            status = rules.INCONCLUSIVE if status == rules.PASS else status
+        status = closed(r)
         out.append(decision(case, kind, status, "storage:" + r["stage"],
-                            r["reason"], owed=r["owed"],
-                            attempt=r["attempt"]))
+                            r["reason"] if status == r["decision"] else
+                            "%s: still %s after the last stage%s" % (
+                                r["reason"], r["decision"], " (owed %s)" %
+                                r["owed"] if r["owed"] else ""),
+                            owed=r["owed"], attempt=r["attempt"]))
     for key, r in sorted(rows.items()):  # decided, not expected: listed
-        out.append(decision(r["case"], r["kind"], r["decision"],
+        out.append(decision(r["case"], r["kind"], closed(r),
                             "storage:" + r["stage"], r["reason"],
                             owed=r["owed"], attempt=r["attempt"]))
+    for key, r in sorted(side_rows.items()):  # reported, unsupported
+        out.append(decision(r["case"], r["kind"], r["decision"],
+                            "storage:" + r["stage"], r["reason"],
+                            attempt=r["attempt"]))
     return out, reported
+
+
+def process_redraws(chains):
+    """Every try superseded in a storage stage: the processes redrawn, why
+    (design 8.6), with the stage's attempt."""
+    return [dict(attempt=entry["report"]["attempt"], stage=entry["stage"],
+                 unit=e["workload"], side=e["side"], pair=e["pair"],
+                 selection=e["selection"], redraw=e["redraw"],
+                 reason=e["superseded"])
+            for chain in chains for entry in chain
+            for e in entry["report"]["runs"] if e.get("superseded")]
+
+
+def timing_attribution(disp):
+    """The timing chain's GC CPU and maxrss paired intervals scanned like
+    the S3 archive's: the final stage's candidate intervals wholly above
+    the policy margin owe an attribution."""
+    out = []
+    for unit, row in sorted(disp["workloads"].items()):
+        last = row["stages"][-1]
+        for metric in ATTRIBUTED:
+            interval = last["intervals"].get(metric)
+            if interval and interval[0] > 1:
+                out.append(dict(
+                    unit=unit, field=metric, low=interval[0],
+                    stage=last["stage"], source="timing",
+                    wholly_above_margin=interval[0] > offline.ABOVE))
+    return out
+
+
+def check_offline_identity(found, args):
+    """The offline reports given are the ones the storage counts were
+    predeclared with."""
+    counts = a.load(storage.storage_counts_path(args))
+    for command in OFFLINE:
+        d.require(found[command][1]["seal"] ==
+                  counts["offline"][command]["seal"],
+                  "the %s report is not the one the storage counts "
+                  "bound" % command)
+
+
+def check_linear(chains, ledger):
+    """The storage chains are linear: each stage names its predecessor
+    (`storage.replay_chain` checks it), and no attempt of the gate that
+    decided something is outside them (a branch: a second run, or a
+    contingency another stage had already taken)."""
+    stages = [c[0]["stage"] for c in chains]
+    d.require(sorted(stages) in (["run"], ["audit", "run"]),
+              "the storage chains are the run's and the audit's, once "
+              "each: %s" % stages)
+    key = chains[0][0]["report"]["key"]
+    _, found = d.read_ledger(ledger, storage.LEDGER_TABLE)
+    decided = {(i, st) for (i, st), row in found.items()
+               if st in storage.DECISIVE and row["opens"][0]["key"] == key
+               and any(c["status"] in d.DECISIONS.values()
+                       for c in row["closes"])}
+    listed = {(e["report"]["attempt"], e["stage"])
+              for chain in chains for e in chain}
+    extra = sorted(decided - listed)
+    d.require(not extra, "a deciding attempt is outside the chains (a "
+              "branch): %s" % ", ".join("%s (%s)" % x for x in extra))
 
 
 def split_relocated(ledger, relocated):
@@ -205,13 +302,14 @@ def table_ledger(ledger, table, relocated):
 
 
 def dispose(args):
-    """`task33_storage.py dispose`: the one disposition.json."""
+    """`task33_storage.py dispose`: the one, sealed, disposition.json."""
     relocated = d.parse_relocated(args.relocated)
     offline_found = load_offline(args.offline)
+    check_offline_identity(offline_found, args)
     with d.using_table("task33"):
         timing_chain = d.replay_chain(
             args.timing_stage, args.ledger, args.timing_counts,
-            args.followup_counts, args.repo)
+            args.timing_followup_counts, args.repo)
         ledger = args.ledger or d.ledger_path(
             timing_chain[0]["report"]["repo"])
         shares = split_relocated(ledger, relocated)
@@ -219,8 +317,10 @@ def dispose(args):
             timing_chain, ledger, args.timing_counts, shares[d.TABLE])
         storage_chains = [storage.replay_chain(
             s, args.ledger, args.repo, args.storage_counts,
-            args.followup_counts) for s in args.stage]
+            args.storage_followup_counts, args.timing_counts)
+            for s in args.stage]
         same_gate([timing_chain] + storage_chains)
+        check_linear(storage_chains, ledger)
         loading_ledger = table_ledger(ledger, d.TABLE, shares[d.TABLE])
         storage_ledger = table_ledger(
             ledger, storage.LEDGER_TABLE, shares[storage.LEDGER_TABLE])
@@ -228,6 +328,8 @@ def dispose(args):
     stored, reported = storage_decisions(storage_chains)
     off, attribution = offline_decisions(offline_found)
     decisions += stored + off
+    attribution += [x for x in timing_attribution(timing_disp)
+                    if x["wholly_above_margin"]]
     gates = [x["decision"] for x in decisions if x["decision"] in
              rules.GATES]
     status = overall(gates)
@@ -235,7 +337,9 @@ def dispose(args):
         schema=SCHEMA, status=status, decisions=decisions,
         counts={s: sum(1 for x in decisions if x["decision"] == s)
                 for s in rules.GATES + (rules.REPORTED, rules.UNSUPPORTED)},
+        owed=[x for x in decisions if x.get("owed")],
         reported=reported, attribution_needed=attribution,
+        process_redraws=process_redraws(storage_chains),
         timing=timing_disp, ledgers=dict(loading=loading_ledger,
                                          storage=storage_ledger),
         storage_chains=[[dict(stage=e["stage"], run=str(e["folder"]),
@@ -246,6 +350,8 @@ def dispose(args):
         code=d.code_seals())
     with args.out.open("x") as stream:
         stream.write(d.dumps(data))
+    with Path(str(args.out) + ".seal").open("x") as stream:
+        stream.write(d.dumps(a.seal(args.out)))
     print("TASK33 disposition: %s %s" % (status, json.dumps(data["counts"])))
     return {"pass": 0, "fail": 1}.get(status, 2)
 
@@ -298,6 +404,25 @@ def sealed_evidence(evidence):
                            receipt_seal=data["audit"]["receipt_seal"]))
 
 
+def sealed_disposition(evidence):
+    """The one disposition.json under `evidence`, sealed, a disposition of
+    this schema that owes nothing (no row owed, no attribution still
+    needed): {path, seal}."""
+    found = sorted(Path(evidence).rglob("disposition.json"))
+    d.require(len(found) == 1, "%d disposition.json under %s, not one" %
+              (len(found), evidence))
+    path = found[0]
+    d.require(a.load(Path(str(path) + ".seal")) == a.seal(path),
+              "the disposition seal differs")
+    data = a.load(path)
+    d.require(data.get("schema") == SCHEMA, "not a %s file" % SCHEMA)
+    d.require(not data["owed"] and not data["attribution_needed"],
+              "the disposition still owes: %s" % (
+                  [x["kind"] for x in data["owed"]] +
+                  [x["unit"] for x in data["attribution_needed"]],))
+    return dict(path=str(path), seal=a.seal(path))
+
+
 def removal_plan(manifest, repo, scratch_root):
     """The paths to remove, from the manifest and nothing else, each
     checked: ({kind: [(path, how)]}, the parents to remove if empty).
@@ -335,11 +460,11 @@ def removal_plan(manifest, repo, scratch_root):
         d.require(os.path.realpath(path) == str(path),
                   "%s is not a canonical path" % path)
     scratch_root = Path(scratch_root)
-    d.require(scratch_root.is_absolute() and scratch_root.name == "t33" and
+    d.require(scratch_root == Path(storage.SCRATCH_ROOT) and
               scratch_root == Path(os.path.abspath(scratch_root)) and
               not os.path.islink(scratch_root),
-              "the scratch root is not an absolute .../t33 directory: %s" %
-              scratch_root)
+              "the scratch root is not the declared %s: %s" % (
+                  storage.SCRATCH_ROOT, scratch_root))
     return plan, scratch_root, sorted(snaps), sorted(scratch)
 
 
@@ -372,11 +497,32 @@ def remove_empty(path, stop):
     return gone
 
 
+def intent_of(manifest_path, plan, scratch_root):
+    return dict(schema=INTENT_SCHEMA, manifest=a.seal(manifest_path),
+                paths=[[str(p), how] for p, how in plan],
+                scratch_root=str(scratch_root))
+
+
+def write_intent(path, data):
+    """Atomic and durable, as the run journals are."""
+    tmp = Path(str(path) + ".tmp")
+    with open(tmp, "w") as stream:
+        stream.write(d.dumps(data))
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(tmp, path)
+
+
 def dispose_snapshots(args):
-    """`task33_storage.py dispose-snapshots` (design section 5)."""
+    """`task33_storage.py dispose-snapshots` (design section 5). The
+    intent journal is written before anything is removed; a command that
+    finds one (an interrupted disposal of the same plan) resumes it: what
+    is already gone is skipped and the verification, which the missing
+    paths would fail, is not repeated."""
     repo = Path(args.repo).resolve(strict=True)
     evidence = Path(args.evidence).resolve(strict=True)
     out = evidence / "snapshot-disposal.json"
+    intent_path = evidence / "snapshot-disposal.intent.json"
     d.require(not out.exists(), "%s exists: the snapshots were disposed" %
               out)
     manifest_path = Path(args.manifest).resolve(strict=True)
@@ -386,21 +532,31 @@ def dispose_snapshots(args):
         "not a complete snapshot manifest")
     plan, scratch_root, snaps, scratches = removal_plan(
         manifest, repo, args.scratch_root)
-    for path, how in plan:
-        d.require(os.path.lexists(path), "%s is absent: the snapshots are "
-                  "not whole (nothing was removed)" % path)
+    intent = intent_of(manifest_path, plan, scratch_root)
+    resumed = intent_path.exists()
+    if resumed:
+        d.require(a.load(intent_path) == intent, "the disposal intent "
+                  "journal %s is of another plan" % intent_path)
+    else:
+        for path, how in plan:
+            d.require(os.path.lexists(path), "%s is absent: the snapshots "
+                      "are not whole (nothing was removed)" % path)
     sealed = sealed_evidence(evidence)
+    sealed["disposition"] = sealed_disposition(evidence)
     sides = {s: dict(root=Path(manifest["sides"][s]["root"]),
                      pin=manifest["sides"][s]["pin"],
                      tree=manifest["sides"][s]["tree"]) for s in LABELS}
     verify = args.verify_argv or d.default_verify(repo, manifest_path,
                                                   sides)
-    sizes = {str(p): tree_bytes(p) if how == "tree" else
-             os.lstat(p).st_size for p, how in plan}
+    sizes = {str(p): (tree_bytes(p) if how == "tree" else
+                      os.lstat(p).st_size) if os.path.lexists(p) else None
+             for p, how in plan}
     with a.serial_lock(repo) as fds:
         d.require(not pending(repo), "a restore journal is pending: "
                   "`recover` first (nothing was removed)")
-        final = d.run_verify(verify, repo, fds)
+        final = None if resumed else d.run_verify(verify, repo, fds)
+        if not resumed:
+            write_intent(intent_path, intent)
         removed = [str(p) for p, how in plan if remove_path(p, how)]
         if scratch_root.exists():
             shutil.rmtree(scratch_root)
@@ -412,8 +568,10 @@ def dispose_snapshots(args):
     data = dict(
         schema=DISPOSAL_SCHEMA, manifest=dict(
             path=str(manifest_path), seal=a.seal(manifest_path)),
-        sizes_bytes=sizes, verify=final, harvest=sealed["harvest"],
-        api_audit=sealed["audit"], removed=removed, emptied_parents=gone,
+        sizes_bytes=sizes, verify=final, resumed=resumed,
+        harvest=sealed["harvest"], api_audit=sealed["audit"],
+        disposition=sealed["disposition"], removed=removed,
+        emptied_parents=gone,
         recreate=[
             "python3 src/simp/tests/performance/task32_snapshots.py build "
             "--side base --pin %s ..." % manifest["sides"]["base"]["pin"],
@@ -424,5 +582,6 @@ def dispose_snapshots(args):
             "task32_snapshots.py compare ..."])
     with out.open("x") as stream:
         stream.write(d.dumps(data))
+    intent_path.unlink()
     print("removed %d paths; wrote %s" % (len(removed), out))
     return 0

@@ -69,6 +69,11 @@ the fields below, no more and no fewer:
   phase     n:uint, share_start, share_built, share_shared, share_canon:
             uint (share counts at the start of the size, after the as-built
             rows, after the forced sharing, after the canonical rows);
+            share_tries:uint 1..SHARE_TRIES_MAX, converged:bool (the
+            sharing of the anchor inputs that precedes the canonical
+            pre-anchor ran share_tries rounds and the anchors stopped
+            changing; a probe that did not converge is NotComparable, not a
+            moved anchor);
             build, rows: peak windows {reset_ok:bool, rss_before,
             hwm_before, rss_reset, hwm_reset, rss_after, hwm_after:
             uint|null bytes, status:"ok"|"unsupported"}. build is the
@@ -126,7 +131,7 @@ from fractions import Fraction
 
 sys.dont_write_bytecode = True
 
-SCHEMA = "task33-records-v4"
+SCHEMA = "task33-records-v5"
 PREFIX = "@@T33\t"
 
 # Files a probe directory needs (copied from task33/ and from the
@@ -149,6 +154,9 @@ SWITCHES = ("graph_extra", "leak", "hook")
 CONTROL_PROBES = dict(graph_extra=("graph", "ext"), leak=("release", "ext"),
                       hook=("registry", "ext"))
 
+# The registry lists L3 compares (the ordered listeners, the sorted rest).
+L3_LISTS = ("listeners", "attributes", "set_types", "structures",
+            "signatures", "functors")
 STARTUP_KINDS = ("state0-empty", "state-empty")
 LOAD_KINDS = STARTUP_KINDS + ("load-simpLib", "load-congLib", "first-use")
 PROBE_KINDS = dict(load=LOAD_KINDS, registry=LOAD_KINDS,
@@ -172,6 +180,7 @@ SIZED = ("ThmAttribute", "Cond_rewr", "simpLib", "Traverse", "Travrules",
          "Opening", "boolSimps", "pureSimps")
 DECLARED = ("ThmAttribute", "Cond_rewr")  # D: structure and signature
 REPEATS = 3
+SHARE_TRIES_MAX = 9  # T33GraphLib `shared`: the first round and 8 more
 CONS = 3  # words of a list cell (header, head, tail)
 LOAD_CHECK = {"load-simpLib": "SIMP_CONV rule",
               "load-congLib": "CONGRUENCE_EQ_SIMP_CONV rule"}
@@ -290,7 +299,8 @@ FIELDS = dict(
                canon_anchor=is_uint, canon_anchor_post=is_uint,
                canon_union=is_uint, canon_words=is_int, canon_share=is_uint),
     phase=dict(n=is_uint, share_start=is_uint, share_built=is_uint,
-               share_shared=is_uint, share_canon=is_uint, build=is_window,
+               share_shared=is_uint, share_canon=is_uint,
+               share_tries=is_uint, converged=is_bool, build=is_window,
                rows=is_window),
     step=dict(graph=is_str, mode=is_str, first=is_int, rest=is_int,
               span=is_uint),
@@ -521,6 +531,9 @@ def check_phase(record):
                                   "share_shared", "share_canon")]
     if shares != sorted(shares):
         fail("phase %d: share counts decrease" % record["n"])
+    if not 1 <= record["share_tries"] <= SHARE_TRIES_MAX:
+        fail("phase %d: share_tries %d outside 1..%d" % (
+            record["n"], record["share_tries"], SHARE_TRIES_MAX))
     for name in ("build", "rows"):
         check_window(record["n"], name, record[name])
 
@@ -710,7 +723,8 @@ def validate(text, controls=(), root=None):
                    times={}, live={}, share={}, alloc={}, graph={},
                    release={}, residual={}, held={}, phase={}, step={},
                    gateable={}, gateable_coverage={}, anchor_moved=[],
-                   held_comparable={}, weak=None, registry=None, anchored=None)
+                   held_comparable={}, unconverged=[], weak=None,
+                   registry=None, anchored=None)
     steps = {}
     for r in records:
         name = r["record"]
@@ -731,6 +745,8 @@ def validate(text, controls=(), root=None):
         elif name == "phase":
             check_phase(r)
             summary["phase"][r["n"]] = r
+            if not r["converged"]:
+                summary["unconverged"].append(r["n"])
         elif name == "step":
             if r["mode"] not in STEP_MODES or r["span"] != STEP_SPAN:
                 fail("step %s: bad mode or span" % r["graph"])
@@ -766,6 +782,11 @@ def validate(text, controls=(), root=None):
             fail("phase %d without its live record" % n)
     check_comparable(summary["release"], records,
                      summary["held_comparable"])
+    if summary["unconverged"]:
+        raise NotComparable(
+            "the canonical pre-anchor did not converge at size(s) %s (%d "
+            "sharing rounds): a harness reading, not a moved anchor" % (
+                summary["unconverged"], SHARE_TRIES_MAX))
     return summary
 
 
