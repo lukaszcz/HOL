@@ -133,7 +133,7 @@ FAILED, BLOCKED = loading.FAILED, loading.BLOCKED
 # HISTORY (per file of CODE, the seals it had when a record was made, once
 # it has changed since: PROTOCOL "Seals and seal histories"; replay accepts
 # the current seal or one listed here, a run needs the current one),
-# MIN_UNIT_CPU, R_CAP, SAMPLE_CPU and `cases`.
+# MIN_UNIT_CPU, UNIT_FLOOR, R_CAP, SAMPLE_CPU and `cases`.
 TASK32_HISTORY = {
     "task32_downstream.py": [
         {"sha256": "08465bf86ce7cef1b991e396a78cb03e6f857ed392215769236582f"
@@ -195,10 +195,13 @@ class Table:
     the others append -smoke, -control, -pilot, -ext, -fu), `journals`
     (restore journals, relative to the checkout), `scratch` (default
     --scratch), `code` (the files its counts and runs are bound to) and
-    `history`, `min_unit_cpu` (a unit under it sizes no R), `r_cap` (the
-    most fresh processes per sample), `sample_cpu` (seconds of CPU a
-    sample should reach: R is at least ceil(sample_cpu / median CPU); 0
-    for none), `claims`, `cross_side` (the L1 rule: per unit the loaded
+    `history`, `min_unit_cpu` (a unit under it sizes no R), `unit_floor`
+    (where that floor applies: "process", the median CPU of one process, or
+    "sample", the median CPU of the declared sample, min(R, r_cap) times
+    that of a process), `r_cap` (the most fresh processes per sample),
+    `sample_cpu` (seconds of CPU a sample should reach: R is at least
+    ceil(sample_cpu / median CPU); 0 for none), `claims`,
+    `cross_side` (the L1 rule: per unit the loaded
     modules and the files the process added to fileDirMap, root-masked,
     are equal on both sides, a difference blocks; the part of fileDirMap
     the heap preloaded is compared only through the `loaded_before`
@@ -224,6 +227,7 @@ class Table:
     code: tuple
     history: dict
     min_unit_cpu: float
+    unit_floor: str
     r_cap: int
     sample_cpu: float
     claims: str
@@ -231,6 +235,14 @@ class Table:
     env_prefix: object
     probe_sources: object
     probe_digest: object
+
+    def __post_init__(self):
+        if self.unit_floor not in UNIT_FLOORS:
+            raise ValueError("table %s: unit_floor %r is not one of %s" % (
+                self.name, self.unit_floor, ", ".join(UNIT_FLOORS)))
+
+
+UNIT_FLOORS = ("process", "sample")
 
 
 # The storage driver (S4) and its rules, bound by the table's seals like
@@ -249,7 +261,8 @@ TABLES = {
         seed="task32-1", journals=".agent-files/scratch/task32",
         scratch="/dev/shm/t32",
         code=("task32_cases.py", "task32_downstream.py") + COMMON_CODE,
-        history=TASK32_HISTORY, min_unit_cpu=1.0, r_cap=4,
+        history=TASK32_HISTORY, min_unit_cpu=1.0,
+        unit_floor="process", r_cap=4,
         sample_cpu=0.0, claims="NOT release acceptance: proof-build timing "
         "only", cross_side=False, env_prefix=None, probe_sources=None,
         probe_digest=None),
@@ -262,7 +275,8 @@ TABLES = {
         scratch="/dev/shm/t33",
         code=("task33_cases.py", "task32_downstream.py") + COMMON_CODE +
         task33_cases.CODE_FILES + STORAGE_CODE,
-        history={}, min_unit_cpu=0.2, r_cap=8, sample_cpu=1.0,
+        history={}, min_unit_cpu=0.2, unit_floor="sample", r_cap=8,
+        sample_cpu=1.0,
         claims="NOT release acceptance: startup and load timing only",
         cross_side=True, env_prefix="T33_",
         probe_sources=task33_cases.PROBE_FILES,
@@ -281,7 +295,7 @@ def use_table(name):
     refuses it under a different one."""
     global ACTIVE, TABLE, COUNTS, FOLLOWUP_COUNTS, LAYOUT_SEED
     global EXTENSION_SEED, FOLLOWUP_SEED, SEEDS, JOURNALS, CODE, HISTORY
-    global MIN_UNIT_CPU, R_CAP, SAMPLE_CPU, cases
+    global MIN_UNIT_CPU, UNIT_FLOOR, R_CAP, SAMPLE_CPU, cases
     require(name in TABLES, "unknown table %r (one of %s)" % (
         name, ", ".join(TABLES)))
     for unit in TABLES[name].cases.UNITS:
@@ -300,6 +314,7 @@ def use_table(name):
     JOURNALS = table.journals
     CODE, HISTORY = table.code, table.history
     MIN_UNIT_CPU, R_CAP = table.min_unit_cpu, table.r_cap
+    UNIT_FLOOR = table.unit_floor
     SAMPLE_CPU = table.sample_cpu
     cases = table.cases
     return previous
@@ -1694,7 +1709,9 @@ def pilot_summary(rows_by_unit, reps_floor=1):
     """The pilot of each unit: B/B pairs only. loading.jitter at R = 1, the
     proposed R (n * R the sd bound asks for, over the stage's pairs), the
     median CPU and wall of a process and whether it reaches the unit floor
-    (MIN_UNIT_CPU; the table's SAMPLE_CPU, if any, also floors R)."""
+    (MIN_UNIT_CPU; the table's SAMPLE_CPU, if any, also floors R). Under
+    the "sample" unit floor the compared value is the declared sample's
+    median CPU, min(R, R_CAP) times a process's, recorded as `floor_cpu`."""
     out = {}
     for name, rows in rows_by_unit.items():
         pairs = len(rows) // 2
@@ -1713,7 +1730,17 @@ def pilot_summary(rows_by_unit, reps_floor=1):
                          median_wall=median([m["wall"] for m in raw]),
                          reps=reps, long_enough=cpu >= MIN_UNIT_CPU,
                          within_cap=reps is not None and reps <= R_CAP)
+        if UNIT_FLOOR == "sample":
+            floor_cpu = None if reps is None else min(reps, R_CAP) * cpu
+            out[name].update(floor_cpu=floor_cpu, long_enough=(
+                floor_cpu is not None and floor_cpu >= MIN_UNIT_CPU))
     return out
+
+
+def floor_text():
+    """The unit floor as the refusals name it."""
+    return "%g s of CPU %s" % (MIN_UNIT_CPU, "per declared sample" if
+                               UNIT_FLOOR == "sample" else "per process")
 
 
 def declared_reps(pilot_outcome):
@@ -1725,8 +1752,8 @@ def declared_reps(pilot_outcome):
     units = pilot_outcome["pilot"]
     require(pilot_outcome.get("covered") and units and all(
         isinstance(p.get("reps"), int) for p in units.values()),
-        "the pilot is not usable: a unit is under %g s of CPU, so it "
-        "sized no R" % MIN_UNIT_CPU)
+        "the pilot is not usable: a unit is under %s, so it "
+        "sized no R" % floor_text())
     return {w: min(R_CAP, p["reps"]) for w, p in units.items()}
 
 
@@ -3057,7 +3084,7 @@ def predeclare_first(args):
                                      args.ledger, [cases.CONTROL_UNIT],
                                      mseal=mseal)
     require(pilot["outcome"]["covered"], "the pilot is not usable: a unit "
-            "is under %g s of CPU" % MIN_UNIT_CPU)
+            "is under %s" % floor_text())
     require(smoke["outcome"]["probe"]["ok"] and
             smoke["outcome"]["probe"]["complete"],
             "the smoke run did not pass the probe facts (reporter in "
@@ -3213,7 +3240,7 @@ def busy_spec(args, key, mseal):
             "--pilot is not a pilot of this gate with %s" %
             cases.CONTROL_UNIT)
     require(pilot["outcome"]["covered"], "--pilot is not usable: a unit "
-            "is under %g s of CPU" % MIN_UNIT_CPU)
+            "is under %s" % floor_text())
     require(pilot["manifest"] == mseal, "--pilot was made on other "
             "snapshots (the manifest seal differs)")
     cpu = pilot["outcome"]["pilot"][cases.CONTROL_UNIT]["median_cpu"]

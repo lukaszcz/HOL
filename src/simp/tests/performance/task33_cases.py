@@ -34,7 +34,8 @@ control (T33_LEAK, T33_HOOK, T33_GRAPH_EXTRA) is a separate unit
 
 `serial` is a rough expectation of the whole-process CPU in seconds (only
 fakes use it; the pilot measures the real figure and the unit floor is
-`task32_downstream.Table.min_unit_cpu`).
+`task32_downstream.Table.min_unit_cpu`, applied to the declared sample's CPU,
+`Table.unit_floor` = "sample").
 """
 
 import task33_records as records

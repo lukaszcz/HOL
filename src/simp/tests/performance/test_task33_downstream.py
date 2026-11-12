@@ -707,9 +707,46 @@ class Sizing(unittest.TestCase):
             self.assertTrue(got["long_enough"])
             self.assertTrue(got["within_cap"])
 
-    def test_a_unit_under_the_floor_is_not_long_enough(self):
-        self.assertFalse(self.pilot(0.19)["long_enough"])
-        self.assertTrue(self.pilot(0.2)["long_enough"])
+    def test_the_floor_applies_to_the_declared_sample(self):
+        # a 0.069 s kind at R 15 is declared at 8: 8 * 0.069 = 0.552 s
+        got = self.pilot(0.069)
+        self.assertEqual(got["reps"], 15)
+        self.assertTrue(got["long_enough"])
+        self.assertAlmostEqual(got["floor_cpu"], 0.552)
+        outcome = dict(covered=True, pilot=dict(u=got))
+        self.assertEqual(dw.declared_reps(outcome), dict(u=8))
+
+    def test_a_sample_under_the_floor_even_at_the_cap_is_not_long_enough(
+            self):
+        got = self.pilot(0.02)
+        self.assertEqual(got["reps"], 50)
+        self.assertFalse(got["long_enough"])
+        self.assertAlmostEqual(got["floor_cpu"], 0.16)
+        self.assertTrue(self.pilot(0.025)["long_enough"])
+        with self.assertRaisesRegex(Exception, "per declared sample"):
+            dw.declared_reps(dict(covered=False, pilot=dict(u=got)))
+
+    def test_the_refusals_name_the_kind_of_the_floor(self):
+        self.assertEqual(dw.floor_text(), "0.2 s of CPU per declared sample")
+        with dw.using_table("task32"):
+            self.assertEqual(dw.floor_text(), "1 s of CPU per process")
+            with self.assertRaisesRegex(Exception, "1 s of CPU per process"):
+                dw.declared_reps(dict(covered=False, pilot={}))
+
+    def test_a_process_floor_table_is_unchanged_and_has_no_floor_cpu(self):
+        with dw.using_table("task32"):
+            got = self.pilot(0.5)
+            self.assertFalse(got["long_enough"])
+            self.assertNotIn("floor_cpu", got)
+            self.assertTrue(self.pilot(1.0)["long_enough"])
+
+    def test_the_unit_floor_of_each_table_and_its_validation(self):
+        self.assertEqual(dw.UNIT_FLOOR, "sample")
+        with dw.using_table("task32"):
+            self.assertEqual(dw.UNIT_FLOOR, "process")
+        for bad in ("unit", "", None):
+            with self.assertRaises(ValueError):
+                dataclass_replace(dw.TABLES["task33"], unit_floor=bad)
 
     def test_noise_raises_r_above_the_floor_and_the_cap_clamps_it(self):
         got = self.pilot(0.25, noise=0.5)
