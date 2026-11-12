@@ -369,26 +369,56 @@ names the extension signature in the repo), every name that develop's `M.sig`
 (pinned in `inputs/develop/`, from the base revision) exports and that the
 extension's `M'.sig` also declares needs either a row with old name `M.name`,
 or an entry in [migration/shared-exports.tsv](../migration/shared-exports.tsv)
-with a one-line justification that the extension binds the identical value or
-type. `check_design.py` enforces this: a missing name fails, and an entry that
+with a `binding` and a one-line justification that the extension binds the
+identical value or type. `check_design.py` enforces this: a missing name fails, and an entry that
 also has a row or is not a shared export (stale) fails. Names are read from the
 signatures by a comment-stripping reader, per namespace (a type and a value of
 the same name are different declarations); it fails on `structure`, `functor`,
-`sharing`, spec-level `and` and unknown includes. Names that `include Abbrev`
+`sharing`, `withtype`, `where`, `abstype`, spec-level `and` and unknown
+includes. Names that `include Abbrev`
 brings in are excluded: they are the shared basic types.
 
-The row-versus-entry decision is checked against the sources. If the develop
-and extension specs of the name differ (whitespace and comments aside), the
-binding is distinct: a row is right and an entry is an error, except for an
-extension type that is a qualified alias of another type. If the specs are
-identical, a row needs the extension `.sml` not to bind the name directly to
-one qualified identifier (`val x = M.y`, `type t = M.t`), and an entry needs
-that direct binding or a type. This is a conservative textual check, not
-semantic equivalence.
+Rows are the default and are never checked against the sources: a row for
+a name that could have been allowlisted only over-documents a migration. An
+allowlist entry is a strict, declared claim. Its `binding` column (columns:
+`old_api`, `binding`, `justification`) names the identical shared value or
+type, and `check_design.py` verifies it against the extension, or fails.
+
+A value entry must satisfy all of: the develop and extension specs are equal
+after normalisation (spaces around `: , ; ( ) { } * = ->` and a trailing `;`
+aside; differing specs mean a row); the `binding` is a qualified identifier
+`Q.x` whose `Q` is not an extension module (not a `MODULES` extension and not
+named `\w+Ext(Lib)?`), so `Q` is a shared module or the develop module itself,
+and the extension source does not define a structure named `Q`; the extension
+`.sml` has exactly one binding occurrence of the name (`val name`, `fun
+name`, `and name`, or a name inside a `val (...)` pattern, counted
+generously), and it is the single-line form `val name = Q.x`, optionally
+followed by `;` and a comment; the next non-blank, non-comment line starts with
+a declaration keyword (`val`, `fun`, `type`, `datatype`, `exception`,
+`structure`, `local`, `open`, `infix`, `infixr`, `nonfix`), `end` or `in`, or
+the file ends, so no continuation line can apply the value; and the written
+`binding` equals the `Q.x` in the source.
+
+A type entry must satisfy all of: the extension `.sig` spec is a manifest
+`type params name = rhs`, not a `datatype`, `eqtype` or abstract type; either
+the normalised `rhs` equals the normalised `binding`, or the develop spec is
+also manifest with the same parameters and `rhs` and the `binding` is the
+marker `=manifest`, which records "identical manifest right-hand side" (used
+for the record abbreviations `convdata`, `stdconvdata`, `relsimpdata` and
+`simptac_config`); and the `rhs` names no type the extension signature itself
+declares and no type of an extension module.
+
+The develop `.sml` is not pinned and is not checked. The qualifier rule makes
+the bound module a develop or shared one, and the TASK_34 ledger records the
+shared modules as unchanged apart from its listed differences. Every entry
+must be checked: an entry whose name is not a shared export fails. These
+checks are textual, not a semantic equivalence proof; the rules are strict so
+that an unusual source form fails rather than passes.
 
 `MODULES` itself is checked without git: the scan walks the repository tree
-(skipping `.git`, `.hol`, `tests` directories and symbolic links such as
-`sigobj`), and every file named `MExt.sig` or `pExtLib.sig` must be in
+(pruning every dot-directory such as `.git`, `.hol` and `.agent-files`,
+every directory named `sigobj` or `tests`, and symbolic links (the `sigobj`
+entries)), and every file named `MExt.sig` or `pExtLib.sig` must be in
 `MODULES` or in `EXCLUDED_EXT_SIGS`, which lists, with a reason, extension
 signatures without a develop counterpart (empty). Every `MODULES` extension
 must be found and exist, every listed module needs its pinned

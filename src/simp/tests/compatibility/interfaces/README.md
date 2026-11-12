@@ -36,7 +36,8 @@ External output names bind to the typed Default provider boundary; the
 consumer driver `run_task25_consumer.py` validates an actual external
 implementation. Shared exports are checked
 in their existing owner signatures; extension exports are checked in their
-specific prototype signature blocks. The graph is the declared design, not an
+specific prototype signature blocks, except that F1 rows are witnessed by the
+extension's production `.sig`. The graph is the declared design, not an
 audit of final production imports.
 
 `Task08Controls` models prepared-event rebinding with the actual current paired
