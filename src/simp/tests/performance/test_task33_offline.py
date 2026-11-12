@@ -1540,6 +1540,9 @@ class ArchiveTest(unittest.TestCase):
             driver = d.TASK33_DRIVER_SEALS[0]
             t.check_code(dict(seals, **{"task32_downstream.py": driver}))
             self.assertNotIn(driver, history)
+            t.check_code(dict(seals, **{
+                "task33_offline.py": d.TASK33_HISTORY[
+                    "task33_offline.py"][0]}))
             t.check_code(seals)
 
     def test_extension_module_loaded_fails(self):

@@ -513,7 +513,7 @@ that pins the history constant is edited with it:
   the last driver before it became a driver of tables (`a2a7d3c487`, so that
   TASK32's records still replay);
 - the TASK33 table (`task32_downstream.TASK33_HISTORY`): the driver seal
-  `TASK33_DRIVER_SEALS`, the `task33_offline.py` seal and the
+  `TASK33_DRIVER_SEALS`, the `task33_offline.py` seal, and it includes the
   `task33_storage.py` seals of `task33_storage.UNDIVIDED_CAP`;
   `task33_offline.check_code` accepts that history besides TASK32's.
 
@@ -3715,21 +3715,20 @@ by the larger, of the pilot's release process and the smoke's `ext`
 process, of its CPU per released object (whole-process CPU over M x kinds,
 start-up included, so an upper bound) times the number of kinds it releases
 (8 `RELEASE_KINDS`, 6 `EXT_RELEASE_KINDS`; M is objects per kind). The
-smoke's `ext` per-object CPU,
-measured at its small M and sizes, is an upper bound of the cost at the
-decision M only while the graph's cost at the decision sizes stays under
-about (M / smoke M - 1) times the start-up, likely and not checked; the
-pilot is sized from a given smoke, `--smoke`). A process reporting no CPU
-time is a refusal. The counts record `required_m` and `capped` as TASK32
-records `required_reps`, and `object_cpu` and `ext_object_cpu`;
+smoke's `ext` per-object CPU, measured at its small M and sizes, is an
+upper bound of the cost at the decision M only while the graph's cost at
+the decision sizes stays under about (M / smoke M - 1) times the start-up
+(likely, not checked; the pilot is sized from a given smoke, `--smoke`).
+A process reporting no CPU time is a refusal. The counts record
+`required_m` and `capped` as TASK32 records `required_reps`, and `object_cpu` and `ext_object_cpu`;
 `check_sizing` recomputes the cap, M and `capped` from them at `run`,
 `replay` and `dispose`: a record or counts file whose `task33_storage.py`
 seal is in `UNDIVIDED_CAP` is checked with the undivided cap, any other
-with the per-kind cap, and `predeclare` refuses a pilot of the former. The
-sizing assumes that the raw noise in words of a
-release process does not depend on M, so that the required M is that noise
-over 1/4; the decision stages check it by the no-op floor (an unresolved
-floor is inconclusive, hence a follow-up). The follow-up M is max(4 M,
+with the per-kind cap, and `predeclare` refuses a pilot of the former.
+The sizing assumes that the raw noise in words of a release process does
+not depend on M, so that the required M is that noise over 1/4; the
+decision stages check it by the no-op floor (an unresolved floor is
+inconclusive, hence a follow-up). The follow-up M is max(4 M,
 ceil(M x floor range / 1/4)), capped by 4 times the budget
 (`FOLLOWUP_FACTOR`). The driver requires `FOLLOWUP_FACTOR` x the budget to
 be under the process timeout (`TIMEOUT`, 900 s), at import, whenever a cap
@@ -4303,8 +4302,9 @@ file, recorded by the counts files, runs, reports and replays):
 replay (a change to a CODE file after a record exists adds the old seal in
 the same commit, see "Seals and seal histories"): one each for
 `task32_downstream.py`, `task33_offline.py` and `task33_storage.py`, the
-versions that made the kept TASK33 records. The last is `UNDIVIDED_CAP`:
-the cap was not divided by the kinds before it. The offline reports
+versions that made the kept TASK33 records. The `task33_storage.py` seal
+is the one in `UNDIVIDED_CAP`, the version before the cap was divided by
+the kinds. The offline reports
 carry their own `code` (`task33_offline.py`, `task33_declared.json` and the
 TASK32 code they reuse, which they bind to the `task32` table explicitly).
 

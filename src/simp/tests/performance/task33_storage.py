@@ -96,21 +96,21 @@ M0 = 200  # the pilot's release size
 # process, of its CPU per released object (whole-process CPU over M x
 # kinds, start-up included, so an upper bound) times the number of kinds
 # it releases (`cap_of`); a follow-up may take FOLLOWUP_FACTOR times as
-# much, which must
-# stay under the process timeout (`check_budget`). The required M assumes
+# much, which must stay under the process timeout (`check_budget`). The
+# required M assumes
 # that the raw noise in words of a release process does not depend on M
 # (the pilot measures it at M0; the follow-up's scaling by the floor range
 # makes the same assumption); the decision stages check it by the floor
 # (R1 is inconclusive when the floor's range exceeds the resolution).
 RELEASE_BUDGET_S = 60
+FOLLOWUP_FACTOR = 4  # the least growth of M in a follow-up, and its budget
+MAX_REDRAWS = 3  # tries after the first at one position of a plan
 # The `task33_storage.py` seals of the versions whose cap did not divide
 # by the kinds: a record or counts file made by one is checked with the
 # undivided cap (`per_kind`), any other with the per-kind one.
 UNDIVIDED_CAP = (
     {"sha256": "069b87eea6287685ff50715d4dc07db797163767c0e5f5bf475cf1ad"
                "f94f2ab5", "bytes": 79375},)
-FOLLOWUP_FACTOR = 4  # the least growth of M in a follow-up, and its budget
-MAX_REDRAWS = 3  # tries after the first at one position of a plan
 SCRATCH_ROOT = Path("/dev/shm/t33")
 AUDIT_CASES = 8
 AUDIT_UNIT = "api-audit"

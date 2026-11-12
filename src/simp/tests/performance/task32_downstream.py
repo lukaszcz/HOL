@@ -152,8 +152,8 @@ TASK33_DRIVER_SEALS = (
     {"sha256": "e3169e265e13cf55a18045fdebc5845f198ff8f9d1d15f9529076915"
                "dbc23516", "bytes": 179579},)
 # The TASK33 table's history: the driver above, the offline checks that
-# made the kept reports, and the storage driver before its cap divided by
-# the kinds (`task33_storage.UNDIVIDED_CAP`).
+# made the kept reports, and the storage driver before its cap was divided
+# by the kinds (`task33_storage.UNDIVIDED_CAP`).
 TASK33_HISTORY = {
     "task32_downstream.py": list(TASK33_DRIVER_SEALS),
     "task33_offline.py": [
@@ -163,6 +163,7 @@ TASK33_HISTORY = {
         {"sha256": "069b87eea6287685ff50715d4dc07db797163767c0e5f5bf475cf1"
                    "adf94f2ab5", "bytes": 79375}],
 }
+
 
 def require(ok, message):
     if not ok:

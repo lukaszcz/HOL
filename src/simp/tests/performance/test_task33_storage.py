@@ -1776,16 +1776,16 @@ class Controls34(Chain34):
         self.assertGreater(old["m_cap"], now["m_cap"])
 
     def test_predeclare_refuses_a_pilot_of_the_undivided_sizing(self):
-        self.info_stages()
         w = self.world
-        args = self.args("pre", timing_counts=self.timing_counts(),
-                         smoke=w.tmp / "smoke", pilot=w.tmp / "pilot",
-                         control=w.tmp / "control",
-                         offline=self.offline_files())
         with mock.patch.object(st, "UNDIVIDED_CAP", (st.a.seal(
-                st.HERE / "task33_storage.py"),)), \
-                self.assertRaisesRegex(dw.Refusal, "undivided|differs"):
-            st.predeclare_run(args)
+                st.HERE / "task33_storage.py"),)):
+            self.info_stages()
+            args = self.args("pre", timing_counts=self.timing_counts(),
+                             smoke=w.tmp / "smoke", pilot=w.tmp / "pilot",
+                             control=w.tmp / "control",
+                             offline=self.offline_files())
+            with self.assertRaisesRegex(dw.Refusal, "undivided"):
+                st.predeclare_run(args)
 
     def test_the_extension_process_caps_m_as_well(self):
         # the fake processes all take 0.9 s of CPU: make the extension
