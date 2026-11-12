@@ -3720,11 +3720,12 @@ upper bound of the cost at the decision M only while the graph's cost at
 the decision sizes stays under about (M / smoke M - 1) times the start-up
 (likely, not checked; the pilot is sized from a given smoke, `--smoke`).
 A process reporting no CPU time is a refusal. The counts record
-`required_m` and `capped` as TASK32 records `required_reps`, and `object_cpu` and `ext_object_cpu`;
-`check_sizing` recomputes the cap, M and `capped` from them at `run`,
-`replay` and `dispose`: a record or counts file whose `task33_storage.py`
-seal is in `UNDIVIDED_CAP` is checked with the undivided cap, any other
-with the per-kind cap, and `predeclare` refuses a pilot of the former.
+`required_m` and `capped` as TASK32 records `required_reps`, and
+`object_cpu` and `ext_object_cpu`; `check_sizing` recomputes the cap, M
+and `capped` from them at `run`, `replay` and `dispose`: a record or
+counts file whose `task33_storage.py` seal is in `UNDIVIDED_CAP` is
+checked with the undivided cap, any other with the per-kind cap, and
+`predeclare` refuses a pilot of the former.
 The sizing assumes that the raw noise in words of a release process does
 not depend on M, so that the required M is that noise over 1/4; the
 decision stages check it by the no-op floor (an unresolved floor is
