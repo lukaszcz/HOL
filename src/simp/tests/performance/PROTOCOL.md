@@ -509,7 +509,9 @@ that pins the history constant is edited with it:
 - the TASK32 driver (`task32_downstream.HISTORY`): the seal of the code
   that made the TASK32 smoke and pilot (`b545d1fd0e`); the entry for
   `task32_downstream.py` also holds the seal of the code that made the
-  counts file and runs the first decision stage (`e1fef186b2`).
+  counts file and runs the first decision stage (`e1fef186b2`), and that of
+  the last driver before it became a driver of tables (`a2a7d3c487`, so that
+  TASK32's records still replay).
 
 A file whose seal no record carries needs no entry (usage text, style). The
 cascade, with a worked example, is in the bullet "Seal histories" of "TASK30
@@ -3410,7 +3412,8 @@ detected control, a smoke run, `predeclare`, `replay`, `recover`); 1 fail
 (a failing stage, an undetected control, a failing disposition); 2
 an inconclusive stage, a blocked run (a finding about the candidate), a
 pilot with a unit under 1 s of CPU, or a blocked disposition; 3 the run
-failed or was refused;
+failed or was refused (a usage error of the command line, `--table`
+abbreviation included, is a refusal: 3, not the parser's 2);
 4 SIGTERM or SIGHUP ended the run. After a signal
 the child's group is killed, the products are restored and the attempt is
 closed; with status 4 the saved result, if any, is still printed, else

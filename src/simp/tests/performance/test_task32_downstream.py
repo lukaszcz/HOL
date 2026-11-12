@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import random
+import re
 import shutil
 import signal
 import subprocess
@@ -2361,7 +2362,11 @@ class Sealed(unittest.TestCase):
             dict(sha256="08465bf86ce7cef1b991e396a78cb03e6f857ed392215769236"
                         "582f3888f064f", bytes=137307),
             dict(sha256="a5cc94d14ff37fa0586803153ab155dfa4c1564e6dc3bd2aef9"
-                        "3c210663eb5a7", bytes=133766)]})
+                        "3c210663eb5a7", bytes=133766),
+            dict(sha256="a3f949829ffa88ea799dd4016cbb1bbbaa5d50210b69c126fce"
+                        "32e6afa3179b5", bytes=141455),
+            dict(sha256="5d624a37756b33000051888f770e7ecdf9e4242afcdb0210c41"
+                        "6bd64b78e89bf", bytes=168045)]})
 
     def test_a_record_carries_the_current_seal_or_one_the_history_lists(self):
         now = dw.code_seals()
@@ -3104,7 +3109,7 @@ class HelpRenders(unittest.TestCase):
         # No public API lists the subparsers; the top-level usage line
         # names every choice, so read it from there.
         flat = self.help_of(["--help"])
-        usage = flat[flat.index("{"):flat.index("}")]
+        usage = re.search(r"\{[^}]*smoke[^}]*", flat).group(0)
         self.assertEqual(set(usage.strip("{").split(",")),
                          set(dw.COMMANDS))
 

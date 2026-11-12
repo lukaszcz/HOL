@@ -42,6 +42,25 @@ argument (selftests) and writes one JSON line to $T32_STATS at exit.
              --relocated ATTEMPT=DIR;
   recover    puts back what a killed or failed restore left in a journal.
 
+Tables: `--table task32` (the default) is the proof-build timing above;
+`--table task33` (task33_cases.py) times fresh-process startup and
+first-load costs, five units of the kind `probe`: `hol run` on a heap with
+the reporter and a sealed probe module (task33/, built per side by
+`build_probes`) in the side's probe directory, under the same watch of the
+whole snapshot, with no product to restore; the unit's output is the digest
+of the probe's `@@T33` check records (the table's `probe_digest`, for task33
+`task33_cases.digest`: the records parser's digest with the root and the
+probe directory masked). A table is
+the `Table` record (`TABLES`, `use_table`): what differs (units, counts
+files, seeds, ledger table and directory, code and its HISTORY, the unit
+floor MIN_UNIT_CPU, R_CAP, the sample floor SAMPLE_CPU that makes R at least
+ceil(SAMPLE_CPU / median CPU), the cross-side L1 rule). A record of a table
+other than task32 carries `table`; replay needs the same `--table`. The
+interface other drivers (TASK33 S4) call: `Table`, `use_table`,
+`build_reporter`, `build_probes`, `make_ctx`, `launch_probe` (with
+`execute_unit`, `admit`, `archive`), `open_attempt` and `table_lines` with
+their ledger `table`.
+
 A theory process is protected by a restore journal under
 .agent-files/scratch/task32 (backups, written before any product is
 deleted, kept when a restore fails); a run refuses to start while one is
@@ -58,6 +77,7 @@ drops it. Interface to task32_snapshots.py: see `load_manifest`.
 """
 import argparse
 import contextlib
+import dataclasses
 import gzip
 import hashlib
 import json
@@ -82,29 +102,19 @@ sys.path.insert(0, str(HERE.parent / "compatibility"))
 import acceptance as a
 import loading
 import performance_schema as ps
-import task32_cases as cases
+import task32_cases
 import task32_dat as dat
 import task32_snapshots as snap
+import task33_cases
 import timing_grid as tg
 
 SCHEMA = "task32-downstream-v1"
 COUNTS_SCHEMA = "task32-counts-v2"
 STATS_SCHEMA = "task32-stats-v1"
-TABLE = "task32-downstream"
 POLICY = a.EQUIVALENCE_POLICY
 PAIRS = 20
 PILOT_PAIRS = 10  # the least that paired_statistics accepts
-R_CAP = 4  # fresh processes per sample: a pilot asking for more is clamped
 BUSY = 0.06
-MIN_UNIT_CPU = 1.0
-LAYOUT_SEED = "task32-1"
-EXTENSION_SEED = LAYOUT_SEED + "-ext"
-FOLLOWUP_SEED = LAYOUT_SEED + "-fu"
-SEEDS = dict(smoke=LAYOUT_SEED + "-smoke", control=LAYOUT_SEED + "-control",
-             pilot=LAYOUT_SEED + "-pilot", first=LAYOUT_SEED,
-             second=EXTENSION_SEED, followup=FOLLOWUP_SEED)
-COUNTS = HERE / "task32_counts.json"
-FOLLOWUP_COUNTS = HERE / "task32_followup_counts.json"
 COMPILED_REF = snap.C31  # C32's compiled sources must equal it
 COUNTS_SCOPE = "src/simp/tests/performance/"
 # The timed metrics, as loading.jitter names them (+ maxrss).
@@ -112,23 +122,31 @@ METRICS = loading.METRICS + ("maxrss",)
 DECISIVE = ("first", "second", "followup")
 INFO_MODES = ("smoke", "control", "pilot")
 PROCESS_PHASES = ("control", "candidate")
-JOURNALS = ".agent-files/scratch/task32"  # restore journals, not /dev/shm
 TIMEOUT = 900
 DECISIONS = loading.DECISIONS
 FAILED, BLOCKED = loading.FAILED, loading.BLOCKED
-# Code the counts file is bound to (replay refuses a changed one).
-CODE = ("task32_cases.py", "task32_downstream.py", "task32_snapshots.py",
-        "task32_dat.py", "startup_gate.py", "loading.py", "acceptance.py",
-        "timing_grid.py", "performance_schema.py", "summarize.py")
-# Per file of CODE, the seals it had when a record was made, once it has
-# changed since (PROTOCOL "Seals and seal histories"): replay accepts the
-# current seal or one listed here; a run needs the current one.
-HISTORY = {
+# What differs between the tables this driver runs (the TASK32 proof builds,
+# the TASK33 loads) is the `Table` record below. `use_table` copies the
+# active table's fields into these module names, which the one code path
+# reads at call time: TABLE (the ledger table), COUNTS and FOLLOWUP_COUNTS,
+# LAYOUT_SEED, EXTENSION_SEED, FOLLOWUP_SEED and SEEDS, JOURNALS, CODE and
+# HISTORY (per file of CODE, the seals it had when a record was made, once
+# it has changed since: PROTOCOL "Seals and seal histories"; replay accepts
+# the current seal or one listed here, a run needs the current one),
+# MIN_UNIT_CPU, R_CAP, SAMPLE_CPU and `cases`.
+TASK32_HISTORY = {
     "task32_downstream.py": [
         {"sha256": "08465bf86ce7cef1b991e396a78cb03e6f857ed392215769236582f"
                    "3888f064f", "bytes": 137307},
         {"sha256": "a5cc94d14ff37fa0586803153ab155dfa4c1564e6dc3bd2aef93c2"
-                   "10663eb5a7", "bytes": 133766}],
+                   "10663eb5a7", "bytes": 133766},
+        # the last driver before the tables (a2a7d3c487)
+        {"sha256": "a3f949829ffa88ea799dd4016cbb1bbbaa5d50210b69c126fce32e"
+                   "6afa3179b5", "bytes": 141455},
+        # the driver of the integrated tables, before the storage driver's
+        # interface (9b3b4bb3c6)
+        {"sha256": "5d624a37756b33000051888f770e7ecdf9e4242afcdb0210c416bd"
+                   "64b78e89bf", "bytes": 168045}],
 }
 
 
@@ -149,6 +167,159 @@ class Blocked(Refusal):
 
 class Fatal(RuntimeError):
     """A snapshot could not be restored: stop everything."""
+
+
+# ------------------------------------------------------------------ tables
+
+def check_unit_env(unit, table=None):
+    """The environment a unit adds to its process is the probe's own: every
+    key starts with the table's `env_prefix` (T33_ for TASK33, so a unit can
+    never set T32_STATS, T32_LAYOUT or T32_BUSY, which belong to the
+    driver, nor POLY_CLINE_OPTIONS or PATH), every value a string. A table
+    with no `env_prefix` (TASK32) has units with no environment. `table`
+    is the active one by default."""
+    prefix = (table or ACTIVE).env_prefix
+    env = unit.get("env") or {}
+    bad = sorted(str(k) for k, v in env.items() if not (
+        prefix and isinstance(k, str) and k.startswith(prefix) and
+        isinstance(v, str)))
+    require(not bad, "unit %s: environment key(s) that are not %s* "
+            "strings: %s" % (unit.get("name"), prefix or "allowed (none)",
+                             ", ".join(bad)))
+
+
+@dataclasses.dataclass(frozen=True)
+class Table:
+    """What one table of the driver fixes (everything else is one code
+    path). `use_table(name)` selects it; `--table` does so on the command
+    line. Fields: `name` and `label` (TASK32), `ledger_table` (the `table`
+    of its ledger lines) in `ledger_dir` (below .agent-files/evidence),
+    `cases` (the module of its units), `counts` and `followup_counts` (the
+    committed predeclared files), `seed` (the first stage's layout seed;
+    the others append -smoke, -control, -pilot, -ext, -fu), `journals`
+    (restore journals, relative to the checkout), `scratch` (default
+    --scratch), `code` (the files its counts and runs are bound to) and
+    `history`, `min_unit_cpu` (a unit under it sizes no R), `r_cap` (the
+    most fresh processes per sample), `sample_cpu` (seconds of CPU a
+    sample should reach: R is at least ceil(sample_cpu / median CPU); 0
+    for none), `claims`, `cross_side` (the L1 rule: per unit the loaded
+    modules and the files the process added to fileDirMap, root-masked,
+    are equal on both sides, a difference blocks; the part of fileDirMap
+    the heap preloaded is compared only through the `loaded_before`
+    names, and S4's `registry` case owes the comparison of the full map),
+    `env_prefix` (the prefix of the variables a unit may add to its
+    process, None when units add none), `probe_sources` (the files, relative
+    to this directory, that `build_probes` copies into the probe directory
+    and builds there, None when the table has no probe unit; they are in
+    `code`, so their seals are bound by the counts and the report) and
+    `probe_digest` (None when the table has no probe unit; else the output
+    digest of a `probe` unit, `(text, root, probe_dir, unit) -> hex digest`,
+    raising ValueError: each table names its own, there is no global hook)."""
+    name: str
+    label: str
+    ledger_table: str
+    ledger_dir: str
+    cases: object
+    counts: Path
+    followup_counts: Path
+    seed: str
+    journals: str
+    scratch: str
+    code: tuple
+    history: dict
+    min_unit_cpu: float
+    r_cap: int
+    sample_cpu: float
+    claims: str
+    cross_side: bool
+    env_prefix: object
+    probe_sources: object
+    probe_digest: object
+
+
+# The storage driver (S4) and its rules, bound by the table's seals like
+# the loading driver's code.
+STORAGE_CODE = ("task33_rules.py", "task33_storage.py",
+                "task33_dispose.py")
+COMMON_CODE = ("task32_snapshots.py", "task32_dat.py", "startup_gate.py",
+               "loading.py", "acceptance.py", "timing_grid.py",
+               "performance_schema.py", "summarize.py")
+TABLES = {
+    "task32": Table(
+        name="task32", label="TASK32", ledger_table="task32-downstream",
+        ledger_dir="task32", cases=task32_cases,
+        counts=HERE / "task32_counts.json",
+        followup_counts=HERE / "task32_followup_counts.json",
+        seed="task32-1", journals=".agent-files/scratch/task32",
+        scratch="/dev/shm/t32",
+        code=("task32_cases.py", "task32_downstream.py") + COMMON_CODE,
+        history=TASK32_HISTORY, min_unit_cpu=1.0, r_cap=4,
+        sample_cpu=0.0, claims="NOT release acceptance: proof-build timing "
+        "only", cross_side=False, env_prefix=None, probe_sources=None,
+        probe_digest=None),
+    "task33": Table(
+        name="task33", label="TASK33", ledger_table="task33-loading",
+        ledger_dir="task33", cases=task33_cases,
+        counts=HERE / "task33_counts.json",
+        followup_counts=HERE / "task33_followup_counts.json",
+        seed="task33-1", journals=".agent-files/scratch/task33",
+        scratch="/dev/shm/t33",
+        code=("task33_cases.py", "task32_downstream.py") + COMMON_CODE +
+        task33_cases.CODE_FILES + STORAGE_CODE,
+        history={}, min_unit_cpu=0.2, r_cap=8, sample_cpu=1.0,
+        claims="NOT release acceptance: startup and load timing only",
+        cross_side=True, env_prefix="T33_",
+        probe_sources=task33_cases.PROBE_FILES,
+        probe_digest=task33_cases.digest),
+}
+DEFAULT_TABLE = "task32"
+ACTIVE = None
+
+
+def use_table(name):
+    """Select the table: the module names listed above `TASK32_HISTORY`
+    take its values. Returns the previous table's name (so that a caller
+    can restore it). The task32 table keeps every behaviour, output and
+    record of the driver before there were tables (a record carries no
+    `table` key); a record of another table carries `table`, and replay
+    refuses it under a different one."""
+    global ACTIVE, TABLE, COUNTS, FOLLOWUP_COUNTS, LAYOUT_SEED
+    global EXTENSION_SEED, FOLLOWUP_SEED, SEEDS, JOURNALS, CODE, HISTORY
+    global MIN_UNIT_CPU, R_CAP, SAMPLE_CPU, cases
+    require(name in TABLES, "unknown table %r (one of %s)" % (
+        name, ", ".join(TABLES)))
+    for unit in TABLES[name].cases.UNITS:
+        check_unit_env(unit, TABLES[name])
+    previous = None if ACTIVE is None else ACTIVE.name
+    ACTIVE = table = TABLES[name]
+    TABLE = table.ledger_table
+    COUNTS, FOLLOWUP_COUNTS = table.counts, table.followup_counts
+    LAYOUT_SEED = table.seed
+    EXTENSION_SEED = LAYOUT_SEED + "-ext"
+    FOLLOWUP_SEED = LAYOUT_SEED + "-fu"
+    SEEDS = dict(smoke=LAYOUT_SEED + "-smoke",
+                 control=LAYOUT_SEED + "-control",
+                 pilot=LAYOUT_SEED + "-pilot", first=LAYOUT_SEED,
+                 second=EXTENSION_SEED, followup=FOLLOWUP_SEED)
+    JOURNALS = table.journals
+    CODE, HISTORY = table.code, table.history
+    MIN_UNIT_CPU, R_CAP = table.min_unit_cpu, table.r_cap
+    SAMPLE_CPU = table.sample_cpu
+    cases = table.cases
+    return previous
+
+
+@contextlib.contextmanager
+def using_table(name):
+    """`use_table(name)` for the length of a block."""
+    previous = use_table(name)
+    try:
+        yield
+    finally:
+        use_table(previous)
+
+
+use_table(DEFAULT_TABLE)
 
 
 # The reporter: a sealed string, built per side by that side's Holmake.
@@ -364,8 +535,9 @@ def check_code(recorded):
     changed = [n for n in CODE if recorded[n] != now[n] and
                recorded[n] not in HISTORY.get(n, ())]
     require(not changed, "the code changed since the record was made: %s; "
-            "add the seal it was made by to task32_downstream.HISTORY: %s" %
-            (", ".join(changed), "; ".join(
+            "add the seal it was made by to the HISTORY of table %s "
+            "(TASK32_HISTORY or the table's `history`): %s" %
+            (", ".join(changed), ACTIVE.name, "; ".join(
                 "%s: %s" % (n, json.dumps(recorded[n], sort_keys=True))
                 for n in changed)))
 
@@ -405,6 +577,9 @@ def load_counts(path, sides, kind, repo=None, committed=True,
     counts = a.load(path)
     require(counts.get("schema") == COUNTS_SCHEMA and
             counts.get("kind") == kind, "not a %s counts file" % kind)
+    require(counts.get("table", DEFAULT_TABLE) == ACTIVE.name,
+            "the counts file is of table %s, not %s (--table)" % (
+                counts.get("table", DEFAULT_TABLE), ACTIVE.name))
     require(counts["base"] == sides["base"]["pin"] and
             counts["cand"] == sides["cand"]["pin"],
             "the counts file is of another gate")
@@ -430,10 +605,13 @@ def load_counts(path, sides, kind, repo=None, committed=True,
 def stops_for(unit):
     """The directories below a unit's own that belong to another unit (src/real
     holds src/real/analysis): a scan does not enter them."""
+    if unit["kind"] == "probe":
+        return ()  # its folder is the probe directory, below no unit
     mine = Path(unit["dir"])
     return tuple(sorted(
         str(Path(u["dir"]).relative_to(mine)) for u in cases.UNITS
-        if u["dir"] != unit["dir"] and Path(u["dir"]).is_relative_to(mine)))
+        if u.get("dir") and u["dir"] != unit["dir"] and
+        Path(u["dir"]).is_relative_to(mine)))
 
 
 def scan(top, stops=()):
@@ -719,6 +897,9 @@ def outside_for(ctx, side, unit, stops):
     inventory = ctx.setdefault("inventory", {})
     if side not in inventory:
         inventory[side] = hol_dirs(ctx["roots"][side])
+    if unit["kind"] == "probe":
+        # the process runs outside the snapshot: all of it is watched
+        return tuple(list(part) for part in inventory[side])
     return tuple(outside_dirs(part, unit["dir"], stops)
                  for part in inventory[side])
 
@@ -734,6 +915,19 @@ def normalize_text(data, root):
 
 def text_digest(data, root):
     return sha(normalize_text(data, root).encode("latin-1", "replace"))
+
+
+def probe_digest(text, root, probe_dir, unit):
+    """The active table's output digest of a `probe` unit, with an
+    unreadable, malformed or misplaced-path output a Refusal."""
+    require(ACTIVE.probe_digest is not None,
+            "table %s has no probe units" % ACTIVE.name)
+    try:
+        return ACTIVE.probe_digest(text, root, probe_dir, unit)
+    except ValueError as error:
+        if isinstance(error, Refusal):
+            raise
+        raise Refusal("the probe's output: %s" % error)
 
 
 def theory_digest(files, root, where=None):
@@ -926,6 +1120,86 @@ def build_reporter(root, folder, env, timeout, fds):
                 build_stdout_sha256=done["stdout_sha256"])
 
 
+def build_probes(root, folder, env, timeout, fds, sealed=None,
+                 modules=None, base=HERE):
+    """The probe modules of the active table, built by this side's own
+    Holmake (not timed), the way `build_reporter` builds the reporter, in
+    their final directory: `folder` is the reporter's directory (it
+    exists), the one directory the process runs in. Every file of
+    `ACTIVE.probe_sources` (`task33/*` and the unchanged RuntimeMetrics.sml,
+    relative to `base`, this directory) is first checked against its seal in
+    `sealed` (default the current seals of the table's CODE, `code_seals`;
+    a run passes the seals its counts and report record) and then copied
+    there, byte for byte, by its own name; each probe module (`modules`,
+    default `cases.PROBES`: bare module names, each with its `.sml` among
+    the sources) is built with `Holmake --no-project --no-cache` (the flags
+    of `build_reporter`; no heap option). The compiled units live in
+    `.hol/objs/`, so nothing about the probe names or tests a physical
+    `<module>.uo`: a probe is run by its bare module name with this
+    directory as cwd (`unit_argv`). Returns `dir`, `modules` (the bare
+    names), `sources` (file -> sha256, recorded in the report and checked by
+    replay) and `build_stdout_sha256`. Refuses a table without probe
+    sources, a source whose seal is not the sealed one, missing sources or
+    modules, a failed build, a source named like the reporter."""
+    require(ACTIVE.probe_sources is not None,
+            "table %s has no probe sources" % ACTIVE.name)
+    sealed = code_seals() if sealed is None else sealed
+    folder = Path(folder)
+    data, seals = {}, {}
+    for rel in ACTIVE.probe_sources:
+        path = Path(rel)
+        require(path.stem != REPORTER_NAME, "a probe source is named like "
+                "the reporter: " + rel)
+        require(path.name not in seals, "two probe sources are named " +
+                path.name)
+        data[path.name] = (Path(base) / rel).read_bytes()
+        seals[path.name] = sha(data[path.name])
+        require(rel in sealed and sealed[rel]["sha256"] == seals[path.name],
+                "the probe source %s is not the one sealed" % rel)
+    modules = list(cases.PROBES if modules is None else modules)
+    require(modules, "no probe modules to build")
+    for module in modules:
+        require(module + ".sml" in seals, "the probe module %s has no "
+                "source %s.sml among the probe sources" % (module, module))
+    for name, content in data.items():
+        (folder / name).write_bytes(content)
+    done = loading.execute(
+        [str(root / "bin/Holmake"), "--no-project", "--no-cache"] +
+        [m + ".uo" for m in modules], folder, env, timeout, fds)
+    require(done["exit"] == 0 and not done["timed_out"],
+            "probe build failed in %s: %s" % (root, done["stdout"][-300:]))
+    for module in modules:
+        require((folder / ".hol/objs" / (module + ".uo")).exists(),
+                "the probe %s was not built" % module)
+    return dict(dir=str(folder), modules=modules, sources=seals,
+                build_stdout_sha256=done["stdout_sha256"])
+
+
+def make_ctx(sides, scratch, timeout, fds, journal, attempt, evidence):
+    """The context of `execute_unit` and `admit` (`body` makes it from a
+    run's arguments): `roots` (side -> snapshot root), `scratch` (with
+    home, tmp and out inside, created by the caller), `timeout`, `fds` (the
+    serial lock's), `reporter` and `probes` (side -> the dicts of
+    `build_reporter` and `build_probes`, filled in by the caller), the
+    restore `journal` folder (a started journal, see `journal_end`), the
+    `attempt` and the `evidence` folder (strays go below it)."""
+    return dict(roots={k: v["root"] for k, v in sides.items()},
+                scratch=str(scratch), timeout=timeout, fds=fds,
+                reporter={}, probes={}, journal=journal, attempt=attempt,
+                evidence=Path(evidence))
+
+
+def launch_probe(ctx, side, unit, label, layout=0, expected=None):
+    """One probe process of `unit` on `side`, executed and admitted (the
+    receipt, accepted or rejected, is returned: `receipt["accepted"]`,
+    `["rejection"]`, `["blocked"]`; the caller archives it with `archive`
+    and refuses a rejection). `layout` is the T32_LAYOUT padding, `expected`
+    the digest the output must have (None: any)."""
+    receipt = execute_unit(ctx, unit, side, label, layout, None, expected)
+    receipt.update(workload=unit["name"], side=side)
+    return admit(receipt, unit, ctx, side, expected)
+
+
 def poly_version(env, cwd, fds):
     done = loading.execute(["poly", "-v"], cwd, env, 60, fds)
     require(done["exit"] == 0 and done["stdout"].strip(),
@@ -952,7 +1226,14 @@ def parse_selftest(text, root, unit):
 
 
 def unit_argv(unit, root, reporter_uo):
-    """The command of a unit (and its working directory)."""
+    """The command of a unit (and its working directory). A `probe` unit
+    runs `hol run` on its heap with the reporter, then its probe module by
+    its bare name, with the reporter's directory (where `build_probes` built
+    the module) as cwd."""
+    if unit["kind"] == "probe":
+        return [str(root / "bin/hol"), "--gcthreads=1", "run",
+                "--holstate=" + str(root / unit["heap"]), reporter_uo,
+                unit["probe"]], Path(reporter_uo).parent
     folder = root / unit["dir"]
     if unit["kind"] == "theory":
         return cases.theory_argv(root, unit["theory"]), folder
@@ -961,7 +1242,9 @@ def unit_argv(unit, root, reporter_uo):
 
 
 def unit_env(ctx, unit, reporter_uo, stats, layout, busy):
-    extra = dict(T32_STATS=str(stats), T32_LAYOUT=str(layout))
+    check_unit_env(unit)
+    extra = dict(unit.get("env") or {})
+    extra.update(T32_STATS=str(stats), T32_LAYOUT=str(layout))
     if unit["kind"] == "theory":
         extra["POLY_CLINE_OPTIONS"] = reporter_uo
     if busy:
@@ -998,22 +1281,47 @@ def parse_stats(text):
     return stats
 
 
-def check_loaded(stats, root, reporter_dir, candidate):
-    """Every loaded path inside the side's root (the reporter's own
-    directory apart), and no extension module anywhere."""
+def check_loaded(stats, root, reporter_dir, candidate, extension=False):
+    """Every loaded path inside the side's root (the probe directory, the
+    reporter's own, apart: exactly that directory, as `fileDirMap` records
+    the logical directory of a unit and not `.hol/objs`), and no extension
+    module anywhere, unless the unit uses the extension on purpose
+    (`extension`: the unit's own `extension` field, TASK33's `ext` probe)."""
     require(stats["holdir"] == str(root), "the process runs in %s, not %s"
             % (stats["holdir"], root))
     for name, folder in stats["files"]:
-        inside = Path(folder).is_relative_to(root) or \
-            Path(folder) == Path(reporter_dir)
-        require(inside, "loaded %s from %s, outside the root" % (
-            name, folder))
+        masked = mask_dir(folder, root, reporter_dir)
+        require(masked == PROBE_MASK or
+                masked.startswith(ROOT_MASK),
+                "loaded %s from %s, outside the root" % (name, folder))
     names = stats["loaded_before"] + stats["loaded"] + [
         Path(n).name.split(".")[0] for n, _ in stats["files"]]
     found = sorted({n for n in names if loading.extension_name(n)})
-    if found:
+    if found and not extension:
         error = Blocked if candidate else Refusal
         raise error("extension module(s) loaded: " + ", ".join(found))
+
+
+def loads_problem(unit, stats):
+    """None, or why the process did not load what its unit claims. A unit
+    with a `loads` field (the modules its kind loads) needs every one of
+    them in `loaded` and not in `loaded_before`; for `loads == ()` none of
+    the simplifier libraries (`cases.SIMPLIFIER_LIBS`) is newly loaded.
+    A unit without the field is not checked."""
+    loads = unit.get("loads")
+    if loads is None:
+        return None
+    new = set(stats["loaded"]) - set(stats["loaded_before"])
+    missing = sorted(n for n in loads if n not in new)
+    if missing:
+        return "%s: not newly loaded by the process: %s" % (
+            unit["name"], ", ".join(missing))
+    if not loads:
+        extra = sorted(new & set(getattr(cases, "SIMPLIFIER_LIBS", ())))
+        if extra:
+            return "%s loads nothing, but %s was newly loaded" % (
+                unit["name"], ", ".join(extra))
+    return None
 
 
 def check_digest(digest, expected, candidate):
@@ -1043,19 +1351,25 @@ def validate(receipt, unit, root, reporter_dir, expected, candidate):
             ", ".join(receipt["usage"].get("survivors") or []))
     stats = receipt["stats"]
     require(stats is not None, "missing stats")
-    check_loaded(stats, root, reporter_dir, candidate)
+    check_loaded(stats, root, reporter_dir, candidate,
+                 bool(unit.get("extension")))
+    problem = loads_problem(unit, stats)
+    if problem:
+        raise (Blocked if candidate else Refusal)(problem)
     require(not receipt["modified"], "modified existing file(s) outside "
             "the products: %s; the snapshot must be rebuilt" %
             ", ".join(receipt["modified"][:5]))
-    base = root / unit["dir"]
+    base = root if unit["kind"] == "probe" else root / unit["dir"]
     bad = [p for p in receipt["churn"] if not (
         is_holmake_cache(p) and Path(os.path.normpath(base / p)
                                      ).is_relative_to(root))]
     require(not bad, "churn that is not Holmake's dependency cache in the "
-            "snapshot: " + ", ".join(bad[:5]))
+            "unit's tree (the snapshot, or a probe unit's probe "
+            "directory): " + ", ".join(bad[:5]))
     require(not receipt["churn"], "the process wrote Holmake cache file(s) "
-            "(%s): the snapshot is not a fixed point under the unit's "
-            "Holmake scan; it must be re-primed or rebuilt" %
+            "(%s): the unit's tree (the snapshot, or a probe unit's probe "
+            "directory) is not a fixed point under its Holmake scan; a "
+            "snapshot must be re-primed or rebuilt" %
             ", ".join(receipt["churn"][:5]))
     require(not receipt["stray"], "stray write: " + ", ".join(
         receipt["stray"][:5]))
@@ -1096,11 +1410,13 @@ def journals_dir(repo):
     return Path(repo).resolve() / JOURNALS
 
 
-def pending_journals(repo):
-    """The run journals that still hold a theory unit's products to restore
-    (or that cannot be read: treated as pending)."""
+def pending_journals(repo, directory=None):
+    """The run journals of the active table (or of the journal directory
+    `directory`) that still hold a theory unit's products to restore (or
+    that cannot be read: treated as pending)."""
     found = []
-    for path in sorted(journals_dir(repo).glob("*/journal.json")):
+    for path in sorted((directory or journals_dir(repo)).glob(
+            "*/journal.json")):
         try:
             data = json.loads(path.read_text())
             pending = data["pending"] is not None
@@ -1111,14 +1427,37 @@ def pending_journals(repo):
     return found
 
 
+def pending_everywhere(repo):
+    """The pending journals of every table, [(table, folder)]: the tables
+    share the snapshots, so a restore pending under one blocks a run under
+    any."""
+    return [(t.name, folder) for t in TABLES.values()
+            for folder in pending_journals(
+                repo, Path(repo).resolve() / t.journals)]
+
+
 def execute_unit(ctx, unit, side, label, layout, busy, expected):
     """One process of a unit on a side, in a fresh scratch state, with its
     tree checks and, for a theory, the byte-for-byte restore of its
     products. The backups and a journal are written to disk before any
     product is deleted and are removed only after the restore was checked.
-    Returns the receipt (accepted or with a rejection)."""
+    Returns the receipt (accepted or with a rejection).
+
+    A `probe` unit (the interface of S4's stages too): `unit` is a dict
+    with `kind="probe"`, `name`, `heap`, `probe` (the module `build_probes`
+    built into the reporter's directory) and `env` (extra environment, e.g.
+    T33_KIND); `ctx` as `body` makes it (`make_ctx`, the reporters and the
+    probes built). The process runs in the probe directory with the
+    snapshot-wide watch (every make-deps directory of the snapshot and its
+    sigobj: Holmake churn and any other write are refused, the probe
+    directory is scanned like a selftest's folder), no product is touched
+    and no journal written. The receipt has `stdout` (all of it), `stats`
+    (the reporter's line), `usage`, `digest` (the table's `probe_digest` of
+    the output) and the watch's lists. `label` names the process's files
+    and must be unique in the run."""
     root, reporter = ctx["roots"][side], ctx["reporter"][side]
-    folder = root / unit["dir"]
+    probe = unit["kind"] == "probe"
+    folder = Path(reporter["dir"]) if probe else root / unit["dir"]
     stops = stops_for(unit)
     work = Path(ctx["scratch"]) / "out"
     stats_path = work / (label + ".stats")
@@ -1127,7 +1466,9 @@ def execute_unit(ctx, unit, side, label, layout, busy, expected):
     env = unit_env(ctx, unit, reporter["uo"], stats_path, layout, busy)
     receipt = dict(argv=argv, cwd=str(cwd), layout=layout, busy=busy or None,
                    env={k: v for k, v in env.items() if k.startswith(
-                       ("T32_", "POLY_"))},
+                       ("T32_", "POLY_") + (
+                           (ACTIVE.env_prefix,) if ACTIVE.env_prefix
+                           else ()))},
                    stats=None, stray=[], moved=[], churn=[], modified=[],
                    rewritten=[], digest=None, accepted=False)
     theory = unit["kind"] == "theory"
@@ -1181,8 +1522,8 @@ def execute_unit(ctx, unit, side, label, layout, busy, expected):
                 errors.append(error)
             try:
                 settled_outside = settle_outside(
-                    root, folder, outside, outside_before, bare,
-                    stray_dir / "outside")
+                    root, root if probe else folder, outside,
+                    outside_before, bare, stray_dir / "outside")
             except BaseException as error:
                 errors.append(error)
             scans += time.perf_counter() - started
@@ -1224,6 +1565,7 @@ def execute_unit(ctx, unit, side, label, layout, busy, expected):
     try:
         receipt["digest"] = theory_digest(
             produced, root, where_of(unit, folder)) if theory else \
+            probe_digest(text, root, folder, unit) if probe else \
             text_digest(data, root)
     except Refusal as error:
         receipt["digest_error"] = str(error)
@@ -1355,7 +1697,8 @@ def median(values):
 def pilot_summary(rows_by_unit, reps_floor=1):
     """The pilot of each unit: B/B pairs only. loading.jitter at R = 1, the
     proposed R (n * R the sd bound asks for, over the stage's pairs), the
-    median CPU and wall of a process and whether it reaches the 1 s floor."""
+    median CPU and wall of a process and whether it reaches the unit floor
+    (MIN_UNIT_CPU; the table's SAMPLE_CPU, if any, also floors R)."""
     out = {}
     for name, rows in rows_by_unit.items():
         pairs = len(rows) // 2
@@ -1363,9 +1706,13 @@ def pilot_summary(rows_by_unit, reps_floor=1):
         jitter = loading.jitter(rows, control, pairs, 1)
         raw = [r["measurement"]["raw"] for r in rows]
         need = jitter["required_units"]
-        reps = max(reps_floor, math.ceil(need / PAIRS)) \
-            if need is not None else None
         cpu = median([m["cpu"] for m in raw])
+        # a table with a sample floor (SAMPLE_CPU) asks for at least
+        # ceil(SAMPLE_CPU / median CPU) processes per sample
+        floor = math.ceil(SAMPLE_CPU / cpu) if SAMPLE_CPU and cpu > 0 \
+            else 1
+        reps = max(reps_floor, floor, math.ceil(need / PAIRS)) \
+            if need is not None else None
         out[name] = dict(jitter=jitter, median_cpu=cpu,
                          median_wall=median([m["wall"] for m in raw]),
                          reps=reps, long_enough=cpu >= MIN_UNIT_CPU,
@@ -1382,7 +1729,7 @@ def declared_reps(pilot_outcome):
     units = pilot_outcome["pilot"]
     require(pilot_outcome.get("covered") and units and all(
         isinstance(p.get("reps"), int) for p in units.values()),
-        "the pilot is not usable: a unit is under %.0f s of CPU, so it "
+        "the pilot is not usable: a unit is under %g s of CPU, so it "
         "sized no R" % MIN_UNIT_CPU)
     return {w: min(R_CAP, p["reps"]) for w, p in units.items()}
 
@@ -1454,16 +1801,19 @@ EVENT_FIELDS = {
 
 def ledger_path(repo):
     """The ledger of the table: below the checkout's ignored .agent-files."""
-    return (Path(repo).resolve() / ".agent-files" / "evidence" / "task32" /
-            "attempts.jsonl")
+    return (Path(repo).resolve() / ".agent-files" / "evidence" /
+            ACTIVE.ledger_dir / "attempts.jsonl")
 
 
-def table_lines(state):
-    """The lines of this table, each of a known event with its fields of the
-    right types; anything else is a corrupt ledger."""
+def table_lines(state, table=None):
+    """The lines of one table of the ledger: `table` is the ledger table
+    named (default the active table's `ledger_table`; the storage driver's
+    is `task33-storage`, in the same file), each line of a known event with
+    its fields of the right types; anything else is a corrupt ledger. The
+    lines of the other tables are not looked at."""
     lines, infos, ends = [], set(), set()
     for record in state.records:
-        if record.get("table") != TABLE:
+        if record.get("table") != (table or TABLE):
             continue
         event = record.get("event")
         require(isinstance(event, str) and event in EVENT_FIELDS,
@@ -1487,10 +1837,11 @@ def table_lines(state):
     return lines
 
 
-def table_attempts(state):
-    """(attempt, stage) -> its open and close lines."""
+def table_attempts(state, table=None):
+    """(attempt, stage) -> its open and close lines, in the ledger table
+    `table` (default the active table's)."""
     found = {}
-    for record in table_lines(state):
+    for record in table_lines(state, table):
         if record["event"] in ("info", "info-end"):
             continue
         row = found.setdefault((record["attempt"], record["stage"]),
@@ -1504,9 +1855,10 @@ def table_attempts(state):
     return found
 
 
-def read_ledger(path):
+def read_ledger(path, table=None):
+    """(the ledger's state, table_attempts of `table`)."""
     state = tg.Ledger(path)
-    return state, table_attempts(state)
+    return state, table_attempts(state, table)
 
 
 def judged_because(attempt, stage, row):
@@ -1595,7 +1947,7 @@ def own_report(path, attempt, sealed):
     return report, None
 
 
-def info_runs(state, relocated=None):
+def info_runs(state, relocated=None, table=None):
     """Every information run (smoke, pilot, control) of the table with how
     it ended; a control also with its decision and whether it was detected,
     from its report. The report is taken only where the run recorded its
@@ -1604,13 +1956,14 @@ def info_runs(state, relocated=None):
     its seal the `info-end` line recorded). A row carries `report` (the
     path read, None when no report is read) and `why` (None when decision
     and detected were read, else the reason they are None: see
-    `own_report`). `relocated` is checked here: an entry naming no
+    `own_report`). `table` is the ledger table (default the active
+    table's). `relocated` is checked here: an entry naming no
     information run, a run that is not a successful control, or a report
     that is not the attempt's own is a refusal."""
     relocated = dict(relocated or {})
-    ends = {r["attempt"]: r for r in table_lines(state)
-            if r["event"] == "info-end"}
-    starts = [r for r in table_lines(state) if r["event"] == "info"]
+    lines = table_lines(state, table)
+    ends = {r["attempt"]: r for r in lines if r["event"] == "info-end"}
+    starts = [r for r in lines if r["event"] == "info"]
     unknown = sorted(set(relocated) - {r["attempt"] for r in starts})
     require(not unknown, "--relocated names no information run of the "
             "ledger: %s" % ", ".join(unknown))
@@ -1692,13 +2045,15 @@ def redraws(attempts, infos, counts):
              r["attempt"] != (counts.get(r["mode"]) or {}).get("attempt")])
 
 
-def refuse_second_draw(path, key, stage):
-    """The gate has no judged attempt at this stage yet: only a run that
-    admitted no measurement is void; any other new draw needs a written
-    policy decision (a follow-up is its own stage with its own counts)."""
+def refuse_second_draw(path, key, stage, table=None):
+    """The gate has no judged attempt at this stage yet (among the
+    attempts of the ledger table `table`, default the active table's):
+    only a run that admitted no measurement is void; any other new draw
+    needs a written policy decision (a follow-up is its own stage with its
+    own counts)."""
     if not Path(path).exists():
         return
-    found = read_ledger(path)[1]
+    found = read_ledger(path, table)[1]
     why = reasons(found)
     rows = gate_attempts(found, key, stage)
     counted = judged(rows, stage, why)
@@ -1707,31 +2062,49 @@ def refuse_second_draw(path, key, stage):
                 stage, ", ".join(counted)))
 
 
-def open_attempt(path, kind, **fields):
+def open_attempt(path, kind, table=None, **fields):
+    """The opening line of an attempt (`kind` open) or information run
+    (`info`) in the ledger table `table` (default the active table's).
+    The table travels with the attempt: `end_attempt` closes it in the
+    table of its opening line."""
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     attempt = "%s-%s" % (fields.get("stage") or fields["mode"],
                          uuid.uuid4().hex[:12])
-    tg.ledger_append(path, event=kind, table=TABLE, attempt=attempt,
-                     **fields)
+    tg.ledger_append(path, event=kind, table=table or TABLE,
+                     attempt=attempt, **fields)
     return attempt
 
 
-def end_attempt(path, report, output, saved):
-    """The close of a decision attempt, or the end of an information run;
-    when it cannot be written the attempt stays open (counts as judged).
-    Returns whether the line was written."""
+def attempt_table(path, attempt):
+    """The ledger table of the line that opened `attempt` (an `open` or
+    `info` line of any table), None when the ledger has none."""
+    found = {r.get("table") for r in tg.Ledger(path).records
+             if r.get("event") in ("open", "info") and
+             r.get("attempt") == attempt}
+    require(len(found) <= 1, "attempt %s was opened in several ledger "
+            "tables" % attempt)
+    return next(iter(found), None)
+
+
+def end_attempt(path, report, output, saved, table=None):
+    """The close of a decision attempt, or the end of an information run,
+    in the ledger table `table`; by default the table of the attempt's own
+    opening line (the attempt carries its table), the active table's when
+    the ledger has none. When it cannot be written the attempt stays open
+    (counts as judged). Returns whether the line was written."""
     try:
+        table = table or attempt_table(path, report["attempt"]) or TABLE
         seal = a.seal(Path(output) / "downstream.json")["sha256"] \
             if saved else None
         if report["mode"] in INFO_MODES:
-            tg.ledger_append(path, event="info-end", table=TABLE,
+            tg.ledger_append(path, event="info-end", table=table,
                              attempt=report["attempt"],
                              success=report["success"] is True, seal=seal)
             return True
         status = BLOCKED if report.get("blocked") else FAILED
         if report["success"]:
             status = stage_status(report["outcome"]["results"])
-        tg.ledger_append(path, event="close", table=TABLE,
+        tg.ledger_append(path, event="close", table=table,
                          attempt=report["attempt"], stage=report["stage"],
                          status=status, seal=seal, output=str(output))
         return True
@@ -1748,11 +2121,12 @@ def stage_status(results):
         "pass" if all(d == "pass" for d in decisions) else "inconclusive"
 
 
-def check_ledger(path, report, seal, status):
+def check_ledger(path, report, seal, status, table=None):
     """Replay: this run is the recorded attempt of its stage, closed with
-    this seal and status, and no other judged attempt exists for the gate."""
+    this seal and status, and no other judged attempt exists for the gate
+    (all in the ledger table `table`, default the active table's)."""
     require(Path(path).is_file(), "no attempts ledger: %s" % path)
-    found = read_ledger(path)[1]
+    found = read_ledger(path, table)[1]
     attempt, stage = report.get("attempt"), report["stage"]
     require((attempt, stage) in found, "the ledger has no opening of this "
             "run")
@@ -1824,6 +2198,131 @@ def check_new_stems(receipts):
                                   r["workload"], ",".join(sorted(extra))))
 
 
+ROOT_MASK = "<ROOT>"
+PROBE_MASK = "<PROBE>"
+PATH_CHAR = r"[A-Za-z0-9_.\-/]"
+
+
+class MaskError(ValueError):
+    """A path or text that holds the snapshot root or the probe directory
+    in a misplaced form."""
+
+
+def logical_prefixes(root, probe_dir):
+    """[(mask, directory)], the longest directory first: the snapshot root
+    and the side's probe directory, the two places that differ between the
+    sides."""
+    return sorted(((ROOT_MASK, str(root)), (PROBE_MASK, str(probe_dir))),
+                  key=lambda x: -len(x[1]))
+
+
+def mask_path(path, root, probe_dir):
+    """A directory with the snapshot root or the probe directory masked.
+    The probe directory is where `hol run` is started and where
+    Meta.fileDirMap records the probe's files (the logical directory, not
+    `.hol/objs`). A path that merely contains one of the two in another
+    form (not at its start, or ending inside a name: `<root>2/x`) is
+    misplaced: MaskError, never compared as an unmasked path. The rule of
+    `mask_dir` (L1 and `check_loaded`), of the TASK33 probe digest
+    (task33_cases.digest) and of the S3 archive; it is here, among the
+    sealed code of TASK32, because TASK32 replay runs it."""
+    path = str(path)
+    for mask, prefix in logical_prefixes(root, probe_dir):
+        if path == prefix or path.startswith(prefix + "/"):
+            return mask + path[len(prefix):]
+    for mask, prefix in logical_prefixes(root, probe_dir):
+        if prefix in path:
+            raise MaskError("the path %s holds %s in a misplaced form" % (
+                path, prefix))
+    return path
+
+
+def mask_text(text, root, probe_dir):
+    """`text` with every occurrence of the snapshot root and of the probe
+    directory masked. An occurrence must start a path (not follow a path
+    character) and end it (be followed by `/` or a character that cannot
+    continue a name): anything else is a misplaced prefix, MaskError."""
+    for mask, prefix in logical_prefixes(root, probe_dir):
+        pattern = re.compile("(?<!%s)%s(?=/|(?!%s))" % (
+            PATH_CHAR, re.escape(prefix), PATH_CHAR))
+        text = pattern.sub(mask, text)
+        if prefix in text:
+            raise MaskError("%s occurs in a misplaced form (inside a longer "
+                            "path or name)" % prefix)
+    return text
+
+
+def mask_dir(path, root, probe_dir):
+    """A directory of fileDirMap with the snapshot root and the process's
+    own probe directory masked (they differ between the sides): the one
+    rule `mask_path`, which also refuses a path that holds either in a
+    misplaced form (not at its start, or ending inside a name)."""
+    try:
+        return mask_path(path, root, probe_dir)
+    except ValueError as error:
+        raise Refusal(str(error))
+
+
+def masked_view(receipt, root, reporter_dir):
+    """What L1 compares between the sides: the modules the heap preloaded
+    (by name), the modules the process loaded, and the files it added to
+    `Meta.fileDirMap` with their directories root-masked, each sorted. The
+    files the heap preloaded into fileDirMap are not part of it."""
+    stats = receipt["stats"]
+    return dict(
+        loaded_before=sorted(set(stats["loaded_before"])),
+        loaded=sorted(set(stats["loaded"])),
+        files=sorted([f, mask_dir(d, root, reporter_dir)]
+                     for f, d in stats["files"]))
+
+
+def check_cross_side(report, receipts):
+    """L1 for a table with `cross_side`: per workload every process of a
+    side has one and the same masked view, and the two sides' views are
+    equal. `outcome` runs it after the digest, new-stem and churn checks
+    (and the per-process validation of the receipts before them), so a
+    run that fails one of those is refused or blocked by that check first,
+    whatever the views. Within this check: a baseline whose processes
+    differ among themselves is a harness fault (Refusal, whatever the
+    candidate does); a candidate whose processes differ among themselves
+    while the baseline's agree, and a candidate whose view differs from
+    the baseline's, are findings about the candidate: Blocked. The view
+    holds the heap's `loaded_before` names, the modules loaded and the
+    files the process added to `fileDirMap`; the part of fileDirMap the
+    heap preloaded is not compared (S4's `registry` case owes the full map)."""
+    views = {}
+    for r in receipts:
+        side = r["side"]
+        view = masked_view(r, report["roots"][side],
+                           report["reporter"][side]["dir"])
+        views.setdefault(r["workload"], {}).setdefault(
+            side, {}).setdefault(json.dumps(view, sort_keys=True), view)
+    for w, sides in sorted(views.items()):
+        for side, found in sorted(sides.items()):
+            require(len(found) == 1 or (
+                side == "cand" and "base" in sides and
+                len(sides["base"]) == 1),
+                "the processes of %s on the %s snapshot loaded different "
+                "modules or files" % (w, side))
+    for w, sides in sorted(views.items()):
+        if len(sides.get("cand", {})) > 1:
+            raise Blocked("the candidate's processes of %s loaded "
+                          "different modules or files" % w)
+    for w, sides in sorted(views.items()):
+        if len(sides) == 2:
+            base = next(iter(sides["base"].values()))
+            cand = next(iter(sides["cand"].values()))
+            if base != cand:
+                diff = sorted(
+                    "%s:%s" % (k, json.dumps(x))
+                    for k in base for x in (
+                        [i for i in base[k] if i not in cand[k]] +
+                        [i for i in cand[k] if i not in base[k]]))
+                raise Blocked("the candidate's loaded modules or "
+                              "fileDirMap differ from the baseline's "
+                              "(%s): %s" % (w, "; ".join(diff[:5])))
+
+
 def heap_anchors(root, heap):
     """The modules the heap `heap` (relative to `root`) preloads, from its
     own build: the module names in the `*DEPS` variables of the Holmakefile
@@ -1853,7 +2352,8 @@ def probe_facts(report, receipts):
     started), whether the reporter registered in Meta.fileDirMap, and what
     the process rewrote. `ok` needs the reporter in every process, a
     consistent heap fingerprint per declared heap (distinct between heaps)
-    and, for all the workloads, all four heaps."""
+    and, for all the workloads, every heap of the cases; `loads_ok` is
+    that each process loaded what its unit's kind claims (`loads`)."""
     facts = {}
     for r in receipts:
         unit = cases.BY_NAME[r["workload"]]
@@ -1865,7 +2365,8 @@ def probe_facts(report, receipts):
                                   for _, d in stats["files"]),
             loaded_before=len(stats["loaded_before"]),
             new_modules=len(stats["loaded"]), files=len(stats["files"]),
-            rewritten=r["rewritten"])
+            rewritten=r["rewritten"],
+            loads_ok=loads_problem(unit, stats) is None)
     heaps = sorted({cases.BY_NAME[w]["heap"] for w in report["workloads"]})
     complete = list(report["workloads"]) == list(cases.NAMES)
     # the heap is observed, with a positive anchor each: the modules a
@@ -1893,7 +2394,8 @@ def probe_facts(report, receipts):
             heap_ok = heap_ok and (
                 want is None or (bool(want) and want <= have)) and (
                 parent is None or have > next(iter(parent)))
-    ok = all(f["reporter_in_files"] for found in facts.values()
+    ok = all(f["reporter_in_files"] and f["loads_ok"]
+             for found in facts.values()
              for f in found.values()) and heap_ok and (
         not complete or heaps == list(cases.HEAPS))
     return dict(units=facts, heaps=heaps, complete=complete,
@@ -1932,6 +2434,8 @@ def outcome(report, receipts):
                 ", ".join(bad))
     check_churn(receipts)
     check_new_stems(receipts)
+    if ACTIVE.cross_side:
+        check_cross_side(report, receipts)
     out = dict(digests=found)
     if mode == "smoke":
         out["probe"] = probe_facts(report, receipts)
@@ -1979,7 +2483,9 @@ def planned_runs(report):
 def new_report(mode, stage, spec, repo, sides, mseal, output):
     names = spec["names"]
     return {"schema": SCHEMA, "success": False, "mode": mode, "stage": stage,
-            "claims": "NOT release acceptance: proof-build timing only",
+            **({} if ACTIVE.name == DEFAULT_TABLE else
+               {"table": ACTIVE.name}),
+            "claims": ACTIVE.claims,
             "repo": str(repo), "output": str(output), "key": spec["key"],
             "base": sides["base"]["pin"], "cand": sides["cand"]["pin"],
             "roots": {k: str(v["root"]) for k, v in sides.items()},
@@ -1996,12 +2502,16 @@ def new_report(mode, stage, spec, repo, sides, mseal, output):
 def originals(ctx, names):
     """The digest of what each snapshot already holds, per side, before any
     process: a theory unit's prebuilt products, a selftest's own build log
-    (the same normalization as the live output). The sides must agree."""
+    (the same normalization as the live output); None for a `probe` unit,
+    which has nothing prebuilt. The sides must agree."""
     found = {}
     for w in names:
         unit = cases.BY_NAME[w]
         for side in ("base", "cand"):
             root = ctx["roots"][side]
+            if unit["kind"] == "probe":
+                found[w, side] = None  # a process makes nothing beforehand
+                continue
             folder = root / unit["dir"]
             if unit["kind"] == "theory":
                 found[w, side] = theory_digest(
@@ -2034,12 +2544,20 @@ def carries(report, state):
         raise
 
 
-def run_stage(args, spec):
+def run_stage(args, spec, *, body_fn=None, report_fn=None,
+              decisive_stages=DECISIVE, table=None):
     """One run (smoke, control, pilot or a decision stage): lock, ledger,
     reporters, the processes in order (failing fast on a rejection), the
     outcome, the verification of the snapshots before and after. SIGTERM and
     SIGHUP end the run the way a failure does: the child's group is killed,
-    the products restored, the attempt closed."""
+    the products restored, the attempt closed.
+
+    The storage driver (task33_storage.py) runs its stages through this
+    function: `body_fn` (default `body`, same arguments) runs the
+    processes, `report_fn` (default `new_report`, same arguments) makes the
+    report, `decisive_stages` are the stage names that are judged attempts
+    (the others are information runs) and `table` is the ledger table of
+    the attempt (default the active table's)."""
     repo = Path(args.repo).resolve(strict=True)
     sides, mseal = load_manifest(args.manifest, args.base_root,
                                  args.cand_root)
@@ -2052,7 +2570,7 @@ def run_stage(args, spec):
     ledger = ledger_path(repo)
     loading.require_ignored(ledger, repo)
     loading.require_ignored(journals_dir(repo), repo)
-    decisive = stage in DECISIVE
+    decisive = stage in decisive_stages
     verify = None if args.no_verify else (
         args.verify_argv or default_verify(repo, args.manifest, sides))
     require(verify is not None or (not decisive and args.only),
@@ -2060,25 +2578,27 @@ def run_stage(args, spec):
             "the snapshot verification (--no-verify is for a --only subset "
             "of an information run)")
     with a.serial_lock(repo) as fds:
-        pending = pending_journals(repo)
+        pending = pending_everywhere(repo)
         require(not pending, "a restore journal is pending: %s; run "
-                "`recover` first" % ", ".join(map(str, pending)))
+                "`recover` first (with --table for the table named)" %
+                ", ".join("%s: %s" % (t, f) for t, f in pending))
         if decisive:
-            refuse_second_draw(ledger, spec["key"], stage)
+            refuse_second_draw(ledger, spec["key"], stage, table)
         output.mkdir(parents=True, exist_ok=False)
-        report = new_report(mode, stage, spec, repo, sides, mseal, output)
+        report = (report_fn or new_report)(mode, stage, spec, repo, sides,
+                                           mseal, output)
         fields = dict(key=spec["key"], seed=spec["seed"],
                       output=str(output), checkout=str(repo))
         if decisive:
             link = spec.get("first") or spec.get("replaces")
             report["attempt"] = open_attempt(
-                ledger, "open", stage=stage, first_attempt=None
+                ledger, "open", table, stage=stage, first_attempt=None
                 if link is None else link["attempt"],
                 counts=None if spec.get("counts") is None else
                 spec["counts"]["seal"]["sha256"], **fields)
         else:
-            report["attempt"] = open_attempt(ledger, "info", mode=mode,
-                                             **fields)
+            report["attempt"] = open_attempt(ledger, "info", table,
+                                             mode=mode, **fields)
         scratch = Path(args.scratch) / ("run-" + report["attempt"])
         journal = journals_dir(repo) / report["attempt"]
         saved = False
@@ -2086,8 +2606,8 @@ def run_stage(args, spec):
         signalled = None
         with carries(report, state), snap.terminating():
             try:
-                body(args, spec, report, sides, scratch, fds, verify,
-                     journal)
+                (body_fn or body)(args, spec, report, sides, scratch, fds,
+                                  verify, journal)
                 snap.hold()  # last: from here a signal is only recorded
                 report["success"] = True
             except (Exception, snap.Terminated) as error:
@@ -2138,14 +2658,19 @@ def pending_journals_in(folder):
         return True
 
 
-def body(args, spec, report, sides, scratch, fds, verify, journal):
+def prepare(args, report, sides, scratch, fds, verify, journal,
+            modules=None):
+    """The start of every run's body: the scratch folders, the context
+    (`make_ctx`), the verification before, the Poly/ML version, each
+    side's reporter and, for a table with probes, each side's probes (built
+    from the sealed sources of the report's code: `modules` is the list of
+    probe modules to build, or a function of the side giving it; default
+    `cases.PROBES`). Returns the context."""
     scratch.mkdir(parents=True, exist_ok=False)
     for sub in ("home", "tmp", "out"):
         (scratch / sub).mkdir()
-    ctx = dict(roots={k: v["root"] for k, v in sides.items()},
-               scratch=str(scratch), timeout=args.timeout, fds=fds,
-               reporter={}, journal=journal, attempt=report["attempt"],
-               evidence=Path(report["output"]))
+    ctx = make_ctx(sides, scratch, args.timeout, fds, journal,
+                   report["attempt"], report["output"])
     journal_end(ctx)
     if verify is not None:
         report["verify"] = {"before": run_verify(verify, report["repo"],
@@ -2157,12 +2682,25 @@ def body(args, spec, report, sides, scratch, fds, verify, journal):
             ctx["roots"][side], scratch / ("probe-" + side), env,
             args.timeout, fds)
     report["reporter"] = ctx["reporter"]
+    if ACTIVE.probe_sources is not None:
+        for side in ("base", "cand"):
+            wanted = modules(side) if callable(modules) else modules
+            ctx["probes"][side] = build_probes(
+                ctx["roots"][side], ctx["reporter"][side]["dir"], env,
+                args.timeout, fds, sealed=report["code"], modules=wanted)
+        report["probes"] = ctx["probes"]
+    return ctx
+
+
+def body(args, spec, report, sides, scratch, fds, verify, journal):
+    ctx = prepare(args, report, sides, scratch, fds, verify, journal)
     origin = originals(ctx, report["workloads"])
     report["prebuilt"] = {w: origin[w, "base"] for w in report["workloads"]}
     refs = report["references"]
     if refs:
         for w in report["workloads"]:
-            require(refs[w] == origin[w, "base"], "what the snapshots "
+            require(origin[w, "base"] is None or
+                    refs[w] == origin[w, "base"], "what the snapshots "
                     "already hold of %s differs from the reference" % w)
     receipts = []
     busy_spec = report["busy"]
@@ -2211,6 +2749,7 @@ def check_receipt(folder, report, entry, refs):
         receipt["accepted"] is entry["accepted"] is True,
         "process receipt disagrees with the report: " + label)
     unit = cases.BY_NAME[entry["workload"]]
+    check_unit_env(unit)
     side = side_of(entry["phase"], entry["selection"],
                    bool(report["busy"]))
     require(receipt["side"] == side, "wrong snapshot: " + label)
@@ -2230,6 +2769,10 @@ def check_receipt(folder, report, entry, refs):
             (busy is None or
              receipt["env"]["T32_BUSY"] == repr(float(busy))),
             "wrong layout or busy setting: " + label)
+    require({k: v for k, v in receipt["env"].items()
+             if ACTIVE.env_prefix and
+             k.startswith(ACTIVE.env_prefix)} == (unit.get("env") or {}),
+            "wrong probe environment: " + label)
     expected = (refs or {}).get(entry["workload"]) or \
         report["prebuilt"][entry["workload"]]
     validate(receipt, unit, root, reporter["dir"], expected, side == "cand")
@@ -2237,12 +2780,37 @@ def check_receipt(folder, report, entry, refs):
         require(text_digest(receipt["stdout"].encode("latin-1"), root) ==
                 receipt["digest"], "the stored output does not give the "
                 "digest: " + label)
+    if unit["kind"] == "probe":
+        require(probe_digest(receipt["stdout"], root, reporter["dir"],
+                             unit) == receipt["digest"],
+                "the stored output does not give the digest: " + label)
     require(same(measure(receipt), receipt["measurement"]["raw"]),
             "changed measurement: " + label)
     return receipt
 
 
+def check_probe_sources(report):
+    """A table with probe units: each side's probes were built from the
+    sealed sources (`probes.sources`, file -> sha256, as `build_probes`
+    recorded) the report's code seals name, and from no other file."""
+    if ACTIVE.probe_sources is None:
+        return
+    want = {Path(rel).name: report["code"][rel]["sha256"]
+            for rel in ACTIVE.probe_sources}
+    for side in ("base", "cand"):
+        built = (report.get("probes") or {}).get(side)
+        require(isinstance(built, dict) and built.get("sources") == want,
+                "the %s probes were not built from the sealed sources" %
+                side)
+        modules = built.get("modules")
+        require(isinstance(modules, list) and modules and all(
+            m + ".sml" in want for m in modules),
+            "the %s probe modules are not among the sealed sources" % side)
+
+
 def unit_argv_shape(unit, root, uo, argv):
+    if unit["kind"] == "probe":
+        return argv == unit_argv(unit, root, uo)[0]
     if unit["kind"] == "theory":
         return argv == cases.theory_argv(root, unit["theory"])
     return (len(argv) >= 6 and argv[0] == str(root / "bin/hol") and
@@ -2274,6 +2842,10 @@ def replay_one(folder, ledger=None, counts=None, followup_counts=None,
     report = a.load(folder / "downstream.json")
     require(report.get("schema") == SCHEMA and report["success"] is True,
             "not a successful " + SCHEMA + " run")
+    require(report.get("table", DEFAULT_TABLE) == ACTIVE.name,
+            "the run is of table %s, not %s: replay it with --table %s" % (
+                report.get("table", DEFAULT_TABLE), ACTIVE.name,
+                report.get("table", DEFAULT_TABLE)))
     mode, stage = report["mode"], report["stage"]
     require(stage == (None if mode in INFO_MODES else mode) and
             mode in INFO_MODES + DECISIVE, "malformed run")
@@ -2282,8 +2854,10 @@ def replay_one(folder, ledger=None, counts=None, followup_counts=None,
             report["layout_seed"] == SEEDS[stage or mode],
             "the policy, reporter or seed changed")
     check_code(report["code"])
+    check_probe_sources(report)
     require(sorted(report["prebuilt"]) == sorted(report["workloads"]) and
             all(not report["references"] or
+                report["prebuilt"][w] is None or
                 report["references"][w] == report["prebuilt"][w]
                 for w in report["workloads"]),
             "what the snapshots held does not match the references")
@@ -2366,7 +2940,8 @@ def replay_chain(folder, ledger=None, counts=None, followup_counts=None,
     if stage == "first":
         require(report["workloads"] == list(cases.NAMES) and
                 set(report["pairs"].values()) == {PAIRS},
-                "a first stage is all 15 workloads of %d pairs" % PAIRS)
+                "a first stage is all %d workloads of %d pairs" % (
+                    len(cases.NAMES), PAIRS))
         return [here]
     link = report["first_stage"] if stage == "second" else report["replaces"]
     parent = replay_chain(link["run"], ledger, counts, followup_counts, repo)
@@ -2423,10 +2998,23 @@ def pins_of(args):
     return sides, mseal
 
 
-def info_run(folder, key, mode, ledger, names=None, *, mseal):
+def info_run(folder, key, mode, ledger, names=None, *, mseal,
+             table=None):
     """A replayed information run of this gate, verified before and after
     (a run without the audit cannot feed the counts)."""
     info, report = replay_one(folder, ledger=ledger)
+    check_info_run(info, report, key, mode, ledger, names, mseal, table)
+    return info, report
+
+
+def check_info_run(info, report, key, mode, ledger, names, mseal,
+                   table=None):
+    """What makes a replayed run (`info`, `report`) an information run of
+    this gate for the counts: its mode and gate, the manifest, the
+    workloads (`names`: the unit names it must have run, default
+    `cases.NAMES`), the snapshot verification and its lines in the ledger
+    table `table` (default the active table's). The storage driver replays
+    its own runs and calls this."""
     require(report["mode"] == mode and report["key"] == key,
             "--%s is not a %s run of this gate" % (mode, mode))
     require(report["manifest"] == mseal, "the %s run was made on other "
@@ -2439,7 +3027,7 @@ def info_run(folder, key, mode, ledger, names=None, *, mseal):
             "the %s run did not verify the snapshots" % mode)
     path = Path(ledger or ledger_path(report["repo"]))
     require(path.is_file(), "no attempts ledger: %s" % path)
-    lines = table_lines(tg.Ledger(path))
+    lines = table_lines(tg.Ledger(path), table)
     attempt = report["attempt"]
     starts = [r for r in lines if r["event"] == "info" and
               r["attempt"] == attempt]
@@ -2452,7 +3040,12 @@ def info_run(folder, key, mode, ledger, names=None, *, mseal):
             ends[0]["seal"] == info["seal"]["sha256"],
             "the ledger has no successful `info-end` with the seal of this "
             "%s run" % mode)
-    return info, report
+
+
+def table_key():
+    """The `table` of a counts file: absent for the default table (its
+    files are as before there were tables)."""
+    return {} if ACTIVE.name == DEFAULT_TABLE else {"table": ACTIVE.name}
 
 
 def predeclare_first(args):
@@ -2468,11 +3061,12 @@ def predeclare_first(args):
                                      args.ledger, [cases.CONTROL_UNIT],
                                      mseal=mseal)
     require(pilot["outcome"]["covered"], "the pilot is not usable: a unit "
-            "is under %.0f s of CPU" % MIN_UNIT_CPU)
+            "is under %g s of CPU" % MIN_UNIT_CPU)
     require(smoke["outcome"]["probe"]["ok"] and
             smoke["outcome"]["probe"]["complete"],
             "the smoke run did not pass the probe facts (reporter in "
-            "fileDirMap, all four heaps)")
+            "fileDirMap, every process loads what its kind claims, all "
+            "%d heaps)" % len(cases.HEAPS))
     require(pilot["outcome"]["digests"] == smoke["outcome"]["digests"],
             "the pilot and the smoke run disagree on an output")
     found = control["outcome"]["negative_control"]
@@ -2501,7 +3095,8 @@ def predeclare_first(args):
     verifying = sum(over["verify_seconds"].values())
     estimate = {w: estimate[w] + scanning[w] for w in cases.NAMES}
     return {
-        "schema": COUNTS_SCHEMA, "kind": "first", "base": pilot["base"],
+        "schema": COUNTS_SCHEMA, **table_key(), "kind": "first",
+        "base": pilot["base"],
         "cand": pilot["cand"], "manifest": mseal, "pairs": PAIRS,
         "seed": LAYOUT_SEED, "extension_seed": EXTENSION_SEED,
         "reps": reps, "r_cap": R_CAP, "required_reps": required,
@@ -2546,7 +3141,7 @@ def predeclare_followup(args):
                          repo=args.repo)
     owed, pairs = followup_plan(chain)
     first, last = chain[0]["report"], chain[-1]
-    return {"schema": COUNTS_SCHEMA, "kind": "followup",
+    return {"schema": COUNTS_SCHEMA, **table_key(), "kind": "followup",
             "base": first["base"], "cand": first["cand"],
             "manifest": mseal, "seed": FOLLOWUP_SEED, "workloads": owed,
             "pairs": pairs, "reps": {w: first["reps"][w] for w in owed},
@@ -2557,13 +3152,15 @@ def predeclare_followup(args):
             "code": code_seals()}
 
 
-def disposition(chain, ledger, counts_path=None, relocated=None):
+def disposition(chain, ledger, counts_path=None, relocated=None,
+                table=None):
     """Per workload and overall: pass, fail or blocked (the R-1 table of
     every attempt of the gate, the information runs and the redraws
     included). `counts_path` names the first-stage counts file, as in
     replay (default: the committed COUNTS); its seal must be the one the
     first stage used. `relocated` maps an information run to the directory
-    its report was moved to (see `info_runs`)."""
+    its report was moved to (see `info_runs`). `table` is the ledger table
+    whose attempts the R-1 table lists (default the active table's)."""
     chains = workload_chains(chain)
     require(sorted(chains) == sorted(cases.NAMES), "not all workloads")
     rows = {}
@@ -2581,9 +3178,9 @@ def disposition(chain, ledger, counts_path=None, relocated=None):
     statuses = [r["status"] for r in rows.values()]
     overall = "fail" if "fail" in statuses else \
         "pass" if set(statuses) == {"pass"} else "blocked"
-    state, found = read_ledger(ledger)
+    state, found = read_ledger(ledger, table)
     attempts = attempts_table(found, reasons(found))
-    infos = info_runs(state, relocated)
+    infos = info_runs(state, relocated, table)
     use = chain[0]["report"]["counts"]
     path = counts_file_for(chain[0]["report"], counts_path, None)
     require(a.seal(path) == use["seal"], "%s is not the counts file the "
@@ -2620,7 +3217,7 @@ def busy_spec(args, key, mseal):
             "--pilot is not a pilot of this gate with %s" %
             cases.CONTROL_UNIT)
     require(pilot["outcome"]["covered"], "--pilot is not usable: a unit "
-            "is under %.0f s of CPU" % MIN_UNIT_CPU)
+            "is under %g s of CPU" % MIN_UNIT_CPU)
     require(pilot["manifest"] == mseal, "--pilot was made on other "
             "snapshots (the manifest seal differs)")
     cpu = pilot["outcome"]["pilot"][cases.CONTROL_UNIT]["median_cpu"]
@@ -2752,8 +3349,8 @@ def exit_of(report):
 
 def summary_line(report):
     out = report.get("outcome", {})
-    head = "TASK32 %s%s: attempt %s, %d processes, success %s" % (
-        report["mode"], "" if report["stage"] is None else
+    head = "%s %s%s: attempt %s, %d processes, success %s" % (
+        ACTIVE.label, report["mode"], "" if report["stage"] is None else
         " (" + report["stage"] + ")", report.get("attempt"),
         len(report["runs"]), report["success"])
     if not report["success"]:
@@ -2789,7 +3386,7 @@ def add_run(parser):
     add_common(parser)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--scratch", type=absolute_path,
-                        default=Path("/dev/shm/t32"))
+                        default=Path(ACTIVE.scratch))
     parser.add_argument("--timeout", type=int, default=TIMEOUT)
     parser.add_argument("--verify-argv", type=shlex.split,
                         help="command that exits 0 while the snapshots are "
@@ -2805,8 +3402,27 @@ COMMAND_HELP = {"recover": "put back the products a killed or failed "
                 "restore left in a journal"}
 
 
+def add_table(parser):
+    parser.add_argument("--table", choices=sorted(TABLES),
+                        default=ACTIVE.name, help="the table: which units, "
+                        "counts, seeds, ledger and code (default %s; "
+                        "before the command)" % DEFAULT_TABLE)
+
+
+class Parser(argparse.ArgumentParser):
+    """A usage error of the command line is a refusal: usage and message
+    on the standard error, status 3 (2 is the status of a blocked stage)."""
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(3, "%s: error: %s\n" % (self.prog, message))
+
+
 def build_parser():
-    parser = argparse.ArgumentParser(description=__doc__)
+    """The parser of the active table (`main` selects it first from
+    --table, which is why the scratch default is the table's)."""
+    parser = Parser(description=__doc__, allow_abbrev=False)
+    add_table(parser)
     sub = parser.add_subparsers(dest="command", required=True)
     cmd = {name: sub.add_parser(name, help=COMMAND_HELP.get(name))
            for name in COMMANDS}
@@ -2850,12 +3466,29 @@ def build_parser():
     return parser
 
 
-def main(argv=None):
-    args = build_parser().parse_args(argv)
+def select_table(argv):
+    """Apply --table of `argv` (before the parser is built)."""
+    first = Parser(add_help=False, allow_abbrev=False)
+    first.add_argument("--table", choices=sorted(TABLES))
+    known = first.parse_known_args(argv)[0]
+    use_table(known.table or DEFAULT_TABLE)
+
+
+def main(argv=None, *, table=None, build=None, run=None,
+         summarize=None):
+    """The command line of a driver of tables. TASK32's and TASK33's timing
+    driver is the default; the storage driver passes its own `table` (the
+    one to use, instead of --table's), `build` (the parser), `run` (the
+    dispatch) and `summarize` (the summary line of a signalled run)."""
+    if table is None:
+        select_table(sys.argv[1:] if argv is None else argv)
+    else:
+        use_table(table)
+    args = (build or build_parser)().parse_args(argv)
     try:
-        return dispatch(args)
+        return (run or dispatch)(args)
     except snap.Terminated as signalled:
-        return terminated(args, signalled)
+        return terminated(args, signalled, summarize)
     except (Refusal, a.Blocked, ValueError, OSError) as error:
         print("REFUSED: %s%s" % (error, "".join(
             " (%s)" % n for n in getattr(error, "__notes__", ()))),
@@ -2869,7 +3502,7 @@ def main(argv=None):
         return 3
 
 
-def terminated(args, signalled):
+def terminated(args, signalled, summarize=None):
     """The status 4 of a run ended by a signal, with what is left. A report
     that was saved (and its attempt closed) is still summarized: the stage
     result is recorded, whatever the signal. Otherwise the attempt is
@@ -2879,7 +3512,7 @@ def terminated(args, signalled):
     report = getattr(signalled, "report", None)
     if report is not None and getattr(signalled, "saved", False) and \
             getattr(signalled, "closed", False):
-        print(summary_line(report))
+        print((summarize or summary_line)(report))
         print("the result is recorded: %s, attempt %s is closed" % (
             Path(report["output"]) / "downstream.json",
             report.get("attempt")))
@@ -2893,6 +3526,8 @@ def terminated(args, signalled):
 
 
 def dispatch(args):
+    require(args.table == ACTIVE.name, "--table %s, but the active table "
+            "is %s" % (args.table, ACTIVE.name))
     command = args.command
     if command in ("smoke", "pilot", "control"):
         spec = info_spec(args, command)
@@ -2939,8 +3574,8 @@ def dispatch(args):
             chain[0]["report"]["repo"]), args.counts, relocated)
         with args.out.open("x") as stream:
             stream.write(dumps(data))
-        print("TASK32 disposition: %s %s" % (data["status"],
-                                             json.dumps(data["counts"])))
+        print("%s disposition: %s %s" % (ACTIVE.label, data["status"],
+                                         json.dumps(data["counts"])))
         return {"pass": 0, "fail": 1}.get(data["status"], 2)
     report = run_stage(args, spec)
     print(summary_line(report))

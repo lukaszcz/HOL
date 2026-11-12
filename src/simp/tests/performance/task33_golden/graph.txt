@@ -1,0 +1,97 @@
+@@T33 {"record":"probe","probe":"graph","kind":"graph","holdir":"@ROOT@","switches":{"graph_extra":false,"leak":false,"hook":false},"params":{"sizes":[0,1,10]}}
+@@T33 {"record":"live","probe":"graph","kind":"graph","phase":"start","size_heap":6291456,"free_full":1427408,"alloc":1048576,"alloc_free":1048576,"gc_share":0,"comparable":true,"words":476934}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"fragment 0","ok":true,"value":"n=0 fragment 0 merged 0"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"compiled 0","ok":true,"value":"n=0 ⊢ T ⇔ T"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"compiled_bool 0","ok":true,"value":"n=0 "}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"merge 0","ok":true,"value":"n=0 "}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"projection 0","ok":true,"value":"n=0 "}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"tactic 0","ok":true,"value":"n=0 "}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"exclusion 0","ok":true,"value":"n=0 "}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"removed 0","ok":true,"value":"n=0 "}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"cong 0","ok":true,"value":"n=0 "}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"fragment","n":0,"anchor":2359646,"anchor_post":2359646,"union":2359655,"words":9,"share":0,"canon_anchor":2359646,"canon_anchor_post":2359646,"canon_union":2359655,"canon_words":9,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"compiled","n":0,"anchor":2359655,"anchor_post":2359655,"union":2359678,"words":23,"share":0,"canon_anchor":2359655,"canon_anchor_post":2359655,"canon_union":2359678,"canon_words":23,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"compiled_bool","n":0,"anchor":2359655,"anchor_post":2359655,"union":2359676,"words":21,"share":0,"canon_anchor":2359655,"canon_anchor_post":2359655,"canon_union":2359678,"canon_words":23,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"merge","n":0,"anchor":2359655,"anchor_post":2359655,"union":2359664,"words":9,"share":0,"canon_anchor":2359655,"canon_anchor_post":2359655,"canon_union":2359664,"canon_words":9,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"projection","n":0,"anchor":2359669,"anchor_post":2359669,"union":2359695,"words":26,"share":0,"canon_anchor":2359669,"canon_anchor_post":2359669,"canon_union":2359669,"canon_words":0,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"conversion","n":0,"anchor":2359669,"anchor_post":2359669,"union":2359745,"words":76,"share":0,"canon_anchor":2359669,"canon_anchor_post":2359669,"canon_union":2359753,"canon_words":84,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"tactic","n":0,"anchor":2359669,"anchor_post":2359669,"union":2359790,"words":121,"share":0,"canon_anchor":2359669,"canon_anchor_post":2359669,"canon_union":2359798,"canon_words":129,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"exclusion","n":0,"anchor":2359655,"anchor_post":2359655,"union":2359676,"words":21,"share":0,"canon_anchor":2359655,"canon_anchor_post":2359655,"canon_union":2359678,"canon_words":23,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"removed","n":0,"anchor":2359646,"anchor_post":2359646,"union":2359671,"words":25,"share":0,"canon_anchor":2359646,"canon_anchor_post":2359646,"canon_union":2359646,"canon_words":0,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"cong","n":0,"anchor":2359646,"anchor_post":2359646,"union":2359711,"words":65,"share":0,"canon_anchor":2359646,"canon_anchor_post":2359646,"canon_union":2359672,"canon_words":26,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"cells_cons","n":0,"anchor":2359644,"anchor_post":2359644,"union":2359644,"words":0,"share":0,"canon_anchor":2359644,"canon_anchor_post":2359644,"canon_union":2359644,"canon_words":0,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"cells_ref","n":0,"anchor":2359644,"anchor_post":2359644,"union":2359644,"words":0,"share":0,"canon_anchor":2359644,"canon_anchor_post":2359644,"canon_union":2359644,"canon_words":0,"canon_share":0}
+@@T33 {"record":"live","probe":"graph","kind":"graph","phase":"graph.0","size_heap":6291456,"free_full":1422160,"alloc":1048576,"alloc_free":1048576,"gc_share":0,"comparable":true,"words":477590}
+@@T33 {"record":"phase","probe":"graph","kind":"graph","n":0,"share_start":0,"share_built":0,"share_shared":0,"share_canon":0,"build":{"reset_ok":true,"rss_before":110190592,"hwm_before":113012736,"rss_reset":110268416,"hwm_reset":110268416,"rss_after":112705536,"hwm_after":112705536,"status":"ok"},"rows":{"reset_ok":true,"rss_before":112705536,"hwm_before":112705536,"rss_reset":112783360,"hwm_reset":112783360,"rss_after":111206400,"hwm_after":113000448,"status":"unsupported"}}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"fragment 1","ok":true,"value":"n=1 fragment 1 merged 1"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"compiled 1","ok":true,"value":"n=1  [.] ⊢ t33_g0 ⇔ T;  [.] ⊢ t33_g0 ⇔ T"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"compiled_bool 1","ok":true,"value":"n=1  [.] ⊢ t33_g0 ⇔ T;  [.] ⊢ t33_g0 ⇔ T"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"merge 1","ok":true,"value":"n=1  [.] ⊢ t33_g0 ⇔ T;  [.] ⊢ t33_g0 ⇔ T"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"projection 1","ok":true,"value":"n=1  [.] ⊢ t33_g0 ⇔ T;  [.] ⊢ t33_g0 ⇔ T"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"tactic 1","ok":true,"value":"n=1  [.] ⊢ t33_g0;  [.] ⊢ t33_g0"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"exclusion 1","ok":true,"value":"n=1  [.] ⊢ t33_g0 ⇔ T"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"removed 1","ok":true,"value":"n=1 ⊢ t33_g0 ⇔ t33_g0"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"cong 1","ok":true,"value":"n=1  [.] ⊢ t33_g0 ⇔ T;  [.] ⊢ t33_g0 ⇔ T"}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"fragment","n":1,"anchor":2359674,"anchor_post":2359674,"union":2359689,"words":15,"share":0,"canon_anchor":2359674,"canon_anchor_post":2359674,"canon_union":2359689,"canon_words":15,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"compiled","n":1,"anchor":2359686,"anchor_post":2359686,"union":2359758,"words":72,"share":0,"canon_anchor":2359686,"canon_anchor_post":2359686,"canon_union":2359758,"canon_words":72,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"compiled_bool","n":1,"anchor":2359686,"anchor_post":2359686,"union":2359810,"words":124,"share":0,"canon_anchor":2359686,"canon_anchor_post":2359686,"canon_union":2359774,"canon_words":88,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"merge","n":1,"anchor":2359686,"anchor_post":2359686,"union":2359695,"words":9,"share":0,"canon_anchor":2359686,"canon_anchor_post":2359686,"canon_union":2359695,"canon_words":9,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"projection","n":1,"anchor":2359758,"anchor_post":2359758,"union":2359784,"words":26,"share":0,"canon_anchor":2359758,"canon_anchor_post":2359758,"canon_union":2359777,"canon_words":19,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"conversion","n":1,"anchor":2359758,"anchor_post":2359758,"union":2359834,"words":76,"share":0,"canon_anchor":2359758,"canon_anchor_post":2359758,"canon_union":2359834,"canon_words":76,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"tactic","n":1,"anchor":2359758,"anchor_post":2359758,"union":2359879,"words":121,"share":0,"canon_anchor":2359758,"canon_anchor_post":2359758,"canon_union":2359879,"canon_words":121,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"exclusion","n":1,"anchor":2359694,"anchor_post":2359694,"union":2359807,"words":113,"share":0,"canon_anchor":2359694,"canon_anchor_post":2359694,"canon_union":2359798,"canon_words":104,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"removed","n":1,"anchor":2359674,"anchor_post":2359674,"union":2359699,"words":25,"share":0,"canon_anchor":2359674,"canon_anchor_post":2359674,"canon_union":2359674,"canon_words":0,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"cong","n":1,"anchor":2359674,"anchor_post":2359674,"union":2359769,"words":95,"share":0,"canon_anchor":2359674,"canon_anchor_post":2359674,"canon_union":2359730,"canon_words":56,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"cells_cons","n":1,"anchor":2359641,"anchor_post":2359641,"union":2359644,"words":3,"share":0,"canon_anchor":2359641,"canon_anchor_post":2359641,"canon_union":2359644,"canon_words":3,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"cells_ref","n":1,"anchor":2359641,"anchor_post":2359641,"union":2359646,"words":5,"share":0,"canon_anchor":2359641,"canon_anchor_post":2359641,"canon_union":2359646,"canon_words":5,"canon_share":0}
+@@T33 {"record":"live","probe":"graph","kind":"graph","phase":"graph.1","size_heap":6291456,"free_full":1419080,"alloc":1048576,"alloc_free":1048576,"gc_share":0,"comparable":true,"words":477975}
+@@T33 {"record":"phase","probe":"graph","kind":"graph","n":1,"share_start":0,"share_built":0,"share_shared":0,"share_canon":0,"build":{"reset_ok":true,"rss_before":110190592,"hwm_before":113061888,"rss_reset":110268416,"hwm_reset":110268416,"rss_after":126857216,"hwm_after":126857216,"status":"ok"},"rows":{"reset_ok":true,"rss_before":126857216,"hwm_before":126857216,"rss_reset":126857216,"hwm_reset":126857216,"rss_after":111353856,"hwm_after":126537728,"status":"unsupported"}}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"fragment 10","ok":true,"value":"n=10 fragment 10 merged 10"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"compiled 10","ok":true,"value":"n=10  [.] ⊢ t33_g0 ⇔ T;  [.] ⊢ t33_g9 ⇔ T"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"compiled_bool 10","ok":true,"value":"n=10  [.] ⊢ t33_g0 ⇔ T;  [.] ⊢ t33_g9 ⇔ T"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"merge 10","ok":true,"value":"n=10  [.] ⊢ t33_g0 ⇔ T;  [.] ⊢ t33_g9 ⇔ T"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"projection 10","ok":true,"value":"n=10  [.] ⊢ t33_g0 ⇔ T;  [.] ⊢ t33_g9 ⇔ T"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"tactic 10","ok":true,"value":"n=10  [.] ⊢ t33_g0;  [.] ⊢ t33_g9"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"exclusion 10","ok":true,"value":"n=10 ⊢ t33_g0 ⇔ t33_g0;  [.] ⊢ t33_g9 ⇔ T"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"removed 10","ok":true,"value":"n=10 ⊢ t33_g0 ⇔ t33_g0"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"cong 10","ok":true,"value":"n=10  [.] ⊢ t33_g0 ⇔ T;  [.] ⊢ t33_g9 ⇔ T"}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"fragment","n":10,"anchor":2359953,"anchor_post":2359953,"union":2360022,"words":69,"share":0,"canon_anchor":2359953,"canon_anchor_post":2359953,"canon_union":2360022,"canon_words":69,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"compiled","n":10,"anchor":2359992,"anchor_post":2359992,"union":2360557,"words":565,"share":0,"canon_anchor":2359992,"canon_anchor_post":2359992,"canon_union":2360566,"canon_words":574,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"compiled_bool","n":10,"anchor":2359992,"anchor_post":2359992,"union":2360871,"words":879,"share":0,"canon_anchor":2359992,"canon_anchor_post":2359992,"canon_union":2360583,"canon_words":591,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"merge","n":10,"anchor":2359992,"anchor_post":2359992,"union":2360001,"words":9,"share":0,"canon_anchor":2359992,"canon_anchor_post":2359992,"canon_union":2360001,"canon_words":9,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"projection","n":10,"anchor":2360557,"anchor_post":2360557,"union":2360583,"words":26,"share":0,"canon_anchor":2360557,"canon_anchor_post":2360557,"canon_union":2360576,"canon_words":19,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"conversion","n":10,"anchor":2360557,"anchor_post":2360557,"union":2360633,"words":76,"share":0,"canon_anchor":2360557,"canon_anchor_post":2360557,"canon_union":2360633,"canon_words":76,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"tactic","n":10,"anchor":2360557,"anchor_post":2360557,"union":2360678,"words":121,"share":0,"canon_anchor":2360557,"canon_anchor_post":2360557,"canon_union":2360678,"canon_words":121,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"exclusion","n":10,"anchor":2360072,"anchor_post":2360072,"union":2360919,"words":847,"share":0,"canon_anchor":2360072,"canon_anchor_post":2360072,"canon_union":2360888,"canon_words":816,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"removed","n":10,"anchor":2359953,"anchor_post":2359953,"union":2359978,"words":25,"share":0,"canon_anchor":2359953,"canon_anchor_post":2359953,"canon_union":2359953,"canon_words":0,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"cong","n":10,"anchor":2359953,"anchor_post":2359953,"union":2360289,"words":336,"share":0,"canon_anchor":2359953,"canon_anchor_post":2359953,"canon_union":2360250,"canon_words":297,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"cells_cons","n":10,"anchor":2359641,"anchor_post":2359641,"union":2359671,"words":30,"share":0,"canon_anchor":2359641,"canon_anchor_post":2359641,"canon_union":2359671,"canon_words":30,"canon_share":0}
+@@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"cells_ref","n":10,"anchor":2359641,"anchor_post":2359641,"union":2359691,"words":50,"share":0,"canon_anchor":2359641,"canon_anchor_post":2359641,"canon_union":2359691,"canon_words":50,"canon_share":0}
+@@T33 {"record":"live","probe":"graph","kind":"graph","phase":"graph.10","size_heap":6291456,"free_full":1403544,"alloc":1048576,"alloc_free":1048576,"gc_share":0,"comparable":true,"words":479917}
+@@T33 {"record":"phase","probe":"graph","kind":"graph","n":10,"share_start":0,"share_built":0,"share_shared":0,"share_canon":0,"build":{"reset_ok":true,"rss_before":111157248,"hwm_before":126537728,"rss_reset":111235072,"hwm_reset":111235072,"rss_after":129482752,"hwm_after":129482752,"status":"ok"},"rows":{"reset_ok":true,"rss_before":129482752,"hwm_before":129482752,"rss_reset":129560576,"hwm_reset":129560576,"rss_after":110284800,"hwm_after":129351680,"status":"unsupported"}}
+@@T33 {"record":"step","probe":"graph","kind":"graph","graph":"fragment","mode":"built","first":6,"rest":54,"span":9}
+@@T33 {"record":"step","probe":"graph","kind":"graph","graph":"compiled","mode":"built","first":49,"rest":493,"span":9}
+@@T33 {"record":"step","probe":"graph","kind":"graph","graph":"compiled_bool","mode":"built","first":103,"rest":755,"span":9}
+@@T33 {"record":"step","probe":"graph","kind":"graph","graph":"merge","mode":"built","first":0,"rest":0,"span":9}
+@@T33 {"record":"step","probe":"graph","kind":"graph","graph":"projection","mode":"built","first":0,"rest":0,"span":9}
+@@T33 {"record":"step","probe":"graph","kind":"graph","graph":"conversion","mode":"built","first":0,"rest":0,"span":9}
+@@T33 {"record":"step","probe":"graph","kind":"graph","graph":"tactic","mode":"built","first":0,"rest":0,"span":9}
+@@T33 {"record":"step","probe":"graph","kind":"graph","graph":"exclusion","mode":"built","first":92,"rest":734,"span":9}
+@@T33 {"record":"step","probe":"graph","kind":"graph","graph":"removed","mode":"built","first":0,"rest":0,"span":9}
+@@T33 {"record":"step","probe":"graph","kind":"graph","graph":"cong","mode":"built","first":30,"rest":241,"span":9}
+@@T33 {"record":"step","probe":"graph","kind":"graph","graph":"cells_cons","mode":"built","first":3,"rest":27,"span":9}
+@@T33 {"record":"step","probe":"graph","kind":"graph","graph":"cells_ref","mode":"built","first":5,"rest":45,"span":9}
+@@T33 {"record":"step","probe":"graph","kind":"graph","graph":"fragment","mode":"canonical","first":6,"rest":54,"span":9}
+@@T33 {"record":"step","probe":"graph","kind":"graph","graph":"compiled","mode":"canonical","first":49,"rest":502,"span":9}
+@@T33 {"record":"step","probe":"graph","kind":"graph","graph":"compiled_bool","mode":"canonical","first":65,"rest":503,"span":9}
+@@T33 {"record":"step","probe":"graph","kind":"graph","graph":"merge","mode":"canonical","first":0,"rest":0,"span":9}
+@@T33 {"record":"step","probe":"graph","kind":"graph","graph":"projection","mode":"canonical","first":19,"rest":0,"span":9}
+@@T33 {"record":"step","probe":"graph","kind":"graph","graph":"conversion","mode":"canonical","first":-8,"rest":0,"span":9}
+@@T33 {"record":"step","probe":"graph","kind":"graph","graph":"tactic","mode":"canonical","first":-8,"rest":0,"span":9}
+@@T33 {"record":"step","probe":"graph","kind":"graph","graph":"exclusion","mode":"canonical","first":81,"rest":712,"span":9}
+@@T33 {"record":"step","probe":"graph","kind":"graph","graph":"removed","mode":"canonical","first":0,"rest":0,"span":9}
+@@T33 {"record":"step","probe":"graph","kind":"graph","graph":"cong","mode":"canonical","first":30,"rest":241,"span":9}
+@@T33 {"record":"step","probe":"graph","kind":"graph","graph":"cells_cons","mode":"canonical","first":3,"rest":27,"span":9}
+@@T33 {"record":"step","probe":"graph","kind":"graph","graph":"cells_ref","mode":"canonical","first":5,"rest":45,"span":9}
+@@T33 {"record":"live","probe":"graph","kind":"graph","phase":"end","size_heap":6291456,"free_full":1429808,"alloc":1048576,"alloc_free":1048576,"gc_share":0,"comparable":true,"words":476634}
+@@T33 {"record":"done","probe":"graph","kind":"graph"}
