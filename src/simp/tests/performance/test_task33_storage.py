@@ -2165,6 +2165,32 @@ class DisposeSnapshots(unittest.TestCase):
         self.assertTrue(t.manifest.is_file())
         self.assertTrue(t.evidence.is_dir())
 
+    def cli(self, *extra):
+        t = self.tree
+        return ["dispose-snapshots", "--evidence", str(t.evidence),
+                "--manifest", str(t.manifest), "--repo", str(t.repo),
+                "--scratch-root", str(t.scratch_root),
+                "--verify-argv", "%s -c pass" % sys.executable, *extra]
+
+    def test_the_command_line_disposes_the_fixture_snapshots(self):
+        t = self.tree
+        listed = t.listed()
+        args = st.build_parser().parse_args(self.cli())
+        self.assertFalse(hasattr(args, "ledger"))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(st.dispatch(args), 0)
+        for path in listed:
+            self.assertFalse(path.exists(), path)
+        self.assertTrue((t.evidence / "snapshot-disposal.json").is_file())
+
+    def test_main_runs_dispose_snapshots_end_to_end(self):
+        t = self.tree
+        listed = t.listed()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(st.main(self.cli()), 0)
+        for path in listed:
+            self.assertFalse(path.exists(), path)
+
     def test_empty_parents_go_and_the_agent_directory_stays(self):
         t = self.tree
         with contextlib.redirect_stdout(io.StringIO()):

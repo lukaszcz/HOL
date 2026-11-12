@@ -1797,9 +1797,10 @@ def dispatch(args):
         return 0
     else:
         import task33_dispose as dispose
+        if command == "dispose-snapshots":
+            return dispose.dispose_snapshots(args)
         d.require_ledger(args)
-        return (dispose.dispose if command == "dispose" else
-                dispose.dispose_snapshots)(args)
+        return dispose.dispose(args)
     report = run(args, spec)
     print(summary_line(report))
     return exit_of(report)
