@@ -3960,10 +3960,11 @@ Steps, in this order (each run command also takes `--timeout`, default
     #    .seal; archive reads the TASK32 first-stage archive and replays
     #    it, --no-replay skips that and the report is then inconclusive
     #    and refused by predeclare; --ledger names a copy of the TASK32
-    #    ledger)
+    #    ledger; harvest needs an empty directory of its own and writes
+    #    harvest.json inside it)
     python3 -B $P/task33_offline.py audit --out $E/offline --manifest $M \
         --base-root $S/base --cand-root $S/cand
-    python3 -B $P/task33_offline.py harvest --out $E/offline \
+    python3 -B $P/task33_offline.py harvest --out $E/offline/harvest \
         --manifest $M --cand-root $S/cand
     python3 -B $P/task33_offline.py archive --out $E/offline \
         --archive .agent-files/evidence/task32/first
@@ -3986,7 +3987,7 @@ Steps, in this order (each run command also takes `--timeout`, default
     # 8. predeclare the storage counts, then commit the file ALONE
     $Q predeclare $C --pilot $E/s-pilot --smoke $E/s-smoke \
         --control $E/s-control --offline $E/offline/audit.json \
-        --offline $E/offline/harvest.json \
+        --offline $E/offline/harvest/harvest.json \
         --offline $E/offline/archive.json \
         --out $P/task33_storage_counts.json
     # 9-10. decision runs
@@ -4003,7 +4004,7 @@ Steps, in this order (each run command also takes `--timeout`, default
     # 13. disposition
     $Q dispose --stage $E/s-run --stage $E/s-audit \
         --timing-stage $E/t-run --offline $E/offline/audit.json \
-        --offline $E/offline/harvest.json \
+        --offline $E/offline/harvest/harvest.json \
         --offline $E/offline/archive.json --out $E/disposition.json
     # 14. dispose of the snapshots (after the handoff, and only then)
     $Q dispose-snapshots --evidence $E --manifest $M --repo .
