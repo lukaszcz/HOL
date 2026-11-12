@@ -30,11 +30,6 @@ path = "examples/generic_graphs"
 linelen = 80
 
 [[h4pedant.dir]]
-# mostly generated
-path = "src/tactictoe/selftest"
-linelen = 0
-
-[[h4pedant.dir]]
 # generated
 path = "src/AI/sml_inspection/parallel"
 linelen = 0
@@ -42,10 +37,6 @@ linelen = 0
 [[h4pedant.dir]]
 # translated/generated parity corpora
 path = "src/auto/benchmarks"
-linelen = 0
-
-[[h4pedant.dir]]
-path = "src/1"
 linelen = 0
 
 [[h4pedant.dir]]
@@ -158,4 +149,9 @@ linelen = 0
 
 [[h4pedant.dir]]
 path = "src/simp/src"
+linelen = 0
+
+[[h4pedant.dir]]
+# mostly generated
+path = "src/tactictoe/selftest"
 linelen = 0

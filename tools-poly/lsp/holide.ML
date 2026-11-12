@@ -21,6 +21,10 @@ val prelude: unit -> unit
 val postPrelude: unit -> unit
 
 val compile: bool ref
+(* Whether a compiled declaration reports what it bound, the way a
+   REPL does.  Off for buffer elaboration, which binds the whole
+   file; `$/eval' turns it on.  See `codeFn'. *)
+val printBindings: bool ref
 
 datatype props =
   PQuote
@@ -128,6 +132,12 @@ fun prelude () = let
 fun postPrelude () = ()
 
 val compile = ref true
+val printBindings = ref false
+(* What `printBindings' renders at.  The width is a plain default --
+   unlike hover, an eval's output goes to a transcript the client
+   scrolls, not into a box whose width only the client knows. *)
+val printWidth = 77
+val printDepth = 100
 
 datatype props =
   PQuote
@@ -271,6 +281,11 @@ fun withProps sp NONE ls = Built (sp, [], ls)
 
 fun onList _ [] pt acc = (acc, pt)
   | onList f (x::xs) pt acc = onList f xs (moveRight pt) (f (x, pt, acc))
+
+(* A single-clause `fun' group is itself the clause; multi-clause groups
+   have an additional clause level. *)
+fun funClauses [_] pt = pt
+  | funClauses _ pt = moveDown pt
 
 fun skipDecs [] pt = pt
   | skipDecs (DecExpansion {result, ...} :: ds) pt = skipDecs ds (skipDecs result pt)
@@ -490,6 +505,18 @@ and annotateFunPat (App (f, x)) pt = let
     in (moveRight pt, mkList [left, f, right]) end
   | annotateFunPat e pt = (moveRight pt, annotateExp NONE e pt)
 
+(* A clause's result constraint -- `fun f x : ty = e' -- gets a Poly/ML
+   sibling between the last parameter and the body, so the body moves
+   one further right.  One inside a parameter's parentheses does not:
+   that parameter's node carries pattern and type as its two children,
+   which `annotateExp's `Typed' case walks.  Hence not a case of
+   `annotateFunPat', which recurses through `Parens'. *)
+and annotateClausePat (e as Typed {exp, ty, ...}) pt = let
+    val (pt, e') = annotateFunPat exp pt
+    in (moveRight pt, overspan (fiSpan (expSpan e))
+                               (mkList [e', annotateTy ty pt])) end
+  | annotateClausePat pat pt = annotateFunPat pat pt
+
 and annotateDecs [] pt acc = (acc, pt)
   | annotateDecs (DecExpansion {result = [], ...} :: ds) pt acc = annotateDecs ds pt acc
   | annotateDecs (d::ds) pt acc = case annotateDec d pt of (d, pt) => annotateDecs ds pt (d::acc)
@@ -558,9 +585,9 @@ and annotateDec (DecExpansion {orig = DecExp _,
       #1 (onList (fn (ls, pt, acc) =>
         mkList (rev (#1 (onList (fn ({pat, exp, ...}, pt, acc) => let
           val pt = moveDown pt
-          val (pt, pat) = annotateFunPat pat pt
+          val (pt, pat) = annotateClausePat pat pt
           in mkList [pat, annotateExp NONE exp pt] :: acc end
-          ) ls (moveDown pt) []))) :: acc
+          ) ls (funClauses ls pt) []))) :: acc
         ) args (moveTopDown pt) [])
     | DecType {tybind, ...} => #1 (annotateTybinds tybind (moveTopDown pt) [])
     | DecDatatype {datbind, withtype_, ...} =>
@@ -931,6 +958,28 @@ fun initialize {
          next `resetForCompile` when the user deletes a `val` from
          the file. *)
       fun enter f = app (f LSPNameSpace.fileNS)
+      (* Supplying `CPCompilerResultFun' takes the compiler's own
+         result handling away, and saying what a declaration bound is
+         part of what it took: Poly's default result function runs the
+         code *and* prints the bindings.  Elaborating a buffer does
+         not want that -- it would print the whole file, declaration
+         by declaration -- so it stays off and `$/eval' turns it on.
+         Without it an eval can say that its code failed but never
+         what it computed, which is most of the reason to send it one.
+
+         Values only.  A chunk that declares a structure or a type is
+         not what this is for, and Poly's own rendering of those is a
+         signature, which is not what a REPL line should expand to.
+
+         `printWithType' renders the whole `val name = value: type'
+         line, name included, so there is nothing to put in front of
+         it, and `prettyPrint' ends the block with its own newline. *)
+      val () = if not (!printBindings) then () else
+        app (fn (_, v) =>
+              PolyML.prettyPrint (toplevelOut, printWidth)
+                (PolyML.NameSpace.Values.printWithType
+                   (v, printDepth, SOME LSPNameSpace.fileNS)))
+            values
       in enter #enterFix fixes; enter #enterType types; enter #enterSig signatures;
         enter #enterStruct structures; enter #enterFunct functors; enter #enterVal values end
   fun getOffset () =

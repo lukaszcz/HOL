@@ -254,12 +254,12 @@ val _ = bnfDatatype `zv = VA (zv option) | VB (zv list) | VC (zv option) num`
 
 val _ = tprint "an operator per predicate, in the order first mentioned"
 val _ =
-    let val ops = [{induction = TypeBase.induction_of “:'a list”,
+    let val ops = [{induction = TypeBase.set_induction_of “:'a list”,
                     sets = CONJUNCTS listTheory.LIST_TO_SET},
-                   {induction = TypeBase.induction_of “:'a option”,
+                   {induction = TypeBase.set_induction_of “:'a option”,
                     sets = CONJUNCTS bnfPrelimsTheory.optSET_def}]
         val th = legacyInduction.mutual_induction
-                   ops (TypeBase.induction_of “:zv”)
+                   ops (TypeBase.set_induction_of “:zv”)
     in
       (* the option comes first in the specification, so it is Q0, even
          though the list's clauses are what a caller lists first *)
@@ -271,6 +271,34 @@ val _ =
               (∀t h. P h ∧ Q1 t ⇒ Q1 (h::t)) ⇒
               (∀v. P v) ∧ (∀l. Q0 l) ∧ ∀l. Q1 l”
       then OK() else die "not the order the specification mentions them"
+    end
+
+(* ----------------------------------------------------------------------
+    and for a type that recurses under one operator inside another, where
+    the order the clauses mention them in is not the order they are
+    proved in
+   ---------------------------------------------------------------------- *)
+
+val _ = bnfDatatype `zw = WA (zw option) | WB (zw option list)`
+
+val _ = tprint "an operator settled before the one that collects it"
+val _ =
+    let val ops = [{induction = TypeBase.set_induction_of “:'a list”,
+                    sets = CONJUNCTS listTheory.LIST_TO_SET},
+                   {induction = TypeBase.set_induction_of “:'a option”,
+                    sets = CONJUNCTS bnfPrelimsTheory.optSET_def}]
+        val th = legacyInduction.mutual_induction
+                   ops (TypeBase.set_induction_of “:zw”)
+    in
+      (* WA mentions the option first, so it is still Q0, even though
+         the list's own clauses cannot be proved until it is *)
+      if same (concl th)
+           “∀P Q0 Q1.
+              (∀v. Q0 v ⇒ P (WA v)) ∧ (∀l. Q1 l ⇒ P (WB l)) ∧ Q0 NONE ∧
+              (∀a. P a ⇒ Q0 (SOME a)) ∧ Q1 [] ∧
+              (∀t h. Q0 h ∧ Q1 t ⇒ Q1 (h::t)) ⇒
+              (∀v. P v) ∧ (∀l. Q0 l) ∧ ∀l. Q1 l”
+      then OK() else die "not the shape the older construction gave"
     end
 
 (* ----------------------------------------------------------------------

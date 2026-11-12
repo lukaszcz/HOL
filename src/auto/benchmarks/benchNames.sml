@@ -1008,7 +1008,7 @@ val table : (string * (unit -> resolution)) list =
    library "list" "EXISTS_MEM"),
   ("listrel.intros",
    bundle [library "list" "LIST_REL_NIL",
-           library "list" "LIST_REL_cons_I"]),
+           later_cases (library "list" "LIST_REL_rules")]),
   ("listrel1E",
    translated "source_listrel1E"),
   ("listrel_iff_nth",

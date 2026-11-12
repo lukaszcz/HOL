@@ -23,12 +23,6 @@ Libs
   boolSimps pred_setLib TotalDefn metisLib quotientLib
   Datatype[qualified] OpenTheoryMap[qualified]
 
-(* the bound is a cardinality, and cardinalityCoreTheory makes no
-   grammar of its own; this is kept to itself so that a theory
-   declaring a datatype does not inherit the notation *)
-Overload "<<="[local] = “cardleq”
-
-
 val ERR = mk_HOL_ERR "listScript"
 
 val arith_ss = bool_ss ++ numSimps.ARITH_ss ++ numSimps.REDUCE_ss
@@ -70,10 +64,11 @@ val PAIR_EQ      = pairTheory.PAIR_EQ;
 (* Declare the datatype of lists                                             *)
 (*---------------------------------------------------------------------------*)
 
-val _ = Datatype.Hol_datatype
-          ‘list[map=MAP[nocompute],set=LIST_TO_SET[nocompute],rel=LIST_REL,
-            size=list_size] =
-             NIL | CONS of 'a => list’;
+Datatype:
+  list[map=MAP[nocompute],set=LIST_TO_SET[nocompute],rel=LIST_REL,
+       size=list_size] =
+    NIL | CONS 'a list
+End
 
 local open OpenTheoryMap val cname = OpenTheory_const_name in
 val ns = ["Data","List"]
@@ -1418,6 +1413,12 @@ Theorem SUM_eq_0:
    !ls. (SUM ls = 0) = !x. MEM x ls ==> (x = 0)
 Proof
   LIST_INDUCT_TAC THEN SRW_TAC[] [SUM, MEM] THEN METIS_TAC[]
+QED
+
+Theorem SUM_less_EVERY_less:
+  SUM ls < n ==> EVERY (λx. x < n) ls
+Proof
+  Induct_on ‘ls’ >> simp[SUM, EVERY_DEF]
 QED
 
 Theorem NULL_FILTER:
