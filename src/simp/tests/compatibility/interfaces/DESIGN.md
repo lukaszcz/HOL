@@ -388,6 +388,9 @@ module `M'`:
 - a value entry asserts `PolyML.pointerEq (M.x, M'.x)`: type-checking forces
   the two types to unify, and pointer equality proves the extension exports
   the very object the develop module does, not a copy;
+  because immediate values (an `int`, say) compare equal by pointer
+  whatever their origin, a value entry must have a function type (a
+  top-level `->` in its spec), else it needs a row;
 - a type entry is the coercion `fn (v : P M.x) => (v : P M'.x)` and its
   converse, with the parameters `P` of the develop spec; it compiles only if
   the two types are equal, so an abstract, opaque or datatype-distinct type
@@ -403,8 +406,10 @@ Reading the source text for the binding was abandoned because it can never be
 complete: every review round found another fail-open form (`open` lists,
 `local` blocks, arity, rebinding), whereas the compiler resolves them all.
 
-`design-check --negative-controls` generates two entries from the same
-generator and requires each to fail in the expected way. `simpLib.ssfrag`
+The `design-check` Holmake target runs
+`check_design.py --run --negative-controls`, which generates two entries from
+the same generator and requires each to fail in the expected way.
+`simpLib.ssfrag`
 against `simpExtLib.ssfrag` (two opaque types) must fail with a static type
 error (`Can't unify simpLib.ssfrag ... with simpExtLib.ssfrag`), so a distinct
 type cannot be allowlisted. `boolSimps.SimpL` against `boolSimpsExt.SimpL`

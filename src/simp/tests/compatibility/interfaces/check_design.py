@@ -359,6 +359,21 @@ def type_params(spec):
     return found.group(0) if found else ""
 
 
+def is_function_spec(spec):
+    """Whether `val x : T` has a top-level `->` in T (outside parentheses
+    and brackets); pointer equality cannot tell equal immediates apart."""
+    depth = 0
+    text = spec.split(":", 1)[1] if ":" in spec else ""
+    for i, ch in enumerate(text):
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif ch == "-" and text[i + 1:i + 2] == ">" and depth == 0:
+            return True
+    return False
+
+
 def shared_entries(shared=None, develop=INPUTS, root=ROOT):
     """(namespace, module, extension module, name, type params) of every
     allowlist entry, in a fixed order.  Cheap pre-filters only; the compiled
@@ -386,6 +401,9 @@ def shared_entries(shared=None, develop=INPUTS, root=ROOT):
                                      "needs a row: " + api)
                 if not old[key].startswith("val "):
                     raise ValueError("value entry is not a val spec: " + api)
+                if not is_function_spec(old[key]):
+                    raise ValueError("value entry is not a function, "
+                                     "needs a row: " + api)
                 params = ""
             else:
                 params = type_params(old[key])
@@ -682,8 +700,16 @@ def shared_negative_controls():
                     raise ValueError("shared negative control %s failed "
                                      "unexpectedly, no %r:\n%s" %
                                      (name, expected, output))
-            receipts.append({"control": name, "exit": result.returncode,
-                             "output": output})
+            matched = list(NEGATIVE_SHARED_EXPECT[name])
+            # "output" is the private full text: main() writes it only to
+            # the --output directory and strips it before anything is
+            # printed (it holds `Uncaught exception`, which the log judge
+            # rightly treats as a failure when it appears in a log).
+            receipts.append({
+                "control": name, "exit": result.returncode,
+                "matched": matched,
+                "output_sha256": hashlib.sha256(output.encode()).hexdigest(),
+                "output": output})
     return receipts
 
 
@@ -763,6 +789,12 @@ def main():
               "cutovers_checked": list(range(9, 17))}
     if args.run:
         result["commands"], output = execute(args.negative_controls)
+        for command in result["commands"]:
+            text = command.pop("output", None)
+            if text is not None and args.output:
+                args.output.mkdir(parents=True, exist_ok=True)
+                (args.output / (command["control"] + ".log")).write_text(
+                    text)
         for line in output.splitlines():
             if line.startswith(("shared export ok:",
                                 "SHARED_EXPORTS_CHECK_OK")):

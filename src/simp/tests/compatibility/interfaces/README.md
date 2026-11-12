@@ -39,8 +39,8 @@ The 275 rows are **migration decisions**, not 275 compiled downstream clients.
 External output names bind to the typed Default provider boundary; the
 consumer driver `run_task25_consumer.py` validates an actual external
 implementation. Allowlisted shared exports are compile-checked identical;
-shared names with a row are checked
-in their existing owner signatures; extension exports are checked in their
+rows with the `shared` witness (shared singletons) are checked in their
+existing owner signatures; extension exports are checked in their
 specific prototype signature blocks, except that F1 rows are witnessed by the
 extension's production `.sig`. The graph is the declared design, not an
 audit of final production imports.

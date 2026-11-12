@@ -11,9 +11,9 @@ selftest.exe: selftest.uo Task08Clients.uo Task08Cutovers.uo \
   Task08Reducers.uo Task08Controls.uo
 	$(HOLMOSMLC) -o $@ $<
 
-# The generated identity check of the allowlisted shared exports: building
-# it type-checks the type coercions and runs the pointer comparisons; the
-# executable runs them again, so a failure fails the build either way.
+# The generated identity check of the allowlisted shared exports: the .uo
+# is only a dependency stub; the executable compiles and runs the check, so
+# a static or runtime failure makes ./sharedExportsCheck.exe fail.
 sharedExportsCheck.exe: sharedExportsCheck.uo
 	$(HOLMOSMLC) -o $@ $<
 
@@ -23,5 +23,5 @@ check: selftest.exe sharedExportsCheck.exe
 	./sharedExportsCheck.exe
 
 design-check:
-	python3 -B -m unittest discover -s . -p 'test_*.py'
-	python3 -B check_design.py --run --negative-controls
+	python3 -B -m unittest discover -s . -p 'test_*.py' 2>&1
+	python3 -B check_design.py --run --negative-controls 2>&1

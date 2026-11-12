@@ -301,14 +301,18 @@ class DesignTests(unittest.TestCase):
     def test_entry_prefilters(self):
         self.assertEqual(
             self.entry_pair({"m.x": "j", "m.t": "j"},
-                            "val x : int\ntype 'a t",
-                            "val x : int\ntype 'a t = 'a list"),
+                            "val x : int -> int\ntype 'a t",
+                            "val x : int -> int\ntype 'a t = 'a list"),
             [("type", "m", "mExt", "t", "'a"),
              ("value", "m", "mExt", "x", "")])
         for shared, dev, ext, why in [
                 ({"m.y": "j"}, "val x : int", "val x : int", "no shared"),
                 ({"m.x": "j"}, "val x : int", "val x : bool",
                  "distinct specs"),
+                ({"m.x": "j"}, "val x : int", "val x : int",
+                 "not a function"),
+                ({"m.x": "j"}, "val x : (int -> int) list",
+                 "val x : (int -> int) list", "not a function"),
                 ({"m.E": "j"}, "exception E", "exception E", "not a val"),
                 ({"m.A": "j"}, "datatype t = A", "datatype t = A",
                  "not a val"),
@@ -336,6 +340,55 @@ class DesignTests(unittest.TestCase):
             self.assertTrue(text.startswith(design.CHECK_HEAD))
             self.assertEqual(text.count("SHARED_EXPORTS_CHECK_OK"), 1)
 
+    def test_main_output_passes_the_task33_log_judge(self):
+        # The interfaces-design-check log is judged by task33_offline's
+        # LOG_FAIL patterns; a negative control's own text (`Uncaught
+        # exception`, `Static Errors`) must never reach stdout or stderr.
+        perf = Path(__file__).resolve().parents[2] / "performance"
+        sys.path.insert(0, str(perf))
+        try:
+            import task33_offline as judge
+        finally:
+            sys.path.remove(str(perf))
+        entries = design.shared_entries()
+        ok = "".join("shared export ok: %s%s.%s\n" % (
+            "type " if e[0] == "type" else "", e[1], e[3])
+            for e in entries) + "SHARED_EXPORTS_CHECK_OK entries=17\n"
+        raw = {
+            "sharedExportsNegType":
+                "Type mismatch in type constraint\nCan't unify "
+                "simpLib.ssfrag with simpExtLib.ssfrag\n"
+                "Static Errors\nUncaught exception:\n"
+                "Fail \"Static Errors\"\n",
+            "sharedExportsNegValue":
+                "SHARED_EXPORT_FAILED: boolSimps.SimpL is not the develop "
+                "object\nUncaught exception:\n"
+                "Fail \"shared export check failed\"\n"}
+        commands = [{"argv": ["x"], "exit": 0}] + [
+            {"control": n, "exit": 1, "matched":
+                list(design.NEGATIVE_SHARED_EXPECT[n]),
+             "output_sha256": "0" * 64, "output": t}
+            for n, t in raw.items()]
+        for text in raw.values():
+            self.assertTrue(any(r.search(text) for r in judge.LOG_FAIL))
+        out, err = io.StringIO(), io.StringIO()
+        with tempfile.TemporaryDirectory() as temp, \
+                patch.object(design, "execute",
+                             return_value=(commands, ok)), \
+                patch.object(sys, "argv", ["check_design.py", "--run",
+                             "--negative-controls", "--output", temp]), \
+                contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(err):
+            design.main()
+            self.assertIn("Uncaught exception",
+                          (Path(temp) / "sharedExportsNegType.log")
+                          .read_text())
+        printed = out.getvalue() + err.getvalue()
+        self.assertIn("failed as expected", printed)
+        self.assertNotIn("Uncaught", printed)
+        for regex in judge.LOG_FAIL:
+            self.assertIsNone(regex.search(printed), regex.pattern)
+
     def test_output_validation(self):
         entries = design.shared_entries()
         ok = "".join("shared export ok: %s%s.%s\n" % (
@@ -354,7 +407,8 @@ class DesignTests(unittest.TestCase):
         start = text.index("\ninterfaces-design-check:")
         recipe = text[start:text.index("\n\t", start)]
         modules = {m for e in design.shared_entries() for m in e[1:3]}
-        modules |= {"boolSimps", "boolSimpsExt"}
+        modules |= {m for e in design.NEGATIVES_SHARED.values()
+                    for m in e[1:3]}
         for module in modules:
             self.assertRegex(recipe, rf"\b{module}\.uo\b")
         make = (design.HERE / "Holmakefile").read_text()
