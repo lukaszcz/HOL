@@ -171,7 +171,8 @@ def parse_specs(text):
     flat name set is not enough).  Includes resolve through INCLUDES, whose
     values are sets of (namespace, name) pairs; an unknown include fails, as
     does syntax this flat reader does not handle: structure, functor and
-    sharing specs, and `and` (a spec-level conjunction)."""
+    sharing specs, `and` (a spec-level conjunction), `withtype`, `where` and
+    `abstype`; the scan covers the whole signature text."""
     text = strip_sml_comments(text)
     unsupported = UNSUPPORTED.search(text)
     if unsupported:
@@ -331,8 +332,8 @@ def validate_completeness(old_rows=None, shared=None,
         new_text = (root / path).read_text()
         # A name may be a type in one signature and a value in the other;
         # compare per namespace, then name the shared exports.
-        for name in sorted({n for _, n in namespaced(old_text) &
-                            namespaced(new_text)}):
+        both = namespaced(old_text) & namespaced(new_text)
+        for name in sorted({n for _, n in both}):
             api = module + "." + name
             common.add(api)
             if api in shared and api in rows:
@@ -341,6 +342,10 @@ def validate_completeness(old_rows=None, shared=None,
             if api not in shared and api not in rows:
                 raise ValueError("shared export has neither row nor "
                                  "shared-exports entry: " + api)
+            if (api in shared and ("value", name) in both and
+                    not (develop / (module + ".sml")).is_file()):
+                raise ValueError("value entry without a pinned develop "
+                                 "source: " + api)
     for api in shared:
         if api not in common:
             raise ValueError("stale shared-exports entry, not a shared "
@@ -359,17 +364,113 @@ def extension_module(name):
 
 
 QUALIFIED = re.compile(r"[A-Za-z_]\w*(?:\.[A-Za-z_][\w']*)+")
+# Keywords that may start the line after a binding.  `open` may not: a
+# column-0 `open` anywhere after the binding is refused separately.
 DECLARATION = re.compile(r"(?:val|fun|type|datatype|exception|structure|"
-                         r"local|open|infixr?|nonfix|end|in)\b")
-# The `binding` of a type entry whose develop and extension specs are both
-# manifest with identical right-hand sides; it names no single type.
-MANIFEST = "=manifest"
+                         r"local|infixr?|nonfix|end|in)\b")
 
 
-def value_binding_problem(name, binding, old_spec, new_spec, sml):
+def binding_occurrences(word, sml):
+    """Binding occurrences of word in sml, counted generously: `fun` and
+    `and` names, names inside a `val ... =` pattern, `exception name` and
+    datatype constructors (`= name` or `| name` in a datatype body, which
+    runs to the next line that starts at column 0 with neither `|` nor
+    `and`)."""
+    name = re.escape(word)
+    count = (
+        len(re.findall(rf"\b(?:fun|and)\s+(?:op\s+)?{name}\b", sml)) +
+        len(re.findall(rf"\bexception\s+(?:op\s+)?{name}\b", sml)) +
+        len([p for p in re.findall(r"\bval\b([^=]*)=", sml)
+             if re.search(rf"(?<![\w'.]){name}(?![\w'])", p)]))
+    for body in re.findall(r"\bdatatype\b(?:[^\n]|\n(?=\s|\||and\b))*",
+                           sml):
+        count += len(re.findall(rf"(?:=|\|)\s*(?:op\s+)?{name}\b", body))
+    return count
+
+
+def single_binding_problem(name, sml):
+    """(problem, parts): problem is why name is not bound exactly once, by
+    one column-0 line `val name = rhs` that no later line continues and
+    that no later column-0 `open` follows; else None, with parts =
+    (line index, lines, rhs).  Column 0 is the top level of a struct body:
+    an indented line may be inside a `let` or `local`, where the binding
+    would not be the module's."""
+    occurrences = binding_occurrences(name, sml)
+    if occurrences != 1:
+        return f"source has {occurrences} binding occurrences, not one", None
+    lines = sml.split("\n")
+    strict = re.compile(rf"val\s+{re.escape(name)}\s*=\s*(\S+?)\s*;?\s*")
+    for i, line in enumerate(lines):
+        found = strict.fullmatch(line)
+        if found:
+            break
+    else:
+        return ("binding is not the strict column-0 form "
+                "`val name = Q.x`"), None
+    if re.search(r"^open\b", "\n".join(lines[i + 1:]), re.M):
+        return "an `open` follows the binding", None
+    for line in lines[i + 1:]:
+        if line.strip():
+            if not DECLARATION.match(line.strip()):
+                return "binding line continues on the next line", None
+            break
+    return None, (i, lines, found.group(1))
+
+
+def open_lists(lines):
+    """(line index, module names) of the column-0 `open` declarations; an
+    open runs over its indented continuation lines."""
+    result = []
+    for i, line in enumerate(lines):
+        if re.match(r"open\b", line):
+            text = line
+            for more in lines[i + 1:]:
+                if not more.strip() or not more[0].isspace():
+                    break
+                text += " " + more
+            result.append((i, re.findall(r"[\w'.]+", text)[1:]))
+    return result
+
+
+def develop_binding_problem(name, binding, dev_sml):
+    """Why the develop source does not bind name to binding, or None.  It
+    is bound once under the extension's strictness, and the qualifier is
+    not a structure the source defines; the right-hand side is either
+    `Q.y` itself, or `y` where a column-0 `open` lists Q before the
+    binding, no later column-0 open before the binding names a module
+    other than Q (it could shadow y), and y has no binding occurrence
+    before the binding."""
+    qualifier, _, ident = binding.partition(".")
+    problem, parts = single_binding_problem(name, dev_sml)
+    if problem:
+        return "develop " + problem
+    i, lines, rhs = parts
+    if re.search(rf"\bstructure\s+{re.escape(qualifier)}\b", dev_sml):
+        return "develop defines a structure named like the qualifier"
+    if rhs == binding:
+        return None
+    if rhs != ident:
+        return "develop binds a different value"
+    opens = [names for n, names in open_lists(lines) if n < i]
+    holders = [k for k, names in enumerate(opens) if qualifier in names]
+    if not holders:
+        return "develop does not open the binding's qualifier"
+    for names in opens[holders[-1] + 1:]:
+        if set(names) - {qualifier}:
+            return "a later develop open could shadow the binding"
+    if binding_occurrences(ident, "\n".join(lines[:i])):
+        return "develop binds the identifier before the binding"
+    return None
+
+
+def value_binding_problem(name, binding, old_spec, new_spec, sml,
+                          dev_sml=None):
     """Why the allowlist entry for a shared value is not a strict, declared
-    claim, or None.  The develop source is not read: the qualifier rule
-    keeps the bound module a develop or shared one."""
+    claim, or None: equal specs; a qualified binding Q.y whose Q is no
+    extension module or source-defined structure; the extension source
+    binds name once, by a column-0 `val name = Q.y`
+    (single_binding_problem); and the develop source binds it to the same
+    thing (develop_binding_problem)."""
     if old_spec != new_spec:
         return "allowlisted value has a distinct spec, needs a row"
     if not QUALIFIED.fullmatch(binding):
@@ -379,28 +480,26 @@ def value_binding_problem(name, binding, old_spec, new_spec, sml):
         return "binding qualifier is an extension module"
     if re.search(rf"\bstructure\s+{re.escape(qualifier)}\b", sml):
         return "binding qualifier is a structure the source defines"
-    word = re.escape(name)
-    occurrences = (
-        len(re.findall(rf"\b(?:fun|and)\s+(?:op\s+)?{word}\b", sml)) +
-        len([p for p in re.findall(r"\bval\b([^=]*)=", sml)
-             if re.search(rf"(?<![\w'.]){word}(?![\w'])", p)]))
-    if occurrences != 1:
-        return f"source has {occurrences} binding occurrences, not one"
-    lines = sml.split("\n")
-    strict = re.compile(rf"\s*val\s+{word}\s*=\s*(\S+?)\s*;?\s*")
-    for i, line in enumerate(lines):
-        found = strict.fullmatch(line)
-        if found:
-            break
-    else:
-        return "binding is not the strict form `val name = Q.x`"
-    if found.group(1) != binding:
+    problem, parts = single_binding_problem(name, sml)
+    if problem:
+        return problem
+    if parts[2] != binding:
         return "binding disagrees with the source"
-    for line in lines[i + 1:]:
-        if line.strip():
-            if not DECLARATION.match(line.strip()):
-                return "binding line continues on the next line"
-            break
+    if dev_sml is None:
+        return "no pinned develop source"
+    return develop_binding_problem(name, binding, dev_sml)
+
+
+def value_spec_problem(module, name, spec, new_types, old, shared):
+    """Why a value entry's spec cannot be allowlisted, or None: it names a
+    type the extension declares, unless that type has a type entry of its
+    own."""
+    rest = re.sub(rf"^(?:val|exception)\s+(?:op\s+)?{re.escape(name)}", "",
+                  spec)
+    for token in re.findall(r"(?<![\w'.])[A-Za-z_][\w']*(?![\w'.])", rest):
+        if token in new_types and not (
+                module + "." + token in shared and ("type", token) in old):
+            return f"value spec names extension type {token}, needs a row"
     return None
 
 
@@ -411,22 +510,23 @@ def type_rhs(spec):
     return (found.group(1).strip(), found.group(2).strip()) if found else None
 
 
-def type_binding_problem(name, binding, old_spec, new_spec, new_types):
+def type_binding_problem(module, name, binding, old_spec, new_spec,
+                         new_types):
     """Why the allowlist entry for a shared type is wrong, or None.  The
-    extension spec must be manifest; its right-hand side is the binding, or
-    equals the develop spec's manifest right-hand side (binding MANIFEST).
-    The right-hand side names no type of the extension signature or of an
-    extension module."""
+    extension spec is manifest and its normalised rhs equals the
+    normalised binding, and either (a) the develop spec is manifest with
+    equal (params, rhs), or (b) the rhs is exactly `module.name`, the
+    develop module's own type.  The rhs names no type of the extension
+    signature or of an extension module."""
     new = type_rhs(new_spec)
     if new is None:
         return "extension spec is not a manifest type"
-    params, rhs = new
-    if binding == MANIFEST:
-        old = type_rhs(old_spec)
-        if old is None or old != new:
-            return "develop spec is not manifest and identical"
-    elif normalise(binding) != rhs:
+    rhs = new[1]
+    if normalise(binding) != rhs:
         return "binding disagrees with the extension spec"
+    if rhs != module + "." + name and type_rhs(old_spec) != new:
+        return ("type is neither identical manifest in both signatures "
+                "nor the develop module's own type")
     for token in re.findall(r"[A-Za-z_][\w'.]*", rhs):
         if "." in token:
             if extension_module(token.split(".", 1)[0]):
@@ -438,8 +538,9 @@ def type_binding_problem(name, binding, old_spec, new_spec, new_types):
 
 def validate_bindings(shared=None, develop=INPUTS, root=ROOT):
     """Every allowlist entry is a strict, declared claim: its `binding`
-    must hold in the extension source or signature, see
-    value_binding_problem and type_binding_problem.  Rows are not checked."""
+    must hold in the extension source or signature and, for a value, in
+    the pinned develop source; see value_binding_problem,
+    value_spec_problem and type_binding_problem.  Rows are not checked."""
     if shared is None:
         shared = read_shared()
     checked = set()
@@ -448,6 +549,9 @@ def validate_bindings(shared=None, develop=INPUTS, root=ROOT):
                                .read_text()))
         new = dict(parse_specs((Path(root) / path).read_text()))
         sml = sml_text(path, root)
+        dev_path = Path(develop) / (module + ".sml")
+        dev_sml = (strip_sml_comments(dev_path.read_text())
+                   if dev_path.is_file() else None)
         new_types = {n for (ns, n) in new if ns == "type"}
         for key in sorted(old.keys() & new.keys()):
             api = module + "." + key[1]
@@ -457,11 +561,13 @@ def validate_bindings(shared=None, develop=INPUTS, root=ROOT):
             ns, name = key
             binding = shared[api]["binding"]
             if ns == "value":
-                problem = value_binding_problem(
-                    name, binding, old[key], new[key], sml)
+                problem = (value_binding_problem(
+                    name, binding, old[key], new[key], sml, dev_sml) or
+                    value_spec_problem(module, name, new[key], new_types,
+                                       old, shared))
             else:
                 problem = type_binding_problem(
-                    name, binding, old[key], new[key], new_types)
+                    module, name, binding, old[key], new[key], new_types)
             if problem:
                 raise ValueError(problem + ": " + api)
     for api in shared:
@@ -653,9 +759,9 @@ def execute(negative_controls):
 def source_paths():
     """The sources of the verdict: this directory, the final table, and the
     inputs the verdict reads: the shared-exports and apis tables, the pinned
-    develop signatures, every extension signature and source the checks
-    read, the singleton signatures of the `shared` witness, and the
-    signature parser."""
+    develop signatures and sources, every extension signature and source
+    the checks read, the singleton signatures of the `shared` witness, and
+    the signature parser."""
     shared = {row["old_api"].split(".")[0] for row in expected_rows()
               if row["witness"] == "shared"}
     witnesses = [ROOT / ("src/1" if module == "ThmAttribute"
@@ -669,7 +775,9 @@ def source_paths():
                   + [HERE / "Holmakefile", TABLE, SHARED,
                      MIGRATION / "apis.tsv",
                      HERE.parent / "check_task27_docs.py"]
-                  + list(INPUTS.glob("*.sig")) + witnesses + extensions)
+                  + list(INPUTS.glob("*.sig")) + [p for m in sorted(MODULES)
+                     if (p := INPUTS / (m + ".sml")).is_file()]
+                  + witnesses + extensions)
 
 
 def main():

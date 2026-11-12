@@ -370,50 +370,88 @@ names the extension signature in the repo), every name that develop's `M.sig`
 extension's `M'.sig` also declares needs either a row with old name `M.name`,
 or an entry in [migration/shared-exports.tsv](../migration/shared-exports.tsv)
 with a `binding` and a one-line justification that the extension binds the
-identical value or type. `check_design.py` enforces this: a missing name fails, and an entry that
-also has a row or is not a shared export (stale) fails. Names are read from the
-signatures by a comment-stripping reader, per namespace (a type and a value of
-the same name are different declarations); it fails on `structure`, `functor`,
-`sharing`, `withtype`, `where`, `abstype`, spec-level `and` and unknown
-includes. Names that `include Abbrev`
+identical value or type. `check_design.py` enforces this: a missing name
+fails, and an entry that also has a row or is not a shared export (stale)
+fails. Names are read from the signatures by a comment-stripping reader, per
+namespace (a type and a value of the same name are different declarations);
+it fails on `structure`, `functor`, `sharing`, `withtype`, `where`,
+`abstype`, spec-level `and` and unknown includes. Names that `include Abbrev`
 brings in are excluded: they are the shared basic types.
 
 Rows are the default and are never checked against the sources: a row for
 a name that could have been allowlisted only over-documents a migration. An
 allowlist entry is a strict, declared claim. Its `binding` column (columns:
 `old_api`, `binding`, `justification`) names the identical shared value or
-type, and `check_design.py` verifies it against the extension, or fails.
+type, and `check_design.py` verifies it, or fails.
 
-A value entry must satisfy all of: the develop and extension specs are equal
-after normalisation (spaces around `: , ; ( ) { } * = ->` and a trailing `;`
-aside; differing specs mean a row); the `binding` is a qualified identifier
-`Q.x` whose `Q` is not an extension module (not a `MODULES` extension and not
-named `\w+Ext(Lib)?`), so `Q` is a shared module or the develop module itself,
-and the extension source does not define a structure named `Q`; the extension
-`.sml` has exactly one binding occurrence of the name (`val name`, `fun
-name`, `and name`, or a name inside a `val (...)` pattern, counted
-generously), and it is the single-line form `val name = Q.x`, optionally
-followed by `;` and a comment; the next non-blank, non-comment line starts with
-a declaration keyword (`val`, `fun`, `type`, `datatype`, `exception`,
-`structure`, `local`, `open`, `infix`, `infixr`, `nonfix`), `end` or `in`, or
-the file ends, so no continuation line can apply the value; and the written
-`binding` equals the `Q.x` in the source.
+A value entry must satisfy all of:
 
-A type entry must satisfy all of: the extension `.sig` spec is a manifest
-`type params name = rhs`, not a `datatype`, `eqtype` or abstract type; either
-the normalised `rhs` equals the normalised `binding`, or the develop spec is
-also manifest with the same parameters and `rhs` and the `binding` is the
-marker `=manifest`, which records "identical manifest right-hand side" (used
-for the record abbreviations `convdata`, `stdconvdata`, `relsimpdata` and
-`simptac_config`); and the `rhs` names no type the extension signature itself
-declares and no type of an extension module.
+- the develop and extension specs are equal after normalisation (spaces
+  around `: , ; ( ) { } * = ->` and a trailing `;` aside; differing specs
+  mean a row), and the spec names no type that the extension signature
+  declares, unless that type has a type entry of its own (else a row);
+- the `binding` is a qualified identifier `Q.y` whose `Q` is not an
+  extension module (not a `MODULES` extension and not named
+  `\w+Ext(Lib)?`), and the extension source defines no structure `Q`;
+- the extension `.sml` has exactly one binding occurrence of the name, and
+  it is the line `val name = Q.y` starting at column 0, optionally followed
+  by `;` and a comment. Binding occurrences are counted generously: `fun
+  name` and `and name`, a name inside a `val ... =` pattern, `exception
+  name`, and a datatype constructor `= name` or `| name` in a datatype body
+  (the text up to the next line that starts at column 0 with neither `|` nor
+  `and`). Column 0 is the top level of the struct body (the live bindings,
+  `simpExtLib.sml` 2218-2225 and 3169, are there); an indented line may sit
+  in a `let` or `local`, so it is refused;
+- the next non-blank, non-comment line starts with `val`, `fun`, `type`,
+  `datatype`, `exception`, `structure`, `local`, `infix`, `infixr`,
+  `nonfix`, `end` or `in`, or the file ends, so no continuation line can
+  apply the value; and no column-0 `open` appears anywhere after the
+  binding, since it could shadow the names a later line uses;
+- the written `binding` equals the `Q.y` in the source;
+- the pinned develop `.sml` (`inputs/develop/M.sml`, base bytes of the base
+  revision; the completeness check fails if a value entry's develop module
+  has none) binds the name to the same thing, under the same strictness
+  (one binding occurrence, column 0, no continuation, no later `open`), in
+  one of two ways: the line `val name = Q.y`, or `val name = y` where a
+  column-0 `open` before it lists `Q`, no later column-0 `open` before the
+  binding names a module other than `Q` (it could shadow `y`), the develop
+  source defines no structure `Q`, and `y` has no binding occurrence before
+  the binding (`track`: `val track = with_tracking` under `open ... Cond_rewr
+  ...`). Modules named after `Q` in the same `open` are not examined. The
+  develop match implies `Q` is a module at the base revision; the selftest
+  also checks that each live qualifier `Q` has a `Q.sml` at the base
+  revision.
 
-The develop `.sml` is not pinned and is not checked. The qualifier rule makes
-the bound module a develop or shared one, and the TASK_34 ledger records the
-shared modules as unchanged apart from its listed differences. Every entry
-must be checked: an entry whose name is not a shared export fails. These
-checks are textual, not a semantic equivalence proof; the rules are strict so
-that an unusual source form fails rather than passes.
+A type entry is accepted only when the extension `.sig` spec is a manifest
+`type params name = rhs` (not a `datatype`, `eqtype` or abstract type), the
+normalised `binding` equals the normalised `rhs`, and either (a) the develop
+spec is also manifest, with the same parameters and normalised `rhs`; or (b)
+the `rhs` is exactly `M.name`, where `M` is the develop module itself and
+`name` the entry's own name (an alias of the develop module's type, whatever
+its develop spec). The `rhs` names no type the extension signature itself
+declares and no type of an extension module. The `binding` records the `rhs`
+(for the record abbreviations `convdata`, `stdconvdata`, `relsimpdata` and
+`simptac_config` the whole normalised record type).
+
+Every entry must be checked: an entry whose name is not a shared export
+fails. These checks are textual, not a semantic equivalence proof, and the
+TASK_34 ledger records the shared modules as unchanged apart from its listed
+differences.
+
+Strictness assumptions (fail closed; a row is always available):
+
+- The tokenizer treats `'a`, `''a` as type parameters and reads record labels
+  inside `{...}` as part of the normalised text; it has no other grammar.
+- Datatype replication (`datatype t = datatype M.t`) is rejected for
+  allowlisting: a datatype is never a manifest type, so it needs a row.
+- `val op`, `val rec`, several declarations on one line, and a following
+  `and` fail the strict line form or the occurrence count.
+- The UNSUPPORTED scan (`structure`, `functor`, `sharing`, `and`,
+  `withtype`, `where`, `abstype`) covers the whole signature, comments
+  excepted.
+- Bindings must start at column 0 (the top level of the struct body); the
+  develop `open` form is read only at column 0 too, and `local open ... in`
+  is not an `open`.
 
 `MODULES` itself is checked without git: the scan walks the repository tree
 (pruning every dot-directory such as `.git`, `.hol` and `.agent-files`,

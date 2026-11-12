@@ -10,9 +10,9 @@ simpLib.ExclSF	markerLib.ExclSF	both bind markerLib.ExclSF
 simpLib.Req0	markerLib.mk_Req0	both bind markerLib.mk_Req0
 simpLib.ReqD	markerLib.mk_ReqD	both bind markerLib.mk_ReqD
 simpLib.controlled_thm	BoundedRewrites.controlled_thm	identical alias of BoundedRewrites.controlled_thm
-simpLib.convdata	=manifest	same type: abbreviation of an identical record type
-simpLib.relsimpdata	=manifest	same type: abbreviation of an identical record type
-simpLib.simptac_config	=manifest	same type: abbreviation of an identical record type
-simpLib.stdconvdata	=manifest	same type: abbreviation of an identical record type
+simpLib.convdata	{name:string,key:(term list*term)option,trace:int,conv:(term list->term->thm)->term list->conv}	same type: abbreviation of an identical record type
+simpLib.relsimpdata	{refl:thm,trans:thm,weakenings:thm list,subsets:thm list,rewrs:thm list}	same type: abbreviation of an identical record type
+simpLib.simptac_config	{strip:bool,elimvars:bool,droptrues:bool,oldestfirst:bool}	same type: abbreviation of an identical record type
+simpLib.stdconvdata	{name:string,pats:term list,conv:conv}	same type: abbreviation of an identical record type
 simpLib.thname	KernelSig.kernelname	identical alias of KernelSig.kernelname
 simpLib.track	Cond_rewr.with_tracking	both bind Cond_rewr.with_tracking
