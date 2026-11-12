@@ -139,6 +139,9 @@ Additional coverage here (not a replacement for those suites):
   dispatcher/Context/rule identity, then reject a foreign replacement. The
   source-isolated negative must compile successfully and fail the repair
   assertion, not a deferred static error.
+  A final check replaces the direct `split` attribute with a counting handler
+  (the foreign dispatcher removed first) and requires initialization and
+  persistent removal to fail as conflicts with that handler never called.
 
 The launcher statically imports only kernel/test helpers. A library build
 prerequisite is not a linked import. `Meta.loaded` **and** the runtime global

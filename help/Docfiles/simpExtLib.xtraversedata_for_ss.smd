@@ -12,7 +12,8 @@ simpExtLib.xtraversedata_for_ss :
 Extracts a configured extension traversal description paired with subgoaler,
 unsafe solvers, condition depth and term order. Its native rewriter is
 built by `TraverseExt.CONFIG_REDUCER`; supplied extension decision
-procedures are unchanged. The data contains equality, traversal rules and the set's limit.
+procedures are unchanged. The data contains equality, traversal rules and the
+set's limit.
 
 Pass the pair to `TraverseExt.XTRAVERSE`. For configured reducer data alone,
 use `#1 (simpExtLib.xtraversedata_for_ss ss)`. The extension default projection

@@ -291,11 +291,19 @@ class TableSelection(unittest.TestCase):
                    "bf475cf1adf94f2ab5", "bytes": 79375}
         offline = {"sha256": "4d5a51e01704b51b2c0099704744e7c7404f29a0039094"
                    "fe3a673649b75f7d41", "bytes": 90838}
-        self.assertEqual(dw.TASK33_DRIVER_SEALS, (driver,))
+        # TASK34 appended the seals of 2e043b6bf4 (code before the new log
+        # rules); they too made kept TASK33 records
+        driver2 = {"sha256": "8d05e058fa2fba44ba2a717e7b362a47ef379a850d91c2"
+                   "5484fc60f5e43c1224", "bytes": 180533}
+        offline2 = {"sha256": "1223bd31f2f4a176f96cbd2394b39b55a2a25c4c006d88"
+                    "07d41d0eea7cef6f90", "bytes": 91144}
+        self.assertEqual(dw.TASK33_DRIVER_SEALS, (driver, driver2))
         self.assertNotIn(driver, old)
+        self.assertNotIn(driver2, old)
         self.assertEqual(dw.TABLES["task33"].history, {
-            "task32_downstream.py": [driver], "task33_storage.py": [storage],
-            "task33_offline.py": [offline]})
+            "task32_downstream.py": [driver, driver2],
+            "task33_storage.py": [storage],
+            "task33_offline.py": [offline, offline2]})
 
     def test_a_counts_file_of_another_table_is_refused(self):
         with tempfile_dir() as tmp:

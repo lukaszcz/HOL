@@ -1385,6 +1385,12 @@ LOG_RULES = {
                                             r"checks")),
     "literal-exclusions": ("unittest", {}),
     "ordinary-tactics": ("unittest", {}),
+    "fragments-python-tests": ("unittest", marker(
+        r"Ran ([1-9]\d*) tests? in")),
+    "compiled-core-python-tests": ("unittest", marker(
+        r"Ran ([1-9]\d*) tests? in")),
+    "interfaces-design-check": ("unittest", marker(
+        r"Ran ([1-9]\d*) tests? in")),
     "compiled-core": ("manifest", {}),
     "fragment-contracts": ("manifest", {}),
     "boolSimpsContextTheory": ("theory", dict(theory="boolSimpsContext")),

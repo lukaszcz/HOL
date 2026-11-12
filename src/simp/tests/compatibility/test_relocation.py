@@ -43,8 +43,8 @@ class RelocationTests(unittest.TestCase):
         self.reject(changed, "destination")
 
     # TASK34: the four sources below carry the split_attribute_now helper
-    # (3 lines) after their header, so later case anchors move by that many
-    # lines (4 where the file also gained a blank separator).
+    # (3 lines) at or after their header, so later case anchors move by
+    # that many lines (4 where the file also gained a blank separator).
     TASK34_SOURCES = {
         "src/simp/tests/fresh-load/identity-before.ML": 0,
         "src/simp/tests/fresh-load/identity-after.ML": 3,

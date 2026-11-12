@@ -34,7 +34,8 @@ REVIEW = 'c707baca802d7e0d22e7e8045a0dc5d3567bd7a9'
 # owned by develop's Cond_rewr and shared by both engines through the one
 # added Cond_rewr.note_rewrite spec; Cond_rewr.sml itself is pinned develop
 # again, and Cond_rewrExt keeps its own is_var_perm.  TASK34: the abstract
-# TraverseExt.reducer, and ThmAttribute.attribute_fns_of only.  The files
+# TraverseExt.reducer, its congExtLib client, SplitData.preflight using
+# is_attribute, and ThmAttribute.attribute_fns_of.  The files
 # below are sealed by content (git blob id), not by the id of a commit, so
 # the seal survives rebases and squashes.  A change to one of them needs a
 # new blob and a new reason here.

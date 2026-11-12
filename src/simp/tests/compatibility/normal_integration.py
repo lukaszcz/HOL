@@ -6,10 +6,10 @@ from run_paired import require
 # are supplementary suites, not replacements for the 2,153 frozen ledger IDs.
 SUITES = {
     "traverse-ext": (131, ["TraverseExt focused checks: 131"]),
-    "cond-rewr-ext": (103, ["Cond_rewrExt focused checks: 103"]),
+    "cond-rewr-ext": (105, ["Cond_rewrExt focused checks: 105"]),
     "congruence-ext": (61, ["Ordinary congruence focused checks: 4",
                            "Congruence extension focused checks: 57"]),
-    "simp-ext": (2809, ["simpExtLib focused checks: 88",
+    "simp-ext": (2813, ["simpExtLib focused checks: 92",
         "TRACKED_COMPILER_CHECKS=174",
         "TASK19_EXTENSION_EXCLUSIONS_OK checks=159",
         "simpExtLib strategy checks: 186; executed validations: 63",
@@ -17,7 +17,7 @@ SUITES = {
         "SOURCE_VIEW_BUNDLE_CHECKS=407", "DERIVATION_CHECKS=1392",
         "TraverseExt lifetime checks: 315"]),
     "standard-recipes": (118, ["STANDARD_RECIPE_CHECKS=118"]),
-    "split-lifecycle": (1762, ["OBS repair=pass"]),
+    "split-lifecycle": (2197, ["OBS repair=pass"]),
 }
 
 

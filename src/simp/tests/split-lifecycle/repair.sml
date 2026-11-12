@@ -46,20 +46,27 @@ val _ = check "repair never replaces a foreign dispatcher"
       (Listener.listeners Theory.delta_hook) of
         SOME (_,f) => Portable.pointer_eq (f,foreign)
       | _ => false) andalso !foreign_calls = 0)
-(* Ownership checks (initialize preflight, rule queries) only read the
-   handler record: a replacement "split" handler is never called. *)
+(* Ownership checks (initialize preflight, persistent removal) only read the
+   handler record: a replacement "split" handler is never called. The foreign
+   dispatcher above is removed first, so only the attribute conflict is in
+   play. *)
 val replacement_calls = ref 0
 fun replacement_attr _ = replacement_calls := !replacement_calls + 1
+val _ = Listener.remove_listener Theory.delta_hook name
 val _ = Context.restore entry
 val _ = ThmAttribute.register_attribute
   ("split",{localf=replacement_attr,storedf=replacement_attr})
 val replaced = Context.snapshot ()
 val replaced_result = Exn.capture init ()
+val replaced_exclusion =
+  Exn.capture splitLib.exclude_split "split_listener_repair$local"
+fun conflict_of f (Exn.Exn (HOL_ERR e)) =
+      Feedback.top_structure_of e = "splitLib" andalso
+      Feedback.top_function_of e = f
+  | conflict_of _ _ = false
 val _ = check "ownership checks never call a replacement handler"
-  ((case replaced_result of
-        Exn.Exn (HOL_ERR e) =>
-          Feedback.top_function_of e = "enable_split_attribute"
-      | _ => false) andalso
+  (conflict_of "enable_split_attribute" replaced_result andalso
+   conflict_of "exclude_split" replaced_exclusion andalso
    null (SplitData.named_rules ()) andalso
    Portable.pointer_eq (replaced,Context.snapshot ()) andalso
    !replacement_calls = 0)
