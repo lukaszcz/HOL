@@ -983,6 +983,44 @@ class Stages(Chain34):
         self.assertEqual(st.owed_units(chain, "followup"), [])
 
 
+class Followup34(Chain34):
+    def test_extend_after_a_followup_uses_the_followup_counts_given(self):
+        """run, then follow-up, then extend: the extend replays the
+        follow-up with the counts file named on its command line, wherever
+        that is."""
+        self.prepared()
+        self.world.edits["release", "cand"] = noop_leak
+        self.once("graph", "cand", lambda run: grow(run, "fragment", 100))
+        a, first = self.decide()
+        owed = {x[0] for x in first["outcome"]["owed"]}
+        self.assertEqual(owed, {"followup", "extend"})
+        self.world.edits.clear()
+        pre = self.args("pre2", storage_counts=a.storage_counts,
+                        timing_counts=a.timing_counts,
+                        stage=Path(first["output"]))
+        out = self.world.repo / "src/simp/tests/performance/" \
+            "elsewhere_followup_counts.json"
+        out.write_text(dw.dumps(st.predeclare_followup(pre)))
+        self.commit(out)
+        fu = self.args("third", storage_counts=a.storage_counts,
+                       followup_counts=out, timing_counts=a.timing_counts,
+                       stage=Path(first["output"]))
+        follow = st.run(fu, st.followup_spec(fu))
+        self.assertTrue(follow["success"], follow.get("failure"))
+        self.assertNotEqual(out, st.FOLLOWUP_COUNTS)
+        ext = self.args("fourth", storage_counts=a.storage_counts,
+                        followup_counts=out, timing_counts=a.timing_counts,
+                        first=Path(follow["output"]))
+        report = st.run(ext, st.extend_spec(ext))
+        self.assertTrue(report["success"], report.get("failure"))
+        chain = st.replay_chain(report["output"], counts=a.storage_counts,
+                                followup_counts=out,
+                                timing_counts=a.timing_counts)
+        self.assertEqual([e["stage"] for e in chain],
+                         ["run", "followup", "extend"])
+        self.assertEqual(report["outcome"]["owed"], [])
+
+
 def incomparable(run):
     """A release run whose readings of one kind differ in gc_share."""
     i = rt.find(run, "live", phase="simpset.after")
@@ -1278,6 +1316,45 @@ class Controls34(Chain34):
             out["object_cpu"]))
         self.assertLess(ext_cap, release_cap)  # 6 kinds against 8
         self.assertEqual(out["m_cap"], ext_cap)
+
+    def test_a_run_refuses_a_timeout_the_followup_budget_does_not_fit(self):
+        limit = st.FOLLOWUP_FACTOR * st.RELEASE_BUDGET_S
+        for command in st.RUN_COMMANDS:
+            args = self.args("t", command=command, timeout=limit)
+            with mock.patch.object(st, "run") as run, \
+                    self.assertRaisesRegex(dw.Refusal, "process timeout"):
+                st.dispatch(args)
+            run.assert_not_called()
+
+    def test_a_cap_is_not_sized_from_a_zero_cpu_reading(self):
+        for costs in ((0, 1), (1, 0), (0.0, 0.0)):
+            with self.assertRaisesRegex(dw.Refusal, "no CPU time"):
+                st.cap_of(*costs, 4)
+
+    def test_information_runs_are_replayed_with_the_given_manifest(self):
+        w = self.world
+        self.info_stages()
+        timing = self.timing_counts()
+        moved = w.tmp / "moved-manifest.json"
+        moved.write_text(w.manifest.read_text())
+        w.manifest.unlink()
+        args = self.args("pre", manifest=moved, timing_counts=timing,
+                         smoke=w.tmp / "smoke", pilot=w.tmp / "pilot",
+                         control=w.tmp / "control",
+                         offline=self.offline_files())
+        sides, mseal = dw.pins_of(args)
+        key = dw.gate_key(sides)
+        with self.assertRaisesRegex(dw.Refusal, "manifest"):
+            st.info_run(args.smoke, key, "smoke", list(st.UNITS), None,
+                        mseal)
+        st.info_run(args.smoke, key, "smoke", list(st.UNITS), None, mseal,
+                    moved)
+        data = st.predeclare_run(args)
+        self.assertEqual(data["manifest"], mseal)
+        for mode, spec_args in (("pilot", dict(smoke=args.smoke)),
+                                ("control", dict(pilot=args.pilot))):
+            st.info_spec(self.args("x", manifest=moved, m0=M,
+                                   **spec_args), mode)
 
     def test_the_followup_budget_must_fit_the_process_timeout(self):
         st.check_budget()
@@ -1747,6 +1824,46 @@ class Joining(unittest.TestCase):
         (got,) = dispose.timing_decisions(None, disp)
         self.assertEqual((got["decision"], got["owed"]), ("blocked", None))
 
+    def test_every_timing_contingency_has_one_mapping(self):
+        second = dispose.d.NOTE_SECOND
+        for status, note, want in (
+                ("pass", "first", ("pass", None)),
+                ("fail", "first", ("fail", None)),
+                ("followup", "x", ("inconclusive", "followup")),
+                ("blocked", second, ("inconclusive", "second")),
+                ("blocked", "control-limited after the second stage",
+                 ("blocked", None)),
+                ("blocked", "inconclusive after the follow-up",
+                 ("blocked", None))):
+            self.assertEqual(dispose.timing_status(status, note), want,
+                             (status, note))
+
+    def test_a_row_owed_the_second_stage_blocks_the_disposal(self):
+        disp = dict(workloads={"first-use": dict(
+            status="blocked", note=dispose.d.NOTE_SECOND,
+            stages=[dict(stage="first")])})
+        (got,) = dispose.timing_decisions(None, disp)
+        self.assertEqual((got["decision"], got["owed"]),
+                         ("inconclusive", "second"))
+        data = dict(schema=dispose.SCHEMA, owed=[got])
+        with t32.tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "disposition.json"
+            path.write_text(dw.dumps(data))
+            Path(str(path) + ".seal").write_text(dw.dumps(acc.seal(path)))
+            with self.assertRaisesRegex(dw.Refusal, "still owes.*second"):
+                dispose.sealed_disposition(tmp)
+
+    def test_a_skipped_offline_check_is_blocked_and_owes_nothing(self):
+        found = {"audit": (offline_report("audit", [
+            check_of("c3", "S3", "skipped")]), dict(seal=1))}
+        got, _ = dispose.offline_decisions(found)
+        (row,) = [x for x in got if x["source"] == "offline:audit"]
+        self.assertEqual(row["decision"], "blocked")
+        self.assertEqual(dispose.overall(["inconclusive", "blocked"]),
+                         "blocked")
+        self.assertEqual(dispose.overall(["pass", "inconclusive"]),
+                         "inconclusive")
+
     def test_offline_checks_of_combined_cases_are_decided_in_each(self):
         found = {"audit": (offline_report("audit", [
             check_of("c1", "L1/S3"), check_of("c2", "L2", "fail"),
@@ -1760,7 +1877,7 @@ class Joining(unittest.TestCase):
             sorted((x["case"], x["kind"], x["decision"]) for x in got
                    if x["source"] == "offline:audit"),
             [("L1", "c1", "pass"), ("L2", "c2", "fail"),
-             ("S3", "c1", "pass"), ("S3", "c3", "inconclusive")])
+             ("S3", "c1", "pass"), ("S3", "c3", "blocked")])
         self.assertEqual([x["unit"] for x in attribution], ["a"])
         missing = [x for x in got if x["case"] == "offline"]
         self.assertEqual([(x["kind"], x["decision"]) for x in missing],
@@ -2065,6 +2182,17 @@ class Disposition(Chain34):
         self.assertEqual(dispose.sealed_disposition(self.world.tmp)["path"],
                          str(disposition))
 
+    def test_the_stage_output_settles_owed_like_the_disposition(self):
+        a, first, report, out = self.followup_chain()
+        self.assertEqual(first["outcome"]["owed"],
+                         [["followup", "release"]])
+        self.assertEqual(report["outcome"]["owed"], [])
+        text = st.summary_line(report)
+        self.assertIn("R1:simpset", text)
+        self.assertNotIn("owed", text)
+        self.assertIn("blocked", text)
+        self.assertIn("owed", st.summary_line(first))
+
     def test_a_followup_decides_only_the_rows_owed_it(self):
         a, first, report, out = self.followup_chain()
         owed = st.owed_keys(st.replay_chain(
@@ -2207,10 +2335,9 @@ class Disposition(Chain34):
         l4 = {x["kind"]: x for x in data["decisions"] if x["case"] == "L4"}
         self.assertEqual(sorted(l4), sorted(cases33.NAMES))
         for name, row in data["timing"]["workloads"].items():
-            self.assertEqual(l4[name]["decision"],
-                             dispose.TIMING[row["status"]])
-            self.assertEqual(l4[name]["owed"], "followup" if
-                             row["status"] == "followup" else None)
+            want = dispose.timing_status(row["status"], row["note"])
+            self.assertEqual((l4[name]["decision"], l4[name]["owed"]),
+                             want)
 
     def test_the_offline_reports_must_be_the_ones_the_counts_bound(self):
         a, first, audit = self.stages()

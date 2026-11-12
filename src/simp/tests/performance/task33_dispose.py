@@ -51,8 +51,22 @@ OFFLINE = storage.OFFLINE_COMMANDS
 ATTRIBUTED = ("gc_cpu", "maxrss")  # the timing intervals scanned
 LABELS = ("base", "cand")
 GATE_ORDER = (rules.FAIL, rules.BLOCKED, rules.INCONCLUSIVE)
-TIMING = {"pass": rules.PASS, "fail": rules.FAIL,
-          "followup": rules.INCONCLUSIVE, "blocked": rules.BLOCKED}
+
+
+def timing_status(status, note):
+    """(decision, owed) of a timing row from TASK32's `classify` (status,
+    note): the one mapping of its contingencies. A "followup" row is
+    inconclusive and owed the follow-up; the blocked row that says the
+    second stage is owed (`d.NOTE_SECOND`) is inconclusive and owed
+    `second` (the timing `extend` stage) until that stage has run, after
+    which `classify` gives another status; every other blocked row is
+    blocked and owes nothing."""
+    if status == "followup":
+        return rules.INCONCLUSIVE, "followup"
+    if (status, note) == ("blocked", d.NOTE_SECOND):
+        return rules.INCONCLUSIVE, "second"
+    return {"pass": rules.PASS, "fail": rules.FAIL,
+            "blocked": rules.BLOCKED}[status], None
 
 
 def overall(decisions):
@@ -84,14 +98,15 @@ def expected_storage():
 
 def timing_decisions(chain, disp):
     """L4 decisions: one per timing kind, from the disposition's rows
-    (pass, fail, blocked, or followup: inconclusive and owed the timing
-    follow-up, which the timing driver classifies blocked once it ran)."""
+    (`timing_status`: a row owed the follow-up or the second stage is
+    inconclusive and owes it; the timing driver classifies it again once
+    the stage ran)."""
     out = []
     for unit, row in sorted(disp["workloads"].items()):
+        status, owed = timing_status(row["status"], row["note"])
         out.append(decision(
-            "L4", unit, TIMING[row["status"]], "timing:" + row["stages"][
-                -1]["stage"], row["note"] or "", stages=row["stages"],
-            owed="followup" if row["status"] == "followup" else None))
+            "L4", unit, status, "timing:" + row["stages"][-1]["stage"],
+            row["note"] or "", stages=row["stages"], owed=owed))
     return out
 
 
@@ -122,7 +137,8 @@ def load_offline(paths):
 def offline_decisions(found):
     """One decision per (case, check id) of the reports; a case combined
     in one check ("L1/S3") is decided in each of its cases. Missing
-    reports are blocked decisions."""
+    reports and skipped checks are blocked decisions: no stage could
+    resolve them."""
     out, attribution = [], []
     for command in OFFLINE:
         if command not in found:
@@ -133,7 +149,7 @@ def offline_decisions(found):
         report, _ = found[command]
         for check in report["checks"]:
             status = {"pass": rules.PASS, "fail": rules.FAIL,
-                      "skipped": rules.INCONCLUSIVE}[check["status"]]
+                      "skipped": rules.BLOCKED}[check["status"]]
             for case in check["case"].split("/"):
                 out.append(decision(case, check["id"], status,
                                     "offline:" + command, check["reason"]))

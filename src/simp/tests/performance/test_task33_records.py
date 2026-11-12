@@ -963,16 +963,20 @@ class Masking(unittest.TestCase):
 
 
 def golden(name):
-    """A real probe output (task33_golden/NAME.txt): the TAB after @@T33 is
-    stored as a space (no TAB in the repository), the snapshot root is
-    masked, and the probe directory does not occur in it."""
-    body = (GOLDEN / (name + ".txt")).read_text(encoding="utf-8")
+    """A real probe output (task33_golden/NAME.txt). The rule for every
+    golden: the file is the probe's raw stdout bytes (UTF-8), except that
+    the snapshot root is masked (`@ROOT@`) and the TAB after @@T33 is
+    stored as a space (no TAB in the repository). This restores both and
+    applies the driver's own decoding of a probe's stdout (latin-1, as
+    `task32_downstream` reads it into the receipt) before `validate` sees
+    it. No golden contains the probe directory."""
+    raw = (GOLDEN / (name + ".txt")).read_bytes().decode("utf-8")
     out = []
-    for line in body.splitlines():
+    for line in raw.splitlines():
         if line.startswith("@@T33 "):
             line = r.PREFIX + line[len("@@T33 "):]
         out.append(line.replace("@ROOT@", ROOT))
-    return "\n".join(out) + "\n"
+    return "\n".join(out).encode("utf-8").decode("latin-1") + "\n"
 
 
 class Golden(unittest.TestCase):

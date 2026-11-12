@@ -1,7 +1,7 @@
 @@T33 {"record":"probe","probe":"graph","kind":"graph","holdir":"@ROOT@","switches":{"graph_extra":false,"leak":false,"hook":false},"params":{"sizes":[0,1,10]}}
 @@T33 {"record":"live","probe":"graph","kind":"graph","phase":"start","size_heap":6291456,"free_full":1392000,"alloc":1048576,"alloc_free":1048576,"gc_share":0,"comparable":true,"words":481360}
 @@T33 {"record":"check","probe":"graph","kind":"graph","check":"fragment 0","ok":true,"value":"n=0 fragment 0 merged 0"}
-@@T33 {"record":"check","probe":"graph","kind":"graph","check":"compiled 0","ok":true,"value":"n=0 â¢ T â T"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"compiled 0","ok":true,"value":"n=0 ⊢ T ⇔ T"}
 @@T33 {"record":"check","probe":"graph","kind":"graph","check":"compiled_bool 0","ok":true,"value":"n=0 "}
 @@T33 {"record":"check","probe":"graph","kind":"graph","check":"merge 0","ok":true,"value":"n=0 "}
 @@T33 {"record":"check","probe":"graph","kind":"graph","check":"projection 0","ok":true,"value":"n=0 "}
@@ -24,14 +24,14 @@
 @@T33 {"record":"live","probe":"graph","kind":"graph","phase":"graph.0","size_heap":6291456,"free_full":1386616,"alloc":1048576,"alloc_free":1048576,"gc_share":0,"comparable":true,"words":482033}
 @@T33 {"record":"phase","probe":"graph","kind":"graph","n":0,"share_start":0,"share_built":0,"share_shared":0,"share_canon":0,"share_tries":2,"converged":true,"build":{"reset_ok":true,"rss_before":111169536,"hwm_before":113082368,"rss_reset":111247360,"hwm_reset":111247360,"rss_after":113684480,"hwm_after":113684480,"status":"ok"},"rows":{"reset_ok":true,"rss_before":113684480,"hwm_before":113684480,"rss_reset":113762304,"hwm_reset":113762304,"rss_after":111292416,"hwm_after":113623040,"status":"unsupported"}}
 @@T33 {"record":"check","probe":"graph","kind":"graph","check":"fragment 1","ok":true,"value":"n=1 fragment 1 merged 1"}
-@@T33 {"record":"check","probe":"graph","kind":"graph","check":"compiled 1","ok":true,"value":"n=1  [.] â¢ t33_g0 â T;  [.] â¢ t33_g0 â T"}
-@@T33 {"record":"check","probe":"graph","kind":"graph","check":"compiled_bool 1","ok":true,"value":"n=1  [.] â¢ t33_g0 â T;  [.] â¢ t33_g0 â T"}
-@@T33 {"record":"check","probe":"graph","kind":"graph","check":"merge 1","ok":true,"value":"n=1  [.] â¢ t33_g0 â T;  [.] â¢ t33_g0 â T"}
-@@T33 {"record":"check","probe":"graph","kind":"graph","check":"projection 1","ok":true,"value":"n=1  [.] â¢ t33_g0 â T;  [.] â¢ t33_g0 â T"}
-@@T33 {"record":"check","probe":"graph","kind":"graph","check":"tactic 1","ok":true,"value":"n=1  [.] â¢ t33_g0;  [.] â¢ t33_g0"}
-@@T33 {"record":"check","probe":"graph","kind":"graph","check":"exclusion 1","ok":true,"value":"n=1  [.] â¢ t33_g0 â T"}
-@@T33 {"record":"check","probe":"graph","kind":"graph","check":"removed 1","ok":true,"value":"n=1 â¢ t33_g0 â t33_g0"}
-@@T33 {"record":"check","probe":"graph","kind":"graph","check":"cong 1","ok":true,"value":"n=1  [.] â¢ t33_g0 â T;  [.] â¢ t33_g0 â T"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"compiled 1","ok":true,"value":"n=1  [.] ⊢ t33_g0 ⇔ T;  [.] ⊢ t33_g0 ⇔ T"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"compiled_bool 1","ok":true,"value":"n=1  [.] ⊢ t33_g0 ⇔ T;  [.] ⊢ t33_g0 ⇔ T"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"merge 1","ok":true,"value":"n=1  [.] ⊢ t33_g0 ⇔ T;  [.] ⊢ t33_g0 ⇔ T"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"projection 1","ok":true,"value":"n=1  [.] ⊢ t33_g0 ⇔ T;  [.] ⊢ t33_g0 ⇔ T"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"tactic 1","ok":true,"value":"n=1  [.] ⊢ t33_g0;  [.] ⊢ t33_g0"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"exclusion 1","ok":true,"value":"n=1  [.] ⊢ t33_g0 ⇔ T"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"removed 1","ok":true,"value":"n=1 ⊢ t33_g0 ⇔ t33_g0"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"cong 1","ok":true,"value":"n=1  [.] ⊢ t33_g0 ⇔ T;  [.] ⊢ t33_g0 ⇔ T"}
 @@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"fragment","n":1,"anchor":2359839,"anchor_post":2359839,"union":2359854,"words":15,"share":0,"canon_anchor":2359839,"canon_anchor_post":2359839,"canon_union":2359854,"canon_words":15,"canon_share":0}
 @@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"compiled","n":1,"anchor":2359851,"anchor_post":2359851,"union":2359923,"words":72,"share":0,"canon_anchor":2359851,"canon_anchor_post":2359851,"canon_union":2359923,"canon_words":72,"canon_share":0}
 @@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"compiled_bool","n":1,"anchor":2359851,"anchor_post":2359851,"union":2359975,"words":124,"share":0,"canon_anchor":2359851,"canon_anchor_post":2359851,"canon_union":2359939,"canon_words":88,"canon_share":0}
@@ -47,14 +47,14 @@
 @@T33 {"record":"live","probe":"graph","kind":"graph","phase":"graph.1","size_heap":6291456,"free_full":1383464,"alloc":1048576,"alloc_free":1048576,"gc_share":0,"comparable":true,"words":482427}
 @@T33 {"record":"phase","probe":"graph","kind":"graph","n":1,"share_start":0,"share_built":0,"share_shared":0,"share_canon":0,"share_tries":2,"converged":true,"build":{"reset_ok":true,"rss_before":111419392,"hwm_before":113623040,"rss_reset":111497216,"hwm_reset":111497216,"rss_after":128086016,"hwm_after":128086016,"status":"ok"},"rows":{"reset_ok":true,"rss_before":128086016,"hwm_before":128086016,"rss_reset":128086016,"hwm_reset":128086016,"rss_after":111435776,"hwm_after":127815680,"status":"unsupported"}}
 @@T33 {"record":"check","probe":"graph","kind":"graph","check":"fragment 10","ok":true,"value":"n=10 fragment 10 merged 10"}
-@@T33 {"record":"check","probe":"graph","kind":"graph","check":"compiled 10","ok":true,"value":"n=10  [.] â¢ t33_g0 â T;  [.] â¢ t33_g9 â T"}
-@@T33 {"record":"check","probe":"graph","kind":"graph","check":"compiled_bool 10","ok":true,"value":"n=10  [.] â¢ t33_g0 â T;  [.] â¢ t33_g9 â T"}
-@@T33 {"record":"check","probe":"graph","kind":"graph","check":"merge 10","ok":true,"value":"n=10  [.] â¢ t33_g0 â T;  [.] â¢ t33_g9 â T"}
-@@T33 {"record":"check","probe":"graph","kind":"graph","check":"projection 10","ok":true,"value":"n=10  [.] â¢ t33_g0 â T;  [.] â¢ t33_g9 â T"}
-@@T33 {"record":"check","probe":"graph","kind":"graph","check":"tactic 10","ok":true,"value":"n=10  [.] â¢ t33_g0;  [.] â¢ t33_g9"}
-@@T33 {"record":"check","probe":"graph","kind":"graph","check":"exclusion 10","ok":true,"value":"n=10 â¢ t33_g0 â t33_g0;  [.] â¢ t33_g9 â T"}
-@@T33 {"record":"check","probe":"graph","kind":"graph","check":"removed 10","ok":true,"value":"n=10 â¢ t33_g0 â t33_g0"}
-@@T33 {"record":"check","probe":"graph","kind":"graph","check":"cong 10","ok":true,"value":"n=10  [.] â¢ t33_g0 â T;  [.] â¢ t33_g9 â T"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"compiled 10","ok":true,"value":"n=10  [.] ⊢ t33_g0 ⇔ T;  [.] ⊢ t33_g9 ⇔ T"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"compiled_bool 10","ok":true,"value":"n=10  [.] ⊢ t33_g0 ⇔ T;  [.] ⊢ t33_g9 ⇔ T"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"merge 10","ok":true,"value":"n=10  [.] ⊢ t33_g0 ⇔ T;  [.] ⊢ t33_g9 ⇔ T"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"projection 10","ok":true,"value":"n=10  [.] ⊢ t33_g0 ⇔ T;  [.] ⊢ t33_g9 ⇔ T"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"tactic 10","ok":true,"value":"n=10  [.] ⊢ t33_g0;  [.] ⊢ t33_g9"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"exclusion 10","ok":true,"value":"n=10 ⊢ t33_g0 ⇔ t33_g0;  [.] ⊢ t33_g9 ⇔ T"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"removed 10","ok":true,"value":"n=10 ⊢ t33_g0 ⇔ t33_g0"}
+@@T33 {"record":"check","probe":"graph","kind":"graph","check":"cong 10","ok":true,"value":"n=10  [.] ⊢ t33_g0 ⇔ T;  [.] ⊢ t33_g9 ⇔ T"}
 @@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"fragment","n":10,"anchor":2360118,"anchor_post":2360118,"union":2360187,"words":69,"share":0,"canon_anchor":2360118,"canon_anchor_post":2360118,"canon_union":2360187,"canon_words":69,"canon_share":0}
 @@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"compiled","n":10,"anchor":2360157,"anchor_post":2360157,"union":2360722,"words":565,"share":0,"canon_anchor":2360157,"canon_anchor_post":2360157,"canon_union":2360731,"canon_words":574,"canon_share":0}
 @@T33 {"record":"graph","probe":"graph","kind":"graph","graph":"compiled_bool","n":10,"anchor":2360157,"anchor_post":2360157,"union":2361036,"words":879,"share":0,"canon_anchor":2360157,"canon_anchor_post":2360157,"canon_union":2360748,"canon_words":591,"canon_share":0}

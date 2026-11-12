@@ -3686,7 +3686,11 @@ clamped to a cap derived from a declared CPU budget (`RELEASE_BUDGET_S` =
 60 s per release or `ext` process): the budget divided by the larger CPU per
 object of the pilot's release processes and of the smoke's `ext` process
 (whole-process CPU over M times the kinds released, start-up included, so an
-upper bound; the pilot is sized from a given smoke, `--smoke`). The counts
+upper bound; the smoke's `ext` per-object CPU, measured at its small M and
+sizes, is an upper bound of the cost at the decision M only while the
+graph's cost at the decision sizes stays under about (M / smoke M - 1) times
+the start-up, likely and not checked; the pilot is sized from a given
+smoke, `--smoke`). A process reporting no CPU time is a refusal. The counts
 record `required_m` and `capped` as TASK32 records `required_reps`, and
 `object_cpu` and `ext_object_cpu`; `check_sizing` recomputes the cap, M and
 `capped` from them at `run`, `replay` and `dispose`. The sizing assumes that
@@ -3695,9 +3699,10 @@ the required M is that noise over 1/4; the decision stages check it by the
 no-op floor (an unresolved floor is inconclusive, hence a follow-up). The
 follow-up M is max(4 M, ceil(M x floor range / 1/4)), capped by 4 times the
 budget (`FOLLOWUP_FACTOR`). The driver requires `FOLLOWUP_FACTOR` x the
-budget to be under the process timeout (`TIMEOUT`, 900 s), at import and
-whenever a cap is computed, and refuses with that message otherwise: a capped
-follow-up process would always time out.
+budget to be under the process timeout (`TIMEOUT`, 900 s), at import,
+whenever a cap is computed and, with the run's own `--timeout`, before any
+run command launches a process, and refuses with that message otherwise: a
+capped follow-up process would always time out.
 
 Extension cases (E2), on the candidate only; no develop counterpart exists
 for (b). The `ext` probe loads `simpExtLib`, uses tracked construction,
@@ -4078,9 +4083,18 @@ blocked) owes nothing, and an inconclusive row owed no stage that may still
 run (the stage ran and left it inconclusive, or the rule owes none) is
 blocked and owes nothing. A rule owes a stage only when nothing else decides
 the row: E2 (b) owes a follow-up only when no kind is blocked or failed. The
-timing L4 rows follow the timing classification: a `followup` row is
-inconclusive and owed the timing follow-up until it has run, and is blocked
-after it.
+timing L4 rows follow the timing classification, by one mapping from
+TASK32's `classify` (status, note) to (decision, owed): `followup` is
+inconclusive and owed `followup`; blocked with the note "second stage owed"
+(a control-limited row after the first stage) is inconclusive and owed
+`second` (the timing `extend` stage); any other blocked row is blocked; pass
+and fail stand. `dispose-snapshots` refuses while a row is owed, so the
+snapshots the second stage or the follow-up needs are kept until it has run;
+after it `classify` gives the row's new status. A skipped offline check
+(`archive --no-replay`) is blocked: no stage could resolve it. The `owed`
+a storage stage prints and records is settled by the stages that ran up to
+it (its link names its parent chain's stages), as the disposition settles
+it.
 
 A contingency stage measures the units owed, but decides only the rows its
 parent owed it (`decides` in its report, the keys; `replay` checks them
@@ -4089,8 +4103,10 @@ that decided it last. A stage's exit status is that of its rows.
 
 A timing follow-up is owed only after any owed second stage. `followup`
 refuses while a second stage is owed. The disposition's overall status is
-`fail` if any gate fails, `pass` only if every gate passes, `inconclusive`
-while a gate is still owed a stage that may run, else `blocked`.
+`fail` if any gate fails, else `blocked` if any is blocked, else
+`inconclusive` if any is, else `pass` (precedence fail > blocked >
+inconclusive > pass; `owed` lists the rows still owed a stage, whatever the
+status).
 
 ### Replay and disposition
 

@@ -575,8 +575,8 @@ def outcome(report, loaded, folder=None):
     out["reported"]["times"] = times_of(groups)
     out["reported"]["heap_bytes"] = report["heap_bytes"]
     out["owed"] = [list(x) for x in sorted({
-        (r["owed"], u) for r in out["results"].values() if r["owed"]
-        for u in row_units(r)})]
+        (r["owed"], u) for r in stage_rows(report, out["results"]).values()
+        if r["owed"] for u in row_units(r)})]
     return out
 
 
@@ -611,7 +611,10 @@ def object_cpu(procs, m):
 def ext_object_cpu(smoke):
     """CPU seconds per released object of the smoke's extension process
     (its one candidate process; the start-up and the graph at the smoke's
-    sizes count: an upper bound)."""
+    sizes count). An upper bound of the per-object cost at the decision M
+    only while the graph's cost at the decision sizes stays under about
+    (M / smoke M - 1) times the start-up (likely, not checked); a
+    pessimistic cost only makes `capped` likelier."""
     cpu = smoke["outcome"]["times"][EXT]["cand"]["cpu"]
     return cpu / (smoke["params"]["m"] * len(records.EXT_RELEASE_KINDS))
 
@@ -621,6 +624,9 @@ def cap_of(cost, ext_cost, m0, factor=1):
     CPU seconds per object) and extension process (at `ext_cost`) both fit
     `factor` times RELEASE_BUDGET_S, never under the pilot's own M0."""
     check_budget()
+    require(cost > 0 and ext_cost > 0, "a release process reports no CPU "
+            "time (%s, %s s per object): the cap cannot be sized" % (
+                cost, ext_cost))
     return max(m0, min(math.floor(Fraction(RELEASE_BUDGET_S * factor) /
                                   Fraction(c)) for c in (cost, ext_cost)))
 
@@ -1135,7 +1141,8 @@ def replay_chain(folder, ledger=None, repo=None, counts=None,
                           followup_counts, timing_counts, manifest)
     last = parent[-1]
     require(a.seal(Path(link["run"]) / "downstream.json") == link["seal"]
-            and link["attempt"] == last["report"]["attempt"],
+            and link["attempt"] == last["report"]["attempt"]
+            and link.get("stages") == [e["stage"] for e in parent],
             "the stage names another parent")
     for key in ("base", "cand", "key", "roots", "manifest"):
         require(report[key] == last["report"][key],
@@ -1162,29 +1169,37 @@ def final_rows(chain):
     return found
 
 
-def allowed(chain, kind):
-    """A contingency stage ("extend", "followup") may still follow the
-    chain: each is run once."""
-    return all(e["stage"] != kind for e in chain)
-
-
-def settled_rows(chain):
-    """{key: row} after the chain (`final_rows`) with the stages still to
-    come taken into account: a row is owed (inconclusive, `owed` the
-    stage) only while that stage is allowed; an inconclusive row owed no
-    allowed stage is blocked (the TASK32 convention); every other row owes
-    nothing."""
+def settle(rows, ran):
+    """`rows` ({key: row}) after the stages `ran` (names, in order) with
+    the stages still to come taken into account: a row is owed
+    (inconclusive, `owed` the stage) only while that contingency stage
+    ("extend", "followup") has not run (each is run once); an inconclusive
+    row owed no stage that may still run is blocked (the TASK32
+    convention); every other row owes nothing."""
     out = {}
-    for key, r in final_rows(chain).items():
+    for key, r in rows.items():
         if r["decision"] != rules.INCONCLUSIVE:
             r = dict(r, owed=None)
-        elif not (r["owed"] and allowed(chain, r["owed"])):
+        elif not (r["owed"] and r["owed"] not in ran):
             r = dict(r, decision=rules.BLOCKED, owed=None, reason=(
                 "%s: still inconclusive after the last allowed stage%s" % (
                     r["reason"], " (%s ran)" % r["owed"] if r["owed"]
                     else "")))
         out[key] = r
     return out
+
+
+def settled_rows(chain):
+    """`settle` of the chain's final rows (`final_rows`)."""
+    return settle(final_rows(chain), [e["stage"] for e in chain])
+
+
+def stage_rows(report, results):
+    """The `results` of a stage, settled by the stages that ran up to and
+    including it (the parent chain's names are in its link): what the
+    stage prints and records as owed, as the disposition settles it."""
+    link = parents(report) or {}
+    return settle(results, link.get("stages", []) + [report["stage"]])
 
 
 def owed_rows(chain, kind):
@@ -1244,10 +1259,11 @@ def load_storage_counts(path, sides, kind, repo, mseal, timing_path,
     return data
 
 
-def info_run(folder, key, mode, names, ledger, mseal):
+def info_run(folder, key, mode, names, ledger, mseal, manifest=None):
     """A replayed information run of this gate (the storage driver's own
-    replay, the timing driver's checks)."""
-    info, report = replay_one(folder, ledger=ledger)
+    replay, the timing driver's checks); `manifest` is the snapshot
+    manifest file when it moved."""
+    info, report = replay_one(folder, ledger=ledger, manifest=manifest)
     d.check_info_run(info, report, key, mode, ledger, names, mseal,
                      LEDGER_TABLE)
     return info, report
@@ -1285,13 +1301,15 @@ def predeclare_run(args):
     timing = d.load_counts(timing_path, sides, "first", args.repo,
                            mseal=mseal)
     pilot_info, pilot = info_run(args.pilot, key, "pilot",
-                                 list(PILOT_UNITS), args.ledger, mseal)
+                                 list(PILOT_UNITS), args.ledger, mseal,
+                                 args.manifest)
     smoke_info, smoke = info_run(args.smoke, key, "smoke", list(UNITS),
-                                 args.ledger, mseal)
+                                 args.ledger, mseal, args.manifest)
     require(pilot["smoke"] == smoke_link(smoke_info, smoke),
             "the pilot was sized from another smoke")
     control_info, control = info_run(args.control, key, "control",
-                                     control_names(), args.ledger, mseal)
+                                     control_names(), args.ledger, mseal,
+                                     args.manifest)
     out = pilot["outcome"]
     require(smoke["outcome"]["facts"]["ok"], "the smoke run did not pass "
             "the probe facts (reporter in fileDirMap, every process loads "
@@ -1431,14 +1449,14 @@ def info_spec(args, mode):
     sizes = tuple(args.sizes or records.DEFAULT_SIZES)
     if mode == "pilot":
         info, smoke = info_run(args.smoke, key, "smoke", list(UNITS), None,
-                               mseal)
+                               mseal, args.manifest)
         require(smoke["outcome"]["facts"]["ok"], "--smoke did not pass the "
                 "probe facts")
         return spec_of(mode, list(PILOT_UNITS), dict(
             sizes=list(sizes), m=args.m0 or M0, k=K),
             smoke=smoke_link(info, smoke))
     info, pilot = info_run(args.pilot, key, "pilot", list(PILOT_UNITS),
-                           None, mseal)
+                           None, mseal, args.manifest)
     return spec_of(mode, control_names(), decision_params(pilot),
                    pilot=dict(attempt=pilot["attempt"], seal=info["seal"]))
 
@@ -1464,13 +1482,15 @@ def run_spec(args):
 def link_of(chain):
     last = chain[-1]
     return dict(run=str(last["folder"]), attempt=last["report"]["attempt"],
-                seal=last["info"]["seal"])
+                seal=last["info"]["seal"],
+                stages=[e["stage"] for e in chain])
 
 
 def extend_spec(args):
     sides, counts, use = counts_spec(args, "extend")
     chain = replay_chain(args.first, None, args.repo, args.storage_counts,
-                         None, args.timing_counts, args.manifest)
+                         args.followup_counts, args.timing_counts,
+                         args.manifest)
     owed = owed_units(chain, "extend")
     require(owed, "no unit is owed the %d-pair stage" % EXTEND_PAIRS)
     return spec_of("extend", owed, dict(
@@ -1528,7 +1548,7 @@ def summary_line(report):
         return head + "\n" + "\n".join(
             "  %-24s %-12s%s" % (k, r["decision"], "" if not r["owed"] else
                                  " owed " + r["owed"])
-            for k, r in sorted(out["results"].items()))
+            for k, r in sorted(stage_rows(report, out["results"]).items()))
     return head
 
 
@@ -1642,6 +1662,8 @@ def build_parser():
 
 def dispatch(args):
     command = args.command
+    if command in RUN_COMMANDS:
+        check_budget(args.timeout)
     if command in ("smoke", "pilot", "control"):
         spec = info_spec(args, command)
     elif command == "run":
