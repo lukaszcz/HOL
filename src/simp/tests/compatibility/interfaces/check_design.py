@@ -5,19 +5,25 @@ import csv
 import hashlib
 import io
 import json
+from functools import lru_cache
 from pathlib import Path
 import re
 import shutil
+import sys
 import subprocess
 import tempfile
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[4]
+sys.path.insert(0, str(HERE.parent))
+from check_task27_docs import signature_symbols  # noqa: E402
 # The Holmake check builds and runs the design gate; one hour bounds it, and
 # its children read /dev/null, not the caller's standard input.
 TIMEOUT = 3600
 MIGRATION = HERE.parent / "migration"
 TABLE = MIGRATION / "final-apis.tsv"
+SHARED = MIGRATION / "shared-exports.tsv"
+EXTENSIONS = ROOT / "src" / "simp" / "src"
 FIELDS = ["group", "old_api", "replacement", "domain", "construction",
           "witness", "owners"]
 MODULES = {"Traverse": "TraverseExt", "Cond_rewr": "Cond_rewrExt",
@@ -51,9 +57,14 @@ NEGATIVES = ["reducer-to-legacy", "reducer-from-legacy", "set-to-legacy",
              "congset-to-legacy", "provider-from-legacy"]
 
 
-def expected_rows():
+def read_old_rows():
     with (MIGRATION / "apis.tsv").open() as stream:
-        old = list(csv.DictReader(stream, delimiter="\t"))
+        return list(csv.DictReader(stream, delimiter="\t"))
+
+
+def expected_rows(old=None):
+    if old is None:
+        old = read_old_rows()
     rows = []
     for row in old:
         group, api = row["group"], row["old_api"]
@@ -84,13 +95,27 @@ def expected_rows():
 
 
 INPUTS = HERE.parent / "inputs" / "develop"
+PAIRED_KINDS = {"existing", "val", "type", "datatype", "constructor"}
+
+
+@lru_cache(maxsize=None)
+def declared(text):
+    """Names a signature text declares: not comments or `signature X = sig`.
+
+    Abbrev only adds the shared basic types, never a module's own names;
+    Task08ReducerTypes is concatenated with its includer where it is used."""
+    return frozenset(signature_symbols(
+        text, {"Abbrev": set(), "Task08ReducerTypes": set()}))
+
+
+def exports(text, name):
+    return name in declared(text)
 
 
 def validate_existing(old_rows=None):
     """Every kind=existing old name must be exported by develop's .sig."""
     if old_rows is None:
-        with (MIGRATION / "apis.tsv").open() as stream:
-            old_rows = list(csv.DictReader(stream, delimiter="\t"))
+        old_rows = read_old_rows()
     for row in old_rows:
         if row["kind"] != "existing":
             continue
@@ -99,11 +124,47 @@ def validate_existing(old_rows=None):
         if not path.is_file():
             raise ValueError("no develop signature for existing row: " +
                              row["old_api"])
-        if not re.search(r"\b(?:val|type|datatype)\s+" + re.escape(name) +
-                         r"\b|(?:=|\|)\s*" + re.escape(name) + r"\b",
-                         path.read_text()):
+        if not exports(path.read_text(), name):
             raise ValueError("existing row not exported by develop: " +
                              row["old_api"])
+
+
+def read_shared():
+    with SHARED.open() as stream:
+        return {row["old_api"]: row["justification"]
+                for row in csv.DictReader(stream, delimiter="\t")}
+
+
+def validate_completeness(old_rows=None, shared=None,
+                          develop=INPUTS, extension=EXTENSIONS):
+    """Every name develop's M exports that extension M' also declares has
+    either a row or a shared-exports justification, never both."""
+    if old_rows is None:
+        old_rows = read_old_rows()
+    if shared is None:
+        shared = read_shared()
+    rows = {row["old_api"] for row in old_rows}
+    modules = sorted({row["old_api"].split(".", 1)[0] for row in old_rows
+                      if row["kind"] in PAIRED_KINDS} & MODULES.keys())
+    common = set()
+    for module in modules:
+        if MODULES[module] == module:
+            continue
+        old = declared((develop / (module + ".sig")).read_text())
+        new = declared((extension / (MODULES[module] + ".sig")).read_text())
+        for name in sorted(old & new):
+            api = module + "." + name
+            common.add(api)
+            if api in shared and api in rows:
+                raise ValueError("stale shared-exports entry has a row: " +
+                                 api)
+            if api not in shared and api not in rows:
+                raise ValueError("shared export has neither row nor "
+                                 "shared-exports entry: " + api)
+    for api in shared:
+        if api not in common:
+            raise ValueError("stale shared-exports entry, not a shared "
+                             "export: " + api)
 
 
 def table_text(rows):
@@ -117,8 +178,10 @@ def table_text(rows):
 
 def validate_table(text):
     rows = list(csv.DictReader(io.StringIO(text), delimiter="\t"))
-    expected = expected_rows()
-    validate_existing()
+    old = read_old_rows()
+    expected = expected_rows(old)
+    validate_existing(old)
+    validate_completeness(old)
     if rows != expected:
         raise ValueError("missing/stale final API decision; "
                          "do not drop a consumer")
@@ -127,9 +190,6 @@ def validate_table(text):
         r"  structure (\w+) :\s*\n  sig\n(.*?)\n  end", api, re.S))
     blocks["T"] = (HERE / "Task08TraverseExt.sml").read_text() + (
         HERE / "Task08ReducerTypes.sml").read_text()
-    def exports(text, name):
-        return re.search(r"\b(?:val|type|datatype)\s+" + re.escape(name) +
-                         r"\b|(?:=|\|)\s*" + re.escape(name) + r"\b", text)
     for row in rows:
         witness = row["witness"]
         name = row["replacement"].rsplit(".", 1)[-1]

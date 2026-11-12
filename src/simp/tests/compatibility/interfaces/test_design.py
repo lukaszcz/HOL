@@ -12,8 +12,8 @@ class DesignTests(unittest.TestCase):
         self.graph = json.loads((design.HERE / "graph.json").read_text())
         self.table = design.TABLE.read_text()
 
-    def test_all_198_api_decisions(self):
-        self.assertEqual(design.validate_table(self.table), 198)
+    def test_all_240_api_decisions(self):
+        self.assertEqual(design.validate_table(self.table), 240)
 
     def test_existing_rows_are_develop_exports(self):
         design.validate_existing()
@@ -24,6 +24,44 @@ class DesignTests(unittest.TestCase):
         rows[0]["old_api"] = "noSuchLib.f"
         with self.assertRaisesRegex(ValueError, "no develop signature"):
             design.validate_existing(rows)
+
+    def test_existing_rows_reject_non_exports(self):
+        # Names that appear only in a comment, in `signature X = sig`, or
+        # not at all must be rejected; a real export must be accepted.
+        for api in ["congLib.y", "simpLib.BoundedRewrites", "congLib.sig"]:
+            rows = [dict(group="C2", old_api=api, kind="existing")]
+            with self.assertRaisesRegex(ValueError, "not exported"):
+                design.validate_existing(rows)
+        design.validate_existing(
+            [dict(group="B1", old_api="simpLib.SF", kind="existing")])
+
+    def test_only_existing_rows_are_checked(self):
+        rows = [dict(group="T1", old_api="simpLib.BoundedRewrites",
+                     kind="val")]
+        design.validate_existing(rows)
+
+    def test_shared_export_needs_row_or_justification(self):
+        old, shared = design.read_old_rows(), design.read_shared()
+        design.validate_completeness(old, shared)
+        self.assertIn("simpLib.Cong", shared)
+        # A missing row fails.
+        rows = [r for r in old if r["old_api"] != "simpLib.SIMP_TAC"]
+        with self.assertRaisesRegex(ValueError, "neither row"):
+            design.validate_completeness(rows, shared)
+        # An allowlisted name passes without a row.
+        self.assertNotIn("simpLib.Cong", {r["old_api"] for r in old})
+        # An allowlisted name that also has a row is stale.
+        stale = dict(shared, **{"simpLib.SIMP_TAC": "x"})
+        with self.assertRaisesRegex(ValueError, "has a row"):
+            design.validate_completeness(old, stale)
+        # An allowlisted name that is not a shared export is stale.
+        for api in ["simpLib.threaded_cong_ss", "simpLib.noSuchName"]:
+            with self.assertRaisesRegex(ValueError, "not a shared export"):
+                design.validate_completeness(old, dict(shared, **{api: "x"}))
+        # Removing a justified entry fails.
+        short = {k: v for k, v in shared.items() if k != "simpLib.Cong"}
+        with self.assertRaisesRegex(ValueError, "neither row"):
+            design.validate_completeness(old, short)
 
     def test_missing_api_is_not_a_pass(self):
         lines = self.table.splitlines(keepends=True)

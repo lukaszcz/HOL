@@ -12,9 +12,8 @@ val _ = check "local split conversion has a closed, correctly headed proof"
 fun same_concls (ths1,ths2) = length ths1 = length ths2 andalso
   ListPair.allEq (fn (a,b) => aconv (concl a) (concl b)) (ths1,ths2);
 val _ = check "goal_split_rules on a COND goal gives the bool type rules"
-  (let val rules = splitLib.goal_split_rules [tm]
-   in length rules = 2 andalso
-      same_concls (rules,splitLib.type_split_rules bool) end);
+  (same_concls (splitLib.goal_split_rules [tm],
+                splitLib.type_split_rules bool));
 val local_ss = (add_split rule bool_ss ++ split_ss) &&
   [simpMarkerLib.ExclX "case:bool"];
 val (goals,_) = runtac (VALID (SIMP_TAC local_ss [])) ([],tm);

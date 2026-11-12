@@ -9,7 +9,7 @@ SUITES = {
     "cond-rewr-ext": (105, ["Cond_rewrExt focused checks: 105"]),
     "congruence-ext": (62, ["Ordinary congruence focused checks: 4",
                            "Congruence extension focused checks: 58"]),
-    "simp-ext": (2817, ["simpExtLib focused checks: 96",
+    "simp-ext": (2818, ["simpExtLib focused checks: 97",
         "TRACKED_COMPILER_CHECKS=174",
         "TASK19_EXTENSION_EXCLUSIONS_OK checks=159",
         "simpExtLib strategy checks: 186; executed validations: 63",

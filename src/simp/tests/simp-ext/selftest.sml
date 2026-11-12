@@ -438,29 +438,37 @@ val _ = scoped (fn () => let
 in () end)
 
 (* Compiled uses of the migrated B1 names add_relsimp, add_weakener,
-   weakener_data and ssf_upd_rewrs, each called qualified from outside. *)
+   weakener_data and ssf_upd_rewrs, each called qualified from outside.
+   A non-equality preorder needs relation-specific subgoal machinery that
+   this suite does not load, so add_relsimp is shown with equality only. *)
 exception MigState of unit
 val _ = let
   val pq = ASSUME ``mig_p = mig_q:bool``
-  val data : S.relsimpdata = {refl=boolTheory.EQ_REFL,
+  val qr = ASSUME ``mig_p = mig_r:bool``
+  val p = ``mig_p:bool``
+  val data : simpExtLib.relsimpdata = {refl=boolTheory.EQ_REFL,
     trans=boolTheory.EQ_TRANS,weakenings=[],subsets=[],rewrs=[pq]}
-  val ss = S.add_relsimp data pureSimpsExt.pure_ss
-  val _ = check "add_relsimp installs a rewriting relation"
-    (same (S.SIMP_CONV ss [] ``mig_p:bool``) pq)
-  val wd : S.weakener_data = ([],[],E.lift (Traverse.REDUCER
+  val ss = simpExtLib.add_relsimp data pureSimpsExt.pure_ss
+  val _ = check ("add_relsimp installs a relsimp reducer whose rule "
+                 ^ "rewrites (equality relation)")
+    (same (simpExtLib.SIMP_CONV ss [] p) pq)
+  val wd : simpExtLib.weakener_data = ([],[],E.lift (Traverse.REDUCER
     {name=SOME "migration weakener",initial=MigState (),
-     addcontext=fn (c,_) => c,apply=fn _ => NO_CONV}))
+     addcontext=fn (c,_) => c,
+     apply=fn _ => fn tm => if aconv tm p then pq else NO_CONV tm}))
   val plain = boolSimpsExt.bool_ss
-  val weak = S.add_weakener wd plain
-  val input = ``(\x:bool. x /\ T) mig_p``
-  val _ = check "add_weakener keeps simplifying as before"
-    (same (S.SIMP_CONV weak [] input) (S.SIMP_CONV plain [] input))
-  val frag = S.ssf_upd_rewrs (fn rules => rules) (S.rewrites [pq])
-  val _ = check "ssf_upd_rewrs keeps the fragment rules"
-    (uses [pq] (S.frag_rewrites frag))
-in check "ssf_upd_rewrs fragment still rewrites"
-     (same (S.SIMP_CONV (S.++ (pureSimpsExt.pure_ss,frag)) []
-              ``mig_p:bool``) pq) end
+  val weak = simpExtLib.add_weakener wd plain
+  val _ = check "add_weakener: plain simpset leaves mig_p unchanged"
+    (same (total (simpExtLib.SIMP_CONV plain []) p) (REFL p))
+  val _ = check "add_weakener: its reducer rewrites what plain leaves"
+    (same (simpExtLib.SIMP_CONV weak [] p) pq)
+  val frag = simpExtLib.ssf_upd_rewrs (fn _ => [(NONE,qr)])
+               (simpExtLib.rewrites [pq])
+  val _ = check "ssf_upd_rewrs replaces the fragment rules"
+    (uses [qr] (simpExtLib.frag_rewrites frag))
+  val ss = simpExtLib.++ (pureSimpsExt.pure_ss,frag)
+in check "ssf_upd_rewrs fragment rewrites mig_p to mig_r, not mig_q"
+     (same (simpExtLib.SIMP_CONV ss [] p) qr) end
 
 (* Poly/ML really elaborates deliberately ill-typed clients. Only the exact
    static-error exception counts; missing files/other failures fail closed. *)

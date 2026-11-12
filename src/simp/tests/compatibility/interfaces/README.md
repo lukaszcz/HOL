@@ -5,8 +5,12 @@ files here are checked design prototypes, not a replacement for
 production/runtime tests.
 
 [DESIGN.md](DESIGN.md) finalizes types, control/identity ownership, recipes and
-the explicit provider boundary. The finalized 198-row API mapping
-is [../migration/final-apis.tsv](../migration/final-apis.tsv).
+the explicit provider boundary. The finalized 240-row API mapping
+is [../migration/final-apis.tsv](../migration/final-apis.tsv). The table is
+complete by rule, not by hand-picking: every name exported both by a develop
+module and by its extension counterpart has a row or a justified entry in
+[../migration/shared-exports.tsv](../migration/shared-exports.tsv), and
+`check_design.py` fails on a missing or stale one.
 
 From the repository root:
 
@@ -25,7 +29,7 @@ and rejects eight cross-engine type misuses statically. Accepted-body and
 missing-file controls must fail. `.uo` creation is not success.
 
 There is no production engine implementation or permissive engine stub here.
-The 198 rows are **migration decisions**, not 198 compiled downstream clients.
+The 240 rows are **migration decisions**, not 240 compiled downstream clients.
 External output names bind to the typed Default provider boundary; the
 consumer driver `run_task25_consumer.py` validates an actual external
 implementation. Shared exports are checked

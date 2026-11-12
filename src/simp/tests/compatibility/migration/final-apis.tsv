@@ -6,16 +6,39 @@ A1	simpLib.GEN_GLOBAL_SIMP_TAC_CHILD_FIRST	simpExtLib.GEN_GLOBAL_SIMP_TAC_CHILD_
 A1	simpLib.GEN_GLOBAL_SIMP_TAC_CHILD_FIRST_BOUND	simpExtLib.GEN_GLOBAL_SIMP_TAC_CHILD_FIRST_BOUND	extension; ordinary API unchanged	tracked invocation before supplied-rule binding; BOUND never reinstalls	S	10,18,20;27
 A1	simpLib.GEN_SIMP_TAC	simpExtLib.GEN_SIMP_TAC	extension; ordinary API unchanged	tracked invocation before supplied-rule binding; BOUND never reinstalls	S	10,18,20;27
 A1	simpLib.GEN_SIMP_TAC_CHILD_FIRST	simpExtLib.GEN_SIMP_TAC_CHILD_FIRST	extension; ordinary API unchanged	tracked invocation before supplied-rule binding; BOUND never reinstalls	S	10,18,20;27
+B1	simpLib.&&	simpExtLib.&&	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.++	simpExtLib.++	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.-*	simpExtLib.-*	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.ASM_SIMP_RULE	simpExtLib.ASM_SIMP_RULE	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.ASM_SIMP_TAC	simpExtLib.ASM_SIMP_TAC	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.FULL_SIMP_TAC	simpExtLib.FULL_SIMP_TAC	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.NO_STRIP_FULL_SIMP_TAC	simpExtLib.NO_STRIP_FULL_SIMP_TAC	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.NO_STRIP_REV_FULL_SIMP_TAC	simpExtLib.NO_STRIP_REV_FULL_SIMP_TAC	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.REV_FULL_SIMP_TAC	simpExtLib.REV_FULL_SIMP_TAC	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
 B1	simpLib.SF	simpExtLib.SF	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.SIMP_CONV	simpExtLib.SIMP_CONV	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.SIMP_PROVE	simpExtLib.SIMP_PROVE	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.SIMP_RULE	simpExtLib.SIMP_RULE	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.SIMP_TAC	simpExtLib.SIMP_TAC	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
 B1	simpLib.SSFRAG	simpExtLib.SSFRAG	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
 B1	simpLib.ac_ss	simpExtLib.ac_ss	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.add_named_rwt	simpExtLib.add_named_rwt	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
 B1	simpLib.add_relsimp	simpExtLib.add_relsimp	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
 B1	simpLib.add_weakener	simpExtLib.add_weakener	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
 B1	simpLib.all_named_frags	simpExtLib.all_named_frags	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.allasms	simpExtLib.allasms	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.asm_simp_tac	simpExtLib.asm_simp_tac	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
 B1	simpLib.conv_ss	simpExtLib.conv_ss	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
 B1	simpLib.dproc_ss	simpExtLib.dproc_ss	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
 B1	simpLib.empty_ss	simpExtLib.empty_ss	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
 B1	simpLib.empty_ssfrag	simpExtLib.empty_ssfrag	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.exclude_ssfrags	simpExtLib.exclude_ssfrags	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.force_add	simpExtLib.force_add	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.frag_name	simpExtLib.frag_name	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.frag_rewrites	simpExtLib.frag_rewrites	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.full_simp_tac	simpExtLib.full_simp_tac	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.global_simp_tac	simpExtLib.global_simp_tac	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.limit	simpExtLib.limit	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
 B1	simpLib.lookup_named_frag	simpExtLib.lookup_named_frag	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
 B1	simpLib.merge_ss	simpExtLib.merge_ss	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
 B1	simpLib.mk_simpset	simpExtLib.mk_simpset	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
@@ -23,28 +46,43 @@ B1	simpLib.name_ss	simpExtLib.name_ss	parallel ordinary and extension APIs; no o
 B1	simpLib.named_merge_ss	simpExtLib.named_merge_ss	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
 B1	simpLib.named_rewrites	simpExtLib.named_rewrites	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
 B1	simpLib.named_rewrites_with_names	simpExtLib.named_rewrites_with_names	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.partition_ssfrags	simpExtLib.partition_ssfrags	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.pp_simpset	simpExtLib.pp_simpset	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.pp_ssfrag	simpExtLib.pp_ssfrag	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.psr	simpExtLib.psr	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
 B1	simpLib.register_frag	simpExtLib.register_frag	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
 B1	simpLib.relsimp_ss	simpExtLib.relsimp_ss	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.remove_simps	simpExtLib.remove_simps	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.remove_ssfrags	simpExtLib.remove_ssfrags	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.rev_full_simp_tac	simpExtLib.rev_full_simp_tac	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
 B1	simpLib.rewrites	simpExtLib.rewrites	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
 B1	simpLib.rewrites_with_names	simpExtLib.rewrites_with_names	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.simp_tac	simpExtLib.simp_tac	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.simpset	simpExtLib.simpset	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
 B1	simpLib.ssf_upd_rewrs	simpExtLib.ssf_upd_rewrs	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.ssfrag	simpExtLib.ssfrag	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.ssfrag_names_of	simpExtLib.ssfrag_names_of	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
 B1	simpLib.ssfrags_of	simpExtLib.ssfrags_of	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.std_conv_ss	simpExtLib.std_conv_ss	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
 B1	simpLib.traversedata_for_ss	simpExtLib.traversedata_for_ss	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
 B1	simpLib.tyi_to_ssdata	simpExtLib.tyi_to_ssdata	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
 B1	simpLib.type_ssfrag	simpExtLib.type_ssfrag	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
+B1	simpLib.unlimit	simpExtLib.unlimit	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
 B1	simpLib.weakener_data	simpExtLib.weakener_data	parallel ordinary and extension APIs; no ordinary migration	extension EMPTY/PURE/BOOL before relevant maker/rule/dproc	S	10,14,15,16,24;27
 C1	Opening.THREADED_CONGPROC	OpeningExt.THREADED_CONGPROC	extension; ordinary API unchanged	extension fragment/congruence factory before installation	O	10,13,14;27
 C1	Travrules.mk_threaded_travrules	TravrulesExt.mk_threaded_travrules	extension; ordinary API unchanged	extension fragment/congruence factory before installation	R	10,13,14;27
 C1	simpLib.threaded_cong_ss	simpExtLib.threaded_cong_ss	extension; ordinary API unchanged	extension fragment/congruence factory before installation	S	10,13,14;27
+C2	congLib.ASM_CONGRUENCE_SIMP_TAC	congExtLib.ASM_CONGRUENCE_SIMP_TAC	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
 C2	congLib.CONGRUENCE_EQ_SIMP_CONV	congExtLib.CONGRUENCE_EQ_SIMP_CONV	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
-C2	congLib.CONGRUENCE_SIMP_RULE	congExtLib.CONGRUENCE_SIMP_RULE	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
 C2	congLib.CONGRUENCE_SIMP_CONV	congExtLib.CONGRUENCE_SIMP_CONV	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
 C2	congLib.CONGRUENCE_SIMP_QCONV	congExtLib.CONGRUENCE_SIMP_QCONV	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
-C2	congLib.CSFRAG	congExtLib.CSFRAG	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
-C2	congLib.ASM_CONGRUENCE_SIMP_TAC	congExtLib.ASM_CONGRUENCE_SIMP_TAC	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
+C2	congLib.CONGRUENCE_SIMP_RULE	congExtLib.CONGRUENCE_SIMP_RULE	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
 C2	congLib.CONGRUENCE_SIMP_TAC	congExtLib.CONGRUENCE_SIMP_TAC	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
+C2	congLib.CSFRAG	congExtLib.CSFRAG	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
 C2	congLib.FULL_CONGRUENCE_SIMP_TAC	congExtLib.FULL_CONGRUENCE_SIMP_TAC	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
 C2	congLib.add_csfrag_rewrites	congExtLib.add_csfrag_rewrites	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
+C2	congLib.congset	congExtLib.congset	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
+C2	congLib.congsetfrag	congExtLib.congsetfrag	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
 C2	congLib.cs_addfrag	congExtLib.cs_addfrag	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
 C2	congLib.csfrag_rewrites	congExtLib.csfrag_rewrites	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
 C2	congLib.empty_congset	congExtLib.empty_congset	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
@@ -165,18 +203,22 @@ T1	Traverse.ChildFirst	TraverseExt.ChildFirst	extension; ordinary API unchanged	
 T1	Traverse.ParentFirst	TraverseExt.ParentFirst	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
 T1	Traverse.traversal_policy	TraverseExt.traversal_policy	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
 T1	Traverse.child_first_policy	TraverseExt.child_first_policy	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+T1	Traverse.reducer	TraverseExt.reducer	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
 T1	Traverse.reducer_config_data	TraverseExt.reducer_config_data	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
 T1	Traverse.simp_prover_ctxt	TraverseExt.simp_prover_ctxt	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
 T1	Traverse.ssolver	TraverseExt.ssolver	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
 T1	Traverse.subgoaler	TraverseExt.subgoaler	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
 T1	Traverse.traverse_config	TraverseExt.traverse_config	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+T1	Traverse.traverse_data	TraverseExt.traverse_data	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
 T1	Traverse.xtraverse_data	TraverseExt.xtraverse_data	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
 T1	Traverse.CHILD_FIRST_WITH_OBSERVER	TraverseExt.CHILD_FIRST_WITH_OBSERVER	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
 T1	Traverse.NORMALIZE_ARGUMENTS	TraverseExt.NORMALIZE_ARGUMENTS	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
 T1	Traverse.ROOT_REWRITE	TraverseExt.ROOT_REWRITE	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
 T1	Traverse.ROOT_REWRITE_WITH_CONTEXT	TraverseExt.ROOT_REWRITE_WITH_CONTEXT	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+T1	Traverse.TRAVERSE	TraverseExt.TRAVERSE	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
 T1	Traverse.TRAVERSE_WITH_CONTEXT	TraverseExt.TRAVERSE_WITH_CONTEXT	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
 T1	Traverse.XTRAVERSE	TraverseExt.XTRAVERSE	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
+T1	Traverse.addctxt	TraverseExt.addctxt	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
 T1	Traverse.charge_only	TraverseExt.charge_only	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
 T1	Traverse.default_config	TraverseExt.default_config	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27
 T1	Traverse.keep_abstraction	TraverseExt.keep_abstraction	extension; ordinary API unchanged	extension reducer factory; explicit ordinary lift; no inventory	T	09,10,11,22;27

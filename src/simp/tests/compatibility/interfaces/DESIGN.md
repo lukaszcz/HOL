@@ -339,7 +339,18 @@ ordinary versions; only branch extension callers move to the parallel types.
 Special resolutions: delete `legacy_traversedata_for_ss` (no replacement optional
 promotion); extended `traversedata_for_ss` returns T data; external output/helper
 names stay external with extension-typed inputs/outputs where required.
-SplitData/ThmAttribute/simpMarkerLib/splitLib keep
-one identity and their current owning modules. No legacy client must change.
+SplitData/ThmAttribute/simpMarkerLib/splitLib keep one identity and their
+current owning modules. No legacy client must change.
+
+Completeness does not depend on hand-picking. For each pair of develop module
+M and extension module M' (M different from M') used by the existing, val,
+type, datatype and constructor rows, every name that develop's `M.sig` (pinned
+in `inputs/develop/`, from the base revision) exports and that the extension's
+`M'.sig` also declares needs either a row with old name `M.name`, or an entry
+in [migration/shared-exports.tsv](../migration/shared-exports.tsv) with a
+one-line justification that the extension binds the identical value or type.
+`check_design.py` enforces this: a missing name fails, and an entry that also
+has a row or is not a shared export (stale) fails. Names are read from the
+signatures by the comment-stripping parser of `check_task27_docs.py`.
 
 No free retrospective metadata promise remains in this design.
