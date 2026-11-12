@@ -14,6 +14,7 @@ import json
 import math
 from pathlib import Path
 import re
+import shlex
 import shutil
 import sys
 import unittest
@@ -2129,6 +2130,8 @@ class DisposeSnapshots(unittest.TestCase):
         patch = mock.patch.object(st, "SCRATCH_ROOT", self.tree.scratch_root)
         patch.start()
         self.addCleanup(patch.stop)
+        previous = dw.use_table("task33")
+        self.addCleanup(dw.use_table, previous)
 
     def refused(self, pattern, **extra):
         with self.assertRaisesRegex(dw.Refusal, pattern):
@@ -2170,7 +2173,8 @@ class DisposeSnapshots(unittest.TestCase):
         return ["dispose-snapshots", "--evidence", str(t.evidence),
                 "--manifest", str(t.manifest), "--repo", str(t.repo),
                 "--scratch-root", str(t.scratch_root),
-                "--verify-argv", "%s -c pass" % sys.executable, *extra]
+                "--verify-argv",
+                "%s -c pass" % shlex.quote(sys.executable), *extra]
 
     def test_the_command_line_disposes_the_fixture_snapshots(self):
         t = self.tree
@@ -2296,7 +2300,8 @@ class DisposeSnapshots(unittest.TestCase):
         t.disposition(attribution_needed=[dict(unit="load-simpLib")])
         self.assertEqual(dispose.sealed_disposition(t.evidence)["path"],
                          str(t.evidence / "disposition.json"))
-        self.assertEqual(dispose.dispose_snapshots(t.args()), 0)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(dispose.dispose_snapshots(t.args()), 0)
 
     def test_a_disposition_of_another_schema_is_refused(self):
         self.tree.disposition(schema="other")
