@@ -144,8 +144,13 @@ def check_code(recorded):
     now = code_seals()
     require(isinstance(recorded, dict) and set(recorded) == set(CODE),
             "the recorded code is not " + ", ".join(CODE))
+    # TASK33's history is accepted besides TASK32's, for the files of this
+    # CODE it names (`task32_downstream.py`, this file): the reports of the
+    # kept TASK33 records carry the versions that made them
+    known = {n: list(T32.history.get(n, ())) +
+             list(d.TASK33_HISTORY.get(n, ())) for n in CODE}
     changed = [n for n in CODE if recorded[n] != now[n] and
-               recorded[n] not in T32.history.get(n, ())]
+               recorded[n] not in known[n]]
     require(not changed, "the code changed since the report was made: " +
             ", ".join(changed))
 

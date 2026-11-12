@@ -143,21 +143,26 @@ TASK32_HISTORY = {
                    "10663eb5a7", "bytes": 133766},
         # the last driver before the tables (a2a7d3c487)
         {"sha256": "a3f949829ffa88ea799dd4016cbb1bbbaa5d50210b69c126fce32e"
-                   "6afa3179b5", "bytes": 141455},
-        # the driver before the TASK33 storage cap changed (281599302d);
-        # the TASK33 records and the S3 reports carry it
-        {"sha256": "e3169e265e13cf55a18045fdebc5845f198ff8f9d1d15f9529076"
-                   "915dbc23516", "bytes": 179579}],
+                   "6afa3179b5", "bytes": 141455}],
 }
-# TASK33: the driver and the storage driver as the kept records carry them
-# (the storage cap divided by the kinds a process releases since)
+# The `task32_downstream.py` seals of the versions that made the kept
+# TASK33 records (281599302d). Only the TASK33 table and the S3 reports
+# accept them (`task33_offline.check_code`): TASK32's history is unchanged.
+TASK33_DRIVER_SEALS = (
+    {"sha256": "e3169e265e13cf55a18045fdebc5845f198ff8f9d1d15f9529076915"
+               "dbc23516", "bytes": 179579},)
+# The TASK33 table's history: the driver above, the offline checks that
+# made the kept reports, and the storage driver before its cap divided by
+# the kinds (`task33_storage.UNDIVIDED_CAP`).
 TASK33_HISTORY = {
-    "task32_downstream.py": TASK32_HISTORY["task32_downstream.py"][-1:],
+    "task32_downstream.py": list(TASK33_DRIVER_SEALS),
+    "task33_offline.py": [
+        {"sha256": "4d5a51e01704b51b2c0099704744e7c7404f29a0039094fe3a6736"
+                   "49b75f7d41", "bytes": 90838}],
     "task33_storage.py": [
         {"sha256": "069b87eea6287685ff50715d4dc07db797163767c0e5f5bf475cf1"
                    "adf94f2ab5", "bytes": 79375}],
 }
-
 
 def require(ok, message):
     if not ok:

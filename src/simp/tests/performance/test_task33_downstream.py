@@ -284,12 +284,18 @@ class TableSelection(unittest.TestCase):
 
     def test_the_histories_of_task32_and_task33(self):
         old = dw.TABLES["task32"].history["task32_downstream.py"]
-        self.assertEqual(len(old), 4)
-        history = dw.TABLES["task33"].history
-        self.assertEqual(set(history), {
-            "task32_downstream.py", "task33_storage.py"})
-        self.assertEqual(history["task32_downstream.py"], old[-1:])
-        self.assertEqual(len(history["task33_storage.py"]), 1)
+        self.assertEqual(len(old), 3)  # TASK32's history is unchanged
+        driver = {"sha256": "e3169e265e13cf55a18045fdebc5845f198ff8f9d1d15f"
+                  "9529076915dbc23516", "bytes": 179579}
+        storage = {"sha256": "069b87eea6287685ff50715d4dc07db797163767c0e5f5"
+                   "bf475cf1adf94f2ab5", "bytes": 79375}
+        offline = {"sha256": "4d5a51e01704b51b2c0099704744e7c7404f29a0039094"
+                   "fe3a673649b75f7d41", "bytes": 90838}
+        self.assertEqual(dw.TASK33_DRIVER_SEALS, (driver,))
+        self.assertNotIn(driver, old)
+        self.assertEqual(dw.TABLES["task33"].history, {
+            "task32_downstream.py": [driver], "task33_storage.py": [storage],
+            "task33_offline.py": [offline]})
 
     def test_a_counts_file_of_another_table_is_refused(self):
         with tempfile_dir() as tmp:

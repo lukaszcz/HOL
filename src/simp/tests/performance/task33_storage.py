@@ -92,16 +92,23 @@ SMOKE_M = 50
 M0 = 200  # the pilot's release size
 # CPU seconds one release or extension process may take at the decision M
 # (design 8.6, 8.7): the cap on M (objects per kind) is this budget over
-# the larger CPU of a process per object per kind, times its number of
-# kinds, of the pilot's release processes and of the smoke's extension
-# process (`cap_of`; the start-up counts, so the cost is an upper bound);
-# a follow-up may take FOLLOWUP_FACTOR times as much, which must
+# the larger, of the pilot's release process and the smoke's extension
+# process, of its CPU per released object (whole-process CPU over M x
+# kinds, start-up included, so an upper bound) times the number of kinds
+# it releases (`cap_of`); a follow-up may take FOLLOWUP_FACTOR times as
+# much, which must
 # stay under the process timeout (`check_budget`). The required M assumes
 # that the raw noise in words of a release process does not depend on M
 # (the pilot measures it at M0; the follow-up's scaling by the floor range
 # makes the same assumption); the decision stages check it by the floor
 # (R1 is inconclusive when the floor's range exceeds the resolution).
 RELEASE_BUDGET_S = 60
+# The `task33_storage.py` seals of the versions whose cap did not divide
+# by the kinds: a record or counts file made by one is checked with the
+# undivided cap (`per_kind`), any other with the per-kind one.
+UNDIVIDED_CAP = (
+    {"sha256": "069b87eea6287685ff50715d4dc07db797163767c0e5f5bf475cf1ad"
+               "f94f2ab5", "bytes": 79375},)
 FOLLOWUP_FACTOR = 4  # the least growth of M in a follow-up, and its budget
 MAX_REDRAWS = 3  # tries after the first at one position of a plan
 SCRATCH_ROOT = Path("/dev/shm/t33")
@@ -629,17 +636,22 @@ def ext_object_cpu(smoke):
     return cpu / (smoke["params"]["m"] * len(records.EXT_RELEASE_KINDS))
 
 
+def per_kind(code):
+    """Whether the record whose `code` seals are given was sized with the
+    cap per kind (not by a version of UNDIVIDED_CAP)."""
+    return code["task33_storage.py"] not in UNDIVIDED_CAP
+
+
 def cap_of(cost, ext_cost, m0, factor=1, per_kind=True):
     """The most objects per release kind M whose release process and
     extension process both fit `factor` times RELEASE_BUDGET_S, never
     under the pilot's own M0. `cost` and `ext_cost` are CPU seconds per
-    object per kind (`object_cpu`, `ext_object_cpu`), and a process
-    releases M objects of every kind it releases, so a process costs
-    M x kinds x cost: the release process (RELEASE_KINDS) and the
-    extension process (EXT_RELEASE_KINDS) each divide by their own count
-    of kinds. `per_kind=False` is the earlier sizing, which did not divide
-    by the kinds (`check_sizing` accepts its `m_cap` in the first counts,
-    made before the fix)."""
+    released object (`object_cpu`, `ext_object_cpu`: whole-process CPU
+    over M x kinds), and a process releases M objects of every kind, so it
+    costs M x kinds x cost: the release process (RELEASE_KINDS) and the
+    extension process (EXT_RELEASE_KINDS) each divide by their own number
+    of kinds. `per_kind=False` is the sizing of the UNDIVIDED_CAP
+    versions, which did not divide by the kinds."""
     check_budget()
     require(cost > 0 and ext_cost > 0, "a release process reports no CPU "
             "time (%s, %s s per object): the cap cannot be sized" % (
@@ -683,15 +695,7 @@ def pilot_outcome(report, groups):
     required = max(m0, math.ceil(Fraction(worst) / rules.RESOLUTION))
     cost = object_cpu(release, m0)
     ext_cost = report["smoke"]["object_cpu"]
-    cap = cap_of(cost, ext_cost, m0)
-    # a pilot made before the cap was divided by the kinds records the
-    # undivided one, kept where M and `capped` come out the same (`replay`
-    # recomputes the outcome of the report)
-    old = cap_of(cost, ext_cost, m0, per_kind=False)
-    if ((report.get("outcome") or {}).get("m_cap") == old and
-            min(old, required) == min(cap, required) and
-            (required > old) == (required > cap)):
-        cap = old
+    cap = cap_of(cost, ext_cost, m0, per_kind=per_kind(report["code"]))
     # reported only: the least held size over the comparable readings (a
     # share-pass lower bound >= H_MIN counts), None when there is none
     held = {}
@@ -1158,7 +1162,7 @@ def check_sizing(data):
     kind = data["kind"]
     factor = 1 if kind == "run" else FOLLOWUP_FACTOR
     cap = cap_of(data["object_cpu"], data["ext_object_cpu"], data["m0"],
-                 factor)
+                 factor, per_kind=per_kind(data["code"]))
     required = data["required_m"]
     if kind == "followup":
         required = max(FOLLOWUP_FACTOR * data["base_m"], math.ceil(
@@ -1167,15 +1171,7 @@ def check_sizing(data):
         require(required == data["required_m"], "the follow-up counts' "
                 "required M is not the base M scaled by the floor range")
     want = data["decision"] if kind == "run" else data["followup"]
-    # the first counts record the `m_cap` of the sizing before the cap was
-    # divided by the kinds; it is accepted only where M and `capped`,
-    # which are what the stages use, come out the same
-    old = cap_of(data["object_cpu"], data["ext_object_cpu"], data["m0"],
-                 factor, per_kind=False)
-    same = (min(old, required) == min(cap, required) and
-            (required > old) == (required > cap))
-    require(data["budget_s"] == RELEASE_BUDGET_S and (
-        data["m_cap"] == cap or (same and data["m_cap"] == old))
+    require(data["budget_s"] == RELEASE_BUDGET_S and data["m_cap"] == cap
             and want["k"] == K and want["m"] == min(cap, required)
             and data["capped"] == (required > cap),
             "the counts file's budget, cap, M, required_m and capped "
@@ -1373,10 +1369,13 @@ def time_estimate(pilot, smoke, smoke_folder, m):
     by M / M0, an upper bound: the start-up counts), and of `ext` the
     pilot's graph wall plus what the smoke's `ext` process took over its
     `graph` candidate process (the simpExtLib load and the extension
-    kinds), scaled by M / smoke M. `total` is the processes of the run
-    (the plan's) times their wall, the registry and trivial units at the
-    smoke's wall, plus the verifications; `extend_total` is the same for
-    the extension stage of one owed unit (the slowest, an upper bound)."""
+    kinds), scaled by M / smoke M: an upper bound, as the fixed load is
+    scaled too. `total` is the processes of the run (the plan's) times
+    their wall, the registry and trivial units at the smoke's wall, plus
+    the verifications. `extend_total` is the same for the extension stage
+    of the one owed unit whose plan is the slowest (an upper bound), and
+    `processes.extend` the length of that plan (not the former
+    2 x EXTEND_PAIRS)."""
     out, params = pilot["outcome"], smoke["params"]
     walls = smoke_walls(smoke_folder, smoke)
     wall = dict(out["median_wall"])
@@ -1414,6 +1413,8 @@ def predeclare_run(args):
     pilot_info, pilot = info_run(args.pilot, key, "pilot",
                                  list(PILOT_UNITS), args.ledger, mseal,
                                  args.manifest)
+    require(per_kind(pilot["code"]), "the pilot was made by the undivided "
+            "sizing of the cap (UNDIVIDED_CAP): run the pilot again")
     smoke_info, smoke = info_run(args.smoke, key, "smoke", list(UNITS),
                                  args.ledger, mseal, args.manifest)
     require(pilot["smoke"] == smoke_link(smoke_info, smoke),

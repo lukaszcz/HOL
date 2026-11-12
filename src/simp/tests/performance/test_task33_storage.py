@@ -1732,28 +1732,77 @@ class Controls34(Chain34):
         procs = [dict(usage=dict(utime=2.0, stime=0.0))] * 3
         self.assertEqual(st.object_cpu(procs, 10), 2.0 / (10 * rel))
 
-    def test_the_first_counts_keep_the_cap_of_the_undivided_sizing(self):
-        # task33_storage_counts.json: m_cap 1102 was sized without the
-        # division by the kinds, but M = 200 and `capped` are the same
-        data = st.a.load(st.STORAGE_COUNTS)
-        self.assertEqual(data["m_cap"], 1102)
-        self.assertEqual(st.cap_of(data["object_cpu"],
-                                   data["ext_object_cpu"], data["m0"]),
-                         data["m0"])
-        st.check_sizing(data)
-        with self.assertRaisesRegex(dw.Refusal, "disagree"):
-            st.check_sizing(dict(data, m_cap=1103))
+    def old_seal(self):
+        return dict(st.UNDIVIDED_CAP[0])
 
-    def test_the_extension_process_caps_m_as_well(self):
+    def test_the_undivided_seal_is_in_the_history_of_the_table(self):
+        history = dw.TABLES["task33"].history["task33_storage.py"]
+        self.assertEqual(st.UNDIVIDED_CAP, (dict(
+            sha256="069b87eea6287685ff50715d4dc07db797163767c0e5f5bf475cf1"
+            "adf94f2ab5", bytes=79375),))
+        for seal in st.UNDIVIDED_CAP:
+            self.assertIn(seal, history)
+        self.assertFalse(st.per_kind(
+            {"task33_storage.py": self.old_seal()}))
+        self.assertTrue(st.per_kind(st.d.code_seals()))
+
+    def test_the_first_counts_are_checked_with_the_undivided_cap(self):
+        data = st.a.load(st.STORAGE_COUNTS)
+        self.assertEqual(data["code"]["task33_storage.py"],
+                         self.old_seal())
+        self.assertEqual(data["m_cap"], 1102)
+        st.check_sizing(data)
+        # the current seal: the per-kind cap (M0 here), not 1102
+        now = dict(data, code=dict(data["code"], **{
+            "task33_storage.py": st.a.seal(st.HERE / "task33_storage.py")}))
+        with self.assertRaisesRegex(dw.Refusal, "disagree"):
+            st.check_sizing(now)
+        st.check_sizing(dict(now, m_cap=data["m0"]))
+        # the old seal with the per-kind cap
+        with self.assertRaisesRegex(dw.Refusal, "disagree"):
+            st.check_sizing(dict(data, m_cap=data["m0"]))
+
+    def test_a_pilot_is_sized_by_the_seal_of_its_own_code(self):
         self.stage("smoke", "smoke")
         with mock.patch.object(st, "RELEASE_BUDGET_S", 100):
-            out = self.pilot()["outcome"]
+            now = self.pilot("now")["outcome"]
+            with mock.patch.object(st, "UNDIVIDED_CAP", (st.a.seal(
+                    st.HERE / "task33_storage.py"),)):
+                old = self.pilot("old")["outcome"]
+            for out, per in ((now, True), (old, False)):
+                self.assertEqual(out["m_cap"], st.cap_of(
+                    out["object_cpu"], out["ext_object_cpu"], out["m0"],
+                    per_kind=per))
+        self.assertGreater(old["m_cap"], now["m_cap"])
+
+    def test_predeclare_refuses_a_pilot_of_the_undivided_sizing(self):
+        self.info_stages()
+        w = self.world
+        args = self.args("pre", timing_counts=self.timing_counts(),
+                         smoke=w.tmp / "smoke", pilot=w.tmp / "pilot",
+                         control=w.tmp / "control",
+                         offline=self.offline_files())
+        with mock.patch.object(st, "UNDIVIDED_CAP", (st.a.seal(
+                st.HERE / "task33_storage.py"),)), \
+                self.assertRaisesRegex(dw.Refusal, "undivided|differs"):
+            st.predeclare_run(args)
+
+    def test_the_extension_process_caps_m_as_well(self):
+        # the fake processes all take 0.9 s of CPU: make the extension
+        # process three times dearer per object
+        real = st.ext_object_cpu
+        with mock.patch.object(st, "ext_object_cpu",
+                               lambda smoke: 3 * real(smoke)):
+            self.stage("smoke", "smoke")
+            with mock.patch.object(st, "RELEASE_BUDGET_S", 100):
+                out = self.pilot()["outcome"]
         ext_cap = math.floor(Fraction(100) / (Fraction(
             out["ext_object_cpu"]) * len(records.EXT_RELEASE_KINDS)))
         release_cap = math.floor(Fraction(100) / (Fraction(
             out["object_cpu"]) * len(records.RELEASE_KINDS)))
-        self.assertEqual(out["m_cap"], max(out["m0"], min(ext_cap,
-                                                         release_cap)))
+        self.assertLess(ext_cap, release_cap)
+        self.assertGreater(ext_cap, out["m0"])
+        self.assertEqual(out["m_cap"], ext_cap)
 
     def test_a_run_refuses_a_timeout_the_followup_budget_does_not_fit(self):
         limit = st.FOLLOWUP_FACTOR * st.RELEASE_BUDGET_S
@@ -1811,6 +1860,9 @@ class Controls34(Chain34):
         self.assertAlmostEqual(per[st.EXT], med[st.GRAPH] +
                                extra * m / smoke["params"]["m"])
         k = st.K
+        slowest = max(len(st.paired_plan([u], st.EXTEND_PAIRS))
+                      for u in st.UNITS)
+        self.assertEqual(estimate["processes"]["extend"], slowest)
         self.assertEqual(estimate["processes"]["run"],
                          2 * k * (len(st.REGISTRY) + len(st.TRIVIAL) + 2)
                          + k)
