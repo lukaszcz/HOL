@@ -46,8 +46,7 @@ runs are not stored in the repository: every runner takes an explicit
 - `tools/require_output.py`: the Holmakefile's output-directory check.
 - `interfaces/`, `migration/`: design prototypes and the API mapping tables
   (`apis.tsv`, `final-apis.tsv`, `shared-exports.tsv`) and relocation
-  overlays; see
-  `interfaces/README.md`.
+  overlays; see `interfaces/README.md`.
 
 `inputs/develop/prior-streams.json.gz` is the oracle of the prior contracts:
 for each prior fixture, the ordered semantic stream (`semantic_stream` in

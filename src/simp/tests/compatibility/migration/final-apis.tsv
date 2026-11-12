@@ -126,41 +126,41 @@ D1	seedCollections.field_ss	seedCollections.field_ss	ordinary producer retained;
 E1	simpLib.filter_rewrites	simpExtLib.filter_rewrites	extension; ordinary API unchanged	already tracked input; reset versus preserving replay explicit	S	17,19,21;27
 E1	simpLib.filter_rewrites_preserving_controls	simpExtLib.filter_rewrites_preserving_controls	extension; ordinary API unchanged	already tracked input; reset versus preserving replay explicit	S	17,19,21;27
 E1	simpLib.remove_ssfrags_preserving_controls	simpExtLib.remove_ssfrags_preserving_controls	extension; ordinary API unchanged	already tracked input; reset versus preserving replay explicit	S	17,19,21;27
-F1	boolSimps.ABBREV_ss	boolSimpsExt.ABBREV_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
-F1	boolSimps.BOOL_ss	boolSimpsExt.BOOL_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
-F1	boolSimps.COND_elim_ss	boolSimpsExt.COND_elim_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
-F1	boolSimps.CONG_ss	boolSimpsExt.CONG_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
-F1	boolSimps.CONJ_ss	boolSimpsExt.CONJ_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
-F1	boolSimps.DISJ_ss	boolSimpsExt.DISJ_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
-F1	boolSimps.DNF_ss	boolSimpsExt.DNF_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
-F1	boolSimps.EQUIV_EXTRACT_ss	boolSimpsExt.EQUIV_EXTRACT_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
-F1	boolSimps.ETA_ss	boolSimpsExt.ETA_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
-F1	boolSimps.HIDE_ss	boolSimpsExt.HIDE_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
-F1	boolSimps.LABEL_CONG_ss	boolSimpsExt.LABEL_CONG_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
-F1	boolSimps.LET_ss	boolSimpsExt.LET_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
-F1	boolSimps.LIFT_COND_ss	boolSimpsExt.LIFT_COND_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
-F1	boolSimps.NORMEQ_ss	boolSimpsExt.NORMEQ_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
-F1	boolSimps.NOT_ss	boolSimpsExt.NOT_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
-F1	boolSimps.SimpL	boolSimpsExt.SimpL	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
-F1	boolSimps.SimpLHS	boolSimpsExt.SimpLHS	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
-F1	boolSimps.SimpR	boolSimpsExt.SimpR	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
-F1	boolSimps.SimpRHS	boolSimpsExt.SimpRHS	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
-F1	boolSimps.UNWIND_ss	boolSimpsExt.UNWIND_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
-F1	boolSimps.bool_ss	boolSimpsExt.bool_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
-F1	boolSimps.literal_case_ss	boolSimpsExt.literal_case_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
-F1	combinSimps.COMBIN_ss	combinSimpsExt.COMBIN_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	24;27
-F1	intReduce.INT_REDUCE_ss	intReduceExt.INT_REDUCE_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	24;27
-F1	listSimps.LIST_EQ_ss	listSimpsExt.LIST_EQ_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	24;27
-F1	numSimps.ARITH_RWTS_ss	numSimpsExt.ARITH_RWTS_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	24;27
-F1	numSimps.MOD_ss	numSimpsExt.MOD_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	24;27
-F1	numSimps.REDUCE_ss	numSimpsExt.REDUCE_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	24;27
-F1	pred_setSimps.GSPEC_SIMP_ss	pred_setSimpsExt.GSPEC_SIMP_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	24;27
-F1	pred_setSimps.SET_SPEC_ss	pred_setSimpsExt.SET_SPEC_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	24;27
-F1	pureSimps.PURE_ss	pureSimpsExt.PURE_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
-F1	pureSimps.pure_ss	pureSimpsExt.pure_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
-F1	realSimps.REAL_REDUCE_ss	realSimpsExt.REAL_REDUCE_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	24;27
-F1	realSimps.RMULCANON_ss	realSimpsExt.RMULCANON_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	24;27
-F1	realSimps.RMULRELNORM_ss	realSimpsExt.RMULRELNORM_ss	extension; ordinary API unchanged	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	24;27
+F1	boolSimps.ABBREV_ss	boolSimpsExt.ABBREV_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
+F1	boolSimps.BOOL_ss	boolSimpsExt.BOOL_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
+F1	boolSimps.COND_elim_ss	boolSimpsExt.COND_elim_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
+F1	boolSimps.CONG_ss	boolSimpsExt.CONG_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
+F1	boolSimps.CONJ_ss	boolSimpsExt.CONJ_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
+F1	boolSimps.DISJ_ss	boolSimpsExt.DISJ_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
+F1	boolSimps.DNF_ss	boolSimpsExt.DNF_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
+F1	boolSimps.EQUIV_EXTRACT_ss	boolSimpsExt.EQUIV_EXTRACT_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
+F1	boolSimps.ETA_ss	boolSimpsExt.ETA_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
+F1	boolSimps.HIDE_ss	boolSimpsExt.HIDE_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
+F1	boolSimps.LABEL_CONG_ss	boolSimpsExt.LABEL_CONG_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
+F1	boolSimps.LET_ss	boolSimpsExt.LET_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
+F1	boolSimps.LIFT_COND_ss	boolSimpsExt.LIFT_COND_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
+F1	boolSimps.NORMEQ_ss	boolSimpsExt.NORMEQ_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
+F1	boolSimps.NOT_ss	boolSimpsExt.NOT_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
+F1	boolSimps.SimpL	boolSimpsExt.SimpL	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
+F1	boolSimps.SimpLHS	boolSimpsExt.SimpLHS	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
+F1	boolSimps.SimpR	boolSimpsExt.SimpR	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
+F1	boolSimps.SimpRHS	boolSimpsExt.SimpRHS	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
+F1	boolSimps.UNWIND_ss	boolSimpsExt.UNWIND_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
+F1	boolSimps.bool_ss	boolSimpsExt.bool_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
+F1	boolSimps.literal_case_ss	boolSimpsExt.literal_case_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
+F1	combinSimps.COMBIN_ss	combinSimpsExt.COMBIN_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	24;27
+F1	intReduce.INT_REDUCE_ss	intReduceExt.INT_REDUCE_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	24;27
+F1	listSimps.LIST_EQ_ss	listSimpsExt.LIST_EQ_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	24;27
+F1	numSimps.ARITH_RWTS_ss	numSimpsExt.ARITH_RWTS_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	24;27
+F1	numSimps.MOD_ss	numSimpsExt.MOD_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	24;27
+F1	numSimps.REDUCE_ss	numSimpsExt.REDUCE_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	24;27
+F1	pred_setSimps.GSPEC_SIMP_ss	pred_setSimpsExt.GSPEC_SIMP_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	24;27
+F1	pred_setSimps.SET_SPEC_ss	pred_setSimpsExt.SET_SPEC_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	24;27
+F1	pureSimps.PURE_ss	pureSimpsExt.PURE_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
+F1	pureSimps.pure_ss	pureSimpsExt.pure_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	10;27
+F1	realSimps.REAL_REDUCE_ss	realSimpsExt.REAL_REDUCE_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	24;27
+F1	realSimps.RMULCANON_ss	realSimpsExt.RMULCANON_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	24;27
+F1	realSimps.RMULRELNORM_ss	realSimpsExt.RMULRELNORM_ss	parallel ordinary and extension APIs; no ordinary migration	opt-in extension fragment/simpset values of a develop library; no default simpset update	Ext	24;27
 H1	simpLib.SIMP_CONV_CHILD_FIRST	simpExtLib.SIMP_CONV_CHILD_FIRST	extension; ordinary API unchanged	tracked ambient net before private derivation; opaque internals excluded	S	10,22;27
 H1	simpLib.prepare_child_first	simpExtLib.prepare_child_first	extension; ordinary API unchanged	tracked ambient net before private derivation; opaque internals excluded	S	10,22;27
 H1	simpLib.prepare_child_first_observed	simpExtLib.prepare_child_first_observed	extension; ordinary API unchanged	tracked ambient net before private derivation; opaque internals excluded	S	10,22;27

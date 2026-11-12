@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import check_design as design
+from run_paired import require_revisions  # noqa: E402
 
 
 class DesignTests(unittest.TestCase):
@@ -53,7 +54,7 @@ class DesignTests(unittest.TestCase):
         # An allowlisted name passes without a row.
         self.assertNotIn("simpLib.Cong", {r["old_api"] for r in old})
         # An allowlisted name that also has a row is stale.
-        stale = dict(shared, **{"simpLib.SIMP_TAC": "x"})
+        stale = dict(shared, **{"boolSimps.BOOL_ss": "x"})
         with self.assertRaisesRegex(ValueError, "has a row"):
             design.validate_completeness(old, stale)
         # An allowlisted name that is not a shared export is stale.
@@ -73,52 +74,100 @@ class DesignTests(unittest.TestCase):
                     "listSimps.LIST_EQ_ss", "numSimps.MOD_ss",
                     "pred_setSimps.SET_SPEC_ss", "realSimps.REAL_REDUCE_ss"]:
             self.assertIn(api, names)
-        # integer_wordLib shares no name with its extension.
-        self.assertIn("integer_wordLib", design.MODULES)
+        # integer_wordLib shares no name with its extension: the develop
+        # and extension namespaced sets are disjoint.
+        path = design.MODULES["integer_wordLib"][1]
+        self.assertFalse(
+            design.namespaced((design.INPUTS / "integer_wordLib.sig")
+                              .read_text()) &
+            design.namespaced((design.ROOT / path).read_text()))
         rows = [r for r in old if r["old_api"] != "numSimps.MOD_ss"]
         with self.assertRaisesRegex(ValueError, "neither row"):
             design.validate_completeness(rows, design.read_shared())
 
+    def tree(self, temp, *paths):
+        root = Path(temp)
+        for path in paths:
+            (root / path).parent.mkdir(parents=True, exist_ok=True)
+            (root / path).write_text("sig\nend\n")
+        return root
+
+    def test_extension_scan_is_git_free_and_by_name(self):
+        scanned = design.scan_extension_sigs()
+        self.assertEqual(
+            set(scanned),
+            {path for _, path in design.MODULES.values()})
+        # Name-only recognition: decoys never match.
+        for name in ["IntExtra", "BoolExtractShared", "ParseExtras",
+                     "intExtensionLib", "Extract", "LSPExtension",
+                     "GraphExtra"]:
+            self.assertIsNone(design.EXT_SIG.fullmatch(name + ".sig"), name)
+        for name in ["fooExt", "fooExtLib", "a_bExt"]:
+            self.assertTrue(design.EXT_SIG.fullmatch(name + ".sig"), name)
+
     def test_every_extension_signature_is_covered(self):
         design.validate_extension_coverage()
-        develop = {"foo.sig", "bar.sig", "fooLib.sig", "IntExtra.sig"}
-        design.validate_extension_coverage(
-            ["src/simp/src/simpExtLib.sig"],
-            develop | {"simpLib.sig"})
-        for path in ["src/x/fooExt.sig", "src/x/fooExtLib.sig"]:
-            with self.assertRaisesRegex(ValueError, "not covered"):
-                design.validate_extension_coverage([path], develop)
-        # Decoys, tests directories and signatures without a develop
-        # counterpart are not extension signatures.
-        design.validate_extension_coverage(
-            ["src/x/IntExtra.sig", "src/x/BoolExtractShared.sig",
-             "src/x/ParseExtras.sig", "src/x/intExtensionLib.sig",
-             "src/x/Extract.sig", "src/x/LSPExtension.sig",
-             "src/x/GraphExtra.sig", "src/x/tests/fooExt.sig",
-             "src/x/bazExt.sig"], develop)
-        # Every module's extension signature exists and every pinned
-        # develop signature is present.
-        for module, (_, path) in design.MODULES.items():
-            self.assertTrue((design.ROOT / path).is_file(), path)
-            self.assertTrue((design.INPUTS / (module + ".sig")).is_file())
+        # The sanity floor: a scan that finds nothing is not a pass.
+        with patch.object(design, "scan_extension_sigs", lambda root: []):
+            with self.assertRaisesRegex(ValueError, "not found by"):
+                design.validate_extension_coverage()
+        with tempfile.TemporaryDirectory() as temp:
+            develop = self.tree(temp + "/d", "m.sig")
+            root = self.tree(temp + "/r", "src/mExt.sig")
+            modules = {"m": ("mExt", "src/mExt.sig")}
+            def check(**kwargs):
+                design.validate_extension_coverage(
+                    root, modules, kwargs.get("excluded", {}), develop)
+            check()
+            # Unlisted extension signatures fail.
+            for path in ["src/fooExt.sig", "src/x/fooExtLib.sig"]:
+                self.tree(root, path)
+                with self.assertRaisesRegex(ValueError, "not covered"):
+                    check()
+                # An excluded entry passes, with a reason only.
+                check(excluded={path: "no develop counterpart"})
+                with self.assertRaisesRegex(ValueError, "without a reason"):
+                    check(excluded={path: " "})
+                (root / path).unlink()
+            # A stale exclusion, whose file is absent, fails.
+            with self.assertRaisesRegex(ValueError, "stale exclusion"):
+                check(excluded={"src/gone.sig": "r"})
+            # Decoys, tests directories and symlinks are ignored.
+            self.tree(root, "src/IntExtra.sig", "src/BoolExtractShared.sig",
+                      "src/ParseExtras.sig", "src/intExtensionLib.sig",
+                      "src/Extract.sig", "src/LSPExtension.sig",
+                      "src/GraphExtra.sig", "src/tests/fooExt.sig",
+                      ".git/fooExt.sig", ".hol/fooExt.sig")
+            (root / "src/linkExt.sig").symlink_to(root / "src/mExt.sig")
+            check()
+            # MODULES must exist and be pinned.
+            (root / "src/mExt.sig").unlink()
+            with self.assertRaisesRegex(ValueError, "missing"):
+                check()
+            self.tree(root, "src/mExt.sig")
+            (develop / "m.sig").unlink()
+            with self.assertRaisesRegex(ValueError, "no pinned develop"):
+                check()
 
     def test_new_develop_pins_are_base_bytes(self):
-        paths = {"boolSimps": "src/simp/src", "combinSimps": "src/simp/src",
-                 "pureSimps": "src/simp/src", "intReduce": "src/integer",
-                 "integer_wordLib": "src/integer",
-                 "listSimps": "src/list/src", "numSimps": "src/num/arith/src",
-                 "pred_setSimps": "src/pred_set/src",
-                 "realSimps": "src/real"}
-        for module, directory in paths.items():
+        require_revisions(design.BASE)
+        listing = subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only", design.BASE],
+            cwd=design.ROOT, capture_output=True, text=True, check=True,
+            stdin=subprocess.DEVNULL).stdout.splitlines()
+        pins = sorted(design.INPUTS.glob("*.sig"))
+        self.assertTrue({m + ".sig" for m in design.MODULES} |
+                        {"ThmAttribute.sig"} <= {p.name for p in pins})
+        for pin in pins:
+            paths = [f for f in listing
+                     if f.rsplit("/", 1)[-1] == pin.name and
+                     "/tests/" not in "/" + f]
+            self.assertEqual(len(paths), 1, pin.name)
             result = subprocess.run(
-                ["git", "show", design.BASE + ":" + directory + "/" +
-                 module + ".sig"], cwd=design.ROOT, capture_output=True,
+                ["git", "show", design.BASE + ":" + paths[0]],
+                cwd=design.ROOT, capture_output=True, check=True,
                 stdin=subprocess.DEVNULL)
-            if result.returncode != 0:
-                self.skipTest("base revision not available")
-            self.assertEqual(
-                (design.INPUTS / (module + ".sig")).read_bytes(),
-                result.stdout, module)
+            self.assertEqual(pin.read_bytes(), result.stdout, pin.name)
 
     def test_shared_exports_reject_repeats_and_empty_reasons(self):
         original = design.SHARED
@@ -157,9 +206,104 @@ class DesignTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "neither row"):
                     design.validate_completeness([], {}, root, root)
 
+    def test_namespaced_fails_closed(self):
+        for text, why in [
+                ("sig structure S : sig end\nend", "structure"),
+                ("sig functor F : sig end\nend", "functor"),
+                ("sig type t\nsharing type t = u\nend", "sharing"),
+                ("sig val a : int\nand b : int\nend", "and"),
+                ("sig type t\nand u\nend", "and"),
+                ("sig datatype t = A\nand u = B\nend", "and"),
+                ("sig exception E\nand F\nend", "and"),
+                ("sig eqtype t\nand u\nend", "and")]:
+            with self.assertRaisesRegex(ValueError, "unsupported.*" + why):
+                design.namespaced(text)
+        with self.assertRaisesRegex(ValueError, "unresolved signature"):
+            design.namespaced("sig include Nope\nend")
+        # Comments hide the keywords; includes resolve through INCLUDES.
+        self.assertEqual(
+            design.namespaced("sig (* structure and *) val a : int end"),
+            {("value", "a")})
+        with patch.dict(design.INCLUDES, {"Inc": {("type", "t"),
+                                                   ("value", "v")}}):
+            self.assertEqual(
+                design.namespaced("sig include Inc val a : int end"),
+                {("type", "t"), ("value", "v"), ("value", "a")})
+            self.assertEqual(
+                design.declared("sig include Inc val a : int end"),
+                {"t", "v", "a"})
+
+    def test_owner_field_format(self):
+        row = dict(group="F1", old_api="boolSimps.bool_ss", kind="val",
+                   replacement_api="boolSimpsExt.bool_ss", owners="08,11,13")
+        self.assertEqual(design.expected_rows([row])[0]["owners"],
+                         "08,11,13;27")
+        for owners in ["", "8", "08;27", "08,", "08 11", "x", "08,11,"]:
+            with self.assertRaisesRegex(ValueError, "malformed owner"):
+                design.expected_rows([dict(row, owners=owners)])
+
+    def test_bindings_follow_the_row_versus_entry_rule(self):
+        old, shared = design.read_old_rows(), design.read_shared()
+        design.validate_bindings(old, shared)
+        key = ("value", "x")
+        direct = "val x = Mod.y\n"
+        own = "val x = fn a => a\n"
+        spec = "val x : int"
+        problem = design.binding_problem
+        # Identical specs: the source decides.
+        self.assertIsNone(problem(key, spec, spec, own, False))
+        self.assertIsNone(problem(key, spec, spec, direct, True))
+        self.assertRegex(problem(key, spec, spec, direct, False),
+                         "direct re-export")
+        self.assertRegex(problem(key, spec, spec, own, True),
+                         "not bound directly")
+        # Differing specs: distinct, so a row is right, an entry wrong.
+        other = "val x : bool"
+        self.assertIsNone(problem(key, spec, other, own, False))
+        self.assertRegex(problem(key, spec, other, direct, True),
+                         "distinct binding")
+        # A type may be allowlisted when identical or a qualified alias.
+        tkey = ("type", "t")
+        self.assertIsNone(problem(tkey, "type t = int", "type t = int",
+                                  "type t = {a : int}", True))
+        self.assertIsNone(problem(tkey, "type t", "type t = M.t",
+                                  "type t = M.t", True))
+        self.assertRegex(problem(tkey, "type t = int", "type t = bool",
+                                 "type t = bool", True), "distinct")
+        self.assertRegex(problem(tkey, "type t", "type t", "type t = M.t",
+                                 False), "direct re-export")
+        # Live data: mutated sources and tables are caught.
+        original = Path.read_text
+        def reexport(path, *args, **kwargs):
+            text = original(path, *args, **kwargs)
+            if path.name == "boolSimpsExt.sml":
+                text += "\nval SimpL = boolSimps.SimpL\n"
+            return text
+        with patch.object(Path, "read_text", reexport):
+            with self.assertRaisesRegex(ValueError, "direct re-export"):
+                design.validate_bindings(old, shared)
+            with self.assertRaisesRegex(ValueError, "direct re-export"):
+                design.validate_table(self.table)
+        with self.assertRaisesRegex(ValueError, "not bound directly"):
+            design.validate_bindings(
+                old, dict(shared, **{"boolSimps.SimpL": "x"}))
+        for api in ["simpLib.track", "simpLib.AC"]:
+            with self.assertRaisesRegex(ValueError, "direct|distinct"):
+                design.validate_bindings(old, {k: v for k, v in
+                                               shared.items() if k != api})
+        with self.assertRaisesRegex(ValueError, "distinct binding"):
+            design.validate_bindings(
+                old, dict(shared, **{"boolSimps.BOOL_ss": "x"}))
+
     def test_receipt_hashes_the_verdict_inputs(self):
-        names = {p.name for p in design.source_paths()}
-        for name in ["shared-exports.tsv", "apis.tsv", "final-apis.tsv",
+        paths = design.source_paths()
+        names = {p.name for p in paths}
+        for _, path in design.MODULES.values():
+            self.assertIn(design.ROOT / path, paths)
+        for name in ["boolSimpsExt.sig", "realSimpsExt.sig",
+                     "boolSimpsExt.sml", "ThmAttribute.sig",
+                     "simpMarkerLib.sig", "splitLib.sig", "SplitData.sig",
+                     "shared-exports.tsv", "apis.tsv", "final-apis.tsv",
                      "check_task27_docs.py", "check_design.py",
                      "Cond_rewr.sig", "boolSimps.sig", "realSimps.sig"]:
             self.assertIn(name, names)

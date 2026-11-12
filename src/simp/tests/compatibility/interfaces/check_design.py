@@ -5,6 +5,7 @@ import csv
 import hashlib
 import io
 import json
+import os
 from functools import lru_cache
 from pathlib import Path
 import re
@@ -84,11 +85,19 @@ def read_old_rows():
         return list(csv.DictReader(stream, delimiter="\t"))
 
 
+# Owner stages of a row in apis.tsv: two-digit TASK numbers, comma-separated
+# and ascending as written there (08,11,13); the final table appends ;27.
+OWNERS = re.compile(r"\d\d(?:,\d\d)*")
+
+
 def expected_rows(old=None):
     if old is None:
         old = read_old_rows()
     rows = []
     for row in old:
+        if not OWNERS.fullmatch(row["owners"]):
+            raise ValueError("malformed owner field: " + row["old_api"] +
+                             ": " + repr(row["owners"]))
         group, api = row["group"], row["old_api"]
         module, name = api.split(".", 1)
         replacement = MODULES.get(module, (module,))[0] + "." + name
@@ -106,7 +115,7 @@ def expected_rows(old=None):
             if module == "seedCollections":
                 domain = ("ordinary producer retained; "
                           "explicit extension recipe if selected")
-        elif group in {"B1", "C2"}:
+        elif group in {"B1", "C2", "F1"}:
             domain = ("parallel ordinary and extension APIs; "
                       "no ordinary migration")
         if name == "legacy_traversedata_for_ss":
@@ -122,7 +131,7 @@ PAIRED_KINDS = {"existing", "val", "type", "datatype", "constructor"}
 
 # Names `include Abbrev` brings in are the shared basic types, identical in
 # a develop module and its extension; they never need a row.
-INCLUDES = {"Abbrev": set(), "Task08ReducerTypes": set()}
+INCLUDES = {"Abbrev": set(), "Task08ReducerTypes": set()}  # (ns, name) pairs
 
 
 @lru_cache(maxsize=None)
@@ -131,34 +140,59 @@ def declared(text):
 
     Abbrev only adds the shared basic types, never a module's own names;
     Task08ReducerTypes is concatenated with its includer where it is used."""
-    return frozenset(signature_symbols(text, INCLUDES))
+    return frozenset(signature_symbols(
+        text, {k: {n for _, n in v} for k, v in INCLUDES.items()}))
+
+
+UNSUPPORTED = re.compile(r"\b(structure|functor|sharing|and)\b")
+
+
+@lru_cache(maxsize=None)
+def parse_specs(text):
+    """((namespace, name), normalised spec text) pairs of a signature.
+
+    "type" is the namespace of type, eqtype and datatype names, "value" of
+    val, exception and datatype constructors (a name may be in both, so a
+    flat name set is not enough).  Includes resolve through INCLUDES, whose
+    values are sets of (namespace, name) pairs; an unknown include fails, as
+    does syntax this flat reader does not handle: structure, functor and
+    sharing specs, and `and` (a spec-level conjunction)."""
+    text = strip_sml_comments(text)
+    unsupported = UNSUPPORTED.search(text)
+    if unsupported:
+        raise ValueError("unsupported signature syntax: " +
+                         unsupported.group(1))
+    params = r"(?:\([^)]*\)\s*|'[A-Za-z_0-9]+\s+)?"
+    declaration = re.compile(
+        rf"\b(val|type|eqtype|datatype|exception|include)\s+{params}"
+        rf"(?:op\s+)?({NAME})")
+    matches = list(declaration.finditer(text))
+    result = []
+    for i, match in enumerate(matches):
+        kind, name = match.groups()
+        if kind == "include":
+            if name not in INCLUDES:
+                raise ValueError(f"unresolved signature include: {name}")
+            result.extend((key, "include " + name) for key in INCLUDES[name])
+            continue
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        body = text[match.end():end]
+        spec = re.sub(r"\s+", " ", text[match.start():end]).strip()
+        spec = re.sub(r"\s*;?\s*\bend$", "", spec).strip()
+        if kind in {"val", "exception"}:
+            result.append((("value", name), spec))
+            continue
+        result.append((("type", name), spec))
+        if kind == "datatype" and not re.match(r"\s*=\s*datatype\b", body):
+            for ctor in re.findall(rf"(?:=|\|)\s*({NAME})", body):
+                result.append((("value", ctor), spec))
+    return tuple(result)
 
 
 @lru_cache(maxsize=None)
 def namespaced(text):
-    """(namespace, name) pairs a signature declares: "type" for type, eqtype
-    and datatype names, "value" for val, exception and datatype constructors.
-    A name may be in both namespaces, so a flat name set is not enough."""
-    text = strip_sml_comments(text)
-    params = r"(?:\([^)]*\)\s*|'[A-Za-z_0-9]+\s+)?"
-    declaration = re.compile(
-        rf"\b(val|type|eqtype|datatype|exception)\s+{params}(?:op\s+)?"
-        rf"({NAME})")
-    matches = list(declaration.finditer(text))
-    types, values = set(), set()
-    for i, match in enumerate(matches):
-        kind, name = match.groups()
-        if kind in {"val", "exception"}:
-            values.add(name)
-            continue
-        types.add(name)
-        if kind == "datatype":
-            end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-            body = text[match.end():end]
-            if not re.match(r"\s*=\s*datatype\b", body):
-                values.update(re.findall(rf"(?:=|\|)\s*({NAME})", body))
-    return frozenset({("type", n) for n in types} |
-                     {("value", n) for n in values})
+    """(namespace, name) pairs a signature declares; see parse_specs."""
+    return frozenset(key for key, _ in parse_specs(text))
 
 
 def exports(text, name):
@@ -196,53 +230,59 @@ def read_shared():
     return result
 
 
-def repo_files():
-    """Tracked files of the checkout, or every file if git is unusable."""
-    try:
-        out = subprocess.run(["git", "ls-files"], cwd=ROOT, text=True,
-                             capture_output=True, check=True,
-                             stdin=subprocess.DEVNULL).stdout
-        return out.splitlines()
-    except (OSError, subprocess.CalledProcessError):
-        return [str(p.relative_to(ROOT)) for p in (ROOT / "src").rglob("*")
-                if p.is_file()]
+# Extension signatures are recognised by name alone: MExt.sig or pExtLib.sig.
+EXT_SIG = re.compile(r"\w+Ext(?:Lib)?\.sig")
+SKIPPED_DIRS = {".git", ".hol", "tests"}
+# Extension signatures that have no develop counterpart, so MODULES does not
+# list them: path -> reason.  Each entry needs a reason and must exist.
+EXCLUDED_EXT_SIGS = {}
 
 
-def base_basenames():
-    """Basenames of the files at the base revision; the current tracked
-    files if the revision is not available."""
-    try:
-        out = subprocess.run(["git", "ls-tree", "-r", "--name-only", BASE],
-                             cwd=ROOT, text=True, capture_output=True,
-                             check=True, stdin=subprocess.DEVNULL).stdout
-        files = out.splitlines()
-    except (OSError, subprocess.CalledProcessError):
-        files = repo_files()
-    return {f.rsplit("/", 1)[-1] for f in files}
+def scan_extension_sigs(root=ROOT):
+    """Repo-relative paths of the extension signatures under root, found by
+    walking the file system (not git); .git, .hol and tests directories
+    and symbolic links (sigobj) are skipped."""
+    found = []
+    for directory, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in SKIPPED_DIRS]
+        for file in files:
+            full = os.path.join(directory, file)
+            # sigobj holds symlinks to the real signatures: not files.
+            if EXT_SIG.fullmatch(file) and not os.path.islink(full):
+                found.append(os.path.relpath(full, root))
+    return sorted(found)
 
 
-EXT_SIG = re.compile(r"(\w+?)Ext(Lib)?\.sig")
+def validate_extension_coverage(root=ROOT, modules=None, excluded=None,
+                                develop=INPUTS):
+    """Every extension signature in the tree is in MODULES or excluded.
 
-
-def validate_extension_coverage(files=None, develop=None):
-    """Every extension signature of a develop module is in MODULES.
-
-    An extension signature is M's `MExt.sig`, or `pExtLib.sig` for `pLib`,
-    where develop has M.sig (or pLib.sig) at the base revision. Signatures
-    under a tests directory do not count."""
-    if files is None:
-        files = repo_files()
-    if develop is None:
-        develop = base_basenames()
-    covered = {path for _, path in MODULES.values()}
-    for path in files:
-        if "/tests/" in "/" + path:
-            continue
-        match = EXT_SIG.fullmatch(path.rsplit("/", 1)[-1])
-        if not match:
-            continue
-        counterpart = match.group(1) + (match.group(2) or "")
-        if counterpart + ".sig" in develop and path not in covered:
+    Fails closed: each MODULES extension must be found by the scan and
+    exist, each MODULES develop module needs its pinned signature, and each
+    exclusion needs a reason and a signature the scan finds."""
+    if modules is None:
+        modules = MODULES
+    if excluded is None:
+        excluded = EXCLUDED_EXT_SIGS
+    found = set(scan_extension_sigs(root))
+    covered = {path for _, path in modules.values()}
+    for module, (_, path) in modules.items():
+        if not (Path(root) / path).is_file():
+            raise ValueError("MODULES extension signature missing: " + path)
+        if path not in found:
+            raise ValueError("MODULES extension signature not found by "
+                             "the scan: " + path)
+        if not (Path(develop) / (module + ".sig")).is_file():
+            raise ValueError("no pinned develop signature for " + module)
+    for path, reason in excluded.items():
+        if not reason.strip():
+            raise ValueError("exclusion without a reason: " + path)
+        if path in covered:
+            raise ValueError("exclusion is in MODULES: " + path)
+        if path not in found:
+            raise ValueError("stale exclusion, signature absent: " + path)
+    for path in sorted(found):
+        if path not in covered and path not in excluded:
             raise ValueError("extension signature not covered by MODULES: " +
                              path)
 
@@ -278,6 +318,75 @@ def validate_completeness(old_rows=None, shared=None,
                              "export: " + api)
 
 
+def sml_text(path, root=ROOT):
+    return strip_sml_comments((Path(root) / path).with_suffix(".sml")
+                              .read_text())
+
+
+def directly_binds(sml, key):
+    """Conservative: the extension source binds the name to one qualified
+    identifier, as in `val x = M.y` or `type t = M.t` (also
+    `datatype t = datatype M.t`), so it shares M's declaration."""
+    ns, name = key
+    ident = r"(?:[A-Za-z_][\w']*\.)+[^\s;]+"
+    if ns == "value":
+        pattern = (rf"^[ \t]*val\s+(?:op\s+)?{re.escape(name)}\s*"
+                   rf"(?::[^=\n]*)?=\s*{ident}\s*;?[ \t]*$")
+    else:
+        pattern = (rf"^[ \t]*(?:type|eqtype|datatype)\s+"
+                   rf"(?:\([^)]*\)\s*|'\w+\s+)?{re.escape(name)}\s*="
+                   rf"\s*(?:datatype\s+)?{ident}\s*;?[ \t]*$")
+    return re.search(pattern, sml, re.M) is not None
+
+
+def binding_problem(key, old_spec, new_spec, sml, allowed):
+    """Why the row-or-allowlist decision for one shared name is wrong, or
+    None.  Differing specs mean a distinct binding: a row is right and an
+    allowlist entry is wrong, except that an extension type declared as a
+    qualified alias of another type shares it.  Identical specs say nothing
+    about the type (an extension spec may name its own types), so the source
+    decides: a direct re-export is allowlisted, never a row; an allowlisted
+    name must be one, or a type (an abbreviation of an identical type)."""
+    ns, name = key
+    direct = directly_binds(sml, key)
+    if old_spec != new_spec:
+        alias = ns == "type" and re.search(
+            r"=\s*(?:datatype\s+)?(?:[A-Za-z_][\w']*\.)+[^\s;]+$",
+            new_spec)
+        if allowed and not alias:
+            return "allowlisted name has a distinct binding, needs a row"
+        return None
+    if allowed and ns == "value" and not direct:
+        return ("allowlisted name is not bound directly to the develop "
+                "value")
+    if not allowed and direct:
+        return "row for a direct re-export, needs an allowlist entry"
+    return None
+
+
+def validate_bindings(old_rows=None, shared=None, develop=INPUTS,
+                      root=ROOT, only=None):
+    """For every shared name (the completeness rule's), compare the develop
+    and extension specs and the extension source; see binding_problem.
+    only restricts the check to the given old API names."""
+    if old_rows is None:
+        old_rows = read_old_rows()
+    if shared is None:
+        shared = read_shared()
+    for module, (_, path) in sorted(MODULES.items()):
+        old = dict(parse_specs((develop / (module + ".sig")).read_text()))
+        new = dict(parse_specs((Path(root) / path).read_text()))
+        sml = sml_text(path, root)
+        for key in sorted(old.keys() & new.keys()):
+            api = module + "." + key[1]
+            if only is not None and api not in only:
+                continue
+            problem = binding_problem(key, old[key], new[key], sml,
+                                      api in shared)
+            if problem:
+                raise ValueError(problem + ": " + api)
+
+
 def table_text(rows):
     stream = io.StringIO()
     writer = csv.DictWriter(stream, FIELDS, delimiter="\t",
@@ -294,6 +403,7 @@ def validate_table(text):
     validate_existing(old)
     validate_extension_coverage()
     validate_completeness(old)
+    validate_bindings(old)
     if rows != expected:
         raise ValueError("missing/stale final API decision; "
                          "do not drop a consumer")
@@ -319,6 +429,8 @@ def validate_table(text):
             if (row["replacement"].split(".")[0] != MODULES[module][0] or
                     not exports(source, name)):
                 raise ValueError("missing extension export: " + name)
+            # The row must be a distinct binding, not a shared export.
+            validate_bindings(old, only={row["old_api"]})
         elif witness == "shared":
             module = row["old_api"].split(".")[0]
             directory = "src/1" if module == "ThmAttribute" else "src/simp/src"
@@ -460,15 +572,24 @@ def execute(negative_controls):
 
 def source_paths():
     """The sources of the verdict: this directory, the final table, and the
-    inputs the verdict reads (the shared-exports and apis tables, the pinned
-    develop signatures and the signature parser)."""
+    inputs the verdict reads: the shared-exports and apis tables, the pinned
+    develop signatures, every extension signature and source the checks
+    read, the singleton signatures of the `shared` witness, and the
+    signature parser."""
+    shared = {row["old_api"].split(".")[0] for row in expected_rows()
+              if row["witness"] == "shared"}
+    witnesses = [ROOT / ("src/1" if module == "ThmAttribute"
+                         else "src/simp/src") / (module + ".sig")
+                 for module in sorted(shared)]
+    extensions = [ROOT / path for _, path in MODULES.values()]
+    extensions += [p.with_suffix(".sml") for p in extensions]
     return sorted([p for p in HERE.rglob("*")
                    if p.is_file() and ".hol" not in p.parts and
                    p.suffix in {".sml", ".ML", ".md", ".py", ".json"}]
                   + [HERE / "Holmakefile", TABLE, SHARED,
                      MIGRATION / "apis.tsv",
                      HERE.parent / "check_task27_docs.py"]
-                  + list(INPUTS.glob("*.sig")))
+                  + list(INPUTS.glob("*.sig")) + witnesses + extensions)
 
 
 def main():

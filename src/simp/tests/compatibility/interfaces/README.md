@@ -8,8 +8,9 @@ production/runtime tests.
 the explicit provider boundary. The finalized 275-row API mapping
 is [../migration/final-apis.tsv](../migration/final-apis.tsv). The table is
 complete by rule, not by hand-picking: every name exported both by a develop
-module and by its extension counterpart (every pair in `MODULES`, and
-`check_design.py` fails on an extension signature `MODULES` omits) has a row or a justified entry in
+module and by its extension counterpart (every pair in `MODULES`; the gate
+scans the tree and fails on an extension signature `MODULES` omits) has a row
+or a justified entry in
 [../migration/shared-exports.tsv](../migration/shared-exports.tsv), and
 `check_design.py` fails on a missing or stale one.
 

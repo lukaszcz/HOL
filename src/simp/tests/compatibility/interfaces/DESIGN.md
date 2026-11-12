@@ -344,10 +344,18 @@ F1 covers the extension counterparts of the develop `*Simps`/`*Reduce`/
 `integer_wordLibExt` but shares no name with it). Each row maps `M.name` to
 `MExt.name`, an opt-in value of type `simpExtLib.ssfrag`/`simpset` (or a
 `thm`/`term -> thm` with a distinct definition) whose loading changes no
-default simpset. The witness is the extension's own signature. Owners are the
-stages that introduced the modules in `graph.json`: 10 for `boolSimpsExt` and
-`pureSimpsExt`, 24 for the rest (the stage-24 commit "Complete explicit
-tracked recipes" added them; there is no earlier TASK prefix in the log).
+default simpset. The domain is "parallel ordinary and extension APIs; no
+ordinary migration", as for B1 and C2. The `boolSimps`/`pureSimps` rows are
+the production counterparts of the `Pure`/`Bool` prototype blocks (§1); the
+witness is the extension's own production `.sig`, which is the interface
+authority, not the prototype. `boolSimps.SimpL`, `SimpR`, `SimpLHS` and
+`SimpRHS` each have a row: `boolSimpsExt` has a separately evaluated copy, not
+bound to the develop value. Owners are the stages that introduced the modules:
+10 for `boolSimpsExt` and `pureSimpsExt` (`graph.json`; added with the TASK_10
+handoff in 459512593b), and 24 for `combinSimpsExt` (`graph.json`) and for the
+six library modules (added by 4a0ad8e916 with `TASK_24_HANDOFF.md`, which names
+them). Each row's owner field must be comma-separated two-digit stages; the
+final table appends `;27`.
 
 Special resolutions: delete `legacy_traversedata_for_ss` (no replacement optional
 promotion); extended `traversedata_for_ss` returns T data; external output/helper
@@ -357,20 +365,33 @@ current owning modules. No legacy client must change.
 
 Completeness does not depend on hand-picking. For each pair of develop module
 M and extension module M' listed in `MODULES` in `check_design.py` (which also
-names the extension signature in the repo), every name that develop's `M.sig` (pinned
-in `inputs/develop/`, from the base revision) exports and that the extension's
-`M'.sig` also declares needs either a row with old name `M.name`, or an entry
-in [migration/shared-exports.tsv](../migration/shared-exports.tsv) with a
-one-line justification that the extension binds the identical value or type.
-`check_design.py` enforces this: a missing name fails, and an entry that also
-has a row or is not a shared export (stale) fails. Names are read from the
-signatures by the comment-stripping parser of `check_task27_docs.py`, per
-namespace (a type and a value of the same name are different declarations).
-Names that `include Abbrev` brings in are excluded: they are the shared basic
-types, identical in both signatures. `MODULES` itself is checked: a tracked
-extension signature (`MExt.sig`, or `pExtLib.sig` for `pLib`, outside `tests`
-directories) whose develop `M.sig` exists at the base revision, and which
-`MODULES` does not list, fails. The pinned develop signatures of every listed
-module are in `inputs/develop/`.
+names the extension signature in the repo), every name that develop's `M.sig`
+(pinned in `inputs/develop/`, from the base revision) exports and that the
+extension's `M'.sig` also declares needs either a row with old name `M.name`,
+or an entry in [migration/shared-exports.tsv](../migration/shared-exports.tsv)
+with a one-line justification that the extension binds the identical value or
+type. `check_design.py` enforces this: a missing name fails, and an entry that
+also has a row or is not a shared export (stale) fails. Names are read from the
+signatures by a comment-stripping reader, per namespace (a type and a value of
+the same name are different declarations); it fails on `structure`, `functor`,
+`sharing`, spec-level `and` and unknown includes. Names that `include Abbrev`
+brings in are excluded: they are the shared basic types.
+
+The row-versus-entry decision is checked against the sources. If the develop
+and extension specs of the name differ (whitespace and comments aside), the
+binding is distinct: a row is right and an entry is an error, except for an
+extension type that is a qualified alias of another type. If the specs are
+identical, a row needs the extension `.sml` not to bind the name directly to
+one qualified identifier (`val x = M.y`, `type t = M.t`), and an entry needs
+that direct binding or a type. This is a conservative textual check, not
+semantic equivalence.
+
+`MODULES` itself is checked without git: the scan walks the repository tree
+(skipping `.git`, `.hol`, `tests` directories and symbolic links such as
+`sigobj`), and every file named `MExt.sig` or `pExtLib.sig` must be in
+`MODULES` or in `EXCLUDED_EXT_SIGS`, which lists, with a reason, extension
+signatures without a develop counterpart (empty). Every `MODULES` extension
+must be found and exist, every listed module needs its pinned
+`inputs/develop/M.sig`, and a stale exclusion fails.
 
 No free retrospective metadata promise remains in this design.
