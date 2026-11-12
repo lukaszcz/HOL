@@ -52,6 +52,7 @@ class WorldS(t33.World33):
         self.edits = {}  # (unit, side) -> function on the record list
         self.log_edit = None  # None: the log of the records, False: no log,
                               # else a function on the log text
+        self.plan = None  # (unit, side, counter) -> the rt.fake_log plan
 
     def records_of(self, name, env, side):
         sw = dict(graph_extra="T33_GRAPH_EXTRA" in env,
@@ -99,7 +100,8 @@ class WorldS(t33.World33):
             stats["loaded"].append("simpExtLib")
         if self.fault and self.fault(name, side, self.counter) == "stray":
             (Path(cwd) / "stray.txt").write_text("x")
-        body = rt.text(run, noise=False)
+        plan = self.plan(name, side, self.counter) if self.plan else None
+        body = rt.text(run, noise=False, plan=plan)
         text = retext(body, root)
         Path(out_path).write_text("banner\n" + text)
         if "T33_GCLOG" in env and self.log_edit is not False:
@@ -1424,6 +1426,37 @@ class Redraws(Chain34):
         folder = Path(report["output"])
         info = st.replay_chain(folder)[-1]["info"]
         self.assertEqual(info["replayed"], len(report["runs"]))
+
+    def foreign_gc(self, first_only):
+        """A run-time full GC inside a reading of the release probe."""
+        seen = []
+
+        def plan(name, side, counter):
+            if (name, side) != ("release", "cand"):
+                return None
+            seen.append(counter)
+            if first_only and len(seen) > 1:
+                return None
+            return {"simpset.after": dict(between=rt.RTS_GC)}
+        self.world.plan = plan
+
+    def test_a_run_time_gc_in_a_reading_is_redrawn(self):
+        self.foreign_gc(True)
+        args, report = self.run_stage("smoke", "smoke")
+        self.assertTrue(report["success"], report.get("failure"))
+        runs = self.tries(report, "release", "cand")
+        self.assertEqual([(e["redraw"], e["accepted"]) for e in runs],
+                         [(0, False), (1, True)])
+        self.assertIn("run-time GC", runs[0]["superseded"])
+        st.replay_chain(Path(report["output"]))
+
+    def test_a_run_time_gc_that_persists_is_a_refusal(self):
+        self.foreign_gc(False)
+        args, report = self.run_stage("smoke", "smoke")
+        self.assertFalse(report["success"])
+        self.assertIn("process rejected", report["failure"])
+        self.assertEqual(len(self.tries(report, "release", "cand")),
+                         st.MAX_REDRAWS + 1)
 
     def test_a_process_that_never_compares_is_a_refusal(self):
         self.world.edits["release", "cand"] = incomparable

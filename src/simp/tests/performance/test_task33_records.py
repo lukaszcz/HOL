@@ -26,20 +26,24 @@ def rec(name, probe, kind, **fields):
 
 
 def live(probe, kind, phase, words=1000, share=0, alloc=SEG):
-    """A live record; log_end is set by `text`, which writes the GC log."""
+    """A live record; log_start and log_end are set by `text`, which writes
+    the GC log."""
     return rec("live", probe, kind, phase=phase,
                size_heap=8 * words + 3000 + alloc, free_full=3000,
                alloc=alloc, alloc_free=alloc, gc_share=share,
-               extent=words, log_end=0, words=words)
+               extent=words, log_start=0, log_end=0, words=words)
 
 
 # The lines of one full GC in the GC log, as Poly/ML 5.9.2 writes them
-# (copied from a real run); %d is the marked live total.
-FULL_GC = """\
+# (copied from a real run); %%T%% is the marked live total. A reading's
+# slice ends with the total's line: HEAD is the part up to it, TAIL the rest.
+FULL_GC_HEAD = """\
 GC: Full GC, 0 words required 1 spaces
 GC: (Mark) CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0
 GC: (Bitmap) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
-GC: Mark: Total live data %d words
+GC: Mark: Total live data %T% words
+"""
+FULL_GC_TAIL = """\
 GC: Check weak refs
 GC: (Copy) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
 GC: Update
@@ -47,6 +51,9 @@ GC: (Update) CPU user: 0.000 system: 0.000 real: 0.000 speed up 1.0
 GC: CPU user: 0.001 system: 0.000 real: 0.001 speed up 1.0 page faults 0
 GC: Completed successfully
 """
+FULL_GC = FULL_GC_HEAD + FULL_GC_TAIL
+# A full GC the run time sets off itself (N words required, N > 0).
+RTS_GC = FULL_GC.replace("0 words required 1", "3 words required 5")
 MINOR_GC = """\
 GC: Non-GC time: CPU user: 0.002 system: 0.001 real: 0.003 page faults: 0
 GC: Beginning quick GC
@@ -55,18 +62,34 @@ GC: Completed successfully
 """
 
 
-def fake_log(records, extra=0, full=3):
+def fake_log(records, extra=0, full=3, plan=None):
     """The GC log a probe with these records would leave, and the records
-    with their `log_end`: per reading some minor GCs, then three full GCs
-    whose totals are the record's words (the first two `extra` higher: only
-    the last of a reading counts); `full` full GCs per reading."""
+    with their `log_start` and `log_end`. Per reading: `window` (default
+    two minor GCs), the start of the slice, `between` (default nothing),
+    `full` full GCs, `after`; the totals in the order of the log are the
+    record's words + `extra` twice, then its words (the third total is the
+    reading's), then words + 7. `plan[phase]` gives window, between and
+    after of that reading; end is just past the third total's line (or the
+    end of the full GCs when fewer)."""
     records, log = copy.deepcopy(records), ""
     for x in records:
-        if x["record"] == "live":
-            log += MINOR_GC * 2
-            for k in reversed(range(full)):
-                log += FULL_GC % (x["words"] + k * extra)
-            x["log_end"] = len(log)
+        if x["record"] != "live":
+            continue
+        opts = (plan or {}).get(x["phase"], {})
+        log += opts.get("window", MINOR_GC * 2).replace("%T%", "777")
+        count = [0]
+
+        def total(_):
+            count[0] += 1
+            return str(x["words"] + (extra if count[0] < 3 else
+                                     0 if count[0] == 3 else 7))
+        own = re.sub("%T%", total, opts.get("between", "") + FULL_GC * full)
+        text_ = own + re.sub("%T%", total, opts.get("after", ""))
+        found = list(re.finditer(r"Total live data [0-9]+ words\n", text_))
+        stop = found[2].end() if len(found) >= 3 else len(own)
+        x["log_start"] = len(log)
+        x["log_end"] = len(log) + stop
+        log += text_
     return records, log
 
 
@@ -255,10 +278,10 @@ def ext_run(m=2, sizes=(0, 1)):
             [live(p, k, "registry"), registry(p, k), rec("done", p, k)])
 
 
-def text(records, noise=True, log=None, full=3):
+def text(records, noise=True, log=None, full=3, plan=None):
     """The stdout of a process with these records and, as `.log`, the GC
     log that gives their words (`fake_log`; `log` replaces it)."""
-    records, fake = fake_log(records, extra=5, full=full)
+    records, fake = fake_log(records, extra=5, full=full, plan=plan)
     lines = []
     for i, x in enumerate(records):
         if noise and i % 3 == 0:
@@ -502,7 +525,9 @@ class WellFormed(unittest.TestCase):
         val(noisy)
 
 
-class Malformed(unittest.TestCase):
+class Bad:
+    """Helpers of a TestCase for refusals."""
+
     def bad(self, body, fragment=None, **kw):
         with self.assertRaises(r.RecordError) as caught:
             val(body, **kw)
@@ -512,6 +537,8 @@ class Malformed(unittest.TestCase):
     def line(self, record):
         return r.PREFIX + json.dumps(record) + "\n"
 
+
+class Malformed(Bad, unittest.TestCase):
     def test_lines(self):
         run = load_run("load", "state0-empty")
         self.bad("@@T33 " + json.dumps(run[0]) + "\n", "malformed")
@@ -1205,9 +1232,11 @@ class Golden(unittest.TestCase):
         self.assertEqual(s["residual"]["noop"], 0)
         self.assertEqual(s["weak"]["status"], "pass")
         self.assertTrue(all(s["held_comparable"].values()))
-        self.assertTrue(all(s["residual"][k] == 0 or k == "traversedata"
-                            or abs(s["residual"][k]) < 1
-                            for k in s["residual"]))
+        # the marked totals of a real run: every kind is exact and
+        # retains nothing, but one word of the conversion run (m = 50)
+        self.assertEqual(s["residual"], {
+            k: Fraction(-1, 50) if k == "conversion" else 0
+            for k in r.RELEASE_KINDS})
 
     def test_first_use(self):
         text_ = golden("first-use")
@@ -1249,24 +1278,34 @@ class Golden(unittest.TestCase):
         val(body)
 
 
-def with_log_end(body, phase, end):
-    """The output `body` of `text` with the `log_end` of one live record
-    replaced (the log is kept)."""
+def with_live(body, phase, **fields):
+    """The output `body` of `text` with fields of one live record replaced
+    (the log is kept)."""
     lines = body.splitlines()
     for k, line in enumerate(lines):
         if line.startswith(r.PREFIX):
             x = json.loads(line[len(r.PREFIX):])
             if x["record"] == "live" and x["phase"] == phase:
-                x["log_end"] = end
+                x.update(fields)
                 lines[k] = r.PREFIX + json.dumps(x)
     out = Text("\n".join(lines) + "\n")
     out.log = body.log
     return out
 
 
-class GCLog(Malformed):
+def live_records(body):
+    return [x for x in r.parse(body) if x["record"] == "live"]
+
+
+class GCLog(Bad, unittest.TestCase):
     """The words of a reading are the GC log's marked total (the log's
-    format and its split per reading: task33_records.check_gc_log)."""
+    format and its slices: task33_records.check_gc_log)."""
+
+    def redraw(self, body, fragment=None, **kw):
+        with self.assertRaises(r.NotComparable) as caught:
+            val(body, **kw)
+        if fragment:
+            self.assertIn(fragment, str(caught.exception))
 
     def test_the_real_format_is_parsed(self):
         log = golden_log("release")
@@ -1290,29 +1329,36 @@ class GCLog(Malformed):
                       "GC (Total): Mark: Total live data 12 words",
                       "GC: Total live data 12 words"):
             self.assertEqual(r.gc_log_totals(other + "\n"), [], other)
+        self.assertTrue(r.FULL_GC_HEAD.fullmatch(
+            "GC: Full GC, 0 words required 1 spaces"))
+        self.assertEqual(r.FULL_GC_HEAD.fullmatch(
+            "GC: Full GC, 3 words required 5 spaces").group(1), "3")
 
-    def test_every_reading_has_its_three_full_gcs_in_the_real_log(self):
+    def test_every_reading_has_its_own_slice_in_the_real_log(self):
         body, log = golden("release"), golden_log("release")
-        live = [x for x in r.parse(body) if x["record"] == "live"]
-        start = 0
-        for x in live:
-            totals = r.gc_log_totals(log[start:x["log_end"]])
-            self.assertGreaterEqual(len(totals), r.MIN_FULL_GCS)
-            self.assertEqual(totals[-1], x["words"])
-            start = x["log_end"]
-        self.assertTrue(log[start:].strip())  # the process's exit
+        prev = 0
+        for x in live_records(body):
+            self.assertLessEqual(prev, x["log_start"])
+            slice_ = log[x["log_start"]:x["log_end"]]
+            self.assertEqual(len(r.gc_log_totals(slice_)),
+                             r.OWN_FULL_GCS)
+            self.assertEqual(r.gc_log_totals(slice_)[-1], x["words"])
+            heads = [m.group(1) for m in r.FULL_GC_HEAD.finditer(slice_)]
+            self.assertEqual(heads, ["0"] * r.OWN_FULL_GCS)
+            prev = x["log_end"]
+        self.assertTrue(log[prev:].strip())  # the process's exit
 
     def test_words_are_the_log_total(self):
         run = release_run(4)
         body = text(run)
         s = val(body)
         self.assertEqual(s["live"]["simpset.after"], 5000)
-        # only the last full GC of a reading counts
+        # only the third total of a reading counts: the first two may differ
         i = body.log.index("Total live data 5005 words")
         j = body.log.index("Total live data 5000 words", i)
+        self.assertLess(i, j)
         other = body.log[:i] + body.log[i:].replace("5005", "6006", 1)
         val(body, gclog=other)
-        self.assertLess(i, j)
         last = body.log[:j] + "Total live data 5001 words" + body.log[
             j + len("Total live data 5000 words"):]
         self.bad(body, "marked total", gclog=last)
@@ -1328,30 +1374,101 @@ class GCLog(Malformed):
         val(text(load_run("load", "load-simpLib")), gclog=None)
 
     def test_too_few_full_gcs_are_refused(self):
-        # a reading's slice holds its own full GCs only
+        # a reading's slice holds exactly its own three totals
         self.bad(text(release_run(4), full=2), "full GC total")
-        self.bad(text(release_run(4), full=0), "full GC total")
+        self.bad(text(release_run(4), full=1), "full GC total")
+        self.bad(text(release_run(4), full=0))
+        # the fourth is outside the slice (after the third own total)
         val(text(release_run(4), full=4))
-        # minor GCs and the log of other readings do not count
         body = text(release_run(4))
         self.assertGreaterEqual(len(r.gc_log_totals(body.log)), 3 * 25)
 
-    def test_the_log_ends_of_the_readings_are_checked(self):
+    def test_a_run_time_gc_after_the_third_total_is_ignored(self):
+        # the log read itself may set one off: its total counts the buffers
+        for phase in ("noop.before", "simpset.after", "cong.held"):
+            plan = {phase: dict(after=RTS_GC)}
+            body = text(release_run(4), plan=plan)
+            s = val(body)
+            self.assertEqual(s["live"]["simpset.after"], 5000)
+            self.assertIn("3 words required", body.log)
+
+    def test_run_time_gcs_before_the_start_are_ignored(self):
+        plan = {"noop.after": dict(window=MINOR_GC + RTS_GC * 2 + MINOR_GC),
+                "cong.held": dict(window=RTS_GC)}
+        val(text(release_run(4), plan=plan))
+
+    def test_a_run_time_gc_before_the_first_own_gc_is_a_redraw(self):
+        # inside the slice: its total shifts the third one to the second
+        # own GC, and the slice holds a foreign header
+        plan = {"simpset.after": dict(between=RTS_GC)}
+        body = text(release_run(4), plan=plan)
+        self.redraw(body, "simpset.after")
+        # the same with the third total counted from the end
+        self.redraw(text(release_run(4), plan={
+            "noop.before": dict(between=RTS_GC * 2)}), "noop.before")
+
+    def test_a_repeated_mark_is_a_redraw(self):
+        # a Count-error retry: a second mark of one own GC
+        again = "GC: Mark: Total live data %T% words\n"
+        plan = {"cong.before": dict(between=FULL_GC_HEAD + again)}
+        self.redraw(text(release_run(4), plan=plan), "cong.before")
+
+    def test_a_gap_before_the_start_is_accepted(self):
+        # quiet readings and GCs of any kind between two readings
+        gap = MINOR_GC * 3 + RTS_GC + "unrelated line\n"
+        plan = {x["phase"]: dict(window=gap)
+                for x in live_records(text(release_run(4)))}
+        val(text(release_run(4), plan=plan))
         body = text(release_run(4))
-        ends = [x["log_end"] for x in r.parse(body)
-                if x["record"] == "live"]
-        phase = "noop.before"
-        for end, why in ((0, "not a line end"),
-                         (ends[0], "not a line end"),
-                         (len(body.log) + 1, "not a line end"),
-                         (ends[3] - 3, "not a line end"),
-                         (ends[3] + 5, "not a line end")):
-            self.bad(with_log_end(body, phase, end), "log_end", )
+        self.assertTrue(all(
+            b["log_start"] > a["log_end"] for a, b in zip(
+                live_records(body), live_records(body)[1:])))
+        # ... and none at all: a start at the previous end
+        recs = live_records(body)
+        for a, b in zip(recs, recs[1:]):
+            val(with_live(body, b["phase"], log_start=a["log_end"]))
+
+    def test_the_offsets_of_the_readings_are_checked(self):
+        body = text(release_run(4))
+        recs = live_records(body)
+        phase = recs[3]["phase"]
+        start, end = recs[3]["log_start"], recs[3]["log_end"]
+        lines = body.log
+        self.assertEqual(lines[end - 1], "\n")
+        inside = start + lines[start:].index("\n") + 2
+        for fields in (dict(log_end=0), dict(log_start=end),
+                       dict(log_start=end + 1),
+                       dict(log_end=len(body.log) + 1),
+                       dict(log_end=end - 3), dict(log_end=end + 5),
+                       dict(log_start=inside), dict(log_start=start + 3),
+                       dict(log_start=recs[2]["log_end"] - 1),
+                       dict(log_start=0),
+                       dict(log_end=start)):
+            self.bad(with_live(body, phase, **fields), phase)
+        # one that starts before the previous reading's end
+        self.bad(with_live(body, recs[4]["phase"],
+                           log_start=recs[3]["log_end"] - 1))
         # beyond the log, on a line end
         longer = Text(str(body))
-        longer.log = body.log + FULL_GC % 1
-        self.bad(with_log_end(longer, "cong.held", len(longer.log) + 1),
-                 "log_end")
+        longer.log = body.log + FULL_GC.replace("%T%", "1")
+        self.bad(with_live(longer, "cong.held", log_end=len(longer.log)
+                           + len(FULL_GC)), "cong.held")
+        # a field that is not an unsigned integer
+        for bad in (None, 1.5, "7", True, -1):
+            self.bad(with_live(body, phase, log_start=bad))
+
+    def test_a_malformed_record_wins_over_an_earlier_redraw(self):
+        plan = {"noop.before": dict(between=RTS_GC)}
+        body = text(release_run(4), plan=plan)
+        self.redraw(body, "noop.before")
+        late = with_live(body, "cong.held", log_end=len(body.log) + 1)
+        self.bad(late, "cong.held")
+        # both redraws are reported when nothing is malformed
+        both = text(release_run(4), plan={
+            "noop.before": dict(between=RTS_GC),
+            "cong.held": dict(between=RTS_GC)})
+        self.redraw(both, "cong.held")
+        self.redraw(both, "noop.before")
 
     def test_a_leak_is_still_seen_in_the_marked_totals(self):
         s = val(text(release_run(4, leak=True)), controls=("leak",))
@@ -1411,6 +1528,12 @@ class Ties(unittest.TestCase):
                       self.src("T33GraphLib.sml"))
         sml = self.src("T33.sml")
         self.assertIn('val gclog_env = "%s"' % r.GCLOG_ENV, sml)
+        # the own full GCs of a reading: one constant of the SML, which
+        # runs that many collections and takes that total
+        self.assertIn("val own_gcs = %d  (*" % r.OWN_FULL_GCS, sml)
+        self.assertIn("List.tabulate (own_gcs, fn i => i)", sml)
+        self.assertIn("seen + 1 = own_gcs", sml)
+        self.assertNotIn("[1, 2, 3]", sml)
         marker, unit = re.search(r'val log_marker = "(.*?)"\s+val log_unit '
                                  r'= "(.*?)"', sml, re.S).groups()
         self.assertEqual(r.LOG_TOTAL.pattern,

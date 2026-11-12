@@ -3869,25 +3869,38 @@ retained word that is invisible); see
 minor GC, written under `--debug gc --logfile`) was exact in all 36
 diagnostic runs.
 
-- `T33.live` runs three full GCs and takes the last total among the log
-  lines appended since the previous reading (it remembers the log's length
-  at the end of its last reading, a line end). It fails loudly
-  (`Fail`) when the log is missing or has fewer than three totals in that
-  part. The record carries `words` (that total), `log_end` (the log's
-  length through the reading) and, report only, `extent`, `size_heap`,
-  `free_full`, `alloc`, `alloc_free` and `gc_share`.
+- `T33.live` reads the log's size (`log_start`) immediately before its
+  three own full GCs (`T33.own_gcs`, `task33_records.OWN_FULL_GCS`, tied by
+  `Ties`), takes the statistics, then reads the log from `log_start` and
+  takes the THIRD `Total live data` line there: `words` is that total and
+  `log_end` the offset just past its line. Not the last total: a full GC
+  the run time sets off by the read itself (counting its buffers) comes
+  after the third own total, and one set off before the own GCs would
+  shift a count from the end. It fails loudly (`Fail`) when the log cannot
+  be read or holds fewer than three totals from `log_start`. The record
+  carries `words`, `log_start`, `log_end` and, report only, `extent`,
+  `size_heap`, `free_full` and `alloc_free`; `alloc` and `gc_share` are
+  recorded and decide comparability (below).
 - The receipt of a storage probe keeps the log (`gclog`, in the compressed
   receipt like `stdout`) and `gclog_sha256`. The shared validator
   (`d.validate`: run and replay) requires the stored log to give the digest
   and `records.validate(..., gclog)` (the one Python parser of the log,
-  `gc_log_totals` and `check_gc_log`, which documents the line format)
-  requires every `live` record's `words` to equal the last full-GC total of
-  its slice of the log, at least three in the slice. A process with `live`
-  records and no log is refused, not redrawn.
-- Comparability is the share-pass rule of design 8.9 alone (above): there
-  is no allocation-area condition, no `comparable` field and no settle
-  retry. Graph rows come from `objSize` and are unaffected; only the
-  report-only live readings changed meaning.
+  `gc_log_totals` and `check_gc_log`, which documents the line formats)
+  checks every `live` record's slice `log[log_start:log_end]`: `prev
+  log_end <= log_start < log_end <= len(log)`, line boundaries at both
+  ends, exactly three totals with the last line a total, and `words` the
+  third (else `RecordError`). A slice that is not exactly three `Full GC, 0
+  words required` headers (an RTS full GC, `N > 0`, between `log_start` and
+  the first own GC, or a repeated mark: a Count-error retry) is
+  `NotComparable`, a redraw; that is decided after every record is checked,
+  so a later malformed record is still refused. RTS GCs before `log_start`
+  and any after the third own total are outside the slice. A process with
+  `live` records and no log is refused, not redrawn.
+- Comparability is the share-pass rule of design 8.9 alone (above): equal
+  `alloc` and a non-shrinking `gc_share` decide it. There is no allocation
+  *freshness* condition, no `comparable` field and no settle retry. Only
+  `extent`, `size_heap`, `free_full` and `alloc_free` are report-only. Graph
+  rows come from `objSize` and are unaffected.
 - The placement sentinel of the diagnosis is not adopted: it does not fix
   the hole filling and depends on GC placement internals.
 

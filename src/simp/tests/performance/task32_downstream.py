@@ -1500,7 +1500,7 @@ def execute_unit(ctx, unit, side, label, layout, busy, expected):
     work = Path(ctx["scratch"]) / "out"
     stats_path = work / (label + ".stats")
     out_path = work / (label + ".out")
-    log_path = work / (label + ".gclog") if unit.get("gclog") else None
+    log_path = work / gclog_name(label) if unit.get("gclog") else None
     argv, cwd = unit_argv(unit, root, reporter["uo"], log_path)
     env = unit_env(ctx, unit, reporter["uo"], stats_path, layout, busy,
                    log_path)
@@ -2920,6 +2920,13 @@ def check_probe_sources(report):
             "the %s probe modules are not among the sealed sources" % side)
 
 
+def gclog_name(label):
+    """The file name of a process's GC log in its output area: the one
+    rule of the driver's path (execute_unit) and the replay's check
+    (receipt_gclog)."""
+    return label + ".gclog"
+
+
 def receipt_gclog(unit, receipt, label):
     """The GC log path of a receipt: its environment names one exactly for
     a unit with a GC log, in the process's output area (`<label>.gclog`),
@@ -2930,7 +2937,7 @@ def receipt_gclog(unit, receipt, label):
         require(name not in receipt["env"],
                 "a process without a GC log names one: " + label)
         return None
-    require(isinstance(path, str) and Path(path).name == label + ".gclog"
+    require(isinstance(path, str) and Path(path).name == gclog_name(label)
             and Path(path).parent.name == "out",
             "wrong GC log path: " + label)
     return path
