@@ -24,6 +24,8 @@ class RevisionGuardTest(unittest.TestCase):
                 "-q", "--allow-empty", "-m", "x")
             head = git("rev-parse", "HEAD").strip()
             require_revisions(head, repo=temp)
+            blob = git("rev-parse", "HEAD^{tree}").strip()
+            require_revisions(blob, repo=temp)  # a non-commit object
             with self.assertRaises(unittest.SkipTest):
                 require_revisions("0" * 40, repo=temp)
 

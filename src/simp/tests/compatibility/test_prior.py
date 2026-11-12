@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import prior_contracts as prior
 import coverage_ledger as coverage
+import task10_relocation as relocation
 from run_paired import BASE, InvalidRun, require, require_revisions
 from source_manifest import START
 
@@ -82,7 +83,7 @@ class PriorTests(unittest.TestCase):
 class LedgerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        require_revisions(BASE, START)
+        require_revisions(BASE, START, *relocation.pinned_revisions())
         cls.ledger = coverage.receipt(HERE / "coverage-ledger.json.gz")
 
     def test_source_binding(self):

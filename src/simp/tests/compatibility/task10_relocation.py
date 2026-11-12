@@ -23,6 +23,17 @@ def load():
     return task26_relocation.apply(json.loads(SUPPLEMENT.read_text()))
 
 
+def pinned_revisions():
+    """Every revision the relocation records read, taken from the data."""
+    import task26_relocation
+    revisions = {r["old_revision"] for r in
+                 json.loads(SUPPLEMENT.read_text())["sources"].values()
+                 if "old_revision" in r}
+    revisions.add(json.loads(
+        task26_relocation.SUPPLEMENT.read_text())["baseline"])
+    return sorted(revisions)
+
+
 def historical_source(path, record):
     data = git(REPO, "show", record["old_revision"] + ":" + path)
     require({"sha256": digest(data), "bytes": len(data)} == record["old"],

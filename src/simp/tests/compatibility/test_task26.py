@@ -83,7 +83,7 @@ def printed_vector_sizes(sml):
 class PhysicalTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        require_revisions(BASE)
+        require_revisions(BASE, *typed.pinned_revisions())
 
     def test_exact_move_and_original(self):
         original = json.loads(typed.SUPPLEMENT.read_text())

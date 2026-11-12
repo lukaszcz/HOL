@@ -11,7 +11,7 @@ from source_manifest import START
 class RelocationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        require_revisions(BASE, START)
+        require_revisions(BASE, START, *relocation.pinned_revisions())
         cls.ledger = coverage.receipt(relocation.LEDGER)
         cls.supplement = relocation.load()
 
