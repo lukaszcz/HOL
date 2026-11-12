@@ -133,6 +133,9 @@ class TraversalHarnessTests(unittest.TestCase):
         output = self.repo / "must-not-exist"
         result = subprocess.run(
             [sys.executable, "-B", str(Path(runner.__file__)),
+             "--candidate", "HEAD",
+             "--candidate-signature", "pass",
+             "--candidate-behavior", "baseline",
              "--traversal-performance", "--output", str(output)],
             capture_output=True, text=True)
         self.assertEqual(result.returncode, 2)

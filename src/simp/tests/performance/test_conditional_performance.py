@@ -151,8 +151,11 @@ class ConditionalHarnessTests(unittest.TestCase):
                                 "--performance-pairs", "1"],
                                "not allowed with argument")):
             result = subprocess.run(
-                [sys.executable, "-B", script, *flags,
-                 "--output", str(output)],
+                [sys.executable, "-B", script,
+                 "--candidate", "HEAD",
+                 "--candidate-signature", "pass",
+                 "--candidate-behavior", "baseline",
+                 *flags, "--output", str(output)],
                 capture_output=True, text=True)
             self.assertEqual(result.returncode, 2)
             self.assertIn(reason, result.stderr)
