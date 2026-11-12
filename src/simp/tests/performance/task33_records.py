@@ -863,7 +863,7 @@ def check_comparable(release, records, summary):
                     "the residual bound %s is under %s" % (
                         name, summary["residual"][name], HALF))
         summary["residual_bound"][name] = bound
-        held_bound = hs != as_
+        held_bound = hs > as_
         summary["held_bound"][name] = held_bound
         summary["held_comparable"][name] = (
             live[name + ".held"]["comparable"] and ha == aa and hs >= as_

@@ -467,10 +467,16 @@ def r1_kind(base, cand, kind, case="R1"):
     floor = noop_floor(procs)
     rb = [p["residual"][kind] for p in base]
     rc = [p["residual"][kind] for p in cand]
+    # the validator's invariant; a violation is a ValueError, which the
+    # storage driver turns into a refusal (`refusing`)
     for p in procs:
         if p["residual_bound"][kind] and p["residual"][kind] < records.HALF:
             raise ValueError("%s: a residual bound under 1/2 was admitted"
                              % kind)
+        if p["held_bound"][kind] and p["held_comparable"][kind] and \
+                p["held"][kind] < records.H_MIN:
+            raise ValueError("%s: a held bound under %d was admitted as "
+                             "comparable" % (kind, records.H_MIN))
     detail = dict(floor=[num(x) for x in floor],
                   floor_range=num(spread(floor)),
                   residual=dict(base=[num(x) for x in rb],

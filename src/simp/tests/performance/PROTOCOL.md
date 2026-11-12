@@ -3658,10 +3658,11 @@ R1 release rule. The `release` probe warms up once, then per kind reads live
 words (after three full GCs) before, creates and discards M objects, reads
 again (`after`), and holds M objects alive (`held`). Residual = (after -
 before) / M words per object; held size h = (held - after) / M. The leading
-kind `noop` (`FLOOR_KIND`, defined once in `T33.sml` and
-`task33_records.py`) is the in-process noise floor; `T33_LEAK` does not
-retain its objects. Comparisons use exact fractions,
-no rounding. The kinds are `simpset`, `conversion`, `tactic`,
+kind `noop` is the in-process noise floor, the floor kind: defined in
+`T33.sml` (`T33.floor_kind`), mirrored by `task33_records.FLOOR_KIND` and
+tied by `Ties.test_kinds`; `T33_LEAK` does not retain its objects.
+Comparisons use exact fractions, no rounding. The kinds are `simpset`,
+`conversion`, `tactic`,
 `traversedata`, `exclusion`, `removed` and `cong`, plus the `weak` row
 (`RuntimeMetrics.release`: a weak reference to a discarded simpset must be
 collected).
@@ -3692,7 +3693,9 @@ collected).
   (`held_bound`) >= `H_MIN`. `HALF` and `H_MIN` are defined once, in
   `task33_records.py`, and used by validator and rules. An admitted bound is
   >= 1/2, so a candidate bound fails and a baseline bound is inconclusive
-  (never a pass); the spread checks are never reached with a bound. The rows
+  (never a pass); the spread checks are never reached with a bound. The
+  pilot sizes M from the exact residuals only (a bound is recorded in
+  `bounds`; a kind with no exact residual refuses the pilot). The rows
   show `residual_bound` and `held_bound` (E2 (b) included). Run and replay
   share the validator, so replay re-derives the same summaries. Any other
   process without a comparable reading is `NotComparable`: a redraw, never a
@@ -3929,9 +3932,10 @@ the chain is replayed (the report must be the attempt's own, with the seal its
 
 Process redraws (storage stages). A process whose output is well formed but
 whose readings cannot be compared (`NotComparable`: a non-fresh allocation
-area, differing `alloc` or a share-pass residual bound under 1/2 (or on
-`noop`) in one release kind, no comparable
-`held` reading in a group, a probe that did not converge, an anchor that
+area, differing `alloc`, a shrinking `gc_share` or a share-pass residual
+bound under 1/2 (or on `noop`) in one release kind, no comparable
+`held` reading in a group (a held bound under `H_MIN` is not comparable),
+a probe that did not converge, an anchor that
 moved in one process) is not a measurement: it is rerun at the same position
 of the plan (up to `MAX_REDRAWS` = 3 tries after the first), the rejected try
 stays in the archive as `superseded`, and `dispose` lists it in
@@ -3943,8 +3947,8 @@ candidate and a refusal on the baseline. A control group (`unit+switch`) is
 redrawn like its unit, so a missing `held` reading in `release+leak` is
 redrawn, not read as an undetected control. Distinguish these from R-1 redraws
 (an attempt) and from outcomes: `NotComparable` redraws never produce a
-pass, fail or held row; h under 20 or an uncollected baseline weak probe is
-blocked, not redrawn. Anchor movement is diagnosed once (`objSize` per
+pass, fail or held row; an exact h under 20 or an uncollected baseline weak
+probe is blocked, not redrawn. Anchor movement is diagnosed once (`objSize` per
 anchor component around a move) and the cause is written in the handoff.
 
 ### Run recipe and order

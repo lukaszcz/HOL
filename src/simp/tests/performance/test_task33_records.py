@@ -190,10 +190,13 @@ def reading(run, kind, which, words, share=None, alloc=None):
 
 
 def release_run(m=4, **switches):
+    """The floor kind does not leak, as in the probe (T33_LEAK)."""
+    leak = 1 if switches.get("leak") else 0
     return ([head("release", "release", dict(m=m), **switches),
              live("release", "release", "start")] +
-            release_rows("release", "release", r.RELEASE_KINDS, m,
-                         1 if switches.get("leak") else 0) +
+            release_rows("release", "release", (r.FLOOR_KIND,), m) +
+            release_rows("release", "release", r.RELEASE_KINDS[1:], m,
+                         leak) +
             [rec("weak", "release", "release",
                  scope="controlled-simpset-ref-closure", retained=True,
                  collected=True, full_gcs=4, status="pass"),
@@ -837,6 +840,12 @@ class ShareBounds(unittest.TestCase):
                                     5000 + 5 * self.M)))
         self.assertTrue(s["held_comparable"]["simpset"])
 
+    def test_a_shrinking_held_count_is_neither_comparable_nor_a_bound(self):
+        run = self.run_of(before=2, after=2, held=1)
+        s = r.validate(text(run))
+        self.assertFalse(s["held_comparable"]["simpset"])
+        self.assertFalse(s["held_bound"]["simpset"])
+
     def test_the_thresholds_have_one_definition(self):
         import task33_rules as rules
         self.assertEqual((r.HALF, r.H_MIN), (Fraction(1, 2), 20))
@@ -966,7 +975,7 @@ class Controls(unittest.TestCase):
     def test_leak_in_release_rows(self):
         s = r.validate(text(release_run(4, leak=True)), controls=("leak",))
         self.assertEqual(s["residual"]["tactic"], 1)
-        self.assertEqual(s["residual"]["noop"], 1)
+        self.assertEqual(s["residual"]["noop"], 0)
         clean = r.validate(text(release_run(4)))
         self.assertEqual(clean["residual"]["tactic"], 0)
 
@@ -1280,14 +1289,15 @@ class Ties(unittest.TestCase):
     def test_kinds(self):
         body = self.src("T33Release.sml")
         kinds = body[body.index("val kinds"):body.index("val m =")]
-        named = lambda x: r.FLOOR_KIND if x == "T33.floor_kind" else x
+        floor = r'(?:T33|C)\.floor_kind'
+        named = lambda x: r.FLOOR_KIND if re.fullmatch(floor, x) else \
+            x.strip('"')
         got = [named(a or b) for a, b in re.findall(
-            r'\(("[\w]+"|T33\.floor_kind), fn|conv_kind "(\w+)"', kinds)]
-        got = [x.strip('"') for x in got]
+            r'\(("\w+"|%s), fn|conv_kind "(\w+)"' % floor, kinds)]
         self.assertEqual(tuple(got), r.RELEASE_KINDS)
         ext = self.src("T33ExtUse.ML")
-        got = [named(x).strip('"') for x in re.findall(
-            r'\(("(?:ext_)?\w+"|T33\.floor_kind), fn', ext)]
+        got = [named(x) for x in re.findall(
+            r'\(("(?:ext_)?\w+"|%s), fn' % floor, ext)]
         self.assertEqual(tuple(got), r.EXT_RELEASE_KINDS)
         self.assertIn('val floor_kind = "%s"' % r.FLOOR_KIND,
                       self.src("T33.sml"))

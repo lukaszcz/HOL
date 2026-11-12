@@ -69,15 +69,8 @@ class WorldS(t33.World33):
     @staticmethod
     def release(m, sw):
         """A release run; a leaked kind keeps every discarded object, but
-        the no-op kind has nothing to keep."""
-        run = rt.release_run(m, **sw)
-        if not sw.get("leak"):
-            return run
-        first = rt.find(run, "live", phase="noop.before")
-        last = rt.find(run, "release", release="noop")
-        run[first:last + 1] = rt.release_rows("release", "release",
-                                              ("noop",), m)
-        return run
+        the no-op kind has nothing to keep (`rt.release_run`)."""
+        return rt.release_run(m, **sw)
 
     def output(self, unit, root, probe_dir, differ=False):
         if unit["name"] not in cases33.NAMES:
@@ -293,24 +286,34 @@ def release_of(m=M, noop_leak=0, leak=False):
     return summ(run, ("leak",) if leak else ())
 
 
-def live_leak_run(m=M, per_object=300, quiet=()):
+def share_pass(run, kind, per_object=Fraction(1, 2)):
+    """`run` with a GC share pass (gc_share 0 -> 1) between the before and
+    after readings of release kind `kind`, which retains `per_object`
+    words per object: its residual is a share-pass bound."""
+    m = run[rt.find(run, "probe")]["params"]["m"]
+    words = int(per_object * m)
+    run = rt.reading(run, kind, "after", 5000 + words, share=1)
+    return rt.reading(run, kind, "held", 5000 + words + 600 * m, share=1)
+
+
+def live_leak_run(m=M, per_object=300):
     """The release run of the leak control as measured live: the floor kind
     does not leak (exact, 0), every other kind retains `per_object` words
     per object, and Poly/ML's GC share passes fall between readings
     (simpset, ...: after 0, held 1; removed: before 4, after 5), so the
-    residuals are share-pass bounds. `quiet` kinds have no passes."""
-    run = rt.release_run(m, leak=True)
-    i, j = rt.find(run, "live", phase="noop.before"), rt.find(
-        run, "release", release="noop")
-    run[i:j + 1] = rt.release_rows("release", "release", ("noop",), m)
+    residuals of `removed` are share-pass bounds."""
+    run = rt.release_run(m, leak=True)  # the floor kind does not leak
     for k in rules.ORDINARY_RELEASE:
         after = 5000 + per_object * m
-        passes = (0, 0, 0) if k in quiet else (
-            (4, 5, 5) if k == "removed" else (0, 0, 1))
+        passes = (4, 5, 5) if k == "removed" else (0, 0, 1)
         run = rt.reading(run, k, "before", 5000, share=passes[0])
         run = rt.reading(run, k, "after", after, share=passes[1])
         run = rt.reading(run, k, "held", after + 600 * m, share=passes[2])
     return run
+
+
+def release_of_run(m=M):
+    return rt.release_run(m)
 
 
 class ShareBoundRules(unittest.TestCase):
@@ -358,20 +361,27 @@ class ShareBoundRules(unittest.TestCase):
         self.assertEqual(out["controls"]["leak"]["decisions"]["removed"],
                          "fail")
 
-    def test_a_baseline_bound_of_half_is_inconclusive_not_a_pass(self):
-        base = [summ(live_leak_run(per_object=1), ("leak",))] * 3
-        cand = [release_of()] * 3
-        for k in ("simpset", "removed"):
-            r = rules.r1_kind(base, cand, k)
-            self.assertEqual((r["decision"], r["owed"]),
-                             ("inconclusive", "followup"), (k, r["reason"]))
+    def test_a_candidate_bound_of_exactly_half_fails(self):
+        run = share_pass(release_of_run(), "simpset")
+        s = summ(run)
+        self.assertTrue(s["residual_bound"]["simpset"])
+        self.assertEqual(s["residual"]["simpset"], Fraction(1, 2))
+        r = rules.r1_kind([release_of()] * 3, [s] * 3, "simpset")
+        self.assertEqual(r["decision"], "fail", r["reason"])
+        self.assertEqual(r["residual_bound"]["cand"], [True] * 3)
 
-    def test_a_bound_is_never_judged_stable(self):
-        # a candidate bound at exactly 1/2 fails; it is not a spread test
-        cand = [summ(live_leak_run(per_object=2, quiet=("simpset",)),
-                     ("leak",))] * 3
-        self.assertEqual(rules.r1_kind([release_of()] * 3, cand,
-                                       "removed")["decision"], "fail")
+    def test_a_baseline_bound_of_exactly_half_is_inconclusive(self):
+        s = summ(share_pass(release_of_run(), "simpset"))
+        r = rules.r1_kind([s] * 3, [release_of()] * 3, "simpset")
+        self.assertEqual((r["decision"], r["owed"]),
+                         ("inconclusive", "followup"), r["reason"])
+        self.assertEqual(r["residual_bound"]["base"], [True] * 3)
+
+    def test_a_baseline_bound_is_never_a_pass(self):
+        base = [summ(live_leak_run(per_object=1), ("leak",))] * 3
+        for k in ("simpset", "removed"):
+            r = rules.r1_kind(base, [release_of()] * 3, k)
+            self.assertNotEqual(r["decision"], "pass", (k, r["reason"]))
 
     def test_an_inadmissible_bound_is_refused_by_the_rule(self):
         run = release_of()
@@ -379,6 +389,20 @@ class ShareBoundRules(unittest.TestCase):
                                             simpset=True))
         with self.assertRaises(ValueError):
             rules.r1_kind([run], [bad], "simpset")
+        held = dict(run, held_bound=dict(run["held_bound"], simpset=True),
+                    held=dict(run["held"], simpset=Fraction(5)))
+        with self.assertRaises(ValueError):
+            rules.r1_kind([run], [held], "simpset")
+
+    def test_an_inadmissible_bound_is_a_refusal_in_a_decision(self):
+        run = release_of()
+        bad = dict(run, residual_bound=dict(run["residual_bound"],
+                                            simpset=True))
+        with self.assertRaises(dw.Refusal):
+            st.refusing(rules.r1_rows, [run], [bad])
+        with self.assertRaises(dw.Refusal):
+            st.refusing(rules.e2b, [dict(ext_of(), residual_bound=dict(
+                ext_of()["residual_bound"], ext_views=True))])
 
 
 class R1(unittest.TestCase):
@@ -578,6 +602,21 @@ class E(unittest.TestCase):
         r = rules.e2b([ext_of()] * 3)
         self.assertEqual((r["case"], r["kind"], r["decision"]),
                          ("E2", "b", "pass"), r["reason"])
+
+    def test_e2b_fails_on_an_extension_share_pass_bound(self):
+        run = share_pass(rt.ext_run(M, SIZES), "ext_views")
+        s = summ(run)
+        self.assertTrue(s["residual_bound"]["ext_views"])
+        r = rules.e2b([s] * 3)
+        self.assertEqual(r["decision"], "fail", r["reason"])
+        self.assertEqual(r["kinds"]["ext_views"]["residual_bound"]["cand"],
+                         [True] * 3)
+        self.assertEqual(r["kinds"]["ext_tracked"]["decision"], "pass")
+
+    def test_the_extension_floor_must_be_exact(self):
+        run = share_pass(rt.ext_run(M, SIZES), records.FLOOR_KIND)
+        with self.assertRaisesRegex(records.NotComparable, "floor"):
+            summ(run)
 
     def test_e2b_rows_show_the_bounds(self):
         r = rules.e2b([ext_of()] * 3)
@@ -1474,6 +1513,31 @@ class Controls34(Chain34):
         run[i:j + 1] = rt.release_rows("release", "release", ("noop",), m,
                                        self.noise // m)
         return run
+
+    def test_a_bound_is_left_out_of_the_pilot_noise(self):
+        self.stage("smoke", "smoke")
+        calls = []
+
+        def one_bound(run):
+            calls.append(1)
+            if len(calls) == 1:
+                return share_pass(run, "simpset", 300)
+            return run
+        self.world.edits["release", "base"] = one_bound
+        out = self.pilot()["outcome"]
+        self.assertEqual(out["bounds"], dict(simpset=1))
+        self.assertEqual(out["noise_words"]["simpset"], 0)
+        self.assertEqual(out["required_m"], M)
+
+    def test_a_kind_with_only_bounds_refuses_the_pilot(self):
+        self.stage("smoke", "smoke")
+        self.world.edits["release", "base"] = lambda run: share_pass(
+            run, "simpset", 300)
+        args, report = self.run_stage("pilot", "pilot", sizes=SIZES, m0=M,
+                                      smoke=self.world.tmp / "smoke")
+        self.assertFalse(report["success"])
+        self.assertIn("simpset", report["failure"])
+        self.assertIn("cannot be sized", report["failure"])
 
     def test_the_pilot_records_noise_and_the_clamped_m(self):
         self.stage("smoke", "smoke")

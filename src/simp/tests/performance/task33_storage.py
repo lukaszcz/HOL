@@ -643,22 +643,35 @@ def pilot_outcome(report, groups):
                                      for p in graph])
                      for n in graph[0]["graph"][g]) for g in
               rules.GRAPH_GATED}
-    noise = {}
+    # The noise is the range of the exact residuals only: a share-pass
+    # lower bound is not a reading of the noise (task33_records, "Release
+    # readings and share passes"). A kind with no exact residual in the
+    # group cannot be sized.
+    noise, bounds = {}, {}
     for kind in records.RELEASE_KINDS:
-        raw = [p["release"][kind]["after"] - p["release"][kind]["before"]
-               for p in release]
-        noise[kind] = max(raw) - min(raw)
+        exact = [p["release"][kind]["after"] - p["release"][kind]["before"]
+                 for p in release if not p["residual_bound"][kind]]
+        require(exact, "the pilot's release processes have only GC "
+                "share-pass bounds for %s: its noise cannot be sized" %
+                kind)
+        noise[kind] = max(exact) - min(exact)
+        count = sum(p["residual_bound"][kind] for p in release)
+        if count:
+            bounds[kind] = count
     worst = max(noise.values())
     m0 = report["params"]["m"]
     required = max(m0, math.ceil(Fraction(worst) / rules.RESOLUTION))
     cost = object_cpu(release, m0)
     ext_cost = report["smoke"]["object_cpu"]
     cap = cap_of(cost, ext_cost, m0)
-    # reported only; a value may be a share-pass lower bound (`held_bound`)
-    held = {k: rules.num(min(p["held"][k] for p in release))
-            for k in rules.ORDINARY_RELEASE}
+    # reported only: the least held size over the comparable readings (a
+    # share-pass lower bound >= H_MIN counts), None when there is none
+    held = {}
+    for k in rules.ORDINARY_RELEASE:
+        seen = [p["held"][k] for p in release if p["held_comparable"][k]]
+        held[k] = rules.num(min(seen)) if seen else None
     return dict(
-        graph_repeatable=repeat, noise_words=noise, m0=m0,
+        graph_repeatable=repeat, noise_words=noise, bounds=bounds, m0=m0,
         required_m=required, m=min(cap, required), m_cap=cap,
         capped=required > cap, budget_s=RELEASE_BUDGET_S, object_cpu=cost,
         ext_object_cpu=ext_cost,
@@ -695,6 +708,15 @@ def control_outcome(report, loaded, groups):
     return dict(controls=found, negative_control=dict(
         decision=rules.FAIL if detected else rules.PASS, detected=detected,
         expected=rules.FAIL))
+
+
+def refusing(rule, *args):
+    """`rule(*args)`, a violated invariant of the rules (a ValueError: an
+    inadmissible share-pass bound reached R1) as a refusal."""
+    try:
+        return rule(*args)
+    except ValueError as error:
+        raise d.Refusal(str(error))
 
 
 def decide(report, groups, paired):
@@ -734,10 +756,10 @@ def decide(report, groups, paired):
             found += [rules.s1_kind(base, cand, g, paired)
                       for g in rules.GRAPH_GATED]
         elif name == RELEASE:
-            found += rules.r1_rows(base, cand)
+            found += refusing(rules.r1_rows, base, cand)
         elif name == EXT:
             found.append(rules.e1_ext(cand))
-            found.append(rules.e2b(cand))
+            found.append(refusing(rules.e2b, cand))
             ordinary = groups.get(GRAPH, {}).get("cand")
             if ordinary:
                 found.append(rules.e2a(cand, ordinary, paired))

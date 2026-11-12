@@ -1,7 +1,7 @@
 (* Probe: R1, residual live words of discarded ordinary objects.  T33_M
    cycles per kind after one warm cycle, then M objects held; the weak
    probe of RuntimeMetrics (unchanged) runs once at the end.  T33_LEAK
-   keeps every discarded object (a control). *)
+   keeps every discarded object except the floor kind's (a control). *)
 open HolKernel boolLib simpLib
 
 fun rules tag i = List.tabulate (4, fn j => let
