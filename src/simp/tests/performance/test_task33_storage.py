@@ -10,6 +10,7 @@ import copy
 from fractions import Fraction
 import io
 import json
+import math
 from pathlib import Path
 import shutil
 import sys
@@ -79,9 +80,13 @@ class WorldS(t33.World33):
         return run
 
     def output(self, unit, root, probe_dir, differ=False):
-        raise AssertionError("storage units are played by `launch`")
+        if unit["name"] not in cases33.NAMES:
+            raise AssertionError("storage units are played by `launch`")
+        return t33.World33.output(unit, root, probe_dir, differ)
 
     def launch(self, argv, cwd, env, timeout, out_path, fds=()):
+        if argv[-1] == cases33.PROBE:  # a loading (timing) unit
+            return super().launch(argv, cwd, env, timeout, out_path, fds)
         side = "cand" if str(self.roots["cand"]) in argv[0] else "base"
         name = self.unit_name(argv[-1], env)
         run = self.records_of(name, env, side)
@@ -125,7 +130,8 @@ class WorldS(t33.World33):
                modules=None):
         out = super().probes(root, folder, env, timeout, fds, sealed,
                              modules)
-        out["modules"] = list(modules or [])
+        if modules is not None:  # a storage stage; the loading driver's
+            out["modules"] = list(modules)  # own are the base world's
         return out
 
 
@@ -150,7 +156,7 @@ class Base34(t33.Base33):
             output=w.tmp / name, scratch=w.tmp / "scratch", timeout=60,
             verify_argv=[sys.executable, "-c", "pass"], no_verify=False,
             authorize_measurements=True, only=[], sizes=SIZES, m=M,
-            m0=M, pilot=None, first=None, stage=None, ledger=None,
+            m0=M, smoke=None, pilot=None, first=None, stage=None, ledger=None,
             followup_counts=None, timing_followup_counts=None,
             storage_followup_counts=None)
         values.update(extra)
@@ -676,7 +682,11 @@ class Chain34(Base34):
         t32.git(w.repo, "add", str(path.relative_to(w.repo)))
         t32.git(w.repo, "commit", "-q", "-m", "counts " + path.name)
 
+    real_timing_counts = None  # set by a test that ran the timing chain
+
     def timing_counts(self):
+        if self.real_timing_counts:
+            return self.real_timing_counts
         w = self.world
         sides, mseal = dw.pins_of(self.args("x"))
         path = w.repo / "src/simp/tests/performance/task33_counts.json"
@@ -696,7 +706,8 @@ class Chain34(Base34):
 
     def info_stages(self):
         _, smoke = self.stage("smoke", "smoke")
-        _, pilot = self.stage("pilot", "pilot", sizes=SIZES, m0=M)
+        _, pilot = self.stage("pilot", "pilot", sizes=SIZES, m0=M,
+                              smoke=self.world.tmp / "smoke")
         _, control = self.stage("control", "control",
                                 pilot=self.world.tmp / "pilot")
         return smoke, pilot, control
@@ -852,6 +863,49 @@ class Stages(Chain34):
         with self.assertRaisesRegex(dw.Refusal, "owed"):
             st.extend_spec(ext)
 
+    def test_a_contingency_stage_decides_only_the_rows_owed_it(self):
+        self.prepared()
+        self.once("graph", "cand", lambda run: grow(run, "fragment", 100))
+        a, first = self.decide()
+        ext = self.args("second", storage_counts=a.storage_counts,
+                        timing_counts=a.timing_counts,
+                        first=Path(first["output"]))
+        spec = st.extend_spec(ext)
+        self.assertEqual(spec["decides"], ["E2:a", "S1:fragment"])
+        report = st.run(ext, spec)
+        self.assertEqual(report["decides"], ["E2:a", "S1:fragment"])
+        # the stage ran the ext and graph processes, but E1, E2 (b), the
+        # other S1 kinds ... keep the run's decision
+        self.assertEqual(sorted(report["outcome"]["results"]),
+                         ["E2:a", "S1:fragment"])
+        chain = st.replay_chain(report["output"], counts=a.storage_counts,
+                                timing_counts=a.timing_counts)
+        final = st.final_rows(chain)
+        for key in ("E1:ext", "E2:b", "S1:merge", "S1:compiled"):
+            self.assertEqual(final[key]["stage"], "run", key)
+        for key in ("E2:a", "S1:fragment"):
+            self.assertEqual(final[key]["stage"], "extend", key)
+
+    def test_the_replay_refuses_a_stage_that_decides_other_rows(self):
+        self.prepared()
+        self.once("graph", "cand", lambda run: grow(run, "fragment", 100))
+        a, first = self.decide()
+        ext = self.args("second", storage_counts=a.storage_counts,
+                        timing_counts=a.timing_counts,
+                        first=Path(first["output"]))
+        report = st.run(ext, st.extend_spec(ext))
+        path = Path(report["output"]) / "downstream.json"
+        saved = path.read_text()
+        data = json.loads(saved)
+        data["decides"] = None  # decide everything
+        path.write_text(dw.dumps(data))
+        with self.assertRaises(dw.Refusal):
+            st.replay_chain(report["output"], counts=a.storage_counts,
+                            timing_counts=a.timing_counts)
+        path.write_text(saved)
+        st.replay_chain(report["output"], counts=a.storage_counts,
+                        timing_counts=a.timing_counts)
+
     def followup_data(self, leak, **patched):
         self.prepared()
         self.world.edits["release", "cand"] = lambda run: noop_leak(
@@ -872,7 +926,8 @@ class Stages(Chain34):
         self.assertEqual(data["followup"]["m"], 32)
         self.assertFalse(data["capped"])
         self.assertEqual(data["m_cap"], st.cap_of(
-            data["object_cpu"], data["m0"], st.FOLLOWUP_FACTOR))
+            data["object_cpu"], data["ext_object_cpu"], data["m0"],
+            st.FOLLOWUP_FACTOR))
 
     def test_a_small_floor_range_still_quadruples_m(self):
         data, first = self.followup_data(1)
@@ -884,7 +939,7 @@ class Stages(Chain34):
             self.assertTrue(data["capped"])
             self.assertEqual(data["followup"]["m"], data["m_cap"])
             self.assertEqual(data["m_cap"], st.cap_of(
-                data["object_cpu"], data["m0"], 4))
+                data["object_cpu"], data["ext_object_cpu"], data["m0"], 4))
             st.check_sizing(data)
             data["followup"]["m"] += 1
             with self.assertRaisesRegex(dw.Refusal, "disagree"):
@@ -973,20 +1028,10 @@ class Redraws(Chain34):
         self.assertEqual(len(self.tries(report, "release", "cand")),
                          st.MAX_REDRAWS + 1)
 
-    def test_a_not_comparable_held_reading_alone_is_accepted(self):
-        run = held_incomparable(rt.release_run(M))
-        s = summ(run)
+    def test_a_group_without_a_comparable_held_reading_is_redrawn(self):
+        s = summ(held_incomparable(rt.release_run(M)))
         self.assertFalse(s["held_comparable"]["simpset"])
         self.assertTrue(s["held_comparable"]["noop"])
-        self.once("release", "cand", held_incomparable)
-        args, report = self.run_stage("smoke", "smoke")
-        self.assertTrue(report["success"], report.get("failure"))
-        # one process in the group has no comparable held reading of the
-        # kind: the group is redrawn (below), not the reading refused
-        self.assertEqual([e["redraw"] for e in self.tries(
-            report, "release", "cand")], [0, 1])
-
-    def test_a_group_without_a_comparable_held_reading_is_redrawn(self):
         self.once("release", "cand", held_incomparable)
         args, report = self.run_stage("smoke", "smoke")
         self.assertTrue(report["success"], report.get("failure"))
@@ -996,8 +1041,34 @@ class Redraws(Chain34):
         self.assertTrue(first["accepted"] and again["accepted"])
         self.assertEqual(self.tries(report, "release", "base")[0][
             "superseded"], None)
-        self.replayed(report, argparse.Namespace(storage_counts=None)) \
-            if False else st.replay_chain(report["output"])
+        st.replay_chain(report["output"])
+
+    def test_a_control_group_is_redrawn_like_its_unit(self):
+        """`release+leak` gets the held-gap redraw of `release`: without
+        it a gap would read as an undetected control."""
+        self.assertEqual(st.release_kinds("release+leak"),
+                         st.release_kinds("release"))
+        self.assertEqual(st.release_kinds("ext+ordinary"),
+                         st.release_kinds("ext"))
+        self.assertEqual(st.release_kinds("graph+graph_extra"), ())
+        calls = []
+
+        def three(run):  # no comparable held reading in the first three
+            calls.append(1)
+            return held_incomparable(run) if len(calls) <= 3 else run
+        self.world.edits["release+leak", "base"] = three
+        self.stage("smoke", "smoke")
+        self.stage("pilot", "pilot", sizes=SIZES, m0=M,
+                   smoke=self.world.tmp / "smoke")
+        args, report = self.run_stage("control", "control",
+                                      pilot=self.world.tmp / "pilot")
+        self.assertTrue(report["success"], report.get("failure"))
+        runs = self.tries(report, "release+leak", "base")
+        self.assertEqual([(e["pair"], e["redraw"]) for e in runs],
+                         [(0, 0), (1, 0), (2, 0), (2, 1)])
+        self.assertIn("no comparable held reading", runs[2]["superseded"])
+        self.assertTrue(report["outcome"]["negative_control"]["detected"])
+        st.replay_chain(report["output"])
 
     def test_a_held_gap_that_persists_is_a_refusal(self):
         self.world.edits["release", "cand"] = held_incomparable
@@ -1007,7 +1078,9 @@ class Redraws(Chain34):
         self.assertEqual(len(self.tries(report, "release", "cand")),
                          st.MAX_REDRAWS + 1)
 
-    def test_a_comparable_process_of_the_group_covers_the_gap(self):
+    def test_a_not_comparable_held_reading_alone_is_accepted(self):
+        """With a comparable reading elsewhere in the group the process is
+        a measurement as it is, not redrawn."""
         self.prepared()
         self.once("release", "cand", held_incomparable)
         a, report = self.decide()
@@ -1105,7 +1178,8 @@ def inert(run):
 
 class Controls34(Chain34):
     def pilot(self, name="pilot", m0=M):
-        return self.stage(name, "pilot", sizes=SIZES, m0=m0)[1]
+        return self.stage(name, "pilot", sizes=SIZES, m0=m0,
+                          smoke=self.world.tmp / "smoke")[1]
 
     def test_every_control_is_detected_at_the_decision_configuration(self):
         _, smoke = self.stage("smoke", "smoke")
@@ -1184,13 +1258,40 @@ class Controls34(Chain34):
         self.assertEqual(spec["params"]["m"], out["m_cap"])
 
     def test_the_cap_is_the_budget_over_the_cpu_per_object(self):
-        with mock.patch.object(st, "RELEASE_BUDGET_S", 600):
-            self.assertEqual(st.cap_of(0.5, 4), 1200)
-            self.assertEqual(st.cap_of(0.5, 4, 4), 4800)
-            self.assertEqual(st.cap_of(1000, 7), 7)  # never under M0
+        with mock.patch.object(st, "RELEASE_BUDGET_S", 100):
+            self.assertEqual(st.cap_of(0.5, 0.5, 4), 200)
+            self.assertEqual(st.cap_of(0.5, 0.5, 4, 4), 800)
+            self.assertEqual(st.cap_of(1000, 1000, 7), 7)  # never under M0
+            # the dearer of the release and the extension process caps
+            self.assertEqual(st.cap_of(0.5, 1.0, 4), 100)
+            self.assertEqual(st.cap_of(1.0, 0.5, 4), 100)
         procs = [dict(usage=dict(utime=2.0, stime=0.0))] * 3
         self.assertEqual(st.object_cpu(procs, 10), 2.0 / (
             10 * len(records.RELEASE_KINDS)))
+
+    def test_the_extension_process_caps_m_as_well(self):
+        self.stage("smoke", "smoke")
+        with mock.patch.object(st, "RELEASE_BUDGET_S", 100):
+            out = self.pilot()["outcome"]
+        ext_cap = math.floor(Fraction(100) / Fraction(out["ext_object_cpu"]))
+        release_cap = math.floor(Fraction(100) / Fraction(
+            out["object_cpu"]))
+        self.assertLess(ext_cap, release_cap)  # 6 kinds against 8
+        self.assertEqual(out["m_cap"], ext_cap)
+
+    def test_the_followup_budget_must_fit_the_process_timeout(self):
+        st.check_budget()
+        self.assertEqual(st.RELEASE_BUDGET_S, 60)
+        self.assertLess(st.FOLLOWUP_FACTOR * st.RELEASE_BUDGET_S,
+                        dw.TIMEOUT)
+        with mock.patch.object(st, "RELEASE_BUDGET_S",
+                               dw.TIMEOUT // st.FOLLOWUP_FACTOR):
+            for call in (st.check_budget, lambda: st.cap_of(1, 1, 4)):
+                with self.assertRaisesRegex(dw.Refusal,
+                                            "under the process timeout"):
+                    call()
+        with self.assertRaisesRegex(dw.Refusal, "timeout"):
+            st.check_budget(st.FOLLOWUP_FACTOR * st.RELEASE_BUDGET_S)
 
     def world_noise(self, run):
         """A release run whose no-op floor moves by a million words."""
@@ -1203,10 +1304,14 @@ class Controls34(Chain34):
         return run
 
     def test_the_pilot_records_noise_and_the_clamped_m(self):
+        self.stage("smoke", "smoke")
         pilot = self.pilot()
         out = pilot["outcome"]
         self.assertNotIn("covered", out)
-        self.assertEqual(out["m_cap"], st.cap_of(out["object_cpu"], M))
+        self.assertEqual(out["m_cap"], st.cap_of(
+            out["object_cpu"], out["ext_object_cpu"], M))
+        self.assertEqual(out["ext_object_cpu"], st.ext_object_cpu(
+            acc.load(self.world.tmp / "smoke" / "downstream.json")))
         self.assertEqual(out["budget_s"], st.RELEASE_BUDGET_S)
         self.assertEqual(out["m"], M)
         self.assertEqual(out["required_m"], M)
@@ -1538,12 +1643,18 @@ class DisposeSnapshots(unittest.TestCase):
         path.unlink()
         self.refused("0 disposition.json")
 
-    def test_a_disposition_that_still_owes_something_is_refused(self):
+    def test_a_disposition_that_still_owes_a_stage_is_refused(self):
         t = self.tree
-        t.disposition(owed=[dict(kind="simpset")])
-        self.refused("still owes")
+        t.disposition(owed=[dict(case="R1", kind="simpset",
+                                 owed="followup")])
+        self.refused("still owes: .*R1 simpset")
+
+    def test_attribution_flags_are_a_handoff_duty_not_a_condition(self):
+        t = self.tree
         t.disposition(attribution_needed=[dict(unit="load-simpLib")])
-        self.refused("still owes")
+        self.assertEqual(dispose.sealed_disposition(t.evidence)["path"],
+                         str(t.evidence / "disposition.json"))
+        self.assertEqual(dispose.dispose_snapshots(t.args()), 0)
 
     def test_a_disposition_of_another_schema_is_refused(self):
         self.tree.disposition(schema="other")
@@ -1624,9 +1735,17 @@ class Joining(unittest.TestCase):
                                       dict(stage="second")])})
         got = dispose.timing_decisions(None, disp)
         self.assertEqual([(x["case"], x["kind"], x["decision"],
-                           x["source"]) for x in got], [
-            ("L4", "first-use", "inconclusive", "timing:second"),
-            ("L4", "load-simpLib", "pass", "timing:first")])
+                           x["source"], x["owed"]) for x in got], [
+            ("L4", "first-use", "inconclusive", "timing:second",
+             "followup"),
+            ("L4", "load-simpLib", "pass", "timing:first", None)])
+
+    def test_a_blocked_timing_row_owes_nothing(self):
+        disp = dict(workloads={"first-use": dict(
+            status="blocked", note="inconclusive after the follow-up",
+            stages=[dict(stage="first"), dict(stage="followup")])})
+        (got,) = dispose.timing_decisions(None, disp)
+        self.assertEqual((got["decision"], got["owed"]), ("blocked", None))
 
     def test_offline_checks_of_combined_cases_are_decided_in_each(self):
         found = {"audit": (offline_report("audit", [
@@ -1686,14 +1805,62 @@ class Joining(unittest.TestCase):
         self.assertEqual(by[("E2", "u")], "reported")
         self.assertNotIn(("times", "graph"), by)
 
-    def test_rows_owed_or_inconclusive_close_as_blocked(self):
-        for decision, owed in (("pass", "extend"), ("inconclusive", None),
-                               ("inconclusive", "followup")):
-            r = rules.row("S1", "fragment", decision, "why", owed)
-            self.assertEqual(dispose.closed(r), "blocked")
-        for decision in ("pass", "fail"):
-            self.assertEqual(dispose.closed(rules.row(
-                "S1", "fragment", decision, "why")), decision)
+    def settled(self, *stages):
+        """settled_rows of a chain of (stage, row) pairs."""
+        return st.settled_rows([dict(stage=name, report=dict(
+            attempt=name, outcome=dict(results={
+                rules.key_of(r["case"], r["kind"]): r for r in rows})))
+            for name, rows in stages])
+
+    def test_a_row_is_owed_only_while_its_stage_may_still_run(self):
+        row = lambda owed: rules.row("S1", "fragment", "inconclusive",
+                                     "why", owed)
+        for owed in ("extend", "followup"):
+            got = self.settled(("run", [row(owed)]))["S1:fragment"]
+            self.assertEqual((got["decision"], got["owed"]),
+                             ("inconclusive", owed))
+            # the stage ran and the row is still owed it: blocked
+            got = self.settled(("run", [row(owed)]),
+                               (owed, [row(owed)]))["S1:fragment"]
+            self.assertEqual((got["decision"], got["owed"]),
+                             ("blocked", None))
+            self.assertIn("last allowed stage", got["reason"])
+        # the other stage may still run
+        got = self.settled(("run", [row("followup")]),
+                           ("extend", [row("followup")]))["S1:fragment"]
+        self.assertEqual((got["decision"], got["owed"]),
+                         ("inconclusive", "followup"))
+
+    def test_an_inconclusive_row_with_no_stage_to_come_is_blocked(self):
+        got = self.settled(("run", [rules.row(
+            "S1", "fragment", "inconclusive", "why")]))["S1:fragment"]
+        self.assertEqual((got["decision"], got["owed"]), ("blocked", None))
+
+    def test_a_row_that_decided_owes_nothing(self):
+        for decision in ("pass", "fail", "blocked"):
+            got = self.settled(("run", [rules.row(
+                "S1", "fragment", decision, "why", "extend")]))
+            self.assertEqual(
+                (got["S1:fragment"]["decision"],
+                 got["S1:fragment"]["owed"]), (decision, None))
+
+    def test_e2b_with_a_blocked_part_owes_no_follow_up(self):
+        def kinds(*decisions):
+            rows = [rules.row("E2", k, d, "w") for k, d in zip(
+                rules.EXT_RELEASE, decisions)]
+            with mock.patch.object(rules, "r1_kind", side_effect=rows):
+                return rules.e2b([])
+        n = len(rules.EXT_RELEASE)
+        inconclusive = ["inconclusive"] * n
+        for mixed, want, owed in (
+                (["blocked"] + inconclusive[1:], "blocked", None),
+                (["fail"] + inconclusive[1:], "fail", None),
+                (inconclusive, "inconclusive", "followup"),
+                (["pass"] + inconclusive[1:], "inconclusive", "followup"),
+                (["pass"] * n, "pass", None)):
+            got = kinds(*mixed)
+            self.assertEqual((got["decision"], got["owed"]), (want, owed),
+                             mixed)
 
     def test_the_units_an_owed_row_needs(self):
         row = lambda case, kind: rules.row(case, kind, "inconclusive", "w")
@@ -1722,8 +1889,10 @@ class Joining(unittest.TestCase):
 class Disposition(Chain34):
     install = Audit.install
 
-    def stages(self):
+    def stages(self, edit=None):
         self.prepared()
+        if edit:
+            edit()
         a, first = self.decide()
         self.assertTrue(first["success"], first.get("failure"))
         self.install()
@@ -1736,6 +1905,16 @@ class Disposition(Chain34):
     intervals = dict(wall=[0.9, 1.0], cpu=[0.9, 1.0], gc_cpu=[0.9, 1.0],
                      maxrss=[0.9, 1.0])
 
+    def dispose_args(self, stages, a, out="disposition.json", **extra):
+        w = self.world
+        return argparse.Namespace(**dict(dict(
+            stage=[Path(r["output"]) for r in stages],
+            timing_stage=w.tmp / "timing", offline=self.offline_files(),
+            repo=w.repo, ledger=None, timing_counts=a.timing_counts,
+            storage_counts=a.storage_counts, timing_followup_counts=None,
+            storage_followup_counts=None, relocated=[],
+            manifest=w.manifest, out=w.tmp / out), **extra))
+
     def dispose(self, stages, a, first, out="disposition.json", **extra):
         w = self.world
         timing = [dict(report=dict(
@@ -1744,13 +1923,7 @@ class Disposition(Chain34):
         disp = dict(workloads={"load-simpLib": dict(
             status="pass", note="", stages=[dict(
                 stage="first", intervals=self.intervals)])})
-        args = argparse.Namespace(**dict(dict(
-            stage=[Path(r["output"]) for r in stages],
-            timing_stage=w.tmp / "timing", offline=self.offline_files(),
-            repo=w.repo, ledger=None, timing_counts=a.timing_counts,
-            storage_counts=a.storage_counts, timing_followup_counts=None,
-            storage_followup_counts=None, relocated=[],
-            out=w.tmp / out), **extra))
+        args = self.dispose_args(stages, a, out, **extra)
         with mock.patch.object(dw, "replay_chain", lambda *x: timing), \
                 mock.patch.object(dw, "disposition",
                                   lambda *x: disp), \
@@ -1821,31 +1994,117 @@ class Disposition(Chain34):
         self.assertEqual(data["schema"], dispose.SCHEMA)
         self.assertEqual(data["owed"], [])
 
-    def test_an_owed_row_after_the_last_stage_is_blocked(self):
-        self.prepared()
-        self.once("graph", "cand", lambda run: grow(run, "fragment", 100))
-        a, first = self.decide()
-        code, out = self.dispose([first], a, first)
-        data = json.loads(out.read_text())
-        self.assertEqual(code, 2)
-        got = {(x["case"], x["kind"]): x for x in data["decisions"]}
-        row = got[("S1", "fragment")]
-        self.assertEqual(row["decision"], "blocked")
-        self.assertEqual(row["owed"], "extend")
-        self.assertIn("after the last stage", row["reason"])
-        self.assertIn(("S1", "fragment"), [(x["case"], x["kind"])
-                                           for x in data["owed"]])
-
-    def test_an_inconclusive_row_after_the_last_stage_is_blocked(self):
+    def followup_chain(self):
+        """A run whose no-op floor is unresolved (R1 owes a follow-up),
+        then the follow-up, which is still unresolved (the edit stays)."""
         self.prepared()
         self.world.edits["release", "cand"] = noop_leak
         a, first = self.decide()
-        self.assertEqual(first["outcome"]["results"]["R1:simpset"][
+        pre = self.args("pre2", storage_counts=a.storage_counts,
+                        timing_counts=a.timing_counts,
+                        stage=Path(first["output"]))
+        out = self.world.repo / "src/simp/tests/performance/" \
+            "task33_storage_followup_counts.json"
+        out.write_text(dw.dumps(st.predeclare_followup(pre)))
+        self.commit(out)
+        fu = self.args("third", storage_counts=a.storage_counts,
+                       followup_counts=out, timing_counts=a.timing_counts,
+                       stage=Path(first["output"]))
+        report = st.run(fu, st.followup_spec(fu))
+        self.assertTrue(report["success"], report.get("failure"))
+        return a, first, report, out
+
+    def test_an_owed_row_is_owed_while_its_stage_may_still_run(self):
+        a, first, audit = self.stages(lambda: self.once(
+            "graph", "cand", lambda run: grow(run, "fragment", 100)))
+        code, out = self.dispose([first, audit], a, first)
+        data = json.loads(out.read_text())
+        self.assertEqual((code, data["status"]), (2, "inconclusive"))
+        got = {(x["case"], x["kind"]): x for x in data["decisions"]}
+        row = got[("S1", "fragment")]
+        self.assertEqual((row["decision"], row["owed"]),
+                         ("inconclusive", "extend"))
+        self.assertEqual(
+            sorted((x["case"], x["kind"], x["owed"]) for x in data["owed"]),
+            [("E2", "a", "extend"), ("S1", "fragment", "extend")])
+        with self.assertRaisesRegex(dw.Refusal, "still owes.*S1 fragment"):
+            dispose.sealed_disposition(self.world.tmp)
+
+    def test_the_extend_stage_settles_the_rows_it_was_owed(self):
+        self.prepared()
+        self.once("graph", "cand", lambda run: grow(run, "fragment", 100))
+        a, first = self.decide()
+        ext = self.args("second", storage_counts=a.storage_counts,
+                        timing_counts=a.timing_counts,
+                        first=Path(first["output"]))
+        report = st.run(ext, st.extend_spec(ext))
+        self.assertTrue(report["success"], report.get("failure"))
+        code, out = self.dispose([report], a, first)
+        data = json.loads(out.read_text())
+        self.assertEqual(data["owed"], [])
+        got = {(x["case"], x["kind"]): x["decision"]
+               for x in data["decisions"]}
+        self.assertEqual(got[("S1", "fragment")], "pass")
+
+    def test_disposal_after_an_inconclusive_followup(self):
+        """The row the follow-up could not resolve is blocked and owes
+        nothing, so the snapshots may be disposed of."""
+        a, first, report, out = self.followup_chain()
+        self.assertEqual(report["outcome"]["results"]["R1:simpset"][
             "decision"], "inconclusive")
+        self.assertEqual(report["outcome"]["results"]["R1:simpset"][
+            "owed"], "followup")
+        code, disposition = self.dispose([report], a, first,
+                                         storage_followup_counts=out)
+        data = json.loads(disposition.read_text())
+        row = [x for x in data["decisions"]
+               if (x["case"], x["kind"]) == ("R1", "simpset")][0]
+        self.assertEqual((row["decision"], row["owed"]), ("blocked", None))
+        self.assertIn("last allowed stage", row["reason"])
+        self.assertEqual((code, data["owed"]), (2, []))
+        self.assertEqual(dispose.sealed_disposition(self.world.tmp)["path"],
+                         str(disposition))
+
+    def test_a_followup_decides_only_the_rows_owed_it(self):
+        a, first, report, out = self.followup_chain()
+        owed = st.owed_keys(st.replay_chain(
+            first["output"], counts=a.storage_counts,
+            timing_counts=a.timing_counts), "followup")
+        self.assertEqual(report["decides"], owed)
+        self.assertEqual(set(report["outcome"]["results"]), set(owed))
+        self.assertLess(set(owed), set(first["outcome"]["results"]))
+
+    def test_the_timing_follow_up_is_owed_until_it_has_run(self):
+        self.prepared()
+        a, first = self.decide()
+        disp = dict(workloads={"load-simpLib": dict(
+            status="followup", note="owed", stages=[dict(
+                stage="first", intervals=self.intervals)])})
+        timing = [dict(report=dict(
+            repo=str(self.world.repo), base=first["base"],
+            cand=first["cand"], key=first["key"],
+            manifest=first["manifest"]), stage="first")]
+        args = self.dispose_args([first], a)
+        with mock.patch.object(dw, "replay_chain", lambda *x: timing), \
+                mock.patch.object(dw, "disposition", lambda *x: disp), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(dispose.dispose(args), 2)
+        data = json.loads(args.out.read_text())
+        self.assertEqual([(x["case"], x["kind"], x["owed"])
+                          for x in data["owed"]],
+                         [("L4", "load-simpLib", "followup")])
+        with self.assertRaisesRegex(dw.Refusal, "still owes.*L4"):
+            dispose.sealed_disposition(self.world.tmp)
+
+    def test_attribution_flags_do_not_stop_the_disposal(self):
+        self.prepared()
+        a, first = self.decide()
+        self.intervals = dict(self.intervals, gc_cpu=[1.1, 1.3])
         code, out = self.dispose([first], a, first)
-        got = {(x["case"], x["kind"]): x["decision"] for x in
-               json.loads(out.read_text())["decisions"]}
-        self.assertEqual(got[("R1", "simpset")], "blocked")
+        data = json.loads(out.read_text())
+        self.assertTrue(data["attribution_needed"])
+        self.assertEqual(data["owed"], [])
+        dispose.sealed_disposition(self.world.tmp)
 
     def test_a_second_deciding_attempt_is_a_branch(self):
         """The driver refuses a second judged draw itself; the disposition
@@ -1898,6 +2157,60 @@ class Disposition(Chain34):
                 if x.get("source") == "timing"]
         self.assertEqual([(x["unit"], x["field"]) for x in mine],
                          [("load-simpLib", "gc_cpu")])
+
+    def test_a_missing_offline_report_is_a_refusal_not_a_key_error(self):
+        a, first, audit = self.stages()
+        files = [f for f in self.offline_files() if f.stem != "audit"]
+        with mock.patch.object(Disposition, "offline_files",
+                               lambda self: files):
+            with self.assertRaisesRegex(dw.Refusal, "no audit report"):
+                self.dispose([first, audit], a, first)
+
+    def real_timing(self):
+        """The timing chain through the loading driver itself (smoke,
+        pilot, control, predeclare, first stage) on this world's fake
+        processes; sets `real_timing_counts`."""
+        w = self.world
+        for mode, extra in (("smoke", {}), ("pilot", {}), ("control", dict(
+                pilot=w.tmp / "tpilot"))):
+            args, spec = w.info("t" + mode, mode, **extra)
+            run = dw.run_stage(args, spec)
+            self.assertTrue(run["success"], run.get("failure"))
+        counts = dw.predeclare_first(w.args(
+            "x", pilot=w.tmp / "tpilot", smoke=w.tmp / "tsmoke",
+            control=w.tmp / "tcontrol"))
+        path = w.repo / "src/simp/tests/performance/task33_counts.json"
+        path.write_text(dw.dumps(counts))
+        self.commit(path)
+        args = w.args("tfirst", counts=path)
+        first = dw.run_stage(args, dw.first_spec(args))
+        self.assertTrue(first["success"], first.get("failure"))
+        self.real_timing_counts = path
+        return first
+
+    def test_the_real_timing_replay_and_disposition_on_a_small_archive(self):
+        """No mock of `replay_chain` or `disposition`: the timing archive
+        is the loading driver's own stage."""
+        timing = self.real_timing()
+        self.prepared()
+        a, first = self.decide()
+        w = self.world
+        args = self.dispose_args([first], a, timing_stage=w.tmp / "tfirst")
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = dispose.dispose(args)
+        data = json.loads(args.out.read_text())
+        self.assertEqual(code, {"pass": 0, "fail": 1}.get(data["status"], 2))
+        self.assertEqual(sorted(data["timing"]["workloads"]),
+                         sorted(cases33.NAMES))
+        self.assertEqual(data["timing"]["chain"][0]["attempt"],
+                         timing["attempt"])
+        l4 = {x["kind"]: x for x in data["decisions"] if x["case"] == "L4"}
+        self.assertEqual(sorted(l4), sorted(cases33.NAMES))
+        for name, row in data["timing"]["workloads"].items():
+            self.assertEqual(l4[name]["decision"],
+                             dispose.TIMING[row["status"]])
+            self.assertEqual(l4[name]["owed"], "followup" if
+                             row["status"] == "followup" else None)
 
     def test_the_offline_reports_must_be_the_ones_the_counts_bound(self):
         a, first, audit = self.stages()
@@ -2049,12 +2362,97 @@ class Cli(Chain34):
         self.assertEqual(report["heap_bytes"], want)
         self.assertEqual(report["outcome"]["reported"]["heap_bytes"], want)
 
+    def edit_report(self, report, change):
+        path = Path(report["output"]) / "downstream.json"
+        data = json.loads(path.read_text())
+        change(data)
+        path.write_text(dw.dumps(data))
+
+    def test_replay_checks_the_heap_bytes_against_the_sealed_manifest(self):
+        a, report = self.go()
+        self.replayed(report, a)
+        saved = Path(report["output"], "downstream.json").read_text()
+
+        def bump(data):
+            sizes = data["heap_bytes"]["base"]
+            sizes[sorted(sizes)[0]] += 1
+            data["outcome"]["reported"]["heap_bytes"] = data["heap_bytes"]
+        self.edit_report(report, bump)
+        with self.assertRaisesRegex(dw.Refusal, "heap bytes"):
+            self.replayed(report, a)
+        Path(report["output"], "downstream.json").write_text(saved)
+        # the manifest must be the sealed one: a copy is, a change is not
+        w = self.world
+        copy_ = w.tmp / "moved-manifest.json"
+        copy_.write_text(w.manifest.read_text())
+        st.replay_chain(report["output"], counts=a.storage_counts,
+                        timing_counts=a.timing_counts, manifest=copy_)
+        copy_.write_text(copy_.read_text() + " ")
+        with self.assertRaisesRegex(dw.Refusal, "not the one the stage "
+                                    "used"):
+            st.replay_chain(report["output"], counts=a.storage_counts,
+                            timing_counts=a.timing_counts, manifest=copy_)
+
     def test_a_heap_the_manifest_does_not_list_refuses(self):
         report = dict(units={"u": dict(heap="bin/hol.state9")})
         manifest = dict(sides={s: dict(products={}) for s in
                                ("base", "cand")})
         with self.assertRaisesRegex(dw.Refusal, "lists no"):
             st.heap_bytes(report, manifest)
+
+    def other_declaration(self):
+        path = self.world.tmp / "declared-other.json"
+        path.write_text(offline.DECLARED.read_text() + " ")
+        return mock.patch.object(offline, "DECLARED", path)
+
+    def test_the_information_runs_record_the_declaration_seal(self):
+        self.info_stages()
+        for mode in ("smoke", "pilot", "control"):
+            report = acc.load(self.world.tmp / mode / "downstream.json")
+            self.assertEqual(report["declared"],
+                             acc.seal(offline.DECLARED), mode)
+
+    def test_predeclare_refuses_a_declaration_changed_after_a_run(self):
+        self.info_stages()
+        counts = self.timing_counts()
+        args = self.args("pre", timing_counts=counts,
+                         smoke=self.world.tmp / "smoke",
+                         pilot=self.world.tmp / "pilot",
+                         control=self.world.tmp / "control",
+                         offline=self.offline_files())
+        with self.other_declaration():
+            for mode in ("smoke", "pilot", "control"):
+                with self.subTest(mode):
+                    with self.assertRaisesRegex(
+                            dw.Refusal, "declaration changed since the "
+                            "%s run" % mode):
+                        st.replay_one(self.world.tmp / mode)
+            with self.assertRaisesRegex(dw.Refusal, "declaration changed"):
+                st.predeclare_run(args)
+        self.assertEqual(st.predeclare_run(args)["declared"],
+                         acc.seal(offline.DECLARED))
+
+    def test_the_pilot_must_be_sized_from_the_smoke_predeclared(self):
+        self.info_stages()
+        self.stage("smoke2", "smoke")
+        counts = self.timing_counts()
+        args = self.args("pre", timing_counts=counts,
+                         smoke=self.world.tmp / "smoke2",
+                         pilot=self.world.tmp / "pilot",
+                         control=self.world.tmp / "control",
+                         offline=self.offline_files())
+        with self.assertRaisesRegex(dw.Refusal, "another smoke"):
+            st.predeclare_run(args)
+
+    def test_the_counts_record_and_check_the_extension_cost(self):
+        self.info_stages()
+        _, data, out = self.predeclare()
+        self.assertEqual(data["ext_object_cpu"], st.ext_object_cpu(
+            acc.load(self.world.tmp / "smoke" / "downstream.json")))
+        st.check_sizing(data)
+        data["ext_object_cpu"] *= 1000
+        with self.assertRaisesRegex(dw.Refusal, "disagree"):
+            st.check_sizing(data)
 
     def test_predeclare_refuses_uncommitted_timing_counts(self):
         self.info_stages()
@@ -2077,7 +2475,8 @@ class Cli(Chain34):
              report["outcome"]["capped"]), (M, M, False))
         _, data, out = self.predeclare()
         self.assertEqual((data["required_m"], data["capped"]), (M, False))
-        self.assertEqual(data["m_cap"], st.cap_of(data["object_cpu"], M))
+        self.assertEqual(data["m_cap"], st.cap_of(
+            data["object_cpu"], data["ext_object_cpu"], M))
         self.assertEqual(data["budget_s"], st.RELEASE_BUDGET_S)
         self.assertEqual(data["timing_counts"]["seal"], acc.seal(
             self.world.repo / "src/simp/tests/performance/"

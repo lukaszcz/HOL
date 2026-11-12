@@ -6,15 +6,17 @@
                      S3 offline reports (audit, harvest, archive; their
                      seals, schemas and code seals verified) and the
                      storage stages' decisions, one decision per case id
-                     and kind. Pass only if every gate passes; a row still
-                     owed or inconclusive after the last allowed stage is
-                     blocked; the reported items, the process redraws and
-                     the attributions still owed are listed. The file is
-                     sealed (disposition.json.seal).
+                     and kind. Pass only if every gate passes; a row is
+                     owed only while its contingency stage (extend, follow-
+                     up) may still run, and an inconclusive row with no
+                     stage left is blocked; the reported items, the process
+                     redraws and the attributions still needed (a handoff
+                     duty) are listed. The file is sealed
+                     (disposition.json.seal).
   dispose-snapshots  after the last use: verify the snapshots, check that
                      the harvest and the api-audit receipt are sealed under
                      the evidence directory and that a sealed
-                     disposition.json owes nothing, write an intent journal
+                     disposition.json owes no stage, write an intent journal
                      (snapshot-disposal.intent.json; a repeated command
                      resumes it), remove exactly the paths the snapshot
                      manifest names (the two roots, their HOMEs, the
@@ -82,12 +84,14 @@ def expected_storage():
 
 def timing_decisions(chain, disp):
     """L4 decisions: one per timing kind, from the disposition's rows
-    (pass, fail, followup owed, blocked)."""
+    (pass, fail, blocked, or followup: inconclusive and owed the timing
+    follow-up, which the timing driver classifies blocked once it ran)."""
     out = []
     for unit, row in sorted(disp["workloads"].items()):
         out.append(decision(
             "L4", unit, TIMING[row["status"]], "timing:" + row["stages"][
-                -1]["stage"], row["note"] or "", stages=row["stages"]))
+                -1]["stage"], row["note"] or "", stages=row["stages"],
+            owed="followup" if row["status"] == "followup" else None))
     return out
 
 
@@ -163,21 +167,14 @@ def reported_rows(chains):
     return found
 
 
-def closed(r):
-    """The status of a gated row once no stage is left: a row still owed
-    a contingency or inconclusive is blocked (the TASK32 convention)."""
-    if r["owed"] or r["decision"] == rules.INCONCLUSIVE:
-        return rules.BLOCKED
-    return r["decision"]
-
-
 def storage_decisions(chains):
-    """The decision of every (case, kind): the last stage that decided it;
+    """The decision of every (case, kind): the last stage that decided it,
+    owed only while its stage may still run (`storage.settled_rows`);
     missing ones are blocked. Also the reported items per stage."""
     rows = {}
     reported = {}
     for chain in chains:
-        for key, r in storage.final_rows(chain).items():
+        for key, r in storage.settled_rows(chain).items():
             rows[key] = r
         for entry in chain:
             for k, v in entry["report"]["outcome"].get("reported",
@@ -199,15 +196,11 @@ def storage_decisions(chains):
                                 "no evidence: the stage that decided it "
                                 "did not run"))
             continue
-        status = closed(r)
-        out.append(decision(case, kind, status, "storage:" + r["stage"],
-                            r["reason"] if status == r["decision"] else
-                            "%s: still %s after the last stage%s" % (
-                                r["reason"], r["decision"], " (owed %s)" %
-                                r["owed"] if r["owed"] else ""),
+        out.append(decision(case, kind, r["decision"],
+                            "storage:" + r["stage"], r["reason"],
                             owed=r["owed"], attempt=r["attempt"]))
     for key, r in sorted(rows.items()):  # decided, not expected: listed
-        out.append(decision(r["case"], r["kind"], closed(r),
+        out.append(decision(r["case"], r["kind"], r["decision"],
                             "storage:" + r["stage"], r["reason"],
                             owed=r["owed"], attempt=r["attempt"]))
     for key, r in sorted(side_rows.items()):  # reported, unsupported
@@ -246,9 +239,12 @@ def timing_attribution(disp):
 
 
 def check_offline_identity(found, args):
-    """The offline reports given are the ones the storage counts were
-    predeclared with."""
+    """The offline reports given are exactly the ones the storage counts
+    were predeclared with."""
     counts = a.load(storage.storage_counts_path(args))
+    absent = [c for c in OFFLINE if c not in found]
+    d.require(not absent, "no %s report among --offline (the storage "
+              "counts bound one of each)" % ", ".join(absent))
     for command in OFFLINE:
         d.require(found[command][1]["seal"] ==
                   counts["offline"][command]["seal"],
@@ -317,8 +313,8 @@ def dispose(args):
             timing_chain, ledger, args.timing_counts, shares[d.TABLE])
         storage_chains = [storage.replay_chain(
             s, args.ledger, args.repo, args.storage_counts,
-            args.storage_followup_counts, args.timing_counts)
-            for s in args.stage]
+            args.storage_followup_counts, args.timing_counts,
+            args.manifest) for s in args.stage]
         same_gate([timing_chain] + storage_chains)
         check_linear(storage_chains, ledger)
         loading_ledger = table_ledger(ledger, d.TABLE, shares[d.TABLE])
@@ -406,8 +402,9 @@ def sealed_evidence(evidence):
 
 def sealed_disposition(evidence):
     """The one disposition.json under `evidence`, sealed, a disposition of
-    this schema that owes nothing (no row owed, no attribution still
-    needed): {path, seal}."""
+    this schema that owes nothing (no row owed a stage that may still run;
+    the attributions it lists are a handoff duty, not a condition):
+    {path, seal}."""
     found = sorted(Path(evidence).rglob("disposition.json"))
     d.require(len(found) == 1, "%d disposition.json under %s, not one" %
               (len(found), evidence))
@@ -416,10 +413,9 @@ def sealed_disposition(evidence):
               "the disposition seal differs")
     data = a.load(path)
     d.require(data.get("schema") == SCHEMA, "not a %s file" % SCHEMA)
-    d.require(not data["owed"] and not data["attribution_needed"],
-              "the disposition still owes: %s" % (
-                  [x["kind"] for x in data["owed"]] +
-                  [x["unit"] for x in data["attribution_needed"]],))
+    d.require(not data["owed"], "the disposition still owes: %s" % (
+        ["%s %s (%s)" % (x["case"], x["kind"], x["owed"])
+         for x in data["owed"]],))
     return dict(path=str(path), seal=a.seal(path))
 
 

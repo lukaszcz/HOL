@@ -9,8 +9,9 @@ probes of task33/ on the two TASK32 snapshots, and the commands around them.
   pilot      base only: 3 `graph` and 3 `release` processes at the decision
              sizes and a pilot M0: repeatability and the noise that sizes M
              (required M, clamped to the cap RELEASE_BUDGET_S gives over
-             the pilot's CPU per object: `required`/`capped`); information
-             run
+             the CPU per object of the pilot's release processes and of the
+             smoke's extension process: `required`/`capped`); information
+             run, sized from a smoke (--smoke)
   control    the negative controls at the decision configuration (sizes and
              M of the pilot): T33_GRAPH_EXTRA, T33_LEAK and T33_HOOK, each
              against its plain unit on the base snapshot, must fail S1, R1
@@ -22,11 +23,11 @@ probes of task33/ on the two TASK32 snapshots, and the commands around them.
              S3 reported, S4 reported unsupported
   extend     the contingency: 10 aligned pairs (`paired_statistics` at zero
              margin) for the units a `run` owes (a value not repeatable
-             within a side)
+             within a side); it decides only the rows owed it
   followup   the contingency: R1 / E2 (b) at a larger M (the greater of
              4 M and M x floor range / resolution, capped by 4 times the
              budget), for the units a stage owes (resolution not reached),
-             counts committed alone
+             counts committed alone; it decides only the rows owed it
   audit      `src/simp/tests/api-audit/run.py` in the candidate snapshot:
              8 PASS, its receipt sealed under the stage's output (the
              execution is the stage's measuring entry, so that a refused
@@ -86,13 +87,17 @@ EXTEND_PAIRS = rules.EXTEND_PAIRS
 SMOKE_SIZES = (0, 1, 10)
 SMOKE_M = 50
 M0 = 200  # the pilot's release size
-# CPU seconds one release process may take at the decision M (design
-# 8.6): the cap on M is this budget over the pilot's CPU per released
-# object (`cap_of`); a follow-up may take FOLLOWUP_FACTOR times as much.
-# A base release process at M0 takes about 0.9 s CPU (measured live, start-up
-# included), so about 0.5 ms per object and kind: the budget allows a cap
-# of about 10^6 objects per kind, far above the sizes that are required
-RELEASE_BUDGET_S = 600
+# CPU seconds one release or extension process may take at the decision M
+# (design 8.6, 8.7): the cap on M is this budget over the larger CPU per
+# released object of the pilot's release processes and of the smoke's
+# extension process (`cap_of`; the start-up counts, so the cost is an upper
+# bound); a follow-up may take FOLLOWUP_FACTOR times as much, which must
+# stay under the process timeout (`check_budget`). The required M assumes
+# that the raw noise in words of a release process does not depend on M
+# (the pilot measures it at M0; the follow-up's scaling by the floor range
+# makes the same assumption); the decision stages check it by the floor
+# (R1 is inconclusive when the floor's range exceeds the resolution).
+RELEASE_BUDGET_S = 60
 FOLLOWUP_FACTOR = 4  # the least growth of M in a follow-up, and its budget
 MAX_REDRAWS = 3  # tries after the first at one position of a plan
 SCRATCH_ROOT = Path("/dev/shm/t33")
@@ -117,6 +122,19 @@ RESOLVED = frozenset((rules.PASS, rules.FAIL))
 
 def require(ok, message):
     d.require(ok, message)
+
+
+def check_budget(timeout=None):
+    """A follow-up's budget must fit in the process timeout, else a capped
+    follow-up process would always time out."""
+    limit = d.TIMEOUT if timeout is None else timeout
+    require(FOLLOWUP_FACTOR * RELEASE_BUDGET_S < limit,
+            "a follow-up's CPU budget (%d x %s s) is not under the process "
+            "timeout (%s s): a capped follow-up process would time out" % (
+                FOLLOWUP_FACTOR, RELEASE_BUDGET_S, limit))
+
+
+check_budget()
 
 
 # ------------------------------------------------------------------ units
@@ -310,9 +328,10 @@ def run_item(ctx, report, entry_item, unit, redraw, references):
 
 
 def release_kinds(name):
-    """The release kinds a unit's `held` readings are needed for."""
+    """The release kinds a unit's `held` readings are needed for (a
+    control, `unit+switch`, those of its unit)."""
     return {RELEASE: rules.ORDINARY_RELEASE,
-            EXT: rules.EXT_RELEASE}.get(name, ())
+            EXT: rules.EXT_RELEASE}.get(name.split("+")[0], ())
 
 
 def held_gap(name, summaries):
@@ -388,6 +407,7 @@ def body(args, spec, report, sides, scratch, fds, verify, journal):
     ctx = d.prepare(args, report, sides, scratch, fds, verify, journal,
                     modules=lambda side: probe_modules(report, side))
     check_lengths(report)
+    report["manifest_file"] = str(Path(args.manifest).resolve())
     report["heap_bytes"] = heap_bytes(report, a.load(args.manifest))
     loaded, finals = [], {}
     for planned, last in zip(report["plan"], last_positions(report["plan"])):
@@ -588,18 +608,30 @@ def object_cpu(procs, m):
         m * len(records.RELEASE_KINDS))
 
 
-def cap_of(cost, m0, factor=1):
-    """The most objects per release kind whose process fits `factor` times
-    RELEASE_BUDGET_S at `cost` CPU seconds per object, never under the
-    pilot's own M0."""
-    return max(m0, math.floor(Fraction(RELEASE_BUDGET_S * factor) /
-                              Fraction(cost)))
+def ext_object_cpu(smoke):
+    """CPU seconds per released object of the smoke's extension process
+    (its one candidate process; the start-up and the graph at the smoke's
+    sizes count: an upper bound)."""
+    cpu = smoke["outcome"]["times"][EXT]["cand"]["cpu"]
+    return cpu / (smoke["params"]["m"] * len(records.EXT_RELEASE_KINDS))
+
+
+def cap_of(cost, ext_cost, m0, factor=1):
+    """The most objects per release kind whose release process (at `cost`
+    CPU seconds per object) and extension process (at `ext_cost`) both fit
+    `factor` times RELEASE_BUDGET_S, never under the pilot's own M0."""
+    check_budget()
+    return max(m0, min(math.floor(Fraction(RELEASE_BUDGET_S * factor) /
+                                  Fraction(c)) for c in (cost, ext_cost)))
 
 
 def pilot_outcome(report, groups):
     """Graph repeatability, the release noise and the M it needs: the
-    required M, clamped to the cap the budget gives (never a refusal over
-    the cap: `required` and `capped` say what the clamp did)."""
+    required M (the noise in words over the resolution, taking the noise
+    as independent of M), clamped to the cap the budget gives (never a
+    refusal over the cap: `required` and `capped` say what the clamp did).
+    The extension process's CPU per object is the smoke's, linked in
+    `report["smoke"]`."""
     graph, release = groups[GRAPH]["base"], groups[RELEASE]["base"]
     repeat = {g: all(rules.constant([p["graph"][g][n]["canon_words"]
                                      for p in graph])
@@ -614,13 +646,15 @@ def pilot_outcome(report, groups):
     m0 = report["params"]["m"]
     required = max(m0, math.ceil(Fraction(worst) / rules.RESOLUTION))
     cost = object_cpu(release, m0)
-    cap = cap_of(cost, m0)
+    ext_cost = report["smoke"]["object_cpu"]
+    cap = cap_of(cost, ext_cost, m0)
     held = {k: rules.num(min(p["held"][k] for p in release))
             for k in rules.ORDINARY_RELEASE}
     return dict(
         graph_repeatable=repeat, noise_words=noise, m0=m0,
         required_m=required, m=min(cap, required), m_cap=cap,
         capped=required > cap, budget_s=RELEASE_BUDGET_S, object_cpu=cost,
+        ext_object_cpu=ext_cost,
         held_per_object=held, resolution=rules.num(rules.RESOLUTION),
         median_wall={u: statistics.median(p["usage"]["wall"] for p in g)
                      for u, g in ((GRAPH, graph), (RELEASE, release))})
@@ -660,8 +694,12 @@ def decide(report, groups, paired):
     """({key: row} of the gated decisions, {key: row} of the reported
     ones) of a decision stage. The stage's units decide their own cases;
     E2 (a) and (c) need the ordinary candidate's `graph` and
-    `registry-state-empty` and are decided where both ran."""
+    `registry-state-empty` and are decided where both ran. A contingency
+    stage decides only the rows its parent owed it (`report["decides"]`:
+    the keys); every other row keeps the parent's decision, however the
+    stage's processes would have decided it."""
     names = report["workloads"]
+    decides = report["decides"]
     declared = offline.load_declared()
     deltas = rules.total_deltas(declared)
 
@@ -704,7 +742,10 @@ def decide(report, groups, paired):
     gated, reported = {}, {}
     for r in found:
         key = rules.key_of(r["case"], r["kind"])
-        (gated if r["decision"] in rules.GATES else reported)[key] = r
+        if r["decision"] not in rules.GATES:
+            reported[key] = r
+        elif decides is None or key in decides:
+            gated[key] = r
     return gated, reported
 
 
@@ -770,7 +811,8 @@ def new_report(mode, stage, spec, repo, sides, mseal, output):
         "plan": plan_for(stage or mode, names, params),
         "references": spec.get("references"), "counts": spec.get("counts"),
         "first_stage": spec.get("first"), "replaces": spec.get("replaces"),
-        "pilot": spec.get("pilot"), "declared": a.seal(offline.DECLARED),
+        "pilot": spec.get("pilot"), "smoke": spec.get("smoke"),
+        "decides": spec.get("decides"), "declared": a.seal(offline.DECLARED),
         "runs": [], "argv": sys.argv, "reporter_seal": d.REPORTER_SEAL,
         "code": d.code_seals()}
 
@@ -932,6 +974,13 @@ def check_audit_entry(folder, report):
             "the audit entry is not the recorded execution")
 
 
+def smoke_link(info, smoke):
+    """What a pilot records of the smoke that sized it: the run and the
+    CPU per object of its extension process."""
+    return dict(attempt=smoke["attempt"], seal=info["seal"],
+                object_cpu=ext_object_cpu(smoke))
+
+
 def decision_params(pilot):
     """The configuration of the decision runs (and of the controls): the
     pilot's sizes and its M, clamped."""
@@ -939,11 +988,24 @@ def decision_params(pilot):
     return dict(sizes=pilot["params"]["sizes"], m=out["m"], k=K)
 
 
+def check_heap_bytes(report, manifest=None):
+    """The saved-state sizes the stage reports are the sealed manifest's:
+    the manifest file (`manifest`, else the one the stage recorded) must be
+    the one whose seal the stage bound, and its products give the bytes."""
+    path = Path(manifest or report["manifest_file"])
+    require(path.is_file() and a.seal(path) == report["manifest"],
+            "the snapshot manifest %s is not the one the stage used" % path)
+    require(report["heap_bytes"] == jsonable(heap_bytes(report,
+                                                        a.load(path))),
+            "the stage's heap bytes are not the sealed manifest's")
+
+
 def replay_one(folder, ledger=None, repo=None, counts=None,
-               timing_counts=None):
+               timing_counts=None, manifest=None):
     """Recompute every observation, check and decision of one finished
     storage stage from its archived receipts (no process runs). Returns
-    (info, report)."""
+    (info, report). `manifest` is the snapshot manifest file when it moved
+    from where the stage recorded it."""
     folder = Path(folder).resolve(strict=True)
     seal = a.seal(folder / "downstream.json")
     report = a.load(folder / "downstream.json")
@@ -958,13 +1020,17 @@ def replay_one(folder, ledger=None, repo=None, counts=None,
             "the reporter or seed changed")
     d.check_code(report["code"])
     require(report["declared"] == a.seal(offline.DECLARED),
-            "the declaration changed since the run")
+            "the declaration changed since the %s run: it is sealed "
+            "before the smoke, the pilot and the controls" % mode)
+    require((report["decides"] is None) ==
+            (mode not in ("extend", "followup")), "malformed run")
     if mode in DECISIVE:
         require(all(report["verify"][k]["exit"] == 0
                     for k in ("before", "after")),
                 "a decision stage ran without the snapshot verification")
     if mode != "audit":
         d.check_probe_sources(report)
+        check_heap_bytes(report, manifest)
         groups = check_plan(report)
         receipts = {e["receipt"]: check_run(folder, report, e)
                     for e in report["runs"]}
@@ -1023,12 +1089,14 @@ def check_timing_seal(data, timing_path=None):
 
 
 def check_sizing(data):
-    """M is what the budget, the pilot's CPU per object and the noise
-    give: min(cap, required), `capped` and, for a follow-up, `required`
+    """M is what the budget, the CPU per object of the release processes
+    and of the extension process, and the noise give: min(cap, required),
+    `capped` and, for a follow-up, `required`
     from the base M and the floor range of the rows that owe it."""
     kind = data["kind"]
     factor = 1 if kind == "run" else FOLLOWUP_FACTOR
-    cap = cap_of(data["object_cpu"], data["m0"], factor)
+    cap = cap_of(data["object_cpu"], data["ext_object_cpu"], data["m0"],
+                 factor)
     required = data["required_m"]
     if kind == "followup":
         required = max(FOLLOWUP_FACTOR * data["base_m"], math.ceil(
@@ -1049,7 +1117,7 @@ def parents(report):
 
 
 def replay_chain(folder, ledger=None, repo=None, counts=None,
-                 followup_counts=None, timing_counts=None):
+                 followup_counts=None, timing_counts=None, manifest=None):
     """The stage chain ending in `folder`: [{stage, report, info, folder}].
     A contingency stage (extend, followup) names its parent run, which is
     replayed and tied to it (same gate, manifest, units owed)."""
@@ -1057,14 +1125,14 @@ def replay_chain(folder, ledger=None, repo=None, counts=None,
     stage = a.load(folder / "downstream.json")["stage"]
     info, report = replay_one(folder, ledger, repo, followup_counts if
                               stage == "followup" else counts,
-                              timing_counts)
+                              timing_counts, manifest)
     here = dict(stage=report["stage"], report=report, info=info,
                 folder=folder)
     link = parents(report)
     if link is None:
         return [here]
     parent = replay_chain(link["run"], ledger, repo, counts,
-                          followup_counts, timing_counts)
+                          followup_counts, timing_counts, manifest)
     last = parent[-1]
     require(a.seal(Path(link["run"]) / "downstream.json") == link["seal"]
             and link["attempt"] == last["report"]["attempt"],
@@ -1078,6 +1146,8 @@ def replay_chain(folder, ledger=None, repo=None, counts=None,
     owed = owed_units(parent, kind)
     require(owed and report["workloads"] == owed, "the %s stage is not of "
             "the units owed: %s" % (report["stage"], owed))
+    require(report["decides"] == owed_keys(parent, kind), "the %s stage "
+            "does not decide exactly the rows owed it" % report["stage"])
     return parent + [here]
 
 
@@ -1092,10 +1162,40 @@ def final_rows(chain):
     return found
 
 
+def allowed(chain, kind):
+    """A contingency stage ("extend", "followup") may still follow the
+    chain: each is run once."""
+    return all(e["stage"] != kind for e in chain)
+
+
+def settled_rows(chain):
+    """{key: row} after the chain (`final_rows`) with the stages still to
+    come taken into account: a row is owed (inconclusive, `owed` the
+    stage) only while that stage is allowed; an inconclusive row owed no
+    allowed stage is blocked (the TASK32 convention); every other row owes
+    nothing."""
+    out = {}
+    for key, r in final_rows(chain).items():
+        if r["decision"] != rules.INCONCLUSIVE:
+            r = dict(r, owed=None)
+        elif not (r["owed"] and allowed(chain, r["owed"])):
+            r = dict(r, decision=rules.BLOCKED, owed=None, reason=(
+                "%s: still inconclusive after the last allowed stage%s" % (
+                    r["reason"], " (%s ran)" % r["owed"] if r["owed"]
+                    else "")))
+        out[key] = r
+    return out
+
+
 def owed_rows(chain, kind):
-    """The rows owed `kind` ("extend" or "followup") after the chain, by
-    the stages that decide them last."""
-    return [r for r in final_rows(chain).values() if r["owed"] == kind]
+    """The rows owed `kind` ("extend" or "followup") after the chain."""
+    return [r for r in settled_rows(chain).values() if r["owed"] == kind]
+
+
+def owed_keys(chain, kind):
+    """The keys of the rows owed `kind`: what that stage decides."""
+    return sorted(rules.key_of(r["case"], r["kind"])
+                  for r in owed_rows(chain, kind))
 
 
 def owed_units(chain, kind):
@@ -1188,6 +1288,8 @@ def predeclare_run(args):
                                  list(PILOT_UNITS), args.ledger, mseal)
     smoke_info, smoke = info_run(args.smoke, key, "smoke", list(UNITS),
                                  args.ledger, mseal)
+    require(pilot["smoke"] == smoke_link(smoke_info, smoke),
+            "the pilot was sized from another smoke")
     control_info, control = info_run(args.control, key, "control",
                                      control_names(), args.ledger, mseal)
     out = pilot["outcome"]
@@ -1222,7 +1324,9 @@ def predeclare_run(args):
         "seeds": SEEDS, "decision": decision, "m0": out["m0"],
         "required_m": out["required_m"], "m_cap": out["m_cap"],
         "capped": out["capped"], "budget_s": out["budget_s"],
-        "object_cpu": out["object_cpu"], "resolution": out["resolution"],
+        "object_cpu": out["object_cpu"],
+        "ext_object_cpu": out["ext_object_cpu"],
+        "resolution": out["resolution"],
         "contingencies": dict(
             extend=dict(pairs=EXTEND_PAIRS, rule="paired_statistics at "
                         "zero margin, for a unit whose value is not "
@@ -1265,7 +1369,7 @@ def predeclare_followup(args):
         args.repo, mseal, timing_path, committed=False)
     chain = replay_chain(args.stage, args.ledger, args.repo,
                          args.storage_counts, args.followup_counts,
-                         args.timing_counts)
+                         args.timing_counts, args.manifest)
     owed = owed_units(chain, "followup")
     require(owed, "no unit is owed a follow-up")
     first = chain[0]["report"]
@@ -1273,14 +1377,15 @@ def predeclare_followup(args):
     floor = max(floor_range_of(r) for r in owed_rows(chain, "followup"))
     required = max(FOLLOWUP_FACTOR * base_m,
                    math.ceil(base_m * floor / rules.RESOLUTION))
-    cap = cap_of(run_counts["object_cpu"], run_counts["m0"],
-                 FOLLOWUP_FACTOR)
+    cap = cap_of(run_counts["object_cpu"], run_counts["ext_object_cpu"],
+                 run_counts["m0"], FOLLOWUP_FACTOR)
     return {
         "schema": COUNTS_SCHEMA, "kind": "followup", "base": first["base"],
         "cand": first["cand"], "manifest": mseal, "seed": SEEDS[
             "followup"], "workloads": owed, "required_m": required,
         "base_m": base_m, "floor_range": rules.num(floor),
         "m0": run_counts["m0"], "object_cpu": run_counts["object_cpu"],
+        "ext_object_cpu": run_counts["ext_object_cpu"],
         "budget_s": RELEASE_BUDGET_S, "m_cap": cap,
         "capped": required > cap,
         "followup": dict(sizes=first["params"]["sizes"],
@@ -1325,8 +1430,13 @@ def info_spec(args, mode):
             sizes=list(sizes), m=args.m or SMOKE_M, k=1))
     sizes = tuple(args.sizes or records.DEFAULT_SIZES)
     if mode == "pilot":
+        info, smoke = info_run(args.smoke, key, "smoke", list(UNITS), None,
+                               mseal)
+        require(smoke["outcome"]["facts"]["ok"], "--smoke did not pass the "
+                "probe facts")
         return spec_of(mode, list(PILOT_UNITS), dict(
-            sizes=list(sizes), m=args.m0 or M0, k=K))
+            sizes=list(sizes), m=args.m0 or M0, k=K),
+            smoke=smoke_link(info, smoke))
     info, pilot = info_run(args.pilot, key, "pilot", list(PILOT_UNITS),
                            None, mseal)
     return spec_of(mode, control_names(), decision_params(pilot),
@@ -1360,24 +1470,27 @@ def link_of(chain):
 def extend_spec(args):
     sides, counts, use = counts_spec(args, "extend")
     chain = replay_chain(args.first, None, args.repo, args.storage_counts,
-                         None, args.timing_counts)
+                         None, args.timing_counts, args.manifest)
     owed = owed_units(chain, "extend")
     require(owed, "no unit is owed the %d-pair stage" % EXTEND_PAIRS)
     return spec_of("extend", owed, dict(
         counts["decision"], pairs=EXTEND_PAIRS), counts=use,
-        first=link_of(chain), references=counts["references"])
+        first=link_of(chain), references=counts["references"],
+        decides=owed_keys(chain, "extend"))
 
 
 def followup_spec(args):
     sides, counts, use = counts_spec(args, "followup", True)
     chain = replay_chain(args.stage, None, args.repo, args.storage_counts,
-                         args.followup_counts, args.timing_counts)
+                         args.followup_counts, args.timing_counts,
+                         args.manifest)
     owed = owed_units(chain, "followup")
     require(owed and owed == counts["workloads"], "the follow-up counts "
             "are not of the units owed: %s" % owed)
     return spec_of("followup", owed, counts["followup"], counts=use,
                    replaces=link_of(chain),
-                   references=counts["references"])
+                   references=counts["references"],
+                   decides=owed_keys(chain, "followup"))
 
 
 def audit_spec(args):
@@ -1465,6 +1578,9 @@ def build_parser():
     cmd = {name: sub.add_parser(name) for name in COMMANDS}
     for name in RUN_COMMANDS:
         add_run(cmd[name])
+    cmd["pilot"].add_argument("--smoke", type=Path, required=True,
+                              help="the smoke run (its extension "
+                              "process's CPU per object caps M)")
     cmd["control"].add_argument("--pilot", type=Path, required=True)
     cmd["extend"].add_argument("--first", type=Path, required=True,
                                help="the run (or the stage) that owes it")
@@ -1487,6 +1603,8 @@ def build_parser():
     rep.add_argument("--storage-counts", type=Path)
     rep.add_argument("--followup-counts", type=Path)
     rep.add_argument("--timing-counts", type=Path)
+    rep.add_argument("--manifest", type=Path, help="the snapshot manifest "
+                     "(default: where the stages recorded it)")
     dis = cmd["dispose"]
     dis.add_argument("--stage", type=Path, action="append", required=True,
                      help="the last stage of the storage chain(s): run, "
@@ -1501,6 +1619,8 @@ def build_parser():
     dis.add_argument("--repo", type=Path)
     dis.add_argument("--ledger", type=Path)
     dis.add_argument("--timing-counts", type=Path)
+    dis.add_argument("--manifest", type=Path, help="the snapshot manifest "
+                     "(default: where the stages recorded it)")
     dis.add_argument("--storage-counts", type=Path)
     dis.add_argument("--timing-followup-counts", type=Path)
     dis.add_argument("--storage-followup-counts", type=Path)
@@ -1546,7 +1666,8 @@ def dispatch(args):
         for folder in args.runs:
             print(json.dumps(replay_chain(
                 folder, args.ledger, args.repo, args.storage_counts,
-                args.followup_counts, args.timing_counts)[-1]["info"],
+                args.followup_counts, args.timing_counts,
+                args.manifest)[-1]["info"],
                 sort_keys=True))
         return 0
     else:

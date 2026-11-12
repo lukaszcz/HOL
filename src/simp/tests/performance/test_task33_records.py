@@ -326,6 +326,16 @@ class WellFormed(unittest.TestCase):
             r.validate(text(self.phase_with(converged=False,
                                             share_tries=r.SHARE_TRIES_MAX)))
         self.assertIn("converge", str(why.exception))
+        self.assertIn("after %d sharing rounds" % r.SHARE_TRIES_MAX,
+                      str(why.exception))
+
+    def test_a_non_converged_share_stops_only_after_the_last_round(self):
+        for tries in range(1, r.SHARE_TRIES_MAX):
+            with self.subTest(tries):
+                with self.assertRaisesRegex(r.RecordError,
+                                            "not converged after"):
+                    r.validate(text(self.phase_with(converged=False,
+                                                    share_tries=tries)))
 
     def test_the_share_tries_are_bounded_and_the_fields_typed(self):
         for bad in (dict(share_tries=0),

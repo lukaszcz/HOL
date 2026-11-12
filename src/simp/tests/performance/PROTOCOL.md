@@ -3615,7 +3615,9 @@ share count at the start of the size and at each measurement
   n, mode, pre, post}. Moved on the candidate is an S1 fail (retention into
   the shared base); moved on the baseline is a refusal (a harness fault); a
   move in one process of a pair is first redrawn (below). A probe that did
-  not converge is `NotComparable`.
+  not converge (`converged` false, which it reports only after its last
+  round, `SHARE_TRIES_MAX` = 9; fewer is a malformed record) is
+  `NotComparable`.
 - Graph kinds: fragment, compiled (`pure_ss ++ f`), compiled_bool (`bool_ss
   ++ f`), merge, projection (`traversedata_for_ss`), conversion, tactic,
   exclusion history (`ss -* names`, k = n/10 names), removed
@@ -3681,10 +3683,21 @@ collected).
 
 M is sized by the pilot from the raw noise (range <= 0.25 M words) and
 clamped to a cap derived from a declared CPU budget (`RELEASE_BUDGET_S` =
-600 s per release process divided by the pilot's CPU per object); the counts
-record `required_m` and `capped` as TASK32 records `required_reps`. The
+60 s per release or `ext` process): the budget divided by the larger CPU per
+object of the pilot's release processes and of the smoke's `ext` process
+(whole-process CPU over M times the kinds released, start-up included, so an
+upper bound; the pilot is sized from a given smoke, `--smoke`). The counts
+record `required_m` and `capped` as TASK32 records `required_reps`, and
+`object_cpu` and `ext_object_cpu`; `check_sizing` recomputes the cap, M and
+`capped` from them at `run`, `replay` and `dispose`. The sizing assumes that
+the raw noise in words of a release process does not depend on M, so that
+the required M is that noise over 1/4; the decision stages check it by the
+no-op floor (an unresolved floor is inconclusive, hence a follow-up). The
 follow-up M is max(4 M, ceil(M x floor range / 1/4)), capped by 4 times the
-budget.
+budget (`FOLLOWUP_FACTOR`). The driver requires `FOLLOWUP_FACTOR` x the
+budget to be under the process timeout (`TIMEOUT`, 900 s), at import and
+whenever a cap is computed, and refuses with that message otherwise: a capped
+follow-up process would always time out.
 
 Extension cases (E2), on the candidate only; no develop counterpart exists
 for (b). The `ext` probe loads `simpExtLib`, uses tracked construction,
@@ -3722,8 +3735,8 @@ chain's GC CPU and maxrss paired intervals and the `archive` report's
 15 TASK32 units, paired where paired) are scanned: an interval whose low
 bound is above 1 is listed, and one wholly above 1.03 (`ABOVE`) is entered in
 `attribution_needed` of the disposition. That is a duty, not a gate and not
-a waiver: the handoff owes a written attribution for each (`dispose-
-snapshots` refuses while one is outstanding). The `archive` report carries
+a waiver: the handoff owes a written attribution for each. It is not a
+condition of `dispose-snapshots`. The `archive` report carries
 the data for the TASK32 `lim` GC CPU interval. GC counts and heap size are
 not deterministic (Poly/ML sizes its heap from GC timing); they are never
 gated.
@@ -3840,22 +3853,29 @@ below `src/simp/tests/performance`):
 - `task33_followup_counts.json`. by: the same with `--followup`. holds: the
   timing follow-up
 - `task33_storage_counts.json`. by: `task33_storage.py predeclare`. holds: k,
-  sizes, M (`m0`, `required_m`, `m_cap`, `capped`, `budget_s`, `object_cpu`),
-  seeds, the two contingencies, seals of the replayed smoke, pilot and control
-  and the three offline reports, manifest and declaration seals, `CODE` seals,
-  and the seal and commit of `task33_counts.json`
+  sizes, M (`m0`, `required_m`, `m_cap`, `capped`, `budget_s`, `object_cpu`,
+  `ext_object_cpu`), seeds, the two contingencies, seals of the replayed
+  smoke, pilot and control and the three offline reports, manifest and
+  declaration seals, `CODE` seals, and the seal and commit of
+  `task33_counts.json`
 - `task33_storage_followup_counts.json`. by: `task33_storage.py predeclare
   --followup`. holds: the units owed, M, the stage it replaces
+
+The declaration is sealed before the storage smoke, pilot and controls:
+each records its seal (`declared`), and `predeclare` refuses an information
+run whose seal is not the current declaration's ("declaration changed since
+the run"), as `run`, `replay` and `dispose` refuse any stage whose seal
+differs.
 
 The storage counts bind the committed timing counts (their seal is
 recorded and `run`, `replay` and `dispose` verify it against the timing
 chain's counts), and both bind the same `CODE` seals. `predeclare` refuses
 a control that did not run at the decision configuration (pairs, R, k, M as
 declared; for the storage controls the pilot's sizes and M, and the
-control must name the pilot it was sized from), a smoke that did not pass
-the probe facts, an information run of another gate or manifest, and
-offline reports that are not exactly one each of `archive`, `audit` and
-`harvest`.
+control must name the pilot it was sized from, and the pilot the smoke), a
+smoke that did not pass the probe facts, an information run of another gate
+or manifest, and offline reports that are not exactly one each of `archive`,
+`audit` and `harvest`.
 
 Layout seeds. Timing: `task33-1` (first stage) with `-smoke`, `-pilot`,
 `-control`, `-ext` and `-fu`. Storage: `task33-s4-<stage>` for `smoke`,
@@ -3895,7 +3915,9 @@ stays in the archive as `superseded`, and `dispose` lists it in
 passes on that receipt, and replay checks that it has the same (unit, side,
 pair, selection) as the rejected try and consecutive redraw numbers. An
 anchor move that persists through the redraws is an S1 fail on the
-candidate and a refusal on the baseline. Distinguish these from R-1 redraws
+candidate and a refusal on the baseline. A control group (`unit+switch`) is
+redrawn like its unit, so a missing `held` reading in `release+leak` is
+redrawn, not read as an undetected control. Distinguish these from R-1 redraws
 (an attempt) and from outcomes: `NotComparable` redraws never produce a
 pass, fail or held row; h under 20 or an uncollected baseline weak probe is
 blocked, not redrawn. Anchor movement is diagnosed once (`objSize` per
@@ -3946,7 +3968,8 @@ Steps, in this order (each run command also takes `--timeout`, default
     # 3-4. pilots, base only (storage: --sizes, --m, --m0 override the
     #      sizes and the release size)
     $T pilot $C --output $E/t-pilot --authorize-measurements
-    $Q pilot $C --output $E/s-pilot --authorize-measurements
+    $Q pilot $C --smoke $E/s-smoke --output $E/s-pilot \
+        --authorize-measurements
     # 5-6. controls at the decision configuration, sized from the pilot
     $T control $C --pilot $E/t-pilot --output $E/t-control \
         --authorize-measurements
@@ -4006,8 +4029,8 @@ Notes on the order.
   0, 1, 10 and M = 50, and records the probe facts; the pilot measures the
   baseline alone: 3 `graph` and 3 `release` processes at the decision sizes
   and M0 = 200, for graph repeatability, release noise, the required M, and
-  the CPU per object that gives the cap. The pilot always exits 0 when it
-  succeeds.
+  the CPU per object that gives the cap (with the smoke's `ext` process, which
+  the pilot names). The pilot always exits 0 when it succeeds.
 - `run` of the timing table is 20 pairs per kind at the declared R, round
   robin, AB/BA alternation, TASK32's statistics and margin (`POLICY`: low >
   1.03 fails, high <= 1.03 with a valid B/B control passes, else inconclusive;
@@ -4048,10 +4071,26 @@ the storage chains are linear, each contingency naming its predecessor, and
 - owed or inconclusive after the last allowed stage: blocked (the
   TASK32 convention)
 
+Owed and closed rows. A contingency stage runs once in a chain. A row is
+owed `extend` or `followup` only while it is inconclusive and that stage has
+not run in the chain (`settled_rows`); a row that decided (pass, fail,
+blocked) owes nothing, and an inconclusive row owed no stage that may still
+run (the stage ran and left it inconclusive, or the rule owes none) is
+blocked and owes nothing. A rule owes a stage only when nothing else decides
+the row: E2 (b) owes a follow-up only when no kind is blocked or failed. The
+timing L4 rows follow the timing classification: a `followup` row is
+inconclusive and owed the timing follow-up until it has run, and is blocked
+after it.
+
+A contingency stage measures the units owed, but decides only the rows its
+parent owed it (`decides` in its report, the keys; `replay` checks them
+against the parent chain); every other row keeps its decision from the stage
+that decided it last. A stage's exit status is that of its rows.
+
 A timing follow-up is owed only after any owed second stage. `followup`
 refuses while a second stage is owed. The disposition's overall status is
-`fail` if any gate fails, `pass` only if every gate passes, else
-`blocked`; it is never inconclusive.
+`fail` if any gate fails, `pass` only if every gate passes, `inconclusive`
+while a gate is still owed a stage that may run, else `blocked`.
 
 ### Replay and disposition
 
@@ -4059,11 +4098,15 @@ refuses while a second stage is owed. The disposition's overall status is
 runs no process: `$T replay RUN... [--counts F] [--followup-counts F]
 [--ledger L] [--repo .]` (`--table task33` before it) and `$Q replay RUN...
 [--storage-counts F] [--followup-counts F] [--timing-counts F] [--ledger L]
-[--repo .]`. A run is replayed with its whole chain. Replay requires
-exactly `PAIRS` pairs of a timing control, checks a receipt's environment
-against its unit, and refuses a record made by a code version neither the
-current one nor in the table's history. Receipts of a table other than
-`task32` carry `table`, and replay needs the same `--table`.
+[--repo .] [--manifest M]`. A run is replayed with its whole chain. A storage
+replay re-derives the saved-state bytes of the heaps the units run on from
+the sealed snapshot manifest (the file the stage recorded, or `--manifest`;
+its seal must be the stage's) and refuses stored values that differ.
+Replay requires exactly `PAIRS` pairs of a timing control, checks a
+receipt's environment against its unit, and refuses a record made by a code
+version neither the current one nor in the table's history. Receipts of a
+table other than `task32` carry `table`, and replay needs the same
+`--table`.
 
 `$Q dispose` writes one sealed `disposition.json` (and `.seal`) joining the
 timing disposition (`task32_downstream.py --table task33 dispose`), the
@@ -4071,14 +4114,16 @@ three offline reports (the sealed ones named in the storage counts) and the
 storage stages. Flags: `--stage` (once for the storage `run` or its last
 contingency, once for the `audit` stage), `--timing-stage`, `--offline`
 (three), `--timing-counts`, `--storage-counts`, `--timing-followup-counts`,
-`--storage-followup-counts`, `--ledger`, `--repo`, `--relocated ATTEMPT=DIR`
-(repeatable; either ledger table's information runs), `--out`. It contains
+`--storage-followup-counts`, `--manifest`, `--ledger`, `--repo`,
+`--relocated ATTEMPT=DIR` (repeatable; either ledger table's information
+runs), `--out`. It contains
 one decision per case id and kind (L1, L2, L3, L4 per timing kind, S1, S2,
 R1 including `weak`, R2, R3, E1, E2 a, b, c, and the api-audit rows;
 S3, S4 and `E2:u` as reported or unsupported), every attempt, information
 run and redraw of both ledger tables, `process_redraws`, `owed`,
-`reported`, and `attribution_needed`. A row still owed or inconclusive after
-the last stage is blocked, a case with no evidence is blocked. The
+`reported`, and `attribution_needed` (the handoff's attribution duty). A row
+is owed only while its stage may still run; inconclusive after the last
+allowed stage it is blocked, and a case with no evidence is blocked. The
 timing-only disposition `$T dispose --stage LAST --out FILE [--relocated
 ...]` writes the timing part alone.
 
@@ -4146,7 +4191,8 @@ use ends.
 `dispose-snapshots` requires, in `--evidence`: exactly one successful
 sealed `harvest.json`, exactly one successful `audit` stage with its sealed
 receipt (a pass), and exactly one sealed `disposition.json` of the current
-schema that owes nothing (no `owed` row, no `attribution_needed`). It
+schema that owes nothing (no `owed` row: no stage may still run for any row;
+`attribution_needed` is a handoff duty, not a condition). It
 refuses a scratch root other than `/dev/shm/t33` and any path the manifest
 does not name where the snapshot driver puts it (roots under
 `.agent-files/snapshots/task32/{base,cand}`, HOMEs

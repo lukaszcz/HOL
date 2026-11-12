@@ -534,6 +534,10 @@ def check_phase(record):
     if not 1 <= record["share_tries"] <= SHARE_TRIES_MAX:
         fail("phase %d: share_tries %d outside 1..%d" % (
             record["n"], record["share_tries"], SHARE_TRIES_MAX))
+    if not record["converged"] and record["share_tries"] != SHARE_TRIES_MAX:
+        fail("phase %d: not converged after %d sharing rounds, but the "
+             "probe stops only after %d" % (
+                 record["n"], record["share_tries"], SHARE_TRIES_MAX))
     for name in ("build", "rows"):
         check_window(record["n"], name, record[name])
 
@@ -784,9 +788,11 @@ def validate(text, controls=(), root=None):
                      summary["held_comparable"])
     if summary["unconverged"]:
         raise NotComparable(
-            "the canonical pre-anchor did not converge at size(s) %s (%d "
-            "sharing rounds): a harness reading, not a moved anchor" % (
-                summary["unconverged"], SHARE_TRIES_MAX))
+            "the canonical pre-anchor did not converge at size(s) %s (after "
+            "%s sharing rounds): a harness reading, not a moved anchor" % (
+                summary["unconverged"], ", ".join(
+                    str(summary["phase"][n]["share_tries"])
+                    for n in summary["unconverged"])))
     return summary
 
 

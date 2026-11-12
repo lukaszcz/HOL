@@ -561,11 +561,14 @@ def e2a(ext, ordinary, paired=False):
 
 def e2b(ext):
     out = [r1_kind([], ext, k, "E2") for k in EXT_RELEASE]
-    decisions = [r["decision"] for r in out]
-    return row("E2", "b", worst(decisions),
+    decision = worst([r["decision"] for r in out])
+    # a follow-up is owed only when nothing else decides the row: a
+    # blocked or failed part makes the row blocked or failed whatever a
+    # larger M shows
+    return row("E2", "b", decision,
                "residual of the extension objects: " + ", ".join(
                    "%s %s" % (r["kind"], r["decision"]) for r in out),
-               "followup" if INCONCLUSIVE in decisions else None,
+               "followup" if decision == INCONCLUSIVE else None,
                kinds={r["kind"]: r for r in out})
 
 
@@ -578,9 +581,10 @@ def agreed(procs, field, view):
 
 
 def declared_names(declared):
-    """({list: set of names}, {list: set of names of required entries},
-    set of the probe's own) of the declared e2c state: the observable
-    entries' `registers` and the `probe_support` ones."""
+    """({list: set of names the extension may add}, {list: set of names of
+    the required entries}) of the declared e2c state: the observable
+    entries' `registers` and the `probe_support` ones are allowed, those of
+    the required entries are also required."""
     allowed = {f: set() for f in L3_LISTS}
     required = {f: set() for f in L3_LISTS}
     for e in declared["extension_state"]:
