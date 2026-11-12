@@ -260,6 +260,9 @@ val _ = let
     (same (saved tm) proof)
   val _ = check "saved congExtLib threaded conversion repeats full proof"
     (same (saved tm) proof)
+  val _ = check "congExtLib CONGRUENCE_SIMP_RULE rewrites the conclusion"
+    (same (congExtLib.CONGRUENCE_SIMP_RULE cs ss [] (ASSUME tm))
+          (EQ_MP proof (ASSUME tm)))
   val old_cs = congLib.mk_congset
     [congLib.CSFRAG {rewrs=[],relations=[],dprocs=[],congs=[cong]}]
   val old_ss = simpLib.++ (pureSimps.pure_ss,

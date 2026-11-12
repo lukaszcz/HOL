@@ -12,8 +12,18 @@ class DesignTests(unittest.TestCase):
         self.graph = json.loads((design.HERE / "graph.json").read_text())
         self.table = design.TABLE.read_text()
 
-    def test_all_189_api_decisions(self):
-        self.assertEqual(design.validate_table(self.table), 189)
+    def test_all_198_api_decisions(self):
+        self.assertEqual(design.validate_table(self.table), 198)
+
+    def test_existing_rows_are_develop_exports(self):
+        design.validate_existing()
+        rows = [dict(group="C2", old_api="congLib.CONGRUENCE_EQ_SIMP_RULE",
+                     kind="existing")]
+        with self.assertRaisesRegex(ValueError, "not exported by develop"):
+            design.validate_existing(rows)
+        rows[0]["old_api"] = "noSuchLib.f"
+        with self.assertRaisesRegex(ValueError, "no develop signature"):
+            design.validate_existing(rows)
 
     def test_missing_api_is_not_a_pass(self):
         lines = self.table.splitlines(keepends=True)

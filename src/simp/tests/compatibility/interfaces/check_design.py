@@ -78,11 +78,32 @@ def expected_rows():
                       "no ordinary migration")
         if name == "legacy_traversedata_for_ss":
             replacement = "REMOVED; use simpExtLib.traversedata_for_ss"
-        if api == "congLib.CONGRUENCE_EQ_SIMP_RULE":
-            replacement = "congExtLib.CONGRUENCE_SIMP_RULE"
         rows.append(dict(zip(FIELDS, [group, api, replacement, domain,
             BOUNDARIES[group], witness, row["owners"] + ";27"])))
     return rows
+
+
+INPUTS = HERE.parent / "inputs" / "develop"
+
+
+def validate_existing(old_rows=None):
+    """Every kind=existing old name must be exported by develop's .sig."""
+    if old_rows is None:
+        with (MIGRATION / "apis.tsv").open() as stream:
+            old_rows = list(csv.DictReader(stream, delimiter="\t"))
+    for row in old_rows:
+        if row["kind"] != "existing":
+            continue
+        module, name = row["old_api"].split(".", 1)
+        path = INPUTS / (module + ".sig")
+        if not path.is_file():
+            raise ValueError("no develop signature for existing row: " +
+                             row["old_api"])
+        if not re.search(r"\b(?:val|type|datatype)\s+" + re.escape(name) +
+                         r"\b|(?:=|\|)\s*" + re.escape(name) + r"\b",
+                         path.read_text()):
+            raise ValueError("existing row not exported by develop: " +
+                             row["old_api"])
 
 
 def table_text(rows):
@@ -97,6 +118,7 @@ def table_text(rows):
 def validate_table(text):
     rows = list(csv.DictReader(io.StringIO(text), delimiter="\t"))
     expected = expected_rows()
+    validate_existing()
     if rows != expected:
         raise ValueError("missing/stale final API decision; "
                          "do not drop a consumer")

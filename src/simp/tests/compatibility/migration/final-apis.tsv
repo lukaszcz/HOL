@@ -37,10 +37,19 @@ C1	Opening.THREADED_CONGPROC	OpeningExt.THREADED_CONGPROC	extension; ordinary AP
 C1	Travrules.mk_threaded_travrules	TravrulesExt.mk_threaded_travrules	extension; ordinary API unchanged	extension fragment/congruence factory before installation	R	10,13,14;27
 C1	simpLib.threaded_cong_ss	simpExtLib.threaded_cong_ss	extension; ordinary API unchanged	extension fragment/congruence factory before installation	S	10,13,14;27
 C2	congLib.CONGRUENCE_EQ_SIMP_CONV	congExtLib.CONGRUENCE_EQ_SIMP_CONV	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
-C2	congLib.CONGRUENCE_EQ_SIMP_RULE	congExtLib.CONGRUENCE_SIMP_RULE	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
+C2	congLib.CONGRUENCE_SIMP_RULE	congExtLib.CONGRUENCE_SIMP_RULE	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
 C2	congLib.CONGRUENCE_SIMP_CONV	congExtLib.CONGRUENCE_SIMP_CONV	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
 C2	congLib.CONGRUENCE_SIMP_QCONV	congExtLib.CONGRUENCE_SIMP_QCONV	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
 C2	congLib.CSFRAG	congExtLib.CSFRAG	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
+C2	congLib.ASM_CONGRUENCE_SIMP_TAC	congExtLib.ASM_CONGRUENCE_SIMP_TAC	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
+C2	congLib.CONGRUENCE_SIMP_TAC	congExtLib.CONGRUENCE_SIMP_TAC	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
+C2	congLib.FULL_CONGRUENCE_SIMP_TAC	congExtLib.FULL_CONGRUENCE_SIMP_TAC	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
+C2	congLib.add_csfrag_rewrites	congExtLib.add_csfrag_rewrites	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
+C2	congLib.cs_addfrag	congExtLib.cs_addfrag	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
+C2	congLib.csfrag_rewrites	congExtLib.csfrag_rewrites	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
+C2	congLib.empty_congset	congExtLib.empty_congset	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
+C2	congLib.merge_cs	congExtLib.merge_cs	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
+C2	congLib.mk_congset	congExtLib.mk_congset	parallel ordinary and extension APIs; no ordinary migration	extension congset from explicit fragments; no opaque congset lift	G	08,11,13;27
 D1	aesopData.aesop_ss	aesopData.aesop_ss	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
 D1	aesopData.cached_simpset	aesopData.cached_simpset	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27
 D1	aesopRule.simp_rule_with	aesopRule.simp_rule_with	external typed extension variant; retain ordinary variant	typed provider/producer before source use; explicit typed updates	Default	25;27

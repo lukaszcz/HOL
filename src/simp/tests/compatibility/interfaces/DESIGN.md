@@ -338,10 +338,8 @@ ordinary versions; only branch extension callers move to the parallel types.
 
 Special resolutions: delete `legacy_traversedata_for_ss` (no replacement optional
 promotion); extended `traversedata_for_ss` returns T data; external output/helper
-names stay external with extension-typed inputs/outputs where required; the
-inventory's `congLib.CONGRUENCE_EQ_SIMP_RULE` lexical entry maps to actual
-`congExtLib.CONGRUENCE_SIMP_RULE` (there is no such EQ_SIMP_RULE export in the
-inspected congLib signature). SplitData/ThmAttribute/simpMarkerLib/splitLib keep
+names stay external with extension-typed inputs/outputs where required.
+SplitData/ThmAttribute/simpMarkerLib/splitLib keep
 one identity and their current owning modules. No legacy client must change.
 
 No free retrospective metadata promise remains in this design.

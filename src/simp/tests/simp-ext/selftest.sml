@@ -437,6 +437,31 @@ val _ = scoped (fn () => let
     (uses [original,reducer] outer)
 in () end)
 
+(* Compiled uses of the migrated B1 names add_relsimp, add_weakener,
+   weakener_data and ssf_upd_rewrs, each called qualified from outside. *)
+exception MigState of unit
+val _ = let
+  val pq = ASSUME ``mig_p = mig_q:bool``
+  val data : S.relsimpdata = {refl=boolTheory.EQ_REFL,
+    trans=boolTheory.EQ_TRANS,weakenings=[],subsets=[],rewrs=[pq]}
+  val ss = S.add_relsimp data pureSimpsExt.pure_ss
+  val _ = check "add_relsimp installs a rewriting relation"
+    (same (S.SIMP_CONV ss [] ``mig_p:bool``) pq)
+  val wd : S.weakener_data = ([],[],E.lift (Traverse.REDUCER
+    {name=SOME "migration weakener",initial=MigState (),
+     addcontext=fn (c,_) => c,apply=fn _ => NO_CONV}))
+  val plain = boolSimpsExt.bool_ss
+  val weak = S.add_weakener wd plain
+  val input = ``(\x:bool. x /\ T) mig_p``
+  val _ = check "add_weakener keeps simplifying as before"
+    (same (S.SIMP_CONV weak [] input) (S.SIMP_CONV plain [] input))
+  val frag = S.ssf_upd_rewrs (fn rules => rules) (S.rewrites [pq])
+  val _ = check "ssf_upd_rewrs keeps the fragment rules"
+    (uses [pq] (S.frag_rewrites frag))
+in check "ssf_upd_rewrs fragment still rewrites"
+     (same (S.SIMP_CONV (S.++ (pureSimpsExt.pure_ss,frag)) []
+              ``mig_p:bool``) pq) end
+
 (* Poly/ML really elaborates deliberately ill-typed clients. Only the exact
    static-error exception counts; missing files/other failures fail closed. *)
 fun negative name = let
