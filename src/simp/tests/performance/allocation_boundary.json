@@ -47,17 +47,17 @@
     },
     {
       "path": "src/1/ThmAttribute.sig",
-      "blob": "f6dee4ff48c8c78ebf03c5cf28812c021659c2bf",
+      "blob": "0277788be43d67ed8724d677c562d61e125a9e69",
       "reason": "adds two read-only lookups; no value changes"
     },
     {
       "path": "src/1/ThmAttribute.sml",
-      "blob": "09d0cb7d2923adbdcb1d8c0e0bc0c26e3bfa3af0",
+      "blob": "b2161e0effd516e2bfffdbfba81bcd5c5a708e21",
       "reason": "adds two lookups; existing functions unchanged"
     },
     {
       "path": "src/1/selftest.sml",
-      "blob": "ae2b0618aa6051955788f792263ff02a651c666d",
+      "blob": "667f51d43f353d1771425e6fb7b52ab71f9bd76d",
       "reason": "selftest.exe only; the heap does not load it"
     },
     {

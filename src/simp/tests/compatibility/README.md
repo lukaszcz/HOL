@@ -124,16 +124,21 @@ bin/Holmake --no-project --no-cache --no_prereqs \
 
 `PAIRED_OUTPUT` is required and must be an absolute path outside the
 repository.  This runs the Python validator tests (`checked-tests`, after the
-`output-dir` check), then private Holmake-built SML launchers for both exact
-pinned source revisions, including all six negative controls. No SML is piped
+`output-dir` check), then private Holmake-built SML launchers for the baseline
+and for `HEAD` (selected explicitly, with `--candidate-signature pass
+--candidate-behavior baseline`), including all six negative controls. No SML is piped
 to `bin/hol`. Expected reviewed-candidate staging/signature regressions are
 explicitly **expected-red**, not compatibility passes.
 
-Direct driver and baseline-versus-baseline control:
+Direct driver (the bare defaults reproduce the historic reviewed candidate
+`cf1f863b4e`, which is stale against the current tree and is not used by any
+Holmake target) and baseline-versus-baseline control:
 
 ```sh
 python3 -B src/simp/tests/compatibility/run_paired.py \
-  --negative-controls --output /tmp/my-paired-run
+  --candidate HEAD --candidate-signature pass \
+  --candidate-behavior baseline --negative-controls \
+  --output /tmp/my-paired-run
 python3 -B src/simp/tests/compatibility/run_paired.py \
   --candidate cccaa27d7099cbadc886983020cbe745db7793f3 \
   --candidate-signature pass --candidate-behavior baseline \

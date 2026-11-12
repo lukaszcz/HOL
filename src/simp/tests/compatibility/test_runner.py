@@ -253,5 +253,46 @@ class VersionQueryTests(unittest.TestCase):
         self.assertEqual(queries, [("<poly>", "-v")])
 
 
+class HolmakefileWiringTests(unittest.TestCase):
+    """The run_paired.py defaults reproduce a historic revision; no target
+    may rely on them (a stale default fails negative controls for the wrong
+    reason), so every driver invocation names its candidate."""
+
+    def commands(self):
+        text = (Path(__file__).parent / "Holmakefile").read_text()
+        text = text.replace("\\\n", " ")
+        found = {}
+        target = None
+        for line in text.splitlines():
+            if line and not line[0] in "\t #" and ":" in line:
+                target = line.split(":")[0]
+            elif line.startswith("\t") and "run_paired.py" in line:
+                found[target] = line.split()
+        return found
+
+    def test_every_run_paired_target_names_its_candidate(self):
+        found = self.commands()
+        self.assertTrue(found)
+        for target, words in found.items():
+            self.assertIn("--candidate", words, target)
+
+    def test_head_targets_select_signature_and_behavior(self):
+        found = self.commands()
+        for target in ("check", "prior-contracts", "public-contracts",
+                       "staging-contracts"):
+            words = found[target]
+            self.assertEqual(words[words.index("--candidate") + 1], "HEAD")
+            self.assertEqual(
+                words[words.index("--candidate-behavior") + 1], "baseline")
+            self.assertEqual(
+                words[words.index("--candidate-signature") + 1], "pass")
+
+    def test_negative_control_targets_use_an_explicit_candidate(self):
+        for target, words in self.commands().items():
+            if "--negative-controls" in words:
+                self.assertIn("--candidate", words, target)
+                self.assertIn("--candidate-behavior", words, target)
+
+
 if __name__ == "__main__":
     unittest.main()

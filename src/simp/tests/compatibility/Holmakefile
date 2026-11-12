@@ -18,13 +18,19 @@ output-dir:
 checked-tests: output-dir
 	python3 -B -m unittest discover -s . -p 'test_*.py'
 
+# Every target selects its candidate explicitly: the run_paired.py defaults
+# reproduce the historic reviewed revision, which goes stale whenever shared
+# code changes (and then fails the negative controls for the wrong reason).
 check: checked-tests
-	python3 -B run_paired.py --negative-controls --output "$(PAIRED_OUTPUT)"
+	python3 -B run_paired.py --negative-controls \
+	  --candidate HEAD --candidate-signature pass \
+	  --candidate-behavior baseline --output "$(PAIRED_OUTPUT)"
 
 # Prior legacy inputs are strict equal contracts, not expected failures.
 prior-contracts: checked-tests
 	python3 -B run_paired.py --prior-contracts --negative-controls \
-	  --candidate HEAD --output "$(PAIRED_OUTPUT)"
+	  --candidate HEAD --candidate-signature pass \
+	  --candidate-behavior baseline --output "$(PAIRED_OUTPUT)"
 
 prior-baseline-control: checked-tests
 	python3 -B run_paired.py --prior-contracts \
