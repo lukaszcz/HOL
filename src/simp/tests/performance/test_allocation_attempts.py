@@ -489,8 +489,8 @@ class Attempts(Fixture):
         self.assertEqual((found["attempt"], found["void"]), (key, True))
         self.assertEqual(
             [(r["archive"], r["reason"]) for r in found["rejections"]],
-            [("cell0.json.xz", "unresolved cell"),
-             ("cell1.json.xz", "unresolved cell")])
+            [("cell0.json.xz", "unresolved cell (recorded: tool defect)"),
+             ("cell1.json.xz", "unresolved cell (recorded: tool defect)")])
 
     def test_one_admitted_cell_makes_the_attempt_judged(self):
         out, _ = self.cells("one", "rejected", "ok")

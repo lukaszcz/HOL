@@ -226,7 +226,9 @@ def rejections(output):
         try:
             am.replay_cell(output / name, am.row_binding(inventory, row))
         except sc.InvalidAllocation as error:
-            found.append((name, str(error)))
+            # the refusal of the replay, and the reason the run recorded
+            found.append((name, "%s (recorded: %s)" % (
+                error, row["rejected"])))
         except Exception as error:
             return [], ("the archive %s does not replay to a refusal: %r" %
                         (name, error))
