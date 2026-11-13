@@ -101,8 +101,12 @@ def launcher_patterns():
 
 def holmake_patterns():
     """The wildcard patterns of FRESH_EXT_UO, with .sml dropped."""
-    m = re.search(r"\$\(wildcard ([^)]*)\)", HOLMAKEFILE.read_text())
-    return [w[:-4] for w in m.group(1).split()] if m else []
+    m = re.search(r"FRESH_EXT_UO\s*=.*?\$\(wildcard ([^)]*)\)",
+                  HOLMAKEFILE.read_text(), re.S)
+    words = m.group(1).split() if m else []
+    for w in words:
+        assert w.endswith(".sml"), "unexpected wildcard word: " + w
+    return [w[:-4] for w in words]
 
 
 def select(patterns, scripts=False):
@@ -114,9 +118,15 @@ def select(patterns, scripts=False):
 
 
 def fallback_files():
-    """Without git objects: the same name rules, in the same directory."""
-    return sorted(SIMP_SRC / (n + ".sml") for n in
-                  select(launcher_patterns()))
+    """Without git objects, mirror the naming of the added modules: the
+    launcher patterns in src/simp/src, the *Ext.sml extension modules of the
+    other libraries (not tests or .hol build products), and the one added
+    module that follows no naming rule, boss/trackedSimpDefaults.sml."""
+    files = {SIMP_SRC / (n + ".sml") for n in select(launcher_patterns())}
+    files |= {p for p in (ROOT / "src").rglob("*Ext.sml")
+              if not {"tests", ".hol"} & set(p.relative_to(ROOT).parts)}
+    files.add(ROOT / "src" / "boss" / "trackedSimpDefaults.sml")
+    return sorted(files)
 
 
 def candidates():
@@ -147,6 +157,10 @@ class ShadowedNames(unittest.TestCase):
         self.assertTrue(added)
         self.assertEqual(select(launcher_patterns()), added)
         self.assertEqual(select(holmake_patterns(), scripts=True), added)
+
+    def test_fallback_matches_added_files(self):
+        require_revisions(BASE)
+        self.assertEqual(set(fallback_files()), set(added_files()))
 
     def test_added_modules_qualify_shadowed_names(self):
         files = candidates()
