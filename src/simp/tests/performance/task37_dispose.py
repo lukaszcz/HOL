@@ -131,10 +131,11 @@ The gate's R2 load totals must equal them on every image or the gate FAILS
 record's inputs. `--startup-ledger` is the runner's attempts ledger: every
 attempt is listed in the record (R-1). The judged gate (and its null
 control) must be the last attempt; its `inputs.txt` is sealed in the
-record. A COMPLETED last attempt (closed with exit 0, or 2: the run
-completed, a soft step failed, with its `done` file) is judged by its
-gate and always has a null control, so `--startup-null` is required. An
-incomplete last attempt (a failing step, `die`, a signal, no `done`, or
+record. A COMPLETED last attempt (its `done` file is written, whatever its
+close status: design decision 31) is judged by its gate and always has a
+null control, so `--startup-null` is required; it must be exactly the
+attempt's `gate-null`, as the null of every attempt. An
+incomplete last attempt (a failing step, `die`, a signal before `done`, or
 never closed: ledger status `open`) with no gate decision is void and
 refuses (the lead redraws); one with a gate decision is judged by it
 (design decision 26): a fail or blocked decision, on any grounds
@@ -144,21 +145,25 @@ leaves the attempt incomplete owing a `redraw` (`owes-redraw`). Its
 null control is neither read nor replayed (not applicable; the
 `--startup-null` flag is refused there), except for an attempt owing a
 redraw: its own `gate-null` is read and replayed when it holds a complete
-archive that replays (an explicit `--startup-null` must be that archive),
-and is otherwise recorded as absent (it cannot change that verdict). The
-null of a complete attempt must replay (refused otherwise).
+archive that replays, and is otherwise recorded as absent (it cannot
+change that verdict); an explicit `--startup-null` there must be that
+archive and replay (refused otherwise). The null of a complete attempt must
+replay (refused otherwise).
 The judged gate is the `gate` of the last attempt and `--startup-declared`
-its `declared-deltas.json`. A gate decision counts iff the sha256 rows of its
-`gate/receipt.json` all
-match the files it lists AND the archive replays with the attempt's own
-record (design decision 28; the runner's progress files never decide it, so
-a signal after a decided, replayable gate does not undo the decision). An
-archive that gives no decision makes the attempt void (a redraw is
-allowed) unless the attempt shows progress past `replay-gate` (exit 0,
-`done`, `replay-gate.exit` reading `exit=0`, a later step file): it is
-then damaged and refused, as is an attempt that closed with exit 0 and no
-`done`, or with exit 2 and no `done` although `cell-o2-24.exit` reads
-`exit=0` and no step `.exit` reads `exit=2`.
+its `declared-deltas.json`. A gate decision counts iff the sha256 rows of
+its `gate/receipt.json` all match the files it lists AND the archive,
+sealed to a record, replays with the attempt's own record (design decisions
+28, 31; the runner's progress files never decide it, so a signal after a
+decided, replayable gate does not undo the decision). The replay is this
+checkout's `startup_gate.py`, which must be the one the attempt's harness
+had (`harness-head.txt`; otherwise "startup_gate.py changed since
+attempt X"): it stays frozen across attempts and dispose. An archive that
+gives no decision makes the attempt void (a redraw is allowed; the reason
+is in the attempt row) unless the attempt shows progress past
+`replay-gate` (`done`, `replay-gate.exit` reading `exit=0`, a later step
+file): it is then damaged and refused, as is an attempt that closed with 0
+or 2 and no `done` although its last step (`cell-o2-24`) finished with
+`exit=0` (exit 2 also comes from the soft steps).
 Each
 earlier attempt is judged by its gate decision when it has one, complete
 or not: it is recorded
@@ -1198,27 +1203,34 @@ NULL_NA = ("not applicable (the gate failed or was blocked: the null "
 
 def startup_null(args, verdict):
     """The null control archive of the judged startup attempt (its
-    `verdict`, `gates.startup_attempts`), or None when it is not read. A
-    complete attempt (`judged`) always has a replayed null control, so
-    `--startup-null` is required. A `judged-incomplete` one (the gate failed
-    or was blocked) is never read, so the flag is refused there. One owing
-    a redraw (`owes-redraw`) may have ended before the null gate: its own
-    `gate-null` is read when it holds a complete archive that replays and
-    is otherwise absent (design decision 28); the flag, when given, must
-    be that complete archive."""
+    `verdict`, `gates.startup_attempts`), or None when it is not read. The
+    null of every attempt is exactly `<attempt>/gate-null`. A complete
+    attempt (`judged`) always has a replayed null control, so
+    `--startup-null` is required (and it is replayed late). A
+    `judged-incomplete` one (the gate failed or was blocked) is never read,
+    so the flag is refused there. One owing a redraw (`owes-redraw`) may
+    have ended before the null gate: its own `gate-null` is read when it
+    holds a complete archive that replays and is otherwise absent (design
+    decisions 28, 31); the flag, when given, must be that complete archive
+    and it must replay (refused otherwise)."""
+    own = Path(args.startup_gate).resolve().parent / "gate-null"
     if verdict == "judged":
         a.require(args.startup_null is not None,
                   "a complete startup attempt needs --startup-null")
-        return args.startup_null
+        a.require(Path(args.startup_null).resolve() == own,
+                  "--startup-null %s is not the gate-null of the judged "
+                  "attempt (%s)" % (args.startup_null, own))
+        return own
     a.require(verdict in ("owes-redraw", "judged-incomplete"),
               "unexpected startup verdict " + verdict)
-    own = Path(args.startup_gate).resolve().parent / "gate-null"
     if verdict == "judged-incomplete":
         a.require(args.startup_null is None,
                   "--startup-null is for a complete attempt only: the null "
                   "control of an incomplete attempt whose gate failed or "
                   "was blocked is not read (omit the flag)")
         return None
+    ok, reason = gates.replays(own, null=True) \
+        if gates.archive_complete(own) else (False, "")
     if args.startup_null is not None:
         a.require(Path(args.startup_null).resolve() == own and
                   gates.archive_complete(own),
@@ -1226,8 +1238,10 @@ def startup_null(args, verdict):
                   "of the incomplete attempt (%s): omit the flag, the null "
                   "of an incomplete attempt is found by itself" % (
                       args.startup_null, own))
-    return own if gates.archive_complete(own) and gates.replays(own) \
-        else None
+        a.require(ok, "--startup-null %s does not replay (%s): omit the "
+                  "flag, the null of an incomplete attempt is then "
+                  "recorded absent" % (args.startup_null, reason))
+    return own if ok else None
 
 
 def read_gates(args, lineage, inputs, late, extra):

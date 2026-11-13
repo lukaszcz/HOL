@@ -4553,15 +4553,19 @@ Waves (a stream starts a wave when the edges into it hold):
     (once);
   - the snapshots of the `t32` stream and of the `t33` stream, each its own
     pair in its own clone;
-  - the identity one-cell `--only` diagnostics (client, matrix, downstream),
-    then `sources`, then `task37_sources.py` filled and committed (alone) in
-    main (the client's list is checked to equal TASK31's);
   - the allocation counts: `task37_iterations.py all` in main, then
     `--check`, each of the three files committed alone; then each allocation
     clone brings itself forward and builds its toolchain.
 - Wave 2 (the process budget below):
-  - the identity grids (client, matrix, downstream) and allocation (matrix,
-    client, downstream), all `nice -n 19`;
+  - first, once every wave-1 job has exited (decision 27: an identity cell
+    times batches, and wall time inflates on an oversubscribed host), the
+    identity one-cell `--only` diagnostics (client, matrix, downstream),
+    then `sources`, then `task37_sources.py` filled and committed (alone) in
+    main; a cell refused on "batch too short; recalibrate" alone ran under
+    contention: it is rerun, and the refusal is not an identity result;
+  - the identity grids (client, matrix, downstream; they too start only
+    after every wave-1 job has exited) and allocation (matrix, client,
+    downstream), all `nice -n 19`;
   - the timing shard pilots and their `predeclare` (6 shards: client-1,
     client-2, matrix-1 ... matrix-4), then `t32` (smoke, pilot, control,
     `predeclare`) and `t33`;
@@ -4700,10 +4704,10 @@ stream: `id-T`, `alloc-T`, `t32`, `S`, `harness`, `load-SHARD`; the
 exceptions are stated), and a measuring command also takes
 `--authorize-measurements`. Every on-disk TMPDIR lies outside every clone
 (decision 27): the identity tools refuse private build roots under the repo
-root ("overlapping archived source roots"), and no stream writes inside a
-clone it does not commit from. The recipe loops and `for` lines run under
-`bash` (the operator shell may be zsh, which does not word-split). Evidence
-goes to
+root ("overlapping archived source roots"), and no stream writes inside
+another stream's clone. Every recipe runs under `bash` (start `bash` first):
+zsh does not word-split a command held in a variable (`$I`, `$G`, `$T`,
+`$Q`, `$SN`, `$F`, `$C`, `$K`). Evidence goes to
 `$EV/STREAM/` by absolute path, so that a stream can name another stream's
 files.
 
@@ -4776,15 +4780,16 @@ waves 1 and 2. The `sources` fill is by hand, in `$M`:
     export TMPDIR=$W/t37-tmp/id-T; mkdir -p $TMPDIR
     I="python3 -B $P/task37_identity.py"
     $I prepare --table T                                     # wave 1
-    # all three tables: one diagnostic cell, then its sources (the client's
-    # list starts from TASK31's and the diagnostic checks it is the same)
+    # all three tables (wave 2, before the grids): one diagnostic cell, then
+    # its sources (the client's list starts from TASK31's; see Sources)
     $I cells --table T | head -3
     $I identity --table T --only CELL --output $E/diag \
       --candidate $CAND --authorize-measurements
     $I sources --output $E/diag
     # in $M: enter the printed lists in $P/task37_sources.py by hand
-    # (MATRIX and DOWNSTREAM; the client's must equal TASK31's, which
-    # `CLIENT` already is), review, and commit that file alone
+    # (MATRIX and DOWNSTREAM, and CLIENT only if the diagnostic showed a
+    # file missing from TASK31's closure), review, and commit that file
+    # alone
     # then, for all three identity clones: forward $CL
     nice -n 19 $I identity --table T --output $E/grid \
       --candidate $(git rev-parse HEAD) --authorize-measurements --jobs N
@@ -5137,6 +5142,7 @@ owed, else `first`: a follow-up goes only in `--followup` and
 replaces):
 
     cd $M
+    export TMPDIR=$W/t37-tmp/dispose; mkdir -p $TMPDIR
     lg() {  # lg CLONE TABLE: the attempts ledger of a clone
       echo $W/t37-$1/.agent-files/evidence/$2/attempts.jsonl; }
     shard() {  # shard S LAST: the options of a timing shard
@@ -5191,7 +5197,8 @@ directories), the shard stages and pilots by the shard recipe, the TASK32 and
 TASK33 dispositions by their `dispose` commands, the startup attempt by the
 runner, the loading runs by `run_loading.sh` and the D7 receipt by
 `task37_dispose.py receipt`. `--check $EV/dispose` replays a recorded
-disposition. After a `pass`, the `t33` snapshots are disposed (above).
+disposition. After a `pass`, the `t33` snapshots are disposed (above), and
+the cleanup removes `$W/t37-tmp` (every stream's TMPDIR) with the clones.
 
 The identity source lists are the exception to the counts-alone ordering
 (design decision 19): `task37_sources.py` is sealed by the identity tables
@@ -5288,8 +5295,12 @@ elaborated closures in `task37_sources.py`: `CLIENT` is TASK31's
 same 278 cells); `MATRIX` and `DOWNSTREAM` are derived. A full
 grid of a table with an empty list is refused with this procedure: run one
 diagnostic cell with `--only` (in any checkout, at the final candidate; all
-three tables run one, and the client's shows any file the final candidate
-elaborates that TASK31's closure lacks), run `sources --output DIR`, enter
+three tables run one). The client's shows only `uncovered` files, those
+the final candidate elaborates that TASK31's closure lacks;
+`unused_sources` is checked by full grids only. If it shows a missing file,
+derive `CLIENT` like the others: enter the printed list in
+`task37_sources.py`, review it and commit that file alone. Run
+`sources --output DIR`, enter
 the printed list in `task37_sources.py` and commit that file alone, before
 the full identity grids. Only the
 identity tables seal `task37_sources.py` (tests: it is in no shard's or
@@ -5618,28 +5629,35 @@ binds each to its own table. A follow-up declaration is committed alone
 and must be an ancestor of the commit of the follow-up's counts file
 (checked by the follow-up engine and again by dispose).
 
-Startup attempts (decisions 21, 25, 26, 28). The last attempt holds the
-judged gate; it may be unclosed (ledger status `open`: incomplete, like one
-closed with another status than 0 or 2). A gate decision counts iff every
-sha256 row of `gate/receipt.json` matches its file (it lists `header.json`
-and `decisions.json`; `startup_gate.write_archive`) AND `startup_gate.replay`
-of the archive, with the attempt's own `not-client-visible.md`, returns 0
-(dispose runs it quietly and in-process). The runner's progress files never
-decide that, so a signal or crash after a decided, replayable gate (killed
-during `gate-null`, say) does not undo the decision. An archive that is
-absent, cut or does not replay gives no decision: the attempt is void (a
-redraw is allowed; a truncated file never raises) unless it shows progress
-past `replay-gate` (exit 0, `done`, `replay-gate.exit` reading `exit=0`,
-or any of `check_deltas.*`, `replay-null.*`, `cell-*.exit`), when it was
-damaged after the run and dispose refuses it (earlier or last), never reads
-it as void. An attempt that closed with exit 0 and no `done`, or with exit 2
-and no `done` although `cell-o2-24.exit` reads `exit=0` and no step `.exit`
-reads `exit=2`, is damaged too. The judged gate
-must be the `gate` of the last attempt and `--startup-declared` its
-`declared-deltas.json`. If the last attempt
-is complete (closed with 0 or 2, with its `done`) it is judged by its gate
-and has a replayed null control (`--startup-null` is required, and it must
-replay). If it is incomplete and left no gate decision it is void and
+Startup attempts (decisions 21, 25, 26, 28, 31). The last attempt holds the
+judged gate; it may be unclosed (ledger status `open`: incomplete). A gate
+decision counts iff every sha256 row of `gate/receipt.json` matches its file
+(it lists `header.json` and `decisions.json`;
+`startup_gate.write_archive`) AND `startup_gate.replay` of the archive,
+sealed to a record (`record_sha256`), with the attempt's own
+`not-client-visible.md`, returns 0 (dispose runs it quietly and in-process,
+with this checkout's `startup_gate.py`, which stays frozen across attempts
+and dispose: an attempt whose harness, `harness-head.txt`, has another
+`startup_gate.py` is refused, "startup_gate.py changed since attempt X").
+The runner's progress files never decide that, so a signal or crash after a
+decided, replayable gate (killed during `gate-null`, say) does not undo the
+decision. An archive that is absent, cut or does not replay gives no
+decision: the attempt is void (a redraw is allowed; a truncated file never
+raises; the reason is in the message and in the attempt row) unless it
+shows progress past `replay-gate` (`done`, `replay-gate.exit` reading
+`exit=0`, or any of `check_deltas.*`, `replay-null.*`, `cell-*.exit`), when
+it was damaged after the run and dispose refuses it (earlier or last),
+never reads it as void. `done` present means every step ran: the attempt is
+complete whatever its close status (a signal after `done`, or never
+closed), and its gate must replay, else it is damaged. Exit 2 also comes
+from the soft steps (`who_pays_s1`, `gate`, `gate-null`, `check_deltas`),
+so an attempt closed with 0 or 2 and no `done` is damaged when the
+runner's last step (`cell-o2-24`) finished with `exit=0`, and incomplete
+otherwise. The judged gate must be the `gate` of the last attempt and
+`--startup-declared` its `declared-deltas.json`. A complete attempt is
+judged by its gate and has a replayed null control (`--startup-null` is
+required, exactly the attempt's `gate-null`, and it must replay). If the
+last attempt is incomplete and left no gate decision it is void and
 refuses (the lead redraws). If it is incomplete and has a gate decision it
 is judged by it: a
 fail or blocked decision (a failure on the declared deltas alone included)
@@ -5649,10 +5667,10 @@ only a pass leaves the attempt incomplete owing a `redraw` (the gate record
 is inconclusive and owes `redraw`). The null control of a failed or blocked
 incomplete attempt is neither read nor replayed (recorded as not applicable;
 `--startup-null` is refused). That of an attempt owing a redraw is read and
-replayed when its own `gate-null` holds a complete archive that replays (an
-explicit `--startup-null` must be that archive), and is otherwise recorded
-as `absent` (the attempt ended before the null gate, or its null does
-not replay).
+replayed when its own `gate-null` holds a complete archive that replays,
+and is otherwise recorded as `absent` (the attempt ended before the null
+gate, or its null does not replay); an explicit `--startup-null` there must
+be that archive and replay, else dispose refuses.
 An earlier attempt is judged by its gate decision too, whenever it has one,
 complete or not, and a redraw is blocked only by an earlier attempt that is
 complete and passed (superseded) or that decided fail or blocked on grounds
@@ -5666,8 +5684,8 @@ N, Dc = M" parsed from the record) and, for an earlier one, to its
 record's sha256 in `gate/header.json` and to the `DECLARED_DELTAS_SHA256`
 of its sealed `inputs.txt`. The runner exits 0 when all steps pass, 2 when
 it completed but a soft step failed (the file `<output>/done` is written,
-not a ledger line), 1 on `die`; an attempt is complete only with `done`
-and a close status of 0 or 2. An `ATTEMPT` name is
+not a ledger line), 1 on `die`; an attempt is complete iff it has `done`,
+whatever its close status. An `ATTEMPT` name is
 never reused and `EVTAG` is
 restricted to `[A-Za-z0-9._-]`. `--check` accepts the stored `head` when
 it is an ancestor of HEAD with the same tree outside the performance

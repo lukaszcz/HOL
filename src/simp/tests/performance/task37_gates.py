@@ -38,9 +38,10 @@ What each replay re-derives, and what it cannot:
   attempts ledger (`--startup-ledger`, R-1: a failed attempt stays), and
   the judged gate must be the last one (`startup_attempts`); an attempt
   counts as complete only with its `done` file (`<output>/done`, written
-  by the runner at its end; it is not a ledger line) and a close status of
-  0 or 2 (2: completed with a soft step failed); a complete attempt
-  always has a replayed null control, which `--startup-null` names. An
+  by the runner at its end; it is not a ledger line), whatever its close
+  status (decision 31: a signal after `done` leaves it complete); a
+  complete attempt always has a replayed null control, which
+  `--startup-null` names (it must be the attempt's own `gate-null`). An
   incomplete last attempt (a failing step, `die`, a signal, no `done`,
   or never closed) with no gate decision is void (refused); with one it
   is judged by it (decision 26): a fail or blocked decision, on any
@@ -62,12 +63,16 @@ What each replay re-derives, and what it cannot:
   decided, replayable gate does not undo it. An archive that is absent,
   cut or does not replay gives no decision, and the attempt is void
   (a redraw is allowed) unless it shows progress past `replay-gate`
-  (`past_replay_gate`: exit 0, `done`, `replay-gate.exit` reading
-  `exit=0`, or a later step file), when it was damaged after the run and
-  is refused, never read as void (`classify`). So is an attempt that
-  closed with exit 0 and no `done`, or with exit 2 and no `done` although
-  `cell-o2-24.exit` reads `exit=0` and no step `.exit` reads `exit=2`
-  (`damaged_runner`). Every earlier attempt is judged by
+  (`past_replay_gate`: `done`, `replay-gate.exit` reading `exit=0`, or a
+  later step file), when it was damaged after the run and is refused,
+  never read as void (`classify`); the reason the replay failed is in the
+  message and in the attempt row (`replay`). So is an attempt that closed
+  with 0 or 2 and no `done` although its last step (`cell-o2-24`) finished
+  with `exit=0` (`damaged_runner`; exit 2 also comes from the soft steps).
+  The replay is this checkout's `startup_gate.py`: an attempt whose
+  harness (`harness-head.txt`) has another one is refused, so the module
+  stays frozen across attempts and dispose (`check_frozen`). A gate not
+  sealed to a record gives no decision. Every earlier attempt is judged by
   its gate decision when it has one, complete or not, and recorded; it
   blocks a redraw only when it is complete and passed, or decided fail
   or blocked on grounds other than the declared deltas (void attempts,
@@ -482,9 +487,10 @@ def declared_problems(declared, decisions):
 
 
 # The close status of a startup attempt (run_startup_gate.sh): 0, every
-# step passed; 2, the run completed (`done` is written) but a soft step
-# failed (gate, null gate, check_deltas); anything else (a failing step or
-# `die` 1, a signal 129/130/143) is an incomplete run.
+# step passed; 2, a soft step failed (who_pays_s1, gate, gate-null,
+# check_deltas) and the run went on, or a step failed with 2; anything else
+# (a failing step or `die` 1, a signal 129/130/143) is not a normal end.
+# Only `done` says that every step ran (design decision 31).
 EXIT_COMPLETE = (0, 2)
 
 
@@ -531,10 +537,10 @@ def read_ledger(ledger):
 
 
 def completed(row):
-    """The runner of the attempt reached its end: it closed with 0 or 2 and
-    wrote `done` (a step that failed with 2 wrote none)."""
-    return row["exit"] in EXIT_COMPLETE and (
-        Path(row["output"]) / "done").is_file()
+    """The runner of the attempt ran every step: it wrote `done` (design
+    decision 31), whatever its close status (a signal after `done`, or no
+    close, leaves the attempt complete)."""
+    return (Path(row["output"]) / "done").is_file()
 
 
 def step_exit(out, name):
@@ -551,34 +557,33 @@ LATER_STEPS = ("check_deltas.*", "replay-null.*", "cell-*.exit")
 
 
 def past_replay_gate(row):
-    """The attempt `row` shows progress past `replay-gate` (design decision
-    28): it closed with exit 0, wrote `done`, `replay-gate.exit` reads
-    `exit=0`, or a later step left a file (`LATER_STEPS`). A gate archive
-    that does not replay then cannot be a gate that died before its
-    replay: it was damaged."""
+    """The attempt `row` shows progress past `replay-gate` (design decisions
+    28, 31): it wrote `done`, `replay-gate.exit` reads `exit=0`, or a later
+    step left a file (`LATER_STEPS`). A gate archive that does not replay
+    then cannot be a gate that died before its replay: it was damaged."""
     out = Path(row["output"])
-    return (row["exit"] == 0 or (out / "done").is_file() or
+    return ((out / "done").is_file() or
             step_exit(out, "replay-gate.exit") == "exit=0" or
             any(next(out.glob(g), None) is not None for g in LATER_STEPS))
 
 
+# The last step of the runner (run_startup_gate.sh): the last `cell`.
+LAST_STEP = "cell-o2-24"
+
+
 def damaged_runner(row):
     """Why the closing status of the attempt `row` contradicts its files,
-    or "": the runner exits 0 only after it wrote `done`, and exits 2
-    without `done` only from a step that failed with 2 (its `.exit` reads
-    `exit=2`; the soft steps that failed with 2 write `done`). Exit 2
-    without `done` is damage when the last cell passed (`cell-o2-24.exit`
-    reads `exit=0`) and no step `.exit` reads `exit=2`."""
+    or "" (design decision 31). Exit 2 comes from soft steps too (who_pays_s1,
+    gate, gate-null, check_deltas), so a close with 0 or 2 shows no early
+    stop; but when the runner's last step (`LAST_STEP`) finished with
+    `exit=0` it always wrote `done` next, so an attempt closed with 0 or 2
+    without `done` is damaged then, and incomplete otherwise."""
     out = Path(row["output"])
-    if (out / "done").is_file():
-        return ""
-    if row["exit"] == 0 or (
-            row["exit"] == 2 and step_exit(out, "cell-o2-24.exit") ==
-            "exit=0" and not any(step_exit(out, p.name) == "exit=2"
-                                 for p in out.glob("*.exit"))):
+    if row["exit"] in EXIT_COMPLETE and not (out / "done").is_file() and \
+            step_exit(out, LAST_STEP + ".exit") == "exit=0":
         return ("the startup attempt %s closed with exit %d and wrote no "
-                "`done`: the runner writes `done` before it exits so, so "
-                "the attempt was damaged after the run (R-1)" % (
+                "`done` although its last step finished with exit=0: it "
+                "was damaged after the run (R-1)" % (
                     row["attempt"], row["exit"]))
     return ""
 
@@ -642,41 +647,86 @@ def archive_complete(out):
     return gate_decision(out) is not None
 
 
-def replays(out, record=None):
-    """The startup gate archive `out` replays (`startup_gate.replay`
-    returns 0), quietly and in-process. `record` is passed to the replay
-    when the header is sealed to a record, and ignored otherwise (a null
-    control has none). An archive that cannot be read or does not replay,
-    for whatever reason, does not replay."""
+def replays(out, record=None, null=False):
+    """(ok, reason): the startup gate archive `out` replays
+    (`startup_gate.replay` returns 0), quietly and in-process; `reason`
+    says why not. A gate (not `null`) must be sealed to a record
+    (`record_sha256`), which is passed to the replay; a null control has
+    none. An archive that cannot be read or does not replay, for whatever
+    reason, does not replay."""
     import startup_gate as sg
     import argparse
     out = Path(out)
     try:
         sealed = bool(a.load(out / "header.json").get("record_sha256"))
-        return quiet(sg.replay, argparse.Namespace(
+        if sealed == null:
+            return False, ("the archive %s a null control and is sealed to "
+                           "%s record" % ("is" if null else "is not",
+                                          "a" if sealed else "no"))
+        code = quiet(sg.replay, argparse.Namespace(
             output=out, record=Path(record) if sealed and record
-            is not None else None)) == 0
-    except Exception:
-        return False
+            is not None else None))
+        return (True, "") if code == 0 else (
+            False, "the replay returned %s" % code)
+    except Exception as error:
+        return False, "%s: %s" % (type(error).__name__, error)
+
+
+def harness_source(head):
+    """The bytes of `startup_gate.py` at the commit `head` of this
+    checkout's repository."""
+    import startup_gate as sg
+    import subprocess
+    here = Path(sg.__file__).resolve()
+    try:
+        return subprocess.run(
+            ("git", "-C", str(here.parent), "show",
+             "%s:./%s" % (head, here.name)), capture_output=True,
+            check=True, stdin=subprocess.DEVNULL).stdout
+    except (OSError, subprocess.CalledProcessError):
+        raise ValueError("cannot read startup_gate.py at the harness "
+                         "commit %s" % head) from None
+
+
+def check_frozen(row):
+    """Refuse the attempt `row` unless its harness's `startup_gate.py` (at
+    the commit it recorded in `harness-head.txt`) is the checkout's: its
+    archives are replayed with this checkout's (design decision 31), so
+    that module stays frozen across attempts and dispose."""
+    import startup_gate as sg
+    out = Path(row["output"])
+    head = step_exit(out, "harness-head.txt") or ""
+    a.require(re.fullmatch(r"[0-9a-f]{40}", head) is not None,
+              "the startup attempt %s records no harness commit "
+              "(harness-head.txt)" % row["attempt"])
+    a.require(harness_source(head) == Path(sg.__file__).read_bytes(),
+              "startup_gate.py changed since attempt %s (harness %s): its "
+              "archive would be replayed with another replay" % (
+                  row["attempt"], head))
 
 
 def judge_gate(row):
-    """(decisions, damage) of the gate of the attempt `row`: its decisions
-    when they count (`classify`, else None) and the message that says why
-    the attempt is damaged (else "")."""
+    """(decisions, damage, reason) of the gate of the attempt `row`: its
+    decisions when they count (`classify`, else None), the message that
+    says why the attempt is damaged (else "") and why the archive did not
+    replay (else "")."""
     out = Path(row["output"])
     damage = damaged_runner(row)
     decisions = gate_decision(out / "gate")
-    if decisions is not None and not replays(
-            out / "gate", out / "not-client-visible.md"):
-        decisions = None
+    reason = ""
+    if decisions is not None:
+        check_frozen(row)
+        ok, reason = replays(out / "gate", out / "not-client-visible.md")
+        if not ok:
+            decisions = None
     if decisions is None and not damage and past_replay_gate(row):
         damage = ("the startup attempt %s got past replay-gate and its "
                   "gate archive shows no gate decision now (a receipt row "
-                  "differs, a file is missing or it does not replay): it "
+                  "differs, a file is missing or it does not replay%s): it "
                   "was damaged after the run, which a redraw would hide "
-                  "(R-1)" % row["attempt"])
-    return decisions, damage
+                  "(R-1)" % (row["attempt"],
+                             ": " + reason if reason else ""))
+    return decisions, damage, reason
 
 
 def classify(row):
@@ -697,13 +747,14 @@ def classify(row):
     the attempt is not damaged. An archive that is absent, cut or does not
     replay gives no decision: the attempt is void (a redraw is allowed)
     unless it shows progress past `replay-gate` (`past_replay_gate`), in
-    which case it was damaged after the run and is refused (R-1). An
-    attempt whose closing status contradicts its files is damaged too
-    (`damaged_runner`)."""
+    which case it was damaged after the run and is refused (R-1); `replay`
+    is the reason the replay failed. An attempt whose closing status
+    contradicts its files is damaged too (`damaged_runner`)."""
     out = Path(row["output"])
-    decisions, damage = judge_gate(row)
+    decisions, damage, reason = judge_gate(row)
     found = dict(row, decision=None, reasons=[], problems=[],
-                 complete=completed(row), kind="void", damaged=damage)
+                 complete=completed(row), kind="void", damaged=damage,
+                 replay=reason)
     if decisions is None:
         return found
     found.update(decision=decisions.get("decision"),
@@ -764,10 +815,10 @@ def startup_attempts(ledger, judged):
     """Every attempt of the startup-gate runner in `ledger`, oldest first:
     [{attempt, output, exit, status, judged, verdict, decision, reasons,
     problems}]. The judged gate directory `judged` must be the `gate` of
-    the output of the LAST attempt, which may be open (never closed:
-    incomplete, as one closed with another status than 0 or 2). Its
-    verdict is `judged` when it completed (`completed`: exit 0 or 2 and
-    `done`, its gate being decided as `classify` says). A damaged attempt
+    the output of the LAST attempt, which may be open (never closed). Its
+    verdict is `judged` when it completed (`completed`: it wrote `done`,
+    whatever its close status; its gate must replay, else it is damaged).
+    A damaged attempt
     (`classify`) is refused. An incomplete last
     attempt with no gate decision is void and cannot be judged (the lead
     redraws); one with a gate decision is judged by it (decision 26):
@@ -789,17 +840,19 @@ def startup_attempts(ledger, judged):
         damage = judge_gate(last)[1]
         a.require(not damage, damage)
         return found + [dict(last, judged=True, verdict="judged",
-                             decision=None, reasons=[], problems=[])]
+                             decision=None, reasons=[], problems=[],
+                             replay="")]
     seen = classify(last)
     damage = seen.pop("damaged")
     a.require(not damage, damage)
     a.require(seen["kind"] != "void",
               "the last startup attempt %s is void (exit %s, `done` %s, no "
-              "gate decision): the runner did not complete, so it cannot "
+              "gate decision%s): the runner did not complete, so it cannot "
               "be judged; the lead redraws (R-1)" % (
                   last["attempt"], last["exit"],
                   "written" if (Path(last["output"]) / "done").is_file()
-                  else "missing"))
+                  else "missing",
+                  ": " + seen["replay"] if seen["replay"] else ""))
     verdict = "owes-redraw" if seen.pop("kind") == "pass" \
         else "judged-incomplete"
     return found + [dict(seen, judged=True, verdict=verdict)]
