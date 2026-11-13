@@ -197,8 +197,55 @@ fun build_dep_table dependencies facts =
       else dadd thmid (intact_dependencies (dependencies thmid)) table)
     (dempty String.compare) facts
 
+(* mlThmData.intactdep_of_thm on a theorem's raw dependency list, with
+   each theory's depnumber index built once instead of rescanning the
+   theory per dependency.  A theory with a theorem lacking a dependency
+   number keeps the original scan, which raises exactly where it did. *)
+fun intact_dependency_resolver () =
+  let
+    val indices = ref (dempty String.compare)
+    fun build theory =
+      SOME (foldl (fn ((name, theorem), table) =>
+        let val number = mlThmData.depnumber_of_thm theorem in
+          if dmem number table then table else dadd number name table
+        end) (dempty Int.compare) (DB.thms theory))
+      handle HOL_ERR _ => NONE
+    fun index theory =
+      case Redblackmap.peek (!indices, theory) of
+          SOME result => result
+        | NONE =>
+            let val result = build theory in
+              indices := dadd theory result (!indices);
+              result
+            end
+    fun scan theory number =
+      Option.map #1 (List.find (fn (_, theorem) =>
+        number = mlThmData.depnumber_of_thm theorem) (DB.thms theory))
+    fun thmid_of_depid (theory, number) =
+      let
+        val found =
+          case index theory of
+              NONE => scan theory number
+            | SOME table => Redblackmap.peek (table, number)
+      in
+        case found of
+            SOME name =>
+              if can (DB.fetch theory) name andalso
+                 uptodate_thm (DB.fetch theory name)
+              then SOME (theory ^ "Theory." ^ name)
+              else NONE
+          | NONE => NONE
+      end
+  in
+    fn raw =>
+      let val resolved = List.mapPartial thmid_of_depid raw in
+        (length raw = length resolved, resolved)
+      end
+  end
+
 fun create_dep_table (_, facts) =
   let
+    val intact_dependencies_of = intact_dependency_resolver ()
     fun dependency_info thmid =
       case total mlThmData.thm_of_name thmid of
           SOME (SOME (_, theorem)) =>
@@ -208,8 +255,7 @@ fun create_dep_table (_, facts) =
               else
                 let
                   val raw = Dep.depidl_of (Tag.dep_of (Thm.tag theorem))
-                  val (intact, fetchable) =
-                    mlThmData.intactdep_of_thm theorem
+                  val (intact, fetchable) = intact_dependencies_of raw
                 in
                   SOME {fetchable = fetchable, intact = intact,
                         count = length raw}
