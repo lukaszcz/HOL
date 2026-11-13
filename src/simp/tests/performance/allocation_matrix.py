@@ -9,6 +9,16 @@ LD_LIBRARY_PATH, and its binding is checked against the process maps. No
 timing is measured. Failures and uncertainty stay failures and uncertainty:
 no thresholds, outlier removal or subtraction. Output goes only below
 --output; nothing here names a path inside the repository.
+
+TASK37: the tasks `task37-matrix` (every TASK29 and TASK30 case, 306 cells,
+size 10000 included) and `task37-client` (the 245 cells that `task31`
+allocates) run 3 pairs per cell (Task.pairs, TASK37_PAIRS); the legacy tasks
+keep 10. Counts are exact and no run ever saw a nondeterministic cell; the
+determinism and control checks of allocation_analysis run on the 3 pairs
+unchanged. `--pairs` defaults to the task's; fewer is a smoke. The cost of a
+cell is proportional to its pairs (4 fresh processes per pair, one after the
+other); `--jobs` runs cells, not processes of one cell, in parallel. The
+`downstream_*` cells are not a task here (see task37_client).
 """
 import argparse
 from collections import Counter
@@ -51,7 +61,11 @@ BOUNDARY = HERE / "allocation_boundary.json"
 SCHEMA = "task29b-matrix-v2"
 CONTROLS_SCHEMA = "task29-managed-counter-controls-v4"
 SIZES = a.SIZES
-PAIRS = 10  # acceptance minimum; fewer pairs is a smoke only
+# Acceptance minimum of the pairs of a legacy task (TASK29B, TASK30, TASK31);
+# fewer pairs is a smoke only. Every task has its own (Task.pairs): the
+# TASK37 tasks use TASK37_PAIRS.
+PAIRS = 10
+TASK37_PAIRS = 3
 # Job directories are named "j%02d" (make_job): more would give some private
 # paths, hence PAIR_PRIVATE, another length than the rest of the grid.
 MAX_JOBS = 100
@@ -134,13 +148,31 @@ class Task:
 
     A case's sizes are those of its size set in matrix.json, without the
     `infeasible` (case, size) cells, which no gate can run. With `rows`
-    the decisions also hold one pass/fail row per cell (see assemble)."""
+    the decisions also hold one pass/fail row per cell (see assemble).
+
+    `pairs` is the acceptance minimum of fresh-process AB/BA pairs per
+    cell (a run with fewer is a smoke). The legacy tasks keep PAIRS (10).
+    The TASK37 tasks use TASK37_PAIRS (3): the allocation counts are exact
+    (the private counter counts words, not time), and no run of TASK29B,
+    TASK30 or TASK31 ever observed a nondeterministic count. Three pairs
+    (six candidate and six control processes besides the baselines) still
+    detect a cell that is nondeterministic, as the analysis compares every
+    process of a cell, repeat by repeat, with the others and with the
+    baseline/baseline control (allocation_analysis.control_identical and
+    `deterministic`); more pairs would only lengthen the run (the cost is
+    proportional to the pairs). `case_files` are the case-list modules of
+    this checkout besides those every task binds, which the harness seals.
+    """
 
     def __init__(self, name, label, cases, iterations, infeasible=(),
-                 rows=False):
+                 rows=False, pairs=PAIRS, case_files=()):
         self.name, self.label = name, label
         self.cases, self.iterations = tuple(cases), iterations
         self.infeasible, self.rows = frozenset(infeasible), rows
+        sc.require(isinstance(pairs, int) and not isinstance(pairs, bool)
+                   and pairs >= 2, "a task needs at least an AB and a BA "
+                   "pair")
+        self.pairs, self.case_files = pairs, tuple(case_files)
         fixtures = {ms.EXPECTED_CASES[c]["fixture"] for c in self.cases}
         sc.require(len(fixtures) == 1 and fixtures <= set(FAMILIES),
                    "a task runs the cases of one fixture family")
@@ -168,7 +200,34 @@ def task31():
     import task31_cases
     return Task("task31", "TASK31", task31_cases.CASES,
                 HERE / "allocation_iterations_task31.json",
-                task31_cases.INFEASIBLE_CELLS, rows=True)
+                task31_cases.INFEASIBLE_CELLS, rows=True,
+                case_files=("task31_cases.py",))
+
+
+def task37_matrix():
+    """The TASK37 matrix task: every TASK29 and TASK30 cell (162 + 144),
+    size 10000 included, at TASK37_PAIRS pairs. Lazy, like task31."""
+    import task37_cases
+    return Task("task37-matrix", "TASK37 matrix", task37_cases.MATRIX_CASES,
+                HERE / "allocation_iterations_task37_matrix.json",
+                rows=True, pairs=TASK37_PAIRS,
+                case_files=task37_cases.FILES)
+
+
+def task37_client():
+    """The TASK37 client task: exactly the 245 cells that task31 allocates
+    (the cells of the TASK31 case list but its infeasible ones), at
+    TASK37_PAIRS pairs. Lazy, like task31.
+
+    The `downstream_*` cells are not a task: they need the shared client
+    closure (numLib, reduceLib, bossLib recompiled against the private
+    simplifier, client_dependencies.py), which this driver does not
+    install, so a process would run the shared simplifier in them."""
+    import task37_cases
+    return Task("task37-client", "TASK37 client", task37_cases.CLIENT_CASES,
+                HERE / "allocation_iterations_task37_client.json",
+                task37_cases.CLIENT_INFEASIBLE_CELLS, rows=True,
+                pairs=TASK37_PAIRS, case_files=task37_cases.FILES)
 
 
 class Tasks(collections.abc.Mapping):
@@ -201,7 +260,8 @@ TASKS = Tasks({
     DEFAULT_TASK: Task(DEFAULT_TASK, "TASK29B", gate.CASES, ITERATIONS),
     "task30": Task("task30", "TASK30", task30_cases.CASES,
                    HERE / "allocation_iterations_task30.json")},
-    {"task31": task31})
+    {"task31": task31, "task37-matrix": task37_matrix,
+     "task37-client": task37_client})
 
 
 def task_named(name):
@@ -458,7 +518,7 @@ def harness_files(task=None):
         "allocation_boundary.json", task.iterations.name,
         *task.family.sources, "acceptance.py",
         "evidence_bundle.py", "loading.py", "task29_gate.py",
-        "task30_cases.py", *(("task31_cases.py",) if task.rows else ()),
+        "task30_cases.py", *task.case_files,
         "path_schema.py", "performance_schema.py", "matrix_schema.py",
         "audit_evidence.py", "summarize.py")]
     inputs += [HERE / "allocator-counter" / n for n in (
@@ -511,13 +571,13 @@ class Grid:
 
     def __init__(self, args):
         self.args = args
-        self.pairs = args.pairs
+        self.task = task_named(getattr(args, "task", DEFAULT_TASK))
+        self.pairs = self.task.pairs if args.pairs is None else args.pairs
         self.repo = args.repo.resolve(strict=True)
         self.report = dict(commands=[])
         self.scratch = None
         self.ready = False
         self.header = {}
-        self.task = task_named(getattr(args, "task", DEFAULT_TASK))
 
     def bind_harness(self, candidate):
         """The harness binding of this grid's task, with the input and
@@ -709,7 +769,8 @@ class Grid:
                          if k != "TMPDIR"}, tmpdir=self.env["TMPDIR"],
             boundary=self.boundary,
             harness=self.harness,
-            acceptance_pairs=self.pairs >= PAIRS, outliers="none removed",
+            acceptance_pairs=self.pairs >= self.task.pairs,
+            outliers="none removed",
             decision="no allowance; no subtraction; see allocation_analysis")
 
     def make_job(self, index):
@@ -775,7 +836,7 @@ class Grid:
         return receipt
 
     def cell(self, job, case, size, root, counts):
-        """All 4*PAIRS fresh processes of one cell, archived and replayed."""
+        """All 4*pairs fresh processes of one cell, archived and replayed."""
         name = name_of(case, size)
         steady = counts["steady"][name]
         bind = binding(dict(self.header, iterations=counts), case, size)
@@ -1177,7 +1238,7 @@ def assemble(cells, records, observed, baseline=a.BASE, task=None,
         out["work"] = work
         out["work_status"] = work["status"]
     out["complete"] = complete
-    out["acceptance_pairs"] = bool(pairs) and min(pairs) >= PAIRS
+    out["acceptance_pairs"] = bool(pairs) and min(pairs) >= task.pairs
     # Only the pinned develop commit is the baseline of an acceptance.
     out["acceptance_baseline"] = baseline == a.BASE
     if task.rows:
@@ -1205,10 +1266,11 @@ def cell_rows(task, decisions):
 
     `decision` is the allocation words' decision for the cell: `pass` only
     when every gated phase and metric of the cell passes, the cell has at
-    least PAIRS pairs, the baseline is the pinned one and none of its rows
-    is nondeterministic; `fail` when one fails; `inconclusive` otherwise
-    (also for a cell without an analysis). `work` is the structural work
-    row beside the words (`equal`, `differs`, `inconclusive`, or None
+    least `task.pairs` pairs, the baseline is the pinned one and none of
+    its rows is nondeterministic; `fail` when one fails; `inconclusive`
+    otherwise (also for a cell without an analysis). `work` is the
+    structural work row beside the words (`equal`, `differs`,
+    `inconclusive`, or None
     without work rows); the disposition requires it equal for a pass. The
     slopes of a case are differences of the cells', so they are not in a
     row."""
@@ -1220,7 +1282,7 @@ def cell_rows(task, decisions):
             name = name_of(case, size)
             status = cell_status(cell)
             if status == "pass" and not (
-                    cell["pairs"] >= PAIRS and name not in varying and
+                    cell["pairs"] >= task.pairs and name not in varying and
                     decisions["acceptance_baseline"]):
                 status = "inconclusive"
             rows[name] = dict(
@@ -1319,10 +1381,28 @@ def checkpoint(path, value):
     partial.replace(path)
 
 
+def check_pairs(inventory, task):
+    """The pairs an inventory claims must be those of its cells and the
+    acceptance flag it carries must be the task's rule: a record of fewer
+    pairs than the task's is a smoke and must say so, one that says
+    otherwise (or a flag from the rule of another task) is refused. A cell
+    archive whose own pairs differ from the header's is refused by its
+    binding (see binding, checked_cell)."""
+    pairs = inventory.get("pairs")
+    sc.require(isinstance(pairs, int) and not isinstance(pairs, bool) and
+               pairs >= 2, "inventory without a valid pair count")
+    if "acceptance_pairs" in inventory:
+        sc.require(inventory["acceptance_pairs"] == (pairs >= task.pairs),
+                   "the inventory's acceptance flag is not the rule of %s "
+                   "(%d pairs; at least %d are an acceptance)" % (
+                       task.name, pairs, task.pairs))
+
+
 def finish(root, inventory):
     """Recompute everything from the archives; write decisions + results."""
     cells, records, observed, shared = {}, {}, {}, {}
     task = task_of(inventory)
+    check_pairs(inventory, task)
     controls_copy(root, inventory)
     for row in inventory["runs"]:
         key = row["case"], row["size"]
@@ -1558,15 +1638,17 @@ def main(argv=None):
 
     r = sub.add_parser("run")
     common(r)
-    r.add_argument("--pairs", type=int, default=PAIRS,
-                   help="fewer than %d is a smoke, never a decision" % PAIRS)
+    r.add_argument("--pairs", type=int, default=None,
+                   help="pairs per cell (default: the task's, %d for the "
+                   "legacy tasks, %d for TASK37); fewer than the task's is "
+                   "a smoke, never a decision" % (PAIRS, TASK37_PAIRS))
     r.add_argument("--resume", action="store_true")
     r.add_argument("--only", nargs="*", default=[],
                    help="measure only these case-size cells (partial)")
     c = sub.add_parser("check-jobs")
     common(c)
     c.add_argument("--cells", nargs="+", required=True)
-    c.add_argument("--pairs", type=int, default=PAIRS)
+    c.add_argument("--pairs", type=int, default=None)
     p = sub.add_parser("replay")
     p.add_argument("--output", type=Path, required=True)
     t = sub.add_parser("toolchain")
@@ -1576,7 +1658,9 @@ def main(argv=None):
     t.add_argument("--timeout", type=int, default=3600)
     args = parser.parse_args(argv)
     if args.action in ("run", "check-jobs"):
-        sc.require(args.pairs >= 2 and args.jobs >= 1,
+        sc.require(args.pairs is None or args.pairs >= 2,
+                   "need an AB and a BA pair and a positive job count")
+        sc.require(args.jobs >= 1,
                    "need an AB and a BA pair and a positive job count")
         sc.require(args.jobs <= MAX_JOBS,
                    "--jobs above %d would lengthen a job path" % MAX_JOBS)

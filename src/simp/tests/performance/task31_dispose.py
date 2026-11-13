@@ -103,8 +103,15 @@ CODE = ("task31_dispose.py", "task31_grid.py", "task31_identity_grid.py",
         "allocation_matrix.py", "allocation_analysis.py",
         "allocation_schema.py", "allocation_boundary.py", "path_schema.py")
 # Per file of CODE, the seals it had when a disposition was recorded, once it
-# has changed since.
-HISTORY = {}
+# has changed since. The seals of 7e202dfbaa: allocation_matrix.py before it
+# took a pair count per task (TASK37), and this file before it named that.
+HISTORY = {
+    "allocation_matrix.py": (dict(
+        bytes=74810, sha256="935b2a4962cd6c2b4270805a1f94758d"
+                       "f07d62c757b14f38d315041c050c9ef5"),),
+    "task31_dispose.py": (dict(
+        bytes=31264, sha256="551f76142534cb62820a40b8c324eaa1"
+                       "7843adbb742b142ca5697842de2eab3c"),)}
 
 
 def seals():

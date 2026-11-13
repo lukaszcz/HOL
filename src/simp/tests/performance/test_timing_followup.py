@@ -1808,6 +1808,10 @@ class ReplacedOpenings(Rig):
     # task is asked for, which no TASK29B or TASK30 process, replay or
     # disposition does: the edge is left out of the disposition's closure.
     TASK31_EDGE = ("allocation_matrix", "task31_cases", "task31")
+    # So do `task37_matrix` and `task37_client` import the TASK37 case
+    # lists, which only a TASK37 allocation grid asks for.
+    TASK37_EDGES = {("allocation_matrix", "task37_cases", "task37_matrix"),
+                    ("allocation_matrix", "task37_cases", "task37_client")}
 
     def test_the_disposition_is_downstream_of_the_replay(self):
         # The disposition consumes the replays and is in neither table's
@@ -1823,7 +1827,8 @@ class ReplacedOpenings(Rig):
         self.assertNotIn("task30_dispose", self.covered())
         self.ROOTS = ("task30_dispose",)
         try:
-            self.LEFT_OUT = self.LEFT_OUT | {self.TASK31_EDGE}
+            self.LEFT_OUT = self.LEFT_OUT | {self.TASK31_EDGE} | \
+                self.TASK37_EDGES
             own = self.closure(sources)
             self.LEFT_OUT = type(self).LEFT_OUT
             self.assertIn("task31_cases", self.closure(sources))

@@ -382,6 +382,11 @@ class Modules(unittest.TestCase):
         "harness_files binding of the blob is a record of the "
         "measurement, which the replay does not compare")
 
+    ALLOCATION_TASK37 = (
+        "allocation_matrix imports the TASK37 case lists only when a "
+        "TASK37 task is asked for, which a TASK31 allocation grid never "
+        "does")
+
     @staticmethod
     def edges(reason, *edges):
         return {edge: reason for edge in edges}
@@ -421,6 +426,10 @@ class Modules(unittest.TestCase):
             found.update(cls.edges(
                 cls.ALLOCATION_CASES,
                 ("allocation_matrix", "task30_cases", None)))
+            found.update(cls.edges(
+                cls.ALLOCATION_TASK37,
+                ("allocation_matrix", "task37_cases", "task37_matrix"),
+                ("allocation_matrix", "task37_cases", "task37_client")))
         return found
 
     @staticmethod
