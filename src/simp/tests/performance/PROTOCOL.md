@@ -4791,6 +4791,8 @@ waves 1 and 2. The `sources` fill is by hand, in `$M`:
     # (MATRIX and DOWNSTREAM; CLIENT only under the rule in Sources),
     # review, and commit that file alone
     # then, for all three identity clones: forward $CL
+    # (a clone is forwarded only when its grid, reruns included, is
+    # closed: a forward replaces the code its running grid is sealed by)
     nice -n 19 $I identity --table T --output $E/grid \
       --candidate $(git rev-parse HEAD) --authorize-measurements --jobs N
     # a cell refused on "batch too short; recalibrate" alone ran under
@@ -5380,7 +5382,19 @@ private counter of `allocation_matrix.py`, in three tasks, one per clone.
   before it is compared with the changed paths of the git diff, which
   name sources: a changed source must be a reviewed boundary file, and a
   shared product of a module the closure installs privately (`modules` of
-  the closure record) is refused.
+  the closure record) is refused. A theory of a script the closure
+  builds privately is private too (design decision 29): selecting
+  `XScript` makes `XTheory` private, the closure record lists the
+  private names (`private`), and a descriptor of the frozen set rebound
+  to such a name is built by `paired.exe` from its script. The products
+  of that theory (`.hol/objs/XTheory.{sml,sig,uo,ui,dat}`) are judged by
+  the selected script (design decision 34), and only when their seal is
+  the one the same process's post-build record holds: `built` in an
+  allocation receipt (the entries of `.hol/objs/` of the private tree
+  after Holmake; the processes of a side must agree on it) and
+  `selections[side].products` in an identity manifest. A product that
+  is absent from that record, or sealed otherwise, is refused. A receipt
+  made before `built` existed has no such record: its theory is refused.
 - Counts. `task37_iterations.py {matrix,client,downstream,all} [--check]`
   writes `allocation_iterations_task37_matrix.json`,
   `allocation_iterations_task37_client.json` and
