@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import tempfile
 import types
 import unittest
@@ -103,7 +104,7 @@ def seal_gate(directory):
         for n in ("header.json", "decisions.json")})
 
 
-def fake_replays(out, record=None, null=False, module=None):
+def fake_replays(out, record=None, null=False, harness=None):
     """Stands in for `gates.replays` over the fake gate archives of these
     fixtures: they replay unless they hold a `no-replay` marker. The real
     archives are those of `ReplayValidity`."""
@@ -124,14 +125,19 @@ RUNNER_HARD_STEPS = (
     "build", "who_pays", "fill_record", "replay-gate", "replay-null",
     "cell-o1-19", "cell-o1-24", "cell-o1-33", "cell-o2-24")
 HARNESS = "ab" * 20
-LOADED = {}        # Ledgers.fake_load
+# a harness `startup_gate.py` that has the contract and replays with CODE
+STAND_IN = ("SCHEMA = 'stand-in'\nPAIRS = 1\n"
+            "def replay(args):\n    return %d\n")
 
 
 class Ledgers(unittest.TestCase):
     """A directory of attempts and their ledger. The harness commit an
-    attempt records (`harness-head.txt`, `HARNESS`) has the checkout's
-    modules, unless a test says otherwise (`self.sources`: bytes by module
-    name, or by (commit, name))."""
+    attempt records (`harness-head.txt`, `HARNESS`) is run, at the one seam
+    `gates.run_harness`, in-process by the checkout's `startup_gate`,
+    unless a test says otherwise (`self.sources`: the source of a stand-in
+    `startup_gate.py`, by commit or for all). The real child process over
+    a real tree is exercised by `HarnessTree`, `ReplayValidity` (the real
+    HEAD) and the temp-repo tests."""
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -139,46 +145,48 @@ class Ledgers(unittest.TestCase):
         import startup_gate as sg
         self.here = Path(sg.__file__).resolve().parent
         self.sources = {}
-        self.real_harness_source = gates.harness_source
-        self.real_harness_names = gates.harness_names
-        self.real_load_harness = gates.load_harness
-        for name, fake in (("harness_source", self.fake_source),
-                           ("harness_names", self.fake_names),
-                           ("load_harness", self.fake_load)):
+        self.real_harness_tree = gates.harness_tree
+        self.real_run_harness = gates.run_harness
+        for name, fake in (("harness_tree", lambda head, entry=None:
+                            self.here),
+                           ("run_harness", self.fake_run)):
             patch = mock.patch.object(gates, name, fake)
             patch.start()
             self.addCleanup(patch.stop)
 
-    def fake_source(self, head, path=None):
-        name = Path(path or self.here / "startup_gate.py").stem
-        for key in ((head, name), name):
-            if key in self.sources:
-                return self.sources[key]
-        return (self.here / (name + ".py")).read_bytes()
-
-    def fake_load(self, head, path=None):
-        """`gates.load_harness`, remembered per (commit, sources): loading
-        the 27 modules of the closure takes 0.4 s. The real one is tested
-        in `use_real_git`, `ClosureLoading` and `ReplayValidity`."""
-        key = (head, str(path), tuple(sorted(
-            (str(k), hashlib.sha256(v).hexdigest())
-            for k, v in self.sources.items())))
-        if key not in LOADED:
-            LOADED[key] = self.real_load_harness(head, path)
-        return LOADED[key]
-
-    def fake_names(self, head, path=None):
-        return {p.stem for p in self.here.glob("*.py")}
-
-    def use_real_git(self):
-        """The attempts' harness is read from git, not from the checkout's
-        files."""
-        for name, real in (("harness_source", self.real_harness_source),
-                           ("harness_names", self.real_harness_names),
-                           ("load_harness", self.real_load_harness)):
+    def use_real_harness(self):
+        """The real tree and child process."""
+        for name, real in (("harness_tree", self.real_harness_tree),
+                           ("run_harness", self.real_run_harness)):
             patch = mock.patch.object(gates, name, real)
             patch.start()
             self.addCleanup(patch.stop)
+        self.addCleanup(gates.release_harness_trees)
+
+    def fake_run(self, harness, request):
+        """`gates.run_harness` in-process, with the contract of the child:
+        the harness's `replay`, `SCHEMA` and `PAIRS`."""
+        import startup_gate as sg
+        module = sg
+        for key in (harness.head, None):
+            if key in self.sources:
+                module = types.ModuleType("stand_in")
+                exec(self.sources[key], module.__dict__)
+                break
+        missing = [n for n in ("replay", "SCHEMA", "PAIRS")
+                   if not hasattr(module, n)]
+        if missing:
+            raise gates.HarnessRefused("lacks " + ", ".join(missing))
+        result = dict(SCHEMA=module.SCHEMA, PAIRS=module.PAIRS)
+        if request["op"] == "replay":
+            try:
+                result["code"] = gates.quiet(module.replay, argparse.Namespace(
+                    output=Path(request["output"]),
+                    record=None if request["record"] is None
+                    else Path(request["record"])))
+            except Exception as error:
+                result["error"] = "%s: %s" % (type(error).__name__, error)
+        return result
 
     def ledger(self, *lines):
         return write(self.root / "attempts.jsonl", "".join(
@@ -359,45 +367,19 @@ class StartupLedger(Ledgers):
         with self.assertRaisesRegex(ValueError, "records no harness"):
             gates.startup_attempts(ledger, out / "gate")
         write(out / "harness-head.txt", "0" * 40 + "\n")
-        self.use_real_git()
+        self.use_real_harness()
         with self.assertRaisesRegex(
-                ValueError, "the startup attempt a: cannot list the "
-                "modules of .* at the "
-                "harness commit " + "0" * 40):
+                ValueError, "the startup attempt a: cannot build the "
+                "harness tree of .*startup_gate.py at the harness commit "
+                + "0" * 40):
             gates.startup_attempts(ledger, out / "gate")
+        self.assertEqual(gates.HARNESS_TMP, [])    # nothing left behind
         # no gate decision, nothing to replay: the harness is not read
         void = self.run_dir("v", done=False)
         (void / "harness-head.txt").unlink()
         self.assertEqual(gates.classify(dict(
             attempt="v", output=str(void), exit=143,
             status="failed"))["kind"], "void")
-
-    def test_the_harness_source_is_the_blob_at_the_commit_in_its_path(self):
-        import subprocess
-        repo = self.root / "repo"
-        (repo / "sub").mkdir(parents=True)
-        subprocess.run(("git", "-C", str(repo), "init", "-q"), check=True,
-                       stdin=subprocess.DEVNULL)
-        shas = []
-        for text in (b"one\n", b"two\n"):
-            (repo / "sub" / "startup_gate.py").write_bytes(text)
-            for argv in (("add", "."), ("-c", "user.name=t", "-c",
-                                        "user.email=t@t", "commit", "-q",
-                                        "-m", "x")):
-                subprocess.run(("git", "-C", str(repo)) + argv,
-                               check=True, stdin=subprocess.DEVNULL)
-            shas.append(subprocess.run(
-                ("git", "-C", str(repo), "rev-parse", "HEAD"), check=True,
-                capture_output=True, text=True).stdout.strip())
-        where = repo / "sub" / "startup_gate.py"
-        self.assertEqual([self.real_harness_source(c, where)
-                          for c in shas], [b"one\n", b"two\n"])
-        with self.assertRaisesRegex(ValueError, "cannot read sub/startup_"
-                                    "gate.py at the harness commit 0"):
-            self.real_harness_source("0" * 40, where)
-        with self.assertRaisesRegex(ValueError, "cannot read startup_gate"
-                                    ".py at the harness commit"):
-            self.real_harness_source(shas[0], repo / "startup_gate.py")
 
     def test_a_judged_gate_that_is_not_the_last_attempt_is_refused(self):
         one, two = self.run_dir("one"), self.run_dir("two")
@@ -772,25 +754,36 @@ class ReplayValidity(Ledgers):
         patch = mock.patch.object(sg, "PAIRS", tsg.TEST_PAIRS)
         patch.start()
         self.addCleanup(patch.stop)
-        # the attempt's own module, loaded from its source, has the
-        # archives' pair count too
-        text = (self.here / "startup_gate.py").read_bytes()
-        self.sources["startup_gate"] = text.replace(b"PAIRS = 10  #",
-                                                    b"PAIRS = 2  #")
-        self.assertIn(b"PAIRS = 2  #", self.sources["startup_gate"])
 
-    def run_dir(self, name, fail=False, done=False, steps=None):
+    def write_archive(self, root, records, record, pairs):
+        """`test_startup_gate.ArchiveTest.archive` for `pairs` pairs."""
+        sg = self.sg
+        text = json.dumps(tsg.declared_data_raw())
+        header = dict(
+            schema=sg.SCHEMA, sides=tsg.SIDES, null=False, pairs=pairs,
+            record_sha256=record, clock_mentions=[],
+            hol={l: "/s/%s/hol-source" % l for l in tsg.BASE + tsg.CAND},
+            holdir_length=len("/s/b1/hol-source"), sources=tsg.SOURCES,
+            declared_text=text,
+            declared_sha256=hashlib.sha256(text.encode()).hexdigest())
+        with mock.patch.object(sg, "PAIRS", pairs):
+            report = sg.analyse(records, tsg.SIDES, sg.parse_declared(text),
+                                tsg.SOURCES, pairs, False, record)
+        sg.write_archive(root, records, header, report)
+
+    def run_dir(self, name, fail=False, done=False, steps=None,
+                pairs=tsg.TEST_PAIRS):
         """An attempt whose gate is a real archive: attributed, or with
         `fail` failed (an undeclared file carries words), sealed to the
-        attempt's own record."""
+        attempt's own record, of `pairs` pairs."""
         path = self.root / name
         write(path / "harness-head.txt", HARNESS + "\n")
         record = write(path / "not-client-visible.md", "record\n")
         records = tsg.world(delta=dict(tsg.DELTA, **(
-            {"Other.sml": 3} if fail else {})))
+            {"Other.sml": 3} if fail else {})), pairs=pairs)
         (path / "gate").mkdir()
-        tsg.ArchiveTest().archive(path / "gate", records,
-                                  self.sg.sha_file(record))
+        self.write_archive(path / "gate", records, self.sg.sha_file(record),
+                           pairs)
         if done:
             write(path / "done", "done\n")
         for step, text in (steps or {}).items():
@@ -885,59 +878,44 @@ class ReplayValidity(Ledgers):
             shutil.rmtree(out)
             shutil.rmtree(self.root / "last", ignore_errors=True)
 
-    def test_the_replay_is_the_attempts_own_module_from_git(self):
+    def test_the_real_head_harness_replays_a_real_archive_in_a_child(self):
         import subprocess
         import sys
         head = subprocess.run(
             ("git", "-C", str(Path(gates.__file__).parent), "rev-parse",
              "HEAD"), check=True, capture_output=True, text=True,
             stdin=subprocess.DEVNULL).stdout.strip()
-        out = self.run_dir("g", fail=True)
+        out = self.run_dir("g", fail=True, pairs=self.sg.PAIRS * 5)
         write(out / "harness-head.txt", head + "\n")
-        row = self.row(out)
-        self.use_real_git()
-        before = dict(sys.modules)
-        module = gates.attempt_startup_gate(row)
-        self.assertEqual(sys.modules, before)
+        self.use_real_harness()
+        path, modules = list(sys.path), dict(sys.modules)
+        harness = gates.attempt_harness(self.row(out))
+        self.assertTrue(harness.directory.is_dir())
+        # the tree holds the performance area at HEAD, allocator-counter
+        # included, and the checkout's siblings above it
+        self.assertTrue((harness.directory / "allocator-counter"
+                         / "private_runtime.py").is_file())
+        self.assertTrue((harness.directory.parents[3] / ".git").exists())
+        self.assertEqual(gates.harness_constants(harness),
+                         (self.sg.SCHEMA, 10))
+        self.assertEqual(gates.replays(
+            out / "gate", out / "not-client-visible.md",
+            harness=harness), (True, ""))
+        # a record that is not the seal does not replay
+        ok, reason = gates.replays(out / "gate", out / "no-such-record",
+                                   harness=harness)
+        self.assertFalse(ok)
+        self.assertEqual(gates.classify(self.row(out))["kind"], "fail")
+        self.assertEqual((sys.path, sys.modules), (path, modules))
         self.assertIs(sys.modules["startup_gate"], self.sg)
-        self.assertIsNot(module, self.sg)
-        # real blobs, real replay of a real archive (its pair count is
-        # the archive's)
-        with mock.patch.object(module, "PAIRS", tsg.TEST_PAIRS):
-            self.assertEqual(gates.replays(
-                out / "gate", out / "not-client-visible.md",
-                module=module), (True, ""))
-
-    def test_the_replay_uses_the_harness_commits_allocation_schema(self):
-        import sys
-        import allocation_schema
-        out = self.run_dir("g", fail=True)
-        self.assertFalse(hasattr(allocation_schema, "HARNESS_MARK"))
-        self.sources["allocation_schema"] = (
-            self.here / "allocation_schema.py").read_bytes() + \
-            b"\nHARNESS_MARK = 'harness'\n"
-        self.sources["startup_gate"] += (
-            b"\n\ndef replay(args):\n"
-            b"    return 0 if sc.HARNESS_MARK == 'harness' else 9\n")
-        before = dict(sys.modules)
-        got = gates.classify(self.row(out))
-        self.assertEqual((got["kind"], got["replay"]), ("fail", ""))
-        module = gates.attempt_startup_gate(self.row(out))
-        self.assertEqual(sys.modules, before)
-        self.assertIsNot(module.sc, allocation_schema)
-        self.assertIs(sys.modules["allocation_schema"], allocation_schema)
-        # the other harness modules are the harness's too
-        self.assertIsNot(module.a, sys.modules["acceptance"])
-        # and the checkout's own is not what decides
-        del self.sources["allocation_schema"]
-        self.assertEqual(gates.classify(self.row(out))["kind"], "void")
+        tree = harness.directory
+        gates.release_harness_trees()
+        self.assertFalse(tree.exists())
 
     def test_each_attempt_is_replayed_by_its_own_harness_commit(self):
         old, new = "11" * 20, "22" * 20
-        self.sources[(old, "startup_gate")] = \
-            b"def replay(args):\n    return 7\n"
-        self.sources[(new, "startup_gate")] = \
-            b"def replay(args):\n    return 0\n"
+        self.sources[old] = STAND_IN % 7
+        self.sources[new] = STAND_IN % 0
         one, two = self.run_dir("one", fail=True), \
             self.run_dir("two", fail=True, done=True)
         write(one / "harness-head.txt", old + "\n")
@@ -954,47 +932,23 @@ class ReplayValidity(Ledgers):
         self.assertEqual(gates.classify(self.row(one))["kind"], "fail")
         self.assertEqual(gates.classify(self.row(two, 0))["kind"], "void")
 
-    def test_a_harness_blob_that_cannot_load_is_refused_by_name(self):
-        out = self.run_dir("g", fail=True)
-        where = re.escape(gates.harness_prefix(gates.__file__))
-        for name, source, message in (
-                ("startup_gate", b"raise ImportError('boom')\n",
-                 "cannot load %sstartup_gate.py at the harness commit "
-                 "%s: ImportError: boom"),
-                ("startup_gate", b"import no_such_module_anywhere\n",
-                 "cannot load %sstartup_gate.py at the harness commit "
-                 "%s: ModuleNotFoundError"),
-                ("allocation_schema", b"raise ImportError('boom')\n",
-                 "cannot load %sallocation_schema.py at the harness "
-                 "commit %s: ImportError: boom"),
-                ("loading", b"def (:\n",
-                 "cannot compile %sloading.py at the harness commit "
-                 "%s: SyntaxError")):
-            self.sources.clear()
-            self.sources[name] = source
-            if name != "startup_gate":
-                self.sources["startup_gate"] = (
-                    self.here / "startup_gate.py").read_bytes()
-            expect = "the startup attempt g: " + message % (where, HARNESS)
-            with self.assertRaisesRegex(ValueError, expect, msg=name):
-                gates.attempt_startup_gate(self.row(out))
-            with self.assertRaisesRegex(ValueError, expect, msg=name):
-                gates.startup_attempts(self.attempts(("g", 143)),
-                                       out / "gate")
-
     def test_the_attempts_version_of_the_replay_is_the_one_used(self):
         out = self.run_dir("g", fail=True)
         self.assertEqual(gates.classify(self.row(out))["kind"], "fail")
         # an attempt whose harness had another `replay`
-        self.sources["startup_gate"] = b"def replay(args):\n    return 7\n"
+        self.sources[None] = STAND_IN % 7
         got = gates.classify(self.row(out))
         self.assertEqual(got["kind"], "void")
         self.assertIn("returned 7", got["replay"])
         # a null is replayed by it too
         self.assertEqual(gates.replays(
             out / "gate", out / "not-client-visible.md",
-            module=gates.attempt_startup_gate(self.row(out))),
+            harness=gates.attempt_harness(self.row(out))),
             (False, "the replay returned 7"))
+        # one without the contract is refused, not read as a failed replay
+        self.sources[None] = "def replay(args):\n    return 0\n"
+        with self.assertRaisesRegex(ValueError, "lacks SCHEMA, PAIRS"):
+            gates.classify(self.row(out))
 
     def test_a_replay_that_is_not_run_gives_no_decision(self):
         out = self.run_dir("g")
@@ -1063,87 +1017,195 @@ def archive_fixture(root, simp=158440, cong=90000, name="round4",
     return archive, record, side, dict(record_sha256=rsha)
 
 
-class HarnessClosure(unittest.TestCase):
-    """`gates.load_harness` over a real git repository whose commits hold
-    a small harness: `sub/startup_gate.py` and the modules it imports."""
-    FILES = {
-        "startup_gate.py": (
-            "import json\nimport allocation_schema as sc\n"
-            "from helper import VALUE\n"
-            "def counts():\n    return sc.COUNTS, VALUE, json.dumps(1)\n"
-            "def late():\n    import lazy\n    return lazy.LAZY\n"),
-        "helper.py": ("import sys\nimport allocation_schema\n"
-                      "VALUE = allocation_schema.COUNTS * 2\n"
-                      "ME = sys.modules[__name__]\n"),
-        "allocation_schema.py": "COUNTS = %d\n",
-        "lazy.py": "LAZY = %d\n",
-        "unrelated.py": "raise SystemExit('never imported')\n"}
+class HarnessTree(unittest.TestCase):
+    """The harness tree and the child process (decision 38) over a real
+    git repository whose commits hold a small harness: a `startup_gate.py`
+    that imports `private_runtime` from `allocator-counter/` by a
+    `sys.path` insert, as the real one does, and `allocation_schema.py`,
+    with a file of the repository outside the performance area."""
+    AREA = "src/simp/tests/performance"
+    GATE = (
+        "import os, sys\n"
+        "HERE = os.path.dirname(os.path.abspath(__file__))\n"
+        "sys.path.insert(0, os.path.join(HERE, 'allocator-counter'))\n"
+        "import private_runtime\nimport allocation_schema as sc\n"
+        "SCHEMA, PAIRS = 'fake', 1\n"
+        "def replay(args):\n"
+        "    open(os.path.join(HERE, '..', '..', '..', '..', 'tools',\n"
+        "                      'marker.txt')).read()\n"
+        "    return private_runtime.CODE + sc.COUNTS\n")
 
     def setUp(self):
-        import subprocess
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
+        self.addCleanup(gates.release_harness_trees)
         self.repo = Path(self.tmp.name).resolve() / "repo"
-        (self.repo / "sub").mkdir(parents=True)
+        self.area = self.repo / self.AREA
+        (self.area / "allocator-counter").mkdir(parents=True)
+        (self.repo / "tools").mkdir()
+        write(self.repo / "tools" / "marker.txt", "marker\n")
         self.git("init", "-q")
-        self.shas = []
-        for n in (3, 4):
-            for name, text in self.FILES.items():
-                (self.repo / "sub" / name).write_text(
-                    text % n if "%d" in text else text)
-            self.git("add", ".")
-            self.git("-c", "user.name=t", "-c", "user.email=t@t",
-                     "commit", "-q", "-m", "x")
-            self.shas.append(self.git("rev-parse", "HEAD").strip())
-        self.entry = self.repo / "sub" / "startup_gate.py"
-        self.subprocess = subprocess
+        self.entry = self.area / "startup_gate.py"
+        # (CODE of the allocator-counter module, COUNTS): 0 replays
+        self.shas = [self.commit(0, 0), self.commit(5, 2)]
 
     def git(self, *argv):
-        import subprocess
         return subprocess.run(
             ("git", "-C", str(self.repo)) + argv, check=True,
             capture_output=True, text=True,
             stdin=subprocess.DEVNULL).stdout
 
-    def test_each_commit_is_loaded_as_its_own_closure(self):
-        import sys
-        import allocation_schema
-        before = dict(sys.modules)
-        for sha, n in zip(self.shas, (3, 4)):
-            mods = gates.load_harness(sha, self.entry)
-            self.assertEqual(sorted(mods), [
-                "allocation_schema", "helper", "lazy", "startup_gate"])
-            self.assertEqual(mods["startup_gate"].counts(),
-                             (n, 2 * n, "1"))
-            self.assertEqual(mods["startup_gate"].late(), n)
-            # the imports resolve inside the closure
-            self.assertIs(mods["startup_gate"].sc,
-                          mods["allocation_schema"])
-            self.assertIs(mods["helper"].allocation_schema,
-                          mods["allocation_schema"])
-            self.assertIs(mods["helper"].ME, mods["helper"])
-        self.assertEqual(sys.modules, before)
-        self.assertNotIn("helper", sys.modules)
-        self.assertIs(sys.modules["allocation_schema"], allocation_schema)
-
-    def test_a_module_that_is_not_imported_is_not_loaded(self):
-        self.assertNotIn("unrelated",
-                         gates.load_harness(self.shas[0], self.entry))
-
-    def test_a_missing_module_commit_or_blob_is_refused_by_name(self):
-        with self.assertRaisesRegex(ValueError, "cannot list the modules "
-                                    "of sub at the harness commit 0"):
-            gates.load_harness("0" * 40, self.entry)
-        (self.repo / "sub" / "helper.py").write_text("import nope_at_all\n")
-        self.git("add", ".")
+    def commit(self, code, counts, gate=None):
+        write(self.entry, gate or self.GATE)
+        write(self.area / "allocator-counter" / "private_runtime.py",
+              "CODE = %d\n" % code)
+        write(self.area / "allocation_schema.py", "COUNTS = %d\n" % counts)
+        self.git("add", "-A")
         self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit",
-                 "-q", "-m", "y")
+                 "-q", "-m", "x")
+        return self.git("rev-parse", "HEAD").strip()
+
+    def harness(self, sha, name="a"):
+        row = dict(attempt=name, output=str(self.repo / ("out-" + name)))
+        write(Path(row["output"]) / "harness-head.txt", sha + "\n")
+        return gates.attempt_harness(row, self.entry)
+
+    def archive(self, null=True):
+        """An archive directory whose header says only whether it is a
+        sealed gate."""
+        out = self.repo / "archive"
+        write(out / "header.json", {} if null else {"record_sha256": "x"})
+        return out
+
+    def test_each_commit_is_replayed_with_its_own_tree(self):
+        import sys
+        path, modules = list(sys.path), set(sys.modules)
+        first, second = (self.harness(sha) for sha in self.shas)
+        self.assertNotEqual(first.directory, second.directory)
+        # `private_runtime` (allocator-counter/) and `allocation_schema`
+        # are the commit's own; tools/marker.txt is the checkout's
+        self.assertEqual(gates.replays(self.archive(), null=True,
+                                       harness=first), (True, ""))
+        self.assertEqual(gates.replays(self.archive(), null=True,
+                                       harness=second),
+                         (False, "the replay returned 7"))
+        self.assertEqual(gates.harness_constants(second), ("fake", 1))
+        self.assertTrue((first.directory / "allocator-counter" /
+                         "private_runtime.py").is_file())
+        self.assertTrue((first.directory.parents[3] / ".git").exists())
+        self.assertTrue((first.directory.parents[3] / "tools").is_symlink())
+        # one tree per commit
+        self.assertEqual(self.harness(self.shas[0], "b").directory,
+                         first.directory)
+        self.assertEqual((sys.path, set(sys.modules)), (path, modules))
+
+    def test_the_tree_is_removed_by_the_scope_also_on_error(self):
+        with gates.harness_scope():
+            tree = self.harness(self.shas[0]).directory
+            self.assertTrue(tree.is_dir())
+        self.assertFalse(tree.exists())
+        self.assertEqual(gates.HARNESS_TREES, {})
+        with self.assertRaises(RuntimeError):
+            with gates.harness_scope():
+                tree = self.harness(self.shas[0]).directory
+                raise RuntimeError
+        self.assertFalse(tree.exists())
+        self.assertEqual(gates.HARNESS_TMP, [])
+
+    def test_dispose_removes_the_trees_when_it_is_refused(self):
+        import contextlib
+        import io
+        built = []
+
+        def disposition(args):
+            built.append(self.harness(self.shas[0]).directory)
+            raise ValueError("refused here")
+        with mock.patch.object(d, "disposition", disposition), \
+                mock.patch.object(d, "parser", lambda: types.SimpleNamespace(
+                    parse_args=lambda argv: None)), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(d.main(["x"]), d.tg.REFUSED)
+        self.assertTrue(built)
+        self.assertFalse(built[0].exists())
+
+    def test_a_commit_or_blob_that_is_missing_is_refused_by_name(self):
         with self.assertRaisesRegex(
-                ValueError, "cannot load sub/helper.py at the harness "
-                "commit %s: ModuleNotFoundError" % self.git(
-                    "rev-parse", "HEAD").strip()):
-            gates.load_harness(self.git("rev-parse", "HEAD").strip(),
-                               self.entry)
+                ValueError, "the startup attempt a: cannot build the "
+                "harness tree of .*startup_gate.py at the harness commit "
+                + "0" * 40):
+            self.harness("0" * 40)
+        self.assertEqual(gates.HARNESS_TMP, [])
+        # a commit without the entry file
+        self.git("rm", "-q", "-r", "--cached", self.AREA)
+        self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit",
+                 "-q", "-m", "gone")
+        with self.assertRaisesRegex(ValueError, "has no .*startup_gate.py"):
+            self.harness(self.git("rev-parse", "HEAD").strip())
+        self.assertEqual(gates.HARNESS_TMP, [])
+
+    def test_a_harness_that_breaks_the_contract_is_refused_by_name(self):
+        for what, gate, message in (
+                ("load", "raise ImportError('boom here')\n",
+                 "exited 1: .*ImportError: boom here"),
+                ("exit", "raise SystemExit(3)\n", "exited 3"),
+                ("missing", "SCHEMA = 'x'\n",
+                 "startup_gate.py lacks replay, PAIRS"),
+                ("malformed", "import os\nos.write(1, b'junk')\n"
+                 "SCHEMA, PAIRS = 'x', 1\ndef replay(args):\n    return 0\n",
+                 "malformed output"),
+                ("tree", "import private_runtime\n",
+                 "ModuleNotFoundError")):
+            sha = self.commit(0, 0, gate)
+            harness = self.harness(sha, what)
+            expect = "the startup attempt %s \\(harness commit %s\\): .*%s" \
+                % (what, sha, message)
+            with self.assertRaisesRegex(gates.HarnessRefused, expect,
+                                        msg=what):
+                gates.replays(self.archive(), null=True, harness=harness)
+            with self.assertRaisesRegex(gates.HarnessRefused, expect,
+                                        msg=what):
+                gates.harness_constants(harness)
+
+    def test_the_child_runs_in_the_tree_without_bytecode_or_stdin(self):
+        harness = self.harness(self.shas[0])
+        seen, real = [], subprocess.Popen
+
+        def popen(*args, **kw):
+            seen.append(kw)
+            return real(*args, **kw)
+        with mock.patch.object(subprocess, "Popen", popen):
+            gates.harness_constants(harness)
+        (kw,) = seen
+        self.assertEqual(kw["env"]["PYTHONDONTWRITEBYTECODE"], "1")
+        self.assertEqual(kw["stdin"], subprocess.DEVNULL)
+        self.assertEqual(kw["cwd"], str(harness.directory))
+        self.assertEqual(list(harness.directory.rglob("__pycache__")), [])
+
+    def test_an_interrupt_propagates_and_kills_the_child(self):
+        import os
+        import signal
+        import threading
+        import time
+        sha = self.commit(0, 0, "import time\ntime.sleep(60)\n")
+        harness = self.harness(sha)
+        made, real = [], subprocess.Popen
+
+        def popen(*args, **kw):
+            made.append(real(*args, **kw))
+            return made[-1]
+        timer = threading.Timer(
+            1.0, lambda: os.kill(os.getpid(), signal.SIGINT))
+        start = time.time()
+        timer.start()
+        try:
+            with mock.patch.object(subprocess, "Popen", popen):
+                with self.assertRaises(KeyboardInterrupt):
+                    gates.replays(self.archive(), null=True,
+                                  harness=harness)
+        finally:
+            timer.cancel()
+        self.assertLess(time.time() - start, 30)
+        self.assertIsNotNone(made[0].poll())
 
 
 class Declared(unittest.TestCase):
@@ -1292,9 +1354,9 @@ class StartupPath(Ledgers):
             patch.start()
             self.addCleanup(patch.stop)
 
-    def replays(self, out, record=None, null=False, module=None):
+    def replays(self, out, record=None, null=False, harness=None):
         """Stands in for `gates.replays` over the fake archives here."""
-        self.replayed.append((Path(out).name, null, module))
+        self.replayed.append((Path(out).name, null, harness))
         if str(Path(out).resolve()) in self.unreplayable:
             return False, "marked as not replaying"
         return True, ""
@@ -1514,52 +1576,55 @@ class StartupPath(Ledgers):
         args = self.make(done=False)
         args.startup_null = None
         self.read(args)
-        import startup_gate as sg
-        module = types.ModuleType("mine")
-        module.SCHEMA, module.PAIRS = sg.SCHEMA, sg.PAIRS
+        harness = gates.Harness("attempt", HARNESS, self.here, "x")
         self.assertEqual(sorted({(n, null) for n, null, _ in self.replayed}),
                          [("gate", False), ("gate-null", True)])
-        # the late replays, and the null's, use the attempt's own module
-        with mock.patch.object(gates, "attempt_startup_gate",
-                               lambda row: module):
+        # the late replays, and the null's, use the attempt's own harness
+        with mock.patch.object(gates, "attempt_harness",
+                               lambda row: harness):
             self.replayed.clear()
             _, _, late, _ = self.read(args)
             with mock.patch.object(gates, "replay_startup") as replay:
                 late[0][1]()
-        self.assertEqual({m for _, _, m in self.replayed}, {module})
+        self.assertEqual({m for _, _, m in self.replayed}, {harness})
         self.assertEqual([c.args[-1] for c in replay.call_args_list],
-                         [module, module])
+                         [harness, harness])
 
-    def test_the_header_is_checked_by_the_attempts_own_module(self):
+    def test_the_header_is_checked_by_the_attempts_own_harness(self):
         import startup_gate as sg
         args = self.make(done=False)
         args.startup_null = None
         for what, value, message in (
                 ("SCHEMA", "other", "is not a startup gate archive"),
                 ("PAIRS", sg.PAIRS * 1000, "fewer than")):
-            fields = dict(SCHEMA=sg.SCHEMA, PAIRS=sg.PAIRS)
-            fields[what] = value
-            with mock.patch.object(gates, "attempt_startup_gate",
-                                   lambda row: types.SimpleNamespace(
-                                       **fields)):
+            consts = {"SCHEMA": sg.SCHEMA, "PAIRS": sg.PAIRS}
+            consts[what] = value
+            with mock.patch.object(gates, "harness_constants",
+                                   lambda harness: (consts["SCHEMA"],
+                                                    consts["PAIRS"])):
                 with self.assertRaisesRegex(ValueError, message,
                                             msg=what):
                     self.read(args)
         self.read(args)      # this checkout's own are the same
+        # through the contract: a harness with another SCHEMA
+        self.sources[None] = STAND_IN % 0
+        with self.assertRaisesRegex(ValueError, "is not a startup gate"):
+            self.read(args)
 
-    def test_the_gate_and_its_null_are_both_read_with_the_attempts_module(
+    def test_the_gate_and_its_null_are_both_read_with_the_attempts_harness(
             self):
         import startup_gate as sg
-        module = types.ModuleType("mine")
-        module.SCHEMA, module.PAIRS = sg.SCHEMA, sg.PAIRS
+        harness = gates.Harness("attempt", HARNESS, self.here, "x")
         args = self.make(done=True)
-        with mock.patch.object(gates, "attempt_startup_gate",
-                               lambda row: module), \
+        with mock.patch.object(gates, "attempt_harness",
+                               lambda row: harness), \
+                mock.patch.object(gates, "harness_constants",
+                                  lambda h: (sg.SCHEMA, sg.PAIRS)), \
                 mock.patch.object(gates, "read_startup",
                                   wraps=gates.read_startup) as read:
             self.read(args)
-        self.assertEqual([c.kwargs.get("module", c.args[-1])
-                          for c in read.call_args_list], [module, module])
+        self.assertEqual([c.kwargs.get("harness", c.args[-1])
+                          for c in read.call_args_list], [harness, harness])
         self.assertEqual([c.args[1] for c in read.call_args_list],
                          [False, True])
 
@@ -1596,7 +1661,7 @@ class StartupPath(Ledgers):
             _, _, late, _ = self.read(args)
             late[0][1]()
         self.assertEqual(replay.call_count, 2)
-        def replay_one(out, record, module=None):
+        def replay_one(out, record, harness=None):
             if Path(out).name == "gate-null":
                 raise ValueError("did not replay")
         with mock.patch.object(gates, "replay_startup", replay_one):

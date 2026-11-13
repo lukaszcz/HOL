@@ -155,14 +155,15 @@ its `gate/receipt.json` all match the files it lists AND the archive,
 sealed to a record, replays with the attempt's own record (design decisions
 28, 33; the runner's progress files never decide it, so a signal after a
 decided, replayable gate does not undo the decision). The replay is made
-with the attempt's own harness (design decisions 33, 36): `startup_gate.py`
-and every performance-area module it imports, transitively, as blobs at
-the commit in its `harness-head.txt`, loaded as fresh modules in a private
-namespace (`sys.modules` is untouched; refused, naming the attempt, the
-commit and the path, when a blob cannot be read, compiled or loaded). The
-same harness checks the header (`SCHEMA`, `PAIRS`) and replays the null and
-the late replays, so a later fix to any of those modules never locks a
-disposition out. An archive that
+with the attempt's own harness (design decisions 33, 36, 38): the whole
+performance area as blobs at the commit in its `harness-head.txt`, in a
+temporary tree (every other path being the checkout's), run by a child
+process; it also checks the header (`SCHEMA`, `PAIRS`) and replays the
+null and the late replays, so a later fix to any harness file never locks
+a disposition out. The checkout's interpreter never imports harness code;
+the trees are removed when dispose ends. A harness that cannot be built or
+run is refused, naming the attempt, the commit and the child's stderr
+tail. An archive that
 gives no decision makes the attempt void (a redraw is allowed; the reason
 is in the attempt row) unless the attempt shows progress past
 `replay-gate` (`done`, `replay-gate.exit` reading `exit=0`, a later step
@@ -1206,7 +1207,7 @@ NULL_NA = ("not applicable (the gate failed or was blocked: the null "
            "control is neither read nor replayed)")
 
 
-def startup_null(args, verdict, module=None):
+def startup_null(args, verdict, harness=None):
     """The null control archive of the judged startup attempt (its
     `verdict`, `gates.startup_attempts`), or None when it is not read. The
     null of every attempt is exactly `<attempt>/gate-null`. A complete
@@ -1234,7 +1235,7 @@ def startup_null(args, verdict, module=None):
                   "control of an incomplete attempt whose gate failed or "
                   "was blocked is not read (omit the flag)")
         return None
-    ok, reason = gates.replays(own, null=True, module=module) \
+    ok, reason = gates.replays(own, null=True, harness=harness) \
         if gates.archive_complete(own) else (False, "")
     if args.startup_null is not None:
         a.require(Path(args.startup_null).resolve() == own and
@@ -1265,9 +1266,9 @@ def read_gates(args, lineage, inputs, late, extra):
               "the startup gate needs --startup-gate")
     attempts = gates.startup_attempts(args.startup_ledger,
                                       args.startup_gate)
-    module = gates.attempt_startup_gate(attempts[-1])
+    harness = gates.attempt_harness(attempts[-1])
     header, decisions = gates.read_startup(args.startup_gate, False,
-                                           lineage, module=module)
+                                           lineage, harness=harness)
     record_seal = gates.check_record(header, args.startup_record, lineage)
     inputs[gates.STARTUP] = {
         n: a.seal(Path(d) / f) for n, d, f in (
@@ -1283,7 +1284,7 @@ def read_gates(args, lineage, inputs, late, extra):
               "--startup-declared %s is not the declared-deltas.json of "
               "the judged attempt (%s)" % (args.startup_declared, attempt))
     verdict = attempts[-1]["verdict"]
-    null = startup_null(args, verdict, module)
+    null = startup_null(args, verdict, harness)
     null_decisions = None
     if null is None:
         why = NULL_NA if verdict == "judged-incomplete" else NO_NULL
@@ -1294,7 +1295,7 @@ def read_gates(args, lineage, inputs, late, extra):
             null).resolve().parent,
             "the startup gate and its null control are not of one attempt")
         _, null_decisions = gates.read_startup(
-            null, True, lineage, "startup-gate null control", module)
+            null, True, lineage, "startup-gate null control", harness)
         inputs[gates.STARTUP]["null-header"] = a.seal(
             Path(null) / "header.json")
         inputs[gates.STARTUP]["null-decisions"] = a.seal(
@@ -1322,9 +1323,9 @@ def read_gates(args, lineage, inputs, late, extra):
         archive_sha256=declared["archive_sha256"], problems=problems)
     late.append((gates.STARTUP, lambda: (
         gates.replay_startup(args.startup_gate, args.startup_record,
-                             module),
+                             harness),
         None if null is None else gates.replay_startup(null, None,
-                                                       module))))
+                                                       harness))))
     reports = {}
     for gate, root in zip(sorted(gates.LOADING),
                           (args.loading_conglib, args.loading_simplib)):
@@ -1606,7 +1607,7 @@ def main(argv=None):
     """The status of the disposition, or REFUSED (3) with one line on the
     standard error."""
     argv = sys.argv[1:] if argv is None else argv
-    with tg.terminating_as_interrupt():
+    with tg.terminating_as_interrupt(), gates.harness_scope():
         try:
             if argv[:1] == ["receipt"]:
                 return receipt_command(argv[1:])

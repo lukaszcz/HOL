@@ -5331,7 +5331,9 @@ A fix they find is a tooling change that voids every run that seals the
 touched file, and those are redrawn: a fix in `task37_cases.py` voids the
 identity runs, all six shards, all three allocation tasks (the run in
 flight) and the follow-ups; a fix in `task30_cases.py` voids the identity
-runs, the matrix shards and all three allocation tasks; a fix in the
+runs, the matrix shards, the matrix follow-ups (`task37_followup` seals it
+through `task37_grid.SEALED["matrix"]`) and all three allocation tasks; a
+fix in the
 identity code alone voids the identity runs only. A rerun of a diagnostic
 takes a fresh `--output` (`$E/diag-2`, ...).
 `--jobs N` runs cells in parallel, each in its
@@ -5657,18 +5659,23 @@ decision counts iff every sha256 row of `gate/receipt.json` matches its file
 (it lists `header.json` and `decisions.json`;
 `startup_gate.write_archive`) AND `replay` of the archive, sealed to a
 record (`record_sha256`), with the attempt's own `not-client-visible.md`,
-returns 0 (dispose runs it quietly and in-process). Each attempt's gate
-and null are replayed with that attempt's own `startup_gate.py`: the blob at
-the commit in its `harness-head.txt`, together with every performance-area
-module it imports, transitively (decision 36): all are blobs at that
-commit, run as fresh modules in a private namespace whose imports resolve
-to one another first and then to the standard library (`sys.modules` and
-the dispose checkout's modules are untouched). The same harness checks the
-archive header (`SCHEMA`, `PAIRS`) and replays the null and the late
-replays, so a later fix to any of these modules, needed for a redraw,
-never locks the disposition out. A decided attempt whose blob cannot be
-read, compiled or loaded is refused, naming the attempt, the commit and
-the repository path.
+returns 0. Each attempt's gate and null are replayed by that attempt's own
+harness (decisions 33, 36, 38): dispose makes a temporary tree under
+`TMPDIR` that holds the whole performance area (`allocator-counter/`
+included) as blobs at the commit in its `harness-head.txt`, every other
+path being the checkout's through symlinks of the siblings at each
+ancestor level (`.git` too); one tree per commit, removed when dispose
+exits, also on an error. A child `python3 -B` process runs a small driver
+in that tree, imports its `startup_gate` and prints one JSON object: the
+`replay` of an archive (gate or null), `SCHEMA` and `PAIRS`. The same child
+checks the archive header (`SCHEMA`, `PAIRS`) and makes the null replay
+and the late replays. The checkout's interpreter never imports harness
+code. A later fix to any harness file, needed for a redraw, therefore never
+locks the disposition out. A harness that lacks `replay`, `SCHEMA` or
+`PAIRS`, fails to load, exits non-zero or prints malformed output, and a
+tree that cannot be built (commit or blob unreadable), are refused, naming
+the attempt, the commit and the tail of the child's stderr or the path. An
+interrupt of dispose kills the child and is not a refusal.
 The runner's progress files never decide that, so a signal or crash after a
 decided, replayable gate (killed during `gate-null`, say) does not undo the
 decision. An archive that is absent, cut or does not replay gives no

@@ -69,17 +69,20 @@ What each replay re-derives, and what it cannot:
   message and in the attempt row (`replay`). So is an attempt that closed
   with exit 0 and no `done`, or with exit 2 and no `done` although no hard
   step failed with 2 (`damaged_runner`).
-  An attempt is judged by its own harness (decisions 33, 36;
-  `load_harness`, `attempt_startup_gate`): `startup_gate.py` and every
-  performance-area module it imports, transitively, taken as blobs at the
-  commit in its `harness-head.txt` and run as fresh modules in a private
-  namespace (the checkout's modules and `sys.modules` are untouched). The
-  replay, the null, the late replays and the `SCHEMA` and `PAIRS` checks of
-  `read_startup` all use it, so a later fix to any of those modules never
-  locks a disposition out. An attempt with no harness commit, or a blob
-  that cannot be read, compiled or loaded, is refused (the message names
-  the attempt, the commit and the repository path).
-  or blob is refused. A gate not sealed to a record gives no decision. Every
+  An attempt is judged by its own harness (decisions 33, 36, 38;
+  `harness_tree`, `attempt_harness`, `run_harness`): a temporary tree holds
+  the whole performance area (`allocator-counter/` included) as blobs at
+  the commit in its `harness-head.txt`, every other path being the
+  checkout's through symlinks, and a child process over that tree computes
+  the replay, the null, the late replays and the `SCHEMA` and `PAIRS`
+  checks of `read_startup`. The checkout's interpreter never imports
+  harness code, and the trees are removed when dispose ends
+  (`harness_scope`). A later fix to any harness file therefore never
+  locks a disposition out. An attempt with no harness commit, a tree that
+  cannot be built, or a child that fails, prints malformed output or lacks
+  `replay`, `SCHEMA` or `PAIRS` is refused (the message names the attempt,
+  the commit and the child's stderr tail or the path).
+  A gate not sealed to a record gives no decision. Every
   earlier attempt is judged by
   its gate decision when it has one, complete or not, and recorded; it
   blocks a redraw only when it is complete and passed, or decided fail
@@ -106,13 +109,18 @@ What each replay re-derives, and what it cannot:
 The reviewed lines: the recorded candidates and harnesses are accepted by
 `task37_lineage.Lineage`.
 """
+import collections
 import contextlib
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import re
 import shlex
+import shutil
+import signal
+import subprocess
 import sys
 import tempfile
 
@@ -339,24 +347,26 @@ def check_declared(held, path, lineage):
 
 # ---------------------------------------------------------- startup gate
 
-def read_startup(out, null, lineage, label=STARTUP, module=None):
+def read_startup(out, null, lineage, label=STARTUP, harness=None):
     """The startup gate archive `out` (a gate, or with `null` its null
     control): its header and decisions, with the candidate and harness it
     names accepted. The schema and the pair count it must have are those of
-    `module` (the attempt's harness, `attempt_startup_gate`; by default
-    this checkout's `startup_gate`). Returns (header, decisions)."""
+    `harness` (the attempt's, `attempt_harness`; by default this
+    checkout's `startup_gate`). Returns (header, decisions)."""
     import startup_gate as sg
-    sg = module or sg
+    schema, pairs = sg.SCHEMA, sg.PAIRS
+    if harness is not None:
+        schema, pairs = harness_constants(harness)
     out = Path(out)
     header = read(out / "header.json", label + " header")
     decisions = read(out / "decisions.json", label + " decisions")
-    a.require(header.get("schema") == sg.SCHEMA and
+    a.require(header.get("schema") == schema and
               bool(header.get("null")) == null,
               "%s is not a%s startup gate archive" % (
                   label, " null" if null else ""))
     a.require(isinstance(header.get("pairs"), int) and
-              header["pairs"] >= sg.PAIRS, "%s has fewer than %d pairs" % (
-                  label, sg.PAIRS))
+              header["pairs"] >= pairs, "%s has fewer than %d pairs" % (
+                  label, pairs))
     lineage.harness(label, header.get("harness"), clean=True)
     a.require(bool(header.get("record_sha256")) != null,
               "%s %s" % (label, "has a record, which a null control "
@@ -665,204 +675,261 @@ def archive_complete(out):
     return gate_decision(out) is not None
 
 
-def replays(out, record=None, null=False, module=None):
+def replays(out, record=None, null=False, harness=None):
     """(ok, reason): the startup gate archive `out` replays (the `replay`
-    of `module`, by default this checkout's `startup_gate`, returns 0),
-    quietly and in-process; `reason` says why not. A gate (not `null`) must
-    be sealed to a record (`record_sha256`), which is passed to the replay;
-    a null control has none. An archive that cannot be read or does not
-    replay, for whatever reason, does not replay."""
-    import startup_gate as sg
-    import argparse
+    of the `harness` of the attempt, a child process over its tree, or by
+    default this checkout's `startup_gate`, in-process, returns 0); `reason`
+    says why not. A gate (not `null`) must be sealed to a record
+    (`record_sha256`), which is passed to the replay; a null control has
+    none. An archive that cannot be read or does not replay, for whatever
+    reason, does not replay. A harness that fails to run is refused
+    (`HarnessRefused`), never read as a replay that failed."""
     out = Path(out)
-    sg = module or sg
     try:
         sealed = bool(a.load(out / "header.json").get("record_sha256"))
         if sealed == null:
             return False, ("the archive %s a null control and is sealed to "
                            "%s record" % ("is" if null else "is not",
                                           "a" if sealed else "no"))
-        code = quiet(sg.replay, argparse.Namespace(
-            output=out, record=Path(record) if sealed and record
-            is not None else None))
+        record = Path(record) if sealed and record is not None else None
+        if harness is None:
+            import startup_gate as sg
+            import argparse
+            code = quiet(sg.replay, argparse.Namespace(
+                output=out, record=record))
+        else:
+            result = run_harness(harness, dict(
+                op="replay", output=str(out),
+                record=None if record is None else str(record)))
+            if "error" in result:
+                return False, result["error"]
+            code = result["code"]
         return (True, "") if code == 0 else (
             False, "the replay returned %s" % code)
+    except HarnessRefused:
+        raise
     except Exception as error:
         return False, "%s: %s" % (type(error).__name__, error)
 
 
+class HarnessRefused(ValueError):
+    """The harness of an attempt cannot be built or run (decision 38)."""
+
+
+# The harness trees made for this process, by (commit, entry file), and the
+# temporary directories that hold them (`release_harness_trees`).
+HARNESS_TREES, HARNESS_TMP = {}, []
+
+# What a harness is, for an attempt: its name, its commit, the performance
+# directory of its tree and the repository path of its `startup_gate.py`.
+Harness = collections.namedtuple("Harness",
+                                 "attempt head directory where")
+
+
 def harness_prefix(path):
     """The path of the directory of the file `path` in its repository, with
-    a trailing slash ("" at the top): where the harness modules are at any
-    commit."""
-    import subprocess
+    a trailing slash ("" at the top): where the performance area is."""
     return subprocess.run(
         ("git", "-C", str(Path(path).resolve().parent), "rev-parse",
          "--show-prefix"), capture_output=True, check=True,
         stdin=subprocess.DEVNULL, text=True).stdout.strip()
 
 
-def harness_source(head, path=None):
-    """The bytes of the module file `path` (by default this checkout's
-    `startup_gate.py`) at the commit `head` of the repository that holds
-    it."""
-    import startup_gate as sg
-    import subprocess
-    path = Path(path or sg.__file__).resolve()
-    where = path.name
+def release_harness_trees():
+    """Remove the harness trees made so far."""
+    HARNESS_TREES.clear()
+    while HARNESS_TMP:
+        shutil.rmtree(HARNESS_TMP.pop(), ignore_errors=True)
+
+
+@contextlib.contextmanager
+def harness_scope():
+    """The harness trees made inside the block are removed when it ends,
+    also by an error or an interrupt."""
     try:
-        where = harness_prefix(path) + path.name
-        return subprocess.run(
-            ("git", "-C", str(path.parent), "show", "%s:%s" % (head, where)),
-            capture_output=True, check=True,
-            stdin=subprocess.DEVNULL).stdout
-    except (OSError, subprocess.CalledProcessError):
-        raise ValueError("cannot read %s at the harness commit %s" % (
-            where, head)) from None
+        yield
+    finally:
+        release_harness_trees()
 
 
-def harness_names(head, path=None):
-    """The names of the modules (`x` for `x.py`) in the directory of `path`
-    (by default this checkout's `startup_gate.py`) at the commit `head`."""
+def harness_tree(head, entry=None):
+    """The performance directory of the harness tree of the commit `head`
+    (design decision 38), made once per commit under TMPDIR. The tree holds
+    every blob of the performance area (the directory of `entry`, by
+    default this checkout's `startup_gate.py`) at `head`, at its repository
+    path, modes and symlinks kept; at each ancestor level, symlinks to the
+    checkout's siblings (`.git` included), so every other path resolves to
+    the checkout. ValueError when `head` or a blob cannot be read."""
     import startup_gate as sg
-    import subprocess
-    path = Path(path or sg.__file__).resolve()
+    entry = Path(entry or sg.__file__).resolve()
+    key = (head, str(entry))
+    if key in HARNESS_TREES:
+        return HARNESS_TREES[key]
+
+    def git(*argv, **kw):
+        return subprocess.run(("git", "-C", str(kw.pop("cwd", entry.parent))
+                               ) + argv,
+                              capture_output=True, check=True,
+                              stdin=kw.pop("stdin", subprocess.DEVNULL),
+                              **kw).stdout
+    where, base = "", None
     try:
-        listing = subprocess.run(
-            ("git", "-C", str(path.parent), "ls-tree", "--name-only", head),
-            capture_output=True, check=True, stdin=subprocess.DEVNULL,
-            text=True).stdout.split("\n")
-    except (OSError, subprocess.CalledProcessError):
-        raise ValueError("cannot list the modules of %s at the harness "
-                         "commit %s" % (path.parent.name, head)) from None
-    return {n[:-3] for n in listing if n.endswith(".py")}
+        where = harness_prefix(entry)
+        root = Path(git("rev-parse", "--show-toplevel",
+                        text=True).strip())
+        listing = [e.split(b"\t", 1) for e in git(
+            "ls-tree", "-r", "-z", head, "--", where,
+            cwd=root).split(b"\0") if e]
+        base = Path(tempfile.mkdtemp(prefix="task37-harness-"))
+        HARNESS_TMP.append(base)
+        here, there = root, base
+        for part in where.strip("/").split("/") if where else ():
+            for sibling in sorted(here.iterdir()):
+                if sibling.name != part:
+                    (there / sibling.name).symlink_to(sibling)
+            here, there = here / part, there / part
+            there.mkdir()
+        blobs = [(m.split(), Path(p.decode())) for m, p in listing]
+        blobs = [(m, p) for m, p in blobs if m[1] == b"blob"]
+        if not blobs or Path(where, entry.name) not in [p for _, p in blobs]:
+            raise ValueError("it has no %s%s" % (where, entry.name))
+        data = git("cat-file", "--batch", stdin=None, cwd=root,
+                   input=b"".join(m[2] + b"\n" for m, _ in blobs))
+        at = 0
+        for (mode, _, sha), path in blobs:
+            end = data.index(b"\n", at)
+            fields = data[at:end].split()
+            if fields[:2] != [sha, b"blob"]:
+                raise ValueError("blob %s is missing" % sha.decode())
+            size = int(fields[2])
+            content = data[end + 1:end + 1 + size]
+            at = end + 2 + size
+            dest = base / path
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if mode == b"120000":
+                dest.symlink_to(content.decode())
+            else:
+                dest.write_bytes(content)
+                if mode == b"100755":
+                    dest.chmod(0o755)
+    except (OSError, subprocess.CalledProcessError, ValueError,
+            IndexError) as error:
+        if base is not None:
+            shutil.rmtree(base, ignore_errors=True)
+            HARNESS_TMP.remove(base)
+        said = getattr(error, "stderr", None) or str(error)
+        if isinstance(said, bytes):
+            said = said.decode(errors="replace")
+        raise HarnessRefused("cannot build the harness tree of %s at the "
+                             "harness commit %s: %s" % (
+                                 where + entry.name, head,
+                                 " ".join(said.split()))) from None
+    HARNESS_TREES[key] = base / where
+    return base / where
 
 
-class LoadFailure(ImportError):
-    """A harness module (`name`) failed to load, with `error`."""
-    def __init__(self, name, error):
-        super().__init__("%s: %s" % (type(error).__name__, error))
-        self.name, self.error = name, error
-
-
-class PrivateSys:
-    """The `sys` that the modules of a harness see: the real one, except
-    that `modules` holds the harness's own modules first (a module that
-    looks itself up, `sys.modules[__name__]`, finds its private self) and
-    then the real ones, and a write to it stays private."""
-    def __init__(self, loaded):
-        import collections
-        import sys
-        object.__setattr__(self, "modules", collections.ChainMap(
-            loaded, sys.modules))
-
-    def __getattr__(self, name):
-        import sys
-        return getattr(sys, name)
-
-    def __setattr__(self, name, value):
-        import sys
-        if name == "modules":
-            object.__setattr__(self, name, value)
-        else:
-            setattr(sys, name, value)
-
-
-def load_harness(head, path=None):
-    """The module closure of the harness at the commit `head` (design
-    decision 36): `startup_gate.py` (`path`, by default this checkout's)
-    and every module of its directory that it imports, directly or
-    transitively (`ast`; the names that are `.py` files of the directory at
-    `head`), all taken as blobs at `head` and run as fresh module objects
-    in a private namespace. The import statements of these modules resolve
-    to one another first and then to the standard library. `sys.modules`
-    and this checkout's modules are not touched. Returns {name: module}.
-    A blob that cannot be read, compiled or loaded is refused (ValueError
-    naming the commit and the repository path)."""
-    import ast
-    import builtins
+def attempt_harness(row, entry=None):
+    """The harness of the attempt `row` (design decision 38): its commit
+    (`harness-head.txt`) and the tree made for it (`harness_tree`). Refused
+    (ValueError naming the attempt) when the attempt records no harness
+    commit or the tree cannot be built."""
     import startup_gate as sg
-    import types
-    entry = Path(path or sg.__file__).resolve()
-    available = harness_names(head, entry)
-    try:
-        prefix = harness_prefix(entry)
-    except Exception:
-        prefix = ""
-    codes, order = {}, [entry.stem]
-    for name in order:
-        where = prefix + name + ".py"
-        raw = harness_source(head, entry.with_name(name + ".py"))
-        try:
-            tree = ast.parse(raw, where)
-            codes[name] = compile(tree, "%s:%s" % (head[:12], where),
-                                  "exec")
-        except Exception as error:
-            raise ValueError("cannot compile %s at the harness commit %s: "
-                             "%s: %s" % (where, head, type(error).__name__,
-                                         error)) from None
-        for node in ast.walk(tree):
-            names = [n.name for n in node.names] if isinstance(
-                node, ast.Import) else [node.module] if isinstance(
-                node, ast.ImportFrom) and node.level == 0 and \
-                node.module else []
-            order.extend(n for n in (m.split(".")[0] for m in names)
-                         if n in available and n not in order)
-    loaded, real = {}, builtins.__import__
-    private = PrivateSys(loaded)
-
-    def importer(name, globals=None, locals=None, fromlist=(), level=0):
-        if level == 0 and name.split(".")[0] in codes:
-            return load(name.split(".")[0])
-        if level == 0 and name == "sys":
-            return private
-        return real(name, globals, locals, fromlist, level)
-
-    def load(name):
-        if name not in loaded:
-            module = types.ModuleType(name)
-            module.__file__ = str(entry.with_name(name + ".py"))
-            module.__dict__["__builtins__"] = dict(
-                vars(builtins), __import__=importer)
-            loaded[name] = module
-            try:
-                exec(codes[name], module.__dict__)
-            except LoadFailure:
-                del loaded[name]
-                raise
-            except BaseException as error:
-                del loaded[name]
-                raise LoadFailure(name, error) from None
-        return loaded[name]
-    for name in order:
-        try:
-            load(name)
-        except LoadFailure as failure:
-            error = failure.error
-            raise ValueError("cannot load %s at the harness commit %s: "
-                             "%s: %s" % (prefix + failure.name + ".py",
-                                         head, type(error).__name__, error)
-                             ) from None
-    return loaded
-
-
-def attempt_startup_gate(row):
-    """The `startup_gate` module as the harness of the attempt `row` had it
-    (design decisions 33, 36): the module of the closure (`load_harness`)
-    at the commit in its `harness-head.txt`, so `replay`, `SCHEMA`, `PAIRS`
-    and everything they use are the attempt's own. Refused (ValueError
-    naming the attempt) when the attempt records no harness commit or the
-    closure cannot be read, compiled or loaded."""
+    entry = Path(entry or sg.__file__).resolve()
     out = Path(row["output"])
     head = step_exit(out, "harness-head.txt") or ""
     a.require(re.fullmatch(r"[0-9a-f]{40}", head) is not None,
               "the startup attempt %s records no harness commit "
               "(harness-head.txt)" % row["attempt"])
     try:
-        return load_harness(head)["startup_gate"]
-    except ValueError as error:
-        raise ValueError("the startup attempt %s: %s" % (
+        directory = harness_tree(head, entry)
+    except HarnessRefused as error:
+        raise HarnessRefused("the startup attempt %s: %s" % (
             row["attempt"], error)) from None
+    return Harness(row["attempt"], head, directory,
+                   harness_prefix(entry) + entry.name)
+
+
+# The child of `run_harness`: it runs in the performance directory of a
+# harness tree, imports that tree's `startup_gate` and prints one JSON
+# object. The contract with the harness is `replay(args)` (args.output,
+# args.record), `SCHEMA` and `PAIRS`.
+DRIVER = r"""
+import argparse, contextlib, io, json, os, pathlib, sys
+request = json.loads(sys.argv[1])
+sys.path.insert(0, os.getcwd())
+with contextlib.redirect_stdout(io.StringIO()):
+    import startup_gate as sg
+missing = [n for n in ("replay", "SCHEMA", "PAIRS") if not hasattr(sg, n)]
+result = {"missing": missing}
+if not missing:
+    result = {"SCHEMA": sg.SCHEMA, "PAIRS": sg.PAIRS}
+    if request["op"] == "replay":
+        record = request["record"]
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                result["code"] = sg.replay(argparse.Namespace(
+                    output=pathlib.Path(request["output"]),
+                    record=None if record is None
+                    else pathlib.Path(record)))
+        except Exception as error:
+            result["error"] = "%s: %s" % (type(error).__name__, error)
+sys.stdout.write(json.dumps(result))
+"""
+
+
+def run_harness(harness, request):
+    """The result (a dict) of `request` ({"op": "replay", "output",
+    "record"} or {"op": "constants"}) run by the child process of the
+    `harness`: `SCHEMA` and `PAIRS`, and for a replay `code` or `error`.
+    The child gets this environment with PYTHONDONTWRITEBYTECODE, no
+    stdin, and runs in the harness tree. A child that fails, prints
+    something else than one JSON object or lacks `replay`, `SCHEMA` or
+    `PAIRS` is refused (`HarnessRefused`) naming the attempt, the commit
+    and what the child said. An interrupt kills the child and propagates."""
+    who = "the startup attempt %s (harness commit %s)" % (
+        harness.attempt, harness.head)
+    child = subprocess.Popen(
+        (sys.executable, "-B", "-c", DRIVER, json.dumps(request)),
+        cwd=str(harness.directory), stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+        start_new_session=True)
+    try:
+        out, err = child.communicate()
+    except BaseException:
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        child.wait()
+        child.stdout.close()
+        child.stderr.close()
+        raise
+    tail = " ".join(err.split())[-400:]
+    if child.returncode != 0:
+        raise HarnessRefused("%s: its harness exited %s: %s" % (
+            who, child.returncode, tail))
+    try:
+        result = json.loads(out)
+        a.require(isinstance(result, dict), "not an object")
+    except ValueError:
+        raise HarnessRefused("%s: its harness printed malformed output "
+                             "(%s)" % (who, tail or out[-200:])) from None
+    if "missing" in result:
+        raise HarnessRefused("%s: %s lacks %s" % (
+            who, harness.where, ", ".join(result["missing"])))
+    if request["op"] == "replay" and \
+            ("code" in result) == ("error" in result):
+        raise HarnessRefused("%s: its replay gave neither a code nor an "
+                             "error" % who)
+    return result
+
+
+def harness_constants(harness):
+    """(SCHEMA, PAIRS) of the harness of an attempt."""
+    result = run_harness(harness, dict(op="constants"))
+    return result["SCHEMA"], result["PAIRS"]
 
 
 def judge_gate(row):
@@ -876,7 +943,7 @@ def judge_gate(row):
     reason = ""
     if decisions is not None:
         ok, reason = replays(out / "gate", out / "not-client-visible.md",
-                             module=attempt_startup_gate(row))
+                             harness=attempt_harness(row))
         if not ok:
             decisions = None
     if decisions is None and not damage and past_replay_gate(row):
@@ -1033,12 +1100,23 @@ def owe_redraw(record, attempt):
                 reasons=list(record["reasons"]) + [why])
 
 
-def replay_startup(out, record, module=None):
-    import startup_gate as sg
-    import argparse
-    code = quiet((module or sg).replay, argparse.Namespace(
-        output=Path(out), record=record))
-    a.require(code == 0, "the startup gate in %s did not replay" % out)
+def replay_startup(out, record, harness=None):
+    """The late replay of the archive `out` (design decision 28): by the
+    attempt's `harness`, else this checkout's `startup_gate`."""
+    if harness is None:
+        import startup_gate as sg
+        import argparse
+        code = quiet(sg.replay, argparse.Namespace(
+            output=Path(out), record=record))
+        a.require(code == 0, "the startup gate in %s did not replay" % out)
+        return
+    result = run_harness(harness, dict(
+        op="replay", output=str(out),
+        record=None if record is None else str(record)))
+    a.require(result.get("code") == 0,
+              "the startup gate in %s did not replay%s" % (
+                  out, ": " + result["error"] if "error" in result
+                  else ""))
 
 
 def startup_gate(header, decisions, null_decisions, problems=()):
