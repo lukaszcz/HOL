@@ -1213,6 +1213,12 @@ class Gates(unittest.TestCase):
 
     def test_a_startup_gate_is_sealed_to_the_record_made_in_its_run(self):
         import hashlib
+        import startup_gate as sg
+        harness = gates.Harness("t", "0" * 40, Path("."), "x")
+        patch = mock.patch.object(gates, "harness_constants",
+                                  lambda h: (sg.SCHEMA, sg.PAIRS))
+        patch.start()
+        self.addCleanup(patch.stop)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             record = root / "not-client-visible.md"
@@ -1224,18 +1230,19 @@ class Gates(unittest.TestCase):
             lin_.equivalent = lambda label, rev: rev
             lin_.harness = lambda label, found, clean=False: None
             header, _ = gates.read_startup(
-                self.startup_archive(root / "g", False, sha), False, lin_)
+                self.startup_archive(root / "g", False, sha), False, lin_,
+                harness)
             self.assertEqual(gates.check_record(header, record, lin_),
                              a.seal(record))
             # a gate with no record, a null control with one
             with self.assertRaisesRegex(ValueError, "no record"):
                 gates.read_startup(self.startup_archive(
-                    root / "g2", False, None), False, lin_)
+                    root / "g2", False, None), False, lin_, harness)
             with self.assertRaisesRegex(ValueError, "never has"):
                 gates.read_startup(self.startup_archive(
-                    root / "n", True, sha), True, lin_)
-            gates.read_startup(self.startup_archive(root / "n2", True,
-                                                    None), True, lin_)
+                    root / "n", True, sha), True, lin_, harness)
+            gates.read_startup(self.startup_archive(
+                root / "n2", True, None), True, lin_, harness)
             # no record given, another file, a record naming other revisions
             with self.assertRaisesRegex(ValueError, "pass it"):
                 gates.check_record(header, None, lin_)

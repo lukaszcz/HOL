@@ -1207,7 +1207,7 @@ NULL_NA = ("not applicable (the gate failed or was blocked: the null "
            "control is neither read nor replayed)")
 
 
-def startup_null(args, verdict, harness=None):
+def startup_null(args, verdict, harness):
     """The null control archive of the judged startup attempt (its
     `verdict`, `gates.startup_attempts`), or None when it is not read. The
     null of every attempt is exactly `<attempt>/gate-null`. A complete
@@ -1268,7 +1268,7 @@ def read_gates(args, lineage, inputs, late, extra):
                                       args.startup_gate)
     harness = gates.attempt_harness(attempts[-1])
     header, decisions = gates.read_startup(args.startup_gate, False,
-                                           lineage, harness=harness)
+                                           lineage, harness)
     record_seal = gates.check_record(header, args.startup_record, lineage)
     inputs[gates.STARTUP] = {
         n: a.seal(Path(d) / f) for n, d, f in (
@@ -1295,7 +1295,7 @@ def read_gates(args, lineage, inputs, late, extra):
             null).resolve().parent,
             "the startup gate and its null control are not of one attempt")
         _, null_decisions = gates.read_startup(
-            null, True, lineage, "startup-gate null control", harness)
+            null, True, lineage, harness, "startup-gate null control")
         inputs[gates.STARTUP]["null-header"] = a.seal(
             Path(null) / "header.json")
         inputs[gates.STARTUP]["null-decisions"] = a.seal(

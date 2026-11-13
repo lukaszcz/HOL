@@ -73,15 +73,20 @@ What each replay re-derives, and what it cannot:
   `harness_tree`, `attempt_harness`, `run_harness`): a temporary tree holds
   the whole performance area (`allocator-counter/` included) as blobs at
   the commit in its `harness-head.txt`, every other path being the
-  checkout's through symlinks, and a child process over that tree computes
-  the replay, the null, the late replays and the `SCHEMA` and `PAIRS`
-  checks of `read_startup`. The checkout's interpreter never imports
-  harness code, and the trees are removed when dispose ends
+  checkout's through symlinks, and a child process (`python3 -B -E -s`,
+  fd 1 kept for its JSON answer) over that tree computes the replay, the
+  null, the late replays and the `SCHEMA` and `PAIRS` checks of
+  `read_startup`; every judgement goes through a harness handle. The tree
+  is refused unless its tree outside the performance area equals the
+  checkout HEAD's, and an attempt unless its `harness-head.txt` is the
+  harness head of its gate header. The checkout's interpreter never
+  imports harness code, and the trees are removed when dispose ends
   (`harness_scope`). A later fix to any harness file therefore never
-  locks a disposition out. An attempt with no harness commit, a tree that
-  cannot be built, or a child that fails, prints malformed output or lacks
-  `replay`, `SCHEMA` or `PAIRS` is refused (the message names the attempt,
-  the commit and the child's stderr tail or the path).
+  locks a disposition out. A replay that returns nonzero or raises is a
+  failed replay; anything that keeps the harness from answering (no
+  harness commit, a tree that cannot be built, a child that cannot start,
+  fails, prints malformed output or lacks `replay`, `SCHEMA` or `PAIRS`)
+  is a refusal (the message names the attempt, the commit and the cause).
   A gate not sealed to a record gives no decision. Every
   earlier attempt is judged by
   its gate decision when it has one, complete or not, and recorded; it
@@ -347,16 +352,13 @@ def check_declared(held, path, lineage):
 
 # ---------------------------------------------------------- startup gate
 
-def read_startup(out, null, lineage, label=STARTUP, harness=None):
+def read_startup(out, null, lineage, harness, label=STARTUP):
     """The startup gate archive `out` (a gate, or with `null` its null
     control): its header and decisions, with the candidate and harness it
     names accepted. The schema and the pair count it must have are those of
-    `harness` (the attempt's, `attempt_harness`; by default this
-    checkout's `startup_gate`). Returns (header, decisions)."""
-    import startup_gate as sg
-    schema, pairs = sg.SCHEMA, sg.PAIRS
-    if harness is not None:
-        schema, pairs = harness_constants(harness)
+    `harness` (the attempt's, `attempt_harness`). Returns (header,
+    decisions)."""
+    schema, pairs = harness_constants(harness)
     out = Path(out)
     header = read(out / "header.json", label + " header")
     decisions = read(out / "decisions.json", label + " decisions")
@@ -675,41 +677,32 @@ def archive_complete(out):
     return gate_decision(out) is not None
 
 
-def replays(out, record=None, null=False, harness=None):
+def replays(out, record=None, null=False, *, harness):
     """(ok, reason): the startup gate archive `out` replays (the `replay`
-    of the `harness` of the attempt, a child process over its tree, or by
-    default this checkout's `startup_gate`, in-process, returns 0); `reason`
-    says why not. A gate (not `null`) must be sealed to a record
-    (`record_sha256`), which is passed to the replay; a null control has
-    none. An archive that cannot be read or does not replay, for whatever
-    reason, does not replay. A harness that fails to run is refused
+    of the `harness` of the attempt, run by a child process over its tree,
+    returns 0); `reason` says why not. A gate (not `null`) must be sealed to
+    a record (`record_sha256`), which is passed to the replay; a null
+    control has none. An archive that cannot be read, or that the harness's
+    replay reports as not replaying (a code, or an error it raised), does
+    not replay. A harness that could not be run is refused
     (`HarnessRefused`), never read as a replay that failed."""
     out = Path(out)
     try:
         sealed = bool(a.load(out / "header.json").get("record_sha256"))
-        if sealed == null:
-            return False, ("the archive %s a null control and is sealed to "
-                           "%s record" % ("is" if null else "is not",
-                                          "a" if sealed else "no"))
-        record = Path(record) if sealed and record is not None else None
-        if harness is None:
-            import startup_gate as sg
-            import argparse
-            code = quiet(sg.replay, argparse.Namespace(
-                output=out, record=record))
-        else:
-            result = run_harness(harness, dict(
-                op="replay", output=str(out),
-                record=None if record is None else str(record)))
-            if "error" in result:
-                return False, result["error"]
-            code = result["code"]
-        return (True, "") if code == 0 else (
-            False, "the replay returned %s" % code)
-    except HarnessRefused:
-        raise
     except Exception as error:
         return False, "%s: %s" % (type(error).__name__, error)
+    if sealed == null:
+        return False, ("the archive %s a null control and is sealed to "
+                       "%s record" % ("is" if null else "is not",
+                                      "a" if sealed else "no"))
+    result = run_harness(harness, dict(
+        op="replay", output=out,
+        record=Path(record) if sealed and record is not None else None))
+    if "error" in result:
+        return False, result["error"]
+    code = result["code"]
+    return (True, "") if code == 0 else (
+        False, "the replay returned %s" % code)
 
 
 class HarnessRefused(ValueError):
@@ -777,6 +770,20 @@ def harness_tree(head, entry=None):
         where = harness_prefix(entry)
         root = Path(git("rev-parse", "--show-toplevel",
                         text=True).strip())
+        outside = {}
+        for rev in (head, "HEAD"):
+            outside[rev] = {}
+            for e in git("ls-tree", "-r", "-z", rev, cwd=root).split(b"\0"):
+                if e and not e.split(b"\t", 1)[1].decode().startswith(where):
+                    meta, name = e.split(b"\t", 1)
+                    outside[rev][name.decode()] = meta
+        differ = sorted(n for n in set(outside[head]) | set(outside["HEAD"])
+                        if outside[head].get(n) != outside["HEAD"].get(n))
+        if differ:
+            raise ValueError(
+                "its tree outside %s differs from the checkout HEAD's, so "
+                "it is not a harness of this lineage (%d paths, first: %s)"
+                % (where, len(differ), ", ".join(differ[:5])))
         listing = [e.split(b"\t", 1) for e in git(
             "ls-tree", "-r", "-z", head, "--", where,
             cwd=root).split(b"\0") if e]
@@ -840,6 +847,17 @@ def attempt_harness(row, entry=None):
     a.require(re.fullmatch(r"[0-9a-f]{40}", head) is not None,
               "the startup attempt %s records no harness commit "
               "(harness-head.txt)" % row["attempt"])
+    header = out / "gate" / "header.json"
+    if header.is_file():
+        try:
+            held = a.load(header).get("harness")
+        except ValueError:
+            held = None
+        held = held.get("head") if isinstance(held, dict) else None
+        a.require(held is None or held == head,
+                  "the startup attempt %s ran at harness commit %s "
+                  "(harness-head.txt), but its gate header records %s" % (
+                      row["attempt"], head, held))
     try:
         directory = harness_tree(head, entry)
     except HarnessRefused as error:
@@ -851,14 +869,17 @@ def attempt_harness(row, entry=None):
 
 # The child of `run_harness`: it runs in the performance directory of a
 # harness tree, imports that tree's `startup_gate` and prints one JSON
-# object. The contract with the harness is `replay(args)` (args.output,
-# args.record), `SCHEMA` and `PAIRS`.
+# object. The contract with the harness is `replay(args)` (args.output and
+# args.record, absolute paths or None), `SCHEMA` and `PAIRS`. Fd 1 is
+# pointed at stderr first, and the JSON is written to a saved duplicate of
+# the original fd 1, so nothing the harness writes can corrupt it.
 DRIVER = r"""
-import argparse, contextlib, io, json, os, pathlib, sys
+import argparse, json, os, pathlib, sys
+saved = os.dup(1)
+os.dup2(2, 1)
 request = json.loads(sys.argv[1])
 sys.path.insert(0, os.getcwd())
-with contextlib.redirect_stdout(io.StringIO()):
-    import startup_gate as sg
+import startup_gate as sg
 missing = [n for n in ("replay", "SCHEMA", "PAIRS") if not hasattr(sg, n)]
 result = {"missing": missing}
 if not missing:
@@ -866,38 +887,52 @@ if not missing:
     if request["op"] == "replay":
         record = request["record"]
         try:
-            with contextlib.redirect_stdout(io.StringIO()), \
-                    contextlib.redirect_stderr(io.StringIO()):
-                result["code"] = sg.replay(argparse.Namespace(
-                    output=pathlib.Path(request["output"]),
-                    record=None if record is None
-                    else pathlib.Path(record)))
+            result["code"] = sg.replay(argparse.Namespace(
+                output=pathlib.Path(request["output"]),
+                record=None if record is None else pathlib.Path(record)))
         except Exception as error:
             result["error"] = "%s: %s" % (type(error).__name__, error)
-sys.stdout.write(json.dumps(result))
+sys.stdout.flush()
+with os.fdopen(saved, "w") as stream:
+    stream.write(json.dumps(result))
 """
 
 
 def run_harness(harness, request):
     """The result (a dict) of `request` ({"op": "replay", "output",
     "record"} or {"op": "constants"}) run by the child process of the
-    `harness`: `SCHEMA` and `PAIRS`, and for a replay `code` or `error`.
-    The child gets this environment with PYTHONDONTWRITEBYTECODE, no
-    stdin, and runs in the harness tree. A child that fails, prints
-    something else than one JSON object or lacks `replay`, `SCHEMA` or
-    `PAIRS` is refused (`HarnessRefused`) naming the attempt, the commit
-    and what the child said. An interrupt kills the child and propagates."""
+    `harness`: `SCHEMA` and `PAIRS`, and for a replay `code` or `error`
+    (the replay failed). The paths of the request are made absolute. The
+    child is `python3 -B -E -s` with this environment (no `PYTHON*`
+    variable is honoured), no stdin, and runs in the harness tree. Output is
+    read as bytes and decoded with replacement. Anything that keeps the
+    harness from answering is a refusal (`HarnessRefused`) naming the
+    attempt, the commit and the cause or the child's stderr tail: failing
+    to start it, a missing tree, a non-zero exit, malformed output, a
+    missing `replay`, `SCHEMA` or `PAIRS`. An interrupt kills the child
+    and propagates."""
     who = "the startup attempt %s (harness commit %s)" % (
         harness.attempt, harness.head)
-    child = subprocess.Popen(
-        (sys.executable, "-B", "-c", DRIVER, json.dumps(request)),
-        cwd=str(harness.directory), stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-        env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
-        start_new_session=True)
+    request = dict(request)
+    for key in ("output", "record"):
+        if request.get(key) is not None:
+            request[key] = str(Path(request[key]).resolve())
+
+    def refuse(cause):
+        return HarnessRefused("%s: cannot run its harness: %s: %s" % (
+            who, type(cause).__name__, " ".join(str(cause).split())))
+    try:
+        child = subprocess.Popen(
+            (sys.executable, "-B", "-E", "-s", "-c", DRIVER,
+             json.dumps(request)),
+            cwd=str(harness.directory), stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=dict(os.environ), start_new_session=True)
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        raise refuse(error) from None
     try:
         out, err = child.communicate()
-    except BaseException:
+    except BaseException as error:
         try:
             os.killpg(child.pid, signal.SIGKILL)
         except OSError:
@@ -905,7 +940,10 @@ def run_harness(harness, request):
         child.wait()
         child.stdout.close()
         child.stderr.close()
+        if isinstance(error, (OSError, ValueError)):
+            raise refuse(error) from None
         raise
+    out, err = (x.decode("utf-8", errors="replace") for x in (out, err))
     tail = " ".join(err.split())[-400:]
     if child.returncode != 0:
         raise HarnessRefused("%s: its harness exited %s: %s" % (
@@ -915,7 +953,8 @@ def run_harness(harness, request):
         a.require(isinstance(result, dict), "not an object")
     except ValueError:
         raise HarnessRefused("%s: its harness printed malformed output "
-                             "(%s)" % (who, tail or out[-200:])) from None
+                             "(%s)" % (who, " ".join(out.split())[-200:]
+                                       or tail)) from None
     if "missing" in result:
         raise HarnessRefused("%s: %s lacks %s" % (
             who, harness.where, ", ".join(result["missing"])))
@@ -1100,19 +1139,11 @@ def owe_redraw(record, attempt):
                 reasons=list(record["reasons"]) + [why])
 
 
-def replay_startup(out, record, harness=None):
-    """The late replay of the archive `out` (design decision 28): by the
-    attempt's `harness`, else this checkout's `startup_gate`."""
-    if harness is None:
-        import startup_gate as sg
-        import argparse
-        code = quiet(sg.replay, argparse.Namespace(
-            output=Path(out), record=record))
-        a.require(code == 0, "the startup gate in %s did not replay" % out)
-        return
-    result = run_harness(harness, dict(
-        op="replay", output=str(out),
-        record=None if record is None else str(record)))
+def replay_startup(out, record, harness):
+    """The late replay of the archive `out` (design decision 28), by the
+    attempt's `harness`: refused unless the replay returns 0."""
+    result = run_harness(harness, dict(op="replay", output=out,
+                                       record=record))
     a.require(result.get("code") == 0,
               "the startup gate in %s did not replay%s" % (
                   out, ": " + result["error"] if "error" in result

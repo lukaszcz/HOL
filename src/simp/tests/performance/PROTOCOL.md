@@ -5147,6 +5147,8 @@ replaces):
 
     cd $M
     export TMPDIR=$W/t37-tmp/dispose; mkdir -p $TMPDIR
+    # dispose owns this TMPDIR: a harness tree left by a SIGKILL is
+    # cleared with it (see the cleanup)
     lg() {  # lg CLONE TABLE: the attempts ledger of a clone
       echo $W/t37-$1/.agent-files/evidence/$2/attempts.jsonl; }
     shard() {  # shard S LAST: the options of a timing shard
@@ -5665,17 +5667,35 @@ harness (decisions 33, 36, 38): dispose makes a temporary tree under
 included) as blobs at the commit in its `harness-head.txt`, every other
 path being the checkout's through symlinks of the siblings at each
 ancestor level (`.git` too); one tree per commit, removed when dispose
-exits, also on an error. A child `python3 -B` process runs a small driver
-in that tree, imports its `startup_gate` and prints one JSON object: the
-`replay` of an archive (gate or null), `SCHEMA` and `PAIRS`. The same child
-checks the archive header (`SCHEMA`, `PAIRS`) and makes the null replay
-and the late replays. The checkout's interpreter never imports harness
-code. A later fix to any harness file, needed for a redraw, therefore never
-locks the disposition out. A harness that lacks `replay`, `SCHEMA` or
-`PAIRS`, fails to load, exits non-zero or prints malformed output, and a
-tree that cannot be built (commit or blob unreadable), are refused, naming
-the attempt, the commit and the tail of the child's stderr or the path. An
-interrupt of dispose kills the child and is not a refusal.
+exits, also on an error. The tree is that harness's only if its tree
+outside the performance area equals the checkout HEAD's (the lineage rule):
+dispose compares the two once per commit and refuses a mismatch, naming the
+attempt, the commit and the first differing paths; it also refuses an
+attempt whose `harness-head.txt` is not the harness head in its gate
+header. The `.git` symlink makes the tree a work tree of the checkout's
+repository with another performance area, so the replay contract runs no
+git command there (a harness that did would see it dirty). A child
+`python3 -B -E -s` process (stdin `/dev/null`, dispose's environment, no
+`PYTHON*` variable honoured, so nothing can put the checkout's modules
+ahead of the tree) runs a small driver in that tree. The driver points fd 1
+at stderr and writes its one JSON object to a saved duplicate of the
+original fd 1, so a stray write by the harness cannot corrupt it. The
+harness contract is `replay(args)`, with `args.output` and `args.record`
+as absolute paths (or `None`), `SCHEMA` and `PAIRS`; the null is judged in
+the parent (a null has no record). The same child checks the archive header
+(`SCHEMA`, `PAIRS`) and makes the null replay and the late replays. The
+checkout's interpreter never imports harness code. A later fix to any
+harness file, needed for a redraw, therefore never locks the disposition
+out. A replay that returns a nonzero code or raises is a failed replay (the
+code or the error is the reason). Everything that keeps the harness from
+answering is a refusal, never a failed replay: a harness that lacks
+`replay`, `SCHEMA` or `PAIRS`, fails to load, exits non-zero or prints
+malformed output; a child that cannot be started, a missing tree, an
+undecodable stream (output is read as bytes and decoded with replacement),
+a tree that cannot be built (commit or blob unreadable), a lineage or
+header mismatch. A refusal names the attempt, the commit and the cause, the
+tail of the child's stderr or the path. An interrupt of dispose kills the
+child and is not a refusal.
 The runner's progress files never decide that, so a signal or crash after a
 decided, replayable gate (killed during `gate-null`, say) does not undo the
 decision. An archive that is absent, cut or does not replay gives no
