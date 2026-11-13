@@ -205,21 +205,85 @@ class StartupLedger(unittest.TestCase):
         self.assertEqual([x["verdict"] for x in got],
                          ["void", "void", "void", "void", "judged"])
 
-    def test_an_incomplete_attempt_is_judged_by_its_gate_decision(self):
-        # a decided gate is not undone by a crash or a signal after it
+    def test_an_incomplete_earlier_attempt_blocks_only_on_a_fail(self):
+        # a decided gate is not undone by a crash or a signal after it,
+        # but an incomplete PASS owed the redraw and does not block it
+        import shutil
         for name, exit_, done, decision, reasons in (
-                ("p1", 0, False, "pass", ()),        # passing: superseded
-                ("p2", 143, True, "pass", ()),
                 ("f1", 1, False, "fail", ("R1 differs",)),  # non-delta
-                ("f2", 130, False, "attributed", ("R3 noise",))):
+                ("f2", 130, False, "attributed", ("R3 noise",)),
+                ("f3", 143, True, "blocked", ("R3 noise",))):
             self.run_dir(name, done=done, decision=decision,
                          reasons=reasons, declared=(158440, 90000))
             with self.assertRaisesRegex(ValueError, "stays judged",
                                         msg=name):
                 self.judged((name, exit_))
-            import shutil
             shutil.rmtree(self.root / name)
             shutil.rmtree(self.root / "last", ignore_errors=True)
+        for name, exit_, done in (("p1", 0, False), ("p2", 143, True)):
+            self.run_dir(name, done=done, decision="pass",
+                         declared=(158440, 90000))
+            got = self.judged((name, exit_))
+            self.assertEqual((got[0]["verdict"], got[0]["complete"]),
+                             ("incomplete-pass", False), name)
+            shutil.rmtree(self.root / name)
+            shutil.rmtree(self.root / "last", ignore_errors=True)
+
+    def last(self, exit_, done, decision, reasons=(), declared=(
+            158440, 90000)):
+        out = self.run_dir("last", done=done, decision=decision,
+                           reasons=reasons, declared=declared)
+        return gates.startup_attempts(self.attempts(("last", exit_)),
+                                      out / "gate")[-1]
+
+    def test_an_incomplete_last_attempt_that_failed_is_the_result(self):
+        for decision, reasons in (("fail", ("R1 differs",)),
+                                  ("blocked", ("R3 noise",))):
+            got = self.last(143, False, decision, reasons)
+            self.assertEqual((got["verdict"], got["judged"],
+                              got["decision"], got["complete"]),
+                             ("judged-incomplete", True, decision, False))
+            import shutil
+            shutil.rmtree(self.root / "last")
+
+    def test_an_incomplete_last_attempt_that_passed_owes_a_redraw(self):
+        got = self.last(1, False, "pass")
+        self.assertEqual((got["verdict"], got["problems"]),
+                         ("owes-redraw", []))
+
+    def test_an_incomplete_last_attempt_failing_on_the_deltas_owes_one(
+            self):
+        got = self.last(130, True, "pass", declared=(158441, 90000))
+        self.assertEqual(got["verdict"], "owes-redraw")
+        self.assertIn("load-simpLib", got["problems"][0])
+
+    def test_owing_a_redraw_makes_the_gate_record_incomplete(self):
+        row = self.last(143, False, "pass", declared=(158441, 90000))
+        record = gates.owe_redraw(gates.startup_gate(
+            dict(record_sha256="x"), dict(decision="pass"),
+            dict(decision="pass"), row["problems"]), row)
+        self.assertEqual((record["failed"], record["owed"]),
+                         ([], ["redraw"]))
+        self.assertIn("incomplete", record["missing"][0])
+        self.assertEqual(record["source"], "inconclusive")
+
+    def test_a_redraw_after_an_incomplete_pass_is_accepted(self):
+        self.run_dir("cut", done=False, decision="pass",
+                     declared=(158440, 90000))
+        got = self.judged(("cut", 143))
+        self.assertEqual([x["verdict"] for x in got],
+                         ["incomplete-pass", "judged"])
+
+    def test_a_redraw_after_a_complete_pass_is_refused(self):
+        self.run_dir("done", decision="pass", declared=(158440, 90000))
+        with self.assertRaisesRegex(ValueError, "stays judged"):
+            self.judged(("done", 0))
+
+    def test_a_redraw_after_a_non_delta_fail_is_refused(self):
+        self.run_dir("bad", decision="fail", reasons=("R1 differs",),
+                     declared=(158441, 90000))
+        with self.assertRaisesRegex(ValueError, "stays judged"):
+            self.judged(("bad", 2))
 
     def test_an_incomplete_attempt_that_failed_on_the_declared_deltas(
             self):
@@ -479,6 +543,7 @@ class StartupPath(unittest.TestCase):
         self.archive_of(self.ev / "gate-null", True)
         if done:
             write(self.ev / "done", "done\n")
+        write(self.ev / "inputs.txt", "A=b\n")
         ledger = write(self.root / "attempts.jsonl", json.dumps(dict(
             event="open", attempt="attempt", output=str(self.ev))) + "\n"
             + json.dumps(dict(event="close", attempt="attempt",
@@ -508,7 +573,9 @@ class StartupPath(unittest.TestCase):
         self.assertEqual(record["source"], "pass")
         self.assertEqual(set(inputs[gates.STARTUP]), {
             "header", "decisions", "null-header", "null-decisions",
-            "record", "declared", "ledger", "done"})
+            "record", "declared", "ledger", "done", "attempt-inputs"})
+        self.assertEqual(inputs[gates.STARTUP]["attempt-inputs"],
+                         a.seal(self.ev / "inputs.txt"))
         self.assertEqual(inputs[gates.STARTUP]["ledger"],
                          a.seal(args.startup_ledger))
         self.assertEqual(inputs[gates.STARTUP]["done"],
@@ -527,11 +594,37 @@ class StartupPath(unittest.TestCase):
         self.assertEqual(len(extra["startup_declared"]["problems"]), 2)
         self.assertIn("declared deltas", " ".join(record["reasons"]))
 
-    def test_an_incomplete_attempt_cannot_be_judged(self):
-        with self.assertRaisesRegex(ValueError, "void"):
-            self.read(self.make(done=False))
-        with self.assertRaisesRegex(ValueError, "void"):
-            self.read(self.make(exit_=143))
+    def test_an_incomplete_attempt_with_a_decision_is_judged_by_it(self):
+        found, inputs, _, extra = self.read(self.make(done=False))
+        record = found[gates.STARTUP]      # a passing gate owes a redraw
+        self.assertEqual((record["source"], record["owed"]),
+                         ("inconclusive", ["redraw"]))
+        self.assertEqual(inputs[gates.STARTUP]["done"], "absent")
+        self.assertEqual(extra["startup_attempts"][-1]["verdict"],
+                         "owes-redraw")
+        found, _, _, extra = self.read(self.make(exit_=143))
+        self.assertEqual(found[gates.STARTUP]["owed"], ["redraw"])
+
+    def test_an_incomplete_failed_attempt_is_a_fail(self):
+        args = self.make(done=False)
+        write(self.ev / "gate" / "decisions.json", dict(
+            decision="fail", reasons=["R1 differs"], R2=r2()))
+        found, _, _, extra = self.read(args)
+        self.assertEqual(found[gates.STARTUP]["source"], "fail")
+        self.assertEqual(extra["startup_attempts"][-1]["verdict"],
+                         "judged-incomplete")
+
+    def test_an_incomplete_attempt_with_no_decision_is_refused(self):
+        args = self.make(done=False)
+        (self.ev / "gate" / "decisions.json").unlink()
+        with self.assertRaisesRegex(ValueError, "decisions"):
+            self.read(args)
+
+    def test_the_attempt_inputs_must_exist(self):
+        args = self.make()
+        (self.ev / "inputs.txt").unlink()
+        with self.assertRaisesRegex(ValueError, "no sealed inputs.txt"):
+            self.read(args)
 
     def test_the_gate_and_its_null_control_must_be_of_one_attempt(self):
         args = self.make()

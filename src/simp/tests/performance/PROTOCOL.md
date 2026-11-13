@@ -4454,18 +4454,17 @@ the tables' sources (`Cond_rewr.sig`) and the heap and build entries
   identity only) carries over. R-1 (a void attempt is listed, never hidden,
   and never replaces a judged one) carries over. Counts alone decide nothing.
 
-### Stage order and waves (design decisions 10, 12, 17, 24, 25)
+### Stage order and waves (design decisions 10, 12, 17, 24, 25, 26)
 
 Tooling lands, is reviewed and merged; one `python-tests` + `boundary-tests`
 run. The measurements then run as parallel streams in waves (decision 12
 supersedes the serial order of decision 10; the dependency edges below are
 what keeps the order). A stream is one `git clone --shared` of the main
-worktree (`git clone --shared $M $W/t37-STREAM`), never of another clone;
-the performance lock, ledger, build stamp and counts are per clone, so a
-clone runs one runner at a time. Deterministic streams run under `nice -n 19`
-and timing streams at normal priority, about 14 measurement processes at
-once on 16 CPUs. Any code or build change after the counts commits voids the
-affected results.
+worktree (always of `$M`, never of another clone); the performance lock,
+ledger, build stamp and counts are per clone, so a clone runs one runner at a
+time. At most 16 measuring processes or jobs run at once (Process budget).
+Any code or build change after the counts commits voids the affected
+results.
 
 Commit rule (decision 17). Every commit is made in the main worktree `$M`
 and a clone never commits. A counts file, a declaration file, the
@@ -4474,98 +4473,196 @@ and a clone never commits. A counts file, a declaration file, the
 A file made in a clone (a pilot's `predeclare` output, a follow-up
 declaration) is copied to `$M`, committed there, and the clone's untracked
 copy deleted BEFORE the clone is brought forward (an untracked file of the
-same name blocks the fast-forward):
+same name blocks the fast-forward); `forward` (below) then brings the clone
+forward:
 
     cp $CL/$P/FILE $M/$P/FILE && git -C $M add $P/FILE
     git -C $M commit -m "TASK37: FILE"        # FILE alone
     rm "${CL:?}/${P:?}/FILE"
-    git -C $CL fetch origin simplifier
-    git -C $CL merge --ff-only FETCH_HEAD
+    forward $CL
 
-A stream's measurement candidate is its clone's HEAD at launch; the stages
-name the candidate by `$CAND` (`task37_cases.COMPILED_REF`), and dispose
-accepts the clones' different HEADs by the lineage rule below.
+The candidate of a measuring command is the clone's HEAD at launch,
+`--candidate $(git rev-parse HEAD)` run in the clone (shard `run`, the
+identity full grid and allocation require it to equal the clone's HEAD:
+`timing_grid.checkout_identity`, `task31_identity_grid`, the toolchain's
+lineage head). The final candidate `$CAND` (`task37_cases.COMPILED_REF`) is
+used only where a tool compares trees: `task37_dispose.py --candidate`, the
+identity `--only` diagnostics, the snapshot pins, `CAND_REV` of the startup
+runner and `CAND` of the loading, api-audit and D7 runners. Dispose accepts
+the clones' different HEADs by the lineage rule below. A clone is brought
+forward only where this section says so: never between a stage and the
+`extend` of the same shard (the second stage binds the first stage's HEAD),
+and a clone is never deleted before dispose (the ledgers and archives it
+holds are inputs).
 
 Waves (a stream starts a wave when the edges into it hold):
 
-- Wave 1, prepare (all in parallel):
-  - the toolchains and `prepare` of each stream's clone
-    (`allocation_matrix.py toolchain`; `task37_grid.py SHARD prepare`;
-    `task37_identity.py prepare --table T`);
-  - the controls receipt and `run_api_audit.sh` (once, in the harness
-    clone);
+- Wave 1, prepare (unmeasured; all in parallel):
+  - the clones, the `prepare` of the shards and of the identity tables;
+  - the harness clone: build, the controls receipt, then `run_api_audit.sh`
+    (once);
   - the snapshots of the `t32` stream and of the `t33` stream, each its own
     pair in its own clone;
-  - the identity one-cell `--only` diagnostics, then `sources`, then
-    `task37_sources.py` filled and committed (alone) in main;
+  - the identity one-cell `--only` diagnostics (matrix, downstream), then
+    `sources`, then `task37_sources.py` filled and committed (alone) in main;
   - the allocation counts: `task37_iterations.py all` in main, then
-    `--check`, each of the three files committed alone.
-- Wave 2:
-  - the identity grids (client, matrix with `--jobs`, downstream);
-  - allocation (matrix, client, downstream, `nice -n 19`, one clone each);
+    `--check`, each of the three files committed alone; then each allocation
+    clone brings itself forward and builds its toolchain.
+- Wave 2 (the process budget below):
+  - the identity grids (client, matrix, downstream) and allocation (matrix,
+    client, downstream), all `nice -n 19`;
   - the timing shard pilots and their `predeclare` (6 shards: client-1,
-    client-2, matrix-1 ... matrix-4);
-  - `t32`: smoke, pilot, control, `predeclare`;
+    client-2, matrix-1 ... matrix-4), then `t32` (smoke, pilot, control,
+    `predeclare`) and `t33`;
   - `t33`: the two throwaway storage smokes, `task37_declared.py observe`
     and `fill` (committed alone in main), then the TASK33 smokes, pilots,
     controls and the timing `predeclare` under the filled declaration, and
-    the offline `audit` and `harvest`;
-  - the startup diagnostic gate, only if the declared deltas need a new
-    record (decision 21).
-- Wave 3, counts commits in main, each alone, then the clones fast-forward:
-  the 6 timing shards' counts files, `task37_t32_counts.json` and
-  `task37_t33_counts.json` (the storage `predeclare` of `t33` binds the
-  committed timing counts).
-- Wave 4:
-  - the 6 timing shards' decision runs;
-  - `t32` first stage, then `task33_offline.py archive` (below), then the
-    `t33` storage `predeclare` (it takes the archive), the
-    `task37_t33_storage_counts.json` commit and the `t33` decision runs
-    (`t-run`, `s-run`, `s-audit`);
-  - the loading shards (simplib and conglib, one clone each; `STAGE=2` of
-    `run_loading.sh` for a shard that owes stage 2);
-  - the startup gate (`run_startup_gate.sh`) and the D7 builds;
-  - stage 2 and the follow-ups as owed, each with its counts or declaration
-    commit (alone, in main) first.
-- Wave 5, dispose, in main (`task37_dispose.py`, Disposition below).
+    the offline `audit` and `harvest`.
+- Wave 3, counts commits in main, each alone, then the clones forward: the
+  6 timing shards' counts files, `task37_t32_counts.json` and
+  `task37_t33_counts.json`.
+- Wave 4a: the 6 timing shards' decision runs (`run`); `t32` first stage,
+  then `task33_offline.py archive` (below), then the `t33` storage
+  `predeclare` (it takes the archive), the `task37_t33_storage_counts.json`
+  commit and the `t33` decision runs (`t-run`, `s-run`, `s-audit`; the
+  `t-run` follows the `t33` timing counts commit as soon as the clone is
+  forward, it waits for no offline report); allocation continues from
+  wave 2.
+- Wave 4b, once allocation has finished: the loading shards (simplib and
+  conglib, one clone each; `STAGE=2` of `run_loading.sh` for a shard that
+  owes stage 2), the startup gate (`run_startup_gate.sh`, once, no
+  diagnostic run before it) and the D7 builds; stage 2 and the follow-ups of
+  the 4a streams as owed. The startup gate is redrawn only after a failure
+  on the declared deltas alone (Startup gate): `DECLARED_ARCHIVE` is then the
+  failed attempt's own `gate` and `EVTAG` a new tag.
+- Wave 5, dispose, in main (`task37_dispose.py`, below), then the TASK33
+  `dispose-snapshots`.
+
+Process budget (decision 26). Each moment at most 16 measuring processes or
+jobs, counting a `--jobs N` run as N and a stream's runner as 1. Identity and
+allocation run at `nice -n 19` with their TMPDIR on disk (so the allocation
+runner, which starts only with HUP, INT and TERM at their defaults, is
+started `setsid -w env --default-signal=HUP,INT,TERM nice -n 19 ...`).
+Timing gates (the shards, `t32`, `t33`, loading) run at normal priority:
+`nice` is for deterministic streams only.
+
+- Wave 2, deterministic: identity matrix `--jobs 4`, client `--jobs 2`,
+  downstream `--jobs 1`; allocation matrix `--jobs 5`, client `--jobs 2`,
+  downstream `--jobs 1`: 7 + 8 = 15 processes (the 16th: a `t33` storage
+  smoke or `observe`).
+- Wave 2, pilots: the 6 shard pilots, then `t32` and `t33`, while allocation
+  keeps running. They start when the identity grids have finished, so that
+  each pilot has the concurrency of its decision run (the policy): 6 + 8,
+  then 8 + 8 = 16.
+- Wave 4a: 6 shards + `t32` + `t33` (its stages one at a time) + allocation:
+  6 + 1 + 1 + 8 = 16. Allocation continues into wave 4 with the same jobs.
+- Wave 4b, once allocation has finished: the loading shards (2), the startup
+  gate (1) and D7 (Holmake's default `-j4`), with the 4a streams that still
+  owe a stage: at most 16.
+
+Disk and `/dev/shm`. The identity, allocation, shard and `t32` TMPDIRs and
+scratch are on disk (`$CL/.agent-files/tmp`); only the `t33` scratch
+(`/dev/shm/t37-t33`), the startup gate (`/dev/shm/t37-sg-*`, about 7 GB) and
+D7 (`/dev/shm/t37-builds`) use `/dev/shm`, at most 20 GB in total.
 
 Dependency edges (A -> B: B starts after A is finished and, for a commit,
 the clone has fast-forwarded to it):
 
-- `task37_sources.py` commit -> the identity grids (a full grid of a table
-  whose list is empty is refused); no timing pilot or counts file depends
-  on it;
-- the commit of an allocation counts file -> that allocation task (the file
-  is sealed by the task's header);
+- `task37_sources.py` commit -> the three identity grids (a full grid of a
+  table whose list is empty is refused, and every identity table seals the
+  file, so the client grid too runs after the commit, in a clone that has
+  gone forward); no timing pilot or counts file depends on it;
+- the commit of an allocation counts file -> that allocation task's
+  toolchain build (the toolchain's lineage head must be the run's candidate,
+  so each toolchain is built after its task's counts commit and the clone's
+  `forward`, and no later commit is brought in before the run);
+- the controls receipt -> the allocation runs and the startup gate; the
+  api-audit receipt -> both loading shards; the harness clone is built before
+  the audit and is not brought forward afterwards;
 - a shard's pilot -> its `predeclare` -> its counts commit -> its `run`; a
   follow-up's declaration commit -> its pilot (the declaration must be an
   ancestor of the pilot's checkout head, and committed, not untracked) ->
   its counts commit;
 - `t33`: throwaway smokes -> `observe` -> `fill` -> the
   `task37_declared.json` commit (alone) -> the TASK33 smokes, pilots and
-  controls (they seal the filled declaration) -> the offline `audit` and
-  `harvest` -> the timing `predeclare` -> its commit -> the storage
-  `predeclare`;
-- `t32` counts commit -> `t32` first stage -> `task33_offline.py archive` ->
-  `t33` storage `predeclare` (the archive must be of the `task37-t32`
+  controls (they seal the filled declaration) and the offline `audit` and
+  `harvest` -> (the timing `predeclare` needs the pilot, smoke and control)
+  -> its commit -> `t-run`; the storage `predeclare` needs the `t32` archive
+  and the offline reports;
+- the `task37_declared.json` fill commit -> the `t32` archive (the archive
+  seals the declaration: sealed before the fill it would seal the
+  placeholder, which every gate refuses). The fill is committed in wave 2,
+  before the wave 3 counts commits, so the `t32` clone that goes forward over
+  its counts commit has it before `run`. A `t32` clone that was brought
+  forward before the fill goes forward once more before its first stage; if
+  that was missed, it goes forward between the first stage and the archive
+  (safe when no stage 2 is owed), never between `run` and `extend`;
+- `t32` counts commit -> `t32` first stage -> `task33_offline.py archive`
+  -> `t33` storage `predeclare` (the archive must be of the `task37-t32`
   table, decision 24) -> `task37_t33_storage_counts.json` commit -> the
-  `t33` decision runs;
-- the api-audit receipt -> both loading shards; the startup record of a
-  redraw -> that attempt (decision 21).
+  `t33` storage decision runs;
+- the startup record of a redraw -> that attempt (decision 21);
+- every stage and the final dispose -> `dispose-snapshots` of `t33`.
 
-Recipes. The variables, once:
+Recipes. The variables, once (the shell functions too):
 
     M=/home/lukasz/work/HOL/worktrees/simplifier   # main worktree
     W=/home/lukasz/work/HOL/worktrees              # the clones' place
     EV=$M/.agent-files/evidence/task37             # absolute, outside git
+    R=$EV/runners                                  # the runners, outside git
     P=src/simp/tests/performance                   # below a clone or $M
     CAND=7e202dfbaa63a48514c36fece89e3ab3f69b3696  # COMPILED_REF
     BASE=cccaa27d7099cbadc886983020cbe745db7793f3  # acceptance.BASE
+    CONTROLS=$EV/controls/controls.json            # the controls receipt
+    AUDIT=$EV/api-audit/run/audit                  # the api-audit output
+    clone() {  # clone NAME: $W/t37-NAME, of the main worktree
+      git clone --shared $M $W/t37-$1 </dev/null
+      echo /.agent-files >> \
+        "$(git -C $W/t37-$1 rev-parse --absolute-git-dir)/info/exclude"
+      mkdir -p $W/t37-$1/.agent-files/tmp
+    }
+    forward() {  # forward CLONE: over the commits made in $M
+      git -C $1 fetch origin simplifier </dev/null &&
+        git -C $1 merge --ff-only FETCH_HEAD </dev/null
+    }
 
-Every command below runs from its clone's root with `</dev/null` and a
-`TMPDIR` of its own; a measuring command also takes
-`--authorize-measurements`. Evidence goes to `$EV/STREAM/` by absolute path,
-so that a stream can name another stream's files.
+The clones, by name (`clone NAME`): `harness`, `load-simplib`, `load-conglib`,
+`id-client`, `id-matrix`, `id-downstream`, `alloc-matrix`, `alloc-client`,
+`alloc-downstream`, `client-1`, `client-2`, `matrix-1` ... `matrix-4`, `t32`
+and `t33` (17 in all). A fresh clone does not exclude the agent-state
+directory, whose files would make it dirty; `clone` adds `/.agent-files` to
+the clone's `info/exclude` (the absolute git directory, so that the path
+resolves from anywhere). In a recipe `CL=$W/t37-NAME` is the clone and
+`E=$EV/NAME` its evidence; every command runs from `CL` with `</dev/null`
+and `export TMPDIR=$CL/.agent-files/tmp` (the exceptions are stated), and a
+measuring command also takes `--authorize-measurements`. Evidence goes to
+`$EV/STREAM/` by absolute path, so that a stream can name another stream's
+files.
+
+The harness clone (`$W/t37-harness`, wave 1) is the clone of the
+once-only steps. Its HEAD is the tooling commit and it is not brought
+forward after the audit (the startup gate records it as `HARNESS_COMMIT`):
+
+    cd $W/t37-harness && export TMPDIR=$PWD/.agent-files/tmp
+    poly < tools/smart-configure.sml </dev/null
+    bin/build --stdknl --seq=tools/sequences/upto-parallel </dev/null
+    mkdir -p $EV/controls
+    python3 -B $P/allocator-counter/run_controls.py \
+      --authorize-experimental-runtime --bootstrap-hol --reference $CAND \
+      --output $CONTROLS </dev/null
+    CAND=$CAND CAND_TREE=$PWD setsid -w env \
+      --default-signal=HUP,INT,TERM $R/run_api_audit.sh </dev/null
+
+The build is needed by the api-audit only (`CAND_TREE` must hold `bin/Holmake`
+and `bin/hol.state0`); `run_controls.py` builds its own HOL and Poly/ML
+(`--bootstrap-hol` is required), must run from a clean committed checkout
+that differs from `--reference` only below `src/simp/tests/performance`, and
+its receipt does not depend on the counts commits (its harness inputs are the
+`allocator-counter` directory and a few modules). `run_api_audit.sh` writes
+`$EV/api-audit/run/audit/STAMP/receipt.json` (exactly one; `AUDIT` names the
+`audit` directory) and its scratch is `/dev/shm/t37-api-audit`, removed on
+exit. The startup gate needs the harness clone only clean at its HEAD (it
+builds its own trees); D7 needs `task37_builds.py` in it.
 
 Allocation counts (main, wave 1; the files are never edited):
 
@@ -4575,35 +4672,66 @@ Allocation counts (main, wave 1; the files are never edited):
       git add $P/allocation_iterations_task37_$t.json
       git commit -m "TASK37 allocation counts: $t"; done  # each alone
 
-Each allocation clone (`$W/t37-alloc-matrix`, `-client`, `-downstream`)
-fast-forwards, runs `task37_iterations.py all --check`, builds the toolchain
-once (`allocation_matrix.py toolchain --toolchain $TC --repo .`) and runs
+Each allocation clone (`alloc-matrix`, `alloc-client`, `alloc-downstream`;
+`T` is `matrix`, `client` or `downstream`, `JOBS` 5, 2 and 1) goes forward
+over the three counts commits, checks them, builds its toolchain on disk
+once (after the counts commit and `forward`: the toolchain's lineage head is
+the clone's HEAD at the build and must equal the run's candidate, so the
+clone is not brought forward again before `run`) and runs:
 
-    nice -n 19 setsid -w env --default-signal=HUP,INT,TERM \
-      python3 -B $P/allocation_matrix.py run --task task37-matrix \
-      --candidate $CAND --toolchain $TC --controls-receipt $CONTROLS \
-      --authorize-experimental-runtime --jobs 8 \
-      --output $EV/alloc-matrix/run
+    CL=$W/t37-alloc-T; E=$EV/alloc-T
+    forward $CL; cd $CL; export TMPDIR=$CL/.agent-files/tmp
+    python3 -B $P/task37_iterations.py all --check
+    TC=$CL/.agent-files/toolchain
+    python3 -B $P/allocation_matrix.py toolchain --toolchain $TC --repo .
+    setsid -w env --default-signal=HUP,INT,TERM nice -n 19 \
+      python3 -B $P/allocation_matrix.py run --task task37-T \
+      --candidate $(git rev-parse HEAD) --toolchain $TC \
+      --controls-receipt $CONTROLS --authorize-experimental-runtime \
+      --jobs JOBS --output $E/run
 
-(`task37-client` and `task37-downstream` alike; the jobs are split between
-the three). The count rule is the policy of `task37_iterations.py` (its
-docstring): each matrix or client cell takes the steady count its
-originating task predeclared (TASK29B, TASK30, TASK31) and the downstream
-cells the TASK30 size rule; a count is never a measurement.
+The count rule is the policy of `task37_iterations.py` (its docstring): each
+matrix or client cell takes the steady count its originating task
+predeclared (TASK29B, TASK30, TASK31) and the downstream cells the TASK30
+size rule; a count is never a measurement. The allocation ledger is
+`$CL/.agent-files/evidence/task37-T/attempts.jsonl`.
 
-The `t32` stream (clone `CL=$W/t37-t32`, `E=$EV/t32`, table `task37-t32`):
+The identity stream of a table T (`client`, `matrix`, `downstream`; clone
+`id-T`, `E=$EV/id-T`, `N` the jobs 2, 4 and 1) in
+waves 1 and 2. The `sources` fill is by hand, in `$M`:
 
-    export TMPDIR=/dev/shm/t37-t32/tmp; mkdir -p $TMPDIR $E
+    CL=$W/t37-id-T; cd $CL; export TMPDIR=$CL/.agent-files/tmp
+    I="python3 -B $P/task37_identity.py"
+    $I prepare --table T                                     # wave 1
+    # matrix and downstream only (the client list is TASK31's, so the
+    # client run needs no diagnostic): one cell, then its sources
+    $I cells --table T | head -3
+    $I identity --table T --only CELL --output $E/diag \
+      --candidate $CAND --authorize-measurements
+    $I sources --output $E/diag
+    # in $M: enter the printed lists in $P/task37_sources.py by hand
+    # (MATRIX and DOWNSTREAM), review, and commit that file alone
+    # then, for all three identity clones: forward $CL
+    nice -n 19 $I identity --table T --output $E/grid \
+      --candidate $(git rev-parse HEAD) --authorize-measurements --jobs N
+
+The ledger is `$CL/.agent-files/evidence/task37-T-identity/attempts.jsonl`.
+
+The `t32` stream (clone `CL=$W/t37-t32`, `E=$EV/t32`, table `task37-t32`;
+disk TMPDIR and scratch, and its snapshot pair is built and compared here
+and goes with the clone):
+
+    export TMPDIR=$CL/.agent-files/tmp; mkdir -p $E
     S=$CL/.agent-files/snapshots/task32
-    SCR=$CL/.agent-files/scratch/task37-t32
+    SCR=$CL/.agent-files/scratch/task32
     SN="python3 -B $P/task32_snapshots.py"
     # wave 1: the snapshot pair (its own manifest), verified and compared
     $SN build --table task37-t32 --repo . --side base --pin $BASE --mktool \
       --cand-pin $CAND --manifest $E/snapshots.json --root $S \
-      --scratch $SCR --evidence $E/build/logs
+      --scratch $SCR --evidence $E/build/logs --tmpdir $TMPDIR
     $SN build --table task37-t32 --repo . --side cand --pin $CAND \
       --manifest $E/snapshots.json --root $S --scratch $SCR \
-      --evidence $E/build/logs
+      --evidence $E/build/logs --tmpdir $TMPDIR
     $SN verify --repo . --manifest $E/snapshots.json --base-pin $BASE \
       --cand-pin $CAND --compiled-ref $CAND
     $SN compare --repo . --manifest $E/snapshots.json --base-pin $BASE \
@@ -4612,37 +4740,51 @@ The `t32` stream (clone `CL=$W/t37-t32`, `E=$EV/t32`, table `task37-t32`):
     T="python3 -B $P/task32_downstream.py --table task37-t32"
     C="--repo . --base-root $S/base --cand-root $S/cand \
       --manifest $E/snapshots.json"
-    $T smoke $C --output $E/smoke --authorize-measurements
-    $T pilot $C --output $E/pilot --authorize-measurements
-    $T control $C --pilot $E/pilot --output $E/control \
+    K="--scratch $CL/.agent-files/scratch/t32-run"   # on disk (run commands)
+    $T smoke $C $K --output $E/smoke --authorize-measurements
+    $T pilot $C $K --output $E/pilot --authorize-measurements
+    $T control $C $K --pilot $E/pilot --output $E/control \
       --authorize-measurements
     $T predeclare $C --pilot $E/pilot --smoke $E/smoke \
       --control $E/control --out $P/task37_t32_counts.json
-    # wave 3: commit task37_t32_counts.json alone in main; fast-forward
-    # wave 4: the first stage, then the S3 archive report
-    $T run $C --output $E/first --authorize-measurements
+    # wave 3: commit task37_t32_counts.json alone in main; forward $CL
+    # (the clone then holds the declared fill commit too: the archive's edge)
+    # wave 4a: the first stage, then the S3 archive report
+    $T run $C $K --output $E/first --authorize-measurements
     python3 -B $P/task33_offline.py archive --out $E/offline \
       --archive $E/first --declared $P/task37_declared.json
-    # before dispose: the TASK32 disposition
+    # a second stage, if owed (no counts commit, no forward before it):
+    #   $T extend $C $K --first $E/first --output $E/second \
+    #     --authorize-measurements
+    # before dispose: the TASK32 disposition, of the LAST stage owed
     $T dispose --repo . --stage $E/first --out $E/disposition.json
 
-The archive is made in the `t32` clone (its repository and ledger are the
-ones that replay the run). The `t33` clone needs no `t32` commit for it: it
-names the report by its absolute path, `--offline
-$EV/t32/offline/archive.json`, in its storage `predeclare`, and the report
-records its table (`task37-t32`), base and candidate, which that
-`predeclare` checks. (Made in the `t33` clone instead, the clone must first
-fetch and fast-forward over the `t32` counts commit and be given the `t32`
-ledger with `--ledger`; the `t32` clone is the choice.) Stage 2 and the
-follow-ups of `t32` (`extend --first`, `predeclare --followup`,
-`followup`) are the same commands, each counts file committed alone first.
+(`--scratch` belongs to the run commands, so `predeclare` takes `C` alone.
+The `t32` stage scratch is on disk, by the `/dev/shm` budget.) The archive
+is made in the `t32` clone, whose repository and ledger replay the run, in a
+clone that holds the filled `task37_declared.json` (the edge above):
+`task33_offline.py archive --declared` seals that file. The `t33` clone
+needs no `t32` commit for it: it names the report by its absolute path,
+`--offline $EV/t32/offline/archive.json`, in its storage `predeclare`, and
+the report records its table (`task37-t32`), base and candidate, which that
+`predeclare` checks. A stage 2 of `t32` is `extend --first <first stage>`
+with no counts commit (the engine derives the second stage from the first
+stage's results); the follow-up of `t32` is `predeclare --followup` (its
+counts file committed alone first) and `followup`. The `--stage` of
+`dispose` and of the `--task32-replay` string is the last stage of the chain
+(the second stage or the follow-up, when owed).
 
-The `t33` stream (clone `CL=$W/t37-t33`, `E=$EV/t33`, table `task37-t33`):
+The `t33` stream (clone `CL=$W/t37-t33`, `E=$EV/t33`, table `task37-t33`).
+Its scratch and its snapshot builds' TMPDIR are in `/dev/shm`; the snapshot
+pair must be built with the scratch `$CL/.agent-files/scratch/task32`
+(`task33_dispose.removal_plan` requires the snapshot HOMEs there, as
+`dispose-snapshots` removes them):
 
     export TMPDIR=/dev/shm/t37-t33/tmp; mkdir -p $TMPDIR $E
     S=$CL/.agent-files/snapshots/task32
-    SCR=$CL/.agent-files/scratch/task37-t33
-    # wave 1: as for t32, with --table task37-t33 and its own manifest
+    SCR=$CL/.agent-files/scratch/task32
+    # wave 1: as for t32 (same SN commands), with --table task37-t33, this
+    # clone's S and SCR, and its own manifest $E/snapshots.json
     T="python3 -B $P/task32_downstream.py --table task37-t33"
     Q="python3 -B $P/task33_storage.py --table task37-t33"
     C="--repo . --base-root $S/base --cand-root $S/cand \
@@ -4657,8 +4799,7 @@ The `t33` stream (clone `CL=$W/t37-t33`, `E=$EV/t33`, table `task37-t33`):
     (cd $M && python3 -B $P/task37_declared.py fill --declared $D \
       --observation $E/observation.json && git diff $D)   # review
     git -C $M add $D && git -C $M commit -m "TASK37 declared"
-    git -C $CL fetch origin simplifier
-    git -C $CL merge --ff-only FETCH_HEAD
+    forward $CL      # (the t32 clone gets it at its wave 3 forward)
     # the smokes, pilots and controls under the FILLED declaration
     $T smoke $C --output $E/t-smoke --authorize-measurements
     $Q smoke $C --output $E/s-smoke --authorize-measurements
@@ -4676,18 +4817,19 @@ The `t33` stream (clone `CL=$W/t37-t33`, `E=$EV/t33`, table `task37-t33`):
       --cand-root $S/cand
     $T predeclare $C --pilot $E/t-pilot --smoke $E/t-smoke \
       --control $E/t-control --out $P/task37_t33_counts.json
-    # wave 3: commit task37_t33_counts.json alone in main; fast-forward
-    # wave 4, after the t32 first stage and its archive report:
+    # wave 3: commit task37_t33_counts.json alone in main; forward $CL
+    # wave 4a: the timing run needs no offline report and no archive
+    $T run $C --output $E/t-run --authorize-measurements
+    # after the t32 first stage and its archive report:
     $Q predeclare $C --pilot $E/s-pilot --smoke $E/s-smoke \
       --control $E/s-control --offline $E/offline/audit.json \
       --offline $E/offline/harvest/harvest.json \
       --offline $EV/t32/offline/archive.json \
       --out $P/task37_t33_storage_counts.json
-    # commit task37_t33_storage_counts.json alone in main; fast-forward
-    $T run $C --output $E/t-run --authorize-measurements
+    # commit task37_t33_storage_counts.json alone in main; forward $CL
     $Q run $C --output $E/s-run --authorize-measurements
     $Q audit $C --output $E/s-audit --authorize-measurements
-    # before dispose: the TASK33 disposition
+    # before dispose: the TASK33 disposition (its last stages)
     $Q dispose --repo . --stage $E/s-run --stage $E/s-audit \
       --timing-stage $E/t-run --offline $E/offline/audit.json \
       --offline $E/offline/harvest/harvest.json \
@@ -4695,37 +4837,219 @@ The `t33` stream (clone `CL=$W/t37-t33`, `E=$EV/t33`, table `task37-t33`):
 
 (`--declared` and `--compiled-ref` of the `task37-t33` table are fixed by
 the table; the `fill` runs in `$M` so that the file is committed there and
-the clone only fast-forwards.) The `t-run`, `s-run` and `s-audit` run one at
+the clone only goes forward.) The `t-run`, `s-run` and `s-audit` run one at
 a time in the clone (one runner per clone and lock), each with its own
-`--scratch` default (`/dev/shm/t37-t33`, `/dev/shm/t37-t33/storage`).
+`--scratch` default (`/dev/shm/t37-t33`, `/dev/shm/t37-t33/storage`). A
+stage 2 or a follow-up is the same commands as for `t32` (`extend --first`,
+`predeclare --followup`, `followup`), and the `--stage`/`--timing-stage` of
+`dispose` and of the replay string are the last stage of each chain.
+
+After the final `task37_dispose.py` (below), the snapshots of `t33` are
+disposed, from its clone root, with TMPDIR elsewhere (the command removes the
+declared scratch root `/dev/shm/t37-t33`, which holds the usual TMPDIR). It
+verifies the snapshots, checks that the harvest, the api-audit stage and one
+owing-nothing `disposition.json` are sealed under `$E` and removes exactly
+the paths the manifest names (it writes `snapshot-disposal.json`):
+
+    cd $CL && TMPDIR=$CL/.agent-files/tmp $Q dispose-snapshots \
+      --evidence $E --manifest $E/snapshots.json --repo .
+
+(The `t32` snapshots go with their clone, which is removed only after
+dispose.)
 
 A timing shard (clone `$W/t37-matrix-1`; `client-1`, `client-2` and
-`matrix-1` ... `matrix-4` alike), `G="python3 -B $P/task37_grid.py
-matrix-1"`:
+`matrix-1` ... `matrix-4` alike; `S=matrix-1`, `E=$EV/S`), the table
+`task37-S`, its ledger `$CL/.agent-files/evidence/task37-S/attempts.jsonl`:
 
+    CL=$W/t37-S; cd $CL; export TMPDIR=$CL/.agent-files/tmp
+    G="python3 -B $P/task37_grid.py S"
     $G prepare
-    $G pilot --output $EV/matrix-1/pilot --authorize-measurements
-    $G predeclare --grid $EV/matrix-1/pilot \
-      --output $P/task37_matrix_1_iterations.json
-    # wave 3: commit the counts file alone in main; fast-forward
-    $G verify-counts --grid $EV/matrix-1/pilot
-    $G run --candidate $CAND --output $EV/matrix-1/first \
-      --pilot $EV/matrix-1/pilot --authorize-measurements
-    $G extend --grid $EV/matrix-1/first --output $EV/matrix-1/second \
-      --pilot $EV/matrix-1/pilot --authorize-measurements   # if owed
+    $G pilot --output $E/pilot --authorize-measurements
+    $G predeclare --grid $E/pilot --output $P/task37_matrix_1_iterations.json
+    # wave 3: commit the counts file alone in main; forward $CL
+    $G verify-counts --grid $E/pilot
+    $G run --candidate $(git rev-parse HEAD) --output $E/first \
+      --pilot $E/pilot --authorize-measurements
+    # stage 2, if owed: no counts commit, and the clone is NOT brought
+    # forward between `run` and `extend` (`extend` binds the first stage's
+    # HEAD, `bind_checkout`)
+    $G extend --grid $E/first --output $E/second \
+      --pilot $E/pilot --authorize-measurements
 
-The identity stream of a table T (`client`, `matrix`, `downstream`; clone
-`$W/t37-id-T`): `task37_identity.py prepare --table T`, the one-cell
-diagnostic `identity --table T --only CELL --output $EV/id-T/diag
---candidate $CAND --authorize-measurements`, `sources --output
-$EV/id-T/diag` and the `task37_sources.py` commit, then `nice -n 19 python3
--B $P/task37_identity.py identity --table T --output $EV/id-T/grid
---candidate $CAND --authorize-measurements --jobs 8`.
+(The counts file of `S` is `task37_<kind>_<n>_iterations.json`, e.g.
+`task37_client_2_iterations.json`.) The dispose `--timing S=` is the last
+stage run (`second` when owed, else `first`; a follow-up replaces it).
 
-The counts files and declaration files of the follow-ups are made in the
-stream clone (the pilot and `predeclare` there; the follow-up declaration
-file by hand), committed only in main as above, and the follow-up's pilot
-runs in a clone that has fast-forwarded over the declaration commit.
+The follow-up of a shard (`F="python3 -B $P/task37_followup.py S"`; it runs
+in the shard's own clone, whose ledger takes its attempts, and only after
+the shard's last stage, since it brings the clone forward):
+
+    # in $M: the declaration, by hand: $P/task37_<kind>_<n>_followup_cells.json
+    #   {"schema": "task37-followup-cells-v1", "shard": "S", "cells": [..]}
+    git -C $M add $P/task37_<kind>_<n>_followup_cells.json   # and commit it
+    forward $CL         # the declaration must be an ancestor of the pilot
+    $F prepare
+    $F pilot --output $E/fpilot --authorize-measurements
+    $F predeclare --grid $E/fpilot \
+      --output $P/task37_<kind>_<n>_followup_iterations.json \
+      --replaces $E/second --replaces-pilot $E/pilot
+    # commit the counts file alone in main, rm the clone's copy, forward $CL
+    $F verify-counts --grid $E/fpilot --replaces $E/second \
+      --replaces-pilot $E/pilot
+    $F run --candidate $(git rev-parse HEAD) --output $E/followup \
+      --pilot $E/fpilot --replaces $E/second --replaces-pilot $E/pilot \
+      --authorize-measurements
+    $F extend --grid $E/followup --output $E/followup2 --pilot $E/fpilot \
+      --replaces-pilot $E/pilot --authorize-measurements    # if owed
+
+(`--replaces` is the shard's last stage, `first` when there is no second.)
+Dispose then takes `--followup S=<its last stage> --followup-pilot
+S=$E/fpilot`, and still `--timing S=` and `--pilot S=` of the shard.
+
+The startup gate (wave 4b, once; deterministic, so `nice -n 19`). Every
+variable is required but `EVTAG` and `DECLARED_ARCHIVE`:
+
+    cd $M
+    DEV_REV=$BASE CAND_REV=$CAND HARNESS=$W/t37-harness \
+    HARNESS_COMMIT=$(git -C $W/t37-harness rev-parse HEAD) \
+    CONTROLS=$CONTROLS EVTAG=g1 setsid -w env \
+      --default-signal=HUP,INT,TERM nice -n 19 $R/run_startup_gate.sh \
+      </dev/null
+
+`DEV_REV` is the develop revision of the baseline images, `CAND_REV` the
+candidate whose trees `s1`/`s2` are built, `HARNESS` the clean checkout at
+`HARNESS_COMMIT` (the full sha of its HEAD), `CONTROLS` the controls receipt.
+`EVTAG` (`[A-Za-z0-9._-]+`, default `run`) names the attempt and its
+directory `$EV/startup-gate/EVTAG`, and is never reused. `DECLARED_ARCHIVE`
+(default round 4's gate) is the gate archive whose R2 load figures the record
+declares. If, and only if, the gate failed on the declared deltas alone
+(the record Ds, Dc differ from the gate's R2 load totals: the disposition
+says so), redraw with the failed attempt's own gate as the declared archive:
+
+    DEV_REV=$BASE CAND_REV=$CAND HARNESS=$W/t37-harness \
+    HARNESS_COMMIT=$(git -C $W/t37-harness rev-parse HEAD) \
+    CONTROLS=$CONTROLS EVTAG=g2 DECLARED_ARCHIVE=$EV/startup-gate/g1/gate \
+    setsid -w env --default-signal=HUP,INT,TERM nice -n 19 \
+      $R/run_startup_gate.sh </dev/null
+
+The attempts are in `$EV/startup-gate/attempts.jsonl`. Dispose takes the last
+attempt's `gate`, `gate-null`, `not-client-visible.md` and
+`declared-deltas.json`.
+
+The loading shards (wave 4b; timing, at normal priority; the api-audit
+receipt of the harness clone is made first). Each shard has a clone of its
+own, built like the shards (`prepare` does not build it; the loading run
+needs `bin/hol.state0` and `bin/Holmake` there), at the tooling HEAD:
+
+    for s in simplib conglib; do
+      cd $W/t37-load-$s && export TMPDIR=$PWD/.agent-files/tmp
+      poly < tools/smart-configure.sml </dev/null
+      bin/build --stdknl --seq=tools/sequences/upto-parallel </dev/null
+    done
+    # in each clone (SHARD simplib or conglib):
+    CAND=$CAND BASE=$BASE REPO=$W/t37-load-SHARD AUDIT=$AUDIT \
+    SHARD=SHARD EVTAG=run setsid -w env --default-signal=HUP,INT,TERM \
+      $R/run_loading.sh </dev/null
+    # a shard that owes stage 2 (its first-stage B/B control missed its
+    # window), in the same clone and ledger:
+    CAND=$CAND BASE=$BASE REPO=$W/t37-load-SHARD AUDIT=$AUDIT \
+    SHARD=SHARD EVTAG=run STAGE=2 FIRST=$EV/loading/run/MODULE \
+      setsid -w env --default-signal=HUP,INT,TERM $R/run_loading.sh \
+      </dev/null
+
+(`MODULE` is `simpLib` or `congLib`; the runner's scratch is
+`/dev/shm/t37-loading-SHARD`. Its ledger is `$W/t37-load-SHARD/.agent-files/
+evidence/task31-loading/attempts.jsonl`. Dispose takes `--loading-simplib
+$EV/loading/run/simpLib` and `--loading-conglib $EV/loading/run/congLib`, the
+`-stage2` directory for a shard with a second stage.)
+
+D7, recorded and attributed (wave 4b). The runner nices its builds itself
+(`nice -n 19`), so it is not wrapped; the exit status 5 (a build failed or
+timed out, recorded) still leaves a receipt:
+
+    MAIN=$M HARNESS=$W/t37-harness BASE=$BASE CAND=$CAND EVTAG=run \
+      setsid -w env --default-signal=HUP,INT,TERM $R/run_builds.sh \
+      </dev/null
+    cd $W/t37-harness
+    python3 -B $P/task37_builds.py attribute $EV/builds/run/receipt.json \
+      --out $EV/builds/run/attribution.json
+    python3 -B $P/task37_dispose.py receipt --gate d7-build --candidate $CAND \
+      --status attributed --exit 0 --out $EV/builds/run/d7.json \
+      --report $EV/builds/run/receipt.json \
+      --report $EV/builds/run/attribution.json \
+      --attribution "extra Ext modules and selftest targets: attribution.json"
+
+(Status `attributed` has exit 0, `fail` 1, `pass` 0 and `inconclusive` 2; D7
+is reported, never a gate.)
+
+The host load, beside the streams (reported only, `--load`), started once
+from the harness clone for the duration of the measurements (the recorder's
+PID is kept and killed at the end, by PID):
+
+    mkdir -p $EV/load; cd $W/t37-harness
+    nice -n 19 python3 -B $P/task37_load.py record \
+      --output $EV/load/host.jsonl --stream host </dev/null &
+
+The disposition (wave 5, in `$M`, which holds the code; no clone may be
+deleted before it, since the ledgers default to the clone each report
+records). The replay strings of `--task32-replay` and `--task33-replay` are
+the arguments of the `dispose` commands above without `--table`, `--out` and
+`--repo`, which the replay fixes. `LAST` is `first`, `second` or the
+follow-up of the shard, as owed:
+
+    cd $M
+    lg() {  # lg CLONE TABLE: the attempts ledger of a clone
+      echo $W/t37-$1/.agent-files/evidence/$2/attempts.jsonl; }
+    shard() {  # shard S LAST: the options of a timing shard
+      echo --timing $1=$EV/$1/$2 --pilot $1=$EV/$1/pilot \
+        --ledger $1=$(lg $1 task37-$1); }
+    R33="--stage $EV/t33/s-run --stage $EV/t33/s-audit"
+    R33="$R33 --timing-stage $EV/t33/t-run"
+    R33="$R33 --offline $EV/t33/offline/audit.json"
+    R33="$R33 --offline $EV/t33/offline/harvest/harvest.json"
+    R33="$R33 --offline $EV/t32/offline/archive.json"
+    G=$EV/startup-gate/TAG      # TAG: the last startup attempt
+    python3 -B $P/task37_dispose.py --candidate $CAND --repo $M \
+      --identity-client $EV/id-client/grid \
+      --identity-matrix $EV/id-matrix/grid \
+      --identity-downstream $EV/id-downstream/grid \
+      --identity-ledger client=$(lg id-client task37-client-identity) \
+      --identity-ledger matrix=$(lg id-matrix task37-matrix-identity) \
+      --identity-ledger downstream=$(lg id-downstream \
+        task37-downstream-identity) \
+      --alloc-matrix $EV/alloc-matrix/run \
+      --alloc-client $EV/alloc-client/run \
+      --alloc-downstream $EV/alloc-downstream/run \
+      --alloc-ledger task37-matrix=$(lg alloc-matrix task37-matrix) \
+      --alloc-ledger task37-client=$(lg alloc-client task37-client) \
+      --alloc-ledger task37-downstream=$(lg alloc-downstream \
+        task37-downstream) \
+      $(shard client-1 first) $(shard client-2 first) \
+      $(shard matrix-1 first) $(shard matrix-2 first) \
+      $(shard matrix-3 first) $(shard matrix-4 first) \
+      [--followup S=$EV/S/followup --followup-pilot S=$EV/S/fpilot] \
+      --task32 $EV/t32/disposition.json \
+      --task32-replay "--stage $EV/t32/first" \
+      --task33 $EV/t33/disposition.json --task33-replay "$R33" \
+      --startup-gate $G/gate --startup-null $G/gate-null \
+      --startup-record $G/not-client-visible.md \
+      --startup-declared $G/declared-deltas.json \
+      --startup-ledger $EV/startup-gate/attempts.jsonl \
+      --loading-simplib $EV/loading/run/simpLib \
+      --loading-conglib $EV/loading/run/congLib \
+      --loading-ledger simplib=$(lg load-simplib task31-loading) \
+      --loading-ledger conglib=$(lg load-conglib task31-loading) \
+      [--d7-build $EV/builds/run/d7.json] \
+      [--load host=$EV/load/host.jsonl] --record $EV/dispose
+
+Every `[..]` is optional (`--followup` and `--followup-pilot` once for each
+shard that has a follow-up). The inputs are produced by the steps above:
+the identity grids and allocation runs by their streams (the grid and run
+directories), the shard stages and pilots by the shard recipe, the TASK32
+and TASK33 dispositions by their `dispose` commands, the startup attempt by
+the runner, the loading runs by `run_loading.sh` and the D7 receipt by
+`task37_dispose.py receipt`. `--check $EV/dispose` replays a recorded
+disposition. After a `pass`, the `t33` snapshots are disposed (above).
 
 The identity source lists are the exception to the counts-alone ordering
 (design decision 19): `task37_sources.py` is sealed by the identity tables
@@ -4760,9 +5084,11 @@ No averaging and no allowed regression percentage.
   is a fresh `mkdtemp` (give each stream its own `TMPDIR`), so two tables
   run at once from two clones with no shared path.
 - Timing streams run at normal priority, one process per stream: client
-  table, matrix table, TASK32 units, TASK33 t-run, loading. Deterministic
-  streams (identity, allocation, TASK33 storage and audit, startup gate, D7)
-  run under `nice -n 19`. At most about 14 measurement processes at once.
+  and matrix shards, TASK32 units, TASK33 t-run and storage stages, loading.
+  Deterministic streams (identity, allocation, the startup gate) run under
+  `nice -n 19`, and D7's runner nices its builds itself. At most 16
+  measuring processes or jobs at once; the explicit numbers per wave are in
+  "Process budget" above (decision 26).
 - Every timing round keeps its B/B control; the runner records the load
   averages before and after each cell, and `task37_load.py record` samples
   `/proc/loadavg` beside each stream into the evidence directory.
@@ -5053,8 +5379,10 @@ without editing what their kept records depend on.
   against the declared archive) are `soft` steps in `run_startup_gate.sh`:
   a failure does not stop the run (the replays and cells run, so the
   disposition can record the fail), but the run exits non-zero at the end.
-  The redraw path: the lead predeclares a new record from a TASK37
-  diagnostic gate archive (`DECLARED_ARCHIVE=<that gate>`) and runs again
+  The gate runs once, in wave 4b, with no diagnostic run before it
+  (decision 26). The redraw path is only for a failure on the declared
+  deltas alone: the failed attempt's own gate archive becomes the declared
+  one (`DECLARED_ARCHIVE=$EV/startup-gate/<tag1>/gate`) and the run is made
   under a new `EVTAG`. The runner records every attempt in
   `.agent-files/evidence/task37/startup-gate/attempts.jsonl` (an `open` and
   a `close` line with the exit status, the close written by the EXIT trap,
@@ -5138,20 +5466,30 @@ binds each to its own table. A follow-up declaration is committed alone
 and must be an ancestor of the commit of the follow-up's counts file
 (checked by the follow-up engine and again by dispose).
 
-Startup attempts. Every attempt is judged by its gate decision whenever
-`gate/decisions.json` exists, complete or not (a crash or a signal after a
-decided gate does not undo it): the decision and reasons are recorded, and
-a redraw is refused unless the earlier attempt has no gate decision (void)
-or its gate failed on the declared deltas alone (a passing or attributed
-decided attempt is superseded, so a redraw after it is refused). The
+Startup attempts (decisions 21, 25, 26). The last attempt must be closed
+and holds the judged gate. If it is complete (closed with 0 or 2, with its
+`done`) it is judged by its gate. If it is incomplete and left no gate
+decision it is void and refuses (the lead redraws). If it is incomplete and
+has a gate decision it is judged by it: a fail or blocked decision on
+grounds other than the declared deltas is the gate's result (the startup
+gate fails, or is inconclusive), and a pass, or a failure on the declared
+deltas alone, leaves the attempt incomplete owing a `redraw` (the gate
+record is inconclusive and owes `redraw`). An earlier attempt is judged by
+its gate decision too, whenever `gate/decisions.json` exists, complete or
+not, and a redraw is blocked only by an earlier attempt that is complete
+and passed (superseded) or that decided fail or blocked on grounds other
+than the declared deltas; it is allowed after an attempt with no gate
+decision (void), one that failed on the declared deltas alone and one that
+is incomplete with a pass (which owed the redraw). The sha256 of the judged
+attempt's sealed `inputs.txt` is in the record's inputs. The
 sidecar `declared-deltas.json` of the judged attempt and of every earlier
 one is bound to its record text (archive sha256, recomputed totals, "Ds =
 N, Dc = M" parsed from the record) and, for an earlier one, to its
 record's sha256 in `gate/header.json` and to the `DECLARED_DELTAS_SHA256`
 of its sealed `inputs.txt`. The runner exits 0 when all steps pass, 2 when
 it completed but a soft step failed (the file `<output>/done` is written,
-not a ledger line), 1 on `die`; dispose accepts the judged attempt only if
-`done` is present and the close status is 0 or 2. An `ATTEMPT` name is
+not a ledger line), 1 on `die`; an attempt is complete only with `done`
+and a close status of 0 or 2. An `ATTEMPT` name is
 never reused and `EVTAG` is
 restricted to `[A-Za-z0-9._-]`. `--check` accepts the stored `head` when
 it is an ancestor of HEAD with the same tree outside the performance

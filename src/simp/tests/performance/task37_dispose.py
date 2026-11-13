@@ -130,18 +130,24 @@ The gate's R2 load totals must equal them on every image or the gate FAILS
 (design decision 21; nothing is transferred); the sidecar is sealed in the
 record's inputs. `--startup-ledger` is the runner's attempts ledger: every
 attempt is listed in the record (R-1). The judged gate (and its null
-control) must be the last attempt and a COMPLETED one: closed with exit 0, or
-2 (the run completed, a soft step failed) with its `done` file (the file
-`<output>/done`, not a ledger line; sealed); any other close (a failing
-step, `die`, a signal) or a missing `done` makes the attempt void, which
-refuses (the lead redraws). Each earlier attempt is judged by its gate
-decision whenever `gate/decisions.json` exists, complete or not: it is
-recorded with its gate decision, reasons and declared-delta problems (the
-sidecar bound to the attempt's record and sealed `inputs.txt`), and a
-redraw is accepted only after an attempt with no gate decision (void) or a
-gate that failed on the declared deltas alone (`gates.earlier_attempt`);
-an earlier attempt that was decided with a pass, or that failed for another
-reason, refuses the disposition. The api-audit receipt must be present and
+control) must be the last attempt; its `inputs.txt` is sealed in the
+record. A COMPLETED last attempt (closed with exit 0, or 2: the run
+completed, a soft step failed, with its `done` file) is judged by its
+gate. An incomplete last attempt (a failing step, `die`, a signal, no
+`done`) with no gate decision is void and refuses (the lead redraws); one
+with a gate decision is judged by it (design decision 26): a fail or
+blocked decision on grounds other than the declared deltas is the gate's
+result (`judged-incomplete`), and a pass, or a failure on the declared
+deltas alone, leaves the attempt incomplete owing a `redraw`
+(`owes-redraw`). Each earlier attempt is judged by its gate decision
+whenever `gate/decisions.json` exists, complete or not: it is recorded
+with its gate decision, reasons and declared-delta problems (the sidecar
+bound to the attempt's record and sealed `inputs.txt`). A redraw is
+accepted after an attempt with no gate decision (void), a gate that
+failed on the declared deltas alone, or an incomplete attempt with a
+passing gate (`gates.earlier_attempt`); it is refused after a complete
+attempt that passed and after any attempt that decided fail or blocked on
+other grounds. The api-audit receipt must be present and
 passing.
 The record holds D's HEAD (`head`), which must have no uncommitted change
 to a tracked file outside .agent-files, and `--candidate` must be
@@ -1201,8 +1207,16 @@ def read_gates(args, lineage, inputs, late, extra):
     attempts = gates.startup_attempts(args.startup_ledger,
                                       args.startup_gate)
     inputs[gates.STARTUP]["ledger"] = a.seal(Path(args.startup_ledger))
-    inputs[gates.STARTUP]["done"] = a.seal(
-        Path(args.startup_gate).resolve().parent / "done")
+    attempt = Path(args.startup_gate).resolve().parent
+    a.require((attempt / "inputs.txt").is_file(),
+              "the judged startup attempt has no sealed inputs.txt: %s" %
+              attempt)
+    inputs[gates.STARTUP]["attempt-inputs"] = a.seal(attempt / "inputs.txt")
+    inputs[gates.STARTUP]["done"] = a.seal(attempt / "done") \
+        if (attempt / "done").is_file() else "absent"
+    if attempts[-1]["verdict"] == "owes-redraw":
+        found[gates.STARTUP] = gates.owe_redraw(found[gates.STARTUP],
+                                                attempts[-1])
     extra["startup_attempts"] = attempts
     extra["startup_declared"] = dict(
         totals=declared["totals"], archive=declared["archive"],

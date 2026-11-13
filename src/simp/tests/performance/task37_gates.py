@@ -39,12 +39,17 @@ What each replay re-derives, and what it cannot:
   the judged gate must be the last one (`startup_attempts`); an attempt
   counts as complete only with its `done` file (`<output>/done`, written
   by the runner at its end; it is not a ledger line) and a close status of
-  0 or 2 (2: completed with a soft step failed). Every earlier attempt is
+  0 or 2 (2: completed with a soft step failed). An incomplete last
+  attempt with no gate decision is void (refused); with one it is judged
+  by it (decision 26): fail or blocked on grounds other than the declared
+  deltas is the gate's result, a pass or a failure on the declared deltas
+  alone leaves it incomplete owing a `redraw`. Every earlier attempt is
   judged by its gate decision whenever `gate/decisions.json` exists,
-  complete or not, and recorded; a redraw needs an attempt with no gate
-  decision (void) or one whose gate failed on the declared deltas alone
-  (its sidecar bound to its record and its sealed `inputs.txt`). NOT
-  re-derived: the builds, the path-length cells
+  complete or not, and recorded; it blocks a redraw only when it is
+  complete and passed, or decided fail or blocked on grounds other than
+  the declared deltas (void attempts, delta-only failures and incomplete
+  passing attempts do not block); a sidecar is bound to its record and
+  its sealed `inputs.txt`. NOT re-derived: the builds, the path-length cells
   (`startup_gate.py cell`) and the runner's `check_deltas` (whole load
   rows against the declared archive), which needs the built trees; the
   declared totals are re-checked here from `decisions.json`.
@@ -540,26 +545,23 @@ def bound_sidecar(out):
     return doc
 
 
-def earlier_attempt(row):
-    """What an attempt before the judged one shows, and whether its redraw
-    is allowed (decision 21, 25): an attempt is judged by its gate
-    decision whenever `gate/decisions.json` exists, complete or not (a
-    crash or a signal after a decided gate does not undo it). A redraw
-    follows only a gate that FAILED on the declared deltas alone (its own
-    decision has no reasons or blockers and passes or is attributed, and
-    its R2 load totals differ from the totals its own record declared,
-    the sidecar being bound to the record and the sealed inputs), or an
-    attempt that is void (it left no gate decision). Anything else, such as
-    a passing attempt or a gate that failed for another reason, is a draw
-    that stays judged: the disposition is refused. Returns the row with
-    `verdict` (`void`, `declared-deltas`), `decision`, `reasons`,
-    `problems` and `complete`."""
+def classify(row):
+    """What the gate of the attempt `row` shows, by its decision whenever
+    `gate/decisions.json` exists, complete or not (a crash or a signal
+    after a decided gate does not undo it). Returns the row with `kind`:
+    `void` (no gate decision), `pass` (decided pass or attributed, no
+    reasons, the R2 load totals the record declared), `delta-only` (the
+    same, but the totals differ from the totals its own record declared,
+    the sidecar being bound to the record and the sealed inputs: the
+    disposition fails it on the declared deltas alone) or `fail` (any
+    other decision or reasons: fail, blocked, a smoke), with `decision`,
+    `reasons`, `problems` and `complete`."""
     out = Path(row["output"])
     found = dict(row, decision=None, reasons=[], problems=[],
-                 complete=completed(row))
+                 complete=completed(row), kind="void")
     path = out / "gate" / "decisions.json"
     if not path.is_file():
-        return dict(found, verdict="void")
+        return found
     decisions = a.load(path)
     found.update(decision=decisions.get("decision"),
                  reasons=list(decisions.get("reasons", [])) + list(
@@ -570,30 +572,60 @@ def earlier_attempt(row):
                 declared["totals"]) == set(LOAD_KINDS) and isinstance(
                     declared.get("archive"), str):
         found["problems"] = declared_problems(declared, decisions)
-    a.require(found["problems"] and not found["reasons"] and
-              found["decision"] in ("pass", "attributed"),
-              "the earlier startup attempt %s (%s) has gate decision "
-              "%s%s%s: a redraw is allowed only after a gate that failed "
-              "on the declared deltas alone (or an attempt with no gate "
-              "decision), so that attempt is a draw that stays judged "
-              "(design decisions 21, 25)" % (
-                  row["attempt"],
-                  "complete" if found["complete"] else "incomplete",
-                  found["decision"],
-                  " (%s)" % "; ".join(found["reasons"])
-                  if found["reasons"] else "",
-                  "" if found["problems"] else ", which declared "
-                  "deltas it matched"))
-    return dict(found, verdict="declared-deltas")
+    clean = not found["reasons"] and found["decision"] in (
+        "pass", "attributed")
+    found["kind"] = ("fail" if not clean else
+                     "delta-only" if found["problems"] else "pass")
+    return found
+
+
+def earlier_attempt(row):
+    """What an attempt before the judged one shows, and whether a redraw
+    after it is allowed (decisions 21, 25, 26). A redraw is blocked only
+    by a draw that stays judged: a COMPLETE attempt whose gate passed
+    (superseded), or an attempt, complete or not, whose gate decided fail
+    or blocked on grounds other than the declared deltas. It is allowed
+    after an attempt that left no gate decision (void), one whose gate
+    failed on the declared deltas alone, and one that is incomplete with a
+    passing gate (it owed the redraw). Returns the row with `verdict`
+    (`void`, `declared-deltas`, `incomplete-pass`), `decision`, `reasons`,
+    `problems` and `complete`; the disposition is refused when the redraw
+    is not allowed."""
+    found = classify(row)
+    kind = found.pop("kind")
+    if kind == "void":
+        return dict(found, verdict="void")
+    if kind == "delta-only":
+        return dict(found, verdict="declared-deltas")
+    if kind == "pass" and not found["complete"]:
+        return dict(found, verdict="incomplete-pass")
+    raise ValueError(
+        "the earlier startup attempt %s (%s) has gate decision %s%s%s: a "
+        "redraw is allowed only after a gate that failed on the declared "
+        "deltas alone, an incomplete attempt with a passing gate or an "
+        "attempt with no gate decision, so that attempt is a draw that "
+        "stays judged (design decisions 21, 25, 26)" % (
+            row["attempt"],
+            "complete" if found["complete"] else "incomplete",
+            found["decision"],
+            " (%s)" % "; ".join(found["reasons"])
+            if found["reasons"] else "",
+            "" if found["problems"] else ", which declared deltas it "
+            "matched"))
 
 
 def startup_attempts(ledger, judged):
     """Every attempt of the startup-gate runner in `ledger`, oldest first:
     [{attempt, output, exit, status, judged, verdict, decision, reasons,
     problems}]. The judged gate directory `judged` must lie in the output
-    of the LAST attempt, which is closed with 0 or 2 and completed
-    (`completed`: otherwise the attempt is void and cannot be judged, the
-    lead redraws). Every earlier attempt is judged by `earlier_attempt` (R-1:
+    of the LAST attempt, which is closed. Its verdict is `judged` when it
+    completed (`completed`: exit 0 or 2 and `done`). An incomplete last
+    attempt with no gate decision is void and cannot be judged (the lead
+    redraws); one with a gate decision is judged by it (decision 26):
+    `judged-incomplete` when the gate decided fail or blocked on grounds
+    other than the declared deltas (the gate's result), `owes-redraw` when
+    it passed or failed on the declared deltas alone (incomplete, a redraw
+    is owed). Every earlier attempt is judged by `earlier_attempt` (R-1:
     it stays in the record with its decision) and a redraw that was not
     allowed refuses."""
     rows = read_ledger(ledger)
@@ -605,16 +637,36 @@ def startup_attempts(ledger, judged):
     a.require(inside, "the judged startup gate %s is not in the last "
               "attempt of the ledger (%s): a later attempt exists, or this "
               "is an earlier one" % (judged, last["output"]))
-    a.require(completed(last),
-              "the last startup attempt %s is void (exit %s, `done` %s): "
-              "the runner did not complete, so it cannot be judged; the "
-              "lead redraws (R-1)" % (
+    found = [dict(earlier_attempt(row), judged=False) for row in rows[:-1]]
+    if completed(last):
+        return found + [dict(last, judged=True, verdict="judged",
+                             decision=None, reasons=[], problems=[])]
+    seen = classify(last)
+    a.require(seen["kind"] != "void",
+              "the last startup attempt %s is void (exit %s, `done` %s, no "
+              "gate decision): the runner did not complete, so it cannot "
+              "be judged; the lead redraws (R-1)" % (
                   last["attempt"], last["exit"],
                   "written" if (Path(last["output"]) / "done").is_file()
                   else "missing"))
-    found = [dict(earlier_attempt(row), judged=False) for row in rows[:-1]]
-    return found + [dict(last, judged=True, verdict="judged", decision=None,
-                         reasons=[], problems=[])]
+    verdict = "judged-incomplete" if seen.pop("kind") == "fail" \
+        else "owes-redraw"
+    return found + [dict(seen, judged=True, verdict=verdict)]
+
+
+def owe_redraw(record, attempt):
+    """The startup gate record of a last attempt that owes a redraw
+    (`startup_attempts`): incomplete, whatever the gate showed, owing
+    `redraw`."""
+    why = ("the last startup attempt %s is incomplete (exit %s, gate "
+           "decision %s%s) and owes a redraw" % (
+               attempt["attempt"], attempt["exit"], attempt["decision"],
+               "; declared deltas: " + "; ".join(attempt["problems"])
+               if attempt["problems"] else ""))
+    return dict(record, source="inconclusive", failed=[],
+                missing=["%s: %s" % (STARTUP, why)], owed=["redraw"],
+                exit=EXITS["inconclusive"],
+                reasons=list(record["reasons"]) + [why])
 
 
 def replay_startup(out, record):
