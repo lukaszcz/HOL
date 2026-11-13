@@ -1077,10 +1077,15 @@ local
       (wordsSyntax.word_add_tm, apfst_fixed_width "bvadd"),
       (wordsSyntax.word_sub_tm, apfst_fixed_width "bvsub"),
       (wordsSyntax.word_mul_tm, apfst_fixed_width "bvmul"),
-      (wordsSyntax.word_quot_tm, apfst_fixed_width "bvsdiv"),
+      (* word_quot, word_div and word_smod differ from bvsdiv, bvudiv and
+         bvsmod at a zero divisor; WORD_SIMP_TAC rewrites them to these *)
+      (Term.prim_mk_const {Thy="HolSmt", Name="smt_bvsdiv"},
+        apfst_fixed_width "bvsdiv"),
       (wordsSyntax.word_rem_tm, apfst_fixed_width "bvsrem"),
-      (integer_wordSyntax.word_smod_tm, apfst_fixed_width "bvsmod"),
-      (wordsSyntax.word_div_tm, apfst_fixed_width "bvudiv"),
+      (Term.prim_mk_const {Thy="HolSmt", Name="smt_bvsmod"},
+        apfst_fixed_width "bvsmod"),
+      (Term.prim_mk_const {Thy="HolSmt", Name="smt_bvudiv"},
+        apfst_fixed_width "bvudiv"),
       (wordsSyntax.word_mod_tm, apfst_fixed_width "bvurem"),
       (* shift operations with two bit-vector arguments; the corresponding HOL
          shift operations that take a numeral as their second argument are not
@@ -2469,8 +2474,10 @@ local
       wordsSyntax.word_xnor_tm, wordsSyntax.word_2comp_tm,
       wordsSyntax.word_compare_tm, wordsSyntax.word_add_tm,
       wordsSyntax.word_sub_tm, wordsSyntax.word_mul_tm,
-      wordsSyntax.word_quot_tm, wordsSyntax.word_rem_tm,
-      integer_wordSyntax.word_smod_tm, wordsSyntax.word_div_tm,
+      Term.prim_mk_const {Thy="HolSmt", Name="smt_bvsdiv"},
+      wordsSyntax.word_rem_tm,
+      Term.prim_mk_const {Thy="HolSmt", Name="smt_bvsmod"},
+      Term.prim_mk_const {Thy="HolSmt", Name="smt_bvudiv"},
       wordsSyntax.word_mod_tm, wordsSyntax.word_lsl_bv_tm,
       wordsSyntax.word_lsr_bv_tm, wordsSyntax.word_asr_bv_tm,
       wordsSyntax.word_replicate_tm, wordsSyntax.w2w_tm,
@@ -8276,7 +8283,19 @@ in
     {emitted_head = int_emod_tm, arity = 2,
      replay_head = Term.prim_mk_const
        {Thy = "HolSmt", Name = "smt_emod_total"},
-     unfolding = HolSmtTheory.smt_emod_total_compute}
+     unfolding = HolSmtTheory.smt_emod_total_compute},
+    {emitted_head = Term.prim_mk_const {Thy = "HolSmt", Name = "smt_bvudiv"},
+     arity = 2,
+     replay_head = Term.prim_mk_const {Thy = "HolSmt", Name = "smt_bvudiv"},
+     unfolding = HolSmtTheory.smt_bvudiv_def},
+    {emitted_head = Term.prim_mk_const {Thy = "HolSmt", Name = "smt_bvsdiv"},
+     arity = 2,
+     replay_head = Term.prim_mk_const {Thy = "HolSmt", Name = "smt_bvsdiv"},
+     unfolding = HolSmtTheory.smt_bvsdiv_def},
+    {emitted_head = Term.prim_mk_const {Thy = "HolSmt", Name = "smt_bvsmod"},
+     arity = 2,
+     replay_head = Term.prim_mk_const {Thy = "HolSmt", Name = "smt_bvsmod"},
+     unfolding = HolSmtTheory.smt_bvsmod_def}
   ]
 
   fun definition_for_record record =
