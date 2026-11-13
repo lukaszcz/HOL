@@ -14,14 +14,15 @@ TASK37 protocol (the decision rule is design decision 11)
 
 Cells. The matrix (every MatrixPerformance case at every size: the TASK29
 and TASK30 families, 306 cells), the client cells (the TASK31 cells, 278)
-and the downstream cells (11): `task37_cases.py`. A cell passes if and only
-if
+and the downstream cells (11): `task37_cases.py`, the one place the cell
+sets, samples and policy lists are defined. A cell passes if and only if
 
 - identity: its row in the identity table of its kind is `identical` or
   `attributed` (`different` fails; anything else is not a decision);
 - allocation: the allocation task of its kind decided `pass` with a work
   row `equal`, from at least the task's own number of pairs (taken from the
-  task's inventory, never a constant here);
+  task's own, `allocation_matrix.task_named(task).pairs`, which its
+  inventory must record, never a constant here);
 - timing, where the cell is sampled: the timing table decided `pass`.
 
 An unsampled cell passes on identity and exact allocation (the stratified
@@ -36,14 +37,14 @@ Policies carried over, each recorded on the cell:
   identity-only; an attributed one also needs its family's measured cells
   (an allocation cell of at most 1000 assumptions that passed with an
   attributed identity, and a passing timing cell of the sample).
-- D4: the thirteen cells of `task30_dispose.DISPOSITION["attributed"]` get
-  a fresh decision. The only carry-over: a timing chain whose decisive first
-  stage is control-limited is not owed a second stage; the cell is then a
-  pass with policy `D4` (its identity and exact allocation still required).
-  A pass or a fail of any stage decides as for any cell.
+- D4: the thirteen cells of `task37_cases.ATTRIBUTED` (TASK30's attributed
+  cells) get a fresh decision. The only carry-over: a timing chain whose
+  decisive first stage is control-limited is not owed a second stage; the
+  cell is then a pass with policy `D4` (its identity and exact allocation
+  still required). A pass or a fail of any stage decides as for any cell.
 - R-1: every attempt of a timing table in its ledger is judged or void
-  (`void_attempts.attempts_of`, through the table's engine in
-  `task37_grid.ENGINES`); the attempts are recorded.
+  (`void_attempts.attempts_of`, through the shard's engine in
+  `task37_grid.GRIDS`); the attempts are recorded.
 
 Inconclusive never passes. A cell with no decision is `incomplete`, and
 what is owed is listed explicitly on it (`stage2`, `followup`,
@@ -51,35 +52,57 @@ what is owed is listed explicitly on it (`stage2`, `followup`,
 inconclusive cell with no stage left is `blocked` (still incomplete, owing
 an attribution).
 
-Timing inputs (per table `task37-client`, `task37-matrix`): the final stage
-directory (`inventory.json`, `decisions.json` of timing_grid; an extension
-names its first stage by `grid`, whose seals it carries and which is read
-too) and optionally follow-up directories whose cells replace the table's
-for those cells. The counts file the inventory names must be the committed
-one: `counts_file` is the table's file and `iterations_seal` its seal now
-(a stale counts file is refused). Host-load data the inventory carries
-(`environment`, `host_load`, `loadavg`) is copied, reported only.
+Timing inputs. The client sample (39 cells) runs as 2 shards and the matrix
+sample (87 cells) as 4 (`task37_grid.SHARDS`; design decision 14), each with
+its own ledger, in its own clone. Every shard is required, with the final
+stage directory (`--timing SHARD=DIR`: `inventory.json` and `decisions.json`
+of timing_grid; an extension names its first stage by `grid`, whose seals it
+carries and which is read too) and its ledger (`--ledger SHARD=FILE`); the
+cells of a shard's decisions are exactly its part of the sample
+(`task37_grid.PARTS`), and the union of the shards' decisions is exactly the
+sample. A shard may have the declared follow-up of `task37_grid.
+FOLLOWUP_CELLS` (`--followup SHARD=DIR` with `--pilot SHARD=DIR` and
+`--followup-pilot SHARD=DIR`, which its replay needs), whose cells replace
+the shard's for those cells. The counts file an inventory names must be the
+shard's committed one (`counts_file` is the table's file and
+`iterations_seal` its seal now: a stale counts file is refused).
 
-Other inputs. Identity tables: `task31_identity_grid` for the client cells,
-`task37_matrix_identity` (`task37-matrix-identity`,
-`task37-downstream-identity`), each a directory with `inventory.json` and
-`decisions.json`. Allocation: three `allocation_matrix` outputs
-(`task37-matrix`, `task37-client`, `task37-downstream`). TASK32: the
-disposition of `task32_downstream.py` (15 units; `followup` and
-`second stage owed` rows are owed, other blocked rows are blocked). TASK33:
-`task33_dispose.py`'s `disposition.json` (every expected storage decision
-present; its `owed`, `reported`, `attribution_needed` and `process_redraws`
-are carried). Both must carry the `candidate` they were measured at. The
-startup gate and the two loading gates are receipts (`receipt` below), and
-the D7 build timing receipt is reported only, never a gate.
+Replays. The disposition does not only read and seal JSON: it replays every
+input, and a replay that fails refuses the disposition. Each identity table
+is replayed by `task37_identity.identity_replay` (archives, decisions, code
+seals, the reviewed table, the opening in `--identity-ledger KIND=FILE`);
+each timing shard and follow-up by its engine's `replay` (`task37_grid.
+GRIDS[table]`); each allocation task by `allocation_matrix.replay` (the task
+is the inventory's own). The identity tables were judged by the committed
+`task37_attributed.json` (their inventories' recorded seal is required to be
+its seal). The replays need the checkout of the grids' candidate (`--repo`).
+
+Host load. `--load STREAM=FILE` (repeatable, optional) names a recording of
+`task37_load.py record`; its summary (`task37_load.summarize`) is copied into
+the record under `host_load` and printed, reported only and never a gate.
+
+Other inputs. Identity tables: `task37_identity.py` (`task37-client-identity`,
+`task37-matrix-identity`, `task37-downstream-identity`), each a directory
+with `inventory.json` and `decisions.json` of `task31_identity_grid.decide`.
+Allocation: three `allocation_matrix` outputs (`task37-matrix`,
+`task37-client`, `task37-downstream`). TASK32: the disposition of
+`task32_downstream.py` (15 units; `followup` and `second stage owed` rows are
+owed, other blocked rows are blocked). TASK33: `task33_dispose.py`'s
+`disposition.json` (every expected storage decision present; its `owed`,
+`reported`, `attribution_needed` and `process_redraws` are carried). Both
+must carry a top-level `candidate` field: the candidate they were measured
+at. The startup gate and the two loading gates are receipts (`receipt`
+below), and the D7 build timing receipt is reported only, never a gate.
 
 Commands
 
-    task37_dispose.py --candidate REV --identity-client DIR
-        --identity-matrix DIR --identity-downstream DIR
-        --alloc-matrix DIR --alloc-client DIR --alloc-downstream DIR
-        --timing-client DIR [--followup-client DIR ...] --ledger-client F
-        --timing-matrix DIR [--followup-matrix DIR ...] --ledger-matrix F
+    task37_dispose.py --candidate REV --repo CHECKOUT
+        --identity-{client,matrix,downstream} DIR
+        --identity-ledger KIND=FILE (three)
+        --alloc-{matrix,client,downstream} DIR
+        --timing SHARD=DIR --ledger SHARD=FILE   (every shard)
+        [--followup SHARD=DIR --pilot SHARD=DIR --followup-pilot SHARD=DIR]
+        [--load STREAM=FILE ...]
         --task32 FILE --task33 FILE --startup-gate FILE
         --loading-simplib FILE --loading-conglib FILE [--d7-build FILE]
         (--record OUTDIR | --check OUTDIR)
@@ -98,13 +121,18 @@ Unsupported: aarch64 Linux only, Poly/ML 5.9.2, allocation only with the
 private counter, RSS reported only (recorded as `scope`).
 """
 import argparse
+import contextlib
+import io
 import json
 from pathlib import Path
 import sys
 
 sys.dont_write_bytecode = True
 import acceptance as a
+import task31_pins as reviewed
 import task37_cases as cases
+import task37_grid as grid
+import task37_load as load
 import timing_grid as tg
 from void_attempts import attempts_of
 
@@ -115,18 +143,18 @@ SCOPE = ("aarch64 Linux only; Poly/ML 5.9.2; allocation only with the "
 GATES = ("startup-gate", "loading-simpLib", "loading-congLib")
 D7 = "d7-build"
 RECEIPT_STATUS = ("pass", "attributed", "fail", "inconclusive")
-COUNTS = {"task37-client": "task37_client_iterations.json",
-          "task37-matrix": "task37_matrix_iterations.json"}
 # Where the committed counts files are (tests point this elsewhere).
 COUNTS_DIR = a.HERE
-LOAD_KEYS = ("environment", "host_load", "loadavg")
+KINDS = ("client", "matrix", "downstream")
+TASKS = dict(client="task37-client", matrix="task37-matrix",
+             downstream="task37-downstream")
 # Every module whose decision or seal the record depends on.
-CODE = ("task37_dispose.py", "task37_cases.py", "task37_matrix_identity.py",
-        "task37_grid.py", "task31_identity_grid.py", "task31_cases.py",
-        "task30_dispose.py", "task32_downstream.py", "task32_cases.py",
-        "task33_dispose.py", "task33_rules.py", "task33_storage.py",
-        "timing_grid.py", "acceptance.py", "void_attempts.py",
-        "allocation_matrix.py", "allocation_schema.py",
+CODE = ("task37_dispose.py", "task37_cases.py", "task37_identity.py",
+        "task37_grid.py", "task37_load.py", "task31_identity_grid.py",
+        "task31_cases.py", "task31_pins.py", "task32_downstream.py",
+        "task32_cases.py", "task33_dispose.py", "task33_rules.py",
+        "task33_storage.py", "timing_grid.py", "acceptance.py",
+        "void_attempts.py", "allocation_matrix.py", "allocation_schema.py",
         "allocation_analysis.py", "matrix_schema.py")
 HISTORY = {}
 
@@ -187,14 +215,65 @@ def read(path, label):
     return a.load(path)
 
 
+# ------------------------------------------------------- command inputs
+
+def keyed(values, label, allowed=None):
+    """{key: Path} of repeated `KEY=PATH` options; `allowed` limits the keys
+    (and the message names them)."""
+    found = {}
+    for value in values or []:
+        key, sep, path = str(value).partition("=")
+        a.require(sep and key and path and (allowed is None or
+                                            key in allowed),
+                  "--%s needs KEY=PATH%s, not %r" % (
+                      label, "" if allowed is None else " with KEY one of "
+                      + ", ".join(allowed), value))
+        a.require(key not in found, "--%s names %s twice" % (label, key))
+        found[key] = Path(path)
+    return found
+
+
+def replayed(code, label):
+    """A replay ended in a decision (any status), not by a refusal."""
+    a.require(code in (0, 1, 2), "%s did not replay (exit %r)" % (
+        label, code))
+
+
 # ------------------------------------------------------------- identity
 
 IDENTITY_OK = ("identical", "attributed")
 
 
-def load_identity(root, label, names, candidate):
-    """The identity table of `names` in directory `root`: {cells, status,
-    unaccounted, attributed, seals}."""
+def replay_identity(kind, root, repo, ledger):
+    """Replay the identity grid of table `kind` in `root` offline
+    (task37_identity.identity_replay: the archives, the decisions, the code
+    seals, the reviewed table and the opening in `ledger`); a refusal
+    refuses the disposition."""
+    import task37_identity
+    with contextlib.redirect_stdout(io.StringIO()):
+        code = task37_identity.identity_replay(argparse.Namespace(
+            table=kind, output=Path(root).resolve(), repo=repo,
+            attributed=None, ledger=ledger))
+    replayed(code, "the %s identity grid" % kind)
+
+
+def identity_binding(held, label):
+    """The reviewed table the identity grid was judged by is the committed
+    task37_attributed.json (by sha256), as every gate's."""
+    now = reviewed.load(cases.REVIEWED_FILE)["seal"]
+    a.require(isinstance(held, dict) and held.get("sha256"),
+              "%s records no reviewed table" % label)
+    a.require(held["sha256"] == now["sha256"],
+              "%s was judged by the reviewed table %s, not the committed "
+              "%s: run it again" % (label, held["sha256"], now["sha256"]))
+
+
+def load_identity(root, label, names, candidate, kind=None, ledger=None,
+                  repo=None):
+    """The identity table of `names` in directory `root` (inventory.json and
+    decisions.json of task31_identity_grid.identity, through
+    task37_identity.py): {cells, status, unaccounted, attributed, seals},
+    after it was replayed."""
     root = Path(root)
     inventory = read(root / "inventory.json", label + " inventory")
     decisions = read(root / "decisions.json", label + " decisions")
@@ -203,6 +282,7 @@ def load_identity(root, label, names, candidate):
     a.require(not decisions.get("diagnostic") and
               not inventory.get("diagnostic"),
               "%s is a diagnostic, not the whole table" % label)
+    identity_binding((inventory.get("attributed") or {}).get("file"), label)
     cells = decisions.get("cells")
     a.require(isinstance(cells, dict) and set(cells) == set(names),
               "%s has not exactly the cells of its kind (%d expected)" % (
@@ -210,12 +290,16 @@ def load_identity(root, label, names, candidate):
     for name, row in cells.items():
         a.require(isinstance(row, dict) and isinstance(
             row.get("status"), str), "malformed %s row: %s" % (label, name))
+    a.require(ledger is not None and Path(ledger).is_file(),
+              "no attempts ledger for %s: %s" % (label, ledger))
+    replay_identity(kind, root, repo, ledger)
     return dict(cells=cells, status=decisions.get("status"),
                 unaccounted=decisions.get("unaccounted", []),
                 attributed=decisions.get("attributed", []),
                 candidate=found,
                 seals={"inventory": a.seal(root / "inventory.json"),
-                       "decisions": a.seal(root / "decisions.json")})
+                       "decisions": a.seal(root / "decisions.json"),
+                       "ledger": a.seal(Path(ledger))})
 
 
 # ----------------------------------------------------------- allocation
@@ -224,9 +308,28 @@ WORK = ("equal", "differs", "inconclusive", None)
 DECISIONS = ("pass", "fail", "inconclusive")
 
 
+def required_pairs(task):
+    """The pairs a passing row of allocation task `task` needs: the task's
+    own (`allocation_matrix.Task.pairs`), never the legacy constant."""
+    import allocation_matrix as am
+    return am.task_named(task).pairs
+
+
+def replay_allocation(root):
+    """Replay the allocation grid in `root` (allocation_matrix.replay: the
+    archives, the decisions and the results table, from the inventory's own
+    task)."""
+    import allocation_matrix as am
+    with contextlib.redirect_stdout(io.StringIO()):
+        code = am.replay(argparse.Namespace(output=Path(root).resolve()))
+    replayed(code, "the allocation grid in %s" % root)
+
+
 def load_allocation(root, task, names, infeasible, candidate):
     """{rows: {name: {decision, work, pairs}}, pairs, seals} of an
-    allocation task; the pairs a passing row needs are the task's own."""
+    allocation task (inventory.json and decisions.json of
+    allocation_matrix, `rows` of `cell_rows`); the pairs a passing row needs
+    are the task's own, which the inventory must record."""
     root = Path(root)
     inventory = read(root / "inventory.json", task + " inventory")
     a.require(root.joinpath("decisions.json").is_file(),
@@ -240,6 +343,9 @@ def load_allocation(root, task, names, infeasible, candidate):
     pairs = inventory.get("pairs")
     a.require(isinstance(pairs, int) and not isinstance(pairs, bool) and
               pairs >= 1, "the %s inventory has no pair count" % task)
+    a.require(pairs == required_pairs(task),
+              "the %s allocation was run with %s pairs, not the task's %s"
+              % (task, pairs, required_pairs(task)))
     a.require(decisions.get("complete") is True,
               "the %s allocation is not complete" % task)
     a.require(decisions.get("infeasible") == sorted(infeasible),
@@ -254,7 +360,7 @@ def load_allocation(root, task, names, infeasible, candidate):
                       row.get("pairs") is None and
                       row.get("decision") == "inconclusive")),
                   "malformed allocation row: %r" % (row,))
-        name = cases.name_of(row["case"], row["size"])
+        name = cases.name(row["case"], row["size"])
         a.require(name in names, "%s row of a cell that is not its: %s"
                   % (task, name))
         a.require(name not in rows, "repeated %s row: %s" % (task, name))
@@ -266,6 +372,7 @@ def load_allocation(root, task, names, infeasible, candidate):
     missing = sorted(set(names) - set(rows))
     a.require(not missing, "the %s allocation has no row for: %s" % (
         task, ", ".join(missing[:5])))
+    replay_allocation(root)
     return dict(rows=rows, pairs=pairs,
                 seals={"inventory": a.seal(root / "inventory.json"),
                        "decisions": a.seal(root / "decisions.json")})
@@ -274,7 +381,8 @@ def load_allocation(root, task, names, infeasible, candidate):
 # --------------------------------------------------------------- timing
 
 def class_map(decisions):
-    """({cell: class}, retained-slope class or None) of a grid decision."""
+    """({cell: class}, retained-slope class or None) of a grid decision
+    (`decisions.json` of timing_grid, classified by timing_grid.classify)."""
     found, scaling = {}, None
     for kind, names in tg.classify(decisions).items():
         for name in names:
@@ -290,9 +398,9 @@ def is_extension(inventory):
 
 
 def read_stage(root, label):
-    """One timing output: its inventory, its cell classes, its first
-    stage's classes (read and sealed through `grid` for an extension), the
-    cells its second stage remeasured, and the host-load data."""
+    """One timing output: its inventory (`inventory.json` of timing_grid),
+    its cell classes, its first stage's classes (read and sealed through
+    `grid` for an extension) and the cells its second stage remeasured."""
     root = Path(root).resolve()
     inventory = read(root / "inventory.json", label + " inventory")
     decisions = read(root / "decisions.json", label + " decisions")
@@ -307,29 +415,25 @@ def read_stage(root, label):
                   inventory.get("grid_decisions"),
                   "%s: the first stage is not the one sealed" % label)
         first, _ = class_map(a.load(first_root / "decisions.json"))
-        plan = {cases.name_of(c, s): p for c, s, p in
+        plan = {cases.name(c, s): p for c, s, p in
                 decisions["remeasured"]["plan"]}
     first_inventory = a.load(first_root / "inventory.json")
-    load = {}
-    for key in LOAD_KEYS:
-        if key in first_inventory:
-            load[key] = first_inventory[key]
     seal_files = [root / "inventory.json", root / "decisions.json"]
     if first_root != root:
         seal_files += [first_root / "inventory.json",
                        first_root / "decisions.json"]
     return dict(root=root, inventory=inventory,
                 first_inventory=first_inventory, final=final,
-                scaling=scaling, first=first, plan=plan, load=load,
+                scaling=scaling, first=first, plan=plan,
                 seals={str(p): a.seal(p) for p in seal_files})
 
 
-def check_counts(stage, label, expected=None):
-    """The counts file the stage names is the committed one, unchanged."""
+def check_counts(stage, label, expected):
+    """The counts file the stage names is the table's committed one,
+    unchanged."""
     for inventory in (stage["inventory"], stage["first_inventory"]):
         name = inventory.get("counts_file")
-        a.require(isinstance(name, str) and name and
-                  (expected is None or name == expected),
+        a.require(isinstance(name, str) and name and name == expected,
                   "%s names the counts file %r, not %s" % (
                       label, name, expected))
         path = COUNTS_DIR / name
@@ -339,13 +443,6 @@ def check_counts(stage, label, expected=None):
                   "%s: the counts file %s is not the one the grid used "
                   "(stale counts file)" % (label, name))
     return a.seal(COUNTS_DIR / stage["inventory"]["counts_file"])
-
-
-def timing_engines():
-    """{table name: timing engine} of `task37_grid` (`ENGINES`); a
-    follow-up table is named `<table>-followup`."""
-    import task37_grid
-    return task37_grid.ENGINES
 
 
 def judged_attempts(engine, root):
@@ -361,43 +458,68 @@ def judged_attempts(engine, root):
 
 
 def table_attempts(engine, root, repo, ledger):
-    """Every attempt of the table in `ledger`: judged or void (R-1)."""
+    """Every attempt of the table in `ledger`: judged or void (R-1)
+    (void_attempts.attempts_of with the shard's engine)."""
     return attempts_of(argparse.Namespace(repo=repo, ledger=ledger),
                        engine, judged_attempts(engine, root))
 
 
-def load_timing(table, root, followups, ledger, expected, candidate, repo,
-                engines):
-    """The timing table: {cells: {name: row}, scaling, attempts, load,
-    seals}. A cell's row: class, first (its decisive chain's first stage),
-    stage2 and followup (whether they ran), earlier (the classes the
-    follow-up replaced)."""
-    a.require(root is not None, "no timing table %s given" % table)
+def replay_timing(engine, root, repo, ledger, pilot=None,
+                  replaces_pilot=None):
+    """Replay a timing output with its engine (`timing_grid.Grid.replay`:
+    every archive, the decisions, the code, the counts and the ledger); a
+    follow-up names its pilot and the replaced grid's."""
+    with contextlib.redirect_stdout(io.StringIO()):
+        code = engine.replay(argparse.Namespace(
+            output=Path(root).resolve(), partial=False, repo=repo,
+            ledger=ledger, pilot=pilot, replaces_pilot=replaces_pilot))
+    replayed(code, "the timing output %s" % root)
+
+
+def load_shard(key, root, followup, ledger, pilots, candidate, repo,
+               engines):
+    """One timing shard: {cells: {name: row}, scaling, attempts, seals}. A
+    cell's row: class, first (its decisive chain's first stage), stage2 and
+    followup (whether they ran), earlier (the classes the follow-up
+    replaced). `root` is the final stage directory of the shard, `followup`
+    the directory of its declared follow-up or None, `pilots` the (pilot,
+    follow-up pilot) the follow-up's replay needs."""
+    table = grid.name_of(key)
+    a.require(root is not None, "no timing output for the shard %s" % key)
     a.require(ledger is not None and Path(ledger).is_file(),
               "no attempts ledger for %s: %s" % (table, ledger))
+    engine = engines[table]
+    expected = grid.PARTS[key]
     main = read_stage(root, table)
     tie(table + " inventory", main["inventory"], candidate)
-    check_counts(main, table, COUNTS[table])
+    check_counts(main, table, engine.t.counts.name)
     a.require(set(main["final"]) == set(expected),
-              "the %s table is not the expected sample (%d cells)" % (
+              "the %s table is not its part of the sample (%d cells)" % (
                   table, len(expected)))
+    replay_timing(engine, main["root"], repo, ledger)
     rows = {n: dict(cls=c, first=main["first"][n], stage2=n in main["plan"],
                     followup=False, earlier=[])
             for n, c in main["final"].items()}
     seals = dict(main["seals"])
-    load = {table: main["load"]}
-    attempts = list(table_attempts(engines[table], main["root"], repo,
-                                   ledger))
-    for i, path in enumerate(followups):
-        stage = read_stage(path, "%s follow-up %d" % (table, i + 1))
-        tie("%s follow-up inventory" % table, stage["inventory"], candidate)
-        check_counts(stage, "%s follow-up" % table)
-        a.require(stage["final"] and set(stage["final"]) <= set(rows),
-                  "a %s follow-up has cells outside the table" % table)
+    attempts = list(table_attempts(engine, main["root"], repo, ledger))
+    if followup is not None:
+        name = table + "-followup"
+        a.require(name in engines, "no follow-up is declared for %s "
+                  "(task37_grid.FOLLOWUP_CELLS)" % table)
+        stage = read_stage(followup, "%s follow-up" % table)
+        tie(name + " inventory", stage["inventory"], candidate)
+        check_counts(stage, name, engines[name].t.counts.name)
+        a.require(set(stage["final"]) == set(engines[name].t.names()),
+                  "the %s cells are not the declared follow-up's" % name)
         a.require(stage["scaling"] is None,
                   "a %s follow-up has a retained slope" % table)
-        name = table + "-followup"
-        a.require(name in engines, "no engine for the %s table" % name)
+        pilot, followup_pilot = pilots
+        a.require(pilot is not None and followup_pilot is not None,
+                  "a follow-up of %s needs --pilot and --followup-pilot"
+                  % key)
+        replay_timing(engines[name], stage["root"], repo, ledger,
+                      pilot=Path(followup_pilot).resolve(),
+                      replaces_pilot=Path(pilot).resolve())
         attempts += table_attempts(engines[name], stage["root"], repo,
                                    ledger)
         for n, c in stage["final"].items():
@@ -405,10 +527,46 @@ def load_timing(table, root, followups, ledger, expected, candidate, repo,
                            stage2=n in stage["plan"], followup=True,
                            earlier=rows[n]["earlier"] + [rows[n]["cls"]])
         seals.update(stage["seals"])
-        load["%s-followup-%d" % (table, i + 1)] = stage["load"]
     seals["ledger"] = a.seal(Path(ledger))
     return dict(cells=rows, scaling=main["scaling"], attempts=attempts,
-                load=load, seals=seals)
+                seals=seals)
+
+
+def load_timing(kind, sample, options, candidate, repo, engines):
+    """The shards of a sample, each required, joined: {table name: shard}.
+    The union of the shards' final decisions is exactly `sample`."""
+    found, union = {}, set()
+    for key in grid.shards(kind):
+        a.require(key in options["timing"], "no timing output for the "
+                  "shard %s (every shard is required)" % key)
+        shard = load_shard(
+            key, options["timing"][key], options["followup"].get(key),
+            options["ledger"].get(key),
+            (options["pilot"].get(key), options["followup-pilot"].get(key)),
+            candidate, repo, engines)
+        a.require(not union & set(shard["cells"]),
+                  "the %s shards overlap" % kind)
+        union |= set(shard["cells"])
+        found[grid.name_of(key)] = shard
+    a.require(union == set(sample), "the %s shards do not join to the "
+              "sample (%d cells)" % (kind, len(sample)))
+    return found
+
+
+def load_loads(paths):
+    """{stream: summary} of the host-load recordings (task37_load.py), and
+    their seals; reported only, never a gate."""
+    found, seals = {}, {}
+    for stream, path in paths.items():
+        a.require(path.is_file(), "the load recording of %s is missing: %s"
+                  % (stream, path))
+        try:
+            found[stream] = load.summarize(path)
+        except (KeyError, TypeError, IndexError) as error:
+            raise ValueError("malformed load recording %s: %r" % (
+                path, error))
+        seals["load-" + stream] = a.seal(path)
+    return found, seals
 
 
 # ---------------------------------------------------- TASK32, TASK33, gates
@@ -696,14 +854,15 @@ def dispose(identity, allocation, timing, units, decisions33, receipts,
     """Every workload's record, the status of the whole. `identity` and
     `allocation` map their kind (client, matrix, downstream) to the loaded
     tables, `timing` maps a table to its loaded rows."""
-    d4 = set(cases.d4() if d4 is None else d4)
+    d4 = set(cases.ATTRIBUTED if d4 is None else d4)
     ident = {n: row for k in identity.values() for n, row in
              k["cells"].items()}
     alloc = {n: row for k in allocation.values() for n, row in
              k["rows"].items()}
     timed = {n: row for k in timing.values() for n, row in
              k["cells"].items()}
-    order = cases.MATRIX + cases.CLIENT + cases.DOWNSTREAM
+    order = (cases.MATRIX_CELLS + cases.CLIENT_CELLS +
+             cases.DOWNSTREAM_CELLS)
     a.require(set(order) == set(ident) and len(order) == len(ident),
               "the identity tables are not the cells of TASK37")
     records = {}
@@ -742,8 +901,9 @@ def dispose(identity, allocation, timing, units, decisions33, receipts,
                 for p in ("D2", "D4", "stratified")}
     return dict(
         schema=SCHEMA, status=status, counts=counts,
-        kinds=dict(matrix=len(cases.MATRIX), client=len(cases.CLIENT),
-                   downstream=len(cases.DOWNSTREAM),
+        kinds=dict(matrix=len(cases.MATRIX_CELLS),
+                   client=len(cases.CLIENT_CELLS),
+                   downstream=len(cases.DOWNSTREAM_CELLS),
                    task32_units=len(unit_records),
                    task33_decisions=len(t33), gates=len(gates)),
         identity_status={k: v["status"] for k, v in identity.items()},
@@ -755,39 +915,62 @@ def dispose(identity, allocation, timing, units, decisions33, receipts,
 
 # ------------------------------------------------------------- the command
 
+def timing_options(args):
+    """The per-shard options of the command, by option name."""
+    keys = grid.SHARD_KEYS
+    found = dict(
+        timing=keyed(args.timing, "timing", keys),
+        ledger=keyed(args.ledger, "ledger", keys),
+        followup=keyed(args.followup, "followup", keys),
+        pilot=keyed(args.pilot, "pilot", keys))
+    found["followup-pilot"] = keyed(args.followup_pilot, "followup-pilot",
+                                    keys)
+    return found
+
+
 def derive(args):
     cand = args.candidate
     a.require(isinstance(cand, str) and len(cand) >= 10,
               "--candidate must be a revision of at least ten digits")
-    inputs = {}
+    options = timing_options(args)
+    identity_ledgers = keyed(args.identity_ledger, "identity-ledger", KINDS)
+    loads, load_seals = load_loads(keyed(args.load, "load"))
+    inputs = dict(load_seals)
     identity = {}
     for kind, root, names in (
-            ("client", args.identity_client, cases.CLIENT),
-            ("matrix", args.identity_matrix, cases.MATRIX),
-            ("downstream", args.identity_downstream, cases.DOWNSTREAM)):
+            ("client", args.identity_client, cases.CLIENT_CELLS),
+            ("matrix", args.identity_matrix, cases.MATRIX_CELLS),
+            ("downstream", args.identity_downstream,
+             cases.DOWNSTREAM_CELLS)):
         a.require(root is not None, "no identity table for %s cells" % kind)
-        identity[kind] = load_identity(root, "identity " + kind, names, cand)
+        identity[kind] = load_identity(
+            root, "identity " + kind, names, cand, kind,
+            identity_ledgers.get(kind), args.repo)
         inputs["identity-" + kind] = identity[kind]["seals"]
     allocation = {}
-    for kind, task, root, names, skipped in (
-            ("matrix", "task37-matrix", args.alloc_matrix, cases.MATRIX, ()),
-            ("client", "task37-client", args.alloc_client,
-             cases.CLIENT_ALLOCATED, cases.INFEASIBLE),
-            ("downstream", "task37-downstream", args.alloc_downstream,
-             cases.DOWNSTREAM, ())):
+    for kind, root, names, skipped in (
+            ("matrix", args.alloc_matrix, cases.MATRIX_CELLS, ()),
+            ("client", args.alloc_client, cases.CLIENT_ALLOCATED,
+             cases.INFEASIBLE),
+            ("downstream", args.alloc_downstream, cases.DOWNSTREAM_CELLS,
+             ())):
+        task = TASKS[kind]
         a.require(root is not None, "no allocation output for " + task)
         allocation[kind] = load_allocation(root, task, names, skipped, cand)
         inputs["allocation-" + kind] = allocation[kind]["seals"]
-    engines = timing_engines()
     timing = {}
-    for table, root, followups, ledger, sample in (
-            ("task37-client", args.timing_client, args.followup_client,
-             args.ledger_client, cases.CLIENT_SAMPLE),
-            ("task37-matrix", args.timing_matrix, args.followup_matrix,
-             args.ledger_matrix, cases.MATRIX_SAMPLE)):
-        timing[table] = load_timing(table, root, followups or [], ledger,
-                                    sample, cand, args.repo, engines)
-        inputs[table] = timing[table]["seals"]
+    for kind, sample in (("client", cases.CLIENT_SAMPLE),
+                         ("matrix", cases.MATRIX_SAMPLE)):
+        timing.update(load_timing(kind, sample, options, cand, args.repo,
+                                  grid.GRIDS))
+    for table, found in timing.items():
+        inputs[table] = found["seals"]
+    # Every shard option is used: a pilot or a follow-up of a shard that has
+    # no follow-up is a mistake, not a spare.
+    for kind in ("pilot", "followup-pilot"):
+        extra = set(options[kind]) - set(options["followup"])
+        a.require(not extra, "--%s names a shard with no --followup: %s"
+                  % (kind, ", ".join(sorted(extra))))
     units, inputs["task32"] = load_task32(args.task32, cand)
     t33, reported33, carried33, inputs["task33"] = load_task33(
         args.task33, cand)
@@ -806,7 +989,8 @@ def derive(args):
         scope=SCOPE, inputs=inputs, code=seals(),
         allocation_pairs={k: v["pairs"] for k, v in allocation.items()},
         timing_attempts={t: v["attempts"] for t, v in timing.items()},
-        host_load={t: v["load"] for t, v in timing.items()},
+        shards={t: sorted(v["cells"]) for t, v in timing.items()},
+        host_load=loads,
         reported=dict(
             task33=reported33, task33_carried=carried33,
             d7_build=None if d7 is None else dict(
@@ -909,15 +1093,26 @@ def parser():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     add = p.add_argument
     add("--candidate", required=True)
-    for name in ("client", "matrix", "downstream"):
+    for name in KINDS:
         add("--identity-" + name, type=Path, help="identity table")
         add("--alloc-" + name, type=Path, help="allocation output")
-    for name in ("client", "matrix"):
-        add("--timing-" + name, type=Path, help="final stage of the table")
-        add("--followup-" + name, type=Path, action="append",
-            help="a follow-up of the table (repeatable)")
-        add("--ledger-" + name, type=Path, help="attempts ledger of the "
-            "table")
+    add("--identity-ledger", action="append", metavar="KIND=FILE",
+        help="the attempts ledger of the identity grid of KIND (client, "
+        "matrix, downstream); one for each kind")
+    add("--timing", action="append", metavar="SHARD=DIR",
+        help="the final stage of a timing shard (client-1, client-2, "
+        "matrix-1 ... matrix-4); every shard is required")
+    add("--ledger", action="append", metavar="SHARD=FILE",
+        help="the attempts ledger of a shard; one for each shard")
+    add("--followup", action="append", metavar="SHARD=DIR",
+        help="the declared follow-up of a shard (at most one)")
+    add("--pilot", action="append", metavar="SHARD=DIR",
+        help="the pilot of a shard that has a follow-up")
+    add("--followup-pilot", action="append", metavar="SHARD=DIR",
+        help="the pilot of the follow-up of a shard")
+    add("--load", action="append", metavar="STREAM=FILE",
+        help="a host-load recording of a stream (task37_load.py), "
+        "reported only")
     add("--task32", type=Path)
     add("--task33", type=Path)
     add("--startup-gate", type=Path, help="startup gate receipt")

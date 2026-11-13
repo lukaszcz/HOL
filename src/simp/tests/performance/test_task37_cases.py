@@ -97,7 +97,50 @@ class Derivation(unittest.TestCase):
             c.sizes("no_such_case")
 
 
+class Names(unittest.TestCase):
+    def test_the_infeasible_cells_are_the_task31_ones(self):
+        self.assertEqual(c.INFEASIBLE, tuple(task31_cases.INFEASIBLE))
+        self.assertEqual(c.CLIENT_INFEASIBLE_CELLS,
+                         tuple(task31_cases.INFEASIBLE_CELLS))
+        self.assertTrue(set(c.INFEASIBLE) <= set(c.CLIENT_CELLS))
+        self.assertEqual(len(c.CLIENT_ALLOCATED), 245)
+        self.assertFalse(set(c.CLIENT_ALLOCATED) & set(c.INFEASIBLE))
+        self.assertEqual(len(c.CLIENT_ALLOCATED) + len(c.INFEASIBLE),
+                         len(c.CLIENT_CELLS))
+
+    def test_the_case_lists_of_the_allocation_tasks(self):
+        self.assertEqual(c.cells_of(c.MATRIX_CASES), c.MATRIX_CELLS)
+        self.assertEqual(c.cells_of(c.CLIENT_CASES), c.CLIENT_CELLS)
+        self.assertEqual(c.FILES, ("task37_cases.py", "task31_cases.py"))
+        for name in c.FILES:
+            self.assertTrue((a.HERE / name).is_file(), name)
+
+    def test_the_reviewed_table_is_the_committed_one(self):
+        self.assertEqual(c.REVIEWED_FILE.name, "task37_attributed.json")
+        self.assertTrue(c.REVIEWED_FILE.is_file())
+
+    def test_the_attributed_cells_of_task29a_are_in_the_matrix_sample(self):
+        self.assertTrue(set(c.ATTRIBUTED_29A) <= set(c.MATRIX_SAMPLE))
+        self.assertEqual((len(c.CLIENT_SAMPLE), len(c.MATRIX_SAMPLE)),
+                         (39, 87))
+
+
 class Sources(unittest.TestCase):
+    def test_the_client_timing_sources_cover_the_downstream_ones(self):
+        """The client timing grid also measures the downstream cells, so
+        its sources are the client's and the downstream's together."""
+        self.assertTrue(set(c.CLIENT_SOURCES) <= set(c.CLIENT_TIMING_SOURCES))
+        self.assertTrue(
+            set(c.DOWNSTREAM_SOURCES) <= set(c.CLIENT_TIMING_SOURCES))
+        self.assertEqual(list(c.CLIENT_TIMING_SOURCES),
+                         sorted(c.CLIENT_TIMING_SOURCES))
+
+    def test_the_source_sets_are_tuples_of_paths(self):
+        for sources in (c.MATRIX_SOURCES, c.CLIENT_SOURCES,
+                        c.DOWNSTREAM_SOURCES):
+            self.assertIsInstance(sources, tuple)
+            self.assertEqual(len(set(sources)), len(sources))
+
     def test_the_deleted_files_are_not_sources(self):
         for path in c.DELETED_SOURCES:
             self.assertIn(path, task30_cases.SOURCES)
@@ -122,7 +165,8 @@ class Sources(unittest.TestCase):
 
 class Style(unittest.TestCase):
     def test_no_tabs_trailing_blanks_or_80_columns(self):
-        for name in ("task37_cases.py", "task37_grid.py", "task37_load.py"):
+        for name in ("task37_cases.py", "task37_grid.py", "task37_load.py",
+                     "task37_identity.py", "task37_dispose.py"):
             for i, line in enumerate((a.HERE / name).read_text()
                                      .split("\n"), 1):
                 where = "%s:%d" % (name, i)

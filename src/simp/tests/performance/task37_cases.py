@@ -12,7 +12,9 @@ The cell sets, with their counts (a test pins them):
 - the matrix, MATRIX_CELLS: the 27 TASK29 cases (task29_gate.CASES) and the
   24 TASK30 cases (task30_cases.CASES) at the six sizes of their `rules`
   size set, 162 + 144 = 306 cells, from matrix.json (by matrix_schema);
-- the client cells, CLIENT_CELLS: task31_cases (278 cells);
+- the client cells, CLIENT_CELLS: task31_cases (278 cells), of which the
+  33 of INFEASIBLE (the heavy size-10000 tactic cells: identity only) are
+  not allocated, so CLIENT_ALLOCATED has 245;
 - the downstream cells, DOWNSTREAM_CELLS: `downstream_arithmetic` and
   `downstream_reduce` at 1, 10, 100, 1000 and 10000 and `downstream_boss`
   at 0, 11 cells whose workloads are those of ClientPerformance.sml (the
@@ -33,10 +35,19 @@ The timing samples (design decision 4 of TASK_37_design.md):
 - CLIENT_SAMPLE: the 28 cells of task31_cases.SAMPLE and its follow-up cells
   (task31_followup.CELLS, which are cells of that sample, so the two lists
   add 28 cells), and the 11 downstream cells.
+
+The source sets (the files the cells elaborate, which the identity tables
+require exactly and the timing tables pin; PROTOCOL.md, TASK37 identity):
+CLIENT_SOURCES, MATRIX_SOURCES and DOWNSTREAM_SOURCES. They are the single
+source for the identity tables (task37_identity.py) and the timing tables
+(task37_grid.py). CLIENT_TIMING_SOURCES is the client timing tables' set: the
+client sample also measures the downstream cells, so it is the union of
+CLIENT_SOURCES and DOWNSTREAM_SOURCES (a test pins this).
 """
 import sys
 
 sys.dont_write_bytecode = True
+import acceptance as a
 import matrix_schema as ms
 import task29_gate as gate29
 import task29a_grid as grid29a
@@ -44,6 +55,10 @@ import task30_cases as cases30
 import task31_cases as cases31
 import task31_followup as followup31
 
+# The reviewed differences from the baseline at the final candidate (the
+# format of task31_attributed.json): the one table every TASK37 gate is
+# judged by.
+REVIEWED_FILE = a.HERE / "task37_attributed.json"
 # The size the matrix timing sample takes of every case.
 SAMPLE_SIZE = 1000
 
@@ -90,6 +105,17 @@ def merged(*lists):
 
 MATRIX_CELLS = cells_of(MATRIX_CASES)
 CLIENT_CELLS = cells_of(CLIENT_CASES)
+# The heavy size-10000 tactic cells that do not fit the identity process
+# timeout (TASK31 policy D2): identity only, derived from the measured cells
+# of their case, and not allocated.
+INFEASIBLE = tuple(cases31.INFEASIBLE)
+CLIENT_ALLOCATED = tuple(c for c in CLIENT_CELLS if c not in INFEASIBLE)
+# The same cells as (case, size) pairs (the form allocation_matrix.Task
+# takes).
+CLIENT_INFEASIBLE_CELLS = tuple(cases31.INFEASIBLE_CELLS)
+# The case-list modules the allocation harness seals for the TASK37 tasks
+# (besides task29_gate.py and task30_cases.py, which every task binds).
+FILES = ("task37_cases.py", "task31_cases.py")
 DOWNSTREAM_CELLS = tuple(name(c, n) for c, found in DOWNSTREAM_SIZES.items()
                          for n in found)
 
@@ -163,6 +189,17 @@ MATRIX_SOURCES = tuple(p for p in cases30.SOURCES
 # the downstream cells elaborate files of that closure and of the initial
 # heap (numLib, reduceLib and bossLib are among ELABORATED).
 CLIENT_SOURCES = tuple(cases31.SOURCES)
+# The downstream cells elaborate files that cannot be derived offline: run
+# `task37_identity.py identity --table downstream --only downstream_boss-0
+# ...` once (a diagnostic, in any checkout), print `sources --output DIR`,
+# and enter the list here (design decision 13). Until then it is empty and a
+# full grid of the downstream table is refused, since it could not be
+# conclusive.
+DOWNSTREAM_SOURCES = ()
+# The client timing tables measure the client sample, which holds the
+# downstream cells: their sources must be pinned too.
+CLIENT_TIMING_SOURCES = tuple(sorted(set(CLIENT_SOURCES) |
+                                     set(DOWNSTREAM_SOURCES)))
 
 # Batch seconds: the sub-microsecond operations take a longer batch, as in
 # the tables they come from (task30_grid, task31_grid).

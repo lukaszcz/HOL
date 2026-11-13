@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
-"""TASK37 gate: source identity of every TASK29/30 matrix cell and of the
-`downstream_*` cells.
+"""TASK37 gate: source identity of every client, matrix and downstream cell
+of the final gate.
 
 This is task31_identity_grid.py (read its docstring and the "Gate 1" section
-of PROTOCOL.md) applied to two other cell sets, with nothing of the method
+of PROTOCOL.md) applied to three cell sets, with nothing of the method
 changed: one fresh process per side through the real paired runner
-(task31_snapshot.py), compared by task31_identity.py, judged by the committed
-reviewed table (task31_attributed.json, the table the client grid uses, so
-that the disposition joins the grids under one table), the same pair, sample
+(task31_snapshot.py), compared by task31_identity.py, the same pair, sample
 and batch-second settings (task31_identity_grid.ID_*), the same refusals, the
 same inventory, decisions, archives, ledger lines and exit statuses
 (0 identical or attributed, 1 different, 2 not conclusive, 3 refused). The
@@ -16,43 +14,60 @@ keys, so that one reader reads them all: the grids differ in the cells they
 list, in the seals of the code they were made by (this module is among them)
 and in their table in the attempts ledger.
 
-The two tables (`--table`):
+All three tables are judged by the committed reviewed table of the final
+candidate, task37_attributed.json (the format of task31_attributed.json), and
+by no other: the TASK31 table holds blobs of three files (ThmAttribute.sig,
+ThmAttribute.sml and src/simp/src/Holmakefile) that moved after TASK31, so
+task31_identity_grid cannot run a full grid at the final candidate. The
+TASK31 module and its data are not edited. `--attributed FILE` names another
+reviewed table in a diagnostic (`--only`) run only.
 
-  matrix       `task37-matrix-identity`: every case that matrix.json gives
-               the fixture MatrixPerformance.sml (the families frag, compile,
-               storage_graph, exclude and history: 51 cases) at every size of
-               its size set: 306 cells, the 162 of TASK29 and the 144 of
-               TASK30. The runner takes the fixture from the cell
-               (matrix_schema.get_case).
+The tables (`--table`), whose cells and sources are those of task37_cases.py
+(the one place they are defined):
+
+  client       `task37-client-identity`: the cells of task31_cases (278), as
+               TASK31's grid had them, with its INFEASIBLE rule (below).
+  matrix       `task37-matrix-identity`: the 51 cases of TASK29 and TASK30
+               (MatrixPerformance.sml) at every size of their size set: 306
+               cells, the 162 of TASK29 and the 144 of TASK30. The runner
+               takes the fixture from the cell (matrix_schema.get_case).
   downstream   `task37-downstream-identity`: downstream_arithmetic and
                downstream_reduce at 1, 10, 100, 1000 and 10000 and
                downstream_boss at 0 (11 cells), which the runner takes from
                ClientPerformance.sml (the workloads of `downstream`).
 
 Nothing is edited in the sealed TASK31 module. Its functions read module
-names (`cases`, `IDENTITY_TABLE`, `IDENTITY_CODE`, `CODE_HISTORY`); a command
-of this module runs them with those names bound to the chosen table for the
-duration of the command (`bound`), so the engine, the ledger and the replay
-are the TASK31 code itself. A change to task31_identity_grid.py is in the
-seals of this module's grids (IDENTITY_CODE here extends that of TASK31 with
-this file); CODE_HISTORY is the place for the earlier seals of a file once a
-grid recorded by this module outlives a reviewed change to one.
+names (`cases`, `attribution`, `IDENTITY_TABLE`, `IDENTITY_CODE`,
+`CODE_HISTORY`, `report`, `measure`); a command of this module runs them with
+those names bound to the chosen table for the duration of the command
+(`bound`), so the engine, the ledger and the replay are the TASK31 code
+itself. The binding is one at a time per process (a second, nested or
+concurrent, is refused) and is undone whatever happens. A change to
+task31_identity_grid.py is in the seals of this module's grids (IDENTITY_CODE
+here extends that of TASK31 with this file and task37_cases.py);
+CODE_HISTORY is the place for the earlier seals of a file once a grid
+recorded by this module outlives a reviewed change to one.
 
 Cells that exceed the process timeout. INFEASIBLE of a table is the set of
 its cells that do not fit the 1800 s timeout; such a cell is not run and its
 identity derives from the measured cells of its case by the rule of
 task31_identity_grid.derived (the closure is the same in every measured cell
-of the grid, and every other cell of the case was measured). Both tables
-start with none: no cell of either has been shown to exceed the timeout. A
-cell that does is added here with the reason, and its anchor is the size-0
-cell of its case.
+of the grid, and every other cell of the case was measured; its anchor is the
+size-0 cell of its case). The client table has the 33 of TASK31
+(task31_cases.INFEASIBLE, in task37_cases.INFEASIBLE); the matrix and
+downstream tables have none: no cell of either has been shown to exceed the
+timeout. A cell that does is added to its table here with the reason.
 
-SOURCES. The sources of a table are the files its cells elaborate, which
-the full grid requires exactly (`uncovered`, `unused_sources`; PROTOCOL.md).
-They are derived, never chosen: run `identity --only CELL` on one cell of
-the table (any checkout), print `sources --output DIR`, and enter the list
-in MATRIX_SOURCES or DOWNSTREAM_SOURCES, which are empty until then. A full
-grid of a table with no sources is refused, since it could not be conclusive.
+SOURCES. The sources of a table are the files its cells elaborate, which the
+full grid requires exactly (`uncovered`, `unused_sources`; PROTOCOL.md). They
+are derived, never chosen. The client's are task31_cases.SOURCES. For the
+matrix and the downstream cells they are in task37_cases.MATRIX_SOURCES and
+DOWNSTREAM_SOURCES: the matrix's from task30_cases.SOURCES, and the
+downstream's empty until derived: run `identity --table downstream --only
+CELL ...` on one cell (any checkout), print `sources --output DIR`, and enter
+the list in DOWNSTREAM_SOURCES of task37_cases.py (a mismatch found by a
+later grid is fixed there too). A full grid of a table with no sources is
+refused, since it could not be conclusive.
 
 Parallel cells (`--jobs N`, default 1). With N > 1 the cells run N at a time
 in threads of the one parent, which holds the lock and passes its descriptors
@@ -69,19 +84,19 @@ anchors are the grid's, unchanged. Paths: the scratch directories are named
 other path is below the output or the checkout, so grids in other checkouts
 or outputs share none.
 
-TASK37 usage (the design is TASK_37_design.md, decision 2):
+TASK37 usage (the design is TASK_37_design.md, decisions 2 and 13):
 
   prepare           configure, build and stamp the checkout (takes the lock)
   cells             print the cells of --table, one per line
   identity          --table T --output DIR --candidate COMMIT
                     --authorize-measurements [--only CELL ...] [--resume]
                     [--jobs N]
-  identity-replay   --table T --output DIR   (offline)
+  identity-replay   --table T --output DIR [--ledger FILE]   (offline)
   sources           print the files the grid's cells elaborated
                     (--output DIR [--heap])
 
-Both tables are run at the final candidate in the candidate's checkout, one
-after the other and each alone, as the client grid is.
+The three tables are run at the final candidate in the candidate's checkout
+(or in one clone each, which share no path), each alone in its checkout.
 """
 import argparse
 import concurrent.futures as futures
@@ -96,56 +111,37 @@ import types
 
 sys.dont_write_bytecode = True
 import acceptance as a
-import matrix_schema as ms
+import task31_cases as cases31
 import task31_identity as idt
 import task31_identity_grid as idg
+import task37_cases as cases
 import timing_grid as tg
 
-THIS = "task37_matrix_identity.py"
-IDENTITY_CODE = idg.IDENTITY_CODE + (THIS,)
+THIS = "task37_identity.py"
+IDENTITY_CODE = idg.IDENTITY_CODE + (THIS, "task37_cases.py")
 # Per file of IDENTITY_CODE, the seals it had when a grid of this module was
 # recorded, once it has changed since (see task31_identity_grid.CODE_HISTORY).
 CODE_HISTORY = {}
-MATRIX_FIXTURE = "MatrixPerformance.sml"
-CLIENT_FIXTURE = "ClientPerformance.sml"
-
-# The files the cells of each table elaborate: derived by a diagnostic run
-# and `sources` (see the module docstring), empty until then.
-MATRIX_SOURCES = ()
-DOWNSTREAM_SOURCES = ()
-
-
-def matrix_cases():
-    """The cases of the TASK29/30 matrix, in the order of matrix_schema:
-    those whose fixture is MatrixPerformance.sml."""
-    return tuple(c for c in ms.MATRIX_CASES
-                 if ms.EXPECTED_CASES[c]["fixture"] == MATRIX_FIXTURE)
-
-
-def downstream_cases():
-    """The `downstream_*` cases of the client fixture, in the order of the
-    matrix ledger."""
-    return tuple(c for c in ms.EXPECTED_CASES
-                 if c.startswith("downstream_") and
-                 ms.EXPECTED_CASES[c]["fixture"] == CLIENT_FIXTURE)
 
 
 class Table:
     """One cell set: its name in the attempts ledger, its cases, the cells
-    that are not run and the files its cells elaborate."""
+    that are not run, the files its cells elaborate and the constant of
+    task37_cases.py those files are entered in."""
 
-    def __init__(self, key, ledger, cases, sources=(), infeasible=()):
+    def __init__(self, key, ledger, cases, sources=(), infeasible=(),
+                 constant=""):
         self.key, self.ledger = key, ledger
         self.cases = tuple(cases)
         self.sources, self.infeasible = tuple(sources), tuple(infeasible)
+        self.constant = constant
 
     def cells(self):
         """Every cell, in order: (case, size)."""
-        return [(case, size) for case in self.cases for size in
-                ms.SIZE_SETS[ms.EXPECTED_CASES[case]["sizes"]]]
+        return [cases.split(cell) for cell in cases.cells_of(self.cases)]
 
     def names(self):
-        return [idg.name_of(*k) for k in self.cells()]
+        return list(cases.cells_of(self.cases))
 
     def view(self):
         """What task31_identity_grid reads from task31_cases."""
@@ -153,17 +149,23 @@ class Table:
                   "infeasible cells that are no cell of the table")
         return types.SimpleNamespace(
             CASES=self.cases, INFEASIBLE=self.infeasible,
-            SOURCES=self.sources,
-            PROCESS_TIMEOUT=idg.cases.PROCESS_TIMEOUT)
+            SOURCES=self.sources, PROCESS_TIMEOUT=cases31.PROCESS_TIMEOUT)
 
 
 def tables():
-    """The tables, from the matrix ledger and the sources above."""
+    """The tables, from task37_cases.py (the cells, the sources and the
+    cells not run are defined there once)."""
     return {
-        "matrix": Table("matrix", "task37-matrix-identity", matrix_cases(),
-                        MATRIX_SOURCES),
+        "client": Table("client", "task37-client-identity",
+                        cases.CLIENT_CASES, cases.CLIENT_SOURCES,
+                        cases.INFEASIBLE, "CLIENT_SOURCES"),
+        "matrix": Table("matrix", "task37-matrix-identity",
+                        cases.MATRIX_CASES, cases.MATRIX_SOURCES,
+                        constant="MATRIX_SOURCES"),
         "downstream": Table("downstream", "task37-downstream-identity",
-                            downstream_cases(), DOWNSTREAM_SOURCES)}
+                            cases.DOWNSTREAM_CASES,
+                            cases.DOWNSTREAM_SOURCES,
+                            constant="DOWNSTREAM_SOURCES")}
 
 
 def table_of(args):
@@ -172,30 +174,58 @@ def table_of(args):
     return found[args.table]
 
 
+def attribution(args, diagnostic):
+    """The reviewed table of a command: task37_attributed.json, and its
+    seal. `--attributed` names another file in a diagnostic (`--only`) only,
+    as in task31_identity_grid.attribution, of which this is the TASK37
+    form."""
+    path = getattr(args, "attributed", None)
+    a.require(path is None or diagnostic,
+              "--attributed is for diagnostics (--only); a full grid and "
+              "the disposition use the committed task37_attributed.json")
+    return idg.attr.load(cases.REVIEWED_FILE if path is None
+                         else Path(path))
+
+
+# One binding at a time in a process: the names are those of a module.
+BINDING = threading.Lock()
+
+
 @contextlib.contextmanager
 def bound(table, pool=None):
     """Run task31_identity_grid with the names it reads bound to `table`'s,
-    and restore them after, whatever happens. With a `pool`, its cells run
-    by the pool (`Pool.measure`), which is closed at the end."""
-    original = idg.report
-    names = dict(cases=table.view(), IDENTITY_TABLE=table.ledger,
-                 IDENTITY_CODE=IDENTITY_CODE, CODE_HISTORY=CODE_HISTORY,
-                 report=lambda decisions: report(table, decisions,
-                                                 original))
-    if pool is not None:
-        names["measure"] = pool.measure
-    saved = {n: getattr(idg, n) for n in names}
+    and restore them after, whatever happens (an exception in the body or
+    while binding, a failing `pool.close`). With a `pool`, its cells run by
+    the pool (`Pool.measure`), which is closed at the end. The names belong
+    to one module for all threads of the process, so a binding while another
+    is in force (nested or from another thread) is refused, not silently
+    mixed."""
+    a.require(BINDING.acquire(blocking=False),
+              "task31_identity_grid is already bound to a table (one "
+              "command at a time in a process)")
     try:
-        for name, value in names.items():
-            setattr(idg, name, value)
-        yield
-    finally:
+        original = idg.report
+        names = dict(cases=table.view(), attribution=attribution,
+                     IDENTITY_TABLE=table.ledger,
+                     IDENTITY_CODE=IDENTITY_CODE, CODE_HISTORY=CODE_HISTORY,
+                     report=lambda decisions: report(table, decisions,
+                                                     original))
+        if pool is not None:
+            names["measure"] = pool.measure
+        saved = {n: getattr(idg, n) for n in names}
         try:
-            if pool is not None:
-                pool.close()
-        finally:
-            for name, value in saved.items():
+            for name, value in names.items():
                 setattr(idg, name, value)
+            yield
+        finally:
+            try:
+                if pool is not None:
+                    pool.close()
+            finally:
+                for name, value in saved.items():
+                    setattr(idg, name, value)
+    finally:
+        BINDING.release()
 
 
 class Failure:
@@ -353,9 +383,10 @@ def report(table, decisions, original):
 def identity(args):
     table = table_of(args)
     a.require(args.only or table.sources,
-              "the %s table has no sources yet: run a diagnostic cell with "
-              "--only, print `sources`, and enter the list (see this "
-              "module's docstring)" % table.key)
+              "the %s table has no sources yet: run one diagnostic cell "
+              "with --only (any checkout), print `sources --output DIR`, "
+              "and enter the list in task37_cases.%s (see this module's "
+              "docstring)" % (table.key, table.constant))
     a.require(args.jobs >= 1, "--jobs needs a positive number")
     pool = Pool(args.jobs) if args.jobs > 1 else None
     with bound(table, pool):
@@ -389,7 +420,8 @@ def parser():
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest="action", required=True)
     pick = dict(choices=sorted(tables()), required=True,
-                help="the cell set: matrix (306 cells) or downstream (11)")
+                help="the cell set: client (278 cells), matrix (306) or "
+                "downstream (11)")
 
     build = sub.add_parser(
         "prepare", help="configure and build the checkout and stamp it "
@@ -417,7 +449,7 @@ def parser():
     run.add_argument("--jobs", type=int, default=1, help="cells run at "
                      "once (the records are those of --jobs 1)")
     run.add_argument("--attributed", type=Path, help="the reviewed "
-                     "table, if not task31_attributed.json (a diagnostic "
+                     "table, if not task37_attributed.json (a diagnostic "
                      "run only)")
 
     again = sub.add_parser("identity-replay", help="re-derive the "

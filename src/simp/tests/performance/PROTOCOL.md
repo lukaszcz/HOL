@@ -4387,11 +4387,26 @@ client cases). The final source set of the matrix is `task30_cases.SOURCES`
 less the deleted `SimpTracking.{sig,sml}`; the client's is
 `task31_cases.SOURCES`.
 
-### Tables (`task37_grid.py {client,matrix} COMMAND`)
+### Tables (`task37_grid.py SHARD COMMAND`)
 
-`task37-client` (counts `task37_client_iterations.json`) and `task37-matrix`
-(`task37_matrix_iterations.json`; neither exists until its measurement stage
-commits it). Each: the `warmup` schedule (count rule, headroom 1), 20
+The two samples are timed as disjoint shards that run at once, each in its
+own clone (design decision 14): `task37-client-1`, `task37-client-2` (the 39
+client-sample cells, 20 and 19) and `task37-matrix-1` ... `task37-matrix-4`
+(the 87 matrix-sample cells, 22, 22, 22 and 21). The command names the
+shard: `task37_grid.py matrix-2 pilot ...` (commands `prepare`, `pilot`,
+`predeclare`, `verify-counts`, `run`, `extend`, `replay`). The partition
+(`task37_grid.partition`) is fixed: the sample's cells in sorted order, the
+cells of the long-batch cases first and then the others, dealt out
+round-robin by one running count, so shard sizes differ by at most one and
+the long cells are spread evenly; tests pin that the shards are disjoint,
+cover the sample and are balanced. Each shard has its own counts file
+(`task37_client_1_iterations.json`, `task37_client_2_...`,
+`task37_matrix_1_iterations.json` ... `task37_matrix_4_...`; none exists
+until the shard's measurement stage commits it), layout seed, ledger, build
+stamp and prepare log; there is no un-sharded table. A declared follow-up
+of a shard is `task37-<shard>-followup` (`task37_grid.FOLLOWUP_CELLS`,
+`<shard>-followup COMMAND`, counts `task37_<kind>_<n>_followup_iterations.
+json`), as `task31_followup.py` has it. Each table: the `warmup` schedule (count rule, headroom 1), 20
 first-stage pairs of 5 samples, alternating AB/BA with a B/B control per
 round, 3% on inclusive CPU and wall, GC reported, no outlier removal, a
 second stage sized from the control (the TASK30A decisions). Each has its own
@@ -4455,9 +4470,39 @@ No averaging and no allowed regression percentage.
   stage 2, never by a pass. Each pilot runs under the same concurrency as
   its decision run.
 
-### Identity (part B)
+### Identity (part B; `task37_identity.py`)
 
-(to be merged)
+`task37_identity.py` is `task31_identity_grid.py` applied to three tables
+(`--table`), with the method, records, ledger lines and exit statuses
+unchanged: `client` (`task37-client-identity`, the 278 `task31_cases` cells,
+with TASK31's INFEASIBLE rule: the 33 heavy size-10000 tactic cells are
+derived, not run), `matrix` (`task37-matrix-identity`, 306 cells) and
+`downstream` (`task37-downstream-identity`, 11 cells). The cells, the
+infeasible set and the source sets are those of `task37_cases.py`. All
+three are judged by the committed `task37_attributed.json`; `--attributed
+FILE` is for a diagnostic (`--only`) run only. `task31_identity_grid.py` and
+the TASK31 table are not edited (the latter holds blobs that moved after
+TASK31). The module binds the table to `task31_identity_grid`'s globals
+under a lock for the duration of a run (tested, restored on failure).
+
+    task37_identity.py prepare
+    task37_identity.py cells --table T
+    task37_identity.py identity --table T --output DIR --candidate C
+        --authorize-measurements [--only CELL ...] [--resume] [--jobs N]
+        [--attributed FILE]
+    task37_identity.py identity-replay --table T --output DIR [--repo R]
+        [--ledger FILE]
+    task37_identity.py sources --output DIR [--heap]
+
+Sources. A table's source list (`CLIENT_SOURCES`, `MATRIX_SOURCES`,
+`DOWNSTREAM_SOURCES` in `task37_cases.py`) is the set of files a cell's
+sides differ in under the build. `DOWNSTREAM_SOURCES` is empty until it is
+obtained: a full grid of a table with no sources is refused. Run one
+diagnostic cell with `--only` (in any checkout), run `sources --output DIR`,
+and enter the printed list in `task37_cases.py` (a tooling commit before the
+measurement). The client timing sources must cover the downstream ones
+(`CLIENT_TIMING_SOURCES`; a test pins it). `--jobs N` runs cells in
+parallel, each in its own scratch; the records are those of a serial run.
 
 ### Allocation (part C)
 
@@ -4467,9 +4512,48 @@ No averaging and no allowed regression percentage.
 
 (to be merged)
 
-### Disposition (part E)
+### Disposition (part E; `task37_dispose.py`)
 
-(to be merged)
+One disposition for every required workload, by the rule of design
+decision 11 and `task31_dispose.py`'s method. Every input is an explicit
+path; nothing is looked up. A cell passes if its identity row (its kind's
+table) is `identical` or `attributed`, its allocation decided `pass` with
+work `equal` from at least the task's own pairs (`allocation_matrix.
+task_named(task).pairs`, cross-checked against the inventory's `pairs`,
+never the legacy constant) and, where sampled, its timing decided `pass`.
+Unsampled cells pass on identity and allocation (policy `stratified`).
+D2 (heavy tactic cells identity-only), D4 (the 13 `task37_cases.ATTRIBUTED`
+cells: a control-limited first stage is not owed a second stage) and R-1
+(`void_attempts.attempts_of`, with each shard's engine from
+`task37_grid.GRIDS`) carry over and are recorded. Inconclusive never passes;
+what is owed is listed.
+
+    task37_dispose.py --candidate REV --repo CHECKOUT
+        --identity-{client,matrix,downstream} DIR
+        --identity-ledger KIND=FILE            (three)
+        --alloc-{matrix,client,downstream} DIR
+        --timing SHARD=DIR --ledger SHARD=FILE (every shard, 6)
+        [--followup SHARD=DIR --pilot SHARD=DIR --followup-pilot SHARD=DIR]
+        [--load STREAM=FILE ...]
+        --task32 FILE --task33 FILE --startup-gate FILE
+        --loading-simplib FILE --loading-conglib FILE [--d7-build FILE]
+        (--record OUTDIR | --check OUTDIR)
+
+Shards are joined by their explicit paths; every shard is required, each
+shard's decisions are exactly its part (`task37_grid.PARTS`) and the union
+is exactly the sample. Each input is replayed and a failed replay refuses:
+identity (`task37_identity.identity_replay`), each timing shard and
+follow-up (`Grid.replay` with the shard's engine, a follow-up with both
+pilots) and allocation (`allocation_matrix.replay`). An inventory's
+`counts_file` must be the shard's own committed file and its seal the
+current one. The identity records are those of `task31_identity_grid.decide`
+(`decisions.json`, `inventory.json`), the timing ones those of
+`timing_grid` (`inventory.json`, `decisions.json`, classified by
+`timing_grid.classify`) and the allocation ones those of
+`allocation_matrix` (`cell_rows` in `decisions.json`). `--load STREAM=FILE`
+takes `task37_load.py` recordings; the host load is reported, never a gate.
+TASK32/33 inputs need a top-level `candidate`. `receipt` makes a gate
+receipt for the startup gate, loading and D7.
 
 ## Matrix boundaries and final evidence
 

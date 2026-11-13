@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""TASK37 identity of the matrix and downstream cells
-(task37_matrix_identity.py): the cell sets, the parity of the records with
-task31_identity_grid's, the refusals, the seals and the parallel jobs, with
-the runner stood in for (nothing is measured)."""
+"""TASK37 identity of the client, matrix and downstream cells
+(task37_identity.py): the cell sets, the reviewed table they are judged by,
+the parity of the records with task31_identity_grid's, the refusals, the
+seals, the binding of task31_identity_grid's names and the parallel jobs,
+with the runner stood in for (nothing is measured)."""
 import contextlib
 import copy
 import io
@@ -17,10 +18,12 @@ from unittest import mock
 import acceptance as a
 import matrix_schema as ms
 import task30_cases
+import task31_cases
 import task31_grid as timing
 import task31_identity as idt
 import task31_identity_grid as g
-import task37_matrix_identity as m
+import task37_cases as c37
+import task37_identity as m
 import test_task31_identity_grid as t31
 import timing_grid as tg
 
@@ -33,12 +36,25 @@ def small(**more):
     """A table of two cases (12 cells) whose cells elaborate FILES."""
     return {"matrix": m.Table("matrix", "task37-matrix-identity", SMALL,
                               FILES, **more),
+            "client": m.tables()["client"],
             "downstream": m.tables()["downstream"]}
 
 
 class Cells(unittest.TestCase):
+    def test_the_client_has_the_task31_cells_and_its_infeasible_rule(self):
+        t = m.tables()["client"]
+        self.assertEqual(t.ledger, "task37-client-identity")
+        self.assertEqual(len(t.names()), 278)
+        self.assertEqual(t.names(), [g.name_of(*k) for k in g.every()])
+        self.assertEqual(t.names(), list(c37.CLIENT_CELLS))
+        self.assertEqual(len(t.infeasible), 33)
+        self.assertEqual(t.infeasible, tuple(task31_cases.INFEASIBLE))
+        self.assertEqual(t.sources, tuple(task31_cases.SOURCES))
+        self.assertEqual(t.view().INFEASIBLE, task31_cases.INFEASIBLE)
+
     def test_the_matrix_has_every_case_at_every_size(self):
         t = m.tables()["matrix"]
+        self.assertEqual(t.ledger, "task37-matrix-identity")
         self.assertEqual(len(t.cases), 51)
         self.assertEqual(len(t.cells()), 306)
         self.assertEqual(len(set(t.names())), 306)
@@ -53,12 +69,19 @@ class Cells(unittest.TestCase):
         self.assertLessEqual(set(task30_cases.CASES) | {
             "frag_create", "compile_batch", "storage_graph"}, set(t.cases))
         for case, size in t.cells():
-            self.assertEqual(ms.get_case(case, size), m.MATRIX_FIXTURE)
+            self.assertEqual(ms.get_case(case, size), MATRIX)
         self.assertIn("exclude_dproc-10000", t.names())
         self.assertIn("frag_record-0", t.names())
+        # Every case matrix.json gives the matrix fixture, no other.
+        self.assertEqual(set(t.cases), {
+            k for k, v in ms.EXPECTED_CASES.items()
+            if v["fixture"] == MATRIX})
+        self.assertEqual(t.names(), list(c37.MATRIX_CELLS))
+        self.assertEqual(t.infeasible, ())
 
     def test_the_downstream_cells_are_the_eleven_of_the_client_fixture(self):
         t = m.tables()["downstream"]
+        self.assertEqual(t.ledger, "task37-downstream-identity")
         self.assertEqual(len(t.cells()), 11)
         self.assertEqual(sorted(t.names()), sorted(
             ["downstream_arithmetic-%d" % n for n in (1, 10, 100, 1000,
@@ -66,36 +89,134 @@ class Cells(unittest.TestCase):
             ["downstream_reduce-%d" % n for n in (1, 10, 100, 1000, 10000)]
             + ["downstream_boss-0"]))
         for case, size in t.cells():
-            self.assertEqual(ms.get_case(case, size), m.CLIENT_FIXTURE)
+            self.assertEqual(ms.get_case(case, size), CLIENT)
+        self.assertEqual(t.names(), list(c37.DOWNSTREAM_CELLS))
 
-    def test_no_cell_is_in_the_client_grid_or_in_both_tables(self):
-        from task31_cases import CASES
-        mine = set(m.tables()["matrix"].names())
-        down = set(m.tables()["downstream"].names())
-        self.assertFalse(mine & down)
-        self.assertFalse({g.name_of(*k) for k in g.every()} & (mine | down))
-        self.assertFalse(set(CASES) & (set(m.matrix_cases()) |
-                                       set(m.downstream_cases())))
+    def test_the_sources_are_those_of_the_cases_module(self):
+        found = m.tables()
+        self.assertEqual(found["client"].sources, c37.CLIENT_SOURCES)
+        self.assertEqual(found["matrix"].sources, c37.MATRIX_SOURCES)
+        self.assertEqual(found["downstream"].sources,
+                         c37.DOWNSTREAM_SOURCES)
+        # No duplicate definition of a cell set or a source list here.
+        text = (a.HERE / "task37_identity.py").read_text()
+        for name in ("MATRIX_SOURCES =", "DOWNSTREAM_SOURCES =",
+                     "CLIENT_SOURCES =", "INFEASIBLE =", "def matrix_cases",
+                     "def downstream_cases"):
+            self.assertNotIn(name, text)
+
+    def test_the_tables_are_three_disjoint_cell_sets(self):
+        found = {k: set(t.names()) for k, t in m.tables().items()}
+        self.assertEqual(sorted(len(v) for v in found.values()),
+                         [11, 278, 306])
+        self.assertEqual(len(set().union(*found.values())), 278 + 306 + 11)
+        self.assertEqual(sorted(t.ledger for t in m.tables().values()),
+                         ["task37-client-identity",
+                          "task37-downstream-identity",
+                          "task37-matrix-identity"])
 
     def test_the_view_is_what_the_grid_reads_and_checks_its_cells(self):
         v = m.tables()["matrix"].view()
         self.assertEqual((v.INFEASIBLE, v.PROCESS_TIMEOUT),
-                         ((), g.cases.PROCESS_TIMEOUT))
+                         ((), task31_cases.PROCESS_TIMEOUT))
         with self.assertRaises(ValueError):
             m.Table("x", "y", SMALL, infeasible=("nonsense-1",)).view()
 
     def test_the_names_the_grid_reads_are_restored(self):
-        before = (g.cases, g.IDENTITY_TABLE, g.IDENTITY_CODE,
-                  g.CODE_HISTORY, g.report, g.measure)
+        names = ("cases", "attribution", "IDENTITY_TABLE", "IDENTITY_CODE",
+                 "CODE_HISTORY", "report", "measure")
+        before = [getattr(g, n) for n in names]
         with self.assertRaises(RuntimeError), m.bound(
                 m.tables()["matrix"], m.Pool(2)):
             self.assertEqual(g.IDENTITY_TABLE, "task37-matrix-identity")
             self.assertEqual(len(g.every()), 306)
             raise RuntimeError("x")
-        self.assertEqual(before, (g.cases, g.IDENTITY_TABLE,
-                                  g.IDENTITY_CODE, g.CODE_HISTORY,
-                                  g.report, g.measure))
+        self.assertEqual(before, [getattr(g, n) for n in names])
         self.assertEqual(g.IDENTITY_TABLE, "task31-identity")
+        for key, count in (("client", 278), ("downstream", 11)):
+            with m.bound(m.tables()[key]):
+                self.assertEqual(len(g.every()), count)
+            self.assertEqual(len(g.every()), 278)
+
+
+class Binding(unittest.TestCase):
+    """The mechanism that binds task31_identity_grid's module names."""
+
+    def test_a_failing_pool_close_still_restores_the_names(self):
+        class Broken(m.Pool):
+            def close(self):
+                raise OSError("close")
+        before = g.IDENTITY_TABLE
+        with self.assertRaises(OSError), m.bound(
+                m.tables()["matrix"], Broken(2)):
+            pass
+        self.assertEqual(g.IDENTITY_TABLE, before)
+        # And the binding is released: another can follow.
+        with m.bound(m.tables()["downstream"]):
+            self.assertEqual(g.IDENTITY_TABLE, "task37-downstream-identity")
+
+    def test_a_failure_while_binding_restores_and_releases(self):
+        table = m.tables()["matrix"]
+        with mock.patch.object(table, "view", side_effect=ValueError("v")):
+            with self.assertRaises(ValueError), m.bound(table):
+                self.fail("not reached")
+        self.assertEqual(g.IDENTITY_TABLE, "task31-identity")
+        with m.bound(table):
+            self.assertEqual(g.IDENTITY_TABLE, "task37-matrix-identity")
+
+    def test_a_nested_binding_is_refused_and_leaves_the_first(self):
+        with m.bound(m.tables()["matrix"]):
+            with self.assertRaises(ValueError), m.bound(
+                    m.tables()["downstream"]):
+                self.fail("not reached")
+            self.assertEqual(g.IDENTITY_TABLE, "task37-matrix-identity")
+        self.assertEqual(g.IDENTITY_TABLE, "task31-identity")
+
+    def test_a_binding_from_another_thread_is_refused(self):
+        found = []
+
+        def other():
+            try:
+                with m.bound(m.tables()["downstream"]):
+                    found.append("bound")
+            except ValueError as error:
+                found.append(str(error))
+        with m.bound(m.tables()["matrix"]):
+            thread = threading.Thread(target=other)
+            thread.start()
+            thread.join()
+            self.assertEqual(g.IDENTITY_TABLE, "task37-matrix-identity")
+        self.assertEqual(len(found), 1)
+        self.assertIn("already bound", found[0])
+        self.assertEqual(g.IDENTITY_TABLE, "task31-identity")
+
+    def test_the_reviewed_table_is_task37s(self):
+        document = m.attribution(types_namespace(None), False)
+        self.assertEqual(document["seal"], a.seal(c37.REVIEWED_FILE))
+        self.assertNotEqual(c37.REVIEWED_FILE.name,
+                            "task31_attributed.json")
+        with m.bound(m.tables()["matrix"]):
+            self.assertEqual(g.attribution(types_namespace(None), False)[
+                "seal"], a.seal(c37.REVIEWED_FILE))
+        # Outside a binding the client grid is still judged by its own.
+        self.assertEqual(g.attribution(types_namespace(None), False)[
+            "seal"], a.seal(g.attr.FILE))
+
+    def test_another_table_is_a_diagnostic_only(self):
+        other = a.HERE / "task31_attributed.json"
+        self.assertEqual(m.attribution(types_namespace(other), True)[
+            "seal"], a.seal(other))
+        with self.assertRaises(ValueError) as caught:
+            m.attribution(types_namespace(other), False)
+        self.assertIn("task37_attributed.json", str(caught.exception))
+
+
+def types_namespace(attributed):
+    import argparse
+    return argparse.Namespace(attributed=attributed)
+
+
+MATRIX, CLIENT = "MatrixPerformance.sml", "ClientPerformance.sml"
 
 
 class Code(unittest.TestCase):
@@ -107,7 +228,8 @@ class Code(unittest.TestCase):
                              set(m.IDENTITY_CODE))
         self.assertIn("task31_identity.py", g.IDENTITY_CODE)
         self.assertIn(m.THIS, m.IDENTITY_CODE)
-        self.assertEqual(set(g.IDENTITY_CODE) | {m.THIS},
+        self.assertIn("task37_cases.py", m.IDENTITY_CODE)
+        self.assertEqual(set(g.IDENTITY_CODE) | {m.THIS, "task37_cases.py"},
                          set(m.IDENTITY_CODE))
 
     def test_the_recorded_seals_are_checked(self):
@@ -252,8 +374,9 @@ class Commands(t31.Commands):
         one, two = (a.load(d / "inventory.json") for d in (client, mine))
         self.assertEqual(sorted(one), sorted(two))
         self.assertEqual(one["schema"], two["schema"])
-        self.assertEqual(sorted(one["code"] | {m.THIS: 0}), sorted(
-            two["code"]))
+        self.assertEqual(
+            sorted(one["code"] | {m.THIS: 0, "task37_cases.py": 0}),
+            sorted(two["code"]))
         self.assertEqual(sorted(one["runs"][0]), sorted(two["runs"][0]))
         self.assertEqual(sorted(one["runs"][0]["row"]),
                          sorted(two["runs"][0]["row"]))
@@ -316,6 +439,65 @@ class Commands(t31.Commands):
                 self.assertRaises(SystemExit) as caught:
             self.main(["identity", "--table", "other"])
         self.assertEqual(caught.exception.code, 2)
+
+    def test_a_full_grid_is_judged_by_the_task37_reviewed_table(self):
+        self.start()
+        seen = []
+        with mock.patch.object(g, "prepare_table", lambda args, doc: (
+                seen.append(doc))):
+            code, text, out = self.run_whole()
+        self.assertEqual(code, 0, text)
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen[0]["seal"], a.seal(c37.REVIEWED_FILE))
+        found = a.load(out / "inventory.json")["attributed"]
+        self.assertEqual(found["file"], a.seal(c37.REVIEWED_FILE))
+        self.assertEqual(found["table"], seen[0]["entries"])
+        self.assertNotEqual(found["file"], a.seal(g.attr.FILE))
+        # The reviewed table of a diagnostic may be another; of a full grid
+        # it may not.
+        argv, _ = self.args(out="other")
+        argv += ["--attributed", str(a.HERE / "task31_attributed.json")]
+        self.refusal(argv, "task37_attributed.json")
+        self.assertFalse((self.root / "other").exists())
+
+    def test_the_client_table_derives_its_infeasible_cells(self):
+        self.start()
+        heavy = c37.INFEASIBLE[0]
+        case, _ = c37.split(heavy)
+        self.tables = small()
+        self.tables["client"] = m.Table(
+            "client", "task37-client-identity", (case,), FILES,
+            (heavy,))
+        sizes = c37.sizes(case)
+        argv, out = self.args(table="client")
+        with self.whole_grid():
+            code, text = self.main(argv)
+        self.assertEqual(code, 0, text)
+        ran = {c[c.index("--performance-size") + 1] for c in self.commands}
+        self.assertEqual(ran, {str(n) for n in sizes if n != 10000})
+        found = a.load(out / "decisions.json")["cells"][heavy]
+        self.assertIn("derived from", found["route"])
+        self.assertEqual(found["status"], "identical")
+        lines = [json.loads(x) for x in (self.root / "attempts.jsonl")
+                 .read_text().splitlines()]
+        self.assertEqual({x["table"] for x in lines},
+                         {"task37-client-identity"})
+        with self.whole_grid():
+            self.assertEqual(self.replay_now(out, "client")[0], 0)
+
+    def test_the_refusal_of_a_table_without_sources_says_how_to_get_them(
+            self):
+        self.start()
+        self.tables = {k: m.Table(k, t.ledger, t.cases, constant=(
+            k.upper() + "_SOURCES")) for k, t in self.tables.items()}
+        argv, out = self.args(table="downstream")
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(self.main(argv)[0], tg.REFUSED)
+        text = err.getvalue()
+        for part in ("no sources yet", "--only", "sources --output DIR",
+                     "task37_cases.DOWNSTREAM_SOURCES"):
+            self.assertIn(part, text)
 
     def test_the_wrong_table_or_a_foreign_grid_is_not_replayed(self):
         self.start()
