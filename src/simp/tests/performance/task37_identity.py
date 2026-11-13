@@ -22,8 +22,8 @@ task31_identity_grid cannot run a full grid at the final candidate. The
 TASK31 module and its data are not edited. `--attributed FILE` names another
 reviewed table in a diagnostic (`--only`) run only.
 
-The tables (`--table`), whose cells and sources are those of task37_cases.py
-(the one place they are defined):
+The tables (`--table`), whose cells are those of task37_cases.py and whose
+sources are those of task37_sources.py (the one place each is defined):
 
   client       `task37-client-identity`: the cells of task31_cases (278), as
                TASK31's grid had them, with its INFEASIBLE rule (below).
@@ -37,16 +37,20 @@ The tables (`--table`), whose cells and sources are those of task37_cases.py
                ClientPerformance.sml (the workloads of `downstream`).
 
 Nothing is edited in the sealed TASK31 module. Its functions read module
-names (`cases`, `attribution`, `IDENTITY_TABLE`, `IDENTITY_CODE`,
+names (`cases`, `attribution`, `ENGINE`, `IDENTITY_TABLE`, `IDENTITY_CODE`,
 `CODE_HISTORY`, `report`, `measure`); a command of this module runs them with
 those names bound to the chosen table for the duration of the command
 (`bound`), so the engine, the ledger and the replay are the TASK31 code
-itself. The binding is one at a time per process (a second, nested or
+itself, with an engine (`Placed`) that keeps its evidence in the table's own
+place. The binding is one at a time per process (a second, nested or
 concurrent, is refused) and is undone whatever happens. A change to
 task31_identity_grid.py is in the seals of this module's grids (IDENTITY_CODE
-here extends that of TASK31 with this file and task37_cases.py);
-CODE_HISTORY is the place for the earlier seals of a file once a grid
-recorded by this module outlives a reviewed change to one.
+here extends that of TASK31 with this file, task37_cases.py,
+task37_sources.py and task30_cases.py: the modules a decision or a cell set
+derives from; a test keeps the import closure of this module sealed, or
+reached only by a reviewed exempt edge); CODE_HISTORY is the place for
+the earlier seals of a file once a grid recorded by this module outlives a
+reviewed change to one.
 
 Cells that exceed the process timeout. INFEASIBLE of a table is the set of
 its cells that do not fit the 1800 s timeout; such a cell is not run and its
@@ -58,16 +62,31 @@ size-0 cell of its case). The client table has the 33 of TASK31
 downstream tables have none: no cell of either has been shown to exceed the
 timeout. A cell that does is added to its table here with the reason.
 
+Evidence of a table (checkout-relative, `Placed`). The attempts ledger, the
+build stamp of `prepare` and its log are below
+`<checkout>/.agent-files/evidence/<table>-identity/` with <table> the
+ledger name `task37-client-identity`, `task37-matrix-identity` or
+`task37-downstream-identity`: `attempts.jsonl`, `build-stamp.json`,
+`prepare.log`. TASK31's `.agent-files/evidence/task31/` is never read or
+written. `prepare --table T` stamps the checkout for table T, so each
+table is prepared (and its ledger kept) apart, in its own clone or, in one
+checkout, one after the other. task37_dispose.py takes the ledger of each
+table as `--identity-ledger KIND=FILE` (KIND client, matrix or downstream).
+
 SOURCES. The sources of a table are the files its cells elaborate, which the
-full grid requires exactly (`uncovered`, `unused_sources`; PROTOCOL.md). They
-are derived, never chosen. The client's are task31_cases.SOURCES. For the
-matrix and the downstream cells they are in task37_cases.MATRIX_SOURCES and
-DOWNSTREAM_SOURCES: the matrix's from task30_cases.SOURCES, and the
-downstream's empty until derived: run `identity --table downstream --only
-CELL ...` on one cell (any checkout), print `sources --output DIR`, and enter
-the list in DOWNSTREAM_SOURCES of task37_cases.py (a mismatch found by a
-later grid is fixed there too). A full grid of a table with no sources is
-refused, since it could not be conclusive.
+full grid requires exactly (`uncovered`, `unused_sources`; PROTOCOL.md): a
+listed file no cell elaborates, or an elaborated file in no list, makes the
+grid not conclusive. They are task37_sources.py's CLIENT (TASK31's elaborated
+closure, which TASK31's identity grid used for the same 278 cells), MATRIX
+and DOWNSTREAM (empty until derived). Only this module's grids seal
+task37_sources.py; the timing shards do not (they pin the boundary lists of
+task37_cases.py), so filling a list voids no pilot or counts file. To derive
+a list run `identity --table T --only CELL` on one cell (any checkout),
+print `sources --output DIR`, enter the list in task37_sources.py and commit
+it alone, before the full identity grids. A full grid of a table with no
+sources is refused with this procedure. The one-cell diagnostic of the
+matrix is also the first time the matrix fixture's receipts go through
+task31_identity.cell.
 
 Parallel cells (`--jobs N`, default 1). With N > 1 the cells run N at a time
 in threads of the one parent, which holds the lock and passes its descriptors
@@ -75,18 +94,21 @@ to every runner (`Pool`). A job has its own scratch directory and output
 folder; the parent alone writes the archives, the inventory, the decisions
 and the ledger, in the grid's cell order, so that the records equal those of
 a `--jobs 1` run apart from timestamps and the attempt identifier. After a
-failure no new cell starts, jobs already running are waited for (never
-killed: a runner keeps the lock in a session of its own), the cells before
-the failed one are recorded, the failed one is set aside and refused as in a
-serial run, and `--resume` measures the rest. Infeasible cells and their
-anchors are the grid's, unchanged. Paths: the scratch directories are named
-`task37-identity-*` (the client grid's are `task31-identity-*`), and every
-other path is below the output or the checkout, so grids in other checkouts
-or outputs share none.
+failure the cells after the failed one in the grid's order do not start,
+jobs already running are waited for (never killed: a runner keeps the lock
+in a session of its own), the cells before the failed one run and are
+recorded, the failed one is set aside and refused as in a serial run with
+its real error, and `--resume` measures the rest. Infeasible cells and their
+anchors are the grid's, unchanged. Paths: the scratch directories are
+fresh `mkdtemp`s named `task37-identity-*` with `--jobs` > 1 (the same
+prefix for every table; a serial run uses TASK31's own `task31-identity-*`),
+and every other path is below the output or the checkout, so grids in other
+checkouts or outputs share none.
 
 TASK37 usage (the design is TASK_37_design.md, decisions 2 and 13):
 
-  prepare           configure, build and stamp the checkout (takes the lock)
+  prepare           --table T   configure, build and stamp the checkout for
+                    T (takes the lock)
   cells             print the cells of --table, one per line
   identity          --table T --output DIR --candidate COMMIT
                     --authorize-measurements [--only CELL ...] [--resume]
@@ -101,6 +123,7 @@ The three tables are run at the final candidate in the candidate's checkout
 import argparse
 import concurrent.futures as futures
 import contextlib
+import copy
 import io
 from pathlib import Path
 import shutil
@@ -113,12 +136,22 @@ sys.dont_write_bytecode = True
 import acceptance as a
 import task31_cases as cases31
 import task31_identity as idt
+import task31_grid as timing31
 import task31_identity_grid as idg
 import task37_cases as cases
+import task37_sources as lists
 import timing_grid as tg
 
 THIS = "task37_identity.py"
-IDENTITY_CODE = idg.IDENTITY_CODE + (THIS, "task37_cases.py")
+# What this module adds to TASK31's seals: itself, the cell sets
+# (task37_cases.py, which takes the matrix cases from task30_cases.py, so
+# that is sealed too) and the source lists (task37_sources.py, which no
+# timing table seals). task29a_grid.py and task31_followup.py, which
+# task37_cases.py imports for the timing samples, are not sealed: no identity
+# cell is derived from them (a test names the two exempt import edges).
+EXTRA_CODE = (THIS, "task37_cases.py", "task37_sources.py",
+              "task30_cases.py")
+IDENTITY_CODE = idg.IDENTITY_CODE + EXTRA_CODE
 # Per file of IDENTITY_CODE, the seals it had when a grid of this module was
 # recorded, once it has changed since (see task31_identity_grid.CODE_HISTORY).
 CODE_HISTORY = {}
@@ -127,7 +160,7 @@ CODE_HISTORY = {}
 class Table:
     """One cell set: its name in the attempts ledger, its cases, the cells
     that are not run, the files its cells elaborate and the constant of
-    task37_cases.py those files are entered in."""
+    task37_sources.py those files are entered in."""
 
     def __init__(self, key, ledger, cases, sources=(), infeasible=(),
                  constant=""):
@@ -153,19 +186,19 @@ class Table:
 
 
 def tables():
-    """The tables, from task37_cases.py (the cells, the sources and the
-    cells not run are defined there once)."""
+    """The tables: the cells and the cells not run are those of
+    task37_cases.py, the sources those of task37_sources.py (each defined
+    there once)."""
     return {
         "client": Table("client", "task37-client-identity",
-                        cases.CLIENT_CASES, cases.CLIENT_SOURCES,
-                        cases.INFEASIBLE, "CLIENT_SOURCES"),
+                        cases.CLIENT_CASES, lists.CLIENT,
+                        cases.INFEASIBLE, "CLIENT"),
         "matrix": Table("matrix", "task37-matrix-identity",
-                        cases.MATRIX_CASES, cases.MATRIX_SOURCES,
-                        constant="MATRIX_SOURCES"),
+                        cases.MATRIX_CASES, lists.MATRIX,
+                        constant="MATRIX"),
         "downstream": Table("downstream", "task37-downstream-identity",
-                            cases.DOWNSTREAM_CASES,
-                            cases.DOWNSTREAM_SOURCES,
-                            constant="DOWNSTREAM_SOURCES")}
+                            cases.DOWNSTREAM_CASES, lists.DOWNSTREAM,
+                            constant="DOWNSTREAM")}
 
 
 def table_of(args):
@@ -187,6 +220,33 @@ def attribution(args, diagnostic):
                          else Path(path))
 
 
+class Placed(tg.Grid):
+    """The engine of TASK31's table (task31_grid.TABLE: the same checkout,
+    stamp and lock rules, the same `archive`) keeping its evidence in the
+    directory of one TASK37 identity table instead of TASK31's. The
+    ledger, the build stamp of `prepare` and its log are below
+    `<checkout>/.agent-files/evidence/<table.ledger>/` (`attempts.jsonl`,
+    `build-stamp.json`, `prepare.log`): TASK31's own
+    `.agent-files/evidence/task31/` is never touched, so a checkout that
+    holds TASK31's evidence keeps it, and the three tables, each in its
+    own directory, share no path."""
+
+    def __init__(self, table):
+        own = copy.copy(timing31.TABLE)
+        own.name = own.family = table.ledger
+        super().__init__(own, doc=__doc__)
+        self.place = table.ledger
+
+    def ledger_path(self, repo):
+        return (Path(repo).resolve() / ".agent-files" / "evidence" /
+                self.place / "attempts.jsonl")
+
+
+def engine_of(table):
+    """The engine task31_identity_grid runs with for `table`."""
+    return Placed(table)
+
+
 # One binding at a time in a process: the names are those of a module.
 BINDING = threading.Lock()
 
@@ -206,7 +266,7 @@ def bound(table, pool=None):
     try:
         original = idg.report
         names = dict(cases=table.view(), attribution=attribution,
-                     IDENTITY_TABLE=table.ledger,
+                     ENGINE=engine_of(table), IDENTITY_TABLE=table.ledger,
                      IDENTITY_CODE=IDENTITY_CODE, CODE_HISTORY=CODE_HISTORY,
                      report=lambda decisions: report(table, decisions,
                                                      original))
@@ -254,13 +314,17 @@ class Pool:
     output. The lock was taken once by the parent, which passes its
     descriptors to every runner (acceptance.run_logged).
 
-    A job that fails makes the others that have not started skip their
-    cell, and the parent raises its failure when the grid's order reaches
-    it (the cells before it are recorded first, and a job still running is
-    waited for, not killed: the runner holds the lock in a session of its
-    own, so killing the job's group would leave the runner behind). The
-    cells that ended after it are not recorded: a resumed run measures them
-    again. `close` waits for every job and removes every scratch directory.
+    A job that fails makes the jobs of the cells after it in the grid's
+    order, that have not started, skip their cell; the cells before it
+    still run, so that they are recorded and the failure is the first
+    thing the parent meets in the grid's order: it raises that failure (the
+    real error, with the failed cell's archive set aside), never the skip
+    of an earlier cell. A job still running is waited for, not killed: the
+    runner holds the lock in a session of its own, so killing the job's
+    group would leave the runner behind. The cells that ended after the
+    failed one are not recorded: a resumed run measures them again. Of two
+    failures the earlier cell's is the one raised. `close` waits for every
+    job and removes every scratch directory.
     """
 
     def __init__(self, jobs, prefix="task37-identity-"):
@@ -268,6 +332,8 @@ class Pool:
                   "--jobs needs a positive number")
         self.jobs, self.prefix = jobs, prefix
         self.stop = threading.Event()
+        self.order = {}
+        self.failed = None
         self.pending = {}
         self.executor = None
         self.scratches = []
@@ -281,8 +347,12 @@ class Pool:
 
     def job(self, args, name, inventory, fds):
         """One cell, run: a (folder-derived row, archive, files) result, or
-        a Failure, or None for a cell skipped after another's failure."""
-        if self.stop.is_set():
+        a Failure, or None for a cell skipped: closed before it started, or
+        after the failure of an earlier cell of the grid's order."""
+        with self.lock:
+            after = self.failed is not None and \
+                self.order.get(name, 0) > self.failed
+        if self.stop.is_set() or after:
             return None
         print("IDENTITY %s" % name, flush=True)
         case, size = name.rsplit("-", 1)
@@ -320,7 +390,10 @@ class Pool:
                           "the cell ran in another checkout than the "
                           "candidate's, or a dirty one: " + name)
         except BaseException as error:
-            self.stop.set()
+            with self.lock:
+                here = self.order.get(name, 0)
+                self.failed = here if self.failed is None else min(
+                    self.failed, here)
             return Failure(error, archive if archive is not None and
                            archive.exists() else None, scratch)
         return dict(row=row, archive=archive, files=files)
@@ -330,6 +403,7 @@ class Pool:
                     for r in inventory["runs"]}
         todo = [n for n in idg.feasible(inventory["expected"])
                 if n not in recorded]
+        self.order = {n: i for i, n in enumerate(todo)}
         self.executor = futures.ThreadPoolExecutor(
             max_workers=self.jobs, thread_name_prefix="identity")
         self.pending = {n: self.executor.submit(
@@ -343,8 +417,9 @@ class Pool:
         a.require(name in self.pending, "a cell the pool was not given: " +
                   name)
         found = self.pending.pop(name).result()
-        a.require(found is not None, "the cell was skipped after the "
-                  "failure of another job: " + name)
+        a.require(found is not None, "the cell was skipped (this is a "
+                  "defect: only cells after a failed one are skipped, and "
+                  "the failure is raised first): " + name)
         archive = root / (name + ".json.xz")
         if isinstance(found, Failure):
             if found.archive is not None:
@@ -385,12 +460,19 @@ def identity(args):
     a.require(args.only or table.sources,
               "the %s table has no sources yet: run one diagnostic cell "
               "with --only (any checkout), print `sources --output DIR`, "
-              "and enter the list in task37_cases.%s (see this module's "
-              "docstring)" % (table.key, table.constant))
+              "and enter the list in task37_sources.%s, committed alone "
+              "before the full grids (see this module's docstring)"
+              % (table.key, table.constant))
     a.require(args.jobs >= 1, "--jobs needs a positive number")
     pool = Pool(args.jobs) if args.jobs > 1 else None
     with bound(table, pool):
         return idg.identity(args)
+
+
+def prepare(args):
+    """`prepare` of the table's own stamp and log (see `Placed`)."""
+    with bound(table_of(args)):
+        return idg.prepare(args)
 
 
 def identity_replay(args):
@@ -425,7 +507,8 @@ def parser():
 
     build = sub.add_parser(
         "prepare", help="configure and build the checkout and stamp it "
-        "for the measuring commands")
+        "for the measuring commands of the table")
+    build.add_argument("--table", **pick)
     build.add_argument("--repo", type=Path, default=repo)
     build.add_argument("--timeout", type=int, default=tg.BUILD_TIMEOUT,
                        help="seconds each of the two commands, configure "
@@ -470,7 +553,7 @@ def parser():
     return p
 
 
-HANDLERS = {"prepare": idg.prepare, "cells": listing,
+HANDLERS = {"prepare": prepare, "cells": listing,
             "identity": identity, "identity-replay": identity_replay,
             "sources": sources}
 

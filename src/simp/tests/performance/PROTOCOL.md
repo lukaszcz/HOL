@@ -4385,7 +4385,10 @@ reduce at 1, 10, 100, 1000, 10000; boss at 0), whose workloads are those of
 `ClientPerformance.sml` (selected by PERF_CASE/PERF_SIZE like the other
 client cases). The final source set of the matrix is `task30_cases.SOURCES`
 less the deleted `SimpTracking.{sig,sml}`; the client's is
-`task31_cases.SOURCES`.
+`task31_cases.SOURCES`. These are the boundary lists the timing tables pin
+(`task37_cases.MATRIX_TIMING_SOURCES`, `CLIENT_TIMING_SOURCES`); the
+identity tables use the exact elaborated closures of `task37_sources.py`
+(see Identity).
 
 ### Tables (`task37_grid.py SHARD COMMAND`)
 
@@ -4404,16 +4407,24 @@ cover the sample and are balanced. Each shard has its own counts file
 `task37_matrix_1_iterations.json` ... `task37_matrix_4_...`; none exists
 until the shard's measurement stage commits it), layout seed, ledger, build
 stamp and prepare log; there is no un-sharded table. A declared follow-up
-of a shard is `task37-<shard>-followup` (`task37_grid.FOLLOWUP_CELLS`,
-`<shard>-followup COMMAND`, counts `task37_<kind>_<n>_followup_iterations.
-json`), as `task31_followup.py` has it. Each table: the `warmup` schedule (count rule, headroom 1), 20
-first-stage pairs of 5 samples, alternating AB/BA with a B/B control per
-round, 3% on inclusive CPU and wall, GC reported, no outlier removal, a
-second stage sized from the control (the TASK30A decisions). Each has its own
-seals (cases, pins code, the derivation modules, the fixtures it installs),
-its own layout seed, ledger, build stamp and counts; DRIVERS, ENGINES,
+of a shard is `task37-<shard>-followup`. It is declared in
+`task37_followup.py` (`CELLS`, by shard key; as `task31_followup.py` is
+apart from `task31_grid.py`), so that declaring one changes no seal of the
+shard drivers and voids no pilot or counts file. Its commands are
+`task37_followup.py SHARD COMMAND`, its counts file is
+`task37_<kind>_<n>_followup_iterations.json`, and its engines are
+`task37_followup.GRIDS`, by table name. Each table: the `warmup` schedule
+(count rule, headroom 1), 20 first-stage pairs of 5 samples, alternating
+AB/BA with a B/B control per round, 3% on inclusive CPU and wall, GC
+reported, no outlier removal, a second stage sized from the control (the
+TASK30A decisions). Each has its own seals (cases, pins code, the
+derivation modules, the fixtures it installs; no file repeated), its own
+layout seed, ledger, build stamp and counts; DRIVERS, ENGINES,
 ACCEPTANCE and SEALED_HISTORY are empty until a change follows a table's
-first record. The reviewed build/heap/source differences from B are
+first record. Every table pins the boundary source lists (the rule in
+Scope); correctness does not depend on them, since identity accounting
+proves every differing loaded file attributed (decision 19). The reviewed
+build/heap/source differences from B are
 `task37_attributed.json` (format of `task31_attributed.json`): the pins of
 the tables' sources (`Cond_rewr.sig`) and the heap and build entries
 (`ThmAttribute.{sig,sml}`, Holmakefiles, `holproject.toml`, the sequence).
@@ -4445,7 +4456,25 @@ decision runs; D7; dispose. Deterministic gates come first so a failure
 stops early. Any code or build change after the counts commits voids the
 affected results.
 
+The identity source lists are the exception to that rule (design decision
+19): `task37_sources.py` is sealed by the identity tables only, never by a
+timing shard. The one-cell identity diagnostics (one per table that has no
+list yet; see Identity) and the commit of `task37_sources.py` alone come
+before the full identity grids; pilots, counts files and timing runs are
+independent of that commit and are not voided by it. The identity grids,
+unlike the timing tables, run in their own clone with their own ledger and
+stamp (Identity).
+
 ### Decision rule (design decision 11)
+
+D4 (design decision 16) applies to all 31 cells of `task37_cases.D4` (13
+TASK29A control-limited, 5 TASK29A attributed, 13 TASK30 attributed), only
+when the cell's decisive timing stage is control-limited (the B/B control
+outside the window, the candidate not a reproducible slowdown), identity is
+identical or attributed, and exact allocation passes, work rows included.
+Any other control-limited cell blocks and owes stage 2; if cells outside D4
+are still control-limited after stage 2 the lead asks the user, and D4 is
+not extended.
 
 Every workload gets a decision. A reproducible slowdown of any size fails;
 an inconclusive result does not pass. Experiments are improved, or the
@@ -4477,15 +4506,17 @@ No averaging and no allowed regression percentage.
 unchanged: `client` (`task37-client-identity`, the 278 `task31_cases` cells,
 with TASK31's INFEASIBLE rule: the 33 heavy size-10000 tactic cells are
 derived, not run), `matrix` (`task37-matrix-identity`, 306 cells) and
-`downstream` (`task37-downstream-identity`, 11 cells). The cells, the
-infeasible set and the source sets are those of `task37_cases.py`. All
-three are judged by the committed `task37_attributed.json`; `--attributed
-FILE` is for a diagnostic (`--only`) run only. `task31_identity_grid.py` and
-the TASK31 table are not edited (the latter holds blobs that moved after
-TASK31). The module binds the table to `task31_identity_grid`'s globals
-under a lock for the duration of a run (tested, restored on failure).
+`downstream` (`task37-downstream-identity`, 11 cells). The cells and the
+infeasible set are those of `task37_cases.py`, the source lists those of
+`task37_sources.py`. All three are judged by the committed
+`task37_attributed.json`; `--attributed FILE` is for a diagnostic (`--only`)
+run only. `task31_identity_grid.py` and the TASK31 table are not edited (the
+latter holds blobs that moved after TASK31). The module binds the table to
+`task31_identity_grid`'s globals (`cases`, `attribution`, `ENGINE`,
+`IDENTITY_TABLE`, `IDENTITY_CODE`, `CODE_HISTORY`, `report`, `measure`) under
+a lock for the duration of a run (tested, restored on failure).
 
-    task37_identity.py prepare
+    task37_identity.py prepare --table T [--repo R]
     task37_identity.py cells --table T
     task37_identity.py identity --table T --output DIR --candidate C
         --authorize-measurements [--only CELL ...] [--resume] [--jobs N]
@@ -4494,15 +4525,44 @@ under a lock for the duration of a run (tested, restored on failure).
         [--ledger FILE]
     task37_identity.py sources --output DIR [--heap]
 
-Sources. A table's source list (`CLIENT_SOURCES`, `MATRIX_SOURCES`,
-`DOWNSTREAM_SOURCES` in `task37_cases.py`) is the set of files a cell's
-sides differ in under the build. `DOWNSTREAM_SOURCES` is empty until it is
-obtained: a full grid of a table with no sources is refused. Run one
-diagnostic cell with `--only` (in any checkout), run `sources --output DIR`,
-and enter the printed list in `task37_cases.py` (a tooling commit before the
-measurement). The client timing sources must cover the downstream ones
-(`CLIENT_TIMING_SOURCES`; a test pins it). `--jobs N` runs cells in
-parallel, each in its own scratch; the records are those of a serial run.
+Evidence paths. Identity runs in its own clone (or, in one checkout, one
+table after the other), never in a checkout that holds TASK31's evidence to
+share it: the engine it binds (`Placed`) keeps the ledger, the build stamp
+and the `prepare` log of table T in
+`<checkout>/.agent-files/evidence/task37-T-identity/` (`attempts.jsonl`,
+`build-stamp.json`, `prepare.log`), so `prepare --table T` and the grid
+share them and TASK31's `.agent-files/evidence/task31/` is neither read nor
+written. `task37_dispose.py` takes the ledger of each table as
+`--identity-ledger KIND=FILE` (KIND is `client`, `matrix` or
+`downstream`; FILE is that `attempts.jsonl`). With `--jobs N` the scratch
+directories are fresh `mkdtemp`s named `task37-identity-*` (the same
+prefix for every table; a serial run uses TASK31's `task31-identity-*`).
+After a failure, the cells after the failed one do not start, the cells
+before it run and are recorded, and the real error of the failed cell is
+raised with its archive set aside.
+
+Sources. The sources of a table are the files its cells elaborate, which a
+full grid requires exactly (`uncovered` and `unused_sources` of
+`task31_identity_grid.decide` make it inconclusive). They are the exact
+elaborated closures in `task37_sources.py`: `CLIENT` is TASK31's
+(`task31_cases.SOURCES`, the closure TASK31's identity grid used for the
+same 278 cells); `MATRIX` and `DOWNSTREAM` are `()` until derived. A full
+grid of a table with an empty list is refused with this procedure: run one
+diagnostic cell with `--only` (in any checkout, at the final candidate),
+run `sources --output DIR`, enter the printed list in `task37_sources.py`
+and commit that file alone, before the full identity grids. Only the
+identity tables seal `task37_sources.py` (tests: it is in no shard's or
+follow-up's `SEALED`, and is in `IDENTITY_CODE`), so filling a list voids no
+pilot or counts file. The identity code seals also include `task37_cases.py`
+and `task30_cases.py` (the matrix cells), and a test keeps every module the
+identity module imports, to the transitive closure, sealed or reached only
+by a reviewed exempt import edge (`task29a_grid` and `task31_followup`,
+which `task37_cases.py` imports for the timing samples). The one-cell
+diagnostic of the matrix is the first real exercise of the matrix
+fixture's receipts by `task31_identity.cell`: they have never gone through
+it, so a first diagnostic may find a fixture or closure difference to fix
+before the counts commits. `--jobs N` runs cells in parallel, each in its
+own scratch; the records are those of a serial run.
 
 ### Allocation (part C)
 
@@ -4510,7 +4570,45 @@ parallel, each in its own scratch; the records are those of a serial run.
 
 ### TASK32/33, startup, loading, D7 (part D)
 
-(to be merged)
+TASK37 re-targets the TASK32 and TASK33 drivers to the final candidate
+without editing what their kept records depend on.
+
+- Compiled reference. The revision the candidate's compiled sources must
+  equal is a parameter: `--compiled-ref REV` (the snapshot builder also
+  takes the old spelling `--c31`), default TASK31's C31, so the TASK32 and
+  TASK33 records still replay. TASK37 passes the final candidate.
+- Seals. The seals of the TASK32/TASK33 files as the kept records carry
+  them are kept in `TASK32_HISTORY` and `TASK33_HISTORY` (in
+  `task32_downstream.py`); the files as they are now seal TASK37 records.
+- Dispositions. Both the TASK32 and the TASK33 disposition carry a top-level
+  `candidate` (the full pin the stages measured; TASK33 refuses stages that
+  measured different candidates), which `task37_dispose.py` joins on.
+- Declaration. TASK37's reviewed data is `task37_declared.json` (schema
+  `task33-declared-v4`, as `task33_declared.json`, which stays for the kept
+  r4 records), selected with `--declared` (`task33_storage.py`,
+  `task33_offline.py`). The S2 closure-total change is measured live, so
+  the file carries a placeholder (`s2.total_delta[0].pending`), which every
+  gate refuses (fails closed). It is filled with `task37_declared.py
+  observe` (finished storage smokes of the TASK37 snapshots, replayed first)
+  and `fill`, reviewed, and committed alone before the pilot; the pilot,
+  controls and counts seal it.
+- Snapshots. TASK32 and TASK33 each need their own snapshot pair (base and
+  candidate), built, verified and compared with the compiled reference.
+- Startup gate. The runner uses fixed-length `/dev/shm` paths (the path
+  lengths are part of the test), so one startup-gate run is live at a time.
+- Loading. The loading runner makes the api-audit receipt (in a built
+  candidate tree) and then runs `loading.py` for each module (simpLib and
+  congLib): 40 pairs of 5 first imports, and the replay of each.
+- D7. `task37_builds.py` records build timing and is not a gate: the routine
+  `bin/build -t --seq=tools/sequences/upto-parallel` in 3 AB/BA/AB pairs and
+  `bin/build -t -F` in 2 pairs, each side a fresh `git clone --shared` in
+  `/dev/shm` (at most about 20 GB for all streams), deleted after its pair;
+  `attribute` joins the per-directory build lines of the two sides.
+
+The runners (`run_startup_gate.sh`, `run_loading.sh`, `run_builds.sh`) are
+outside git, by design, in `.agent-files/evidence/task37/runners/`: the
+evidence directory holds them, so that a run's runner is kept with its
+evidence.
 
 ### Disposition (part E; `task37_dispose.py`)
 

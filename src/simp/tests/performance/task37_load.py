@@ -46,20 +46,28 @@ def sample(stream, now=None, path="/proc/loadavg"):
 
 
 def record(output, interval, stream, count=None, path="/proc/loadavg"):
-    """Append samples to `output` until a signal or `count` samples."""
+    """Append samples to `output` until a signal or `count` samples. The
+    SIGTERM and SIGINT handlers it installs are restored on return."""
     if interval <= 0:
         raise ValueError("the interval is positive")
     stop = []
-    for number in (signal.SIGTERM, signal.SIGINT):
-        signal.signal(number, lambda *_: stop.append(1))
+    signals = (signal.SIGTERM, signal.SIGINT)
+    # The handlers are installed for the duration of the recording only.
+    saved = {number: signal.getsignal(number) for number in signals}
     done = 0
-    with open(output, "a") as out:
-        while not stop and (count is None or done < count):
-            out.write(json.dumps(sample(stream, path=path)) + "\n")
-            out.flush()
-            done += 1
-            if count is None or done < count:
-                time.sleep(interval)
+    try:
+        for number in signals:
+            signal.signal(number, lambda *_: stop.append(1))
+        with open(output, "a") as out:
+            while not stop and (count is None or done < count):
+                out.write(json.dumps(sample(stream, path=path)) + "\n")
+                out.flush()
+                done += 1
+                if count is None or done < count:
+                    time.sleep(interval)
+    finally:
+        for number, handler in saved.items():
+            signal.signal(number, handler)
     return done
 
 

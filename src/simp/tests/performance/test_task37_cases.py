@@ -126,27 +126,39 @@ class Names(unittest.TestCase):
 
 
 class Sources(unittest.TestCase):
-    def test_the_client_timing_sources_cover_the_downstream_ones(self):
-        """The client timing grid also measures the downstream cells, so
-        its sources are the client's and the downstream's together."""
-        self.assertTrue(set(c.CLIENT_SOURCES) <= set(c.CLIENT_TIMING_SOURCES))
-        self.assertTrue(
-            set(c.DOWNSTREAM_SOURCES) <= set(c.CLIENT_TIMING_SOURCES))
-        self.assertEqual(list(c.CLIENT_TIMING_SOURCES),
-                         sorted(c.CLIENT_TIMING_SOURCES))
+    """The boundary lists the timing tables pin (task37_cases.py). The
+    identity lists are task37_sources.py's, apart (test_task37_sources.py)."""
 
-    def test_the_source_sets_are_tuples_of_paths(self):
-        for sources in (c.MATRIX_SOURCES, c.CLIENT_SOURCES,
-                        c.DOWNSTREAM_SOURCES):
-            self.assertIsInstance(sources, tuple)
-            self.assertEqual(len(set(sources)), len(sources))
-
-    def test_the_deleted_files_are_not_sources(self):
+    def test_the_matrix_boundary_is_task30s_less_the_deleted_files(self):
         for path in c.DELETED_SOURCES:
             self.assertIn(path, task30_cases.SOURCES)
-            self.assertNotIn(path, c.MATRIX_SOURCES)
-        self.assertEqual(len(c.MATRIX_SOURCES),
+            self.assertNotIn(path, c.MATRIX_TIMING_SOURCES)
+        self.assertEqual(
+            c.MATRIX_TIMING_SOURCES,
+            tuple(p for p in task30_cases.SOURCES
+                  if p not in c.DELETED_SOURCES))
+        self.assertEqual(len(c.MATRIX_TIMING_SOURCES),
                          len(task30_cases.SOURCES) - 2)
+
+    def test_the_client_boundary_is_task31s_list(self):
+        self.assertEqual(c.CLIENT_TIMING_SOURCES,
+                         tuple(task31_cases.SOURCES))
+        for path in c.DELETED_SOURCES:
+            self.assertNotIn(path, c.CLIENT_TIMING_SOURCES)
+
+    def test_the_boundary_lists_are_tuples_of_distinct_paths(self):
+        for sources in (c.MATRIX_TIMING_SOURCES, c.CLIENT_TIMING_SOURCES):
+            self.assertIsInstance(sources, tuple)
+            self.assertTrue(sources)
+            self.assertEqual(len(set(sources)), len(sources))
+
+    def test_the_identity_lists_are_not_defined_here(self):
+        """No second definition of an identity list: they live in
+        task37_sources.py alone, and the false "derived" boundary names
+        are gone."""
+        for name in ("MATRIX_SOURCES", "CLIENT_SOURCES",
+                     "DOWNSTREAM_SOURCES", "DOWNSTREAM_TIMING_SOURCES"):
+            self.assertFalse(hasattr(c, name), name)
 
     def test_the_sources_exist_at_the_final_candidate(self):
         root = a.HERE.parents[3]
@@ -155,7 +167,7 @@ class Sources(unittest.TestCase):
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         if found.returncode:
             self.skipTest("the final candidate is not in this clone")
-        for path in c.MATRIX_SOURCES + c.CLIENT_SOURCES:
+        for path in c.MATRIX_TIMING_SOURCES + c.CLIENT_TIMING_SOURCES:
             kind = subprocess.run(
                 ["git", "-C", str(root), "cat-file", "-t",
                  "%s:%s" % (FINAL, path)], stdout=subprocess.PIPE,
@@ -166,7 +178,8 @@ class Sources(unittest.TestCase):
 class Style(unittest.TestCase):
     def test_no_tabs_trailing_blanks_or_80_columns(self):
         for name in ("task37_cases.py", "task37_grid.py", "task37_load.py",
-                     "task37_identity.py", "task37_dispose.py"):
+                     "task37_identity.py", "task37_dispose.py",
+                     "task37_sources.py", "task37_followup.py"):
             for i, line in enumerate((a.HERE / name).read_text()
                                      .split("\n"), 1):
                 where = "%s:%d" % (name, i)

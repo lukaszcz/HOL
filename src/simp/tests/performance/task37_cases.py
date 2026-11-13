@@ -36,13 +36,11 @@ The timing samples (design decision 4 of TASK_37_design.md):
   (task31_followup.CELLS, which are cells of that sample, so the two lists
   add 28 cells), and the 11 downstream cells.
 
-The source sets (the files the cells elaborate, which the identity tables
-require exactly and the timing tables pin; PROTOCOL.md, TASK37 identity):
-CLIENT_SOURCES, MATRIX_SOURCES and DOWNSTREAM_SOURCES. They are the single
-source for the identity tables (task37_identity.py) and the timing tables
-(task37_grid.py). CLIENT_TIMING_SOURCES is the client timing tables' set: the
-client sample also measures the downstream cells, so it is the union of
-CLIENT_SOURCES and DOWNSTREAM_SOURCES (a test pins this).
+The source lists. The timing tables pin the boundary lists
+MATRIX_TIMING_SOURCES and CLIENT_TIMING_SOURCES (below: the rule is stated
+there). The identity tables need the exact elaborated closure of their
+cells and use task37_sources.py, which only they seal (PROTOCOL.md, TASK37
+identity).
 """
 import sys
 
@@ -174,32 +172,22 @@ CLIENT_SAMPLE_CASES = tuple(dict.fromkeys(split(c)[0]
 MATRIX_SAMPLE_CASES = tuple(c for c in MATRIX_CASES
                             if any(split(x)[0] == c for x in MATRIX_SAMPLE))
 
-# The source files the matrix cases need identical (or pinned) at both
-# commits: those of task30_cases.SOURCES that the final candidate has.
-# task30_cases.SOURCES also names SimpTracking.{sig,sml}, which the final
-# candidate does not have (they were deleted before TASK34; the baseline has
-# neither), so they are no source of the final gate. The matrix cases of
-# TASK29 elaborate the same files (fragment and net code in simpLib, Ho_Net,
-# Cond_rewr and the modules listed there).
+# The boundary source lists the timing tables pin (timing_grid.Table
+# `sources`; task37_grid.py). Rule: a timing table pins the boundary list of
+# the table it derives from, the files a pin can bind, and its correctness
+# does not depend on the list being the elaborated closure: identity
+# accounting proves that every differing loaded file is attributed (design
+# decision 19). The matrix shards pin TASK30's list less the deleted
+# SimpTracking.{sig,sml} (the final candidate has neither, and nor does the
+# baseline); the client shards, whose sample also holds the downstream cells,
+# pin task31_cases.SOURCES. The identity tables need the exact elaborated
+# closures and use the lists of task37_sources.py, which no timing table
+# seals.
 DELETED_SOURCES = ("src/simp/src/SimpTracking.sig",
                    "src/simp/src/SimpTracking.sml")
-MATRIX_SOURCES = tuple(p for p in cases30.SOURCES
-                       if p not in DELETED_SOURCES)
-# The client cells' sources are task31_cases.SOURCES, none of them deleted;
-# the downstream cells elaborate files of that closure and of the initial
-# heap (numLib, reduceLib and bossLib are among ELABORATED).
-CLIENT_SOURCES = tuple(cases31.SOURCES)
-# The downstream cells elaborate files that cannot be derived offline: run
-# `task37_identity.py identity --table downstream --only downstream_boss-0
-# ...` once (a diagnostic, in any checkout), print `sources --output DIR`,
-# and enter the list here (design decision 13). Until then it is empty and a
-# full grid of the downstream table is refused, since it could not be
-# conclusive.
-DOWNSTREAM_SOURCES = ()
-# The client timing tables measure the client sample, which holds the
-# downstream cells: their sources must be pinned too.
-CLIENT_TIMING_SOURCES = tuple(sorted(set(CLIENT_SOURCES) |
-                                     set(DOWNSTREAM_SOURCES)))
+MATRIX_TIMING_SOURCES = tuple(p for p in cases30.SOURCES
+                              if p not in DELETED_SOURCES)
+CLIENT_TIMING_SOURCES = tuple(cases31.SOURCES)
 
 # Batch seconds: the sub-microsecond operations take a longer batch, as in
 # the tables they come from (task30_grid, task31_grid).

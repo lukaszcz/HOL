@@ -41,20 +41,20 @@ and SEALED_HISTORY are empty: no record of these tables predates this file;
 when a change is made after a table's first record (its pilot), append the
 old seals there in the same commit, as task31_grid.py describes.
 
-Follow-ups. FOLLOWUP_CELLS[shard] is empty until a policy decision names
-the cells a shard's grid (and its second stage) left inconclusive. Then the
-follow-up table `task37-<shard>-followup` exists (a subset of the shard's
-cells, twice the pairs, another layout seed, counts file
-`task37_<kind>_<n>_followup_iterations.json`, the ledger of the shard), as
-task31_followup.py describes, and its commands are `<shard>-followup
-COMMAND`. GRIDS holds every declared engine by table name.
+Follow-ups are in task37_followup.py (as TASK31's task31_followup.py is
+apart from task31_grid.py): declaring one changes no seal of these shard
+tables, whose records and counts it must not void.
 
 The reviewed differences are those of task37_attributed.json (the format of
 task31_attributed.json, read by task31_pins.py, which is sealed): the tables
-pin the entries of their sources. The sources are those of task37_cases.py:
-the matrix's (task30_cases.SOURCES without the deleted SimpTracking files),
-and the client's (the TASK31 sources and those of the downstream cells,
-task37_cases.CLIENT_TIMING_SOURCES).
+pin the entries of their sources. The sources are the boundary lists of
+task37_cases.py: the matrix shards' MATRIX_TIMING_SOURCES (task30_cases.
+SOURCES without the deleted SimpTracking files) and the client shards'
+CLIENT_TIMING_SOURCES (task31_cases.SOURCES). They are not the elaborated
+closures that the identity tables need (task37_sources.py, which no shard
+seals): identity accounting proves every differing loaded file attributed,
+so the correctness of a timing table does not depend on its list
+(design decision 19).
 
 The command is the engine's, with the shard named first:
 
@@ -88,8 +88,9 @@ INSTALLED = dict(client=base31.INSTALLED, matrix=base30.INSTALLED)
 DERIVED = dict(
     client=("task31_cases.py", "task31_followup.py", "task31_grid.py"),
     matrix=("task29_gate.py", "task29a_grid.py", "task30_cases.py"))
-SEALED = {k: ("task37_cases.py", "task31_pins.py") + DERIVED[k] +
-          base30.SEALED[1:5] + INSTALLED[k] for k in SHARDS}
+SEALED = {k: tuple(dict.fromkeys(
+    ("task37_cases.py", "task31_pins.py") + DERIVED[k] +
+    base30.SEALED[1:5] + INSTALLED[k])) for k in SHARDS}
 # Seals of earlier code: empty until a change is made after a table's first
 # record (see the docstring).
 DRIVERS, ENGINES, ACCEPTANCE, SEALED_HISTORY = (), (), (), {}
@@ -97,15 +98,12 @@ DRIVERS, ENGINES, ACCEPTANCE, SEALED_HISTORY = (), (), (), {}
 # (every record seals it).
 ATTRIBUTED = reviewed.load(FILE)
 SOURCES = dict(client=cases.CLIENT_TIMING_SOURCES,
-               matrix=cases.MATRIX_SOURCES)
+               matrix=cases.MATRIX_TIMING_SOURCES)
 # The cases of a sample, its cells and the cases with a long batch.
 CASES = dict(client=cases.CLIENT_SAMPLE_CASES,
              matrix=cases.MATRIX_SAMPLE_CASES)
 CELLS = dict(client=cases.CLIENT_SAMPLE, matrix=cases.MATRIX_SAMPLE)
 LONG = dict(client=cases.LONG_CLIENT, matrix=cases.LONG_MATRIX)
-# The cells of the follow-up of each shard, declared by a policy decision
-# after the shard's grid (see the docstring); none yet.
-FOLLOWUP_CELLS = {}
 
 
 def shards(kind):
@@ -137,15 +135,14 @@ PARTS = {k: part for kind in SHARDS
 
 
 def name_of(key):
-    """The table name of a shard key (or of its follow-up)."""
+    """The table name of a shard key (`matrix-2`)."""
     return "task37-" + key
 
 
-def file_of(key, followup=False):
-    """The counts file of a shard (or of its follow-up)."""
+def file_of(key):
+    """The counts file of a shard."""
     kind, number = key.split("-")
-    return a.HERE / ("task37_%s_%s_%siterations.json" % (
-        kind, number, "followup_" if followup else ""))
+    return a.HERE / ("task37_%s_%s_iterations.json" % (kind, number))
 
 
 def table(key, document=ATTRIBUTED):
@@ -172,52 +169,11 @@ def table(key, document=ATTRIBUTED):
         "task37-%s; task37_dispose.py joins the gates" % kind)
 
 
-def followup_table(key, cells, replaced, document=ATTRIBUTED):
-    """The follow-up table of shard `key` for `cells` (a non-empty subset
-    of its cells), replacing the grid of the engine `replaced`."""
-    cells = tuple(cells)
-    kind = KIND[key]
-    a.require(cells and set(cells) <= set(PARTS[key]),
-              "a follow-up measures cells of its shard")
-    base = replaced.t
-    found = tuple(dict.fromkeys(cases.split(c)[0] for c in cells))
-    return tg.Table(
-        name_of(key) + "-followup", "TASK37-%s-FOLLOWUP" % key.upper(),
-        found, __file__, file_of(key, True), cells=cells,
-        family=base.family, replaces=tg.Replaces(replaced),
-        seconds=SECONDS, seconds_by_case={
-            c: LONG_SECONDS for c in found if c in LONG[kind]},
-        fixed_seconds=True, schedule="warmup", headroom=1, pairs=2 * PAIRS,
-        samples=SAMPLES, seed="%s-followup-layout-1" % name_of(key),
-        baseline=a.BASE, engine=True, engines=ENGINES, drivers=DRIVERS,
-        layout_acceptance=ACCEPTANCE, sealed_history=SEALED_HISTORY,
-        tree="src", sealed=SEALED[kind], require_seed=True,
-        sources=SOURCES[kind],
-        pinned=reviewed.pins(document["entries"], SOURCES[kind]),
-        pin_file=FILE.name,
-        pin_history=reviewed.pin_history(document, SOURCES[kind]),
-        allocation=base.allocation)
-
-
 TABLES = {name_of(k): table(k) for k in SHARD_KEYS}
-# The engines by table name: the shards', and the follow-ups declared.
+# The engines of the shards by table name (those of the follow-ups
+# declared are task37_followup.GRIDS).
 GRIDS = {name_of(k): tg.Grid(TABLES[name_of(k)], doc=__doc__)
          for k in SHARD_KEYS}
-
-
-def declare(key, cells):
-    """The engine of the follow-up of shard `key`, added to GRIDS (and
-    TABLES), or None for no cell."""
-    if not cells:
-        return None
-    built = followup_table(key, cells, GRIDS[name_of(key)])
-    TABLES[built.name] = built
-    GRIDS[built.name] = tg.Grid(built, doc=__doc__)
-    return GRIDS[built.name]
-
-
-for _key, _cells in FOLLOWUP_CELLS.items():
-    declare(_key, _cells)
 
 
 def commands():

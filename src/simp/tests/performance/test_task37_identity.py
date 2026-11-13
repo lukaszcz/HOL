@@ -4,6 +4,7 @@
 the parity of the records with task31_identity_grid's, the refusals, the
 seals, the binding of task31_identity_grid's names and the parallel jobs,
 with the runner stood in for (nothing is measured)."""
+import argparse
 import contextlib
 import copy
 import io
@@ -16,14 +17,17 @@ import unittest
 from unittest import mock
 
 import acceptance as a
+import import_closure as ic
 import matrix_schema as ms
 import task30_cases
 import task31_cases
 import task31_grid as timing
 import task31_identity as idt
 import task31_identity_grid as g
+import task37_sources as lists
 import task37_cases as c37
 import task37_identity as m
+import test_task31_attempts as t31a
 import test_task31_identity_grid as t31
 import timing_grid as tg
 
@@ -92,17 +96,17 @@ class Cells(unittest.TestCase):
             self.assertEqual(ms.get_case(case, size), CLIENT)
         self.assertEqual(t.names(), list(c37.DOWNSTREAM_CELLS))
 
-    def test_the_sources_are_those_of_the_cases_module(self):
+    def test_the_sources_are_those_of_the_sources_module(self):
         found = m.tables()
-        self.assertEqual(found["client"].sources, c37.CLIENT_SOURCES)
-        self.assertEqual(found["matrix"].sources, c37.MATRIX_SOURCES)
-        self.assertEqual(found["downstream"].sources,
-                         c37.DOWNSTREAM_SOURCES)
+        self.assertEqual(found["client"].sources, lists.CLIENT)
+        self.assertEqual(found["matrix"].sources, lists.MATRIX)
+        self.assertEqual(found["downstream"].sources, lists.DOWNSTREAM)
+        # Not the boundary lists the timing tables pin.
+        self.assertIsNot(found["matrix"].sources, c37.MATRIX_TIMING_SOURCES)
         # No duplicate definition of a cell set or a source list here.
         text = (a.HERE / "task37_identity.py").read_text()
-        for name in ("MATRIX_SOURCES =", "DOWNSTREAM_SOURCES =",
-                     "CLIENT_SOURCES =", "INFEASIBLE =", "def matrix_cases",
-                     "def downstream_cases"):
+        for name in ("MATRIX =", "DOWNSTREAM =", "CLIENT =", "INFEASIBLE =",
+                     "SOURCES =", "def matrix_cases", "def downstream_cases"):
             self.assertNotIn(name, text)
 
     def test_the_tables_are_three_disjoint_cell_sets(self):
@@ -123,8 +127,8 @@ class Cells(unittest.TestCase):
             m.Table("x", "y", SMALL, infeasible=("nonsense-1",)).view()
 
     def test_the_names_the_grid_reads_are_restored(self):
-        names = ("cases", "attribution", "IDENTITY_TABLE", "IDENTITY_CODE",
-                 "CODE_HISTORY", "report", "measure")
+        names = ("cases", "attribution", "ENGINE", "IDENTITY_TABLE",
+                 "IDENTITY_CODE", "CODE_HISTORY", "report", "measure")
         before = [getattr(g, n) for n in names]
         with self.assertRaises(RuntimeError), m.bound(
                 m.tables()["matrix"], m.Pool(2)):
@@ -229,8 +233,11 @@ class Code(unittest.TestCase):
         self.assertIn("task31_identity.py", g.IDENTITY_CODE)
         self.assertIn(m.THIS, m.IDENTITY_CODE)
         self.assertIn("task37_cases.py", m.IDENTITY_CODE)
-        self.assertEqual(set(g.IDENTITY_CODE) | {m.THIS, "task37_cases.py"},
+        self.assertEqual(set(g.IDENTITY_CODE) | set(m.EXTRA_CODE),
                          set(m.IDENTITY_CODE))
+        self.assertEqual(set(m.EXTRA_CODE), {
+            m.THIS, "task37_cases.py", "task37_sources.py",
+            "task30_cases.py"})
 
     def test_the_recorded_seals_are_checked(self):
         with m.bound(m.tables()["matrix"]):
@@ -247,6 +254,146 @@ class Code(unittest.TestCase):
             old = {k: v for k, v in now.items() if k != m.THIS}
             with self.assertRaises(ValueError):
                 g.check_code(old)
+
+
+class Placement(unittest.TestCase):
+    """The evidence of each table is its own, never TASK31's (the real
+    engine, `Placed`, not the patched stand-in of `Commands`)."""
+
+    REPO = Path("/clone")
+
+    def test_each_table_has_its_own_ledger_stamp_and_log(self):
+        seen = set()
+        for key, t in m.tables().items():
+            engine = m.engine_of(t)
+            here = self.REPO / ".agent-files" / "evidence" / t.ledger
+            self.assertEqual(engine.ledger_path(self.REPO),
+                             here / "attempts.jsonl")
+            self.assertEqual(engine.stamp_path(self.REPO),
+                             here / "build-stamp.json")
+            self.assertEqual(engine.prepare_log_path(self.REPO),
+                             here / "prepare.log")
+            seen |= {engine.ledger_path(self.REPO),
+                     engine.stamp_path(self.REPO),
+                     engine.prepare_log_path(self.REPO)}
+        self.assertEqual(len(seen), 9)
+
+    def test_task31s_paths_are_not_used(self):
+        theirs = {timing.ENGINE.ledger_path(self.REPO),
+                  timing.ENGINE.stamp_path(self.REPO),
+                  timing.ENGINE.prepare_log_path(self.REPO)}
+        self.assertEqual(theirs, {
+            self.REPO / ".agent-files/evidence/task31/attempts.jsonl",
+            self.REPO / ".agent-files/evidence/task31/build-stamp.json",
+            self.REPO / ".agent-files/evidence/task31/prepare.log"})
+        for t in m.tables().values():
+            engine = m.engine_of(t)
+            for path in (engine.ledger_path(self.REPO),
+                         engine.stamp_path(self.REPO),
+                         engine.prepare_log_path(self.REPO)):
+                self.assertNotIn(path, theirs)
+                self.assertNotIn("/task31/", str(path))
+            # The engine is TASK31's table, under this table's name.
+            self.assertEqual(engine.t.name, t.ledger)
+            self.assertEqual(engine.t.family, t.ledger)
+            self.assertEqual(engine.t.sealed, timing.TABLE.sealed)
+        self.assertEqual(timing.TABLE.name, "task31")
+
+    def test_the_command_binds_its_engine_and_restores_task31s(self):
+        before = g.ENGINE
+        for t in m.tables().values():
+            with m.bound(t):
+                self.assertIsNot(g.ENGINE, before)
+                self.assertEqual(
+                    g.ENGINE.h.ledger_path(self.REPO),
+                    self.REPO / ".agent-files/evidence" / t.ledger /
+                    "attempts.jsonl")
+            self.assertIs(g.ENGINE, before)
+
+    def test_prepare_stamps_the_tables_own_place(self):
+        seen = []
+
+        def prepare(engine, args):
+            seen.append((engine.stamp_path(args.repo), g.ENGINE is engine))
+            return 0
+        with mock.patch.object(m.Placed, "prepare", prepare):
+            code = m.main(["prepare", "--table", "matrix", "--repo",
+                           str(self.REPO)])
+        self.assertEqual(code, 0)
+        self.assertEqual(seen, [(self.REPO / ".agent-files/evidence/"
+                                 "task37-matrix-identity/"
+                                 "build-stamp.json", True)])
+        self.assertIs(g.ENGINE, timing.ENGINE)
+
+    def test_prepare_needs_a_table(self):
+        with contextlib.redirect_stderr(io.StringIO()), \
+                self.assertRaises(SystemExit):
+            m.main(["prepare"])
+
+
+class Closure(unittest.TestCase):
+    """The carried-over invariant of test_task31_attempts.Modules for this
+    module: every local module it imports, to the transitive closure, is
+    in IDENTITY_CODE or reached only by an exempt import edge with a
+    stated reason."""
+
+    TIMING_SAMPLES = (
+        "task37_cases.py imports it for the timing samples (the sample "
+        "of the client table: its follow-up cells) and no identity cell "
+        "or source list derives from it: the identity cells are the "
+        "cases, and the lists are task37_sources.py's")
+    D4_LISTS = (
+        "task37_cases.py imports it for the D4 list of TASK29A (the "
+        "disposition's and the timing sample's), not read by any identity "
+        "cell or decision")
+
+    @classmethod
+    def exempt(cls):
+        found = t31a.Modules.runtime_edges(
+            "loading", "path_schema", "prepare_patch", "check_patch")
+        found.update(t31a.Modules.edges(
+            t31a.Modules.TASK30_IDENTITY,
+            ("task31_grid", "task30_grid", None)))
+        found.update(t31a.Modules.edges(
+            cls.TIMING_SAMPLES, ("task37_cases", "task31_followup", None)))
+        found.update(t31a.Modules.edges(
+            cls.D4_LISTS, ("task37_cases", "task29a_grid", None)))
+        return found
+
+    ROOTS = t31a.Modules.IDENTITY_ROOTS + ("task37_identity",)
+
+    def covered(self, sources, exempt):
+        stems = {Path(n).stem for n in m.IDENTITY_CODE}
+        found, used = ic.closure(sources, self.ROOTS, exempt)
+        return found - stems, set(exempt) - used, [
+            e for e in exempt if e[1] in stems]
+
+    def test_the_identity_module_imports_only_sealed_code(self):
+        unsealed, unused, redundant = self.covered(ic.sources(),
+                                                   self.exempt())
+        self.assertEqual(sorted(unsealed), [])
+        self.assertEqual(sorted(unused, key=str), [])
+        self.assertEqual(redundant, [])
+        for edge, reason in self.exempt().items():
+            self.assertTrue(reason, edge)
+
+    def test_the_cell_set_modules_are_sealed(self):
+        stems = {Path(n).stem for n in m.IDENTITY_CODE}
+        for name in ("task37_cases", "task37_sources", "task30_cases",
+                     "task37_identity"):
+            self.assertIn(name, stems)
+        self.assertNotIn("task29a_grid", stems)
+        self.assertNotIn("task31_followup", stems)
+
+    def test_a_new_import_is_found(self):
+        sources = ic.sources()
+        sources["task37_cases"] += "\nimport allocation_boundary\n"
+        unsealed, _, _ = self.covered(sources, self.exempt())
+        self.assertIn("allocation_boundary", unsealed)
+        sources = ic.sources()
+        sources["task37_identity"] += "\nimport task29a_grid\n"
+        unsealed, _, _ = self.covered(sources, self.exempt())
+        self.assertIn("task29a_grid", unsealed)
 
 
 class Commands(t31.Commands):
@@ -281,8 +428,11 @@ class Commands(t31.Commands):
         patch.start()
         self.addCleanup(patch.stop)
         self.tables = small()
+        engine = g.ENGINE   # patched by the TASK31 setUp (`Placement` tests
+        # the real, per-table engine)
         for patch in (
                 mock.patch.object(m, "tables", lambda: self.tables),
+                mock.patch.object(m, "engine_of", lambda table: engine),
                 mock.patch.object(t31.c, "SOURCES", FILES)):
             patch.start()
             self.addCleanup(patch.stop)
@@ -375,7 +525,7 @@ class Commands(t31.Commands):
         self.assertEqual(sorted(one), sorted(two))
         self.assertEqual(one["schema"], two["schema"])
         self.assertEqual(
-            sorted(one["code"] | {m.THIS: 0, "task37_cases.py": 0}),
+            sorted(one["code"] | dict.fromkeys(m.EXTRA_CODE, 0)),
             sorted(two["code"]))
         self.assertEqual(sorted(one["runs"][0]), sorted(two["runs"][0]))
         self.assertEqual(sorted(one["runs"][0]["row"]),
@@ -488,15 +638,15 @@ class Commands(t31.Commands):
     def test_the_refusal_of_a_table_without_sources_says_how_to_get_them(
             self):
         self.start()
-        self.tables = {k: m.Table(k, t.ledger, t.cases, constant=(
-            k.upper() + "_SOURCES")) for k, t in self.tables.items()}
+        self.tables = {k: m.Table(k, t.ledger, t.cases, constant=k.upper())
+                       for k, t in self.tables.items()}
         argv, out = self.args(table="downstream")
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             self.assertEqual(self.main(argv)[0], tg.REFUSED)
         text = err.getvalue()
         for part in ("no sources yet", "--only", "sources --output DIR",
-                     "task37_cases.DOWNSTREAM_SOURCES"):
+                     "task37_sources.DOWNSTREAM"):
             self.assertIn(part, text)
 
     def test_the_wrong_table_or_a_foreign_grid_is_not_replayed(self):
@@ -668,11 +818,75 @@ class Commands(t31.Commands):
         self.assertEqual(self.replay(out)[0], 0)
 
     def test_a_missing_anchor_leaves_the_derived_cell_unresolved(self):
+        """A diagnostic of the infeasible cell alone measures no anchor:
+        the derived cell is `unresolved`, and the grid not conclusive."""
+        self.start()
+        self.tables = small(infeasible=("frag_create-10000",))
+        argv, out = self.args("frag_create-10000", jobs=2)
+        code, text = self.main(argv)
+        self.assertEqual(code, 2, text)
+        found = a.load(out / "decisions.json")
+        row = found["cells"]["frag_create-10000"]
+        self.assertEqual(row["status"], "unresolved")
+        self.assertEqual(found["counts"]["unresolved"], 1)
+        self.assertEqual(found["status"], "inconclusive")
+        self.assertEqual(self.commands, [])
+
+    def test_a_broken_anchor_refuses_the_grid(self):
         self.start()
         self.tables = small(infeasible=("frag_create-10000",))
         self.broken = {"frag_create-0"}
         code, _, _ = self.run_whole(jobs=4)
         self.assertEqual(code, tg.REFUSED)
+
+    def args_for(self, repo=None):
+        return argparse.Namespace(
+            repo=repo or self.repo, baseline=BASE, candidate=CAND,
+            timeout=5)
+
+    def test_a_later_failure_does_not_skip_an_earlier_cell(self):
+        """The race of a job that checks `stop` at entry: cell 1 fails,
+        and cell 0 (earlier in the grid's order, not yet started) must
+        still run, so that the failure is what the parent meets."""
+        self.start()
+        names = self.tables["matrix"].names()[:3]
+        self.broken = {names[1]}
+        inventory = dict(attributed=dict(table=[]), diagnostic=True)
+        pool = m.Pool(2)
+        pool.order = {n: i for i, n in enumerate(names)}
+        with m.bound(self.tables["matrix"], pool):
+            failure = pool.job(self.args_for(), names[1], inventory, [])
+            self.assertIsInstance(failure, m.Failure)
+            self.assertIsInstance(failure.error, ValueError)
+            earlier = pool.job(self.args_for(), names[0], inventory, [])
+            self.assertIsInstance(earlier, dict)
+            self.assertEqual(earlier["row"]["case"], "frag_create")
+            # Only the cells after the failed one are skipped.
+            self.assertIsNone(pool.job(self.args_for(), names[2],
+                                       inventory, []))
+            self.assertEqual(pool.failed, 1)
+            # An earlier failure takes over, a later one does not.
+            self.broken = {names[0]}
+            second = pool.job(self.args_for(), names[0], inventory, [])
+            self.assertIsInstance(second, m.Failure)
+            self.assertEqual(pool.failed, 0)
+
+    def test_the_real_error_is_raised_with_its_archive_set_aside(self):
+        self.start()
+        names = self.tables["matrix"].names()
+        self.broken = {names[2]}
+        argv, out = self.args(jobs=3)
+        err = io.StringIO()
+        with self.whole_grid(), contextlib.redirect_stderr(err):
+            self.assertEqual(self.main(argv)[0], tg.REFUSED)
+        self.assertIn("identity runner failed: " + names[2], err.getvalue())
+        self.assertNotIn("skipped", err.getvalue())
+        inv = a.load(out / "inventory.json")
+        self.assertEqual([r["archive"] for r in inv["runs"]],
+                         [n + ".json.xz" for n in names[:2]])
+        self.assertTrue(
+            (out / (names[2] + ".json.xz.failed-1")).is_file())
+        self.assertEqual(list(self.scratch.iterdir()), [])
 
     def test_the_scratch_directories_are_named_apart_from_the_client(self):
         self.assertTrue(m.Pool(2).prefix.startswith("task37-"))
