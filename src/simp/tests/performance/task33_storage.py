@@ -1671,6 +1671,19 @@ def add_common(parser):
     parser.add_argument("--followup-counts", type=Path, help="the "
                         "follow-up's counts file (default "
                         "task33_storage_followup_counts.json)")
+    add_revision(parser)
+
+
+def add_revision(parser):
+    """The options that name the revision under test: its declaration
+    (default TASK33's task33_declared.json; TASK37's is
+    task37_declared.json) and the revision the candidate's compiled
+    sources equal (default C31)."""
+    parser.add_argument("--declared", type=Path, help="the declaration "
+                        "(default task33_declared.json)")
+    parser.add_argument("--compiled-ref", help="the revision the "
+                        "candidate's compiled sources equal (default "
+                        "%s)" % d.snap.C31)
 
 
 def add_run(parser):
@@ -1726,6 +1739,7 @@ def build_parser():
     rep.add_argument("--storage-counts", type=Path)
     rep.add_argument("--followup-counts", type=Path)
     rep.add_argument("--timing-counts", type=Path)
+    add_revision(rep)
     rep.add_argument("--manifest", type=Path, help="the snapshot manifest "
                      "(default: where the stages recorded it)")
     dis = cmd["dispose"]
@@ -1750,6 +1764,7 @@ def build_parser():
     dis.add_argument("--relocated", action="append", default=[],
                      metavar="ATTEMPT=DIR")
     dis.add_argument("--out", type=Path, required=True)
+    add_revision(dis)
     snaps = cmd["dispose-snapshots"]
     snaps.add_argument("--evidence", type=Path, required=True,
                        help="the evidence/task33 directory")
@@ -1760,11 +1775,14 @@ def build_parser():
     snaps.add_argument("--repo", type=Path, required=True)
     snaps.add_argument("--scratch-root", type=Path, default=SCRATCH_ROOT,
                        help="must be the declared %s" % SCRATCH_ROOT)
+    snaps.add_argument("--compiled-ref", help="as for the stages")
     return parser
 
 
 def dispatch(args):
     command = args.command
+    if getattr(args, "declared", None):
+        offline.use_declared(args.declared)
     if command in RUN_COMMANDS:
         check_budget(args.timeout)
     if command in ("smoke", "pilot", "control"):

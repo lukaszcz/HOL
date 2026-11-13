@@ -2623,6 +2623,7 @@ class Disposition(Chain34):
         data = json.loads(out.read_text())
         self.assertEqual(code, 0, data["counts"])
         self.assertEqual(data["status"], "pass")
+        self.assertRegex(data["candidate"], "^[0-9a-f]{40}$")
         keys = [(x["case"], x["kind"]) for x in data["decisions"]]
         self.assertEqual(len(keys), len(set(keys)))
         for key in dispose.expected_storage():

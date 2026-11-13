@@ -116,7 +116,10 @@ POLICY = a.EQUIVALENCE_POLICY
 PAIRS = 20
 PILOT_PAIRS = 10  # the least that paired_statistics accepts
 BUSY = 0.06
-COMPILED_REF = snap.C31  # C32's compiled sources must equal it
+# The revision the candidate's compiled sources must equal. TASK32 and
+# TASK33 used C31, which stays the default so that their records still
+# replay; a later gate (TASK37) names its own with `--compiled-ref`.
+COMPILED_REF = snap.C31
 COUNTS_SCOPE = "src/simp/tests/performance/"
 # The timed metrics, as loading.jitter names them (+ maxrss).
 METRICS = loading.METRICS + ("maxrss",)
@@ -143,7 +146,14 @@ TASK32_HISTORY = {
                    "10663eb5a7", "bytes": 133766},
         # the last driver before the tables (a2a7d3c487)
         {"sha256": "a3f949829ffa88ea799dd4016cbb1bbbaa5d50210b69c126fce32e"
-                   "6afa3179b5", "bytes": 141455}],
+                   "6afa3179b5", "bytes": 141455},
+        # the driver and the snapshot builder before `--compiled-ref`
+        # (TASK37): the code of the kept TASK32 and TASK33 records
+        {"sha256": "8d05e058fa2fba44ba2a717e7b362a47ef379a850d91c25484fc60"
+                   "f5e43c1224", "bytes": 180533}],
+    "task32_snapshots.py": [
+        {"sha256": "444e5f40c62d8529bceb87e8086d13de5ea54127559063987d4552"
+                   "0a89806ac7", "bytes": 60760}],
 }
 # The `task32_downstream.py` seals of the versions that made the kept
 # TASK33 records (281599302d). Only the TASK33 table and the S3 reports
@@ -155,13 +165,28 @@ TASK33_DRIVER_SEALS = (
 # made the kept reports, and the storage driver before its cap was divided
 # by the kinds (`task33_storage.UNDIVIDED_CAP`).
 TASK33_HISTORY = {
-    "task32_downstream.py": list(TASK33_DRIVER_SEALS),
+    "task32_downstream.py": list(TASK33_DRIVER_SEALS) + [
+        {"sha256": "8d05e058fa2fba44ba2a717e7b362a47ef379a850d91c25484fc60"
+                   "f5e43c1224", "bytes": 180533}],
+    "task32_snapshots.py": [
+        {"sha256": "444e5f40c62d8529bceb87e8086d13de5ea54127559063987d4552"
+                   "0a89806ac7", "bytes": 60760}],
     "task33_offline.py": [
         {"sha256": "4d5a51e01704b51b2c0099704744e7c7404f29a0039094fe3a6736"
-                   "49b75f7d41", "bytes": 90838}],
+                   "49b75f7d41", "bytes": 90838},
+        {"sha256": "9ad396b8f6a4c0ba80c2cb6e674b82ae5d6447b62bb996"
+                   "cf6dbc98b3cd947b78", "bytes": 91835}],
     "task33_storage.py": [
         {"sha256": "069b87eea6287685ff50715d4dc07db797163767c0e5f5bf475cf1"
-                   "adf94f2ab5", "bytes": 79375}],
+                   "adf94f2ab5", "bytes": 79375},
+        {"sha256": "441ca922516d43b63f33f7011b45027651b281a24181d5"
+                   "eaac23f939b22bab2c", "bytes": 82572}],
+    "task33_rules.py": [
+        {"sha256": "fa34fd48bb9489f68457fdabf7e9b025a0059643573e8b"
+                   "201a582159d9115bd8", "bytes": 34186}],
+    "task33_dispose.py": [
+        {"sha256": "61d0cef407ef789867d1ef06574d99e33ffe883cdfc8f6"
+                   "b181735536e12cabb6", "bytes": 26854}],
 }
 
 
@@ -516,14 +541,16 @@ def gate_key(sides):
                            sides["cand"]["pin"]]).encode())
 
 
-def default_verify(repo, manifest, sides):
+def default_verify(repo, manifest, sides, ref=None):
     """The snapshot audit, with the arguments task32_snapshots.py's
-    `verify` requires (pins, C31)."""
+    `verify` requires (pins, and the revision the candidate's compiled
+    sources equal: `ref`, default COMPILED_REF)."""
     return [sys.executable, "-B", str(HERE / "task32_snapshots.py"),
             "verify", "--repo", str(Path(repo).resolve()),
             "--manifest", str(Path(manifest).resolve()),
             "--base-pin", sides["base"]["pin"],
-            "--cand-pin", sides["cand"]["pin"], "--c31", snap.C31]
+            "--cand-pin", sides["cand"]["pin"],
+            "--compiled-ref", ref or COMPILED_REF]
 
 
 def run_verify(argv, cwd, fds):
@@ -537,20 +564,22 @@ def run_verify(argv, cwd, fds):
                 stdout_sha256=done["stdout_sha256"])
 
 
-def check_candidate(repo, sides):
-    """Base is the develop pin; the candidate's compiled sources equal C31's
-    (everything outside the tests directories, snap.TEST_ONLY)."""
+def check_candidate(repo, sides, ref=None):
+    """Base is the develop pin; the candidate's compiled sources equal
+    those of `ref` (default COMPILED_REF; everything outside the tests
+    directories, snap.TEST_ONLY)."""
+    ref = ref or COMPILED_REF
     require(sides["base"]["pin"] == a.BASE, "the baseline is not the pin")
     try:
-        c31 = a.git(repo, "rev-parse", COMPILED_REF + "^{commit}")
+        c31 = a.git(repo, "rev-parse", ref + "^{commit}")
         differs = subprocess.run(
             ["git", "-C", str(repo), "diff", "--quiet", c31,
              sides["cand"]["pin"], "--", ".", *snap.TEST_ONLY],
             stdin=subprocess.DEVNULL).returncode
     except subprocess.CalledProcessError as error:
-        raise Refusal("cannot resolve %s: %s" % (COMPILED_REF, error))
+        raise Refusal("cannot resolve %s: %s" % (ref, error))
     require(differs == 0, "the candidate's compiled sources differ from "
-            "%s" % COMPILED_REF)
+            "%s" % ref)
     return c31
 
 
@@ -2690,7 +2719,8 @@ def run_stage(args, spec, *, body_fn=None, report_fn=None,
     repo = Path(args.repo).resolve(strict=True)
     sides, mseal = load_manifest(args.manifest, args.base_root,
                                  args.cand_root)
-    check_candidate(repo, sides)
+    ref = getattr(args, "compiled_ref", None)
+    check_candidate(repo, sides, ref)
     require(args.authorize_measurements, "measurement authorization "
             "required")
     mode, stage = spec["mode"], spec.get("stage")
@@ -2701,7 +2731,7 @@ def run_stage(args, spec, *, body_fn=None, report_fn=None,
     loading.require_ignored(journals_dir(repo), repo)
     decisive = stage in decisive_stages
     verify = None if args.no_verify else (
-        args.verify_argv or default_verify(repo, args.manifest, sides))
+        args.verify_argv or default_verify(repo, args.manifest, sides, ref))
     require(verify is not None or (not decisive and args.only),
             "a decision stage, and any run that feeds the counts, needs "
             "the snapshot verification (--no-verify is for a --only subset "
@@ -3317,7 +3347,9 @@ def disposition(chain, ledger, counts_path=None, relocated=None,
     replay (default: the committed COUNTS); its seal must be the one the
     first stage used. `relocated` maps an information run to the directory
     its report was moved to (see `info_runs`). `table` is the ledger table
-    whose attempts the R-1 table lists (default the active table's)."""
+    whose attempts the R-1 table lists (default the active table's). The
+    result's `candidate` is the pin of the stages (a record made before
+    the field existed replays: it is derived, not stored)."""
     chains = workload_chains(chain)
     require(sorted(chains) == sorted(cases.NAMES), "not all workloads")
     rows = {}
@@ -3342,8 +3374,9 @@ def disposition(chain, ledger, counts_path=None, relocated=None,
     path = counts_file_for(chain[0]["report"], counts_path, None)
     require(a.seal(path) == use["seal"], "%s is not the counts file the "
             "first stage used" % path)
-    return dict(status=overall, workloads=rows, attempts=attempts,
-                info_runs=infos,
+    # `candidate`: the full pin the stages measured (the TASK37 join's key)
+    return dict(status=overall, candidate=chain[0]["report"]["cand"],
+                workloads=rows, attempts=attempts, info_runs=infos,
                 redraws=redraws(attempts, infos, a.load(path)),
                 chain=[dict(stage=e["stage"], run=str(e["folder"]),
                             seal=e["info"]["seal"],
@@ -3530,6 +3563,9 @@ def add_common(parser):
     parser.add_argument("--cand-root", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--counts", type=Path)
+    parser.add_argument("--compiled-ref", help="the revision the "
+                        "candidate's compiled sources must equal "
+                        "(default: %s, TASK31's C31)" % snap.C31)
 
 
 def add_ledger(parser):

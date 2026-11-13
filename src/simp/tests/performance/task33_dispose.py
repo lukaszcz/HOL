@@ -345,8 +345,13 @@ def dispose(args):
     gates = [x["decision"] for x in decisions if x["decision"] in
              rules.GATES]
     status = overall(gates)
+    cands = {e["report"]["cand"] for e in timing_chain} | {
+        e["report"]["cand"] for c in storage_chains for e in c}
+    d.require(len(cands) == 1, "the stages measured different candidates: "
+              + ", ".join(sorted(cands)))
     data = dict(
-        schema=SCHEMA, status=status, decisions=decisions,
+        schema=SCHEMA, status=status, candidate=cands.pop(),
+        decisions=decisions,
         counts={s: sum(1 for x in decisions if x["decision"] == s)
                 for s in rules.GATES + (rules.REPORTED, rules.UNSUPPORTED)},
         owed=[x for x in decisions if x.get("owed")],
@@ -558,8 +563,8 @@ def dispose_snapshots(args):
     sides = {s: dict(root=Path(manifest["sides"][s]["root"]),
                      pin=manifest["sides"][s]["pin"],
                      tree=manifest["sides"][s]["tree"]) for s in LABELS}
-    verify = args.verify_argv or d.default_verify(repo, manifest_path,
-                                                  sides)
+    verify = args.verify_argv or d.default_verify(
+        repo, manifest_path, sides, getattr(args, "compiled_ref", None))
     sizes = {str(p): (tree_bytes(p) if how == "tree" else
                       os.lstat(p).st_size) if os.path.lexists(p) else None
              for p, how in plan}

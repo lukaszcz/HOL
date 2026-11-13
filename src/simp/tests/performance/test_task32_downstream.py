@@ -300,7 +300,8 @@ class World:
         return [
             mock.patch.object(dw, "launch", self.launch),
             mock.patch.object(dw, "build_reporter", self.reporter),
-            mock.patch.object(dw, "check_candidate", lambda r, s: "c31"),
+            mock.patch.object(dw, "check_candidate",
+                              lambda r, s, ref=None: "c31"),
             mock.patch.object(dw, "poly_version",
                               lambda env, cwd, fds: "Poly/ML fake")]
 
@@ -2364,7 +2365,12 @@ class Sealed(unittest.TestCase):
             dict(sha256="a5cc94d14ff37fa0586803153ab155dfa4c1564e6dc3bd2aef9"
                         "3c210663eb5a7", bytes=133766),
             dict(sha256="a3f949829ffa88ea799dd4016cbb1bbbaa5d50210b69c126fce"
-                        "32e6afa3179b5", bytes=141455)]})
+                        "32e6afa3179b5", bytes=141455),
+            dict(sha256="8d05e058fa2fba44ba2a717e7b362a47ef379a850d91c25484f"
+                        "c60f5e43c1224", bytes=180533)],
+            "task32_snapshots.py": [
+            dict(sha256="444e5f40c62d8529bceb87e8086d13de5ea54127559063987d4"
+                        "5520a89806ac7", bytes=60760)]})
 
     def test_a_record_carries_the_current_seal_or_one_the_history_lists(self):
         now = dw.code_seals()
@@ -2547,6 +2553,7 @@ class Chain(Base):
                                 counts=counts_path, repo=w.repo)
         self.assertEqual([e["stage"] for e in chain], ["first"])
         disp = dw.disposition(chain, ledger, counts_path)
+        self.assertEqual(disp["candidate"], w.cand_pin)
         self.assertEqual(disp["workloads"]["logroot"]["note"],
                          dw.NOTE_SECOND)
         self.assertEqual(disp["workloads"]["rat"]["status"], "followup")

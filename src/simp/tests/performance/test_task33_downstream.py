@@ -284,7 +284,7 @@ class TableSelection(unittest.TestCase):
 
     def test_the_histories_of_task32_and_task33(self):
         old = dw.TABLES["task32"].history["task32_downstream.py"]
-        self.assertEqual(len(old), 3)  # TASK32's history is unchanged
+        self.assertEqual(len(old), 4)  # TASK32's, plus the TASK37 seal
         driver = {"sha256": "e3169e265e13cf55a18045fdebc5845f198ff8f9d1d15f"
                   "9529076915dbc23516", "bytes": 179579}
         storage = {"sha256": "069b87eea6287685ff50715d4dc07db797163767c0e5f5"
@@ -293,9 +293,17 @@ class TableSelection(unittest.TestCase):
                    "fe3a673649b75f7d41", "bytes": 90838}
         self.assertEqual(dw.TASK33_DRIVER_SEALS, (driver,))
         self.assertNotIn(driver, old)
-        self.assertEqual(dw.TABLES["task33"].history, {
-            "task32_downstream.py": [driver], "task33_storage.py": [storage],
-            "task33_offline.py": [offline]})
+        # the kept records' seals come first; later entries are the seals
+        # of the versions before TASK37's `--compiled-ref` and
+        # `--declared` (one per sealed file that changed)
+        history = dw.TABLES["task33"].history
+        self.assertEqual(history["task32_downstream.py"][0], driver)
+        self.assertEqual(history["task33_storage.py"][0], storage)
+        self.assertEqual(history["task33_offline.py"][0], offline)
+        self.assertEqual(sorted(history), [
+            "task32_downstream.py", "task32_snapshots.py",
+            "task33_dispose.py", "task33_offline.py", "task33_rules.py",
+            "task33_storage.py"])
 
     def test_a_counts_file_of_another_table_is_refused(self):
         with tempfile_dir() as tmp:

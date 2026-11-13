@@ -291,7 +291,14 @@ def s1_kind(base, cand, g, paired=False):
 def total_deltas(declared):
     """The declared closure-total changes as scoped entries {heap, kinds,
     value} (design 8.5): `s2.total_delta` of the declaration
-    (task33_offline.load_declared())."""
+    (task33_offline.load_declared()). A value that is not an integer (a
+    TASK37 placeholder not yet measured) is `Inadmissible`: a decision
+    never runs against a declaration that is not filled in."""
+    pending = [e.get("heap") for e in declared["s2"]["total_delta"]
+               if type(e.get("value")) is not int or e.get("pending")]
+    if pending:
+        raise Inadmissible("the S2 total_delta of %s is not measured "
+                           "(placeholder)" % ", ".join(map(str, pending)))
     return [dict(heap=e["heap"], kinds=e.get("kinds"), value=e["value"])
             for e in declared["s2"]["total_delta"]]
 

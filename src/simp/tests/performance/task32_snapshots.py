@@ -17,9 +17,11 @@
            candidate's mktool.ML), the build sequence (same immutable file
            and digest on both sides, as built), the required workload
            products (REQUIRED_PRODUCTS), the compiled-source equality of the
-           candidate with C31, no stale products, every product seal and
-           mtime inside the build interval, no shared inodes, identical
-           argv/env, the toolchain, no nested roots.
+           candidate with C31 (`--compiled-ref REV` names another
+           revision, e.g. TASK37's final candidate), no stale products,
+           every product seal and mtime inside the build interval, no
+           shared inodes, identical argv/env, the toolchain, no nested
+           roots.
   compare  the untimed behaviour comparison: every common untracked
            `*Theory.sig` and `*Theory.dat` and the normalized selftest logs
            of the two trees. Any unexplained difference makes the result
@@ -1335,7 +1337,10 @@ def main(argv=None):
     def pins(parser):
         parser.add_argument("--base-pin", required=True)
         parser.add_argument("--cand-pin", required=True)
-        parser.add_argument("--c31", default=C31)
+        # the revision the candidate's compiled sources equal: C31 for
+        # TASK32 and TASK33, the final candidate for TASK37
+        parser.add_argument("--c31", "--compiled-ref", dest="c31",
+                            default=C31)
         parser.add_argument("--poly", default=POLY)
 
     b = sub.add_parser("build")

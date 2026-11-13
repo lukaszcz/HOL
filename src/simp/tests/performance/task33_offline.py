@@ -59,6 +59,9 @@ import task33_records as records
 SCHEMA = "task33-offline-v1"
 DECLARED_SCHEMA = "task33-declared-v4"
 DECLARED = HERE / "task33_declared.json"
+# The declaration this process uses (`use_declared`; the storage driver's
+# `--declared`). TASK33's own is the default, so its records replay;
+# TASK37 declares its revision in task37_declared.json (task37_declared.py).
 PASS, INCONCLUSIVE, FAIL = 0, 2, 3
 STATUSES = ("pass", "fail", "skipped")
 REPORT_NOTES = """\
@@ -210,8 +213,17 @@ def join_text(value):
     return value
 
 
-def load_declared(path=DECLARED):
-    path = Path(path)
+def use_declared(path):
+    """Select the declaration the storage stages seal and judge by
+    (`DECLARED`, read at call time). Returns the previous one."""
+    global DECLARED
+    previous = DECLARED
+    DECLARED = Path(path).resolve()
+    return previous
+
+
+def load_declared(path=None):
+    path = Path(path or DECLARED)
     require(path.is_file(), "no declaration file: %s" % path)
     data = join_text(json.loads(path.read_text()))
     require(data.get("schema") == DECLARED_SCHEMA,
@@ -274,7 +286,10 @@ def entry_problems(entry, structures, where):
     bad = []
     nat = lambda x: type(x) is int and x > 0
     obs = entry.get("observed")
-    if type(entry.get("value")) is not int or entry["value"] <= 0 or \
+    if entry.get("pending"):
+        bad.append(where + ": pending, the live measurement is not "
+                   "filled in (task37_declared.py fill)")
+    elif type(entry.get("value")) is not int or entry["value"] <= 0 or \
             entry.get("unit") != "words":
         bad.append(where + ": value is not a positive integer of words")
     if not isinstance(obs, dict) or not all(
