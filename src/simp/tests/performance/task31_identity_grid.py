@@ -84,7 +84,16 @@ IDENTITY_CODE = ("task31_identity_grid.py", "task31_grid.py",
 # recorded, once it has changed since (a reviewed change that alters no
 # decision): then, in the same commit, add the old seal here so that the
 # grid still replays.
-CODE_HISTORY = {}
+CODE_HISTORY = {
+    "client_dependencies.py": (dict(
+        bytes=11174, sha256="589fc81abb838dabc49d75b02de0c9c1"
+                            "421afb7bba6369ead54a07e1dd55a66b"),),
+    "task31_grid.py": (dict(
+        bytes=5121, sha256="d62bb568b6b398497e14468cc9335fc7"
+                           "b0410f9073a3395a80ce6daa3a743b94"),),
+    "task31_identity_grid.py": (dict(
+        bytes=29002, sha256="578bf14ee25abab5aae047c5146ccd26"
+                            "be9fbc15fe8b57cc532c0dae2430be5a"),),}
 STATUS_ORDER = ("identical", "attributed", "different")
 
 

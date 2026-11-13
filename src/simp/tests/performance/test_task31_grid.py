@@ -102,12 +102,22 @@ class Driver(unittest.TestCase):
                           if (a.HERE / (m + ".py")).exists()},
                          {"acceptance"})
 
-    def test_the_driver_history_is_empty_until_a_grid_is_recorded(self):
+    def test_the_driver_history_names_the_seals_of_the_kept_grids(self):
+        # Only the change that made a private script's theory private
+        # (client_dependencies.py) was made after the first record: its old
+        # seal and this driver's are the history; nothing else is.
+        self.assertEqual((timing.ENGINES, timing.ACCEPTANCE), ((), ()))
+        self.assertEqual(len(timing.DRIVERS), 1)
+        self.assertEqual(set(timing.SEALED_HISTORY),
+                         {"client_dependencies.py"})
         self.assertEqual(
-            (timing.DRIVERS, timing.ENGINES, timing.ACCEPTANCE,
-             timing.SEALED_HISTORY), ((), (), (), {}))
+            {k: len(v) for k, v in timing.SEALED_HISTORY.items()},
+            {"client_dependencies.py": 1})
         self.assertEqual(timing.TABLE.drivers, timing.DRIVERS)
         self.assertEqual(timing.TABLE.engines, timing.ENGINES)
+        self.assertEqual(timing.TABLE.sealed_history,
+                         {k: tuple(v)
+                          for k, v in timing.SEALED_HISTORY.items()})
 
 
 if __name__ == "__main__":

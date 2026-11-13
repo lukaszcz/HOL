@@ -64,7 +64,17 @@ SEALED = ("task31_cases.py", "task31_pins.py") + base30.SEALED[1:5] + \
 # reviewed table onto the measured sources: a change to the entry of a
 # measured source voids the grid; adding or changing a heap or build entry
 # does not. The code that computes the pins is task31_pins.py, sealed here.
-DRIVERS, ENGINES, ACCEPTANCE, SEALED_HISTORY = (), (), (), {}
+# Seals of the code the kept TASK31 records were made by: this file and
+# client_dependencies.py before a private script's theory became private
+# (TASK37), which changes nothing the TASK31 grids measured.
+DRIVERS = (dict(
+    bytes=5121, sha256="d62bb568b6b398497e14468cc9335fc7"
+                       "b0410f9073a3395a80ce6daa3a743b94"),)
+ENGINES, ACCEPTANCE = (), ()
+SEALED_HISTORY = {
+    "client_dependencies.py": (dict(
+        bytes=11174, sha256="589fc81abb838dabc49d75b02de0c9c1"
+                            "421afb7bba6369ead54a07e1dd55a66b"),),}
 # The reviewed table: read once. Its file is not among SEALED (the counts
 # are not bound to it); every record seals it. The table's sources are the
 # files the cells elaborate (task31_cases.SOURCES), and it pins the reviewed

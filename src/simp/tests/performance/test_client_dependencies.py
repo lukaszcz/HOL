@@ -28,7 +28,7 @@ class InstallTests(unittest.TestCase):
                under_simp=False):
         directory = self.repo / "src" / ("simp" if under_simp else name)
         objects = directory / ".hol/objs"
-        objects.mkdir(parents=True)
+        objects.mkdir(parents=True, exist_ok=True)
         for suffix, edges in ((".sml", deps), (".sig", sigdeps)):
             source = directory / (name + suffix)
             physical = objects / source.name if hfs else source
@@ -110,6 +110,49 @@ class InstallTests(unittest.TestCase):
         self.assertNotIn("$(HOLDIR)/src/simp", loader)
         self.assertIn("contextTheory.uo contextTheory.ui",
                       (self.dst / "Holmakefile").read_text())
+
+    def private_script_case(self, names):
+        """A shared simp library, theory of the same name as a private script
+        and an unrelated simp theory, both generated; the private sources
+        are a library mentioning the theory and the script."""
+        self.module("simpLib")
+        self.module("markTheory", hfs=True, theory=True, under_simp=True)
+        self.module("contextTheory", hfs=True, theory=True, under_simp=True)
+        self.module("bossLib", ["simpLib", "markTheory", "contextTheory"])
+        self.fixture()
+        (self.dst / "markLib.sml").write_text("open markTheory\n")
+        (self.dst / "markScript.sml").write_text("(* private script *)\n")
+        return cd.install(self.repo, self.dst, names)
+
+    def test_theory_of_a_private_script_is_private(self):
+        result = self.private_script_case({"simpLib", "markLib",
+                                           "markScript"})
+        # Nothing of markTheory is copied or sealed as a product, though
+        # the private sources name it and it is a generated simp theory.
+        self.assertEqual(result["modules"], ["bossLib", "contextTheory"])
+        for name in result["products"]:
+            self.assertNotIn("markTheory", name)
+        self.assertFalse(list(self.dst.rglob("markTheory.*")))
+        self.assertNotIn("markTheory.dat",
+                         (self.dst / "Holmakefile").read_text())
+        # The unrelated shared simp theory is still copied as before.
+        dat = ".hol/objs/contextTheory.dat"
+        self.assertEqual((self.dst / dat).read_bytes(), b"theory-data")
+        self.assertEqual(result["products"][dat]["role"], "shared-dependency")
+        # The dependents load the private theory, not a frozen shared one.
+        rules = (self.dst / "Holmakefile").read_text()
+        self.assertRegex(rules, r"(?m)^bossLib\.uo: .*\bmarkTheory\.uo\b")
+
+    def test_theory_of_an_unselected_script_stays_shared(self):
+        # Control: without the script among the private names the theory is
+        # an ordinary shared simp module, copied and frozen.
+        result = self.private_script_case({"simpLib", "markLib"})
+        self.assertEqual(result["modules"],
+                         ["bossLib", "contextTheory", "markTheory"])
+        self.assertEqual(
+            (self.dst / ".hol/objs/markTheory.dat").read_bytes(),
+            b"theory-data")
+        self.assertIn(".hol/objs/markTheory.dat", result["products"])
 
     def test_missing_required_data_fails_before_copy(self):
         self.module("simpLib")

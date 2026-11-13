@@ -38,12 +38,20 @@ def install(repo, dst, private_names):
     search paths. Roots conservatively include every exported module identifier
     mentioned by installed sources, plus the selected modules' shared metadata.
     Reverse reachability is restricted to the recursive forward root closure.
+    The theory of a selected private script is private too: for every
+    private name XScript, XTheory is a private name. It is never copied from
+    the shared tree (lexical roots and shared_simp must not freeze the shared
+    toolchain's XTheory.{sml,sig,dat,uo,ui}); the private directory's own
+    Holmake builds it from the private script when anything needs it.
     Generated support sources under src/simp are also relocation seeds: the
     runner forbids *any* shared source from that directory, including theories
     absent from the selected git sources. Their data remains shared-baseline.
     """
     repo, dst = Path(repo).resolve(strict=True), Path(dst).resolve(strict=True)
     private_names = set(private_names)
+    private_names |= {name[:-len("Script")] + "Theory"
+                      for name in private_names
+                      if name.endswith("Script") and name != "Script"}
     inputs = {}
 
     def read(path):
