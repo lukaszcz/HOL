@@ -47,6 +47,13 @@ Policies carried over, each recorded on the cell:
   allocation passes with its work rows `equal`. The policy is recorded on a
   cell that passes by it, and on no other. A pass or a fail of any stage
   decides as for any cell; any other control-limited cell is owed stage 2.
+- A fail of any stage of a cell's timing chain decides: a first stage, a
+  second stage or an earlier grid that failed is not undone by a later stage
+  or follow-up that passed (D4 cannot dispose it). The owed stage 2 of a cell
+  is the engine's rule (`owes_stage2`: `Grid.extension_pairs`: protocol
+  succeeded, no gated metric failed, a gated metric's B/B control is
+  invalid); a protocol-failed cell owes a `redraw` and is not inspected for
+  one. "Decisive stage" is the chain's final class.
 - R-1: every attempt of a timing table in its ledger is judged or void
   (`void_attempts.attempts_of`, through the shard's engine), the
   follow-up's table (when one is declared) whether or not it is named, and
@@ -110,20 +117,37 @@ and loading are those of their archives, whose replays recompute them
     --startup-declared FILE --startup-ledger FILE
     --loading-simplib DIR --loading-conglib DIR
     --loading-ledger GATE=FILE (GATE simplib or conglib: one for each, no
-        fallback: each shard runs in its own clone with its own ledger)
+        fallback: each shard runs in its own clone with its own ledger;
+        run_loading.sh names its shard `SHARD=simplib|conglib` likewise)
 
 The startup gate: `--startup-declared` is the sidecar `fill_record.py`
 wrote with the record (the load totals Ds, Dc the record declares and the
-archive they come from, bound to the record by its sha256); the gate's R2
-load totals must equal them on every image or the gate FAILS (design
-decision 21; nothing is transferred). `--startup-ledger` is the runner's
-attempts ledger: every attempt is listed in the record (a failed earlier
-one stays, R-1), and the judged gate (and its null control) must be the
-last, closed attempt. The api-audit receipt must be present and passing.
+archive they come from, bound to the record by its sha256). It is bound to
+the record's content too (`gates.read_declared`): the archive must be the
+one named (sha256 of its `decisions.json`), its R2 load totals must be the
+sidecar's, and the record text must state the same Ds, Dc and archive sha256.
+The gate's R2 load totals must equal them on every image or the gate FAILS
+(design decision 21; nothing is transferred); the sidecar is sealed in the
+record's inputs. `--startup-ledger` is the runner's attempts ledger: every
+attempt is listed in the record (R-1). The judged gate (and its null
+control) must be the last attempt and a COMPLETED one: closed with exit 0, or
+2 (the run completed, a soft step failed) with its `done` file (sealed); any
+other close (a failing step, `die`, a signal) or a missing `done` makes the
+attempt void, which refuses (the lead redraws). Each earlier attempt is
+judged: it is recorded with its gate decision, reasons and declared-delta
+problems, and a redraw is accepted only after an incomplete attempt (void) or
+a gate that failed on the declared deltas alone (`gates.earlier_attempt`);
+an earlier attempt that completed with a pass, or that failed for another
+reason, refuses the disposition. The api-audit receipt must be present and
+passing.
 The record holds D's HEAD (`head`), which must have no uncommitted change
 to a tracked file outside .agent-files, and `--candidate` must be
 equivalent to `task37_cases.COMPILED_REF` (same tree outside the
-performance area).
+performance area). A later `--check` accepts the recorded `head` when it is
+an ancestor of the HEAD then with the same tree outside the performance
+area (`Lineage.recorded_head`: a later performance-only commit leaves the
+record checkable; a later commit outside it refuses), and substitutes it as
+it substitutes the recorded code seals.
 
 Allocation grid. For each task: the grid's `status`, `nondeterminism` and
 `unresolved` are recorded, and one record per (task, case) decides the
@@ -584,6 +608,27 @@ def differing_of(decisions, label):
     return list(found["differing"])
 
 
+def owes_stage2(row):
+    """The cell of a decisions row is one the engine plans a second stage
+    for if it has not had one: `Grid.extension_pairs`' rule, read from the
+    row. Its protocol succeeded (a row of a failed protocol has no metrics:
+    it owes a `redraw`, not a stage), no gated metric failed (a first-stage
+    fail stays final) and a gated metric's B/B control is invalid; the row
+    shows an invalid control as the metric's reason `tg.CONTROL`
+    (`acceptance.apply_control` sets it, with `control_valid` false, unless
+    the metric failed). The gated metrics are the policy's own. A test
+    checks the rule against `Grid.extension_pairs`."""
+    if not row.get("protocol"):
+        return False
+    gated = a.EQUIVALENCE_POLICY["gated_timing"]
+    metrics = row["metrics"]
+    if any(metrics[m]["decision"] == "fail" for m in gated):
+        return False
+    return any(metrics[m]["reason"] == tg.CONTROL and
+               metrics[m]["decision"] not in ("pass", "reported")
+               for m in gated)
+
+
 def read_stage(root, label, lineage):
     """One timing output: its inventory (`inventory.json` of timing_grid),
     its cell classes, its first stage's classes (read and sealed through
@@ -598,8 +643,7 @@ def read_stage(root, label, lineage):
     differing = differing_of(decisions, label)
     control_open = sorted(
         "%s-%d" % (w["case"], w["size"]) for w in decisions["workloads"]
-        if tg.open_metrics(w) and any(
-            v["reason"] == tg.CONTROL for v in tg.open_metrics(w)))
+        if owes_stage2(w))
     first, plan, first_root = final, {}, root
     if str(inventory.get("schema", "")).endswith("-extension-v1"):
         first_root = (root / inventory["grid"]).resolve()
@@ -647,6 +691,17 @@ def check_counts(stage, label, table):
                   "%s: the counts file %s is not the one the grid used "
                   "(stale counts file)" % (label, name))
     return a.seal(COUNTS_DIR / stage["inventory"]["counts_file"])
+
+
+def check_declaration(key, stage, repo):
+    """The follow-up's declaration file precedes each counts file of the
+    follow-up the stage used (`task37_followup.check_declaration_order`,
+    which the follow-up's engine checks too)."""
+    for inventory in (stage["inventory"], stage["first_inventory"]):
+        a.require(isinstance(inventory.get("counts_commit"), str),
+                  "the follow-up of %s records no counts commit" % key)
+        followup.check_declaration_order(
+            repo, inventory["candidate"], key, inventory["counts_commit"])
 
 
 def pins_binding(engine, label, root, document):
@@ -746,6 +801,7 @@ def read_shard(key, options, lineage, repo, document, late):
                   "--followup-pilot" % key)
         stage = read_stage(given, "%s follow-up" % table, lineage)
         check_counts(stage, name, follow.t)
+        check_declaration(key, stage, repo)
         a.require(set(stage["final"]) == set(follow.t.names()),
                   "the %s cells are not the declared follow-up's" % name)
         a.require(stage["scaling"] is None,
@@ -891,11 +947,17 @@ def judge_timing(name, row, d4, failed, missing, owed):
     run owes `stage2` (the control sizes it), else the `followup`, then an
     attribution."""
     cls = row["cls"]
-    if cls == "pass":
-        return False
     if cls == "fail":
         failed.append("timing: fail")
-    elif cls == "control_limited" and name in d4:
+        return False
+    if "fail" in row["earlier"] or row["first"] == "fail":
+        # a fail of any stage decides: a follow-up or a second stage that
+        # passed does not undo it, and D4 can never dispose it
+        failed.append("timing: an earlier stage failed")
+        return False
+    if cls == "pass":
+        return False
+    if cls == "control_limited" and name in d4:
         return True
     elif cls == "protocol":
         missing.append("timing: no admitted measurement")
@@ -909,6 +971,19 @@ def judge_timing(name, row, d4, failed, missing, owed):
                     "stage2" if row.get("control_open") and
                     not row["stage2"] else "followup")
     return False
+
+
+def chain_text(row):
+    """The timing chain of a cell in words: the stage the first class
+    belongs to, whether stage 2 and the follow-up ran, and the classes the
+    follow-up replaced; the last class is the decisive stage's."""
+    steps = ["first stage %s" % row["first"]]
+    steps.append("stage 2 ran" if row["stage2"] else "no stage 2")
+    if row["followup"]:
+        steps.append("follow-up ran, replacing %s" % (
+            ", ".join(row["earlier"]) or "nothing"))
+    steps.append("final class %s" % row["cls"])
+    return "; ".join(steps)
 
 
 def judge(name, identity, allocated, timed, d4, groups=None):
@@ -951,9 +1026,9 @@ def judge(name, identity, allocated, timed, d4, groups=None):
     if by_d4 and found["status"] == STATUS_PASS:
         found["policy"] = "D4"
         found["policy_note"] = (
-            "decisive timing stage control-limited: stage 2 skipped, "
-            "disposed by policy D4 with identity and exact allocation "
-            "(work rows equal)")
+            "decisive timing stage control-limited (%s): disposed by "
+            "policy D4 with identity and exact allocation (work rows "
+            "equal)" % chain_text(timed))
     return found
 
 
@@ -1113,7 +1188,7 @@ def read_gates(args, lineage, inputs, late, extra):
             ("null-decisions", args.startup_null, "decisions.json"))}
     inputs[gates.STARTUP]["record"] = record_seal
     declared, inputs[gates.STARTUP]["declared"] = gates.read_declared(
-        args.startup_declared, header)
+        args.startup_declared, header, args.startup_record)
     problems = gates.declared_problems(declared, decisions)
     found[gates.STARTUP] = gates.startup_gate(header, decisions,
                                               null_decisions, problems)
@@ -1123,6 +1198,8 @@ def read_gates(args, lineage, inputs, late, extra):
     attempts = gates.startup_attempts(args.startup_ledger,
                                       args.startup_gate)
     inputs[gates.STARTUP]["ledger"] = a.seal(Path(args.startup_ledger))
+    inputs[gates.STARTUP]["done"] = a.seal(
+        Path(args.startup_gate).resolve().parent / "done")
     extra["startup_attempts"] = attempts
     extra["startup_declared"] = dict(
         totals=declared["totals"], archive=declared["archive"],
@@ -1152,10 +1229,16 @@ def read_gates(args, lineage, inputs, late, extra):
     return found, d7
 
 
-def derive(args):
+def derive(args, held=None):
+    """The record derived from the inputs. `held`, the recorded
+    disposition of a `--check`, may hold an earlier HEAD of the checkout
+    (a later commit touched only the performance area): that is accepted
+    by `Lineage.recorded_head` and substituted, as the code seals are."""
     lineage = lineage_of.Lineage(args.repo, args.candidate)
     repo = lineage.repo
     head = lineage.head()
+    if held is not None and held.get("head") != head:
+        head = lineage.recorded_head(held.get("head"))
     compiled_ref = lineage.compiled_ref(cases.COMPILED_REF)
     options = timing_options(args)
     identity_ledgers = keyed(args.identity_ledger, "identity-ledger", KINDS)
@@ -1256,7 +1339,10 @@ def lines(record):
     for x in record["startup_attempts"]:
         out.append("STARTUP-ATTEMPT %s %s: %s" % (
             x["attempt"], x["status"], "judged" if x["judged"] else
-            "earlier attempt, kept in the ledger (R-1)"))
+            "earlier attempt, kept in the ledger (R-1): %s%s" % (
+                x["verdict"], "; gate %s: %s" % (
+                    x["decision"], "; ".join(x["problems"]))
+                if x["decision"] else "")))
     for kind, paths in record["identity_unaccounted"].items():
         out += ["FAIL identity %s: unaccounted difference %s" % (kind, p)
                 for p in paths]
@@ -1306,7 +1392,7 @@ def disposition(args):
         held_path = Path(args.check) / "disposition.json"
         held = read(held_path, "the recorded disposition")
         check_code(held.get("code"))
-    record = derive(args)
+    record = derive(args, held if args.check else None)
     for line in lines(record):
         print(line)
     if args.record:

@@ -10,6 +10,7 @@ import contextlib
 import copy
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -41,12 +42,14 @@ HEAVY = c.INFEASIBLE[0]
 KEYS = grid.SHARD_KEYS
 CAND = "c" * 40
 ORIGINAL_REPLAY = d.replay_timing
+ORIGINAL_CHECK_DECLARATION = d.check_declaration
 
 
 def trow(cls="pass", first=None, stage2=False, followup=False,
-         control_open=False):
+         control_open=False, earlier=()):
     return dict(cls=cls, first=first or cls, stage2=stage2,
-                followup=followup, earlier=[], control_open=control_open)
+                followup=followup, earlier=list(earlier),
+                control_open=control_open)
 
 
 def ident(status="identical"):
@@ -101,6 +104,26 @@ class Rule(unittest.TestCase):
         self.assertEqual(r["status"], "fail")
         self.assertEqual(r["failed"], ["timing: fail"])
 
+    def test_a_fail_of_any_stage_decides(self):
+        name = D4[0]
+        # a follow-up that passed does not undo the shard's fail
+        r = self.judge(timed=trow("pass", first="pass", followup=True,
+                                  earlier=["fail"]))
+        self.assertEqual(r["status"], "fail")
+        self.assertEqual(r["failed"], ["timing: an earlier stage failed"])
+        # nor can D4 dispose a cell whose follow-up is control-limited
+        r = self.judge(name=name, timed=trow(
+            "control_limited", followup=True, earlier=["fail"]))
+        self.assertEqual((r["status"], r["policy"]), ("fail", None))
+        # a failed first stage is a fail whatever a later stage says
+        r = self.judge(name=name, timed=trow(
+            "control_limited", first="fail", stage2=True))
+        self.assertEqual((r["status"], r["policy"]), ("fail", None))
+        # an earlier class that did not fail changes nothing
+        r = self.judge(name=name, timed=trow(
+            "control_limited", followup=True, earlier=["inconclusive"]))
+        self.assertEqual((r["status"], r["policy"]), ("pass", "D4"))
+
     def test_inconclusive_never_passes_and_owes_something(self):
         r = self.judge(timed=trow("inconclusive"))
         self.assertEqual((r["status"], r["owed"]), ("incomplete",
@@ -142,7 +165,16 @@ class Rule(unittest.TestCase):
         name = D4[0]
         r = self.judge(name=name, timed=trow("control_limited"))
         self.assertEqual((r["status"], r["policy"]), ("pass", "D4"))
-        self.assertIn("stage 2 skipped", r["policy_note"])
+        self.assertIn("no stage 2", r["policy_note"])
+        self.assertNotIn("skipped", r["policy_note"])
+        # the note states the actual chain, stage 2 and follow-up included
+        r = self.judge(name=name, timed=trow(
+            "control_limited", first="inconclusive", stage2=True,
+            followup=True, earlier=["inconclusive"]))
+        self.assertIn("first stage inconclusive; stage 2 ran; follow-up "
+                      "ran, replacing inconclusive; final class "
+                      "control_limited", r["policy_note"])
+        self.assertNotIn("no stage 2", r["policy_note"])
         # a fresh pass or fail decides as for any cell, with no policy
         r = self.judge(name=name, timed=trow())
         self.assertEqual((r["status"], r["policy"]), ("pass", None))
@@ -376,6 +408,12 @@ class FakeLineage:
         return "h" * 40
 
     def compiled_ref(self, rev):
+        return rev
+
+    EARLIER = "e" * 40   # a head the checkout is a descendant of
+
+    def recorded_head(self, rev):
+        a.require(rev == self.EARLIER, "not an earlier head: %s" % rev)
         return rev
 
     def harness(self, label, found, clean=False):
@@ -644,6 +682,34 @@ class Lineage(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "uncommitted changes"):
             got.head()
 
+    def test_a_later_performance_only_commit_leaves_the_head_acceptable(
+            self):
+        perf = "src/simp/tests/performance/p.txt"
+        recorded = self.git("rev-parse", "HEAD")
+        later = self.commit(perf, "later perf only")
+        got = lin.Lineage(self.repo, recorded)
+        self.assertEqual(got.head(), later)
+        self.assertEqual(got.recorded_head(recorded), recorded)
+        self.assertEqual(got.recorded_head(later), later)
+        # a head that differs outside the performance area, or that is not
+        # an ancestor, or that is unknown, is refused
+        with self.assertRaisesRegex(ValueError, "tree outside"):
+            got.recorded_head(self.c1)
+        side = self.git("commit-tree", "-m", "side", "-p", self.c1,
+                        self.c1 + "^{tree}")
+        with self.assertRaisesRegex(ValueError, "not an ancestor"):
+            got.recorded_head(side)
+        with self.assertRaisesRegex(ValueError, "no commit"):
+            got.recorded_head("e" * 40)
+        with self.assertRaisesRegex(ValueError, "ten hex"):
+            got.recorded_head(None)
+        # a later commit outside the performance area changes the HEAD's
+        # tree: the recorded head is then refused
+        self.commit("x.txt", "later source change")
+        got = lin.Lineage(self.repo, recorded)
+        with self.assertRaisesRegex(ValueError, "tree outside"):
+            got.recorded_head(recorded)
+
     def test_the_compiled_reference_must_be_equivalent_to_the_candidate(
             self):
         got = lin.Lineage(self.repo, self.c3)
@@ -729,6 +795,7 @@ class Pilot(unittest.TestCase):
                 (d, ("timing_engine", lambda key: self.engine)),
                 (d, ("read_stage", self.stage)),
                 (d, ("check_counts", lambda *args: None)),
+                (d, ("check_declaration", lambda *args: None)),
                 (d, ("pins_binding", lambda *args: {})),
                 (d, ("replay_timing", self.spy)),
                 (d, ("ledger_attempts", self.attempts)),
@@ -857,6 +924,64 @@ class Pilot(unittest.TestCase):
         self.assertTrue(held["cells"][first]["followup"])
         self.assertEqual(held["cells"][first]["earlier"], ["pass"])
 
+    def two_stages(self, main_class, follow_class):
+        first = self.names[0]
+        self.stages["main"] = dict(
+            root=self.root / "main", first_root=self.root / "main",
+            inventory=dict(candidate=CAND), first_inventory={},
+            scaling=None, differing=[], seals={}, plan={},
+            final={n: main_class if n == first else "pass"
+                   for n in self.names},
+            first={n: main_class if n == first else "pass"
+                   for n in self.names})
+        self.stages["f"] = dict(
+            root=self.root / "f", first_root=self.root / "f",
+            inventory=dict(candidate=CAND, replaces=dict(grid="../main")),
+            first_inventory={}, scaling=None, differing=[], seals={},
+            plan={}, final={first: follow_class},
+            first={first: follow_class})
+        (self.root / "f").mkdir(exist_ok=True)
+        (self.root / "main").mkdir(exist_ok=True)
+        options = self.options(followup={self.key: self.root / "f"})
+        options["followup-pilot"] = {self.key: self.root / "fp"}
+        return first, options
+
+    def test_a_shard_fail_is_not_undone_by_a_follow_up(self):
+        engines = {followup.name_of(self.key): fake_follow(self.table)}
+        for later, d4 in (("pass", False), ("control_limited", True)):
+            first, options = self.two_stages("fail", later)
+            held, _ = self.read(options, engines)
+            row = held["cells"][first]
+            self.assertEqual((row["cls"], row["earlier"]), (later, ["fail"]))
+            name = D4[0] if d4 else first
+            record = d.judge(name, ident(), arow(), row, set(D4))
+            self.assertEqual(record["status"], "fail", later)
+            self.assertIsNone(record["policy"])
+            self.assertEqual(record["failed"],
+                             ["timing: an earlier stage failed"])
+
+    def test_the_follow_ups_declaration_is_checked_against_its_counts(self):
+        seen = []
+        first, options = self.two_stages("inconclusive", "pass")
+        with mock.patch.object(d, "check_declaration",
+                               lambda *args: seen.append(args)):
+            self.read(options, {followup.name_of(self.key):
+                                fake_follow(self.table)})
+        self.assertEqual([x[0] for x in seen], [self.key])
+        self.assertEqual(seen[0][2], "repo")
+
+    def test_check_declaration_reads_each_inventorys_counts_commit(self):
+        stage = dict(inventory=dict(candidate=CAND, counts_commit="1" * 40),
+                     first_inventory=dict(candidate="d" * 40,
+                                          counts_commit="2" * 40))
+        with mock.patch.object(followup, "check_declaration_order") as run:
+            ORIGINAL_CHECK_DECLARATION(self.key, stage, "repo")
+        self.assertEqual([x.args for x in run.call_args_list], [
+            ("repo", CAND, self.key, "1" * 40),
+            ("repo", "d" * 40, self.key, "2" * 40)])
+        stage["inventory"].pop("counts_commit")
+        with self.assertRaisesRegex(ValueError, "no counts commit"):
+            ORIGINAL_CHECK_DECLARATION(self.key, stage, "repo")
 
     def follow_stage(self, extension, first, replaces_ext=None,
                      replaces_first=None):
@@ -872,7 +997,6 @@ class Pilot(unittest.TestCase):
         return options
 
     def test_replaces_is_resolved_against_each_inventorys_own_root(self):
-        import os
         main = self.root / "main"
         ext = self.root / "elsewhere" / "deep" / "ext"
         first = self.root / "other" / "first"
@@ -897,6 +1021,100 @@ class Pilot(unittest.TestCase):
         none = self.follow_stage(ext, first)
         with self.assertRaisesRegex(ValueError, "does not replace"):
             self.read(none, engines)
+
+
+def metric(decision="pass", reason="", **more):
+    return dict(decision=decision, median_paired_ratio=1.0,
+                paired_ratio_bootstrap_95_percent=[0.99, 1.01],
+                reason=reason, **more)
+
+
+def workload(case, size, protocol=True, **metrics):
+    """A row of a grid's decisions.json (task29_gate.summary): a failed
+    protocol has no metrics."""
+    if not protocol:
+        return dict(case=case, size=size, protocol=False, exit=2,
+                    unresolved="blocked")
+    found = dict(cpu=metric(), wall=metric(), gc=metric("reported"))
+    found.update(metrics)
+    return dict(case=case, size=size, protocol=True, exit=0,
+                metrics=found, control_metrics={})
+
+
+class ReadStage(unittest.TestCase):
+    """`read_stage` over the files of a timing output."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+
+    def stage(self, rows):
+        write(self.root / "inventory.json", dict(
+            candidate=CAND, checkout=dict(head=CAND)))
+        write(self.root / "decisions.json", dict(
+            workloads=rows, retained_scaling=None,
+            source_identity=dict(differing=[])))
+        return d.read_stage(self.root, "t", FakeLineage())
+
+    def test_a_protocol_failed_cell_has_no_metrics_to_inspect(self):
+        """A cell with no admitted measurement has no `metrics`: it is
+        recorded (class `protocol`, owing a `redraw`) and the others are
+        read as before."""
+        open_ = workload("a", 1, cpu=metric("inconclusive", tg.CONTROL))
+        found = self.stage([
+            workload("a", 1, **open_["metrics"]),
+            workload("b", 10, protocol=False), workload("c", 100)])
+        self.assertEqual(found["control_open"], ["a-1"])
+        self.assertEqual(found["final"], {
+            "a-1": "control_limited", "b-10": "protocol", "c-100": "pass"})
+        row = d.judge("b-10", ident(), arow(), dict(
+            cls="protocol", first="protocol", stage2=False,
+            followup=False, earlier=[], control_open=False), set())
+        self.assertEqual((row["status"], row["owed"]),
+                         ("incomplete", ["redraw"]))
+
+    def test_the_owed_stage_is_the_engines_rule(self):
+        """`owes_stage2` reads `Grid.extension_pairs`' rule from the row:
+        checked against the engine over every combination of the two
+        gated metrics' decisions and controls."""
+        engine = grid.GRIDS["task37-matrix-1"]
+        gated = ("cpu", "wall")
+        states = [("pass", True), ("inconclusive", True),
+                  ("inconclusive", False), ("fail", True),
+                  ("fail", False)]
+        count = 0
+        for cpu in states:
+            for wall in states:
+                result = dict(
+                    candidate=dict(metrics={}),
+                    control=dict(metrics={m: dict(
+                        paired_ratio_bootstrap_95_percent=[0.9, 1.1])
+                        for m in gated}))
+                row = workload("a", 1)
+                for m, (decision, valid) in zip(gated, (cpu, wall)):
+                    reason = (tg.CONTROL if not valid and
+                              decision != "fail" else
+                              "other" if decision == "inconclusive" else "")
+                    result["candidate"]["metrics"][m] = dict(
+                        decision=decision, reason=reason,
+                        control_valid=valid)
+                    row["metrics"][m] = metric(decision, reason)
+                report = dict(success=True, workloads=[result])
+                self.assertEqual(
+                    d.owes_stage2(row),
+                    engine.extension_pairs(report, 20) is not None,
+                    (cpu, wall))
+                count += 1
+        self.assertEqual(count, 25)
+        # a failed protocol: the engine plans nothing and nor does the row
+        self.assertIsNone(engine.extension_pairs(dict(success=False), 20))
+        self.assertFalse(d.owes_stage2(workload("a", 1, protocol=False)))
+        # a non-gated metric's control reason does not owe a stage
+        row = workload("a", 1, gc=metric("inconclusive", tg.CONTROL))
+        self.assertFalse(d.owes_stage2(row))
+        self.assertEqual(d.chain_text(trow()), "first stage pass; no "
+                         "stage 2; final class pass")
 
 
 class RealReplay(ttg.Rig):
@@ -1207,6 +1425,33 @@ class Derive(unittest.TestCase):
             d.disposition(self.args("--check", str(out)))
         with self.assertRaisesRegex(ValueError, "refusing to replace"):
             d.disposition(self.args("--record", str(out)))
+
+
+    def test_a_later_commit_keeps_a_recorded_disposition_checkable(self):
+        out = self.root / "out"
+        self.assertEqual(d.disposition(self.args("--record", str(out))), 0)
+        path = out / "disposition.json"
+        held = json.loads(path.read_text())
+        self.assertEqual(held["head"], "h" * 40)
+        # recorded at an earlier head of the same tree outside the
+        # performance area (a later performance-only commit followed)
+        held["head"] = FakeLineage.EARLIER
+        path.write_text(json.dumps(held))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(d.disposition(
+                self.args("--check", str(out))), 0)
+        # a head the checkout does not descend from with that tree (a
+        # later commit outside the performance area, or another branch)
+        held["head"] = "f" * 40
+        path.write_text(json.dumps(held))
+        with self.assertRaisesRegex(ValueError, "not an earlier head"):
+            d.disposition(self.args("--check", str(out)))
+        # the head is no way to alter anything else
+        held["head"] = FakeLineage.EARLIER
+        held["status"] = "fail"
+        path.write_text(json.dumps(held))
+        with self.assertRaisesRegex(ValueError, "changed TASK37"):
+            d.disposition(self.args("--check", str(out)))
 
 
 class Command(unittest.TestCase):

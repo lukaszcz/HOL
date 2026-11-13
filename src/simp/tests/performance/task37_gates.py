@@ -36,7 +36,11 @@ What each replay re-derives, and what it cannot:
   judged gate; a difference makes the gate `fail` (visible in the
   disposition, never transferred). Every attempt of the runner is in an
   attempts ledger (`--startup-ledger`, R-1: a failed attempt stays), and
-  the judged gate must be the last one (`startup_attempts`). NOT
+  the judged gate must be the last one (`startup_attempts`); an attempt
+  counts as complete only with its `done` line and a close status of 0 or
+  2 (2: completed with a soft step failed), every earlier attempt is
+  judged and recorded, and a redraw needs a void one or one that failed
+  on the declared deltas only. NOT
   re-derived: the builds, the path-length cells
   (`startup_gate.py cell`) and the runner's `check_deltas` (whole load
   rows against the declared archive), which needs the built trees; the
@@ -62,6 +66,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import re
 import shlex
 import sys
 import tempfile
@@ -336,13 +341,44 @@ def check_record(header, record, lineage, label=STARTUP):
 
 DECLARED_SCHEMA = "task37-startup-declared-v1"
 LOAD_KINDS = ("load-simpLib", "load-congLib")
+SHA256 = re.compile(r"[0-9a-f]{64}")
+# The sentences of the record text (fill_record.py) that declare the totals
+# and name their archive.
+TEXT_TOTALS = re.compile(r"Ds = ([0-9,]+), Dc = ([0-9,]+)")
+TEXT_ARCHIVE = re.compile(r"sha256 of its decisions\.json ([0-9a-f]{64})")
 
 
-def read_declared(path, header):
+def archive_totals(decisions, label):
+    """{kind: R2 `load.total`} of a gate archive's decisions (the figures
+    `fill_record.py` declares), each equal on every image."""
+    r2 = decisions.get("R2") if isinstance(decisions, dict) else None
+    found = {}
+    for kind in LOAD_KINDS:
+        images = r2.get(kind) if isinstance(r2, dict) else None
+        a.require(isinstance(images, dict) and images,
+                  "%s has no R2 %s" % (label, kind))
+        totals = {((row or {}).get("load") or {}).get("total")
+                  for row in images.values()}
+        a.require(len(totals) == 1 and type(next(iter(totals))) is int,
+                  "%s: the R2 %s total is not one integer on every image"
+                  % (label, kind))
+        found[kind] = totals.pop()
+    return found
+
+
+def read_declared(path, header, record=None):
     """The sidecar of the record (`fill_record.py`): the load totals Ds and
     Dc the record declares, per kind, with the archive they come from. It
-    is bound to the record the gate is sealed to. Returns (document,
-    seal)."""
+    is bound to the record the gate is sealed to, and to its content:
+
+    - the archive named is a gate archive whose `decisions.json` has the
+      sha256 the sidecar states, and the totals recomputed from it (the R2
+      `load.total` of each kind) are the sidecar's;
+    - the record text (`record`, a path; its sha256 is the header's, see
+      `check_record`) states the same Ds and Dc and names the same archive
+      sha256.
+
+    Returns (document, seal)."""
     doc = read(path, "the startup declared deltas")
     a.require(doc.get("schema") == DECLARED_SCHEMA and
               doc.get("record_sha256") == header.get("record_sha256"),
@@ -352,8 +388,30 @@ def read_declared(path, header):
     a.require(isinstance(totals, dict) and set(totals) == set(LOAD_KINDS)
               and all(type(v) is int for v in totals.values()) and
               isinstance(doc.get("archive"), str) and doc["archive"] and
-              isinstance(doc.get("archive_sha256"), str),
+              isinstance(doc.get("archive_sha256"), str) and
+              SHA256.fullmatch(doc["archive_sha256"]),
               "malformed startup declared deltas")
+    archive = Path(doc["archive"]) / "decisions.json"
+    a.require(archive.is_file(), "the archive the declared deltas come "
+              "from is missing: %s" % archive)
+    a.require(hashlib.sha256(archive.read_bytes()).hexdigest() ==
+              doc["archive_sha256"], "the archive %s is not the one the "
+              "declared deltas name (sha256 differs)" % archive)
+    a.require(archive_totals(a.load(archive), str(archive)) == totals,
+              "the declared totals are not the R2 load totals of their "
+              "archive %s" % archive)
+    a.require(record is not None, "the declared deltas are checked "
+              "against the record text: pass the record")
+    text = Path(record).read_text()
+    found = TEXT_TOTALS.findall(text)
+    a.require(len(found) == 1 and found[0] == tuple(
+        format(totals[k], ",") for k in LOAD_KINDS),
+        "the record text does not declare Ds = %s, Dc = %s" % tuple(
+            format(totals[k], ",") for k in LOAD_KINDS))
+    a.require(TEXT_ARCHIVE.findall(text) == [doc["archive_sha256"]] and
+              doc["archive"] in text,
+              "the record text does not name the archive %s with sha256 "
+              "%s" % (doc["archive"], doc["archive_sha256"]))
     return doc, a.seal(Path(path))
 
 
@@ -379,14 +437,19 @@ def declared_problems(declared, decisions):
     return problems
 
 
-def startup_attempts(ledger, judged):
-    """Every attempt of the startup-gate runner in `ledger` (JSON lines
+# The close status of a startup attempt (run_startup_gate.sh): 0, every
+# step passed; 2, the run completed (`done` is written) but a soft step
+# failed (gate, null gate, check_deltas); anything else (a failing step or
+# `die` 1, a signal 129/130/143) is an incomplete run.
+EXIT_COMPLETE = (0, 2)
+
+
+def read_ledger(ledger):
+    """The attempts of the startup-gate runner in `ledger` (JSON lines
     `open`/`close` of `run_startup_gate.sh`: {event, attempt, output,
-    exit}), oldest first: [{attempt, output, status, judged}] with status
-    `ok` (closed with exit 0), `failed` (closed otherwise) or `open`. The
-    judged gate directory `judged` must lie in the output of the LAST
-    attempt, which is closed: an earlier attempt stays in the ledger and in
-    the record (R-1), and a later one is not the judged one."""
+    exit}), oldest first, as [{attempt, output, exit, status}] with
+    status `open` (no close yet), `ok` (closed with exit 0), `soft`
+    (closed with exit 2) or `failed` (closed otherwise)."""
     path = Path(ledger) if ledger is not None else None
     a.require(path is not None and path.is_file(),
               "no startup attempts ledger: %s" % ledger)
@@ -417,10 +480,73 @@ def startup_attempts(ledger, judged):
                       "the startup attempt %s is closed without a single "
                       "matching open" % key)
             rows[key].update(exit=record["exit"],
-                             status="ok" if record["exit"] == 0
-                             else "failed")
+                             status="ok" if record["exit"] == 0 else
+                             "soft" if record["exit"] == 2 else "failed")
     a.require(order, "the startup ledger %s has no attempt" % path)
-    last = rows[order[-1]]
+    return [rows[k] for k in order]
+
+
+def completed(row):
+    """The runner of the attempt reached its end: it closed with 0 or 2 and
+    wrote `done` (a step that failed with 2 wrote none)."""
+    return row["exit"] in EXIT_COMPLETE and (
+        Path(row["output"]) / "done").is_file()
+
+
+def earlier_attempt(row):
+    """What an attempt before the judged one shows, and whether its redraw
+    is allowed (decision 21): a redraw follows a gate that FAILED on the
+    declared deltas (the attempt completed with a gate whose own decision
+    has no reasons or blockers, and whose R2 load totals differ from the
+    totals its own record declared) or an attempt that is void (the runner
+    did not complete, or left no gate decision). Anything else, such as a
+    passing attempt or a gate that failed for another reason, is a draw
+    that stays judged: the disposition is refused. Returns the row with
+    `verdict` (`void`, `declared-deltas`), `decision`, `reasons` and
+    `problems`."""
+    out = Path(row["output"])
+    found = dict(row, decision=None, reasons=[], problems=[])
+    if not completed(row):
+        return dict(found, verdict="void")
+    path = out / "gate" / "decisions.json"
+    if not path.is_file():
+        return dict(found, verdict="void")
+    decisions = a.load(path)
+    found.update(decision=decisions.get("decision"),
+                 reasons=list(decisions.get("reasons", [])) + list(
+                     decisions.get("blockers", [])))
+    side = out / "declared-deltas.json"
+    if side.is_file():
+        declared = a.load(side)
+        if isinstance(declared.get("totals"), dict) and set(
+                declared["totals"]) == set(LOAD_KINDS) and isinstance(
+                    declared.get("archive"), str):
+            found["problems"] = declared_problems(declared, decisions)
+    a.require(found["problems"] and not found["reasons"] and
+              found["decision"] in ("pass", "attributed"),
+              "the earlier startup attempt %s completed with gate decision "
+              "%s%s%s: a redraw is allowed only after a gate that failed "
+              "on the declared deltas alone (or an incomplete run), so "
+              "that attempt is a draw that stays judged (design decision "
+              "21)" % (row["attempt"], found["decision"],
+                       " (%s)" % "; ".join(found["reasons"])
+                       if found["reasons"] else "",
+                       "" if found["problems"] else ", which declared "
+                       "deltas it matched"))
+    return dict(found, verdict="declared-deltas")
+
+
+def startup_attempts(ledger, judged):
+    """Every attempt of the startup-gate runner in `ledger`, oldest first:
+    [{attempt, output, exit, status, judged, verdict, decision, reasons,
+    problems}]. The judged gate directory `judged` must lie in the output
+    of the LAST attempt, which is closed with 0 or 2 and completed
+    (`completed`: otherwise the attempt is void and cannot be judged, the
+    lead redraws). Every earlier attempt is judged by `earlier_attempt` (R-1:
+    it stays in the record with its decision) and a redraw that was not
+    allowed refuses."""
+    rows = read_ledger(ledger)
+    last = rows[-1]
     a.require(last["status"] != "open",
               "the last startup attempt %s is not closed" % last["attempt"])
     inside = Path(judged).resolve().parent == Path(
@@ -428,7 +554,16 @@ def startup_attempts(ledger, judged):
     a.require(inside, "the judged startup gate %s is not in the last "
               "attempt of the ledger (%s): a later attempt exists, or this "
               "is an earlier one" % (judged, last["output"]))
-    return [dict(rows[k], judged=k == order[-1]) for k in order]
+    a.require(completed(last),
+              "the last startup attempt %s is void (exit %s, `done` %s): "
+              "the runner did not complete, so it cannot be judged; the "
+              "lead redraws (R-1)" % (
+                  last["attempt"], last["exit"],
+                  "written" if (Path(last["output"]) / "done").is_file()
+                  else "missing"))
+    found = [dict(earlier_attempt(row), judged=False) for row in rows[:-1]]
+    return found + [dict(last, judged=True, verdict="judged", decision=None,
+                         reasons=[], problems=[])]
 
 
 def replay_startup(out, record):

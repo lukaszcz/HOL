@@ -56,12 +56,24 @@ seals): identity accounting proves every differing loaded file attributed,
 so the correctness of a timing table does not depend on its list
 (design decision 19).
 
+Counts revisions are data, like follow-up declarations (task37_followup.py):
+the engine names a revision of a counts file by a new path, `STEM_2.json`,
+`STEM_3.json`, ... beside it (`predeclare --revises`; PROTOCOL.md, "Revisions
+and the route after a regression"), so a table's revisions are the files of
+that pattern that exist (`revisions_of`), in the order of their numbers
+without a gap, and neither this module nor task37_followup.py changes when
+one is made. A revision belongs to the table whose counts file it revises
+(the pattern holds that file's stem): it changes no seal or path of another
+shard's tables or follow-ups.
+
 The command is the engine's, with the shard named first:
 
   task37_grid.py {client-1,client-2,matrix-1,...,matrix-4} COMMAND ...
 
   prepare, pilot, predeclare, verify-counts, run, extend, replay
 """
+from pathlib import Path
+import re
 import sys
 
 sys.dont_write_bytecode = True
@@ -145,17 +157,44 @@ def file_of(key):
     return a.HERE / ("task37_%s_%s_iterations.json" % (kind, number))
 
 
-def table(key, document=ATTRIBUTED):
+def revisions_of(counts):
+    """The revisions of a counts file that exist, in order: the files
+    `STEM_2.json`, `STEM_3.json`, ... beside `counts` (`STEM.json`), the
+    engine's own naming of `predeclare --revises`. The numbers run from 2
+    without a gap and without leading zeros, or the table is refused (a
+    revision is never edited and never dropped); no revision gives ()."""
+    counts = Path(counts)
+    found = {}
+    pattern = re.compile(r"%s_([2-9]|[1-9][0-9]+)%s" % (
+        re.escape(counts.stem), re.escape(counts.suffix)))
+    for path in counts.parent.glob(counts.stem + "_*" + counts.suffix):
+        match = pattern.fullmatch(path.name)
+        a.require(match, "%s is no revision of %s by the engine's naming "
+                  "(%s_N%s, N from 2)" % (
+                      path.name, counts.name, counts.stem, counts.suffix))
+        found[int(match.group(1))] = path
+    numbers = sorted(found)
+    a.require(numbers == list(range(2, 2 + len(numbers))),
+              "the revisions of %s are numbered %s, not from 2 without a "
+              "gap" % (counts.name, numbers))
+    return tuple(found[n] for n in numbers)
+
+
+def table(key, document=ATTRIBUTED, revisions=None):
     """The timing table of a shard key (`matrix-2`) with the pins of a
-    reviewed document."""
+    reviewed document and the counts revisions that exist (`revisions_of`,
+    or `revisions`, for a test)."""
     kind = KIND[key]
     cells = PARTS[key]
     found = tuple(c for c in CASES[kind]
                   if any(cases.split(x)[0] == c for x in cells))
+    if revisions is None:
+        revisions = revisions_of(file_of(key))
     return tg.Table(
         name_of(key), "TASK37-" + key.upper(), found, __file__,
-        file_of(key), seconds=SECONDS, seconds_by_case={
-            c: LONG_SECONDS for c in found if c in LONG[kind]},
+        file_of(key), revisions=revisions, seconds=SECONDS,
+        seconds_by_case={c: LONG_SECONDS for c in found
+                         if c in LONG[kind]},
         fixed_seconds=True, schedule="warmup", headroom=1, pairs=PAIRS,
         samples=SAMPLES, seed="%s-layout-1" % name_of(key),
         baseline=a.BASE, engine=True, engines=ENGINES, drivers=DRIVERS,

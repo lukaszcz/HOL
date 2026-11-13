@@ -4735,7 +4735,7 @@ without editing what their kept records depend on.
   each) each run in a clone of their own, with `--api-audit` given that
   receipt file, record `inputs.txt`, and replay with `--expect-seal` of
   the sha256 of their `loading.json` and the clone's ledger. The shard
-  (`simpLib`, `congLib` or `all`) is validated.
+  (`simplib` or `conglib`, required) is validated.
 - D7. `task37_builds.py` records build timing and is not a gate: the routine
   `bin/build -t --seq=tools/sequences/upto-parallel` in 3 AB/BA/AB pairs and
   `bin/build -t -F` in 2 pairs, each side a fresh `git clone --shared` in
@@ -4779,6 +4779,30 @@ it and on no other. Any other control-limited cell blocks and owes stage
 2. Inconclusive never passes, and every incomplete record lists what
 is owed (`stage2`, `followup`, `attribution`, `redraw`, `identity-rerun`,
 `allocation-rerun`, `retained-slope`; TASK33's `second` is `stage2`).
+
+Owed stage and decisive stage. The decisive stage of a cell is the final
+class of its chain of timing stages (the chain's last stage, not the first
+that decided). A stage-2 rule is owed exactly where the engine's own rule
+(`extension_pairs`) extends the first stage; the disposition derives it
+from that rule, never from a copy. A `fail` at any stage decides (an
+earlier fail is a fail even if a later stage passes). A revision of a
+counts file (`STEM_N.json`, N >= 2, made by `predeclare --revises`) is
+data: each table discovers its own by the engine's naming pattern and
+binds each to its own table. A follow-up declaration is committed alone
+and must be an ancestor of the commit of the follow-up's counts file
+(checked by the follow-up engine and again by dispose).
+
+Startup attempts. Every attempt is judged: its gate decision and reasons
+are recorded, and a redraw is refused unless the earlier attempt was void
+or failed on the declared deltas only. The sidecar `declared-deltas.json`
+is bound to the record text (archive sha256, recomputed totals, "Ds = N,
+Dc = M" parsed from the record). The runner exits 0 when all steps pass, 2
+when it completed but a soft step failed (a `done` line is in the ledger),
+1 on `die`; dispose accepts an attempt only if `done` is present and the
+close status is 0 or 2. An `ATTEMPT` name is never reused and `EVTAG` is
+restricted to `[A-Za-z0-9._-]`. `--check` accepts the stored `head` when
+it is an ancestor of HEAD with the same tree outside the performance
+directory.
 
 Lineage (design decision 17). Dispose runs in the main worktree that
 holds the code, and `--repo` must be it. An input's candidate is accepted

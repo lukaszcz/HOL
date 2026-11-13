@@ -14,6 +14,7 @@ import acceptance as a
 import import_closure as ic
 import performance_schema as ps
 import task37_cases as c
+import task37_dispose as d
 import task37_followup as f
 import task37_grid as g
 import task37_load as load
@@ -126,21 +127,32 @@ class Configuration(unittest.TestCase):
         """The measurement stages create and commit the counts files (each
         alone); until then there is none to check, and nothing is said
         about its absence (as test_task30_grid.py)."""
-        found = [t for t in g.TABLES.values() if t.counts.exists()]
+        found = [(t, p) for t in g.TABLES.values() for p in t.files()
+                 if p.exists()]
         if not found:
             self.skipTest("the counts files are made by each shard's "
                           "measurement stage and committed then")
-        for t in found:
-            counts = a.load(t.counts)
-            self.assertEqual(set(counts["iterations"]), set(t.names()),
-                             t.counts)
-            self.assertEqual(counts["seconds"], t.seconds_map(), t.counts)
-            for value in counts["iterations"].values():
-                # the warmup schedule: any positive integer, by the
-                # schema's own rule (not a power of two)
-                self.assertEqual(
-                    ps.batch_iterations(value, t.schedule), value,
-                    t.counts)
+        for t, path in found:
+            self.assertEqual(counts_problems(t, a.load(path)), [], path)
+
+    def test_the_counts_check_finds_what_is_wrong(self):
+        t = g.TABLES["task37-matrix-1"]
+        cells = t.names()
+        good = dict(iterations={c: 3 for c in cells},
+                    seconds=t.seconds_map())
+        self.assertEqual(counts_problems(t, good), [])
+        for bad in (
+                dict(good, iterations={c: 3 for c in cells[1:]}),
+                dict(good, iterations=dict(good["iterations"], x=1)),
+                dict(good, seconds={}),
+                dict(good, iterations=dict(good["iterations"],
+                                           **{cells[0]: 0})),
+                dict(good, iterations=dict(good["iterations"],
+                                           **{cells[0]: 1.5})),
+                dict(good, iterations=dict(good["iterations"],
+                                           **{cells[0]: "3"})),
+                dict(seconds=good["seconds"])):
+            self.assertTrue(counts_problems(t, bad), bad)
 
     def test_the_sources_are_the_boundary_lists(self):
         """The rule: matrix shards pin TASK30's list less SimpTracking,
@@ -162,6 +174,27 @@ class Configuration(unittest.TestCase):
             self.assertEqual(set(t.pinned), {"src/simp/src/Cond_rewr.sig"})
             self.assertEqual(t.pin_file, "task37_attributed.json")
             self.assertEqual(g.FILE, c.REVIEWED_FILE)
+
+
+def counts_problems(t, counts):
+    """What is wrong with the counts document of table `t`, as a list: its
+    cells, its seconds (a per-cell map) and the schema's own rule for every
+    batch count (the warmup schedule: any positive integer)."""
+    found = []
+    if not isinstance(counts.get("iterations"), dict) or \
+            set(counts["iterations"]) != set(t.names()):
+        found.append("the cells are not the table's")
+        return found
+    if counts.get("seconds") != t.seconds_map():
+        found.append("the seconds are not the table's")
+    for cell, value in counts["iterations"].items():
+        try:
+            same = ps.batch_iterations(value, t.schedule) == value
+        except (ValueError, TypeError):
+            same = False
+        if not same:
+            found.append("%s: %r is no batch count" % (cell, value))
+    return found
 
 
 class Shards(unittest.TestCase):
@@ -320,6 +353,144 @@ class Seals(unittest.TestCase):
         for t in of_kind("client"):
             self.assertNotIn("MatrixPerformance.sml", t.sealed)
             self.assertIn("ClientPerformance.sml", t.sealed)
+
+
+class Revisions(unittest.TestCase):
+    """Counts revisions are data (`revisions_of`): found by the engine's
+    own naming, each bound to the table whose counts file it revises, with
+    no edit to the driver."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        # a directory the way a.HERE is deep (the table roots at its
+        # fourth parent)
+        self.here = self.root / "p" / "q" / "r" / "s"
+        self.here.mkdir(parents=True)
+
+    def touch(self, *names):
+        for name in names:
+            (self.here / name).write_text("{}")
+
+    def test_none_exist_yet(self):
+        self.assertTrue(all(t.revisions == () for t in g.TABLES.values()))
+        self.assertEqual(g.revisions_of(self.here / "x_iterations.json"),
+                         ())
+
+    def test_the_revisions_found_are_in_numeric_order(self):
+        self.touch("x_iterations_3.json", "x_iterations_2.json",
+                   "x_iterations_10.json", *(
+                       "x_iterations_%d.json" % n for n in range(4, 10)),
+                   "y_iterations_2.json", "x_other.json")
+        got = g.revisions_of(self.here / "x_iterations.json")
+        self.assertEqual([p.name for p in got], [
+            "x_iterations_%d.json" % n for n in range(2, 11)])
+        self.assertEqual(g.revisions_of(self.here / "y_iterations.json"),
+                         (self.here / "y_iterations_2.json",))
+
+    def test_a_gap_or_an_odd_name_is_refused(self):
+        self.touch("x_iterations_3.json")
+        with self.assertRaisesRegex(ValueError, "without a gap"):
+            g.revisions_of(self.here / "x_iterations.json")
+        self.touch("x_iterations_2.json")
+        g.revisions_of(self.here / "x_iterations.json")
+        for odd in ("x_iterations_02.json", "x_iterations_rev1.json",
+                    "x_iterations_1.json"):
+            self.touch(odd)
+            with self.assertRaisesRegex(ValueError, "no revision of"):
+                g.revisions_of(self.here / "x_iterations.json")
+            (self.here / odd).unlink()
+
+    def table_with(self, key, names):
+        self.touch(*names)
+        return g.table(key, revisions=g.revisions_of(
+            self.here / g.file_of(key).name))
+
+    def test_a_table_takes_its_revisions_with_real_objects(self):
+        key = "matrix-1"
+        base = g.file_of(key).stem
+        t = self.table_with(key, [base + "_2.json", base + "_3.json"])
+        self.assertEqual([p.name for p in t.revisions],
+                         [base + "_2.json", base + "_3.json"])
+        self.assertEqual(t.files()[0], g.file_of(key))
+        self.assertEqual(t.latest().name, base + "_3.json")
+        self.assertEqual(t.file_named(base + "_2.json").name,
+                         base + "_2.json")
+        with self.assertRaises(ValueError):
+            t.file_named("task37_matrix_2_iterations_2.json")
+        self.assertIsInstance(tg.Grid(t, doc=__doc__), tg.Grid)
+
+    def test_discovery_reads_the_directory_of_the_counts_file(self):
+        base = g.file_of("matrix-1").stem
+        self.touch(base + "_2.json")
+        with mock.patch.object(a, "HERE", self.here):
+            found = {k: g.table(k).revisions for k in g.SHARD_KEYS}
+        self.assertEqual(found.pop("matrix-1"),
+                         (self.here / (base + "_2.json"),))
+        self.assertTrue(all(v == () for v in found.values()))
+
+    def test_a_revision_of_one_shard_touches_no_other_shard(self):
+        base = g.file_of("matrix-1").stem
+        revised = self.table_with("matrix-1", [base + "_2.json"])
+        plain = g.TABLES["task37-matrix-1"]
+        # the revision changes the files of its own table only
+        self.assertEqual(len(revised.files()), 2)
+        self.assertEqual(len(plain.files()), 1)
+        for key in g.SHARD_KEYS:
+            if key != "matrix-1":
+                other = g.table(key)
+                self.assertEqual(other.files(), (g.file_of(key),))
+        # and no seal: the sealed files, the driver and the pins of
+        # every table are the same, and so are the engines' code seals
+        for key in g.SHARD_KEYS:
+            engine = g.GRIDS[g.name_of(key)]
+            before = engine.code_now()
+            if key == "matrix-1":
+                other = tg.Grid(revised, doc=__doc__)
+                self.assertEqual(other.code_now(), before)
+            self.assertEqual(g.table(key).sealed, g.TABLES[
+                g.name_of(key)].sealed)
+        # a follow-up of another shard is not touched either: its table
+        # has its own counts file, whose revisions are its own
+        replaced = g.GRIDS["task37-matrix-2"]
+        follow = f.table("matrix-2", g.PARTS["matrix-2"][:1], replaced)
+        self.assertEqual(follow.files(), (f.file_of("matrix-2"),))
+
+    def test_the_follow_up_of_a_shard_has_its_own_revisions(self):
+        shard = g.file_of("matrix-1").stem
+        follow = f.file_of("matrix-1").stem
+        self.touch(shard + "_2.json", follow + "_2.json",
+                   follow + "_3.json")
+        with mock.patch.object(a, "HERE", self.here):
+            first = g.table("matrix-1")
+            other = f.table("matrix-1", g.PARTS["matrix-1"][:1],
+                            g.GRIDS["task37-matrix-1"])
+        self.assertEqual([p.name for p in first.revisions],
+                         [shard + "_2.json"])
+        self.assertEqual([p.name for p in other.revisions],
+                         [follow + "_2.json", follow + "_3.json"])
+        # the follow-up's counts file is still not the shard's
+        self.assertNotIn(other.counts, first.files())
+
+    def test_the_disposition_accepts_a_revision_of_its_own_table(self):
+        base = g.file_of("matrix-1").stem
+        t = self.table_with("matrix-1", [base + "_2.json"])
+        other = g.TABLES["task37-matrix-2"]
+        (self.root / "task37_matrix_1_iterations.json").write_text("one")
+        (self.root / (base + "_2.json")).write_text("two")
+        with mock.patch.object(d, "COUNTS_DIR", self.root):
+            for name in (base + ".json", base + "_2.json"):
+                inventory = dict(counts_file=name, iterations_seal=a.seal(
+                    self.root / name))
+                stage = dict(inventory=inventory,
+                             first_inventory=inventory)
+                self.assertEqual(
+                    d.check_counts(stage, "t", t),
+                    a.seal(self.root / name))
+            # a revision of shard 1 is no counts file of shard 2's table
+            with self.assertRaisesRegex(ValueError, "not one of"):
+                d.check_counts(stage, "t", other)
 
 
 class Modules(unittest.TestCase):

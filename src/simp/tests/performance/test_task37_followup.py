@@ -5,6 +5,7 @@ the shard drivers' seals."""
 import contextlib
 import io
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +15,7 @@ import acceptance as a
 import import_closure as ic
 import task37_followup as f
 import task37_grid as g
+import test_task37_grid as tgrid
 import timing_grid as tg
 
 
@@ -164,6 +166,155 @@ class Declarations(unittest.TestCase):
                         k.split("-")))):
                 self.assertEqual(f.declared(),
                                  {"client-1": (g.PARTS["client-1"][0],)})
+
+
+class Counts(unittest.TestCase):
+    """The counts files of a follow-up are checked like a shard's."""
+
+    def test_a_follow_up_counts_file_that_exists_is_a_valid_one(self):
+        found = [(t, p) for t in f.TABLES.values() for p in t.files()
+                 if p.exists()]
+        if not found:
+            self.skipTest("no follow-up is declared yet: its counts are "
+                          "made and committed by its measurement stage")
+        for t, path in found:
+            self.assertEqual(tgrid.counts_problems(t, a.load(path)), [],
+                             path)
+
+    def test_the_check_finds_what_is_wrong_with_a_follow_up_file(self):
+        key = "matrix-2"
+        cells = g.PARTS[key][:2]
+        t = f.table(key, cells, g.GRIDS["task37-" + key])
+        good = dict(iterations={c: 4 for c in cells},
+                    seconds=t.seconds_map())
+        self.assertEqual(tgrid.counts_problems(t, good), [])
+        # the shard's whole part is no follow-up's cell set
+        whole = dict(good, iterations={c: 4 for c in g.PARTS[key]})
+        self.assertTrue(tgrid.counts_problems(t, whole))
+        self.assertTrue(tgrid.counts_problems(
+            t, dict(good, iterations={cells[0]: 4})))
+        self.assertTrue(tgrid.counts_problems(t, dict(good, seconds={})))
+        self.assertTrue(tgrid.counts_problems(
+            t, dict(good, iterations={c: 0 for c in cells})))
+
+
+class Ordering(unittest.TestCase):
+    """The declaration precedes the follow-up's counts (a real repository)."""
+
+    KEY = "matrix-2"
+
+    def git(self, *args):
+        return subprocess.run(
+            ["git", "-C", str(self.repo), "-c", "user.name=t", "-c",
+             "user.email=t@t", *args], check=True, text=True,
+            stdout=subprocess.PIPE).stdout.strip()
+
+    def commit(self, **files):
+        for name, text in files.items():
+            (self.repo / name).write_text(text)
+        self.git("add", "-A")
+        self.git("commit", "-qm", "c")
+        return self.git("rev-parse", "HEAD")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = Path(self.tmp.name).resolve()
+        self.git("init", "-q", ".")
+        self.decl = self.repo / "decl.json"
+        patch = mock.patch.object(f, "declaration_file",
+                                  lambda key: self.decl)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def check(self, candidate, counts):
+        f.check_declaration_order(self.repo, candidate, self.KEY, counts)
+
+    def test_a_declaration_committed_alone_before_the_counts_is_accepted(
+            self):
+        first = self.commit(**{"decl.json": "{}"})
+        counts = self.commit(**{"counts.json": "1"})
+        later = self.commit(**{"other.txt": "x"})
+        self.check(later, counts)
+        self.check(counts, counts)
+
+    def test_a_declaration_after_the_counts_is_refused(self):
+        counts = self.commit(**{"counts.json": "1"})
+        late = self.commit(**{"decl.json": "{}"})
+        with self.assertRaisesRegex(ValueError, "not an ancestor"):
+            self.check(late, counts)
+
+    def test_a_declaration_in_the_counts_commit_is_refused(self):
+        both = self.commit(**{"decl.json": "{}", "counts.json": "1"})
+        with self.assertRaisesRegex(ValueError, "change only that file"):
+            self.check(both, both)
+
+    def test_a_declaration_committed_with_other_files_is_refused(self):
+        self.commit(**{"decl.json": "{}", "other.txt": "x"})
+        counts = self.commit(**{"counts.json": "1"})
+        with self.assertRaisesRegex(ValueError, "change only that file"):
+            self.check(counts, counts)
+
+    def test_an_uncommitted_edited_or_recommitted_file_is_refused(self):
+        counts = self.commit(**{"counts.json": "1"})
+        self.decl.write_text("{}")
+        with self.assertRaises(ValueError):          # not committed
+            self.check(counts, counts)
+        decl = self.commit(**{"decl.json": "{}"})
+        self.decl.write_text('{"edited": 1}')
+        with self.assertRaisesRegex(ValueError, "not the committed one"):
+            self.check(decl, decl)
+        self.decl.write_text("{}")
+        again = self.commit(**{"decl.json": '{"cells": []}'})
+        with self.assertRaisesRegex(ValueError, "exactly one commit"):
+            self.check(again, again)
+
+    def test_the_engine_checks_every_counts_commit_it_reads(self):
+        built, engine = f.declare(
+            self.KEY, g.PARTS[self.KEY][:1])
+        self.assertIsInstance(engine, f.Followup)
+        with mock.patch.object(tg.Grid, "counts_commit",
+                               return_value="a" * 40) as base, \
+                mock.patch.object(f, "check_declaration_order") as check:
+            got = engine.counts_commit("repo", "cand", "path")
+        self.assertEqual(got, "a" * 40)
+        base.assert_called_once_with("repo", "cand", "path")
+        check.assert_called_once_with("repo", "cand", self.KEY, "a" * 40)
+        # a refusal of the order refuses the counts commit
+        with mock.patch.object(tg.Grid, "counts_commit",
+                               return_value="a" * 40), \
+                mock.patch.object(f, "check_declaration_order",
+                                  side_effect=ValueError("late")):
+            with self.assertRaisesRegex(ValueError, "late"):
+                engine.counts_commit("repo", "cand", "path")
+
+
+class OtherShardDeclared(unittest.TestCase):
+    """Declaring the follow-up of another shard leaves a recorded follow-up
+    checkable by the real engine."""
+
+    def test_check_code_of_a_recorded_follow_up_survives_another_one(self):
+        mine, other = "matrix-1", "matrix-3"
+        paths = [f.declaration_file(k) for k in (mine, other)]
+        if any(p.exists() for p in paths):
+            self.skipTest("a follow-up is already declared")
+        self.addCleanup(lambda: [p.unlink() for p in paths
+                                 if p.exists()])
+        declare_in(a.HERE, mine, g.PARTS[mine][:1])
+        built, engine = f.declare(mine, f.load_declaration(mine))
+        recorded = engine.code_now()
+        engine.check_code(recorded, True)
+        # the other shard's declaration appears: the recorded code of this
+        # follow-up is still the code of this table
+        declare_in(a.HERE, other, g.PARTS[other][:1])
+        self.assertEqual(engine.code_now(), recorded)
+        engine.check_code(recorded, True)
+        again = f.declare(mine, f.load_declaration(mine))[1]
+        again.check_code(recorded, True)
+        theirs = f.declare(other, f.load_declaration(other))[1]
+        self.assertNotEqual(theirs.code_now(), recorded)
+        with self.assertRaises(ValueError):
+            engine.check_code(theirs.code_now(), True)
 
 
 class Apart(unittest.TestCase):

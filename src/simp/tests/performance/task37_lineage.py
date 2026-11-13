@@ -12,6 +12,9 @@ decision 17). `Lineage` is the one place that accepts a revision:
   an ancestor of D's HEAD, and has the tree outside the performance area
   (`timing_grid.git_tree_outside`) of `--candidate`: the inputs measured the
   same sources, whatever performance-only commits they were at;
+- a recorded disposition checked later (`recorded_head`) holds the HEAD it
+  was made at; that is accepted by the same rule, so a later commit that
+  touched only the performance area leaves it checkable;
 - a harness an input records (a checkout, a clean head) is accepted by the
   same rule for its head, and its recorded tree is the one git gives.
 
@@ -95,6 +98,26 @@ class Lineage:
                   "or revert them: %s" % (
                       self.repo, " ".join(found.stdout.split())[:200]))
         return a.git(self.repo, "rev-parse", "HEAD")
+
+    def recorded_head(self, rev):
+        """The HEAD a recorded disposition holds, when it is checked later:
+        accepted (and returned in full) if it is an ancestor of HEAD now
+        with the same tree outside the performance area as HEAD now, which
+        is what a later commit that touched only the performance area
+        leaves. A later commit that changed anything else refuses."""
+        label = "the recorded head"
+        full = self.commit(label, rev)
+        found = subprocess.run(
+            ["git", "-C", str(self.repo), "merge-base", "--is-ancestor",
+             full, "HEAD"], stdin=subprocess.DEVNULL)
+        a.require(found.returncode == 0,
+                  "%s names %s, which is not an ancestor of HEAD of %s"
+                  % (label, full, self.repo))
+        a.require(self.tree_of(full) == self.tree_of("HEAD"),
+                  "%s names %s, whose tree outside the performance area "
+                  "is not that of HEAD now: a commit after it changed "
+                  "more than the performance area" % (label, full))
+        return full
 
     def compiled_ref(self, rev):
         """The compiled reference of the TASK32/33 snapshots is equivalent

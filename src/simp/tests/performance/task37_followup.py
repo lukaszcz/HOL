@@ -37,6 +37,13 @@ follow-up table of shard `matrix-2` is
 `task37_matrix_2_followup_iterations.json` (made by `pilot` and
 `predeclare --replaces GRID --replaces-pilot DIR`, committed alone).
 
+The declaration must precede the follow-up's counts: the engine here
+(`Followup`) checks, wherever it reads the commit of a counts file, that the
+declaration file was committed alone and that its commit is an ancestor of
+that counts commit (`check_declaration_order`); task37_dispose.py checks it
+again. Counts revisions of the follow-up (`STEM_2.json`, ...) are discovered
+as for the shards (`task37_grid.revisions_of`), each bound to its own table.
+
   task37_followup.py SHARD COMMAND ...
 
 with the engine's commands (`prepare`, `pilot`, `predeclare`,
@@ -45,7 +52,7 @@ declared, by table name; task37_dispose.py takes them with
 `task37_grid.GRIDS` (`--followup SHARD=DIR`, `--pilot`,
 `--followup-pilot`).
 """
-import json
+import subprocess
 import sys
 
 sys.dont_write_bytecode = True
@@ -107,18 +114,63 @@ def file_of(key):
                                                                  number))
 
 
-def table(key, cells, replaced):
+def check_declaration_order(repo, candidate, key, counts_commit):
+    """The declaration file of shard `key` was committed alone (the one
+    commit of the candidate's history that touched it changed nothing else,
+    and the file is the committed one) and that commit is an ancestor of
+    the commit of the follow-up's counts file `counts_commit`: the cells
+    were fixed before the follow-up's counts, hence before any observation
+    of it (the counts-alone rule)."""
+    path = declaration_file(key)
+    name = tg.repo_relative(repo, path)
+    commit = tg.git_introduced(repo, candidate, name)
+    a.require(tg.git_blob(repo, candidate, name) ==
+              a.git(repo, "hash-object", str(path)),
+              "the declaration file %s is not the committed one" % name)
+    a.require(set(tg.git_touched(repo, commit)) == {name},
+              "the commit %s that introduced %s must change only that "
+              "file: commit the declaration alone" % (commit[:12], name))
+    found = subprocess.run(
+        ["git", "-C", str(repo), "merge-base", "--is-ancestor", commit,
+         counts_commit], stdin=subprocess.DEVNULL)
+    a.require(commit != counts_commit and found.returncode == 0,
+              "the declaration %s (commit %s) is not an ancestor of the "
+              "commit %s of the follow-up's counts file: declare the "
+              "follow-up before its counts are made" % (
+                  name, commit[:12], counts_commit[:12]))
+
+
+class Followup(tg.Grid):
+    """The engine of a follow-up: the shared engine, and the counts commit
+    of any of its counts files is checked to follow the declaration."""
+
+    def __init__(self, table, key, doc=None):
+        super().__init__(table, doc=doc)
+        self.key = key
+
+    def counts_commit(self, repo, candidate, path):
+        commit = super().counts_commit(repo, candidate, path)
+        check_declaration_order(repo, candidate, self.key, commit)
+        return commit
+
+
+def table(key, cells, replaced, revisions=None):
     """The follow-up table of shard `key` for `cells` (a non-empty subset
-    of its cells), replacing the grid of the engine `replaced`."""
+    of its cells), replacing the grid of the engine `replaced`, with the
+    counts revisions that exist (`task37_grid.revisions_of`, or
+    `revisions`, for a test)."""
     cells = tuple(cells)
     kind = base.KIND[key]
     a.require(cells and set(cells) <= set(base.PARTS[key]),
               "a follow-up measures cells of its shard")
     first = replaced.t
     found = tuple(dict.fromkeys(cases.split(c)[0] for c in cells))
+    if revisions is None:
+        revisions = base.revisions_of(file_of(key))
     return tg.Table(
         name_of(key), "TASK37-%s-FOLLOWUP" % key.upper(), found, __file__,
-        file_of(key), cells=cells, family=first.family,
+        file_of(key), revisions=revisions, cells=cells,
+        family=first.family,
         replaces=tg.Replaces(replaced), seconds=base.SECONDS,
         seconds_by_case={c: base.LONG_SECONDS for c in found
                          if c in base.LONG[kind]},
@@ -140,7 +192,7 @@ def declare(key, cells, grids=base.GRIDS):
     if not cells:
         return None
     built = table(key, cells, grids[base.name_of(key)])
-    return built, tg.Grid(built, doc=__doc__)
+    return built, Followup(built, key, doc=__doc__)
 
 
 # The cells of the follow-up of each shard, by shard key (`matrix-2`), read
