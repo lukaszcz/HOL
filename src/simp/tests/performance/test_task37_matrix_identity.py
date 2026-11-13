@@ -1,0 +1,510 @@
+#!/usr/bin/env python3
+"""TASK37 identity of the matrix and downstream cells
+(task37_matrix_identity.py): the cell sets, the parity of the records with
+task31_identity_grid's, the refusals, the seals and the parallel jobs, with
+the runner stood in for (nothing is measured)."""
+import contextlib
+import copy
+import io
+import json
+from pathlib import Path
+import re
+import tempfile
+import threading
+import unittest
+from unittest import mock
+
+import acceptance as a
+import matrix_schema as ms
+import task30_cases
+import task31_grid as timing
+import task31_identity as idt
+import task31_identity_grid as g
+import task37_matrix_identity as m
+import test_task31_identity_grid as t31
+import timing_grid as tg
+
+BASE, CAND = a.BASE, "c" * 40
+FILES = ("src/simp/src/simpLib.sig", "src/simp/src/simpLib.sml")
+SMALL = ("frag_create", "frag_named")
+
+
+def small(**more):
+    """A table of two cases (12 cells) whose cells elaborate FILES."""
+    return {"matrix": m.Table("matrix", "task37-matrix-identity", SMALL,
+                              FILES, **more),
+            "downstream": m.tables()["downstream"]}
+
+
+class Cells(unittest.TestCase):
+    def test_the_matrix_has_every_case_at_every_size(self):
+        t = m.tables()["matrix"]
+        self.assertEqual(len(t.cases), 51)
+        self.assertEqual(len(t.cells()), 306)
+        self.assertEqual(len(set(t.names())), 306)
+        self.assertEqual(sum(1 for c in t.cases
+                             if c in task30_cases.CASES), 24)
+        self.assertEqual(sum(len(ms.SIZE_SETS["rules"])
+                             for c in t.cases if c not in
+                             task30_cases.CASES), 162)
+        self.assertEqual(sum(len(ms.SIZE_SETS["rules"])
+                             for c in t.cases if c in
+                             task30_cases.CASES), 144)
+        self.assertLessEqual(set(task30_cases.CASES) | {
+            "frag_create", "compile_batch", "storage_graph"}, set(t.cases))
+        for case, size in t.cells():
+            self.assertEqual(ms.get_case(case, size), m.MATRIX_FIXTURE)
+        self.assertIn("exclude_dproc-10000", t.names())
+        self.assertIn("frag_record-0", t.names())
+
+    def test_the_downstream_cells_are_the_eleven_of_the_client_fixture(self):
+        t = m.tables()["downstream"]
+        self.assertEqual(len(t.cells()), 11)
+        self.assertEqual(sorted(t.names()), sorted(
+            ["downstream_arithmetic-%d" % n for n in (1, 10, 100, 1000,
+                                                      10000)] +
+            ["downstream_reduce-%d" % n for n in (1, 10, 100, 1000, 10000)]
+            + ["downstream_boss-0"]))
+        for case, size in t.cells():
+            self.assertEqual(ms.get_case(case, size), m.CLIENT_FIXTURE)
+
+    def test_no_cell_is_in_the_client_grid_or_in_both_tables(self):
+        from task31_cases import CASES
+        mine = set(m.tables()["matrix"].names())
+        down = set(m.tables()["downstream"].names())
+        self.assertFalse(mine & down)
+        self.assertFalse({g.name_of(*k) for k in g.every()} & (mine | down))
+        self.assertFalse(set(CASES) & (set(m.matrix_cases()) |
+                                       set(m.downstream_cases())))
+
+    def test_the_view_is_what_the_grid_reads_and_checks_its_cells(self):
+        v = m.tables()["matrix"].view()
+        self.assertEqual((v.INFEASIBLE, v.PROCESS_TIMEOUT),
+                         ((), g.cases.PROCESS_TIMEOUT))
+        with self.assertRaises(ValueError):
+            m.Table("x", "y", SMALL, infeasible=("nonsense-1",)).view()
+
+    def test_the_names_the_grid_reads_are_restored(self):
+        before = (g.cases, g.IDENTITY_TABLE, g.IDENTITY_CODE,
+                  g.CODE_HISTORY, g.report, g.measure)
+        with self.assertRaises(RuntimeError), m.bound(
+                m.tables()["matrix"], m.Pool(2)):
+            self.assertEqual(g.IDENTITY_TABLE, "task37-matrix-identity")
+            self.assertEqual(len(g.every()), 306)
+            raise RuntimeError("x")
+        self.assertEqual(before, (g.cases, g.IDENTITY_TABLE,
+                                  g.IDENTITY_CODE, g.CODE_HISTORY,
+                                  g.report, g.measure))
+        self.assertEqual(g.IDENTITY_TABLE, "task31-identity")
+
+
+class Code(unittest.TestCase):
+    def test_the_modules_this_one_imports_are_sealed(self):
+        text = (a.HERE / m.THIS).read_text()
+        local = {n + ".py" for n in re.findall(
+            r"^import (\w+)", text, re.M) if (a.HERE / (n + ".py")).is_file()}
+        self.assertLessEqual(local - {"task31_identity.py"},
+                             set(m.IDENTITY_CODE))
+        self.assertIn("task31_identity.py", g.IDENTITY_CODE)
+        self.assertIn(m.THIS, m.IDENTITY_CODE)
+        self.assertEqual(set(g.IDENTITY_CODE) | {m.THIS},
+                         set(m.IDENTITY_CODE))
+
+    def test_the_recorded_seals_are_checked(self):
+        with m.bound(m.tables()["matrix"]):
+            now = g.code_seals()
+            self.assertIn(m.THIS, now)
+            g.check_code(now)
+            bad = dict(now, **{m.THIS: {"sha256": "0"}})
+            with self.assertRaises(ValueError):
+                g.check_code(bad)
+            with mock.patch.dict(m.CODE_HISTORY, {
+                    m.THIS: [{"sha256": "0"}]}):
+                g.check_code(bad)
+            # A grid of the client's module has no seal of this one.
+            old = {k: v for k, v in now.items() if k != m.THIS}
+            with self.assertRaises(ValueError):
+                g.check_code(old)
+
+
+class Commands(t31.Commands):
+    """The commands of this module over the fake runner of the TASK31
+    tests, which `setUp` already installs on task31_identity_grid (the
+    functions this module runs)."""
+
+    def setUp(self):
+        super().setUp()
+        self.broken = set()
+        self.scratch = self.root / "tmp"
+        self.scratch.mkdir()
+        patch = mock.patch.object(tempfile, "tempdir", str(self.scratch))
+        patch.start()
+        self.addCleanup(patch.stop)
+
+        def run_one(command, log, fds, timeout):
+            folder = Path(command[command.index("--output") + 1])
+            folder.mkdir()
+            case = command[command.index("--performance-case") + 1]
+            size = command[command.index("--performance-size") + 1]
+            with self.guard:
+                self.commands = self.commands + [command]
+            Path(log).write_text("log\n")
+            if "%s-%s" % (case, size) in self.broken:
+                return dict(exit=1, timed_out=False)
+            (folder / "cell").write_text("%s %s\n" % (case, size))
+            return dict(exit=0, timed_out=False)
+        self.guard = threading.Lock()
+        self.commands = []
+        patch = mock.patch.object(g, "run_one", run_one)
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.tables = small()
+        for patch in (
+                mock.patch.object(m, "tables", lambda: self.tables),
+                mock.patch.object(t31.c, "SOURCES", FILES)):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    @staticmethod
+    def blobs(repo, baseline, candidate, entries, tree):
+        found = {p: dict(baseline="b", candidate="b") for p in FILES}
+        found.update({e["path"]: dict(baseline=e["baseline_blob"],
+                                      candidate=e["candidate_blob"])
+                      for e in entries})
+        return found
+
+    def cell_row(self, folder, case, size, baseline, candidate,
+                 samples=3, entries=()):
+
+        return t31.row(case, size, entries=entries, files=FILES)
+
+    def args(self, *only, table="matrix", jobs=1, **more):
+        argv, out = super().args(*only, **more)
+        return [argv[0], "--table", table, "--jobs", str(jobs)] + \
+            argv[1:], out
+
+    def main(self, argv):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            return m.main(argv), out.getvalue()
+
+    def run_whole(self, **more):
+        with self.whole_grid():
+            argv, out = self.args(**more)
+            code, text = self.main(argv)
+        return code, text, out
+
+    def replay(self, out, table="matrix", *more):
+        with self.whole_grid():
+            return self.replay_now(out, table, *more)
+
+    def replay_now(self, out, table, *more):
+        return self.main(["identity-replay", "--table", table, "--output",
+                          str(out), "--repo", str(self.repo), *more])
+
+    def start(self):
+        patch = mock.patch.object(idt, "cell", self.cell_row)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_a_diagnostic_cell_is_run_archived_decided_and_replayed(self):
+        self.start()
+        argv, out = self.args("frag_create-0", "frag_named-10")
+        code, text = self.main(argv)
+        self.assertEqual(code, 0, text)
+        self.assertIn("TASK37 matrix identity: attributed", text)
+        self.assertTrue((out / "frag_create-0.json.xz").is_file())
+        flags = self.commands[0]
+        self.assertTrue(flags[1].endswith("task31_snapshot.py"))
+        self.assertEqual(flags[flags.index("--performance-pairs") + 1], "1")
+        self.assertEqual(flags[flags.index("--samples") + 1], "3")
+        self.assertEqual(flags[flags.index("--batch-seconds") + 1], "1.0")
+        self.assertEqual((g.ID_PAIRS, g.ID_SAMPLES, g.ID_SECONDS),
+                         (1, 3, 1.0))
+        code, text = self.replay(out)
+        self.assertEqual(code, 0, text)
+
+    def test_the_whole_table_is_bound_to_the_checkout_and_replayed(self):
+        self.start()
+        code, text, out = self.run_whole()
+        self.assertEqual(code, 0, text)
+        decisions = a.load(out / "decisions.json")
+        self.assertEqual(sum(decisions["counts"].values()), 12)
+        self.assertEqual(decisions["counts"]["unresolved"], 0)
+        self.assertEqual(len(self.commands), 12)
+        self.assertEqual(self.replay(out)[0], 0)
+
+    def test_the_records_have_the_keys_of_the_client_grid(self):
+        self.start()
+        argv, mine = self.args("frag_create-0", out="matrix")
+        self.assertEqual(self.main(argv)[0], 0)
+        ledger = self.root / "attempts.jsonl"
+        # The client grid, run by its own module with the same stand-ins.
+        out = io.StringIO()
+        client = self.root / "client"
+        with contextlib.redirect_stdout(out):
+            code = g.main(["identity", "--output", str(client),
+                           "--baseline", BASE, "--candidate", CAND,
+                           "--authorize-measurements", "--repo",
+                           str(self.repo), "--only",
+                           "traversal_construct-0"])
+        self.assertEqual(code, 0, out.getvalue())
+        one, two = (a.load(d / "inventory.json") for d in (client, mine))
+        self.assertEqual(sorted(one), sorted(two))
+        self.assertEqual(one["schema"], two["schema"])
+        self.assertEqual(sorted(one["code"] | {m.THIS: 0}), sorted(
+            two["code"]))
+        self.assertEqual(sorted(one["runs"][0]), sorted(two["runs"][0]))
+        self.assertEqual(sorted(one["runs"][0]["row"]),
+                         sorted(two["runs"][0]["row"]))
+        for key in ("attributed", "source_tree", "sources"):
+            self.assertEqual(sorted(one[key]), sorted(two[key]), key)
+        d1, d2 = (a.load(d / "decisions.json") for d in (client, mine))
+        self.assertEqual(sorted(d1), sorted(d2))
+        self.assertEqual(d1["schema"], d2["schema"])
+        self.assertEqual(sorted(d1["counts"]), sorted(d2["counts"]))
+        self.assertEqual(sorted(d1["cells"]["traversal_construct-0"]),
+                         sorted(d2["cells"]["frag_create-0"]))
+        # The ledger tells the tables apart and holds the same fields.
+        lines = [json.loads(x) for x in ledger.read_text().splitlines()]
+        tables = [x["table"] for x in lines]
+        self.assertEqual(tables, ["task37-matrix-identity"] * 2 +
+                         ["task31-identity"] * 2)
+        self.assertEqual(sorted(lines[0]), sorted(lines[2]))
+        self.assertEqual(sorted(lines[1]), sorted(lines[3]))
+        self.assertEqual(m.attempt_counts(self.tables["matrix"], ledger,
+                                          CAND), (1, 1))
+        self.assertEqual(g.attempt_counts(ledger, CAND), (1, 1))
+
+    def refusal(self, argv, why):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code, text = self.main(argv)
+        self.assertEqual(code, tg.REFUSED, text)
+        self.assertIn(why, err.getvalue())
+
+    def test_the_refusals(self):
+        self.start()
+        argv, out = self.args("frag_create-0")
+        bare = list(argv)
+        bare.remove("--authorize-measurements")
+        self.refusal(bare, "measurement authorization required")
+        argv[argv.index("--candidate") + 1] = "develop"
+        self.refusal(argv, "")
+        argv, _ = self.args("nonsense-1")
+        self.refusal(argv, "unknown or repeated cell")
+        argv, _ = self.args("frag_create-0", "frag_create-0")
+        self.refusal(argv, "unknown or repeated cell")
+        # A cell of the other table is unknown to this one.
+        argv, _ = self.args("downstream_boss-0")
+        self.refusal(argv, "unknown or repeated cell")
+        argv, _ = self.args("frag_create-0", jobs=0)
+        self.refusal(argv, "--jobs")
+        # A full grid of a table whose sources are not derived yet.
+        self.tables = {k: m.Table(k, t.ledger, t.cases)
+                       for k, t in self.tables.items()}
+        argv, out = self.args()
+        self.refusal(argv, "has no sources yet")
+        self.assertFalse(out.exists())
+        # A diagnostic of it is allowed: that is how they are derived.
+        argv, out = self.args("frag_create-0")
+        self.assertEqual(self.main(argv)[0], 2)
+        self.assertEqual(self.main(["sources", "--output", str(out)])[1]
+                         .split(), sorted(FILES))
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), \
+                self.assertRaises(SystemExit) as caught:
+            self.main(["identity", "--table", "other"])
+        self.assertEqual(caught.exception.code, 2)
+
+    def test_the_wrong_table_or_a_foreign_grid_is_not_replayed(self):
+        self.start()
+        argv, out = self.args("frag_create-0")
+        self.assertEqual(self.main(argv)[0], 0)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = self.main(["identity-replay", "--table", "downstream",
+                              "--output", str(out), "--repo",
+                              str(self.repo)])[0]
+        self.assertEqual(code, tg.REFUSED)
+        # A grid the client module made has no seal of this module's.
+        client = self.root / "client"
+        with contextlib.redirect_stdout(io.StringIO()):
+            g.main(["identity", "--output", str(client), "--baseline",
+                    BASE, "--candidate", CAND, "--authorize-measurements",
+                    "--repo", str(self.repo), "--only",
+                    "traversal_construct-0"])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = self.replay(client)[0]
+        self.assertEqual(code, tg.REFUSED)
+        self.assertIn("identity code recorded", err.getvalue())
+
+    def test_a_changed_seal_is_refused_on_replay_and_history_admits_it(self):
+        self.start()
+        argv, out = self.args("frag_create-0")
+        self.assertEqual(self.main(argv)[0], 0)
+        inv = a.load(out / "inventory.json")
+        (out / "inventory.json").unlink()
+        inv["code"][m.THIS] = {"sha256": "0"}
+        a.save(out / "inventory.json", inv)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(self.replay(out)[0], tg.REFUSED)
+        self.assertIn(m.THIS, err.getvalue())
+        with mock.patch.dict(m.CODE_HISTORY, {m.THIS: [{"sha256": "0"}]}):
+            self.assertEqual(self.replay(out)[0], 0)
+
+    def test_a_different_cell_gives_status_1_and_replays_as_such(self):
+        def cell(folder, case, size, baseline, candidate, samples=3,
+                 entries=()):
+            return t31.row(case, size, "different" if case == "frag_create"
+                           else "identical", entries=entries, files=FILES)
+        argv, out = self.args("frag_create-0")
+        with mock.patch.object(idt, "cell", cell):
+            self.assertEqual(self.main(argv)[0], 1)
+            self.assertEqual(self.replay(out)[0], 1)
+
+    # Parallel jobs
+
+    def records(self, out):
+        """Everything a grid recorded, but what a run makes new."""
+        inv = a.load(out / "inventory.json")
+        for key in ("attempt", "checkout"):
+            inv.pop(key, None)
+        archives = {p.name: a.seal(p) for p in sorted(out.glob("*.xz"))}
+        return inv, a.load(out / "decisions.json"), archives
+
+    def ledger_events(self):
+        ledger = self.root / "attempts.jsonl"
+        return [(x["event"], x.get("status")) for x in
+                (json.loads(t) for t in ledger.read_text().splitlines())]
+
+    def test_jobs_give_the_records_of_one_job(self):
+        self.start()
+        code, text, one = self.run_whole(out="one")
+        self.assertEqual(code, 0, text)
+        order = [c[c.index("--performance-case") + 1] + "-" +
+                 c[c.index("--performance-size") + 1]
+                 for c in self.commands]
+        self.commands = []
+        code, text, three = self.run_whole(out="three", jobs=3)
+        self.assertEqual(code, 0, text)
+        self.assertEqual(sorted(c[c.index("--performance-case") + 1] + "-" +
+                                c[c.index("--performance-size") + 1]
+                                for c in self.commands), sorted(order))
+        a1, a3 = self.records(one), self.records(three)
+        self.assertEqual(a1[0]["runs"], a3[0]["runs"])
+        self.assertEqual([r["archive"] for r in a3[0]["runs"]],
+                         [n + ".json.xz" for n in self.tables["matrix"]
+                          .names()])
+        self.assertEqual(a1, a3)
+        ends = [x for x in text.splitlines() if x.startswith("END")]
+        self.assertEqual([x.split()[1] for x in ends],
+                         self.tables["matrix"].names())
+        self.assertEqual(self.ledger_events(), [("open", None),
+                         ("close", "attributed")] * 2)
+        self.assertEqual(list(self.scratch.iterdir()), [])
+        self.assertEqual(self.replay(three)[0], 0)
+
+    def test_the_jobs_do_run_at_once(self):
+        """The first three cells wait for each other: only a run that
+        has three jobs at once gets past (else the barrier times out and
+        the cell fails)."""
+        self.start()
+        hold, calls = threading.Barrier(3, timeout=20), []
+        ordinary = g.run_one
+
+        def waiting(*args):
+            calls.append(1)
+            if len(calls) <= 3:
+                hold.wait()
+            return ordinary(*args)
+        with mock.patch.object(g, "run_one", waiting):
+            code, text, out = self.run_whole(jobs=3)
+        self.assertEqual(code, 0, text)
+
+    def test_a_failed_job_is_recorded_and_the_run_stops_cleanly(self):
+        self.start()
+        names = self.tables["matrix"].names()
+        self.broken = {names[5]}
+        code, text, out = self.run_whole(jobs=3)
+        self.assertEqual(code, tg.REFUSED, text)
+        inv = a.load(out / "inventory.json")
+        self.assertEqual([r["archive"] for r in inv["runs"]],
+                         [n + ".json.xz" for n in names[:5]])
+        self.assertFalse((out / (names[5] + ".json.xz")).exists())
+        self.assertEqual(self.ledger_events(),
+                         [("open", None), ("close", "interrupted")])
+        self.assertEqual(list(self.scratch.iterdir()), [])
+        self.assertEqual([t.name for t in threading.enumerate()
+                          if t.name.startswith("identity")], [])
+        self.assertLess(len(self.commands), len(names))
+        # The resume measures the cells that are missing, with the
+        # records of an uninterrupted run.
+        self.broken = set()
+        with self.whole_grid():
+            argv, out = self.args(jobs=2)
+            code, text = self.main(argv + ["--resume"])
+        self.assertEqual(code, 0, text)
+        self.commands = []
+        _, _, clean = self.run_whole(out="clean")
+        a1, a2 = self.records(clean), self.records(out)
+        self.assertEqual(a1[0]["runs"], a2[0]["runs"])
+        self.assertEqual(a1[1:], a2[1:])
+        self.assertEqual(self.replay(out)[0], 0)
+
+    def test_a_failed_job_leaves_its_archive_set_aside(self):
+        self.start()
+        name = "frag_named-10"
+
+        def refuse(folder, case, size, baseline, candidate, samples=3,
+                   entries=()):
+            if g.name_of(case, size) == name:
+                raise ValueError("the row is refused")
+            return t31.row(case, size, entries=entries, files=FILES)
+        argv, out = self.args(jobs=2)
+        with self.whole_grid(), mock.patch.object(idt, "cell", refuse):
+            self.assertEqual(self.main(argv)[0], tg.REFUSED)
+        self.assertTrue((out / (name + ".json.xz.failed-1")).is_file())
+        self.assertFalse((out / (name + ".json.xz")).exists())
+        self.assertEqual(list(self.scratch.iterdir()), [])
+
+    def test_an_infeasible_cell_derives_from_its_case_with_jobs(self):
+        self.start()
+        self.tables = small(infeasible=("frag_create-10000",))
+        code, text, out = self.run_whole(jobs=4)
+        self.assertEqual(code, 0, text)
+        flags = [c[c.index("--performance-size") + 1] + c[
+            c.index("--performance-case") + 1] for c in self.commands]
+        self.assertNotIn("10000frag_create", flags)
+        self.assertIn("10000frag_named", flags)
+        found = a.load(out / "decisions.json")["cells"][
+            "frag_create-10000"]
+        self.assertIn("derived from frag_create-0", found["route"])
+        self.assertEqual(found["status"], "identical")
+        self.assertEqual(self.replay(out)[0], 0)
+
+    def test_a_missing_anchor_leaves_the_derived_cell_unresolved(self):
+        self.start()
+        self.tables = small(infeasible=("frag_create-10000",))
+        self.broken = {"frag_create-0"}
+        code, _, _ = self.run_whole(jobs=4)
+        self.assertEqual(code, tg.REFUSED)
+
+    def test_the_scratch_directories_are_named_apart_from_the_client(self):
+        self.assertTrue(m.Pool(2).prefix.startswith("task37-"))
+        self.assertNotEqual(m.Pool(2).prefix, "task31-identity-")
+        with self.assertRaises(ValueError):
+            m.Pool(0)
+
+
+# The tests of the TASK31 class are about the client cells: this class
+# inherits its fixtures only.
+for _name in dir(t31.Commands):
+    if _name.startswith("test_") and _name not in vars(Commands):
+        setattr(Commands, _name, None)
+
+
+if __name__ == "__main__":
+    unittest.main()
