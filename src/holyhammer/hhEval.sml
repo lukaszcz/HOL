@@ -230,6 +230,13 @@ fun validate_condition (condition : condition) =
         else ()
     | _ => ()
 
+fun json_int number = JSON.INT (IntInf.fromInt number)
+
+fun engine_param_fields {provers, slices, cores, max_proofs} =
+  [("provers", JSON.ARRAY (map JSON.STRING provers)),
+   ("slices", json_int slices), ("cores", json_int cores),
+   ("max_proofs", json_int max_proofs)]
+
 fun json_condition condition =
   let
     val _ = validate_condition condition
@@ -242,15 +249,11 @@ fun json_condition condition =
           Prover prover =>
             [("engine", JSON.STRING "prover"),
              ("prover", JSON.STRING prover)]
-        | Sched {provers, slices, cores, max_proofs} =>
-            [("engine", JSON.STRING "sched"),
-             ("provers", JSON.ARRAY (map JSON.STRING provers)),
-             ("slices", JSON.INT (IntInf.fromInt slices)),
-             ("cores", JSON.INT (IntInf.fromInt cores)),
-             ("max_proofs", JSON.INT (IntInf.fromInt max_proofs))]
+        | Sched parameters =>
+            ("engine", JSON.STRING "sched") :: engine_param_fields parameters
   in
     JSON.OBJECT (common @ engine_fields @
-      [("timeout", JSON.INT (IntInf.fromInt (#timeout condition))),
+      [("timeout", json_int (#timeout condition)),
        ("reconstruct", JSON.BOOL (#reconstruct condition))])
   end
 
@@ -277,17 +280,18 @@ fun option_field decoder name value =
 
 fun string_list value = JSONUtil.arrayMap JSONUtil.asString value
 
+fun parse_engine_params value =
+  {provers = string_list (field "provers" value),
+   slices = int_field "slices" value, cores = int_field "cores" value,
+   max_proofs = int_field "max_proofs" value}
+
 fun parse_engine value =
   case optional_field "engine" value of
       NONE => Prover (string_field "prover" value)
     | SOME engine_value =>
         (case JSONUtil.asString engine_value of
              "prover" => Prover (string_field "prover" value)
-           | "sched" => Sched
-               {provers = string_list (field "provers" value),
-                slices = int_field "slices" value,
-                cores = int_field "cores" value,
-                max_proofs = int_field "max_proofs" value}
+           | "sched" => Sched (parse_engine_params value)
            | name => raise Fail ("unknown evaluation engine: " ^ name))
 
 fun parse_condition_value value : condition =
@@ -409,22 +413,15 @@ fun json_slice
     [("prover", JSON.STRING prover), ("format", JSON.STRING format),
      ("type_enc", JSON.STRING type_enc),
      ("lam_trans", JSON.STRING lam_trans),
-     ("nfacts", JSON.INT (IntInf.fromInt nfacts)),
+     ("nfacts", json_int nfacts),
      ("filter", JSON.STRING filter),
      ("extra_opts", JSON.ARRAY (map JSON.STRING extra_opts)),
-     ("slice_size", JSON.INT (IntInf.fromInt slice_size))]
+     ("slice_size", json_int slice_size)]
 
 fun json_journal_slice {slice, szs, time, cached} =
   JSON.OBJECT
     [("slice", json_slice slice), ("szs", JSON.STRING szs),
      ("time", JSON.FLOAT time), ("cached", JSON.BOOL cached)]
-
-fun json_engine_params {provers, slices, cores, max_proofs} =
-  JSON.OBJECT
-    [("provers", JSON.ARRAY (map JSON.STRING provers)),
-     ("slices", JSON.INT (IntInf.fromInt slices)),
-     ("cores", JSON.INT (IntInf.fromInt cores)),
-     ("max_proofs", JSON.INT (IntInf.fromInt max_proofs))]
 
 fun journal_json
     {run, thy, thm, goal_id, cond, regime, selector, engine, ho, fresh, prover,
@@ -442,8 +439,8 @@ fun journal_json
     val winning =
       [("prover", JSON.STRING prover),
        ("prover_version", json_string_option prover_version),
-       ("nfacts", JSON.INT (IntInf.fromInt nfacts)),
-       ("timeout", JSON.INT (IntInf.fromInt timeout)),
+       ("nfacts", json_int nfacts),
+       ("timeout", json_int timeout),
        ("szs", JSON.STRING szs), ("t_prover", JSON.FLOAT t_prover),
        ("axioms_used", json_string_list_option axioms_used),
        ("recon_ok", json_bool_option recon_ok),
@@ -461,7 +458,8 @@ fun journal_json
             (case (stop, t_total) of
                  (SOME reason, SOME total) =>
                    [("engine", JSON.STRING "sched"),
-                    ("engine_params", json_engine_params parameters)] @
+                    ("engine_params",
+                     JSON.OBJECT (engine_param_fields parameters))] @
                    winning @
                    [("stop", JSON.STRING reason),
                     ("t_total", JSON.FLOAT total),
@@ -497,14 +495,7 @@ fun parse_journal_slice value : journal_slice =
 fun parse_journal_engine value prover =
   case string_field "engine" value of
       "prover" => Prover prover
-    | "sched" =>
-        let val parameters = field "engine_params" value in
-          Sched
-            {provers = string_list (field "provers" parameters),
-             slices = int_field "slices" parameters,
-             cores = int_field "cores" parameters,
-             max_proofs = int_field "max_proofs" parameters}
-        end
+    | "sched" => Sched (parse_engine_params (field "engine_params" value))
     | name => raise Fail ("unknown journal engine: " ^ name)
 
 (* Only the format written by journal_json is accepted.  The schedule
@@ -684,7 +675,7 @@ fun json_prover {name, path, version, sha256} =
 fun json_corpus_entry {thy, theorem_count, dep_stamp} =
   JSON.OBJECT
     [("thy", JSON.STRING thy),
-     ("theorem_count", JSON.INT (IntInf.fromInt theorem_count)),
+     ("theorem_count", json_int theorem_count),
      ("dep_stamp", JSON.STRING dep_stamp)]
 
 (* Preserve effective values across fresh worker processes.  The default
@@ -710,20 +701,13 @@ fun header_json
      ("corpus", JSON.ARRAY (map json_corpus_entry corpus)),
      ("added_from_dat", JSON.ARRAY (map JSON.STRING added_from_dat)),
      ("conditions", JSON.ARRAY (map json_condition conditions)),
-     ("sample", JSON.INT (IntInf.fromInt sample)),
+     ("sample", json_int sample),
      ("hammer_options", json_hammer_options ())]
 
 fun write_run_header expdir header =
-  let
-    val _ = ensure_dir expdir
-    val output = TextIO.openOut (join expdir "run.json")
-    val _ = JSONPrinter.printFmt (output, header_json header)
-    val _ = TextIO.output (output, "\n")
-    val _ = TextIO.flushOut output
-    val _ = TextIO.closeOut output
-  in
-    ()
-  end
+  (ensure_dir expdir;
+   write_file (join expdir "run.json")
+     (JSONPrinter.valueString true (header_json header) ^ "\n"))
 
 fun validate_run_header expdir header =
   let
@@ -845,7 +829,157 @@ fun make_metrics entries : metrics =
      p90 = p90, maximum = maximum}
   end
 
-fun json_int number = JSON.INT (IntInf.fromInt number)
+(* Groups keyed and ordered by [key], each in its original entry order. *)
+fun group_by key items =
+  let
+    fun add (item, groups) =
+      let val k = key item in
+        Redblackmap.insert (groups, k,
+          item :: Option.getOpt (Redblackmap.peek (groups, k), []))
+      end
+  in
+    map (fn (k, group) => (k, List.rev group))
+      (Redblackmap.listItems
+        (List.foldl add (Redblackmap.mkDict String.compare) items))
+  end
+
+(* Each distinct value in [compare] order with its number of occurrences. *)
+fun distribution compare values =
+  let
+    fun add (value, counts) =
+      Redblackmap.insert (counts, value,
+        1 + Option.getOpt (Redblackmap.peek (counts, value), 0))
+  in
+    Redblackmap.listItems
+      (List.foldl add (Redblackmap.mkDict compare) values)
+  end
+
+type condition_report =
+  {name : string, cells : journal_entry list, metrics : metrics,
+   ho : metrics, non_ho : metrics, seen : metrics, fresh : metrics}
+
+type slice_contribution =
+  {format : string, type_enc : string, lam_trans : string, prover : string,
+   filter : string, nfacts : int, wins : int, reconstructed : int}
+
+type portfolio_report =
+  {key : string, cells : journal_entry list, metrics : metrics,
+   unique : (string * int * int) list}
+
+type schedule_report =
+  {name : string, slices_run : (int * int) list,
+   stop_reasons : (string * int) list}
+
+type comparison_report =
+  {name : string, key : string, schedule : metrics, union : metrics}
+
+type report_data =
+  {conditions : condition_report list,
+   contributions : slice_contribution list,
+   portfolios : portfolio_report list,
+   schedules : schedule_report list,
+   comparisons : comparison_report list,
+   theories : (string * condition_report list) list}
+
+fun condition_report (name, cells) : condition_report =
+  let
+    fun subset predicate = make_metrics (List.filter predicate cells)
+  in
+    {name = name, cells = cells, metrics = make_metrics cells,
+     ho = subset #ho, non_ho = subset (not o #ho),
+     seen = subset (not o #fresh), fresh = subset #fresh}
+  end
+
+fun winning_row entry : slice_contribution option =
+  let
+    val reconstructed = if reconstructed_cell entry then 1 else 0
+    fun row (format, type_enc, lam_trans, prover, filter, nfacts) =
+      {format = format, type_enc = type_enc, lam_trans = lam_trans,
+       prover = prover, filter = filter, nfacts = nfacts, wins = 1,
+       reconstructed = reconstructed}
+  in
+    case #engine entry of
+        Prover _ => SOME (row ("fof", "", "", #prover entry,
+          filter_of_selector (#selector entry), #nfacts entry))
+      | Sched _ =>
+          Option.map (fn slice =>
+            row (#format slice, #type_enc slice, #lam_trans slice,
+              #prover slice, #filter slice, #nfacts slice))
+            (#winner entry)
+  end
+
+fun contribution_key (row : slice_contribution) =
+  String.concatWith "\000"
+    [#format row, #type_enc row, #lam_trans row, #prover row, #filter row,
+     Int.toString (#nfacts row)]
+
+fun slice_contributions entries : slice_contribution list =
+  let
+    fun merge (_, rows : slice_contribution list) =
+      let val first = hd rows in
+        {format = #format first, type_enc = #type_enc first,
+         lam_trans = #lam_trans first, prover = #prover first,
+         filter = #filter first, nfacts = #nfacts first,
+         wins = length rows,
+         reconstructed = List.foldl op+ 0 (map #reconstructed rows)}
+      end
+  in
+    map merge (group_by contribution_key
+      (List.mapPartial winning_row (List.filter proven_cell entries)))
+  end
+
+fun portfolio_key entry =
+  string_of_regime (#regime entry) ^ "/" ^
+  Int.toString (#timeout entry) ^ "s"
+
+fun unique_count prover predicate entries =
+  let
+    fun ids keep =
+      goal_ids (List.filter (fn entry => keep (#prover entry = prover))
+        entries) predicate
+    val others = Binaryset.addList (Binaryset.empty String.compare,
+      ids not)
+  in
+    length (List.filter (fn goal => not (Binaryset.member (others, goal)))
+      (ids (fn own => own)))
+  end
+
+fun portfolio_report (key, cells) : portfolio_report =
+  {key = key, cells = cells, metrics = make_metrics cells,
+   unique = map (fn prover =>
+     (prover, unique_count prover proven_cell cells,
+      unique_count prover reconstructed_cell cells))
+     (sorted_unique (map #prover cells))}
+
+fun schedule_report (name, cells) : schedule_report =
+  {name = name,
+   slices_run = distribution Int.compare (map (length o #slices) cells),
+   stop_reasons = distribution String.compare (List.mapPartial #stop cells)}
+
+fun report_data entries : report_data =
+  let
+    val prover_groups = group_by portfolio_key (List.filter prover_cell entries)
+    val schedule_groups = group_by #cond (List.filter sched_cell entries)
+    fun comparison (name, cells) =
+      let val key = portfolio_key (hd cells) in
+        case List.find (fn (other, _) => other = key) prover_groups of
+            NONE => NONE
+          | SOME (_, union) =>
+              SOME {name = name, key = key, schedule = make_metrics cells,
+                    union = make_metrics union}
+      end
+  in
+    {conditions = map condition_report (group_by #cond entries),
+     contributions = slice_contributions entries,
+     portfolios = map portfolio_report prover_groups,
+     schedules = map schedule_report schedule_groups,
+     comparisons = List.mapPartial comparison schedule_groups,
+     theories = map (fn (theory, cells) =>
+       (theory, map condition_report (group_by #cond cells)))
+       (group_by #thy entries)}
+  end
+
+(* summary.json *)
 
 fun json_metrics
     {goals, attempted, proved, reconstructed, proved_pct, reconstructed_pct,
@@ -860,22 +994,14 @@ fun json_metrics
      ("t_prover_p90", json_real_option p90),
      ("t_prover_max", json_real_option maximum)]
 
-fun entries_for_condition name entries =
-  List.filter (fn entry => #cond entry = name) entries
-
-fun subset_metrics want entries =
-  make_metrics (List.filter (fn entry => #ho entry = want) entries)
-
-fun fresh_subset_metrics want entries =
-  make_metrics (List.filter (fn entry => #fresh entry = want) entries)
-
 fun subset_json label metrics =
   JSON.OBJECT
     [("subset", JSON.STRING label), ("metrics", json_metrics metrics)]
 
-fun condition_json name entries =
+fun condition_json ({name, cells, metrics, ho, non_ho, seen, fresh}
+                    : condition_report) =
   let
-    val first = hd entries
+    val first = hd cells
     val schedule_fields =
       case #engine first of
           Prover _ => []
@@ -886,77 +1012,21 @@ fun condition_json name entries =
              ("cores", json_int cores), ("max_proofs", json_int max_proofs)]
   in
     JSON.OBJECT
-       ([("cond", JSON.STRING name), ("regime",
-        JSON.STRING (string_of_regime (#regime first))),
-       ("selector", JSON.STRING (string_of_selector (#selector first))),
-       ("filter", JSON.STRING (filter_of_selector (#selector first))),
-       ("prover", JSON.STRING (#prover first)),
-       ("timeout", json_int (#timeout first)),
-       ("metrics", json_metrics (make_metrics entries)),
-       ("subsets", JSON.ARRAY
-         [subset_json "HO" (subset_metrics true entries),
-          subset_json "non-HO" (subset_metrics false entries)]),
-       ("fresh_subsets", JSON.ARRAY
-         [subset_json "seen" (fresh_subset_metrics false entries),
-          subset_json "fresh" (fresh_subset_metrics true entries)])] @
+      ([("cond", JSON.STRING name),
+        ("regime", JSON.STRING (string_of_regime (#regime first))),
+        ("selector", JSON.STRING (string_of_selector (#selector first))),
+        ("filter", JSON.STRING (filter_of_selector (#selector first))),
+        ("prover", JSON.STRING (#prover first)),
+        ("timeout", json_int (#timeout first)),
+        ("metrics", json_metrics metrics),
+        ("subsets", JSON.ARRAY
+          [subset_json "HO" ho, subset_json "non-HO" non_ho]),
+        ("fresh_subsets", JSON.ARRAY
+          [subset_json "seen" seen, subset_json "fresh" fresh])] @
        schedule_fields)
   end
 
-type slice_contribution =
-  {format : string, type_enc : string, lam_trans : string, prover : string,
-   filter : string, nfacts : int, wins : int, reconstructed : int}
-
-fun winning_slice_fields entry =
-  case #engine entry of
-      Prover _ => SOME ("fof", "", "", #prover entry,
-        filter_of_selector (#selector entry), #nfacts entry)
-    | Sched _ =>
-        (case #winner entry of
-             NONE => NONE
-           | SOME slice =>
-               SOME (#format slice, #type_enc slice, #lam_trans slice,
-                 #prover slice, #filter slice, #nfacts slice))
-
-fun slice_contributions entries : slice_contribution list =
-  let
-    fun add entry rows =
-      case winning_slice_fields entry of
-          NONE => rows
-        | SOME (format, type_enc, lam_trans, prover, filter, nfacts) =>
-            let
-              fun same {format = old_format, type_enc = old_enc,
-                        lam_trans = old_lam, prover = old_prover,
-                        filter = old_filter, nfacts = old_nfacts, ...} =
-                format = old_format andalso type_enc = old_enc andalso
-                lam_trans = old_lam andalso prover = old_prover andalso
-                filter = old_filter andalso
-                nfacts = old_nfacts
-              val reconstructed = if reconstructed_cell entry then 1 else 0
-            in
-              case List.partition same rows of
-                  ([], rest) =>
-                    {format = format, type_enc = type_enc,
-                     lam_trans = lam_trans, prover = prover, filter = filter,
-                     nfacts = nfacts,
-                     wins = 1, reconstructed = reconstructed} :: rest
-                | (old :: _, rest) =>
-                    {format = #format old, type_enc = #type_enc old,
-                     lam_trans = #lam_trans old, prover = #prover old,
-                     filter = #filter old, nfacts = #nfacts old,
-                     wins = #wins old + 1,
-                     reconstructed = #reconstructed old + reconstructed} :: rest
-            end
-    fun key row =
-      #format row ^ "\000" ^ #type_enc row ^ "\000" ^ #lam_trans row ^
-      "\000" ^ #prover row ^ "\000" ^ #filter row ^ "\000" ^
-      Int.toString (#nfacts row)
-  in
-    dict_sort (fn (left, right) => String.compare (key left, key right))
-      (List.foldl (fn (entry, rows) => add entry rows) []
-        (List.filter proven_cell entries))
-  end
-
-fun contribution_json row =
+fun contribution_json (row : slice_contribution) =
   JSON.OBJECT
     [("format", JSON.STRING (#format row)),
      ("type_enc", JSON.STRING (#type_enc row)),
@@ -966,343 +1036,177 @@ fun contribution_json row =
      ("wins", json_int (#wins row)),
      ("reconstructed", json_int (#reconstructed row))]
 
-fun encoding_text "" = "legacy"
-  | encoding_text text = text
-
-fun contribution_markdown row =
-  "| " ^ #format row ^ " | " ^ encoding_text (#type_enc row) ^ " | " ^
-  (if #lam_trans row = "" then "legacy" else #lam_trans row) ^ " | " ^
-  #prover row ^ " | " ^ #filter row ^ " | " ^
-  Int.toString (#nfacts row) ^ " | " ^
-  Int.toString (#wins row) ^ " | " ^ Int.toString (#reconstructed row) ^
-  " |\n"
-
-fun portfolio_key entry =
-  string_of_regime (#regime entry) ^ "/" ^
-  Int.toString (#timeout entry) ^ "s"
-
-fun entries_for_key key entries =
-  List.filter (fn entry => portfolio_key entry = key) entries
-
-fun proof_ids entries = goal_ids entries proven_cell
-fun reconstruction_ids entries = goal_ids entries reconstructed_cell
-
-fun unique_count prover ids_of entries =
-  let
-    val own = ids_of (List.filter (fn entry => #prover entry = prover) entries)
-    val others = Binaryset.addList (Binaryset.empty String.compare,
-      ids_of (List.filter (fn entry => #prover entry <> prover) entries))
-  in
-    length (List.filter (fn goal => not (Binaryset.member (others, goal))) own)
-  end
-
-fun portfolio_prover_json prover entries =
+fun portfolio_json ({key, cells, metrics, unique} : portfolio_report) =
   JSON.OBJECT
-    [("prover", JSON.STRING prover),
-     ("unique_proved", json_int (unique_count prover proof_ids entries)),
-     ("unique_reconstructed",
-      json_int (unique_count prover reconstruction_ids entries))]
+    [("key", JSON.STRING key),
+     ("regime", JSON.STRING (string_of_regime (#regime (hd cells)))),
+     ("selectors", JSON.ARRAY (map JSON.STRING
+       (sorted_unique (map (string_of_selector o #selector) cells)))),
+     ("timeout", json_int (#timeout (hd cells))),
+     ("condition_ids", JSON.ARRAY
+       (map JSON.STRING (sorted_unique (map #cond cells)))),
+     ("metrics", json_metrics metrics),
+     ("provers", JSON.ARRAY (map (fn (prover, proved, reconstructed) =>
+       JSON.OBJECT
+         [("prover", JSON.STRING prover),
+          ("unique_proved", json_int proved),
+          ("unique_reconstructed", json_int reconstructed)]) unique))]
 
-fun portfolio_json key entries =
+fun schedule_json ({name, slices_run, stop_reasons} : schedule_report) =
   let
-    val first = hd entries
-    val provers = sorted_unique (map #prover entries)
-  in
-    JSON.OBJECT
-      [("key", JSON.STRING key), ("regime",
-        JSON.STRING (string_of_regime (#regime first))),
-       ("selectors", JSON.ARRAY (map JSON.STRING
-        (sorted_unique (map (string_of_selector o #selector) entries)))),
-       ("timeout", json_int (#timeout first)),
-       ("condition_ids", JSON.ARRAY
-        (map JSON.STRING (sorted_unique (map #cond entries)))),
-       ("metrics", json_metrics (make_metrics entries)),
-       ("provers", JSON.ARRAY
-        (map (fn prover => portfolio_prover_json prover entries) provers))]
-  end
-
-fun theory_json theory entries =
-  let
-    val in_theory = List.filter (fn entry => #thy entry = theory) entries
-    val conditions = sorted_unique (map #cond in_theory)
-  in
-    JSON.OBJECT
-      [("theory", JSON.STRING theory), ("conditions", JSON.ARRAY
-        (map (fn name => condition_json name
-          (entries_for_condition name in_theory)) conditions))]
-  end
-
-fun count value values =
-  length (List.filter (fn other => other = value) values)
-
-fun schedule_distribution_json name entries =
-  let
-    val slice_counts = map (length o #slices) entries
-    val stops = sorted_unique (List.mapPartial #stop entries)
-    val slice_values = mk_fast_set Int.compare slice_counts
+    fun counts json values = JSON.ARRAY (map (fn (value, count) =>
+      JSON.OBJECT [("value", json value), ("count", json_int count)]) values)
   in
     JSON.OBJECT
       [("cond", JSON.STRING name),
-       ("slices_run", JSON.ARRAY (map (fn value => JSON.OBJECT
-          [("value", json_int value),
-           ("count", json_int (count value slice_counts))]) slice_values)),
-       ("stop_reasons", JSON.ARRAY (map (fn value => JSON.OBJECT
-          [("value", JSON.STRING value),
-           ("count", json_int (count value
-             (List.mapPartial #stop entries)))]) stops))]
+       ("slices_run", counts json_int slices_run),
+       ("stop_reasons", counts JSON.STRING stop_reasons)]
   end
 
-fun comparison_json name key schedule_entries union_entries =
-  let
-    val schedule_metrics = make_metrics schedule_entries
-    val union_metrics = make_metrics union_entries
-  in
-    JSON.OBJECT
-      [("condition", JSON.STRING name), ("portfolio", JSON.STRING key),
-       ("schedule", json_metrics schedule_metrics),
-       ("union", json_metrics union_metrics),
-       ("proved_delta", json_int
-          (#proved schedule_metrics - #proved union_metrics)),
-       ("reconstructed_delta", json_int
-          (#reconstructed schedule_metrics - #reconstructed union_metrics))]
-  end
+fun comparison_json ({name, key, schedule, union} : comparison_report) =
+  JSON.OBJECT
+    [("condition", JSON.STRING name), ("portfolio", JSON.STRING key),
+     ("schedule", json_metrics schedule), ("union", json_metrics union),
+     ("proved_delta", json_int (#proved schedule - #proved union)),
+     ("reconstructed_delta",
+      json_int (#reconstructed schedule - #reconstructed union))]
+
+fun summary_json (data : report_data) =
+  JSON.OBJECT
+    ([("schema", JSON.STRING "hhEval-summary-v1"),
+      ("conditions", JSON.ARRAY (map condition_json (#conditions data))),
+      ("portfolios", JSON.ARRAY (map portfolio_json (#portfolios data))),
+      ("slice_contributions",
+       JSON.ARRAY (map contribution_json (#contributions data))),
+      ("theories", JSON.ARRAY (map (fn (theory, conditions) =>
+        JSON.OBJECT
+          [("theory", JSON.STRING theory),
+           ("conditions", JSON.ARRAY (map condition_json conditions))])
+        (#theories data)))] @
+     (if null (#schedules data) then []
+      else
+        [("schedule_distributions",
+          JSON.ARRAY (map schedule_json (#schedules data))),
+         ("schedule_vs_union",
+          JSON.ARRAY (map comparison_json (#comparisons data)))]))
+
+(* report.md *)
 
 fun option_text NONE = "-"
   | option_text (SOME number) = Real.fmt (StringCvt.FIX (SOME 2)) number
 
-fun metrics_markdown metrics =
-  Int.toString (#goals metrics) ^ " | " ^
-  Int.toString (#attempted metrics) ^ " | " ^
-  Int.toString (#proved metrics) ^ " | " ^
-  option_text (#proved_pct metrics) ^ " | " ^
-  Int.toString (#reconstructed metrics) ^ " | " ^
-  option_text (#reconstructed_pct metrics) ^ " | " ^
-  option_text (#p50 metrics) ^ " | " ^ option_text (#p90 metrics) ^
-  " | " ^ option_text (#maximum metrics)
+fun metrics_cells (metrics : metrics) =
+  [Int.toString (#goals metrics), Int.toString (#attempted metrics),
+   Int.toString (#proved metrics), option_text (#proved_pct metrics),
+   Int.toString (#reconstructed metrics),
+   option_text (#reconstructed_pct metrics),
+   option_text (#p50 metrics), option_text (#p90 metrics),
+   option_text (#maximum metrics)]
 
-fun subset_markdown condition label metrics =
-  "| " ^ condition ^ " | " ^ label ^ " | " ^ metrics_markdown metrics ^ " |\n"
+val metrics_columns =
+  ["G", "A", "P", "P%", "R", "R%", "p50", "p90", "max"]
 
-fun condition_markdown name entries =
+fun markdown_row cells = "| " ^ String.concatWith " | " cells ^ " |\n"
+
+(* A table whose [left] columns are left-aligned and [right] columns
+   right-aligned. *)
+fun markdown_table title left right rows =
+  "## " ^ title ^ "\n\n" ^ markdown_row (left @ right) ^ "|" ^
+  String.concat (map (fn _ => "---|") left @ map (fn _ => "---:|") right) ^
+  "\n" ^ String.concat rows
+
+fun metrics_table title labels rows =
+  markdown_table title labels metrics_columns
+    (map (fn (cells, metrics) =>
+      markdown_row (cells @ metrics_cells metrics)) rows)
+
+fun encoding_text "" = "legacy"
+  | encoding_text text = text
+
+fun distribution_text to_string [] = "-"
+  | distribution_text to_string counts =
+      String.concatWith ", " (map (fn (value, count) =>
+        to_string value ^ ":" ^ Int.toString count) counts)
+
+fun signed number =
+  if number < 0 then "-" ^ Int.toString (~number) else Int.toString number
+
+fun report_markdown (data : report_data) =
   let
-    val first = hd entries
-    val engine =
-      case #engine first of Prover _ => #prover first | Sched _ => "schedule"
+    val conditions = #conditions data
+    fun first_filter (condition : condition_report) =
+      filter_of_selector (#selector (hd (#cells condition)))
+    fun engine_text (condition : condition_report) =
+      case #engine (hd (#cells condition)) of
+          Prover _ => #prover (hd (#cells condition))
+        | Sched _ => "schedule"
+    val tables =
+      [metrics_table "Conditions" ["condition", "prover", "filter"]
+         (map (fn condition =>
+           ([#name condition, engine_text condition, first_filter condition],
+            #metrics condition)) conditions),
+       metrics_table "HO subsets" ["condition", "subset"]
+         (List.concat (map (fn condition =>
+           [([#name condition, "HO"], #ho condition),
+            ([#name condition, "non-HO"], #non_ho condition)]) conditions)),
+       metrics_table "Seen/fresh subsets" ["condition", "filter", "subset"]
+         (List.concat (map (fn condition =>
+           [([#name condition, first_filter condition, "seen"],
+             #seen condition),
+            ([#name condition, first_filter condition, "fresh"],
+             #fresh condition)]) conditions)),
+       markdown_table "Slice contributions"
+         ["format", "encoding", "lambda", "prover", "filter"]
+         ["facts", "wins", "reconstructed"]
+         (map (fn (row : slice_contribution) => markdown_row
+           [#format row, encoding_text (#type_enc row),
+            encoding_text (#lam_trans row), #prover row, #filter row,
+            Int.toString (#nfacts row), Int.toString (#wins row),
+            Int.toString (#reconstructed row)]) (#contributions data)),
+       metrics_table "Portfolio unions" ["portfolio"]
+         (map (fn (portfolio : portfolio_report) =>
+           ([#key portfolio], #metrics portfolio)) (#portfolios data)),
+       markdown_table "Unique solves" ["portfolio", "prover"]
+         ["proved", "reconstructed"]
+         (List.concat (map (fn (portfolio : portfolio_report) =>
+           map (fn (prover, proved, reconstructed) => markdown_row
+             [#key portfolio, prover, Int.toString proved,
+              Int.toString reconstructed]) (#unique portfolio))
+           (#portfolios data)))] @
+      (if null (#schedules data) then []
+       else
+         [markdown_table "Schedule distributions"
+            ["condition", "slices run (value:count)",
+             "stop reasons (value:count)"] []
+            (map (fn (schedule : schedule_report) => markdown_row
+              [#name schedule,
+               distribution_text Int.toString (#slices_run schedule),
+               distribution_text (fn text => text)
+                 (#stop_reasons schedule)]) (#schedules data))]) @
+      (if null (#comparisons data) then []
+       else
+         [markdown_table "Schedule vs portfolio union"
+            ["schedule", "portfolio"]
+            ["S P", "U P", "ΔP", "S R", "U R", "ΔR"]
+            (map (fn {name, key, schedule, union} => markdown_row
+              [name, key, Int.toString (#proved schedule),
+               Int.toString (#proved union),
+               signed (#proved schedule - #proved union),
+               Int.toString (#reconstructed schedule),
+               Int.toString (#reconstructed union),
+               signed (#reconstructed schedule - #reconstructed union)])
+              (#comparisons data))]) @
+      [metrics_table "Theories" ["theory", "condition"]
+         (List.concat (map (fn (theory, conditions) =>
+           map (fn (condition : condition_report) =>
+             ([theory, #name condition], #metrics condition)) conditions)
+           (#theories data)))]
   in
-    "| " ^ name ^ " | " ^ engine ^ " | " ^
-    filter_of_selector (#selector first) ^ " | " ^
-    metrics_markdown (make_metrics entries) ^ " |\n"
-  end
-
-fun portfolio_markdown key entries =
-  "| " ^ key ^ " | " ^ metrics_markdown (make_metrics entries) ^ " |\n"
-
-fun theory_markdown theory name entries =
-  "| " ^ theory ^ " | " ^ name ^ " | " ^
-  metrics_markdown (make_metrics entries) ^ " |\n"
-
-fun int_distribution values =
-  let
-    val distinct = mk_fast_set Int.compare values
-  in
-    if null distinct then "-"
-    else String.concatWith ", " (map (fn value =>
-      Int.toString value ^ ":" ^ Int.toString (count value values)) distinct)
-  end
-
-fun string_distribution values =
-  let val distinct = sorted_unique values in
-    if null distinct then "-"
-    else String.concatWith ", " (map (fn value =>
-      value ^ ":" ^ Int.toString (count value values)) distinct)
-  end
-
-fun schedule_distribution_markdown name entries =
-  "| " ^ name ^ " | " ^ int_distribution (map (length o #slices) entries) ^
-  " | " ^ string_distribution (List.mapPartial #stop entries) ^ " |\n"
-
-fun comparison_markdown name key schedule_entries union_entries =
-  let
-    val schedule = make_metrics schedule_entries
-    val union = make_metrics union_entries
-    fun signed number =
-      if number < 0 then "-" ^ Int.toString (~number)
-      else Int.toString number
-  in
-    "| " ^ name ^ " | " ^ key ^ " | " ^
-    Int.toString (#proved schedule) ^ " | " ^ Int.toString (#proved union) ^
-    " | " ^ signed (#proved schedule - #proved union) ^ " | " ^
-    Int.toString (#reconstructed schedule) ^ " | " ^
-    Int.toString (#reconstructed union) ^ " | " ^
-    signed (#reconstructed schedule - #reconstructed union) ^ " |\n"
-  end
-
-fun write_report_markdown expdir entries =
-  let
-    val conditions = sorted_unique (map #cond entries)
-    val prover_entries = List.filter prover_cell entries
-    val schedule_entries = List.filter sched_cell entries
-    val schedule_conditions = sorted_unique (map #cond schedule_entries)
-    val portfolios = sorted_unique (map portfolio_key prover_entries)
-    val theories = sorted_unique (map #thy entries)
-    fun comparison name =
-      let
-        val cells = entries_for_condition name schedule_entries
-        val key = portfolio_key (hd cells)
-        val union = entries_for_key key prover_entries
-      in
-        if null union then NONE else SOME (name, key, cells, union)
-      end
-    val comparisons = List.mapPartial comparison schedule_conditions
-    val contributions = slice_contributions entries
-    val output = TextIO.openOut (join expdir "report.md")
-    val _ = TextIO.output (output, "# hhEval report\n\n")
-    val _ = TextIO.output (output,
-      "Partial journals are reported as observed cells only. For schedule " ^
-      "runs, size `ncore` to `machine_cores div cores_per_cell`; peak prover " ^
-      "load is `ncore × cores_per_cell`.\n\n")
-    val _ = TextIO.output (output,
-      "## Conditions\n\n| condition | prover | filter | G | A | P | P% | " ^
-      "R | R% | p50 | p90 | max |\n|---|---|---|---:|---:|---:|" ^
-      "---:|---:|---:|---:|---:|---:|\n")
-    val _ = app (fn name => TextIO.output (output,
-      condition_markdown name (entries_for_condition name entries))) conditions
-    val _ = TextIO.output (output,
-      "\n## HO subsets\n\n| condition | subset | G | A | P | P% | R | R% | " ^
-      "p50 | p90 | max |\n|---|---|---:|---:|---:|---:|---:|---:|" ^
-      "---:|---:|---:|\n")
-    val _ = app (fn name =>
-      let val cells = entries_for_condition name entries in
-        TextIO.output (output, subset_markdown name "HO"
-          (subset_metrics true cells));
-        TextIO.output (output, subset_markdown name "non-HO"
-          (subset_metrics false cells))
-      end) conditions
-    val _ = TextIO.output (output,
-      "\n## Seen/fresh subsets\n\n| condition | filter | subset | G | A | " ^
-      "P | P% | R | R% | p50 | p90 | max |\n|---|---|---|---:|---:|" ^
-      "---:|---:|---:|---:|---:|---:|---:|\n")
-    val _ = app (fn name =>
-      let
-        val cells = entries_for_condition name entries
-        val filter = filter_of_selector (#selector (hd cells))
-        fun row label metrics =
-          "| " ^ name ^ " | " ^ filter ^ " | " ^ label ^ " | " ^
-          metrics_markdown metrics ^ " |\n"
-      in
-        TextIO.output (output, row "seen" (fresh_subset_metrics false cells));
-        TextIO.output (output, row "fresh" (fresh_subset_metrics true cells))
-      end) conditions
-    val _ = TextIO.output (output,
-      "\n## Slice contributions\n\n| format | encoding | lambda | prover | " ^
-      "filter | facts | wins | reconstructed |\n" ^
-      "|---|---|---|---|---|---:|---:|---:|\n")
-    val _ = app (fn row => TextIO.output (output, contribution_markdown row))
-      contributions
-    val _ = TextIO.output (output,
-      "\n## Portfolio unions\n\n| portfolio | G | A | P | P% | R | R% | " ^
-      "p50 | p90 | max |\n|---|---:|---:|---:|---:|---:|---:|---:|" ^
-      "---:|---:|\n")
-    val _ = app (fn key => TextIO.output (output,
-      portfolio_markdown key (entries_for_key key prover_entries))) portfolios
-    val _ = TextIO.output (output,
-      "\n## Unique solves\n\n| portfolio | prover | proved | " ^
-      "reconstructed |\n|---|---|---:|---:|\n")
-    fun unique_rows key =
-      let
-        val cells = entries_for_key key prover_entries
-        fun row prover = TextIO.output (output,
-          "| " ^ key ^ " | " ^ prover ^ " | " ^
-          Int.toString (unique_count prover proof_ids cells) ^ " | " ^
-          Int.toString (unique_count prover reconstruction_ids cells) ^
-          " |\n")
-      in
-        app row (sorted_unique (map #prover cells))
-      end
-    val _ = app unique_rows portfolios
-    val _ =
-      if null schedule_conditions then ()
-      else
-        (TextIO.output (output,
-           "\n## Schedule distributions\n\n| condition | slices run " ^
-           "(value:count) | stop reasons (value:count) |\n" ^
-           "|---|---|---|\n");
-         app (fn name => TextIO.output (output,
-           schedule_distribution_markdown name
-             (entries_for_condition name schedule_entries)))
-           schedule_conditions)
-    val _ =
-      if null comparisons then ()
-      else
-        (TextIO.output (output,
-           "\n## Schedule vs portfolio union\n\n| schedule | portfolio | " ^
-           "S P | U P | ΔP | S R | U R | ΔR |\n" ^
-           "|---|---|---:|---:|---:|---:|---:|---:|\n");
-         app (fn (name, key, schedule, union) => TextIO.output (output,
-           comparison_markdown name key schedule union)) comparisons)
-    val _ = TextIO.output (output,
-      "\n## Theories\n\n| theory | condition | G | A | P | P% | R | R% | " ^
-      "p50 | p90 | max |\n|---|---|---:|---:|---:|---:|---:|---:|" ^
-      "---:|---:|---:|\n")
-    fun theory_rows theory =
-      let
-        val cells = List.filter (fn entry => #thy entry = theory) entries
-        fun row name = TextIO.output (output,
-          theory_markdown theory name (entries_for_condition name cells))
-      in
-        app row (sorted_unique (map #cond cells))
-      end
-    val _ = app theory_rows theories
-    val _ = TextIO.closeOut output
-  in
-    ()
-  end
-
-fun write_summary expdir entries =
-  let
-    val conditions = sorted_unique (map #cond entries)
-    val prover_entries = List.filter prover_cell entries
-    val schedule_entries = List.filter sched_cell entries
-    val schedule_conditions = sorted_unique (map #cond schedule_entries)
-    val portfolios = sorted_unique (map portfolio_key prover_entries)
-    val theories = sorted_unique (map #thy entries)
-    val contributions = slice_contributions entries
-    fun comparison name =
-      let
-        val cells = entries_for_condition name schedule_entries
-        val key = portfolio_key (hd cells)
-        val union = entries_for_key key prover_entries
-      in
-        if null union then NONE
-        else SOME (comparison_json name key cells union)
-      end
-    val base =
-      [("schema", JSON.STRING "hhEval-summary-v1"),
-       ("conditions", JSON.ARRAY (map (fn name => condition_json name
-         (entries_for_condition name entries)) conditions)),
-       ("portfolios", JSON.ARRAY (map (fn key => portfolio_json key
-         (entries_for_key key prover_entries)) portfolios)),
-       ("slice_contributions", JSON.ARRAY
-         (map contribution_json contributions)),
-       ("theories", JSON.ARRAY (map (fn theory => theory_json theory entries)
-         theories))]
-    val schedule_fields =
-      if null schedule_conditions then []
-      else
-        [("schedule_distributions", JSON.ARRAY (map (fn name =>
-            schedule_distribution_json name
-              (entries_for_condition name schedule_entries))
-            schedule_conditions)),
-         ("schedule_vs_union", JSON.ARRAY
-            (List.mapPartial comparison schedule_conditions))]
-    val summary = JSON.OBJECT (base @ schedule_fields)
-    val output = TextIO.openOut (join expdir "summary.json")
-    val _ = JSONPrinter.printFmt (output, summary)
-    val _ = TextIO.output (output, "\n")
-    val _ = TextIO.flushOut output
-    val _ = TextIO.closeOut output
-  in
-    ()
+    "# hhEval report\n\n" ^
+    "Partial journals are reported as observed cells only. For schedule " ^
+    "runs, size `ncore` to `machine_cores div cores_per_cell`; peak prover " ^
+    "load is `ncore × cores_per_cell`.\n\n" ^
+    String.concatWith "\n" tables
   end
 
 fun report expdir =
@@ -1310,10 +1214,12 @@ fun report expdir =
     val paths = map (join (join expdir "journal")) (journal_files expdir)
     val entries = List.filter regular_cell
       (latest_cells (List.concat (map read_journal paths)))
+    val data = report_data entries
     val _ = ensure_dir expdir
-    val _ = write_report_markdown expdir entries
   in
-    write_summary expdir entries
+    write_file (join expdir "report.md") (report_markdown data);
+    write_file (join expdir "summary.json")
+      (JSONPrinter.valueString true (summary_json data) ^ "\n")
   end
 
 (* -------------------------------------------------------------------------
@@ -1817,15 +1723,13 @@ fun write_evalscript expdir thy conditions sample =
     val action = "val _ = hhEval.eval_thy " ^ Portable.mlquote expdir ^
       " " ^ Portable.mlquote thy ^ ";"
     val worker_theory = "hheval_worker_" ^ safe_component thy
-    val output = TextIO.openOut path
-    val _ = TextIO.output (output,
-      "load \"BasicProvers\";\n" ^
-      "load " ^ Portable.mlquote (thy ^ "Theory") ^ ";\n" ^
-      "val _ = Feedback.quiet_messages Theory.new_theory " ^
-      Portable.mlquote worker_theory ^ ";\n" ^
-      "load \"hhEval\";\n" ^ hammer_settings ^ settings ^ "\n" ^
-      action ^ "\n")
-    val _ = TextIO.closeOut output
+    val _ = write_file path
+      ("load \"BasicProvers\";\n" ^
+       "load " ^ Portable.mlquote (thy ^ "Theory") ^ ";\n" ^
+       "val _ = Feedback.quiet_messages Theory.new_theory " ^
+       Portable.mlquote worker_theory ^ ";\n" ^
+       "load \"hhEval\";\n" ^ hammer_settings ^ settings ^ "\n" ^
+       action ^ "\n")
   in
     path
   end
