@@ -113,7 +113,7 @@ and loading are those of their archives, whose replays recompute them
         its `task32_downstream.py dispose` (without --out)
     --task33 FILE --task33-replay ARGS   the same for `task33_storage.py
         dispose` (under --declared task37_declared.json)
-    --startup-gate DIR --startup-null DIR --startup-record FILE
+    --startup-gate DIR [--startup-null DIR] --startup-record FILE
     --startup-declared FILE --startup-ledger FILE
     --loading-simplib DIR --loading-conglib DIR
     --loading-ledger GATE=FILE (GATE simplib or conglib: one for each, no
@@ -133,14 +133,20 @@ attempt is listed in the record (R-1). The judged gate (and its null
 control) must be the last attempt; its `inputs.txt` is sealed in the
 record. A COMPLETED last attempt (closed with exit 0, or 2: the run
 completed, a soft step failed, with its `done` file) is judged by its
-gate. An incomplete last attempt (a failing step, `die`, a signal, no
-`done`) with no gate decision is void and refuses (the lead redraws); one
-with a gate decision is judged by it (design decision 26): a fail or
-blocked decision on grounds other than the declared deltas is the gate's
-result (`judged-incomplete`), and a pass, or a failure on the declared
-deltas alone, leaves the attempt incomplete owing a `redraw`
-(`owes-redraw`). Each earlier attempt is judged by its gate decision
-whenever `gate/decisions.json` exists, complete or not: it is recorded
+gate and always has a null control, so `--startup-null` is required. An
+incomplete last attempt (a failing step, `die`, a signal, no `done`, or
+never closed: ledger status `open`) with no gate decision is void and
+refuses (the lead redraws); one with a gate decision is judged by it
+(design decision 26): a fail or blocked decision, on any grounds
+(a failure on the declared deltas alone included: a `fail`, a redraw
+allowed), is the gate's result (`judged-incomplete`), and only a pass
+leaves the attempt incomplete owing a `redraw` (`owes-redraw`). Its
+null control is read and replayed when `--startup-null` is given or the
+attempt's `gate-null` holds a complete archive, and is otherwise
+recorded as absent (the attempt ended before the null gate). A gate
+decision counts only with a `gate/receipt.json` whose sha256 rows match
+its `header.json` and `decisions.json`. Each earlier attempt is judged
+by its gate decision when it has one, complete or not: it is recorded
 with its gate decision, reasons and declared-delta problems (the sidecar
 bound to the attempt's record and sealed `inputs.txt`). A redraw is
 accepted after an attempt with no gate decision (void), a gate that
@@ -1169,6 +1175,26 @@ LOADING_KEYS = {gate: module.lower() for gate, module in
                 gates.LOADING.items()}
 
 
+NO_NULL = "absent (attempt ended before the null gate)"
+
+
+def startup_null(args, complete):
+    """The null control archive of the judged startup attempt, or None for
+    an incomplete attempt that has none. A complete attempt always has a
+    replayed null control, so `--startup-null` is required. An incomplete
+    one (it may have ended before the null gate) reads the archive given,
+    or the `gate-null` of its attempt when that holds a complete archive,
+    and is recorded without one otherwise."""
+    if complete:
+        a.require(args.startup_null is not None,
+                  "a complete startup attempt needs --startup-null")
+        return args.startup_null
+    if args.startup_null is not None:
+        return args.startup_null
+    found = Path(args.startup_gate).resolve().parent / "gate-null"
+    return found if gates.archive_complete(found) else None
+
+
 def read_gates(args, lineage, inputs, late, extra):
     """The gate records and the receipt of the D7 timing: the startup gate
     and the two loading runs are read (their statuses are those of their
@@ -1181,31 +1207,38 @@ def read_gates(args, lineage, inputs, late, extra):
               "--loading-ledger GATE=FILE is needed for each loading gate "
               "(%s): each shard has its own clone and ledger" %
               ", ".join(sorted(LOADING_KEYS.values())))
-    a.require(args.startup_gate is not None and
-              args.startup_null is not None,
-              "the startup gate needs --startup-gate and --startup-null")
+    a.require(args.startup_gate is not None,
+              "the startup gate needs --startup-gate")
     header, decisions = gates.read_startup(args.startup_gate, False,
                                            lineage)
-    null_header, null_decisions = gates.read_startup(
-        args.startup_null, True, lineage, "startup-gate null control")
     record_seal = gates.check_record(header, args.startup_record, lineage)
     inputs[gates.STARTUP] = {
         n: a.seal(Path(d) / f) for n, d, f in (
             ("header", args.startup_gate, "header.json"),
-            ("decisions", args.startup_gate, "decisions.json"),
-            ("null-header", args.startup_null, "header.json"),
-            ("null-decisions", args.startup_null, "decisions.json"))}
+            ("decisions", args.startup_gate, "decisions.json"))}
     inputs[gates.STARTUP]["record"] = record_seal
     declared, inputs[gates.STARTUP]["declared"] = gates.read_declared(
         args.startup_declared, header, args.startup_record)
     problems = gates.declared_problems(declared, decisions)
-    found[gates.STARTUP] = gates.startup_gate(header, decisions,
-                                              null_decisions, problems)
-    a.require(Path(args.startup_gate).resolve().parent == Path(
-        args.startup_null).resolve().parent,
-        "the startup gate and its null control are not of one attempt")
     attempts = gates.startup_attempts(args.startup_ledger,
                                       args.startup_gate)
+    null = startup_null(args, attempts[-1]["verdict"] == "judged")
+    null_decisions = None
+    if null is None:
+        inputs[gates.STARTUP]["null-header"] = NO_NULL
+        inputs[gates.STARTUP]["null-decisions"] = NO_NULL
+    else:
+        a.require(Path(args.startup_gate).resolve().parent == Path(
+            null).resolve().parent,
+            "the startup gate and its null control are not of one attempt")
+        _, null_decisions = gates.read_startup(
+            null, True, lineage, "startup-gate null control")
+        inputs[gates.STARTUP]["null-header"] = a.seal(
+            Path(null) / "header.json")
+        inputs[gates.STARTUP]["null-decisions"] = a.seal(
+            Path(null) / "decisions.json")
+    found[gates.STARTUP] = gates.startup_gate(header, decisions,
+                                              null_decisions, problems)
     inputs[gates.STARTUP]["ledger"] = a.seal(Path(args.startup_ledger))
     attempt = Path(args.startup_gate).resolve().parent
     a.require((attempt / "inputs.txt").is_file(),
@@ -1223,7 +1256,7 @@ def read_gates(args, lineage, inputs, late, extra):
         archive_sha256=declared["archive_sha256"], problems=problems)
     late.append((gates.STARTUP, lambda: (
         gates.replay_startup(args.startup_gate, args.startup_record),
-        gates.replay_startup(args.startup_null, None))))
+        None if null is None else gates.replay_startup(null, None))))
     reports = {}
     for gate, root in zip(sorted(gates.LOADING),
                           (args.loading_conglib, args.loading_simplib)):
@@ -1477,7 +1510,8 @@ def parser():
     add("--task33-replay", metavar="ARGS", help="the arguments of "
         "`task33_storage.py dispose`, without --out, in one string")
     add("--startup-gate", type=Path, help="the startup gate archive")
-    add("--startup-null", type=Path, help="its null control's archive")
+    add("--startup-null", type=Path, help="its null control's archive "
+        "(required unless the attempt is incomplete)")
     add("--startup-record", type=Path, help="the record the gate is "
         "sealed to")
     add("--loading-simplib", type=Path, help="the loading run of simpLib")

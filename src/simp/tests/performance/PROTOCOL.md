@@ -4538,9 +4538,12 @@ identity `--only` diagnostics, the snapshot pins, `CAND_REV` of the startup
 runner and `CAND` of the loading, api-audit and D7 runners. Dispose accepts
 the clones' different HEADs by the lineage rule below. A clone is brought
 forward only where this section says so: never between a stage and the
-`extend` of the same shard (the second stage binds the first stage's HEAD),
-and a clone is never deleted before dispose (the ledgers and archives it
-holds are inputs).
+`extend` of the same shard (a timing shard's second stage binds the first
+stage's HEAD, `bind_checkout`; `t32` and `t33` bind the first stage's report,
+manifest, counts seal and commit and code seals instead, so a forward there
+is safe when it touches none of the table's code, and "no forward" stays a
+precaution), and a clone is never deleted before dispose (the ledgers and
+archives it holds are inputs).
 
 Waves (a stream starts a wave when the edges into it hold):
 
@@ -4579,9 +4582,11 @@ Waves (a stream starts a wave when the edges into it hold):
   conglib, one clone each; `STAGE=2` of `run_loading.sh` for a shard that
   owes stage 2), the startup gate (`run_startup_gate.sh`, once, no
   diagnostic run before it) and the D7 builds; stage 2 and the follow-ups of
-  the 4a streams as owed. The startup gate is redrawn only after a failure
-  on the declared deltas alone (Startup gate): `DECLARED_ARCHIVE` is then the
-  failed attempt's own `gate` and `EVTAG` a new tag.
+  the 4a streams as owed. The startup gate is redrawn, always under a new
+  `EVTAG`, only after a failure on the declared deltas (complete or not:
+  `DECLARED_ARCHIVE` is then that failed attempt's own `gate`), after a void
+  attempt or after an incomplete pass (`DECLARED_ARCHIVE` is then the one the
+  redrawn attempt used: omit it for the default); see Startup gate.
 - Wave 5, dispose, in main (`task37_dispose.py`, below), then the TASK33
   `dispose-snapshots`.
 
@@ -4598,19 +4603,26 @@ Timing gates (the shards, `t32`, `t33`, loading) run at normal priority:
   downstream `--jobs 1`: 7 + 8 = 15 processes (the 16th: a `t33` storage
   smoke or `observe`).
 - Wave 2, pilots: the 6 shard pilots, then `t32` and `t33`, while allocation
-  keeps running. They start when the identity grids have finished, so that
-  each pilot has the concurrency of its decision run (the policy): 6 + 8,
-  then 8 + 8 = 16.
+  keeps running. The shard pilots start once the identity matrix and
+  downstream grids have finished (at most the identity client grid, 2 jobs,
+  is then left: 2 + 8 + 6 = 16), and `t32` and `t33` when all identity grids
+  have finished, so that each pilot has the concurrency of its decision run
+  (the policy): 8 + 8 = 16.
 - Wave 4a: 6 shards + `t32` + `t33` (its stages one at a time) + allocation:
   6 + 1 + 1 + 8 = 16. Allocation continues into wave 4 with the same jobs.
 - Wave 4b, once allocation has finished: the loading shards (2), the startup
-  gate (1) and D7 (Holmake's default `-j4`), with the 4a streams that still
-  owe a stage: at most 16.
+  gate (its build step counts as 2 jobs, `GATE_BUILD_JOBS`; 1 otherwise) and
+  D7 (Holmake's default `-j4`), with the 4a streams that still owe a stage:
+  at most 16.
 
 Disk and `/dev/shm`. The identity, allocation, shard and `t32` TMPDIRs and
 scratch are on disk (`$CL/.agent-files/tmp`); only the `t33` scratch
-(`/dev/shm/t37-t33`), the startup gate (`/dev/shm/t37-sg-*`, about 7 GB) and
-D7 (`/dev/shm/t37-builds`) use `/dev/shm`, at most 20 GB in total.
+(`/dev/shm/t37-t33`), the startup gate (`/dev/shm/t37-sg-*`, about 7 GB),
+D7 (`/dev/shm/t37-builds`), the api-audit (`/dev/shm/t37-api-audit`, wave 1,
+about 1 GB, removed on exit) and each loading shard
+(`/dev/shm/t37-loading-SHARD`, wave 4b, about 2 GB each: the loading medium
+is unchanged) use `/dev/shm`, at most 20 GB in total (the api-audit and
+loading sizes are estimates, not measurements).
 
 Dependency edges (A -> B: B starts after A is finished and, for a commit,
 the clone has fast-forwarded to it):
@@ -4691,7 +4703,7 @@ once-only steps. Its HEAD is the tooling commit and it is not brought
 forward after the audit (the startup gate records it as `HARNESS_COMMIT`):
 
     cd $W/t37-harness && export TMPDIR=$PWD/.agent-files/tmp
-    poly < tools/smart-configure.sml </dev/null
+    poly < tools/smart-configure.sml
     bin/build --stdknl --seq=tools/sequences/upto-parallel </dev/null
     mkdir -p $EV/controls
     python3 -B $P/allocator-counter/run_controls.py \
@@ -4731,6 +4743,8 @@ clone is not brought forward again before `run`) and runs:
     python3 -B $P/task37_iterations.py all --check
     TC=$CL/.agent-files/toolchain
     python3 -B $P/allocation_matrix.py toolchain --toolchain $TC --repo .
+    # (it refuses an existing $TC: after a failed build remove $TC, or
+    # use a new path)
     setsid -w env --default-signal=HUP,INT,TERM nice -n 19 \
       python3 -B $P/allocation_matrix.py run --task task37-T \
       --candidate $(git rev-parse HEAD) --toolchain $TC \
@@ -4768,6 +4782,7 @@ The `t32` stream (clone `CL=$W/t37-t32`, `E=$EV/t32`, table `task37-t32`;
 disk TMPDIR and scratch, and its snapshot pair is built and compared here
 and goes with the clone):
 
+    CL=$W/t37-t32; E=$EV/t32; cd $CL
     export TMPDIR=$CL/.agent-files/tmp; mkdir -p $E
     S=$CL/.agent-files/snapshots/task32
     SCR=$CL/.agent-files/scratch/task32
@@ -4794,15 +4809,23 @@ and goes with the clone):
       --authorize-measurements
     $T predeclare $C --pilot $E/pilot --smoke $E/smoke \
       --control $E/control --out $P/task37_t32_counts.json
-    # wave 3: commit task37_t32_counts.json alone in main; forward $CL
+    # wave 3: commit task37_t32_counts.json alone in main (Commit rule: cp,
+    # commit alone, rm the clone's copy, forward $CL)
     # (the clone then holds the declared fill commit too: the archive's edge)
     # wave 4a: the first stage, then the S3 archive report
     $T run $C $K --output $E/first --authorize-measurements
     python3 -B $P/task33_offline.py archive --out $E/offline \
       --archive $E/first --declared $P/task37_declared.json
-    # a second stage, if owed (no counts commit, no forward before it):
+    # a second stage, if owed (no counts commit; no forward before it, as a
+    # precaution):
     #   $T extend $C $K --first $E/first --output $E/second \
     #     --authorize-measurements
+    # a follow-up, if owed after the last stage (<last>: $E/second, else
+    # $E/first); its counts file is committed alone first (Commit rule: cp,
+    # commit alone, rm the clone's copy, forward $CL):
+    #   $T predeclare $C --followup --stage $E/<last> \
+    #     --out $P/task37_t32_followup_counts.json
+    #   $T followup $C $K --output $E/followup --authorize-measurements
     # before dispose: the TASK32 disposition, of the LAST stage owed
     $T dispose --repo . --stage $E/first --out $E/disposition.json
 
@@ -4816,8 +4839,9 @@ needs no `t32` commit for it: it names the report by its absolute path,
 the report records its table (`task37-t32`), base and candidate, which that
 `predeclare` checks. A stage 2 of `t32` is `extend --first <first stage>`
 with no counts commit (the engine derives the second stage from the first
-stage's results); the follow-up of `t32` is `predeclare --followup` (its
-counts file committed alone first) and `followup`. The `--stage` of
+stage's results); the follow-up of `t32` is the commented recipe above
+(`predeclare --followup`, its counts file committed alone, `followup`). The
+`--stage` of
 `dispose` and of the `--task32-replay` string is the last stage of the chain
 (the second stage or the follow-up, when owed).
 
@@ -4827,6 +4851,7 @@ pair must be built with the scratch `$CL/.agent-files/scratch/task32`
 (`task33_dispose.removal_plan` requires the snapshot HOMEs there, as
 `dispose-snapshots` removes them):
 
+    CL=$W/t37-t33; E=$EV/t33; cd $CL
     export TMPDIR=/dev/shm/t37-t33/tmp; mkdir -p $TMPDIR $E
     S=$CL/.agent-files/snapshots/task32
     SCR=$CL/.agent-files/scratch/task32
@@ -4864,7 +4889,8 @@ pair must be built with the scratch `$CL/.agent-files/scratch/task32`
       --cand-root $S/cand
     $T predeclare $C --pilot $E/t-pilot --smoke $E/t-smoke \
       --control $E/t-control --out $P/task37_t33_counts.json
-    # wave 3: commit task37_t33_counts.json alone in main; forward $CL
+    # wave 3: commit task37_t33_counts.json alone in main (Commit rule: cp,
+    # commit alone, rm the clone's copy, forward $CL)
     # wave 4a: the timing run needs no offline report and no archive
     $T run $C --output $E/t-run --authorize-measurements
     # after the t32 first stage and its archive report:
@@ -4873,7 +4899,8 @@ pair must be built with the scratch `$CL/.agent-files/scratch/task32`
       --offline $E/offline/harvest/harvest.json \
       --offline $EV/t32/offline/archive.json \
       --out $P/task37_t33_storage_counts.json
-    # commit task37_t33_storage_counts.json alone in main; forward $CL
+    # commit task37_t33_storage_counts.json alone in main (Commit rule: cp,
+    # commit alone, rm the clone's copy, forward $CL)
     $Q run $C --output $E/s-run --authorize-measurements
     $Q audit $C --output $E/s-audit --authorize-measurements
     # before dispose: the TASK33 disposition (its last stages)
@@ -4882,14 +4909,34 @@ pair must be built with the scratch `$CL/.agent-files/scratch/task32`
       --offline $E/offline/harvest/harvest.json \
       --offline $EV/t32/offline/archive.json --out $E/disposition.json
 
+The stage 2 and follow-up recipes of `t33`, as owed (each counts file is
+committed alone first, by the Commit rule: cp, commit alone, rm the clone's
+copy, forward $CL; `<last>` is the last stage of that chain; the timing
+chain is as for `t32` without `$K`, the storage chain follows):
+
+    # timing chain
+    $T extend $C --first $E/t-run --output $E/t-second \
+      --authorize-measurements
+    $T predeclare $C --followup --stage $E/<last> \
+      --out $P/task37_t33_followup_counts.json
+    $T followup $C --output $E/t-followup --authorize-measurements
+    # storage chain
+    $Q extend $C --first $E/s-run --output $E/s-ext \
+      --authorize-measurements
+    $Q predeclare $C --followup --stage <last> \
+      --out $P/task37_t33_storage_followup_counts.json
+    $Q followup $C --stage <last> --output $E/s-followup \
+      --authorize-measurements
+
 (`--declared` and `--compiled-ref` of the `task37-t33` table are fixed by
 the table; the `fill` runs in `$M` so that the file is committed there and
 the clone only goes forward.) The `t-run`, `s-run` and `s-audit` run one at
 a time in the clone (one runner per clone and lock), each with its own
 `--scratch` default (`/dev/shm/t37-t33`, `/dev/shm/t37-t33/storage`). A
-stage 2 or a follow-up is the same commands as for `t32` (`extend --first`,
-`predeclare --followup`, `followup`), and the `--stage`/`--timing-stage` of
-`dispose` and of the replay string are the last stage of each chain.
+stage 2 or a follow-up is the recipe above, and the `--stage`/
+`--timing-stage` of `dispose` and of the replay string are the last stage of
+each chain. The snapshot trees of `t32` and `t33` are `--shared` clones of
+their stream clone, so no stream clone is deleted before dispose.
 
 After the final `task37_dispose.py` (below), the snapshots of `t33` are
 disposed, from its clone root, with TMPDIR elsewhere (the command removes the
@@ -4908,12 +4955,13 @@ A timing shard (clone `$W/t37-matrix-1`; `client-1`, `client-2` and
 `matrix-1` ... `matrix-4` alike; `S=matrix-1`, `E=$EV/S`), the table
 `task37-S`, its ledger `$CL/.agent-files/evidence/task37-S/attempts.jsonl`:
 
-    CL=$W/t37-S; cd $CL; export TMPDIR=$CL/.agent-files/tmp
+    CL=$W/t37-S; E=$EV/S; cd $CL; export TMPDIR=$CL/.agent-files/tmp
     G="python3 -B $P/task37_grid.py S"
     $G prepare
     $G pilot --output $E/pilot --authorize-measurements
     $G predeclare --grid $E/pilot --output $P/task37_matrix_1_iterations.json
-    # wave 3: commit the counts file alone in main; forward $CL
+    # wave 3: commit the counts file alone in main (Commit rule: cp,
+    # commit alone, rm the clone's copy, forward $CL)
     $G verify-counts --grid $E/pilot
     $G run --candidate $(git rev-parse HEAD) --output $E/first \
       --pilot $E/pilot --authorize-measurements
@@ -4925,7 +4973,8 @@ A timing shard (clone `$W/t37-matrix-1`; `client-1`, `client-2` and
 
 (The counts file of `S` is `task37_<kind>_<n>_iterations.json`, e.g.
 `task37_client_2_iterations.json`.) The dispose `--timing S=` is the last
-stage run (`second` when owed, else `first`; a follow-up replaces it).
+stage run (`second` when owed, else `first`; a follow-up replaces it but
+is named by `--followup`, never by `--timing`).
 
 The follow-up of a shard (`F="python3 -B $P/task37_followup.py S"`; it runs
 in the shard's own clone, whose ledger takes its attempts, and only after
@@ -4933,7 +4982,8 @@ the shard's last stage, since it brings the clone forward):
 
     # in $M: the declaration, by hand: $P/task37_<kind>_<n>_followup_cells.json
     #   {"schema": "task37-followup-cells-v1", "shard": "S", "cells": [..]}
-    git -C $M add $P/task37_<kind>_<n>_followup_cells.json   # and commit it
+    git -C $M add $P/task37_<kind>_<n>_followup_cells.json
+    git -C $M commit -m "TASK37: follow-up declaration S"   # it alone
     forward $CL         # the declaration must be an ancestor of the pilot
     $F prepare
     $F pilot --output $E/fpilot --authorize-measurements
@@ -4969,9 +5019,18 @@ candidate whose trees `s1`/`s2` are built, `HARNESS` the clean checkout at
 `EVTAG` (`[A-Za-z0-9._-]+`, default `run`) names the attempt and its
 directory `$EV/startup-gate/EVTAG`, and is never reused. `DECLARED_ARCHIVE`
 (default round 4's gate) is the gate archive whose R2 load figures the record
-declares. If, and only if, the gate failed on the declared deltas alone
-(the record Ds, Dc differ from the gate's R2 load totals: the disposition
-says so), redraw with the failed attempt's own gate as the declared archive:
+declares. A redraw always uses a new `EVTAG` (never reused; every attempt
+stays in the ledger, R-1), and `DECLARED_ARCHIVE` depends on why:
+
+- the attempt failed on the declared deltas (the record Ds, Dc differ from
+  the gate's R2 load totals: the disposition says so), complete or not: the
+  failed attempt's own gate is the declared archive,
+  `DECLARED_ARCHIVE=$EV/startup-gate/<that tag>/gate`;
+- the attempt is void (no gate decision) or an incomplete pass (it owes the
+  redraw): the same `DECLARED_ARCHIVE` the redrawn attempt used (the default:
+  omit it).
+
+The redraw after a delta failure of `g1`:
 
     DEV_REV=$BASE CAND_REV=$CAND HARNESS=$W/t37-harness \
     HARNESS_COMMIT=$(git -C $W/t37-harness rev-parse HEAD) \
@@ -4979,9 +5038,18 @@ says so), redraw with the failed attempt's own gate as the declared archive:
     setsid -w env --default-signal=HUP,INT,TERM nice -n 19 \
       $R/run_startup_gate.sh </dev/null
 
+and after a void or an incomplete-pass `g1` the same command with `EVTAG=g2`
+and no `DECLARED_ARCHIVE` (or `g1`'s own value, when it set one). After a
+SIGKILL of the runner (which runs no trap) the fixed scratch
+`/dev/shm/t37-sg-*` survives and the next run refuses ("evidence or scratch
+exists") before it opens a ledger line: the operator removes that scratch by
+hand (never the evidence directory).
+
 The attempts are in `$EV/startup-gate/attempts.jsonl`. Dispose takes the last
-attempt's `gate`, `gate-null`, `not-client-visible.md` and
-`declared-deltas.json`.
+attempt's `gate`, `not-client-visible.md` and `declared-deltas.json`, and its
+`gate-null` (`--startup-null`, required when the attempt is complete; for an
+incomplete attempt it is read when `gate-null` holds a complete archive and
+otherwise recorded as absent).
 
 The loading shards (wave 4b; timing, at normal priority; the api-audit
 receipt of the harness clone is made first). Each shard has a clone of its
@@ -4990,7 +5058,7 @@ needs `bin/hol.state0` and `bin/Holmake` there), at the tooling HEAD:
 
     for s in simplib conglib; do
       cd $W/t37-load-$s && export TMPDIR=$PWD/.agent-files/tmp
-      poly < tools/smart-configure.sml </dev/null
+      poly < tools/smart-configure.sml
       bin/build --stdknl --seq=tools/sequences/upto-parallel </dev/null
     done
     # in each clone (SHARD simplib or conglib):
@@ -5031,18 +5099,22 @@ is reported, never a gate.)
 
 The host load, beside the streams (reported only, `--load`), started once
 from the harness clone for the duration of the measurements (the recorder's
-PID is kept and killed at the end, by PID):
+PID is kept, and it is killed by PID after the last measurement and before
+`task37_dispose.py --record`):
 
     mkdir -p $EV/load; cd $W/t37-harness
     nice -n 19 python3 -B $P/task37_load.py record \
       --output $EV/load/host.jsonl --stream host </dev/null &
+    LOADPID=$!        # after the last measurement: kill $LOADPID
 
 The disposition (wave 5, in `$M`, which holds the code; no clone may be
 deleted before it, since the ledgers default to the clone each report
 records). The replay strings of `--task32-replay` and `--task33-replay` are
 the arguments of the `dispose` commands above without `--table`, `--out` and
-`--repo`, which the replay fixes. `LAST` is `first`, `second` or the
-follow-up of the shard, as owed:
+`--repo`, which the replay fixes. `LAST` is `second` when that stage was
+owed, else `first`: a follow-up goes only in `--followup` and
+`--followup-pilot` (dispose requires `--timing` to be the grid the follow-up
+replaces):
 
     cd $M
     lg() {  # lg CLONE TABLE: the attempts ledger of a clone
@@ -5071,9 +5143,9 @@ follow-up of the shard, as owed:
       --alloc-ledger task37-client=$(lg alloc-client task37-client) \
       --alloc-ledger task37-downstream=$(lg alloc-downstream \
         task37-downstream) \
-      $(shard client-1 first) $(shard client-2 first) \
-      $(shard matrix-1 first) $(shard matrix-2 first) \
-      $(shard matrix-3 first) $(shard matrix-4 first) \
+      $(shard client-1 LAST) $(shard client-2 LAST) \
+      $(shard matrix-1 LAST) $(shard matrix-2 LAST) \
+      $(shard matrix-3 LAST) $(shard matrix-4 LAST) \
       [--followup S=$EV/S/followup --followup-pilot S=$EV/S/fpilot] \
       --task32 $EV/t32/disposition.json \
       --task32-replay "--stage $EV/t32/first" \
@@ -5432,16 +5504,19 @@ without editing what their kept records depend on.
   a failure does not stop the run (the replays and cells run, so the
   disposition can record the fail), but the run exits non-zero at the end.
   The gate runs once, in wave 4b, with no diagnostic run before it
-  (decision 26). The redraw path is only for a failure on the declared
-  deltas alone: the failed attempt's own gate archive becomes the declared
-  one (`DECLARED_ARCHIVE=$EV/startup-gate/<tag1>/gate`) and the run is made
-  under a new `EVTAG`. The runner records every attempt in
+  (decision 26). A redraw is made under a new `EVTAG`: after a failure on
+  the declared deltas (complete or not) the failed attempt's own gate
+  archive becomes the declared one
+  (`DECLARED_ARCHIVE=$EV/startup-gate/<tag1>/gate`); after a void attempt or
+  an incomplete pass the `DECLARED_ARCHIVE` of the redrawn attempt is
+  kept. The runner records every attempt in
   `.agent-files/evidence/task37/startup-gate/attempts.jsonl` (an `open` and
   a `close` line with the exit status, the close written by the EXIT trap,
   so on a signal too); the disposition (`--startup-ledger`) lists every
   attempt (a failed earlier one stays, R-1) and requires the judged gate
-  and its null control to be in the last, closed attempt. The null gate has
-  no record.
+  (and its null control, when it has one) to be in the last attempt, which
+  may be unclosed (ledger status `open`, incomplete). The null gate has no
+  record.
 - Loading. The api-audit is a one-time step (`run_api_audit.sh`, in the
   built harness clone, never a snapshot) that writes one `receipt.json`.
   The loading shards (simpLib and congLib, 40 pairs of 5 first imports
@@ -5518,19 +5593,27 @@ binds each to its own table. A follow-up declaration is committed alone
 and must be an ancestor of the commit of the follow-up's counts file
 (checked by the follow-up engine and again by dispose).
 
-Startup attempts (decisions 21, 25, 26). The last attempt must be closed
-and holds the judged gate. If it is complete (closed with 0 or 2, with its
-`done`) it is judged by its gate. If it is incomplete and left no gate
-decision it is void and refuses (the lead redraws). If it is incomplete and
-has a gate decision it is judged by it: a fail or blocked decision on
-grounds other than the declared deltas is the gate's result (the startup
-gate fails, or is inconclusive), and a pass, or a failure on the declared
-deltas alone, leaves the attempt incomplete owing a `redraw` (the gate
-record is inconclusive and owes `redraw`). An earlier attempt is judged by
-its gate decision too, whenever `gate/decisions.json` exists, complete or
-not, and a redraw is blocked only by an earlier attempt that is complete
-and passed (superseded) or that decided fail or blocked on grounds other
-than the declared deltas; it is allowed after an attempt with no gate
+Startup attempts (decisions 21, 25, 26). The last attempt holds the judged
+gate; it may be unclosed (ledger status `open`: incomplete, like one closed
+with another status than 0 or 2). A gate decision counts only when
+`gate/receipt.json` exists and its sha256 rows match `header.json` and
+`decisions.json` (`startup_gate.write_archive`); otherwise the attempt has
+no decision (void), and a truncated file never raises. If the last attempt
+is complete (closed with 0 or 2, with its `done`) it is judged by its gate
+and has a replayed null control (`--startup-null` is required). If it is
+incomplete and left no gate decision it is void and refuses (the lead
+redraws). If it is incomplete and has a gate decision it is judged by it: a
+fail or blocked decision (a failure on the declared deltas alone included)
+is the gate's result (the startup gate fails, or is inconclusive; a
+delta-only failure is `fail` with a redraw allowed, complete or not), and
+only a pass leaves the attempt incomplete owing a `redraw` (the gate record
+is inconclusive and owes `redraw`). Its null control is read and replayed
+when `--startup-null` is given or its `gate-null` holds a complete archive,
+and is otherwise recorded as `absent (attempt ended before the null gate)`.
+An earlier attempt is judged by its gate decision too, whenever it has one,
+complete or not, and a redraw is blocked only by an earlier attempt that is
+complete and passed (superseded) or that decided fail or blocked on grounds
+other than the declared deltas; it is allowed after an attempt with no gate
 decision (void), one that failed on the declared deltas alone and one that
 is incomplete with a pass (which owed the redraw). The sha256 of the judged
 attempt's sealed `inputs.txt` is in the record's inputs. The

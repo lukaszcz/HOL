@@ -52,6 +52,7 @@ declared, by table name; task37_dispose.py takes them with
 `task37_grid.GRIDS` (`--followup SHARD=DIR`, `--pilot`,
 `--followup-pilot`).
 """
+from pathlib import Path
 import subprocess
 import sys
 

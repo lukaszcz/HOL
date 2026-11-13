@@ -341,6 +341,50 @@ class Ordering(unittest.TestCase):
                 engine.counts_commit("repo", "cand", "path")
 
 
+class RepoOfCode(unittest.TestCase):
+    def test_the_repository_of_the_code_is_found_unmocked(self):
+        repo = f.repo_of_code()
+        self.assertIsInstance(repo, Path)
+        self.assertTrue((repo / ".git").exists())
+        self.assertTrue(f.declaration_file("matrix-1").resolve()
+                        .is_relative_to(repo.resolve()))
+
+
+class UndefinedGlobals(unittest.TestCase):
+    def test_no_task37_module_uses_a_name_it_never_binds(self):
+        """A pyflakes-like scan: every global name a `task37_*.py` loads
+        is bound in its module or is a builtin (an unimported `Path` is
+        found here)."""
+        import builtins
+        import symtable
+        for path in sorted(a.HERE.glob("task37_*.py")):
+            top = symtable.symtable(path.read_text(), str(path), "exec")
+            bound = {s.get_name() for s in top.get_symbols()
+                     if s.is_assigned() or s.is_imported() or
+                     s.is_namespace()}
+            missing = set()
+            module_names = {"__file__", "__name__", "__doc__"}
+
+            def walk(table):
+                for s in table.get_symbols():
+                    if s.is_global() and s.is_referenced() and \
+                            s.get_name() not in bound and \
+                            not hasattr(builtins, s.get_name()) and \
+                            s.get_name() not in module_names:
+                        missing.add(s.get_name())
+                for child in table.get_children():
+                    walk(child)
+
+            walk(top)
+            for s in top.get_symbols():
+                if s.is_referenced() and not (
+                        s.is_assigned() or s.is_imported() or
+                        s.is_namespace() or hasattr(builtins, s.get_name())
+                        or s.get_name() in module_names):
+                    missing.add(s.get_name())
+            self.assertEqual(missing, set(), path.name)
+
+
 class OtherShardDeclared(unittest.TestCase):
     """Declaring the follow-up of another shard leaves a recorded follow-up
     checkable by the real engine."""

@@ -89,6 +89,17 @@ def r2(simp=158440, cong=90000, images=("b1", "s1")):
                              for i in images}}
 
 
+def seal_gate(directory):
+    """The `receipt.json` of a gate archive (`startup_gate.write_archive`)
+    for its header and decisions."""
+    directory = Path(directory)
+    if not (directory / "header.json").exists():
+        write(directory / "header.json", {})
+    write(directory / "receipt.json", {
+        n: hashlib.sha256((directory / n).read_bytes()).hexdigest()
+        for n in ("header.json", "decisions.json")})
+
+
 class StartupLedger(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -122,6 +133,8 @@ class StartupLedger(unittest.TestCase):
                 archive="/x/round4/gate"))
             write(path / "inputs.txt", "A=b\nDECLARED_DELTAS_SHA256=%s\n"
                   % hashlib.sha256(side.read_bytes()).hexdigest())
+        if decision is not None:
+            seal_gate(path / "gate")
         return path
 
     def attempts(self, *rows):
@@ -167,9 +180,10 @@ class StartupLedger(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not in the last"):
             gates.startup_attempts(ledger, one / "gate")
 
-    def test_an_open_last_attempt_or_a_bad_ledger_is_refused(self):
+    def test_an_open_last_attempt_with_no_decision_or_a_bad_ledger_is_void(
+            self):
         one = self.run_dir("one")
-        with self.assertRaisesRegex(ValueError, "not closed"):
+        with self.assertRaisesRegex(ValueError, "void"):
             gates.startup_attempts(self.attempts(("one", None)),
                                    one / "gate")
         with self.assertRaisesRegex(ValueError, "no startup attempts"):
@@ -251,11 +265,72 @@ class StartupLedger(unittest.TestCase):
         self.assertEqual((got["verdict"], got["problems"]),
                          ("owes-redraw", []))
 
-    def test_an_incomplete_last_attempt_failing_on_the_deltas_owes_one(
+    def test_an_incomplete_last_attempt_failing_on_the_deltas_is_a_fail(
             self):
+        # uniform with a complete one: a fail, a redraw allowed
         got = self.last(130, True, "pass", declared=(158441, 90000))
-        self.assertEqual(got["verdict"], "owes-redraw")
+        self.assertEqual(got["verdict"], "judged-incomplete")
         self.assertIn("load-simpLib", got["problems"][0])
+
+    def test_an_open_last_attempt_is_classified_not_refused(self):
+        got = self.last(None, False, "fail", ("R1 differs",))
+        self.assertEqual((got["status"], got["verdict"], got["exit"]),
+                         ("open", "judged-incomplete", None))
+        import shutil
+        shutil.rmtree(self.root / "last")
+        got = self.last(None, False, "pass")
+        self.assertEqual((got["status"], got["verdict"]),
+                         ("open", "owes-redraw"))
+
+    def test_an_open_earlier_attempt_is_judged_as_an_earlier_one(self):
+        self.run_dir("p", done=False, decision="pass",
+                     declared=(158440, 90000))
+        self.run_dir("v", done=False)
+        got = self.judged(("p", None), ("v", None))
+        self.assertEqual([(x["status"], x["verdict"]) for x in got[:2]],
+                         [("open", "incomplete-pass"),
+                          ("open", "void")])
+        self.run_dir("f", done=False, decision="fail",
+                     reasons=("R1 differs",), declared=(158440, 90000))
+        import shutil
+        shutil.rmtree(self.root / "last")
+        with self.assertRaisesRegex(ValueError, "stays judged"):
+            self.judged(("f", None))
+
+    def test_a_gate_decision_needs_a_receipt_that_matches(self):
+        import shutil
+        out = self.run_dir("g", done=False, decision="fail",
+                           reasons=("R1 differs",))
+        gate = out / "gate"
+        self.assertEqual(gates.gate_decision(gate)["decision"], "fail")
+        for damage in ("receipt missing", "receipt bad", "decisions "
+                       "truncated", "header edited", "row missing",
+                       "decisions edited"):
+            shutil.rmtree(out)
+            out = self.run_dir("g", done=False, decision="fail",
+                               reasons=("R1 differs",))
+            if damage == "receipt missing":
+                (gate / "receipt.json").unlink()
+            elif damage == "receipt bad":
+                (gate / "receipt.json").write_text("{")
+            elif damage == "decisions truncated":
+                text = (gate / "decisions.json").read_text()
+                (gate / "decisions.json").write_text(text[:10])
+            elif damage == "header edited":
+                write(gate / "header.json", dict(x=1))
+            elif damage == "row missing":
+                doc = json.loads((gate / "receipt.json").read_text())
+                doc.pop("header.json")
+                write(gate / "receipt.json", doc)
+            else:
+                write(gate / "decisions.json", dict(decision="pass"))
+            self.assertIsNone(gates.gate_decision(gate), damage)
+            row = gates.classify(dict(
+                attempt="g", output=str(out), exit=1, status="failed"))
+            self.assertEqual(row["kind"], "void", damage)
+            with self.assertRaisesRegex(ValueError, "void", msg=damage):
+                gates.startup_attempts(self.attempts(("g", 1)),
+                                       gate)
 
     def test_owing_a_redraw_makes_the_gate_record_incomplete(self):
         row = self.last(143, False, "pass", declared=(158441, 90000))
@@ -536,6 +611,7 @@ class StartupPath(unittest.TestCase):
                          dirty=False)))
         write(directory / "decisions.json", dict(
             decision="pass", R2=r2(*total)))
+        seal_gate(directory)
 
     def make(self, exit_=0, total=(158440, 90000), done=True):
         self.ev.mkdir(exist_ok=True)
@@ -609,10 +685,64 @@ class StartupPath(unittest.TestCase):
         args = self.make(done=False)
         write(self.ev / "gate" / "decisions.json", dict(
             decision="fail", reasons=["R1 differs"], R2=r2()))
+        seal_gate(self.ev / "gate")
         found, _, _, extra = self.read(args)
         self.assertEqual(found[gates.STARTUP]["source"], "fail")
         self.assertEqual(extra["startup_attempts"][-1]["verdict"],
                          "judged-incomplete")
+
+    def test_a_complete_attempt_needs_its_null_control(self):
+        args = self.make()
+        args.startup_null = None
+        with self.assertRaisesRegex(ValueError, "needs --startup-null"):
+            self.read(args)
+
+    def test_an_incomplete_failure_without_a_null_is_a_fail(self):
+        import shutil
+        args = self.make(done=False, exit_=143)
+        shutil.rmtree(self.ev / "gate-null")
+        write(self.ev / "gate" / "decisions.json", dict(
+            decision="fail", reasons=["R1 differs"], R2=r2()))
+        seal_gate(self.ev / "gate")
+        for given in (None, self.ev / "gate-null"):
+            args.startup_null = given
+            if given is not None:
+                with self.assertRaisesRegex(ValueError, "null control"):
+                    self.read(args)
+                continue
+            found, inputs, late, _ = self.read(args)
+            self.assertEqual(found[gates.STARTUP]["source"], "fail")
+            self.assertEqual(inputs[gates.STARTUP]["null-header"],
+                             d.NO_NULL)
+            self.assertEqual(inputs[gates.STARTUP]["null-decisions"],
+                             d.NO_NULL)
+            with mock.patch.object(gates, "replay_startup") as replay:
+                late[0][1]()
+            self.assertEqual(replay.call_count, 1)    # the gate only
+
+    def test_an_incomplete_pass_without_a_null_owes_a_redraw(self):
+        import shutil
+        args = self.make(done=False)
+        shutil.rmtree(self.ev / "gate-null")
+        args.startup_null = None
+        found, _, _, extra = self.read(args)
+        self.assertEqual((found[gates.STARTUP]["source"],
+                          found[gates.STARTUP]["owed"]),
+                         ("inconclusive", ["redraw"]))
+
+    def test_an_incomplete_attempt_reads_a_complete_null_archive(self):
+        args = self.make(done=False)
+        args.startup_null = None          # found as the attempt's gate-null
+        found, inputs, late, _ = self.read(args)
+        self.assertNotEqual(inputs[gates.STARTUP]["null-header"],
+                            d.NO_NULL)
+        with mock.patch.object(gates, "replay_startup") as replay:
+            late[0][1]()
+        self.assertEqual(replay.call_count, 2)
+        # an archive with no receipt is not a complete one
+        (self.ev / "gate-null" / "receipt.json").unlink()
+        found, inputs, _, _ = self.read(args)
+        self.assertEqual(inputs[gates.STARTUP]["null-header"], d.NO_NULL)
 
     def test_an_incomplete_attempt_with_no_decision_is_refused(self):
         args = self.make(done=False)

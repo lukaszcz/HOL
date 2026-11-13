@@ -39,16 +39,24 @@ What each replay re-derives, and what it cannot:
   the judged gate must be the last one (`startup_attempts`); an attempt
   counts as complete only with its `done` file (`<output>/done`, written
   by the runner at its end; it is not a ledger line) and a close status of
-  0 or 2 (2: completed with a soft step failed). An incomplete last
-  attempt with no gate decision is void (refused); with one it is judged
-  by it (decision 26): fail or blocked on grounds other than the declared
-  deltas is the gate's result, a pass or a failure on the declared deltas
-  alone leaves it incomplete owing a `redraw`. Every earlier attempt is
-  judged by its gate decision whenever `gate/decisions.json` exists,
-  complete or not, and recorded; it blocks a redraw only when it is
-  complete and passed, or decided fail or blocked on grounds other than
-  the declared deltas (void attempts, delta-only failures and incomplete
-  passing attempts do not block); a sidecar is bound to its record and
+  0 or 2 (2: completed with a soft step failed); a complete attempt
+  always has a replayed null control, which `--startup-null` names. An
+  incomplete last attempt (a failing step, `die`, a signal, no `done`,
+  or never closed) with no gate decision is void (refused); with one it
+  is judged by it (decision 26): a fail or blocked decision, on any
+  grounds, the declared deltas alone included, is the gate's result
+  (`fail` or inconclusive; a delta-only failure allows a redraw), and
+  only a pass leaves it incomplete owing a `redraw`. Its null control is
+  read and replayed when `gate-null` holds a complete archive and is
+  otherwise recorded as absent (the attempt ended before the null gate).
+  A gate decision counts only with a `gate/receipt.json` whose sha256
+  rows match `header.json` and `decisions.json` (`gate_decision`),
+  otherwise the attempt has none. Every earlier attempt is judged by
+  its gate decision when it has one, complete or not, and recorded; it
+  blocks a redraw only when it is complete and passed, or decided fail
+  or blocked on grounds other than the declared deltas (void attempts,
+  delta-only failures and incomplete passing attempts do not block); a
+  sidecar is bound to its record and
   its sealed `inputs.txt`. NOT re-derived: the builds, the path-length cells
   (`startup_gate.py cell`) and the runner's `check_deltas` (whole load
   rows against the declared archive), which needs the built trees; the
@@ -545,10 +553,35 @@ def bound_sidecar(out):
     return doc
 
 
+def gate_decision(out):
+    """The decisions of the gate archive `out` (`startup_gate.
+    write_archive`), or None when the attempt has no gate decision: it
+    counts only when `receipt.json` exists and its sha256 rows for
+    `header.json` and `decisions.json` are those of the files (a gate cut
+    short, or a truncated or edited file, decided nothing)."""
+    out = Path(out)
+    try:
+        receipt = json.loads((out / "receipt.json").read_text())
+        names = ("header.json", "decisions.json")
+        if not (isinstance(receipt, dict) and all(
+                receipt.get(n) == hashlib.sha256(
+                    (out / n).read_bytes()).hexdigest() for n in names)):
+            return None
+        decisions = json.loads((out / "decisions.json").read_text())
+    except (OSError, ValueError):
+        return None
+    return decisions if isinstance(decisions, dict) else None
+
+
+def archive_complete(out):
+    """The gate archive `out` is a complete one (`gate_decision`)."""
+    return gate_decision(out) is not None
+
+
 def classify(row):
     """What the gate of the attempt `row` shows, by its decision whenever
-    `gate/decisions.json` exists, complete or not (a crash or a signal
-    after a decided gate does not undo it). Returns the row with `kind`:
+    the attempt has one (`gate_decision`), complete or not (a crash or a
+    signal after a decided gate does not undo it). Returns the row with `kind`:
     `void` (no gate decision), `pass` (decided pass or attributed, no
     reasons, the R2 load totals the record declared), `delta-only` (the
     same, but the totals differ from the totals its own record declared,
@@ -559,10 +592,9 @@ def classify(row):
     out = Path(row["output"])
     found = dict(row, decision=None, reasons=[], problems=[],
                  complete=completed(row), kind="void")
-    path = out / "gate" / "decisions.json"
-    if not path.is_file():
+    decisions = gate_decision(out / "gate")
+    if decisions is None:
         return found
-    decisions = a.load(path)
     found.update(decision=decisions.get("decision"),
                  reasons=list(decisions.get("reasons", [])) + list(
                      decisions.get("blockers", [])))
@@ -618,20 +650,19 @@ def startup_attempts(ledger, judged):
     """Every attempt of the startup-gate runner in `ledger`, oldest first:
     [{attempt, output, exit, status, judged, verdict, decision, reasons,
     problems}]. The judged gate directory `judged` must lie in the output
-    of the LAST attempt, which is closed. Its verdict is `judged` when it
-    completed (`completed`: exit 0 or 2 and `done`). An incomplete last
+    of the LAST attempt, which may be open (never closed: incomplete, as
+    one closed with another status than 0 or 2). Its verdict is `judged`
+    when it completed (`completed`: exit 0 or 2 and `done`). An incomplete last
     attempt with no gate decision is void and cannot be judged (the lead
     redraws); one with a gate decision is judged by it (decision 26):
-    `judged-incomplete` when the gate decided fail or blocked on grounds
-    other than the declared deltas (the gate's result), `owes-redraw` when
-    it passed or failed on the declared deltas alone (incomplete, a redraw
-    is owed). Every earlier attempt is judged by `earlier_attempt` (R-1:
-    it stays in the record with its decision) and a redraw that was not
-    allowed refuses."""
+    `judged-incomplete` when the gate failed or was blocked, on any
+    grounds, the declared deltas alone included (the gate's result, a
+    `fail`; a redraw is allowed), `owes-redraw` only when it passed
+    (incomplete, a redraw is owed). Every earlier attempt is judged by
+    `earlier_attempt` (R-1: it stays in the record with its decision) and
+    a redraw that was not allowed refuses."""
     rows = read_ledger(ledger)
     last = rows[-1]
-    a.require(last["status"] != "open",
-              "the last startup attempt %s is not closed" % last["attempt"])
     inside = Path(judged).resolve().parent == Path(
         last["output"]).resolve()
     a.require(inside, "the judged startup gate %s is not in the last "
@@ -649,8 +680,8 @@ def startup_attempts(ledger, judged):
                   last["attempt"], last["exit"],
                   "written" if (Path(last["output"]) / "done").is_file()
                   else "missing"))
-    verdict = "judged-incomplete" if seen.pop("kind") == "fail" \
-        else "owes-redraw"
+    verdict = "owes-redraw" if seen.pop("kind") == "pass" \
+        else "judged-incomplete"
     return found + [dict(seen, judged=True, verdict=verdict)]
 
 
@@ -681,7 +712,9 @@ def startup_gate(header, decisions, null_decisions, problems=()):
     """The gate record of the startup gate: its status is that of its
     decision (`pass`, `attributed` with the notes as the attribution,
     `fail`; anything else, a blocked or a smoke run, is inconclusive), and
-    a null control that did not pass makes it inconclusive. `problems`
+    a null control that did not pass makes it inconclusive (`null_decisions`
+    is None only for an attempt that ended before its null gate, which
+    `task37_dispose.py` accepts for an incomplete one only). `problems`
     (`declared_problems`) make it `fail`: the record's declared deltas are
     not the gate's, and nothing is transferred."""
     decision = decisions.get("decision")
@@ -692,7 +725,8 @@ def startup_gate(header, decisions, null_decisions, problems=()):
     if problems:
         status = "fail"
         reasons += ["declared deltas: " + p for p in problems]
-    if status != "fail" and null_decisions.get("decision") != "pass":
+    if status != "fail" and null_decisions is not None and \
+            null_decisions.get("decision") != "pass":
         status = "inconclusive"
         reasons.append("the null control is %s, not pass" %
                        null_decisions.get("decision"))
