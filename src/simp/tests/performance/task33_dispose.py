@@ -325,7 +325,7 @@ def dispose(args):
     relocated = d.parse_relocated(args.relocated)
     offline_found = load_offline(args.offline)
     check_offline_identity(offline_found, args)
-    with d.using_table("task33"):
+    with d.using_table(storage.TABLE):
         timing_chain = d.replay_chain(
             args.timing_stage, args.ledger, args.timing_counts,
             args.timing_followup_counts, args.repo)

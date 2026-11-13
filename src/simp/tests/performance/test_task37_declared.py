@@ -13,8 +13,10 @@ from unittest import mock
 sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import task32_downstream as d
 import task33_offline as offline
 import task33_rules as rules
+import task37_cases as cases37
 import task37_declared as t
 
 KINDS = ["state-empty", "first-use"]
@@ -167,7 +169,9 @@ class Fill(unittest.TestCase):
 
     def test_the_filled_declaration_is_valid_and_binds_the_gates(self):
         new = t.fill(self.raw(), observed())
-        self.assertEqual(new["cand"], "a" * 40)  # the observation's
+        # the declared candidate is the named constant, not the observation's
+        self.assertEqual(new["cand"], cases37.COMPILED_REF)
+        self.assertEqual(new["cand"], self.raw()["cand"])
         entry = new["s2"]["total_delta"][0]
         self.assertNotIn("pending", entry)
         self.assertEqual(entry["value"], 10)
@@ -248,7 +252,6 @@ class ObserveFolders(unittest.TestCase):
                                      load())
 
     def test_one_gate_gives_an_observation_with_its_pins(self):
-        import task32_downstream as d
         before = d.ACTIVE.name
         obs = self.observe([self.report(), self.report()])
         self.assertEqual(d.ACTIVE.name, before)  # the table is restored
@@ -257,7 +260,23 @@ class ObserveFolders(unittest.TestCase):
                          (load()["base"], "a" * 40))
         self.assertEqual(obs["manifest"], pins()["manifest"])
         new = t.fill(json.loads(t.DECLARED.read_text()), obs)
-        self.assertEqual(new["cand"], "a" * 40)
+        self.assertEqual(new["cand"], cases37.COMPILED_REF)
+
+    def test_the_stages_are_observed_under_the_task37_table(self):
+        import task33_storage as storage
+        seen = []
+        real = t.observe_stages
+
+        def spy(*args):
+            seen.append((d.ACTIVE.name, storage.ACTIVE_STORAGE,
+                         storage.LEDGER_TABLE))
+            return real(*args)
+        before = (d.ACTIVE.name, storage.ACTIVE_STORAGE)
+        with mock.patch.object(t, "observe_stages", spy):
+            self.observe([self.report()])
+        self.assertEqual(seen, [("task37-t33", "task37-t33",
+                                 "task37-t33-storage")])
+        self.assertEqual((d.ACTIVE.name, storage.ACTIVE_STORAGE), before)
 
     def test_stages_of_different_candidates_or_manifests_are_refused(self):
         with self.assertRaisesRegex(t.Refusal, "one base, one candidate"):

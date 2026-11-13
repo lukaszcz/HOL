@@ -4596,7 +4596,8 @@ private counter of `allocation_matrix.py`, in three tasks, one per clone.
   task's is a smoke and cannot pass (its rows are inconclusive and the
   grid is not complete). The dispositions read the pairs from the
   inventory and refuse any pair count that is not the task's own, and a
-  passing row of fewer pairs.
+  passing row of fewer pairs. A run of a ledger task refuses `--pairs`
+  above the task's (such a run could be neither disposed nor voided).
 - Tasks and cells. `task37-matrix`: every TASK29 and TASK30 case at its
   size set, size 10000 included, 306 cells. `task37-client`: the cells
   that `task31` allocates, 245 (its infeasible cells are left out).
@@ -4609,7 +4610,13 @@ private counter of `allocation_matrix.py`, in three tasks, one per clone.
   against the private simplifier (`client_dependencies.py`, as the timing
   path does), sealed per side in the header and checked on replay against
   what each cell installed. Closure families accept the toolchain shared
-  inputs; a family without a closure installs none.
+  inputs; a family without a closure installs none. A loaded shared file
+  (a compiled product: `.hol/objs/...`, `.uo`, `.ui`, a theory's `.dat`)
+  is mapped to the source it stands for (`allocation_matrix.source_of`)
+  before it is compared with the changed paths of the git diff, which
+  name sources: a changed source must be a reviewed boundary file, and a
+  shared product of a module the closure installs privately (`modules` of
+  the closure record) is refused.
 - Counts. The measurement stage makes the counts files
   `allocation_iterations_task37_matrix.json`,
   `allocation_iterations_task37_client.json` and
@@ -4620,7 +4627,9 @@ private counter of `allocation_matrix.py`, in three tasks, one per clone.
   tracked by git; the run refuses if it would be), with the hash chain of
   the timing ledger: `open` once the output exists, `resume`, and `close`
   with the status of the decisions (`pass`, `fail`, `inconclusive`) or
-  `failed` when the run raised. An attempt is of one output
+  `failed` when the run raised (SIGHUP and SIGTERM raise too: the
+  attempt closes failed and its scratch is removed). An attempt is of one
+  output
   (`allocation_attempts.attempt_id`). It is void, and its settings may be
   drawn again as a new attempt, only if it admitted no measurement:
   exactly one close, `failed`; no resume; its output exists and holds no
@@ -4657,12 +4666,34 @@ private counter of `allocation_matrix.py`, in three tasks, one per clone.
 TASK37 re-targets the TASK32 and TASK33 drivers to the final candidate
 without editing what their kept records depend on.
 
+- Tables (design decision 22). TASK37 runs its own TASK32 and TASK33
+  tables, `task37-t32` and `task37-t33` (`task32_downstream.TABLES`; the
+  storage equivalent `task33_storage.STORAGE_TABLES`), so that no TASK37
+  run uses the C32 tables, whose counts files bind the C32 candidate
+  e436752631. Each has its own counts and follow-up counts files
+  (`task37_t32_counts.json`, `task37_t32_followup_counts.json`,
+  `task37_t33_counts.json`, `task37_t33_followup_counts.json` and, for the
+  TASK33 storage stages, `task37_t33_storage_counts.json` and
+  `task37_t33_storage_followup_counts.json`), seeds, ledger tables and
+  directories (`task37-t32`, `task37-t33`), journals
+  (`.agent-files/scratch/task37-t32`, `.../task37-t33`) and scratch
+  (`/dev/shm/t37-t32`, `/dev/shm/t37-t33`, the storage stages below the
+  latter in `storage`), and the units, policy and code of their parents,
+  with no history. TASK37 passes `--table task37-t32` or `--table
+  task37-t33` (before the command, to the storage driver as well), and
+  each table gets its own smoke, pilot and predeclare at the final
+  candidate; the counts files are committed alone. The C32 tables
+  (`task32`, `task33`, the default) and their counts, records and ledgers
+  stay untouched and replayable.
 - Compiled reference. The revision the candidate's compiled sources must
   equal is a parameter: `--compiled-ref REV` (the snapshot builder also
   takes the old spelling `--c31`), default TASK31's C31, so the TASK32 and
-  TASK33 records still replay. TASK37 passes the named constant
-  `task37_cases.COMPILED_REF` (the final candidate, 7e202dfbaa, as a full
-  sha), never its stream's own HEAD.
+  TASK33 records still replay. The TASK37 tables fix it (`Table.
+  compiled_ref`) to the named constant `task37_cases.COMPILED_REF` (the
+  final candidate, 7e202dfbaa, as a full sha), never its stream's own
+  HEAD; a contradicting `--compiled-ref` is refused. `task37-t33` fixes
+  its declaration (`Table.declared`) likewise, and refuses a contradicting
+  `--declared`.
 - Seals. The seals of the TASK32/TASK33 files as the kept records carry
   them are kept in `TASK32_HISTORY` and `TASK33_HISTORY` (in
   `task32_downstream.py`); the files as they are now seal TASK37 records.
@@ -4680,15 +4711,20 @@ without editing what their kept records depend on.
   pilot, controls and counts seal it. `observe` requires its stages to be
   of one base, one candidate and one snapshot manifest and records them
   as the pins of the observation (schema `task37-s2-observation-v2`);
-  `fill` takes the declaration's `cand` from the observation (there is no
-  `--cand`) and refuses an observation of another base. The filled
+  `fill` leaves the declaration's `cand` the named constant (the stages
+  are measured at a stream clone's head; the TASK37 table accepts a
+  candidate whose tree outside the performance area is the declared
+  one's) and refuses an observation of another base. The filled
   declaration has another seal than the placeholder one, so the throwaway
   smokes no longer replay: a smoke, the pilot and the controls are made
   under the filled file.
-- Pin checks. TASK37 passes `--declared task37_declared.json
-  --compiled-ref <task37_cases.COMPILED_REF>` to the TASK33 drivers. A
-  TASK33 stage, a predeclaration and a replay require the declaration's
-  `base` and `cand` to equal the pins of the gate (`check_declared`); a
+- Pin checks. The `task37-t33` table selects `task37_declared.json` and
+  `task37_cases.COMPILED_REF` itself (explicit `--declared` and
+  `--compiled-ref` must agree with them). A TASK33 stage, a predeclaration
+  and a replay require the declaration's `base` to equal the base of the
+  gate and its `cand` to be the gate's candidate (`check_declared`; the
+  C32 table needs the exact one, the TASK37 table a candidate with the
+  same tree outside the performance area); a
   predeclaration also requires a declaration that is filled and valid
   (`declared_ready`); `dispose` requires the `inputs.declared` seal of
   the audit and harvest reports to equal the seal of the declaration it
@@ -4697,8 +4733,9 @@ without editing what their kept records depend on.
   candidate), built, verified and compared with the compiled reference,
   each in its own clone (`<clone>/.agent-files/snapshots/task32`; the
   serial lock is per clone, so each driver and clone builds its own pair
-  under it). Scratch roots are distinct per stream: TASK33's t-run uses
-  `/dev/shm/t33` and its s-run `/dev/shm/t33/storage` (`--scratch`), and
+  under it). Scratch roots are distinct per stream: TASK37's TASK33 t-run
+  uses `/dev/shm/t37-t33` and its s-run `/dev/shm/t37-t33/storage`
+  (`--scratch`; the C32 table's are `/dev/shm/t33` and below), and
   `make_scratch` retries a `mkdir` that falls between another stage's
   `rmdir` of the empty root and the creation of its own folder.
 - Startup gate. The runner uses fixed-length `/dev/shm` paths (the path
@@ -4868,7 +4905,9 @@ outside `.agent-files` is allowed), `--candidate` must be equivalent to
 deltas are recorded. `--load STREAM=FILE` takes `task37_load.py`
 recordings; the host load is reported, never a gate. TASK32/33 inputs need
 a top-level `candidate`. `receipt` makes the receipt of the D7 build timing
-only, which is reported and never a gate.
+only, which is reported and never a gate; when a report is a
+`task37-builds-v1` receipt, the candidate given must be the one its sealed
+pins name (checked again when the receipt is loaded).
 
 ## Matrix boundaries and final evidence
 

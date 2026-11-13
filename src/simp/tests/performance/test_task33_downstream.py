@@ -284,7 +284,7 @@ class TableSelection(unittest.TestCase):
 
     def test_the_histories_of_task32_and_task33(self):
         old = dw.TABLES["task32"].history["task32_downstream.py"]
-        self.assertEqual(len(old), 5)  # TASK32's, plus two TASK37 seals
+        self.assertEqual(len(old), 4)  # TASK32's, plus the 7e202dfbaa one
         driver = {"sha256": "e3169e265e13cf55a18045fdebc5845f198ff8f9d1d15f"
                   "9529076915dbc23516", "bytes": 179579}
         storage = {"sha256": "069b87eea6287685ff50715d4dc07db797163767c0e5f5"

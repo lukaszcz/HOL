@@ -5,10 +5,11 @@
     "`task33_storage.py --declared` and `task33_offline.py --declared`;",
     "task33_declared.json (TASK33's C32) stays unchanged for its records.",
     "Changing it invalidates a decision run: the counts file seals it",
-    "before the pilot. `cand` is the pin of the candidate snapshot: if the",
-    "snapshots are built at a later commit that touches only",
-    "src/simp/tests/performance, set `cand` to it in the commit that fills",
-    "the S2 total_delta (task37_declared.py fill), committed alone."
+    "before the pilot. `cand` is the final candidate, the named constant",
+    "task37_cases.COMPILED_REF; the snapshots may be built at a later",
+    "commit whose tree outside src/simp/tests/performance is the same",
+    "(the TASK37 table accepts it), so `cand` is not changed by the fill",
+    "of the S2 total_delta (task37_declared.py fill), committed alone."
   ],
   "base": "cccaa27d7099cbadc886983020cbe745db7793f3",
   "cand": "7e202dfbaa63a48514c36fece89e3ab3f69b3696",

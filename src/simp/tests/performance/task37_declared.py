@@ -23,11 +23,13 @@ filled; every gate refuses a placeholder (`task33_offline.shape_problems`,
            and one snapshot manifest, which the observation records.
            Written as JSON; refuses a value that varies or an exclusive
            part that grows
-  fill     writes the observation into the placeholder and sets the
-           declaration's `cand` from the observation (the candidate the
-           stages measured: there is no other source), and refuses unless
+  fill     writes the observation into the placeholder, and refuses unless
            the observation's base is the declaration's and the declaration
-           is valid afterwards
+           is valid afterwards. The declaration's `cand` stays
+           task37_cases.COMPILED_REF: the stages are measured at the stream
+           clone's head, whose tree outside the performance area is the
+           declared candidate's, which the storage driver accepts for the
+           TASK37 table (`task33_storage.check_declared`)
 
 How the value is measured and committed (TASK37 recipe, before the pilot):
 
@@ -69,6 +71,7 @@ import task33_records as records
 
 DECLARED = HERE / "task37_declared.json"
 SCHEMA = "task37-s2-observation-v2"
+TABLE = "task37-t33"  # the table whose stages are observed
 
 
 class Refusal(ValueError):
@@ -151,10 +154,9 @@ def observation(groups, heap, kinds, pins=None):
 
 
 def fill(declared, obs):
-    """The declaration with the placeholder filled and its `cand` set to
-    the candidate the observation was made on (a new dict); refuses an
-    observation of another base, and a declaration that is not valid
-    afterwards."""
+    """The declaration with the placeholder filled (a new dict; its `cand`
+    is unchanged); refuses an observation of another base, and a
+    declaration that is not valid afterwards."""
     require(obs.get("schema") == SCHEMA, "not an S2 observation")
     require(obs.get("base") == declared["base"], "the observation is of "
             "base %s, the declaration's is %s" % (
@@ -177,7 +179,6 @@ def fill(declared, obs):
         % (obs["observed"]["d_base"], obs["observed"]["d_cand"]),
         "Only D's own code and type structure grow: no state, nothing per",
         "object."]
-    new["cand"] = obs["cand"]
     bad = problems(offline.join_text(new))
     require(not bad, "the filled declaration is not valid: " +
             "; ".join(bad))
@@ -195,16 +196,19 @@ def observe_folders(folders, manifest, declared, heap=None):
     """The observation of the finished storage stages in `folders`
     (replayed first), which must all be of one base, one candidate and one
     snapshot manifest (recorded in the observation). Needs the snapshots'
-    manifest only where a stage moved from it. The driver's active table is
-    the storage table meanwhile and is restored."""
+    manifest only where a stage moved from it. The TASK37 storage table
+    (`TABLE`) is the active one of both drivers meanwhile, and both are
+    restored."""
     import task32_downstream as d
     import task33_storage as storage
     previous = d.ACTIVE.name
-    d.use_table(storage.TABLE)
+    previous_storage = storage.use_storage_table(TABLE)
+    d.use_table(TABLE)
     try:
         return observe_stages(storage, folders, manifest, declared, heap)
     finally:
         d.use_table(previous)
+        storage.use_storage_table(previous_storage)
 
 
 def observe_stages(storage, folders, manifest, declared, heap):
@@ -264,8 +268,8 @@ def main(argv=None):
             print("%s: %d problem(s)" % (args.declared, len(bad)))
             return 1 if bad and args.final else 0
         if args.command == "observe":
-            offline.use_declared(args.declared)
-            obs = observe_folders(args.folders, args.manifest, declared)
+            with offline.using_declared(args.declared):
+                obs = observe_folders(args.folders, args.manifest, declared)
             with args.out.open("x") as stream:
                 stream.write(json.dumps(obs, indent=2) + "\n")
             print("S2 total change %+d words: %s" % (obs["value"], args.out))

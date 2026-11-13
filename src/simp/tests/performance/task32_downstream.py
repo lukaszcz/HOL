@@ -107,6 +107,7 @@ import task32_cases
 import task32_dat as dat
 import task32_snapshots as snap
 import task33_cases
+import task37_cases
 import timing_grid as tg
 
 SCHEMA = "task32-downstream-v1"
@@ -150,10 +151,7 @@ TASK32_HISTORY = {
         # the driver and the snapshot builder before `--compiled-ref`
         # (TASK37): the code of the kept TASK32 and TASK33 records
         {"sha256": "8d05e058fa2fba44ba2a717e7b362a47ef379a850d91c25484fc60"
-                   "f5e43c1224", "bytes": 180533},
-        # TASK37 part D before the scratch retry (1761ae677b)
-        {"sha256": "7cfaf9583803b8fd550d6efe6a9f3b6946108775d7dc62"
-                   "690ea6fe9a988db807", "bytes": 182649}],
+                   "f5e43c1224", "bytes": 180533}],
     "task32_snapshots.py": [
         {"sha256": "444e5f40c62d8529bceb87e8086d13de5ea54127559063987d4552"
                    "0a89806ac7", "bytes": 60760}],
@@ -170,9 +168,7 @@ TASK33_DRIVER_SEALS = (
 TASK33_HISTORY = {
     "task32_downstream.py": list(TASK33_DRIVER_SEALS) + [
         {"sha256": "8d05e058fa2fba44ba2a717e7b362a47ef379a850d91c25484fc60"
-                   "f5e43c1224", "bytes": 180533},
-        {"sha256": "7cfaf9583803b8fd550d6efe6a9f3b6946108775d7dc62"
-                   "690ea6fe9a988db807", "bytes": 182649}],
+                   "f5e43c1224", "bytes": 180533}],
     "task32_snapshots.py": [
         {"sha256": "444e5f40c62d8529bceb87e8086d13de5ea54127559063987d4552"
                    "0a89806ac7", "bytes": 60760}],
@@ -185,17 +181,13 @@ TASK33_HISTORY = {
         {"sha256": "069b87eea6287685ff50715d4dc07db797163767c0e5f5bf475cf1"
                    "adf94f2ab5", "bytes": 79375},
         {"sha256": "441ca922516d43b63f33f7011b45027651b281a24181d5"
-                   "eaac23f939b22bab2c", "bytes": 82572},
-        {"sha256": "96689c8cb39dcf51c30f80e156f782366ed6dfb7ef2497"
-                   "ac8f19b8b603c7ea62", "bytes": 83363}],
+                   "eaac23f939b22bab2c", "bytes": 82572}],
     "task33_rules.py": [
         {"sha256": "fa34fd48bb9489f68457fdabf7e9b025a0059643573e8b"
                    "201a582159d9115bd8", "bytes": 34186}],
     "task33_dispose.py": [
         {"sha256": "61d0cef407ef789867d1ef06574d99e33ffe883cdfc8f6"
-                   "b181735536e12cabb6", "bytes": 26854},
-        {"sha256": "42eff22257a15f9ac0a8ba5f27d058e6c21d906c991d0d"
-                   "97c5a684d06f74ca53", "bytes": 27123}],
+                   "b181735536e12cabb6", "bytes": 26854}],
 }
 
 
@@ -268,7 +260,13 @@ class Table:
     `code`, so their seals are bound by the counts and the report) and
     `probe_digest` (None when the table has no probe unit; else the output
     digest of a `probe` unit, `(text, root, probe_dir, unit) -> hex digest`,
-    raising ValueError: each table names its own, there is no global hook)."""
+    raising ValueError: each table names its own, there is no global hook),
+    `compiled_ref` (None: the revision the candidate's compiled sources
+    equal is the `--compiled-ref` option's, default COMPILED_REF; else the
+    table fixes it and a contradicting `--compiled-ref` is refused:
+    `resolve_ref`) and `declared` (None: TASK33's declaration is the
+    default of the storage driver's `--declared`; else the table's own
+    declaration file, which a contradicting `--declared` cannot replace)."""
     name: str
     label: str
     ledger_table: str
@@ -290,6 +288,8 @@ class Table:
     env_prefix: object
     probe_sources: object
     probe_digest: object
+    compiled_ref: object = None
+    declared: object = None
 
     def __post_init__(self):
         if self.unit_floor not in UNIT_FLOORS:
@@ -337,6 +337,27 @@ TABLES = {
         probe_sources=task33_cases.PROBE_FILES,
         probe_digest=task33_cases.digest),
 }
+# The TASK37 tables (design decision 22): the TASK32 and TASK33 units, policy
+# and code under the final candidate, with their own counts and follow-up
+# counts, seeds, ledger, journals and scratch, so that no run of the final
+# gate shares or rewrites anything of the C32 tables, whose counts files
+# bind the C32 candidate. No history: the code of a TASK37 run is the code
+# of the final tooling.
+for _parent, _name, _label, _stem in (
+        ("task32", "task37-t32", "TASK37 T32", "task37_t32"),
+        ("task33", "task37-t33", "TASK37 T33", "task37_t33")):
+    TABLES[_name] = dataclasses.replace(
+        TABLES[_parent], name=_name, label=_label,
+        ledger_table=_name + ("-downstream" if _parent == "task32" else
+                              "-loading"),
+        ledger_dir=_name, counts=HERE / (_stem + "_counts.json"),
+        followup_counts=HERE / (_stem + "_followup_counts.json"),
+        seed=_name + "-1", journals=".agent-files/scratch/" + _name,
+        scratch="/dev/shm/" + _name.replace("task37-", "t37-"),
+        history={}, compiled_ref=task37_cases.COMPILED_REF,
+        declared=HERE / "task37_declared.json" if _parent == "task33"
+        else None)
+del _parent, _name, _label, _stem
 DEFAULT_TABLE = "task32"
 ACTIVE = None
 
@@ -550,16 +571,30 @@ def gate_key(sides):
                            sides["cand"]["pin"]]).encode())
 
 
+def resolve_ref(ref=None, table=None):
+    """The revision the candidate's compiled sources must equal: the
+    table's own when it fixes one (a `ref` that contradicts it, other than
+    as an abbreviation of at least ten digits, is refused), else `ref`,
+    default COMPILED_REF."""
+    fixed = (table or ACTIVE).compiled_ref
+    if fixed is None:
+        return ref or COMPILED_REF
+    require(ref is None or (len(ref) >= 10 and fixed.startswith(ref)),
+            "--compiled-ref %s contradicts table %s, which fixes %s" % (
+                ref, (table or ACTIVE).name, fixed))
+    return fixed
+
+
 def default_verify(repo, manifest, sides, ref=None):
     """The snapshot audit, with the arguments task32_snapshots.py's
     `verify` requires (pins, and the revision the candidate's compiled
-    sources equal: `ref`, default COMPILED_REF)."""
+    sources equal: `ref` as `resolve_ref` gives it)."""
     return [sys.executable, "-B", str(HERE / "task32_snapshots.py"),
             "verify", "--repo", str(Path(repo).resolve()),
             "--manifest", str(Path(manifest).resolve()),
             "--base-pin", sides["base"]["pin"],
             "--cand-pin", sides["cand"]["pin"],
-            "--compiled-ref", ref or COMPILED_REF]
+            "--compiled-ref", resolve_ref(ref)]
 
 
 def run_verify(argv, cwd, fds):
@@ -575,9 +610,9 @@ def run_verify(argv, cwd, fds):
 
 def check_candidate(repo, sides, ref=None):
     """Base is the develop pin; the candidate's compiled sources equal
-    those of `ref` (default COMPILED_REF; everything outside the tests
+    those of `ref` (`resolve_ref`; everything outside the tests
     directories, snap.TEST_ONLY)."""
-    ref = ref or COMPILED_REF
+    ref = resolve_ref(ref)
     require(sides["base"]["pin"] == a.BASE, "the baseline is not the pin")
     try:
         c31 = a.git(repo, "rev-parse", ref + "^{commit}")
@@ -2742,7 +2777,7 @@ def run_stage(args, spec, *, body_fn=None, report_fn=None,
     repo = Path(args.repo).resolve(strict=True)
     sides, mseal = load_manifest(args.manifest, args.base_root,
                                  args.cand_root)
-    ref = getattr(args, "compiled_ref", None)
+    ref = resolve_ref(getattr(args, "compiled_ref", None))
     check_candidate(repo, sides, ref)
     require(args.authorize_measurements, "measurement authorization "
             "required")
@@ -3588,7 +3623,10 @@ def add_common(parser):
     parser.add_argument("--counts", type=Path)
     parser.add_argument("--compiled-ref", help="the revision the "
                         "candidate's compiled sources must equal "
-                        "(default: %s, TASK31's C31)" % snap.C31)
+                        "(default: %s, TASK31's C31, unless the table "
+                        "fixes it: %s)" % (COMPILED_REF, ", ".join(
+                            n for n, t in sorted(TABLES.items())
+                            if t.compiled_ref)))
 
 
 def add_ledger(parser):

@@ -26,7 +26,8 @@ and S4 refuses it), 3 fail or refused (including a report that cannot be
 written).  A check has `status` pass, fail or skipped; the report
 succeeds when no check failed or was skipped.  Reports are never
 overwritten.  Every report carries `code`: the seals of this file, of
-task33_declared.json and of the TASK32 code it reuses (`check_code`).
+the declaration (`--declared`, default task33_declared.json) and of the
+TASK32 code it reuses (`check_code`).
 
 `audit` and `harvest` are bound to the TASK32 snapshot manifest
 (`--manifest`, required): each root is that side's snapshot root, the
@@ -35,6 +36,7 @@ declared pins are the manifest's, and the build commands exited 0.
 Interface for the disposition (S4): see the schema notes at REPORT_NOTES.
 """
 import argparse
+import contextlib
 import difflib
 import gzip
 import hashlib
@@ -58,10 +60,13 @@ import task33_records as records
 
 SCHEMA = "task33-offline-v1"
 DECLARED_SCHEMA = "task33-declared-v4"
-DECLARED = HERE / "task33_declared.json"
-# The declaration this process uses (`use_declared`; the storage driver's
-# `--declared`). TASK33's own is the default, so its records replay;
-# TASK37 declares its revision in task37_declared.json (task37_declared.py).
+DEFAULT_DECLARED = HERE / "task33_declared.json"
+DECLARED = DEFAULT_DECLARED
+# The declaration this process uses (`using_declared`, for the length of a
+# command; the storage driver's `--declared` or its table's). TASK33's own
+# is the default, so its records replay; TASK37 declares its revision in
+# task37_declared.json (task37_declared.py). A report is bound to the
+# declaration it was made under (`code_paths`).
 PASS, INCONCLUSIVE, FAIL = 0, 2, 3
 STATUSES = ("pass", "fail", "skipped")
 REPORT_NOTES = """\
@@ -132,6 +137,10 @@ def report_path(out, command):
 # storage driver runs with task33 selected): this module binds to the
 # `task32` table explicitly (`archive_report` runs under it).
 T32 = d.TABLES["task32"]
+# The tables whose archives the `archive` report accepts: the TASK32 proof
+# builds of the C32 gate and of TASK37 (each is replayed under its own
+# table: its counts, ledger and code).
+ARCHIVE_TABLES = ("task32", "task37-t32")
 # The code a report is bound to: this file, the declaration, and the
 # TASK32 code it reuses (a record made by an earlier version of a TASK32
 # file is accepted as task32_downstream.check_code accepts it).
@@ -139,20 +148,32 @@ OWN_CODE = ("task33_offline.py", "task33_declared.json")
 CODE = OWN_CODE + tuple(T32.code)
 
 
+def code_paths():
+    """{name: path} of the code a report made now is bound to: `CODE`, with
+    the declaration actually selected (`DECLARED`, by its own name) in the
+    place of TASK33's."""
+    return {(DECLARED.name if n == DEFAULT_DECLARED.name else n):
+            (DECLARED if n == DEFAULT_DECLARED.name else HERE / n)
+            for n in CODE}
+
+
 def code_seals():
-    return {n: a.seal(HERE / n) for n in CODE}
+    return {n: a.seal(p) for n, p in code_paths().items()}
 
 
 def check_code(recorded):
     now = code_seals()
-    require(isinstance(recorded, dict) and set(recorded) == set(CODE),
-            "the recorded code is not " + ", ".join(CODE))
+    require(isinstance(recorded, dict) and set(recorded) == set(now),
+            "the recorded code is not " + ", ".join(now))
     # TASK33's history is accepted besides TASK32's, for the files of this
     # CODE it names (`task32_downstream.py`, this file): the reports of the
-    # kept TASK33 records carry the versions that made them
+    # kept TASK33 records carry the versions that made them. Only under
+    # TASK33's own declaration: TASK37's reports have no history.
+    own = DECLARED == DEFAULT_DECLARED
     known = {n: list(T32.history.get(n, ())) +
-             list(d.TASK33_HISTORY.get(n, ())) for n in CODE}
-    changed = [n for n in CODE if recorded[n] != now[n] and
+             list(d.TASK33_HISTORY.get(n, ())) if own else []
+             for n in now}
+    changed = [n for n in now if recorded[n] != now[n] and
                recorded[n] not in known[n]]
     require(not changed, "the code changed since the report was made: " +
             ", ".join(changed))
@@ -220,6 +241,20 @@ def use_declared(path):
     previous = DECLARED
     DECLARED = Path(path).resolve()
     return previous
+
+
+@contextlib.contextmanager
+def using_declared(path):
+    """`use_declared(path)` for the length of a block, the previous one
+    restored whatever happens; `None` selects nothing."""
+    if path is None:
+        yield
+        return
+    previous = use_declared(path)
+    try:
+        yield
+    finally:
+        use_declared(previous)
 
 
 def load_declared(path=None):
@@ -1952,9 +1987,14 @@ def reported_intervals(report):
 
 
 def archive_report(folder, repo, replay, checks, ledger=None):
-    """The archive report, under the TASK32 table of the driver (its
-    seals, replay and ledger are TASK32's, whichever table is active)."""
-    with d.using_table(T32.name):
+    """The archive report, under the TASK32 table of the run archived (the
+    C32 `task32` or TASK37's `task37-t32`: its seals, replay and ledger
+    are that table's, whichever table is active)."""
+    run = a.load(Path(folder).resolve(strict=True) / "downstream.json")
+    table = run.get("table", T32.name)
+    require(table in ARCHIVE_TABLES, "the archive is of table %s, not one "
+            "of %s" % (table, ", ".join(ARCHIVE_TABLES)))
+    with d.using_table(table):
         return archive_in_table(folder, repo, replay, checks, ledger)
 
 
@@ -2024,6 +2064,10 @@ def build_parser():
                        "harvest: the directory of the sealed logs)")
     sub.choices["archive"].add_argument("--archive", type=Path,
                                         required=True)
+    sub.choices["archive"].add_argument(
+        "--declared", type=Path, default=DECLARED, help="the declaration "
+        "the report is bound to (default task33_declared.json; TASK37's "
+        "is task37_declared.json)")
     sub.choices["archive"].add_argument("--no-replay", action="store_true",
                                         help="skip the TASK32 replay: the "
                                         "report is inconclusive (exit 2)")
@@ -2046,6 +2090,12 @@ def build_parser():
 
 
 def run(args):
+    """The command, with its declaration selected for its length."""
+    with using_declared(getattr(args, "declared", None)):
+        return run_command(args)
+
+
+def run_command(args):
     checks, inputs, data = Checks(), {}, {}
     try:
         if args.command == "archive":

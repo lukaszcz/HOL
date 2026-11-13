@@ -80,11 +80,14 @@ folders differ by default (the timing stage's SCRATCH_ROOT, the storage
 stages' STORAGE_SCRATCH), and a scratch folder created while another stage
 removes the empty root is created again (`task32_downstream.make_scratch`).
 """
+import contextlib
+import dataclasses
 import json
 import math
 from pathlib import Path
 import shlex
 import statistics
+import subprocess
 import sys
 from fractions import Fraction
 
@@ -102,11 +105,37 @@ import task33_rules as rules
 
 SCHEMA = "task33-storage-v1"
 COUNTS_SCHEMA = "task33-storage-counts-v1"
-TABLE = "task33"  # the table of the driver this file drives
-LEDGER_TABLE = "task33-storage"
-STORAGE_COUNTS = HERE / "task33_storage_counts.json"
-FOLLOWUP_COUNTS = HERE / "task33_storage_followup_counts.json"
-SEED = "task33-s4"
+# What differs between the tables this driver runs (the C32 `task33` and
+# TASK37's `task37-t33`, design decision 22) is the `StorageTable` record
+# below, named like the timing driver's table of the same name
+# (`task32_downstream.TABLES`). `use_storage_table` copies the selected
+# one's fields into the module names TABLE, LEDGER_TABLE, STORAGE_COUNTS,
+# FOLLOWUP_COUNTS, SEED and SEEDS, SCRATCH_ROOT and STORAGE_SCRATCH, which
+# the one code path reads at call time; `--table` (before the command)
+# selects it, default the C32 table so that its records replay.
+@dataclasses.dataclass(frozen=True)
+class StorageTable:
+    name: str  # also the name of the timing driver's table
+    ledger_table: str
+    storage_counts: Path
+    followup_counts: Path
+    seed: str
+    scratch_root: Path
+
+
+STORAGE_TABLES = {t.name: t for t in (
+    StorageTable(
+        "task33", "task33-storage", HERE / "task33_storage_counts.json",
+        HERE / "task33_storage_followup_counts.json", "task33-s4",
+        Path("/dev/shm/t33")),
+    StorageTable(
+        "task37-t33", "task37-t33-storage",
+        HERE / "task37_t33_storage_counts.json",
+        HERE / "task37_t33_storage_followup_counts.json",
+        "task37-t33-s4", Path("/dev/shm/t37-t33")))}
+DEFAULT_TABLE = "task33"
+STORAGE_STAGES = ("smoke", "pilot", "control", "run", "extend", "followup",
+                  "audit")
 DECISIVE = ("run", "extend", "followup", "audit")
 INFO = d.INFO_MODES
 K = 3  # fresh processes per side of an exact kind
@@ -140,11 +169,45 @@ UNDIVIDED_CAP = (
 # so that the two streams that run at once never share a folder (nor the
 # `rmdir` of an empty root, which each does when it ends). The disposal
 # removes SCRATCH_ROOT, and with it both.
-SCRATCH_ROOT = Path("/dev/shm/t33")
-STORAGE_SCRATCH = SCRATCH_ROOT / "storage"
 AUDIT_CASES = 8
 AUDIT_UNIT = "api-audit"
 OFFLINE_COMMANDS = ("archive", "audit", "harvest")  # the S3 reports
+
+
+
+def use_storage_table(name):
+    """Select the table (see `StorageTable`). Returns the previous one's
+    name."""
+    global TABLE, LEDGER_TABLE, STORAGE_COUNTS, FOLLOWUP_COUNTS, SEED
+    global SEEDS, SCRATCH_ROOT, STORAGE_SCRATCH, ACTIVE_STORAGE
+    d.require(name in STORAGE_TABLES, "unknown table %r (one of %s)" % (
+        name, ", ".join(STORAGE_TABLES)))
+    previous = ACTIVE_STORAGE
+    table = STORAGE_TABLES[name]
+    ACTIVE_STORAGE = table.name
+    TABLE = table.name  # the timing driver's table
+    LEDGER_TABLE = table.ledger_table
+    STORAGE_COUNTS, FOLLOWUP_COUNTS = (table.storage_counts,
+                                       table.followup_counts)
+    SEED = table.seed
+    SEEDS = {s: "%s-%s" % (SEED, s) for s in STORAGE_STAGES}
+    SCRATCH_ROOT = table.scratch_root
+    STORAGE_SCRATCH = SCRATCH_ROOT / "storage"
+    return previous
+
+
+ACTIVE_STORAGE = None
+use_storage_table(DEFAULT_TABLE)
+
+
+@contextlib.contextmanager
+def using_storage_table(name):
+    """`use_storage_table(name)` for the length of a block."""
+    previous = use_storage_table(name)
+    try:
+        yield
+    finally:
+        use_storage_table(previous)
 
 REGISTRY = tuple("registry-" + k for k in records.LOAD_KINDS)
 TRIVIAL = tuple("trivial-" + k for k in records.STARTUP_KINDS)
@@ -156,8 +219,6 @@ CONTROLS = (("graph_extra", GRAPH), ("leak", RELEASE),
             ("hook", "registry-state-empty"))
 ORDINARY = "ext+ordinary"  # the extension probe, not declared as such
 PILOT_UNITS = (GRAPH, RELEASE)
-SEEDS = {s: "%s-%s" % (SEED, s) for s in (
-    "smoke", "pilot", "control", "run", "extend", "followup", "audit")}
 RESOLVED = frozenset((rules.PASS, rules.FAIL))
 
 
@@ -906,17 +967,41 @@ def new_report(mode, stage, spec, repo, sides, mseal, output):
         "code": d.code_seals()}
 
 
-def check_declared(base, cand):
-    """The declaration (`offline.load_declared()`, selected by
+def check_declared(base, cand, repo=None):
+    """The declaration (`offline.load_declared()`, selected by the table or
     `--declared`) is the one of the revisions measured: its `base` and
     `cand` are the pins of the stage. TASK33's own declaration names its
     own candidate (so that its records replay), TASK37's names the final
-    one; neither can silently bind the other's."""
+    one; neither can silently bind the other's. The C32 table needs the
+    exact candidate; a table that fixes its declaration (TASK37's) accepts
+    any candidate whose tree outside the performance area is the declared
+    one's (a stream clone's head, which differs from the declared
+    candidate only by performance commits), judged in `repo` (default: the
+    checkout of this code)."""
     declared = offline.load_declared()
-    for side, pin in (("base", base), ("cand", cand)):
-        require(declared[side] == pin, "the declaration %s is for %s %s, "
-                "not the %s %s of this gate (--declared)" % (
-                    offline.DECLARED.name, side, declared[side], side, pin))
+    name = offline.DECLARED.name
+
+    def refuse(side, pin):
+        raise d.Refusal("the declaration %s is for %s %s, not the %s %s of "
+                        "this gate (--declared)" % (
+                            name, side, declared[side], side, pin))
+    if declared["base"] != base:
+        refuse("base", base)
+    if declared["cand"] == cand:
+        return
+    if d.TABLES[ACTIVE_STORAGE].declared is None:
+        refuse("cand", cand)
+    repo = Path(repo) if repo else HERE.parents[3]
+    try:
+        same = d.tg.git_tree_outside(repo, declared["cand"]) == \
+            d.tg.git_tree_outside(repo, cand)
+    except (ValueError, OSError, subprocess.CalledProcessError) as error:
+        raise d.Refusal("cannot compare the candidate %s with the "
+                        "declaration's %s in %s: %s" % (
+                            cand, declared["cand"], repo, error))
+    require(same, "the declaration %s is for cand %s, whose tree outside "
+            "the performance area is not that of the cand %s of this "
+            "gate" % (name, declared["cand"], cand))
 
 
 def declared_ready():
@@ -931,7 +1016,7 @@ def run(args, spec):
     """One stage of the storage driver (a `d.run_stage`)."""
     stage = spec["mode"]
     sides, _ = d.pins_of(args)
-    check_declared(sides["base"]["pin"], sides["cand"]["pin"])
+    check_declared(sides["base"]["pin"], sides["cand"]["pin"], args.repo)
     return d.run_stage(
         args, spec, body_fn=audit_body if stage == "audit" else body,
         report_fn=new_report, decisive_stages=DECISIVE,
@@ -1141,7 +1226,7 @@ def replay_one(folder, ledger=None, repo=None, counts=None,
     require(report["declared"] == a.seal(offline.DECLARED),
             "the declaration changed since the %s run: it is sealed "
             "before the smoke, the pilot and the controls" % mode)
-    check_declared(report["base"], report["cand"])
+    check_declared(report["base"], report["cand"], repo)
     require((report["decides"] is None) ==
             (mode not in ("extend", "followup")), "malformed run")
     if mode in DECISIVE:
@@ -1460,7 +1545,7 @@ def predeclare_run(args):
     control that all ran, verified, on this gate, bound to the committed
     timing counts."""
     sides, mseal = d.pins_of(args)
-    check_declared(sides["base"]["pin"], sides["cand"]["pin"])
+    check_declared(sides["base"]["pin"], sides["cand"]["pin"], args.repo)
     declared_ready()
     key = d.gate_key(sides)
     timing_path = table_counts_path(args).resolve(strict=True)
@@ -1540,7 +1625,7 @@ def predeclare_followup(args):
     resolution) (capped by FOLLOWUP_FACTOR times the budget; `required_m`
     and `capped` recorded as the first counts do)."""
     sides, mseal = d.pins_of(args)
-    check_declared(sides["base"]["pin"], sides["cand"]["pin"])
+    check_declared(sides["base"]["pin"], sides["cand"]["pin"], args.repo)
     declared_ready()
     timing_path = table_counts_path(args).resolve(strict=True)
     run_counts = load_storage_counts(
@@ -1769,6 +1854,10 @@ COMMANDS = RUN_COMMANDS + ("predeclare", "replay", "dispose",
 
 def build_parser():
     parser = Parser(description=__doc__, allow_abbrev=False)
+    parser.add_argument("--table", choices=sorted(STORAGE_TABLES),
+                        default=TABLE, help="the table: which counts, "
+                        "seeds, ledger, scratch and declaration (default "
+                        "%s; before the command)" % DEFAULT_TABLE)
     sub = parser.add_subparsers(dest="command", required=True,
                                 parser_class=Parser)
     cmd = {name: sub.add_parser(name) for name in COMMANDS}
@@ -1809,7 +1898,7 @@ def build_parser():
                      "stage")
     dis.add_argument("--timing-stage", type=Path, required=True,
                      help="the last timing stage (replayed under "
-                     "--table task33)")
+                     "--table %s)" % TABLE)
     dis.add_argument("--offline", type=Path, action="append",
                      required=True, help="S3 reports: audit, harvest, "
                      "archive")
@@ -1839,10 +1928,36 @@ def build_parser():
     return parser
 
 
+def selected_declaration(args):
+    """The declaration the command seals and judges by: the table's own
+    when it fixes one (a contradicting `--declared` is refused), else
+    `--declared`, else None (the module default, TASK33's). The table's
+    fixed revision is checked here too (`--compiled-ref`)."""
+    table = d.TABLES[getattr(args, "table", ACTIVE_STORAGE)]
+    d.resolve_ref(getattr(args, "compiled_ref", None), table)
+    given = getattr(args, "declared", None)
+    if table.declared is None:
+        return given
+    require(given is None or Path(given).resolve() ==
+            Path(table.declared).resolve(),
+            "--declared %s contradicts table %s, which fixes %s" % (
+                given, table.name, table.declared))
+    return table.declared
+
+
 def dispatch(args):
+    """`run_command`, with the declaration selected for its length only
+    (the selection never outlasts the command in this process)."""
+    table = getattr(args, "table", ACTIVE_STORAGE)
+    require(table == ACTIVE_STORAGE, "--table %s, but the active "
+            "table is %s" % (table, ACTIVE_STORAGE))
+    declared = selected_declaration(args)
+    with offline.using_declared(declared):
+        return run_command(args)
+
+
+def run_command(args):
     command = args.command
-    if getattr(args, "declared", None):
-        offline.use_declared(args.declared)
     if command in RUN_COMMANDS:
         check_budget(args.timeout)
     if command in ("smoke", "pilot", "control"):
@@ -1884,8 +1999,21 @@ def dispatch(args):
     return exit_of(report)
 
 
+def select_table(argv):
+    """Apply --table of `argv` (before the parser is built) to this
+    driver. Returns the table's name, which is also the timing driver's."""
+    first = Parser(add_help=False, allow_abbrev=False)
+    first.add_argument("--table", choices=sorted(STORAGE_TABLES))
+    known = first.parse_known_args(argv)[0]
+    name = known.table or DEFAULT_TABLE
+    if name != ACTIVE_STORAGE:
+        use_storage_table(name)
+    return TABLE
+
+
 def main(argv=None):
-    return d.main(argv, table=TABLE, build=build_parser, run=dispatch,
+    table = select_table(sys.argv[1:] if argv is None else argv)
+    return d.main(argv, table=table, build=build_parser, run=dispatch,
                   summarize=summary_line)
 
 

@@ -82,6 +82,8 @@ STARTUP = "startup-gate"
 LOADING = {"loading-simpLib": "simpLib", "loading-congLib": "congLib"}
 GATES = (STARTUP,) + tuple(LOADING)
 D7 = "d7-build"
+# The TASK37 tables of the TASK32 and TASK33 drivers (decision 22).
+TABLE32, TABLE33 = "task37-t32", "task37-t33"
 EXITS = {"pass": 0, "attributed": 0, "fail": 1, "inconclusive": 2}
 # The owed stage of the sources' vocabulary: TASK33 calls the timing
 # `extend` stage `second`, the cells `stage2`.
@@ -165,10 +167,12 @@ def replay_task32(path, text, lineage):
     `dispose` command (`text`, without --out) and require the file to be
     it."""
     held = a.load(Path(path))
-    with d32.using_table("task32"):
+    with d32.using_table(TABLE32):
         args = parse(d32.build_parser(), ["dispose", *shlex.split(text),
                                           "--out", "/dev/null"],
                      "TASK32")
+        a.require(args.table == TABLE32, "the TASK32 replay is not under "
+                  "table " + TABLE32)
         check_repo(args, lineage, "TASK32")
         d32.require_ledger(args)
 
@@ -239,34 +243,35 @@ def read_task33(path, lineage):
 
 def replay_task33(path, text, lineage):
     """Derive the TASK33 disposition again from the arguments of its own
-    `dispose` command (`text`, without --out; it must name the TASK37
-    declaration) and require the file to be it, but for the `code` record,
-    which must be that of the code now or of its history."""
+    `dispose` command (`text`, without --out) under the TASK37 table
+    (`task37-t33`, which fixes the TASK37 declaration; a contradicting
+    --declared is refused) and require the file to be it, but for the
+    `code` record, which must be that of the code now or of its history."""
     import task33_storage as storage
     held = a.load(Path(path))
     with tempfile.TemporaryDirectory(prefix="task37-t33-") as scratch, \
-            d32.using_table(storage.TABLE):
+            storage.using_storage_table(TABLE33), d32.using_table(TABLE33):
         out = Path(scratch) / "disposition.json"
         args = parse(storage.build_parser(), ["dispose", *shlex.split(text),
                                               "--out", str(out)], "TASK33")
-        a.require(args.declared is not None and Path(
-            args.declared).resolve() == (a.HERE / "task37_declared.json"
-                                         ).resolve(),
-                  "the TASK33 replay is not under --declared "
-                  "task37_declared.json")
+        a.require(args.table == TABLE33 and
+                  d32.TABLES[args.table].declared is not None,
+                  "the TASK33 replay is not under a TASK37 table")
         check_repo(args, lineage, "TASK33")
         d32.check_code(held.get("code"))
         quiet(storage.dispatch, args)
-        check_declared(held, a.HERE / "task37_declared.json")
+        check_declared(held, d32.TABLES[TABLE33].declared, lineage)
         found = a.load(out)
     a.require(d32.same(dict(found, code=None), dict(held, code=None)),
               "the TASK33 disposition is not the one its stages derive")
 
 
-def check_declared(held, path):
+def check_declared(held, path, lineage=None):
     """The declaration the TASK33 disposition was judged under is valid
     and filled (no placeholder) and is for the baseline and the candidate
-    of the disposition."""
+    of the disposition: the same one, or with a `lineage` one whose tree
+    outside the performance area is the same (the stages are measured at a
+    stream clone's head, the declaration names the final candidate)."""
     import task33_offline as offline
     declared = offline.load_declared(path)
     problems = offline.shape_problems(declared)
@@ -274,6 +279,13 @@ def check_declared(held, path):
         Path(path).name, "; ".join(problems)))
     a.require(declared["base"] == a.BASE,
               "the declaration is for another baseline than %s" % a.BASE)
+    if lineage is not None and declared["cand"] != held.get("candidate"):
+        try:
+            lineage.equivalent("the declaration's candidate",
+                               declared["cand"])
+            return
+        except ValueError:
+            pass
     a.require(declared["cand"] == held.get("candidate"),
               "the declaration is for candidate %s, the TASK33 "
               "disposition's is %s" % (declared["cand"],
@@ -689,6 +701,31 @@ def gate_record(gate, status, attribution, reasons, sealed):
 
 # -------------------------------------------------- the D7 build receipt
 
+def same_rev(one, other):
+    """Two revisions of at least ten hex digits that are one (either may
+    abbreviate the other)."""
+    return (isinstance(one, str) and isinstance(other, str) and
+            min(len(one), len(other)) >= 10 and
+            (one.startswith(other) or other.startswith(one)))
+
+
+def check_builds_candidate(candidate, report):
+    """When `report` is a build-timing receipt (`task37-builds-v1`), the
+    candidate the D7 receipt names is the one its sealed pins name; any
+    other report is not examined."""
+    try:
+        doc = json.loads(Path(report).read_text())
+    except (OSError, ValueError):
+        return
+    if not (isinstance(doc, dict) and
+            doc.get("schema") == "task37-builds-v1"):
+        return
+    pinned = (doc.get("pins") or {}).get("cand")
+    a.require(same_rev(candidate, pinned),
+              "the %s receipt names candidate %s, the build timing %s "
+              "measured %s" % (D7, candidate, Path(report).name, pinned))
+
+
 def make_receipt(gate, candidate, status, exit_status, reports=(),
                  attribution=(), note=""):
     """The receipt of the D7 build timing, which is reported and never a
@@ -701,6 +738,8 @@ def make_receipt(gate, candidate, status, exit_status, reports=(),
               "exit %d is not that of %s (%d)" % (
                   exit_status, status, EXITS[status]))
     a.require(reports, "a receipt needs at least one sealed --report")
+    for report in reports:
+        check_builds_candidate(candidate, report)
     return dict(schema=RECEIPT_SCHEMA, gate=gate, candidate=candidate,
                 baseline=a.BASE, status=status, exit=exit_status,
                 attribution=list(attribution), note=note,
@@ -725,4 +764,5 @@ def load_receipt(path, lineage):
         a.require(target.is_file() and a.seal(target) == held["seal"],
                   "the %s receipt's report changed or is missing: %s" % (
                       D7, held["path"]))
+        check_builds_candidate(doc["candidate"], target)
     return dict(doc, seal=a.seal(Path(path)))
