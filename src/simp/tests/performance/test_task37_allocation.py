@@ -548,6 +548,73 @@ class ClosureReceipts(unittest.TestCase):
                 files=[HEAP], changed=["x"])))
 
 
+class ClosureProducts(unittest.TestCase):
+    """The closure guard compares the sources a changed-path list names with
+    the compiled products a process loads: `source_of` maps a product to
+    its source first, and a shared product of a module the closure installs
+    privately is refused."""
+    REPO = Path("/repo")
+
+    def meta(self, changed=(), files=(), modules=("Dep",)):
+        return dict(closure=dict(
+            changed=list(changed), boundary_files={f: "1" * 40
+                                                   for f in files},
+            sides={side: dict(modules=list(modules), roots=[], products={})
+                   for side in ("baseline", "candidate", "control")}))
+
+    def check(self, path, loaded=False, **meta):
+        return m.check_changed_input(self.REPO, self.REPO / path,
+                                     self.meta(**meta), "x", loaded)
+
+    def test_a_product_maps_to_its_source(self):
+        for product, source in (
+                ("src/x/.hol/objs/FooTheory.uo", "src/x/FooScript.sml"),
+                ("src/x/.hol/objs/FooTheory.ui", "src/x/FooScript.sml"),
+                ("src/x/.hol/objs/FooTheory.dat", "src/x/FooScript.sml"),
+                ("src/x/.hol/objs/FooTheory.sml", "src/x/FooScript.sml"),
+                ("src/x/FooTheory.uo", "src/x/FooScript.sml"),
+                ("src/x/Foo.uo", "src/x/Foo.sml"),
+                ("src/x/Foo.ui", "src/x/Foo.sig"),
+                ("src/x/.hol/objs/Foo.uo", "src/x/Foo.sml"),
+                ("src/x/Foo.sml", "src/x/Foo.sml"),
+                ("src/x/Foo.sig", "src/x/Foo.sig"),
+                ("src/x/Theory.sml", "src/x/Theory.sml"),
+                ("sigobj/Foo.uo", "sigobj/Foo.sml")):
+            with self.subTest(product=product):
+                self.assertEqual(m.source_of(product), source)
+
+    def test_a_changed_source_is_found_through_the_product_loaded(self):
+        for product, source in (
+                ("src/x/.hol/objs/FooTheory.uo", "src/x/FooScript.sml"),
+                ("src/x/.hol/objs/FooTheory.dat", "src/x/FooScript.sml"),
+                ("src/x/Foo.uo", "src/x/Foo.sml"),
+                ("src/x/Foo.ui", "src/x/Foo.sig")):
+            with self.subTest(product=product):
+                with self.assertRaisesRegex(sc.InvalidAllocation,
+                                            "not a reviewed boundary"):
+                    self.check(product, changed=[source])
+                self.check(product, changed=[source], files=[source])
+                self.check(product, changed=["src/x/Other.sml"])
+
+    def test_a_loaded_product_of_a_recompiled_module_is_refused(self):
+        for product in ("src/x/Dep.uo", "src/x/Dep.ui",
+                        "src/x/.hol/objs/Dep.uo", "sigobj/Dep.sml"):
+            with self.subTest(product=product):
+                with self.assertRaisesRegex(sc.InvalidAllocation,
+                                            "installs privately"):
+                    self.check(product, loaded=True)
+                # the origin of a product the closure copies is no load
+                self.check(product, loaded=False)
+        self.check("src/x/Heap1.uo", loaded=True)
+
+    def test_a_module_of_either_side_counts(self):
+        meta = self.meta(modules=())
+        meta["closure"]["sides"]["candidate"]["modules"] = ["Dep"]
+        with self.assertRaisesRegex(sc.InvalidAllocation, "installs"):
+            m.check_changed_input(self.REPO, self.REPO / "src/Dep.uo",
+                                  meta, "x", True)
+
+
 class Closures(unittest.TestCase):
     """Grid.make_closure and make_job for a closure family, over the
     stubbed checkout of test_allocation_grid.Jobs."""

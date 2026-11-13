@@ -123,6 +123,74 @@ class Recording(Fixture):
             self.run_with(self.out(), KeyboardInterrupt())
         self.assertEqual(self.lines()[-1]["status"], "failed")
 
+    def test_sighup_and_sigterm_close_the_attempt_and_release_the_scratch(
+            self):
+        import os
+        import signal
+        for number in (signal.SIGTERM, signal.SIGHUP):
+            with self.subTest(signal=number):
+                self.ledger().unlink(missing_ok=True)
+                before = (signal.getsignal(signal.SIGTERM),
+                          signal.getsignal(signal.SIGHUP))
+                cleaned = []
+
+                def grid(args, task, started, number=number):
+                    started(dict(candidate=CAND))
+                    try:  # as the Grid context manager's exit does
+                        os.kill(os.getpid(), number)
+                        signal.pthread_sigmask(signal.SIG_BLOCK, [])
+                        raise AssertionError("the signal was not raised")
+                    finally:
+                        cleaned.append(number)
+                with mock.patch.object(m, "run_grid", grid), \
+                        self.assertRaises(m.Terminated):
+                    m.run(namespace(self.repo, self.out("o%d" % number)))
+                self.assertEqual(cleaned, [number])
+                first, last = self.lines()
+                self.assertEqual((first["event"], last["event"],
+                                  last["status"]), ("open", "close",
+                                                    "failed"))
+                self.assertIn("signal %d" % number, last["failure"])
+                self.assertEqual((signal.getsignal(signal.SIGTERM),
+                                  signal.getsignal(signal.SIGHUP)), before)
+
+    def test_main_reports_a_signal_with_status_4(self):
+        import os
+        import signal
+
+        def grid(args, task, started):
+            os.kill(os.getpid(), signal.SIGTERM)
+            raise AssertionError("the signal was not raised")
+        with mock.patch.object(m, "run_grid", grid), \
+                mock.patch.object(m.pr, "use_fixed_path"), \
+                mock.patch("sys.stderr"):
+            code = m.main(["run", "--output", str(self.out()), "--repo",
+                           str(self.repo), "--candidate", CAND,
+                           "--toolchain", "t", "--controls-receipt", "c",
+                           "--task", TASK])
+        self.assertEqual(code, 4)
+
+    def test_more_pairs_than_the_task_are_refused_before_any_line(self):
+        task = m.TASKS[TASK]
+        for pairs in (task.pairs + 1, 10):
+            with self.subTest(pairs=pairs):
+                with mock.patch.object(m, "run_grid") as grid, \
+                        self.assertRaisesRegex(sc.InvalidAllocation,
+                                               "above the %d pairs" %
+                                               task.pairs):
+                    m.run(namespace(self.repo, self.out("p%d" % pairs),
+                                    pairs=pairs))
+                grid.assert_not_called()
+                self.assertFalse(self.ledger().exists())
+        for pairs in (None, 2, task.pairs):  # a smoke or the task's own
+            self.assertEqual(self.run_with(
+                self.out("q%s" % pairs), 0, pairs=pairs), 0)
+
+    def test_a_legacy_task_may_run_more_pairs_than_its_acceptance(self):
+        with mock.patch.object(m, "run_grid", return_value=0):
+            self.assertEqual(m.run(namespace(
+                self.repo, self.out(), task="task30", pairs=14)), 0)
+
     def test_a_refusal_before_the_opening_leaves_no_line(self):
         def grid(args, task, started):
             raise sc.InvalidAllocation("refused")

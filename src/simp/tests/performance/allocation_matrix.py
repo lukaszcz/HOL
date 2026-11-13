@@ -23,15 +23,17 @@ other); `--jobs` runs cells, not processes of one cell, in parallel. The
 import argparse
 from collections import Counter
 import collections.abc
+import contextlib
 from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 import gzip
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import platform
 import queue
 import shutil
+import signal
 import sys
 import tempfile
 import threading
@@ -1122,22 +1124,62 @@ def under_prefix(repo, path, prefixes):
     return next((p for p in prefixes if below.startswith(p)), None)
 
 
-def check_changed_input(repo, path, meta, what):
+PRODUCT_SOURCE = {".uo": ".sml", ".ui": ".sig"}
+THEORY_PRODUCTS = (".uo", ".ui", ".dat", ".sml", ".sig")
+
+
+def source_of(below):
+    """The tracked source a loaded file stands for, as the path (relative to
+    the repository, as `git diff --name-only` writes it) in which a change
+    of it shows: a product below `.hol/objs` is the file beside that
+    directory, a `.uo` is the `.sml` and a `.ui` the `.sig` of its stem, and
+    the products of a generated theory (`FooTheory.{uo,ui,dat,sml,sig}`)
+    are those of its `FooScript.sml`. Any other file is its own source."""
+    path = PurePosixPath(below)
+    parts = list(path.parts)
+    if len(parts) >= 3 and parts[-3:-1] == [".hol", "objs"]:
+        del parts[-3:-1]
+    name = PurePosixPath(parts[-1])
+    stem, suffix = name.stem, name.suffix
+    if stem.endswith("Theory") and len(stem) > len("Theory") and \
+            suffix in THEORY_PRODUCTS:
+        parts[-1] = stem[:-len("Theory")] + "Script.sml"
+    elif suffix in PRODUCT_SOURCE:
+        parts[-1] = stem + PRODUCT_SOURCE[suffix]
+    else:
+        parts[-1] = name.name
+    return str(PurePosixPath(*parts))
+
+
+def check_changed_input(repo, path, meta, what, loaded=False):
     """A shared file of a closure grid (a loaded input, a product of the
-    closure it installs): when it differs between baseline and candidate
-    it must be a file of the reviewed boundary (the manifest's `files`,
-    whose blobs the run checked), which the sides share by construction.
-    A path outside the toolchain is refused."""
+    closure it installs): when it, or the source it stands for
+    (`source_of`: the changed paths are sources, the loaded files are
+    compiled products), differs between baseline and candidate it must be a
+    file of the reviewed boundary (the manifest's `files`, whose blobs the
+    run checked), which the sides share by construction. A `loaded` file
+    (one a process read, not the origin of a product the closure copies) is
+    moreover never the product of a module the closure installs privately,
+    which the process must have loaded from its private directory. A path
+    outside the toolchain is refused."""
     try:
         below = Path(path).relative_to(repo).as_posix()
     except ValueError:
         raise sc.InvalidAllocation(
             "shared input outside the toolchain: %s" % (what,))
     closure = meta["closure"]
-    sc.require(below not in set(closure["changed"]) or
-               below in closure["boundary_files"],
+    source = source_of(below)
+    changed, files = set(closure["changed"]), closure["boundary_files"]
+    sc.require(all(path not in changed or path in files
+                   for path in (below, source)),
                "shared input differs between baseline and candidate and "
                "is not a reviewed boundary file: %s" % (what,))
+    if loaded:
+        modules = {m for side in closure["sides"].values()
+                   for m in side.get("modules", ())}
+        sc.require(Path(below).stem not in modules,
+                   "a shared product of a module the closure installs "
+                   "privately was loaded: %s" % (what,))
 
 
 def check_receipt(receipt, meta, experiment):
@@ -1205,7 +1247,8 @@ def check_receipt(receipt, meta, experiment):
                     # closure installed privately, sealed per side. A
                     # loaded file that does differ must be a reviewed
                     # boundary file.
-                    check_changed_input(repo, product, meta, logical)
+                    check_changed_input(repo, product, meta, logical,
+                                        loaded=True)
                     continue
                 prefix = under_prefix(repo, product, meta["boundary_prefixes"])
                 sc.require(prefix is None,
@@ -1592,30 +1635,62 @@ def status_code(decisions):
     return {"pass": 0, "fail": 1}.get(decisions["status"], 2)
 
 
+class Terminated(KeyboardInterrupt):
+    """SIGHUP or SIGTERM turned into an exception, so that a run unwinds
+    (its attempt closes failed, its scratch and lock are released) as it
+    does for any other failure."""
+
+
+@contextlib.contextmanager
+def terminating():
+    """SIGHUP and SIGTERM raise `Terminated` in the main thread for the
+    length of the block (SIGINT already raises KeyboardInterrupt), and the
+    previous handlers are restored."""
+    def stop(number, frame):
+        raise Terminated("signal %d" % number)
+    previous = {n: signal.signal(n, stop)
+                for n in (signal.SIGHUP, signal.SIGTERM)}
+    try:
+        yield
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
+
+
 def run(args):
     """One run of a grid. A TASK37 task records it in its attempts ledger
     (allocation_attempts.py): an opening (or a resumption) once the output
     exists and before the first process, and a close: the status of the
-    decisions, or `failed` when the run raised. A run that is not a judged
-    attempt (`--only`, hence check-jobs, or fewer pairs than the task's:
-    a smoke) is recorded as an information run (`info`, `info-end`),
-    which R-1 does not judge. The output of an attempt is never reused:
-    see allocation_attempts."""
+    decisions, or `failed` when the run raised (SIGHUP and SIGTERM raise
+    too, `terminating`: the scratch is removed and the attempt closes). A
+    run that is not a judged attempt (`--only`, hence check-jobs, or fewer
+    pairs than the task's: a smoke) is recorded as an information run
+    (`info`, `info-end`), which R-1 does not judge. A judged run takes at
+    most the task's pairs (a ledger task is disposed at exactly them). The
+    output of an attempt is never reused: see allocation_attempts."""
     task = task_named(getattr(args, "task", DEFAULT_TASK))
+    pairs = getattr(args, "pairs", None)
+    sc.require(not task.ledger or pairs is None or pairs <= task.pairs,
+               "--pairs %s is above the %d pairs of %s: a judged run "
+               "could never be disposed (it needs exactly %d) and cannot "
+               "be voided" % (pairs, task.pairs, task.name, task.pairs))
     if not task.ledger:
-        return run_grid(args, task, None)
+        with terminating():
+            return run_grid(args, task, None)
     import allocation_attempts
     info = bool(args.only) or (args.pairs is not None and
                                args.pairs < task.pairs)
     attempt = allocation_attempts.Attempt(
         task, args.repo, args.output, task.iterations, args.resume, info)
     attempt.check_new()
-    try:
-        code = run_grid(args, task, attempt.start)
-    except BaseException as error:
-        attempt.close(allocation_attempts.FAILED, failure=repr(error)[:500])
-        raise
-    attempt.close(allocation_attempts.status_of(code))
+    with terminating():
+        try:
+            code = run_grid(args, task, attempt.start)
+        except BaseException as error:
+            attempt.close(allocation_attempts.FAILED,
+                          failure=repr(error)[:500])
+            raise
+        attempt.close(allocation_attempts.status_of(code))
     return code
 
 
@@ -1836,8 +1911,13 @@ def main(argv=None):
                    "need an AB and a BA pair and a positive job count")
         sc.require(args.jobs <= MAX_JOBS,
                    "--jobs above %d would lengthen a job path" % MAX_JOBS)
-    return {"run": run, "replay": replay, "check-jobs": check_jobs,
-            "toolchain": toolchain}[args.action](args)
+    try:
+        return {"run": run, "replay": replay, "check-jobs": check_jobs,
+                "toolchain": toolchain}[args.action](args)
+    except Terminated as stopped:
+        print("TERMINATED (%s): the attempt is closed failed and the "
+              "scratch removed" % stopped, file=sys.stderr)
+        return 4
 
 
 if __name__ == "__main__":
