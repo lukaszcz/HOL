@@ -431,7 +431,8 @@ class Modules(unittest.TestCase):
                 ("allocation_matrix", "task37_cases", "task37_matrix"),
                 ("allocation_matrix", "task37_cases", "task37_client"),
                 ("allocation_matrix", "task37_cases",
-                 "task37_downstream")))
+                 "task37_downstream"),
+                ("allocation_matrix", "allocation_attempts", "run")))
         return found
 
     @staticmethod

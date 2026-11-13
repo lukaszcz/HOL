@@ -180,11 +180,14 @@ class Task:
     this checkout besides those every task binds, which the harness seals.
     `family` is the allocation fixture of a task whose cases are not run by
     the family of their matrix.json fixture (the family's `timing` is that
-    fixture).
+    fixture). A task with `ledger` records every `run` in the attempts
+    ledger of its clone (allocation_attempts.py, rule R-1); the legacy
+    tasks write none.
     """
 
     def __init__(self, name, label, cases, iterations, infeasible=(),
-                 rows=False, pairs=PAIRS, case_files=(), family=None):
+                 rows=False, pairs=PAIRS, case_files=(), family=None,
+                 ledger=False):
         self.name, self.label = name, label
         self.cases, self.iterations = tuple(cases), iterations
         self.infeasible, self.rows = frozenset(infeasible), rows
@@ -192,6 +195,7 @@ class Task:
                    and pairs >= 2, "a task needs at least an AB and a BA "
                    "pair")
         self.pairs, self.case_files = pairs, tuple(case_files)
+        self.ledger = bool(ledger)
         fixtures = {ms.EXPECTED_CASES[c]["fixture"] for c in self.cases}
         sc.require(len(fixtures) == 1 and (
             fixtures <= set(FAMILIES) if family is None else
@@ -232,7 +236,7 @@ def task37_matrix():
     return Task("task37-matrix", "TASK37 matrix", task37_cases.MATRIX_CASES,
                 HERE / "allocation_iterations_task37_matrix.json",
                 rows=True, pairs=TASK37_PAIRS,
-                case_files=task37_cases.FILES)
+                case_files=task37_cases.FILES, ledger=True)
 
 
 def task37_downstream():
@@ -244,7 +248,7 @@ def task37_downstream():
                 task37_cases.DOWNSTREAM_CASES,
                 HERE / "allocation_iterations_task37_downstream.json",
                 rows=True, pairs=TASK37_PAIRS, case_files=task37_cases.FILES,
-                family=DOWNSTREAM_FAMILY)
+                family=DOWNSTREAM_FAMILY, ledger=True)
 
 
 def task37_client():
@@ -256,7 +260,8 @@ def task37_client():
     return Task("task37-client", "TASK37 client", task37_cases.CLIENT_CASES,
                 HERE / "allocation_iterations_task37_client.json",
                 task37_cases.CLIENT_INFEASIBLE_CELLS, rows=True,
-                pairs=TASK37_PAIRS, case_files=task37_cases.FILES)
+                pairs=TASK37_PAIRS, case_files=task37_cases.FILES,
+                ledger=True)
 
 
 class Tasks(collections.abc.Mapping):
@@ -574,7 +579,8 @@ def harness_files(task=None):
         "task30_cases.py", *task.case_files,
         "path_schema.py", "performance_schema.py", "matrix_schema.py",
         "audit_evidence.py", "summarize.py",
-        *(("client_dependencies.py",) if task.family.closure else ()))]
+        *(("client_dependencies.py",) if task.family.closure else ()),
+        *(("allocation_attempts.py",) if task.ledger else ()))]
     inputs += [HERE / "allocator-counter" / n for n in (
         "private_runtime.py", "bracket.c", "managed_alloc_counter.h",
         "SOURCE_SHA256.json", "PATCHED_SHA256.json",
@@ -1112,16 +1118,6 @@ def under_prefix(repo, path, prefixes):
     return next((p for p in prefixes if below.startswith(p)), None)
 
 
-def changed_input(repo, path, changed):
-    """Whether a file of the toolchain is among the changed paths of the
-    comparison. A path outside the toolchain is refused."""
-    try:
-        return Path(path).relative_to(repo).as_posix() in set(changed)
-    except ValueError:
-        raise sc.InvalidAllocation(
-            "shared input outside the toolchain: %s" % (path,))
-
-
 def check_receipt(receipt, meta, experiment):
     """Offline protocol and provenance checks of one archived process."""
     sc.require(receipt["accepted"] is True and receipt["exit"] == 0 and
@@ -1177,13 +1173,13 @@ def check_receipt(receipt, meta, experiment):
                             *map(Path, info["related_products"])):
                 if "closure" in meta:
                     # The cases load shared modules that the manifest's
-                    # prefixes claim nothing loads from; what must hold
-                    # is that no loaded file differs between the sides.
-                    sc.require(
-                        not changed_input(repo, product,
-                                          meta["closure"]["changed"]),
-                        "shared input differs between baseline and "
-                        "candidate: " + logical)
+                    # prefixes claim nothing loads from. They are the
+                    # toolchain's, one for every side (its seals are in
+                    # the header); what differs between the sides is the
+                    # closure installed privately, sealed per side.
+                    sc.require(Path(product).is_relative_to(repo),
+                               "shared input outside the toolchain: "
+                               + logical)
                     continue
                 prefix = under_prefix(repo, product, meta["boundary_prefixes"])
                 sc.require(prefix is None,
@@ -1339,7 +1335,10 @@ def assemble(cells, records, observed, baseline=a.BASE, task=None,
             data = {n: observed[case, n] for n in every_size}
             record["slopes"] = an.slopes(record["cells"], list(every_size),
                                          data)
-            record["constants"] = an.constants(record["cells"])
+            # A case with no size-0 cell (downstream_arithmetic and
+            # downstream_reduce start at 1) has no constants to gate.
+            record["constants"] = an.constants(record["cells"]) \
+                if 0 in record["cells"] else None
             every += an.case_decisions(record)
         else:
             for c in record["cells"].values():
@@ -1568,8 +1567,27 @@ def status_code(decisions):
 
 
 def run(args):
-    root = args.output.resolve()
+    """One run of a grid. A TASK37 task records it in its attempts ledger
+    (allocation_attempts.py): an opening (or a resumption) once the output
+    exists and before the first process, and a close: the status of the
+    decisions, or `failed` when the run raised."""
     task = task_named(getattr(args, "task", DEFAULT_TASK))
+    if not task.ledger:
+        return run_grid(args, task, None)
+    import allocation_attempts
+    attempt = allocation_attempts.Attempt(
+        task, args.repo, args.output, task.iterations, args.resume)
+    try:
+        code = run_grid(args, task, attempt.start)
+    except BaseException as error:
+        attempt.close(allocation_attempts.FAILED, failure=repr(error)[:500])
+        raise
+    attempt.close(allocation_attempts.status_of(code))
+    return code
+
+
+def run_grid(args, task, started):
+    root = args.output.resolve()
     counts = load_iterations(task=task)
     wanted = keys(task)
     if args.only:
@@ -1594,6 +1612,8 @@ def run(args):
             # The archives alone must be able to re-verify the controls.
             shutil.copyfile(args.controls_receipt,
                             root / inventory["controls"]["file"])
+        if started is not None:
+            started(inventory)
         done = {(r["case"], r["size"]) for r in inventory["runs"]}
         todo = sorted((k for k in wanted if k not in done),
                       key=lambda k: -k[1])

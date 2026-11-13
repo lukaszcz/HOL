@@ -1814,7 +1814,8 @@ class ReplacedOpenings(Rig):
     TASK37_EDGES = {("allocation_matrix", "task37_cases", "task37_matrix"),
                     ("allocation_matrix", "task37_cases", "task37_client"),
                     ("allocation_matrix", "task37_cases",
-                     "task37_downstream")}
+                     "task37_downstream"),
+                    ("allocation_matrix", "allocation_attempts", "run")}
 
     def test_the_disposition_is_downstream_of_the_replay(self):
         # The disposition consumes the replays and is in neither table's
