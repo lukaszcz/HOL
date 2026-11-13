@@ -234,6 +234,10 @@ TASK37_HISTORY = {
     "task33_dispose.py": [
         {"sha256": "014a8860938753d609bc4462e8b03d"
                    "ced7e2a95de99293e3ab0da0398bfaff9c", "bytes": 27801}],
+    # before the storage predeclare bound the timing counts as a record
+    "task33_storage.py": [
+        {"sha256": "06b4dee630d4c65bc8254026d32ef516"
+                   "bd100767a7c04ff8b40ed453e570f53d", "bytes": 94490}],
 }
 TASK37_T32_HISTORY = {
     "task32_downstream.py": TASK37_DRIVER,
@@ -732,9 +736,14 @@ def check_counts_commit(repo, path, cand_pin):
 
 
 def load_counts(path, sides, kind, repo=None, committed=True,
-                mseal=None):
+                mseal=None, as_record=False):
     """A counts file, checked against this gate: schema, pins, manifest, the
-    code it is bound to and (committed=True) the commit rule."""
+    code it is bound to and (committed=True) the commit rule. With
+    as_record=False a stage runs under the counts: the recorded code must be
+    the code now. With as_record=True the caller binds the counts file and
+    runs nothing under it: the recorded code is checked as a record's, by
+    check_code (now, or an earlier version the active table's history
+    names), with its refusal text."""
     counts = a.load(path)
     require(counts.get("schema") == COUNTS_SCHEMA and
             counts.get("kind") == kind, "not a %s counts file" % kind)
@@ -747,10 +756,13 @@ def load_counts(path, sides, kind, repo=None, committed=True,
     require(mseal is None or counts.get("manifest") == mseal,
             "the snapshots were rebuilt since the counts file was made "
             "(its manifest seal is not the current one): predeclare again")
-    require(counts["code"] == code_seals(), "the code changed since the "
-            "counts file was made: " + ", ".join(
-                n for n in CODE if counts["code"].get(n) !=
-                code_seals()[n]))
+    if as_record:
+        check_code(counts["code"])
+    else:
+        require(counts["code"] == code_seals(), "the code changed since "
+                "the counts file was made: " + ", ".join(
+                    n for n in CODE if counts["code"].get(n) !=
+                    code_seals()[n]))
     require(sorted(counts["reps"]) == sorted(counts["references"]) and
             set(counts["reps"]) <= set(cases.NAMES) and
             all(isinstance(r, int) and r >= 1

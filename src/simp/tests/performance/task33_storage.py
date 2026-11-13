@@ -1464,10 +1464,14 @@ def storage_counts_path(args, followup=False):
 
 
 def load_storage_counts(path, sides, kind, repo, mseal, timing_path,
-                        committed=True):
+                        committed=True, as_record=False):
     """A storage counts file, checked against this gate: schema, pins,
     manifest, the code and declaration it is bound to, the timing counts'
-    seal it binds, the sizing of M (`check_sizing`) and the commit rule."""
+    seal it binds, the sizing of M (`check_sizing`) and the commit rule.
+    With as_record=False a stage runs under the counts: the recorded code
+    must be the code now. With as_record=True the caller only reads the
+    counts and runs nothing under them: the recorded code is checked as a
+    record's (`check_code`: now, or an earlier version the history names)."""
     data = a.load(path)
     require(data.get("schema") == COUNTS_SCHEMA and data.get("kind") ==
             kind, "not a storage %s counts file" % kind)
@@ -1476,8 +1480,11 @@ def load_storage_counts(path, sides, kind, repo, mseal, timing_path,
             "the counts file is of another gate")
     require(data["manifest"] == mseal, "the snapshots were rebuilt since "
             "the counts file was made: predeclare again")
-    require(data["code"] == d.code_seals(), "the code changed since the "
-            "counts file was made")
+    if as_record:
+        d.check_code(data["code"])
+    else:
+        require(data["code"] == d.code_seals(), "the code changed since "
+                "the counts file was made")
     require(data["declared"] == a.seal(offline.DECLARED),
             "the declaration changed since the counts file was made")
     check_timing_seal(data, timing_path)
@@ -1582,8 +1589,9 @@ def predeclare_run(args):
     declared_ready()
     key = d.gate_key(sides)
     timing_path = table_counts_path(args).resolve(strict=True)
+    # binds the timing counts' seal and commit; runs nothing under them
     timing = d.load_counts(timing_path, sides, "first", args.repo,
-                           mseal=mseal)
+                           mseal=mseal, as_record=True)
     pilot_info, pilot = info_run(args.pilot, key, "pilot",
                                  list(PILOT_UNITS), args.ledger, mseal,
                                  args.manifest)
@@ -1663,7 +1671,7 @@ def predeclare_followup(args):
     timing_path = table_counts_path(args).resolve(strict=True)
     run_counts = load_storage_counts(
         storage_counts_path(args).resolve(strict=True), sides, "run",
-        args.repo, mseal, timing_path, committed=False)
+        args.repo, mseal, timing_path, committed=False, as_record=True)
     chain = replay_chain(args.stage, args.ledger, args.repo,
                          args.storage_counts, args.followup_counts,
                          args.timing_counts, args.manifest)

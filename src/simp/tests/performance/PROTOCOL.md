@@ -524,12 +524,18 @@ that pins the history constant is edited with it:
   `loading.py` before the halt of in-flight processes (decision 32); the
   t33 table alone also lists the driver of fe2ea792d9 (the pooled logs,
   which made the redrawn harvest `offline/harvest2`) and
-  `task33_dispose.py` before it took the harvest the disposition names.
+  `task33_dispose.py` before it took the harvest the disposition names, and
+  `task33_storage.py` before the storage predeclare bound counts as records.
   `task33_offline.check_code` takes the history from the table that names
   the selected declaration (`history_of_declared`, as `archive_table`), not
   from the active table: TASK33's declaration accepts TASK32's and TASK33's
   histories, TASK37's accepts that table's, and a declaration no table
   names accepts none.
+  The TASK37 t33 storage `predeclare` (and `predeclare --followup`) bind
+  earlier counts as records (`as_record=True`: their code may be now's or an
+  earlier version the table's history names); the timing `run` and
+  `followup`, and every storage stage under the storage counts (`run`,
+  `extend`, `followup`, `audit`), require the code now.
 
 A file whose seal no record carries needs no entry (usage text, style). The
 cascade, with a worked example, is in the bullet "Seal histories" of "TASK30

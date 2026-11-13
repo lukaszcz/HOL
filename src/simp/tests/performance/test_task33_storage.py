@@ -3264,6 +3264,58 @@ class Cli(Chain34):
         with self.assertRaisesRegex(dw.Refusal, "committed"):
             st.predeclare_run(args)
 
+    OLD_SEAL = {"sha256": "0" * 64, "bytes": 1}
+
+    def test_predeclare_binds_timing_counts_made_by_earlier_code(self):
+        """The storage predeclare binds the timing counts as a record: an
+        earlier seal the table's history names is admitted, any other is
+        refused; a run under the counts needs the code now."""
+        self.info_stages()
+        name = "task33_rules.py"
+        older = dict(dw.code_seals(), **{name: self.OLD_SEAL})
+        with mock.patch.object(dw, "code_seals", lambda: older):
+            path = self.timing_counts()
+        self.real_timing_counts = path
+        sides, mseal = dw.pins_of(self.args("x"))
+        repo = self.world.repo
+        with mock.patch.object(dw, "HISTORY", {name: [self.OLD_SEAL]}):
+            with self.assertRaisesRegex(dw.Refusal, "since the counts "
+                                        "file was made"):
+                dw.load_counts(path, sides, "first", repo, mseal=mseal)
+            _, data, _ = self.predeclare()
+        self.assertEqual(data["timing_counts"]["seal"], acc.seal(path))
+        self.assertTrue(data["timing_counts"]["commit"])
+        with mock.patch.object(dw, "HISTORY", {}):
+            with self.assertRaisesRegex(dw.Refusal, "since the record "
+                                        "was made"):
+                self.predeclare()
+            with self.assertRaisesRegex(dw.Refusal, "since the counts "
+                                        "file was made"):
+                dw.load_counts(path, sides, "first", repo, mseal=mseal)
+
+    def test_storage_counts_read_as_a_record_by_the_followup(self):
+        """predeclare_followup only reads the storage counts: their code
+        may be an earlier version the history names, but the stages that
+        run under them need the code now."""
+        self.info_stages()
+        _, data, out = self.predeclare()
+        name = "task33_rules.py"
+        data["code"][name] = self.OLD_SEAL
+        out.write_text(dw.dumps(data))
+        sides, mseal = dw.pins_of(self.args("x"))
+        call = (out, sides, "run", self.world.repo, mseal,
+                data_timing(self))
+        with mock.patch.object(dw, "HISTORY", {name: [self.OLD_SEAL]}):
+            st.load_storage_counts(*call, committed=False, as_record=True)
+            with self.assertRaisesRegex(dw.Refusal, "since the counts "
+                                        "file was made"):
+                st.load_storage_counts(*call, committed=False)
+        with mock.patch.object(dw, "HISTORY", {}):
+            with self.assertRaisesRegex(dw.Refusal, "since the record "
+                                        "was made"):
+                st.load_storage_counts(*call, committed=False,
+                                       as_record=True)
+
     def test_m_is_clamped_with_required_and_capped(self):
         self.info_stages()
         pilot = Path(self.world.tmp / "pilot")

@@ -2683,6 +2683,27 @@ class Chain(Base):
                                lambda: dict(counts["code"], x="y")):
             with self.assertRaisesRegex(dw.Refusal, "code changed"):
                 dw.load_counts(counts_path, sides, "first", w.repo)
+        # a counts file bound as a record (the caller runs nothing under
+        # it) is admitted by a seal the table's history names, but a stage
+        # that runs under it is not
+        name = dw.CODE[0]
+        now = dw.code_seals()
+        old_seal = {"sha256": "0" * 64, "bytes": 1}
+        mocked = dict(now, **{name: old_seal})
+        stale = w.tmp / "stale-counts.json"
+        stale.write_text(json.dumps(dict(counts, code=mocked)) + "\n")
+        with mock.patch.object(dw, "HISTORY", {name: [old_seal]}):
+            with self.assertRaisesRegex(dw.Refusal, "since the counts file "
+                                        "was made"):
+                dw.load_counts(stale, sides, "first", committed=False)
+            dw.load_counts(stale, sides, "first", committed=False,
+                           as_record=True)
+        with mock.patch.object(dw, "HISTORY", {}):
+            for record, text in ((False, "since the counts file was made"),
+                                 (True, "since the record was made")):
+                with self.assertRaisesRegex(dw.Refusal, text):
+                    dw.load_counts(stale, sides, "first", committed=False,
+                                   as_record=record)
         # a counts file of another gate is refused
         other = dict(sides, cand=dict(sides["cand"], pin="2" * 40))
         with self.assertRaisesRegex(dw.Refusal, "another gate"):

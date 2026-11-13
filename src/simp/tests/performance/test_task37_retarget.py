@@ -1310,7 +1310,7 @@ class HistoryOfTheKeptRecords(unittest.TestCase):
             self.assertEqual(seals, kept, name)
         self.assertEqual(sorted(dw.TASK37_HISTORY), [
             "loading.py", "task32_downstream.py", "task33_dispose.py",
-            "task33_offline.py"])
+            "task33_offline.py", "task33_storage.py"])
         self.assertEqual(dw.TABLES["task37-t33"].history, dw.TASK37_HISTORY)
         self.assertEqual(
             dw.TABLES["task37-t32"].history,
@@ -1330,6 +1330,19 @@ class HistoryOfTheKeptRecords(unittest.TestCase):
                         dw.TASK37_HISTORY, dw.TASK37_T32_HISTORY):
             self.assertEqual(history["loading.py"], [seal])
         self.assertIn("loading.py", dw.CODE)
+
+    def test_the_kept_counts_files_pass_check_code(self):
+        """The code a kept TASK37 counts file carries is now's or in the
+        table's history: a CODE edit that misses its history entry fails
+        here."""
+        for table, stem in (("task37-t33", "task37_t33"),
+                            ("task37-t32", "task37_t32")):
+            for kind in ("counts", "followup_counts"):
+                path = HERE / ("%s_%s.json" % (stem, kind))
+                if not path.exists():
+                    continue
+                with dw.using_table(table):
+                    dw.check_code(json.loads(path.read_text())["code"])
 
 
 if __name__ == "__main__":
