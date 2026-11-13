@@ -29,7 +29,6 @@
 *.toc
 *.dvi
 *.out
-**/.hheval_*.sml
 *.idx
 *.ilg
 *.ind
@@ -148,5 +147,4 @@ examples/l3-machine-code/**/*-heap
 /.codex/
 /.pi/
 CLAUDE.local.md
-.agent-files
 __pycache__
