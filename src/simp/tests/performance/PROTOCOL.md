@@ -4622,11 +4622,15 @@ inventory's `pairs`, never a constant) and, where sampled, its timing
 decided `pass`. Unsampled cells pass on identity and allocation (policy
 `stratified`). D2 (heavy tactic cells identity-only) and R-1
 (`void_attempts.attempts_of`) carry over and are recorded. D4 (design
-decision 16) covers the 31 cells of `task37_cases.D4`: a timing chain whose
-decisive first stage is control-limited is not owed a second stage, and the
-cell passes with policy `D4` when identity and exact allocation (work rows
-`equal`) pass; the policy is recorded on a cell that passes by it and on no
-other. Inconclusive never passes, and every incomplete record lists what
+decision 16) covers all 31 cells of `task37_cases.D4` (13 TASK29A
+control-limited, 5 TASK29A attributed, 13 TASK30 attributed), only when
+the decisive timing stage is control-limited (the B/B control outside the
+window, the candidate not a reproducible slowdown), identity is identical
+or attributed and exact allocation passes, work rows included (the
+"Decision rule" above); the cell then passes with policy `D4` and is not
+owed a second stage, and the policy is recorded on a cell that passes by
+it and on no other. Any other control-limited cell blocks and owes stage
+2. Inconclusive never passes, and every incomplete record lists what
 is owed (`stage2`, `followup`, `attribution`, `redraw`, `identity-rerun`,
 `allocation-rerun`, `retained-slope`; TASK33's `second` is `stage2`).
 
@@ -4641,7 +4645,9 @@ the one place that accepts a revision.
 
     task37_dispose.py --candidate REV [--repo CHECKOUT]
         --identity-{client,matrix,downstream} DIR
-        --identity-ledger KIND=FILE            (three)
+        --identity-ledger KIND=FILE            (three; each table's
+            <checkout>/.agent-files/evidence/task37-<table>-identity/
+            attempts.jsonl, never a fixed path)
         --alloc-{matrix,client,downstream} DIR
         --alloc-ledger TASK=FILE               (three)
         --timing SHARD=DIR --ledger SHARD=FILE
@@ -4658,9 +4664,11 @@ the one place that accepts a revision.
 Shards are joined by their explicit paths; every shard is required with
 its ledger and pilot, each shard's decisions are exactly its part
 (`task37_grid.PARTS`) and the union is exactly the sample. A declared
-follow-up of a shard is judged for R-1 whether or not it is given; given,
-it must replace the shard's `--timing` output. Every input carries the pins
-of the committed `task37_attributed.json` for the sources it measures; a
+follow-up of a shard (entered in `task37_followup.CELLS`, whose engines
+`task37_followup.GRIDS` are named `task37-<shard>-followup`; the shard
+tables are `task37_grid.GRIDS` alone) is judged for R-1 whether or not
+it is given; given, it must replace the shard's `--timing` output. Every
+input carries the pins of the committed `task37_attributed.json` for the sources it measures; a
 stage whose `source_identity.differing` is not empty is incomplete. All
 reads, ties and joins come first and the replays last, and a failed
 replay refuses: identity (`task37_identity.identity_replay`, attempts

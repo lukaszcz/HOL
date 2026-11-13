@@ -165,6 +165,7 @@ import task31_dispose as d31
 import task31_pins as reviewed
 import task37_cases as cases
 import task37_gates as gates
+import task37_followup as followup
 import task37_grid as grid
 import task37_lineage as lineage_of
 import task37_load as load
@@ -186,6 +187,7 @@ TASKS = dict(client="task37-client", matrix="task37-matrix",
 # test pins it, function-local imports included).
 CODE = ("task37_dispose.py", "task37_gates.py", "task37_lineage.py",
         "task37_cases.py", "task37_identity.py", "task37_grid.py",
+        "task37_followup.py", "task37_sources.py",
         "task37_load.py", "task31_dispose.py", "task31_identity_grid.py",
         "task31_identity.py", "task31_attribution.py", "task31_cases.py",
         "task31_followup.py", "task31_grid.py", "task31_pins.py",
@@ -203,7 +205,6 @@ CODE = ("task37_dispose.py", "task37_gates.py", "task37_lineage.py",
 HISTORY = {}
 
 STATUS_FAIL, STATUS_INCOMPLETE, STATUS_PASS = "fail", "incomplete", "pass"
-FOLLOWUP_SUFFIX = "-followup"
 
 
 def seals():
@@ -638,14 +639,13 @@ def timing_engine(key):
 
 def followup_engines():
     """{follow-up table name: engine} of the declared follow-ups: the one
-    place that knows where they are declared (`task37_grid.GRIDS` now)."""
-    return {n: e for n, e in grid.GRIDS.items()
-            if n.endswith(FOLLOWUP_SUFFIX)}
+    place that knows where they are declared (`task37_followup.GRIDS`)."""
+    return dict(followup.GRIDS)
 
 
 def followup_of(key):
     """The engine of the declared follow-up of a shard, or None."""
-    return followup_engines().get(grid.name_of(key) + FOLLOWUP_SUFFIX)
+    return followup_engines().get(followup.name_of(key))
 
 
 def read_shard(key, options, lineage, repo, document, late):
@@ -679,7 +679,7 @@ def read_shard(key, options, lineage, repo, document, late):
     follow = followup_of(key)
     given = options["followup"].get(key)
     if given is not None:
-        name = table + FOLLOWUP_SUFFIX
+        name = followup.name_of(key)
         a.require(follow is not None, "no follow-up is declared for %s "
                   "(see followup_engines)" % table)
         followup_pilot = options["followup-pilot"].get(key)

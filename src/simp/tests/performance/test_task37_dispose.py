@@ -23,6 +23,7 @@ import task32_downstream as d32
 import task37_cases as c
 import task37_dispose as d
 import task37_gates as gates
+import task37_followup as followup
 import task37_grid as grid
 import task37_lineage as lin
 import test_timing_grid as ttg
@@ -629,12 +630,12 @@ class Pilot(unittest.TestCase):
 
     def test_a_declared_follow_up_is_judged_whether_or_not_given(self):
         self.read_late = self.read(
-            self.options(), {self.table + "-followup":
+            self.options(), {followup.name_of(self.key):
                              fake_follow(self.table)})
         self.read_late[1][0][1]()
         judged = [x for x in self.calls if x[0] == "attempts"]
         self.assertEqual([x[1] for x in judged],
-                         [self.table, self.table + "-followup"])
+                         [self.table, followup.name_of(self.key)])
         self.assertEqual(judged[1][2], {})
 
     def test_a_follow_up_needs_a_declaration_and_its_pilot(self):
@@ -642,7 +643,7 @@ class Pilot(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no follow-up is declared"):
             self.read(options)
         with self.assertRaisesRegex(ValueError, "needs --followup-pilot"):
-            self.read(options, {self.table + "-followup":
+            self.read(options, {followup.name_of(self.key):
                                 fake_follow(self.table)})
 
     def test_a_follow_up_pilot_without_a_follow_up_is_refused(self):
@@ -662,7 +663,7 @@ class Pilot(unittest.TestCase):
         options = self.options(followup={self.key: self.root / "f"})
         options["followup-pilot"] = {self.key: self.root / "fp"}
         with self.assertRaisesRegex(ValueError, "does not replace"):
-            self.read(options, {self.table + "-followup":
+            self.read(options, {followup.name_of(self.key):
                                 fake_follow(self.table)})
 
     def test_a_follow_up_that_replaces_the_output_gets_both_pilots(self):
@@ -679,7 +680,7 @@ class Pilot(unittest.TestCase):
         # names
         (self.root / "f").mkdir()
         (self.root / "main").mkdir()
-        held, late = self.read(options, {self.table + "-followup":
+        held, late = self.read(options, {followup.name_of(self.key):
                                          fake_follow(self.table)})
         late[0][1]()
         replays = [x for x in self.calls if x[0] == "replay"]
@@ -928,10 +929,9 @@ class Command(unittest.TestCase):
         self.assertEqual(args.identity_ledger, ["client=i"])
 
     def test_the_followup_accessor(self):
-        self.assertEqual(d.followup_engines(), {
-            n: e for n, e in grid.GRIDS.items()
-            if n.endswith("-followup")})
-        engines = {grid.name_of("client-1") + "-followup": "E"}
+        self.assertEqual(d.followup_engines(), dict(followup.GRIDS))
+        self.assertFalse(set(grid.GRIDS) & set(followup.GRIDS))
+        engines = {followup.name_of("client-1"): "E"}
         with mock.patch.object(d, "followup_engines", lambda: engines):
             self.assertEqual(d.followup_of("client-1"), "E")
             self.assertIsNone(d.followup_of("client-2"))
@@ -965,7 +965,8 @@ class Code(unittest.TestCase):
 
     def test_every_imported_module_is_sealed_function_local_too(self):
         todo = ["task37_dispose", "task37_gates", "task37_lineage",
-                "task37_cases", "task37_identity", "task37_grid"]
+                "task37_cases", "task37_identity", "task37_grid",
+                "task37_followup", "task37_sources"]
         seen = set()
         while todo:
             name = todo.pop()
