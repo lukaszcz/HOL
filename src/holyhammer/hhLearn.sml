@@ -105,80 +105,20 @@ type dep_info =
   {fetchable : mlThmData.thmid list, intact : bool, count : int}
 type dep_table = (mlThmData.thmid, dep_info) Redblackmap.dict
 
-fun frame text = Int.toString (String.size text) ^ ":" ^ text
+(* The target's (name, theorem) inventory keys its thmdata.  Unchanged
+   theorems are usually the very same objects, so the pointer test makes
+   the warm comparison linear without rendering any terms. *)
+fun same_inventory_entry ((left_name, left_thm), (right_name, right_thm)) =
+  left_name = right_name andalso
+  (Portable.pointer_eq (left_thm, right_thm) orelse
+   goal_compare (dest_thm left_thm, dest_thm right_thm) = EQUAL)
 
-fun canonical_sequence tag values =
-  frame tag ^ frame (Int.toString (length values)) ^
-  String.concat (map frame values)
+fun same_inventory ((left_target, left_entries),
+                    (right_target, right_entries)) =
+  left_target = right_target andalso
+  ListPair.allEq same_inventory_entry (left_entries, right_entries)
 
-val structural_goal_digest_schema = "hh-goal-struct-v1"
-
-fun canonical_type ty =
-  if Type.is_vartype ty then
-    canonical_sequence "type-variable" [Type.dest_vartype ty]
-  else
-    let
-      val {Thy, Tyop, Args} = Type.dest_thy_type ty
-    in
-      canonical_sequence "type-operator"
-        (Thy :: Tyop :: map canonical_type Args)
-    end
-
-fun canonical_term tm =
-  let
-    fun bound_index _ [] = NONE
-      | bound_index variable (binder :: rest) =
-          if Term.term_eq variable binder then SOME 0
-          else
-            case bound_index variable rest of
-                SOME index => SOME (index + 1)
-              | NONE => NONE
-    fun encode bound current =
-      if Term.is_var current then
-        let
-          val (name, ty) = Term.dest_var current
-          val index = bound_index current bound
-          val fields =
-            case index of
-                SOME position => [Int.toString position, canonical_type ty]
-              | NONE => [name, canonical_type ty]
-          val tag =
-            if Option.isSome index then "bound-variable"
-            else "free-variable"
-        in
-          canonical_sequence tag fields
-        end
-      else if Term.is_const current then
-        let val {Thy, Name, Ty} = Term.dest_thy_const current in
-          canonical_sequence "constant" [Thy, Name, canonical_type Ty]
-        end
-      else if Term.is_comb current then
-        let val (operator, operand) = Term.dest_comb current in
-          canonical_sequence "combination"
-            [encode bound operator, encode bound operand]
-        end
-      else
-        let val (binder, body) = Term.dest_abs current in
-          canonical_sequence "abstraction"
-            [canonical_type (Term.type_of binder),
-             encode (binder :: bound) body]
-        end
-  in
-    encode [] tm
-  end
-
-fun structural_goal_text (assumptions, conclusion) =
-  canonical_sequence structural_goal_digest_schema
-    [canonical_sequence "assumption-set"
-       (mk_string_set (map canonical_term assumptions)),
-     canonical_sequence "conclusion" [canonical_term conclusion]]
-
-fun thmdata_inventory_sha1 entries =
-  aiLib.sha1_string (canonical_sequence "hh-target-thmdata-inventory-v1"
-    (map (fn (name, theorem) => canonical_sequence "theorem"
-       [name, structural_goal_text (dest_thm theorem)]) entries))
-
-type target_thmdata_cache_key = string * string
+type target_thmdata_cache_key = string * (string * thm) list
 val target_thmdata_cache = ref
   (NONE : (target_thmdata_cache_key * mlThmData.thmdata) option)
 val target_thmdata_build_count = ref 0
@@ -208,8 +148,7 @@ fun create_thmdata_for target =
           (mlThmData.unsafe_namespace_thms ())
       else []
     val entries = database_entries @ namespace_entries
-    val inventory_sha1 = thmdata_inventory_sha1 entries
-    val key = (target, inventory_sha1)
+    val key = (target, entries)
     fun add ((name, theorem), (facts, seen)) =
       let val theorem_goal = dest_thm theorem in
         if dmem theorem_goal seen orelse not (uptodate_thm theorem) then
@@ -228,7 +167,7 @@ fun create_thmdata_for target =
   in
     case !target_thmdata_cache of
         SOME (cached_key, thmdata) =>
-          if cached_key = key then thmdata
+          if same_inventory (cached_key, key) then thmdata
           else
             let val replacement = build () in
               target_thmdata_build_count :=
