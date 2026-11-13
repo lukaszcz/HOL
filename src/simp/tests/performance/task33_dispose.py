@@ -134,6 +134,12 @@ def load_offline(paths):
     return found
 
 
+def offline_record(found):
+    """What the disposition records of the S3 reports it was made from:
+    {command: {path, seal}} (the one shape `sealed_evidence` reads)."""
+    return {c: s for c, (_, s) in found.items()}
+
+
 def offline_decisions(found):
     """One decision per (case, check id) of the reports; a case combined
     in one check ("L1/S3") is decided in each of its cases. Missing
@@ -373,7 +379,7 @@ def dispose(args):
                               seal=e["info"]["seal"],
                               attempt=e["report"]["attempt"])
                          for e in chain] for chain in storage_chains],
-        offline={c: s for c, (_, s) in offline_found.items()},
+        offline=offline_record(offline_found),
         code=d.code_seals())
     with args.out.open("x") as stream:
         stream.write(d.dumps(data))
@@ -398,17 +404,24 @@ def tree_bytes(path):
 def sealed_evidence(evidence, disposition):
     """The harvest and the api-audit receipt under `evidence`, both
     sealed: {harvest, audit}; refuses when either is absent or changed.
-    The harvest is the one the sealed `disposition` names (its
-    `offline["harvest"]` seal): a failed harvest stays in the evidence
-    beside the passing one drawn after it, and exactly one harvest report
-    has the named seal."""
+    The harvest is the one the sealed `disposition` records (its
+    `offline["harvest"]`, {path, seal}, as `load_offline` makes it): a
+    failed harvest stays in the evidence beside the passing one drawn
+    after it, and exactly one harvest report has the recorded path and
+    seal."""
     evidence = Path(evidence).resolve(strict=True)
-    named = a.load(Path(disposition["path"])).get("offline", {}).get(
+    entry = a.load(Path(disposition["path"])).get("offline", {}).get(
         "harvest")
+    d.require(isinstance(entry, dict) and set(entry) == {"path", "seal"} and
+              isinstance(entry["path"], str) and
+              isinstance(entry["seal"], dict),
+              "the disposition does not record the harvest it took as "
+              "{path, seal}")
     harvests = [p for p in sorted(evidence.rglob("harvest.json"))
-                if named is not None and a.seal(p) == named]
+                if a.seal(p) == entry["seal"] and
+                p.resolve() == Path(entry["path"]).resolve()]
     d.require(len(harvests) == 1, "%d harvest reports under %s have the "
-              "seal the disposition names, not one" % (
+              "path and seal the disposition names, not one" % (
                   len(harvests), evidence))
     path = harvests[0]
     report = a.load(path)

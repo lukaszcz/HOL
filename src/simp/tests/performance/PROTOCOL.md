@@ -3981,6 +3981,14 @@ undeclared S2 or L2 difference fails; it is not explained after the fact. A
 `total_delta` value is measured live (k = 2 per side, deterministic) before
 the declaration is committed.
 
+Redrawn harvests. A failed harvest stays in the evidence (R-1: refused
+attempts are never moved or deleted), and a redraw goes to a fresh `--out`
+(the harvest needs an empty directory of its own). The disposition records
+the harvest it took as `offline.harvest`, `{path, seal}`, and
+`dispose-snapshots` selects the harvest by that record: exactly one
+`harvest.json` under `--evidence` with that path and seal, and it must be
+a successful, sealed report.
+
 Pooled log groups (E1 harvest). Suites that build the same theories run in
 parallel, and whichever takes Holmake's lock first builds them: the OK lines
 of the theory scripts land in its log and the other skips the build. The
@@ -4388,9 +4396,9 @@ evidence is untouched (needed for its replay). `/dev/shm/t33`, each run's
 `run-<attempt>` scratch and the probe directories are removed when their last
 use ends.
 
-`dispose-snapshots` requires, in `--evidence`: exactly one successful
-sealed `harvest.json`, exactly one successful `audit` stage with its sealed
-receipt (a pass), and exactly one sealed `disposition.json` of the current
+`dispose-snapshots` requires, in `--evidence`: the successful sealed
+`harvest.json` the disposition records (see "Redrawn harvests"), exactly
+one successful `audit` stage with its sealed receipt (a pass), and exactly one sealed `disposition.json` of the current
 schema that owes nothing (no `owed` row: no stage may still run for any row;
 `attribution_needed` is a handoff duty, not a condition). It
 refuses a scratch root other than `/dev/shm/t33` and any path the manifest
@@ -4893,9 +4901,7 @@ pair must be built with the scratch `$CL/.agent-files/scratch/task32`
       --manifest $E/snapshots.json"
     D=$P/task37_declared.json
     # the harvest the storage counts and the disposition bind: the last
-    # passing harvest drawn. A failed harvest is redrawn into a fresh
-    # output (decision 33's redraw rule) and stays in the evidence; the
-    # disposition names the one it took by seal (`task33_dispose`)
+    # passing harvest drawn (see "Redrawn harvests" under the E1 harvest)
     HV=$E/offline/harvest2/harvest.json
     # wave 2, the S2 closure total (measured live, committed alone)
     $Q smoke $C --output $E/s-smoke-a --authorize-measurements
