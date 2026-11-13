@@ -1809,8 +1809,10 @@ class ReplacedOpenings(Rig):
     # task is asked for, which no TASK29B or TASK30 process, replay or
     # disposition does: the edge is left out of the disposition's closure.
     TASK31_EDGE = ("allocation_matrix", "task31_cases", "task31")
-    # So do `task37_matrix` and `task37_client` import the TASK37 case
-    # lists, which only a TASK37 allocation grid asks for.
+    # So do the TASK37 tasks (`task37_matrix`, `task37_client` and
+    # `task37_downstream`) import the TASK37 case lists, and `run` the
+    # attempts ledger (allocation_attempts), which only a TASK37
+    # allocation grid asks for.
     TASK37_EDGES = {("allocation_matrix", "task37_cases", "task37_matrix"),
                     ("allocation_matrix", "task37_cases", "task37_client"),
                     ("allocation_matrix", "task37_cases",

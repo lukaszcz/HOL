@@ -22,17 +22,30 @@ What each replay re-derives, and what it cannot:
   replay.
 - the startup gate (`startup_gate.replay`): every decision from the process
   records of the archive alone; the record it is sealed to is the one the
-  caller names. The null control is replayed too and must pass, or the gate
-  is `inconclusive`. NOT re-derived: the builds, the path-length cells
-  (`startup_gate.py cell`) and `check_deltas`, which need the built trees.
+  caller names. A TASK37 gate always has one (`run_startup_gate.sh` makes
+  it in the run, from the TASK37 template and the run's own `who_pays.out`,
+  and `header.json` seals its sha256), which must be that file and must
+  name the baseline and the candidate of the gate; its null control has
+  none. The null control is replayed too and must pass, or the gate is
+  `inconclusive`. NOT re-derived: the builds, the path-length cells
+  (`startup_gate.py cell`) and `check_deltas`, which only reports and
+  needs the built trees.
 - loading (`loading.replay`): every observation, extension check and
   decision of the run from its archived process receipts, with the attempts
-  ledger. NOT re-derived: the API audit receipt's own run.
+  ledger. The two shards (simpLib, congLib) must have been run with the
+  same api-audit receipt (`run_api_audit.sh` makes it once; the reports
+  record its seal), which is sealed in the record. NOT re-derived: the API
+  audit receipt's own run.
+- TASK33 is judged under `task37_declared.json`: the declaration must be
+  valid and filled, and name the baseline and the candidate of the
+  disposition (the stages and the offline reports are bound to it by the
+  storage driver's own replay, `check_declared` and `check_offline_identity`).
 
 The reviewed lines: the recorded candidates and harnesses are accepted by
 `task37_lineage.Lineage`.
 """
 import contextlib
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -226,9 +239,27 @@ def replay_task33(path, text, lineage):
         check_repo(args, lineage, "TASK33")
         d32.check_code(held.get("code"))
         quiet(storage.dispatch, args)
+        check_declared(held, a.HERE / "task37_declared.json")
         found = a.load(out)
     a.require(d32.same(dict(found, code=None), dict(held, code=None)),
               "the TASK33 disposition is not the one its stages derive")
+
+
+def check_declared(held, path):
+    """The declaration the TASK33 disposition was judged under is valid
+    and filled (no placeholder) and is for the baseline and the candidate
+    of the disposition."""
+    import task33_offline as offline
+    declared = offline.load_declared(path)
+    problems = offline.shape_problems(declared)
+    a.require(not problems, "the declaration %s is not valid: %s" % (
+        Path(path).name, "; ".join(problems)))
+    a.require(declared["base"] == a.BASE,
+              "the declaration is for another baseline than %s" % a.BASE)
+    a.require(declared["cand"] == held.get("candidate"),
+              "the declaration is for candidate %s, the TASK33 "
+              "disposition's is %s" % (declared["cand"],
+                                       held.get("candidate")))
 
 
 # ---------------------------------------------------------- startup gate
@@ -249,6 +280,11 @@ def read_startup(out, null, lineage, label=STARTUP):
               header["pairs"] >= sg.PAIRS, "%s has fewer than %d pairs" % (
                   label, sg.PAIRS))
     lineage.harness(label, header.get("harness"), clean=True)
+    a.require(bool(header.get("record_sha256")) != null,
+              "%s %s" % (label, "has a record, which a null control "
+                         "never has" if null else
+                         "is sealed to no record: a TASK37 gate always "
+                         "has one, made in its run"))
     trees, sides = header["trees"], header["sides"]
     for side in ("base", "candidate"):
         revs = {trees[l]["rev"] for l in sides[side]}
@@ -262,6 +298,27 @@ def read_startup(out, null, lineage, label=STARTUP):
         else:
             lineage.candidate_of(label, rev)
     return header, decisions
+
+
+def check_record(header, record, lineage, label=STARTUP):
+    """The record file is the one the gate is sealed to (sha256 in
+    `header.json`) and it names the baseline and the candidate the gate
+    measured (the template's `Baseline: develop <sha>` and candidate
+    lines). Returns the record's seal."""
+    a.require(record is not None, "%s is sealed to a record: pass it" %
+              label)
+    record = Path(record)
+    a.require(record.is_file(), "%s record is missing: %s" % (label, record))
+    data = record.read_bytes()
+    a.require(hashlib.sha256(data).hexdigest() == header["record_sha256"],
+              "%s record differs from its seal in header.json" % label)
+    text = data.decode()
+    for side in ("base", "candidate"):
+        for rev in {header["trees"][l]["rev"] for l in header["sides"][side]}:
+            full = lineage.commit(label, rev)
+            a.require(full in text, "%s record does not name the %s %s" %
+                      (label, side, full))
+    return a.seal(record)
 
 
 def replay_startup(out, record):
@@ -312,6 +369,22 @@ def read_loading(out, gate, lineage):
     code = loading.exit_status(report["results"]["candidate"]["metrics"])
     status = {0: "pass", 1: "fail"}.get(code, "inconclusive")
     return report, status
+
+
+def check_one_audit(reports):
+    """The loading shards ran with one api-audit receipt: {gate: report};
+    returns its seal."""
+    seals = {}
+    for gate, report in reports.items():
+        found = report.get("semantic_gate")
+        a.require(isinstance(found, dict) and found.get("seal"),
+                  "%s records no api-audit receipt" % gate)
+        seals[gate] = json.dumps(found["seal"], sort_keys=True)
+    a.require(len(set(seals.values())) == 1,
+              "the loading shards were run with different api-audit "
+              "receipts (it is made once): %s" % ", ".join(
+                  "%s %s" % kv for kv in sorted(seals.items())))
+    return next(iter(reports.values()))["semantic_gate"]["seal"]
 
 
 def replay_loading(out, ledger):

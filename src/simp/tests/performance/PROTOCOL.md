@@ -4617,6 +4617,18 @@ private counter of `allocation_matrix.py`, in three tasks, one per clone.
   judged attempt; an extra attempt that is not void, a judged attempt
   that is not in the ledger or ran in another output, and a missing or
   broken ledger refuse it. The legacy tasks write no ledger.
+  One output, one attempt: a `run` that is not a `--resume` whose output
+  already has a line in the ledger is refused before anything is built
+  (use a new output path), and `attempts_of` refuses an attempt with more
+  than one `open`, so that a later pass of the same output path cannot
+  hide an earlier measured failure. A redraw after a void attempt uses a
+  new output path and must not delete the void attempt's output (the
+  disposition looks at it to see it void).
+  Only a judged attempt is in R-1's view. `check-jobs`, any run with
+  `--only` and any run with fewer pairs than the task's (a smoke) are
+  information runs: they write `info` and `info-end` lines (the TASK32
+  precedent), never `open`, `resume` or `close`, and cannot take the
+  output of a judged attempt, nor a judged run theirs.
 - Launch. `--jobs` is chosen at launch (it runs cells, not the processes
   of one cell, in parallel; the records are those of a serial run). One
   clone per task: the ledger is of the clone, so the three tasks run in
@@ -4633,7 +4645,9 @@ without editing what their kept records depend on.
 - Compiled reference. The revision the candidate's compiled sources must
   equal is a parameter: `--compiled-ref REV` (the snapshot builder also
   takes the old spelling `--c31`), default TASK31's C31, so the TASK32 and
-  TASK33 records still replay. TASK37 passes the final candidate.
+  TASK33 records still replay. TASK37 passes the named constant
+  `task37_cases.COMPILED_REF` (the final candidate, 7e202dfbaa, as a full
+  sha), never its stream's own HEAD.
 - Seals. The seals of the TASK32/TASK33 files as the kept records carry
   them are kept in `TASK32_HISTORY` and `TASK33_HISTORY` (in
   `task32_downstream.py`); the files as they are now seal TASK37 records.
@@ -4646,26 +4660,68 @@ without editing what their kept records depend on.
   `task33_offline.py`). The S2 closure-total change is measured live, so
   the file carries a placeholder (`s2.total_delta[0].pending`), which every
   gate refuses (fails closed). It is filled with `task37_declared.py
-  observe` (finished storage smokes of the TASK37 snapshots, replayed first)
-  and `fill`, reviewed, and committed alone before the pilot; the pilot,
-  controls and counts seal it.
+  observe` (finished storage smokes of the TASK37 snapshots, replayed
+  first) and `fill`, reviewed, and committed alone before the pilot; the
+  pilot, controls and counts seal it. `observe` requires its stages to be
+  of one base, one candidate and one snapshot manifest and records them
+  as the pins of the observation (schema `task37-s2-observation-v2`);
+  `fill` takes the declaration's `cand` from the observation (there is no
+  `--cand`) and refuses an observation of another base. The filled
+  declaration has another seal than the placeholder one, so the throwaway
+  smokes no longer replay: a smoke, the pilot and the controls are made
+  under the filled file.
+- Pin checks. TASK37 passes `--declared task37_declared.json
+  --compiled-ref <task37_cases.COMPILED_REF>` to the TASK33 drivers. A
+  TASK33 stage, a predeclaration and a replay require the declaration's
+  `base` and `cand` to equal the pins of the gate (`check_declared`); a
+  predeclaration also requires a declaration that is filled and valid
+  (`declared_ready`); `dispose` requires the `inputs.declared` seal of
+  the audit and harvest reports to equal the seal of the declaration it
+  judges by (`check_offline_identity`).
 - Snapshots. TASK32 and TASK33 each need their own snapshot pair (base and
-  candidate), built, verified and compared with the compiled reference.
+  candidate), built, verified and compared with the compiled reference,
+  each in its own clone (`<clone>/.agent-files/snapshots/task32`; the
+  serial lock is per clone, so each driver and clone builds its own pair
+  under it). Scratch roots are distinct per stream: TASK33's t-run uses
+  `/dev/shm/t33` and its s-run `/dev/shm/t33/storage` (`--scratch`), and
+  `make_scratch` retries a `mkdir` that falls between another stage's
+  `rmdir` of the empty root and the creation of its own folder.
 - Startup gate. The runner uses fixed-length `/dev/shm` paths (the path
   lengths are part of the test), so one startup-gate run is live at a time.
-- Loading. The loading runner makes the api-audit receipt (in a built
-  candidate tree) and then runs `loading.py` for each module (simpLib and
-  congLib): 40 pairs of 5 first imports, and the replay of each.
+  The gate's record (`not-client-visible.md`) is always made inside the
+  run, by `fill_record.py` from the TASK37 template and this run's
+  `who_pays.out` (the process counts), with the load deltas of the
+  round-4 archive; it is made read-only before the gate, its sha256 is
+  sealed in the gate's `header.json` (`record_sha256`), and the replay
+  checks it. `check_deltas` only reports whether this run's R2 load rows
+  equal round 4's: it neither stops the run nor transfers anything, and
+  the lead reviews a difference. The null gate has no record.
+- Loading. The api-audit is a one-time step (`run_api_audit.sh`, in the
+  built harness clone, never a snapshot) that writes one `receipt.json`.
+  The loading shards (simpLib and congLib, 40 pairs of 5 first imports
+  each) each run in a clone of their own, with `--api-audit` given that
+  receipt file, record `inputs.txt`, and replay with `--expect-seal` of
+  the sha256 of their `loading.json` and the clone's ledger. The shard
+  (`simpLib`, `congLib` or `all`) is validated.
 - D7. `task37_builds.py` records build timing and is not a gate: the routine
   `bin/build -t --seq=tools/sequences/upto-parallel` in 3 AB/BA/AB pairs and
   `bin/build -t -F` in 2 pairs, each side a fresh `git clone --shared` in
-  `/dev/shm` (at most about 20 GB for all streams), deleted after its pair;
-  `attribute` joins the per-directory build lines of the two sides.
+  `/dev/shm` (at most about 20 GB for all streams), one tree at a time and
+  deleted right after its build. Each build has a timeout
+  (`--timeout-s`, default 4 h). A failed or timed-out build is recorded,
+  left out of every median of `attribute`, and makes `run` and `attribute`
+  exit with the distinct status 5; `attribute` joins the per-directory
+  build lines of the two sides.
+- Runners. Each starts with the default signal dispositions (job control,
+  so a step is not started with SIGINT ignored), turns HUP, INT and TERM
+  into exits 129, 130 and 143 that run the cleanup (kill the step's
+  process group, then remove its scratch), and runs every step with
+  `</dev/null`.
 
-The runners (`run_startup_gate.sh`, `run_loading.sh`, `run_builds.sh`) are
-outside git, by design, in `.agent-files/evidence/task37/runners/`: the
-evidence directory holds them, so that a run's runner is kept with its
-evidence.
+The runners (`run_startup_gate.sh`, `run_api_audit.sh`, `run_loading.sh`,
+`run_builds.sh`, with `runner_common.sh`) are outside git, by design, in
+`.agent-files/evidence/task37/runners/`: the evidence directory holds
+them, so that a run's runner is kept with its evidence.
 
 ### Disposition (part E; `task37_dispose.py`)
 
@@ -4713,7 +4769,7 @@ the one place that accepts a revision.
         [--load STREAM=FILE ...]
         --task32 FILE --task32-replay ARGS
         --task33 FILE --task33-replay ARGS
-        --startup-gate DIR --startup-null DIR [--startup-record FILE]
+        --startup-gate DIR --startup-null DIR --startup-record FILE
         --loading-simplib DIR --loading-conglib DIR [--loading-ledger FILE]
         [--d7-build FILE]
         (--record OUTDIR | --check OUTDIR)
@@ -4736,6 +4792,11 @@ attempts_of`, part C), TASK32 and TASK33 (their `dispose` run again from
 the arguments in `--task32-replay` and `--task33-replay`), the startup gate
 and loading (`task37_gates.py` says what each re-derives and what it
 cannot). Their statuses are those of their archives, not typed. The
+startup gate must be sealed to a record (`--startup-record`: the file whose
+sha256 `header.json` holds, naming the gate's baseline and candidate; its
+null control has none), the two loading shards must record one api-audit
+receipt, and the TASK33 declaration must be filled and for the candidate of
+the TASK33 disposition. The
 allocation grid's `status`, `nondeterminism` and `unresolved` are recorded
 and one record per (task, case) decides the slopes and constants. An
 inventory's `counts_file` must be the shard's own committed file and its

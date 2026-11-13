@@ -504,12 +504,67 @@ class Installation(unittest.TestCase):
             (self.directory / "Performance.sml").read_bytes(),
             (HERE / "MatrixAllocation.sml").read_bytes())
 
-    def test_no_family_installs_a_shared_closure(self):
-        # A process loads the selected sources, the installed files and the
-        # shared heap; a module outside them is refused as shared input.
+    def test_only_the_downstream_family_installs_a_shared_closure(self):
+        # The legacy families load the selected sources, the installed
+        # files and the shared heap, and nothing else; the downstream
+        # family also installs the shared closure (see test_task37_*).
+        closures = {name: task.family.closure
+                    for name, task in m.TASKS.items()}
+        self.assertEqual({n for n, c in closures.items() if c},
+                         {"task37-downstream"})
+        self.assertFalse(any(f.closure for f in m.FAMILIES.values()))
         self.assertFalse(hasattr(m.Family, "dependencies"))
         self.assertFalse(hasattr(m, "deps"))
         self.assertFalse(hasattr(m.Grid, "probe_dependencies"))
+
+
+class DownstreamFixture(unittest.TestCase):
+    """DownstreamAllocation.sml is the downstream workloads of
+    ClientPerformance.sml inside the same driver, and nothing else."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.alloc = (HERE / "DownstreamAllocation.sml").read_text()
+        cls.client = (HERE / "ClientAllocation.sml").read_text()
+        cls.timing = (HERE / "ClientPerformance.sml").read_text()
+
+    def test_the_driver_is_that_of_the_client_fixture_word_for_word(self):
+        self.assertEqual(self.alloc[self.alloc.index(DRIVER):],
+                         self.client[self.client.index(DRIVER):])
+
+    def test_the_workloads_are_those_of_the_timing_fixture(self):
+        ours = declarations("\n".join(client_lines(self.alloc)))
+        theirs = declarations(self.timing)
+        for first in ("val sink = ref 0", "fun consume () = sink := !sink + 1",
+                      "fun same expected actual =",
+                      "fun verify expected actual =",
+                      "type workload = {run:unit -> unit, "
+                      "verify:unit -> unit}",
+                      "fun conversion stage make input expected : workload"
+                      " = let",
+                      "fun downstream name n : workload = let"):
+            self.assertIn(first, theirs, first)
+            self.assertEqual(ours[first], theirs[first], first)
+
+    def test_only_the_marked_lines_are_added_to_the_workloads(self):
+        marked = [l for l in self.alloc.split("\n")
+                  if l.rstrip().endswith("(*alloc*)")]
+        self.assertEqual(len(marked), 2 + 2)
+        self.assertEqual(sum("retaining" in l for l in marked), 2)
+        self.assertEqual(sum("thmText (!proof)" in l for l in marked), 2)
+        self.assertEqual(sum("ignore ((!slot) input)" in l
+                             for l in marked), 1)
+        self.assertEqual(sum("val _ = run ()" in l for l in marked), 1)
+        for line in marked:
+            self.assertNotIn(line, self.timing)
+
+    def test_it_chooses_only_the_downstream_cases(self):
+        choose = declarations(self.alloc)["fun choose () ="]
+        self.assertIn('  if String.isPrefix "downstream_" selected then',
+                      choose)
+        self.assertTrue(any("raise Fail" in l for l in choose))
+        for word in ("traversal", "tactic", "dependency"):
+            self.assertFalse(any(word in l for l in choose), word)
 
 
 if __name__ == "__main__":

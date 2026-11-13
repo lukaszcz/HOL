@@ -102,7 +102,7 @@ and loading are those of their archives, whose replays recompute them
         its `task32_downstream.py dispose` (without --out)
     --task33 FILE --task33-replay ARGS   the same for `task33_storage.py
         dispose` (under --declared task37_declared.json)
-    --startup-gate DIR --startup-null DIR [--startup-record FILE]
+    --startup-gate DIR --startup-null DIR --startup-record FILE
     --loading-simplib DIR --loading-conglib DIR [--loading-ledger FILE]
 
 Allocation grid. For each task: the grid's `status`, `nondeterminism` and
@@ -141,7 +141,7 @@ Commands
         [--load STREAM=FILE ...]
         --task32 FILE --task32-replay ARGS --task33 FILE
         --task33-replay ARGS --startup-gate DIR --startup-null DIR
-        [--startup-record FILE] --loading-simplib DIR --loading-conglib DIR
+        --startup-record FILE --loading-simplib DIR --loading-conglib DIR
         [--loading-ledger FILE] [--d7-build FILE]
         (--record OUTDIR | --check OUTDIR)
     task37_dispose.py receipt --gate d7-build --candidate REV --status S
@@ -1051,9 +1051,7 @@ def read_gates(args, lineage, inputs, late):
                                            lineage)
     null_header, null_decisions = gates.read_startup(
         args.startup_null, True, lineage, "startup-gate null control")
-    a.require(not header["record_sha256"] or args.startup_record,
-              "the startup gate archive is sealed to a record: pass "
-              "--startup-record")
+    record_seal = gates.check_record(header, args.startup_record, lineage)
     found[gates.STARTUP] = gates.startup_gate(header, decisions,
                                               null_decisions)
     inputs[gates.STARTUP] = {
@@ -1062,17 +1060,21 @@ def read_gates(args, lineage, inputs, late):
             ("decisions", args.startup_gate, "decisions.json"),
             ("null-header", args.startup_null, "header.json"),
             ("null-decisions", args.startup_null, "decisions.json"))}
+    inputs[gates.STARTUP]["record"] = record_seal
     late.append((gates.STARTUP, lambda: (
         gates.replay_startup(args.startup_gate, args.startup_record),
         gates.replay_startup(args.startup_null, None))))
+    reports = {}
     for gate, root in zip(sorted(gates.LOADING),
                           (args.loading_conglib, args.loading_simplib)):
         a.require(root is not None, "no loading run for " + gate)
         report, status = gates.read_loading(root, gate, lineage)
+        reports[gate] = report
         found[gate] = gates.loading_gate(gate, report, status)
         inputs[gate] = a.seal(Path(root) / "loading.json")
         late.append((gate, lambda root=root: gates.replay_loading(
             root, args.loading_ledger)))
+    inputs["api-audit"] = gates.check_one_audit(reports)
     d7 = None
     if args.d7_build is not None:
         d7 = gates.load_receipt(args.d7_build, lineage)

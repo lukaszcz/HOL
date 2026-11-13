@@ -18,7 +18,7 @@ determinism and control checks of allocation_analysis run on the 3 pairs
 unchanged. `--pairs` defaults to the task's; fewer is a smoke. The cost of a
 cell is proportional to its pairs (4 fresh processes per pair, one after the
 other); `--jobs` runs cells, not processes of one cell, in parallel. The
-`downstream_*` cells are not a task here (see task37_client).
+`downstream_*` cells are the task `task37-downstream` (DOWNSTREAM_FAMILY).
 """
 import argparse
 from collections import Counter
@@ -387,8 +387,10 @@ def binding(header, case, size, where=None):
     named = {"structure": header["structure"]} if "structure" in header \
         else {}
     if "closure" in header:
-        named["closure"] = {k: header["closure"][k]
-                            for k in ("changed", "sides")}
+        named["closure"] = dict(
+            {k: header["closure"][k] for k in ("changed", "sides")},
+            boundary_files={f["path"]: f["blob"]
+                            for f in header["boundary"]["files"]})
     return dict(
         named,
         case=case, size=size, steady=header["iterations"]["steady"][name],
@@ -787,9 +789,11 @@ class Grid:
         the modules recompiled, the roots and the seal of every installed
         product (the descriptors, which name their directory, with that
         name replaced), the paths that differ between baseline and
-        candidate (a process may load no shared file among them), and the
-        shared inputs read, which are in the toolchain and sealed again at
-        the end."""
+        candidate (`changed`: a process may load a shared file, or a
+        product may be copied from one, among them only if it is a file of
+        the reviewed boundary, see check_changed_input), and the shared
+        inputs read, which are in the toolchain and sealed again at the
+        end."""
         sides, inputs = {}, {}
         for side in SIDES:
             directory = self.scratch / ("closure-" + side)
@@ -1118,6 +1122,24 @@ def under_prefix(repo, path, prefixes):
     return next((p for p in prefixes if below.startswith(p)), None)
 
 
+def check_changed_input(repo, path, meta, what):
+    """A shared file of a closure grid (a loaded input, a product of the
+    closure it installs): when it differs between baseline and candidate
+    it must be a file of the reviewed boundary (the manifest's `files`,
+    whose blobs the run checked), which the sides share by construction.
+    A path outside the toolchain is refused."""
+    try:
+        below = Path(path).relative_to(repo).as_posix()
+    except ValueError:
+        raise sc.InvalidAllocation(
+            "shared input outside the toolchain: %s" % (what,))
+    closure = meta["closure"]
+    sc.require(below not in set(closure["changed"]) or
+               below in closure["boundary_files"],
+               "shared input differs between baseline and candidate and "
+               "is not a reviewed boundary file: %s" % (what,))
+
+
 def check_receipt(receipt, meta, experiment):
     """Offline protocol and provenance checks of one archived process."""
     sc.require(receipt["accepted"] is True and receipt["exit"] == 0 and
@@ -1152,6 +1174,10 @@ def check_receipt(receipt, meta, experiment):
     check_protocol(receipt, meta, events)
     source, repo = meta["sources"][side], Path(meta["repo"])
     closure = meta.get("closure", {"sides": {}})["sides"].get(side, {})
+    for name, info in closure.get("products", {}).items():
+        if Path(info["source"]).is_absolute():  # not a generated rule
+            check_changed_input(repo, info["source"], meta,
+                                "closure product " + name)
     for logical, info in receipt["paths"].items():
         physical = Path(info["physical"])
         seal = {k: info[k] for k in ("sha256", "bytes")}
@@ -1176,10 +1202,10 @@ def check_receipt(receipt, meta, experiment):
                     # prefixes claim nothing loads from. They are the
                     # toolchain's, one for every side (its seals are in
                     # the header); what differs between the sides is the
-                    # closure installed privately, sealed per side.
-                    sc.require(Path(product).is_relative_to(repo),
-                               "shared input outside the toolchain: "
-                               + logical)
+                    # closure installed privately, sealed per side. A
+                    # loaded file that does differ must be a reviewed
+                    # boundary file.
+                    check_changed_input(repo, product, meta, logical)
                     continue
                 prefix = under_prefix(repo, product, meta["boundary_prefixes"])
                 sc.require(prefix is None,
@@ -1570,13 +1596,20 @@ def run(args):
     """One run of a grid. A TASK37 task records it in its attempts ledger
     (allocation_attempts.py): an opening (or a resumption) once the output
     exists and before the first process, and a close: the status of the
-    decisions, or `failed` when the run raised."""
+    decisions, or `failed` when the run raised. A run that is not a judged
+    attempt (`--only`, hence check-jobs, or fewer pairs than the task's:
+    a smoke) is recorded as an information run (`info`, `info-end`),
+    which R-1 does not judge. The output of an attempt is never reused:
+    see allocation_attempts."""
     task = task_named(getattr(args, "task", DEFAULT_TASK))
     if not task.ledger:
         return run_grid(args, task, None)
     import allocation_attempts
+    info = bool(args.only) or (args.pairs is not None and
+                               args.pairs < task.pairs)
     attempt = allocation_attempts.Attempt(
-        task, args.repo, args.output, task.iterations, args.resume)
+        task, args.repo, args.output, task.iterations, args.resume, info)
+    attempt.check_new()
     try:
         code = run_grid(args, task, attempt.start)
     except BaseException as error:

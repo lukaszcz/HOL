@@ -60,10 +60,11 @@ Re-targeting (TASK37). `--declared FILE` selects the declaration and
 `--compiled-ref REV` the revision the candidate's compiled sources equal
 (defaults: task33_declared.json and C31, so that the TASK33 records
 replay). TASK37 passes `--declared task37_declared.json --compiled-ref
-<task37_cases.COMPILED_REF>`. A stage, a predeclaration and a replay require the declaration's
-`base` and `cand` to be the pins of the gate (`check_declared`), a
-predeclaration also a valid, filled declaration (`declared_ready`), and
-`dispose` that the audit and the harvest were made against it.
+<task37_cases.COMPILED_REF>`. A stage, a predeclaration and a replay
+require the declaration's `base` and `cand` to be the pins of the gate
+(`check_declared`), a predeclaration also a valid, filled declaration
+(`declared_ready`), and `dispose` that the audit and the harvest were made
+against it (`task33_dispose.check_offline_identity`).
 
 Concurrency. Streams run in separate clones, and a snapshot pair belongs
 to one driver: TASK32 and TASK33 (and every other stream) each build their

@@ -867,6 +867,95 @@ class Gates(unittest.TestCase):
                                  dict(decision="fail"))
         self.assertEqual(got["source"], "fail")
 
+    BASE = a.BASE
+
+    class Revs(FakeLineage):
+        def commit(self, label, rev):
+            return rev
+
+    def startup_archive(self, root, null, record_sha, cand=CAND):
+        import startup_gate as sg
+        trees = {"b1": dict(rev=self.BASE), "b2": dict(rev=self.BASE),
+                 "s1": dict(rev=self.BASE if null else cand),
+                 "s2": dict(rev=self.BASE if null else cand)}
+        write(root / "header.json", dict(
+            schema=sg.SCHEMA, null=null, pairs=sg.PAIRS,
+            record_sha256=record_sha, trees=trees,
+            sides=dict(base=["b1", "b2"], candidate=["s1", "s2"]
+                       if not null else ["s1", "s2"]),
+            harness=dict(head=CAND, tree_outside_performance="t",
+                         dirty=False)))
+        write(root / "decisions.json", dict(decision="pass"))
+        return root
+
+    def test_a_startup_gate_is_sealed_to_the_record_made_in_its_run(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            record = root / "not-client-visible.md"
+            record.write_text("Baseline: develop %s\n%s\n" % (
+                self.BASE, CAND))
+            sha = hashlib.sha256(record.read_bytes()).hexdigest()
+            lin_ = self.Revs()
+            lin_.tree = "t"
+            lin_.equivalent = lambda label, rev: rev
+            lin_.harness = lambda label, found, clean=False: None
+            header, _ = gates.read_startup(
+                self.startup_archive(root / "g", False, sha), False, lin_)
+            self.assertEqual(gates.check_record(header, record, lin_),
+                             a.seal(record))
+            # a gate with no record, a null control with one
+            with self.assertRaisesRegex(ValueError, "no record"):
+                gates.read_startup(self.startup_archive(
+                    root / "g2", False, None), False, lin_)
+            with self.assertRaisesRegex(ValueError, "never has"):
+                gates.read_startup(self.startup_archive(
+                    root / "n", True, sha), True, lin_)
+            gates.read_startup(self.startup_archive(root / "n2", True,
+                                                    None), True, lin_)
+            # no record given, another file, a record naming other revisions
+            with self.assertRaisesRegex(ValueError, "pass it"):
+                gates.check_record(header, None, lin_)
+            other = root / "other.md"
+            other.write_text("changed")
+            with self.assertRaisesRegex(ValueError, "differs from its seal"):
+                gates.check_record(header, other, lin_)
+            record.write_text("Baseline: develop %s\n" % self.BASE)
+            header["record_sha256"] = hashlib.sha256(
+                record.read_bytes()).hexdigest()
+            with self.assertRaisesRegex(ValueError, "does not name the"):
+                gates.check_record(header, record, lin_)
+
+    def test_the_loading_shards_must_share_the_api_audit_receipt(self):
+        one = dict(semantic_gate=dict(seal=dict(sha256="1" * 64, bytes=2)))
+        same = gates.check_one_audit({"loading-congLib": one,
+                                      "loading-simpLib": one})
+        self.assertEqual(same, one["semantic_gate"]["seal"])
+        other = dict(semantic_gate=dict(seal=dict(sha256="2" * 64,
+                                                  bytes=2)))
+        with self.assertRaisesRegex(ValueError, "different api-audit"):
+            gates.check_one_audit({"loading-congLib": one,
+                                   "loading-simpLib": other})
+        with self.assertRaisesRegex(ValueError, "no api-audit receipt"):
+            gates.check_one_audit({"loading-congLib": one,
+                                   "loading-simpLib": dict(
+                                       semantic_gate="not admitted")})
+
+    def test_the_task33_declaration_must_be_filled_and_for_the_gate(self):
+        import task33_offline as offline
+        path = a.HERE / "task37_declared.json"
+        declared = json.loads(path.read_text())
+        held = dict(candidate=declared["cand"])
+        with mock.patch.object(offline, "shape_problems",
+                               return_value=[]):
+            gates.check_declared(held, path)
+            with self.assertRaisesRegex(ValueError, "candidate"):
+                gates.check_declared(dict(candidate="d" * 40), path)
+        with mock.patch.object(offline, "shape_problems",
+                               return_value=["pending"]), \
+                self.assertRaisesRegex(ValueError, "not valid"):
+            gates.check_declared(held, path)
+
     def test_loading_inconclusive_owes_stage2_then_attribution(self):
         r = gates.loading_gate("loading-simpLib", dict(stage="first"),
                                "inconclusive")

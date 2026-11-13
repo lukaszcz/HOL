@@ -12,6 +12,7 @@ import unittest
 from unittest import mock
 
 import allocation_analysis as an
+import allocation_boundary as bd
 import allocation_matrix as m
 import allocation_schema as sc
 import allocation_testbed as tb
@@ -20,6 +21,7 @@ import task29_gate as gate
 import task30_cases
 import task31_cases
 import task37_cases as cases
+import test_allocation_grid as grid_tests
 import test_allocation_matrix as matrix_tests
 
 MATRIX = m.TASKS["task37-matrix"]
@@ -304,9 +306,6 @@ class Records(unittest.TestCase):
                         runs=[]))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class Downstream(unittest.TestCase):
     def test_the_task_is_declared_by_its_family_not_by_its_name(self):
@@ -370,3 +369,245 @@ class Downstream(unittest.TestCase):
             ins.assert_called_once_with(Path("/hol"), d, {"Cond_rewr"})
             self.assertIn("paired.exe: Performance.uo",
                           (d / "Holmakefile").read_text())
+
+
+DEP = "Dep.sml"
+HEAP = "src/Heap1.sml"
+HEAP_UO = "src/Heap1.uo"
+
+
+class ClosureReceipts(unittest.TestCase):
+    """check_receipt of a closure family (the downstream cells): a loaded
+    shared file, or a product's source, that differs between baseline and
+    candidate must be a reviewed boundary file; the closure installed
+    privately is checked per side."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.sb = tb.Sandbox(Path(tmp.name), pairs=3)
+        self.repo = self.sb.repo
+        for directory in self.sb.private.values():
+            (directory / DEP).write_text("val dep = 1\n")
+
+    def header(self, changed=(), files=(), source="generated", seal=None,
+               prefixes=None, closure=True):
+        sides = {side: dict(modules=["Dep"], roots=[], products={
+            DEP: dict(source=source, **(seal or tb.seal(
+                directory / DEP)))}) for side, directory in
+            self.sb.private.items()}
+        boundary = dict(
+            schema=bd.SCHEMA, changed=0,
+            manifest_prefixes=list(tb.PREFIXES if prefixes is None
+                                   else prefixes),
+            files=[dict(path=f, blob="1" * 40) for f in files])
+        found = dict(boundary=boundary)
+        if closure:
+            found["closure"] = dict(changed=list(changed), sides=sides,
+                                    inputs={})
+        return found
+
+    def check(self, edit=None, side="candidate", **header):
+        dep = str(self.sb.private[side] / DEP)
+
+        def mutate(events):
+            at = events.index(["use", str(self.sb.private[side] /
+                                          "MatrixSupport.sml")])
+            events[at:at] = [["use", dep], ["used", dep]]
+            events.insert(len(events) - 1, ["loaded", dep])
+        receipt = self.sb.receipt("candidate", side, 0, 1, mutate=mutate)
+        receipt["paths"].update(self.sb.paths([dep]))
+        if edit is not None:
+            edit(receipt)
+        meta = dict(self.sb.bind(**self.header(**header)),
+                    schema=m.SCHEMA)
+        return m.check_receipt(receipt, meta, "candidate")
+
+    def refused(self, message, *args, **kw):
+        with self.assertRaisesRegex(sc.InvalidAllocation, message):
+            self.check(*args, **kw)
+
+    def test_the_binding_carries_the_boundary_files_of_the_closure(self):
+        bound = self.sb.bind(**self.header(files=[HEAP]))
+        self.assertEqual(bound["closure"]["boundary_files"],
+                         {HEAP: "1" * 40})
+        self.assertEqual(sorted(bound["closure"]),
+                         ["boundary_files", "changed", "sides"])
+
+    def test_a_clean_closure_receipt_is_accepted(self):
+        self.assertEqual(self.check()["steady"], tb.STEADY)
+        # a changed file that the reviewed boundary lists is accepted,
+        # also with its product beside it
+        found = self.check(changed=[HEAP, HEAP_UO, "src/simp/src/X.sml"],
+                           files=[HEAP, HEAP_UO])
+        self.assertEqual(found["steady"], tb.STEADY)
+
+    def test_a_changed_loaded_file_outside_the_boundary_is_refused(self):
+        for changed, files in (([HEAP], []), ([HEAP], ["other.sml"]),
+                               ([HEAP_UO], [HEAP]),
+                               ([HEAP, HEAP_UO], [HEAP])):
+            with self.subTest(changed=changed, files=files):
+                self.refused("not a reviewed boundary file",
+                             changed=changed, files=files)
+
+    def test_a_product_beside_a_loaded_file_is_checked_too(self):
+        self.refused("not a reviewed boundary file", changed=[HEAP_UO])
+
+    def test_a_closure_product_must_have_the_sealed_content(self):
+        self.refused("wrong selected source", seal=dict(
+            sha256="0" * 64, bytes=12))
+        self.refused("wrong selected source", seal=dict(
+            sha256=tb.seal(self.sb.private["candidate"] / DEP)["sha256"],
+            bytes=1))
+
+    def test_the_closure_of_the_other_side_is_not_this_sides(self):
+        other = tb.seal(self.sb.private["baseline"] / DEP)
+        (self.sb.private["candidate"] / DEP).write_text("val dep = 2\n")
+        self.assertEqual(other, tb.seal(self.sb.private["baseline"] / DEP))
+        # the sides' products were sealed with the new content: accepted;
+        # sealed with the baseline's content: refused
+        self.check()
+        self.refused("wrong selected source", seal=other)
+
+    def test_a_shared_input_outside_the_toolchain_is_refused(self):
+        def outside(receipt):
+            for info in receipt["paths"].values():
+                if info["physical"].endswith("Heap1.sml"):
+                    info["physical"] = "/elsewhere/Heap1.sml"
+        self.refused("shared input outside the toolchain", outside)
+
+        def related(receipt):
+            for info in receipt["paths"].values():
+                if info["related_products"]:
+                    info["related_products"] = {
+                        "/elsewhere/Heap1.uo": dict(sha256="0" * 64,
+                                                    bytes=1)}
+        self.refused("shared input outside the toolchain", related)
+
+    def test_a_shared_simp_load_is_refused(self):
+        def simp(receipt):
+            for info in receipt["paths"].values():
+                if info["physical"].endswith("Heap1.sml"):
+                    info["physical"] = str(self.repo /
+                                           "src/simp/src/Foo.sml")
+        self.refused("shared input outside the toolchain", simp)
+
+    def test_a_changed_closure_product_source_is_checked(self):
+        source = str(self.repo / HEAP)
+        self.refused("closure product", changed=[HEAP], source=source)
+        self.refused("closure product", changed=["src/simp/src/X.sml"],
+                     source=str(self.repo / "src/simp/src/X.sml"))
+        self.refused("outside the toolchain", source="/elsewhere/X.sml")
+        self.check(changed=[HEAP], files=[HEAP], source=source)
+        # a source that did not change, and a generated rule that names no
+        # path, are not changed shared files
+        self.check(changed=["other"], source=source)
+        self.check(changed=[HEAP], files=[HEAP],
+                   source="generated dependency rules")
+
+    def test_the_legacy_prefix_refusal_still_applies_without_a_closure(self):
+        self.assertEqual(self.sb.bind(
+            **self.header(closure=False)).get("closure"), None)
+
+        sb = self.sb
+        receipt = sb.receipt("candidate", "candidate", 0, 1)
+        meta = dict(sb.bind(**self.header(closure=False, prefixes=["src/"])),
+                    schema=m.SCHEMA)
+        with self.assertRaisesRegex(sc.InvalidAllocation,
+                                    "under the boundary prefix"):
+            m.check_receipt(receipt, meta, "candidate")
+        meta = dict(sb.bind(**self.header(closure=False, prefixes=[])),
+                    schema=m.SCHEMA)
+        m.check_receipt(receipt, meta, "candidate")
+
+    def test_the_closure_is_in_the_digest_the_binding_and_the_settings(self):
+        header = dict(self.sb.header(), **self.header(files=[HEAP]),
+                      task="task37-downstream")
+        digest = m.grid_digest(header)
+        self.assertNotEqual(digest, m.grid_digest(
+            {k: v for k, v in header.items() if k != "closure"}))
+        other = json.loads(json.dumps(header))
+        other["closure"]["changed"] = ["x"]
+        self.assertNotEqual(digest, m.grid_digest(other))
+        other = json.loads(json.dumps(header))
+        other["closure"]["sides"]["candidate"]["modules"] = ["X"]
+        self.assertNotEqual(digest, m.grid_digest(other))
+        self.assertEqual(m.binding(header, tb.CASE, tb.SIZE)["closure"][
+            "sides"], header["closure"]["sides"])
+        self.assertIn("closure", m.changed_settings(
+            header, other))
+        self.assertNotIn("closure", m.changed_settings(header, header))
+        self.assertIn("closure", m.changed_settings(
+            {k: v for k, v in header.items() if k != "closure"}, header))
+        # a cell measured under another closure is refused
+        folder = Path(self.sb.root) / "cell"
+        self.sb.write_cell(folder, **self.header(files=[HEAP]))
+        with self.assertRaisesRegex(sc.InvalidAllocation,
+                                    "different inputs"):
+            m.cell_data(folder, self.sb.bind(**self.header(
+                files=[HEAP], changed=["x"])))
+
+
+class Closures(unittest.TestCase):
+    """Grid.make_closure and make_job for a closure family, over the
+    stubbed checkout of test_allocation_grid.Jobs."""
+    REVS = grid_tests.Jobs.REVS
+
+    def setUp(self):
+        grid_tests.Jobs.setUp(self)
+        grid = self.grid
+        grid.task = DOWNSTREAM
+        grid.args = argparse.Namespace(baseline="a" * 40,
+                                       candidate="b" * 40)
+        grid.repo = Path(self.tmp.name) / "repo"
+        self.results = {}
+        self.records = {}
+        self.inputs = {}
+        patches = [mock.patch.object(m.bd, "changed_paths",
+                                     return_value=["p"]),
+                   mock.patch.object(m, "closure_record",
+                                     side_effect=self.record)]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        grid.install_private = self.install
+
+    def record(self, result, directory):
+        return result["record"]
+
+    def install(self, directory, sources):
+        label = directory.name.replace("closure-", "")
+        side = {v: k for k, v in m.SIDES.items()}.get(label, label)
+        return dict(record=self.records.get(side, dict(modules=["M"])),
+                    inputs=self.inputs.get(side, {"/hol/x": [1]}))
+
+    def test_the_closure_is_made_per_side_with_its_inputs(self):
+        closure = self.grid.make_closure()
+        self.assertEqual(sorted(closure["sides"]), sorted(m.SIDES))
+        self.assertEqual((closure["changed"], closure["inputs"]),
+                         (["p"], {"/hol/x": [1]}))
+
+    def test_a_control_that_is_not_the_baselines_copy_is_refused(self):
+        self.records["control"] = dict(modules=["other"])
+        with self.assertRaisesRegex(sc.InvalidAllocation,
+                                    "control closure is not a copy"):
+            self.grid.make_closure()
+
+    def test_an_input_that_changed_between_sides_is_refused(self):
+        self.inputs["candidate"] = {"/hol/x": [2]}
+        with self.assertRaisesRegex(sc.InvalidAllocation,
+                                    "closure input changed between sides"):
+            self.grid.make_closure()
+
+    def test_a_job_must_install_the_closure_of_the_grid(self):
+        self.grid.closure = self.grid.make_closure()
+        self.assertTrue(self.grid.make_job(0).dirs)
+        self.records["candidate"] = dict(modules=["other"])
+        with self.assertRaisesRegex(sc.InvalidAllocation,
+                                    "installed closure differs from the "
+                                    "grid's"):
+            self.grid.make_job(1)
+
+
+if __name__ == "__main__":
+    unittest.main()

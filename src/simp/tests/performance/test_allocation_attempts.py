@@ -18,10 +18,11 @@ CAND = "c" * 40
 TASK = "task37-matrix"
 
 
-def namespace(repo, output, resume=False, task=TASK):
+def namespace(repo, output, resume=False, task=TASK, only=None,
+              pairs=None):
     import argparse
     return argparse.Namespace(task=task, repo=repo, output=output,
-                              resume=resume)
+                              resume=resume, only=only, pairs=pairs)
 
 
 class Fixture(unittest.TestCase):
@@ -51,7 +52,7 @@ class Fixture(unittest.TestCase):
             (path / "inventory.json").write_text(json.dumps(inventory))
         return path
 
-    def run_with(self, output, effect, resume=False, task=TASK):
+    def run_with(self, output, effect, resume=False, task=TASK, **more):
         def grid(args, task_, started):
             if started is not None:
                 started(dict(candidate=CAND))
@@ -59,7 +60,8 @@ class Fixture(unittest.TestCase):
                 raise effect
             return effect
         with mock.patch.object(m, "run_grid", grid):
-            return m.run(namespace(self.repo, output, resume, task))
+            return m.run(namespace(self.repo, output, resume, task,
+                                   **more))
 
     def ledger(self):
         return at.ledger_path(self.repo, TASK)
@@ -138,6 +140,67 @@ class Recording(Fixture):
         self.assertEqual(events, [("open", None), ("close", "failed"),
                                   ("resume", None), ("close", "pass")])
         self.assertEqual(len({x["attempt"] for x in self.lines()}), 1)
+
+    def test_an_output_is_one_attempt_and_is_not_opened_twice(self):
+        out = self.out()
+        with self.assertRaises(sc.InvalidAllocation):
+            self.run_with(out, sc.InvalidAllocation("measured"))
+        before = self.ledger().read_text()
+        for effect in (0, sc.InvalidAllocation("again")):
+            with self.assertRaises(sc.InvalidAllocation) as caught:
+                self.run_with(out, effect)
+            self.assertIn("use a new output path", str(caught.exception))
+        self.assertEqual(self.ledger().read_text(), before)
+        # a new output is a new attempt; the earlier failure stays
+        other = self.out("o2")
+        self.assertEqual(self.run_with(other, 0), 0)
+        self.assertEqual(len({x["attempt"] for x in self.lines()}), 2)
+
+    def test_a_refused_open_writes_no_close(self):
+        out = self.out()
+        with mock.patch.object(at.Attempt, "line",
+                               side_effect=OSError("disk")), \
+                self.assertRaises(OSError):
+            self.run_with(out, 0)
+        self.assertFalse(self.ledger().exists())
+
+    def test_only_and_smoke_runs_are_information_runs(self):
+        for name, more in (("only", dict(only=["a-1"])),
+                           ("smoke", dict(pairs=2))):
+            with self.subTest(name):
+                self.ledger().unlink(missing_ok=True)
+                out = self.out(name)
+                self.assertEqual(self.run_with(out, 0, **more), 0)
+                first, last = self.lines()
+                self.assertEqual((first["event"], last["event"],
+                                  last["success"], last["status"]),
+                                 ("info", "info-end", True, "pass"))
+                self.assertEqual(first["attempt"], at.attempt_id(out))
+                tg.Ledger(self.ledger())
+                self.assertEqual(tg.Ledger(self.ledger()).attempts(TASK),
+                                 {})
+                self.assertEqual(at.attempts_of(TASK, self.ledger()), [])
+        # a run with the task's pairs is judged
+        out = self.out("full")
+        self.run_with(out, 0, pairs=m.TASKS[TASK].pairs)
+        self.assertEqual(self.lines()[-2]["event"], "open")
+
+    def test_a_failed_information_run_is_not_an_attempt(self):
+        out = self.out()
+        with self.assertRaises(sc.InvalidAllocation):
+            self.run_with(out, sc.InvalidAllocation("boom"), only=["a-1"])
+        first, last = self.lines()
+        self.assertEqual((first["event"], last["event"], last["success"]),
+                         ("info", "info-end", False))
+        self.assertEqual(at.attempts_of(TASK, self.ledger()), [])
+
+    def test_judged_and_information_runs_never_share_an_output(self):
+        info, judged = self.out("i"), self.out("j")
+        self.run_with(info, 0, only=["a-1"])
+        self.run_with(judged, 0)
+        for out, more in ((info, {}), (judged, dict(only=["a-1"]))):
+            with self.assertRaises(sc.InvalidAllocation):
+                self.run_with(out, 0, **more)
 
     def test_the_ledger_of_a_task_is_its_own(self):
         self.assertEqual(
@@ -226,6 +289,29 @@ class Attempts(Fixture):
                 out = self.out(name.replace(" ", "_"), **made)
                 self.attempt(out, *events)
                 self.assertIn("is not void", self.refused())
+
+    def test_an_output_opened_twice_is_refused(self):
+        # open/fail/open/pass would show the pass and hide the failure;
+        # open/open/pass the same
+        for name, events in (
+                ("failpass", [("open", None), ("close", "failed"),
+                              ("open", None), ("close", "pass")]),
+                ("openopen", [("open", None), ("open", None),
+                              ("close", "pass")])):
+            with self.subTest(name):
+                self.ledger().unlink(missing_ok=True)
+                out = self.out(name, cells=["a-1.json.xz"])
+                key = self.attempt(out, *events)
+                self.assertIn("opened 2 times",
+                              self.refused({key: out}))
+                self.assertIn("opened 2 times", self.refused())
+
+    def test_information_lines_are_not_attempts(self):
+        out = self.out()
+        key = at.attempt_id(out)
+        self.attempt(out, ("info", None), ("info-end", None))
+        self.assertEqual(self.refused({key: out})[:14], "judged attempt")
+        self.assertEqual(at.attempts_of(TASK, self.ledger()), [])
 
     def test_a_missing_output_is_judged(self):
         out = Path(self.tmp.name) / "gone"

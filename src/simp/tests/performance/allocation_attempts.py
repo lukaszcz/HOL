@@ -23,6 +23,20 @@ Everything else, an attempt left open, resumed, closed twice, closed with
 another status, or whose output is missing or holds a cell, is judged: it
 cannot be redrawn, and `attempts_of` refuses it unless it is the judged one.
 The legacy tasks write no ledger.
+
+One output, one attempt: an `open` (a run that is not a `--resume`) whose
+attempt is already in the ledger is refused before anything is built, so
+an earlier measured failure of the output cannot be hidden behind a later
+attempt; a redraw after a void attempt uses a new output path and must not
+delete the void attempt's output (which `attempts_of` needs to see void).
+`attempts_of` also refuses an attempt with more than one `open`.
+
+A run that is not a judged attempt is an information run, recorded as
+`info` and `info-end` lines (the timing grids' information runs, which
+R-1 does not judge) and never as `open`, `resume` or `close`: `check-jobs`,
+any run with `--only`, and any run with fewer pairs than the task's (a
+smoke). It cannot take the output of a judged attempt, and a judged one
+cannot take the output of an information run.
 """
 import hashlib
 import json
@@ -37,6 +51,7 @@ import timing_grid as tg
 
 TASKS = ("task37-matrix", "task37-client", "task37-downstream")
 STAGE = "first"
+JUDGED = {"open", "resume", "close"}
 FAILED = "failed"
 
 
@@ -66,10 +81,10 @@ def status_of(code):
 class Attempt:
     """The ledger lines of one run: open or resume, then one close."""
 
-    def __init__(self, task, repo, output, counts_file, resume):
+    def __init__(self, task, repo, output, counts_file, resume, info=False):
         self.task, self.repo = check_task(task), Path(repo).resolve()
         self.output, self.resume = Path(output).resolve(), resume
-        self.counts_file = Path(counts_file)
+        self.counts_file, self.info = Path(counts_file), bool(info)
         self.path = ledger_path(self.repo, self.task)
         self.header = None
 
@@ -84,32 +99,65 @@ class Attempt:
                   "tracked by git: exclude .agent-files first: %s"
                   % self.path)
 
-    def line(self, event, **more):
+    def line(self, candidate, event, **more):
         tg.ledger_append(
             self.path, event=event, stage=STAGE, table=self.task,
-            attempt=attempt_id(self.output),
-            candidate=self.header["candidate"],
+            attempt=attempt_id(self.output), candidate=candidate,
             counts_file=self.counts_file.name,
             counts=hashlib.sha256(self.counts_file.read_bytes()).hexdigest(),
             output=str(self.output), checkout=str(self.repo), **more)
 
+    def events(self):
+        """The events of this attempt already in the ledger."""
+        if not self.path.is_file():
+            return []
+        me = attempt_id(self.output)
+        return [r["event"] for r in tg.Ledger(self.path).records
+                if r.get("table") == self.task and r.get("attempt") == me]
+
+    def check_new(self):
+        """The output has no attempt of the other kind, and a fresh
+        (non-resume) judged run has none at all: one output, one attempt.
+        Refused before anything is built."""
+        seen = self.events()
+        sc.require(not (self.info and set(seen) & JUDGED),
+                   "the output %s is that of a judged attempt of %s: use "
+                   "a new output path" % (self.output, self.task))
+        sc.require(self.info or self.resume or not seen,
+                   "the attempts ledger of %s already has the output %s "
+                   "(one output, one attempt): use a new output path, "
+                   "keeping the old output" % (self.task, self.output))
+        sc.require(self.info or "info" not in seen,
+                   "the output %s was an information run of %s: use a new "
+                   "output path" % (self.output, self.task))
+
     def start(self, header):
-        """Before the first process: the opening (or the resumption). It
-        must be written, so a failure refuses the run."""
-        self.header = dict(header, candidate=a.git(
-            self.repo, "rev-parse", "--verify", header["candidate"] +
-            "^{commit}"))
+        """Before the first process: the opening (or the resumption), or
+        the `info` line of an information run. It must be written, so a
+        failure refuses the run (and the attempt stays unopened)."""
+        candidate = a.git(self.repo, "rev-parse", "--verify",
+                          header["candidate"] + "^{commit}")
         self.check_ignored()
+        self.check_new()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.line("resume" if self.resume else "open")
+        self.line(candidate, "info" if self.info else
+                  "resume" if self.resume else "open",
+                  **(dict(mode="allocation") if self.info else {}))
+        self.header = dict(header, candidate=candidate)
 
     def close(self, status, **note):
         """The close; when it cannot be written the attempt stays open in
-        the ledger (so judged) and the line printed carries it."""
+        the ledger (so judged) and the line printed carries it. An
+        information run ends with `info-end` and whether it passed."""
         if self.header is None:
             return
         try:
-            self.line("close", status=status, **note)
+            if self.info:
+                self.line(self.header["candidate"], "info-end",
+                          success=status == "pass", status=status, **note)
+            else:
+                self.line(self.header["candidate"], "close", status=status,
+                          **note)
         except Exception as error:
             print("ATTEMPT-NOT-CLOSED %s (outcome %s): %s" % (
                 attempt_id(self.output), status, error), file=sys.stderr,
@@ -156,18 +204,21 @@ def attempts_of(task, ledger, judged=None):
     attempt of more than one output, a judged attempt in another output
     than the one given, a judged id the ledger does not know, and any other
     attempt that is not void (it may have measured: it needs a new policy
-    decision)."""
+    decision), and an attempt that was opened more than once. The `info`
+    lines of information runs are not attempts and are ignored."""
     name = check_task(task)
     judged = {k: Path(v).resolve() for k, v in (judged or {}).items()}
     sc.require(Path(ledger).is_file(), "no attempts ledger: %s" % ledger)
     state = tg.Ledger(ledger)
-    where = {}
+    where, opens = {}, {}
     for record in state.records:
-        if record["event"] in ("open", "resume", "close") and \
-                record.get("table") == name:
+        if record["event"] in JUDGED and record.get("table") == name:
             outputs = where.setdefault(record.get("attempt"), [])
             if record.get("output") not in outputs:
                 outputs.append(record.get("output"))
+            if record["event"] == "open":
+                key = record.get("attempt")
+                opens[key] = opens.get(key, 0) + 1
     rows = {k[0]: r for k, r in state.attempts(name).items()}
     unknown = sorted(set(judged) - set(rows))
     sc.require(not unknown, "judged attempt not in the ledger of %s: %s"
@@ -180,6 +231,10 @@ def attempts_of(task, ledger, judged=None):
                   "of one output" % (key, name, "more than one"
                                      if outputs else "no",
                                      ", ".join(map(str, outputs))))
+        sc.require(opens.get(key, 0) <= 1,
+                  "attempt %s of %s was opened %d times: an earlier "
+                  "attempt of the output may be hidden; one output, one "
+                  "attempt" % (key, name, opens[key]))
         output = outputs[0]
         entry = dict(attempt=key, status=row["status"], output=output,
                      judged=key in judged, void=False)

@@ -384,8 +384,9 @@ class Modules(unittest.TestCase):
 
     ALLOCATION_TASK37 = (
         "allocation_matrix imports the TASK37 case lists only when a "
-        "TASK37 task is asked for, which a TASK31 allocation grid never "
-        "does")
+        "TASK37 task is asked for, and the attempts ledger "
+        "(allocation_attempts, imported lazily by `run`) only for a task "
+        "with a ledger, which a TASK31 allocation grid never does")
 
     @staticmethod
     def edges(reason, *edges):
