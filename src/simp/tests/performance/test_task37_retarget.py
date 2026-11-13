@@ -189,8 +189,28 @@ class DeclaredPins(unittest.TestCase):
                 storage.run(args, dict(mode="smoke"))
         stage.assert_not_called()
 
-    def test_predeclare_refuses_a_placeholder_inside_the_refusal_path(self):
+    def prefilled(self):
+        """The committed TASK37 declaration as it was before `fill` (the
+        S2 closure total a placeholder), selected for the test."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        data = json.loads(self.TASK37.read_text())
+        entry = data["s2"]["total_delta"][0]
+        entry.update(value=None, observed=None, pending=True,
+                     mechanism=["PLACEHOLDER: measured live"])
+        path = Path(tmp.name) / "task37_declared.json"
+        path.write_text(json.dumps(data))
+        self.selected(path)
+
+    def test_the_committed_declaration_is_ready(self):
         self.selected(self.TASK37)
+        storage.declared_ready()
+        entry = offline.load_declared()["s2"]["total_delta"][0]
+        self.assertEqual(entry["value"], 553)
+        self.assertNotIn("pending", entry)
+
+    def test_predeclare_refuses_a_placeholder_inside_the_refusal_path(self):
+        self.prefilled()
         declared = offline.load_declared()
         sides = dict(base=dict(pin=declared["base"]),
                      cand=dict(pin=declared["cand"]))
@@ -202,7 +222,7 @@ class DeclaredPins(unittest.TestCase):
                     getattr(storage, name)(mock.Mock())
         with self.assertRaises(storage.d.Refusal):
             storage.declared_ready()
-        self.selected(offline.DECLARED.parent / "task33_declared.json")
+        self.selected(HERE / "task33_declared.json")
         storage.declared_ready()   # TASK33's own is valid
 
     def test_the_archive_table_is_the_selected_tables_field(self):
@@ -224,7 +244,7 @@ class DeclaredPins(unittest.TestCase):
                 offline.archive_table()
 
     def test_a_placeholder_decision_is_a_refusal_not_a_traceback(self):
-        self.selected(self.TASK37)
+        self.prefilled()
         with self.assertRaisesRegex(storage.d.Refusal, "not measured"):
             storage.refusing(storage.rules.total_deltas,
                              offline.load_declared())

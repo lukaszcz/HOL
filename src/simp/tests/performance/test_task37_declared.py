@@ -1,5 +1,5 @@
 """task37_declared.py and task37_declared.json: the TASK37 declaration of
-the final candidate, its placeholder, and how it is observed and filled.
+the final candidate (filled), and how its placeholder was observed and filled.
 No HOL, no build, no measurement."""
 import copy
 import json
@@ -41,9 +41,50 @@ def load():
     return offline.load_declared(t.DECLARED)
 
 
+# The S2 closure total the committed declaration holds (measured live, then
+# filled by `task37_declared.py fill`): the pinned value and observation.
+FILLED_VALUE = 553
+FILLED_OBSERVED = {
+    "base": 2873517, "cand": 2874070, "d_base": 2555187, "d_cand": 2556111,
+    "exclusive": {"simpLib": [307102, 306734], "Traverse": [149848, 149482],
+                  "Travrules": [149061, 149049], "Opening": [2461, 2461],
+                  "boolSimps": [187043, 187037],
+                  "pureSimps": [182625, 182622]},
+    "processes_per_side_per_kind": 2, "repeats_per_process": 3}
+
+
+def prefill():
+    """The committed declaration as it was before `fill`: its S2 closure
+    total entry is the placeholder (an in-test fixture for the paths that
+    handle a placeholder; the committed file is filled)."""
+    data = json.loads(t.DECLARED.read_text())
+    entry = data["s2"]["total_delta"][0]
+    entry.update(value=None, observed=None, pending=True,
+                 mechanism=["PLACEHOLDER: measured live, then filled in by",
+                            "`task37_declared.py fill`."])
+    return data
+
+
 class TheDeclaration(unittest.TestCase):
-    def test_only_the_s2_placeholder_is_open(self):
+    def test_the_s2_closure_total_is_filled(self):
         d = load()
+        self.assertEqual(offline.count_problems(d), [])
+        self.assertEqual(offline.shape_problems(d), [])
+        entries = d["s2"]["total_delta"]
+        self.assertEqual(len(entries), 1)
+        entry = entries[0]
+        self.assertNotIn("pending", entry)
+        self.assertEqual(entry["value"], FILLED_VALUE)
+        self.assertEqual(entry["observed"], FILLED_OBSERVED)
+        self.assertTrue(entry["mechanism"])
+        self.assertFalse(any("PLACEHOLDER" in x for x in entry["mechanism"]))
+        self.assertEqual((entry["heap"], entry["kinds"]), (HEAP, KINDS))
+        # the value is the observed growth
+        self.assertEqual(entry["observed"]["cand"] -
+                         entry["observed"]["base"], entry["value"])
+
+    def test_only_the_s2_placeholder_is_open_before_fill(self):
+        d = offline.join_text(prefill())
         self.assertEqual(offline.count_problems(d), [])
         bad = offline.shape_problems(d)
         self.assertTrue(bad)
@@ -75,7 +116,9 @@ class TheDeclaration(unittest.TestCase):
 
     def test_a_placeholder_is_never_a_decision_input(self):
         with self.assertRaises(rules.Inadmissible):
-            rules.total_deltas(load())
+            rules.total_deltas(offline.join_text(prefill()))
+        self.assertEqual(rules.total_deltas(load()),
+                         [dict(heap=HEAP, kinds=KINDS, value=FILLED_VALUE)])
 
     def test_the_log_counts_are_what_judge_log_reads(self):
         text = "".join("t%d ... OK\n" % i for i in range(147))
@@ -172,7 +215,7 @@ class Fill(unittest.TestCase):
         self.addCleanup(patch.stop)
 
     def raw(self):
-        return json.loads(t.DECLARED.read_text())
+        return prefill()
 
     def test_the_observed_candidate_must_be_equivalent_to_the_declared(self):
         declared = self.raw()
@@ -221,7 +264,7 @@ class Fill(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             path = tmp / "declared.json"
-            path.write_text(t.DECLARED.read_text())
+            path.write_text(json.dumps(prefill()))
             self.assertEqual(t.main(["check", "--declared", str(path)]), 0)
             self.assertEqual(t.main(["check", "--final", "--declared",
                                      str(path)]), 1)
@@ -347,7 +390,7 @@ class ObserveFolders(unittest.TestCase):
                          (load()["base"], "a" * 40))
         self.assertEqual(obs["manifest"], pins()["manifest"])
         with mock.patch.object(t, "same_tree_outside", return_value=True):
-            new = t.fill(json.loads(t.DECLARED.read_text()), obs)
+            new = t.fill(prefill(), obs)
         self.assertEqual(new["cand"], cases37.COMPILED_REF)
 
     def test_the_stages_are_observed_under_the_task37_table(self):
