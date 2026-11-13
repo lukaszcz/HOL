@@ -811,10 +811,8 @@ struct
           let
             val count = case List.find (fn (old, _) => old = name) copies of
                 NONE => 1 | SOME (_, n) => n + 1
-            val stem = if count = 1 then "thm." else
-              "thm" ^ Int.toString count ^ "."
           in
-            aiLib.escape (stem ^ name)
+            aiLib.escape (hhTptpProblem.fact_name count name)
           end
       fun add name [] = [(name, 1)]
         | add name ((old, n) :: rest) =

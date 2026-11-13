@@ -36,4 +36,10 @@ sig
   val format_name : format -> string
   val string_of_problem : format -> string -> problem -> string
 
+  (* Unescaped TPTP names of premise copies: copy 1 of a fact is
+     thm.<fact>, copy n > 1 (a monomorphic instance) is thm<n>.<fact>.
+     fact_of_name inverts fact_name and is NONE for other names. *)
+  val fact_name : int -> string -> string
+  val fact_of_name : string -> string option
+
 end

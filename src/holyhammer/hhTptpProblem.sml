@@ -220,4 +220,23 @@ struct
     "% " ^ header ^ "\n" ^
     String.concat (map (string_of_section format) sections)
 
+  fun fact_name 1 fact = "thm." ^ fact
+    | fact_name copy fact = "thm" ^ Int.toString copy ^ "." ^ fact
+
+  fun fact_of_name name =
+    if String.isPrefix "thm" name then
+      let
+        val start = String.size "thm"
+        fun digits index =
+          if index < String.size name andalso
+             Char.isDigit (String.sub (name, index)) then digits (index + 1)
+          else index
+        val stop = digits start
+      in
+        if stop < String.size name andalso String.sub (name, stop) = #"."
+        then SOME (String.extract (name, stop + 1, NONE))
+        else NONE
+      end
+    else NONE
+
 end
