@@ -23,7 +23,7 @@ sig
   type journal_entry =
     {run : string, thy : string, thm : string, goal_id : string,
      cond : string, regime : regime, selector : selector,
-     engine : engine, ho : bool option, fresh : bool option, prover : string,
+     engine : engine, ho : bool, fresh : bool, prover : string,
      prover_version : string option, nfacts : int,
      timeout : int, szs : string, t_prover : real,
      axioms_used : string list option, recon_ok : bool option,

@@ -36,7 +36,7 @@ type journal_slice =
 type journal_entry =
   {run : string, thy : string, thm : string, goal_id : string,
    cond : string, regime : regime, selector : selector,
-   engine : engine, ho : bool option, fresh : bool option, prover : string,
+   engine : engine, ho : bool, fresh : bool, prover : string,
    prover_version : string option, nfacts : int,
    timeout : int, szs : string, t_prover : real,
    axioms_used : string list option, recon_ok : bool option,
@@ -442,13 +442,7 @@ fun journal_json
        ("cond", JSON.STRING cond),
        ("regime", JSON.STRING (string_of_regime regime)),
        ("selector", JSON.STRING (string_of_selector selector)),
-       (* A missing flag is only possible after parsing an old journal;
-          rewrites still produce a valid boolean cell field. *)
-       ("ho", JSON.BOOL (case ho of SOME value => value | NONE => false)),
-       (* Likewise, parsing v1--v3 preserves the missing v4 classification
-          internally, while any newly written line has the v4 bool field. *)
-       ("fresh", JSON.BOOL
-          (case fresh of SOME value => value | NONE => false))]
+       ("ho", JSON.BOOL ho), ("fresh", JSON.BOOL fresh)]
     val winning =
       [("prover", JSON.STRING prover),
        ("prover_version", json_string_option prover_version),
@@ -505,50 +499,32 @@ fun parse_journal_slice value : journal_slice =
    cached = bool_field "cached" value}
 
 fun parse_journal_engine value prover =
-  case optional_field "engine" value of
-      NONE => Prover prover
-    | SOME engine_value =>
-        (case JSONUtil.asString engine_value of
-             "prover" => Prover prover
-           | "sched" =>
-               let val parameters = field "engine_params" value in
-                 Sched
-                   {provers = string_list (field "provers" parameters),
-                    slices = int_field "slices" parameters,
-                    cores = int_field "cores" parameters,
-                    max_proofs = int_field "max_proofs" parameters}
-               end
-           | name => raise Fail ("unknown journal engine: " ^ name))
+  case string_field "engine" value of
+      "prover" => Prover prover
+    | "sched" =>
+        let val parameters = field "engine_params" value in
+          Sched
+            {provers = string_list (field "provers" parameters),
+             slices = int_field "slices" parameters,
+             cores = int_field "cores" parameters,
+             max_proofs = int_field "max_proofs" parameters}
+        end
+    | name => raise Fail ("unknown journal engine: " ^ name)
 
-fun nullable_optional decoder name value =
-  case optional_field name value of
-      NONE => NONE
-    | SOME JSON.NULL => NONE
-    | SOME item => SOME (decoder item)
-
-fun array_or_empty decoder name value =
-  case optional_field name value of
-      NONE => []
-    | SOME items => JSONUtil.arrayMap decoder items
-
+(* Only the format written by journal_json is accepted.  The schedule
+   fields are present exactly on Sched entries. *)
 fun parse_journal_value value : journal_entry =
   let
     val prover = string_field "prover" value
     val engine = parse_journal_engine value prover
-    val slices = array_or_empty parse_journal_slice "slices" value
-    val stored_winner = nullable_optional parse_slice "winner" value
-    val winner =
-      case (engine, stored_winner) of
-          (_, SOME slice) => SOME slice
-        | (Prover _, NONE) => NONE
-        | (Sched _, NONE) =>
-            (* Older journals did not persist the winning translation.
-               Recover it only when their abbreviated identity is unique. *)
-            (case List.filter (fn {slice, szs, ...} : journal_slice =>
-               szs = "Theorem" andalso #prover slice = prover andalso
-               #nfacts slice = int_field "nfacts" value) slices of
-                 [{slice, ...}] => SOME slice
-               | _ => NONE)
+    val (stop, t_total, winner, slices) =
+      case engine of
+          Prover _ => (NONE, NONE, NONE, [])
+        | Sched _ =>
+            (SOME (string_field "stop" value),
+             SOME (real_field "t_total" value),
+             option_field parse_slice "winner" value,
+             JSONUtil.arrayMap parse_journal_slice (field "slices" value))
   in
     {run = string_field "run" value, thy = string_field "thy" value,
      thm = string_field "thm" value, goal_id = string_field "goal_id" value,
@@ -556,8 +532,7 @@ fun parse_journal_value value : journal_entry =
      regime = regime_of_string (string_field "regime" value),
      selector = selector_of_string (string_field "selector" value),
      engine = engine,
-     ho = nullable_optional JSONUtil.asBool "ho" value,
-     fresh = nullable_optional JSONUtil.asBool "fresh" value,
+     ho = bool_field "ho" value, fresh = bool_field "fresh" value,
      prover = prover,
      prover_version = option_field JSONUtil.asString "prover_version" value,
      nfacts = int_field "nfacts" value, timeout = int_field "timeout" value,
@@ -568,9 +543,7 @@ fun parse_journal_value value : journal_entry =
      t_recon = option_field JSONUtil.asNumber "t_recon" value,
      stac = option_field JSONUtil.asString "stac" value,
      error = option_field JSONUtil.asString "error" value,
-     stop = nullable_optional JSONUtil.asString "stop" value,
-     t_total = nullable_optional JSONUtil.asNumber "t_total" value,
-     winner = winner, slices = slices}
+     stop = stop, t_total = t_total, winner = winner, slices = slices}
   end
 
 fun encode_journal_line entry = JSONPrinter.valueToString (journal_json entry)
@@ -592,10 +565,20 @@ fun read_journal path =
     let
       (* A torn line can appear anywhere, not just at the end: a resume
          appends past the truncated tail left by an interrupted worker.
-         Skip whatever fails to parse rather than losing the journal. *)
+         Such a line is not JSON, and is skipped rather than losing the
+         journal.  Well-formed JSON in any other shape is an entry from an
+         unsupported journal format, which must not silently vanish from
+         reports or resumption. *)
       fun parse line =
-        (SOME (parse_journal_line line)
-         handle Interrupt => raise Interrupt | _ => NONE)
+        case (SOME (parse_json line)
+              handle Interrupt => raise Interrupt | _ => NONE) of
+            NONE => NONE
+          | SOME value =>
+              (SOME (parse_journal_value value)
+               handle Interrupt => raise Interrupt
+                    | error => raise Fail
+                        ("unsupported hhEval journal entry in " ^ path ^
+                         ": " ^ General.exnMessage error))
     in
       List.mapPartial parse
         (List.filter (fn line => trim line <> "") (read_lines path))
@@ -892,20 +875,14 @@ fun entries_for_condition name entries =
   List.filter (fn entry => #cond entry = name) entries
 
 fun subset_metrics want entries =
-  if List.exists (fn entry => #ho entry = NONE) entries then NONE
-  else SOME (make_metrics (List.filter (fn entry => #ho entry = SOME want)
-    entries))
+  make_metrics (List.filter (fn entry => #ho entry = want) entries)
 
 fun fresh_subset_metrics want entries =
-  if List.exists (fn entry => #fresh entry = NONE) entries then NONE
-  else SOME (make_metrics (List.filter
-    (fn entry => #fresh entry = SOME want) entries))
+  make_metrics (List.filter (fn entry => #fresh entry = want) entries)
 
 fun subset_json label metrics =
   JSON.OBJECT
-    [("subset", JSON.STRING label),
-     ("metrics", case metrics of NONE => JSON.NULL | SOME value =>
-       json_metrics value)]
+    [("subset", JSON.STRING label), ("metrics", json_metrics metrics)]
 
 fun condition_json name entries =
   let
@@ -1117,10 +1094,7 @@ fun metrics_markdown metrics =
   " | " ^ option_text (#maximum metrics)
 
 fun subset_markdown condition label metrics =
-  case metrics of
-      NONE => "| " ^ condition ^ " | " ^ label ^ " | n/a |\n"
-    | SOME value => "| " ^ condition ^ " | " ^ label ^ " | " ^
-        metrics_markdown value ^ " |\n"
+  "| " ^ condition ^ " | " ^ label ^ " | " ^ metrics_markdown metrics ^ " |\n"
 
 fun condition_markdown name entries =
   let
@@ -1227,11 +1201,8 @@ fun write_report_markdown expdir entries =
         val cells = entries_for_condition name entries
         val filter = filter_of_selector (#selector (hd cells))
         fun row label metrics =
-          case metrics of
-              NONE => "| " ^ name ^ " | " ^ filter ^ " | " ^ label ^
-                " | n/a |\n"
-            | SOME value => "| " ^ name ^ " | " ^ filter ^ " | " ^
-                label ^ " | " ^ metrics_markdown value ^ " |\n"
+          "| " ^ name ^ " | " ^ filter ^ " | " ^ label ^ " | " ^
+          metrics_markdown metrics ^ " |\n"
       in
         TextIO.output (output, row "seen" (fresh_subset_metrics false cells));
         TextIO.output (output, row "fresh" (fresh_subset_metrics true cells))
@@ -1472,7 +1443,7 @@ fun append_theory_error path expdir thy message =
        engine = Prover "", timeout = 0, reconstruct = false}
   in
     append_journal path
-      (base_entry expdir thy "__load__" condition NONE NONE 0 "LoadFailure"
+      (base_entry expdir thy "__load__" condition false false 0 "LoadFailure"
          0.0 NONE NONE (failed message))
   end
 
@@ -1676,8 +1647,8 @@ fun schedule_cell_entry expdir thy (name, thm) pool condition parameters =
        goal_id = goal_id thy name, cond = #cond_id condition,
        regime = #regime condition, selector = #selector condition,
        engine = #engine condition,
-       ho = SOME (is_higher_order_goal (list_mk_imp goal)),
-       fresh = SOME (is_fresh_goal thy (list_mk_imp goal)),
+       ho = is_higher_order_goal (list_mk_imp goal),
+       fresh = is_fresh_goal thy (list_mk_imp goal),
        prover = prover, prover_version = version_of_prover prover,
        nfacts = nfacts,
        timeout = #timeout condition, szs = szs, t_prover = t_prover,
@@ -1732,8 +1703,8 @@ fun prover_cell_entry expdir thy (name, thm) pool condition prover_name =
   in
     case hhProver.lookup prover_name of
         NONE => base_entry expdir thy name condition
-          (SOME (is_higher_order_goal (list_mk_imp goal)))
-          (SOME (is_fresh_goal thy (list_mk_imp goal))) nfacts
+          (is_higher_order_goal (list_mk_imp goal))
+          (is_fresh_goal thy (list_mk_imp goal)) nfacts
           "RunFailure" 0.0 NONE
           NONE (failed ("unknown HolyHammer prover: " ^ prover_name))
       | SOME prover =>
@@ -1756,8 +1727,8 @@ fun prover_cell_entry expdir thy (name, thm) pool condition prover_name =
                          | NONE => run_failure_error (#szs result)}
           in
             base_entry expdir thy name condition
-              (SOME (is_higher_order_goal (list_mk_imp goal)))
-              (SOME (is_fresh_goal thy (list_mk_imp goal))) nfacts
+              (is_higher_order_goal (list_mk_imp goal))
+              (is_fresh_goal thy (list_mk_imp goal)) nfacts
               (szs_name (#szs result)) (#time result)
               (#used_axioms result) (#version result) outcome
           end
@@ -1778,22 +1749,20 @@ fun run_cell expdir thy theorem pool condition =
        | error =>
            append_journal (worker_journal_path expdir thy)
              (base_entry expdir thy (#1 theorem) condition
-                (SOME (is_higher_order_goal
-                  (list_mk_imp (dest_thm (#2 theorem)))))
-                (SOME (is_fresh_goal thy
-                  (list_mk_imp (dest_thm (#2 theorem)))))
+                (is_higher_order_goal (list_mk_imp (dest_thm (#2 theorem))))
+                (is_fresh_goal thy (list_mk_imp (dest_thm (#2 theorem))))
                 0 "Error" 0.0 NONE NONE (failed (General.exnMessage error)))
 
 fun broken_deps_cell expdir thy name goal condition =
   append_journal (worker_journal_path expdir thy)
-    (base_entry expdir thy name condition (SOME (is_higher_order_goal goal))
-       (SOME (is_fresh_goal thy goal)) 0 "BrokenDeps" 0.0 NONE NONE
+    (base_entry expdir thy name condition (is_higher_order_goal goal)
+       (is_fresh_goal thy goal) 0 "BrokenDeps" 0.0 NONE NONE
        no_outcome)
 
 fun evaluation_error_cell expdir thy name goal condition message =
   append_journal (worker_journal_path expdir thy)
-    (base_entry expdir thy name condition (SOME (is_higher_order_goal goal))
-       (SOME (is_fresh_goal thy goal)) 0 "Error" 0.0 NONE NONE
+    (base_entry expdir thy name condition (is_higher_order_goal goal)
+       (is_fresh_goal thy goal) 0 "Error" 0.0 NONE NONE
        (failed message))
 
 fun eval_loaded_theory expdir thy =

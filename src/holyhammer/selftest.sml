@@ -2176,7 +2176,7 @@ fun test_hhEval root =
     val null_entry : hhEval.journal_entry =
       {run = "fixture", thy = "list", thm = "nil", goal_id = "list.nil",
        cond = "deps-e", regime = hhEval.Bushy, selector = hhEval.Deps,
-       engine = hhEval.Prover "e", ho = SOME false, fresh = SOME false,
+       engine = hhEval.Prover "e", ho = false, fresh = false,
        prover = "e",
        prover_version = NONE,
        nfacts = 0, timeout = 5,
@@ -2186,7 +2186,7 @@ fun test_hhEval root =
     val full_entry : hhEval.journal_entry =
       {run = "fixture", thy = "list", thm = "cons", goal_id = "list.cons",
        cond = "knn-e", regime = hhEval.Chainy, selector = hhEval.Knn 128,
-       engine = hhEval.Prover "e", ho = SOME true, fresh = SOME true,
+       engine = hhEval.Prover "e", ho = true, fresh = true,
        prover = "e",
        prover_version = SOME "3.2.5", nfacts = 128,
        timeout = 10, szs = "Theorem", t_prover = 1.25,
@@ -2225,7 +2225,7 @@ fun test_hhEval root =
     val retry_entry : hhEval.journal_entry =
       {run = "fixture", thy = "list", thm = "nil", goal_id = "list.nil",
        cond = "deps-e", regime = hhEval.Bushy, selector = hhEval.Deps,
-       engine = hhEval.Prover "e", ho = SOME false, fresh = SOME false,
+       engine = hhEval.Prover "e", ho = false, fresh = false,
        prover = "e",
        prover_version = NONE, nfacts = 0, timeout = 5,
        szs = "Error", t_prover = 0.0, axioms_used = NONE,
@@ -2356,7 +2356,7 @@ fun test_hhEval root =
       {run = "fixture", thy = "list", thm = "scheduled",
        goal_id = "list.scheduled", cond = "sched",
        regime = hhEval.Chainy, selector = hhEval.Knn 256,
-       engine = #engine sched_condition, ho = SOME true, fresh = SOME true,
+       engine = #engine sched_condition, ho = true, fresh = true,
        prover = "e",
        prover_version = SOME "3.2.5", nfacts = 256, timeout = 30,
        szs = "Theorem", t_prover = 1.75,
@@ -2387,46 +2387,27 @@ fun test_hhEval root =
        JSONUtil.asString (JSONUtil.lookupField
          (hd (JSONUtil.arrayMap (fn item => item)
            (JSONUtil.lookupField sched_json "slices"))) "szs") = "Theorem")
-    val v1_fixture = join "test-data/hheval-report/journal" "list.jsonl"
-    val v1_line = hd (read_lines v1_fixture)
-    val v1_entry = hhEval.parse_journal_line v1_line
-    val _ = expect "checked-in v1 journal remains readable"
-      (#goal_id v1_entry = "list.one" andalso #ho v1_entry = NONE andalso
-       #fresh v1_entry = NONE andalso
-       same_engine (#engine v1_entry) (hhEval.Prover "e") andalso
-       #szs v1_entry = "Theorem" andalso null (#slices v1_entry))
-    val v2_fixture = join "test-data" "hheval-journal-v2.jsonl"
-    val v2_line = hd (read_lines v2_fixture)
-    val v2_entry = hhEval.parse_journal_line v2_line
-    val _ = expect "real Phase 1 v2 journal excerpt remains readable"
-      (#goal_id v2_entry = "arithmetic.ZERO_LESS_EQ" andalso
-       #prover v2_entry = "e" andalso #ho v2_entry = NONE andalso
-       #fresh v2_entry = NONE andalso #nfacts v2_entry = 128)
-    val v3_fixture = join "test-data" "hheval-journal-v3.jsonl"
-    val v3_line = hd (read_lines v3_fixture)
-    val v3_entry = hhEval.parse_journal_line v3_line
-    val _ = expect "actual Phase 2 S30-v3 journal excerpt remains readable"
-      (#goal_id v3_entry = "update.APPLY_UPDATE_ID" andalso
-       #ho v3_entry = SOME true andalso #fresh v3_entry = NONE andalso
-       length (#slices v3_entry) = 16 andalso
-       (case #engine v3_entry of
-            hhEval.Sched {provers, slices, cores, max_proofs} =>
-              provers = ["e", "vampire", "zipperposition"] andalso
-              slices = 16 andalso cores = 16 andalso max_proofs = 4
-          | _ => false) andalso
-       (case #winner v3_entry of
-            SOME slice =>
-              #prover slice = "vampire" andalso #format slice = "fof" andalso
-              #nfacts slice = 32 andalso #filter slice = "knn"
-          | NONE => false))
-    val mixed = hhEval.journal_path expdir "mixed"
-    val _ = write_file mixed
-      (v1_line ^ "\n" ^ v2_line ^ "\n" ^ v3_line ^ "\n")
-    val _ = hhEval.append_journal mixed sched_entry
-    val _ = expect "resume accepts mixed v1/v2/v3/v4 journals"
-      (hhEval.journal_complete mixed
-         [("list.one", "deps-e"), ("arithmetic.ZERO_LESS_EQ", "b30-current-e"),
-          ("list.scheduled", "sched")])
+    (* The pre-v4 prover-entry shape: no engine, ho or fresh fields. *)
+    val old_format_line =
+      "{\"run\":\"fixture\",\"thy\":\"list\",\"thm\":\"one\"," ^
+      "\"goal_id\":\"list.one\",\"cond\":\"deps-e\"," ^
+      "\"regime\":\"bushy\",\"selector\":\"deps\",\"prover\":\"e\"," ^
+      "\"prover_version\":null,\"nfacts\":3,\"timeout\":5," ^
+      "\"szs\":\"Theorem\",\"t_prover\":0.2,\"axioms_used\":null," ^
+      "\"recon_ok\":null,\"recon_method\":null,\"t_recon\":null," ^
+      "\"stac\":null,\"error\":null}"
+    val torn = hhEval.journal_path expdir "torn"
+    val _ = write_file torn "{\"run\":\"fix\n"
+    val _ = hhEval.append_journal torn sched_entry
+    val _ = expect "resume skips torn journal lines"
+      (hhEval.journal_complete torn [("list.scheduled", "sched")])
+    val old_format = hhEval.journal_path expdir "old-format"
+    val _ = write_file old_format (old_format_line ^ "\n")
+    val _ = hhEval.append_journal old_format sched_entry
+    val _ = expect "old-format journal entries are rejected, not skipped"
+      (((hhEval.read_journal old_format; false)
+        handle Fail message =>
+          String.isSubstring "unsupported hhEval journal entry" message))
     val header : hhEval.run_header =
       {expname = "fixture", date = "today", host = "host", hol_commit = "abc",
        provers = [{name = "e", path = SOME "/e", version = SOME "3.2.5",
@@ -2557,7 +2538,7 @@ fun test_hhEval root =
       {run = #run full_entry, thy = "subset", thm = thm,
        goal_id = "subset." ^ thm, cond = "subset-fixture",
        regime = hhEval.Bushy, selector = hhEval.Deps,
-       engine = hhEval.Prover "e", ho = SOME ho, fresh = SOME fresh,
+       engine = hhEval.Prover "e", ho = ho, fresh = fresh,
        prover = "e",
        prover_version = #prover_version full_entry, nfacts = 3, timeout = 6,
        szs = szs, t_prover = 0.1, axioms_used = NONE,
@@ -2572,7 +2553,7 @@ fun test_hhEval root =
       {run = "fixture", thy = "ensemble", thm = thm,
        goal_id = "ensemble." ^ thm, cond = cond,
        regime = hhEval.Chainy, selector = selector,
-       engine = hhEval.Prover "e", ho = SOME false, fresh = SOME false,
+       engine = hhEval.Prover "e", ho = false, fresh = false,
        prover = "e", prover_version = SOME "3.2.5", nfacts = 96,
        timeout = 17, szs = "Theorem", t_prover = 0.2,
        axioms_used = NONE, recon_ok = SOME true,
@@ -2601,7 +2582,7 @@ fun test_hhEval root =
         {run = "fixture", thy = "collision", thm = thm,
          goal_id = "collision." ^ thm, cond = "filter-collision",
          regime = hhEval.Chainy, selector = hhEval.PerSlice,
-         engine = collision_engine, ho = SOME false, fresh = SOME false,
+         engine = collision_engine, ho = false, fresh = false,
          prover = "collision", prover_version = SOME "fixture",
          nfacts = 77, timeout = 19, szs = "Theorem", t_prover = 0.3,
          axioms_used = NONE, recon_ok = SOME recon,
@@ -2735,7 +2716,7 @@ fun test_hhEval root =
          JSONUtil.asInt (JSONUtil.lookupField row "wins") >= 1)
          contributions andalso
        String.isSubstring "## HO subsets" report_text andalso
-       String.isSubstring "| deps-e | HO | n/a |" report_text andalso
+       String.isSubstring "| deps-e | HO | 0 | 0 | 0 | - |" report_text andalso
        String.isSubstring "## Slice contributions" report_text)
     val _ = expect "report seen/fresh arithmetic and filter keys"
       (JSONUtil.asString (JSONUtil.lookupField subset_condition "filter") =
