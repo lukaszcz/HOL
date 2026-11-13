@@ -7,12 +7,14 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import tempfile
 import types
 import unittest
 from unittest import mock
 
 import acceptance as a
+import test_startup_gate as tsg
 import task37_dispose as d
 import task37_gates as gates
 
@@ -100,7 +102,18 @@ def seal_gate(directory):
         for n in ("header.json", "decisions.json")})
 
 
-class StartupLedger(unittest.TestCase):
+def fake_replays(out, record=None):
+    """Stands in for `gates.replays` over the fake gate archives of these
+    fixtures: they replay unless they hold a `no-replay` marker. The real
+    archives are those of `ReplayValidity`."""
+    return not (Path(out) / "no-replay").exists()
+
+
+REPLAYED = {"replay-gate.exit": "exit=0\n"}
+
+
+class Ledgers(unittest.TestCase):
+    """A directory of attempts and their ledger."""
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -110,12 +123,31 @@ class StartupLedger(unittest.TestCase):
         return write(self.root / "attempts.jsonl", "".join(
             json.dumps(x) + "\n" for x in lines))
 
+    def attempts(self, *rows):
+        """A ledger of (name, exit) attempts, each opened and closed."""
+        lines = []
+        for name, exit_ in rows:
+            out = str(self.root / name)
+            lines.append(dict(event="open", attempt=name, output=out))
+            if exit_ is not None:
+                lines.append(dict(event="close", attempt=name, output=out,
+                                  exit=exit_))
+        return self.ledger(*lines)
+
+
+class StartupLedger(Ledgers):
+    def setUp(self):
+        super().setUp()
+        patch = mock.patch.object(gates, "replays", fake_replays)
+        patch.start()
+        self.addCleanup(patch.stop)
+
     def run_dir(self, name, done=True, decision=None, declared=None,
-                reasons=(), replay="exit=0\n"):
+                reasons=(), replays=True, steps=None):
         """An attempt's output: `done`, the gate's decisions (the gate
-        decision with R2 totals, if any), its sidecar and, with a
-        decision, the `replay-gate.exit` the runner wrote (`replay`; None:
-        the runner never got there)."""
+        decision with R2 totals, if any), its sidecar, the files of the
+        runner's steps (`steps`: name -> text) and, with `replays` false,
+        a gate archive that does not replay."""
         path = self.root / name
         (path / "gate").mkdir(parents=True)
         if done:
@@ -137,20 +169,11 @@ class StartupLedger(unittest.TestCase):
                   % hashlib.sha256(side.read_bytes()).hexdigest())
         if decision is not None:
             seal_gate(path / "gate")
-            if replay is not None:
-                write(path / "replay-gate.exit", replay)
+            if not replays:
+                write(path / "gate" / "no-replay", "")
+        for step, text in (steps or {}).items():
+            write(path / step, text)
         return path
-
-    def attempts(self, *rows):
-        """A ledger of (name, exit) attempts, each opened and closed."""
-        lines = []
-        for name, exit_ in rows:
-            out = str(self.root / name)
-            lines.append(dict(event="open", attempt=name, output=out))
-            if exit_ is not None:
-                lines.append(dict(event="close", attempt=name, output=out,
-                                  exit=exit_))
-        return self.ledger(*lines)
 
     def test_every_attempt_is_listed_and_the_judged_one_is_last(self):
         one = self.run_dir("one", done=False)
@@ -170,14 +193,46 @@ class StartupLedger(unittest.TestCase):
                          ("soft", 2))
 
     def test_an_incomplete_judged_attempt_is_void_and_refused(self):
-        for name, exit_, done in (
-                ("a", 2, False),     # a step that failed with 2: no done
-                ("b", 0, False), ("c", 1, True), ("d", 143, True),
-                ("e", 130, True), ("f", 129, True), ("g", 3, True)):
-            out = self.run_dir(name, done=done)
+        for name, exit_ in (
+                ("a", 2),            # a step that failed with 2: no done
+                ("c", 1), ("d", 143), ("e", 130), ("f", 129), ("g", 3)):
+            out = self.run_dir(name, done=False)
             with self.assertRaisesRegex(ValueError, "void", msg=name):
                 gates.startup_attempts(self.attempts((name, exit_)),
                                        out / "gate")
+
+    def test_a_closing_status_that_contradicts_the_files_is_damage(self):
+        damaged = "wrote no `done`"
+        # exit 0 without `done`: the runner exits 0 only after it
+        out = self.run_dir("z", done=False, decision="pass",
+                           declared=(158440, 90000))
+        with self.assertRaisesRegex(ValueError, damaged):
+            gates.startup_attempts(self.attempts(("z", 0)), out / "gate")
+        # exit 2 without `done`, the last cell passed and no step failed
+        # with 2: damage, whatever the gate shows
+        cell = {"cell-o2-24.exit": "exit=0\n"}
+        for steps, bad in ((cell, True),
+                           (dict(cell, **{"gate-null.exit": "exit=2\n"}),
+                            False),           # a step that failed with 2
+                           ({}, False),       # it never got to the cells
+                           ({"cell-o2-24.exit": "exit=2\n"}, False)):
+            out = self.run_dir("y", done=False, decision="fail",
+                               reasons=("R1 differs",), steps=steps,
+                               declared=(158440, 90000))
+            got = gates.classify(dict(attempt="y", output=str(out),
+                                      exit=2, status="soft"))
+            self.assertEqual(bool(got["damaged"]), bad, steps)
+            self.assertEqual(got["kind"], "fail")    # still decided
+            if bad:
+                with self.assertRaisesRegex(ValueError, damaged):
+                    gates.startup_attempts(self.attempts(("y", 2)),
+                                           out / "gate")
+            else:
+                self.assertEqual(gates.startup_attempts(
+                    self.attempts(("y", 2)), out / "gate")[-1]["verdict"],
+                    "judged-incomplete")
+            import shutil
+            shutil.rmtree(out)
 
     def test_a_judged_gate_that_is_not_the_last_attempt_is_refused(self):
         one, two = self.run_dir("one"), self.run_dir("two")
@@ -187,7 +242,7 @@ class StartupLedger(unittest.TestCase):
 
     def test_an_open_last_attempt_with_no_decision_or_a_bad_ledger_is_void(
             self):
-        one = self.run_dir("one")
+        one = self.run_dir("one", done=False)
         with self.assertRaisesRegex(ValueError, "void"):
             gates.startup_attempts(self.attempts(("one", None)),
                                    one / "gate")
@@ -215,11 +270,11 @@ class StartupLedger(unittest.TestCase):
 
     def test_a_redraw_after_a_void_attempt_is_accepted(self):
         # void: the attempt left no gate decision, whatever its exit
-        self.run_dir("signal", done=True)                  # exit 143
-        self.run_dir("nodone", done=False)                 # exit 0
+        self.run_dir("signal", done=False)                 # exit 143
+        self.run_dir("nodone", done=False)                 # exit 1
         self.run_dir("crashed", done=False)                # no decisions
-        self.run_dir("killed")                             # never closed
-        got = self.judged(("signal", 143), ("nodone", 0), ("crashed", 2),
+        self.run_dir("killed", done=False)                 # never closed
+        got = self.judged(("signal", 143), ("nodone", 1), ("crashed", 2),
                           ("killed", None))
         self.assertEqual([x["verdict"] for x in got],
                          ["void", "void", "void", "void", "judged"])
@@ -239,7 +294,7 @@ class StartupLedger(unittest.TestCase):
                 self.judged((name, exit_))
             shutil.rmtree(self.root / name)
             shutil.rmtree(self.root / "last", ignore_errors=True)
-        for name, exit_, done in (("p1", 0, False), ("p2", 143, True)):
+        for name, exit_, done in (("p1", 1, False), ("p2", 143, True)):
             self.run_dir(name, done=done, decision="pass",
                          declared=(158440, 90000))
             got = self.judged((name, exit_))
@@ -308,12 +363,15 @@ class StartupLedger(unittest.TestCase):
                            reasons=("R1 differs",))
         gate = out / "gate"
         self.assertEqual(gates.gate_decision(gate)["decision"], "fail")
+        self.assertEqual(gates.classify(dict(
+            attempt="g", output=str(out), exit=1, status="failed"))["kind"],
+            "fail")
         for damage in ("receipt missing", "receipt bad", "decisions "
                        "truncated", "header edited", "row missing",
                        "decisions edited"):
             shutil.rmtree(out)
             out = self.run_dir("g", done=False, decision="fail",
-                               reasons=("R1 differs",))
+                               reasons=("R1 differs",), steps=REPLAYED)
             if damage == "receipt missing":
                 (gate / "receipt.json").unlink()
             elif damage == "receipt bad":
@@ -344,32 +402,71 @@ class StartupLedger(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "void", msg=damage):
                 gates.startup_attempts(self.attempts(("g", 1)), gate)
 
-    def test_a_decided_gate_that_died_at_its_replay_is_void(self):
-        # complete-looking decision, but the runner never got through
-        # replay-gate: it decided nothing and a redraw is allowed
-        for replay in (None, "exit=1\n", "exit=143\n"):
-            self.run_dir("cut", done=False, decision="fail",
-                         reasons=("R1 differs",), declared=(158440, 90000),
-                         replay=replay)
-            got = self.judged(("cut", 143))
-            self.assertEqual((got[0]["verdict"], got[0]["decision"]),
-                             ("void", None), replay)
-            import shutil
-            shutil.rmtree(self.root / "cut")
-            shutil.rmtree(self.root / "last")
+    def test_a_decided_gate_that_does_not_replay_is_void(self):
+        # no progress past replay-gate: it decided nothing, redraw allowed
+        import shutil
+        self.run_dir("cut", done=False, decision="fail",
+                     reasons=("R1 differs",), declared=(158440, 90000),
+                     replays=False)
+        got = self.judged(("cut", 143))
+        self.assertEqual((got[0]["verdict"], got[0]["decision"]),
+                         ("void", None))
+        shutil.rmtree(self.root / "cut")
+        shutil.rmtree(self.root / "last")
+        # the exit 1 of replay-gate itself is no progress either
+        self.run_dir("bad", done=False, decision="fail",
+                     reasons=("R1 differs",), declared=(158440, 90000),
+                     replays=False, steps={"replay-gate.exit": "exit=1\n"})
+        self.assertEqual(self.judged(("bad", 1))[0]["verdict"], "void")
 
-    def test_a_decided_gate_that_got_through_replay_stays_judged(self):
+    def test_progress_past_replay_gate_makes_a_non_replaying_gate_damage(
+            self):
+        import shutil
+        for steps, exit_ in (
+                ({"replay-gate.exit": "exit=0\n"}, 143),
+                ({"check_deltas.exit": "exit=0\n"}, 143),
+                ({"check_deltas.out": ""}, 143),
+                ({"replay-null.err": ""}, 143),
+                ({"cell-o1-19.exit": "exit=0\n"}, 143),
+                ({"done": "done\n"}, 143), ({}, 0)):
+            self.run_dir("cut", done=False, decision="fail",
+                         reasons=("R1 differs",), steps=steps,
+                         declared=(158440, 90000), replays=False)
+            with self.assertRaisesRegex(
+                    ValueError, "damaged after the run", msg=steps):
+                self.judged(("cut", exit_))
+            shutil.rmtree(self.root / "cut")
+            shutil.rmtree(self.root / "last", ignore_errors=True)
+
+    def test_a_signal_after_a_decided_replayable_gate_keeps_the_decision(
+            self):
+        # killed during gate-null: no replay-gate.exit, no later file
+        import shutil
         self.run_dir("cut", done=False, decision="fail",
                      reasons=("R1 differs",), declared=(158440, 90000))
         with self.assertRaisesRegex(ValueError, "stays judged"):
             self.judged(("cut", 143))
+        # deleting replay-gate.exit of a decided attempt changes nothing
+        for steps in ({}, REPLAYED):
+            shutil.rmtree(self.root / "cut", ignore_errors=True)
+            shutil.rmtree(self.root / "last", ignore_errors=True)
+            out = self.run_dir("cut", done=False, decision="fail",
+                               reasons=("R1 differs",), steps=steps,
+                               declared=(158440, 90000))
+            (out / "replay-gate.exit").unlink(missing_ok=True)
+            self.assertEqual(gates.classify(dict(
+                attempt="cut", output=str(out), exit=143,
+                status="failed"))["kind"], "fail")
+            with self.assertRaisesRegex(ValueError, "stays judged"):
+                self.judged(("cut", 143))
 
     def test_a_damaged_earlier_attempt_is_refused_not_redrawn(self):
         import shutil
         for done, exit_ in ((True, 0), (True, 2), (False, 143)):
             for damage in ("receipt", "row", "file", "extra row"):
                 run = self.run_dir("d", done=done, decision="pass",
-                                   declared=(158440, 90000))
+                                   declared=(158440, 90000),
+                                   steps=REPLAYED)
                 gate = run / "gate"
                 if damage == "receipt":
                     (gate / "receipt.json").write_text("not json")
@@ -393,7 +490,7 @@ class StartupLedger(unittest.TestCase):
     def test_a_damaged_last_attempt_is_refused(self):
         for done, exit_ in ((True, 0), (False, 143)):
             out = self.run_dir("last", done=done, decision="pass",
-                               declared=(158440, 90000))
+                               declared=(158440, 90000), steps=REPLAYED)
             (out / "gate" / "receipt.json").unlink()
             with self.assertRaisesRegex(ValueError, "damaged after the "
                                         "run", msg=done):
@@ -509,6 +606,134 @@ class StartupLedger(unittest.TestCase):
             import shutil
             shutil.rmtree(self.root / "bad")
             shutil.rmtree(self.root / "last", ignore_errors=True)
+
+
+class ReplayValidity(Ledgers):
+    """A gate decision counts iff its receipt rows match and its archive
+    replays (design decision 28): REAL archives, written by
+    `startup_gate.write_archive` and replayed by `startup_gate.replay`."""
+    def setUp(self):
+        super().setUp()
+        import startup_gate as sg
+        self.sg = sg
+        patch = mock.patch.object(sg, "PAIRS", tsg.TEST_PAIRS)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def run_dir(self, name, fail=False, done=False, steps=None):
+        """An attempt whose gate is a real archive: attributed, or with
+        `fail` failed (an undeclared file carries words), sealed to the
+        attempt's own record."""
+        path = self.root / name
+        record = write(path / "not-client-visible.md", "record\n")
+        records = tsg.world(delta=dict(tsg.DELTA, **(
+            {"Other.sml": 3} if fail else {})))
+        (path / "gate").mkdir()
+        tsg.ArchiveTest().archive(path / "gate", records,
+                                  self.sg.sha_file(record))
+        if done:
+            write(path / "done", "done\n")
+        for step, text in (steps or {}).items():
+            write(path / step, text)
+        return path
+
+    def row(self, path, exit_=143):
+        return dict(attempt=path.name, output=str(path), exit=exit_,
+                    status="failed")
+
+    def forge(self, path):
+        """The gate's decision edited and the receipt rewritten to match:
+        every row matches, and the archive no longer replays."""
+        gate = path / "gate"
+        text = (gate / "decisions.json").read_text()
+        (gate / "decisions.json").write_text(
+            text.replace('"attributed"', '"pass"').replace(
+                '"fail"', '"pass"'))
+        write(gate / "receipt.json", {
+            n: self.sg.sha_file(gate / n) for n in json.loads(
+                (gate / "receipt.json").read_text())})
+        self.assertIsNotNone(gates.gate_decision(gate))
+
+    def test_a_replayable_gate_is_judged_by_its_decision(self):
+        for fail, kind in ((False, "pass"), (True, "fail")):
+            out = self.run_dir("g%d" % fail, fail=fail, done=True)
+            got = gates.classify(self.row(out, 0))
+            self.assertEqual((got["kind"], got["damaged"]), (kind, ""))
+            self.assertEqual(got["decision"],
+                             "fail" if fail else "attributed")
+
+    def test_a_signal_after_a_decided_replayable_gate_keeps_it(self):
+        # killed during gate-null: no replay-gate.exit, no later file
+        out = self.run_dir("cut", fail=True)
+        got = gates.classify(self.row(out))
+        self.assertEqual((got["kind"], got["damaged"]), ("fail", ""))
+        with self.assertRaisesRegex(ValueError, "stays judged"):
+            gates.startup_attempts(self.attempts(("cut", 143), (
+                "last", 0)), self.run_dir("last", done=True) / "gate")
+        last = gates.startup_attempts(self.attempts(("cut", 143)),
+                                      out / "gate")[-1]
+        self.assertEqual((last["verdict"], last["decision"]),
+                         ("judged-incomplete", "fail"))
+        # deleting replay-gate.exit (or writing it) changes nothing
+        for steps in ({}, {"replay-gate.exit": "exit=0\n"}):
+            out = self.run_dir("more", fail=True, steps=steps)
+            (out / "replay-gate.exit").unlink(missing_ok=True)
+            self.assertEqual(gates.classify(self.row(out))["kind"], "fail")
+            shutil.rmtree(out)
+
+    def test_a_decided_archive_that_does_not_replay_is_void(self):
+        out = self.run_dir("forged")
+        self.forge(out)
+        got = gates.classify(self.row(out))
+        self.assertEqual((got["kind"], got["damaged"]), ("void", ""))
+        got = gates.startup_attempts(self.attempts(
+            ("forged", 143), ("last", 0)),
+            self.run_dir("last", done=True) / "gate")
+        self.assertEqual([x["verdict"] for x in got], ["void", "judged"])
+        with self.assertRaisesRegex(ValueError, "is void"):
+            gates.startup_attempts(self.attempts(("forged", 143)),
+                                   out / "gate")
+
+    def test_a_record_that_is_not_the_seal_does_not_replay(self):
+        out = self.run_dir("g")
+        write(out / "not-client-visible.md", "edited\n")
+        self.assertEqual(gates.classify(self.row(out))["kind"], "void")
+        (out / "not-client-visible.md").unlink()
+        self.assertEqual(gates.classify(self.row(out))["kind"], "void")
+
+    def test_progress_past_replay_gate_makes_it_damage(self):
+        for steps, exit_, done in (
+                ({"replay-gate.exit": "exit=0\n"}, 143, False),
+                ({"check_deltas.exit": "exit=2\n"}, 143, False),
+                ({"replay-null.out": ""}, 143, False),
+                ({"cell-o1-19.exit": "exit=0\n"}, 130, False),
+                ({}, 143, True), ({}, 0, True)):
+            out = self.run_dir("p", steps=steps, done=done)
+            self.forge(out)
+            got = gates.classify(self.row(out, exit_))
+            self.assertEqual(got["kind"], "void", steps)
+            self.assertIn("damaged after the run", got["damaged"], steps)
+            with self.assertRaisesRegex(ValueError, "damaged after",
+                                        msg=steps):
+                gates.startup_attempts(self.attempts(("p", exit_)),
+                                       out / "gate")
+            with self.assertRaisesRegex(ValueError, "damaged after",
+                                        msg=steps):
+                gates.startup_attempts(self.attempts(
+                    ("p", exit_), ("last", 0)),
+                    self.run_dir("last", done=True) / "gate")
+            shutil.rmtree(out)
+            shutil.rmtree(self.root / "last", ignore_errors=True)
+
+    def test_a_replay_that_is_not_run_gives_no_decision(self):
+        out = self.run_dir("g")
+        with mock.patch.object(self.sg, "replay", side_effect=KeyError):
+            self.assertFalse(gates.replays(out / "gate",
+                                           out / "not-client-visible.md"))
+        self.assertTrue(gates.replays(out / "gate",
+                                      out / "not-client-visible.md"))
+        self.assertFalse(gates.replays(out / "gate"))   # needs its record
+        self.assertFalse(gates.replays(out / "nowhere"))
 
 
 def archive_fixture(root, simp=158440, cong=90000, name="round4",
@@ -669,7 +894,9 @@ class StartupPath(unittest.TestCase):
          self.header) = archive_fixture(
              self.ev, prefix="Baseline: develop %s\n%s\n" % (
                  a.BASE, self.cand))
+        self.unreplayable = set()
         for patch in (
+                mock.patch.object(gates, "replays", self.replays),
                 mock.patch.object(gates, "read_loading", lambda out, gate,
                                   lineage: (dict(stage="second"), "pass")),
                 mock.patch.object(gates, "check_one_audit",
@@ -678,6 +905,10 @@ class StartupPath(unittest.TestCase):
                 mock.patch.object(gates, "replay_startup")):
             patch.start()
             self.addCleanup(patch.stop)
+
+    def replays(self, out, record=None):
+        """Stands in for `gates.replays` over the fake archives here."""
+        return str(Path(out).resolve()) not in self.unreplayable
 
     def archive_of(self, directory, null, total=(158440, 90000)):
         import startup_gate as sg
@@ -695,9 +926,12 @@ class StartupPath(unittest.TestCase):
             decision="pass", R2=r2(*total)))
         seal_gate(directory)
 
-    def make(self, exit_=0, total=(158440, 90000), done=True):
+    def make(self, exit_="auto", total=(158440, 90000), done=True):
+        """The attempt: closed with `exit_` (by default 0 with `done`, 143
+        without), open when None."""
         self.ev.mkdir(exist_ok=True)
-        write(self.ev / "replay-gate.exit", "exit=0\n")
+        if exit_ == "auto":
+            exit_ = 0 if done else 143
         self.archive_of(self.ev / "gate", False, total)
         self.archive_of(self.ev / "gate-null", True)
         if done:
@@ -879,18 +1113,43 @@ class StartupPath(unittest.TestCase):
         found, _, _, _ = self.read(args)
         self.assertEqual(found[gates.STARTUP]["source"], "inconclusive")
 
-    def test_a_decided_gate_that_died_at_its_replay_is_void(self):
-        for replay in (None, "exit=1\n", "exit=\n"):
-            args = self.make(done=False, exit_=143)
-            write(self.ev / "gate" / "decisions.json", dict(
-                decision="fail", reasons=["R1 differs"], R2=r2()))
-            seal_gate(self.ev / "gate")
-            if replay is None:
-                (self.ev / "replay-gate.exit").unlink()
-            else:
-                write(self.ev / "replay-gate.exit", replay)
-            with self.assertRaisesRegex(ValueError, "void", msg=replay):
-                self.read(args)
+    def test_a_decided_gate_that_does_not_replay_is_void(self):
+        args = self.make(done=False, exit_=143)
+        write(self.ev / "gate" / "decisions.json", dict(
+            decision="fail", reasons=["R1 differs"], R2=r2()))
+        seal_gate(self.ev / "gate")
+        self.unreplayable.add(str(self.ev / "gate"))
+        with self.assertRaisesRegex(ValueError, "void"):
+            self.read(args)
+
+    def test_the_null_that_does_not_replay_is_recorded_absent(self):
+        # an attempt owing a redraw: its null cannot change the verdict
+        args = self.make(done=False)
+        args.startup_null = None
+        self.unreplayable.add(str(self.ev / "gate-null"))
+        found, inputs, late, _ = self.read(args)
+        self.assertEqual(inputs[gates.STARTUP]["null-header"], d.NO_NULL)
+        self.assertEqual(found[gates.STARTUP]["owed"], ["redraw"])
+        with mock.patch.object(gates, "replay_startup") as replay:
+            late[0][1]()
+        self.assertEqual(replay.call_count, 1)        # the gate only
+        # an explicit flag naming that archive is accepted the same way
+        args.startup_null = self.ev / "gate-null"
+        _, inputs, _, _ = self.read(args)
+        self.assertEqual(inputs[gates.STARTUP]["null-header"], d.NO_NULL)
+
+    def test_the_null_of_a_complete_attempt_must_replay(self):
+        args = self.make()
+        with mock.patch.object(gates, "replay_startup") as replay:
+            _, _, late, _ = self.read(args)
+            late[0][1]()
+        self.assertEqual(replay.call_count, 2)
+        def replay_one(out, record):
+            if Path(out).name == "gate-null":
+                raise ValueError("did not replay")
+        with mock.patch.object(gates, "replay_startup", replay_one):
+            with self.assertRaisesRegex(ValueError, "did not replay"):
+                late[0][1]()
 
     def test_an_open_last_attempt_is_read(self):
         args = self.make(done=False, exit_=None)
@@ -916,6 +1175,31 @@ class StartupPath(unittest.TestCase):
             self.side.read_bytes())
         args.startup_declared = elsewhere / "declared-deltas.json"
         with self.assertRaisesRegex(ValueError, "not the declared-deltas"):
+            self.read(args)
+
+    def test_the_judged_gate_must_be_exactly_the_gate_of_the_last_attempt(
+            self):
+        # a copy of the archive under the last attempt, not named `gate`
+        args = self.make()
+        shutil.copytree(self.ev / "gate", self.ev / "gate2")
+        args.startup_gate = self.ev / "gate2"
+        with self.assertRaisesRegex(ValueError, "not the gate of the "
+                                    "last"):
+            self.read(args)
+
+    def test_an_explicit_null_of_another_attempt_is_refused_by_that_alone(
+            self):
+        # the attempt's own gate-null is complete (and would be used)
+        args = self.make(done=False)
+        args.startup_null = None
+        found, inputs, _, _ = self.read(args)
+        self.assertNotEqual(inputs[gates.STARTUP]["null-header"],
+                            d.NO_NULL)
+        other = self.root / "other"
+        self.archive_of(other / "gate-null", True)
+        self.assertTrue(gates.archive_complete(other / "gate-null"))
+        args.startup_null = other / "gate-null"
+        with self.assertRaisesRegex(ValueError, "omit the flag"):
             self.read(args)
 
     def test_an_incomplete_attempt_with_no_decision_is_refused(self):

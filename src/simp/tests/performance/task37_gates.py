@@ -49,18 +49,25 @@ What each replay re-derives, and what it cannot:
   only a pass leaves it incomplete owing a `redraw`. The null control of
   a failed or blocked incomplete attempt is neither read nor replayed
   (recorded as not applicable). That of one owing a redraw is read and
-  replayed when its own `gate-null` holds a complete archive, and is
-  otherwise recorded as absent (the attempt ended before the null gate);
-  it is found by itself, and an explicit `--startup-null` there must be
-  that complete archive, else it refuses (omit the flag).
-  A gate decision counts only with a `gate/receipt.json` that lists
-  `header.json` and `decisions.json` and whose sha256 rows all match the
-  files (`gate_decision`), and, for an incomplete attempt, only when its
-  `replay-gate.exit` reads `exit=0` (`replay_gate_ok`): a gate that died
-  at its replay decided nothing, and a redraw is allowed. An attempt
-  that completed, or got through `replay-gate`, and shows no decision now
-  was damaged after the run: it is refused, never read as void
-  (`classify`). Every earlier attempt is judged by
+  replayed when its own `gate-null` holds a complete archive that
+  replays, and is otherwise recorded as absent (it cannot change that
+  verdict); it is found by itself, and an explicit `--startup-null` there
+  must be that complete archive, else it refuses (omit the flag). The
+  null of a complete attempt must replay (refused otherwise).
+  A gate decision counts iff the sha256 rows of its `gate/receipt.json`
+  (which lists `header.json` and `decisions.json`) all match the files
+  (`gate_decision`) AND `startup_gate.replay` of the archive, with the
+  attempt's own record, returns 0 (`replays`; design decision 28). The
+  runner's progress files never decide that: a signal or crash after a
+  decided, replayable gate does not undo it. An archive that is absent,
+  cut or does not replay gives no decision, and the attempt is void
+  (a redraw is allowed) unless it shows progress past `replay-gate`
+  (`past_replay_gate`: exit 0, `done`, `replay-gate.exit` reading
+  `exit=0`, or a later step file), when it was damaged after the run and
+  is refused, never read as void (`classify`). So is an attempt that
+  closed with exit 0 and no `done`, or with exit 2 and no `done` although
+  `cell-o2-24.exit` reads `exit=0` and no step `.exit` reads `exit=2`
+  (`damaged_runner`). Every earlier attempt is judged by
   its gate decision when it has one, complete or not, and recorded; it
   blocks a redraw only when it is complete and passed, or decided fail
   or blocked on grounds other than the declared deltas (void attempts,
@@ -530,6 +537,52 @@ def completed(row):
         Path(row["output"]) / "done").is_file()
 
 
+def step_exit(out, name):
+    """The text of the step status file `name` of the attempt directory
+    `out` (`exit=<status>`), or None when it is not there."""
+    try:
+        return (Path(out) / name).read_text().strip()
+    except OSError:
+        return None
+
+
+# The files of the steps that follow `replay-gate` (run_startup_gate.sh).
+LATER_STEPS = ("check_deltas.*", "replay-null.*", "cell-*.exit")
+
+
+def past_replay_gate(row):
+    """The attempt `row` shows progress past `replay-gate` (design decision
+    28): it closed with exit 0, wrote `done`, `replay-gate.exit` reads
+    `exit=0`, or a later step left a file (`LATER_STEPS`). A gate archive
+    that does not replay then cannot be a gate that died before its
+    replay: it was damaged."""
+    out = Path(row["output"])
+    return (row["exit"] == 0 or (out / "done").is_file() or
+            step_exit(out, "replay-gate.exit") == "exit=0" or
+            any(next(out.glob(g), None) is not None for g in LATER_STEPS))
+
+
+def damaged_runner(row):
+    """Why the closing status of the attempt `row` contradicts its files,
+    or "": the runner exits 0 only after it wrote `done`, and exits 2
+    without `done` only from a step that failed with 2 (its `.exit` reads
+    `exit=2`; the soft steps that failed with 2 write `done`). Exit 2
+    without `done` is damage when the last cell passed (`cell-o2-24.exit`
+    reads `exit=0`) and no step `.exit` reads `exit=2`."""
+    out = Path(row["output"])
+    if (out / "done").is_file():
+        return ""
+    if row["exit"] == 0 or (
+            row["exit"] == 2 and step_exit(out, "cell-o2-24.exit") ==
+            "exit=0" and not any(step_exit(out, p.name) == "exit=2"
+                                 for p in out.glob("*.exit"))):
+        return ("the startup attempt %s closed with exit %d and wrote no "
+                "`done`: the runner writes `done` before it exits so, so "
+                "the attempt was damaged after the run (R-1)" % (
+                    row["attempt"], row["exit"]))
+    return ""
+
+
 def bound_sidecar(out):
     """The sidecar `declared-deltas.json` of the earlier attempt `out`,
     bound as `read_declared` binds the current one: to the record of the
@@ -584,47 +637,73 @@ def gate_decision(out):
     return decisions if isinstance(decisions, dict) else None
 
 
-def replay_gate_ok(row):
-    """The runner of the attempt `row` got through `replay-gate`
-    (`replay-gate.exit` reads `exit=0`)."""
-    try:
-        return (Path(row["output"]) / "replay-gate.exit"
-                ).read_text().strip() == "exit=0"
-    except OSError:
-        return False
-
-
 def archive_complete(out):
     """The gate archive `out` is a complete one (`gate_decision`)."""
     return gate_decision(out) is not None
 
 
+def replays(out, record=None):
+    """The startup gate archive `out` replays (`startup_gate.replay`
+    returns 0), quietly and in-process. `record` is passed to the replay
+    when the header is sealed to a record, and ignored otherwise (a null
+    control has none). An archive that cannot be read or does not replay,
+    for whatever reason, does not replay."""
+    import startup_gate as sg
+    import argparse
+    out = Path(out)
+    try:
+        sealed = bool(a.load(out / "header.json").get("record_sha256"))
+        return quiet(sg.replay, argparse.Namespace(
+            output=out, record=Path(record) if sealed and record
+            is not None else None)) == 0
+    except Exception:
+        return False
+
+
+def judge_gate(row):
+    """(decisions, damage) of the gate of the attempt `row`: its decisions
+    when they count (`classify`, else None) and the message that says why
+    the attempt is damaged (else "")."""
+    out = Path(row["output"])
+    damage = damaged_runner(row)
+    decisions = gate_decision(out / "gate")
+    if decisions is not None and not replays(
+            out / "gate", out / "not-client-visible.md"):
+        decisions = None
+    if decisions is None and not damage and past_replay_gate(row):
+        damage = ("the startup attempt %s got past replay-gate and its "
+                  "gate archive shows no gate decision now (a receipt row "
+                  "differs, a file is missing or it does not replay): it "
+                  "was damaged after the run, which a redraw would hide "
+                  "(R-1)" % row["attempt"])
+    return decisions, damage
+
+
 def classify(row):
     """What the gate of the attempt `row` shows, by its decision whenever
-    the attempt has one (`gate_decision`), complete or not (a crash or a
-    signal after a decided gate does not undo it). Returns the row with `kind`:
-    `void` (no gate decision), `pass` (decided pass or attributed, no
-    reasons, the R2 load totals the record declared), `delta-only` (the
+    the attempt has one, complete or not (design decision 28). A gate
+    decision counts iff all the receipt rows of `<output>/gate` match
+    (`gate_decision`) AND the archive replays (`replays`, with the
+    attempt's own `not-client-visible.md` as the record). The runner's
+    progress files never decide that, so a signal or crash after a decided,
+    replayable gate does not undo the decision. Returns the row with
+    `kind`: `void` (no gate decision), `pass` (decided pass or attributed,
+    no reasons, the R2 load totals the record declared), `delta-only` (the
     same, but the totals differ from the totals its own record declared,
     the sidecar being bound to the record and the sealed inputs: the
     disposition fails it on the declared deltas alone) or `fail` (any
     other decision or reasons: fail, blocked, a smoke), with `decision`,
-    `reasons`, `problems`, `complete` and `damaged`. A decision counts
-    for an incomplete attempt only when it got through `replay-gate`
-    (`replay_gate_ok`): a gate that died at its replay decided nothing (a
-    redraw is allowed). `damaged`: the attempt is complete, or its
-    `replay-gate.exit` reads `exit=0`, and yet it shows no gate decision
-    now (the archive was damaged after the run, which a redraw must not
-    hide)."""
+    `reasons`, `problems`, `complete` and `damaged`: a message, or "" when
+    the attempt is not damaged. An archive that is absent, cut or does not
+    replay gives no decision: the attempt is void (a redraw is allowed)
+    unless it shows progress past `replay-gate` (`past_replay_gate`), in
+    which case it was damaged after the run and is refused (R-1). An
+    attempt whose closing status contradicts its files is damaged too
+    (`damaged_runner`)."""
     out = Path(row["output"])
+    decisions, damage = judge_gate(row)
     found = dict(row, decision=None, reasons=[], problems=[],
-                 complete=completed(row), kind="void", damaged=False)
-    decisions = gate_decision(out / "gate")
-    if decisions is not None and not found["complete"] and \
-            not replay_gate_ok(row):
-        decisions = None
-    elif decisions is None:
-        found["damaged"] = found["complete"] or replay_gate_ok(row)
+                 complete=completed(row), kind="void", damaged=damage)
     if decisions is None:
         return found
     found.update(decision=decisions.get("decision"),
@@ -643,16 +722,6 @@ def classify(row):
     return found
 
 
-def damaged_message(found):
-    """Why the attempt `found` (`classify`) is refused as damaged."""
-    return ("the startup attempt %s %s and its gate archive shows no "
-            "gate decision now (a receipt row differs or a file is "
-            "missing): it was damaged after the run, which a redraw "
-            "would hide (R-1)" % (
-                found["attempt"], "completed" if found["complete"]
-                else "got through replay-gate"))
-
-
 def earlier_attempt(row):
     """What an attempt before the judged one shows, and whether a redraw
     after it is allowed (decisions 21, 25, 26). A damaged attempt
@@ -668,7 +737,8 @@ def earlier_attempt(row):
     is not allowed."""
     found = classify(row)
     kind = found.pop("kind")
-    a.require(not found.pop("damaged"), damaged_message(found))
+    damage = found.pop("damaged")
+    a.require(not damage, damage)
     if kind == "void":
         return dict(found, verdict="void")
     if kind == "delta-only":
@@ -697,7 +767,8 @@ def startup_attempts(ledger, judged):
     the output of the LAST attempt, which may be open (never closed:
     incomplete, as one closed with another status than 0 or 2). Its
     verdict is `judged` when it completed (`completed`: exit 0 or 2 and
-    `done`). An incomplete last
+    `done`, its gate being decided as `classify` says). A damaged attempt
+    (`classify`) is refused. An incomplete last
     attempt with no gate decision is void and cannot be judged (the lead
     redraws); one with a gate decision is judged by it (decision 26):
     `judged-incomplete` when the gate failed or was blocked, on any
@@ -715,12 +786,13 @@ def startup_attempts(ledger, judged):
               "or this is an earlier one" % (judged, last["output"]))
     found = [dict(earlier_attempt(row), judged=False) for row in rows[:-1]]
     if completed(last):
-        a.require(gate_decision(Path(last["output"]) / "gate") is not None,
-                  damaged_message(dict(last, complete=True)))
+        damage = judge_gate(last)[1]
+        a.require(not damage, damage)
         return found + [dict(last, judged=True, verdict="judged",
                              decision=None, reasons=[], problems=[])]
     seen = classify(last)
-    a.require(not seen.pop("damaged"), damaged_message(seen))
+    damage = seen.pop("damaged")
+    a.require(not damage, damage)
     a.require(seen["kind"] != "void",
               "the last startup attempt %s is void (exit %s, `done` %s, no "
               "gate decision): the runner did not complete, so it cannot "
@@ -761,8 +833,10 @@ def startup_gate(header, decisions, null_decisions, problems=()):
     decision (`pass`, `attributed` with the notes as the attribution,
     `fail`; anything else, a blocked or a smoke run, is inconclusive), and
     a null control that did not pass makes it inconclusive (`null_decisions`
-    is None only for an attempt that ended before its null gate, which
-    `task37_dispose.py` accepts for an incomplete one only). `problems`
+    is None when the null is not read: a judged-incomplete attempt, whose
+    gate failed or was blocked, or an attempt owing a redraw whose null is
+    absent or does not replay, which `task37_dispose.py` accepts for an
+    incomplete attempt only). `problems`
     (`declared_problems`) make it `fail`: the record's declared deltas are
     not the gate's, and nothing is transferred."""
     decision = decisions.get("decision")
