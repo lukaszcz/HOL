@@ -494,7 +494,7 @@ fun register (config : prover_config) =
   end
 
 fun find_exec ({name, exec_names, env_var, ...} : prover_config) =
-  hhConfig.find_exec_with_env name env_var exec_names
+  hhConfig.find_exec name env_var exec_names
 
 fun is_found config = Option.isSome (find_exec config)
 

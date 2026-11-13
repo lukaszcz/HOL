@@ -49,6 +49,8 @@ sig
   val register_prover_validator : (string -> bool) -> unit
 
   val platform : unit -> string
-  val find_exec_with_env : string -> string -> string list -> string option
-  val find_exec : string -> string list -> string option
+  (* find_exec prover env_var names: the config file's
+     prover.<prover>.executable, then env_var, PATH, and the system, state
+     and user installations of prover. *)
+  val find_exec : string -> string -> string list -> string option
 end

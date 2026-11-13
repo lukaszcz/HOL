@@ -241,12 +241,8 @@ fun one_of choices value =
 fun valid_filter value =
   one_of ["", "knn", "mepo", "mash", "mesh", "none"] value
 
-val builtin_prover =
-  fn name =>
-    List.exists (fn item => name = item)
-      ["e", "vampire", "zipperposition", "z3"]
-
-val prover_validator = ref builtin_prover
+(* hhProver installs the registry lookup when it loads. *)
+val prover_validator = ref (fn _ : string => true)
 
 fun register_prover_validator validator = prover_validator := validator
 
@@ -694,16 +690,7 @@ and path_exec_in dir names =
       in if executable path then SOME path else NONE end) names
   else NONE
 
-fun prover_env prover =
-  case prover of
-      "e" => "HOL4_EPROVER_EXECUTABLE"
-    | "eprover" => "HOL4_EPROVER_EXECUTABLE"
-    | _ => "HOL4_" ^
-      String.map (fn c =>
-        if c = #"." orelse c = #"-" then #"_" else Char.toUpper c) prover ^
-      "_EXECUTABLE"
-
-fun find_exec_with_env prover env_var names =
+fun find_exec prover env_var names =
   let
     val config_key = "prover." ^ prover ^ ".executable"
     fun configured () =
@@ -726,8 +713,5 @@ fun find_exec_with_env prover env_var names =
       [configured, environment, fn () => path_exec names,
        system_install, state_install, user_install]
   end
-
-fun find_exec prover names =
-  find_exec_with_env prover (prover_env prover) names
 
 end

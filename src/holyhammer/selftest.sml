@@ -280,8 +280,10 @@ fun test_child root =
           handle Feedback.HOL_ERR _ => true) andalso
        ((hhConfig.snapshot_with [("no_such_option", "1")]; false)
           handle Feedback.HOL_ERR _ => true))
+    fun find_test_exec prover = hhConfig.find_exec prover "HOL4_UNSET_EXEC"
+    val find_e_exec = hhConfig.find_exec "e" "HOL4_EPROVER_EXECUTABLE"
     val _ = expect "configuration executable discovery"
-      (is_some config_exec (hhConfig.find_exec "e" ["path-exec"]))
+      (is_some config_exec (find_e_exec ["path-exec"]))
     val _ = write_file config
       ("priority = user # comments are ignored\n\
        \integer = 42\n\
@@ -295,24 +297,24 @@ fun test_child root =
       (hhConfig.hh_get "timeout" = "22" andalso
        has_parameter "timeout" "22" "env")
     val _ = expect "prover environment executable discovery"
-      (is_some env_exec (hhConfig.find_exec "e" ["path-exec"]))
+      (is_some env_exec (find_e_exec ["path-exec"]))
     val _ = expect "PATH executable discovery"
-      (is_some path_exec (hhConfig.find_exec "pathprover" ["path-exec"]))
+      (is_some path_exec (find_test_exec "pathprover" ["path-exec"]))
     val _ = expect "state-directory installation discovery"
       (is_some state_exec
-       (hhConfig.find_exec "stateprover" ["state-exec"]))
+       (find_test_exec "stateprover" ["state-exec"]))
     val _ = expect "newest system installation is preferred"
       (is_some system_new
-       (hhConfig.find_exec "installprover" ["install-exec"]))
+       (find_test_exec "installprover" ["install-exec"]))
     val _ = expect "install search precedes user installation"
-      (hhConfig.find_exec "installprover" ["install-exec"] <> SOME user_new)
+      (find_test_exec "installprover" ["install-exec"] <> SOME user_new)
     val _ = expect "older installation is not selected"
-      (hhConfig.find_exec "installprover" ["install-exec"] <> SOME system_old)
+      (find_test_exec "installprover" ["install-exec"] <> SOME system_old)
     val _ = expect "legacy flat installation discovery"
-      (is_some flat_exec (hhConfig.find_exec "flatprover" ["flat-exec"]))
+      (is_some flat_exec (find_test_exec "flatprover" ["flat-exec"]))
     val _ = expect "versioned installation precedes the legacy layout"
       (is_some system_new
-       (hhConfig.find_exec "installprover" ["install-exec"]))
+       (find_test_exec "installprover" ["install-exec"]))
     val _ = expect "dump reports provenance"
       (List.exists (fn (key, value) =>
          key = "priority" andalso String.isPrefix "config: " value)
