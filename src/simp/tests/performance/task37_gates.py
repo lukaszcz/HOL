@@ -27,14 +27,27 @@ What each replay re-derives, and what it cannot:
   and `header.json` seals its sha256), which must be that file and must
   name the baseline and the candidate of the gate; its null control has
   none. The null control is replayed too and must pass, or the gate is
-  `inconclusive`. NOT re-derived: the builds, the path-length cells
-  (`startup_gate.py cell`) and `check_deltas`, which only reports and
-  needs the built trees.
+  `inconclusive`. The record is made with the load deltas DECLARED from an
+  archive (design decision 21; `fill_record.py` writes them beside the
+  record as a sidecar, `--startup-declared`, whose `record_sha256` is the
+  record's): `read_declared` binds the sidecar to the record, and
+  `declared_problems` requires its Ds and Dc to equal the R2
+  `load.total` of load-simpLib and load-congLib on EVERY image of the
+  judged gate; a difference makes the gate `fail` (visible in the
+  disposition, never transferred). Every attempt of the runner is in an
+  attempts ledger (`--startup-ledger`, R-1: a failed attempt stays), and
+  the judged gate must be the last one (`startup_attempts`). NOT
+  re-derived: the builds, the path-length cells
+  (`startup_gate.py cell`) and the runner's `check_deltas` (whole load
+  rows against the declared archive), which needs the built trees; the
+  declared totals are re-checked here from `decisions.json`.
 - loading (`loading.replay`): every observation, extension check and
   decision of the run from its archived process receipts, with the attempts
   ledger. The two shards (simpLib, congLib) must have been run with the
   same api-audit receipt (`run_api_audit.sh` makes it once; the reports
-  record its seal), which is sealed in the record. NOT re-derived: the API
+  record its seal), which is sealed in the record and must exist, with the
+  seal the reports record and pass (`check_one_audit`: the loading replay
+  itself only checks it when the file is there). NOT re-derived: the API
   audit receipt's own run.
 - TASK33 is judged under `task37_declared.json`: the declaration must be
   valid and filled, and name the baseline and the candidate of the
@@ -321,6 +334,103 @@ def check_record(header, record, lineage, label=STARTUP):
     return a.seal(record)
 
 
+DECLARED_SCHEMA = "task37-startup-declared-v1"
+LOAD_KINDS = ("load-simpLib", "load-congLib")
+
+
+def read_declared(path, header):
+    """The sidecar of the record (`fill_record.py`): the load totals Ds and
+    Dc the record declares, per kind, with the archive they come from. It
+    is bound to the record the gate is sealed to. Returns (document,
+    seal)."""
+    doc = read(path, "the startup declared deltas")
+    a.require(doc.get("schema") == DECLARED_SCHEMA and
+              doc.get("record_sha256") == header.get("record_sha256"),
+              "the startup declared deltas are not those of the record "
+              "the gate is sealed to")
+    totals = doc.get("totals")
+    a.require(isinstance(totals, dict) and set(totals) == set(LOAD_KINDS)
+              and all(type(v) is int for v in totals.values()) and
+              isinstance(doc.get("archive"), str) and doc["archive"] and
+              isinstance(doc.get("archive_sha256"), str),
+              "malformed startup declared deltas")
+    return doc, a.seal(Path(path))
+
+
+def declared_problems(declared, decisions):
+    """What differs between the load totals the record declares and the R2
+    `load.total` of the gate on every image (empty when they agree)."""
+    problems = []
+    r2 = decisions.get("R2")
+    r2 = r2 if isinstance(r2, dict) else {}
+    for kind in LOAD_KINDS:
+        images = r2.get(kind)
+        if not isinstance(images, dict) or not images:
+            problems.append("the gate has no R2 %s" % kind)
+            continue
+        for image, row in sorted(images.items()):
+            got = ((row or {}).get("load") or {}).get("total")
+            if got != declared["totals"][kind]:
+                problems.append(
+                    "%s on image %s is %s, not the %s the record declares "
+                    "(from %s)" % (kind, image, got,
+                                   declared["totals"][kind],
+                                   declared["archive"]))
+    return problems
+
+
+def startup_attempts(ledger, judged):
+    """Every attempt of the startup-gate runner in `ledger` (JSON lines
+    `open`/`close` of `run_startup_gate.sh`: {event, attempt, output,
+    exit}), oldest first: [{attempt, output, status, judged}] with status
+    `ok` (closed with exit 0), `failed` (closed otherwise) or `open`. The
+    judged gate directory `judged` must lie in the output of the LAST
+    attempt, which is closed: an earlier attempt stays in the ledger and in
+    the record (R-1), and a later one is not the judged one."""
+    path = Path(ledger) if ledger is not None else None
+    a.require(path is not None and path.is_file(),
+              "no startup attempts ledger: %s" % ledger)
+    order, rows = [], {}
+    for number, line in enumerate(path.read_text().splitlines(), 1):
+        try:
+            record = json.loads(line)
+        except ValueError:
+            raise ValueError("the startup ledger %s line %d is not JSON"
+                             % (path, number)) from None
+        a.require(isinstance(record, dict) and
+                  record.get("event") in ("open", "close") and
+                  isinstance(record.get("attempt"), str) and
+                  record["attempt"] and
+                  isinstance(record.get("output"), str),
+                  "malformed startup ledger line %d" % number)
+        key = record["attempt"]
+        if record["event"] == "open":
+            a.require(key not in rows, "the startup attempt %s is opened "
+                      "twice" % key)
+            rows[key] = dict(attempt=key, output=record["output"],
+                             status="open", exit=None)
+            order.append(key)
+        else:
+            a.require(key in rows and rows[key]["status"] == "open" and
+                      rows[key]["output"] == record["output"] and
+                      type(record.get("exit")) is int,
+                      "the startup attempt %s is closed without a single "
+                      "matching open" % key)
+            rows[key].update(exit=record["exit"],
+                             status="ok" if record["exit"] == 0
+                             else "failed")
+    a.require(order, "the startup ledger %s has no attempt" % path)
+    last = rows[order[-1]]
+    a.require(last["status"] != "open",
+              "the last startup attempt %s is not closed" % last["attempt"])
+    inside = Path(judged).resolve().parent == Path(
+        last["output"]).resolve()
+    a.require(inside, "the judged startup gate %s is not in the last "
+              "attempt of the ledger (%s): a later attempt exists, or this "
+              "is an earlier one" % (judged, last["output"]))
+    return [dict(rows[k], judged=k == order[-1]) for k in order]
+
+
 def replay_startup(out, record):
     import startup_gate as sg
     import argparse
@@ -329,16 +439,21 @@ def replay_startup(out, record):
     a.require(code == 0, "the startup gate in %s did not replay" % out)
 
 
-def startup_gate(header, decisions, null_decisions):
+def startup_gate(header, decisions, null_decisions, problems=()):
     """The gate record of the startup gate: its status is that of its
     decision (`pass`, `attributed` with the notes as the attribution,
     `fail`; anything else, a blocked or a smoke run, is inconclusive), and
-    a null control that did not pass makes it inconclusive."""
+    a null control that did not pass makes it inconclusive. `problems`
+    (`declared_problems`) make it `fail`: the record's declared deltas are
+    not the gate's, and nothing is transferred."""
     decision = decisions.get("decision")
     status = decision if decision in ("pass", "attributed", "fail") \
         else "inconclusive"
     reasons = list(decisions.get("reasons", [])) + list(
         decisions.get("blockers", []))
+    if problems:
+        status = "fail"
+        reasons += ["declared deltas: " + p for p in problems]
     if status != "fail" and null_decisions.get("decision") != "pass":
         status = "inconclusive"
         reasons.append("the null control is %s, not pass" %
@@ -384,7 +499,23 @@ def check_one_audit(reports):
               "the loading shards were run with different api-audit "
               "receipts (it is made once): %s" % ", ".join(
                   "%s %s" % kv for kv in sorted(seals.items())))
+    for gate, report in reports.items():
+        check_audit_receipt(gate, report["semantic_gate"])
     return next(iter(reports.values()))["semantic_gate"]["seal"]
+
+
+def check_audit_receipt(gate, found):
+    """The api-audit receipt a loading report names exists, is the sealed
+    one and passed with its eight cases (`loading.replay_gate` checks it
+    only when the file is there, which a disposition must not allow)."""
+    path = Path(str(found.get("receipt")))
+    a.require(path.is_file(), "%s: the api-audit receipt is missing: %s"
+              % (gate, path))
+    a.require(a.seal(path) == found["seal"], "%s: the api-audit receipt "
+              "differs from its seal: %s" % (gate, path))
+    doc = a.load(path)
+    a.require(doc.get("pass") is True and len(doc.get("cases", [])) == 8,
+              "%s: the api-audit receipt did not pass: %s" % (gate, path))
 
 
 def replay_loading(out, ledger):

@@ -4407,10 +4407,16 @@ cover the sample and are balanced. Each shard has its own counts file
 `task37_matrix_1_iterations.json` ... `task37_matrix_4_...`; none exists
 until the shard's measurement stage commits it), layout seed, ledger, build
 stamp and prepare log; there is no un-sharded table. A declared follow-up
-of a shard is `task37-<shard>-followup`. It is declared in
-`task37_followup.py` (`CELLS`, by shard key; as `task31_followup.py` is
-apart from `task31_grid.py`), so that declaring one changes no seal of the
-shard drivers and voids no pilot or counts file. Its commands are
+of a shard is `task37-<shard>-followup`. It is declared by one data file per
+shard, `task37_<kind>_<n>_followup_cells.json` (`{"schema":
+"task37-followup-cells-v1", "shard": "matrix-2", "cells": [...]}`: the key
+of the file name, a non-empty subset of the shard's part without repeats;
+validated by `task37_followup.load_declaration`), which `task37_followup.py`
+discovers; its text never changes on a declaration, and each follow-up
+table seals only its own declaration file, so declaring a follow-up
+changes no seal of the shard drivers or of another shard's follow-up and
+voids no pilot, counts file or record. The declaration file is committed
+alone, before any observation of the follow-up. Its commands are
 `task37_followup.py SHARD COMMAND`, its counts file is
 `task37_<kind>_<n>_followup_iterations.json`, and its engines are
 `task37_followup.GRIDS`, by table name. Each table: the `warmup` schedule
@@ -4449,12 +4455,21 @@ the tables' sources (`Cond_rewr.sig`) and the heap and build entries
 
 Tooling lands, is reviewed and merged; one `python-tests` + `boundary-tests`
 run. Then: controls; prepare, toolchain, controls receipt, api-audit;
-snapshots; startup gate; TASK33 info runs and re-declaration; pilots; counts
-commits (each alone); predeclare; identity (client, matrix, downstream);
+snapshots; startup gate; TASK33 info runs and re-declaration; pilots;
+predeclare (which creates each counts file); counts commits (each alone);
+identity (client, matrix, downstream);
 allocation; client timing; matrix timing; loading; TASK32 stage 1; TASK33
 decision runs; D7; dispose. Deterministic gates come first so a failure
 stops early. Any code or build change after the counts commits voids the
 affected results.
+
+Counts files and declaration files are made in the stream clone (the pilot
+and `predeclare` there; the follow-up declaration file by hand), but
+committed only in the main worktree (design decision 17): copy the file
+there and commit it ALONE, then delete the stream clone's untracked copy
+before its `git fetch` + `git merge --ff-only` (an untracked file of the
+same name blocks the fast-forward). The same holds for the follow-up counts
+files and the follow-up declaration files below.
 
 The identity source lists are the exception to that rule (design decision
 19): `task37_sources.py` is sealed by the identity tables only, never by a
@@ -4690,12 +4705,30 @@ without editing what their kept records depend on.
   lengths are part of the test), so one startup-gate run is live at a time.
   The gate's record (`not-client-visible.md`) is always made inside the
   run, by `fill_record.py` from the TASK37 template and this run's
-  `who_pays.out` (the process counts), with the load deltas of the
-  round-4 archive; it is made read-only before the gate, its sha256 is
-  sealed in the gate's `header.json` (`record_sha256`), and the replay
-  checks it. `check_deltas` only reports whether this run's R2 load rows
-  equal round 4's: it neither stops the run nor transfers anything, and
-  the lead reviews a difference. The null gate has no record.
+  `who_pays.out` (the process counts), with the load deltas Ds, Dc
+  DECLARED from `DECLARED_ARCHIVE` (default round 4's; its path and the
+  sha256 of its `decisions.json` are in the record text); it is made
+  read-only before the gate, its sha256 is sealed in the gate's
+  `header.json` (`record_sha256`), and the replay checks it. Design
+  decision 21 supersedes the earlier "neither stops the run nor transfers
+  anything": `fill_record.py` writes the sidecar `declared-deltas.json`
+  (Ds, Dc, the archive, the record's sha256), sealed in `inputs.txt`; the
+  disposition takes it (`--startup-declared`) and FAILS the gate when its
+  R2 `load.total` of load-simpLib or load-congLib differs from the
+  declared one on any image of the judged run; nothing is transferred.
+  The gate, the null gate and `check_deltas` (the whole R2 load rows
+  against the declared archive) are `soft` steps in `run_startup_gate.sh`:
+  a failure does not stop the run (the replays and cells run, so the
+  disposition can record the fail), but the run exits non-zero at the end.
+  The redraw path: the lead predeclares a new record from a TASK37
+  diagnostic gate archive (`DECLARED_ARCHIVE=<that gate>`) and runs again
+  under a new `EVTAG`. The runner records every attempt in
+  `.agent-files/evidence/task37/startup-gate/attempts.jsonl` (an `open` and
+  a `close` line with the exit status, the close written by the EXIT trap,
+  so on a signal too); the disposition (`--startup-ledger`) lists every
+  attempt (a failed earlier one stays, R-1) and requires the judged gate
+  and its null control to be in the last, closed attempt. The null gate has
+  no record.
 - Loading. The api-audit is a one-time step (`run_api_audit.sh`, in the
   built harness clone, never a snapshot) that writes one `receipt.json`.
   The loading shards (simpLib and congLib, 40 pairs of 5 first imports
@@ -4770,14 +4803,17 @@ the one place that accepts a revision.
         --task32 FILE --task32-replay ARGS
         --task33 FILE --task33-replay ARGS
         --startup-gate DIR --startup-null DIR --startup-record FILE
-        --loading-simplib DIR --loading-conglib DIR [--loading-ledger FILE]
+        --startup-declared FILE --startup-ledger FILE
+        --loading-simplib DIR --loading-conglib DIR
+        --loading-ledger GATE=FILE             (simplib, conglib; both)
         [--d7-build FILE]
         (--record OUTDIR | --check OUTDIR)
 
 Shards are joined by their explicit paths; every shard is required with
 its ledger and pilot, each shard's decisions are exactly its part
 (`task37_grid.PARTS`) and the union is exactly the sample. A declared
-follow-up of a shard (entered in `task37_followup.CELLS`, whose engines
+follow-up of a shard (declared by `task37_<kind>_<n>_followup_cells.json`,
+whose engines
 `task37_followup.GRIDS` are named `task37-<shard>-followup`; the shard
 tables are `task37_grid.GRIDS` alone) is judged for R-1 whether or not
 it is given; given, it must replace the shard's `--timing` output. Every
@@ -4795,12 +4831,17 @@ cannot). Their statuses are those of their archives, not typed. The
 startup gate must be sealed to a record (`--startup-record`: the file whose
 sha256 `header.json` holds, naming the gate's baseline and candidate; its
 null control has none), the two loading shards must record one api-audit
-receipt, and the TASK33 declaration must be filled and for the candidate of
-the TASK33 disposition. The
+receipt, which must exist and pass (each shard has its own `--loading-ledger
+GATE=FILE`, no fallback: each runs in its own clone), and the TASK33
+declaration must be filled and for the candidate of the TASK33 disposition. The
 allocation grid's `status`, `nondeterminism` and `unresolved` are recorded
 and one record per (task, case) decides the slopes and constants. An
-inventory's `counts_file` must be the shard's own committed file and its
-seal the current one. `--load STREAM=FILE` takes `task37_load.py`
+inventory's `counts_file` must be one the shard's table names
+(`Table.file_named`: its counts file or a revision of it) and its seal the
+current one. The record holds D's `head` (no uncommitted tracked change
+outside `.agent-files` is allowed), `--candidate` must be equivalent to
+`task37_cases.COMPILED_REF`, and the startup attempts and the declared
+deltas are recorded. `--load STREAM=FILE` takes `task37_load.py`
 recordings; the host load is reported, never a gate. TASK32/33 inputs need
 a top-level `candidate`. `receipt` makes the receipt of the D7 build timing
 only, which is reported and never a gate.

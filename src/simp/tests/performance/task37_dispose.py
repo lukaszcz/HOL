@@ -40,8 +40,9 @@ Policies carried over, each recorded on the cell:
   attributed identity, and a passing timing cell of the sample).
 - D4 (design decision 16): the 31 cells of `task37_cases.D4` (13 TASK29A
   control-limited, 5 TASK29A attributed, 13 TASK30 attributed) get a fresh
-  decision. The only carry-over: a timing chain whose decisive first stage
-  is control-limited is not owed a second stage, and the cell is a pass with
+  decision. The only carry-over: a timing chain whose decisive stage (its
+  final class, after stage 2 or the follow-up if one ran) is
+  control-limited is not owed a second stage, and the cell is a pass with
   policy `D4` when its identity is identical or attributed and its exact
   allocation passes with its work rows `equal`. The policy is recorded on a
   cell that passes by it, and on no other. A pass or a fail of any stage
@@ -77,11 +78,14 @@ stage directory (`--timing SHARD=DIR`: an extension names its first stage by
 fixed seconds is replayed with its pilot, the second stage too). The cells of
 a shard's decisions are exactly its part of the sample
 (`task37_grid.PARTS`), and the union of the shards' decisions is exactly the
-sample. A declared follow-up of a shard (the engines `followup_engines`
-names) is judged for R-1 whether or not it is given; given
+sample. A declared follow-up of a shard (its declaration file
+`task37_<kind>_<n>_followup_cells.json`, read by task37_followup.py; the
+engines `followup_engines` names) is judged for R-1 whether or not it is
+given; given
 (`--followup SHARD=DIR --followup-pilot SHARD=DIR`) it must replace exactly
 the shard's `--timing` output, and its cells replace the shard's. The counts
-file an inventory names must be the shard's committed one, and every
+file an inventory names must be one the shard's table names (its counts
+file or a revision of it, `Table.file_named`), and every
 inventory, resumption and first stage carries the pins of the committed
 `task37_attributed.json` for the shard's sources (the table's seal is
 recorded). A stage whose `source_identity.differing` is not empty is
@@ -103,7 +107,23 @@ and loading are those of their archives, whose replays recompute them
     --task33 FILE --task33-replay ARGS   the same for `task33_storage.py
         dispose` (under --declared task37_declared.json)
     --startup-gate DIR --startup-null DIR --startup-record FILE
-    --loading-simplib DIR --loading-conglib DIR [--loading-ledger FILE]
+    --startup-declared FILE --startup-ledger FILE
+    --loading-simplib DIR --loading-conglib DIR
+    --loading-ledger GATE=FILE (GATE simplib or conglib: one for each, no
+        fallback: each shard runs in its own clone with its own ledger)
+
+The startup gate: `--startup-declared` is the sidecar `fill_record.py`
+wrote with the record (the load totals Ds, Dc the record declares and the
+archive they come from, bound to the record by its sha256); the gate's R2
+load totals must equal them on every image or the gate FAILS (design
+decision 21; nothing is transferred). `--startup-ledger` is the runner's
+attempts ledger: every attempt is listed in the record (a failed earlier
+one stays, R-1), and the judged gate (and its null control) must be the
+last, closed attempt. The api-audit receipt must be present and passing.
+The record holds D's HEAD (`head`), which must have no uncommitted change
+to a tracked file outside .agent-files, and `--candidate` must be
+equivalent to `task37_cases.COMPILED_REF` (same tree outside the
+performance area).
 
 Allocation grid. For each task: the grid's `status`, `nondeterminism` and
 `unresolved` are recorded, and one record per (task, case) decides the
@@ -141,8 +161,9 @@ Commands
         [--load STREAM=FILE ...]
         --task32 FILE --task32-replay ARGS --task33 FILE
         --task33-replay ARGS --startup-gate DIR --startup-null DIR
-        --startup-record FILE --loading-simplib DIR --loading-conglib DIR
-        [--loading-ledger FILE] [--d7-build FILE]
+        --startup-record FILE --startup-declared FILE --startup-ledger FILE
+        --loading-simplib DIR --loading-conglib DIR
+        --loading-ledger GATE=FILE (simplib, conglib; both) [--d7-build FILE]
         (--record OUTDIR | --check OUTDIR)
     task37_dispose.py receipt --gate d7-build --candidate REV --status S
         --exit N --out FILE --report FILE [--report FILE ...]
@@ -575,6 +596,10 @@ def read_stage(root, label, lineage):
     lineage.harness(label + " checkout", inventory.get("checkout"))
     final, scaling = class_map(decisions)
     differing = differing_of(decisions, label)
+    control_open = sorted(
+        "%s-%d" % (w["case"], w["size"]) for w in decisions["workloads"]
+        if tg.open_metrics(w) and any(
+            v["reason"] == tg.CONTROL for v in tg.open_metrics(w)))
     first, plan, first_root = final, {}, root
     if str(inventory.get("schema", "")).endswith("-extension-v1"):
         first_root = (root / inventory["grid"]).resolve()
@@ -600,18 +625,21 @@ def read_stage(root, label, lineage):
     return dict(root=root, first_root=first_root, inventory=inventory,
                 first_inventory=first_inventory, final=final,
                 scaling=scaling, first=first, plan=plan,
+                control_open=control_open,
                 differing=sorted(set(differing)),
                 seals={str(p): a.seal(p) for p in seal_files})
 
 
-def check_counts(stage, label, expected):
-    """The counts file the stage names is the table's committed one,
-    unchanged."""
+def check_counts(stage, label, table):
+    """The counts file the stage names is one of the table's own committed
+    files (`Table.file_named`: its counts file or a revision of it, made by
+    `predeclare --revises`), unchanged."""
     for inventory in (stage["inventory"], stage["first_inventory"]):
         name = inventory.get("counts_file")
-        a.require(isinstance(name, str) and name and name == expected,
-                  "%s names the counts file %r, not %s" % (
-                      label, name, expected))
+        a.require(isinstance(name, str) and name and any(
+            name == p.name for p in table.files()),
+            "%s names the counts file %r, not one of %s" % (
+                label, name, ", ".join(p.name for p in table.files())))
         path = COUNTS_DIR / name
         a.require(path.is_file(), "%s: the counts file %s is missing"
                   % (label, path))
@@ -694,13 +722,14 @@ def read_shard(key, options, lineage, repo, document, late):
               "fixed seconds is replayed with its pilot)" % key)
     engine, expected = timing_engine(key), grid.PARTS[key]
     main = read_stage(root, table, lineage)
-    check_counts(main, table, engine.t.counts.name)
+    check_counts(main, table, engine.t)
     a.require(set(main["final"]) == set(expected),
               "the %s table is not its part of the sample (%d cells)" % (
                   table, len(expected)))
     pins = pins_binding(engine, table, main["root"], document)
     rows = {n: dict(cls=c, first=main["first"][n], stage2=n in main["plan"],
-                    followup=False, earlier=[])
+                    followup=False, earlier=[],
+                    control_open=n in main.get("control_open", ()))
             for n, c in main["final"].items()}
     seals = dict(main["seals"])
     differing = list(main["differing"])
@@ -716,19 +745,25 @@ def read_shard(key, options, lineage, repo, document, late):
         a.require(followup_pilot is not None, "a follow-up of %s needs "
                   "--followup-pilot" % key)
         stage = read_stage(given, "%s follow-up" % table, lineage)
-        check_counts(stage, name, follow.t.counts.name)
+        check_counts(stage, name, follow.t)
         a.require(set(stage["final"]) == set(follow.t.names()),
                   "the %s cells are not the declared follow-up's" % name)
         a.require(stage["scaling"] is None,
                   "a %s follow-up has a retained slope" % table)
         pins_binding(follow, name, stage["root"], document)
-        replaced = (stage["inventory"].get("replaces") or
-                    stage["first_inventory"].get("replaces") or {})
-        a.require(isinstance(replaced.get("grid"), str) and
-                  (stage["first_root"] / replaced["grid"]).resolve() ==
-                  main["root"],
-                  "the %s follow-up does not replace the shard's --timing "
-                  "output %s" % (table, main["root"]))
+        # each inventory's `replaces.grid` is relative to its own root
+        # (the extension's to the extension, the first stage's to the
+        # first stage), which need not be siblings
+        replaced = [(inv["replaces"], root) for inv, root in (
+            (stage["inventory"], stage["root"]),
+            (stage["first_inventory"], stage["first_root"]))
+            if inv.get("replaces")]
+        a.require(replaced and all(
+            isinstance(r.get("grid"), str) and
+            (Path(root) / r["grid"]).resolve() == main["root"]
+            for r, root in replaced),
+            "the %s follow-up does not replace the shard's --timing "
+            "output %s" % (table, main["root"]))
         pending.append((follow, stage["root"], Path(followup_pilot
                                                     ).resolve(),
                         Path(pilot).resolve()))
@@ -737,6 +772,7 @@ def read_shard(key, options, lineage, repo, document, late):
         for n, c in stage["final"].items():
             rows[n] = dict(cls=c, first=stage["first"][n],
                            stage2=n in stage["plan"], followup=True,
+                           control_open=n in stage.get("control_open", ()),
                            earlier=rows[n]["earlier"] + [rows[n]["cls"]])
         seals.update(stage["seals"])
     else:
@@ -847,15 +883,19 @@ def judge_allocation(row, failed, missing, owed):
 
 def judge_timing(name, row, d4, failed, missing, owed):
     """The timing decision of a sampled cell; true when the cell's chain is
-    one policy D4 disposes (its decisive first stage control-limited: the
-    other gates still decide)."""
+    one policy D4 disposes: the cell is in D4 and its decisive timing stage
+    (the chain's final class, after stage 2 or the follow-up if one ran) is
+    control-limited (design decision 16; the other gates still decide). A
+    control-limited cell outside D4 owes stage 2, then an attribution. An
+    inconclusive cell whose control is invalid and whose stage 2 has not
+    run owes `stage2` (the control sizes it), else the `followup`, then an
+    attribution."""
     cls = row["cls"]
     if cls == "pass":
         return False
     if cls == "fail":
         failed.append("timing: fail")
-    elif cls == "control_limited" and name in d4 and \
-            row["first"] == "control_limited":
+    elif cls == "control_limited" and name in d4:
         return True
     elif cls == "protocol":
         missing.append("timing: no admitted measurement")
@@ -865,7 +905,9 @@ def judge_timing(name, row, d4, failed, missing, owed):
         owed.append("attribution" if row["stage2"] else "stage2")
     else:
         missing.append("timing: inconclusive")
-        owed.append("attribution" if row["followup"] else "followup")
+        owed.append("attribution" if row["followup"] else
+                    "stage2" if row.get("control_open") and
+                    not row["stage2"] else "followup")
     return False
 
 
@@ -909,7 +951,7 @@ def judge(name, identity, allocated, timed, d4, groups=None):
     if by_d4 and found["status"] == STATUS_PASS:
         found["policy"] = "D4"
         found["policy_note"] = (
-            "fresh decisive first stage control-limited: stage 2 skipped, "
+            "decisive timing stage control-limited: stage 2 skipped, "
             "disposed by policy D4 with identity and exact allocation "
             "(work rows equal)")
     return found
@@ -1039,11 +1081,22 @@ def timing_options(args):
     return found
 
 
-def read_gates(args, lineage, inputs, late):
+LOADING_KEYS = {gate: module.lower() for gate, module in
+                gates.LOADING.items()}
+
+
+def read_gates(args, lineage, inputs, late, extra):
     """The gate records and the receipt of the D7 timing: the startup gate
     and the two loading runs are read (their statuses are those of their
-    archives) and their replays added to `late`."""
+    archives) and their replays added to `late`. `extra` receives the
+    startup attempts and the declared deltas for the record."""
     found = {}
+    ledgers = keyed(args.loading_ledger, "loading-ledger",
+                    tuple(LOADING_KEYS.values()))
+    a.require(set(ledgers) == set(LOADING_KEYS.values()),
+              "--loading-ledger GATE=FILE is needed for each loading gate "
+              "(%s): each shard has its own clone and ledger" %
+              ", ".join(sorted(LOADING_KEYS.values())))
     a.require(args.startup_gate is not None and
               args.startup_null is not None,
               "the startup gate needs --startup-gate and --startup-null")
@@ -1052,8 +1105,6 @@ def read_gates(args, lineage, inputs, late):
     null_header, null_decisions = gates.read_startup(
         args.startup_null, True, lineage, "startup-gate null control")
     record_seal = gates.check_record(header, args.startup_record, lineage)
-    found[gates.STARTUP] = gates.startup_gate(header, decisions,
-                                              null_decisions)
     inputs[gates.STARTUP] = {
         n: a.seal(Path(d) / f) for n, d, f in (
             ("header", args.startup_gate, "header.json"),
@@ -1061,6 +1112,21 @@ def read_gates(args, lineage, inputs, late):
             ("null-header", args.startup_null, "header.json"),
             ("null-decisions", args.startup_null, "decisions.json"))}
     inputs[gates.STARTUP]["record"] = record_seal
+    declared, inputs[gates.STARTUP]["declared"] = gates.read_declared(
+        args.startup_declared, header)
+    problems = gates.declared_problems(declared, decisions)
+    found[gates.STARTUP] = gates.startup_gate(header, decisions,
+                                              null_decisions, problems)
+    a.require(Path(args.startup_gate).resolve().parent == Path(
+        args.startup_null).resolve().parent,
+        "the startup gate and its null control are not of one attempt")
+    attempts = gates.startup_attempts(args.startup_ledger,
+                                      args.startup_gate)
+    inputs[gates.STARTUP]["ledger"] = a.seal(Path(args.startup_ledger))
+    extra["startup_attempts"] = attempts
+    extra["startup_declared"] = dict(
+        totals=declared["totals"], archive=declared["archive"],
+        archive_sha256=declared["archive_sha256"], problems=problems)
     late.append((gates.STARTUP, lambda: (
         gates.replay_startup(args.startup_gate, args.startup_record),
         gates.replay_startup(args.startup_null, None))))
@@ -1071,9 +1137,13 @@ def read_gates(args, lineage, inputs, late):
         report, status = gates.read_loading(root, gate, lineage)
         reports[gate] = report
         found[gate] = gates.loading_gate(gate, report, status)
-        inputs[gate] = a.seal(Path(root) / "loading.json")
-        late.append((gate, lambda root=root: gates.replay_loading(
-            root, args.loading_ledger)))
+        ledger = ledgers[LOADING_KEYS[gate]]
+        a.require(ledger.is_file(), "the %s ledger is missing: %s" % (
+            gate, ledger))
+        inputs[gate] = dict(loading=a.seal(Path(root) / "loading.json"),
+                            ledger=a.seal(ledger))
+        late.append((gate, lambda root=root, ledger=ledger:
+                     gates.replay_loading(root, ledger)))
     inputs["api-audit"] = gates.check_one_audit(reports)
     d7 = None
     if args.d7_build is not None:
@@ -1085,6 +1155,8 @@ def read_gates(args, lineage, inputs, late):
 def derive(args):
     lineage = lineage_of.Lineage(args.repo, args.candidate)
     repo = lineage.repo
+    head = lineage.head()
+    compiled_ref = lineage.compiled_ref(cases.COMPILED_REF)
     options = timing_options(args)
     identity_ledgers = keyed(args.identity_ledger, "identity-ledger", KINDS)
     alloc_ledgers = keyed(args.alloc_ledger, "alloc-ledger",
@@ -1136,7 +1208,8 @@ def derive(args):
     a.require(args.task33_replay, "no --task33-replay arguments")
     inputs["task32-replay"], inputs["task33-replay"] = (
         args.task32_replay, args.task33_replay)
-    receipts, d7 = read_gates(args, lineage, inputs, late)
+    extra = {}
+    receipts, d7 = read_gates(args, lineage, inputs, late, extra)
     # The replays come last: they are the expensive part.
     late.append(("task32", lambda: gates.replay_task32(
         args.task32, args.task32_replay, lineage)))
@@ -1146,7 +1219,10 @@ def derive(args):
         replay()
     record = dispose(identity, allocation, timing, units, t33, receipts)
     record.update(
-        candidate=lineage.candidate, baseline=a.BASE,
+        candidate=lineage.candidate, baseline=a.BASE, head=head,
+        compiled_ref=compiled_ref,
+        startup_attempts=extra["startup_attempts"],
+        startup_declared=extra["startup_declared"],
         candidates=dict(sorted(lineage.recorded.items())),
         tree_outside_performance=lineage.tree,
         scope=SCOPE, inputs=inputs, code=seals(),
@@ -1177,6 +1253,10 @@ def lines(record):
                 table, x["attempt"], x["status"],
                 "void (no measurement admitted)" if x["void"]
                 else "judged"))
+    for x in record["startup_attempts"]:
+        out.append("STARTUP-ATTEMPT %s %s: %s" % (
+            x["attempt"], x["status"], "judged" if x["judged"] else
+            "earlier attempt, kept in the ledger (R-1)"))
     for kind, paths in record["identity_unaccounted"].items():
         out += ["FAIL identity %s: unaccounted difference %s" % (kind, p)
                 for p in paths]
@@ -1299,7 +1379,13 @@ def parser():
         "sealed to")
     add("--loading-simplib", type=Path, help="the loading run of simpLib")
     add("--loading-conglib", type=Path, help="the loading run of congLib")
-    add("--loading-ledger", type=Path, help="the loading attempts ledger")
+    add("--loading-ledger", action="append", metavar="GATE=FILE",
+        help="the attempts ledger of a loading shard's clone, one for each "
+        "gate (simplib, conglib); both are required")
+    add("--startup-ledger", type=Path, help="the startup-gate attempts "
+        "ledger of run_startup_gate.sh; the judged gate is its last attempt")
+    add("--startup-declared", type=Path, help="the declared load deltas "
+        "(declared-deltas.json) fill_record.py wrote beside the record")
     add("--d7-build", type=Path, help="D7 build receipt (reported only)")
     add("--repo", type=Path, default=a.HERE.parents[3],
         help="the checkout that holds this code (the only one accepted)")

@@ -4,7 +4,10 @@ follow-up, the engines by table name, and that declaring one is apart from
 the shard drivers' seals."""
 import contextlib
 import io
+import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import acceptance as a
@@ -41,7 +44,8 @@ class Declaration(unittest.TestCase):
                          (first.sources, first.pinned, first.pin_file))
         self.assertEqual((t.samples, t.schedule, t.baseline),
                          (first.samples, first.schedule, first.baseline))
-        self.assertEqual(t.sealed, f.SEALED[key])
+        self.assertEqual(
+            t.sealed, f.SEALED[key] + (f.declaration_file(key).name,))
         self.assertIn("task37_grid.py", t.sealed)
         self.assertNotIn("task37_sources.py", t.sealed)
 
@@ -90,6 +94,76 @@ class Declaration(unittest.TestCase):
             self.assertNotIn(f.name_of(key), g.GRIDS)
             self.assertNotEqual(f.file_of(key), g.file_of(key))
             self.assertTrue(f.file_of(key).parent == a.HERE)
+
+
+def declare_in(root, key, cells, more=None):
+    path = Path(root) / f.declaration_file(key).name
+    doc = dict(schema=f.SCHEMA, shard=key, cells=list(cells))
+    doc.update(more or {})
+    path.write_text(json.dumps(doc))
+    return path
+
+
+class Declarations(unittest.TestCase):
+    def test_a_declaration_file_gives_the_cells(self):
+        with tempfile.TemporaryDirectory() as root:
+            cells = g.PARTS["matrix-2"][:2]
+            path = declare_in(root, "matrix-2", cells)
+            self.assertEqual(path.name,
+                             "task37_matrix_2_followup_cells.json")
+            self.assertEqual(f.load_declaration("matrix-2", path),
+                             tuple(cells))
+
+    def test_declaring_another_shard_changes_no_seal_of_an_earlier_one(
+            self):
+        first = f.table("matrix-1", g.PARTS["matrix-1"][:1],
+                        g.GRIDS["task37-matrix-1"])
+        before = (first.driver, first.sealed)
+        with tempfile.TemporaryDirectory() as root:
+            declare_in(root, "matrix-3", g.PARTS["matrix-3"][:1])
+            second = f.table("matrix-3", g.PARTS["matrix-3"][:1],
+                             g.GRIDS["task37-matrix-3"])
+        again = f.table("matrix-1", g.PARTS["matrix-1"][:1],
+                        g.GRIDS["task37-matrix-1"])
+        self.assertEqual((again.driver, again.sealed), before)
+        self.assertEqual(first.driver, second.driver)
+        self.assertIn("task37_matrix_1_followup_cells.json", first.sealed)
+        self.assertNotIn("task37_matrix_3_followup_cells.json",
+                         first.sealed)
+        self.assertNotIn("task37_matrix_1_followup_cells.json",
+                         second.sealed)
+
+    def test_the_driver_does_not_hold_a_declaration(self):
+        text = Path(f.__file__).read_text()
+        for key in g.SHARD_KEYS:
+            self.assertNotIn(g.PARTS[key][0], text)
+
+    def test_malformed_or_mismatched_files_are_refused(self):
+        key, cells = "matrix-2", list(g.PARTS["matrix-2"][:2])
+        with tempfile.TemporaryDirectory() as root:
+            for bad in (
+                    dict(cells=[]), dict(cells=[g.PARTS["matrix-3"][0]]),
+                    dict(cells=cells + cells[:1]), dict(cells="x"),
+                    dict(shard="matrix-3"), dict(schema="other"),
+                    dict(extra=1)):
+                path = declare_in(root, key, cells, bad)
+                with self.assertRaises(ValueError, msg=bad):
+                    f.load_declaration(key, path)
+            path = Path(root) / "x.json"
+            path.write_text("[]")
+            with self.assertRaises(ValueError):
+                f.load_declaration(key, path)
+            with self.assertRaises(ValueError):
+                f.load_declaration("matrix-9", path)
+
+    def test_declared_discovers_the_files_that_exist(self):
+        with tempfile.TemporaryDirectory() as root:
+            declare_in(root, "client-1", g.PARTS["client-1"][:1])
+            with mock.patch.object(f, "declaration_file", lambda k: Path(
+                    root) / ("task37_%s_%s_followup_cells.json" % tuple(
+                        k.split("-")))):
+                self.assertEqual(f.declared(),
+                                 {"client-1": (g.PARTS["client-1"][0],)})
 
 
 class Apart(unittest.TestCase):

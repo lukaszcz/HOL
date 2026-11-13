@@ -12,6 +12,7 @@ from unittest import mock
 
 import acceptance as a
 import import_closure as ic
+import performance_schema as ps
 import task37_cases as c
 import task37_followup as f
 import task37_grid as g
@@ -135,7 +136,11 @@ class Configuration(unittest.TestCase):
                              t.counts)
             self.assertEqual(counts["seconds"], t.seconds_map(), t.counts)
             for value in counts["iterations"].values():
-                self.assertEqual(value & (value - 1), 0, t.counts)
+                # the warmup schedule: any positive integer, by the
+                # schema's own rule (not a power of two)
+                self.assertEqual(
+                    ps.batch_iterations(value, t.schedule), value,
+                    t.counts)
 
     def test_the_sources_are_the_boundary_lists(self):
         """The rule: matrix shards pin TASK30's list less SimpTracking,

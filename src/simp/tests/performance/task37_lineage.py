@@ -79,6 +79,29 @@ class Lineage:
                       label, full, self.candidate))
         return full
 
+    def head(self):
+        """The HEAD of the checkout that holds the code, which must have no
+        change to a tracked file outside `.agent-files` (an uncommitted
+        edit would go into the record's code seals unseen)."""
+        found = subprocess.run(
+            ["git", "-C", str(self.repo), "status", "--porcelain",
+             "--untracked-files=no", "--", ".", ":(exclude).agent-files"],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True)
+        a.require(found.returncode == 0, "cannot read the status of %s"
+                  % self.repo)
+        a.require(not found.stdout.strip(),
+                  "the checkout %s has uncommitted changes to tracked "
+                  "files (they would be sealed into the record): commit "
+                  "or revert them: %s" % (
+                      self.repo, " ".join(found.stdout.split())[:200]))
+        return a.git(self.repo, "rev-parse", "HEAD")
+
+    def compiled_ref(self, rev):
+        """The compiled reference of the TASK32/33 snapshots is equivalent
+        to the candidate: an ancestor of HEAD with the same tree outside
+        the performance area. Returns its full sha."""
+        return self.equivalent("compiled reference", rev)
+
     def candidate_of(self, label, rev):
         """The candidate an input records, accepted by equivalence and
         recorded under `label`."""

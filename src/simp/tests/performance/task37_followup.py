@@ -17,10 +17,22 @@ stage's, the pairs of a cell derive from the shard's develop/develop
 control (`Grid.followup_pairs`, twice the pairs of the shard), and the
 attempts go into the shard's ledger.
 
-With CELLS empty there is no follow-up and no engine: every command is
-refused. To declare one, enter the shard key and its cells (a subset of the
-shard's part, `task37_grid.PARTS`) in CELLS, and commit before any
-observation of the follow-up. The follow-up table of shard `matrix-2` is
+With no declaration file there is no follow-up and no engine: every
+command is refused. A follow-up is declared by one data file per shard,
+`task37_<kind>_<n>_followup_cells.json` (`declaration_file`):
+
+  {"schema": "task37-followup-cells-v1", "shard": "matrix-2",
+   "cells": ["case-size", ...]}
+
+where "shard" is the shard key of the file name and the cells are a
+non-empty subset of the shard's part (`task37_grid.PARTS`), without
+repeats. This module discovers the files that exist and its text never
+changes on a declaration; each follow-up table seals its own declaration
+file (and no other), so declaring the follow-up of one shard changes no
+seal of the follow-up table of another (whose pilot, counts and records
+stay valid). The declaration file is committed ALONE, before any
+observation of the follow-up (the counts-alone rule of PROTOCOL.md). The
+follow-up table of shard `matrix-2` is
 `task37-matrix-2-followup`, its counts file
 `task37_matrix_2_followup_iterations.json` (made by `pilot` and
 `predeclare --replaces GRID --replaces-pilot DIR`, committed alone).
@@ -33,6 +45,7 @@ declared, by table name; task37_dispose.py takes them with
 `task37_grid.GRIDS` (`--followup SHARD=DIR`, `--pilot`,
 `--followup-pilot`).
 """
+import json
 import sys
 
 sys.dont_write_bytecode = True
@@ -41,13 +54,45 @@ import task37_cases as cases
 import task37_grid as base
 import timing_grid as tg
 
-# The cells of the follow-up of each shard, by shard key (`matrix-2`),
-# declared by a policy decision after the shard's grid; none yet.
-CELLS = {}
+SCHEMA = "task37-followup-cells-v1"
 # The shard's sealed files and its driver (this table takes its constants
 # and replays its grid through its table).
 SEALED = {k: base.SEALED[base.KIND[k]] + ("task37_grid.py",)
           for k in base.SHARD_KEYS}
+
+
+def declaration_file(key):
+    """The declaration file of the follow-up of a shard."""
+    kind, number = key.split("-")
+    return a.HERE / ("task37_%s_%s_followup_cells.json" % (kind, number))
+
+
+def load_declaration(key, path=None):
+    """The cells the declaration file of shard `key` (or `path`, for a
+    test) declares, validated: the schema, the shard key of the file name
+    and a non-empty subset of the shard's part, without repeats."""
+    a.require(key in base.PARTS, "no such shard: %r" % (key,))
+    path = declaration_file(key) if path is None else path
+    found = a.load(path)
+    a.require(isinstance(found, dict) and set(found) == {
+        "schema", "shard", "cells"} and found["schema"] == SCHEMA,
+        "%s is not a %s declaration" % (path, SCHEMA))
+    a.require(found["shard"] == key, "%s declares the follow-up of %r, "
+              "not of the shard %s of its file name" % (
+                  path, found["shard"], key))
+    cells = found["cells"]
+    a.require(isinstance(cells, list) and cells and all(
+        isinstance(c, str) for c in cells) and
+        len(set(cells)) == len(cells) and set(cells) <= set(
+            base.PARTS[key]), "%s declares cells that are not a non-empty "
+        "subset of the part of shard %s, or repeats one" % (path, key))
+    return tuple(cells)
+
+
+def declared():
+    """{shard key: cells} of the declaration files that exist."""
+    return {k: load_declaration(k) for k in base.SHARD_KEYS
+            if declaration_file(k).exists()}
 
 
 def name_of(key):
@@ -83,7 +128,8 @@ def table(key, cells, replaced):
         engines=base.ENGINES, drivers=base.DRIVERS,
         layout_acceptance=base.ACCEPTANCE,
         sealed_history=base.SEALED_HISTORY, tree="src",
-        sealed=SEALED[key], require_seed=True, sources=first.sources,
+        sealed=SEALED[key] + (declaration_file(key).name,),
+        require_seed=True, sources=first.sources,
         pinned=first.pinned, pin_file=first.pin_file,
         pin_history=first.pin_history, allocation=first.allocation)
 
@@ -97,6 +143,9 @@ def declare(key, cells, grids=base.GRIDS):
     return built, tg.Grid(built, doc=__doc__)
 
 
+# The cells of the follow-up of each shard, by shard key (`matrix-2`), read
+# from the declaration files; none until a policy decision declares one.
+CELLS = declared()
 TABLES, GRIDS = {}, {}
 for _key, _cells in CELLS.items():
     _found = declare(_key, _cells)
@@ -114,7 +163,7 @@ def main(argv=None):
     found = commands()
     if not argv or argv[0] not in found:
         print("REFUSED: no such TASK37 follow-up is declared (declared: "
-              "%s; task37_followup.CELLS): task37_followup.py SHARD "
+              "%s; the declaration files): task37_followup.py SHARD "
               "COMMAND ..." % (",".join(found) or "none"), file=sys.stderr)
         return tg.REFUSED
     return found[argv[0]].main(argv[1:])

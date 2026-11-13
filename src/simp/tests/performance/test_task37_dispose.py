@@ -43,9 +43,10 @@ CAND = "c" * 40
 ORIGINAL_REPLAY = d.replay_timing
 
 
-def trow(cls="pass", first=None, stage2=False, followup=False):
+def trow(cls="pass", first=None, stage2=False, followup=False,
+         control_open=False):
     return dict(cls=cls, first=first or cls, stage2=stage2,
-                followup=followup, earlier=[])
+                followup=followup, earlier=[], control_open=control_open)
 
 
 def ident(status="identical"):
@@ -115,6 +116,18 @@ class Rule(unittest.TestCase):
         self.assertEqual((r["status"], r["owed"]), ("incomplete",
                                                     ["redraw"]))
 
+    def test_an_unsized_inconclusive_cell_owes_stage2(self):
+        """Stage 1 inconclusive with an invalid control: stage 2 (sized by
+        the control) is owed before any follow-up."""
+        r = self.judge(timed=trow("inconclusive", control_open=True))
+        self.assertEqual(r["owed"], ["stage2"])
+        r = self.judge(timed=trow("inconclusive", control_open=True,
+                                  stage2=True))
+        self.assertEqual(r["owed"], ["followup"])
+        r = self.judge(timed=trow("inconclusive", control_open=True,
+                                  stage2=True, followup=True))
+        self.assertEqual(r["owed"], ["attribution"])
+
     def test_every_incomplete_cell_lists_what_is_owed(self):
         for identity in ("identical", "unresolved"):
             for timed in (None, trow("inconclusive"),
@@ -135,9 +148,22 @@ class Rule(unittest.TestCase):
         self.assertEqual((r["status"], r["policy"]), ("pass", None))
         self.assertEqual(self.judge(name=name, timed=trow("fail"))[
             "status"], "fail")
-        # the decisive first stage was not control-limited
-        r = self.judge(name=name, timed=trow("control_limited",
-                                             first="inconclusive"))
+        # the decisive stage is the chain's final one: control-limited
+        # after stage 1 inconclusive with an invalid control and a stage 2
+        # is disposed by D4; the same chain of a cell outside D4 owes
+        # the attribution
+        chain = trow("control_limited", first="inconclusive", stage2=True,
+                     control_open=True)
+        r = self.judge(name=name, timed=chain)
+        self.assertEqual((r["status"], r["policy"]), ("pass", "D4"))
+        r = self.judge(timed=chain)
+        self.assertEqual((r["status"], r["owed"]), ("incomplete",
+                                                    ["attribution"]))
+        # a stage 1 that was control-limited, then decided inconclusive by
+        # stage 2: not disposed
+        r = self.judge(name=name, timed=trow("inconclusive",
+                                             first="control_limited",
+                                             stage2=True))
         self.assertEqual((r["status"], r["policy"]), ("incomplete", None))
         # D4 needs identity and exact allocation: no D4 on a cell that
         # does not pass by it
@@ -344,6 +370,12 @@ class FakeLineage:
 
     def candidate_of(self, label, rev):
         self.recorded[label] = rev
+        return rev
+
+    def head(self):
+        return "h" * 40
+
+    def compiled_ref(self, rev):
         return rev
 
     def harness(self, label, found, clean=False):
@@ -600,6 +632,27 @@ class Lineage(unittest.TestCase):
         self.assertEqual(got.candidate_of("t", self.c2), self.c2)
         self.assertEqual(got.recorded["t"], self.c2)
 
+    def test_the_head_is_recorded_and_the_tracked_tree_must_be_clean(self):
+        got = lin.Lineage(self.repo, self.c3)
+        self.assertEqual(got.head(), self.other)
+        # untracked files and .agent-files are not in the way
+        (self.repo / "scratch.txt").write_text("u")
+        (self.repo / ".agent-files").mkdir()
+        (self.repo / ".agent-files/e.txt").write_text("e")
+        self.assertEqual(got.head(), self.other)
+        (self.repo / "src/simp/tests/performance/p.txt").write_text("edit")
+        with self.assertRaisesRegex(ValueError, "uncommitted changes"):
+            got.head()
+
+    def test_the_compiled_reference_must_be_equivalent_to_the_candidate(
+            self):
+        got = lin.Lineage(self.repo, self.c3)
+        self.assertEqual(got.compiled_ref(self.c2), self.c2)
+        with self.assertRaisesRegex(ValueError, "tree outside"):
+            got.compiled_ref(self.other)
+        with self.assertRaisesRegex(ValueError, "no commit"):
+            got.compiled_ref("f" * 40)
+
     def test_a_different_tree_is_refused(self):
         got = lin.Lineage(self.repo, self.c3)
         with self.assertRaisesRegex(ValueError, "tree outside"):
@@ -805,6 +858,47 @@ class Pilot(unittest.TestCase):
         self.assertEqual(held["cells"][first]["earlier"], ["pass"])
 
 
+    def follow_stage(self, extension, first, replaces_ext=None,
+                     replaces_first=None):
+        cell = self.names[0]
+        self.stages["f"] = dict(
+            root=extension, first_root=first,
+            inventory=dict(candidate=CAND, replaces=replaces_ext),
+            first_inventory=dict(candidate=CAND, replaces=replaces_first),
+            scaling=None, differing=[], seals={}, plan={},
+            final={cell: "pass"}, first={cell: "pass"})
+        options = self.options(followup={self.key: self.root / "f"})
+        options["followup-pilot"] = {self.key: self.root / "fp"}
+        return options
+
+    def test_replaces_is_resolved_against_each_inventorys_own_root(self):
+        import os
+        main = self.root / "main"
+        ext = self.root / "elsewhere" / "deep" / "ext"
+        first = self.root / "other" / "first"
+        for each in (main, ext, first):
+            each.mkdir(parents=True)
+        engines = {followup.name_of(self.key): fake_follow(self.table)}
+        # the extension and its first stage are not siblings, and each
+        # names the replaced output relative to itself
+        good = self.follow_stage(
+            ext, first, dict(grid=os.path.relpath(main, ext)),
+            dict(grid=os.path.relpath(main, first)))
+        held, _ = self.read(good, engines)
+        self.assertTrue(held["cells"][self.names[0]]["followup"])
+        # resolving the first stage's name against the extension's root
+        # (the old reading) would miss: it is refused when it points
+        # elsewhere from its own root
+        bad = self.follow_stage(
+            ext, first, dict(grid=os.path.relpath(main, ext)),
+            dict(grid=os.path.relpath(main, ext)))
+        with self.assertRaisesRegex(ValueError, "does not replace"):
+            self.read(bad, engines)
+        none = self.follow_stage(ext, first)
+        with self.assertRaisesRegex(ValueError, "does not replace"):
+            self.read(none, engines)
+
+
 class RealReplay(ttg.Rig):
     """`replay_timing` against a real `Grid.replay` (the rig's toy table,
     with the pilot)."""
@@ -928,12 +1022,14 @@ class Gates(unittest.TestCase):
 
     def test_the_loading_shards_must_share_the_api_audit_receipt(self):
         one = dict(semantic_gate=dict(seal=dict(sha256="1" * 64, bytes=2)))
-        same = gates.check_one_audit({"loading-congLib": one,
-                                      "loading-simpLib": one})
-        self.assertEqual(same, one["semantic_gate"]["seal"])
         other = dict(semantic_gate=dict(seal=dict(sha256="2" * 64,
                                                   bytes=2)))
-        with self.assertRaisesRegex(ValueError, "different api-audit"):
+        with mock.patch.object(gates, "check_audit_receipt"):
+            same = gates.check_one_audit({"loading-congLib": one,
+                                          "loading-simpLib": one})
+            self.assertEqual(same, one["semantic_gate"]["seal"])
+        with mock.patch.object(gates, "check_audit_receipt"), \
+                self.assertRaisesRegex(ValueError, "different api-audit"):
             gates.check_one_audit({"loading-congLib": one,
                                    "loading-simpLib": other})
         with self.assertRaisesRegex(ValueError, "no api-audit receipt"):
@@ -1042,6 +1138,9 @@ class Derive(unittest.TestCase):
             lates.append((kind, late("timing " + kind)))
             return {t: dict(v, seals={}, pins={}) for t, v in
                     timing.items() if grid.KIND[t[len("task37-"):]] == kind}
+        def read_gates(args, lineage, inputs, lates, extra):
+            extra.update(startup_attempts=[], startup_declared={})
+            return receipts, None
         self.fake = FakeLineage()
         self.fake.repo, self.fake.tree = Path("."), "tree"
         self.fake.candidate = CAND
@@ -1053,8 +1152,7 @@ class Derive(unittest.TestCase):
             mock.patch.object(d, "read_identity", read_identity),
             mock.patch.object(d, "read_allocation", read_allocation),
             mock.patch.object(d, "read_timing", read_timing),
-            mock.patch.object(d, "read_gates", lambda *args: (
-                receipts, None)),
+            mock.patch.object(d, "read_gates", read_gates),
             mock.patch.object(gates, "read_task32", lambda p, l: (
                 units, {}, CAND)),
             mock.patch.object(gates, "read_task33", lambda p, l: (
