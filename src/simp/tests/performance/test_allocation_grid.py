@@ -227,6 +227,49 @@ class Cell(Bed):
                 with self.assertRaises(ProcessLookupError):
                     os.killpg(made[0].pid, 0)
 
+    def test_an_ignored_signal_stays_ignored_in_the_child(self):
+        names = (signal.SIGHUP, signal.SIGINT)
+        previous = {n: signal.getsignal(n) for n in names}
+        self.addCleanup(lambda: [signal.signal(n, h)
+                                 for n, h in previous.items()])
+        for n in names:
+            signal.signal(n, signal.SIG_IGN)
+        done = loading.execute(
+            ["sh", "-c", "grep SigIgn /proc/self/status"], self.root,
+            os.environ, 10, ())
+        ignored = int(done["stdout"].split()[-1], 16)
+        self.assertEqual(ignored & 3, 3)  # bits of SIGHUP and SIGINT
+        self.assertEqual({n: signal.getsignal(n) for n in names},
+                         {n: signal.SIG_IGN for n in names})
+
+    def test_a_signal_during_the_restore_leaves_no_recorder(self):
+        class Stop(Exception):
+            pass
+
+        def raiser(number, frame):
+            raise Stop(number)
+        names = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+        previous = {n: signal.getsignal(n) for n in names}
+        self.addCleanup(lambda: [signal.signal(n, h)
+                                 for n, h in previous.items()])
+        for n in names:
+            signal.signal(n, raiser)
+        real, fired = signal.signal, []
+
+        def wrapped(number, handler):
+            old = real(number, handler)
+            if handler is raiser and not fired:  # the first restore
+                fired.append(number)
+                os.kill(os.getpid(), number)
+            return old
+        with mock.patch.object(loading.signal, "signal", wrapped):
+            with self.assertRaises(Stop):
+                with loading.spawn_guard():
+                    pass
+        self.assertEqual(len(fired), 1)
+        self.assertEqual({n: signal.getsignal(n) for n in names},
+                         {n: raiser for n in names})
+
     def test_the_spawn_guard_restores_the_handlers_and_skips_workers(self):
         names = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
         before = {n: signal.getsignal(n) for n in names}

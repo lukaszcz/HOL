@@ -5448,9 +5448,11 @@ private counter of `allocation_matrix.py`, in three tasks, one per clone.
   Refusal texts are frozen once a run has recorded them: the replay's
   text must equal the recorded one (for an unresolved cell, the one in the
   archive's meta), so rewording a refusal turns a recorded void attempt
-  into a judged one (`test_the_recorded_refusal_texts_are_frozen` pins
-  the two recorded ones, "wrong observation count" and the
-  `simpMarkerTheory.dat` closure-product refusal). So a
+  into a judged one. For an unresolved cell the void rule compares the
+  string the archive's meta recorded, so the texts that gate the recorded
+  attempts are `UNRESOLVED` and the downstream closure-product refusal;
+  "wrong observation count" is pinned only as a guard
+  (`test_the_recorded_refusal_texts_are_frozen` pins the three). So a
   tool-defect refusal of every cell, which admitted nothing, is void and
   may be redrawn (design decision 30, aligned with TASK32's "every archived
   measuring process rejected"). Anything else (left open, resumed, closed

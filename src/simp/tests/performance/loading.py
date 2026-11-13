@@ -441,16 +441,21 @@ def spawn_guard():
     try:
         for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             previous = signal.getsignal(number)
-            if previous is None:  # not installed from Python: leave it
+            # not installed from Python, or ignored (it cannot raise, and
+            # the child must inherit the ignore): leave it
+            if previous is None or previous == signal.SIG_IGN:
                 continue
             saved[number] = previous
             signal.signal(number, lambda got, frame: seen.append(got))
         yield
     finally:
-        for number, previous in saved.items():
-            signal.signal(number, previous)
-        if seen:
-            signal.raise_signal(seen[0])
+        # every handler is restored before any exception (a signal that
+        # a restored handler raises) propagates
+        with contextlib.ExitStack() as restore:
+            restore.callback(
+                lambda: seen and signal.raise_signal(seen[0]))
+            for number, previous in saved.items():
+                restore.callback(signal.signal, number, previous)
 
 
 def execute(command, cwd, env, timeout, fds):
