@@ -101,11 +101,13 @@ def launcher_patterns():
 
 def holmake_patterns():
     """The wildcard patterns of FRESH_EXT_UO, with .sml dropped."""
-    m = re.search(r"FRESH_EXT_UO\s*=.*?\$\(wildcard ([^)]*)\)",
-                  HOLMAKEFILE.read_text(), re.S)
+    m = re.search(r"FRESH_EXT_UO\s*=\s*\$\(patsubst\s+%\.sml,%\.uo,"
+                  r"\s*\\?\s*\$\(wildcard ([^)]*)\)",
+                  HOLMAKEFILE.read_text())
     words = m.group(1).split() if m else []
     for w in words:
-        assert w.endswith(".sml"), "unexpected wildcard word: " + w
+        if not w.endswith(".sml"):
+            raise AssertionError("unexpected wildcard word: " + w)
     return [w[:-4] for w in words]
 
 
