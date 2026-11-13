@@ -103,10 +103,10 @@ def set_head(attempt, head):
     held["harness"] = dict(held.get("harness") or {}, head=head)
     write(header, held)
     receipt = attempt / "gate" / "receipt.json"
-    if receipt.is_file():       # the receipt of an archive follows
+    if receipt.is_file():       # only the header's row follows
         rows = json.loads(receipt.read_text())
-        write(receipt, {n: hashlib.sha256(
-            (header.parent / n).read_bytes()).hexdigest() for n in rows})
+        rows["header.json"] = hashlib.sha256(header.read_bytes()).hexdigest()
+        write(receipt, rows)
 
 
 def seal_gate(directory):

@@ -5160,7 +5160,9 @@ replaces):
     R33="$R33 --offline $EV/t33/offline/harvest/harvest.json"
     R33="$R33 --offline $EV/t32/offline/archive.json"
     G=$EV/startup-gate/TAG      # TAG: the last startup attempt
-    python3 -B $P/task37_dispose.py --candidate $CAND --repo $M \
+    # env --default-signal: Ctrl-C reaches dispose from a background shell
+    env --default-signal=INT,HUP,TERM \
+      python3 -B $P/task37_dispose.py --candidate $CAND --repo $M \
       --identity-client $EV/id-client/grid \
       --identity-matrix $EV/id-matrix/grid \
       --identity-downstream $EV/id-downstream/grid \
@@ -5677,88 +5679,82 @@ an attempt whose `gate/header.json` is missing, is not JSON, records no
 harness or records a harness head other than its `harness-head.txt` (a
 missing harness head is a refusal, not a skip), and a gate or null whose
 header names a harness head other than the attempt's: the gate and the
-null are tied to one harness. The `.git` symlink makes the tree a work tree of the checkout's
-repository with another performance area, so the replay contract runs no
-git command there (a harness that did would see it dirty). A child
-`python3 -B -E -s` process (stdin `/dev/null`, dispose's environment, no
-`PYTHON*` variable honoured, so nothing can put the checkout's modules
-ahead of the tree) runs a small driver in that tree. The driver points fd 1
-at stderr and writes its one JSON object to a saved duplicate of the
-original fd 1, so a stray write by the harness cannot corrupt it. The
-harness contract is `replay(args)`, with `args.output` and `args.record`
-as absolute paths (or `None`), `SCHEMA` and `PAIRS`; the null is judged in
-the parent (a null has no record). The same child checks the archive header
-(`SCHEMA`, `PAIRS`) and makes the null replay and the late replays. The
-checkout's interpreter never imports harness code. A later fix to any
-harness file, needed for a redraw, therefore never locks the disposition
-out. A replay that returns a nonzero code or raises is a failed replay (the
-code or the error is the reason). Everything that keeps the harness from
-answering is a refusal, never a failed replay: a harness that lacks
-`replay`, `SCHEMA` or `PAIRS`, fails to load, exits non-zero or prints
-malformed output; a child that cannot be started, a missing tree, an
-undecodable stream (output is read as bytes and decoded with replacement),
-a tree that cannot be built (commit or blob unreadable), a lineage or
-header mismatch. A refusal names the attempt, the commit and the cause, the
-tail of the child's stderr or the path. An interrupt of dispose kills the
-child and is not a refusal.
-The runner's progress files never decide that, so a signal or crash after a
-decided, replayable gate (killed during `gate-null`, say) does not undo the
-decision. An archive that is absent, cut or does not replay gives no
-decision: the attempt is void (a redraw is allowed; a truncated file never
-raises; the reason is in the message and in the attempt row) unless it
-shows progress past `replay-gate` (`done`, `replay-gate.exit` reading
-`exit=0`, or any of `check_deltas.*`, `replay-null.*`, `cell-*.exit`), when
-it was damaged after the run and dispose refuses it (earlier or last),
-never reads it as void. `done` present means every step ran: the attempt is
-complete whatever its close status (a signal after `done`, or never
-closed), and its gate must replay, else it is damaged. A failed soft step
-(`who_pays_s1`, `gate`, `gate-null`, `check_deltas`) leads to `done` and
-exit 2; of their `.exit` files only `who_pays_s1`'s can read `exit=2`
-(`gate` and `gate-null` return 1, `check_deltas` 1), and the soft steps
-are left out of the test as a conservative choice. So: exit 0 without
-`done` is always damaged (the runner exits 0 only after `done`); exit 2
-without `done` is damaged unless a hard step's `.exit` reads `exit=2`; any
-other close without `done` is incomplete. The judged gate must be the
-`gate` of the last attempt
-and
+null are tied to one harness. The `.git` symlink makes the tree a work
+tree of the checkout's repository with another performance area, so the
+replay contract runs no git command there (a harness that did would see
+it dirty). A child `python3 -B -E -s` process
+(stdin `/dev/null`, dispose's environment, no `PYTHON*` variable honoured,
+so nothing can put the checkout's modules ahead of the tree) runs a small
+driver in that tree. The driver points fd 1 at stderr and writes its one
+JSON object to a saved duplicate of the original fd 1, so a stray write by
+the harness cannot corrupt it. The harness contract is `replay(args)`, with
+`args.output` and `args.record` as absolute paths (or `None`), `SCHEMA` and
+`PAIRS`; the null is judged in the parent (a null has no record). The same
+child checks the archive header (`SCHEMA`, `PAIRS`) and makes the null
+replay and the late replays. The checkout's interpreter never imports
+harness code. A later fix to any harness file, needed for a redraw,
+therefore never locks the disposition out. A replay that returns a nonzero
+code or raises is a failed replay (the code or the error is the reason).
+Everything that keeps the harness from answering is a refusal, never a
+failed replay: a harness that lacks `replay`, `SCHEMA` or `PAIRS`, fails to
+load, exits non-zero or prints malformed output; a child that cannot be
+started, a missing tree, an undecodable stream (output is read as bytes and
+decoded with replacement), a tree that cannot be built (commit or blob
+unreadable), a lineage or header mismatch. A refusal names the attempt, the
+commit and the cause, the tail of the child's stderr or the path. An
+interrupt of dispose kills the child and is not a refusal. The runner's
+progress files never decide that, so a signal or crash after a decided,
+replayable gate (killed during `gate-null`, say) does not undo the decision.
+An archive that is absent, cut or does not replay gives no decision: the
+attempt is void (a redraw is allowed; a truncated file never raises; the
+reason is in the message and in the attempt row) unless it shows progress
+past `replay-gate` (`done`, `replay-gate.exit` reading `exit=0`, or any of
+`check_deltas.*`, `replay-null.*`, `cell-*.exit`), when it was damaged after
+the run and dispose refuses it (earlier or last), never reads it as void.
+`done` present means every step ran: the attempt is complete whatever its
+close status (a signal after `done`, or never closed), and its gate must
+replay, else it is damaged. A failed soft step (`who_pays_s1`, `gate`,
+`gate-null`, `check_deltas`) leads to `done` and exit 2; of their `.exit`
+files only `who_pays_s1`'s can read `exit=2` (`gate` and `gate-null` return
+1, `check_deltas` 1), and the soft steps are left out of the test as a
+conservative choice. So: exit 0 without `done` is always damaged (the runner
+exits 0 only after `done`); exit 2 without `done` is damaged unless a hard
+step's `.exit` reads `exit=2`; any other close without `done` is incomplete.
+The judged gate must be the `gate` of the last attempt and
 `--startup-declared` its `declared-deltas.json`. A complete attempt is
 judged by its gate and has a replayed null control (`--startup-null` is
 required, exactly the attempt's `gate-null`, and it must replay). If the
-last attempt is incomplete and left no gate decision it is void and
-refuses (the lead redraws). If it is incomplete and has a gate decision it
-is judged by it: a
-fail or blocked decision (a failure on the declared deltas alone included)
-is the gate's result (the startup gate fails, or is inconclusive; a
-delta-only failure is `fail` with a redraw allowed, complete or not), and
+last attempt is incomplete and left no gate decision it is void and refuses
+(the lead redraws). If it is incomplete and has a gate decision it is judged
+by it: a fail or blocked decision (a failure on the declared deltas alone
+included) is the gate's result (the startup gate fails, or is inconclusive;
+a delta-only failure is `fail` with a redraw allowed, complete or not), and
 only a pass leaves the attempt incomplete owing a `redraw` (the gate record
 is inconclusive and owes `redraw`). The null control of a failed or blocked
 incomplete attempt is neither read nor replayed (recorded as not applicable;
 `--startup-null` is refused). That of an attempt owing a redraw is read and
-replayed when its own `gate-null` holds a complete archive that replays,
-and is otherwise recorded as `absent` (the attempt ended before the null
-gate, or its null does not replay); an explicit `--startup-null` there must
-be that archive and replay, else dispose refuses.
-An earlier attempt is judged by its gate decision too, whenever it has one,
-complete or not, and a redraw is blocked only by an earlier attempt that is
-complete and passed (superseded) or that decided fail or blocked on grounds
-other than the declared deltas; it is allowed after an attempt with no gate
-decision (void), one that failed on the declared deltas alone and one that
-is incomplete with a pass (which owed the redraw). The sha256 of the judged
-attempt's sealed `inputs.txt` is in the record's inputs. The
-sidecar `declared-deltas.json` of the judged attempt and of every earlier
-one is bound to its record text (archive sha256, recomputed totals, "Ds =
-N, Dc = M" parsed from the record) and, for an earlier one, to its
-record's sha256 in `gate/header.json` and to the `DECLARED_DELTAS_SHA256`
-of its sealed `inputs.txt`. The runner exits 0 when all steps pass, 2 when
-it completed but a soft step failed (the file `<output>/done` is written,
-not a ledger line), 1 on `die`, or a failing hard step's own status
-(which may be 2); an attempt is
-complete iff it has `done`,
-whatever its close status. An `ATTEMPT` name is
-never reused and `EVTAG` is
-restricted to `[A-Za-z0-9._-]`. `--check` accepts the stored `head` when
-it is an ancestor of HEAD with the same tree outside the performance
-directory.
+replayed when its own `gate-null` holds a complete archive that replays, and
+is otherwise recorded as `absent` (the attempt ended before the null gate,
+or its null does not replay); an explicit `--startup-null` there must be
+that archive and replay, else dispose refuses. An earlier attempt is judged
+by its gate decision too, whenever it has one, complete or not, and a redraw
+is blocked only by an earlier attempt that is complete and passed
+(superseded) or that decided fail or blocked on grounds other than the
+declared deltas; it is allowed after an attempt with no gate decision
+(void), one that failed on the declared deltas alone and one that is
+incomplete with a pass (which owed the redraw). The sha256 of the judged
+attempt's sealed `inputs.txt` is in the record's inputs. The sidecar
+`declared-deltas.json` of the judged attempt and of every earlier one is
+bound to its record text (archive sha256, recomputed totals, "Ds = N, Dc =
+M" parsed from the record) and, for an earlier one, to its record's sha256
+in `gate/header.json` and to the `DECLARED_DELTAS_SHA256` of its sealed
+`inputs.txt`. The runner exits 0 when all steps pass, 2 when it completed
+but a soft step failed (the file `<output>/done` is written, not a ledger
+line), 1 on `die`, or a failing hard step's own status (which may be 2); an
+attempt is complete iff it has `done`, whatever its close status. An
+`ATTEMPT` name is never reused and `EVTAG` is restricted to
+`[A-Za-z0-9._-]`. `--check` accepts the stored `head` when it is an ancestor
+of HEAD with the same tree outside the performance directory.
 
 Lineage (design decision 17). Dispose runs in the main worktree that
 holds the code, and `--repo` must be it. An input's candidate is accepted
