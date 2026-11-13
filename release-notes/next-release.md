@@ -315,6 +315,16 @@ Bugs fixed
 -   HolSmt's natural-number preprocessing now tolerates duplicate assumptions,
     including assumptions made identical by numeral normalization.
 
+-   HolSmt's oracles no longer return false theorems about word division by
+    zero.  `word_div` and `word_quot` were translated to `bvudiv` and
+    `bvsdiv`, which return all ones (or 1) at a zero divisor where HOL gives
+    `0w`, so `Z3_ORACLE_PROVE` and `CVC_ORACLE_PROVE` returned theorems such
+    as `⊢ ∀w:word8. w // 0w = 255w`; they now prove HOL's
+    `⊢ ∀w:word8. w // 0w = 0w`.  `word_smod a 0w` is unspecified in HOL, but
+    its translation `bvsmod` fixed it to `a`; it now reaches the solver as an
+    uninterpreted function of `a`, so goals that depend on its value are
+    refused.
+
 -   `HolSmt` now gives Z3 4.14.1 full tested support.  Z3 4.14.* queries in
     the seven affected array-bearing inferred logics are widened to `ALL` at
     the Z3 boundary, and Z3 `(error ...)` output can no longer be skipped

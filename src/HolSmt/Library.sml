@@ -1326,6 +1326,33 @@ struct
         (simpLib.++(bossLib.bool_ss, boolSimps.LET_ss)) []
         wordsTheory.bit_field_insert;
 
+  (* Rewrites word_div, word_quot and word_smod to the smt_bv* constants the
+     translation emits as bvudiv, bvsdiv and bvsmod, which differ from HOL's
+     operators at a zero divisor.  A literal divisor settles the condition at
+     once; word_smod by a literal 0w is left alone (HOL leaves its value
+     unspecified) and is translated as an uninterpreted function. *)
+  val WORD_DIV_CONV = let
+    val bridges = map (Conv.REWR_CONV o Drule.SPEC_ALL)
+      [HolSmtTheory.word_div_smt_bvudiv, HolSmtTheory.word_quot_smt_bvsdiv,
+       HolSmtTheory.word_smod_smt_bvsmod]
+    val bridge = Conv.FIRST_CONV bridges
+    val settle = Conv.THENC (Conv.RATOR_CONV (Conv.RATOR_CONV
+      (Conv.RAND_CONV wordsLib.WORD_EVAL_CONV)), Conv.COND_CONV)
+    fun is_zero t = wordsSyntax.dest_word_literal t = Arbnum.zero
+  in
+    fn tm =>
+      let
+        val divisor = Term.rand tm
+      in
+        if not (wordsSyntax.is_word_literal divisor) then
+          bridge tm
+        else if integer_wordSyntax.is_word_smod tm andalso is_zero divisor then
+          Conv.NO_CONV tm
+        else
+          Conv.THENC (bridge, settle) tm
+      end
+  end
+
   (* Lowers constant-index bit operations and shifts to the bit-vector forms
      the translation encodes natively.  Each assumption is rewritten on its
      own, like the conclusion: a word operation left in an assumption is
@@ -1344,8 +1371,10 @@ struct
     CONV_TAC (DEPTH_CONV wordsLib.EXPAND_REDUCE_CONV) THEN
       SIMP_TAC ss thms THEN
       CONV_TAC (DEPTH_CONV wordsLib.EXTEND_EXTRACT_CONV) THEN
+      CONV_TAC (DEPTH_CONV WORD_DIV_CONV) THEN
       RULE_ASSUM_TAC
-        (CONV_RULE (DEPTH_CONV wordsLib.EXTEND_EXTRACT_CONV) o
+        (CONV_RULE (DEPTH_CONV WORD_DIV_CONV) o
+         CONV_RULE (DEPTH_CONV wordsLib.EXTEND_EXTRACT_CONV) o
          SIMP_RULE ss thms o
          CONV_RULE (DEPTH_CONV wordsLib.EXPAND_REDUCE_CONV))
   end

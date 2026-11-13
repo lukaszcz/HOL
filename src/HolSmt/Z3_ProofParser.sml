@@ -843,15 +843,20 @@ local
         end
       else
         SmtLib_Theories.decline "<z3_builtin_dict._>" "not extract<m> n")),
-    ("bvudiv_i", SmtLib_Theories.K_zero_two wordsSyntax.mk_word_div),
+    (* Z3's bv*_i operators are its bv* with the SMT-LIB zero-divisor
+       results (bv_decl_plugin.h); bvudiv0 t is bvudiv t 0, all ones under
+       Z3's default hi_div0 (bv_rewriter.cpp) *)
+    ("bvudiv_i", SmtLib_Theories.K_zero_two
+      (SmtLib_Theories.mk_smt_bv "smt_bvudiv")),
     ("bvurem_i", SmtLib_Theories.K_zero_two wordsSyntax.mk_word_mod),
-    ("bvsmod_i", SmtLib_Theories.K_zero_two integer_wordSyntax.mk_word_smod),
+    ("bvsmod_i", SmtLib_Theories.K_zero_two
+      (SmtLib_Theories.mk_smt_bv "smt_bvsmod")),
     (* bvudiv0 t *)
     ("bvudiv0", SmtLib_Theories.K_zero_one (fn t =>
       let
         val zero = wordsSyntax.mk_n2w (numSyntax.zero_tm, wordsSyntax.dim_of t)
       in
-        wordsSyntax.mk_word_div (t, zero)
+        SmtLib_Theories.mk_smt_bv "smt_bvudiv" (t, zero)
       end)),
     (* bvurem0 t *)
     ("bvurem0", SmtLib_Theories.K_zero_one (fn t =>

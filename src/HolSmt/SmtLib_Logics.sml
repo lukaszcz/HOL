@@ -43,13 +43,13 @@ local
   val BV_extension_tmentries = [
     extension_entry "Z3" "bvudiv_i" (soundness_audit_attributes no_attributes)
       ["Z3 proof alias for bvudiv"]
-      (K_zero_two wordsSyntax.mk_word_div),
+      (K_zero_two (mk_smt_bv "smt_bvudiv")),
     extension_entry "Z3" "bvurem_i" (soundness_audit_attributes no_attributes)
       ["Z3 proof alias for bvurem"]
       (K_zero_two wordsSyntax.mk_word_mod),
     extension_entry "Z3" "bvsdiv_i" (soundness_audit_attributes no_attributes)
       ["Z3 proof alias for bvsdiv"]
-      (K_zero_two wordsSyntax.mk_word_quot),
+      (K_zero_two (mk_smt_bv "smt_bvsdiv")),
     extension_entry "Z3" "bvsrem_i" (soundness_audit_attributes no_attributes)
       ["Z3 proof alias for bvsrem"]
       (K_zero_two wordsSyntax.mk_word_rem)

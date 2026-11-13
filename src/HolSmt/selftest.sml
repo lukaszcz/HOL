@@ -1704,7 +1704,7 @@ val graph_expect_thm = expect_thm
     (``x:word8 <> 0x80w /\ y <> 0w ==> (x / y = -(x / -y))``,
       [(*thm_AUTO, thm_YO,*) thm_CVC, thm_Z3(*, thm_Z3p*)]),
 
-    (``x:word32 // 4w = x // 2w // 2w``, [thm_AUTO, thm_CVC, (*thm_YO,*) thm_Z3(*, thm_Z3p*)]),
+    (``x:word32 // 4w = x // 2w // 2w``, [thm_AUTO, thm_CVC, (*thm_YO,*) thm_Z3, thm_Z3p]),
     (``x:word32 // 6w = x // 2w // 3w``, [(*thm_AUTO, thm_YO,*) thm_CVC, thm_Z3(*, thm_Z3p*)]),
     (``x:word32 // x = 1w``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
     (``x:word32 <> 0w ==> (x // x = 1w)``, [(*thm_AUTO, thm_YO,*) thm_CVC, thm_Z3(*, thm_Z3p*)]),
@@ -1732,8 +1732,20 @@ val graph_expect_thm = expect_thm
       [sat_CVC, (*sat_YO,*) sat_Z3, sat_Z3p, sat_CVCp]),
     (``x:word8 >= 0w /\ y < 0w ==> (word_smod x y = word_mod x (-y) + y)``,
       [sat_CVC, (*sat_YO,*) sat_Z3_v4, sat_Z3p_v4, sat_CVCp]),
+    (* word_smod x 0w is unspecified in HOL *)
     (``x:word8 >= 0w /\ y >= 0w ==> (word_smod x y = word_mod x y)``,
+      [sat_CVC, sat_Z3_v4]),
+    (``x:word8 >= 0w /\ y > 0w ==> (word_smod x y = word_mod x y)``,
       [thm_CVC, (*thm_AUTO, thm_YO,*) thm_Z3_v4(*, thm_Z3p_v4*)]),
+
+    (* division by zero: HOL's values, not SMT-LIB's *)
+    (``(w:word8) // 0w = 255w``, [sat_CVC, sat_Z3, sat_Z3p, sat_CVCp]),
+    (``word_quot (w:word8) 0w <> 0w``, [sat_CVC, sat_Z3, sat_Z3p, sat_CVCp]),
+    (``word_smod (w:word8) 0w = w``, [sat_CVC, sat_Z3, sat_Z3p, sat_CVCp]),
+    (``(w:word8) // 0w = 0w``, [thm_CVC, thm_Z3, thm_Z3p, thm_CVCp]),
+    (``word_quot (w:word8) 0w = 0w``, [thm_CVC, thm_Z3, thm_Z3p, thm_CVCp]),
+    (``(y = 0w) ==> ((x:word8) // y = 0w)``, [thm_CVC, thm_Z3, thm_Z3p]),
+    (``(y = 0w) ==> (word_quot (x:word8) y = 0w)``, [thm_CVC, thm_Z3, thm_Z3p]),
 
     (``x:word32 << 0 = x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
     (``x:word32 << 31 = 0w``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
@@ -22322,7 +22334,10 @@ local
   val comparison =
     ``words$word_compare (emitted_a:word8) (emitted_b:word8) = 1w``
   val goal = ([comparison,``integer$ediv (emitted_i:int) emitted_j = 0``,
-    ``integer$emod (emitted_i:int) emitted_j = 0``],boolSyntax.F)
+    ``integer$emod (emitted_i:int) emitted_j = 0``,
+    ``HolSmt$smt_bvudiv (emitted_a:word8) emitted_b = 0w``,
+    ``HolSmt$smt_bvsdiv (emitted_a:word8) emitted_b = 0w``,
+    ``HolSmt$smt_bvsmod (emitted_a:word8) emitted_b = 0w``],boolSyntax.F)
   type env = {graph:G.graph,root:G.scope,sources:S.sources,
     work:W.portfolio,input:GP.validation}
   fun setup () : env =
@@ -22355,7 +22370,7 @@ in
         length (List.filter (matches spec) actual) = 1)
         (SmtLib.all_emitted_definition_specs ())
     in ensure "emission identity rebuilt or definitions came from public names"
-      (length actual = 3 andalso exact_keys andalso
+      (length actual = 6 andalso exact_keys andalso
        ListPair.allEq Portable.pointer_eq (#records data,again) andalso
        ListPair.allEq (fn (held,derived) =>
          Portable.pointer_eq (SmtLib.emitted_definition_key held,

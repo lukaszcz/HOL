@@ -6487,6 +6487,26 @@ local
       raise ERR "rewrite17_under_budget"
         "translation definitions did not occur in rewrite"
 
+  (* Unfolds the translator's definitions.  The word division constants
+     unfold to a zero-divisor case split, which BBLAST does not decide even
+     for a literal divisor: settle conditions that compare word literals. *)
+  fun unfold_translation_definitions theorems =
+    let
+      fun literal_word_eq_conv tm =
+        let
+          val (l, r) = boolSyntax.dest_eq tm
+        in
+          if wordsSyntax.is_word_literal l andalso
+             wordsSyntax.is_word_literal r
+          then wordsLib.WORD_EVAL_CONV tm
+          else Conv.NO_CONV tm
+        end
+    in
+      Conv.THENC (Rewrite.PURE_REWRITE_CONV theorems,
+        Conv.TRY_CONV (Conv.THENC (Conv.DEPTH_CONV literal_word_eq_conv,
+          Rewrite.PURE_REWRITE_CONV [boolTheory.COND_CLAUSES])))
+    end
+
   fun rewrite17 normalize decide definitions target =
     bv_resource_prove_after_admission "rewrite(17)"
       (rewrite17_under_budget normalize decide definitions) target
@@ -6534,7 +6554,8 @@ local
           end
       fun rewrite17_production definitions target =
         rewrite_profile "rewrite(17)(translator-definitions+word)"
-          (rewrite17 Rewrite.PURE_REWRITE_CONV word_decide_raw definitions)
+          (rewrite17 unfold_translation_definitions word_decide_raw
+            definitions)
           target
       fun rewrite18 case_id boolean_residue target =
         bv_resource_prove_after_admission case_id
