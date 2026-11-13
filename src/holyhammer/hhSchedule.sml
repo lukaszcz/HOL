@@ -103,10 +103,7 @@ fun distinct_problem_slices slices =
   end
 
 fun mono_instances options config =
-  case #mono_instances options of
-      SOME value => value
-    | NONE =>
-        (case #mono_instances config of SOME value => value | NONE => 100)
+  Option.getOpt (#mono_instances options, #mono_instances config)
 
 (* This function is called before any scheduler thread is created.  Both
    thml_of_namel and the exporters touch HOL process-global state. *)

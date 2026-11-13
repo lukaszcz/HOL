@@ -267,7 +267,19 @@ fun test_child root =
        #lam_trans default_options = "" andalso
        #mono_iters default_options = 3 andalso
        #mono_instances default_options = NONE andalso
-       hhConfig.hh_get "mono_instances" = "100")
+       hhConfig.hh_get "mono_instances" = "")
+    val overridden = hhConfig.snapshot_with
+      [("max_proofs", "2"), ("mono_instances", "9"), ("debug_dir", "")]
+    val _ = expect "snapshot overrides leave the runtime settings alone"
+      (#max_proofs overridden = 2 andalso
+       #mono_instances overridden = SOME 9 andalso
+       #debug_dir overridden = NONE andalso
+       hhConfig.hh_get "mono_instances" = "")
+    val _ = expect "invalid and unknown snapshot overrides are rejected"
+      (((hhConfig.snapshot_with [("max_proofs", "x")]; false)
+          handle Feedback.HOL_ERR _ => true) andalso
+       ((hhConfig.snapshot_with [("no_such_option", "1")]; false)
+          handle Feedback.HOL_ERR _ => true))
     val _ = expect "configuration executable discovery"
       (is_some config_exec (hhConfig.find_exec "e" ["path-exec"]))
     val _ = write_file config
@@ -1635,7 +1647,7 @@ fun test_hhSlice () =
          supported_formats = ["fof"],
          mk_command = fn executable => fn _ => (executable, []),
          parse_output = fn _ => (hhProver.SzsUnknown "selftest", NONE),
-         mono_instances = NONE, slices = fn () => [slice], legacy = true}
+         mono_instances = 100, slices = fn () => [slice], legacy = true}
       end
     val invalid_filters =
       [("selftest-empty-filter", ""),
@@ -1830,7 +1842,7 @@ fun fake_config name exec_name args parser : hhProver.prover_config =
    version_args = ["--version"], parse_version = fn _ => SOME "test",
    tested_versions = ["test"], supported_formats = ["fof"],
    mk_command = fn executable => fn _ => (executable, args),
-   parse_output = parser, mono_instances = NONE,
+   parse_output = parser, mono_instances = 100,
    slices = fn () => [],
    legacy = false}
 
@@ -1995,7 +2007,7 @@ fun test_runner () =
        mk_command = fn _ => fn _ =>
          ("/definitely/missing/holyhammer-prover", []),
        parse_output = #parse_output e,
-       mono_instances = NONE, slices = fn () => [], legacy = false}
+       mono_instances = 100, slices = fn () => [], legacy = false}
     val exec_result = hhProver.run exec_failure timeout_request
     val _ = expect "runner exec failure returns RunFailure"
       (case #szs exec_result of hhProver.RunFailure _ => true | _ => false)
@@ -2005,7 +2017,7 @@ fun test_runner () =
        tested_versions = [], supported_formats = ["fof"],
        mk_command = fn executable => fn _ => (executable, []),
        parse_output = #parse_output e,
-       mono_instances = NONE, slices = fn () => [], legacy = false}
+       mono_instances = 100, slices = fn () => [], legacy = false}
     val missing_result = hhProver.run missing timeout_request
     val _ = expect "missing prover names downloader"
       (case #szs missing_result of
@@ -2835,7 +2847,7 @@ fun printer_config name slices note parser : hhProver.prover_config =
    tested_versions = ["test"], supported_formats = ["fof"],
    mk_command = fn executable => fn request =>
      (note request; (executable, #extra request)),
-   parse_output = parser, mono_instances = NONE,
+   parse_output = parser, mono_instances = 100,
    slices = fn () => slices, legacy = false}
 
 fun sleeper_config name parser : hhProver.prover_config =
@@ -2844,7 +2856,7 @@ fun sleeper_config name parser : hhProver.prover_config =
      version_args = ["--version"], parse_version = fn _ => SOME "test",
      tested_versions = ["test"], supported_formats = ["fof"],
      mk_command = fn executable => fn _ => (executable, []),
-     parse_output = parser, mono_instances = NONE,
+     parse_output = parser, mono_instances = 100,
      slices = fn () => [slice], legacy = false}
   end
 

@@ -297,10 +297,10 @@ val option_specs : option_spec list =
    {name = "mono_iters", default = fn () => "3",
     expected = "a positive integer", doc = "monomorphization rounds",
     valid = positive_int},
-   {name = "mono_instances", default = fn () => "100",
-    expected = "a positive integer",
-    doc = "new monomorphization-instance cap",
-    valid = positive_int},
+   {name = "mono_instances", default = fn () => "",
+    expected = "empty or a positive integer",
+    doc = "new monomorphization-instance cap (empty means per-prover)",
+    valid = optional_positive_int},
    {name = "minimize", default = fn () => "true",
     expected = "a Boolean (true/false, yes/no, on/off, or 1/0)",
     doc = "minimize reconstructed proofs", valid = Option.isSome o bool_value},
@@ -498,17 +498,6 @@ val reconstruction_timeouts = ref (fn (_ : real, _ : real) => ())
 fun register_reconstruction_timeouts setter =
   reconstruction_timeouts := setter
 
-fun required_in entries caller key parse =
-  let
-    val spec = checked_spec caller key
-    val (value, _) = effective_option_in entries spec
-    val _ = check_value caller spec value
-  in
-    case parse value of
-        SOME result => result
-      | NONE =>
-          invalid_value caller key value (#expected spec)
-  end
 
 fun optional_string value =
   if trim value = "" then NONE else SOME value
@@ -519,10 +508,29 @@ fun detected_cores () =
          SOME number => number
        | NONE => Thread.numProcessors (), 1)
 
-fun snapshot () =
+(* [overrides] take precedence over every other source, without touching
+   the runtime settings that hh_set changes. *)
+fun snapshot_with overrides =
   let
     val entries = read_config_once ()
-    fun required key parse = required_in entries "snapshot" key parse
+    fun required key parse =
+      let
+        val spec = checked_spec "snapshot" key
+        val value =
+          case lookup key overrides of
+              SOME value => value
+            | NONE => #1 (effective_option_in entries spec)
+        val _ = check_value "snapshot" spec value
+      in
+        case parse value of
+            SOME result => result
+          | NONE => invalid_value "snapshot" key value (#expected spec)
+      end
+    fun optional_int value =
+      if trim value = "" then SOME NONE
+      else Option.map SOME (int_value value)
+    val _ = List.app (fn (key, _) => ignore (checked_spec "snapshot" key))
+      overrides
     val timeout = required "timeout" int_value
     val max_proofs = required "max_proofs" int_value
     val provers = required "provers" (SOME o prover_names)
@@ -533,35 +541,20 @@ fun snapshot () =
     val slices = if configured_slices = 0 then 24 * cores
                  else configured_slices
     val filter = required "filter" (SOME o trim)
-    val max_facts =
-      required "max_facts"
-        (fn value =>
-          if trim value = "" then SOME NONE
-          else Option.map SOME (int_value value))
+    val max_facts = required "max_facts" optional_int
     val format = required "format" (SOME o trim)
     val type_enc = required "type_enc" (SOME o trim)
     val lam_trans = required "lam_trans" (SOME o trim)
     val mono_iters = required "mono_iters" int_value
     (* NONE means "no explicit cap": the per-prover value wins. *)
-    val mono_instances =
-      let
-        val spec = checked_spec "snapshot" "mono_instances"
-        val (value, source) = effective_option_in entries spec
-        val _ = check_value "snapshot" spec value
-      in
-        if source = "default" then NONE else int_value value
-      end
+    val mono_instances = required "mono_instances" optional_int
     val minimize = required "minimize" bool_value
-    val preplay_timeout =
-      required "preplay_timeout" real_value
-    val minimize_timeout =
-      required "minimize_timeout" real_value
+    val preplay_timeout = required "preplay_timeout" real_value
+    val minimize_timeout = required "minimize_timeout" real_value
     val cache = required "cache" bool_value
     val cache_dir = required "cache_dir" SOME
-    val cache_max_entries =
-      required "cache_max_entries" int_value
-    val debug_dir =
-      required "debug_dir" (SOME o optional_string)
+    val cache_max_entries = required "cache_max_entries" int_value
+    val debug_dir = required "debug_dir" (SOME o optional_string)
     val result : hh_options =
       {timeout = timeout, max_proofs = max_proofs, provers = provers,
        slices = slices, cores = cores, filter = filter,
@@ -577,6 +570,8 @@ fun snapshot () =
   in
     result
   end
+
+fun snapshot () = snapshot_with []
 
 fun uname key =
   case List.find (fn (key', _) => key = key') (Posix.ProcEnv.uname ()) of

@@ -38,7 +38,7 @@ sig
      supported_formats : string list,
      mk_command : string -> run_request -> string * string list,
      parse_output : string list -> szs * string list option,
-     mono_instances : int option,
+     mono_instances : int,
      slices : unit -> slice list,
      legacy : bool}
 

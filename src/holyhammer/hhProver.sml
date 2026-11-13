@@ -46,7 +46,7 @@ type prover_config =
    supported_formats : string list,
    mk_command : string -> run_request -> string * string list,
    parse_output : string list -> szs * string list option,
-   mono_instances : int option,
+   mono_instances : int,
    slices : unit -> slice list,
    legacy : bool}
 
@@ -396,7 +396,7 @@ val e_config : prover_config =
    parse_version = e_version, tested_versions = ["3.2.5"],
    supported_formats = ["fof", "tf0", "tx0-", "th0"],
    mk_command = e_command,
-   parse_output = parse_tstp, mono_instances = SOME 128,
+   parse_output = parse_tstp, mono_instances = 128,
    slices = fn () =>
      slices "e"
        [(("fof", "", ""), 128, []),
@@ -420,7 +420,7 @@ val vampire_config : prover_config =
    parse_version = vampire_version, tested_versions = ["5.0.1"],
    supported_formats = ["fof", "tf0", "tf1", "tx0", "th0", "th1"],
    mk_command = vampire_command,
-   parse_output = parse_vampire, mono_instances = SOME 256,
+   parse_output = parse_vampire, mono_instances = 256,
    slices = fn () =>
      slices "vampire"
        [(("fof", "", ""), 96, []),
@@ -447,7 +447,7 @@ val zipperposition_config : prover_config =
    parse_version = zipperposition_version, tested_versions = ["2.1"],
    supported_formats = ["fof", "th1"],
    mk_command = zipperposition_command, parse_output = parse_tstp,
-   mono_instances = NONE,
+   mono_instances = 100,
    slices = fn () =>
      slices "zipperposition"
        [(("fof", "", ""), 128, []),
@@ -468,7 +468,7 @@ val z3_config : prover_config =
    version_args = ["--version"], parse_version = z3_version,
    tested_versions = ["4.11.2"], supported_formats = ["fof"],
    mk_command = z3_command,
-   parse_output = parse_z3, mono_instances = NONE,
+   parse_output = parse_z3, mono_instances = 100,
    slices = fn () => [], legacy = true}
 
 val registry = ref

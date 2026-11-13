@@ -1400,20 +1400,13 @@ fun schedule_stop_name hhSchedule.MaxProofs = "MaxProofs"
   | schedule_stop_name hhSchedule.Exhausted = "Exhausted"
   | schedule_stop_name hhSchedule.Interrupted = "Interrupted"
 
-fun schedule_options condition
-    {provers, slices, cores, max_proofs} : hhConfig.hh_options =
-  let val snapshot = hhConfig.snapshot () in
-    {timeout = #timeout condition, max_proofs = max_proofs,
-     provers = provers, slices = slices, cores = cores,
-     filter = #filter snapshot, max_facts = #max_facts snapshot,
-     format = #format snapshot, type_enc = #type_enc snapshot,
-     lam_trans = #lam_trans snapshot, mono_iters = #mono_iters snapshot,
-     mono_instances = #mono_instances snapshot, minimize = #minimize snapshot,
-     preplay_timeout = #preplay_timeout snapshot,
-     minimize_timeout = #minimize_timeout snapshot,
-     cache = true, cache_dir = #cache_dir snapshot,
-     cache_max_entries = #cache_max_entries snapshot, debug_dir = NONE}
-  end
+fun schedule_options condition {provers, slices, cores, max_proofs} =
+  hhConfig.snapshot_with
+    [("timeout", Int.toString (#timeout condition)),
+     ("max_proofs", Int.toString max_proofs),
+     ("provers", String.concatWith " " provers),
+     ("slices", Int.toString slices), ("cores", Int.toString cores),
+     ("cache", "true"), ("debug_dir", "")]
 
 fun max_schedule_facts schedule =
   foldl Int.max 0 (map (#nfacts o #2) schedule)
@@ -1867,18 +1860,19 @@ fun smoke_goal_id (thy, name, _) = goal_id thy name
 (* The table is smoke-gated before it is used for the long evaluation runs.
    Each row below uses the actual scheduler exporter, the row's real prover
    command, TSTP parse-back, and Metis reconstruction from a named premise. *)
-fun smoke_options expdir timeout : hhConfig.hh_options =
-  let val snapshot = hhConfig.snapshot () in
-    {timeout = timeout, max_proofs = 1,
-     provers = ["e", "vampire", "zipperposition"], slices = 16, cores = 16,
-     filter = "none", max_facts = NONE, format = "", type_enc = "",
-     lam_trans = "", mono_iters = #mono_iters snapshot,
-     mono_instances = NONE, minimize = #minimize snapshot,
-     preplay_timeout = #preplay_timeout snapshot,
-     minimize_timeout = #minimize_timeout snapshot, cache = false,
-     cache_dir = "", cache_max_entries = #cache_max_entries snapshot,
-     debug_dir = SOME (join expdir "out")}
-  end
+(* The fixed smoke-test configuration: the three tested provers on their
+   default slice tables, without the cache. *)
+fun smoke_settings timeout =
+  [("timeout", Int.toString timeout),
+   ("provers", "e vampire zipperposition"), ("slices", "16"),
+   ("cores", "16"), ("filter", "none"), ("cache", "false"),
+   ("format", ""), ("type_enc", ""), ("lam_trans", "")]
+
+fun smoke_options expdir timeout =
+  hhConfig.snapshot_with
+    (smoke_settings timeout @
+     [("max_proofs", "1"), ("max_facts", ""), ("mono_instances", ""),
+      ("debug_dir", join expdir "out")])
 
 (* The format smoke test validates the typed slices.  Select them by
    encoding, not position: the rotation is tuning data and reorders. *)
@@ -2000,11 +1994,7 @@ fun soundness_case options timeout goal (config, slice) =
 
 fun with_smoke_hh_options timeout action =
   let
-    val settings =
-      [("timeout", Int.toString timeout),
-       ("provers", "e vampire zipperposition"), ("slices", "16"),
-       ("cores", "16"), ("filter", "none"), ("cache", "false"),
-       ("format", ""), ("type_enc", ""), ("lam_trans", "")]
+    val settings = smoke_settings timeout
     fun saved key =
       case List.find (fn (name, _, source) => name = key andalso source = "set")
           (hhConfig.hh_params ()) of

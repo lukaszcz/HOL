@@ -72,7 +72,8 @@ them empty to retain the tested per-slice choices.  Formats are `fof`,
 `mono_guards??`; an empty encoding selects the legacy FOF exporter.  Lambda
 modes are `lifting`, `combs`, `combs_and_lifting`, and `keep_lams`.
 Unsupported prover/format combinations are rejected.  `mono_iters` controls
-monomorphization rounds, while `mono_instances` caps new instances.
+monomorphization rounds, while `mono_instances` caps new instances; empty,
+the default, uses each prover's own cap.
 
 The scheduled prover names are `e`, `vampire`, and `zipperposition`.  The
 `z3` registry entry remains callable through `hhProver`, but has no scheduler

@@ -58,19 +58,9 @@ val attrib =
   [Thread.InterruptState Thread.InterruptAsynch,
    Thread.EnableBroadcastInterrupt true]
 
-fun interactive_options provers (options : hhConfig.hh_options) :
-    hhConfig.hh_options =
-  {timeout = #timeout options, max_proofs = 1, provers = provers,
-   slices = #slices options, cores = #cores options,
-   filter = #filter options, max_facts = #max_facts options,
-   format = #format options, type_enc = #type_enc options,
-   lam_trans = #lam_trans options, mono_iters = #mono_iters options,
-   mono_instances = #mono_instances options, minimize = #minimize options,
-   preplay_timeout = #preplay_timeout options,
-   minimize_timeout = #minimize_timeout options,
-   cache = #cache options, cache_dir = #cache_dir options,
-   cache_max_entries = #cache_max_entries options,
-   debug_dir = #debug_dir options}
+fun interactive_options provers =
+  hhConfig.snapshot_with
+    [("max_proofs", "1"), ("provers", String.concatWith " " provers)]
 
 type unverified = hhProver.slice * string list
 
@@ -149,7 +139,7 @@ fun options_for caller wanted_atps =
   let
     val configs = available_configs caller (configs_of caller wanted_atps)
   in
-    interactive_options (map #name configs) (hhConfig.snapshot ())
+    interactive_options (map #name configs)
   end
 
 fun hh_pb directory wanted_atps premises goal =
@@ -163,10 +153,7 @@ fun hh_pb directory wanted_atps premises goal =
 
 fun main_hh_result caller directory thmdata goal =
   let
-    val snapshot = hhConfig.snapshot ()
-    val configs = available_configs caller
-      (configs_of caller (#provers snapshot))
-    val options = interactive_options (map #name configs) snapshot
+    val options = options_for caller (#provers (hhConfig.snapshot ()))
     val schedule = hhSlice.mk_schedule options
     val context = hhLearn.create_context thmdata
     fun rank (filter, maximum) =

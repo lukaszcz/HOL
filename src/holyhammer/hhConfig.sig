@@ -43,6 +43,7 @@ sig
   val hh_params : unit -> (string * string * string) list
   val print_params : unit -> unit
   val snapshot : unit -> hh_options
+  val snapshot_with : (string * string) list -> hh_options
 
   (* Initialisation hooks break dependency cycles with these later modules. *)
   val register_prover_validator : (string -> bool) -> unit
