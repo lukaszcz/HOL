@@ -5402,23 +5402,24 @@ private counter of `allocation_matrix.py`, in three tasks, one per clone.
   (a compiled product: `.hol/objs/...`, `.uo`, `.ui`, a theory's `.dat`)
   is mapped to the source it stands for (`allocation_matrix.source_of`)
   before it is compared with the changed paths of the git diff, which
-  name sources: a changed source must be a reviewed boundary file, and a
-  shared product of a module the closure installs privately (`modules` of
-  the closure record) is refused. A theory of a script the closure
-  builds privately is private too (design decision 29): selecting
-  `XScript` makes `XTheory` private, the closure record lists the
-  private names (`private`), and a descriptor of the frozen set rebound
-  to such a name is built by `paired.exe` from its script. The products
-  of that theory (`.hol/objs/XTheory.{sml,sig,uo,ui,dat}`) are judged by
-  the selected script (design decision 34), and only when their seal is
-  the one the post-build record holds: `built` in an allocation
-  receipt and `selections[side].products` in an identity manifest. In
-  an allocation, `built` is the job's single seal of `.hol/objs/` taken
-  in `make_job` after Holmake and copied into every receipt of that side
-  in the cell; the agreement check on a side catches only an internally
-  inconsistent archive, and no bytes are compared across builds. A product that
-  is absent from that record, or sealed otherwise, is refused. A receipt
-  made before `built` existed has no such record: its theory is refused.
+  name sources: a changed source must be a reviewed boundary file or a
+  theory script of the subject directory (below), and a shared product of
+  a module the closure installs privately (`modules` of the closure
+  record) is refused.
+- Theory data is one shared hierarchy (design decision 40). HOL links a
+  theory to its parents by the hash of each parent's `.dat`, so a theory
+  a side built privately would break the load of every frozen theory that
+  descends from it. Every theory of the closure, the theory of a selected
+  subject script (`src/simp/src/XScript.sml`) included, is therefore a
+  frozen copy of the toolchain's, the same bytes on every side; the sides
+  differ in subject code only, and the `private` names `install` returns
+  are the selected module stems. A closure product or loaded file whose source
+  (`source_of`) is a theory script directly in the subject directory is
+  subject theory data, shared by construction, and is admitted when that
+  script changed; the reviewed boundary manifest does not list it, since
+  its files lie outside the subject. Any other changed source, a subject
+  file that is not a theory script and a script in a subdirectory of the
+  subject are refused.
 - Counts. `task37_iterations.py {matrix,client,downstream,all} [--check]`
   writes `allocation_iterations_task37_matrix.json`,
   `allocation_iterations_task37_client.json` and
