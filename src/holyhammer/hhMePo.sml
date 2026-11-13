@@ -77,10 +77,18 @@ fun order_of_type ty =
           foldl Int.max 0 (map order_of_type (#Args (Type.dest_thy_type ty)))
         else 0
 
+(* A type operator is identified by (Thy, Tyop).  Comparing the pair
+   lexicographically orders heads as String.compare orders Thy ^ "$" ^ Tyop,
+   since theory names contain no character below "$". *)
 fun type_name ty =
   let val {Thy, Tyop, Args} = Type.dest_thy_type ty in
-    (Thy ^ "$" ^ Tyop, Args)
+    ((Thy, Tyop), Args)
   end
+
+fun head_compare ((thy, tyop), (thy', tyop')) =
+  case String.compare (thy, thy') of
+      EQUAL => String.compare (tyop, tyop')
+    | order => order
 
 fun patternT_eq (pattern, instance) =
   if Type.is_vartype pattern then Type.is_vartype instance
@@ -129,7 +137,7 @@ fun patternT_compare (left, right) =
       val (name, arguments) = type_name left
       val (name', arguments') = type_name right
     in
-      case String.compare (name, name') of
+      case head_compare (name, name') of
           EQUAL => List.collate patternT_compare (arguments, arguments')
         | order => order
     end
@@ -503,9 +511,12 @@ fun purge_hopeless (fudge : fudge) iteration weighted =
       (fn (_, weight) => weight >= #hopeless_threshold fudge) weighted
   else weighted
 
+(* counts is the fact's own contribution to the frequency table, so that
+   restricted contexts can adjust a table instead of re-walking terms. *)
 type cached_fact =
   {thmid : string, theory : string, concl : term,
-   pconsts : pconst list, stature : hhStature.stature}
+   pconsts : pconst list, counts : (pconst * int) list,
+   stature : hhStature.stature}
 
 type context =
   {current_theory : string, facts : cached_fact list,
@@ -513,10 +524,36 @@ type context =
 
 fun cache_fact {thmid, theory, concl, stature} =
   {thmid = thmid, theory = theory, concl = concl,
-   pconsts = pconsts_in_term theory concl, stature = stature}
+   pconsts = pconsts_in_term theory concl,
+   counts = frequency_entries (count_fact_consts [(theory, concl)]),
+   stature = stature}
+
+(* Entries never hold zero counts or empty count tables, whichever way the
+   table was reached. *)
+fun adjust_frequency delta ((name, ptype), amount) table =
+  let
+    val counts =
+      case Redblackmap.peek (table, name) of
+          SOME old => old
+        | NONE => dempty ptype_compare
+    val count =
+      (case Redblackmap.peek (counts, ptype) of
+           SOME old => old
+         | NONE => 0) + delta * amount
+    val counts' =
+      if count = 0 then drem ptype counts else dadd ptype count counts
+  in
+    if dlength counts' = 0 then drem name table
+    else dadd name counts' table
+  end
+
+fun adjust_by_facts delta facts table =
+  foldl (fn (fact, table) =>
+    foldl (fn (entry, table) => adjust_frequency delta entry table)
+      table (#counts fact)) table facts
 
 fun frequency_of_facts facts =
-  count_fact_consts (map (fn fact => (#theory fact, #concl fact)) facts)
+  adjust_by_facts 1 facts (empty_frequency_table ())
 
 fun make_context {current_theory, facts} =
   let val cached = map cache_fact facts in
@@ -550,16 +587,20 @@ fun create_context thmdata statures =
 
 fun context_thmids ({facts, ...} : context) = map #thmid facts
 
-fun restrict_context ({current_theory, facts, ...} : context) thmids =
+fun restrict_context ({current_theory, facts, frequency_table} : context)
+    thmids =
   let
     val wanted =
       foldl (fn (thmid, set) => dadd thmid () set)
         (dempty String.compare) thmids
-    val restricted =
-      List.filter (fn fact => dmem (#thmid fact) wanted) facts
+    val (restricted, excluded) =
+      List.partition (fn fact => dmem (#thmid fact) wanted) facts
   in
     {current_theory = current_theory, facts = restricted,
-     frequency_table = frequency_of_facts restricted}
+     frequency_table =
+       if length excluded < length restricted then
+         adjust_by_facts ~1 excluded frequency_table
+       else frequency_of_facts restricted}
   end
 
 fun add_fact_pconsts fact table =
@@ -727,10 +768,18 @@ fun mepo_rank_with_fudge (fudge : fudge)
                       foldl
                         (fn (fact, table) => add_fact_pconsts fact table)
                         rel_table accepted
+                    (* Only names the accepted facts add to can change. *)
+                    val changed = List.filter
+                      (table_name_changed rel_table rel_table')
+                      (mk_fast_set String.compare
+                        (map #1 (List.concat (map #pconsts accepted))))
+                    val changed_set = Redblackset.addList
+                      (Redblackset.empty String.compare, changed)
                     fun dirty fact =
+                      not (null changed) andalso
                       List.exists
                         (fn (name, _) =>
-                          table_name_changed rel_table rel_table' name)
+                          Redblackset.member (changed_set, name))
                         (#pconsts fact)
                     fun reconsider ((fact, weight), (hope, lost)) =
                       if dirty fact then ((fact, NONE) :: hope, lost)
