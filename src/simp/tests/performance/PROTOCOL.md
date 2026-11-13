@@ -1787,12 +1787,13 @@ error with the function that raised it and its message. The fixture emits
 
 The hashed lists of the n rules, the fragment's and the simpset's others, are
 structural keys (`MatrixSupport.thmKey`): hypotheses and conclusion in prefix
-form, constants and type operators with their theory and whether they are
-current or retired, every name with its length. Equal keys mean the same
-structure as `dest_term` shows. A print rebuilds `avoid_symbolmerge`'s token
-list over every known constant, so printing n rules over n fixture constants
-is O(n^2); the key avoids the printer. The rest of the fingerprint is printed
-text. A digest is compared only within one grid, base against candidate under
+form, constants with their theory and type, every name with its length. Names
+are the printer's display names, so a retired constant or type operator keeps
+its generation. Equal keys imply equal `dest_term` structure. A print rebuilds
+`avoid_symbolmerge`'s token list over every known constant, so printing n rules
+over n fixture constants is O(n^2); the key avoids the printer. The rest of the
+fingerprint is printed text. A digest is compared only within one grid, base
+against candidate under
 the same fixture, and each inventory seals the fixture blob, which defines the
 digest. So the digests of grids under different fixture blobs are not
 comparable, and `STRUCTURE` stays "v1".

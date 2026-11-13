@@ -593,19 +593,22 @@ class StructureFixture(unittest.TestCase):
             self.assertIn(token, key)
         # the theory and the name of a constant, its type, the theory and
         # the operator of a type, and its arguments
-        self.assertIn("keyName Thy ::\n        keyName Name :: tyKey Ty acc",
-                      key)
-        self.assertIn("keyName Thy ::\n      keyName Tyop :: Int.toString "
-                      "(length Args) ::", key)
+        self.assertIn("tyKey Ty acc end", key)
+        self.assertIn("\"C\" :: keyName Thy ::", key)
+        self.assertIn('"T" :: keyName Thy :: ', key)
+        self.assertIn("Int.toString (length Args) ::", key)
         self.assertIn("List.foldr (fn (a,acc) => tyKey a acc) acc Args", key)
-        # a retired constant or type operator has its own tag
-        self.assertIn('(if Term.uptodate_term tm then "C" else "c")', key)
-        self.assertIn('(if Type.uptodate_type ty then "T" else "t")', key)
+        # a constant or type operator by its display name, which keeps the
+        # generation of a retired one
+        self.assertIn("Term.dest_thy_constid tm", key)
+        self.assertIn("keyName (Term.display_name_of_id Name)", key)
+        self.assertIn("Type.dest_thy_typeid ty", key)
+        self.assertIn("keyName (Type.display_name_of_id Tyop)", key)
+        self.assertNotIn("uptodate", key)
         # the hypotheses (counted, in order) and the conclusion
         self.assertIn("Int.toString (length (hyp th))", key)
         self.assertIn("List.foldr (fn (h,acc) => tmKey h acc) "
                       '("|" :: tmKey (concl th) [])', key)
-        self.assertIn("(hyp th))", key)
         for token in ("term_to_string", "thm_to_string", "termText",
                       "thmText", "Parse."):
             self.assertNotIn(token, key)

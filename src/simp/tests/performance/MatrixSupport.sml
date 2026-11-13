@@ -66,26 +66,26 @@ struct
     String.concatWith "," (map termText asl) ^ " ?- " ^ termText w
   (* A theorem as its structure, for the hash of the n rules: hypotheses and
      conclusion in prefix form, a constant or type operator with its theory
-     and whether it is current or retired, every type, each name with its
-     length. Two theorems have equal keys exactly when dest_term shows the
-     same structure, bound-variable names included. Not the printer:
-     Parse.term_to_string rebuilds term_pp.avoid_symbolmerge's list of every
-     known constant on each call, so printing n rules over n constants
-     costs n^2. This is linear in binder-free terms and independent of the
-     number of constants in scope (dest_abs scans for clashes, so nested
-     binders cost size times depth). *)
+     and display name, every type, each name with its length. Equal keys
+     imply equal dest_term structure, bound-variable names included. Names
+     are the printer's display names, so a retired constant or type operator
+     keeps its generation. Not the printer: Parse.term_to_string rebuilds
+     term_pp.avoid_symbolmerge's list of every known constant on each call,
+     so printing n rules over n constants costs n^2. Here the work per node
+     is a lookup, so the cost is linear in binder-free terms (dest_abs scans
+     for clashes: nested binders cost size times depth). *)
   fun keyName s = Int.toString (size s) ^ ":" ^ s
   fun tyKey ty acc =
     if is_vartype ty then "'" :: keyName (dest_vartype ty) :: acc
-    else let val {Thy,Tyop,Args} = dest_thy_type ty in
-      (if Type.uptodate_type ty then "T" else "t") :: keyName Thy ::
-      keyName Tyop :: Int.toString (length Args) ::
+    else let val {Thy,Tyop,Args} = Type.dest_thy_typeid ty in
+      "T" :: keyName Thy :: keyName (Type.display_name_of_id Tyop) ::
+      Int.toString (length Args) ::
       List.foldr (fn (a,acc) => tyKey a acc) acc Args end
   fun tmKey tm acc = case dest_term tm of
       VAR (s,ty) => "V" :: keyName s :: tyKey ty acc
-    | CONST {Thy,Name,Ty} =>
-        (if Term.uptodate_term tm then "C" else "c") :: keyName Thy ::
-        keyName Name :: tyKey Ty acc
+    | CONST _ => let val {Thy,Name,Ty} = Term.dest_thy_constid tm in
+        "C" :: keyName Thy :: keyName (Term.display_name_of_id Name) ::
+        tyKey Ty acc end
     | COMB (f,x) => "A" :: tmKey f (tmKey x acc)
     | LAMB (v,b) => "L" :: tmKey v (tmKey b acc)
   fun thmKey th = String.concat (Int.toString (length (hyp th)) ::
