@@ -19,11 +19,15 @@ filled; every gate refuses a placeholder (`task33_offline.shape_problems`,
            runs for the TASK33 k = 2): per side the closure total U, D and
            every exclusive part of the registry units of the entry's heap
            and kinds, each constant over the repeats, the processes and
-           both kinds. Written as JSON; refuses a value that varies or an
-           exclusive part that grows
-  fill     writes the observation into the placeholder (and, with --cand,
-           the candidate pin), and refuses unless the declaration is valid
-           afterwards
+           both kinds. The stages must all be of one base, one candidate
+           and one snapshot manifest, which the observation records.
+           Written as JSON; refuses a value that varies or an exclusive
+           part that grows
+  fill     writes the observation into the placeholder and sets the
+           declaration's `cand` from the observation (the candidate the
+           stages measured: there is no other source), and refuses unless
+           the observation's base is the declaration's and the declaration
+           is valid afterwards
 
 How the value is measured and committed (TASK37 recipe, before the pilot):
 
@@ -32,12 +36,19 @@ How the value is measured and committed (TASK37 recipe, before the pilot):
      compute U on bin/hol.state without a declared value, as information;
   2. `task37_declared.py observe --declared ... --manifest M RUN1 RUN2
      --out observation.json` (it replays each run first);
-  3. `task37_declared.py fill --declared ... --observation observation.json
-     [--cand PIN]`, review the diff;
+  3. `task37_declared.py fill --declared ... --observation
+     observation.json`, review the diff;
   4. commit task37_declared.json ALONE. The declaration is sealed by the
      pilot, the controls and the counts (`task33_storage.py predeclare`);
      those and the decision runs come after this commit, and the throwaway
      smokes are information runs of the ledger (listed by dispose).
+
+After the fill the declaration's seal has changed, so the throwaway smokes
+(made under the placeholder) no longer replay: `predeclare` needs a new
+smoke, and a pilot and controls, made under the filled declaration. To
+derive the observation again later, give `observe` the pre-fill file
+(`git show COMMIT~1:src/simp/tests/performance/task37_declared.json` into
+a file, as `--declared`), because the throwaway smokes are sealed with it.
 
 An observed total change that is not a positive integer, an exclusive part
 that grows, or a value that differs between processes is a finding about
@@ -57,7 +68,7 @@ import task33_offline as offline
 import task33_records as records
 
 DECLARED = HERE / "task37_declared.json"
-SCHEMA = "task37-s2-observation-v1"
+SCHEMA = "task37-s2-observation-v2"
 
 
 class Refusal(ValueError):
@@ -84,11 +95,12 @@ def entry_of(declared, heap=None):
     return found[0]
 
 
-def observation(groups, heap, kinds):
+def observation(groups, heap, kinds, pins=None):
     """The S2 observation of the registry units of `kinds`.
     `groups`: {kind: {"base": [process summary], "cand": [...]}}, a
     process summary carrying `anchored` (task33_records.check_anchored).
-    Returns {heap, kinds, value, observed}."""
+    `pins`: {base, cand, manifest} the stages measured, recorded. Returns
+    {heap, kinds, value, observed, base, cand, manifest}."""
     require(sorted(groups) == sorted(kinds), "registry kinds %s observed, "
             "%s wanted" % (sorted(groups), sorted(kinds)))
     seen = {"base": [], "cand": []}
@@ -129,7 +141,7 @@ def observation(groups, heap, kinds):
             "declare, and a zero or negative change is not a valid "
             "total_delta" % value)
     return dict(schema=SCHEMA, heap=heap, kinds=list(kinds), value=value,
-                observed=dict(
+                **(pins or {}), observed=dict(
                     base=base["total"], cand=cand["total"],
                     d_base=base["d"], d_cand=cand["d"],
                     exclusive={n: [base["rows"][n], cand["rows"][n]]
@@ -138,10 +150,16 @@ def observation(groups, heap, kinds):
                     repeats_per_process=records.REPEATS))
 
 
-def fill(declared, obs, cand=None):
-    """The declaration with the placeholder filled (a new dict); refuses
-    one that is not valid afterwards."""
+def fill(declared, obs):
+    """The declaration with the placeholder filled and its `cand` set to
+    the candidate the observation was made on (a new dict); refuses an
+    observation of another base, and a declaration that is not valid
+    afterwards."""
     require(obs.get("schema") == SCHEMA, "not an S2 observation")
+    require(obs.get("base") == declared["base"], "the observation is of "
+            "base %s, the declaration's is %s" % (
+                obs.get("base"), declared["base"]))
+    a.exact_pin(obs.get("cand"))
     new = json.loads(json.dumps(declared))
     entry = entry_of(new, obs["heap"])
     require(entry["kinds"] == obs["kinds"], "the observation is of kinds "
@@ -159,9 +177,7 @@ def fill(declared, obs, cand=None):
         % (obs["observed"]["d_base"], obs["observed"]["d_cand"]),
         "Only D's own code and type structure grow: no state, nothing per",
         "object."]
-    if cand is not None:
-        a.exact_pin(cand)
-        new["cand"] = cand
+    new["cand"] = obs["cand"]
     bad = problems(offline.join_text(new))
     require(not bad, "the filled declaration is not valid: " +
             "; ".join(bad))
@@ -177,17 +193,31 @@ def write(path, data):
 
 def observe_folders(folders, manifest, declared, heap=None):
     """The observation of the finished storage stages in `folders`
-    (replayed first). Needs the snapshots' manifest only where a stage
-    moved from it."""
+    (replayed first), which must all be of one base, one candidate and one
+    snapshot manifest (recorded in the observation). Needs the snapshots'
+    manifest only where a stage moved from it. The driver's active table is
+    the storage table meanwhile and is restored."""
     import task32_downstream as d
     import task33_storage as storage
+    previous = d.ACTIVE.name
     d.use_table(storage.TABLE)
+    try:
+        return observe_stages(storage, folders, manifest, declared, heap)
+    finally:
+        d.use_table(previous)
+
+
+def observe_stages(storage, folders, manifest, declared, heap):
+    """`observe_folders`, with the storage module `storage`."""
     entry = entry_of(declared, heap)
     groups = {k: {"base": [], "cand": []} for k in entry["kinds"]}
+    pinned = set()
     for folder in folders:
         folder = Path(folder).resolve(strict=True)
         storage.replay_one(folder, manifest=manifest)
         report = a.load(folder / "downstream.json")
+        pinned.add((report["base"], report["cand"],
+                    json.dumps(report["manifest"], sort_keys=True)))
         plan = storage.check_plan(report)
         receipts = {e["receipt"]: storage.check_run(folder, report, e)
                     for e in report["runs"]}
@@ -199,7 +229,12 @@ def observe_folders(folders, manifest, declared, heap=None):
                     entry["heap"]:
                 for side, procs in sides.items():
                     groups[kind][side] += procs
-    return observation(groups, entry["heap"], entry["kinds"])
+    require(len(pinned) == 1, "the stages are not of one base, one "
+            "candidate and one snapshot manifest: %d combinations" %
+            len(pinned))
+    base, cand, manifest_seal = next(iter(pinned))
+    return observation(groups, entry["heap"], entry["kinds"], dict(
+        base=base, cand=cand, manifest=json.loads(manifest_seal)))
 
 
 def build_parser():
@@ -215,7 +250,6 @@ def build_parser():
     o.add_argument("folders", type=Path, nargs="+")
     f = sub.choices["fill"]
     f.add_argument("--observation", type=Path, required=True)
-    f.add_argument("--cand")
     return p
 
 
@@ -238,7 +272,7 @@ def main(argv=None):
             return 0
         obs = json.loads(args.observation.read_text())
         write(args.declared, fill(
-            json.loads(args.declared.read_text()), obs, args.cand))
+            json.loads(args.declared.read_text()), obs))
         print("filled %s: commit it alone" % args.declared)
         return 0
     except (Refusal, ValueError, OSError) as error:

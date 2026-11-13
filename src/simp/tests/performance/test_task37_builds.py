@@ -132,6 +132,33 @@ class Commands(unittest.TestCase):
             self.assertGreater(step["wall_s"], 0)
             self.assertEqual(log.read_text().strip(), "True")
             self.assertEqual(len(step["load_start"]), 3)
+            self.assertFalse(step["timed_out"])
+
+    def test_the_real_runner_counts_the_cpu_of_a_grandchild(self):
+        burn = "x = 0\nfor i in range(6 * 10 ** 6): x += i"
+        child = ("import subprocess, sys; "
+                 "subprocess.run([sys.executable, '-c', %r], check=True)"
+                 % burn)
+        with tempfile.TemporaryDirectory() as tmp:
+            step = b.real_runner([sys.executable, "-c", child], tmp,
+                                 dict(os.environ), str(Path(tmp) / "x.log"))
+            alone = b.real_runner([sys.executable, "-c", burn], tmp,
+                                  dict(os.environ),
+                                  str(Path(tmp) / "y.log"))
+        self.assertEqual(step["exit"], 0)
+        # the grandchild's burn is in the child's rusage (it waited), and
+        # so in the step's: about the same CPU as running it directly
+        self.assertGreater(step["user_s"] + step["sys_s"],
+                           0.8 * (alone["user_s"] + alone["sys_s"]))
+
+    def test_the_real_runner_kills_a_step_that_exceeds_its_timeout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            step = b.real_runner(
+                ["sh", "-c", "sleep 60 & sleep 60"], tmp, dict(os.environ),
+                str(Path(tmp) / "x.log"), timeout=0.5)
+        self.assertTrue(step["timed_out"])
+        self.assertNotEqual(step["exit"], 0)
+        self.assertLess(step["wall_s"], 20)
 
 
 class Limits(unittest.TestCase):
@@ -159,7 +186,7 @@ class Run(Repo):
     def fake(self, log=None, fail=None, seen=None):
         """A runner that makes the tree on `clone` and writes a build log
         with `Building directory` lines; costs differ by side."""
-        def runner(argv, cwd, env, logfile, stdin=None):
+        def runner(argv, cwd, env, logfile, stdin=None, timeout=None):
             if seen is not None:
                 seen.append((argv, cwd, stdin))
             if argv[:2] == ["git", "clone"]:
@@ -212,25 +239,56 @@ class Run(Repo):
         self.assertIn("nice", r["host"])
         self.assertTrue((self.dir / "out" / run["build"]["log"]).is_file())
 
-    def test_only_one_pair_is_on_disk_at_a_time(self):
+    def test_only_one_tree_is_on_disk_at_a_time(self):
         present = []
 
-        def probe(argv, cwd, env, logfile, stdin=None):
+        def probe(argv, cwd, env, logfile, stdin=None, timeout=None):
             if argv[0] == "bin/build":
                 present.append(sorted(p.name for p in
                                       (self.dir / "shm").iterdir()
                                       if p.name != "tmp"))
-            return self.fake()(argv, cwd, env, logfile, stdin)
+            return self.fake()(argv, cwd, env, logfile, stdin, timeout)
         self.run_all(kinds=["routine"], pairs={"routine": 2}, runner=probe)
         self.assertEqual(present, [
-            ["routine-p0-base"], ["routine-p0-base", "routine-p0-cand"],
-            ["routine-p1-cand"], ["routine-p1-base", "routine-p1-cand"]])
+            ["routine-p0-base"], ["routine-p0-cand"],
+            ["routine-p1-cand"], ["routine-p1-base"]])
 
     def test_a_failed_build_is_recorded_not_fatal(self):
         r = self.run_all(kinds=["full"], pairs={"full": 1},
                          runner=self.fake(fail="bin/build"))
         self.assertEqual([x["build"]["exit"] for x in r["runs"]], [1, 1])
         self.assertTrue(r["complete"])
+
+    def test_the_build_gets_the_timeout_and_the_setup_steps_theirs(self):
+        seen = []
+
+        def runner(argv, cwd, env, logfile, stdin=None, timeout=None):
+            seen.append((argv[0], timeout))
+            return self.fake()(argv, cwd, env, logfile, stdin, timeout)
+        self.run_all(kinds=["routine"], pairs={"routine": 1}, runner=runner,
+                     limits=dict(shm_gb=20, reserve_gb=5, timeout_s=77))
+        self.assertEqual([t for a_, t in seen if a_ == "bin/build"],
+                         [77, 77])
+        self.assertEqual({t for a_, t in seen if a_ != "bin/build"},
+                         {b.SETUP_TIMEOUT_S})
+
+    def test_failed_builds_are_listed_and_give_a_distinct_status(self):
+        failing = self.fake(fail="bin/build")
+        r = self.run_all(kinds=["full"], pairs={"full": 1}, runner=failing)
+        self.assertEqual([x[3] for x in b.failed_builds(r)],
+                         ["exit 1", "exit 1"])
+        argv = ["run", "--repo", str(self.repo), "--base", self.base,
+                "--cand", self.cand, "--root", str(self.dir / "shm2"),
+                "--out", str(self.dir / "out2"), "--kinds", "full",
+                "--pairs", "full=1"]
+        real = b.run_all
+        sink = self.dir / "sink"
+        with open(sink, "w") as stream, mock.patch.object(
+                b, "run_all", lambda *a_, **k: real(
+                    *a_, **dict(k, runner=failing))), \
+                mock.patch.object(sys, "stderr", stream):
+            self.assertEqual(b.main(argv), b.FAILED_BUILDS)
+        self.assertIn("FAILED builds", sink.read_text())
 
     def test_a_failed_configure_stops_that_side_without_a_build(self):
         r = self.run_all(kinds=["full"], pairs={"full": 1},
@@ -243,11 +301,11 @@ class Run(Repo):
     def test_an_interrupt_deletes_the_tree_and_keeps_the_receipt(self):
         count = []
 
-        def runner(argv, cwd, env, logfile, stdin=None):
+        def runner(argv, cwd, env, logfile, stdin=None, timeout=None):
             count.append(argv[0])
             if argv[0] == "bin/build":
                 raise KeyboardInterrupt("signal 15")
-            return self.fake()(argv, cwd, env, logfile, stdin)
+            return self.fake()(argv, cwd, env, logfile, stdin, timeout)
         with self.assertRaises(KeyboardInterrupt):
             self.run_all(kinds=["routine"], runner=runner)
         saved = json.loads((self.dir / "out/receipt.json").read_text())
@@ -349,6 +407,39 @@ class Attribution(Repo):
         self.assertEqual(k["wall_s"], dict(base=50, cand=75))
         self.assertEqual(k["common"][0]["directory"], "src/b")  # by |delta|
         self.assertEqual(k["only_cand_total_s"], 32)
+
+    def test_a_failed_build_is_excluded_from_the_medians(self):
+        receipt, out = self.synthetic()
+        receipt["runs"][2]["build"]["exit"] = 1      # a cand build
+        # its (shifted) log would change src/b's median: it is not read
+        (out / receipt["runs"][2]["build"]["log"]).write_text(
+            log_text([("src/a", 0), ("src/b", 500)]))
+        data = b.attribute(receipt, lambda p: (out / p).read_text())
+        k = data["kinds"]["routine"]
+        self.assertEqual(k["runs"], dict(base=2, cand=1))
+        self.assertEqual(k["failed"], [dict(pair=1, label="cand",
+                                            why="exit 1")])
+        self.assertEqual(data["failed"][0]["kind"], "routine")
+        self.assertEqual(k["wall_s"]["cand"], 75)
+        by = {r["directory"]: r for r in k["common"]}
+        self.assertEqual(by["src/b"]["cand_s"], 10)
+        receipt["runs"][2]["build"]["exit"] = 0
+        receipt["runs"][3]["build"]["timed_out"] = True
+        data = b.attribute(receipt, lambda p: (out / p).read_text())
+        self.assertEqual(data["kinds"]["routine"]["failed"][0]["why"],
+                         "timed out")
+
+    def test_attribute_cli_reports_failed_builds_with_status_5(self):
+        receipt, out = self.synthetic()
+        receipt["runs"][0]["build"]["exit"] = 2
+        (out / "receipt.json").write_text(json.dumps(receipt))
+        sink = self.dir / "sink"
+        with open(sink, "w") as stream, mock.patch.object(
+                sys, "stdout", stream):
+            self.assertEqual(b.main([
+                "attribute", str(out / "receipt.json"), "--out",
+                str(self.dir / "a.json")]), b.FAILED_BUILDS)
+        self.assertIn("FAILED build", sink.read_text())
 
     def test_attribute_cli_writes_the_json_and_a_summary(self):
         receipt, out = self.synthetic()

@@ -845,8 +845,16 @@ class Chain34(Base34):
 
     def setUp(self):
         super().setUp()
-        patch = mock.patch.object(st.offline, "load_declared",
-                                  lambda *a: copy.deepcopy(DECLARED))
+        # the declaration names the world's pins (`check_declared`), and its
+        # shape is not what these fake stages are about (`declared_ready`)
+        patch = mock.patch.object(
+            st.offline, "load_declared", lambda *a: dict(
+                copy.deepcopy(DECLARED), base=self.world.base_pin,
+                cand=self.world.cand_pin))
+        patch.start()
+        self.addCleanup(patch.stop)
+        patch = mock.patch.object(st.offline, "shape_problems",
+                                  lambda declared: [])
         patch.start()
         self.addCleanup(patch.stop)
         patch = mock.patch.object(offline, "check_code", lambda c: None)
@@ -945,6 +953,15 @@ class Chain34(Base34):
 
 
 class Smoke(Base34):
+    def setUp(self):
+        super().setUp()
+        patch = mock.patch.object(
+            st.offline, "load_declared", lambda *a: dict(
+                copy.deepcopy(DECLARED), base=self.world.base_pin,
+                cand=self.world.cand_pin))
+        patch.start()
+        self.addCleanup(patch.stop)
+
     def test_a_smoke_run_measures_every_unit_once_per_side(self):
         args, report = self.run_stage("smoke", "smoke")
         self.assertTrue(report["success"], report.get("failure"))
@@ -2364,8 +2381,11 @@ class DisposeSnapshots(unittest.TestCase):
 
 
 def offline_report(command, checks, **data):
+    # `inputs.declared`: the declaration the audit and the harvest were
+    # made against (`check_offline_identity`)
     return dict(schema=offline.SCHEMA, command=command, success=True,
-                checks=checks, data=data, code={})
+                checks=checks, data=data, code={},
+                inputs=dict(declared=acc.seal(offline.DECLARED)))
 
 
 def check_of(ident, case, status="pass"):

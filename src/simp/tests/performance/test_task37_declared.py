@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
@@ -152,7 +153,12 @@ def observed():
     rows["simpLib"], rows["Traverse"] = 9, 9
     # D must fit the structure rule: the total lies between the largest
     # and the sum of the exclusive parts (checked at the record level)
-    return t.observation(groups(rows_c=rows), HEAP, KINDS)
+    return t.observation(groups(rows_c=rows), HEAP, KINDS, pins())
+
+
+def pins(cand="a" * 40):
+    return dict(base=load()["base"], cand=cand,
+                manifest=dict(bytes=1, sha256="0" * 64))
 
 
 class Fill(unittest.TestCase):
@@ -160,8 +166,8 @@ class Fill(unittest.TestCase):
         return json.loads(t.DECLARED.read_text())
 
     def test_the_filled_declaration_is_valid_and_binds_the_gates(self):
-        new = t.fill(self.raw(), observed(), "a" * 40)
-        self.assertEqual(new["cand"], "a" * 40)
+        new = t.fill(self.raw(), observed())
+        self.assertEqual(new["cand"], "a" * 40)  # the observation's
         entry = new["s2"]["total_delta"][0]
         self.assertNotIn("pending", entry)
         self.assertEqual(entry["value"], 10)
@@ -178,8 +184,13 @@ class Fill(unittest.TestCase):
             t.fill(self.raw(), obs)
 
     def test_a_bad_pin_or_observation_is_refused(self):
-        with self.assertRaises(ValueError):
-            t.fill(self.raw(), observed(), "7e202dfbaa")
+        with self.assertRaises(ValueError):  # not a full pin
+            t.fill(self.raw(), dict(observed(), cand="7e202dfbaa"))
+        with self.assertRaisesRegex(t.Refusal, "base"):
+            t.fill(self.raw(), dict(observed(), base="b" * 40))
+        with self.assertRaisesRegex(t.Refusal, "base"):
+            t.fill(self.raw(), {k: v for k, v in observed().items()
+                                if k != "base"})
         with self.assertRaisesRegex(t.Refusal, "not an S2"):
             t.fill(self.raw(), dict(observed(), schema="x"))
 
@@ -201,6 +212,59 @@ class Fill(unittest.TestCase):
                                      "--observation", str(obs)]), 3)
             self.assertEqual(t.main(["check", "--declared",
                                      str(tmp / "none.json")]), 3)
+
+
+class ObserveFolders(unittest.TestCase):
+    """`observe_folders` over stage folders whose replay is stubbed: the
+    stages must share base, candidate and manifest, which are recorded."""
+    def folders(self, tmp, reports):
+        out = []
+        for i, report in enumerate(reports):
+            folder = Path(tmp) / ("f%d" % i)
+            folder.mkdir()
+            (folder / "downstream.json").write_text(json.dumps(report))
+            out.append(folder)
+        return out
+
+    def report(self, cand="a" * 40, manifest=None):
+        return dict(base=load()["base"], cand=cand, runs=[],
+                    manifest=manifest or dict(bytes=1, sha256="0" * 64),
+                    units={"registry-" + k: dict(heap=HEAP)
+                           for k in KINDS})
+
+    def observe(self, reports):
+        import task33_storage as storage
+        grouped = {"registry-" + k: sides for k, sides in groups(
+            rows_c={n: 9 for n in NAMES}, n=1).items()}
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(storage, "replay_one"), \
+                mock.patch.object(storage, "check_plan",
+                                  return_value={}), \
+                mock.patch.object(storage, "check_redraws",
+                                  return_value=[]), \
+                mock.patch.object(storage, "grouped",
+                                  return_value=grouped):
+            return t.observe_folders(self.folders(tmp, reports), None,
+                                     load())
+
+    def test_one_gate_gives_an_observation_with_its_pins(self):
+        import task32_downstream as d
+        before = d.ACTIVE.name
+        obs = self.observe([self.report(), self.report()])
+        self.assertEqual(d.ACTIVE.name, before)  # the table is restored
+        self.assertEqual(obs["value"], 10)
+        self.assertEqual((obs["base"], obs["cand"]),
+                         (load()["base"], "a" * 40))
+        self.assertEqual(obs["manifest"], pins()["manifest"])
+        new = t.fill(json.loads(t.DECLARED.read_text()), obs)
+        self.assertEqual(new["cand"], "a" * 40)
+
+    def test_stages_of_different_candidates_or_manifests_are_refused(self):
+        with self.assertRaisesRegex(t.Refusal, "one base, one candidate"):
+            self.observe([self.report(), self.report("b" * 40)])
+        with self.assertRaisesRegex(t.Refusal, "one base, one candidate"):
+            self.observe([self.report(), self.report(
+                manifest=dict(bytes=2, sha256="1" * 64))])
 
 
 if __name__ == "__main__":

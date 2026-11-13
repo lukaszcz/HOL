@@ -256,7 +256,9 @@ def timing_attribution(disp):
 
 def check_offline_identity(found, args):
     """The offline reports given are exactly the ones the storage counts
-    were predeclared with."""
+    were predeclared with, and the audit and the harvest were made against
+    the declaration this process judges by (the archive report reads no
+    declaration)."""
     counts = a.load(storage.storage_counts_path(args))
     absent = [c for c in OFFLINE if c not in found]
     d.require(not absent, "no %s report among --offline (the storage "
@@ -266,6 +268,11 @@ def check_offline_identity(found, args):
                   counts["offline"][command]["seal"],
                   "the %s report is not the one the storage counts "
                   "bound" % command)
+    own = a.seal(offline.DECLARED)
+    for command in ("audit", "harvest"):
+        d.require(found[command][0].get("inputs", {}).get("declared") == own,
+                  "the %s report was made against another declaration "
+                  "than %s" % (command, offline.DECLARED.name))
 
 
 def check_linear(chains, ledger):

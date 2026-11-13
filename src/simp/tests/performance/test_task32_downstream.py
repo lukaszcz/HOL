@@ -2367,7 +2367,9 @@ class Sealed(unittest.TestCase):
             dict(sha256="a3f949829ffa88ea799dd4016cbb1bbbaa5d50210b69c126fce"
                         "32e6afa3179b5", bytes=141455),
             dict(sha256="8d05e058fa2fba44ba2a717e7b362a47ef379a850d91c25484f"
-                        "c60f5e43c1224", bytes=180533)],
+                        "c60f5e43c1224", bytes=180533),
+            dict(sha256="7cfaf9583803b8fd550d6efe6a9f3b6946108775d7dc62690ea"
+                        "6fe9a988db807", bytes=182649)],
             "task32_snapshots.py": [
             dict(sha256="444e5f40c62d8529bceb87e8086d13de5ea54127559063987d4"
                         "5520a89806ac7", bytes=60760)]})

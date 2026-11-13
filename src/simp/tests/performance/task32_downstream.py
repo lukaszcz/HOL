@@ -150,7 +150,10 @@ TASK32_HISTORY = {
         # the driver and the snapshot builder before `--compiled-ref`
         # (TASK37): the code of the kept TASK32 and TASK33 records
         {"sha256": "8d05e058fa2fba44ba2a717e7b362a47ef379a850d91c25484fc60"
-                   "f5e43c1224", "bytes": 180533}],
+                   "f5e43c1224", "bytes": 180533},
+        # TASK37 part D before the scratch retry (1761ae677b)
+        {"sha256": "7cfaf9583803b8fd550d6efe6a9f3b6946108775d7dc62"
+                   "690ea6fe9a988db807", "bytes": 182649}],
     "task32_snapshots.py": [
         {"sha256": "444e5f40c62d8529bceb87e8086d13de5ea54127559063987d4552"
                    "0a89806ac7", "bytes": 60760}],
@@ -167,7 +170,9 @@ TASK33_DRIVER_SEALS = (
 TASK33_HISTORY = {
     "task32_downstream.py": list(TASK33_DRIVER_SEALS) + [
         {"sha256": "8d05e058fa2fba44ba2a717e7b362a47ef379a850d91c25484fc60"
-                   "f5e43c1224", "bytes": 180533}],
+                   "f5e43c1224", "bytes": 180533},
+        {"sha256": "7cfaf9583803b8fd550d6efe6a9f3b6946108775d7dc62"
+                   "690ea6fe9a988db807", "bytes": 182649}],
     "task32_snapshots.py": [
         {"sha256": "444e5f40c62d8529bceb87e8086d13de5ea54127559063987d4552"
                    "0a89806ac7", "bytes": 60760}],
@@ -180,13 +185,17 @@ TASK33_HISTORY = {
         {"sha256": "069b87eea6287685ff50715d4dc07db797163767c0e5f5bf475cf1"
                    "adf94f2ab5", "bytes": 79375},
         {"sha256": "441ca922516d43b63f33f7011b45027651b281a24181d5"
-                   "eaac23f939b22bab2c", "bytes": 82572}],
+                   "eaac23f939b22bab2c", "bytes": 82572},
+        {"sha256": "96689c8cb39dcf51c30f80e156f782366ed6dfb7ef2497"
+                   "ac8f19b8b603c7ea62", "bytes": 83363}],
     "task33_rules.py": [
         {"sha256": "fa34fd48bb9489f68457fdabf7e9b025a0059643573e8b"
                    "201a582159d9115bd8", "bytes": 34186}],
     "task33_dispose.py": [
         {"sha256": "61d0cef407ef789867d1ef06574d99e33ffe883cdfc8f6"
-                   "b181735536e12cabb6", "bytes": 26854}],
+                   "b181735536e12cabb6", "bytes": 26854},
+        {"sha256": "42eff22257a15f9ac0a8ba5f27d058e6c21d906c991d0d"
+                   "97c5a684d06f74ca53", "bytes": 27123}],
 }
 
 
@@ -2702,6 +2711,20 @@ def carries(report, state):
         raise
 
 
+def make_scratch(path):
+    """Create the run's scratch folder (and its parents). A run of another
+    stage that shares the scratch root removes it with `rmdir` once empty,
+    which can fall between the creation of the root and of this folder:
+    that is retried, a folder that exists is not."""
+    for _ in range(20):
+        try:
+            Path(path).mkdir(parents=True, exist_ok=False)
+            return
+        except FileNotFoundError:
+            continue
+    raise Refusal("cannot create the scratch folder %s" % path)
+
+
 def run_stage(args, spec, *, body_fn=None, report_fn=None,
               decisive_stages=DECISIVE, table=None):
     """One run (smoke, control, pilot or a decision stage): lock, ledger,
@@ -2825,7 +2848,7 @@ def prepare(args, report, sides, scratch, fds, verify, journal,
     from the sealed sources of the report's code: `modules` is the list of
     probe modules to build, or a function of the side giving it; default
     `cases.PROBES`). Returns the context."""
-    scratch.mkdir(parents=True, exist_ok=False)
+    make_scratch(scratch)
     for sub in ("home", "tmp", "out"):
         (scratch / sub).mkdir()
     ctx = make_ctx(sides, scratch, args.timeout, fds, journal,

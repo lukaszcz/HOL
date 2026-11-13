@@ -11,36 +11,57 @@ candidate against the base? Two commands, each timed as one process tree:
              `git clone --shared --no-checkout` of --repo (the main
              worktree: never a clone that itself borrows objects), detached
              at the pin, configured with `poly < tools/smart-configure.sml`,
-             built once, and deleted after its pair. Pairs alternate AB, BA,
-             AB (A = base, B = candidate). One build at a time, one pair at
-             a time, so this run holds at most two trees in /dev/shm. A build
+             built once, and deleted right after its build (its log stays
+             in OUT/logs). Pairs alternate AB, BA, AB (A = base, B =
+             candidate). One build at a time, so this run holds at most one
+             tree in /dev/shm (the receipt records its size). A build
              waits (up to --wait-s) while what /dev/shm holds (the other
              streams' trees included) plus --reserve-gb (default 5, one
              more tree's growth) would exceed --shm-limit-gb (default 20),
              and is refused after that. Per build the receipt records
              wall seconds, CPU seconds of the whole process tree
              (wait4 rusage: user, system) and the exit status, with the host
-             load averages at the start and the end and the nice value.
+             load averages at the start and the end and the nice value. A
+             build is killed (its process group, SIGKILL) after --timeout-s
+             (default 14400, 4 h, which is generous for `-F`) and recorded
+             as failed (`timed_out`).
              Builds start in a new session (setsid) with SIGINT, SIGHUP,
              SIGTERM and SIGPIPE at their default dispositions, whatever the
              runner inherited (a runner started under nohup would otherwise
              hand the build ignored signals).
   attribute  joins the per-directory `Building directory D [time]` lines of
              the base and candidate logs of a receipt and reports the
-             per-directory durations and deltas (median over the runs of a
-             command), the directories that exist only on the candidate (or
-             only on the base) and the totals.
+             per-directory durations and deltas (median over the successful
+             runs of a command: a build that failed or timed out is listed
+             under `failed` and is in no median, since a build that stopped
+             early would shorten every directory after it), the directories
+             that exist only on the candidate (or only on the base) and the
+             totals.
 
 Not a gate: nothing here passes or fails the candidate. The numbers are
 recorded and attributed (the extra Ext modules and the selftest targets
 come to the directories listed by `attribute`); a nonzero build exit is
-recorded and the run goes on. Wall time on a shared host is noisy: the load
-averages are in the receipt so that a reader can judge.
+recorded and the run goes on, but `run` and `attribute` then exit with
+status 5 (FAILED_BUILDS) and print the builds, so that a runner cannot
+mistake a run with failed builds for a clean one. Exit status: 0 clean,
+1 malformed receipt, 3 refused or a usage error, 4 interrupted, 5 failed
+builds. Wall time on a shared host is noisy: the load averages are in the
+receipt so that a reader can judge.
+
+Caveat on the last directory. The log's `Building directory` lines give
+each directory's start, to one second; a directory lasts until the next
+line. The last directory has no next line: it is taken to last until the
+end of the build, i.e. `wall_s` minus its offset from the first line.
+That includes whatever the build does before the first line (a lead of
+unknown length, the same kind of time on both sides) and after the last
+directory finishes, so the last directory's duration is an upper bound,
+and its delta is not to be read alone; the totals are the wall times.
 
 Receipt (`task37-builds-v1`, written to OUT/receipt.json after every pair;
 the build logs are OUT/logs/<kind>-p<pair>-<label>.log):
   {schema, host{uname, cpus, nice}, pins{base, cand, repo, repo_head},
-   limits{shm_gb, reserve_gb}, plan[{kind, pairs, argv}],
+   limits{shm_gb, reserve_gb, wait_s, timeout_s}, plan[{kind, pairs,
+   argv}],
    runs[{kind, pair, order, position, side, label, pin, tree, steps[{name,
    argv, exit, wall_s, user_s, sys_s, start_utc, end_utc, load_start,
    load_end, log}], build{...as a step...}, tree_kb, shm_used_bytes,
@@ -52,9 +73,9 @@ routine and full pairs may run back to back):
       --cand FINAL --root /dev/shm/t37-d7 --out EVIDENCE/d7
   python3 -B task37_builds.py attribute EVIDENCE/d7/receipt.json
       --out EVIDENCE/d7/attribution.json
-Expected /dev/shm peak: two trees of the larger command (about 2 x 3-5 GB
-for the full build, 2 x 1 GB for the routine one; the receipt records the
-measured size of every tree and /dev/shm usage).
+Expected /dev/shm peak: one tree of the larger command (about 3-5 GB for
+the full build, 1 GB for the routine one; the receipt records the measured
+size of every tree and /dev/shm usage).
 """
 import argparse
 import datetime
@@ -82,6 +103,9 @@ SHM_LIMIT_GB = 20
 RESERVE_GB = 5
 WAIT_S = 7200   # how long a build waits for room before it is refused
 POLL_S = 60
+TIMEOUT_S = 14400   # a build is killed after this long (4 h)
+SETUP_TIMEOUT_S = 3600  # clone, checkout and configure
+FAILED_BUILDS = 5   # exit status of a run (or attribution) with a failed build
 GB = 10 ** 9
 LABELS = ("base", "cand")
 CONFIGURE = ["poly"]
@@ -187,9 +211,11 @@ def tree_kb(path):
         return None
 
 
-def real_runner(argv, cwd, env, log, stdin_path=None):
+def real_runner(argv, cwd, env, log, stdin_path=None, timeout=None):
     """Run argv in a new session, default signals, stdout and stderr to
-    `log`; wait4 gives the exit and the CPU of the whole process tree."""
+    `log`; wait4 gives the exit and the CPU of the process and of every
+    descendant it waited for. After `timeout` seconds (None: never) the
+    process group is killed (SIGKILL) and the step has `timed_out`."""
     started, t0 = utc_now(), time.monotonic()
     load = loadavg()
     stdin = open(stdin_path, "rb") if stdin_path else subprocess.DEVNULL
@@ -199,8 +225,19 @@ def real_runner(argv, cwd, env, log, stdin_path=None):
                 argv, cwd=cwd, env=env, stdin=stdin, stdout=out,
                 stderr=subprocess.STDOUT, start_new_session=True,
                 preexec_fn=restore_default_signals)
+            timed_out = False
             try:
-                _, status, usage = os.wait4(proc.pid, 0)
+                while True:
+                    pid, status, usage = os.wait4(proc.pid, os.WNOHANG)
+                    if pid:
+                        break
+                    if timeout is not None and \
+                            time.monotonic() - t0 > timeout:
+                        timed_out = True
+                        os.killpg(proc.pid, signal.SIGKILL)
+                        _, status, usage = os.wait4(proc.pid, 0)
+                        break
+                    time.sleep(0.05)
             except BaseException:
                 try:
                     os.killpg(proc.pid, signal.SIGKILL)
@@ -212,7 +249,8 @@ def real_runner(argv, cwd, env, log, stdin_path=None):
     finally:
         if stdin_path:
             stdin.close()
-    return dict(exit=proc.returncode, wall_s=round(time.monotonic() - t0, 3),
+    return dict(exit=proc.returncode, timed_out=timed_out,
+                wall_s=round(time.monotonic() - t0, 3),
                 user_s=round(usage.ru_utime, 3),
                 sys_s=round(usage.ru_stime, 3), start_utc=started,
                 end_utc=utc_now(), load_start=load, load_end=loadavg())
@@ -299,9 +337,10 @@ def await_room(limit_gb, reserve_gb, wait_s=None, poll_s=None,
 def run_side(receipt, out, repo, root, kind, pair, position, label, pin,
              runner, limits):
     """One side: clone, checkout, configure, build (every step recorded);
-    the tree is left for the caller to delete after the pair."""
+    the tree is left for the caller to delete right after."""
     tree = tree_path(root, kind, pair, label)
     require(not os.path.lexists(tree), "tree exists: %s" % tree)
+    timeout_s = limits.get("timeout_s", TIMEOUT_S)
     logs = Path(out) / "logs"
     logs.mkdir(exist_ok=True)
     env = dict(os.environ, TMPDIR=str(Path(root) / "tmp"))
@@ -321,7 +360,9 @@ def run_side(receipt, out, repo, root, kind, pair, position, label, pin,
         log = logs / ("%s-p%d-%s.log" % (kind, pair, label)
                       if name == "build" else
                       "%s-p%d-%s.%s.log" % (kind, pair, label, name))
-        step = dict(runner(argv, cwd or str(root), env, str(log), stdin),
+        step = dict(runner(argv, cwd or str(root), env, str(log), stdin,
+                           timeout=timeout_s if name == "build" else
+                           SETUP_TIMEOUT_S),
                     name=name, argv=argv, log=str(log.relative_to(out)))
         if name == "build":
             step["shm_used_before"] = used
@@ -337,7 +378,8 @@ def run_side(receipt, out, repo, root, kind, pair, position, label, pin,
 def run_all(repo, base, cand, root, out, kinds=tuple(KINDS), pairs=None,
             limits=None, runner=real_runner, keep=False):
     """The whole D7 run; returns the receipt (also OUT/receipt.json)."""
-    limits = limits or dict(shm_gb=SHM_LIMIT_GB, reserve_gb=RESERVE_GB)
+    limits = limits or dict(shm_gb=SHM_LIMIT_GB, reserve_gb=RESERVE_GB,
+                            timeout_s=TIMEOUT_S)
     repo, full, head = check_repo(repo, dict(base=base, cand=cand))
     plans = plan(kinds, pairs)
     root, out = Path(root), Path(out)
@@ -362,14 +404,12 @@ def run_all(repo, base, cand, root, out, kinds=tuple(KINDS), pairs=None,
                     live.append(tree_path(root, entry["kind"], pair, label))
                     run_side(receipt, out, repo, root, entry["kind"], pair,
                              position, label, full[label], runner, limits)
+                    # the tree goes as soon as it is built: one tree at a
+                    # time (its log is already in OUT)
+                    if not keep:
+                        cleanup()
+                        receipt["runs"][-1]["deleted"] = True
                     write_receipt(out, receipt)
-                if not keep:
-                    cleanup()
-                    for r in receipt["runs"]:
-                        if r["kind"] == entry["kind"] and \
-                                r["pair"] == pair:
-                            r["deleted"] = True
-                write_receipt(out, receipt)
         receipt["complete"] = True
     finally:
         cleanup()
@@ -421,6 +461,23 @@ def validate_receipt(receipt):
     return bad
 
 
+def failed_builds(receipt):
+    """[(kind, pair, label, why)] of the runs whose build did not succeed:
+    a nonzero exit, a timeout, or no build at all (a step before it
+    failed)."""
+    out = []
+    for r in receipt["runs"]:
+        b = r.get("build")
+        if b is None:
+            out.append((r["kind"], r["pair"], r["label"], "no build"))
+        elif b.get("timed_out"):
+            out.append((r["kind"], r["pair"], r["label"], "timed out"))
+        elif b["exit"] != 0:
+            out.append((r["kind"], r["pair"], r["label"],
+                        "exit %d" % b["exit"]))
+    return out
+
+
 # ------------------------------------------------------------ attribution
 
 def building_times(text):
@@ -461,11 +518,14 @@ def durations(times, wall):
 
 def attribute(receipt, read=None, top=None):
     """The per-directory attribution of a receipt: per kind, per
-    directory the median duration on each side over the runs of the kind,
-    the delta, the directories on one side only and the totals."""
+    directory the median duration on each side over the successful runs
+    of the kind (a failed or timed-out build is listed under `failed` and
+    counted in no median), the delta, the directories on one side only and
+    the totals."""
     bad = validate_receipt(receipt)
     require(not bad, "malformed receipt: " + "; ".join(bad))
     read = read or (lambda p: Path(p).read_text(errors="replace"))
+    failed = failed_builds(receipt)
     out = {}
     for kind in sorted({r["kind"] for r in receipt["runs"]}):
         per = {l: [] for l in LABELS}
@@ -473,7 +533,8 @@ def attribute(receipt, read=None, top=None):
         exits = {l: [] for l in LABELS}
         for r in receipt["runs"]:
             b = r["build"]
-            if r["kind"] != kind or b is None:
+            if r["kind"] != kind or b is None or b["exit"] != 0 or \
+                    b.get("timed_out"):
                 continue
             times = building_times(read(b["log"]))
             per[r["label"]].append(durations(times, b["wall_s"]))
@@ -497,6 +558,8 @@ def attribute(receipt, read=None, top=None):
         out[kind] = dict(
             runs={l: len(per[l]) for l in LABELS},
             exits=exits,
+            failed=[dict(pair=p, label=l, why=w)
+                    for k, p, l, w in failed if k == kind],
             wall_s={l: statistics.median(walls[l]) for l in LABELS
                     if walls[l]},
             common=rows[:top] if top else rows,
@@ -505,11 +568,19 @@ def attribute(receipt, read=None, top=None):
             only_cand_total_s=sum(x["seconds"] for x in only.get("cand", [])),
             resolution_s=1)
     return dict(schema=SCHEMA + "-attribution", pins=receipt["pins"],
-                kinds=out)
+                failed=[dict(kind=k, pair=p, label=l, why=w)
+                        for k, p, l, w in failed],
+                caveat="the last directory of a build is taken to last to "
+                "the end of the build (an upper bound: see the module "
+                "docstring)", kinds=out)
 
 
 def summary_text(attribution, top=15):
-    lines = []
+    lines = ["FAILED build (kind pair side: why; excluded from the "
+             "medians): %s" % ", ".join("%s p%d %s: %s" % (
+                 x["kind"], x["pair"], x["label"], x["why"])
+                 for x in attribution["failed"])
+             ] if attribution["failed"] else []
     for kind, k in attribution["kinds"].items():
         lines.append("%s: wall median %s; common directories' delta "
                      "%+.0f s; candidate-only directories %.0f s" % (
@@ -555,6 +626,9 @@ def build_parser():
     r.add_argument("--reserve-gb", type=int, default=RESERVE_GB)
     r.add_argument("--wait-s", type=int, default=WAIT_S,
                    help="how long a build waits for /dev/shm room")
+    r.add_argument("--timeout-s", type=int, default=TIMEOUT_S,
+                   help="a build is killed after this many seconds "
+                   "(default %d)" % TIMEOUT_S)
     r.add_argument("--keep", action="store_true",
                    help="do not delete the trees (debugging)")
     r.add_argument("--dry-run", action="store_true",
@@ -578,7 +652,7 @@ def main(argv=None):
                 stream.write(json.dumps(data, indent=2, sort_keys=True) +
                              "\n")
             print(summary_text(data))
-            return 0
+            return FAILED_BUILDS if data["failed"] else 0
         pairs = parse_pairs(args.pairs)
         if args.dry_run:
             repo, full, _ = check_repo(args.repo, dict(
@@ -604,17 +678,24 @@ def main(argv=None):
                 args.repo, args.base, args.cand, args.root, args.out,
                 args.kinds, pairs, dict(shm_gb=args.shm_limit_gb,
                                         reserve_gb=args.reserve_gb,
-                                        wait_s=args.wait_s),
+                                        wait_s=args.wait_s,
+                                        timeout_s=args.timeout_s),
                 keep=args.keep)
         except KeyboardInterrupt as stopped:
             print("INTERRUPTED (%s): trees deleted, the receipt so far "
                   "is kept, incomplete" % stopped, file=sys.stderr)
             return 4
         bad = validate_receipt(receipt)
+        failed = failed_builds(receipt)
         print("D7: %d builds recorded%s" % (
             len(receipt["runs"]), "; receipt problems: " + "; ".join(bad)
             if bad else ""))
-        return 1 if bad else 0
+        if failed:
+            print("FAILED builds (recorded, excluded from the "
+                  "attribution): " + ", ".join(
+                      "%s p%d %s: %s" % x for x in failed),
+                  file=sys.stderr)
+        return 1 if bad else FAILED_BUILDS if failed else 0
     except (Refusal, ValueError, OSError,
             subprocess.CalledProcessError) as error:
         print("REFUSED: %s" % error, file=sys.stderr)

@@ -193,3 +193,9 @@ CLIENT_TIMING_SOURCES = tuple(cases31.SOURCES)
 # the tables they come from (task30_grid, task31_grid).
 LONG_MATRIX = tuple(cases30.DELETIONS)
 LONG_CLIENT = tuple(cases31.TRAVERSAL_SINGLETON)
+
+# The revision the candidate's compiled sources must equal in the TASK32 and
+# TASK33 re-targeted drivers (`--compiled-ref`): the final candidate, named
+# here once and never the HEAD of the stream's clone (7e202dfbaa plus
+# performance-only commits has the same compiled sources).
+COMPILED_REF = "7e202dfbaa63a48514c36fece89e3ab3f69b3696"

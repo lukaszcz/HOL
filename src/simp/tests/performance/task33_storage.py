@@ -55,6 +55,29 @@ units, plans, rules (task33_rules.py) and replay of the storage stages; its
 ledger table is `task33-storage` (same attempts.jsonl as the loading
 driver). Exit status as the timing driver's: 0 pass, 1 fail, 2
 inconclusive or blocked, 3 refused or a usage error, 4 a signal.
+
+Re-targeting (TASK37). `--declared FILE` selects the declaration and
+`--compiled-ref REV` the revision the candidate's compiled sources equal
+(defaults: task33_declared.json and C31, so that the TASK33 records
+replay). TASK37 passes `--declared task37_declared.json --compiled-ref
+<task37_cases.COMPILED_REF>`. A stage, a predeclaration and a replay require the declaration's
+`base` and `cand` to be the pins of the gate (`check_declared`), a
+predeclaration also a valid, filled declaration (`declared_ready`), and
+`dispose` that the audit and the harvest were made against it.
+
+Concurrency. Streams run in separate clones, and a snapshot pair belongs
+to one driver: TASK32 and TASK33 (and every other stream) each build their
+own pair below their own checkout, `<clone>/.agent-files/snapshots/task32`,
+and name it in their own `--manifest`, `--base-root` and `--cand-root`. A
+pair shared between drivers or clones would be changed under one by the
+restore of the other (the serial lock is per checkout, so two clones cannot
+exclude each other), and nothing in the drivers can tell: the protocol
+states it. Within one clone the lock admits one runner at a time, so
+TASK33's timing stage (t-run) and storage stages (s-run) are alternated
+there or run from two clones, each with a pair of its own. Their scratch
+folders differ by default (the timing stage's SCRATCH_ROOT, the storage
+stages' STORAGE_SCRATCH), and a scratch folder created while another stage
+removes the empty root is created again (`task32_downstream.make_scratch`).
 """
 import json
 import math
@@ -111,7 +134,13 @@ MAX_REDRAWS = 3  # tries after the first at one position of a plan
 UNDIVIDED_CAP = (
     {"sha256": "069b87eea6287685ff50715d4dc07db797163767c0e5f5bf475cf1ad"
                "f94f2ab5", "bytes": 79375},)
+# The scratch the table's stages share: the timing stages (t-run) use
+# SCRATCH_ROOT itself, the storage stages (s-run) STORAGE_SCRATCH below it,
+# so that the two streams that run at once never share a folder (nor the
+# `rmdir` of an empty root, which each does when it ends). The disposal
+# removes SCRATCH_ROOT, and with it both.
 SCRATCH_ROOT = Path("/dev/shm/t33")
+STORAGE_SCRATCH = SCRATCH_ROOT / "storage"
 AUDIT_CASES = 8
 AUDIT_UNIT = "api-audit"
 OFFLINE_COMMANDS = ("archive", "audit", "harvest")  # the S3 reports
@@ -468,7 +497,7 @@ def audit_body(args, spec, report, sides, scratch, fds, verify, journal):
     itself is not among the driver's code seals: it is a file of the
     candidate snapshot, which the snapshot manifest (verified before and
     after the stage) covers."""
-    scratch.mkdir(parents=True, exist_ok=False)
+    d.make_scratch(scratch)
     if verify is not None:
         report["verify"] = {"before": d.run_verify(verify, report["repo"],
                                                    fds)}
@@ -763,7 +792,7 @@ def decide(report, groups, paired):
     names = report["workloads"]
     decides = report["decides"]
     declared = offline.load_declared()
-    deltas = rules.total_deltas(declared)
+    deltas = refusing(rules.total_deltas, declared)
 
     def masked(side, path):
         return d.mask_path(path, report["roots"][side],
@@ -876,9 +905,32 @@ def new_report(mode, stage, spec, repo, sides, mseal, output):
         "code": d.code_seals()}
 
 
+def check_declared(base, cand):
+    """The declaration (`offline.load_declared()`, selected by
+    `--declared`) is the one of the revisions measured: its `base` and
+    `cand` are the pins of the stage. TASK33's own declaration names its
+    own candidate (so that its records replay), TASK37's names the final
+    one; neither can silently bind the other's."""
+    declared = offline.load_declared()
+    for side, pin in (("base", base), ("cand", cand)):
+        require(declared[side] == pin, "the declaration %s is for %s %s, "
+                "not the %s %s of this gate (--declared)" % (
+                    offline.DECLARED.name, side, declared[side], side, pin))
+
+
+def declared_ready():
+    """A counts file is predeclared only against a declaration whose shape
+    is valid and in which no measured value is a placeholder."""
+    problems = offline.shape_problems(offline.load_declared())
+    require(not problems, "the declaration %s is not ready: %s" % (
+        offline.DECLARED.name, "; ".join(problems)))
+
+
 def run(args, spec):
     """One stage of the storage driver (a `d.run_stage`)."""
     stage = spec["mode"]
+    sides, _ = d.pins_of(args)
+    check_declared(sides["base"]["pin"], sides["cand"]["pin"])
     return d.run_stage(
         args, spec, body_fn=audit_body if stage == "audit" else body,
         report_fn=new_report, decisive_stages=DECISIVE,
@@ -1088,6 +1140,7 @@ def replay_one(folder, ledger=None, repo=None, counts=None,
     require(report["declared"] == a.seal(offline.DECLARED),
             "the declaration changed since the %s run: it is sealed "
             "before the smoke, the pilot and the controls" % mode)
+    check_declared(report["base"], report["cand"])
     require((report["decides"] is None) ==
             (mode not in ("extend", "followup")), "malformed run")
     if mode in DECISIVE:
@@ -1406,6 +1459,8 @@ def predeclare_run(args):
     control that all ran, verified, on this gate, bound to the committed
     timing counts."""
     sides, mseal = d.pins_of(args)
+    check_declared(sides["base"]["pin"], sides["cand"]["pin"])
+    declared_ready()
     key = d.gate_key(sides)
     timing_path = table_counts_path(args).resolve(strict=True)
     timing = d.load_counts(timing_path, sides, "first", args.repo,
@@ -1484,6 +1539,8 @@ def predeclare_followup(args):
     resolution) (capped by FOLLOWUP_FACTOR times the budget; `required_m`
     and `capped` recorded as the first counts do)."""
     sides, mseal = d.pins_of(args)
+    check_declared(sides["base"]["pin"], sides["cand"]["pin"])
+    declared_ready()
     timing_path = table_counts_path(args).resolve(strict=True)
     run_counts = load_storage_counts(
         storage_counts_path(args).resolve(strict=True), sides, "run",
@@ -1690,7 +1747,9 @@ def add_run(parser):
     add_common(parser)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--scratch", type=d.absolute_path,
-                        default=SCRATCH_ROOT)
+                        default=STORAGE_SCRATCH, help="default %s (the "
+                        "timing stages' is %s)" % (
+                            STORAGE_SCRATCH, SCRATCH_ROOT))
     parser.add_argument("--timeout", type=int, default=d.TIMEOUT)
     parser.add_argument("--verify-argv", type=shlex.split)
     parser.add_argument("--no-verify", action="store_true")
