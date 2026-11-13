@@ -557,7 +557,7 @@ class StructureFixture(unittest.TestCase):
                       self.support)
 
     def test_the_fingerprints_read_the_retained_result(self):
-        # a fragment: the printed form of every rule it holds, not its
+        # a fragment: the structural key of every rule it holds, not its
         # agreement with what verify already required
         start = self.support.index("fun fragText")
         body = self.support[start:self.support.index("fun fragworkWith")]
@@ -583,17 +583,42 @@ class StructureFixture(unittest.TestCase):
         start = self.support.index("fun keyName")
         end = self.support.index("fun hashText")
         key = self.support[start:end]
-        for token in ("dest_term", "dest_thy_type", "dest_vartype",
-                      "VAR", "CONST", "COMB", "LAMB", "Thy", "Name", "Ty",
-                      "keyName", "tyKey", "tmKey", "hyp th", "concl th"):
-            self.assertIn(token, key)
         # every name is length-prefixed, so the key decodes uniquely
-        self.assertIn('Int.toString (size s) ^ ":" ^ s', key)
+        self.assertIn('fun keyName s = Int.toString (size s) ^ ":" ^ s', key)
+        # each constructor of a term and of a type, with its tag
+        for token in ('"\'" :: keyName (dest_vartype ty)',
+                      '"V" :: keyName s :: tyKey ty acc',
+                      '"A" :: tmKey f (tmKey x acc)',
+                      '"L" :: tmKey v (tmKey b acc)'):
+            self.assertIn(token, key)
+        # the theory and the name of a constant, its type, the theory and
+        # the operator of a type, and its arguments
+        self.assertIn("keyName Thy ::\n        keyName Name :: tyKey Ty acc",
+                      key)
+        self.assertIn("keyName Thy ::\n      keyName Tyop :: Int.toString "
+                      "(length Args) ::", key)
+        self.assertIn("List.foldr (fn (a,acc) => tyKey a acc) acc Args", key)
+        # a retired constant or type operator has its own tag
+        self.assertIn('(if Term.uptodate_term tm then "C" else "c")', key)
+        self.assertIn('(if Type.uptodate_type ty then "T" else "t")', key)
+        # the hypotheses (counted, in order) and the conclusion
+        self.assertIn("Int.toString (length (hyp th))", key)
+        self.assertIn("List.foldr (fn (h,acc) => tmKey h acc) "
+                      '("|" :: tmKey (concl th) [])', key)
+        self.assertIn("(hyp th))", key)
         for token in ("term_to_string", "thm_to_string", "termText",
                       "thmText", "Parse."):
             self.assertNotIn(token, key)
-        # the printed forms of the other fixtures are unchanged
-        self.assertIn("fun thmText th", self.support)
+        # the printed forms of the other fixtures are as they were
+        for text in (
+                "fun termText tm = Lib.with_flag (Globals.show_types,true)\n"
+                "    (fn () => printable (Parse.term_to_string tm)) ()\n",
+                "fun thmText th = String.concatWith \",\" (map termText "
+                "(hyp th)) ^ \" |- \" ^\n                   termText "
+                "(concl th)\n",
+                "fun goalText (asl,w) =\n    String.concatWith \",\" (map "
+                "termText asl) ^ \" ?- \" ^ termText w\n"):
+            self.assertIn(text, self.support)
         self.assertEqual(self.support.count("thmKey"), 3)
 
     def test_the_timing_fixture_knows_nothing_of_it(self):

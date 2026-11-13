@@ -65,20 +65,27 @@ struct
   fun goalText (asl,w) =
     String.concatWith "," (map termText asl) ^ " ?- " ^ termText w
   (* A theorem as its structure, for the hash of the n rules: hypotheses and
-     conclusion in prefix form, a constant with its theory, every type, each
-     name with its length. Distinct theorems get distinct keys. Not the
-     printer: Parse.term_to_string rebuilds term_pp.avoid_symbolmerge's
-     list of every known constant on each call, so printing n rules over
-     the n constants of a workload costs n^2. This is linear in the terms. *)
+     conclusion in prefix form, a constant or type operator with its theory
+     and whether it is current or retired, every type, each name with its
+     length. Two theorems have equal keys exactly when dest_term shows the
+     same structure, bound-variable names included. Not the printer:
+     Parse.term_to_string rebuilds term_pp.avoid_symbolmerge's list of every
+     known constant on each call, so printing n rules over n constants
+     costs n^2. This is linear in binder-free terms and independent of the
+     number of constants in scope (dest_abs scans for clashes, so nested
+     binders cost size times depth). *)
   fun keyName s = Int.toString (size s) ^ ":" ^ s
   fun tyKey ty acc =
     if is_vartype ty then "'" :: keyName (dest_vartype ty) :: acc
     else let val {Thy,Tyop,Args} = dest_thy_type ty in
-      "T" :: keyName Thy :: keyName Tyop :: Int.toString (length Args) ::
+      (if Type.uptodate_type ty then "T" else "t") :: keyName Thy ::
+      keyName Tyop :: Int.toString (length Args) ::
       List.foldr (fn (a,acc) => tyKey a acc) acc Args end
   fun tmKey tm acc = case dest_term tm of
       VAR (s,ty) => "V" :: keyName s :: tyKey ty acc
-    | CONST {Thy,Name,Ty} => "C" :: keyName Thy :: keyName Name :: tyKey Ty acc
+    | CONST {Thy,Name,Ty} =>
+        (if Term.uptodate_term tm then "C" else "c") :: keyName Thy ::
+        keyName Name :: tyKey Ty acc
     | COMB (f,x) => "A" :: tmKey f (tmKey x acc)
     | LAMB (v,b) => "L" :: tmKey v (tmKey b acc)
   fun thmKey th = String.concat (Int.toString (length (hyp th)) ::
@@ -290,8 +297,8 @@ struct
   fun namedRules namer rs = rewrites_with_names
     (ListPair.zip (List.tabulate (length rs,fn i =>
       {Thy="bool",Name=namer i}),rs))
-  (* The fingerprint of a fragment: name, rules (a hash of their printed
-     form) and what `extra` makes of it; its use is a simpset with it. *)
+  (* The fingerprint of a fragment: name, rules (a hash of their structural
+     keys) and what `extra` makes of it; its use is a simpset with it. *)
   fun fragText extra f = let
     val actual = frag_rewrites f
   in optText (frag_name f) ^ ";" ^ Int.toString (length actual) ^ ";" ^

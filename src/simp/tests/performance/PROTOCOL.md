@@ -1787,10 +1787,12 @@ error with the function that raised it and its message. The fixture emits
 
 The hashed lists of the n rules, the fragment's and the simpset's others, are
 structural keys (`MatrixSupport.thmKey`): hypotheses and conclusion in prefix
-form, constants with their theory and type, every name with its length. The
-key is injective and linear in the terms, which printing is not (the TASK37
-allocation note below). The rest of the fingerprint is printed text, as
-before. A digest is compared only within one grid, base against candidate under
+form, constants and type operators with their theory and whether they are
+current or retired, every name with its length. Equal keys mean the same
+structure as `dest_term` shows. A print rebuilds `avoid_symbolmerge`'s token
+list over every known constant, so printing n rules over n fixture constants
+is O(n^2); the key avoids the printer. The rest of the fingerprint is printed
+text. A digest is compared only within one grid, base against candidate under
 the same fixture, and each inventory seals the fixture blob, which defines the
 digest. So the digests of grids under different fixture blobs are not
 comparable, and `STRUCTURE` stays "v1".
@@ -5265,15 +5267,6 @@ private counter of `allocation_matrix.py`, in three tasks, one per clone.
 - Decisions. A case with no size-0 cell has `constants: None`, which the
   disposition reads as `n/a` (not a gate, never a failure); its slopes
   are still gated.
-
-Fingerprint cost. The first fingerprint of the n rules printed each rule
-(`Parse.term_to_string`). A print rebuilds the token list of
-`term_pp.avoid_symbolmerge`, which holds every known constant, and the n rules
-of a workload come with n fixture constants, so a print costs O(n) and the
-fingerprint O(n^2). The counting runtime traps on every allocation and
-multiplies that by about 12: a fragment cell at size 10000 took about 26
-minutes per process. The cost is outside every bracket, so no bracketed word
-depended on it. The structural key above removes it.
 
 ### TASK32/33, startup, loading, D7 (part D)
 
