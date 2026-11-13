@@ -1905,6 +1905,7 @@ class StartupPath(Ledgers):
                       cells={}, task32={}, task33={}, gates={},
                       identity_grid={}, allocation_case={},
                       timing_grid={}, retained_slope={},
+                      attempts=dict(allocation={}),
                       startup_attempts=[dict(
                           attempt="a", status="failed", judged=False,
                           verdict="void", decision=None, problems=[],

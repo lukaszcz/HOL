@@ -210,17 +210,30 @@ TASK33_HISTORY = {
 # counts and the S3 offline audit report). The t33 table holds both, the
 # t32 table the driver (it does not bind `task33_offline.py`);
 # `task33_offline.check_code` takes them from the table that names the
-# selected declaration.
+# selected declaration. Both also list `loading.py` before the halt of
+# in-flight processes (decision 32), the version those records ran.
+TASK37_LOADING = [
+    {"sha256": "c8d740773983a62af72e3ad4af728bc2"
+               "f893e0bbc4a555d74f50eec8d7ba2440", "bytes": 85232}]
+TASK37_DRIVER = [
+    {"sha256": "e030bcb8f76691a1d3c945e6e42d23"
+               "d8822c08bcb0391890e7b4d55fe493ce57", "bytes": 186819}]
+# the t33 table also keeps the redrawn harvest (`offline/harvest2`), made by
+# the driver of fe2ea792d9: the pooled logs, before the halt of in-flight
+# processes
+TASK37_HARVEST_DRIVER = [
+    {"sha256": "e3c5e2535bde5913b3ae8bbd9da80e"
+               "8356e12921105fd5e3c1b744ce53d987c9", "bytes": 187905}]
 TASK37_HISTORY = {
-    "task32_downstream.py": [
-        {"sha256": "e030bcb8f76691a1d3c945e6e42d23"
-                   "d8822c08bcb0391890e7b4d55fe493ce57", "bytes": 186819}],
+    "task32_downstream.py": TASK37_DRIVER + TASK37_HARVEST_DRIVER,
+    "loading.py": TASK37_LOADING,
     "task33_offline.py": [
         {"sha256": "f817b9a2f3ad3a124ae9ab0b06b6d5"
                    "64ba15ee57bfa8219b8c95b8dd409a4146", "bytes": 95782}],
 }
 TASK37_T32_HISTORY = {
-    "task32_downstream.py": TASK37_HISTORY["task32_downstream.py"]}
+    "task32_downstream.py": TASK37_DRIVER,
+    "loading.py": TASK37_LOADING}
 
 
 def require(ok, message):

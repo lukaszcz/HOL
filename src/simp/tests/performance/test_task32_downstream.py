@@ -2370,7 +2370,11 @@ class Sealed(unittest.TestCase):
                         "c60f5e43c1224", bytes=180533)],
             "task32_snapshots.py": [
             dict(sha256="444e5f40c62d8529bceb87e8086d13de5ea54127559063987d4"
-                        "5520a89806ac7", bytes=60760)]})
+                        "5520a89806ac7", bytes=60760)],
+            # before the halt of in-flight processes (decision 32)
+            "loading.py": [
+            dict(sha256="c8d740773983a62af72e3ad4af728bc2f893e0bbc4a555d74f5"
+                        "0eec8d7ba2440", bytes=85232)]})
 
     def test_a_record_carries_the_current_seal_or_one_the_history_lists(self):
         now = dw.code_seals()

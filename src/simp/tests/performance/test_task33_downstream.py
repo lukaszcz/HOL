@@ -300,8 +300,15 @@ class TableSelection(unittest.TestCase):
         self.assertEqual(history["task32_downstream.py"][0], driver)
         self.assertEqual(history["task33_storage.py"][0], storage)
         self.assertEqual(history["task33_offline.py"][0], offline)
+        # `loading.py` before the halt of in-flight processes (decision
+        # 32) is the version the kept TASK32 and TASK33 records ran
+        loading = {"sha256": "c8d740773983a62af72e3ad4af728bc2f893e0bbc4a5"
+                   "55d74f50eec8d7ba2440", "bytes": 85232}
+        self.assertEqual(history["loading.py"], [loading])
+        self.assertEqual(
+            dw.TABLES["task32"].history["loading.py"], [loading])
         self.assertEqual(sorted(history), [
-            "task32_downstream.py", "task32_snapshots.py",
+            "loading.py", "task32_downstream.py", "task32_snapshots.py",
             "task33_dispose.py", "task33_offline.py", "task33_rules.py",
             "task33_storage.py"])
 

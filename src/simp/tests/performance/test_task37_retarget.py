@@ -1246,6 +1246,8 @@ class HistoryOfTheKeptRecords(unittest.TestCase):
     KEPT = "7e202dfbaa63a48514c36fece89e3ab3f69b3696"
     # the head the kept TASK37 records were made with
     TASK37_KEPT = "b6052eb65f"
+    # the driver that made the redrawn t33 harvest (pooled logs)
+    HARVEST2 = "fe2ea792d9"
     PERF = "src/simp/tests/performance/"
     FILES = ("task32_downstream.py", "task32_snapshots.py",
              "task33_offline.py", "task33_storage.py", "task33_rules.py",
@@ -1294,19 +1296,34 @@ class HistoryOfTheKeptRecords(unittest.TestCase):
 
     def test_the_task37_histories_hold_the_kept_versions(self):
         """The versions that made the kept TASK37 records (b6052eb65f,
-        before the pooled logs) and nothing else."""
+        before the pooled logs and the halt of in-flight processes), and
+        for the t33 table the driver that made the redrawn harvest."""
         for name, seals in dw.TASK37_HISTORY.items():
-            self.assertEqual(seals, [self.seal_at(self.TASK37_KEPT, name)],
-                             name)
-        self.assertEqual(sorted(dw.TASK37_HISTORY),
-                         ["task32_downstream.py", "task33_offline.py"])
+            kept = [self.seal_at(self.TASK37_KEPT, name)]
+            if name == "task32_downstream.py":
+                kept.append(self.seal_at(self.HARVEST2, name))
+            self.assertEqual(seals, kept, name)
+        self.assertEqual(sorted(dw.TASK37_HISTORY), [
+            "loading.py", "task32_downstream.py", "task33_offline.py"])
         self.assertEqual(dw.TABLES["task37-t33"].history, dw.TASK37_HISTORY)
-        self.assertEqual(dw.TABLES["task37-t32"].history,
-                         {"task32_downstream.py":
-                          dw.TASK37_HISTORY["task32_downstream.py"]})
+        self.assertEqual(
+            dw.TABLES["task37-t32"].history,
+            {"task32_downstream.py":
+             dw.TASK37_HISTORY["task32_downstream.py"][:1],
+             "loading.py": dw.TASK37_HISTORY["loading.py"]})
         now = dw.code_seals()
-        self.assertNotIn(now["task32_downstream.py"],
-                         dw.TASK37_HISTORY["task32_downstream.py"])
+        for name in ("task32_downstream.py", "loading.py"):
+            self.assertNotIn(now[name], dw.TASK37_HISTORY[name])
+
+    def test_loading_before_the_halt_is_in_every_history_that_ran_it(self):
+        """`loading.py` as the kept TASK32, TASK33 and TASK37 records ran
+        it (decision 32 changed it later)."""
+        seal = self.seal_at(self.KEPT, "loading.py")
+        self.assertEqual(seal, self.seal_at(self.TASK37_KEPT, "loading.py"))
+        for history in (dw.TASK32_HISTORY, dw.TASK33_HISTORY,
+                        dw.TASK37_HISTORY, dw.TASK37_T32_HISTORY):
+            self.assertEqual(history["loading.py"], [seal])
+        self.assertIn("loading.py", dw.CODE)
 
 
 if __name__ == "__main__":
