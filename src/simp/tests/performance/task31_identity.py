@@ -359,13 +359,26 @@ def tracked(path):
         "%s%sScript.sml" % (found.group(1) or "", found.group(2))
 
 
-def private_file(name, physical, selected, repo):
+THEORY_FILE = re.compile(r"([^/]+)Theory\.(?:sml|sig|uo|ui|dat)")
+
+
+def private_file(name, physical, selected, repo, seal=None):
     """The tracked file a private file of one side is built from, or None
     for an installed fixture. It is a selected simplifier source (by its
-    name, the sources are flattened), else the shared source the manifest
-    says a relocated dependency was copied from. Any other private file is
+    name, the sources are flattened), else a file of the theory of a
+    selected script (below), else the shared source the manifest says a
+    relocated dependency was copied from. Any other private file is
     refused: it must be a fixture the runner installed (the manifest's
-    `fixture_products`), so that no private file goes unmapped."""
+    `fixture_products`), so that no private file goes unmapped.
+
+    A file `XTheory.{sml,sig,uo,ui,dat}` is a product of the selected script
+    `XScript.sml` of the side (the private Holmake builds it; the closure
+    does not copy it: TASK37 design decision 34) exactly when its seal (the
+    `{sha256, bytes}` given) is that of the same file in the manifest's
+    post-build record of the private tree (`products`, taken after the
+    build). It is then the script's file. Without a seal (a spelling in the
+    heap, whose entry is judged where it is loaded) the record alone is
+    consulted."""
     git_paths = {Path(s["git_path"]).name: s["git_path"]
                  for s in selected["sources"]}
     products = (selected.get("shared_dependencies") or {}).get(
@@ -376,6 +389,15 @@ def private_file(name, physical, selected, repo):
               Path(info["source"]).is_relative_to(repo)}
     if Path(name).name in git_paths:
         return git_paths[Path(name).name]
+    theory = THEORY_FILE.fullmatch(Path(name).name)
+    if theory is not None and theory.group(1) + "Script.sml" in git_paths:
+        built = (selected.get("products") or {}).get(
+            ".hol/objs/" + Path(name).name)
+        require(built is not None and (seal is None or seal == {
+            k: built.get(k) for k in seal}),
+            "the private theory file %s is not in the post-build record "
+            "of its process, or differs from it" % name)
+        return git_paths[theory.group(1) + "Script.sml"]
     if physical in origin:
         return tracked(origin[physical])
     if name in origin:
@@ -400,8 +422,9 @@ def files_of(closures, manifest):
             if kind == "shared":
                 found = tracked(rest)
             else:
-                found = private_file(rest, entry["physical"], selected,
-                                     repo)
+                found = private_file(
+                    rest, entry["physical"], selected, repo,
+                    dict(sha256=entry["source"], bytes=entry["bytes"]))
             if found is not None:
                 two.add(found)
                 if entry["used"]:

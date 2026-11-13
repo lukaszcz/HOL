@@ -61,6 +61,47 @@ def fake(side, source="s1", uo="u1", extra=None, order=None, tamper=None):
             snapshot)
 
 
+class PrivateTheory(unittest.TestCase):
+    """The files of the theory of a selected script (design decision 34)."""
+    SEAL = dict(sha256="a" * 64, bytes=7)
+
+    def selected(self, script=True, products=None):
+        sources = [dict(git_path="src/simp/src/A.sml")]
+        if script:
+            sources.append(dict(git_path="src/simp/src/xScript.sml"))
+        return dict(
+            sources=sources, shared_dependencies=dict(products={}),
+            fixture_products={},
+            products=products if products is not None else {
+                ".hol/objs/xTheory." + s: self.SEAL
+                for s in ("sml", "sig", "uo", "ui", "dat")})
+
+    def file(self, name, selected, seal=SEAL):
+        return idt.private_file(name, ".hol/objs/" + name, selected, REPO,
+                                seal)
+
+    def test_the_theory_of_a_selected_script_is_its_products(self):
+        for suffix in ("sml", "sig", "uo", "ui", "dat"):
+            self.assertEqual(
+                self.file("xTheory." + suffix, self.selected()),
+                "src/simp/src/xScript.sml")
+
+    def test_a_theory_whose_script_is_not_selected_is_refused(self):
+        with self.assertRaises(ValueError):
+            self.file("xTheory.sml", self.selected(script=False))
+
+    def test_a_seal_that_is_not_the_post_build_one_is_refused(self):
+        other = dict(sha256="b" * 64, bytes=7)
+        with self.assertRaises(ValueError):
+            self.file("xTheory.sml", self.selected(), other)
+        with self.assertRaises(ValueError):
+            self.file("xTheory.sml", self.selected(products={}))
+
+    def test_another_theory_of_the_side_is_still_refused(self):
+        with self.assertRaises(ValueError):
+            self.file("yTheory.sml", self.selected())
+
+
 class Closure(unittest.TestCase):
     def closures(self, **tweak):
         out = {}

@@ -143,6 +143,37 @@ class InstallTests(unittest.TestCase):
         rules = (self.dst / "Holmakefile").read_text()
         self.assertRegex(rules, r"(?m)^bossLib\.uo: .*\bmarkTheory\.uo\b")
 
+    def test_the_private_set_is_returned_with_the_theories(self):
+        result = self.private_script_case({"simpLib", "markLib",
+                                           "markScript"})
+        self.assertEqual(result["private"], ["markLib", "markScript",
+                                             "markTheory", "simpLib"])
+
+    def test_a_frozen_theory_rebound_to_a_private_one_builds_it(self):
+        # contextTheory is copied and frozen; its descriptor names
+        # markTheory, which is private: the descriptor is rebound to the
+        # private directory and the theory is built whatever else needs it.
+        self.module("simpLib")
+        self.module("markTheory", hfs=True, theory=True, under_simp=True)
+        self.module("contextTheory", ["markTheory"], hfs=True, theory=True,
+                    under_simp=True)
+        self.module("bossLib", ["contextTheory"])
+        self.fixture()
+        (self.dst / "markScript.sml").write_text("(* private script *)\n")
+        result = cd.install(self.repo, self.dst, {"simpLib", "markScript"})
+        self.assertEqual(result["modules"], ["bossLib", "contextTheory"])
+        loader = (self.dst / ".hol/objs/contextTheory.uo").read_text()
+        self.assertIn(str(self.dst / "markTheory"), loader.splitlines())
+        rules = (self.dst / "Holmakefile").read_text()
+        self.assertRegex(rules, r"(?m)^paired\.exe: .*\bmarkTheory\.uo\b")
+        # a private name with nothing to build it from is no prerequisite
+        self.dst = Path(self.tmp.name) / "private2"
+        self.dst.mkdir()
+        self.fixture()
+        cd.install(self.repo, self.dst, {"simpLib", "markScript"})
+        self.assertNotRegex((self.dst / "Holmakefile").read_text(),
+                            r"(?m)^paired\.exe: .*markTheory")
+
     def test_theory_of_an_unselected_script_stays_shared(self):
         # Control: without the script among the private names the theory is
         # an ordinary shared simp module, copied and frozen.

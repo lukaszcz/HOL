@@ -32,6 +32,7 @@ import os
 from pathlib import Path, PurePosixPath
 import platform
 import queue
+import re
 import shutil
 import signal
 import sys
@@ -879,12 +880,14 @@ class Grid:
     def make_job(self, index):
         job = Job(self.scratch / ("j%02d" % index))
         job.root.mkdir()
+        private = set()
         for side, directory in job.dirs.items():
             rev, sources = self.checkout(side, directory)
             sc.require(rev == self.revisions[side] and
                        source_map(sources) == self.sources[side],
                        "checkout differs from the grid's sources")
             installed = self.install_private(directory, sources)
+            private |= set((installed or {}).get("private", ()))
             if self.task.family.closure:
                 sc.require(closure_record(installed, directory) ==
                            self.closure["sides"][side],
@@ -892,6 +895,7 @@ class Grid:
             job.inventory[side] = sources
         job.names = {Path(s["git_path"]).stem for v in job.inventory.values()
                      for s in v}
+        job.names |= set(private)
         for side, directory in job.dirs.items():
             cmd = [str(self.hol / "bin/Holmake"), "--no-project", "--no-cache",
                    "--no_prereqs", "--holstate=" +
@@ -937,6 +941,12 @@ class Grid:
                 signature="pass", source_hashes=job.sources,
                 expected_observations=observed)
             receipt["paths"] = result["paths"]
+            # What the private Holmake built, as sealed after the build
+            # (audit() checks the tree unchanged): the theories of selected
+            # scripts are judged against it (built_product).
+            receipt["built"] = {
+                k: v for k, v in job.tree[side].items()
+                if k.startswith(".hol/objs/")}
             receipt["accepted"] = True
         except (ValueError, OSError) as error:
             receipt.update(accepted=False, rejection=str(error))
@@ -1185,6 +1195,27 @@ def check_changed_input(repo, path, meta, what, loaded=False):
                    "privately was loaded: %s" % (what,))
 
 
+THEORY_FILE = re.compile(
+    r"(?:\.hol/objs/)?([^/]+)Theory\.(?:sml|sig|uo|ui|dat)")
+
+
+def built_product(receipt, source, relative):
+    """The fingerprint of a file of a private theory that the private
+    Holmake built, or None when `relative` (a path below the private
+    directory) is not one. It is such a file exactly when it is a file
+    `XTheory.{sml,sig,uo,ui,dat}` (below `.hol/objs`, where HOL puts a
+    theory's files) of a selected script `XScript.sml` of the side
+    (`source`), and then its fingerprint is that of the same file in the
+    process's own post-build record of the private tree, `built` (TASK37
+    design decision 34): a theory is judged by its script, not copied from
+    the shared tree, and bytes are not compared across processes."""
+    found = THEORY_FILE.fullmatch(relative)
+    if found is None or found.group(1) + "Script.sml" not in source:
+        return None
+    return (receipt.get("built") or {}).get(
+        ".hol/objs/" + Path(relative).name)
+
+
 def check_receipt(receipt, meta, experiment):
     """Offline protocol and provenance checks of one archived process."""
     sc.require(receipt["accepted"] is True and receipt["exit"] == 0 and
@@ -1230,6 +1261,9 @@ def check_receipt(receipt, meta, experiment):
             want = source.get(physical.name) or meta["fixtures"].get(
                 physical.name) or closure.get("products", {}).get(
                     physical.relative_to(private).as_posix())
+            if want is None:
+                want = built_product(receipt, source,
+                                     physical.relative_to(private).as_posix())
             sc.require(want is not None and
                        seal == {k: want[k] for k in ("sha256", "bytes")},
                        "wrong selected source: " + physical.name)
@@ -1297,10 +1331,13 @@ def checked_cell(folder, bind):
     receipts = load_receipts(folder)
     sc.require(len(receipts) == 4 * meta["pairs"], "missing process receipt")
     data = {e: [dict() for _ in range(meta["pairs"])] for e in EXPERIMENTS}
-    shared = {}
+    shared, built = {}, {}
     for (experiment, _), receipt in receipts.items():
         side, pair = receipt["side"], receipt["pair"]
         observation = check_receipt(receipt, meta, experiment)
+        sc.require(built.setdefault(side, receipt.get("built")) ==
+                   receipt.get("built"), "private tree built differently "
+                   "in two processes of a side")
         sc.require(side not in data[experiment][pair], "duplicate process")
         data[experiment][pair][side] = observation
         merge_shared(shared, shared_inputs(receipt))

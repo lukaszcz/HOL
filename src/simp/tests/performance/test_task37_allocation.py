@@ -427,6 +427,64 @@ class ClosureReceipts(unittest.TestCase):
         with self.assertRaisesRegex(sc.InvalidAllocation, message):
             self.check(*args, **kw)
 
+    def theory(self, script=True, built=True, seal=None, name="xTheory.sml"):
+        """check_receipt of a process that loaded the file `name` of a
+        theory built by the private Holmake (below .hol/objs), whose
+        script is selected or not; `built` is its post-build record."""
+        side = "candidate"
+        theory = self.sb.private[side] / ".hol/objs" / name
+        theory.parent.mkdir(parents=True, exist_ok=True)
+        theory.write_text("structure xTheory = struct end\n")
+        path = str(theory)
+
+        def mutate(events):
+            at = events.index(["use", str(self.sb.private[side] /
+                                          "MatrixSupport.sml")])
+            events[at:at] = [["use", path], ["used", path]]
+            events.insert(len(events) - 1, ["loaded", path])
+        receipt = self.sb.receipt("candidate", side, 0, 1, mutate=mutate)
+        receipt["paths"].update(self.sb.paths([path]))
+        if built:
+            receipt["built"] = {".hol/objs/" + name: seal or tb.seal(theory)}
+        sources = self.sb.sources()
+        if script:
+            sources[side] = dict(sources[side], **{
+                "xScript.sml": dict(sha256="1" * 64, bytes=1)})
+        meta = dict(self.sb.bind(sources=sources, **self.header()),
+                    schema=m.SCHEMA)
+        return m.check_receipt(receipt, meta, "candidate")
+
+    def test_the_theory_of_a_selected_script_is_judged_by_its_script(self):
+        for name in ("xTheory.sml", "xTheory.sig", "xTheory.uo",
+                     "xTheory.ui", "xTheory.dat"):
+            with self.subTest(name):
+                self.assertEqual(self.theory(name=name)["steady"],
+                                 tb.STEADY)
+
+    def test_a_theory_is_refused_without_its_selected_script(self):
+        with self.assertRaisesRegex(sc.InvalidAllocation,
+                                    "wrong selected source: xTheory.sml"):
+            self.theory(script=False)
+
+    def test_a_theory_must_have_the_seal_of_the_post_build_record(self):
+        other = dict(sha256="0" * 64, bytes=3)
+        for kw in (dict(seal=other), dict(built=False)):
+            with self.subTest(**kw), self.assertRaisesRegex(
+                    sc.InvalidAllocation,
+                    "wrong selected source: xTheory.sml"):
+                self.theory(**kw)
+
+    def test_the_processes_of_a_side_agree_on_the_built_tree(self):
+        folder = self.sb.root / "cellfolder"
+        self.sb.write_cell(folder)
+        first = sorted((folder / "candidate").glob("pair-*.json.gz"))[0]
+        tb.rewrite(first, lambda r: r.update(
+            built={".hol/objs/xTheory.sml": dict(sha256="1" * 64,
+                                                 bytes=1)}))
+        with self.assertRaisesRegex(sc.InvalidAllocation,
+                                    "built differently"):
+            m.cell_data(folder, self.sb.bind())
+
     def test_the_binding_carries_the_boundary_files_of_the_closure(self):
         bound = self.sb.bind(**self.header(files=[HEAP]))
         self.assertEqual(bound["closure"]["boundary_files"],

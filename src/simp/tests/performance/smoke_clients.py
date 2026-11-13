@@ -223,7 +223,8 @@ def main(argv=None):
                             note(f"{selection} group {index} build exit={build['exit']}")
                             rp.require(build["exit"] == 0 and not build["timed_out"],
                                        selection + " private Holmake failed")
-                            local = names | set(installed["modules"])
+                            local = set(installed["private"]) | set(
+                                installed["modules"])
                             for product in (dst / ".hol/objs").iterdir():
                                 if product.suffix not in (".uo", ".ui"):
                                     continue
