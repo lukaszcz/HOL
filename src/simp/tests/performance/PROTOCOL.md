@@ -4783,7 +4783,13 @@ clone is not brought forward again before `run`) and runs:
       python3 -B $P/allocation_matrix.py run --task task37-T \
       --candidate $(git rev-parse HEAD) --toolchain $TC \
       --controls-receipt $CONTROLS --authorize-experimental-runtime \
-      --jobs JOBS --output $E/run
+      --jobs JOBS --output $E/RUN
+
+`RUN` is `run`; a redraw of a void attempt takes a new output
+(`run2`, ...: one output, one attempt) and the void output stays.
+A redraw after a change to the harness or the candidate takes a
+toolchain and a controls receipt of its own head (a new `$TC`;
+`$CONTROLS` drawn at that head).
 
 The count rule is the policy of `task37_iterations.py` (its docstring): each
 matrix or client cell takes the steady count its originating task
@@ -5167,7 +5173,8 @@ the arguments of the `dispose` commands above without `--table`, `--out` and
 `--repo`, which the replay fixes. `LAST` is `second` when that stage was
 owed, else `first`: a follow-up goes only in `--followup` and
 `--followup-pilot` (dispose requires `--timing` to be the grid the follow-up
-replaces):
+replaces). `RUN-T` is the output of the last attempt of allocation task
+`T` (`RUN` above):
 
     cd $M
     export TMPDIR=$W/t37-tmp/dispose; mkdir -p $TMPDIR
@@ -5194,9 +5201,9 @@ replaces):
       --identity-ledger matrix=$(lg id-matrix task37-matrix-identity) \
       --identity-ledger downstream=$(lg id-downstream \
         task37-downstream-identity) \
-      --alloc-matrix $EV/alloc-matrix/run \
-      --alloc-client $EV/alloc-client/run \
-      --alloc-downstream $EV/alloc-downstream/run \
+      --alloc-matrix $EV/alloc-matrix/RUN-matrix \
+      --alloc-client $EV/alloc-client/RUN-client \
+      --alloc-downstream $EV/alloc-downstream/RUN-downstream \
       --alloc-ledger task37-matrix=$(lg alloc-matrix task37-matrix) \
       --alloc-ledger task37-client=$(lg alloc-client task37-client) \
       --alloc-ledger task37-downstream=$(lg alloc-downstream \
