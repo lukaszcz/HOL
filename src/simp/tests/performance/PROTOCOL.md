@@ -4362,6 +4362,115 @@ handoff. Committed: the tools and tests above, the probes, the declaration,
 and the counts files, each counts file in a commit of its own. No result,
 log, date of a run or handoff is committed.
 
+## TASK37 final per-workload performance and allocation gate
+
+Binding design: `.agent-files/tasks/TASK_37_design.md` (outside git). This
+section is the protocol of the tooling; the evidence lives under
+`.agent-files/evidence/task37/`, never in git. Final candidate `7e202dfbaa`
+plus commits that touch only this directory (tooling, counts); base B =
+`cccaa27d70`. Aarch64 Linux only, Poly/ML 5.9.2, allocation only with the
+private counter, RSS reported only.
+
+### Scope (stratified; user decision 2026-11-13)
+
+The TASK31 policy (identity of every cell, exact allocation, and a targeted
+timing sample) applies to the TASK29/30 matrix too. Nothing earlier carries
+over: TASK34 changed `src/1/ThmAttribute` (every heap) and the sealed runner
+changed after TASK31. Earlier results justify only the samples and the D4
+dispositions. TASK29-31 records are superseded and not replayed at the final
+head; no sealed TASK29-31 driver is edited. The cell sets are derived in
+`task37_cases.py`: the matrix (TASK29 + TASK30 cases, 306 cells), the client
+cells (`task31_cases`, 278) and the 11 `downstream_*` cells (arithmetic and
+reduce at 1, 10, 100, 1000, 10000; boss at 0), whose workloads are those of
+`ClientPerformance.sml` (selected by PERF_CASE/PERF_SIZE like the other
+client cases). The final source set of the matrix is `task30_cases.SOURCES`
+less the deleted `SimpTracking.{sig,sml}`; the client's is
+`task31_cases.SOURCES`.
+
+### Tables (`task37_grid.py {client,matrix} COMMAND`)
+
+`task37-client` (counts `task37_client_iterations.json`) and `task37-matrix`
+(`task37_matrix_iterations.json`; neither exists until its measurement stage
+commits it). Each: the `warmup` schedule (count rule, headroom 1), 20
+first-stage pairs of 5 samples, alternating AB/BA with a B/B control per
+round, 3% on inclusive CPU and wall, GC reported, no outlier removal, a
+second stage sized from the control (the TASK30A decisions). Each has its own
+seals (cases, pins code, the derivation modules, the fixtures it installs),
+its own layout seed, ledger, build stamp and counts; DRIVERS, ENGINES,
+ACCEPTANCE and SEALED_HISTORY are empty until a change follows a table's
+first record. The reviewed build/heap/source differences from B are
+`task37_attributed.json` (format of `task31_attributed.json`): the pins of
+the tables' sources (`Cond_rewr.sig`) and the heap and build entries
+(`ThmAttribute.{sig,sml}`, Holmakefiles, `holproject.toml`, the sequence).
+
+### Sample rule (design decision 4; counts pinned by tests)
+
+- Client sample (39 cells): the 28 TASK31 sample cells (its 3 follow-up cells
+  are among them) and the 11 downstream cells.
+- Matrix sample (87 cells): every case at size 1000 (nearest size at or
+  below 1000, or its singleton; 51 cells), the 11 named flagged cells
+  (frag_record-0, compile_collector-10000, frag_named_merge-10000,
+  frag_create-10000, frag_named-10000, frag_named_rules-1 and -10,
+  exclude_partial-1, exclude_tactic_reuse-0, exclude_literal_exact-10000,
+  exclude_dproc-10000) and every cell of the D4 lists: the 13 TASK29A
+  control-limited cells, the 5 TASK29A attributed cells and the 13 TASK30
+  attributed cells, so dispositions are re-tested, not assumed.
+- Stage 2 runs only for owed cells. D2 (heavy size-10000 tactic cells:
+  identity only) carries over. R-1 (a void attempt is listed, never hidden,
+  and never replaces a judged one) carries over. Counts alone decide nothing.
+
+### Stage order (design decision 10, with the concurrency of decision 12)
+
+Tooling lands, is reviewed and merged; one `python-tests` + `boundary-tests`
+run. Then: controls; prepare, toolchain, controls receipt, api-audit;
+snapshots; startup gate; TASK33 info runs and re-declaration; pilots; counts
+commits (each alone); predeclare; identity (client, matrix, downstream);
+allocation; client timing; matrix timing; loading; TASK32 stage 1; TASK33
+decision runs; D7; dispose. Deterministic gates come first so a failure
+stops early. Any code or build change after the counts commits voids the
+affected results.
+
+### Decision rule (design decision 11)
+
+Every workload gets a decision. A reproducible slowdown of any size fails;
+an inconclusive result does not pass. Experiments are improved, or the
+generated work and allocation inspected, until each concern is resolved.
+No averaging and no allowed regression percentage.
+
+### Concurrency policy (design decision 12)
+
+- Each stream runs in its own `clone --shared` of the candidate; the
+  performance lock (`acceptance.serial_lock`), ledger, build stamp, prepare
+  log and counts are per checkout and per table, and every scratch directory
+  is a fresh `mkdtemp` (give each stream its own `TMPDIR`), so two tables
+  run at once from two clones with no shared path.
+- Timing streams run at normal priority, one process per stream: client
+  table, matrix table, TASK32 units, TASK33 t-run, loading. Deterministic
+  streams (identity, allocation, TASK33 storage and audit, startup gate, D7)
+  run under `nice -n 19`. At most about 14 measurement processes at once.
+- Every timing round keeps its B/B control; the runner records the load
+  averages before and after each cell, and `task37_load.py record` samples
+  `/proc/loadavg` beside each stream into the evidence directory.
+- Interference shows as control failures or inconclusive cells, resolved by
+  stage 2, never by a pass. Each pilot runs under the same concurrency as
+  its decision run.
+
+### Identity (part B)
+
+(to be merged)
+
+### Allocation (part C)
+
+(to be merged)
+
+### TASK32/33, startup, loading, D7 (part D)
+
+(to be merged)
+
+### Disposition (part E)
+
+(to be merged)
+
 ## Matrix boundaries and final evidence
 
 [`MATRIX.md`](MATRIX.md) and the frozen schema define the requirements and
