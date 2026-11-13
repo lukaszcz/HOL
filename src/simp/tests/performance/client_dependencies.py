@@ -28,11 +28,7 @@ def _physical(path):
 
 def install(repo, dst, private_names):
     """Return {inputs: {absolute_path: fingerprint}, products: {name: info},
-    modules: [...], roots: [...], private: [...]} after installing affected
-    shared sources. `private` is the sorted set of private module names:
-    the selected ones and the theories of the selected scripts (below); the
-    consumers (the runner, the checks of the receipts and the smoke test)
-    take it from here.
+    modules: [...], roots: [...]} after installing affected shared sources.
 
     Product keys are relative private paths (including .hol/objs for theories).
     Info has role='shared-dependency', source=<physical shared path>, and the
@@ -42,24 +38,12 @@ def install(repo, dst, private_names):
     search paths. Roots conservatively include every exported module identifier
     mentioned by installed sources, plus the selected modules' shared metadata.
     Reverse reachability is restricted to the recursive forward root closure.
-    The theory of a selected private script is private too: for every
-    private name XScript, XTheory is a private name. It is never copied from
-    the shared tree (lexical roots and shared_simp must not freeze the shared
-    toolchain's XTheory.{sml,sig,dat,uo,ui}); the private directory's own
-    Holmake builds it from the private script when anything needs it. The
-    name of such a theory that a frozen copied theory's descriptor refers to
-    is made a prerequisite of paired.exe, so that it is built whatever else
-    needs it. The files it builds (below .hol/objs) are neither copies nor
-    products of this closure: they are judged by their script.
     Generated support sources under src/simp are also relocation seeds: the
     runner forbids *any* shared source from that directory, including theories
     absent from the selected git sources. Their data remains shared-baseline.
     """
     repo, dst = Path(repo).resolve(strict=True), Path(dst).resolve(strict=True)
     private_names = set(private_names)
-    private_names |= {name[:-len("Script")] + "Theory"
-                      for name in private_names
-                      if name.endswith("Script") and name != "Script"}
     inputs = {}
 
     def read(path):
@@ -184,7 +168,6 @@ def install(repo, dst, private_names):
     # .sig/.sml against private dependencies, verified by Paired's trace.
     local_names = private_names | set(modules)
     theories = [name for name in modules if name.endswith("Theory")]
-    rebound_private = set()
     for name in theories:
         for suffix in (".uo", ".ui"):
             product, lines = metadata[name][suffix]
@@ -195,8 +178,6 @@ def install(repo, dst, private_names):
                     line = str(dst / path.name)
                 elif path.name in local_names:
                     line = str(dst / path.name)
-                    if path.name in private_names:
-                        rebound_private.add(path.name)
                 rebound.append(line)
             data = ("\n".join(rebound) + "\n").encode()
             copies[name + suffix] = (product, data)
@@ -227,14 +208,7 @@ def install(repo, dst, private_names):
         rules = "\n# Shared-baseline dependencies; private source loaders.\n"
         # Frozen theory descriptors may refer to helpers invisible to lexical
         # Holdep. Compile all relocated implementations before the launcher.
-        # A private name a frozen descriptor was rebound to is built too
-        # (when it has an implementation or a script to build it from).
-        buildable = {
-            n for n in rebound_private
-            if (dst / (n + ".sml")).exists() or (n.endswith("Theory") and (
-                dst / (n[:-len("Theory")] + "Script.sml")).exists())}
-        rules += "paired.exe: " + " ".join(
-            n + ".uo" for n in sorted(set(modules) | buildable)) + "\n"
+        rules += "paired.exe: " + " ".join(n + ".uo" for n in modules) + "\n"
         for name in theories:
             targets = " ".join(name + suffix for suffix in
                                (".uo", ".ui", ".sml", ".sig", ".dat"))
@@ -267,4 +241,4 @@ def install(repo, dst, private_names):
             "source": "generated dependency rules",
             **_fingerprint(holmakefile.read_bytes())}
     return {"inputs": inputs, "products": products, "modules": modules,
-            "roots": sorted(roots), "private": sorted(private_names)}
+            "roots": sorted(roots)}

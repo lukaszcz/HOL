@@ -124,35 +124,23 @@ class InstallTests(unittest.TestCase):
         (self.dst / "markScript.sml").write_text("(* private script *)\n")
         return cd.install(self.repo, self.dst, names)
 
-    def test_theory_of_a_private_script_is_private(self):
-        result = self.private_script_case({"simpLib", "markLib",
-                                           "markScript"})
-        # Nothing of markTheory is copied or sealed as a product, though
-        # the private sources name it and it is a generated simp theory.
-        self.assertEqual(result["modules"], ["bossLib", "contextTheory"])
-        for name in result["products"]:
-            self.assertNotIn("markTheory", name)
-        self.assertFalse(list(self.dst.rglob("markTheory.*")))
-        self.assertNotIn("markTheory.dat",
-                         (self.dst / "Holmakefile").read_text())
-        # The unrelated shared simp theory is still copied as before.
-        dat = ".hol/objs/contextTheory.dat"
+    def test_theory_of_a_selected_script_is_a_frozen_copy(self):
+        # Decision 40: the theory of a selected private script is copied
+        # and frozen like any other, and is not a private name.
+        names = {"simpLib", "markLib", "markScript"}
+        result = self.private_script_case(names)
+        self.assertEqual(result["modules"],
+                         ["bossLib", "contextTheory", "markTheory"])
+        dat = ".hol/objs/markTheory.dat"
         self.assertEqual((self.dst / dat).read_bytes(), b"theory-data")
         self.assertEqual(result["products"][dat]["role"], "shared-dependency")
-        # The dependents load the private theory, not a frozen shared one.
         rules = (self.dst / "Holmakefile").read_text()
-        self.assertRegex(rules, r"(?m)^bossLib\.uo: .*\bmarkTheory\.uo\b")
+        self.assertIn("markTheory.uo markTheory.ui", rules)
 
-    def test_the_private_set_is_returned_with_the_theories(self):
-        result = self.private_script_case({"simpLib", "markLib",
-                                           "markScript"})
-        self.assertEqual(result["private"], ["markLib", "markScript",
-                                             "markTheory", "simpLib"])
-
-    def test_a_frozen_theory_rebound_to_a_private_one_builds_it(self):
-        # contextTheory is copied and frozen; its descriptor names
-        # markTheory, which is private: the descriptor is rebound to the
-        # private directory and the theory is built whatever else needs it.
+    def test_a_frozen_descriptor_names_the_frozen_copy_of_the_theory(self):
+        # contextTheory's descriptor names markTheory, the theory of a
+        # selected script: it is rebound to the frozen copy in the private
+        # directory, which no private build replaces.
         self.module("simpLib")
         self.module("markTheory", hfs=True, theory=True, under_simp=True)
         self.module("contextTheory", ["markTheory"], hfs=True, theory=True,
@@ -161,29 +149,16 @@ class InstallTests(unittest.TestCase):
         self.fixture()
         (self.dst / "markScript.sml").write_text("(* private script *)\n")
         result = cd.install(self.repo, self.dst, {"simpLib", "markScript"})
-        self.assertEqual(result["modules"], ["bossLib", "contextTheory"])
-        loader = (self.dst / ".hol/objs/contextTheory.uo").read_text()
-        self.assertIn(str(self.dst / "markTheory"), loader.splitlines())
-        rules = (self.dst / "Holmakefile").read_text()
-        self.assertRegex(rules, r"(?m)^paired\.exe: .*\bmarkTheory\.uo\b")
-        # a private name with nothing to build it from is no prerequisite
-        self.dst = Path(self.tmp.name) / "private2"
-        self.dst.mkdir()
-        self.fixture()
-        cd.install(self.repo, self.dst, {"simpLib", "markScript"})
-        self.assertNotRegex((self.dst / "Holmakefile").read_text(),
-                            r"(?m)^paired\.exe: .*markTheory")
-
-    def test_theory_of_an_unselected_script_stays_shared(self):
-        # Control: without the script among the private names the theory is
-        # an ordinary shared simp module, copied and frozen.
-        result = self.private_script_case({"simpLib", "markLib"})
         self.assertEqual(result["modules"],
                          ["bossLib", "contextTheory", "markTheory"])
-        self.assertEqual(
-            (self.dst / ".hol/objs/markTheory.dat").read_bytes(),
-            b"theory-data")
-        self.assertIn(".hol/objs/markTheory.dat", result["products"])
+        loader = (self.dst / ".hol/objs/contextTheory.uo").read_text()
+        self.assertIn(str(self.dst / "markTheory"), loader.splitlines())
+        self.assertIn(
+            "markTheory.uo markTheory.ui markTheory.sml markTheory.sig "
+            "markTheory.dat:\n\t@:\n",
+            (self.dst / "Holmakefile").read_text())
+        self.assertTrue((self.dst / ".hol/objs/markTheory.dat").exists())
+        self.assertFalse((self.dst / "markTheory.sml").exists())
 
     def test_missing_required_data_fails_before_copy(self):
         self.module("simpLib")

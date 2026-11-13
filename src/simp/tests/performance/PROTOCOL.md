@@ -5412,14 +5412,18 @@ private counter of `allocation_matrix.py`, in three tasks, one per clone.
   descends from it. Every theory of the closure, the theory of a selected
   subject script (`src/simp/src/XScript.sml`) included, is therefore a
   frozen copy of the toolchain's, the same bytes on every side; the sides
-  differ in subject code only, and the `private` names `install` returns
-  are the selected module stems. A closure product or loaded file whose source
+  differ in subject code only. A closure product or loaded file whose source
   (`source_of`) is a theory script directly in the subject directory is
   subject theory data, shared by construction, and is admitted when that
   script changed; the reviewed boundary manifest does not list it, since
   its files lie outside the subject. Any other changed source, a subject
   file that is not a theory script and a script in a subdirectory of the
-  subject are refused.
+  subject are refused. A run declares this rule in its closure header
+  (`theory_data: "shared"`, bound into the cell binding with the rest of
+  the closure); replay judges by the declared rule. A record without the
+  declaration was made before decision 40 and is judged by the earlier
+  rule, which refuses a changed subject theory; any other value is
+  refused as unknown.
 - Counts. `task37_iterations.py {matrix,client,downstream,all} [--check]`
   writes `allocation_iterations_task37_matrix.json`,
   `allocation_iterations_task37_client.json` and

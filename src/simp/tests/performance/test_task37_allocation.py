@@ -376,6 +376,9 @@ HEAP = "src/Heap1.sml"
 HEAP_UO = "src/Heap1.uo"
 
 
+ABSENT = object()  # a closure header that declares no theory-data rule
+
+
 class ClosureReceipts(unittest.TestCase):
     """check_receipt of a closure family (the downstream cells): a loaded
     shared file, or a product's source, that differs between baseline and
@@ -391,7 +394,7 @@ class ClosureReceipts(unittest.TestCase):
             (directory / DEP).write_text("val dep = 1\n")
 
     def header(self, changed=(), files=(), source="generated", seal=None,
-               prefixes=None, closure=True):
+               prefixes=None, closure=True, theory_data=ABSENT):
         sides = {side: dict(modules=["Dep"], roots=[], products={
             DEP: dict(source=source, **(seal or tb.seal(
                 directory / DEP)))}) for side, directory in
@@ -405,6 +408,8 @@ class ClosureReceipts(unittest.TestCase):
         if closure:
             found["closure"] = dict(changed=list(changed), sides=sides,
                                     inputs={})
+            if theory_data is not ABSENT:
+                found["closure"]["theory_data"] = theory_data
         return found
 
     def check(self, edit=None, side="candidate", **header):
@@ -427,35 +432,50 @@ class ClosureReceipts(unittest.TestCase):
         with self.assertRaisesRegex(sc.InvalidAllocation, message):
             self.check(*args, **kw)
 
-    def theory(self, script=True, built=True, seal=None, name="xTheory.sml",
-               preloaded=None):
-        """check_receipt of a process that loaded the file `name` of a
-        theory built by the private Holmake (below .hol/objs), whose
-        script is selected or not; `built` is its post-build record."""
-        side = "candidate"
-        theory = self.sb.private[side] / ".hol/objs" / name
-        theory.parent.mkdir(parents=True, exist_ok=True)
-        theory.write_text("structure xTheory = struct end\n")
-        path = str(theory)
+    THEORY = ".hol/objs/simpMarkerTheory.dat"
 
+    def subject_theory_receipt(self, theory_data):
+        """check_receipt of a closure that lists the product of a changed
+        subject theory script, under the given declaration."""
+        product = self.repo / "src/simp/src" / self.THEORY
+        meta = dict(self.sb.bind(**self.header(theory_data=theory_data)),
+                    schema=m.SCHEMA)
+        meta["closure"].update(
+            changed=["src/simp/src/simpMarkerScript.sml"],
+            sides={"candidate": dict(products={self.THEORY: dict(
+                source=str(product))})})
+        return m.check_receipt(
+            self.sb.receipt("candidate", "candidate", 0, 1), meta,
+            "candidate")
+
+    def test_a_declared_shared_theory_data_admits_the_subject_theory(self):
+        self.assertEqual(self.subject_theory_receipt(m.THEORY_DATA)[
+            "steady"], tb.STEADY)
+
+    def test_the_declaration_is_validated_once_per_cell(self):
+        for declared in ("private", None):
+            with self.subTest(declared=declared):
+                folder = self.sb.root / ("cell-%s" % declared)
+                header = self.header(theory_data=declared)
+                self.sb.write_cell(folder, **header)
+                with self.assertRaisesRegex(sc.InvalidAllocation,
+                                            "unknown theory-data rule"):
+                    m.cell_data(folder, self.sb.bind(**header))
+
+    def test_a_theory_preloaded_in_the_heap_is_not_a_selected_name(self):
+        # decision 40: the theory of a selected script is a shared module,
+        # so a heap that preloads it is no selected implementation preloaded
         def mutate(events):
-            at = events.index(["use", str(self.sb.private[side] /
-                                          "MatrixSupport.sml")])
-            events[at:at] = [["use", path], ["used", path]]
-            events.insert(len(events) - 1, ["loaded", path])
-            if preloaded:
-                events[3][1] += "," + preloaded
-        receipt = self.sb.receipt("candidate", side, 0, 1, mutate=mutate)
-        receipt["paths"].update(self.sb.paths([path]))
-        if built:
-            receipt["built"] = {".hol/objs/" + name: seal or tb.seal(theory)}
+            events[3][1] += ",xTheory"
         sources = self.sb.sources()
-        if script:
-            sources[side] = dict(sources[side], **{
-                "xScript.sml": dict(sha256="1" * 64, bytes=1)})
+        sources["candidate"] = dict(sources["candidate"], **{
+            "xScript.sml": dict(sha256="1" * 64, bytes=1)})
         meta = dict(self.sb.bind(sources=sources, **self.header()),
                     schema=m.SCHEMA)
-        return m.check_receipt(receipt, meta, "candidate")
+        receipt = self.sb.receipt("candidate", "candidate", 0, 1,
+                                  mutate=mutate)
+        self.assertEqual(m.check_receipt(receipt, meta, "candidate")[
+            "steady"], tb.STEADY)
 
     def test_the_recorded_refusal_texts_are_frozen(self):
         """The reasons of the two stopped TASK37 attempts (the inventories
@@ -472,62 +492,16 @@ class ClosureReceipts(unittest.TestCase):
         with self.assertRaises(sc.InvalidAllocation) as caught:
             m.check_receipt(receipt, meta, "candidate")
         self.assertEqual(str(caught.exception), "wrong observation count")
-        name = ".hol/objs/simpMarkerTheory.dat"
-        product = self.repo / "src/simp" / name
-        meta = dict(self.sb.bind(**self.header()), schema=m.SCHEMA)
-        meta["closure"] = dict(
-            changed=["src/simp/simpMarkerScript.sml"], boundary_files={},
-            sides={"candidate": dict(products={name: dict(
-                source=str(product))})})
+        # a record made before decision 40 declares no theory-data rule:
+        # a changed subject theory is refused with the recorded text
         with self.assertRaises(sc.InvalidAllocation) as caught:
-            m.check_receipt(
-                self.sb.receipt("candidate", "candidate", 0, 1), meta,
-                "candidate")
+            self.subject_theory_receipt(ABSENT)
         self.assertEqual(
             str(caught.exception),
             "shared input differs between baseline and candidate and is "
-            "not a reviewed boundary file: closure product " + name)
+            "not a reviewed boundary file: closure product " + self.THEORY)
         # and a cell archive's own refusal of a rejected cell
         self.assertEqual(m.UNRESOLVED, "unresolved cell")
-
-    def test_the_theory_of_a_selected_script_is_judged_by_its_script(self):
-        for name in ("xTheory.sml", "xTheory.sig", "xTheory.uo",
-                     "xTheory.ui", "xTheory.dat"):
-            with self.subTest(name):
-                self.assertEqual(self.theory(name=name)["steady"],
-                                 tb.STEADY)
-
-    def test_a_private_theory_preloaded_in_the_heap_is_refused(self):
-        with self.assertRaisesRegex(
-                sc.InvalidAllocation,
-                "selected implementation preloaded in shared heap"):
-            self.theory(preloaded="xTheory")
-        self.assertEqual(self.theory(preloaded="yTheory")["steady"],
-                         tb.STEADY)
-
-    def test_a_theory_is_refused_without_its_selected_script(self):
-        with self.assertRaisesRegex(sc.InvalidAllocation,
-                                    "wrong selected source: xTheory.sml"):
-            self.theory(script=False)
-
-    def test_a_theory_must_have_the_seal_of_the_post_build_record(self):
-        other = dict(sha256="0" * 64, bytes=3)
-        for kw in (dict(seal=other), dict(built=False)):
-            with self.subTest(**kw), self.assertRaisesRegex(
-                    sc.InvalidAllocation,
-                    "wrong selected source: xTheory.sml"):
-                self.theory(**kw)
-
-    def test_the_processes_of_a_side_agree_on_the_built_tree(self):
-        folder = self.sb.root / "cellfolder"
-        self.sb.write_cell(folder)
-        first = sorted((folder / "candidate").glob("pair-*.json.gz"))[0]
-        tb.rewrite(first, lambda r: r.update(
-            built={".hol/objs/xTheory.sml": dict(sha256="1" * 64,
-                                                 bytes=1)}))
-        with self.assertRaisesRegex(sc.InvalidAllocation,
-                                    "built differently"):
-            m.cell_data(folder, self.sb.bind())
 
     def test_the_binding_carries_the_boundary_files_of_the_closure(self):
         bound = self.sb.bind(**self.header(files=[HEAP]))
@@ -535,6 +509,10 @@ class ClosureReceipts(unittest.TestCase):
                          {HEAP: "1" * 40})
         self.assertEqual(sorted(bound["closure"]),
                          ["boundary_files", "changed", "sides"])
+
+    def test_the_binding_carries_the_declared_theory_data_rule(self):
+        bound = self.sb.bind(**self.header(theory_data=m.THEORY_DATA))
+        self.assertEqual(bound["closure"]["theory_data"], "shared")
 
     def test_a_clean_closure_receipt_is_accepted(self):
         self.assertEqual(self.check()["steady"], tb.STEADY)
@@ -657,8 +635,12 @@ class ClosureProducts(unittest.TestCase):
     privately is refused."""
     REPO = Path("/repo")
 
-    def meta(self, changed=(), files=(), modules=("Dep",)):
+    def meta(self, changed=(), files=(), modules=("Dep",),
+             theory_data=m.THEORY_DATA):
+        declared = {} if theory_data is None else dict(
+            theory_data=theory_data)
         return dict(closure=dict(
+            declared,
             changed=list(changed), boundary_files={f: "1" * 40
                                                    for f in files},
             sides={side: dict(modules=list(modules), roots=[], products={})
@@ -707,6 +689,47 @@ class ClosureProducts(unittest.TestCase):
                     self.check(product, changed=[source])
                 self.check(product, changed=[source], files=[source])
                 self.check(product, changed=["src/x/Other.sml"])
+
+    def test_a_changed_subject_theory_script_is_shared_data(self):
+        # Decision 40: the theory data of a subject theory script is one
+        # frozen copy on every side; the boundary manifest does not list it.
+        script = "src/simp/src/simpMarkerScript.sml"
+        for suffix in ("uo", "ui", "dat", "sml", "sig"):
+            for objs in (".hol/objs/", ""):
+                product = "src/simp/src/%ssimpMarkerTheory.%s" % (
+                    objs, suffix)
+                with self.subTest(product=product):
+                    self.check(product, changed=[script])
+
+    def test_the_theory_data_rule_is_the_records_own(self):
+        script = "src/simp/src/simpMarkerScript.sml"
+        product = "src/simp/src/.hol/objs/simpMarkerTheory.dat"
+        # a closure made before decision 40 declares nothing: refused
+        with self.assertRaisesRegex(sc.InvalidAllocation,
+                                    "not a reviewed boundary"):
+            self.check(product, changed=[script], theory_data=None)
+        self.check(product, changed=[script], theory_data="shared")
+        with self.assertRaisesRegex(sc.InvalidAllocation,
+                                    "unknown theory-data rule"):
+            self.check(product, changed=[script], theory_data="private")
+
+    def test_a_changed_input_outside_the_subject_theories_is_refused(self):
+        for product, source in (
+                ("src/x/.hol/objs/FooTheory.dat", "src/x/FooScript.sml"),
+                ("src/simp/src/.hol/objs/Lib.uo", "src/simp/src/Lib.sml"),
+                ("src/simp/src/.hol/objs/Lib.ui", "src/simp/src/Lib.sig"),
+                ("src/simp/src/Lib.sml", "src/simp/src/Lib.sml"),
+                ("src/simp/src/sub/.hol/objs/fooTheory.dat",
+                 "src/simp/src/sub/fooScript.sml"),
+                ("src/simp/.hol/objs/fooTheory.dat",
+                 "src/simp/fooScript.sml")):
+            with self.subTest(product=product):
+                with self.assertRaisesRegex(sc.InvalidAllocation,
+                                            "not a reviewed boundary"):
+                    self.check(product, changed=[source])
+        # a changed subject theory script covers only its own theory
+        self.check("src/simp/src/.hol/objs/otherTheory.dat",
+                   changed=["src/simp/src/simpMarkerScript.sml"])
 
     def test_a_loaded_product_of_a_recompiled_module_is_refused(self):
         for product in ("src/x/Dep.uo", "src/x/Dep.ui",
@@ -765,6 +788,11 @@ class Closures(unittest.TestCase):
         self.assertEqual(sorted(closure["sides"]), sorted(m.SIDES))
         self.assertEqual((closure["changed"], closure["inputs"]),
                          (["p"], {"/hol/x": [1]}))
+
+    def test_the_closure_declares_its_theory_data_rule(self):
+        closure = self.grid.make_closure()
+        self.assertEqual(closure["theory_data"], m.THEORY_DATA)
+        self.assertEqual(closure["theory_data"], "shared")
 
     def test_a_control_that_is_not_the_baselines_copy_is_refused(self):
         self.records["control"] = dict(modules=["other"])

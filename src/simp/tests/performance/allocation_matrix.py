@@ -32,7 +32,6 @@ import os
 from pathlib import Path, PurePosixPath
 import platform
 import queue
-import re
 import shutil
 import signal
 import sys
@@ -392,6 +391,8 @@ def binding(header, case, size, where=None):
     if "closure" in header:
         named["closure"] = dict(
             {k: header["closure"][k] for k in ("changed", "sides")},
+            **{k: header["closure"][k] for k in ("theory_data",)
+               if k in header["closure"]},
             boundary_files={f["path"]: f["blob"]
                             for f in header["boundary"]["files"]})
     return dict(
@@ -796,7 +797,8 @@ class Grid:
         product may be copied from one, among them only if it is a file of
         the reviewed boundary, see check_changed_input), and the shared
         inputs read, which are in the toolchain and sealed again at the
-        end."""
+        end. The header also declares the theory-data rule the run applies
+        (`THEORY_DATA`); a replay judges by the declared rule."""
         sides, inputs = {}, {}
         for side in SIDES:
             directory = self.scratch / ("closure-" + side)
@@ -810,7 +812,7 @@ class Grid:
                    "control closure is not a copy of the baseline's")
         return dict(changed=bd.changed_paths(
             self.repo, self.args.baseline, self.args.candidate),
-            sides=sides, inputs=inputs)
+            sides=sides, inputs=inputs, theory_data=THEORY_DATA)
 
     def check_toolchain_sources(self, built):
         """The tracked HOL sources (as the build left them) and sigobj, as
@@ -880,14 +882,12 @@ class Grid:
     def make_job(self, index):
         job = Job(self.scratch / ("j%02d" % index))
         job.root.mkdir()
-        private = set()
         for side, directory in job.dirs.items():
             rev, sources = self.checkout(side, directory)
             sc.require(rev == self.revisions[side] and
                        source_map(sources) == self.sources[side],
                        "checkout differs from the grid's sources")
             installed = self.install_private(directory, sources)
-            private |= set((installed or {}).get("private", ()))
             if self.task.family.closure:
                 sc.require(closure_record(installed, directory) ==
                            self.closure["sides"][side],
@@ -895,7 +895,6 @@ class Grid:
             job.inventory[side] = sources
         job.names = {Path(s["git_path"]).stem for v in job.inventory.values()
                      for s in v}
-        job.names |= set(private)
         for side, directory in job.dirs.items():
             cmd = [str(self.hol / "bin/Holmake"), "--no-project", "--no-cache",
                    "--no_prereqs", "--holstate=" +
@@ -941,12 +940,6 @@ class Grid:
                 signature="pass", source_hashes=job.sources,
                 expected_observations=observed)
             receipt["paths"] = result["paths"]
-            # What the private Holmake built, as sealed after the build
-            # (audit() checks the tree unchanged): the theories of selected
-            # scripts are judged against it (built_product).
-            receipt["built"] = {
-                k: v for k, v in job.tree[side].items()
-                if k.startswith(".hol/objs/")}
             receipt["accepted"] = True
         except (ValueError, OSError) as error:
             receipt.update(accepted=False, rejection=str(error))
@@ -1074,9 +1067,6 @@ def check_protocol(receipt, meta, events):
     sc.require(len(events) > 6 and events[3][0] == "preloaded" and
                len(events[3]) == 2, "missing preloaded-module inventory")
     names = {Path(n).stem for n in meta["sources"][side]}
-    # the run-time names (`make_job`) include the theory of every script
-    names |= {n[:-len("Script")] + "Theory" for n in names
-              if n.endswith("Script") and n != "Script"}
     sc.require(not (names & set(events[3][1].split(","))),
                "selected implementation preloaded in shared heap")
     index, heaps = 4, []
@@ -1167,17 +1157,53 @@ def source_of(below):
     return str(PurePosixPath(*parts))
 
 
+def subject_theory(source):
+    """Whether `source` (as `source_of` gives it) is a theory script
+    `src/simp/src/XScript.sml` directly in the subject directory. The theory
+    data such a script generates is subject theory data: HOL links a theory
+    to its parents by the hash of their files, so every side loads one
+    frozen copy of it, shared by construction (TASK37 design decision 40)."""
+    path = PurePosixPath(source)
+    return str(path.parent) == bd.SUBJECT_DIRECTORY and \
+        path.name.endswith("Script.sml") and path.name != "Script.sml"
+
+
+# The theory-data rule a closure run declares in its header (design decision
+# 40). A closure record without the key was made before the rule and is
+# judged by the earlier one: a changed subject theory is refused.
+THEORY_DATA = "shared"
+
+
+def theory_data_rule(closure):
+    """The theory-data rule a closure declares: None when it declares none
+    (a record made before decision 40, judged by the earlier rule), else
+    `THEORY_DATA`. Any other declaration, an explicit null included, is
+    refused."""
+    if "theory_data" not in closure:
+        return None
+    sc.require(closure["theory_data"] == THEORY_DATA,
+               "unknown theory-data rule")
+    return THEORY_DATA
+
+
 def check_changed_input(repo, path, meta, what, loaded=False):
     """A shared file of a closure grid (a loaded input, a product of the
     closure it installs): when it, or the source it stands for
     (`source_of`: the changed paths are sources, the loaded files are
-    compiled products), differs between baseline and candidate it must be a
-    file of the reviewed boundary (the manifest's `files`, whose blobs the
-    run checked), which the sides share by construction. A `loaded` file
-    (one a process read, not the origin of a product the closure copies) is
-    moreover never the product of a module the closure installs privately,
-    which the process must have loaded from its private directory. A path
-    outside the toolchain is refused."""
+    compiled products), differs between baseline and candidate it must be
+    either a file of the reviewed boundary (the manifest's `files`, whose
+    blobs the run checked), or, when the closure declares
+    `theory_data == "shared"`, a product of a theory script of the subject
+    directory (`subject_theory`); the sides share both by construction. The
+    boundary manifest does not list subject files, so a changed subject
+    theory script is admitted by its place, nothing else of the subject is.
+    The rule is the record's own: a closure without the declaration was made
+    before decision 40 and is judged by the earlier rule (no subject theory
+    is admitted), and any other declared value is refused.
+    A `loaded` file (one a process read, not the origin of a product the
+    closure copies) is moreover never the product of a module the closure
+    installs privately, which the process must have loaded from its private
+    directory. A path outside the toolchain is refused."""
     try:
         below = Path(path).relative_to(repo).as_posix()
     except ValueError:
@@ -1186,7 +1212,10 @@ def check_changed_input(repo, path, meta, what, loaded=False):
     closure = meta["closure"]
     source = source_of(below)
     changed, files = set(closure["changed"]), closure["boundary_files"]
-    sc.require(all(path not in changed or path in files
+    theory = theory_data_rule(closure) == THEORY_DATA and \
+        subject_theory(source)
+    sc.require(all(path not in changed or path in files or
+                   (path == source and theory)
                    for path in (below, source)),
                "shared input differs between baseline and candidate and "
                "is not a reviewed boundary file: %s" % (what,))
@@ -1196,30 +1225,6 @@ def check_changed_input(repo, path, meta, what, loaded=False):
         sc.require(Path(below).stem not in modules,
                    "a shared product of a module the closure installs "
                    "privately was loaded: %s" % (what,))
-
-
-THEORY_FILE = re.compile(
-    r"(?:\.hol/objs/)?([^/]+)Theory\.(?:sml|sig|uo|ui|dat)")
-
-
-def built_product(receipt, source, relative):
-    """The fingerprint of a file of a private theory that the private
-    Holmake built, or None when `relative` (a path below the private
-    directory) is not one. It is such a file exactly when it is a file
-    `XTheory.{sml,sig,uo,ui,dat}` (below `.hol/objs`, where HOL puts a
-    theory's files) of a selected script `XScript.sml` of the side
-    (`source`), and then its fingerprint is that of the same file in the
-    job's post-build record of the private tree, `built`: the one seal
-    `make_job` takes after Holmake, copied into every receipt of the side
-    in the cell (TASK37 design decision 34). A theory is judged by its
-    script, not copied from the shared tree; the agreement check of a side
-    catches only an internally inconsistent archive, and no bytes are
-    compared across builds."""
-    found = THEORY_FILE.fullmatch(relative)
-    if found is None or found.group(1) + "Script.sml" not in source:
-        return None
-    return (receipt.get("built") or {}).get(
-        ".hol/objs/" + Path(relative).name)
 
 
 def check_receipt(receipt, meta, experiment):
@@ -1267,9 +1272,6 @@ def check_receipt(receipt, meta, experiment):
             want = source.get(physical.name) or meta["fixtures"].get(
                 physical.name) or closure.get("products", {}).get(
                     physical.relative_to(private).as_posix())
-            if want is None:
-                want = built_product(receipt, source,
-                                     physical.relative_to(private).as_posix())
             sc.require(want is not None and
                        seal == {k: want[k] for k in ("sha256", "bytes")},
                        "wrong selected source: " + physical.name)
@@ -1340,16 +1342,15 @@ def checked_cell(folder, bind):
                meta["revisions"]["control"] ==
                meta["revisions"]["baseline"],
                "control is not a copy of the baseline")
+    if "closure" in meta:
+        theory_data_rule(meta["closure"])
     receipts = load_receipts(folder)
     sc.require(len(receipts) == 4 * meta["pairs"], "missing process receipt")
     data = {e: [dict() for _ in range(meta["pairs"])] for e in EXPERIMENTS}
-    shared, built = {}, {}
+    shared = {}
     for (experiment, _), receipt in receipts.items():
         side, pair = receipt["side"], receipt["pair"]
         observation = check_receipt(receipt, meta, experiment)
-        sc.require(built.setdefault(side, receipt.get("built")) ==
-                   receipt.get("built"), "private tree built differently "
-                   "in two processes of a side")
         sc.require(side not in data[experiment][pair], "duplicate process")
         data[experiment][pair][side] = observation
         merge_shared(shared, shared_inputs(receipt))
