@@ -2898,7 +2898,8 @@ which only TASK36 builds, on the candidate.
 
 Recipe (`task32_snapshots.py build`; flags `--repo`, `--manifest`,
 `--root`, `--evidence`, `--scratch`, `--side`, `--pin`, `--mktool`,
-`--cand-pin`, `--jobs` (default 8), `--poly`, `--tmpdir`). Relative paths
+`--cand-pin`, `--jobs` (default 8), `--poly`, `--table`, `--tmpdir`).
+Relative paths
 are resolved against the current directory (and recorded absolute). Both
 sides use the same four paths:
 
@@ -2952,8 +2953,10 @@ on disk, not `/dev/shm`, and outside the repository's tracked paths
 (`require_location`). Build base, then cand.
 
 Environment (`environment`): `env -i` with `PATH=/usr/local/bin:/usr/bin:/bin`,
-`LC_ALL=C`, `TZ=UTC`, `TERM=dumb`, `TMPDIR` (`--tmpdir`, default
-`/dev/shm/t32/tmp`) and a fresh empty `HOME`, `<scratch>/home-<side>-a<n>`,
+`LC_ALL=C`, `TZ=UTC`, `TERM=dumb`, `TMPDIR` (`--tmpdir`, default the
+table's, `--table`: `/dev/shm/t32/tmp`, and TASK37's `/dev/shm/t37-t32/tmp`
+and `/dev/shm/t37-t33/tmp`) and a fresh empty `HOME`,
+`<scratch>/home-<side>-a<n>`,
 the only value that differs between the sides. Stdin of configure is
 `tools/smart-configure.sml`, of the others `/dev/null`. The build refuses a
 target that exists, an unclean tree (the base's `status` must be exactly
@@ -4702,8 +4705,10 @@ without editing what their kept records depend on.
   measured different candidates), which `task37_dispose.py` joins on.
 - Declaration. TASK37's reviewed data is `task37_declared.json` (schema
   `task33-declared-v4`, as `task33_declared.json`, which stays for the kept
-  r4 records), selected with `--declared` (`task33_storage.py`,
-  `task33_offline.py`). The S2 closure-total change is measured live, so
+  r4 records). The `task37-t33` table selects it itself (`--table
+  task37-t33`; an explicit `--declared` must be that file), and the S3
+  `audit` and `harvest` reports take it with `--declared`
+  (`task33_offline.py`). The S2 closure-total change is measured live, so
   the file carries a placeholder (`s2.total_delta[0].pending`), which every
   gate refuses (fails closed). It is filled with `task37_declared.py
   observe` (finished storage smokes of the TASK37 snapshots, replayed
@@ -4714,7 +4719,11 @@ without editing what their kept records depend on.
   `fill` leaves the declaration's `cand` the named constant (the stages
   are measured at a stream clone's head; the TASK37 table accepts a
   candidate whose tree outside the performance area is the declared
-  one's) and refuses an observation of another base. The filled
+  one's) and refuses an observation of another base or of a candidate
+  that is neither the declared one nor has its tree outside the
+  performance area; `observe` refuses a `--declared` other than the
+  table's file (but for the S2 closure total, so the pre-fill file of
+  the recipe replays the throwaway smokes). The filled
   declaration has another seal than the placeholder one, so the throwaway
   smokes no longer replay: a smoke, the pilot and the controls are made
   under the filled file.
@@ -4729,6 +4738,22 @@ without editing what their kept records depend on.
   (`declared_ready`); `dispose` requires the `inputs.declared` seal of
   the audit and harvest reports to equal the seal of the declaration it
   judges by (`check_offline_identity`).
+- S3 archive binding and order (design decision 24). The `archive` report
+  of the TASK33 storage predeclare is made under `--declared
+  task37_declared.json` from a run of the `task37-t32` table only (the
+  C32 `task32` under TASK33's declaration), its base equal to the
+  declaration's and its candidate the declared one or one with the same
+  tree outside the performance area (exact for the C32 table). The report
+  records `inputs.table` (absent in the C32 reports); `offline_seals` (the
+  predeclare) and `check_offline_identity` (`dispose`) refuse a report of
+  another table, base or candidate. The `task37-t32` first stage therefore
+  runs before the `task37-t33` storage predeclare: the TASK32 stream does
+  its pilot, its predeclare and the counts commit, then its first stage,
+  and the archive feeds the TASK33 predeclare.
+- Records. Stage reports of a table that fixes its revision record
+  `compiled_ref`, and the replay checks it is the table's. The
+  dispositions of the TASK37 tables record `table` (`task37-t32`,
+  `task37-t33`), which `task37_gates` requires.
 - Snapshots. TASK32 and TASK33 each need their own snapshot pair (base and
   candidate), built, verified and compared with the compiled reference,
   each in its own clone (`<clone>/.agent-files/snapshots/task32`; the
@@ -4737,7 +4762,12 @@ without editing what their kept records depend on.
   uses `/dev/shm/t37-t33` and its s-run `/dev/shm/t37-t33/storage`
   (`--scratch`; the C32 table's are `/dev/shm/t33` and below), and
   `make_scratch` retries a `mkdir` that falls between another stage's
-  `rmdir` of the empty root and the creation of its own folder.
+  `rmdir` of the empty root and the creation of its own folder. The
+  snapshot builds take `--table` and, by default, the `TMPDIR` of the
+  table (`/dev/shm/t37-t32/tmp`, `/dev/shm/t37-t33/tmp`; the C32 tables
+  `/dev/shm/t32/tmp`). The TASK32 stream's snapshot pair is disposed with
+  its clone (removing the clone removes it), and the stream removes its
+  tmp directory after use.
 - Startup gate. The runner uses fixed-length `/dev/shm` paths (the path
   lengths are part of the test), so one startup-gate run is live at a time.
   The gate's record (`not-client-visible.md`) is always made inside the
@@ -4782,6 +4812,14 @@ without editing what their kept records depend on.
   left out of every median of `attribute`, and makes `run` and `attribute`
   exit with the distinct status 5; `attribute` joins the per-directory
   build lines of the two sides.
+- Allocation runs. A run of a ledger task (`task37-matrix`, `-client`,
+  `-downstream`) refuses to start with HUP, INT or TERM ignored (start it
+  with `setsid -w env --default-signal=HUP,INT,TERM ...`), like the
+  runners; the legacy tasks keep an ignored signal ignored. After the
+  first HUP or TERM the three are ignored until the run is unwound (the
+  workers are joined, the scratch removed and the attempt closed), and the
+  close is not interruptible; a close that could not be written is
+  reported (`ATTEMPT-NOT-CLOSED`), never claimed.
 - Runners. Each starts with the default signal dispositions (job control,
   so a step is not started with SIGINT ignored), turns HUP, INT and TERM
   into exits 129, 130 and 143 that run the cleanup (kill the step's
@@ -4886,7 +4924,8 @@ attempts recorded), each timing shard and follow-up (`Grid.replay` with its
 pilot, a follow-up with its own and the shard's), allocation
 (`allocation_matrix.replay`, its ledger judged by `allocation_matrix.
 attempts_of`, part C), TASK32 and TASK33 (their `dispose` run again from
-the arguments in `--task32-replay` and `--task33-replay`), the startup gate
+the arguments in `--task32-replay` and `--task33-replay`, which must not
+contain `--table`: the replay fixes it), the startup gate
 and loading (`task37_gates.py` says what each re-derives and what it
 cannot). Their statuses are those of their archives, not typed. The
 startup gate must be sealed to a record (`--startup-record`: the file whose
@@ -4894,7 +4933,10 @@ sha256 `header.json` holds, naming the gate's baseline and candidate; its
 null control has none), the two loading shards must record one api-audit
 receipt, which must exist and pass (each shard has its own `--loading-ledger
 GATE=FILE`, no fallback: each runs in its own clone), and the TASK33
-declaration must be filled and for the candidate of the TASK33 disposition. The
+declaration must be filled and for the candidate of the TASK33 disposition
+or an equivalent one (the same tree outside the performance area; an
+unrelated candidate is refused). The TASK32 and TASK33 dispositions must
+record their TASK37 table. The
 allocation grid's `status`, `nondeterminism` and `unresolved` are recorded
 and one record per (task, case) decides the slopes and constants. An
 inventory's `counts_file` must be one the shard's table names
@@ -4905,9 +4947,12 @@ outside `.agent-files` is allowed), `--candidate` must be equivalent to
 deltas are recorded. `--load STREAM=FILE` takes `task37_load.py`
 recordings; the host load is reported, never a gate. TASK32/33 inputs need
 a top-level `candidate`. `receipt` makes the receipt of the D7 build timing
-only, which is reported and never a gate; when a report is a
-`task37-builds-v1` receipt, the candidate given must be the one its sealed
-pins name (checked again when the receipt is loaded).
+only, which is reported and never a gate; every report given must be
+readable JSON, those carrying `pins` or a `task37-builds-v1` schema (the
+attribution output included) must name the baseline and the candidate
+given (the abbreviation allowed), and at least one is the
+`task37-builds-v1` receipt itself (checked again when the receipt is
+loaded).
 
 ## Matrix boundaries and final evidence
 

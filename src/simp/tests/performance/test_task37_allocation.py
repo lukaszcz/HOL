@@ -583,6 +583,16 @@ class ClosureProducts(unittest.TestCase):
             with self.subTest(product=product):
                 self.assertEqual(m.source_of(product), source)
 
+    def test_a_module_without_a_signature_is_covered_by_its_uo(self):
+        # no `.sig` means no `.ui` is ever loaded: the `.uo` stands for the
+        # `.sml`; a module with both has each source covered by its own
+        # product
+        self.assertEqual(m.source_of("src/x/NoSig.uo"), "src/x/NoSig.sml")
+        with self.assertRaisesRegex(sc.InvalidAllocation,
+                                    "not a reviewed boundary"):
+            self.check("src/x/NoSig.uo", changed=["src/x/NoSig.sml"])
+        self.check("src/x/NoSig.uo", changed=["src/x/Other.sig"])
+
     def test_a_changed_source_is_found_through_the_product_loaded(self):
         for product, source in (
                 ("src/x/.hol/objs/FooTheory.uo", "src/x/FooScript.sml"),

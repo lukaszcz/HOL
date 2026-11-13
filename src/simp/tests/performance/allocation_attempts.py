@@ -87,6 +87,7 @@ class Attempt:
         self.counts_file, self.info = Path(counts_file), bool(info)
         self.path = ledger_path(self.repo, self.task)
         self.header = None
+        self.closed = False
 
     def check_ignored(self):
         if not self.path.resolve().is_relative_to(self.repo):
@@ -148,9 +149,13 @@ class Attempt:
     def close(self, status, **note):
         """The close; when it cannot be written the attempt stays open in
         the ledger (so judged) and the line printed carries it. An
-        information run ends with `info-end` and whether it passed."""
+        information run ends with `info-end` and whether it passed.
+        Returns whether the line was written (False when the attempt was
+        never opened)."""
         if self.header is None:
-            return
+            return False
+        if self.closed:
+            return True
         try:
             if self.info:
                 self.line(self.header["candidate"], "info-end",
@@ -158,10 +163,13 @@ class Attempt:
             else:
                 self.line(self.header["candidate"], "close", status=status,
                           **note)
+            self.closed = True
         except Exception as error:
             print("ATTEMPT-NOT-CLOSED %s (outcome %s): %s" % (
                 attempt_id(self.output), status, error), file=sys.stderr,
                 flush=True)
+            return False
+        return True
 
 
 def void_failure(output, row):

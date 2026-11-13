@@ -420,6 +420,17 @@ class FakeLineage:
         a.require(isinstance(found, dict), "%s: no harness" % label)
         return found["head"]
 
+    def equivalent(self, label, rev):
+        return rev
+
+
+class RefusingLineage(FakeLineage):
+    """A lineage to which no other revision is equivalent."""
+
+    def equivalent(self, label, rev):
+        raise ValueError("%s names %s, whose tree is not the candidate's" %
+                         (label, rev))
+
 
 def write(path, value):
     Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -1262,13 +1273,14 @@ class Gates(unittest.TestCase):
         held = dict(candidate=declared["cand"])
         with mock.patch.object(offline, "shape_problems",
                                return_value=[]):
-            gates.check_declared(held, path)
+            gates.check_declared(held, path, FakeLineage())
             with self.assertRaisesRegex(ValueError, "candidate"):
-                gates.check_declared(dict(candidate="d" * 40), path)
+                gates.check_declared(dict(candidate="d" * 40), path,
+                                     RefusingLineage())
         with mock.patch.object(offline, "shape_problems",
                                return_value=["pending"]), \
                 self.assertRaisesRegex(ValueError, "not valid"):
-            gates.check_declared(held, path)
+            gates.check_declared(held, path, FakeLineage())
 
     def test_loading_inconclusive_owes_stage2_then_attribution(self):
         r = gates.loading_gate("loading-simpLib", dict(stage="first"),
@@ -1284,8 +1296,9 @@ class Receipt(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        self.report = self.root / "report.txt"
-        self.report.write_text("report")
+        self.report = self.root / "report.json"
+        self.report.write_text(json.dumps(dict(
+            schema="task37-builds-v1", pins=dict(base=a.BASE, cand=CAND))))
 
     def test_only_d7_has_a_receipt_and_it_needs_a_report(self):
         with self.assertRaisesRegex(ValueError, "replayed"):
@@ -1303,7 +1316,7 @@ class Receipt(unittest.TestCase):
         a.save(path, made)
         got = gates.load_receipt(path, FakeLineage())
         self.assertEqual(got["status"], "pass")
-        self.report.write_text("changed")
+        self.report.write_text(self.report.read_text() + " ")
         with self.assertRaisesRegex(ValueError, "changed or is missing"):
             gates.load_receipt(path, FakeLineage())
 

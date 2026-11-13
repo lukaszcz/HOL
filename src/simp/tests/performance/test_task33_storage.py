@@ -867,7 +867,8 @@ class Chain34(Base34):
             path = self.world.tmp / ("%s.json" % command)
             path.write_text(dw.dumps(offline_report(
                 command, [check_of(command + "-ok", "S3")] if checks is
-                None else checks, above=[])))
+                None else checks, pins=(self.world.base_pin,
+                                        self.world.cand_pin), above=[])))
             Path(str(path) + ".seal").write_text(dw.dumps(acc.seal(path)))
             out.append(path)
         return out
@@ -2380,12 +2381,15 @@ class DisposeSnapshots(unittest.TestCase):
         self.refused("another plan")
 
 
-def offline_report(command, checks, **data):
+def offline_report(command, checks, pins=None, **data):
     # `inputs.declared`: the declaration the audit and the harvest were
-    # made against (`check_offline_identity`)
+    # made against; the archive's `inputs.base` and `cand`: the revisions
+    # of the run it archives (`check_offline_identity`)
+    inputs = dict(declared=acc.seal(offline.DECLARED))
+    if command == "archive" and pins:
+        inputs.update(base=pins[0], cand=pins[1])
     return dict(schema=offline.SCHEMA, command=command, success=True,
-                checks=checks, data=data, code={},
-                inputs=dict(declared=acc.seal(offline.DECLARED)))
+                checks=checks, data=data, code={}, inputs=inputs)
 
 
 def check_of(ident, case, status="pass"):
@@ -2938,7 +2942,9 @@ class Disposition(Chain34):
         for command in ("archive", "audit", "harvest"):
             path = other / ("%s.json" % command)
             path.write_text(dw.dumps(offline_report(
-                command, [check_of("different", "S3")], above=[])))
+                command, [check_of("different", "S3")],
+                pins=(self.world.base_pin, self.world.cand_pin),
+                above=[])))
             Path(str(path) + ".seal").write_text(dw.dumps(acc.seal(path)))
             files.append(path)
         with mock.patch.object(Disposition, "offline_files",

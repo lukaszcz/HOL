@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """TASK33 offline checks (slice S3): no process, no build, no measurement.
 
-  archive  the TASK32 first-stage archive, read offline: its seals (the
-           TASK32 replay, `task32_downstream.replay_one`), per unit and
+  archive  the TASK32 first-stage archive, read offline (of the `task32`
+           table under TASK33's declaration, of `task37-t32` under
+           another, which the report records in `inputs.table`): its seals
+           (the TASK32 replay, `task32_downstream.replay_one`), per unit and
            side the GC counts, GC time, size_heap and maxrss (medians,
            ranges, paired ratios), the cross-side masked loaded-set
            equality of every unit (case L1) and the attribution data of
@@ -132,15 +134,17 @@ def report_path(out, command):
     return out / (command + ".json")
 
 
-# The archive, the code seals and the seal history are TASK32's, whichever
-# table of the driver is active when this module is imported or used (the
-# storage driver runs with task33 selected): this module binds to the
-# `task32` table explicitly (`archive_report` runs under it).
+# The code seals and the seal history are the C32 `task32` table's,
+# whichever table of the driver is active when this module is imported or
+# used (the storage driver runs with task33 or task37-t33 selected). The
+# archive is of the TASK32 table the selected declaration binds
+# (`archive_table`): `archive_report` replays it under that table.
 T32 = d.TABLES["task32"]
-# The tables whose archives the `archive` report accepts: the TASK32 proof
-# builds of the C32 gate and of TASK37 (each is replayed under its own
-# table: its counts, ledger and code).
-ARCHIVE_TABLES = ("task32", "task37-t32")
+# The TASK32 table whose archive each declaration binds (design 24): the
+# C32 gate's proof builds under TASK33's declaration, TASK37's `task37-t32`
+# under any other (each is replayed under its own table: its counts, ledger
+# and code).
+TASK37_ARCHIVE_TABLE = "task37-t32"
 # The code a report is bound to: this file, the declaration, and the
 # TASK32 code it reuses (a record made by an earlier version of a TASK32
 # file is accepted as task32_downstream.check_code accepts it).
@@ -167,9 +171,10 @@ def check_code(recorded):
             "the recorded code is not " + ", ".join(now))
     # TASK33's history is accepted besides TASK32's, for the files of this
     # CODE it names (`task32_downstream.py`, this file): the reports of the
-    # kept TASK33 records carry the versions that made them. Only under
-    # TASK33's own declaration: TASK37's reports have no history.
-    own = DECLARED == DEFAULT_DECLARED
+    # kept TASK33 records carry the versions that made them. Only under a
+    # table with no declaration of its own (the C32 `task33`): TASK37's
+    # reports have no history.
+    own = d.ACTIVE.declared is None
     known = {n: list(T32.history.get(n, ())) +
              list(d.TASK33_HISTORY.get(n, ())) if own else []
              for n in now}
@@ -1986,16 +1991,31 @@ def reported_intervals(report):
     return out
 
 
+def archive_table():
+    """The TASK32 table whose archive the selected declaration binds: the
+    C32 `task32` under TASK33's own declaration, TASK37's `task37-t32`
+    under another (design 24)."""
+    return T32.name if DECLARED == DEFAULT_DECLARED else \
+        TASK37_ARCHIVE_TABLE
+
+
 def archive_report(folder, repo, replay, checks, ledger=None):
-    """The archive report, under the TASK32 table of the run archived (the
-    C32 `task32` or TASK37's `task37-t32`: its seals, replay and ledger
-    are that table's, whichever table is active)."""
+    """The archive report, under the TASK32 table of the run archived,
+    which must be the one of the selected declaration (`archive_table`):
+    its seals, replay and ledger are that table's, whichever table is
+    active. The report records the table when it is not the C32 one (so
+    the C32 reports are as they were)."""
     run = a.load(Path(folder).resolve(strict=True) / "downstream.json")
     table = run.get("table", T32.name)
-    require(table in ARCHIVE_TABLES, "the archive is of table %s, not one "
-            "of %s" % (table, ", ".join(ARCHIVE_TABLES)))
+    want = archive_table()
+    require(table == want, "the archive is of table %s, but %s binds the "
+            "archive of table %s" % (table, DECLARED.name, want))
     with d.using_table(table):
-        return archive_in_table(folder, repo, replay, checks, ledger)
+        inputs, data = archive_in_table(folder, repo, replay, checks,
+                                        ledger)
+    if table != T32.name:
+        inputs = dict(inputs, table=table)
+    return inputs, data
 
 
 def archive_in_table(folder, repo, replay, checks, ledger=None):

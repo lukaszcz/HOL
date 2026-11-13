@@ -129,6 +129,9 @@ def read_task32(path, lineage):
     """({unit: record}, seal, candidate) of the TASK32 disposition."""
     import task32_cases
     doc = read(path, "the TASK32 disposition")
+    a.require(doc.get("table") == TABLE32,
+              "the TASK32 disposition is of table %s, not of TASK37's "
+              "table %s" % (doc.get("table"), TABLE32))
     found = lineage.candidate_of("task32", doc.get("candidate"))
     work = doc.get("workloads")
     a.require(isinstance(work, dict) and
@@ -196,6 +199,9 @@ def read_task33(path, lineage):
     import task33_dispose
     import task33_rules as rules
     doc = read(path, "the TASK33 disposition")
+    a.require(doc.get("table") == TABLE33,
+              "the TASK33 disposition is of table %s, not of TASK37's "
+              "table %s" % (doc.get("table"), TABLE33))
     found_candidate = lineage.candidate_of("task33", doc.get("candidate"))
     a.require(doc.get("schema") == task33_dispose.SCHEMA,
               "not a TASK33 disposition")
@@ -266,12 +272,13 @@ def replay_task33(path, text, lineage):
               "the TASK33 disposition is not the one its stages derive")
 
 
-def check_declared(held, path, lineage=None):
+def check_declared(held, path, lineage):
     """The declaration the TASK33 disposition was judged under is valid
     and filled (no placeholder) and is for the baseline and the candidate
-    of the disposition: the same one, or with a `lineage` one whose tree
-    outside the performance area is the same (the stages are measured at a
-    stream clone's head, the declaration names the final candidate)."""
+    of the disposition: the same one, or one whose tree outside the
+    performance area is the same (`lineage.equivalent`, whose refusal
+    stands: the stages are measured at a stream clone's head, the
+    declaration names the final candidate)."""
     import task33_offline as offline
     declared = offline.load_declared(path)
     problems = offline.shape_problems(declared)
@@ -279,17 +286,10 @@ def check_declared(held, path, lineage=None):
         Path(path).name, "; ".join(problems)))
     a.require(declared["base"] == a.BASE,
               "the declaration is for another baseline than %s" % a.BASE)
-    if lineage is not None and declared["cand"] != held.get("candidate"):
-        try:
-            lineage.equivalent("the declaration's candidate",
-                               declared["cand"])
-            return
-        except ValueError:
-            pass
-    a.require(declared["cand"] == held.get("candidate"),
-              "the declaration is for candidate %s, the TASK33 "
-              "disposition's is %s" % (declared["cand"],
-                                       held.get("candidate")))
+    if declared["cand"] != held.get("candidate"):
+        lineage.equivalent("the declaration's candidate (the TASK33 "
+                           "disposition's is %s)" % held.get("candidate"),
+                           declared["cand"])
 
 
 # ---------------------------------------------------------- startup gate
@@ -709,21 +709,41 @@ def same_rev(one, other):
             (one.startswith(other) or other.startswith(one)))
 
 
-def check_builds_candidate(candidate, report):
-    """When `report` is a build-timing receipt (`task37-builds-v1`), the
-    candidate the D7 receipt names is the one its sealed pins name; any
-    other report is not examined."""
-    try:
-        doc = json.loads(Path(report).read_text())
-    except (OSError, ValueError):
-        return
-    if not (isinstance(doc, dict) and
-            doc.get("schema") == "task37-builds-v1"):
-        return
-    pinned = (doc.get("pins") or {}).get("cand")
-    a.require(same_rev(candidate, pinned),
-              "the %s receipt names candidate %s, the build timing %s "
-              "measured %s" % (D7, candidate, Path(report).name, pinned))
+BUILDS_SCHEMA = "task37-builds-v1"
+
+
+def check_builds_reports(candidate, reports):
+    """The sealed reports of the D7 receipt are JSON, and every one that
+    carries `pins` or a `task37-builds-v1` schema (the build timing and
+    its attribution, `task37-builds-v1-attribution`) names the baseline
+    and the candidate of the receipt (`candidate` may abbreviate its
+    pin); at least one is a build-timing receipt itself."""
+    receipts = 0
+    for report in reports:
+        name = Path(report).name
+        try:
+            doc = json.loads(Path(report).read_text())
+        except (OSError, ValueError) as error:
+            raise ValueError("the %s report %s is not readable JSON: %s" %
+                             (D7, name, error))
+        if not isinstance(doc, dict):
+            continue
+        schema = doc.get("schema")
+        if not ("pins" in doc or (isinstance(schema, str) and
+                                  schema.startswith(BUILDS_SCHEMA))):
+            continue
+        receipts += schema == BUILDS_SCHEMA
+        pins = doc.get("pins")
+        a.require(isinstance(pins, dict),
+                  "the %s report %s has no pins" % (D7, name))
+        a.require(pins.get("base") == a.BASE,
+                  "the %s report %s measured baseline %s, not %s" % (
+                      D7, name, pins.get("base"), a.BASE))
+        a.require(same_rev(candidate, pins.get("cand")),
+                  "the %s receipt names candidate %s, the build timing %s "
+                  "measured %s" % (D7, candidate, name, pins.get("cand")))
+    a.require(receipts, "none of the %s reports is a %s build-timing "
+              "receipt" % (D7, BUILDS_SCHEMA))
 
 
 def make_receipt(gate, candidate, status, exit_status, reports=(),
@@ -738,8 +758,7 @@ def make_receipt(gate, candidate, status, exit_status, reports=(),
               "exit %d is not that of %s (%d)" % (
                   exit_status, status, EXITS[status]))
     a.require(reports, "a receipt needs at least one sealed --report")
-    for report in reports:
-        check_builds_candidate(candidate, report)
+    check_builds_reports(candidate, reports)
     return dict(schema=RECEIPT_SCHEMA, gate=gate, candidate=candidate,
                 baseline=a.BASE, status=status, exit=exit_status,
                 attribution=list(attribution), note=note,
@@ -764,5 +783,6 @@ def load_receipt(path, lineage):
         a.require(target.is_file() and a.seal(target) == held["seal"],
                   "the %s receipt's report changed or is missing: %s" % (
                       D7, held["path"]))
-        check_builds_candidate(doc["candidate"], target)
+    check_builds_reports(doc["candidate"],
+                         [held["path"] for held in doc["reports"]])
     return dict(doc, seal=a.seal(Path(path)))

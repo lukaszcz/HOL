@@ -107,7 +107,6 @@ import task32_cases
 import task32_dat as dat
 import task32_snapshots as snap
 import task33_cases
-import task37_cases
 import timing_grid as tg
 
 SCHEMA = "task32-downstream-v1"
@@ -121,6 +120,10 @@ BUSY = 0.06
 # TASK33 used C31, which stays the default so that their records still
 # replay; a later gate (TASK37) names its own with `--compiled-ref`.
 COMPILED_REF = snap.C31
+# The revision TASK37's tables fix (the final candidate), a literal so that
+# the C32 replays do not depend on the TASK37 modules; a test holds it equal
+# to `task37_cases.COMPILED_REF`.
+TASK37_COMPILED_REF = "7e202dfbaa63a48514c36fece89e3ab3f69b3696"
 COUNTS_SCOPE = "src/simp/tests/performance/"
 # The timed metrics, as loading.jitter names them (+ maxrss).
 METRICS = loading.METRICS + ("maxrss",)
@@ -354,7 +357,7 @@ for _parent, _name, _label, _stem in (
         followup_counts=HERE / (_stem + "_followup_counts.json"),
         seed=_name + "-1", journals=".agent-files/scratch/" + _name,
         scratch="/dev/shm/" + _name.replace("task37-", "t37-"),
-        history={}, compiled_ref=task37_cases.COMPILED_REF,
+        history={}, compiled_ref=TASK37_COMPILED_REF,
         declared=HERE / "task37_declared.json" if _parent == "task33"
         else None)
 del _parent, _name, _label, _stem
@@ -2687,6 +2690,8 @@ def new_report(mode, stage, spec, repo, sides, mseal, output):
     return {"schema": SCHEMA, "success": False, "mode": mode, "stage": stage,
             **({} if ACTIVE.name == DEFAULT_TABLE else
                {"table": ACTIVE.name}),
+            **({"compiled_ref": ACTIVE.compiled_ref}
+               if ACTIVE.compiled_ref else {}),
             "claims": ACTIVE.claims,
             "repo": str(repo), "output": str(output), "key": spec["key"],
             "base": sides["base"]["pin"], "cand": sides["cand"]["pin"],
@@ -3091,6 +3096,9 @@ def replay_one(folder, ledger=None, counts=None, followup_counts=None,
             "the run is of table %s, not %s: replay it with --table %s" % (
                 report.get("table", DEFAULT_TABLE), ACTIVE.name,
                 report.get("table", DEFAULT_TABLE)))
+    require(report.get("compiled_ref") == ACTIVE.compiled_ref,
+            "the run's compiled ref %s is not the one table %s fixes (%s)" %
+            (report.get("compiled_ref"), ACTIVE.name, ACTIVE.compiled_ref))
     mode, stage = report["mode"], report["stage"]
     require(stage == (None if mode in INFO_MODES else mode) and
             mode in INFO_MODES + DECISIVE, "malformed run")
@@ -3287,6 +3295,13 @@ def check_info_run(info, report, key, mode, ledger, names, mseal,
             "%s run" % mode)
 
 
+def disposition_table():
+    """The `table` of a disposition: recorded for the tables that fix
+    their revision (TASK37's), so that a disposition says which table made
+    it; the C32 dispositions are as they were."""
+    return {"table": ACTIVE.name} if ACTIVE.compiled_ref else {}
+
+
 def table_key():
     """The `table` of a counts file: absent for the default table (its
     files are as before there were tables)."""
@@ -3434,7 +3449,7 @@ def disposition(chain, ledger, counts_path=None, relocated=None,
             "first stage used" % path)
     # `candidate`: the full pin the stages measured (the TASK37 join's key)
     return dict(status=overall, candidate=chain[0]["report"]["cand"],
-                workloads=rows, attempts=attempts, info_runs=infos,
+                **disposition_table(), workloads=rows, attempts=attempts, info_runs=infos,
                 redraws=redraws(attempts, infos, a.load(path)),
                 chain=[dict(stage=e["stage"], run=str(e["folder"]),
                             seal=e["info"]["seal"],

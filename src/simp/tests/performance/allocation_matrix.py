@@ -1134,7 +1134,10 @@ def source_of(below):
     of it shows: a product below `.hol/objs` is the file beside that
     directory, a `.uo` is the `.sml` and a `.ui` the `.sig` of its stem, and
     the products of a generated theory (`FooTheory.{uo,ui,dat,sml,sig}`)
-    are those of its `FooScript.sml`. Any other file is its own source."""
+    are those of its `FooScript.sml`. Any other file is its own source.
+    A module without a `.sig` has no `.ui`, only the `.uo` that stands for
+    its `.sml`; one with both has both loaded, so each source is covered
+    by its own product."""
     path = PurePosixPath(below)
     parts = list(path.parts)
     if len(parts) >= 3 and parts[-3:-1] == [".hol", "objs"]:
@@ -1641,19 +1644,60 @@ class Terminated(KeyboardInterrupt):
     does for any other failure."""
 
 
+UNWIND_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
+
+
+def require_default_signals(task):
+    """A run of a ledger task needs HUP, INT and TERM to reach it (the
+    runners' policy): it closes its attempt on them, and a signal that is
+    ignored (`nohup`, a background job of a non-interactive shell) would
+    leave a run that cannot be stopped as the ledger expects."""
+    ignored = [signal.Signals(n).name for n in UNWIND_SIGNALS
+               if signal.getsignal(n) == signal.SIG_IGN]
+    sc.require(not ignored, "%s is ignored by this process: a run of %s "
+               "records an attempt and must be stoppable; start it with "
+               "`setsid -w env --default-signal=HUP,INT,TERM python3 -B "
+               "allocation_matrix.py ...`" % (", ".join(ignored),
+                                              task.name))
+
+
 @contextlib.contextmanager
 def terminating():
     """SIGHUP and SIGTERM raise `Terminated` in the main thread for the
     length of the block (SIGINT already raises KeyboardInterrupt), and the
-    previous handlers are restored."""
+    previous handlers are restored. A signal that was ignored when the
+    block began stays ignored (a grid under `nohup` survives its
+    terminal; a ledger task refuses to start so, `require_default_signals`).
+    Once a signal is taken, HUP, INT and TERM are ignored for the rest of
+    the unwind, so that a second one cannot interrupt the shutdown of the
+    workers, the scratch removal or the closing of the attempt."""
     def stop(number, frame):
+        for other in UNWIND_SIGNALS:
+            signal.signal(other, signal.SIG_IGN)
         raise Terminated("signal %d" % number)
-    previous = {n: signal.signal(n, stop)
-                for n in (signal.SIGHUP, signal.SIGTERM)}
+    previous = {n: signal.getsignal(n) for n in UNWIND_SIGNALS}
     try:
+        for number in (signal.SIGHUP, signal.SIGTERM):
+            if previous[number] != signal.SIG_IGN:
+                signal.signal(number, stop)
         yield
     finally:
         for number, handler in previous.items():
+            signal.signal(number, handler)
+
+
+def close_attempt(attempt, status, **note):
+    """`attempt.close`, uninterruptible: HUP, INT and TERM are blocked, and
+    ignored (a signal that arrives meanwhile is discarded, not raised
+    afterwards), until the close line is written. Returns whether the
+    attempt is closed."""
+    old = signal.pthread_sigmask(signal.SIG_BLOCK, UNWIND_SIGNALS)
+    saved = {n: signal.signal(n, signal.SIG_IGN) for n in UNWIND_SIGNALS}
+    try:
+        return attempt.close(status, **note)
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, old)
+        for number, handler in saved.items():
             signal.signal(number, handler)
 
 
@@ -1676,7 +1720,12 @@ def run(args):
                "be voided" % (pairs, task.pairs, task.name, task.pairs))
     if not task.ledger:
         with terminating():
-            return run_grid(args, task, None)
+            try:
+                return run_grid(args, task, None)
+            except Terminated as stopped:
+                stopped.detail = "the scratch is removed"
+                raise
+    require_default_signals(task)
     import allocation_attempts
     info = bool(args.only) or (args.pairs is not None and
                                args.pairs < task.pairs)
@@ -1686,12 +1735,26 @@ def run(args):
     with terminating():
         try:
             code = run_grid(args, task, attempt.start)
+            close_attempt(attempt, allocation_attempts.status_of(code))
         except BaseException as error:
-            attempt.close(allocation_attempts.FAILED,
-                          failure=repr(error)[:500])
+            # a close is written once: one already written stands
+            closed = close_attempt(attempt, allocation_attempts.FAILED,
+                                   failure=repr(error)[:500])
+            if isinstance(error, Terminated):
+                error.detail = failed_detail(attempt, closed)
             raise
-        attempt.close(allocation_attempts.status_of(code))
     return code
+
+
+def failed_detail(attempt, closed):
+    """What a terminated run says of its attempt: closed failed, never
+    opened, or still open in the ledger (the close could not be written)."""
+    if closed:
+        return "the attempt is closed and the scratch removed"
+    if attempt.header is None:
+        return "no attempt was opened; the scratch is removed"
+    return ("the attempt could not be closed (ATTEMPT-NOT-CLOSED): it "
+            "stays open in the ledger")
 
 
 def run_grid(args, task, started):
@@ -1915,8 +1978,9 @@ def main(argv=None):
         return {"run": run, "replay": replay, "check-jobs": check_jobs,
                 "toolchain": toolchain}[args.action](args)
     except Terminated as stopped:
-        print("TERMINATED (%s): the attempt is closed failed and the "
-              "scratch removed" % stopped, file=sys.stderr)
+        print("TERMINATED (%s)%s" % (stopped, ": " + stopped.detail if
+                                     getattr(stopped, "detail", None)
+                                     else ""), file=sys.stderr)
         return 4
 
 

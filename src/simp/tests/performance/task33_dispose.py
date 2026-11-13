@@ -257,8 +257,9 @@ def timing_attribution(disp):
 def check_offline_identity(found, args):
     """The offline reports given are exactly the ones the storage counts
     were predeclared with, and the audit and the harvest were made against
-    the declaration this process judges by (the archive report reads no
-    declaration)."""
+    the declaration this process judges by (the archive report reads none:
+    it is bound to the table, base and candidate the declaration names,
+    `task33_storage.check_archive_binding`)."""
     counts = a.load(storage.storage_counts_path(args))
     absent = [c for c in OFFLINE if c not in found]
     d.require(not absent, "no %s report among --offline (the storage "
@@ -268,6 +269,8 @@ def check_offline_identity(found, args):
                   counts["offline"][command]["seal"],
                   "the %s report is not the one the storage counts "
                   "bound" % command)
+    storage.check_archive_binding(found["archive"][0],
+                                  getattr(args, "repo", None))
     own = a.seal(offline.DECLARED)
     for command in ("audit", "harvest"):
         d.require(found[command][0].get("inputs", {}).get("declared") == own,
@@ -358,7 +361,7 @@ def dispose(args):
               + ", ".join(sorted(cands)))
     data = dict(
         schema=SCHEMA, status=status, candidate=cands.pop(),
-        decisions=decisions,
+        **d.disposition_table(), decisions=decisions,
         counts={s: sum(1 for x in decisions if x["decision"] == s)
                 for s in rules.GATES + (rules.REPORTED, rules.UNSUPPORTED)},
         owed=[x for x in decisions if x.get("owed")],

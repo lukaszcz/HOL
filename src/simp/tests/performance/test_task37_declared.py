@@ -164,8 +164,27 @@ def pins(cand="a" * 40):
 
 
 class Fill(unittest.TestCase):
+    def setUp(self):
+        # the observation's candidate (a stream clone's head) is judged
+        # equivalent to the declared one unless a test says otherwise
+        patch = mock.patch.object(t, "same_tree_outside", return_value=True)
+        self.same = patch.start()
+        self.addCleanup(patch.stop)
+
     def raw(self):
         return json.loads(t.DECLARED.read_text())
+
+    def test_the_observed_candidate_must_be_equivalent_to_the_declared(self):
+        declared = self.raw()
+        t.fill(declared, dict(observed(), cand=declared["cand"]))
+        self.same.assert_not_called()  # the declared one needs no git
+        t.fill(declared, observed())
+        self.same.assert_called_once_with(
+            t.HERE.parents[3], declared["cand"], "a" * 40)
+        self.same.return_value = False
+        with self.assertRaisesRegex(t.Refusal, "candidate.*not that of "
+                                    "the declared"):
+            t.fill(declared, observed())
 
     def test_the_filled_declaration_is_valid_and_binds_the_gates(self):
         new = t.fill(self.raw(), observed())
@@ -218,6 +237,53 @@ class Fill(unittest.TestCase):
                                      str(tmp / "none.json")]), 3)
 
 
+class SameTree(unittest.TestCase):
+    """The comparison `fill` makes of the observed candidate."""
+
+    def test_equal_trees_and_different_trees(self):
+        trees = {"x": "t1", "y": "t1", "z": "t2"}
+        with mock.patch.object(offline.d.tg, "git_tree_outside",
+                               lambda repo, rev: trees[rev]):
+            self.assertTrue(t.same_tree_outside("r", "x", "y"))
+            self.assertFalse(t.same_tree_outside("r", "x", "z"))
+
+    def test_an_unknown_revision_is_a_refusal(self):
+        with mock.patch.object(offline.d.tg, "git_tree_outside",
+                               side_effect=subprocess.CalledProcessError(
+                                   128, "git")):
+            with self.assertRaisesRegex(t.Refusal, "cannot compare"):
+                t.same_tree_outside("r", "x", "y")
+
+    def test_observe_refuses_a_declaration_the_table_does_not_fix(self):
+        fixed = d.TABLES[t.TABLE].declared
+        t.check_selected(fixed)
+        with self.assertRaisesRegex(t.Refusal, "contradicts"):
+            t.check_selected(HERE / "task33_declared.json")
+        with tempfile.TemporaryDirectory() as tmp:
+            # the pre-fill file differs in the S2 closure total alone
+            data = json.loads(Path(fixed).read_text())
+            data["s2"]["total_delta"][0]["value"] = 12345
+            ok = Path(tmp) / "prefill.json"
+            ok.write_text(json.dumps(data))
+            t.check_selected(ok)
+            data["base"] = "b" * 40
+            bad = Path(tmp) / "other.json"
+            bad.write_text(json.dumps(data))
+            with self.assertRaisesRegex(t.Refusal, "contradicts"):
+                t.check_selected(bad)
+            bad.write_text("not json")
+            with self.assertRaisesRegex(t.Refusal, "contradicts"):
+                t.check_selected(bad)
+        with mock.patch.object(t, "observe_folders") as observe, \
+                mock.patch.object(t, "check_selected",
+                                  side_effect=t.Refusal("contradicts")), \
+                tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(t.main([
+                "observe", "--declared", str(HERE / "task33_declared.json"),
+                "--out", str(Path(tmp) / "o.json"), tmp]), 3)
+            observe.assert_not_called()
+
+
 class ObserveFolders(unittest.TestCase):
     """`observe_folders` over stage folders whose replay is stubbed: the
     stages must share base, candidate and manifest, which are recorded."""
@@ -259,7 +325,8 @@ class ObserveFolders(unittest.TestCase):
         self.assertEqual((obs["base"], obs["cand"]),
                          (load()["base"], "a" * 40))
         self.assertEqual(obs["manifest"], pins()["manifest"])
-        new = t.fill(json.loads(t.DECLARED.read_text()), obs)
+        with mock.patch.object(t, "same_tree_outside", return_value=True):
+            new = t.fill(json.loads(t.DECLARED.read_text()), obs)
         self.assertEqual(new["cand"], cases37.COMPILED_REF)
 
     def test_the_stages_are_observed_under_the_task37_table(self):

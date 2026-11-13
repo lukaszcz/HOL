@@ -22,10 +22,14 @@ filled; every gate refuses a placeholder (`task33_offline.shape_problems`,
            both kinds. The stages must all be of one base, one candidate
            and one snapshot manifest, which the observation records.
            Written as JSON; refuses a value that varies or an exclusive
-           part that grows
+           part that grows, and a `--declared` that is not the one the
+           `task37-t33` table fixes (the pre-fill file of the recipe below
+           differs from it in the S2 closure total alone)
   fill     writes the observation into the placeholder, and refuses unless
-           the observation's base is the declaration's and the declaration
-           is valid afterwards. The declaration's `cand` stays
+           the observation's base is the declaration's, its candidate the
+           declared one or one with the same tree outside the performance
+           area, and the declaration is valid afterwards. The
+           declaration's `cand` stays
            task37_cases.COMPILED_REF: the stages are measured at the stream
            clone's head, whose tree outside the performance area is the
            declared candidate's, which the storage driver accepts for the
@@ -59,6 +63,7 @@ the candidate, not something to declare: the tool refuses.
 import argparse
 import json
 from pathlib import Path
+import subprocess
 import sys
 
 sys.dont_write_bytecode = True
@@ -153,15 +158,34 @@ def observation(groups, heap, kinds, pins=None):
                     repeats_per_process=records.REPEATS))
 
 
-def fill(declared, obs):
+def same_tree_outside(repo, one, other):
+    """Whether the revisions `one` and `other` have the same tree outside
+    the performance area, in `repo`."""
+    tg = offline.d.tg
+    try:
+        return tg.git_tree_outside(repo, one) == \
+            tg.git_tree_outside(repo, other)
+    except (ValueError, OSError, subprocess.CalledProcessError) as error:
+        raise Refusal("cannot compare the candidates %s and %s in %s: %s"
+                      % (one, other, repo, error))
+
+
+def fill(declared, obs, repo=None):
     """The declaration with the placeholder filled (a new dict; its `cand`
-    is unchanged); refuses an observation of another base, and a
-    declaration that is not valid afterwards."""
+    is unchanged); refuses an observation of another base or of another
+    candidate (the declared one, or one with the same tree outside the
+    performance area, judged in `repo`, default the checkout of this
+    code), and a declaration that is not valid afterwards."""
     require(obs.get("schema") == SCHEMA, "not an S2 observation")
     require(obs.get("base") == declared["base"], "the observation is of "
             "base %s, the declaration's is %s" % (
                 obs.get("base"), declared["base"]))
     a.exact_pin(obs.get("cand"))
+    require(obs["cand"] == declared["cand"] or same_tree_outside(
+        Path(repo) if repo else HERE.parents[3], declared["cand"],
+        obs["cand"]), "the observation is of candidate %s, whose tree "
+            "outside the performance area is not that of the declared "
+            "candidate %s" % (obs["cand"], declared["cand"]))
     new = json.loads(json.dumps(declared))
     entry = entry_of(new, obs["heap"])
     require(entry["kinds"] == obs["kinds"], "the observation is of kinds "
@@ -190,6 +214,30 @@ def write(path, data):
     tmp = Path(str(path) + ".tmp")
     tmp.write_text(json.dumps(data, indent=2) + "\n")
     tmp.replace(path)
+
+
+def check_selected(path):
+    """`observe` judges by the declaration the `task37-t33` table fixes: a
+    contradicting `--declared` is refused, but for the S2 closure total,
+    which is what the declaration lacks before `fill` (the throwaway smokes
+    are sealed with the pre-fill file, which must be given to replay
+    them)."""
+    import task32_downstream as d
+    fixed = Path(d.TABLES[TABLE].declared).resolve()
+    if Path(path).resolve() == fixed:
+        return
+
+    def without_total(file):
+        data = json.loads(Path(file).read_text())
+        data["s2"] = {k: v for k, v in data["s2"].items()
+                      if k != "total_delta"}
+        return data
+    try:
+        same = without_total(path) == without_total(fixed)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        same = False
+    require(same, "--declared %s contradicts table %s, which fixes %s (the "
+            "S2 closure total alone may differ)" % (path, TABLE, fixed))
 
 
 def observe_folders(folders, manifest, declared, heap=None):
@@ -268,6 +316,7 @@ def main(argv=None):
             print("%s: %d problem(s)" % (args.declared, len(bad)))
             return 1 if bad and args.final else 0
         if args.command == "observe":
+            check_selected(args.declared)
             with offline.using_declared(args.declared):
                 obs = observe_folders(args.folders, args.manifest, declared)
             with args.out.open("x") as stream:

@@ -3,6 +3,7 @@
 ledgers and outputs only: no runtime, toolchain or HOL process."""
 import json
 from pathlib import Path
+import signal
 import tempfile
 import unittest
 from unittest import mock
@@ -29,6 +30,13 @@ class Fixture(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
+        # a ledger task refuses to run with HUP, INT or TERM ignored (a
+        # test harness started in the background ignores INT)
+        for number, handler in ((signal.SIGHUP, signal.SIG_DFL),
+                                (signal.SIGINT, signal.default_int_handler),
+                                (signal.SIGTERM, signal.SIG_DFL)):
+            self.addCleanup(signal.signal, number,
+                            signal.signal(number, handler))
         self.repo = Path(self.tmp.name).resolve() / "repo"
         self.repo.mkdir()
         counts = Path(self.tmp.name) / "counts.json"
@@ -153,6 +161,95 @@ class Recording(Fixture):
                 self.assertIn("signal %d" % number, last["failure"])
                 self.assertEqual((signal.getsignal(signal.SIGTERM),
                                   signal.getsignal(signal.SIGHUP)), before)
+
+    def test_a_ledger_run_refuses_an_ignored_signal(self):
+        import signal
+        for number in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+            with self.subTest(signal=number):
+                old = signal.signal(number, signal.SIG_IGN)
+                try:
+                    with self.assertRaisesRegex(
+                            sc.InvalidAllocation,
+                            "%s is ignored.*--default-signal" %
+                            number.name):
+                        self.run_with(self.out("o%d" % number), 0)
+                finally:
+                    signal.signal(number, old)
+                self.assertFalse(self.ledger().exists())
+
+    def test_a_legacy_task_keeps_an_ignored_signal_ignored(self):
+        import signal
+        seen = []
+
+        def grid(args, task, started):
+            seen.append((signal.getsignal(signal.SIGHUP),
+                         signal.getsignal(signal.SIGTERM)))
+            return 0
+        old = signal.signal(signal.SIGHUP, signal.SIG_IGN)
+        try:
+            with mock.patch.object(m, "run_grid", grid):
+                m.run(namespace(self.repo, self.out(), task="task29b"))
+            self.assertEqual(signal.getsignal(signal.SIGHUP), signal.SIG_IGN)
+        finally:
+            signal.signal(signal.SIGHUP, old)
+        self.assertEqual(seen[0][0], signal.SIG_IGN)
+        self.assertNotEqual(seen[0][1], signal.SIG_IGN)
+
+    def test_a_second_signal_during_the_unwind_cannot_interrupt_it(self):
+        import os
+        import signal
+        steps = []
+
+        def grid(args, task, started):
+            started(dict(candidate=CAND))
+            try:
+                os.kill(os.getpid(), signal.SIGHUP)
+                signal.pthread_sigmask(signal.SIG_BLOCK, [])
+                raise AssertionError("the signal was not raised")
+            finally:  # the workers' shutdown, the scratch removal ...
+                os.kill(os.getpid(), signal.SIGTERM)
+                os.kill(os.getpid(), signal.SIGINT)
+                signal.pthread_sigmask(signal.SIG_BLOCK, [])
+                steps.append("cleaned")
+        with mock.patch.object(m, "run_grid", grid), \
+                self.assertRaises(m.Terminated) as caught:
+            m.run(namespace(self.repo, self.out()))
+        self.assertEqual(steps, ["cleaned"])
+        first, last = self.lines()
+        self.assertEqual((last["event"], last["status"]), ("close",
+                                                           "failed"))
+        self.assertIn("signal 1", last["failure"])
+        self.assertIn("attempt is closed", caught.exception.detail)
+        self.assertEqual(signal.getsignal(signal.SIGTERM), signal.SIG_DFL)
+
+    def test_the_close_is_written_once_and_is_not_claimed_when_not_made(
+            self):
+        # a close that cannot be written is reported, not claimed
+        with mock.patch.object(at.Attempt, "line",
+                               side_effect=[None, OSError("disk")]), \
+                mock.patch("sys.stderr"), \
+                self.assertRaises(m.Terminated) as caught:
+            self.run_with(self.out(), m.Terminated("signal 15"))
+        self.assertIn("could not be closed", caught.exception.detail)
+        self.assertNotIn("is closed", caught.exception.detail)
+
+    def test_a_terminated_legacy_run_does_not_speak_of_an_attempt(self):
+        def grid(args, task, started):
+            raise m.Terminated("signal 15")
+        with mock.patch.object(m, "run_grid", grid), \
+                self.assertRaises(m.Terminated) as caught:
+            m.run(namespace(self.repo, self.out(), task="task29b"))
+        self.assertNotIn("attempt", caught.exception.detail)
+
+    def test_close_is_idempotent_and_reports_whether_it_wrote(self):
+        attempt = at.Attempt(TASK, self.repo, self.out(),
+                            m.TASKS[TASK].iterations, False)
+        self.assertFalse(attempt.close("failed"))  # never opened
+        attempt.start(dict(candidate=CAND))
+        self.assertTrue(attempt.close("pass"))
+        self.assertTrue(attempt.close("failed"))
+        self.assertEqual([x["event"] for x in self.lines()],
+                         ["open", "close"])
 
     def test_main_reports_a_signal_with_status_4(self):
         import os

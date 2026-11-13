@@ -56,15 +56,19 @@ ledger table is `task33-storage` (same attempts.jsonl as the loading
 driver). Exit status as the timing driver's: 0 pass, 1 fail, 2
 inconclusive or blocked, 3 refused or a usage error, 4 a signal.
 
-Re-targeting (TASK37). `--declared FILE` selects the declaration and
-`--compiled-ref REV` the revision the candidate's compiled sources equal
-(defaults: task33_declared.json and C31, so that the TASK33 records
-replay). TASK37 passes `--declared task37_declared.json --compiled-ref
-<task37_cases.COMPILED_REF>`. A stage, a predeclaration and a replay
-require the declaration's `base` and `cand` to be the pins of the gate
+Re-targeting (TASK37). `--table` (before the command) selects the table:
+the C32 `task33` (default, so that the TASK33 records replay), whose
+`--declared FILE` and `--compiled-ref REV` default to task33_declared.json
+and C31, or TASK37's `task37-t33`, which fixes task37_declared.json and
+`task37_cases.COMPILED_REF` (an explicit `--declared` or `--compiled-ref`
+must agree). A stage, a predeclaration and a replay require the
+declaration's `base` and `cand` to be the pins of the gate
 (`check_declared`), a predeclaration also a valid, filled declaration
 (`declared_ready`), and `dispose` that the audit and the harvest were made
-against it (`task33_dispose.check_offline_identity`).
+against it and that the archive report is of the table, base and candidate
+it binds (`check_archive_binding`, at the predeclaration as well; design
+decision 24: `task37-t32` for TASK37, so its first stage runs before the
+`task37-t33` storage predeclare).
 
 Concurrency. Streams run in separate clones, and a snapshot pair belongs
 to one driver: TASK32 and TASK33 (and every other stream) each build their
@@ -127,12 +131,12 @@ STORAGE_TABLES = {t.name: t for t in (
     StorageTable(
         "task33", "task33-storage", HERE / "task33_storage_counts.json",
         HERE / "task33_storage_followup_counts.json", "task33-s4",
-        Path("/dev/shm/t33")),
+        Path(d.TABLES["task33"].scratch)),
     StorageTable(
         "task37-t33", "task37-t33-storage",
         HERE / "task37_t33_storage_counts.json",
         HERE / "task37_t33_storage_followup_counts.json",
-        "task37-t33-s4", Path("/dev/shm/t37-t33")))}
+        "task37-t33-s4", Path(d.TABLES["task37-t33"].scratch)))}
 DEFAULT_TABLE = "task33"
 STORAGE_STAGES = ("smoke", "pilot", "control", "run", "extend", "followup",
                   "audit")
@@ -952,7 +956,9 @@ def new_report(mode, stage, spec, repo, sides, mseal, output):
     units = {n: jsonable(unit_of(n, params)) for n in names}
     return {
         "schema": SCHEMA, "success": False, "mode": mode, "stage": stage,
-        "table": LEDGER_TABLE, "claims": d.ACTIVE.claims,
+        "table": LEDGER_TABLE,
+        **({"compiled_ref": d.ACTIVE.compiled_ref}
+           if d.ACTIVE.compiled_ref else {}), "claims": d.ACTIVE.claims,
         "repo": str(repo), "output": str(output), "key": spec["key"],
         "base": sides["base"]["pin"], "cand": sides["cand"]["pin"],
         "roots": {k: str(v["root"]) for k, v in sides.items()},
@@ -1002,6 +1008,26 @@ def check_declared(base, cand, repo=None):
     require(same, "the declaration %s is for cand %s, whose tree outside "
             "the performance area is not that of the cand %s of this "
             "gate" % (name, declared["cand"], cand))
+
+
+def check_archive_binding(report, repo=None):
+    """The S3 `archive` report is of the TASK32 table the selected
+    declaration binds (`offline.archive_table`: `task37-t32` under TASK37's,
+    recorded in `inputs.table`; the C32 reports record none), and its base
+    and candidate are the declaration's (`check_declared`: exact for the
+    C32 table, the same tree outside the performance area for a table that
+    fixes its declaration). Design 24."""
+    inputs = report.get("inputs")
+    d.require(isinstance(inputs, dict), "the archive report has no inputs")
+    table, want = inputs.get("table", offline.T32.name), \
+        offline.archive_table()
+    d.require(table == want, "the archive report is of table %s, but "
+              "%s binds the archive of table %s" % (
+                  table, offline.DECLARED.name, want))
+    try:
+        check_declared(inputs.get("base"), inputs.get("cand"), repo)
+    except d.Refusal as error:
+        raise d.Refusal("the archive report: %s" % error)
 
 
 def declared_ready():
@@ -1216,6 +1242,10 @@ def replay_one(folder, ledger=None, repo=None, counts=None,
     require(report.get("schema") == SCHEMA and report["success"] is True,
             "not a successful " + SCHEMA + " run")
     require(report["table"] == LEDGER_TABLE, "malformed run")
+    require(report.get("compiled_ref") == d.ACTIVE.compiled_ref,
+            "the stage's compiled ref %s is not the one table %s fixes "
+            "(%s)" % (report.get("compiled_ref"), d.ACTIVE.name,
+                      d.ACTIVE.compiled_ref))
     mode, stage = report["mode"], report["stage"]
     require(stage == (None if mode in INFO else mode) and
             mode in INFO + DECISIVE, "malformed run")
@@ -1468,10 +1498,11 @@ def info_run(folder, key, mode, names, ledger, mseal, manifest=None):
     return info, report
 
 
-def offline_seals(paths):
+def offline_seals(paths, repo=None):
     """The seals of the three S3 reports (OFFLINE_COMMANDS), each checked
     as `dispose` checks them: its schema, its seal file and the code it was
-    made by."""
+    made by; the archive report also the table and revisions it is bound
+    to (`check_archive_binding`, judged in `repo`)."""
     found = {}
     for path in paths or ():
         path = Path(path).resolve(strict=True)
@@ -1481,6 +1512,8 @@ def offline_seals(paths):
         recorded = a.load(Path(str(path) + ".seal"))
         require(recorded == a.seal(path), "the seal of %s differs" % path)
         offline.check_code(report["code"])
+        if report["command"] == "archive":
+            check_archive_binding(report, repo)
         require(report["command"] not in found, "two %s reports" %
                 report["command"])
         found[report["command"]] = dict(path=str(path), seal=recorded)
@@ -1608,7 +1641,7 @@ def predeclare_run(args):
                         seal=control_info["seal"], params=control["params"],
                         detected={k: c["detected"]
                                   for k, c in found.items()}),
-        "offline": offline_seals(args.offline),
+        "offline": offline_seals(args.offline, args.repo),
         "time_estimate": estimate, "code": d.code_seals()}
 
 
@@ -1808,25 +1841,32 @@ def add_common(parser):
     parser.add_argument("--cand-root", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--timing-counts", type=Path, help="the timing "
-                        "counts file (default task33_counts.json)")
+                        "counts file (default: the table's, "
+                        "task33_counts.json or task37_t33_counts.json)")
     parser.add_argument("--storage-counts", type=Path, help="the storage "
-                        "counts file (default task33_storage_counts.json)")
+                        "counts file (default: the table's, "
+                        "task33_storage_counts.json or "
+                        "task37_t33_storage_counts.json)")
     parser.add_argument("--followup-counts", type=Path, help="the "
-                        "follow-up's counts file (default "
-                        "task33_storage_followup_counts.json)")
+                        "follow-up's counts file (default: the table's, "
+                        "task33_storage_followup_counts.json or "
+                        "task37_t33_storage_followup_counts.json)")
     add_revision(parser)
 
 
 def add_revision(parser):
-    """The options that name the revision under test: its declaration
-    (default TASK33's task33_declared.json; TASK37's is
-    task37_declared.json) and the revision the candidate's compiled
-    sources equal (default C31)."""
+    """The options that name the revision under test: its declaration and
+    the revision the candidate's compiled sources equal. Table `task33`:
+    default task33_declared.json and C31; table `task37-t33` fixes
+    task37_declared.json and the final candidate (a contradicting value is
+    refused)."""
     parser.add_argument("--declared", type=Path, help="the declaration "
-                        "(default task33_declared.json)")
+                        "(default: the table's: task33_declared.json for "
+                        "task33; task37-t33 fixes task37_declared.json)")
     parser.add_argument("--compiled-ref", help="the revision the "
-                        "candidate's compiled sources equal (default "
-                        "%s)" % d.snap.C31)
+                        "candidate's compiled sources equal (default: the "
+                        "table's: %s for task33; task37-t33 fixes %s)" % (
+                            d.snap.C31, d.TASK37_COMPILED_REF))
 
 
 def add_run(parser):

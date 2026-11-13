@@ -223,14 +223,33 @@ class DeclaredPins(unittest.TestCase):
                 return {c: (dict(inputs=dict(declared=declared)),
                             dict(seal="s-" + c))
                         for c in dispose.OFFLINE}
+            args = mock.Mock(repo=None)
             with mock.patch.object(storage, "storage_counts_path",
-                                   return_value=counts):
-                dispose.check_offline_identity(found(own), mock.Mock())
+                                   return_value=counts), \
+                    mock.patch.object(storage, "check_archive_binding"):
+                dispose.check_offline_identity(found(own), args)
                 for bad in (other, None):
                     with self.assertRaisesRegex(
                             storage.d.Refusal, "another declaration"):
-                        dispose.check_offline_identity(found(bad),
-                                                       mock.Mock())
+                        dispose.check_offline_identity(found(bad), args)
+
+    def test_dispose_binds_the_archive_report(self):
+        own = a.seal(offline.DECLARED)
+        with tempfile.TemporaryDirectory() as tmp:
+            counts = Path(tmp) / "counts.json"
+            counts.write_text(json.dumps(dict(offline={
+                c: dict(seal="s-" + c) for c in dispose.OFFLINE})))
+            found = {c: (dict(inputs=dict(declared=own)),
+                         dict(seal="s-" + c)) for c in dispose.OFFLINE}
+            with mock.patch.object(storage, "storage_counts_path",
+                                   return_value=counts), \
+                    mock.patch.object(
+                        storage, "check_archive_binding",
+                        side_effect=storage.d.Refusal("not bound")) as bound:
+                with self.assertRaisesRegex(storage.d.Refusal, "not bound"):
+                    dispose.check_offline_identity(found, mock.Mock(
+                        repo="r"))
+                bound.assert_called_once_with(found["archive"][0], "r")
 
 
 class ScratchAndConstants(unittest.TestCase):
@@ -407,7 +426,6 @@ class KeptRecordsReplay(unittest.TestCase):
 
 
 TABLES = ("task32", "task33", "task37-t32", "task37-t33")
-C32_REV = "7e202dfbaa63a48514c36fece89e3ab3f69b3696"
 
 
 class Tables37(unittest.TestCase):
@@ -473,6 +491,19 @@ class Tables37(unittest.TestCase):
             ("task33", "task33", "task33", "task33-storage", "task33-s4",
              Path("/dev/shm/t33"), "task33_storage_counts.json",
              "task33_storage_followup_counts.json"))
+
+    def test_the_timing_driver_holds_its_own_literal_of_the_final_ref(self):
+        # so that the C32 replays do not import the TASK37 modules
+        self.assertEqual(dw.TASK37_COMPILED_REF, cases37.COMPILED_REF)
+        self.assertEqual(dw.TABLES["task37-t32"].compiled_ref,
+                         dw.TASK37_COMPILED_REF)
+        code = (HERE / "task32_downstream.py").read_text()
+        self.assertNotIn("import task37", code)
+
+    def test_the_storage_scratch_roots_are_the_tables_scratch(self):
+        for name, table in storage.STORAGE_TABLES.items():
+            self.assertEqual(table.scratch_root,
+                             Path(dw.TABLES[name].scratch), name)
 
     def test_the_task37_tables_fix_their_revision_and_declaration(self):
         self.assertEqual(dw.TABLES["task37-t32"].compiled_ref,
@@ -712,6 +743,79 @@ class CheckDeclaredEquivalence(unittest.TestCase):
             storage.check_declared(a.BASE, self.same, self.repo)
 
 
+class Records37(unittest.TestCase):
+    """What the stage reports and dispositions of the TASK37 tables
+    record (and the C32 ones do not)."""
+
+    def test_the_snapshot_tmpdir_follows_the_table(self):
+        for name, table in dw.TABLES.items():
+            want = snap.TMPDIR if name in ("task32", "task33") else \
+                table.scratch + "/tmp"
+            self.assertEqual(snap.TABLE_TMPDIR[name], want, name)
+        self.assertEqual(snap.TMPDIR, "/dev/shm/t32/tmp")
+        self.assertEqual(snap.environment("h")["TMPDIR"], snap.TMPDIR)
+
+    def test_the_build_command_takes_a_table_and_a_tmpdir(self):
+        seen = []
+        argv = ["build", "--repo", "r", "--manifest", "m", "--root", "x",
+                "--evidence", "e", "--scratch", "s", "--side", "base",
+                "--pin", "a" * 40]
+        for extra, want in (
+                ([], snap.TMPDIR),
+                (["--table", "task37-t32"], "/dev/shm/t37-t32/tmp"),
+                (["--table", "task37-t33"], "/dev/shm/t37-t33/tmp"),
+                (["--table", "task37-t33", "--tmpdir", "/z"], "/z")):
+            with mock.patch.object(snap, "build_side",
+                                   lambda *a_, **k: seen.append(k)), \
+                    mock.patch.object(snap.a, "serial_lock"), \
+                    mock.patch.object(snap, "real_runner"):
+                snap.main(argv + extra)
+            self.assertEqual(seen[-1]["tmpdir"], want, extra)
+
+    def test_a_disposition_records_a_task37_table_only(self):
+        for name in dw.TABLES:
+            with dw.using_table(name):
+                self.assertEqual(
+                    dw.disposition_table(),
+                    {"table": name} if name.startswith("task37-") else {})
+
+    def test_stage_reports_record_the_fixed_ref(self):
+        spec = dict(names=[], pairs={}, reps={}, key="k", seed="s")
+        for name in ("task32", "task37-t32"):
+            with dw.using_table(name):
+                report = dw.new_report("smoke", None, spec, "r", {
+                    "base": dict(pin="b", root="x"),
+                    "cand": dict(pin="c", root="y")}, {}, "o")
+            self.assertEqual(report.get("compiled_ref"),
+                             dw.TABLES[name].compiled_ref)
+            self.assertEqual("compiled_ref" in report, name != "task32")
+
+    def test_the_replay_checks_the_ref_of_the_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, ref in (("task37-t32", None), ("task32", "f" * 40)):
+                run = dict(schema=dw.SCHEMA, success=True)
+                if name != "task32":
+                    run["table"] = name
+                if ref:
+                    run["compiled_ref"] = ref
+                (Path(tmp) / "downstream.json").write_text(json.dumps(run))
+                with dw.using_table(name), self.assertRaisesRegex(
+                        dw.Refusal, "compiled ref"):
+                    dw.replay_one(tmp)
+
+    def test_the_gates_require_the_task37_table_of_a_disposition(self):
+        lineage = mock.Mock()
+        with tempfile.TemporaryDirectory() as tmp:
+            for reader, table in ((gates.read_task32, "task37-t32"),
+                                  (gates.read_task33, "task37-t33")):
+                for held in ({}, dict(table="task32"),
+                             dict(table="task33"), dict(table="other")):
+                    path = Path(tmp) / "d.json"
+                    path.write_text(json.dumps(held))
+                    with self.assertRaisesRegex(ValueError, table):
+                        reader(path, lineage)
+
+
 class OfflineBinding(unittest.TestCase):
     """A report is bound to the declaration it was made under, and the
     selection is scoped; the archive is accepted under its own table."""
@@ -763,11 +867,21 @@ class OfflineBinding(unittest.TestCase):
         name = "task32_downstream.py"
         old[name] = dw.TASK33_HISTORY[name][0]
         offline.check_code(old)
-        with offline.using_declared(self.TASK37):
+        # decided by the selected table, not by the declaration's path
+        with offline.using_declared(self.TASK37), dw.using_table("task37-t33"):
             seals = offline.code_seals()
             seals[name] = dw.TASK33_HISTORY[name][0]
             with self.assertRaisesRegex(ValueError, "changed"):
                 offline.check_code(seals)
+        with offline.using_declared(self.TASK37):  # a table with none of its own
+            seals = offline.code_seals()
+            seals[name] = dw.TASK33_HISTORY[name][0]
+            offline.check_code(seals)
+        with dw.using_table("task37-t33"):  # the declaration's name is moot
+            old = dict(offline.code_seals())
+            old[name] = dw.TASK33_HISTORY[name][0]
+            with self.assertRaisesRegex(ValueError, "changed"):
+                offline.check_code(old)
 
     def test_a_command_runs_and_writes_under_its_declaration(self):
         seen = []
@@ -802,23 +916,71 @@ class OfflineBinding(unittest.TestCase):
 
         def archived(folder, repo, replay, checks, ledger=None):
             seen.append(dw.ACTIVE.name)
-            return {}, {}
-        for table, wanted in ((None, "task32"), ("task32", "task32"),
-                              ("task37-t32", "task37-t32")):
-            with tempfile.TemporaryDirectory() as tmp:
+            return dict(folder="f"), {}
+        for table, wanted, declared in (
+                (None, "task32", None), ("task32", "task32", None),
+                ("task37-t32", "task37-t32", self.TASK37)):
+            with tempfile.TemporaryDirectory() as tmp, \
+                    offline.using_declared(declared or offline.DECLARED):
                 run = dict(table=table) if table else {}
                 (Path(tmp) / "downstream.json").write_text(json.dumps(run))
                 with mock.patch.object(offline, "archive_in_table",
                                        archived):
-                    offline.archive_report(tmp, "r", False, None)
+                    inputs, _ = offline.archive_report(tmp, "r", False, None)
                 self.assertEqual(seen[-1], wanted)
                 self.assertEqual(dw.ACTIVE.name, "task32")
-        for bad in ("task33", "task37-t33"):
-            with tempfile.TemporaryDirectory() as tmp:
-                (Path(tmp) / "downstream.json").write_text(
-                    json.dumps(dict(table=bad)))
-                with self.assertRaisesRegex(ValueError, "not one of"):
+                # recorded for TASK37's table only: C32 reports as before
+                self.assertEqual(inputs.get("table"),
+                                 "task37-t32" if declared else None)
+
+    def test_the_archive_is_of_the_table_the_declaration_binds(self):
+        for table, declared in (
+                ("task32", self.TASK37), ("task37-t32", None),
+                (None, self.TASK37), ("task33", None),
+                ("task37-t33", self.TASK37), ("task37-t33", None)):
+            with tempfile.TemporaryDirectory() as tmp, \
+                    offline.using_declared(declared or offline.DECLARED):
+                run = dict(table=table) if table else {}
+                (Path(tmp) / "downstream.json").write_text(json.dumps(run))
+                with self.assertRaisesRegex(ValueError, "binds the archive"):
                     offline.archive_report(tmp, "r", False, None)
+
+    def test_the_archive_report_is_bound_to_table_base_and_candidate(self):
+        declared = dict(base=a.BASE, cand="d" * 40)
+        with mock.patch.object(offline, "load_declared",
+                               return_value=declared):
+            def report(**inputs):
+                return dict(inputs=inputs)
+            # C32: no table recorded, the exact candidate
+            storage.check_archive_binding(report(base=a.BASE, cand="d" * 40))
+            for bad in (dict(base="b" * 40, cand="d" * 40),
+                        dict(base=a.BASE, cand="e" * 40),
+                        dict(base=a.BASE, cand="d" * 40,
+                             table="task37-t32"),
+                        dict(cand="d" * 40), {}):
+                with self.assertRaises(ValueError, msg=bad):
+                    storage.check_archive_binding(report(**bad))
+            with self.assertRaises(ValueError):
+                storage.check_archive_binding({})
+            # TASK37: its table recorded; base and an equivalent candidate
+            with offline.using_declared(self.TASK37), \
+                    storage.using_storage_table("task37-t33"):
+                task37 = dict(base=a.BASE, cand="d" * 40,
+                              table="task37-t32")
+                storage.check_archive_binding(report(**task37))
+                for bad in (dict(task37, table="task32"),
+                            {k: v for k, v in task37.items()
+                             if k != "table"},
+                            dict(task37, base="b" * 40)):
+                    with self.assertRaises(ValueError, msg=bad):
+                        storage.check_archive_binding(report(**bad))
+                with mock.patch.object(storage, "check_declared",
+                                       side_effect=storage.d.Refusal(
+                                           "tree differs")) as judged:
+                    with self.assertRaisesRegex(ValueError,
+                                                "archive report.*tree"):
+                        storage.check_archive_binding(report(**task37), "r")
+                    judged.assert_called_once_with(a.BASE, "d" * 40, "r")
 
 
 class GatesRetargeted(unittest.TestCase):
@@ -852,6 +1014,10 @@ class GatesRetargeted(unittest.TestCase):
         self.assertEqual(dw.ACTIVE.name, "task32")
 
     def test_the_task33_replay_runs_under_the_task37_tables(self):
+        """`dispatch` is stubbed, so it selects no declaration: what it
+        sees is the tables (both drivers' `task37-t33`, the parsed
+        `--table`), and the replay restores them (task32 and task33)
+        afterwards."""
         seen = []
 
         def dispatched(args):
@@ -872,6 +1038,19 @@ class GatesRetargeted(unittest.TestCase):
                                          offline.DEFAULT_DECLARED)])
         self.assertEqual((dw.ACTIVE.name, storage.ACTIVE_STORAGE),
                          ("task32", "task33"))
+
+    def test_the_replays_refuse_a_table_in_their_arguments(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            held = Path(tmp) / "d.json"
+            held.write_text(json.dumps(dict(candidate="x", code={})))
+            for replay, table in ((gates.replay_task32, "task37-t32"),
+                                  (gates.replay_task33, "task37-t33")):
+                for text in ("--table %s --stage s" % table,
+                             "--stage s --table %s" % table,
+                             "--stage s --table task32"):
+                    with self.assertRaisesRegex(
+                            ValueError, "not those of its own command"):
+                        replay(held, text, self.Lineage())
 
     def test_the_task33_replay_refuses_another_declaration(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -894,7 +1073,7 @@ class GatesRetargeted(unittest.TestCase):
             gates.check_declared(held, path, self.Lineage(True))
             with self.assertRaisesRegex(ValueError, "candidate"):
                 gates.check_declared(held, path, self.Lineage(False))
-            with self.assertRaisesRegex(ValueError, "candidate"):
+            with self.assertRaises(TypeError):  # the lineage is required
                 gates.check_declared(held, path)
 
 
@@ -922,12 +1101,51 @@ class ReceiptCandidate(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "measured"):
                 gates.make_receipt(gates.D7, candidate, "pass", 0, [report])
 
-    def test_a_report_that_is_no_builds_receipt_is_not_examined(self):
+    def test_reports_that_are_not_builds_data_are_not_examined(self):
+        other = self.root / "other.json"
+        other.write_text(json.dumps(dict(schema="x", note="c")))
+        listed = self.root / "list.json"
+        listed.write_text("[1]")
+        gates.make_receipt(gates.D7, self.CAND, "pass", 0, [
+            self.builds(self.CAND), other, listed])
+
+    def test_an_unreadable_or_non_json_report_is_refused(self):
         plain = self.root / "plain.txt"
         plain.write_text("not json")
-        other = self.root / "other.json"
-        other.write_text(json.dumps(dict(schema="x", pins=dict(cand="c"))))
-        gates.make_receipt(gates.D7, self.CAND, "pass", 0, [plain, other])
+        for report in (plain, self.root / "missing.json"):
+            with self.assertRaisesRegex(ValueError, "not readable JSON"):
+                gates.make_receipt(gates.D7, self.CAND, "pass", 0, [
+                    self.builds(self.CAND), report])
+
+    def test_one_report_is_the_builds_receipt(self):
+        attribution = self.root / "attribution.json"
+        attribution.write_text(json.dumps(dict(
+            schema="task37-builds-v1-attribution",
+            pins=dict(base=a.BASE, cand=self.CAND))))
+        with self.assertRaisesRegex(ValueError, "build-timing receipt"):
+            gates.make_receipt(gates.D7, self.CAND, "pass", 0,
+                               [attribution])
+        gates.make_receipt(gates.D7, self.CAND, "pass", 0,
+                           [self.builds(self.CAND), attribution])
+
+    def test_the_attribution_output_is_examined_too(self):
+        for schema, cand in (("task37-builds-v1-attribution", "b" * 40),
+                             ("other", "b" * 40)):  # any report with pins
+            bad = self.root / "bad.json"
+            bad.write_text(json.dumps(dict(
+                schema=schema, pins=dict(base=a.BASE, cand=cand))))
+            with self.assertRaisesRegex(ValueError, "measured"):
+                gates.make_receipt(gates.D7, self.CAND, "pass", 0,
+                                   [self.builds(self.CAND), bad])
+
+    def test_the_baseline_must_be_the_one_of_the_task(self):
+        for pins in (dict(base="b" * 40, cand=self.CAND),
+                     dict(cand=self.CAND), None):
+            bad = self.root / "bad.json"
+            bad.write_text(json.dumps(dict(schema="task37-builds-v1",
+                                           pins=pins)))
+            with self.assertRaisesRegex(ValueError, "baseline|no pins"):
+                gates.make_receipt(gates.D7, self.CAND, "pass", 0, [bad])
 
     def test_every_builds_report_is_checked(self):
         with self.assertRaisesRegex(ValueError, "measured"):
@@ -979,6 +1197,10 @@ class HistoryOfTheKeptRecords(unittest.TestCase):
                 self.assertIn(seal, dw.TASK32_HISTORY[name], name)
 
     def test_no_later_version_is_in_a_history(self):
+        """A history holds the seals of the versions the kept records were
+        made with: the version at KEPT, and no seal of any other version
+        since (a later version whose content equals a kept one is the
+        kept version and is fine)."""
         listed = subprocess.run(
             ["git", "-C", str(HERE), "rev-list", self.KEPT + "..HEAD",
              "--", *(self.PERF + n for n in self.FILES)],
@@ -986,9 +1208,12 @@ class HistoryOfTheKeptRecords(unittest.TestCase):
             stderr=subprocess.DEVNULL)
         if listed.returncode != 0:
             self.skipTest("%s is not in this repository" % self.KEPT)
-        for rev in listed.stdout.decode().split():
-            for name in self.FILES:
+        for name in self.FILES:
+            kept = self.seal_at(self.KEPT, name)
+            for rev in listed.stdout.decode().split():
                 seal = self.seal_at(rev, name)
+                if seal == kept:
+                    continue
                 for history in (dw.TASK32_HISTORY, dw.TASK33_HISTORY):
                     self.assertNotIn(seal, history.get(name, []),
                                      (rev, name))

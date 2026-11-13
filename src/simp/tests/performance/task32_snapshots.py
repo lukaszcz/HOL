@@ -191,7 +191,18 @@ def sha256_bytes(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def environment(home, tmpdir="/dev/shm/t32/tmp"):
+# The default TMPDIR of a snapshot build, per table of the timing and storage
+# drivers (`build --table`): TASK37's streams run at the same time as the
+# C32 gate's tooling, so each has a directory of its own, under the table's
+# scratch (`task32_downstream.TABLES[...].scratch`; a test holds them
+# equal). The C32 tables keep `/dev/shm/t32/tmp`.
+TMPDIR = "/dev/shm/t32/tmp"
+TABLE_TMPDIR = {"task32": TMPDIR, "task33": TMPDIR,
+                "task37-t32": "/dev/shm/t37-t32/tmp",
+                "task37-t33": "/dev/shm/t37-t33/tmp"}
+
+
+def environment(home, tmpdir=TMPDIR):
     """The `env -i` environment: the same for both sides but for HOME."""
     return {"PATH": PATH, "HOME": str(home), "LC_ALL": "C", "TZ": "UTC",
             "TERM": "dumb", "TMPDIR": str(tmpdir)}
@@ -718,7 +729,7 @@ def absolute(path):
 
 def build_side(repo, side, pin, root, manifest_path, logs, scratch, *,
                mktool=False, cand_pin=None, jobs=8, poly=POLY,
-               tmpdir="/dev/shm/t32/tmp", runner, probe=probe_toolchain,
+               tmpdir=TMPDIR, runner, probe=probe_toolchain,
                host=probe_host, harness=(HARNESS_ROOT, SEQUENCE_REL)):
     """Build one snapshot and record it. `runner(argv, cwd, env, stdin,
     log)` runs a command and returns its exit (a fake in the tests)."""
@@ -1354,7 +1365,11 @@ def main(argv=None):
     b.add_argument("--cand-pin")
     b.add_argument("--jobs", type=int, default=8)
     b.add_argument("--poly", default=POLY)
-    b.add_argument("--tmpdir", default="/dev/shm/t32/tmp")
+    b.add_argument("--table", choices=sorted(TABLE_TMPDIR),
+                   default="task32", help="the table the snapshot is for: "
+                   "the default --tmpdir is its own (TABLE_TMPDIR)")
+    b.add_argument("--tmpdir", help="TMPDIR of the build (default: the "
+                   "table's, /dev/shm/t32/tmp for task32)")
     d = sub.add_parser("discard")
     common(d)
     d.add_argument("--side", choices=LABELS, required=True)
@@ -1372,7 +1387,8 @@ def main(argv=None):
             build_side(args.repo, args.side, args.pin, args.root,
                        args.manifest, args.evidence, args.scratch,
                        mktool=args.mktool, cand_pin=args.cand_pin,
-                       jobs=args.jobs, poly=args.poly, tmpdir=args.tmpdir,
+                       jobs=args.jobs, poly=args.poly,
+                       tmpdir=args.tmpdir or TABLE_TMPDIR[args.table],
                        runner=real_runner(fds))
             return 0
         if args.command == "discard":
