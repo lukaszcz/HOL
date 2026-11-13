@@ -102,7 +102,7 @@ def seal_gate(directory):
         for n in ("header.json", "decisions.json")})
 
 
-def fake_replays(out, record=None, null=False):
+def fake_replays(out, record=None, null=False, module=None):
     """Stands in for `gates.replays` over the fake gate archives of these
     fixtures: they replay unless they hold a `no-replay` marker. The real
     archives are those of `ReplayValidity`."""
@@ -112,6 +112,9 @@ def fake_replays(out, record=None, null=False):
 
 
 REPLAYED = {"replay-gate.exit": "exit=0\n"}
+# the status files of a run that got to its end (run_startup_gate.sh)
+FINISHED = {n + ".exit": "exit=0\n" for n in gates.SOFT_STEPS +
+            gates.HARD_STEPS}
 
 
 HARNESS = "ab" * 20
@@ -167,6 +170,7 @@ class StartupLedger(Ledgers):
         write(path / "harness-head.txt", HARNESS + "\n")
         if done:
             write(path / "done", "done\n")
+            steps = dict(FINISHED, **(steps or {}))
         if decision is not None:
             write(path / "gate" / "decisions.json", dict(
                 decision=decision, reasons=list(reasons), blockers=[],
@@ -209,53 +213,62 @@ class StartupLedger(Ledgers):
 
     def test_an_incomplete_judged_attempt_is_void_and_refused(self):
         for name, exit_ in (
-                ("a", 2),            # a step that failed with 2: no done
+                ("a", 2),            # a hard step failed with 2: no done
                 ("c", 1), ("d", 143), ("e", 130), ("f", 129), ("g", 3)):
-            out = self.run_dir(name, done=False)
+            out = self.run_dir(name, done=False, steps={
+                "build.exit": "exit=%d\n" % exit_})
             with self.assertRaisesRegex(ValueError, "void", msg=name):
                 gates.startup_attempts(self.attempts((name, exit_)),
                                        out / "gate")
 
     def test_a_closing_status_that_contradicts_the_files_is_damage(self):
         damaged = "wrote no `done`"
-        # closed with 0 or 2 without `done` although the last step passed
-        # (exit 2 also comes from the soft steps: a complete run with
-        # who_pays_s1 failed with 2 and `done` deleted is damage)
-        last = {"cell-o2-24.exit": "exit=0\n"}
-        soft = dict(last, **{"who_pays_s1.exit": "exit=2\n",
-                             "gate.exit": "exit=0\n"})
+        hard = {"cell-o1-24.exit": "exit=2\n"}
+        soft = {"who_pays_s1.exit": "exit=2\n", "gate.exit": "exit=0\n"}
+        # (close status, step files over the finished run, damaged?)
+        cases = []
         for exit_ in (0, 2):
-            for steps, bad in ((last, True), (soft, True),
-                               ({}, False),   # it never got to the end
-                               ({"cell-o2-24.exit": "exit=2\n"}, False)):
-                for as_last in (False, True):
-                    out = self.run_dir("y", done=False, decision="fail",
-                                       reasons=("R1 differs",),
-                                       steps=steps,
-                                       declared=(158440, 90000))
-                    if as_last:
-                        ledger = self.attempts(("y", exit_))
-                    else:
-                        self.run_dir("last", done=True, decision="pass",
-                                     declared=(158440, 90000))
-                        ledger = self.attempts(("y", exit_), ("last", 0))
-                    case = (exit_, sorted(steps), as_last)
-                    got = gates.classify(dict(
-                        attempt="y", output=str(out), exit=exit_,
-                        status="soft"))
-                    self.assertEqual(bool(got["damaged"]), bad, case)
-                    self.assertEqual(got["kind"], "fail")   # still decided
-                    judged = (out if as_last else self.root / "last")
-                    if bad:
-                        with self.assertRaisesRegex(ValueError, damaged,
-                                                    msg=case):
-                            gates.startup_attempts(ledger, judged / "gate")
-                    elif as_last:
-                        self.assertEqual(gates.startup_attempts(
-                            ledger, judged / "gate")[-1]["verdict"],
-                            "judged-incomplete", case)
-                    shutil.rmtree(out)
-                    shutil.rmtree(self.root / "last", ignore_errors=True)
+            cases += [(exit_, {}, True), (exit_, soft, True)]
+        cases += [(0, hard, True)]
+        cases += [(2, hard, False), (2, dict(hard, **soft), False),
+                  (2, {"build.exit": "exit=2\n"}, False)]
+        for exit_ in (1, 143, 130, None):
+            cases += [(exit_, {}, False), (exit_, soft, False),
+                      (exit_, hard, False)]
+        for exit_, steps, bad in cases:
+            for as_last in (False, True):
+                case = (exit_, sorted(steps), as_last)
+                out = self.run_dir("y", done=True, decision="fail",
+                                   reasons=("R1 differs",), steps=steps,
+                                   declared=(158440, 90000))
+                (out / "done").unlink()     # the files of a finished run
+                if as_last:
+                    ledger, judged = self.attempts(("y", exit_)), out
+                else:
+                    judged = self.run_dir(
+                        "last", done=True, decision="pass",
+                        declared=(158440, 90000))
+                    ledger = self.attempts(("y", exit_), ("last", 0))
+                got = gates.classify(dict(
+                    attempt="y", output=str(out), exit=exit_,
+                    status="soft"))
+                self.assertEqual(bool(got["damaged"]), bad, case)
+                self.assertEqual(got["kind"], "fail")     # still decided
+                if bad:
+                    with self.assertRaisesRegex(ValueError, damaged,
+                                                msg=case):
+                        gates.startup_attempts(ledger, judged / "gate")
+                elif as_last:
+                    self.assertEqual(gates.startup_attempts(
+                        ledger, judged / "gate")[-1]["verdict"],
+                        "judged-incomplete", case)
+                shutil.rmtree(out)
+                shutil.rmtree(self.root / "last", ignore_errors=True)
+        # exit 0 with no step file at all (done and the last cell gone)
+        out = self.run_dir("z", done=False, decision="pass",
+                           declared=(158440, 90000))
+        with self.assertRaisesRegex(ValueError, damaged):
+            gates.startup_attempts(self.attempts(("z", 0)), out / "gate")
 
     def test_done_makes_an_attempt_complete_whatever_its_close_status(self):
         for exit_ in (129, 130, 143, 1, None):
@@ -277,21 +290,22 @@ class StartupLedger(Ledgers):
             shutil.rmtree(out)
             shutil.rmtree(self.root / "last", ignore_errors=True)
 
-    def test_an_attempt_needs_the_checkouts_startup_gate(self):
+    def test_an_unreadable_harness_is_refused_with_commit_and_path(self):
         out = self.run_dir("a", done=False, decision="fail",
                            reasons=("R1 differs",), declared=(158440, 90000))
         ledger = self.attempts(("a", 143))
         self.assertEqual(gates.startup_attempts(ledger, out / "gate")[
             -1]["verdict"], "judged-incomplete")
-        self.frozen = b"another startup_gate.py\n"
-        with self.assertRaisesRegex(ValueError, "startup_gate.py changed "
-                                    "since attempt a"):
-            gates.startup_attempts(ledger, out / "gate")
-        self.frozen = Path(gates.__file__).parent.joinpath(
-            "startup_gate.py").read_bytes()
         (out / "harness-head.txt").unlink()
         with self.assertRaisesRegex(ValueError, "records no harness"):
             gates.startup_attempts(ledger, out / "gate")
+        write(out / "harness-head.txt", "0" * 40 + "\n")
+        with mock.patch.object(gates, "harness_source",
+                               self.real_harness_source):
+            with self.assertRaisesRegex(
+                    ValueError, "cannot read startup_gate.py at the "
+                    "harness commit " + "0" * 40):
+                gates.startup_attempts(ledger, out / "gate")
         # no gate decision, nothing to replay: the harness is not read
         void = self.run_dir("v", done=False)
         (void / "harness-head.txt").unlink()
@@ -299,9 +313,30 @@ class StartupLedger(Ledgers):
             attempt="v", output=str(void), exit=143,
             status="failed"))["kind"], "void")
 
-    def test_the_harness_source_is_read_from_git(self):
+    def test_the_harness_source_is_the_blob_at_the_commit_in_its_path(self):
+        import subprocess
+        repo = self.root / "repo"
+        (repo / "sub").mkdir(parents=True)
+        subprocess.run(("git", "-C", str(repo), "init", "-q"), check=True,
+                       stdin=subprocess.DEVNULL)
+        shas = []
+        for text in (b"one\n", b"two\n"):
+            (repo / "sub" / "startup_gate.py").write_bytes(text)
+            for argv in (("add", "."), ("-c", "user.name=t", "-c",
+                                        "user.email=t@t", "commit", "-q",
+                                        "-m", "x")):
+                subprocess.run(("git", "-C", str(repo)) + argv,
+                               check=True, stdin=subprocess.DEVNULL)
+            shas.append(subprocess.run(
+                ("git", "-C", str(repo), "rev-parse", "HEAD"), check=True,
+                capture_output=True, text=True).stdout.strip())
+        where = repo / "sub" / "startup_gate.py"
+        self.assertEqual([self.real_harness_source(c, where)
+                          for c in shas], [b"one\n", b"two\n"])
         with self.assertRaisesRegex(ValueError, "cannot read"):
-            self.real_harness_source("0" * 40)
+            self.real_harness_source("0" * 40, where)
+        with self.assertRaisesRegex(ValueError, "cannot read"):
+            self.real_harness_source(shas[0], repo / "startup_gate.py")
 
     def test_a_judged_gate_that_is_not_the_last_attempt_is_refused(self):
         one, two = self.run_dir("one"), self.run_dir("two")
@@ -343,7 +378,7 @@ class StartupLedger(Ledgers):
         self.run_dir("nodone", done=False)                 # exit 1
         self.run_dir("crashed", done=False)                # no decisions
         self.run_dir("killed", done=False)                 # never closed
-        got = self.judged(("signal", 143), ("nodone", 1), ("crashed", 2),
+        got = self.judged(("signal", 143), ("nodone", 1), ("crashed", 1),
                           ("killed", None))
         self.assertEqual([x["verdict"] for x in got],
                          ["void", "void", "void", "void", "judged"])
@@ -676,6 +711,10 @@ class ReplayValidity(Ledgers):
         patch = mock.patch.object(sg, "PAIRS", tsg.TEST_PAIRS)
         patch.start()
         self.addCleanup(patch.stop)
+        # the attempt's own module, loaded from its source, has the
+        # archives' pair count too
+        self.frozen = self.frozen.replace(b"PAIRS = 10  #", b"PAIRS = 2  #")
+        self.assertIn(b"PAIRS = 2  #", self.frozen)
 
     def run_dir(self, name, fail=False, done=False, steps=None):
         """An attempt whose gate is a real archive: attributed, or with
@@ -782,6 +821,43 @@ class ReplayValidity(Ledgers):
                     self.run_dir("last", done=True) / "gate")
             shutil.rmtree(out)
             shutil.rmtree(self.root / "last", ignore_errors=True)
+
+    def test_the_replay_is_the_attempts_own_module_from_git(self):
+        import subprocess
+        import sys
+        head = subprocess.run(
+            ("git", "-C", str(Path(gates.__file__).parent), "rev-parse",
+             "HEAD"), check=True, capture_output=True, text=True,
+            stdin=subprocess.DEVNULL).stdout.strip()
+        out = self.run_dir("g", fail=True)
+        write(out / "harness-head.txt", head + "\n")
+        row = self.row(out)
+        with mock.patch.object(gates, "harness_source",
+                               self.real_harness_source):
+            module = gates.attempt_startup_gate(row)
+            self.assertIs(sys.modules["startup_gate"], self.sg)
+            self.assertIsNot(module, self.sg)
+            self.assertNotIn(module.__name__, sys.modules)
+            # real blob, real replay of a real archive (its pair count is
+            # the archive's)
+            with mock.patch.object(module, "PAIRS", tsg.TEST_PAIRS):
+                self.assertEqual(gates.replays(
+                    out / "gate", out / "not-client-visible.md",
+                    module=module), (True, ""))
+
+    def test_the_attempts_version_of_the_replay_is_the_one_used(self):
+        out = self.run_dir("g", fail=True)
+        self.assertEqual(gates.classify(self.row(out))["kind"], "fail")
+        # an attempt whose harness had another `replay`
+        self.frozen = b"def replay(args):\n    return 7\n"
+        got = gates.classify(self.row(out))
+        self.assertEqual(got["kind"], "void")
+        self.assertIn("returned 7", got["replay"])
+        # a null is replayed by it too
+        self.assertEqual(gates.replays(
+            out / "gate", out / "not-client-visible.md",
+            module=gates.attempt_startup_gate(self.row(out))),
+            (False, "the replay returned 7"))
 
     def test_a_replay_that_is_not_run_gives_no_decision(self):
         out = self.run_dir("g")
@@ -984,7 +1060,7 @@ class StartupPath(Ledgers):
          self.header) = archive_fixture(
              self.ev, prefix="Baseline: develop %s\n%s\n" % (
                  a.BASE, self.cand))
-        self.unreplayable = set()
+        self.unreplayable, self.replayed = set(), []
         for patch in (
                 mock.patch.object(gates, "replays", self.replays),
                 mock.patch.object(gates, "read_loading", lambda out, gate,
@@ -996,8 +1072,9 @@ class StartupPath(Ledgers):
             patch.start()
             self.addCleanup(patch.stop)
 
-    def replays(self, out, record=None, null=False):
+    def replays(self, out, record=None, null=False, module=None):
         """Stands in for `gates.replays` over the fake archives here."""
+        self.replayed.append((Path(out).name, null, module))
         if str(Path(out).resolve()) in self.unreplayable:
             return False, "marked as not replaying"
         return True, ""
@@ -1213,6 +1290,35 @@ class StartupPath(Ledgers):
         with self.assertRaisesRegex(ValueError, "void"):
             self.read(args)
 
+    def test_a_null_is_replayed_as_a_null_and_a_gate_as_a_gate(self):
+        args = self.make(done=False)
+        args.startup_null = None
+        self.read(args)
+        module = object()
+        self.assertEqual(sorted({(n, null) for n, null, _ in self.replayed}),
+                         [("gate", False), ("gate-null", True)])
+        # the late replays, and the null's, use the attempt's own module
+        with mock.patch.object(gates, "attempt_startup_gate",
+                               lambda row: module):
+            self.replayed.clear()
+            _, _, late, _ = self.read(args)
+            with mock.patch.object(gates, "replay_startup") as replay:
+                late[0][1]()
+        self.assertEqual({m for _, _, m in self.replayed}, {module})
+        self.assertEqual([c.args[-1] for c in replay.call_args_list],
+                         [module, module])
+
+    def test_the_replay_reason_is_in_the_attempt_line(self):
+        record = dict(timing_attempts={}, identity_unaccounted={},
+                      cells={}, task32={}, task33={}, gates={},
+                      identity_grid={}, allocation_case={},
+                      timing_grid={}, retained_slope={},
+                      startup_attempts=[dict(
+                          attempt="a", status="failed", judged=False,
+                          verdict="void", decision=None, problems=[],
+                          replay="the replay returned 7")])
+        self.assertIn("replay: the replay returned 7", d.lines(record)[0])
+
     def test_the_null_that_does_not_replay_is_recorded_absent(self):
         # an attempt owing a redraw: its null cannot change the verdict
         args = self.make(done=False)
@@ -1235,7 +1341,7 @@ class StartupPath(Ledgers):
             _, _, late, _ = self.read(args)
             late[0][1]()
         self.assertEqual(replay.call_count, 2)
-        def replay_one(out, record):
+        def replay_one(out, record, module=None):
             if Path(out).name == "gate-null":
                 raise ValueError("did not replay")
         with mock.patch.object(gates, "replay_startup", replay_one):

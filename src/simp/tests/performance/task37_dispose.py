@@ -153,17 +153,18 @@ The judged gate is the `gate` of the last attempt and `--startup-declared`
 its `declared-deltas.json`. A gate decision counts iff the sha256 rows of
 its `gate/receipt.json` all match the files it lists AND the archive,
 sealed to a record, replays with the attempt's own record (design decisions
-28, 31; the runner's progress files never decide it, so a signal after a
-decided, replayable gate does not undo the decision). The replay is this
-checkout's `startup_gate.py`, which must be the one the attempt's harness
-had (`harness-head.txt`; otherwise "startup_gate.py changed since
-attempt X"): it stays frozen across attempts and dispose. An archive that
+28, 33; the runner's progress files never decide it, so a signal after a
+decided, replayable gate does not undo the decision). The replay is made
+with the attempt's own `startup_gate.py` (the blob at the commit in its
+`harness-head.txt`, loaded as a temporary module; refused when it cannot
+be read), so a later fix to the module never locks a disposition out. An
+archive that
 gives no decision makes the attempt void (a redraw is allowed; the reason
 is in the attempt row) unless the attempt shows progress past
 `replay-gate` (`done`, `replay-gate.exit` reading `exit=0`, a later step
-file): it is then damaged and refused, as is an attempt that closed with 0
-or 2 and no `done` although its last step (`cell-o2-24`) finished with
-`exit=0` (exit 2 also comes from the soft steps).
+file): it is then damaged and refused, as is an attempt that closed with
+exit 0 and no `done`, or with exit 2 and no `done` although no hard step
+failed with 2 (the soft steps also exit 2).
 Each
 earlier attempt is judged by its gate decision when it has one, complete
 or not: it is recorded
@@ -1201,7 +1202,7 @@ NULL_NA = ("not applicable (the gate failed or was blocked: the null "
            "control is neither read nor replayed)")
 
 
-def startup_null(args, verdict):
+def startup_null(args, verdict, module=None):
     """The null control archive of the judged startup attempt (its
     `verdict`, `gates.startup_attempts`), or None when it is not read. The
     null of every attempt is exactly `<attempt>/gate-null`. A complete
@@ -1229,7 +1230,7 @@ def startup_null(args, verdict):
                   "control of an incomplete attempt whose gate failed or "
                   "was blocked is not read (omit the flag)")
         return None
-    ok, reason = gates.replays(own, null=True) \
+    ok, reason = gates.replays(own, null=True, module=module) \
         if gates.archive_complete(own) else (False, "")
     if args.startup_null is not None:
         a.require(Path(args.startup_null).resolve() == own and
@@ -1272,12 +1273,13 @@ def read_gates(args, lineage, inputs, late, extra):
     attempts = gates.startup_attempts(args.startup_ledger,
                                       args.startup_gate)
     attempt = Path(args.startup_gate).resolve().parent
+    module = gates.attempt_startup_gate(attempts[-1])
     a.require(Path(args.startup_declared).resolve() ==
               attempt / "declared-deltas.json",
               "--startup-declared %s is not the declared-deltas.json of "
               "the judged attempt (%s)" % (args.startup_declared, attempt))
     verdict = attempts[-1]["verdict"]
-    null = startup_null(args, verdict)
+    null = startup_null(args, verdict, module)
     null_decisions = None
     if null is None:
         why = NULL_NA if verdict == "judged-incomplete" else NO_NULL
@@ -1315,8 +1317,10 @@ def read_gates(args, lineage, inputs, late, extra):
         totals=declared["totals"], archive=declared["archive"],
         archive_sha256=declared["archive_sha256"], problems=problems)
     late.append((gates.STARTUP, lambda: (
-        gates.replay_startup(args.startup_gate, args.startup_record),
-        None if null is None else gates.replay_startup(null, None))))
+        gates.replay_startup(args.startup_gate, args.startup_record,
+                             module),
+        None if null is None else gates.replay_startup(null, None,
+                                                       module))))
     reports = {}
     for gate, root in zip(sorted(gates.LOADING),
                           (args.loading_conglib, args.loading_simplib)):
@@ -1452,7 +1456,8 @@ def lines(record):
             "earlier attempt, kept in the ledger (R-1): %s%s" % (
                 x["verdict"], "; gate %s: %s" % (
                     x["decision"], "; ".join(x["problems"]))
-                if x["decision"] else "")))
+                if x["decision"] else "")
+            + ("; replay: %s" % x["replay"] if x.get("replay") else "")))
     for kind, paths in record["identity_unaccounted"].items():
         out += ["FAIL identity %s: unaccounted difference %s" % (kind, p)
                 for p in paths]

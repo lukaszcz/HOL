@@ -4787,12 +4787,15 @@ waves 1 and 2. The `sources` fill is by hand, in `$M`:
       --candidate $CAND --authorize-measurements
     $I sources --output $E/diag
     # in $M: enter the printed lists in $P/task37_sources.py by hand
-    # (MATRIX and DOWNSTREAM, and CLIENT only if the diagnostic showed a
-    # file missing from TASK31's closure), review, and commit that file
-    # alone
+    # (MATRIX and DOWNSTREAM; CLIENT only under the rule in Sources),
+    # review, and commit that file alone
     # then, for all three identity clones: forward $CL
     nice -n 19 $I identity --table T --output $E/grid \
       --candidate $(git rev-parse HEAD) --authorize-measurements --jobs N
+    # a cell refused on "batch too short; recalibrate" alone ran under
+    # contention and is not recorded: the same command plus --resume
+    # measures it again (the ledger records the resume); a refused
+    # diagnostic is rerun into a fresh --output
 
 The ledger is `$CL/.agent-files/evidence/task37-T-identity/attempts.jsonl`.
 
@@ -5287,6 +5290,12 @@ After a failure, the cells after the failed one do not start, the cells
 before it run and are recorded, and the real error of the failed cell is
 raised with its archive set aside.
 
+Batch floor (decision 33). An identity cell validates its timing batches
+(a batch under half the calibrated second is "batch too short;
+recalibrate"). A grid cell refused on that check alone is not recorded, so
+rerunning the same identity command with `--resume` measures it again; the
+ledger records the resume. It is not an identity result.
+
 Sources. The sources of a table are the files its cells elaborate, which a
 full grid requires exactly (`uncovered` and `unused_sources` of
 `task31_identity_grid.decide` make it inconclusive). They are the exact
@@ -5295,14 +5304,15 @@ elaborated closures in `task37_sources.py`: `CLIENT` is TASK31's
 same 278 cells); `MATRIX` and `DOWNSTREAM` are derived. A full
 grid of a table with an empty list is refused with this procedure: run one
 diagnostic cell with `--only` (in any checkout, at the final candidate; all
-three tables run one). The client's shows only `uncovered` files, those
-the final candidate elaborates that TASK31's closure lacks;
-`unused_sources` is checked by full grids only. If it shows a missing file,
-derive `CLIENT` like the others: enter the printed list in
-`task37_sources.py`, review it and commit that file alone. Run
-`sources --output DIR`, enter
-the printed list in `task37_sources.py` and commit that file alone, before
-the full identity grids. Only the
+three tables run one), then `sources --output DIR`; enter the printed
+list in `task37_sources.py`, review it and commit that file alone, before
+the full identity grids. The client's diagnostic shows only `uncovered`
+files, those the final candidate elaborates that TASK31's closure lacks
+(`unused_sources` is checked by full grids only). If it shows any,
+`CLIENT` is no longer TASK31's list: changing it is a tooling change to
+`task37_sources.CLIENT`, its docstring and the tests that pin it
+(`test_task37_sources.py`, `test_task37_identity.py`), committed alone
+before the client grid. Only the
 identity tables seal `task37_sources.py` (tests: it is in no shard's or
 follow-up's `SEALED`, and is in `IDENTITY_CODE`), so filling a list voids no
 pilot or counts file. The identity code seals also include `task37_cases.py`
@@ -5312,8 +5322,13 @@ by a reviewed exempt import edge (`task29a_grid` and `task31_followup`,
 which `task37_cases.py` imports for the timing samples). The one-cell
 diagnostic of the matrix is the first real exercise of the matrix
 fixture's receipts by `task31_identity.cell`: they have never gone through
-it, so a first diagnostic may find a fixture or closure difference to fix
-before the counts commits. `--jobs N` runs cells in parallel, each in its
+it, so a first diagnostic may find a fixture or closure difference. The
+diagnostics are in wave 2, after the shard pilots may have started, so such
+a fix is a tooling change that voids the runs whose sealed code it touches,
+and they are redrawn: a fix in `task37_cases.py` or `task30_cases.py`
+voids the identity runs and the matrix shards' pilots and counts (both
+seal them); a fix in the identity code alone voids the identity runs only.
+`--jobs N` runs cells in parallel, each in its
 own scratch; the records are those of a serial run.
 
 ### Allocation (part C)
@@ -5629,16 +5644,18 @@ binds each to its own table. A follow-up declaration is committed alone
 and must be an ancestor of the commit of the follow-up's counts file
 (checked by the follow-up engine and again by dispose).
 
-Startup attempts (decisions 21, 25, 26, 28, 31). The last attempt holds the
+Startup attempts (decisions 21, 25, 26, 28, 31, 33). The last attempt holds the
 judged gate; it may be unclosed (ledger status `open`: incomplete). A gate
 decision counts iff every sha256 row of `gate/receipt.json` matches its file
 (it lists `header.json` and `decisions.json`;
-`startup_gate.write_archive`) AND `startup_gate.replay` of the archive,
-sealed to a record (`record_sha256`), with the attempt's own
-`not-client-visible.md`, returns 0 (dispose runs it quietly and in-process,
-with this checkout's `startup_gate.py`, which stays frozen across attempts
-and dispose: an attempt whose harness, `harness-head.txt`, has another
-`startup_gate.py` is refused, "startup_gate.py changed since attempt X").
+`startup_gate.write_archive`) AND `replay` of the archive, sealed to a
+record (`record_sha256`), with the attempt's own `not-client-visible.md`,
+returns 0 (dispose runs it quietly and in-process). Each attempt's gate
+and null are replayed with that attempt's own `startup_gate.py`: the blob at
+the commit in its `harness-head.txt`, loaded as a temporary module (its
+other imports are the dispose checkout's), so a later fix to the module,
+needed for a redraw, never locks the disposition out. A decided attempt
+with no readable harness commit or blob is refused, naming both.
 The runner's progress files never decide that, so a signal or crash after a
 decided, replayable gate (killed during `gate-null`, say) does not undo the
 decision. An archive that is absent, cut or does not replay gives no
@@ -5651,9 +5668,11 @@ never reads it as void. `done` present means every step ran: the attempt is
 complete whatever its close status (a signal after `done`, or never
 closed), and its gate must replay, else it is damaged. Exit 2 also comes
 from the soft steps (`who_pays_s1`, `gate`, `gate-null`, `check_deltas`),
-so an attempt closed with 0 or 2 and no `done` is damaged when the
-runner's last step (`cell-o2-24`) finished with `exit=0`, and incomplete
-otherwise. The judged gate must be the `gate` of the last attempt and
+so: exit 0 without `done` is always damaged (the runner exits 0 only after
+`done`); exit 2 without `done` is damaged unless a hard step's `.exit`
+reads `exit=2` (the soft steps do not count); any other close without
+`done` is incomplete. The judged gate must be the `gate` of the last attempt
+and
 `--startup-declared` its `declared-deltas.json`. A complete attempt is
 judged by its gate and has a replayed null control (`--startup-null` is
 required, exactly the attempt's `gate-null`, and it must replay). If the
@@ -5684,7 +5703,8 @@ N, Dc = M" parsed from the record) and, for an earlier one, to its
 record's sha256 in `gate/header.json` and to the `DECLARED_DELTAS_SHA256`
 of its sealed `inputs.txt`. The runner exits 0 when all steps pass, 2 when
 it completed but a soft step failed (the file `<output>/done` is written,
-not a ledger line), 1 on `die`; an attempt is complete iff it has `done`,
+not a ledger line), 1 on `die` or a step that failed with 2; an attempt is
+complete iff it has `done`,
 whatever its close status. An `ATTEMPT` name is
 never reused and `EVTAG` is
 restricted to `[A-Za-z0-9._-]`. `--check` accepts the stored `head` when
