@@ -4566,7 +4566,64 @@ own scratch; the records are those of a serial run.
 
 ### Allocation (part C)
 
-(to be merged)
+The exact allocation counts of the final candidate against B, from the
+private counter of `allocation_matrix.py`, in three tasks, one per clone.
+
+- Pairs. Each TASK37 task runs 3 fresh-process AB/BA pairs per cell
+  (`Task.pairs`; the legacy tasks TASK29B, TASK30 and TASK31 keep 10).
+  Justification: the counter counts words, not time, so the counts are
+  exact, and no run of TASK29B, TASK30 or TASK31 ever saw a
+  nondeterministic cell. The determinism and control checks of
+  `allocation_analysis` run unchanged on the 3 pairs: every process of a
+  cell is compared, repeat by repeat, with the others and with the
+  baseline/baseline control, so a nondeterministic cell or a control that
+  differs is still found. `--pairs` defaults to the task's; fewer than the
+  task's is a smoke and cannot pass (its rows are inconclusive and the
+  grid is not complete). The dispositions read the pairs from the
+  inventory and refuse any pair count that is not the task's own, and a
+  passing row of fewer pairs.
+- Tasks and cells. `task37-matrix`: every TASK29 and TASK30 case at its
+  size set, size 10000 included, 306 cells. `task37-client`: the cells
+  that `task31` allocates, 245 (its infeasible cells are left out).
+  `task37-downstream`: the 11 `downstream_*` cells
+  (`downstream_arithmetic` and `downstream_reduce` at sizes 1, 10, 100,
+  1000 and 10000; `downstream_boss` at 0), fixture
+  `DownstreamAllocation.sml`.
+- The downstream closure family. Those workloads use numLib, reduceLib and
+  bossLib, so the family installs the shared client closure recompiled
+  against the private simplifier (`client_dependencies.py`, as the timing
+  path does), sealed per side in the header and checked on replay against
+  what each cell installed. Closure families accept the toolchain shared
+  inputs; a family without a closure installs none.
+- Counts. The measurement stage makes the counts files
+  `allocation_iterations_task37_matrix.json`,
+  `allocation_iterations_task37_client.json` and
+  `allocation_iterations_task37_downstream.json`; none is committed now,
+  and counts alone never gate (the counts-alone rule).
+- Attempts ledger (R-1). Every `run` and `run --resume` of a TASK37 task
+  appends to `<clone>/.agent-files/evidence/<task>/attempts.jsonl` (never
+  tracked by git; the run refuses if it would be), with the hash chain of
+  the timing ledger: `open` once the output exists, `resume`, and `close`
+  with the status of the decisions (`pass`, `fail`, `inconclusive`) or
+  `failed` when the run raised. An attempt is of one output
+  (`allocation_attempts.attempt_id`). It is void, and its settings may be
+  drawn again as a new attempt, only if it admitted no measurement:
+  exactly one close, `failed`; no resume; its output exists and holds no
+  cell archive (`*.json.xz`, also `.partial`), no decisions and no
+  inventory row. Anything else (left open, resumed, closed twice or with
+  another status, output missing or holding a cell) is judged, and a
+  judged attempt cannot be redrawn. The disposition takes the ledger with
+  `--alloc-ledger TASK=FILE` and the output of `--alloc-<task>` as the one
+  judged attempt; an extra attempt that is not void, a judged attempt
+  that is not in the ledger or ran in another output, and a missing or
+  broken ledger refuse it. The legacy tasks write no ledger.
+- Launch. `--jobs` is chosen at launch (it runs cells, not the processes
+  of one cell, in parallel; the records are those of a serial run). One
+  clone per task: the ledger is of the clone, so the three tasks run in
+  three clones.
+- Decisions. A case with no size-0 cell has `constants: None`, which the
+  disposition reads as `n/a` (not a gate, never a failure); its slopes
+  are still gated.
 
 ### TASK32/33, startup, loading, D7 (part D)
 

@@ -108,16 +108,20 @@ and loading are those of their archives, whose replays recompute them
 Allocation grid. For each task: the grid's `status`, `nondeterminism` and
 `unresolved` are recorded, and one record per (task, case) decides the
 slopes and the size-zero constants from `decisions["cases"][CASE]["slopes"]`
-and `["constants"]` (each: {phase: {metric: [row] / row}} with a `decision`);
+and `["constants"]` (each: {phase: {metric: [row] / row}} with a `decision`;
+`constants` is None for a case with no size-0 cell, which is `n/a`: not a
+gate, never a failure, and the slopes are still gated; the slopes of a case
+of one size, with no adjacent pair, are `n/a` likewise);
 a grid that is not `pass` with nothing that explains it (no row that is not
 pass/equal, no case record, no nondeterminism, no unresolved cell) is
-refused. ASSUMPTION (part C, not merged when this was written): the
-3-pair TASK37 tasks keep these keys.
+refused. The 3-pair TASK37 tasks keep these keys (part C).
 
 ALLOCATION LEDGER. `--alloc-ledger TASK=FILE` (one for each task) is judged
-by `allocation_matrix.attempts_of(task, ledger)`, expected to return what
-`void_attempts.attempts_of` returns. ASSUMPTION (part C): that function and
-`Task.pairs` exist once it merges; `allocation_attempts` is the one adapter.
+by `allocation_attempts.attempts_of(task, ledger, judged)` with the output
+named by `--alloc-<task>` as the judged attempt ({attempt, status, output,
+judged, void}, as `void_attempts.attempts_of` returns); its refusal
+(`InvalidAllocation`) refuses the disposition. The pairs a passing row needs
+are `allocation_matrix.task_named(task).pairs`.
 
 Host load. `--load STREAM=FILE` (repeatable, optional) names a recording of
 `task37_load.py record`; its summary (`task37_load.summarize`) is copied into
@@ -196,7 +200,8 @@ CODE = ("task37_dispose.py", "task37_gates.py", "task37_lineage.py",
         "task33_dispose.py", "task33_rules.py", "task33_storage.py",
         "startup_gate.py", "loading.py", "timing_grid.py", "acceptance.py",
         "void_attempts.py", "allocation_matrix.py", "allocation_schema.py",
-        "allocation_analysis.py", "matrix_schema.py", "evidence_bundle.py",
+        "allocation_analysis.py", "allocation_attempts.py",
+        "client_dependencies.py", "matrix_schema.py", "evidence_bundle.py",
         "allocation_boundary.py", "audit_evidence.py", "path_schema.py",
         "performance_schema.py", "runtime_metrics.py", "summarize.py",
         "task30_pins.py", "task31_snapshot.py", "task32_dat.py",
@@ -381,15 +386,20 @@ def replay_allocation(root):
     replayed(code, "the allocation grid in %s" % root)
 
 
-def allocation_attempts(task, ledger):
+def allocation_attempts(task, ledger, root):
     """The attempts of an allocation task in its ledger, each judged or
-    void (R-1), in the shape of `void_attempts.attempts_of`: the one
-    adapter to `allocation_matrix.attempts_of(task, ledger)`."""
-    import allocation_matrix as am
-    a.require(hasattr(am, "attempts_of"),
-              "allocation_matrix.attempts_of is not available: the "
-              "allocation attempts ledger is not part of this tree")
-    return am.attempts_of(task, ledger)
+    void (R-1), in the shape of `void_attempts.attempts_of` ({attempt,
+    status, output, judged, void}): `allocation_attempts.attempts_of`,
+    with the output `root` named by `--alloc-<task>` as the judged
+    attempt. Its refusal is a refusal of the disposition."""
+    import allocation_attempts as aa
+    import allocation_schema as sc
+    try:
+        return aa.attempts_of(
+            task, ledger, judged={aa.attempt_id(root): root})
+    except sc.InvalidAllocation as error:
+        raise ValueError("the attempts ledger of %s is refused: %s" % (
+            task, error)) from None
 
 
 def words(found):
@@ -399,18 +409,38 @@ def words(found):
             "inconclusive")
 
 
+def slope_word(record):
+    """The word of the adjacent-size slopes of a case: `n/a` when the case
+    has one size, so no adjacent pair (every row list is empty), `missing`
+    when the grid computed no slopes."""
+    slopes = record.get("slopes")
+    if slopes is None:
+        return "missing"
+    found = [r["decision"] for phase in slopes.values()
+             for rows in phase.values() for r in rows]
+    return words(found) if found else "n/a"
+
+
+def constant_word(record):
+    """The word of the size-zero constants of a case: `n/a` when the grid
+    has no size-0 cell (`constants` is None), `missing` when the record has
+    no such key."""
+    if "constants" not in record:
+        return "missing"
+    constants = record["constants"]
+    if constants is None:
+        return "n/a"
+    return words([m["decision"] for phase in constants.values()
+                  for m in phase.values()])
+
+
 def case_decisions(record):
     """{slope, constant}: the words of the slope and the size-zero constant
     decisions of one case of an allocation grid
     (`decisions["cases"][CASE]`), `missing` where the grid computed none."""
-    slopes, constants = record.get("slopes"), record.get("constants")
     return dict(
-        slope="missing" if slopes is None else words(
-            [r["decision"] for phase in slopes.values()
-             for rows in phase.values() for r in rows]),
-        constant="missing" if constants is None else words(
-            [m["decision"] for phase in constants.values()
-             for m in phase.values()]))
+        slope=slope_word(record),
+        constant=constant_word(record))
 
 
 def case_records(task, decisions):
@@ -422,7 +452,7 @@ def case_records(task, decisions):
         failed = ["allocation %s: fail" % k for k, v in words_.items()
                   if v == "fail"]
         missing = ["allocation %s: %s" % (k, v) for k, v in words_.items()
-                   if v not in ("pass", "fail")]
+                   if v not in ("pass", "fail", "n/a")]
         found["%s:%s" % (task, case)] = dict(
             words_, failed=failed, missing=missing,
             owed=["allocation-rerun"] if missing else [])
@@ -505,7 +535,7 @@ def read_allocation(root, task, names, infeasible, lineage, ledger, late):
 
     def replay():
         replay_allocation(root)
-        held["attempts"] = allocation_attempts(task, ledger)
+        held["attempts"] = allocation_attempts(task, ledger, root)
     late.append((task, replay))
     return held
 

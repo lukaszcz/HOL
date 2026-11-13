@@ -7,6 +7,7 @@ the pilot and follow-up joins, and the sealed code. The allocation case
 shape is compared with the real `allocation_analysis.case_decisions`."""
 import ast
 import contextlib
+import copy
 import io
 import json
 from pathlib import Path
@@ -18,6 +19,8 @@ from unittest import mock
 
 import acceptance as a
 import allocation_analysis as an
+import allocation_attempts as aa
+import allocation_matrix as am
 import task31_dispose as d31
 import task32_downstream as d32
 import task37_cases as c
@@ -26,6 +29,7 @@ import task37_gates as gates
 import task37_followup as followup
 import task37_grid as grid
 import task37_lineage as lin
+import test_task37_allocation as t37
 import test_timing_grid as ttg
 import timing_grid as tg
 
@@ -353,40 +357,102 @@ def write(path, value):
 
 
 class Allocation(unittest.TestCase):
+    """Allocation readers over the real decisions of allocation_matrix, the
+    real attempts ledger of allocation_attempts and the real pairs of the
+    task."""
     TASK = "task37-downstream"
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
-        self.ledger = self.root / "ledger"
-        self.ledger.touch()
-        patch = mock.patch.object(d, "required_pairs", lambda task: 3)
-        patch.start()
-        self.addCleanup(patch.stop)
+        self.root = Path(self.tmp.name) / "out"
+        self.root.mkdir()
+        self.ledger = Path(self.tmp.name) / "attempts.jsonl"
+        self.make_ledger(self.root)
 
-    def make(self, status="pass", cases=None, **over):
+    def make_ledger(self, output, *events, ledger=None):
+        for event, status in events or (("open", None),
+                                        ("close", "pass")):
+            tg.ledger_append(
+                ledger or self.ledger, event=event, stage="first",
+                table=self.TASK, attempt=aa.attempt_id(output),
+                candidate=CAND, counts_file="c.json", counts="0" * 64,
+                output=str(output), checkout=self.tmp.name,
+                **(dict(status=status) if status else {}))
+
+    def make(self, status="pass", cases=None, pairs=3, **over):
+        task = am.task_named(self.TASK)
         harness = dict(head=CAND, dirty=False,
                        tree_outside_performance="t")
         write(self.root / "inventory.json", dict(
-            candidate=CAND, baseline=a.BASE, task=self.TASK, pairs=3,
+            candidate=CAND, baseline=a.BASE, task=self.TASK, pairs=pairs,
             harness=harness))
-        rows = [dict(case=n.rsplit("-", 1)[0],
-                     size=int(n.rsplit("-", 1)[1]), pairs=3,
-                     decision="pass", work="equal")
-                for n in c.DOWNSTREAM_CELLS]
-        write(self.root / "decisions.json", dict(dict(
-            candidate=CAND, baseline=a.BASE, complete=True,
-            infeasible=[], status=status, nondeterminism=[],
-            unresolved=[], work_status="pass", rows=rows,
-            cases=cases if cases is not None else {"k": case_record()}),
-            **over))
+        out = am.assemble(*t37.grid_of(task, pairs), task=task,
+                          candidate=CAND)
+        for row in out["rows"]:
+            row["work"] = "equal"  # a work-less row would explain a grid
+        out.update(over)
+        if cases is not None:
+            out["cases"] = cases
+        if status != "pass":
+            out["status"] = status
+        write(self.root / "decisions.json", out)
+        return out
 
-    def read(self):
+    def read(self, ledger=None):
         late = []
         got = d.read_allocation(self.root, self.TASK, c.DOWNSTREAM_CELLS,
-                                (), FakeLineage(), self.ledger, late)
+                                (), FakeLineage(), ledger or self.ledger,
+                                late)
         return got, late
+
+    def test_the_real_decisions_have_the_shape_read(self):
+        out = self.make()
+        self.assertEqual({k: v["constants"] is None
+                          for k, v in out["cases"].items()},
+                         {k: 0 not in v["cells"]
+                          for k, v in out["cases"].items()})
+        self.assertTrue(any(v["constants"] is None
+                            for v in out["cases"].values()))
+        got, late = self.read()
+        self.assertEqual(set(got["cases"]),
+                         {self.TASK + ":" + k for k in out["cases"]})
+        self.assertEqual(got["pairs"], 3)
+        self.assertEqual(got["state"]["status"], "pass")
+        self.assertEqual(len(late), 1)
+
+    def test_constants_none_is_not_applicable_and_slopes_are_gated(self):
+        out = self.make()
+        none = [k for k, v in out["cases"].items()
+                if v["constants"] is None]
+        self.assertTrue(none)
+        got, _ = self.read()
+        for case in none:
+            r = got["cases"]["%s:%s" % (self.TASK, case)]
+            self.assertEqual((r["constant"], r["failed"], r["missing"],
+                              r["owed"]), ("n/a", [], [], []))
+            self.assertEqual(r["slope"], "pass")
+        self.assertEqual(d.case_decisions(dict(
+            cells={}, constants=None, slopes=case_record("fail")["slopes"])),
+            dict(slope="fail", constant="n/a"))
+        broken = copy.deepcopy(out["cases"])
+        for case in none:
+            for phase in broken[case]["slopes"].values():
+                for rows in phase.values():
+                    rows[0]["decision"] = "fail"
+        self.make(cases=broken, status="fail")
+        got, _ = self.read()
+        r = got["cases"]["%s:%s" % (self.TASK, none[0])]
+        self.assertEqual(r["failed"], ["allocation slope: fail"])
+
+    def test_a_case_of_one_size_has_no_slope_to_gate(self):
+        out = self.make()
+        got, _ = self.read()
+        r = got["cases"][self.TASK + ":downstream_boss"]
+        self.assertEqual((r["slope"], r["constant"], r["missing"]),
+                         ("n/a", "pass", []))
+        self.assertEqual(out["cases"]["downstream_boss"]["slopes"]
+                         ["setup"]["total"], [])
 
     def test_one_record_per_case_and_the_status_recorded(self):
         self.make(cases={"k": case_record(), "m": case_record("fail")},
@@ -396,7 +462,6 @@ class Allocation(unittest.TestCase):
                                              self.TASK + ":m"})
         self.assertEqual(got["state"]["status"], "fail")
         self.assertEqual(got["state"]["nondeterminism"], 0)
-        self.assertEqual(len(late), 1)
 
     def test_a_grid_that_is_not_pass_and_explains_nothing_is_refused(self):
         self.make(status="inconclusive")
@@ -409,23 +474,68 @@ class Allocation(unittest.TestCase):
         self.read()
 
     def test_the_pairs_are_the_tasks_own(self):
-        self.make()
-        with mock.patch.object(d, "required_pairs", lambda task: 5):
-            with self.assertRaisesRegex(ValueError, "not the task's 5"):
-                self.read()
+        self.assertEqual(d.required_pairs(self.TASK), 3)
+        self.assertEqual(d.required_pairs("task31"), 10)
+        self.make(pairs=3)
+        self.read()
+        self.make(pairs=2)
+        with self.assertRaisesRegex(ValueError, "not the task's 3"):
+            self.read()
+
+    def test_an_inventory_of_the_legacy_pairs_is_refused(self):
+        self.make(pairs=10)
+        with self.assertRaisesRegex(ValueError, "not the task's 3"):
+            self.read()
 
     def test_the_replay_and_the_ledger_run_late(self):
         self.make()
         calls = []
         with mock.patch.object(d, "replay_allocation",
-                               lambda root: calls.append("replay")), \
-                mock.patch.object(d, "allocation_attempts",
-                                  lambda task, ledger: calls.append(
-                                      "ledger") or []):
+                               lambda root: calls.append("replay")):
             got, late = self.read()
-            self.assertEqual(calls, [])
+            self.assertIsNone(got["attempts"])
             late[0][1]()
-        self.assertEqual(calls, ["replay", "ledger"])
+        self.assertEqual(calls, ["replay"])
+        self.assertEqual(got["attempts"], [dict(
+            attempt=aa.attempt_id(self.root), status="pass",
+            output=str(self.root), judged=True, void=False)])
+
+    def replayed(self, ledger=None):
+        self.make()
+        with mock.patch.object(d, "replay_allocation", lambda root: None):
+            got, late = self.read(ledger)
+            late[0][1]()
+        return got
+
+    def test_the_output_given_is_the_judged_attempt(self):
+        void = Path(self.tmp.name) / "void"
+        void.mkdir()
+        self.make_ledger(void, ("open", None), ("close", "failed"))
+        got = self.replayed()
+        self.assertEqual([(x["judged"], x["void"])
+                          for x in got["attempts"]],
+                         [(True, False), (False, True)])
+
+    def test_an_extra_attempt_that_is_not_void_is_refused(self):
+        other = Path(self.tmp.name) / "other"
+        other.mkdir()
+        (other / "x-1.json.xz").write_bytes(b"x")
+        self.make_ledger(other, ("open", None), ("close", "failed"))
+        with self.assertRaisesRegex(ValueError, "refused.*not void"):
+            self.replayed()
+
+    def test_the_output_must_be_in_the_ledger(self):
+        elsewhere = Path(self.tmp.name) / "elsewhere"
+        elsewhere.mkdir()
+        ledger = Path(self.tmp.name) / "other.jsonl"
+        self.make_ledger(elsewhere, ledger=ledger)
+        with self.assertRaisesRegex(ValueError, "not in the ledger"):
+            self.replayed(ledger)
+
+    def test_an_inventory_of_other_pairs_than_the_task_is_refused(self):
+        self.make(pairs=5)
+        with self.assertRaisesRegex(ValueError, "not the task's 3"):
+            self.read()
 
     def test_a_ledger_is_required(self):
         self.make()
@@ -433,13 +543,16 @@ class Allocation(unittest.TestCase):
             d.read_allocation(self.root, self.TASK, c.DOWNSTREAM_CELLS, (),
                               FakeLineage(), None, [])
 
-    def test_the_adapter_names_the_part_c_function(self):
-        import allocation_matrix as am
-        seen = []
-        with mock.patch.object(am, "attempts_of", create=True,
-                               new=lambda t, l: seen.append((t, l)) or []):
-            d.allocation_attempts("T", "L")
-        self.assertEqual(seen, [("T", "L")])
+    def test_the_adapter_is_allocation_attempts(self):
+        found = d.allocation_attempts(self.TASK, self.ledger, self.root)
+        self.assertEqual(found, aa.attempts_of(
+            self.TASK, self.ledger,
+            {aa.attempt_id(self.root): self.root}))
+        with self.assertRaisesRegex(ValueError, "no attempts ledger"):
+            d.allocation_attempts(self.TASK, self.root / "none",
+                                  self.root)
+        with self.assertRaisesRegex(ValueError, "no attempts ledger"):
+            d.allocation_attempts("task31", self.ledger, self.root)
 
 
 class Lineage(unittest.TestCase):
