@@ -38,17 +38,6 @@ COUNTS = a.HERE / "task31_followup_iterations.json"
 # The first grid's sealed files and its driver (this table takes its
 # constants and replays its grid through its table).
 SEALED = base.SEALED + ("task31_grid.py",)
-# Seals of the code the kept follow-up records were made by (as
-# task31_grid.py): this file, and the sealed files with their histories (the
-# first grid's, and task31_grid.py itself), before a private script's theory
-# became private (TASK37), which changes nothing the grids measured.
-DRIVERS = (dict(
-    bytes=3398, sha256="c87b575bd5acf063d3872c164fe5e9a9"
-                       "861f070886943ffaaa56e9cff5189c64"),)
-SEALED_HISTORY = dict(base.SEALED_HISTORY, **{
-    "task31_grid.py": (dict(
-        bytes=5121, sha256="d62bb568b6b398497e14468cc9335fc7"
-                           "b0410f9073a3395a80ce6daa3a743b94"),),})
 
 
 def table(cells):
@@ -64,7 +53,6 @@ def table(cells):
         fixed_seconds=True, schedule="warmup", pairs=2 * base.PAIRS,
         samples=base.SAMPLES, seed=LAYOUT_SEED, baseline=a.BASE,
         engine=True, tree="src", sealed=SEALED, sources=base.SOURCES,
-        drivers=DRIVERS, sealed_history=SEALED_HISTORY,
         pinned=base.TABLE.pinned, pin_file=base.TABLE.pin_file,
         pin_history=base.TABLE.pin_history, require_seed=True,
         allocation=base.TABLE.allocation)

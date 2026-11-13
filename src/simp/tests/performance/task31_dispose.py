@@ -105,27 +105,13 @@ CODE = ("task31_dispose.py", "task31_grid.py", "task31_identity_grid.py",
 # Per file of CODE, the seals it had when a disposition was recorded, once it
 # has changed since. The seals of 7e202dfbaa: allocation_matrix.py before it
 # took a pair count per task (TASK37), and this file before it named that.
-# The seals of 77a6cb4fa9: the timing driver, its follow-up, the identity
-# gate and this file before a private script's theory became private
-# (TASK37, client_dependencies.py).
 HISTORY = {
     "allocation_matrix.py": (dict(
         bytes=74810, sha256="935b2a4962cd6c2b4270805a1f94758d"
                        "f07d62c757b14f38d315041c050c9ef5"),),
     "task31_dispose.py": (dict(
         bytes=31264, sha256="551f76142534cb62820a40b8c324eaa1"
-                       "7843adbb742b142ca5697842de2eab3c"),
-        dict(bytes=31711, sha256="da89b49586badf902c3b9f60695142f6"
-                                 "02e27ed554504d8651b84331e7d38377")),
-    "task31_grid.py": (dict(
-        bytes=5121, sha256="d62bb568b6b398497e14468cc9335fc7"
-                           "b0410f9073a3395a80ce6daa3a743b94"),),
-    "task31_identity_grid.py": (dict(
-        bytes=29002, sha256="578bf14ee25abab5aae047c5146ccd26"
-                            "be9fbc15fe8b57cc532c0dae2430be5a"),),
-    "task31_followup.py": (dict(
-        bytes=3398, sha256="c87b575bd5acf063d3872c164fe5e9a9"
-                           "861f070886943ffaaa56e9cff5189c64"),)}
+                       "7843adbb742b142ca5697842de2eab3c"),)}
 
 
 def seals():

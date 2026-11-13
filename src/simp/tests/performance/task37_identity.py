@@ -154,16 +154,14 @@ EXTRA_CODE = (THIS, "task37_cases.py", "task37_sources.py",
 IDENTITY_CODE = idg.IDENTITY_CODE + EXTRA_CODE
 # Per file of IDENTITY_CODE, the seals it had when a grid of this module was
 # recorded, once it has changed since (see task31_identity_grid.CODE_HISTORY).
+# The seals of 77a6cb4fa9, the code of the t37-id-* grids:
+# client_dependencies.py before a private script's theory became private,
+# and this file before it named that. TASK29-31 records are superseded and
+# not replayed (design decision 1), so no history is kept for them.
 CODE_HISTORY = {
     "client_dependencies.py": (dict(
         bytes=11174, sha256="589fc81abb838dabc49d75b02de0c9c1"
                             "421afb7bba6369ead54a07e1dd55a66b"),),
-    "task31_grid.py": (dict(
-        bytes=5121, sha256="d62bb568b6b398497e14468cc9335fc7"
-                           "b0410f9073a3395a80ce6daa3a743b94"),),
-    "task31_identity_grid.py": (dict(
-        bytes=29002, sha256="578bf14ee25abab5aae047c5146ccd26"
-                            "be9fbc15fe8b57cc532c0dae2430be5a"),),
     "task37_identity.py": (dict(
         bytes=26847, sha256="ea8c864cb565cd1d8105893f1a9d6539"
                             "2cff49dd367a0d25ecf7b24c1ff2f3ad"),),}
