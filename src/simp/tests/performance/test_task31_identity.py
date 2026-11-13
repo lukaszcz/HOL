@@ -121,6 +121,7 @@ class AttributedTheory(unittest.TestCase):
             seal = seal_candidate if side == "candidate" and \
                 seal_candidate else self.SEAL
             closures[side] = dict(entries={
+                "private/xScript.sml": dict(source="d" * 64, bytes=9),
                 "private/xTheory.sml": dict(source=seal["sha256"],
                                             bytes=seal["bytes"])})
         different = [dict(kind="source", name="private/xTheory.sml")]
@@ -132,8 +133,13 @@ class AttributedTheory(unittest.TestCase):
     def test_a_difference_of_a_reviewed_scripts_theory_is_attributed(self):
         attributed, rest = idt.attribute(*self.case())
         self.assertEqual((sorted(attributed), rest), ([self.PATH], []))
-        self.assertEqual(attributed[self.PATH]["entry"],
-                         "private/xTheory.sml")
+        record = attributed[self.PATH]
+        # one file: the script, and the theory's files beside it
+        self.assertEqual(record["entry"], "private/xScript.sml")
+        self.assertEqual(record["baseline_sha256"], "d" * 64)
+        self.assertEqual(record["products"], {"private/xTheory.sml": dict(
+            baseline_sha256=self.SEAL["sha256"],
+            candidate_sha256=self.SEAL["sha256"])})
 
     def test_an_unreviewed_scripts_theory_stays_in_the_rest(self):
         attributed, rest = idt.attribute(*self.case(reviewed=False))

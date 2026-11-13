@@ -5428,6 +5428,11 @@ private counter of `allocation_matrix.py`, in three tasks, one per clone.
   are cancelled and never start, and each interrupted cell is archived
   rejected with the reason "terminated". So a stop leaves no record
   admitted and the attempt void if every archive it holds is rejected.
+  `loading.execute` defers these signals while it starts a child
+  (`spawn_guard`, on the main thread only): a handler that raises inside
+  Popen would orphan the child, which has a session of its own; the
+  signal is delivered again once the child is registered, so `halt`
+  kills it, or `execute`'s own kill path does.
   An attempt is of one output
   (`allocation_attempts.attempt_id`). It is void, and its settings may be
   drawn again as a new attempt, only if it admitted no measurement:
@@ -5439,7 +5444,13 @@ private counter of `allocation_matrix.py`, in three tasks, one per clone.
   decides, never the inventory alone: a row that says rejected over an
   archive that replays to a record leaves the attempt judged. A `.partial`
   archive, an archive with no inventory row to replay it by and one that
-  fails otherwise than by a refusal count as cells not shown rejected. So a
+  fails otherwise than by a refusal count as cells not shown rejected.
+  Refusal texts are frozen once a run has recorded them: the replay's
+  text must equal the recorded one (for an unresolved cell, the one in the
+  archive's meta), so rewording a refusal turns a recorded void attempt
+  into a judged one (`test_the_recorded_refusal_texts_are_frozen` pins
+  the two recorded ones, "wrong observation count" and the
+  `simpMarkerTheory.dat` closure-product refusal). So a
   tool-defect refusal of every cell, which admitted nothing, is void and
   may be redrawn (design decision 30, aligned with TASK32's "every archived
   measuring process rejected"). Anything else (left open, resumed, closed

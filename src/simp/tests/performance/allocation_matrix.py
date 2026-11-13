@@ -1074,6 +1074,9 @@ def check_protocol(receipt, meta, events):
     sc.require(len(events) > 6 and events[3][0] == "preloaded" and
                len(events[3]) == 2, "missing preloaded-module inventory")
     names = {Path(n).stem for n in meta["sources"][side]}
+    # the run-time names (`make_job`) include the theory of every script
+    names |= {n[:-len("Script")] + "Theory" for n in names
+              if n.endswith("Script") and n != "Script"}
     sc.require(not (names & set(events[3][1].split(","))),
                "selected implementation preloaded in shared heap")
     index, heaps = 4, []
@@ -1322,9 +1325,15 @@ def cell_data(folder, bind):
         raise sc.InvalidAllocation("malformed archive: %r" % (error,))
 
 
+# The refusal of a cell archive whose run rejected it. Every refusal text
+# is frozen once a run has recorded it: `allocation_attempts` compares the
+# replay's text with the recorded one (PROTOCOL, Attempts ledger).
+UNRESOLVED = "unresolved cell"
+
+
 def checked_cell(folder, bind):
     meta = a.load(Path(folder) / "meta.json.gz")
-    sc.require(meta["rejected"] is None, "unresolved cell")
+    sc.require(meta["rejected"] is None, UNRESOLVED)
     sc.require(meta == dict(bind, schema=SCHEMA, rejected=None),
                "cell measured under different inputs or settings")
     sc.require(meta["sources"]["control"] == meta["sources"]["baseline"] and

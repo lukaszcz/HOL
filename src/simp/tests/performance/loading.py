@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Fresh ordinary first-import timing; NOT independent/release approval."""
 import argparse
+import contextlib
 import functools
 import gzip
 import hashlib
@@ -419,37 +420,73 @@ def live():
         return sorted(_LIVE)
 
 
+@contextlib.contextmanager
+def spawn_guard():
+    """Defer a stop signal until the child is started and registered.
+    A handler that raises (KeyboardInterrupt, `terminating`'s) can fire in
+    the middle of `subprocess.Popen` (its exec-wait read) or between
+    Popen returning and the child being bound and registered; the child,
+    in a session of its own, would be orphaned, since Popen's cleanup
+    closes pipes but never kills it. On the main thread (the only one that
+    runs signal handlers) SIGINT, SIGTERM and SIGHUP are recorded for the
+    duration, the previous handlers restored, and the first recorded
+    signal is delivered again, so that the handler runs with the child
+    registered (`halt` kills it; an exception takes `execute`'s kill path).
+    On other threads nothing is touched: no handler can run there."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    seen = []
+    saved = {}
+    try:
+        for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            previous = signal.getsignal(number)
+            if previous is None:  # not installed from Python: leave it
+                continue
+            saved[number] = previous
+            signal.signal(number, lambda got, frame: seen.append(got))
+        yield
+    finally:
+        for number, previous in saved.items():
+            signal.signal(number, previous)
+        if seen:
+            signal.raise_signal(seen[0])
+
+
 def execute(command, cwd, env, timeout, fds):
     """Like rp.execute, but preserve serial locks in child processes. The
-    process is killed with its group by `halt`."""
+    process is killed with its group by `halt`, and by any exception
+    (including a signal's) while it runs; `spawn_guard` covers the start."""
     started = time.perf_counter()
     expired = False
-    with _GUARD:
-        if _HALT.is_set():
-            raise Halted("the run is stopping: %s not started" % command[0])
-        proc = subprocess.Popen(
-            command, cwd=cwd, env=env, text=True, stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            start_new_session=True, pass_fds=fds)
-        try:  # opened at once: a failure here must not orphan the child
-            _LIVE.add(proc.pid)
-        except BaseException:
-            os.killpg(proc.pid, signal.SIGKILL)
-            proc.communicate()
-            raise
+    proc = None
     try:
+        with _GUARD:
+            if _HALT.is_set():
+                raise Halted("the run is stopping: %s not started" %
+                             command[0])
+            with spawn_guard():
+                proc = subprocess.Popen(
+                    command, cwd=cwd, env=env, text=True,
+                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT, start_new_session=True,
+                    pass_fds=fds)
+                _LIVE.add(proc.pid)
         text, _ = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         expired = True
         os.killpg(proc.pid, signal.SIGKILL)
         text, _ = proc.communicate()
     except BaseException:
-        os.killpg(proc.pid, signal.SIGKILL)
-        proc.communicate()
+        if proc is not None:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)
+            proc.communicate()
         raise
     finally:
-        with _GUARD:
-            _LIVE.discard(proc.pid)
+        if proc is not None:
+            with _GUARD:
+                _LIVE.discard(proc.pid)
     return {"command": list(map(str, command)), "cwd": str(cwd),
             "exit": proc.returncode, "timed_out": expired, "stdout": text,
             "process_wall": time.perf_counter() - started,

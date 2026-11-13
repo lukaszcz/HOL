@@ -327,12 +327,23 @@ def attribute(different, closures, manifest, entries):
                 reviewed["baseline_blob"], reviewed["candidate_blob"]):
             rest.append(found)
             continue
+        # One record describes one file, the script P: `entry` and the
+        # hashes are the script's. The files of its theory (built, not
+        # copied) are in `products`, each with its own hashes.
+        script = "private/" + Path(one["git_path"]).name
+        have = {side: closures[side]["entries"].get(script)
+                for side in SIDES}
         record = attributed.setdefault(reviewed["path"], dict(
-            path=reviewed["path"], entry=entry, kinds=[],
+            path=reviewed["path"], entry=script, kinds=[],
             baseline_blob=one["git_blob"], candidate_blob=two["git_blob"],
-            baseline_sha256=closures["baseline"]["entries"][entry]
-            ["source"], candidate_sha256=closures["candidate"]["entries"]
-            [entry]["source"], reason=reviewed["reason"]))
+            baseline_sha256=(have["baseline"] or {}).get("source"),
+            candidate_sha256=(have["candidate"] or {}).get("source"),
+            reason=reviewed["reason"]))
+        if entry != script:
+            record.setdefault("products", {})[entry] = dict(
+                baseline_sha256=closures["baseline"]["entries"][entry]
+                ["source"], candidate_sha256=closures["candidate"]
+                ["entries"][entry]["source"])
         if found["kind"] not in record["kinds"]:
             record["kinds"] = sorted(record["kinds"] + [found["kind"]])
     return attributed, rest

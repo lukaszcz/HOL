@@ -427,7 +427,8 @@ class ClosureReceipts(unittest.TestCase):
         with self.assertRaisesRegex(sc.InvalidAllocation, message):
             self.check(*args, **kw)
 
-    def theory(self, script=True, built=True, seal=None, name="xTheory.sml"):
+    def theory(self, script=True, built=True, seal=None, name="xTheory.sml",
+               preloaded=None):
         """check_receipt of a process that loaded the file `name` of a
         theory built by the private Holmake (below .hol/objs), whose
         script is selected or not; `built` is its post-build record."""
@@ -442,6 +443,8 @@ class ClosureReceipts(unittest.TestCase):
                                           "MatrixSupport.sml")])
             events[at:at] = [["use", path], ["used", path]]
             events.insert(len(events) - 1, ["loaded", path])
+            if preloaded:
+                events[3][1] += "," + preloaded
         receipt = self.sb.receipt("candidate", side, 0, 1, mutate=mutate)
         receipt["paths"].update(self.sb.paths([path]))
         if built:
@@ -454,12 +457,53 @@ class ClosureReceipts(unittest.TestCase):
                     schema=m.SCHEMA)
         return m.check_receipt(receipt, meta, "candidate")
 
+    def test_the_recorded_refusal_texts_are_frozen(self):
+        """The reasons of the two stopped TASK37 attempts (the inventories
+        of the superseded matrix and downstream outputs record them). The
+        void rule compares the replay text with the recorded one, so
+        rewording a refusal would turn a recorded void attempt judged."""
+        def drop(events):
+            at = max(i for i, e in enumerate(events)
+                     if e[0] == "observation")
+            del events[at]
+        receipt = self.sb.receipt("candidate", "candidate", 0, 1,
+                                  mutate=drop)
+        meta = dict(self.sb.bind(**self.header()), schema=m.SCHEMA)
+        with self.assertRaises(sc.InvalidAllocation) as caught:
+            m.check_receipt(receipt, meta, "candidate")
+        self.assertEqual(str(caught.exception), "wrong observation count")
+        name = ".hol/objs/simpMarkerTheory.dat"
+        product = self.repo / "src/simp" / name
+        meta = dict(self.sb.bind(**self.header()), schema=m.SCHEMA)
+        meta["closure"] = dict(
+            changed=["src/simp/simpMarkerScript.sml"], boundary_files={},
+            sides={"candidate": dict(products={name: dict(
+                source=str(product))})})
+        with self.assertRaises(sc.InvalidAllocation) as caught:
+            m.check_receipt(
+                self.sb.receipt("candidate", "candidate", 0, 1), meta,
+                "candidate")
+        self.assertEqual(
+            str(caught.exception),
+            "shared input differs between baseline and candidate and is "
+            "not a reviewed boundary file: closure product " + name)
+        # and a cell archive's own refusal of a rejected cell
+        self.assertEqual(m.UNRESOLVED, "unresolved cell")
+
     def test_the_theory_of_a_selected_script_is_judged_by_its_script(self):
         for name in ("xTheory.sml", "xTheory.sig", "xTheory.uo",
                      "xTheory.ui", "xTheory.dat"):
             with self.subTest(name):
                 self.assertEqual(self.theory(name=name)["steady"],
                                  tb.STEADY)
+
+    def test_a_private_theory_preloaded_in_the_heap_is_refused(self):
+        with self.assertRaisesRegex(
+                sc.InvalidAllocation,
+                "selected implementation preloaded in shared heap"):
+            self.theory(preloaded="xTheory")
+        self.assertEqual(self.theory(preloaded="yTheory")["steady"],
+                         tb.STEADY)
 
     def test_a_theory_is_refused_without_its_selected_script(self):
         with self.assertRaisesRegex(sc.InvalidAllocation,

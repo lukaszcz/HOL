@@ -51,8 +51,8 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
-import tempfile
 import sys
+import tempfile
 
 sys.dont_write_bytecode = True
 import acceptance as a
@@ -182,9 +182,6 @@ class Attempt:
         return True
 
 
-UNRESOLVED = "unresolved cell"  # the refusal of `allocation_matrix`
-
-
 def archived_rejection(archive):
     """The reason a cell archive records for its rejection (its meta)."""
     import evidence_bundle as bundle
@@ -245,15 +242,15 @@ def rejections(output):
             am.replay_cell(output / name, bind)
         except sc.InvalidAllocation as error:
             # the refusal of the replay, and the reason the run recorded
-            reason = str(error)
-            if reason == UNRESOLVED:  # the archive says why in its meta
+            reason, text = str(error), str(error)
+            if reason == am.UNRESOLVED:  # the archive says why in its meta
                 reason = archived_rejection(output / name)
+                text = "%s (recorded: %s)" % (error, reason)
             if reason != row["rejected"]:
                 return [], ("the archive %s is refused as %r, the "
                             "inventory records %r" %
                             (name, reason, row["rejected"]))
-            found.append((name, "%s (recorded: %s)" % (
-                error, row["rejected"])))
+            found.append((name, text))
         except Exception as error:
             return [], ("the archive %s does not replay to a refusal: %r" %
                         (name, error))

@@ -182,6 +182,71 @@ class Cell(Bed):
             [(row["archive"], "unresolved cell (recorded: terminated)")],
             None))
 
+    def test_a_signal_during_the_spawn_does_not_orphan_the_child(self):
+        """`spawn_guard`: a raising handler that fires inside Popen's
+        exec-wait read is deferred until the child is registered, then
+        takes execute's kill path; the process group is gone."""
+        class Stop(Exception):
+            pass
+
+        def raiser(number, frame):
+            raise Stop(number)
+        for number, error in ((signal.SIGTERM, Stop),
+                              (signal.SIGINT, Stop)):
+            with self.subTest(signal=number):
+                made, real_read, fired = [], os.read, []
+
+                class Recording(subprocess.Popen):
+                    def __init__(self, *args, **kw):
+                        made.append(self)
+                        super().__init__(*args, **kw)
+
+                def read(fd, size):
+                    if not fired:
+                        fired.append(1)
+                        os.kill(os.getpid(), number)
+                    return real_read(fd, size)
+                previous = {n: signal.getsignal(n) for n in (
+                    signal.SIGINT, signal.SIGTERM, signal.SIGHUP)}
+                for n in previous:
+                    signal.signal(n, raiser)
+                try:
+                    with mock.patch.object(subprocess, "Popen", Recording):
+                        with mock.patch.object(os, "read", read):
+                            with self.assertRaises(error):
+                                loading.execute(["sleep", "60"], self.root,
+                                                os.environ, 120, ())
+                        self.assertEqual(fired, [1])
+                        self.assertEqual(
+                            {n: signal.getsignal(n) for n in previous},
+                            {n: raiser for n in previous})
+                finally:
+                    for n, handler in previous.items():
+                        signal.signal(n, handler)
+                self.assertEqual(loading.live(), [])
+                with self.assertRaises(ProcessLookupError):
+                    os.killpg(made[0].pid, 0)
+
+    def test_the_spawn_guard_restores_the_handlers_and_skips_workers(self):
+        names = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+        before = {n: signal.getsignal(n) for n in names}
+        with loading.spawn_guard():
+            self.assertNotEqual(signal.getsignal(signal.SIGTERM),
+                                before[signal.SIGTERM])
+        self.assertEqual({n: signal.getsignal(n) for n in names}, before)
+        calls, outcome = [], []
+
+        def work():
+            with loading.spawn_guard():
+                outcome.append(loading.execute(
+                    ["true"], self.root, os.environ, 5, ())["exit"])
+        with mock.patch.object(loading.signal, "signal",
+                               lambda *args: calls.append(args)):
+            worker = threading.Thread(target=work)
+            worker.start()
+            worker.join()
+        self.assertEqual((calls, outcome), ([], [0]))
+
     def test_a_process_is_not_orphaned_when_it_cannot_be_registered(self):
         class Refusing(set):
             def add(self, item):
@@ -733,6 +798,49 @@ class Run(Bed):
         inventory = a.load(self.out / "inventory.json")
         self.assertEqual([r["rejected"] for r in inventory["runs"]],
                          ["terminated"])
+
+    def test_a_halted_worker_returns_without_starting_a_cell(self):
+        """`work` (in run_grid) returns at once while `loading` is halted:
+        no cell starts, and none is archived."""
+        log = self.patched()
+        self.addCleanup(loading.unhalt)
+        loading.halt()
+        try:
+            self.quiet(m.run_grid, arguments(self.out, CELLS[:3], jobs=2),
+                       m.TASKS[m.DEFAULT_TASK], None)
+        except sc.InvalidAllocation:
+            pass  # a grid with no cell at all may refuse to decide
+        finally:
+            loading.unhalt()
+        self.assertEqual(log["cells"], [])
+        self.assertEqual(list(self.out.glob("*.json.xz")), [])
+
+    def test_the_queued_cells_are_cancelled_by_the_shutdown_alone(self):
+        """Isolated from the halted-return of `work` (patched out: the
+        halted state is read as False there): jobs=2, six cells, a signal
+        in the first two. Only `shutdown(cancel_futures=True)` stops the
+        other cells from starting while the interrupted two unwind."""
+        order, lock = [], threading.Lock()
+
+        def change(grid, experiment, side, pair):
+            with lock:
+                order.append(1)
+                mine = len(order)
+            if mine > 2:
+                return None
+            hook = self.sleeper([], (lambda: os.kill(
+                os.getpid(), signal.SIGTERM)) if mine == 1 else (
+                lambda: None))
+            try:
+                hook(grid, experiment, side, pair)
+            finally:
+                time.sleep(1)  # the main thread cancels the queue meanwhile
+        log = self.patched(change=change)
+        self.addCleanup(loading.unhalt)
+        with mock.patch.object(m.loading, "halted", lambda: False):
+            with self.assertRaises(m.Terminated):
+                self.run_cells(CELLS[:6], jobs=2)
+        self.assertLessEqual(len(log["cells"]), 2)
 
     def test_run_writes_inventory_decisions_and_build_receipt(self):
         log = self.patched()
