@@ -228,22 +228,20 @@ struct
     end
   fun is_symbol tm = is_const tm orelse is_generated_var tm
 
+  (* Heads are constants or variables, for which Term.compare is EQUAL
+     exactly when they are aconv. *)
   val same_head = aconv
-  fun find_head head [] = NONE
-    | find_head head ((other, value) :: rest) =
-        if same_head head other then SOME value else find_head head rest
+
+  (* Lists of first occurrences, in occurrence order. *)
+  fun distinct_heads heads = aiLib.mk_sameorder_set Term.compare heads
+  fun distinct_types types = aiLib.mk_sameorder_set Type.compare types
 
   fun add_head head arity table =
     if not (is_symbol head) then table
     else
-      let
-        fun update [] = [(head, [arity])]
-          | update ((old, arities) :: rest) =
-              if same_head head old then (old, arity :: arities) :: rest
-              else (old, arities) :: update rest
-      in
-        update table
-      end
+      case Redblackmap.peek (table, head) of
+          SOME arities => Redblackmap.insert (table, head, arity :: arities)
+        | NONE => Redblackmap.insert (table, head, [arity])
 
   fun heads_of_term tm table =
     let val (head, args) = strip_comb tm in
@@ -270,14 +268,14 @@ struct
            SOME (_, range) => result_after range (count - 1)
          | NONE => NONE)
 
-  fun min_arity vars (head, arities) =
+  fun min_arity var_types (head, arities) =
     let
       val ordinary = List.foldl Int.min (hd arities) (tl arities)
       fun useful count =
         case result_after (type_of head) count of
             NONE => false
           | SOME result => type_is_fun result andalso
-              List.exists (fn var => type_of var = result) vars
+              Redblackset.member (var_types, result)
       fun lower count best =
         if count >= ordinary then best
         else lower (count + 1) (if useful count then count else best)
@@ -291,20 +289,25 @@ struct
      their largest observed spine, trading a few partial applications for a
      smaller declaration/application vocabulary. *)
   fun app_arities encoding nfacts variables table =
-    map (fn item as (_, arities) =>
+    let
+      val var_types = Redblackset.addList
+        (Redblackset.empty Type.compare, map type_of variables)
+    in
+    Redblackmap.map (fn item as (_, arities) =>
       let
-        val minimum = min_arity variables item
+        val minimum = min_arity var_types item
         val maximum = List.foldl Int.max (hd arities) (tl arities)
         val use_min =
           case encoding of
               hhTypeEnc.Native {poly = true, ...} => nfacts >= 45
             | _ => false
       in
-        (fst item, if use_min then maximum else minimum)
+        if use_min then maximum else minimum
       end) table
+    end
 
   fun arity_for head arities =
-    case find_head head arities of SOME arity => arity | NONE => 0
+    case Redblackmap.peek (arities, head) of SOME arity => arity | NONE => 0
 
   fun firstorderize format encoding ({conjecture, facts, ...} : proxy_ir) =
     if is_full_ho format then
@@ -333,7 +336,7 @@ struct
           (List.foldl
             (fn ((_, formula), result) =>
               heads_of_formula formula result)
-            [] facts)
+            (Redblackmap.mkDict Term.compare) facts)
         val variables = vars_of_formula conjecture
           (List.foldl
             (fn ((_, formula), result) =>
@@ -674,13 +677,13 @@ struct
         | _ => result
     end
 
+  (* These accumulate symbol occurrences in reverse; distinct_heads of
+     the reversed result lists each head once, in occurrence order. *)
   fun heads_of_fo_term (FOHead (head, args), heads) =
-        List.foldl heads_of_fo_term (if is_symbol head then
-          add_once same_head head heads else heads) args
+        List.foldl heads_of_fo_term
+          (if is_symbol head then head :: heads else heads) args
     | heads_of_fo_term (FOValue head, heads) =
-        if is_symbol head then
-          add_once same_head head heads
-        else heads
+        if is_symbol head then head :: heads else heads
     | heads_of_fo_term (FOApp {left, right, ...}, heads) =
         heads_of_fo_term (right, heads_of_fo_term (left, heads))
     | heads_of_fo_term (FOPred body, heads) = heads_of_fo_term (body, heads)
@@ -742,28 +745,32 @@ struct
 
   fun type_declarations encoding types =
     let
-      fun native_op ty result =
-        if is_vartype ty then result
+      (* Each declaration's first occurrence among the distinct types is
+         its first occurrence among all of them. *)
+      val distinct = distinct_types types
+      fun native_op ty =
+        if is_vartype ty then NONE
         else
-          let
-            val {Thy, Tyop, Args} = Type.dest_thy_type ty
-            val symbol = aiLib.escape ("ty." ^ Thy ^ "." ^ Tyop)
-          in
-            add_once same_value (symbol, length Args) result
+          let val {Thy, Tyop, Args} = Type.dest_thy_type ty in
+            SOME (aiLib.escape ("ty." ^ Thy ^ "." ^ Tyop), length Args)
           end
-      fun mono_sort ty result = add_once same_value (mangle_type ty) result
+      fun operator_compare ((symbol, arity), (symbol', arity')) =
+        case String.compare (symbol, symbol') of
+            EQUAL => Int.compare (arity, arity')
+          | order => order
       fun declarations operators =
         map (fn (symbol, arity) => hhTptpProblem.TypeDecl
           (aiLib.escape ("ty." ^ symbol), symbol, arity)) operators
     in
       case encoding of
           hhTypeEnc.Native {poly = true, ...} =>
-            declarations
-              (List.foldl (fn (ty, result) => native_op ty result) [] types)
+            declarations (aiLib.mk_sameorder_set operator_compare
+              (List.mapPartial native_op distinct))
         | _ =>
             map (fn symbol => hhTptpProblem.TypeDecl
               (aiLib.escape ("ty." ^ symbol), symbol, 0))
-              (List.foldl (fn (ty, result) => mono_sort ty result) [] types)
+              (aiLib.mk_sameorder_set String.compare
+                (map mangle_type distinct))
     end
 
   fun gsy_line encoding needs head =
@@ -971,8 +978,7 @@ struct
         (FOApp {left, right, function_type, argument_type, result_type},
          result) =
         let
-          val result' = add_once same_value
-            (function_type, argument_type, result_type) result
+          val result' = (function_type, argument_type, result_type) :: result
         in
           app_signatures_term
             (right, app_signatures_term (left, result'))
@@ -989,11 +995,10 @@ struct
     | app_signatures_formula (FOAtom tm, result) =
         app_signatures_term (tm, result)
 
-  fun add_head_arity head arity [] = [(head, arity)]
-    | add_head_arity head arity ((old, old_arity) :: rest) =
-        if same_head head old then
-          (old, Int.min (arity, old_arity)) :: rest
-        else (old, old_arity) :: add_head_arity head arity rest
+  fun add_head_arity head arity table =
+    case Redblackmap.peek (table, head) of
+        SOME old => Redblackmap.insert (table, head, Int.min (arity, old))
+      | NONE => Redblackmap.insert (table, head, arity)
 
   fun head_arities_term (FOHead (head, args), result) =
         List.foldl head_arities_term
@@ -1017,7 +1022,7 @@ struct
   fun value_heads_term (FOHead (_, args), result) =
         List.foldl value_heads_term result args
     | value_heads_term (FOValue head, result) =
-        if is_bound_var head then result else add_once same_head head result
+        if is_bound_var head then result else head :: result
     | value_heads_term (FOApp {left, right, ...}, result) =
         value_heads_term (right, value_heads_term (left, result))
     | value_heads_term (FOPred body, result) =
@@ -1036,21 +1041,30 @@ struct
       ({conjecture, facts, used_app, used_pp} : fo_ir) direct_helpers =
     let
       val all_formulas = conjecture :: map #2 facts
-      val app_signatures = List.foldl app_signatures_formula [] all_formulas
-      val head_arities = List.foldl head_arities_formula [] all_formulas
-      val value_heads = List.foldl value_heads_formula [] all_formulas
+      fun signature_compare ((f, a, r), (f', a', r')) =
+        case Type.compare (f, f') of
+            EQUAL =>
+              (case Type.compare (a, a') of
+                   EQUAL => Type.compare (r, r')
+                 | order => order)
+          | order => order
+      val app_signatures = aiLib.mk_sameorder_set signature_compare
+        (rev (List.foldl app_signatures_formula [] all_formulas))
+      val head_arities = List.foldl head_arities_formula
+        (Redblackmap.mkDict Term.compare) all_formulas
+      val value_heads = distinct_heads
+        (rev (List.foldl value_heads_formula [] all_formulas))
       fun head_arity head =
-        case List.find (fn (other, _) => same_head head other) head_arities of
-            SOME (_, arity) => arity
+        case Redblackmap.peek (head_arities, head) of
+            SOME arity => arity
           | NONE => 0
-      val base_heads = List.foldl heads_of_fo_formula [] all_formulas
       val bool_proxies = if used_pp then
         [mk_var ("pxy.true", Type.bool),
          mk_var ("pxy.false", Type.bool)]
         else []
-      val heads = List.foldl
-        (fn (head, result) => add_once same_head head result)
-        base_heads bool_proxies
+      val heads = distinct_heads
+        (rev (List.foldl heads_of_fo_formula [] all_formulas) @
+         bool_proxies)
       fun declared head = raw_symbol head = "$ite" orelse
         not (String.isPrefix "$" (raw_symbol head))
       fun unique_symbols [] _ = []
@@ -1113,11 +1127,8 @@ struct
             value_decls @ pp_decls
           end
       val gsy = List.mapPartial (gsy_line encoding needs) declaration_heads
-      val guard_types = List.foldl (fn (ty, result) =>
-        if guarded_type encoding needs ty then
-          add_once same_value ty result
-        else result)
-        [] all_types
+      val guard_types =
+        List.filter (guarded_type encoding needs) (distinct_types all_types)
       val witnesses = map (witness_line encoding) guard_types
       val (helpers, ordinary) = List.partition (is_helper_name o #1) facts
       fun helper_lines facts =
@@ -1165,9 +1176,9 @@ struct
       fun firstorder terms = firstorderize format type_enc
         (introduce_proxies format (formula_skeleton terms))
       fun heads_of ({conjecture, facts, ...} : fo_ir) =
-        heads_of_fo_formula (conjecture,
+        distinct_heads (rev (heads_of_fo_formula (conjecture,
           List.foldl (fn ((_, formula), heads) =>
-            heads_of_fo_formula (formula, heads)) [] facts)
+            heads_of_fo_formula (formula, heads)) [] facts)))
       val ground_pool = list_mk_conj
         (#conjecture main_terms :: map #2 (#facts main_terms))
       (* Helpers have the original problem as their monomorphization ground
