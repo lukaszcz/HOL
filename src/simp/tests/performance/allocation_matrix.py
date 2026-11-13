@@ -120,10 +120,17 @@ class Family:
     matrix.json (`fixture`) runs: the files installed in every private
     directory as (file here, name there). A process loads only the selected
     simplifier sources, the installed files and the shared heap, so no
-    family installs a shared closure."""
+    family installs a shared closure, but for one with `closure` (the TASK37
+    downstream cells, whose workloads use numLib, reduceLib and bossLib): it
+    installs the shared client closure recompiled against the private
+    simplifier (client_dependencies.py, as the timing path does; see
+    Grid.make_closure). `timing` is the `fixture` of matrix.json whose cases
+    it measures, when that is not the key it stands under."""
 
-    def __init__(self, files):
+    def __init__(self, files, closure=False, timing=None):
         self.files = files
+        self.closure = closure
+        self.timing = timing
 
     @property
     def sources(self):
@@ -140,6 +147,15 @@ FAMILIES = {
     "ClientPerformance.sml": Family(
         (("ClientAllocation.sml", "Performance.sml"),
          ("MatrixSupport.sml", "MatrixSupport.sml")))}
+
+
+# The downstream cases of ClientPerformance.sml have a fixture of their own
+# (DownstreamAllocation.sml): it needs the shared closure, which the TASK31
+# client cells (ClientAllocation.sml) must not load.
+DOWNSTREAM_FAMILY = Family(
+    (("DownstreamAllocation.sml", "Performance.sml"),
+     ("MatrixSupport.sml", "MatrixSupport.sml")),
+    closure=True, timing="ClientPerformance.sml")
 
 
 class Task:
@@ -162,10 +178,13 @@ class Task:
     `deterministic`); more pairs would only lengthen the run (the cost is
     proportional to the pairs). `case_files` are the case-list modules of
     this checkout besides those every task binds, which the harness seals.
+    `family` is the allocation fixture of a task whose cases are not run by
+    the family of their matrix.json fixture (the family's `timing` is that
+    fixture).
     """
 
     def __init__(self, name, label, cases, iterations, infeasible=(),
-                 rows=False, pairs=PAIRS, case_files=()):
+                 rows=False, pairs=PAIRS, case_files=(), family=None):
         self.name, self.label = name, label
         self.cases, self.iterations = tuple(cases), iterations
         self.infeasible, self.rows = frozenset(infeasible), rows
@@ -174,9 +193,11 @@ class Task:
                    "pair")
         self.pairs, self.case_files = pairs, tuple(case_files)
         fixtures = {ms.EXPECTED_CASES[c]["fixture"] for c in self.cases}
-        sc.require(len(fixtures) == 1 and fixtures <= set(FAMILIES),
-                   "a task runs the cases of one fixture family")
-        self.family = FAMILIES[fixtures.pop()]
+        sc.require(len(fixtures) == 1 and (
+            fixtures <= set(FAMILIES) if family is None else
+            fixtures == {family.timing}),
+            "a task runs the cases of one fixture family")
+        self.family = family or FAMILIES[fixtures.pop()]
         sc.require(self.infeasible <= {(c, n) for c in self.cases
                                        for n in self.every_size(c)},
                    "infeasible cells that are no cell of the task")
@@ -214,15 +235,23 @@ def task37_matrix():
                 case_files=task37_cases.FILES)
 
 
+def task37_downstream():
+    """The TASK37 downstream task: the 11 `downstream_*` cells, at
+    TASK37_PAIRS pairs, in the fixture that needs the shared client
+    closure. Lazy, like task31."""
+    import task37_cases
+    return Task("task37-downstream", "TASK37 downstream",
+                task37_cases.DOWNSTREAM_CASES,
+                HERE / "allocation_iterations_task37_downstream.json",
+                rows=True, pairs=TASK37_PAIRS, case_files=task37_cases.FILES,
+                family=DOWNSTREAM_FAMILY)
+
+
 def task37_client():
     """The TASK37 client task: exactly the 245 cells that task31 allocates
     (the cells of the TASK31 case list but its infeasible ones), at
-    TASK37_PAIRS pairs. Lazy, like task31.
-
-    The `downstream_*` cells are not a task: they need the shared client
-    closure (numLib, reduceLib, bossLib recompiled against the private
-    simplifier, client_dependencies.py), which this driver does not
-    install, so a process would run the shared simplifier in them."""
+    TASK37_PAIRS pairs. Lazy, like task31. The `downstream_*` cells are
+    the task `task37-downstream`."""
     import task37_cases
     return Task("task37-client", "TASK37 client", task37_cases.CLIENT_CASES,
                 HERE / "allocation_iterations_task37_client.json",
@@ -261,7 +290,8 @@ TASKS = Tasks({
     "task30": Task("task30", "TASK30", task30_cases.CASES,
                    HERE / "allocation_iterations_task30.json")},
     {"task31": task31, "task37-matrix": task37_matrix,
-     "task37-client": task37_client})
+     "task37-client": task37_client,
+     "task37-downstream": task37_downstream})
 
 
 def task_named(name):
@@ -333,6 +363,8 @@ def grid_digest(header):
         shared["task"] = header["task"]  # TASK29B digests are unchanged
     if "structure" in header:  # so are those of grids without structure
         shared["structure"] = header["structure"]
+    if "closure" in header:  # and those of grids without a shared closure
+        shared["closure"] = header["closure"]
     data = json.dumps(shared, sort_keys=True, allow_nan=False).encode()
     return hashlib.sha256(data).hexdigest()
 
@@ -349,6 +381,9 @@ def binding(header, case, size, where=None):
     name = name_of(case, size)
     named = {"structure": header["structure"]} if "structure" in header \
         else {}
+    if "closure" in header:
+        named["closure"] = {k: header["closure"][k]
+                            for k in ("changed", "sides")}
     return dict(
         named,
         case=case, size=size, steady=header["iterations"]["steady"][name],
@@ -360,6 +395,23 @@ def binding(header, case, size, where=None):
         environment=header["environment"], tmpdir=where["tmpdir"],
         boundary_prefixes=header["boundary"]["manifest_prefixes"],
         grid=grid_digest(header))
+
+
+def closure_record(result, directory):
+    """The job-independent seal of one installed shared closure: its
+    modules and roots and each product's seal. A descriptor holds the
+    directory it was installed in, which is replaced; the other products
+    are copies, whose seals are those of their source."""
+    private = str(Path(directory).resolve(strict=True)).encode()
+    products = {}
+    for name, info in sorted(result["products"].items()):
+        data = (Path(directory) / name).read_bytes().replace(
+            private, b"@PRIVATE@")
+        products[name] = dict(source=info["source"],
+                              sha256=hashlib.sha256(data).hexdigest(),
+                              bytes=len(data))
+    return dict(modules=list(result["modules"]),
+                roots=list(result["roots"]), products=products)
 
 
 def row_binding(inventory, row):
@@ -382,7 +434,8 @@ def changed_settings(old, new):
              if old.get(k) != new[k]] +
             [k for k in ("task",) if old.get(k, DEFAULT_TASK) !=
              new.get(k, DEFAULT_TASK)] +
-            [k for k in ("structure",) if old.get(k) != new.get(k)] +
+            [k for k in ("structure", "closure")
+             if old.get(k) != new.get(k)] +
             [k + "-length" for k in LENGTH_KEYS
              if place_lengths(old).get(k) != place_lengths(new)[k]])
 
@@ -520,7 +573,8 @@ def harness_files(task=None):
         "evidence_bundle.py", "loading.py", "task29_gate.py",
         "task30_cases.py", *task.case_files,
         "path_schema.py", "performance_schema.py", "matrix_schema.py",
-        "audit_evidence.py", "summarize.py")]
+        "audit_evidence.py", "summarize.py",
+        *(("client_dependencies.py",) if task.family.closure else ()))]
     inputs += [HERE / "allocator-counter" / n for n in (
         "private_runtime.py", "bracket.c", "managed_alloc_counter.h",
         "SOURCE_SHA256.json", "PATCHED_SHA256.json",
@@ -568,6 +622,7 @@ class Grid:
     """Locked, sealed environment: toolchain, private runtime, shim."""
 
     task = TASKS[DEFAULT_TASK]
+    closure = None
 
     def __init__(self, args):
         self.args = args
@@ -679,6 +734,8 @@ class Grid:
                 side, self.scratch / ("probe-" + side))
             self.sources[side] = source_map(inventory)
         self.check_sides()
+        self.closure = self.make_closure() if self.task.family.closure \
+            else None
         lib, _, self.source_seals = pr.build_runtime(
             args.source, self.scratch, self.run, report, patched)
         self.lib = lib.resolve(strict=True)
@@ -701,14 +758,46 @@ class Grid:
         self.header = self.make_header(lineage["head"], products)
         self.ready = True
 
-    def install_private(self, directory):
+    def install_private(self, directory, sources):
         """The fixtures of the task in a private directory of one side (the
-        selected sources already checked out)."""
+        selected sources, `sources`, already checked out). A family with a
+        shared closure also gets it, as the timing path installs it
+        (client_dependencies.install); its result is returned, else None."""
         rp.install_fixtures(directory)
         for source, target in self.task.family.files:
             shutil.copyfile(HERE / source, directory / target)
         with (directory / "Holmakefile").open("a") as out:
             out.write("\npaired.exe: Performance.uo\n")
+        if not self.task.family.closure:
+            return None
+        from client_dependencies import install
+        return install(self.hol, directory,
+                       {Path(s["git_path"]).stem for s in sources})
+
+    def make_closure(self):
+        """What the shared closure of this grid is, for the sides that run:
+        installed once per side in a scratch directory. Every job must
+        install exactly this (see make_job). The header records, per side,
+        the modules recompiled, the roots and the seal of every installed
+        product (the descriptors, which name their directory, with that
+        name replaced), the paths that differ between baseline and
+        candidate (a process may load no shared file among them), and the
+        shared inputs read, which are in the toolchain and sealed again at
+        the end."""
+        sides, inputs = {}, {}
+        for side in SIDES:
+            directory = self.scratch / ("closure-" + side)
+            _, sources = self.checkout(side, directory)
+            result = self.install_private(directory, sources)
+            sides[side] = closure_record(result, directory)
+            for path, stamp in result["inputs"].items():
+                sc.require(inputs.setdefault(path, stamp) == stamp,
+                           "closure input changed between sides")
+        sc.require(sides["control"] == sides["baseline"],
+                   "control closure is not a copy of the baseline's")
+        return dict(changed=bd.changed_paths(
+            self.repo, self.args.baseline, self.args.candidate),
+            sides=sides, inputs=inputs)
 
     def check_toolchain_sources(self, built):
         """The tracked HOL sources (as the build left them) and sigobj, as
@@ -754,6 +843,8 @@ class Grid:
         named = {} if self.task.name == DEFAULT_TASK else dict(
             task=self.task.name)
         named["structure"] = sc.STRUCTURE
+        if self.closure is not None:
+            named["closure"] = self.closure
         return dict(
             named, schema=SCHEMA, baseline=args.baseline,
             candidate=args.candidate,
@@ -781,7 +872,11 @@ class Grid:
             sc.require(rev == self.revisions[side] and
                        source_map(sources) == self.sources[side],
                        "checkout differs from the grid's sources")
-            self.install_private(directory)
+            installed = self.install_private(directory, sources)
+            if self.task.family.closure:
+                sc.require(closure_record(installed, directory) ==
+                           self.closure["sides"][side],
+                           "installed closure differs from the grid's")
             job.inventory[side] = sources
         job.names = {Path(s["git_path"]).stem for v in job.inventory.values()
                      for s in v}
@@ -912,6 +1007,8 @@ class Grid:
         loading.check_seals(self.tools)
         loading.check_seals(self.toolchain_seals)
         loading.check_seals(self.source_seals)
+        if self.closure is not None:
+            loading.check_seals(self.closure["inputs"])
         sc.require(a.seal(self.lib) == self.report["runtime"],
                    "runtime changed")
         sc.require(a.seal(self.shim) == self.report["shim"], "shim changed")
@@ -1015,6 +1112,16 @@ def under_prefix(repo, path, prefixes):
     return next((p for p in prefixes if below.startswith(p)), None)
 
 
+def changed_input(repo, path, changed):
+    """Whether a file of the toolchain is among the changed paths of the
+    comparison. A path outside the toolchain is refused."""
+    try:
+        return Path(path).relative_to(repo).as_posix() in set(changed)
+    except ValueError:
+        raise sc.InvalidAllocation(
+            "shared input outside the toolchain: %s" % (path,))
+
+
 def check_receipt(receipt, meta, experiment):
     """Offline protocol and provenance checks of one archived process."""
     sc.require(receipt["accepted"] is True and receipt["exit"] == 0 and
@@ -1048,12 +1155,14 @@ def check_receipt(receipt, meta, experiment):
     sc.check_runtime(receipt["stdout"], meta["library"], meta["aliases"])
     check_protocol(receipt, meta, events)
     source, repo = meta["sources"][side], Path(meta["repo"])
+    closure = meta.get("closure", {"sides": {}})["sides"].get(side, {})
     for logical, info in receipt["paths"].items():
         physical = Path(info["physical"])
         seal = {k: info[k] for k in ("sha256", "bytes")}
         if physical.is_relative_to(private):
             want = source.get(physical.name) or meta["fixtures"].get(
-                physical.name)
+                physical.name) or closure.get("products", {}).get(
+                    physical.relative_to(private).as_posix())
             sc.require(want is not None and
                        seal == {k: want[k] for k in ("sha256", "bytes")},
                        "wrong selected source: " + physical.name)
@@ -1066,6 +1175,16 @@ def check_receipt(receipt, meta, experiment):
             # every product beside it.
             for product in (Path(os.path.normpath(logical)), physical,
                             *map(Path, info["related_products"])):
+                if "closure" in meta:
+                    # The cases load shared modules that the manifest's
+                    # prefixes claim nothing loads from; what must hold
+                    # is that no loaded file differs between the sides.
+                    sc.require(
+                        not changed_input(repo, product,
+                                          meta["closure"]["changed"]),
+                        "shared input differs between baseline and "
+                        "candidate: " + logical)
+                    continue
                 prefix = under_prefix(repo, product, meta["boundary_prefixes"])
                 sc.require(prefix is None,
                            "shared input under the boundary prefix %s: %s"
