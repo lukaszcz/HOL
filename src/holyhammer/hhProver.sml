@@ -353,6 +353,8 @@ fun z3_version output =
 
 fun same_slice (left : slice) right = left = right
 
+val grace_seconds = 2
+
 fun mk_slice prover (format, type_enc, lam_trans) filter nfacts : slice =
   {prover = prover, format = format, type_enc = type_enc,
    lam_trans = lam_trans, nfacts = nfacts, filter = filter,
@@ -793,7 +795,7 @@ fun run_async (config : prover_config) request =
               val (path, args) =
                 #mk_command config executable request
               val process = start_process path args
-                (Real.fromInt (#timeout request + 2))
+                (Real.fromInt (#timeout request + grace_seconds))
               val result_mutex = Mutex.mutex ()
               val saved = ref (NONE : run_result option)
               fun collect () =

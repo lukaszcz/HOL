@@ -43,6 +43,10 @@ sig
      legacy : bool}
 
   val same_slice : slice -> slice -> bool
+  (* Wall-clock slack past a requested time limit: a prover process is
+     killed this long after its own limit, and the scheduler extends its
+     deadlines by the same amount. *)
+  val grace_seconds : int
   (* The built-in slices in scheduling order; each built-in prover's
      slice table is its subsequence of this list. *)
   val portfolio : slice list

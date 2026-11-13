@@ -212,7 +212,8 @@ fun run_in root {options, goal, rankings, progress} =
     val execution_started = Time.now ()
     val deadline = Time.+
       (execution_started, Time.fromReal (Real.fromInt (#timeout options)))
-    val hard_deadline = Time.+ (deadline, Time.fromSeconds 2)
+    val hard_deadline = Time.+
+      (deadline, Time.fromSeconds (Int.toLarge hhProver.grace_seconds))
     val state_mutex = Mutex.mutex ()
     val state_changed = ConditionVar.conditionVar ()
     val work = ref schedule
@@ -333,7 +334,7 @@ fun run_in root {options, goal, rankings, progress} =
     fun run_slice (config, slice) =
       let
         val now = Time.now ()
-        val remaining = Time.toReal (Time.- (deadline, now)) + 2.0
+        val remaining = Time.toReal (Time.- (hard_deadline, now))
         val wanted = hhSlice.slice_budget schedule_length options slice
         val budget = Real.max (0.001, Real.min (wanted, remaining))
         val request : hhProver.run_request =
