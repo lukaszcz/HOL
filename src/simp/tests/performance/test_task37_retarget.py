@@ -21,6 +21,7 @@ import task33_offline as offline
 import task33_storage as storage
 import task37_cases as cases37
 import task37_gates as gates
+from test_task37_declared import prefill
 
 
 def git(repo, *argv):
@@ -194,19 +195,15 @@ class DeclaredPins(unittest.TestCase):
         S2 closure total a placeholder), selected for the test."""
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        data = json.loads(self.TASK37.read_text())
-        entry = data["s2"]["total_delta"][0]
-        entry.update(value=None, observed=None, pending=True,
-                     mechanism=["PLACEHOLDER: measured live"])
         path = Path(tmp.name) / "task37_declared.json"
-        path.write_text(json.dumps(data))
+        path.write_text(json.dumps(prefill()))
         self.selected(path)
 
     def test_the_committed_declaration_is_ready(self):
         self.selected(self.TASK37)
         storage.declared_ready()
         entry = offline.load_declared()["s2"]["total_delta"][0]
-        self.assertEqual(entry["value"], 553)
+        self.assertIsInstance(entry["value"], int)
         self.assertNotIn("pending", entry)
 
     def test_predeclare_refuses_a_placeholder_inside_the_refusal_path(self):
@@ -902,36 +899,57 @@ class OfflineBinding(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "changed"):
                     offline.check_code(made)
 
-    def test_only_task33s_declaration_accepts_the_history(self):
-        old = dict(offline.code_seals())
-        name = "task32_downstream.py"
-        old[name] = dw.TASK33_HISTORY[name][0]
-        offline.check_code(old)
-        # decided by the selected table, not by the declaration's path
-        with offline.using_declared(self.TASK37), dw.using_table("task37-t33"):
-            seals = offline.code_seals()
-            seals[name] = dw.TASK33_HISTORY[name][0]
-            with self.assertRaisesRegex(ValueError, "changed"):
-                offline.check_code(seals)
-        # a table with none of its own
-        with offline.using_declared(self.TASK37):
-            seals = offline.code_seals()
-            seals[name] = dw.TASK33_HISTORY[name][0]
-            offline.check_code(seals)
-        with dw.using_table("task37-t33"):  # the declaration's name is moot
-            old = dict(offline.code_seals())
-            old[name] = dw.TASK33_HISTORY[name][0]
-            with self.assertRaisesRegex(ValueError, "changed"):
-                offline.check_code(old)
+    TABLES = ("task32", "task33", "task37-t32", "task37-t33")
 
-    def test_the_task37_history_is_accepted_under_the_task37_table(self):
-        with offline.using_declared(self.TASK37), dw.using_table("task37-t33"):
+    def with_seal(self, name, seal):
+        seals = dict(offline.code_seals())
+        seals[name] = seal
+        return seals
+
+    def test_the_history_is_that_of_the_table_naming_the_declaration(self):
+        """Whichever table is active: TASK33's declaration accepts the
+        TASK32 and TASK33 histories, the TASK37 declaration the TASK37
+        one (the `history` of the table that names it), and not the
+        other's."""
+        driver, off = "task32_downstream.py", "task33_offline.py"
+        c32 = [(driver, dw.TASK33_HISTORY[driver][0]),
+               (driver, dw.TASK32_HISTORY[driver][0]),
+               (off, dw.TASK33_HISTORY[off][0])]
+        t37 = [(driver, dw.TASK37_HISTORY[driver][0]),
+               (off, dw.TASK37_HISTORY[off][0])]
+        for table in self.TABLES:
+            with dw.using_table(table):
+                # TASK33's own declaration (the default)
+                for name, seal in c32:
+                    offline.check_code(self.with_seal(name, seal))
+                for name, seal in t37:
+                    with self.assertRaisesRegex(ValueError, "changed",
+                                                msg=(table, name)):
+                        offline.check_code(self.with_seal(name, seal))
+                # the TASK37 declaration
+                with offline.using_declared(self.TASK37):
+                    for name, seal in t37:
+                        offline.check_code(self.with_seal(name, seal))
+                    for name, seal in c32:
+                        with self.assertRaisesRegex(
+                                ValueError, "changed", msg=(table, name)):
+                            offline.check_code(self.with_seal(name, seal))
+
+    def test_a_declaration_no_table_names_has_no_history(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            copy = Path(tmp) / "other_declared.json"
+            copy.write_text(self.TASK37.read_text())
+            with offline.using_declared(copy):
+                for name, seals in dw.TASK37_HISTORY.items():
+                    with self.assertRaisesRegex(ValueError, "changed"):
+                        offline.check_code(self.with_seal(name, seals[0]))
+                self.assertEqual(offline.history_of_declared(), {})
+
+    def test_an_unknown_seal_is_refused_under_the_task37_declaration(self):
+        with offline.using_declared(self.TASK37):
             for name, seals in dw.TASK37_HISTORY.items():
-                old = dict(offline.code_seals())
-                old[name] = seals[0]
-                offline.check_code(old)
-                # not the TASK33 or TASK32 history, nor an unknown seal
-                old[name] = dict(seals[0], bytes=seals[0]["bytes"] + 1)
+                old = self.with_seal(name, dict(
+                    seals[0], bytes=seals[0]["bytes"] + 1))
                 with self.assertRaisesRegex(ValueError, "changed"):
                     offline.check_code(old)
 

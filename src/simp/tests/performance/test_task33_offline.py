@@ -6,6 +6,7 @@ import gzip
 import io
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -176,154 +177,6 @@ class World:
             f = Path(root) / "src/list/.hol/objs" / name
             f.parent.mkdir(parents=True, exist_ok=True)
             f.write_text(text.replace("$ROOT", str(root)))
-
-    # ---- pooled logs (split-lifecycle + split-persistence)
-
-    def pool(self, life, pers, decl=None):
-        """The harvest rows with the two pooled logs given as (own lines,
-        shared lines) pairs."""
-        with tempfile.TemporaryDirectory() as raw:
-            root = self.tree(raw, **{"split-lifecycle": pooled_log(*life),
-                                     "split-persistence":
-                                     pooled_log(*pers)})
-            checks = t.Checks()
-            data = t.harvest(root, Path(raw) / "out", checks,
-                             decl or self.DECL)
-            return data, {c["id"]: c for c in checks.rows}
-
-    def test_a_pooled_group_passes_with_either_race_outcome(self):
-        decl = dict(log_counts=dict(COUNTS, **{"split-lifecycle": 2221,
-                                               "split-persistence": 166}))
-        # lifecycle won the race (2221/166), then persistence did
-        # (2217/170): the same 2387 OK lines either way
-        for life, pers in (((2217, SHARED_LINES), (166, [])),
-                           ((2217, []), (166, SHARED_LINES)),
-                           ((2217, SHARED_LINES[:3]),
-                            (166, SHARED_LINES[3:]))):
-            with self.subTest(life=len(life[1]), pers=len(pers[1])):
-                data, rows = self.pool(life, pers, decl)
-                self.assertEqual(ok_ids(rows), [])
-                self.assertEqual(rows[POOL_ID]["status"], "pass")
-        decl = dict(log_counts=dict(COUNTS, **{"split-lifecycle": 2217,
-                                               "split-persistence": 170}))
-        data, rows = self.pool((2217, []), (166, SHARED_LINES), decl)
-        self.assertEqual(ok_ids(rows), [])
-        self.assertEqual(data["pooled"][0]["total"], 2387)
-
-    def test_a_pooled_group_replaces_the_per_log_checks(self):
-        data, rows = self.pool((1, SHARED_LINES), (1, []))
-        self.assertEqual(ok_ids(rows), [])
-        self.assertIn(POOL_ID, rows)
-        self.assertEqual([i for i in rows if "split-" in i
-                          and "registration" not in i], [POOL_ID])
-        self.assertTrue(all(f["passed"] for f in data["files"]))
-        self.assertEqual(
-            sorted(f["counts"]["ok_lines"] for f in data["files"]
-                   if "split-l" in f["path"] or "split-p" in f["path"]),
-            [1, 5])
-
-    def test_a_pooled_group_fails_when_the_sum_differs(self):
-        for life, pers in (((1, SHARED_LINES), (2, [])),
-                           ((0, SHARED_LINES), (1, [])),
-                           ((1, SHARED_LINES), (0, []))):
-            with self.subTest(life=life[0], pers=pers[0]):
-                _, rows = self.pool(life, pers)
-                self.assertEqual(ok_ids(rows), [POOL_ID])
-                self.assertIn("reviewed 6", rows[POOL_ID]["reason"])
-
-    def test_a_shared_line_twice_or_missing_fails(self):
-        # the sum is right in both
-        for life, pers, what in (
-                ((1, SHARED_LINES), (0, SHARED_LINES[:1]), "twice"),
-                ((1, SHARED_LINES[:3]), (1, []), "missing")):
-            with self.subTest(what):
-                decl = dict(log_counts=dict(COUNTS, **{
-                    "split-lifecycle": 1 + len(life[1]),
-                    "split-persistence": pers[0] + len(pers[1])}))
-                if what == "missing":
-                    life = (2, SHARED_LINES[:3])  # same sum, a filler
-                    decl["log_counts"]["split-lifecycle"] = 5
-                _, rows = self.pool(life, pers, decl)
-                self.assertEqual(ok_ids(rows), [POOL_ID])
-                reason = rows[POOL_ID]["reason"]
-                self.assertNotIn("in all", reason)
-                self.assertIn(SHARED_LINES[0] if what == "twice"
-                              else SHARED_LINES[3], reason)
-                self.assertIn("0 times" if what == "missing" else
-                              "2 times", reason)
-
-    def test_a_pooled_log_still_fails_its_other_checks(self):
-        _, rows = self.pool((1, SHARED_LINES), (1, []))
-        self.assertEqual(ok_ids(rows), [])
-        with tempfile.TemporaryDirectory() as raw:
-            root = self.tree(raw, **{"split-persistence":
-                                     "own ... OK\nb ... FAILED\n"})
-            checks = t.Checks()
-            t.harvest(root, Path(raw) / "out", checks, self.DECL)
-            rows = {c["id"]: c for c in checks.rows}
-        self.assertEqual(ok_ids(rows), [POOL_ID])
-        self.assertIn("split-persistence", rows[POOL_ID]["reason"])
-
-    def test_a_missing_pooled_log_fails_the_group(self):
-        _, _, rows = self.harvest(raw := tempfile.mkdtemp(),
-                                  **{"split-persistence": None})
-        self.addCleanup(__import__("shutil").rmtree, raw, True)
-        self.assertEqual(ok_ids(rows), ["E1.logs.split-lifecycle+"
-                                        "split-persistence",
-                                        "E1.required-logs"])
-        self.assertIn("no split-persistence log",
-                      rows[POOL_ID]["reason"])
-
-    def test_the_shared_lines_are_derived_from_the_scripts(self):
-        group = t.POOLED_LOGS[0]
-        with tempfile.TemporaryDirectory() as raw:
-            root = self.tree(raw)
-            self.assertEqual(t.shared_ok_lines(root, group), SHARED_LINES)
-            # a changed script changes the lines expected
-            script = root / "src/simp/tests/split-persistence" / \
-                "splitChildScript.sml"
-            script.write_text(shared_script(["something else"]))
-            self.assertEqual(
-                t.shared_ok_lines(root, group),
-                SHARED_LINES[:1] + ["something else"] + SHARED_LINES[3:])
-
-    def test_a_pool_whose_lines_cannot_be_derived_is_refused(self):
-        base = "src/simp/tests/split-persistence/"
-        for what, edit, message in (
-                ("no script",
-                 lambda r: (r / base / "splitChildScript.sml").unlink(),
-                 "no script"),
-                ("no string",
-                 lambda r: (r / base / "splitChildScript.sml").write_text(
-                     "val _ = 1\n(* tprint \"x\" *)\n"), "no tprint"),
-                ("an escape",
-                 lambda r: (r / base / "splitChildScript.sml").write_text(
-                     'val _ = tprint "a\\n"\n'), "escape"),
-                ("a repeat",
-                 lambda r: (r / base / "splitChildScript.sml").write_text(
-                     shared_script(SHARED_LINES[:1])), "twice")):
-            with self.subTest(what), tempfile.TemporaryDirectory() as raw:
-                root = self.tree(raw)
-                edit(root)
-                with self.assertRaisesRegex(t.Refusal, message):
-                    t.harvest(root, Path(raw) / "out", t.Checks(),
-                              self.DECL)
-
-    def test_logs_outside_a_pool_are_judged_alone(self):
-        # a changed count of a log not in the pool fails its own check
-        decl = dict(log_counts=dict(self.DECL["log_counts"]))
-        decl["log_counts"]["replay-order"] = 2
-        with tempfile.TemporaryDirectory() as raw:
-            root = self.tree(raw)
-            checks = t.Checks()
-            t.harvest(root, Path(raw) / "out", checks, decl)
-            rows = {c["id"]: c for c in checks.rows}
-        self.assertEqual(ok_ids(rows), [
-            "E1.log.src/simp/src/.hol/logs/replay-order"])
-        # and the pool does not need scripts when none of its logs is there
-        self.assertEqual(
-            [g["logs"] for g in t.POOLED_LOGS],
-            [("split-lifecycle", "split-persistence")])
 
     def manifest(self, name="snapshots.json", exits=None, pins=None):
         """A fake TASK32 manifest of the two roots."""
@@ -1256,7 +1109,7 @@ class LogTest(unittest.TestCase):
         return t.judge_log("src/simp/src/.hol/logs/" + name, text)
 
     def test_tprint_suite(self):
-        good = "a ...   OK\nb ...  (0.0s)      OK\n" \
+        good = "a ...   OK\nb ...  (0.000s)      OK\n" \
                "Cond_rewrExt focused checks: 2\n"
         self.assertTrue(self.judge("cond-rewr-ext", good)[0])
         self.assertFalse(self.judge("cond-rewr-ext",
@@ -1267,25 +1120,34 @@ class LogTest(unittest.TestCase):
             "cond-rewr-ext", good.replace("checks: 2", "checks: 0"))[0])
 
     def test_ok_line_grammar_is_that_of_testutils(self):
-        """`timed` in src/parse/testutils.sml: `[GC = t] ` then `(ts)`."""
+        """`timed` in src/parse/testutils.sml: `[GC = t] ` (optional) then
+        `(ts)`, t with 3 decimals; or no annotation at all."""
         head = "process_taclist_then: Req0 succeeds without a match ..."
-        for tail in ("   OK", "   [GC = 0.000]   OK",
+        for tail in ("   OK", "   [GC = 0.000] (0.000s)   OK",
                      " (0.012s)      OK", " [GC = 1.250] (3.100s)      OK",
-                     " \x08\x08\x1b[31m\x1b[1m[GC = 0.5] \x1b[0m(1s)  OK"):
+                     " \x08\x08\x1b[31m\x1b[1m[GC = 0.500] \x1b[0m"
+                     "(1.000s)  OK"):
             with self.subTest(tail):
                 text = head + tail + "\n"
                 self.assertTrue(self.judge("native-extension", text)[0])
                 self.assertEqual(len(t.OK_LINE.findall(
                     t.clean_log(text))), 1)
-        for tail in ("   [GC = x]   OK", "[GC = 0.1", "(0.1s) [GC = 0.1] OK",
-                     "[GC = 0.1] [GC = 0.1] OK", "[GC = 0.1] FAILED",
-                     "[GC = 0.1] OKAY", "(s) OK"):
+        for tail in ("   [GC = x] (0.000s)   OK", "[GC = 0.100",
+                     "(0.1s) OK", "(0.100s) [GC = 0.100] OK",
+                     "[GC = 0.100] OK", "[GC = 0.1] (0.100s) OK",
+                     "[GC = 0.100] (0.100s) [GC = 0.100] (0.100s) OK",
+                     "[GC = 0.100] (0.100s) FAILED",
+                     "(0.100s) OKAY", "(s) OK", "\nOK"):
             with self.subTest(tail):
                 self.assertEqual(len(t.OK_LINE.findall(head + tail + "\n")),
                                  0)
+        # `x ...` then OK on the next line is not an OK line
+        self.assertEqual(len(t.OK_LINE.findall("x ...\nOK\n")), 0)
+        self.assertEqual(t.count_line("x ...\nOK\n", "x"), 0)
         # a log cut off in a GC-annotated test is not finished
-        self.assertFalse(t.finished("a ...  OK\nb ... [GC = 0.1] \n"))
-        self.assertTrue(t.finished("a ...  OK\nb ... [GC = 0.1] (0.1s) OK\n"))
+        self.assertFalse(t.finished("a ...  OK\nb ... [GC = 0.100] \n"))
+        self.assertTrue(t.finished(
+            "a ...  OK\nb ... [GC = 0.100] (0.100s) OK\n"))
 
     def test_obs_suite(self):
         good = "x ...  OK\nOBS result=pass\n"
@@ -1331,7 +1193,7 @@ class LogTest(unittest.TestCase):
         "[1m" + ESC + "[2CFAILED!" + ESC + "[0m\n"
 
     def test_real_testutils_failure_is_a_failure(self):
-        ok = "a ...   \x08\x08(0.0s)    OK\n"
+        ok = "a ...   \x08\x08(0.000s)    OK\n"
         self.assertTrue(self.judge("native-extension", ok)[0])
         for name, text in (
                 ("native-extension", ok + self.FAILED + ok),
@@ -1357,7 +1219,7 @@ class LogTest(unittest.TestCase):
         ok = "a ... OK\n"
         for name, text in (
                 ("native-extension", ok + "b ...    "),
-                ("native-extension", ok + "b ... \x08\x08(0.0s)"),
+                ("native-extension", ok + "b ... \x08\x08(0.000s)"),
                 ("split-persistence", "a ... OK\nb ...\nOBS result=pass\n"),
                 ("ordinary-tactics", "Ran 4 tests in 0.1s\n\n"),
                 ("cond-rewr-ext", ok + "b ...   \n")):
@@ -1462,7 +1324,7 @@ class HarvestTest(unittest.TestCase):
             f.write_text("a ... OK\n" + line + "\n")
         f = root / "src/1/.hol/logs/selftest.log"
         f.parent.mkdir(parents=True, exist_ok=True)
-        f.write_text("a ...   \x08\x08(0.0s)    OK\n")
+        f.write_text("a ...   \x08\x08(0.000s)    OK\n")
         full = root / "src/simp/tests/native-extension/.hol/logs"
         full.mkdir(parents=True)
         (full / "check-full").write_text(
@@ -1559,6 +1421,257 @@ class HarvestTest(unittest.TestCase):
 
 
 # ----------------------------------------------------- the fake archive
+
+    # ---- pooled logs (split-lifecycle + split-persistence)
+
+    def pool(self, life, pers, decl=None):
+        """The harvest rows with the two pooled logs given as (own lines,
+        shared lines) pairs."""
+        with tempfile.TemporaryDirectory() as raw:
+            root = self.tree(raw, **{"split-lifecycle": pooled_log(*life),
+                                     "split-persistence":
+                                     pooled_log(*pers)})
+            checks = t.Checks()
+            data = t.harvest(root, Path(raw) / "out", checks,
+                             decl or self.DECL)
+            return data, {c["id"]: c for c in checks.rows}
+
+    def test_a_pooled_group_passes_with_either_race_outcome(self):
+        decl = dict(log_counts=dict(COUNTS, **{"split-lifecycle": 2221,
+                                               "split-persistence": 166}))
+        # lifecycle won the race (2221/166), then persistence did
+        # (2217/170): the same 2387 OK lines either way
+        for life, pers in (((2217, SHARED_LINES), (166, [])),
+                           ((2217, []), (166, SHARED_LINES)),
+                           ((2217, SHARED_LINES[:3]),
+                            (166, SHARED_LINES[3:]))):
+            with self.subTest(life=len(life[1]), pers=len(pers[1])):
+                data, rows = self.pool(life, pers, decl)
+                self.assertEqual(ok_ids(rows), [])
+                self.assertEqual(rows[POOL_ID]["status"], "pass")
+        decl = dict(log_counts=dict(COUNTS, **{"split-lifecycle": 2217,
+                                               "split-persistence": 170}))
+        data, rows = self.pool((2217, []), (166, SHARED_LINES), decl)
+        self.assertEqual(ok_ids(rows), [])
+        self.assertEqual(data["pooled"][0]["total"], 2387)
+
+    def test_a_pooled_group_replaces_the_per_log_checks(self):
+        data, rows = self.pool((1, SHARED_LINES), (1, []))
+        self.assertEqual(ok_ids(rows), [])
+        self.assertIn(POOL_ID, rows)
+        self.assertEqual([i for i in rows if "split-" in i
+                          and "registration" not in i], [POOL_ID])
+        self.assertTrue(all(f["passed"] for f in data["files"]))
+        self.assertEqual(
+            sorted(f["counts"]["ok_lines"] for f in data["files"]
+                   if "split-l" in f["path"] or "split-p" in f["path"]),
+            [1, 5])
+
+    def test_a_pooled_group_fails_when_the_sum_differs(self):
+        for life, pers in (((1, SHARED_LINES), (2, [])),
+                           ((0, SHARED_LINES), (1, [])),
+                           ((1, SHARED_LINES), (1, SHARED_LINES[:1]))):
+            with self.subTest(life=life[0], pers=pers[0]):
+                _, rows = self.pool(life, pers)
+                self.assertEqual(ok_ids(rows), [POOL_ID])
+                self.assertIn("reviewed 6", rows[POOL_ID]["reason"])
+
+    def test_a_shared_line_twice_or_missing_fails(self):
+        # the sum is right in both
+        for life, pers, what in (
+                ((1, SHARED_LINES), (0, SHARED_LINES[:1]), "twice"),
+                ((1, SHARED_LINES[:3]), (1, []), "missing")):
+            with self.subTest(what):
+                decl = dict(log_counts=dict(COUNTS, **{
+                    "split-lifecycle": 1 + len(life[1]),
+                    "split-persistence": pers[0] + len(pers[1])}))
+                if what == "missing":
+                    life = (2, SHARED_LINES[:3])  # same sum, a filler
+                    decl["log_counts"]["split-lifecycle"] = 5
+                _, rows = self.pool(life, pers, decl)
+                self.assertEqual(ok_ids(rows), [POOL_ID])
+                reason = rows[POOL_ID]["reason"]
+                self.assertNotIn("in all", reason)
+                self.assertIn(SHARED_LINES[0] if what == "twice"
+                              else SHARED_LINES[3], reason)
+                self.assertIn("0 times" if what == "missing" else
+                              "2 times", reason)
+
+    def test_a_pooled_log_still_fails_its_other_checks(self):
+        _, rows = self.pool((1, SHARED_LINES), (1, []))
+        self.assertEqual(ok_ids(rows), [])
+        with tempfile.TemporaryDirectory() as raw:
+            root = self.tree(raw, **{"split-persistence":
+                                     "own ... OK\nb ... FAILED\n"})
+            checks = t.Checks()
+            t.harvest(root, Path(raw) / "out", checks, self.DECL)
+            rows = {c["id"]: c for c in checks.rows}
+        self.assertEqual(ok_ids(rows), [POOL_ID])
+        self.assertIn("split-persistence", rows[POOL_ID]["reason"])
+
+    def test_a_missing_pooled_log_fails_the_group(self):
+        raw = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, raw, True)
+        _, _, rows = self.harvest(raw, **{"split-persistence": None})
+        self.assertEqual(ok_ids(rows), [POOL_ID, "E1.required-logs"])
+        self.assertIn("no split-persistence log",
+                      rows[POOL_ID]["reason"])
+
+    def test_the_shared_lines_are_derived_from_the_scripts(self):
+        group = t.POOLED_LOGS[0]
+        with tempfile.TemporaryDirectory() as raw:
+            root = self.tree(raw)
+            self.assertEqual(t.shared_ok_lines(root, group), SHARED_LINES)
+            # a changed script changes the lines expected
+            script = root / "src/simp/tests/split-persistence" / \
+                "splitChildScript.sml"
+            script.write_text(shared_script(["something else"]))
+            self.assertEqual(
+                t.shared_ok_lines(root, group),
+                SHARED_LINES[:1] + ["something else"] + SHARED_LINES[3:])
+
+    def test_a_pool_whose_lines_cannot_be_derived_is_refused(self):
+        base = "src/simp/tests/split-persistence/"
+        for what, edit, message in (
+                ("no script",
+                 lambda r: (r / base / "splitChildScript.sml").unlink(),
+                 "no script"),
+                ("no string",
+                 lambda r: (r / base / "splitChildScript.sml").write_text(
+                     "val _ = 1\n(* tprint \"x\" *)\n"), "no tprint"),
+                ("an escape",
+                 lambda r: (r / base / "splitChildScript.sml").write_text(
+                     'val _ = tprint "a\\065"\nval _ = OK ()\n'),
+                 "escape"),
+                ("a repeat",
+                 lambda r: (r / base / "splitChildScript.sml").write_text(
+                     shared_script(SHARED_LINES[:1])), "twice")):
+            with self.subTest(what), tempfile.TemporaryDirectory() as raw:
+                root = self.tree(raw)
+                edit(root)
+                with self.assertRaisesRegex(t.Refusal, message):
+                    t.harvest(root, Path(raw) / "out", t.Checks(),
+                              self.DECL)
+
+    def test_logs_outside_a_pool_are_judged_alone(self):
+        # a changed count of a log not in the pool fails its own check
+        decl = dict(log_counts=dict(self.DECL["log_counts"]))
+        decl["log_counts"]["replay-order"] = 2
+        with tempfile.TemporaryDirectory() as raw:
+            root = self.tree(raw)
+            checks = t.Checks()
+            t.harvest(root, Path(raw) / "out", checks, decl)
+            rows = {c["id"]: c for c in checks.rows}
+        self.assertEqual(ok_ids(rows), [
+            "E1.log.src/simp/src/.hol/logs/replay-order"])
+
+    def test_the_pool_needs_no_scripts_when_none_of_its_logs_is_there(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = self.tree(raw, **{"split-lifecycle": None,
+                                     "split-persistence": None})
+            shutil.rmtree(root / "src/simp/tests/split-persistence")
+            checks = t.Checks()
+            t.harvest(root, Path(raw) / "out", checks, self.DECL)
+            rows = {c["id"]: c for c in checks.rows}
+        self.assertEqual(ok_ids(rows), ["E1.required-logs"])
+        self.assertNotIn(POOL_ID, rows)
+
+    def test_the_pool_is_the_split_suites(self):
+        self.assertEqual([g["logs"] for g in t.POOLED_LOGS],
+                         [("split-lifecycle", "split-persistence")])
+
+    def test_a_shift_of_the_shared_lines_only_is_bounded_per_log(self):
+        # reviewed: lifecycle 5 (1 of its own + the 4 shared), persistence 1
+        for what, life, pers in (
+                # the genuine race outcomes
+                ("lifecycle won", (1, SHARED_LINES), (1, [])),
+                ("persistence won", (1, []), (1, SHARED_LINES)),
+                ("split", (1, SHARED_LINES[:2]), (1, SHARED_LINES[2:]))):
+            with self.subTest(what):
+                data, rows = self.pool(life, pers)
+                self.assertEqual(ok_ids(rows), [])
+        # a test lost in lifecycle and duplicated in persistence: the sum
+        # is right, the own counts are not
+        data, rows = self.pool((0, SHARED_LINES), (2, []))
+        self.assertEqual(ok_ids(rows), [POOL_ID])
+        self.assertNotIn("in all", rows[POOL_ID]["reason"])
+        self.assertIn("split-lifecycle: 0 OK lines of its own",
+                      rows[POOL_ID]["reason"])
+        self.assertIn("split-persistence: 2 OK lines of its own",
+                      rows[POOL_ID]["reason"])
+        # a shift of 5 with 4 shared lines (the sum stays 40): reviewed
+        # 22 and 18, i.e. 18 of its own each and the 4 shared in lifecycle
+        decl = dict(log_counts=dict(COUNTS, **{"split-lifecycle": 22,
+                                               "split-persistence": 18}))
+        for life, pers in (((18, SHARED_LINES), (18, [])),
+                           ((18, []), (18, SHARED_LINES))):
+            _, rows = self.pool(life, pers, decl)
+            self.assertEqual(ok_ids(rows), [])
+        for life, pers in (((23, []), (13, SHARED_LINES)),
+                           ((13, SHARED_LINES), (23, []))):
+            _, rows = self.pool(life, pers, decl)
+            self.assertEqual(ok_ids(rows), [POOL_ID])
+            self.assertIn("OK lines of its own", rows[POOL_ID]["reason"])
+
+    def test_a_duplicate_member_name_in_a_pool_is_refused(self):
+        with tempfile.TemporaryDirectory() as raw:
+            root = self.tree(raw)
+            other = root / "src/simp/tests/split-lifecycle/.hol/logs"
+            other.mkdir(parents=True)
+            (other / "split-lifecycle").write_text(
+                pooled_log(1, SHARED_LINES))
+            with mock.patch.object(t, "LOG_SOURCES", t.LOG_SOURCES + (
+                    ("src/simp/tests/split-lifecycle/.hol/logs", "*"),)):
+                with self.assertRaisesRegex(t.Refusal, "two logs answer"):
+                    t.harvest(root, Path(raw) / "out", t.Checks(),
+                              self.DECL)
+
+    def test_the_lexer_reads_comments_and_strings_like_sml(self):
+        def lines(source):
+            return t.script_ok_lines(source)
+        ok = "val _ = OK ()\n"
+        # a comment marker inside a string literal is not a comment
+        self.assertEqual(lines(
+            'val _ = tprint "a (* x"\n' + ok +
+            'val _ = tprint "b"\n' + ok +
+            'val _ = tprint "c *) y"\n' + ok), ["a (* x", "b", "c *) y"])
+        # nested comments
+        self.assertEqual(lines('(* (* *) tprint "inner" OK () *)\n'
+                               'val _ = tprint "outer"\n' + ok), ["outer"])
+        # a string inside a comment may hide the close
+        self.assertEqual(lines('(* "*)" tprint "no" *) tprint "yes"\n' + ok),
+                         ["yes"])
+        # escapes: the printed text is squeezed like tprint's
+        self.assertEqual(lines('tprint "a\\n  b\\"c\\\\"\n' + ok),
+                         ['a b"c\\'])
+        for source, message in (
+                ('tprint ("b" ^ x)\n' + ok, "not followed by a string"),
+                ('val f = tprint\n' + ok, "not followed by a string"),
+                ('tprint "a"\n' + ok + ok, "2 OK calls for 1"),
+                ('tprint "a"\n', "0 OK calls for 1"),
+                ('tprint "a\\065"\n' + ok, "escape"),
+                ('tprint "a"\n' + ok + 'val _ = convtest x\n', "convtest"),
+                ('testutils.timed_tprint "a"\n' + ok, "timed_tprint"),
+                ('tprint "a"\n' + ok + 'testutils.require y\n', "require"),
+                ('tprint "unterminated\n', "unterminated"),
+                ('(* open\ntprint "a"\n' + ok, "unterminated comment"),
+                ('tprint "%s"\n' % ("x" * 80) + ok, "longer")):
+            with self.subTest(source):
+                with self.assertRaisesRegex(t.SmlRefusal, message):
+                    lines(source)
+        # an identifier that only contains a printer's name is not it
+        self.assertEqual(lines('val my_convtest = 1\n'
+                               'val _ = tprint "a"\n' + ok), ["a"])
+
+    def test_the_real_scripts_give_the_four_lines(self):
+        root = Path(__file__).resolve().parents[4]
+        script = root / "src/simp/tests/split-persistence"
+        if not script.is_dir():
+            self.skipTest("no checkout")
+        self.assertEqual(
+            sorted(t.shared_ok_lines(root, t.POOLED_LOGS[0])),
+            sorted(SHARED_LINES))
+
 
 class Archive:
     """A tiny downstream archive: one unit, 4 pairs x 1 rep, both phases;

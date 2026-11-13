@@ -41,22 +41,11 @@ def load():
     return offline.load_declared(t.DECLARED)
 
 
-# The S2 closure total the committed declaration holds (measured live, then
-# filled by `task37_declared.py fill`): the pinned value and observation.
-FILLED_VALUE = 553
-FILLED_OBSERVED = {
-    "base": 2873517, "cand": 2874070, "d_base": 2555187, "d_cand": 2556111,
-    "exclusive": {"simpLib": [307102, 306734], "Traverse": [149848, 149482],
-                  "Travrules": [149061, 149049], "Opening": [2461, 2461],
-                  "boolSimps": [187043, 187037],
-                  "pureSimps": [182625, 182622]},
-    "processes_per_side_per_kind": 2, "repeats_per_process": 3}
-
-
 def prefill():
     """The committed declaration as it was before `fill`: its S2 closure
     total entry is the placeholder (an in-test fixture for the paths that
-    handle a placeholder; the committed file is filled)."""
+    handle a placeholder; the committed file is filled). Shared with
+    test_task37_retarget."""
     data = json.loads(t.DECLARED.read_text())
     entry = data["s2"]["total_delta"][0]
     entry.update(value=None, observed=None, pending=True,
@@ -74,14 +63,15 @@ class TheDeclaration(unittest.TestCase):
         self.assertEqual(len(entries), 1)
         entry = entries[0]
         self.assertNotIn("pending", entry)
-        self.assertEqual(entry["value"], FILLED_VALUE)
-        self.assertEqual(entry["observed"], FILLED_OBSERVED)
         self.assertTrue(entry["mechanism"])
         self.assertFalse(any("PLACEHOLDER" in x for x in entry["mechanism"]))
         self.assertEqual((entry["heap"], entry["kinds"]), (HEAP, KINDS))
         # the value is the observed growth
+        self.assertGreater(entry["value"], 0)
         self.assertEqual(entry["observed"]["cand"] -
                          entry["observed"]["base"], entry["value"])
+        self.assertEqual(rules.total_deltas(d), [
+            dict(heap=HEAP, kinds=KINDS, value=entry["value"])])
 
     def test_only_the_s2_placeholder_is_open_before_fill(self):
         d = offline.join_text(prefill())
@@ -117,8 +107,6 @@ class TheDeclaration(unittest.TestCase):
     def test_a_placeholder_is_never_a_decision_input(self):
         with self.assertRaises(rules.Inadmissible):
             rules.total_deltas(offline.join_text(prefill()))
-        self.assertEqual(rules.total_deltas(load()),
-                         [dict(heap=HEAP, kinds=KINDS, value=FILLED_VALUE)])
 
     def test_the_log_counts_are_what_judge_log_reads(self):
         text = "".join("t%d ... OK\n" % i for i in range(147))

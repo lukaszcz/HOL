@@ -163,21 +163,34 @@ def code_seals():
     return {n: a.seal(p) for n, p in code_paths().items()}
 
 
+def history_of_declared():
+    """{file: [seals]} a report may carry besides the current ones: the
+    history of the table that names the selected declaration, whichever
+    table is active (as `archive_table`). TASK33's own declaration is named
+    by the C32 tables: TASK32's history and TASK33's (the reports of the
+    kept TASK33 records carry the versions that made them). A TASK37
+    declaration is named by one table, whose `history` is that of the kept
+    TASK37 records (`task32_downstream.TASK37_HISTORY`). A declaration no
+    table names has none."""
+    chosen = Path(DECLARED).resolve()
+    named = [t for t in d.TABLES.values() if t.declared is not None and
+             Path(t.declared).resolve() == chosen]
+    if named:
+        require(len(named) == 1, "several tables name the declaration %s"
+                % DECLARED)
+        return {n: list(v) for n, v in named[0].history.items()}
+    if chosen == Path(DEFAULT_DECLARED).resolve():
+        return {n: list(T32.history.get(n, ())) +
+                list(d.TASK33_HISTORY.get(n, ()))
+                for n in set(T32.history) | set(d.TASK33_HISTORY)}
+    return {}
+
+
 def check_code(recorded):
     now = code_seals()
     require(isinstance(recorded, dict) and set(recorded) == set(now),
             "the recorded code is not " + ", ".join(now))
-    # TASK33's history is accepted besides TASK32's, for the files of this
-    # CODE it names (`task32_downstream.py`, this file): the reports of the
-    # kept TASK33 records carry the versions that made them. Only under a
-    # table with no declaration of its own (the C32 `task33`); under a
-    # TASK37 table the history is TASK37's (`task32_downstream.
-    # TASK37_HISTORY`: this file before the pooled logs).
-    own = d.ACTIVE.declared is None
-    known = {n: list(T32.history.get(n, ())) +
-             list(d.TASK33_HISTORY.get(n, ())) if own else
-             list(d.TASK37_HISTORY.get(n, ()))
-             for n in now}
+    known = {n: history_of_declared().get(n, []) for n in now}
     changed = [n for n in now if recorded[n] != now[n] and
                recorded[n] not in known[n]]
     require(not changed, "the code changed since the report was made: " +
@@ -1379,14 +1392,15 @@ LOG_FAIL = tuple(re.compile(p, re.M) for p in (
     r"^Exception- ", r"^Static Errors", r"[Uu]ncaught exception",
     r"^Holmake: .*[Ff]ail"))
 ANSI = re.compile(r"\x1b(?:\[[0-9;?]*[ -/]*[@-~]|.)")
-# What a test prints before its `OK` (src/parse/testutils.sml: `tprint`
-# prints `<text> ...` padded; `timed` then backspaces over the padding and
-# prints, in this order, `[GC = <t>] ` when the GC share of the CPU time
-# exceeds 20% and `(<t>s)` plus spaces; `OK` follows. <t> is
-# `Time.toString`, so digits with a decimal part). Colours and backspaces
-# are removed by `clean_log` before the match.
-OK_ANNOTATION = r"(?:\[GC = \d+(?:\.\d+)?\]\s*)?(?:\(\d+(?:\.\d+)?s\)\s*)?"
-OK_LINE = re.compile(r"\.\.\.\s*" + OK_ANNOTATION + r"OK\s*$", re.M)
+# What a test prints before its `OK` (src/parse/testutils.sml at 7e202dfbaa:
+# `tprint` prints `<text> ...` padded; `timed` then backspaces over the
+# padding and always prints `(<t>s)` plus spaces, preceded by `[GC = <t>] `
+# when the GC share of the CPU time exceeds 20%; `OK` follows. <t> is
+# `Time.toString`, which has 3 decimals). Colours and backspaces are removed
+# by `clean_log` before the match. A match never spans lines.
+OK_ANNOTATION = (r"(?:(?:\[GC = \d+\.\d{3}\][ \t]*)?"
+                 r"\(\d+\.\d{3}s\)[ \t]*)?")
+OK_LINE = re.compile(r"\.\.\.[ \t]*" + OK_ANNOTATION + r"OK[ \t]*$", re.M)
 RAN = re.compile(r"^Ran (\d+) tests? in", re.M)
 # The last line of a unittest run: `OK`, or `OK (skipped=N)` when tests
 # were skipped (the only extra a passing run prints that we accept: an
@@ -1649,9 +1663,120 @@ POOLED_LOGS = (
                   "src/simp/tests/split-persistence/"
                   "splitDescendantScript.sml")),
 )
-# A `tprint "..."` call of an SML theory script (plain strings only).
-TPRINT_CALL = re.compile(r'\btprint\s*"((?:[^"\\]|\\.)*)"')
-SML_COMMENT = re.compile(r"\(\*.*?\*\)", re.S)
+# Every testutils name that prints (or completes) a test line in a way
+# other than `tprint "<string>"` followed by `OK ()`: the exports of
+# src/parse/testutils.sig (7e202dfbaa) that print a test line, an
+# annotation or an OK. A theory script that calls one cannot have its OK
+# lines read from its `tprint` strings.
+OTHER_PRINTERS = frozenset((
+    "timed_tprint", "tadd", "tpp", "tpp_expected", "tppw", "convtest",
+    "timed", "shouldfail", "require", "require_msg", "require_pretty_msg",
+    "require_msgk"))
+SML_IDENT = re.compile(
+    r"[A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*")
+STRING_ESCAPES = {"n": " ", "t": " ", "\\": "\\", '"': '"'}
+
+
+class SmlRefusal(Refusal):
+    """The source is not one the lexer reads."""
+
+
+def sml_tokens(source):
+    """The tokens of SML `source` outside comments (which nest, and in
+    which a string literal may hide `*)`) as (kind, value): `id` (a
+    possibly qualified name), `str` (a string literal, decoded: the
+    escapes `\\n \\t \\\\ \\"` only, any other escape is refused) and `sym`
+    (any other character, one at a time)."""
+    out, i, n = [], 0, len(source)
+
+    def string(i):
+        """(value, index after) of the literal whose quote is at `i`."""
+        chars, i = [], i + 1
+        while i < n and source[i] != '"':
+            if source[i] == "\\":
+                if i + 1 >= n or source[i + 1] not in STRING_ESCAPES:
+                    raise SmlRefusal("an escape other than \\n, \\t, \\\\ "
+                                     "and \\\" in a string literal")
+                chars.append(STRING_ESCAPES[source[i + 1]])
+                i += 2
+            else:
+                chars.append(source[i])
+                i += 1
+        if i >= n:
+            raise SmlRefusal("an unterminated string literal")
+        return "".join(chars), i + 1
+    while i < n:
+        c = source[i]
+        if source.startswith("(*", i):
+            depth, i = 1, i + 2
+            while depth:
+                if i >= n:
+                    raise SmlRefusal("an unterminated comment")
+                if source.startswith("(*", i):
+                    depth, i = depth + 1, i + 2
+                elif source.startswith("*)", i):
+                    depth, i = depth - 1, i + 2
+                elif source[i] == '"':
+                    i = string(i)[1]
+                else:
+                    i += 1
+        elif c == '"':
+            value, i = string(i)
+            out.append(("str", value))
+        elif SML_IDENT.match(source, i):
+            found = SML_IDENT.match(source, i)
+            out.append(("id", found.group(0)))
+            i = found.end()
+        elif c.isspace():
+            i += 1
+        else:
+            out.append(("sym", c))
+            i += 1
+    return out
+
+
+def printed_text(text):
+    """The text `tprint` prints for the string `text`: newlines and tabs
+    to spaces, runs of spaces squeezed (testutils' `rmNLs` and
+    `squish_spaces`)."""
+    return " ".join(text.split())
+
+
+# `tprint` cuts a text that does not fit the line (the width is the
+# terminal's, 80 at least) to `<prefix> ...`: a longer text is refused.
+TPRINT_MAX = 60
+
+
+def script_ok_lines(source):
+    """The OK lines (text before ` ... OK`) a theory script prints, from
+    its `tprint "<string>"` calls. Raises SmlRefusal when a `tprint` is not
+    followed by a string literal, when another testutils printer is named
+    (OTHER_PRINTERS), when a text is too long to be sure of, or when the
+    number of `OK ()` calls differs from the number of lines."""
+    tokens = sml_tokens(source)
+    lines, oks = [], 0
+    for k, (kind, value) in enumerate(tokens):
+        if kind != "id":
+            continue
+        name = value.rsplit(".", 1)[-1]
+        if name in OTHER_PRINTERS:
+            raise SmlRefusal("it calls %s" % name)
+        if name == "OK":
+            oks += 1
+        elif name == "tprint":
+            nxt = tokens[k + 1] if k + 1 < len(tokens) else None
+            if nxt is None or nxt[0] != "str":
+                raise SmlRefusal("a tprint is not followed by a string "
+                                 "literal")
+            text = printed_text(nxt[1])
+            if len(text) > TPRINT_MAX:
+                raise SmlRefusal("a tprint text longer than %d (it may be "
+                                 "cut): %s" % (TPRINT_MAX, text[:30]))
+            lines.append(text)
+    if oks != len(lines):
+        raise SmlRefusal("%d OK calls for %d tprint strings" % (
+            oks, len(lines)))
+    return lines
 
 
 def pooled_id(group):
@@ -1669,35 +1794,34 @@ def pooled_of(path):
 
 def shared_ok_lines(root, group):
     """The text before ` ... OK` of each OK line the shared theory scripts
-    of `group` print, read from their `tprint` strings under `root`.
-    Refuses when a script is missing, has no such string or has one that
-    cannot be read as a line (an escape), or when two lines are equal
-    (they could not be told apart)."""
+    of `group` print, read from their `tprint` strings under `root`
+    (`script_ok_lines`). Refuses when a script is missing, cannot be read
+    that way, or has no such string, or when two lines are equal (they
+    could not be told apart)."""
+    who = ", ".join(group["logs"])
     lines = []
     for script in group["scripts"]:
         path = Path(root) / script
         require(path.is_file(), "cannot derive the OK lines of the pooled "
-                "logs %s: no script %s under %s" % (
-                    ", ".join(group["logs"]), script, root))
-        source = SML_COMMENT.sub("", path.read_text(errors="replace"))
-        found = TPRINT_CALL.findall(source)
+                "logs %s: no script %s under %s" % (who, script, root))
+        try:
+            found = script_ok_lines(path.read_text(errors="replace"))
+        except SmlRefusal as error:
+            raise Refusal("cannot derive the OK lines of the pooled logs "
+                          "%s: %s in %s" % (who, error, script))
         require(found, "cannot derive the OK lines of the pooled logs %s: "
-                "no tprint string in %s" % (", ".join(group["logs"]),
-                                            script))
-        require(not any("\\" in x for x in found), "cannot derive the OK "
-                "lines of the pooled logs %s: an escape in a tprint "
-                "string of %s" % (", ".join(group["logs"]), script))
+                "no tprint string in %s" % (who, script))
         lines += found
     require(len(set(lines)) == len(lines), "cannot derive the OK lines of "
             "the pooled logs %s: a tprint string occurs twice in %s" % (
-                ", ".join(group["logs"]), ", ".join(group["scripts"])))
+                who, ", ".join(group["scripts"])))
     return lines
 
 
 def count_line(text, line):
     """How often the OK line of the tprint string `line` occurs in `text`
     (a cleaned log)."""
-    return len(re.findall(r"^%s\s*\.\.\.\s*%sOK\s*$" %
+    return len(re.findall(r"^%s[ \t]*\.\.\.[ \t]*%sOK[ \t]*$" %
                           (re.escape(line), OK_ANNOTATION), text, re.M))
 
 
@@ -1732,6 +1856,19 @@ def judge_pooled(group, lines, found, declared):
             if n != 1:
                 reasons.append("OK line `%s` occurs %d times in the logs, "
                                "not once" % (line, n))
+        # A race moves only the shared lines: what is left in a log is
+        # its own, and may differ from the reviewed count by at most the
+        # k shared lines (so a test lost in one log and duplicated in the
+        # other is not hidden by the sum).
+        k = len(lines)
+        for name in group["logs"]:
+            own = have[name] - sum(count_line(found[name][3], line)
+                                   for line in lines)
+            data.setdefault("own", {})[name] = own
+            if not counts[name] - k <= own <= counts[name]:
+                reasons.append("%s: %d OK lines of its own, reviewed %d "
+                               "less at most %d shared" % (
+                                   name, own, counts[name], k))
     return not reasons, reasons, data
 
 
@@ -1783,8 +1920,12 @@ def harvest(root, out_dir, checks, declared):
             checks.ok("E1.log." + rel, "E1", passed,
                       "; ".join(reasons), "suite passed")
         else:
-            pooled.setdefault(pooled_id(group), {})[count_key(rel)] = (
-                passed, reasons, counts, clean_log(text))
+            members = pooled.setdefault(pooled_id(group), {})
+            require(count_key(rel) not in members, "two logs answer to %s "
+                    "in the pooled group %s" % (count_key(rel),
+                                                pooled_id(group)))
+            members[count_key(rel)] = (passed, reasons, counts,
+                                       clean_log(text))
     summary = []
     for group in POOLED_LOGS:
         gid = pooled_id(group)

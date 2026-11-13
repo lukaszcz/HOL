@@ -197,9 +197,10 @@ TASK33_HISTORY = {
 # `task33_offline.py` before the harvest pooled the logs of suites that
 # build the same theories in a race (`task33_offline.POOLED_LOGS`), which
 # made the kept TASK37 records (the t32 smoke, the t33 stages, the timing
-# counts and the api-audit). The t33 table holds both, the t32 table the
-# driver (it does not bind `task33_offline.py`); `task33_offline.check_code`
-# accepts them under the TASK37 tables.
+# counts and the S3 offline audit report). The t33 table holds both, the
+# t32 table the driver (it does not bind `task33_offline.py`);
+# `task33_offline.check_code` takes them from the table that names the
+# selected declaration.
 TASK37_HISTORY = {
     "task32_downstream.py": [
         {"sha256": "e030bcb8f76691a1d3c945e6e42d23"

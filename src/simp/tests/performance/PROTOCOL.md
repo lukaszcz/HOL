@@ -516,6 +516,14 @@ that pins the history constant is edited with it:
   `TASK33_DRIVER_SEALS`, the `task33_offline.py` seal, and it includes the
   `task33_storage.py` seals of `task33_storage.UNDIVIDED_CAP`;
   `task33_offline.check_code` accepts that history besides TASK32's.
+- the TASK37 tables (`task32_downstream.TASK37_HISTORY` for `task37-t33`,
+  `TASK37_T32_HISTORY` for `task37-t32`): the seals of `task32_downstream.py`
+  and `task33_offline.py` before the pooled logs of the harvest.
+  `task33_offline.check_code` takes the history from the table that names
+  the selected declaration (`history_of_declared`, as `archive_table`), not
+  from the active table: TASK33's declaration accepts TASK32's and TASK33's
+  histories, TASK37's accepts that table's, and a declaration no table
+  names accepts none.
 
 A file whose seal no record carries needs no entry (usage text, style). The
 cascade, with a worked example, is in the bullet "Seal histories" of "TASK30
@@ -3978,9 +3986,15 @@ group as one check, `E1.logs.<log>+<log>`, in place of the per-log checks:
 the sum of the OK lines of its logs equals the sum of their `log_counts`
 (declared per log, as for any log), and each OK line the shared scripts
 print, read from their `tprint` strings in the candidate snapshot, occurs
-exactly once across the group's logs. A script that cannot be read that way
-refuses the harvest. Each log of a group still passes every check of its
-kind except its own count.
+exactly once across the group's logs. A race moves only those shared
+lines, so each log also keeps the lines of its own within bounds: with k
+shared lines, a log's OK lines less the shared ones it holds lie between
+its declared count less k and the count. The scripts are read with an SML
+lexer (nested comments, strings and their escapes); a script that calls
+another testutils printer, has a `tprint` not followed by a string
+literal, or has a number of `OK ()` calls other than its `tprint` strings
+cannot be read that way and refuses the harvest. Each log of a group still
+passes every check of its kind except its own count.
 
 ### Counts, ledger, redraws
 
@@ -5303,7 +5317,10 @@ without editing what their kept records depend on.
   (`.agent-files/scratch/task37-t32`, `.../task37-t33`) and scratch
   (`/dev/shm/t37-t32`, `/dev/shm/t37-t33`, the storage stages below the
   latter in `storage`), and the units, policy and code of their parents,
-  with no history. TASK37 passes `--table task37-t32` or `--table
+  with no history but that of the kept TASK37 records (`TASK37_HISTORY`,
+  `TASK37_T32_HISTORY`: the versions of `task32_downstream.py` and, for
+  `task37-t33`, `task33_offline.py` before the pooled logs). TASK37
+  passes `--table task37-t32` or `--table
   task37-t33` (before the command, to the storage driver as well), and
   each table gets its own smoke, pilot and predeclare at the final
   candidate; the counts files are committed alone. The C32 tables
@@ -5320,7 +5337,9 @@ without editing what their kept records depend on.
   `--declared`.
 - Seals. The seals of the TASK32/TASK33 files as the kept records carry
   them are kept in `TASK32_HISTORY` and `TASK33_HISTORY` (in
-  `task32_downstream.py`); the files as they are now seal TASK37 records.
+  `task32_downstream.py`); the kept TASK37 records are covered by
+  `TASK37_HISTORY` and `TASK37_T32_HISTORY` (the `history` of the TASK37
+  tables), and the files as they are now seal the records made from here.
 - Dispositions. Both the TASK32 and the TASK33 disposition carry a top-level
   `candidate` (the full pin the stages measured; TASK33 refuses stages that
   measured different candidates), which `task37_dispose.py` joins on.
