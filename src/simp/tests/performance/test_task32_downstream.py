@@ -3117,6 +3117,44 @@ class CountsDefaults(unittest.TestCase):
                 dict(report, stage="second"), None, None))
 
 
+def run_entry(script, argv, module, state, prelude=""):
+    """Run `script` as a command (as `python3 script argv` does, a refused
+    command included) in a fresh interpreter, then report `state` (an
+    expression of the module `module`, as found in `sys.modules`) as JSON:
+    None if no module of that name was loaded. `prelude` is code run in the
+    child first (it may import and patch the named module)."""
+    here = Path(__file__).resolve().parent
+    code = (
+        "import json, runpy, sys\n"
+        "sys.path.insert(0, %r)\n"
+        "sys.argv = [%r] + %r\n"
+        "%s\n"
+        "try:\n"
+        "    runpy.run_path(sys.argv[0], run_name='__main__')\n"
+        "except SystemExit:\n"
+        "    pass\n"
+        "m = sys.modules.get(%r)\n"
+        "print(json.dumps(None if m is None else eval(%r, vars(m))))\n"
+    ) % (str(here), str(here / script), list(argv), prelude, module,
+         state)
+    done = subprocess.run(
+        [sys.executable, "-B", "-c", code], stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    assert done.returncode == 0, done.stderr.decode()
+    return json.loads(done.stdout.decode().splitlines()[-1])
+
+
+class ScriptEntry(unittest.TestCase):
+    """The script entry runs the named module: the modules that import a
+    driver by name share the table the command line selected."""
+
+    def test_the_timing_driver_selects_the_table_in_the_named_module(self):
+        self.assertEqual(run_entry(
+            "task32_downstream.py", ["--table", "task37-t32", "recover",
+                                     "--repo", "/nonexistent/repo"],
+            "task32_downstream", "ACTIVE.name"), "task37-t32")
+
+
 class HelpRenders(unittest.TestCase):
     def help_of(self, argv):
         out = io.StringIO()

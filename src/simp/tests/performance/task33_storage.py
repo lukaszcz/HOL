@@ -2066,4 +2066,8 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # one module instance: the modules that import this one by name share
+    # the state (the table, the declaration) this run selects, which a
+    # second copy of this file, run as `__main__`, would not
+    import task33_storage
+    sys.exit(task33_storage.main())

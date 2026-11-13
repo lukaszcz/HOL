@@ -525,7 +525,13 @@ that pins the history constant is edited with it:
   t33 table alone also lists the driver of fe2ea792d9 (the pooled logs,
   which made the redrawn harvest `offline/harvest2`) and
   `task33_dispose.py` before it took the harvest the disposition names, and
-  `task33_storage.py` before the storage predeclare bound counts as records.
+  `task33_storage.py` before the storage predeclare bound counts as records;
+  `task32_downstream.py` (both tables), `task33_offline.py` and
+  `task33_storage.py` (t33) also list the seal they had at `025d23c440`,
+  which made the t32 follow-up records and the t33 storage counts, `s-run`
+  and `s-audit`, before the script entry ran the named module (the
+  `task33_offline.py` seal is also the one that made the redrawn harvest
+  `offline/harvest2`).
   `task33_offline.check_code` takes the history from the table that names
   the selected declaration (`history_of_declared`, as `archive_table`), not
   from the active table: TASK33's declaration accepts TASK32's and TASK33's
@@ -4135,8 +4141,11 @@ and evidence paths of TASK32:
     T="python3 -B $P/task32_downstream.py --table task33"
     Q="python3 -B $P/task33_storage.py"
 
-`--table` precedes the command. Every command below is run with
-`</dev/null` as its standard input.
+`--table` precedes the command. The script entry of `task32_downstream.py`,
+`task33_storage.py` and `task33_offline.py` imports the module of that name
+and runs its `main`, so that the modules that import a driver by name share
+the table (`task33_offline.py`: the declaration) the command selects.
+Every command below is run with `</dev/null` as its standard input.
 
 Steps, in this order (each run command also takes `--timeout`, default
 900, and `--scratch`, default `/dev/shm/t33`):

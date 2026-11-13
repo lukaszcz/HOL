@@ -341,6 +341,41 @@ def control_groups(base, leak):
                 "registry", "state-empty", hook=True), ("hook",))] * 3)}
 
 
+class ScriptEntry(unittest.TestCase):
+    """The script entry runs the named module: `task33_dispose` (and the
+    TASK37 modules) import `task33_storage` by name and must see the table
+    the command line selected (its counts, ledger table and scratch)."""
+
+    def test_the_storage_driver_selects_the_table_in_the_named_module(self):
+        argv = ["--table", "task37-t33", "replay", "/nonexistent/run"]
+        for state, want in (
+                ("ACTIVE_STORAGE", "task37-t33"),
+                ("STORAGE_COUNTS.name", "task37_t33_storage_counts.json")):
+            self.assertEqual(t32.run_entry(
+                "task33_storage.py", argv, "task33_storage", state), want)
+        self.assertEqual(t32.run_entry(
+            "task33_storage.py", argv, "task32_downstream", "ACTIVE.name"),
+            "task37-t33")
+
+    def test_the_offline_driver_runs_the_named_module(self):
+        """The named module's `main` runs, with the declaration the
+        command selected: its `run_command` is replaced (in the child) by
+        a stub that records the `DECLARED` it is called under."""
+        prelude = (
+            "import task33_offline as o\n"
+            "o.SEEN = None\n"
+            "def stub(args):\n"
+            "    o.SEEN = str(o.DECLARED)\n"
+            "    raise ValueError('stub')\n"
+            "o.run_command = stub\n")
+        declared = "/nonexistent/declared.json"
+        self.assertEqual(t32.run_entry(
+            "task33_offline.py", [
+                "harvest", "--manifest", "m", "--cand-root", "c", "--out",
+                "o", "--declared", declared], "task33_offline", "SEEN",
+            prelude), declared)
+
+
 class ShareBoundRules(unittest.TestCase):
     """R1 on residuals that are GC share-pass lower bounds (design 8.9)."""
 

@@ -1299,14 +1299,24 @@ class HistoryOfTheKeptRecords(unittest.TestCase):
                     self.assertNotIn(seal, history.get(name, []),
                                      (rev, name))
 
+    ENTRY = "025d23c440"    # before the script entry ran the named module
+    ENTRY_FILES = ("task32_downstream.py", "task33_offline.py",
+                   "task33_storage.py")
+
     def test_the_task37_histories_hold_the_kept_versions(self):
         """The versions that made the kept TASK37 records (b6052eb65f,
-        before the pooled logs and the halt of in-flight processes), and
-        for the t33 table the driver that made the redrawn harvest."""
+        before the pooled logs and the halt of in-flight processes), for
+        the t33 table the driver that made the redrawn harvest, and the
+        files edited since (the script entry runs the named module) at
+        ENTRY, the version that made the t32 follow-up and the t33 storage
+        records (for task33_offline.py also the redrawn harvest
+        offline/harvest2)."""
         for name, seals in dw.TASK37_HISTORY.items():
             kept = [self.seal_at(self.TASK37_KEPT, name)]
             if name == "task32_downstream.py":
                 kept.append(self.seal_at(self.HARVEST2, name))
+            if name in self.ENTRY_FILES:
+                kept.append(self.seal_at(self.ENTRY, name))
             self.assertEqual(seals, kept, name)
         self.assertEqual(sorted(dw.TASK37_HISTORY), [
             "loading.py", "task32_downstream.py", "task33_dispose.py",
@@ -1315,11 +1325,15 @@ class HistoryOfTheKeptRecords(unittest.TestCase):
         self.assertEqual(
             dw.TABLES["task37-t32"].history,
             {"task32_downstream.py":
-             dw.TASK37_HISTORY["task32_downstream.py"][:1],
+             dw.TASK37_HISTORY["task32_downstream.py"][:1] +
+             dw.TASK37_HISTORY["task32_downstream.py"][-1:],
              "loading.py": dw.TASK37_HISTORY["loading.py"]})
-        now = dw.code_seals()
-        for name in ("task32_downstream.py", "loading.py"):
-            self.assertNotIn(now[name], dw.TASK37_HISTORY[name])
+        for table, history in (("task37-t33", dw.TASK37_HISTORY),
+                               ("task37-t32", dw.TASK37_T32_HISTORY)):
+            with dw.using_table(table):
+                now = dw.code_seals()
+            for name, seals in history.items():
+                self.assertNotIn(now[name], seals, (table, name))
 
     def test_loading_before_the_halt_is_in_every_history_that_ran_it(self):
         """`loading.py` as the kept TASK32, TASK33 and TASK37 records ran
@@ -1343,6 +1357,13 @@ class HistoryOfTheKeptRecords(unittest.TestCase):
                     continue
                 with dw.using_table(table):
                     dw.check_code(json.loads(path.read_text())["code"])
+        # the storage counts are judged with the check the storage code uses
+        path = HERE / "task37_t33_storage_counts.json"
+        if path.exists():
+            import task33_storage as st
+            with st.using_storage_table("task37-t33"), \
+                    dw.using_table("task37-t33"):
+                dw.check_code(json.loads(path.read_text())["code"])
 
 
 if __name__ == "__main__":

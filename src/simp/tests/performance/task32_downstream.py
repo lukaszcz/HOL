@@ -224,12 +224,24 @@ TASK37_DRIVER = [
 TASK37_HARVEST_DRIVER = [
     {"sha256": "e3c5e2535bde5913b3ae8bbd9da80e"
                "8356e12921105fd5e3c1b744ce53d987c9", "bytes": 187905}]
+# `task32_downstream.py` at 025d23c440, which made the t32 follow-up and the
+# t33 storage records, before the script entry ran the named module
+# (`task33_storage.py --table` selected the table in a copy of the file that
+# the modules importing it did not share)
+TASK37_ENTRY_DRIVER = [
+    {"sha256": "f12719eb77f22c92c7a8d9c9695f2c"
+               "15dbe4875c47b1b3ebe555a6e22eb0f598", "bytes": 189967}]
 TASK37_HISTORY = {
-    "task32_downstream.py": TASK37_DRIVER + TASK37_HARVEST_DRIVER,
+    "task32_downstream.py": (TASK37_DRIVER + TASK37_HARVEST_DRIVER +
+                             TASK37_ENTRY_DRIVER),
     "loading.py": TASK37_LOADING,
     "task33_offline.py": [
         {"sha256": "f817b9a2f3ad3a124ae9ab0b06b6d5"
-                   "64ba15ee57bfa8219b8c95b8dd409a4146", "bytes": 95782}],
+                   "64ba15ee57bfa8219b8c95b8dd409a4146", "bytes": 95782},
+        # before the script entry ran the named module (current since
+        # 54f4083d93: it also made the redrawn harvest `offline/harvest2`)
+        {"sha256": "9a23682e94601b94145d727d108bcb"
+                   "48250dbd38e3cca81892799ba7c84acdb5", "bytes": 109634}],
     # before the disposal took the harvest the disposition names
     "task33_dispose.py": [
         {"sha256": "014a8860938753d609bc4462e8b03d"
@@ -237,10 +249,13 @@ TASK37_HISTORY = {
     # before the storage predeclare bound the timing counts as a record
     "task33_storage.py": [
         {"sha256": "06b4dee630d4c65bc8254026d32ef516"
-                   "bd100767a7c04ff8b40ed453e570f53d", "bytes": 94490}],
+                   "bd100767a7c04ff8b40ed453e570f53d", "bytes": 94490},
+        # before the script entry ran the named module
+        {"sha256": "7f857e16780125a918ef487f5c697e"
+                   "185da0a553d2799fccb0e23ad04eac83e0", "bytes": 94977}],
 }
 TASK37_T32_HISTORY = {
-    "task32_downstream.py": TASK37_DRIVER,
+    "task32_downstream.py": TASK37_DRIVER + TASK37_ENTRY_DRIVER,
     "loading.py": TASK37_LOADING}
 
 
@@ -4089,4 +4104,8 @@ def json_stage(folder):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # one module instance: the modules that import this one by name share
+    # the state (the table, the declaration) this run selects, which a
+    # second copy of this file, run as `__main__`, would not
+    import task32_downstream
+    sys.exit(task32_downstream.main())
