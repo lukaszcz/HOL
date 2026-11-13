@@ -429,7 +429,9 @@ class Modules(unittest.TestCase):
             found.update(cls.edges(
                 cls.ALLOCATION_TASK37,
                 ("allocation_matrix", "task37_cases", "task37_matrix"),
-                ("allocation_matrix", "task37_cases", "task37_client")))
+                ("allocation_matrix", "task37_cases", "task37_client"),
+                ("allocation_matrix", "task37_cases",
+                 "task37_downstream")))
         return found
 
     @staticmethod

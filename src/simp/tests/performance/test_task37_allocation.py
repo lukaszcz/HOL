@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 import allocation_analysis as an
 import allocation_matrix as m
@@ -19,9 +20,11 @@ import task29_gate as gate
 import task30_cases
 import task31_cases
 import task37_cases as cases
+import test_allocation_matrix as matrix_tests
 
 MATRIX = m.TASKS["task37-matrix"]
 CLIENT = m.TASKS["task37-client"]
+DOWNSTREAM = m.TASKS["task37-downstream"]
 CAND = "c" * 40
 
 
@@ -30,7 +33,7 @@ class Pairs(unittest.TestCase):
         self.assertEqual(m.PAIRS, 10)
         for name in ("task29b", "task30", "task31"):
             self.assertEqual(m.TASKS[name].pairs, 10, name)
-        for task in (MATRIX, CLIENT):
+        for task in (MATRIX, CLIENT, DOWNSTREAM):
             self.assertEqual(task.pairs, 3)
         self.assertEqual(m.TASK37_PAIRS, 3)
 
@@ -47,6 +50,7 @@ class Pairs(unittest.TestCase):
                 task=task, pairs=pairs, repo=m.HERE.parents[3]))
         self.assertEqual(grid("task37-matrix").pairs, 3)
         self.assertEqual(grid("task37-client").pairs, 3)
+        self.assertEqual(grid("task37-downstream").pairs, 3)
         self.assertEqual(grid("task30").pairs, 10)
         self.assertEqual(grid("task31").pairs, 10)
         self.assertEqual(grid("task29b").pairs, 10)
@@ -74,7 +78,7 @@ class Pairs(unittest.TestCase):
             m.run = saved
 
     def test_an_unknown_task_is_refused(self):
-        for name in ("task37-downstream", "task37", "task38"):
+        for name in ("task37-other", "task37", "task38"):
             with self.assertRaisesRegex(sc.InvalidAllocation, "unknown"):
                 m.task_named(name)
             with self.assertRaisesRegex(sc.InvalidAllocation, "unknown"):
@@ -302,3 +306,67 @@ class Records(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Downstream(unittest.TestCase):
+    def test_the_task_is_declared_by_its_family_not_by_its_name(self):
+        self.assertEqual(
+            sorted(c for c in DOWNSTREAM.cases),
+            sorted(cases.DOWNSTREAM_CASES))
+        self.assertTrue(DOWNSTREAM.family.closure)
+        self.assertFalse(CLIENT.family.closure)
+        self.assertFalse(MATRIX.family.closure)
+        self.assertFalse(m.TASKS["task31"].family.closure)
+        self.assertFalse(m.TASKS["task30"].family.closure)
+
+    def test_the_family_installs_the_downstream_fixture(self):
+        self.assertEqual(
+            dict(DOWNSTREAM.family.files)["DownstreamAllocation.sml"],
+            "Performance.sml")
+        self.assertTrue(
+            (m.HERE / "DownstreamAllocation.sml").is_file())
+
+    def test_the_closure_record_normalises_the_private_directory(self):
+        with tempfile.TemporaryDirectory() as raw:
+            a, b = Path(raw) / "a", Path(raw) / "b"
+            for d in (a, b):
+                d.mkdir()
+                (d / "x.uo").write_bytes(
+                    b"head " + str(d.resolve()).encode() + b" tail")
+                (d / "y.sml").write_bytes(b"copy")
+            def result(d):
+                return dict(modules=["x"], roots=["r"], products={
+                    "x.uo": dict(source="s/x.uo"),
+                    "y.sml": dict(source="s/y.sml")})
+            ra = m.closure_record(result(a), a)
+            rb = m.closure_record(result(b), b)
+            self.assertEqual(ra, rb)
+            (b / "y.sml").write_bytes(b"other")
+            self.assertNotEqual(ra, m.closure_record(result(b), b))
+
+    def test_install_private_is_closure_free_for_legacy_families(self):
+        for name in ("task30", "task31", "task37-matrix", "task37-client"):
+            grid = m.Grid(argparse.Namespace(
+                task=name, pairs=None, repo=m.HERE.parents[3]))
+            with tempfile.TemporaryDirectory() as raw, \
+                    mock.patch.object(m.rp, "install_fixtures"):
+                d = Path(raw)
+                (d / "Holmakefile").write_text("")
+                self.assertIsNone(grid.install_private(d, []), name)
+
+    def test_the_closure_is_installed_for_the_downstream_family(self):
+        grid = m.Grid(argparse.Namespace(
+            task="task37-downstream", pairs=None,
+            repo=m.HERE.parents[3]))
+        grid.hol = Path("/hol")
+        sources = [dict(git_path="src/simp/src/Cond_rewr.sml")]
+        with tempfile.TemporaryDirectory() as raw, \
+                mock.patch.object(m.rp, "install_fixtures"), \
+                mock.patch("client_dependencies.install",
+                           return_value="R") as ins:
+            d = Path(raw)
+            (d / "Holmakefile").write_text("")
+            self.assertEqual(grid.install_private(d, sources), "R")
+            ins.assert_called_once_with(Path("/hol"), d, {"Cond_rewr"})
+            self.assertIn("paired.exe: Performance.uo",
+                          (d / "Holmakefile").read_text())

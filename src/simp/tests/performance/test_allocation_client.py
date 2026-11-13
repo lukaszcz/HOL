@@ -483,7 +483,7 @@ class Installation(unittest.TestCase):
     def install(self, task):
         self.grid.task = task
         with mock.patch.object(m.rp, "install_fixtures") as fixtures:
-            self.grid.install_private(self.directory)
+            self.grid.install_private(self.directory, [])
         fixtures.assert_called_once_with(self.directory)
 
     def test_the_client_family_installs_its_fixture_and_support(self):

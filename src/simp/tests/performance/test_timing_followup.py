@@ -1803,7 +1803,8 @@ class ReplacedOpenings(Rig):
     # path and its own sealed code: the allocation matrix's building and
     # running of a toolchain, which its replay of an allocation grid does
     # not do.
-    ALLOCATION_BUILD = {"loading", "prepare_patch", "bootstrap_probe"}
+    ALLOCATION_BUILD = {"loading", "prepare_patch", "bootstrap_probe",
+                        "client_dependencies"}
     # `allocation_matrix.task31` imports the TASK31 case list when that
     # task is asked for, which no TASK29B or TASK30 process, replay or
     # disposition does: the edge is left out of the disposition's closure.
@@ -1811,7 +1812,9 @@ class ReplacedOpenings(Rig):
     # So do `task37_matrix` and `task37_client` import the TASK37 case
     # lists, which only a TASK37 allocation grid asks for.
     TASK37_EDGES = {("allocation_matrix", "task37_cases", "task37_matrix"),
-                    ("allocation_matrix", "task37_cases", "task37_client")}
+                    ("allocation_matrix", "task37_cases", "task37_client"),
+                    ("allocation_matrix", "task37_cases",
+                     "task37_downstream")}
 
     def test_the_disposition_is_downstream_of_the_replay(self):
         # The disposition consumes the replays and is in neither table's

@@ -497,7 +497,7 @@ class HarnessFiles(unittest.TestCase):
             "import allocation_matrix as m, task30_dispose\n"
             "assert 'task31_cases' not in sys.modules\n"
             "assert sorted(m.TASKS) == ['task29b', 'task30', 'task31',\n"
-            "    'task37-client', 'task37-matrix']\n"
+            "    'task37-client', 'task37-downstream', 'task37-matrix']\n"
             "assert 'task37_cases' not in sys.modules\n"
             "assert 'task31' in m.TASKS\n"
             "task = m.task_of({})\n"
