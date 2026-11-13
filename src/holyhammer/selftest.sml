@@ -2525,7 +2525,8 @@ fun test_hhEval root =
              (String.concat (read_lines default_script)))
          | SOME _ => true)
     val _ = expect "worker script is beside its theory"
-      (OS.Path.dir script = join src "one")
+      (OS.Path.dir script = join src "one" andalso
+       script = hhEval.evalscript_path expdir "list")
     val _ = expect "worker script loads hhEval"
       (String.isSubstring "load \"hhEval\";" script_text)
     val _ = expect "worker script initializes the simp-data exporter"
@@ -3622,7 +3623,15 @@ fun test_hhEval_integration () =
             (not (null (hhEval.read_journal pair_journal)) andalso
              not (null (hhEval.read_journal option_journal)) andalso
              OS.FileSys.access (join expdir "run.json", [OS.FileSys.A_READ]))
+          fun script_exists thy =
+            OS.FileSys.access (hhEval.evalscript_path expdir thy, [])
+          val _ = expect "hhEval removes worker scripts after the run"
+            (not (script_exists "pair") andalso not (script_exists "option"))
+          (* Simulates a driver killed before its cleanup handlers ran. *)
+          val _ = write_file (hhEval.evalscript_path expdir "pair") "\n"
           val _ = run "smoke" [condition]
+          val _ = expect "hhEval resume sweeps stale worker scripts"
+            (not (script_exists "pair"))
           val journal_after = String.concat (read_lines pair_journal) ^
             String.concat (read_lines option_journal)
           val _ = expect "hhEval integration resume is a no-op"

@@ -99,6 +99,7 @@ sig
   val set_worker_goal_ids : string list -> unit
   val set_worker_partition : {part : int, parts : int} -> unit
   val worker_theory_complete : string -> string -> bool
+  val evalscript_path : string -> string -> string
   val write_evalscript : string -> string -> condition list -> int -> string
   val journal_theory_error : string -> string -> string -> unit
   val eval_thy : string -> string -> unit

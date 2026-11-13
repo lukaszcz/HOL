@@ -1920,15 +1920,23 @@ fun load_theory thy =
     handle error => (restore (); raise error)
   end
 
+(* A theory UI is found relative to its source directory.  In particular,
+   a script in <expdir>/scripts run from hol.state cannot load theories
+   outside the default heap. *)
+fun evalscript_path expdir thy =
+  join (source_script_directory thy)
+    (".hheval_" ^ safe_component (OS.Path.file expdir) ^ "_" ^
+     safe_component thy ^ ".sml")
+
+(* Worker scripts live in the source tree, so they must not outlive their
+   worker.  Theories without a source directory have no script. *)
+fun remove_evalscript expdir thy =
+  OS.FileSys.remove (evalscript_path expdir thy)
+  handle Interrupt => raise Interrupt | _ => ()
+
 fun write_evalscript expdir thy conditions sample =
   let
-    (* A theory UI is found relative to its source directory.  In
-       particular, a script in <expdir>/scripts run from hol.state cannot
-       load theories outside the default heap. *)
-    val scripts = source_script_directory thy
-    val path = join scripts
-      (".hheval_" ^ safe_component (OS.Path.file expdir) ^ "_" ^
-       safe_component thy ^ ".sml")
+    val path = evalscript_path expdir thy
     val conditions_text = String.concatWith ", " (map condition_text conditions)
     val hammer_settings = String.concat (map (fn (key, value) =>
       "val _ = hhConfig.hh_set (" ^ Portable.mlquote key ^ ", " ^
@@ -2016,17 +2024,19 @@ fun run_eval {expname, ncore, thyl, conditions} =
       val queued_names =
         map (#1 o #2) (dict_sort (fn ((a, _), (b, _)) => Int.compare (b, a))
           (map (fn state => (work_size state, state)) pending_states))
-      val queued = map (fn thy =>
-        (thy, write_evalscript expdir thy conditions sample)) queued_names
-      fun cleanup_scripts () = app (fn (_, script) =>
-        OS.FileSys.remove script handle OS.SysErr _ => ()) queued
-      fun run_workers () =
-        ((smlParallel.parapp_queue ncore
-            (fn (_, script) => smlExecScripts.exec_script script) queued;
-          cleanup_scripts ())
-         handle error => (cleanup_scripts (); raise error))
+      (* A killed driver runs no handlers; resuming the experiment sweeps
+         whatever scripts it left behind. *)
+      val _ = app (remove_evalscript expdir) thyl
+      (* Each script exists only while its worker runs, so a killed driver
+         leaves at most [ncore] of them. *)
+      fun run_worker thy =
+        let val script = write_evalscript expdir thy conditions sample in
+          (smlExecScripts.exec_script script;
+           remove_evalscript expdir thy)
+          handle error => (remove_evalscript expdir thy; raise error)
+        end
       val _ = with_flag (aiLib.scratch_dir, join expdir "out")
-        run_workers ()
+        (smlParallel.parapp_queue ncore run_worker) queued_names
       fun note_unfinished (thy, NONE) = ()
         | note_unfinished (thy, SOME cells) =
             if journal_complete (journal_path expdir thy) cells then ()
