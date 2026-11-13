@@ -5405,8 +5405,14 @@ private counter of `allocation_matrix.py`, in three tasks, one per clone.
   the timing ledger: `open` once the output exists, `resume`, and `close`
   with the status of the decisions (`pass`, `fail`, `inconclusive`) or
   `failed` when the run raised (SIGHUP and SIGTERM raise too: the
-  attempt closes failed and its scratch is removed). An attempt is of one
-  output
+  attempt closes failed and its scratch is removed). On SIGTERM, SIGINT
+  or SIGHUP the matrix driver does not wait for the cells in flight
+  (design decision 32): `loading.halt` kills the process group of every
+  measuring process at once and refuses to start another, queued cells
+  are cancelled and never start, and each interrupted cell is archived
+  rejected with the reason "terminated". So a stop leaves no record
+  admitted and the attempt void if every archive it holds is rejected.
+  An attempt is of one output
   (`allocation_attempts.attempt_id`). It is void, and its settings may be
   drawn again as a new attempt, only if it admitted no measurement:
   exactly one close, `failed`; no resume; its output exists and holds no

@@ -17,6 +17,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -134,6 +135,36 @@ class Cell(Bed):
         stub, log = make_stub(self.sb, **kw)
         grid = stub(arguments(self.out))
         return grid, log
+
+    def test_a_halt_kills_the_in_flight_process_and_rejects_the_cell(self):
+        """Decision 32: a stop signal kills the measuring process group at
+        once; the cell it was in is archived rejected as "terminated"."""
+        spawned = []
+
+        def sleeper(grid, experiment, side, pair):
+            def stop():
+                time.sleep(0.5)
+                loading.halt()
+            threading.Thread(target=stop, daemon=True).start()
+            started = time.perf_counter()
+            done = loading.execute(["sleep", "60"], self.root, os.environ,
+                                   120, ())
+            spawned.append(time.perf_counter() - started)
+            if done["exit"] != 0:
+                raise ValueError("measuring process failed")
+        self.addCleanup(loading.unhalt)
+        grid, log = self.grid(change=sleeper)
+        self.out.mkdir()
+        row = grid.cell(self.sb.job(), CASE, 0, self.out,
+                        m.load_iterations())
+        self.assertLess(spawned[0], 30)
+        self.assertEqual(row["rejected"], "terminated")
+        self.assertEqual(len(log["calls"]), 1)
+        with self.assertRaises(loading.Halted):
+            loading.execute(["true"], self.root, os.environ, 5, ())
+        loading.unhalt()
+        self.assertEqual(loading.execute(["true"], self.root, os.environ,
+                                         5, ())["exit"], 0)
 
     def test_cell_runs_ab_ba_pairs_and_archives_them(self):
         grid, log = self.grid()

@@ -158,6 +158,11 @@ TASK32_HISTORY = {
     "task32_snapshots.py": [
         {"sha256": "444e5f40c62d8529bceb87e8086d13de5ea54127559063987d4552"
                    "0a89806ac7", "bytes": 60760}],
+    "loading.py": [
+        # before the halt of in-flight processes (decision 32): the code
+        # of the kept TASK32 and TASK33 records
+        {"sha256": "c8d740773983a62af72e3ad4af728bc2"
+                   "f893e0bbc4a555d74f50eec8d7ba2440", "bytes": 85232}],
 }
 # The `task32_downstream.py` seals of the versions that made the kept
 # TASK33 records (281599302d). Only the TASK33 table and the S3 reports
@@ -175,6 +180,11 @@ TASK33_HISTORY = {
     "task32_snapshots.py": [
         {"sha256": "444e5f40c62d8529bceb87e8086d13de5ea54127559063987d4552"
                    "0a89806ac7", "bytes": 60760}],
+    "loading.py": [
+        # before the halt of in-flight processes (decision 32): the code
+        # of the kept TASK32 and TASK33 records
+        {"sha256": "c8d740773983a62af72e3ad4af728bc2"
+                   "f893e0bbc4a555d74f50eec8d7ba2440", "bytes": 85232}],
     "task33_offline.py": [
         {"sha256": "4d5a51e01704b51b2c0099704744e7c7404f29a0039094fe3a6736"
                    "49b75f7d41", "bytes": 90838},

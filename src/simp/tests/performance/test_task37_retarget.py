@@ -131,7 +131,8 @@ class StorageOptions(unittest.TestCase):
 
 class Histories(unittest.TestCase):
     def test_every_sealed_file_that_changed_keeps_its_old_seal(self):
-        for name in ("task32_downstream.py", "task32_snapshots.py"):
+        for name in ("task32_downstream.py", "task32_snapshots.py",
+                     "loading.py"):
             self.assertTrue(dw.TASK32_HISTORY[name], name)
             self.assertTrue(dw.TASK33_HISTORY[name], name)
         for name in ("task33_offline.py", "task33_storage.py",
@@ -149,6 +150,7 @@ class Histories(unittest.TestCase):
         now = dw.code_seals()
         self.assertNotIn(now["task32_downstream.py"],
                          dw.TASK32_HISTORY["task32_downstream.py"])
+        self.assertNotIn(now["loading.py"], dw.TASK32_HISTORY["loading.py"])
         self.assertNotIn(
             offline.code_seals()["task33_offline.py"],
             dw.TASK33_HISTORY["task33_offline.py"])

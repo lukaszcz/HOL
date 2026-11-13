@@ -16,6 +16,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import uuid
 
@@ -380,13 +381,50 @@ def semantic_gate(path, repo, selected):
             "candidate_sources_bound": True}
 
 
+class Halted(OSError):
+    """A process was refused, or killed, because the run is stopping."""
+
+
+_LIVE = set()  # process groups of the processes `execute` has running
+_HALT = threading.Event()
+_GUARD = threading.RLock()  # re-entrant: a signal handler may take it
+
+
+def halt():
+    """Stop the run's processes at once (a signal, TASK37 decision 32):
+    kill the process group of every process `execute` has running (each
+    runs in a session of its own) and refuse to start another, until
+    `unhalt`. The callers see the processes end (exit -9) or `Halted`."""
+    with _GUARD:
+        _HALT.set()
+        for group in list(_LIVE):
+            try:
+                os.killpg(group, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def unhalt():
+    with _GUARD:
+        _HALT.clear()
+
+
+def halted():
+    return _HALT.is_set()
+
+
 def execute(command, cwd, env, timeout, fds):
-    """Like rp.execute, but preserve serial locks in child processes."""
+    """Like rp.execute, but preserve serial locks in child processes. The
+    process is killed with its group by `halt`."""
     started = time.perf_counter()
-    proc = subprocess.Popen(command, cwd=cwd, env=env, text=True,
-                            stdin=subprocess.DEVNULL,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                            start_new_session=True, pass_fds=fds)
+    with _GUARD:
+        if _HALT.is_set():
+            raise Halted("the run is stopping: %s not started" % command[0])
+        proc = subprocess.Popen(
+            command, cwd=cwd, env=env, text=True, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            start_new_session=True, pass_fds=fds)
+        _LIVE.add(proc.pid)
     expired = False
     try:
         text, _ = proc.communicate(timeout=timeout)
@@ -398,6 +436,9 @@ def execute(command, cwd, env, timeout, fds):
         os.killpg(proc.pid, signal.SIGKILL)
         proc.communicate()
         raise
+    finally:
+        with _GUARD:
+            _LIVE.discard(proc.pid)
     return {"command": list(map(str, command)), "cwd": str(cwd),
             "exit": proc.returncode, "timed_out": expired, "stdout": text,
             "process_wall": time.perf_counter() - started,

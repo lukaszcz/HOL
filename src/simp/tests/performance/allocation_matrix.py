@@ -977,7 +977,7 @@ class Grid:
                                        receipt.get("rejection", ""))
                 self.audit(job, folder)
             except (ValueError, OSError) as error:
-                rejected = str(error)
+                rejected = "terminated" if loading.halted() else str(error)
             meta["rejected"] = rejected
             write_receipt(folder, "meta", meta)
             archive = root / (name + ".json.xz")
@@ -1713,6 +1713,10 @@ def terminating():
     def stop(number, frame):
         for other in UNWIND_SIGNALS:
             signal.signal(other, signal.SIG_IGN)
+        # Every in-flight process dies at once, and none starts: the
+        # workers unwind at once and a cell they were in is rejected as
+        # "terminated" (decision 32), not run to its end.
+        loading.halt()
         raise Terminated("signal %d" % number)
     previous = {n: signal.getsignal(n) for n in UNWIND_SIGNALS}
     try:
@@ -1721,6 +1725,7 @@ def terminating():
                 signal.signal(number, stop)
         yield
     finally:
+        loading.unhalt()
         for number, handler in previous.items():
             signal.signal(number, handler)
 
