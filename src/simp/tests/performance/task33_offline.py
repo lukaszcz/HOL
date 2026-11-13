@@ -1379,7 +1379,14 @@ LOG_FAIL = tuple(re.compile(p, re.M) for p in (
     r"^Exception- ", r"^Static Errors", r"[Uu]ncaught exception",
     r"^Holmake: .*[Ff]ail"))
 ANSI = re.compile(r"\x1b(?:\[[0-9;?]*[ -/]*[@-~]|.)")
-OK_LINE = re.compile(r"\.\.\.\s*(?:\(\S+s\)\s*)?OK\s*$", re.M)
+# What a test prints before its `OK` (src/parse/testutils.sml: `tprint`
+# prints `<text> ...` padded; `timed` then backspaces over the padding and
+# prints, in this order, `[GC = <t>] ` when the GC share of the CPU time
+# exceeds 20% and `(<t>s)` plus spaces; `OK` follows. <t> is
+# `Time.toString`, so digits with a decimal part). Colours and backspaces
+# are removed by `clean_log` before the match.
+OK_ANNOTATION = r"(?:\[GC = \d+(?:\.\d+)?\]\s*)?(?:\(\d+(?:\.\d+)?s\)\s*)?"
+OK_LINE = re.compile(r"\.\.\.\s*" + OK_ANNOTATION + r"OK\s*$", re.M)
 RAN = re.compile(r"^Ran (\d+) tests? in", re.M)
 # The last line of a unittest run: `OK`, or `OK (skipped=N)` when tests
 # were skipped (the only extra a passing run prints that we accept: an
@@ -1690,8 +1697,8 @@ def shared_ok_lines(root, group):
 def count_line(text, line):
     """How often the OK line of the tprint string `line` occurs in `text`
     (a cleaned log)."""
-    return len(re.findall(r"^%s\s*\.\.\.\s*(?:\(\S+s\)\s*)?OK\s*$" %
-                          re.escape(line), text, re.M))
+    return len(re.findall(r"^%s\s*\.\.\.\s*%sOK\s*$" %
+                          (re.escape(line), OK_ANNOTATION), text, re.M))
 
 
 def judge_pooled(group, lines, found, declared):

@@ -1266,6 +1266,27 @@ class LogTest(unittest.TestCase):
         self.assertFalse(self.judge(
             "cond-rewr-ext", good.replace("checks: 2", "checks: 0"))[0])
 
+    def test_ok_line_grammar_is_that_of_testutils(self):
+        """`timed` in src/parse/testutils.sml: `[GC = t] ` then `(ts)`."""
+        head = "process_taclist_then: Req0 succeeds without a match ..."
+        for tail in ("   OK", "   [GC = 0.000]   OK",
+                     " (0.012s)      OK", " [GC = 1.250] (3.100s)      OK",
+                     " \x08\x08\x1b[31m\x1b[1m[GC = 0.5] \x1b[0m(1s)  OK"):
+            with self.subTest(tail):
+                text = head + tail + "\n"
+                self.assertTrue(self.judge("native-extension", text)[0])
+                self.assertEqual(len(t.OK_LINE.findall(
+                    t.clean_log(text))), 1)
+        for tail in ("   [GC = x]   OK", "[GC = 0.1", "(0.1s) [GC = 0.1] OK",
+                     "[GC = 0.1] [GC = 0.1] OK", "[GC = 0.1] FAILED",
+                     "[GC = 0.1] OKAY", "(s) OK"):
+            with self.subTest(tail):
+                self.assertEqual(len(t.OK_LINE.findall(head + tail + "\n")),
+                                 0)
+        # a log cut off in a GC-annotated test is not finished
+        self.assertFalse(t.finished("a ...  OK\nb ... [GC = 0.1] \n"))
+        self.assertTrue(t.finished("a ...  OK\nb ... [GC = 0.1] (0.1s) OK\n"))
+
     def test_obs_suite(self):
         good = "x ...  OK\nOBS result=pass\n"
         self.assertTrue(self.judge("split-persistence", good)[0])
