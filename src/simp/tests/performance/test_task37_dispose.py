@@ -1,37 +1,41 @@
 #!/usr/bin/env python3
-"""The TASK37 disposition (task37_dispose.py) on synthetic inputs: every
-rule branch, the refusals, the replays, the sharded timing join and the
-record/check round trip. The identity decisions are made by the real
-`task31_identity_grid.decide` (through task37_identity.py) and the attempts
-by the real `void_attempts.attempts_of` where a test is about their format;
-the other inputs are written in the format their producers write."""
-import argparse
+"""The TASK37 disposition (task37_dispose.py, with task37_lineage.py and
+task37_gates.py): every rule branch on the loaded tables, the lineage on a
+real git repository, the timing replay through a real `Grid.replay` (the
+rig of test_timing_grid), the readers on files in the producers' formats,
+the pilot and follow-up joins, and the sealed code. The allocation case
+shape is compared with the real `allocation_analysis.case_decisions`."""
+import ast
 import contextlib
 import io
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import types
 import unittest
 from unittest import mock
 
 import acceptance as a
-import task32_cases
-import task33_dispose
+import allocation_analysis as an
+import task31_dispose as d31
+import task32_downstream as d32
 import task37_cases as c
 import task37_dispose as d
+import task37_gates as gates
 import task37_grid as grid
-import task37_identity as ti
-import task37_load as load
-import task31_identity_grid as idg
-import test_task31_identity_grid as t31
+import task37_lineage as lin
+import test_timing_grid as ttg
 import timing_grid as tg
 
-CAND = "c" * 40
+tearDownModule = ttg.tearDownModule
+
 RECORD = [dict(path="src/simp/src/Cond_rewr.sig", reason="adds a spec")]
-D4 = c.ATTRIBUTED
+D4 = c.D4
 HEAVY = c.INFEASIBLE[0]
 KEYS = grid.SHARD_KEYS
+CAND = "c" * 40
+ORIGINAL_REPLAY = d.replay_timing
 
 
 def trow(cls="pass", first=None, stage2=False, followup=False):
@@ -67,10 +71,11 @@ class Rule(unittest.TestCase):
         self.assertEqual(r["attribution"][0]["path"], RECORD[0]["path"])
 
     def test_identity(self):
-        r = self.judge("different")
-        self.assertEqual(r["status"], "fail")
+        self.assertEqual(self.judge("different")["status"], "fail")
         for status in ("unresolved", "inconclusive"):
-            self.assertEqual(self.judge(status)["status"], "incomplete")
+            r = self.judge(status)
+            self.assertEqual((r["status"], r["owed"]),
+                             ("incomplete", ["identity-rerun"]))
 
     def test_allocation(self):
         self.assertEqual(self.judge(alloc=arow("fail"))["status"], "fail")
@@ -78,8 +83,9 @@ class Rule(unittest.TestCase):
                          "fail")
         for alloc in (arow("inconclusive", pairs=None),
                       arow(work="inconclusive"), arow(work=None)):
-            self.assertEqual(self.judge(alloc=alloc)["status"],
-                             "incomplete")
+            r = self.judge(alloc=alloc)
+            self.assertEqual((r["status"], r["owed"]),
+                             ("incomplete", ["allocation-rerun"]))
         r = d.judge(self.NAME, ident(), None, None, set())
         self.assertEqual(r["status"], "incomplete")
 
@@ -87,11 +93,9 @@ class Rule(unittest.TestCase):
         self.assertEqual(self.judge(timed=trow())["status"], "pass")
         r = self.judge(timed=trow("fail"))
         self.assertEqual(r["status"], "fail")
-        # a slowdown fails whatever the other gates say
-        self.assertEqual(self.judge(alloc=arow(), timed=trow("fail"))[
-            "failed"], ["timing: fail"])
+        self.assertEqual(r["failed"], ["timing: fail"])
 
-    def test_inconclusive_never_passes(self):
+    def test_inconclusive_never_passes_and_owes_something(self):
         r = self.judge(timed=trow("inconclusive"))
         self.assertEqual((r["status"], r["owed"]), ("incomplete",
                                                     ["followup"]))
@@ -106,31 +110,40 @@ class Rule(unittest.TestCase):
         self.assertEqual((r["status"], r["owed"]), ("incomplete",
                                                     ["redraw"]))
 
-    def test_d4(self):
+    def test_every_incomplete_cell_lists_what_is_owed(self):
+        for identity in ("identical", "unresolved"):
+            for timed in (None, trow("inconclusive"),
+                          trow("control_limited"), trow("protocol")):
+                for alloc in (arow(), arow("inconclusive", pairs=None),
+                              None):
+                    r = self.judge(identity, alloc, timed)
+                    if r["status"] == "incomplete":
+                        self.assertTrue(r["owed"], r)
+
+    def test_d4_policy_only_where_it_decides(self):
         name = D4[0]
         r = self.judge(name=name, timed=trow("control_limited"))
         self.assertEqual((r["status"], r["policy"]), ("pass", "D4"))
         self.assertIn("stage 2 skipped", r["policy_note"])
-        # a fresh pass and a fresh fail decide as for any cell
-        self.assertEqual(self.judge(name=name, timed=trow())["policy"],
-                         None)
+        # a fresh pass or fail decides as for any cell, with no policy
+        r = self.judge(name=name, timed=trow())
+        self.assertEqual((r["status"], r["policy"]), ("pass", None))
         self.assertEqual(self.judge(name=name, timed=trow("fail"))[
             "status"], "fail")
-        # not in the same way: the decisive first stage was not
-        # control-limited
+        # the decisive first stage was not control-limited
         r = self.judge(name=name, timed=trow("control_limited",
                                              first="inconclusive"))
-        self.assertEqual(r["status"], "incomplete")
-        self.assertEqual(self.judge(name=name, timed=trow(
-            "inconclusive"))["status"], "incomplete")
-        # D4 still needs identity and exact allocation
-        self.assertEqual(self.judge(
-            name=name, timed=trow("control_limited"),
-            alloc=arow(work="differs"))["status"], "fail")
-        self.assertEqual(self.judge(
-            "different", name=name, timed=trow("control_limited"))[
-            "status"], "fail")
-        # and a cell that is not on the list has no such policy
+        self.assertEqual((r["status"], r["policy"]), ("incomplete", None))
+        # D4 needs identity and exact allocation: no D4 on a cell that
+        # does not pass by it
+        for kw in (dict(alloc=arow(work="differs")),
+                   dict(identity="different"),
+                   dict(identity="unresolved"),
+                   dict(alloc=arow(work="inconclusive"))):
+            r = self.judge(name=name, timed=trow("control_limited"), **kw)
+            self.assertNotEqual(r["status"], "pass")
+            self.assertIsNone(r["policy"])
+        # a cell that is not on the list has no such policy
         self.assertEqual(self.judge(timed=trow("control_limited"))[
             "status"], "incomplete")
 
@@ -139,8 +152,6 @@ class Rule(unittest.TestCase):
         self.assertEqual((r["status"], r["policy"]), ("pass", "D2"))
         self.assertEqual(d.judge(HEAVY, ident("different"), None, None,
                                  set(), None)["status"], "fail")
-        self.assertEqual(d.judge(HEAVY, ident("unresolved"), None, None,
-                                 set(), None)["status"], "incomplete")
         none = dict(allocation=[], timing=[])
         r = d.judge(HEAVY, ident("attributed"), None, None, set(), none)
         self.assertEqual((r["status"], r["owed"]), ("incomplete",
@@ -150,34 +161,189 @@ class Rule(unittest.TestCase):
         self.assertEqual(r["status"], "pass")
 
     def test_measured_by(self):
-        fam = d.family_of(HEAVY)
+        fam = d31.family_of(HEAVY)
         cells = {n: ident("attributed") for n in c.CLIENT_CELLS
-                 if d.family_of(n) == fam and n not in c.INFEASIBLE}
+                 if d31.family_of(n) == fam and n not in c.INFEASIBLE}
         alloc = {n: arow() for n in cells}
         timed = {n: trow() for n in cells if n in c.CLIENT_SAMPLE}
         got = d.measured_by(HEAVY, cells, alloc, timed)
         self.assertTrue(got["allocation"] and got["timing"])
-        self.assertTrue(all(d.size_of(n) <= 1000 for n in got["allocation"]))
-        got = d.measured_by(HEAVY, cells, {}, {})
-        self.assertEqual(got, dict(allocation=[], timing=[]))
+        self.assertTrue(all(d31.size_of(n) <= 1000
+                            for n in got["allocation"]))
+        self.assertEqual(d.measured_by(HEAVY, cells, {}, {}),
+                         dict(allocation=[], timing=[]))
+
+    def test_finish_refuses_an_incomplete_record_that_owes_nothing(self):
+        with self.assertRaisesRegex(ValueError, "owes nothing"):
+            d.finish(dict(failed=[], missing=["x"], owed=[]))
+        self.assertEqual(d.finish(dict(failed=[], missing=["x"],
+                                       owed=["stage2"]))["status"],
+                         "incomplete")
 
 
-class Cases(unittest.TestCase):
-    def test_sets(self):
-        self.assertEqual((len(c.MATRIX_CELLS), len(c.CLIENT_CELLS),
-                          len(c.DOWNSTREAM_CELLS)), (306, 278, 11))
-        self.assertEqual(len(c.CLIENT_ALLOCATED), 245)
-        self.assertEqual(len(D4), 13)
-        self.assertTrue(set(D4) <= set(c.MATRIX_SAMPLE))
-        self.assertTrue(set(c.FLAGGED) <= set(c.MATRIX_SAMPLE))
-        self.assertTrue(set(c.CLIENT_SAMPLE) <= set(c.CLIENT_CELLS) |
-                        set(c.DOWNSTREAM_CELLS))
+def table(names, status=None):
+    status = status or {}
+    return dict(cells={n: ident(status.get(n, "identical"))
+                       for n in names},
+                status="identical", unaccounted=[], attributed=[],
+                attempts=[0, 0])
 
-    def test_no_cell_set_is_defined_here(self):
-        text = (a.HERE / "task37_dispose.py").read_text()
-        for name in ("FLAGGED =", "INFEASIBLE =", "CLIENT_ALLOCATED =",
-                     "MATRIX_SAMPLE =", "CLIENT_SAMPLE =", "def d4"):
-            self.assertNotIn(name, text)
+
+def alloc_table(task, names, rows=None, pairs=3):
+    rows = rows or {}
+    return dict(rows={n: dict(arow(pairs=pairs), **rows.get(n, {}))
+                      for n in names}, pairs=pairs, attempts=[],
+                cases={"%s:k" % task: dict(
+                    slope="pass", constant="pass", failed=[], missing=[],
+                    owed=[])},
+                state=dict(status="pass", nondeterminism=0,
+                           unresolved=[], work_status="pass"))
+
+
+class Dispose(unittest.TestCase):
+    """The join on loaded tables."""
+
+    def tables(self, classes=None, identity=None, rows=None, scaling=None,
+               differing=()):
+        identity = identity or {}
+        classes = classes or {}
+        ids = dict(client=table(c.CLIENT_CELLS, identity),
+                   matrix=table(c.MATRIX_CELLS, identity),
+                   downstream=table(c.DOWNSTREAM_CELLS, identity))
+        al = dict(
+            matrix=alloc_table("task37-matrix", c.MATRIX_CELLS, rows),
+            client=alloc_table("task37-client", c.CLIENT_ALLOCATED, rows),
+            downstream=alloc_table("task37-downstream",
+                                   c.DOWNSTREAM_CELLS, rows))
+        timing = {}
+        for key in KEYS:
+            timing[grid.name_of(key)] = dict(
+                cells={n: classes.get(n, trow()) for n in grid.PARTS[key]},
+                scaling=scaling, differing=list(differing),
+                attempts=[], counts=[1, 1])
+        units = {"u1": dict(unit="u1", failed=[], missing=[], owed=[])}
+        return ids, al, timing, units, {}, {}
+
+    def test_all_pass(self):
+        r = d.dispose(*self.tables())
+        self.assertEqual(r["status"], "pass")
+        self.assertEqual(r["counts"]["fail"], 0)
+        self.assertEqual(r["owed"], [])
+
+    def test_the_default_d4_is_the_31_cells_of_cases(self):
+        seen = []
+        real = d.judge
+
+        def spy(name, identity, allocated, timed, d4, groups=None):
+            seen.append(set(d4))
+            return real(name, identity, allocated, timed, d4, groups)
+        with mock.patch.object(d, "judge", spy):
+            d.dispose(*self.tables())
+        self.assertEqual(seen[0], set(c.D4))
+        self.assertEqual(len(seen[0]), 31)
+
+    def test_d4_flag_set_only_for_a_d4_pass(self):
+        name = c.D4[0]
+        r = d.dispose(*self.tables({name: trow("control_limited")}))
+        self.assertEqual(r["cells"][name]["policy"], "D4")
+        self.assertEqual(r["policies"]["D4"], [name])
+        r = d.dispose(*self.tables({name: trow("control_limited")},
+                                   rows={name: dict(work="differs")}))
+        self.assertEqual(r["policies"]["D4"], [])
+        self.assertEqual(r["status"], "fail")
+
+    def test_owed_is_collected_and_vocabulary_is_unified(self):
+        name = [n for n in c.MATRIX_SAMPLE if n not in c.D4][0]
+        r = d.dispose(*self.tables({name: trow("control_limited")}))
+        self.assertEqual(r["status"], "incomplete")
+        self.assertIn(dict(workload=name, owed="stage2"), r["owed"])
+        self.assertEqual(gates.OWED_NAMES["second"], "stage2")
+
+    def test_source_identity_differing_is_incomplete(self):
+        r = d.dispose(*self.tables(differing=["src/x.sml"]))
+        self.assertEqual(r["status"], "incomplete")
+        self.assertTrue(r["timing_grid"]["task37-client-1"]["owed"])
+
+    def test_allocation_case_and_slope_records(self):
+        ids, al, timing, units, t33, rec = self.tables()
+        al["matrix"]["cases"]["task37-matrix:k"] = dict(
+            slope="fail", constant="pass",
+            failed=["allocation slope: fail"], missing=[], owed=[])
+        r = d.dispose(ids, al, timing, units, t33, rec)
+        self.assertEqual(r["status"], "fail")
+        self.assertEqual(r["allocation_case"]["task37-matrix:k"]["status"],
+                         "fail")
+
+    def test_retained_slope_is_a_record(self):
+        r = d.dispose(*self.tables(scaling="inconclusive"))
+        self.assertEqual(r["status"], "incomplete")
+        self.assertTrue(any(o["owed"] == "retained-slope"
+                            for o in r["owed"]))
+        r = d.dispose(*self.tables(scaling="fail"))
+        self.assertEqual(r["status"], "fail")
+
+    def test_identity_grid_status(self):
+        ids, al, timing, units, t33, rec = self.tables()
+        ids["client"]["status"] = "inconclusive"
+        r = d.dispose(ids, al, timing, units, t33, rec)
+        self.assertEqual(r["identity_grid"]["client"]["status"],
+                         "incomplete")
+        self.assertEqual(r["identity_grid"]["client"]["owed"],
+                         ["identity-rerun"])
+
+    def test_wrong_cell_set_is_refused(self):
+        ids, al, timing, units, t33, rec = self.tables()
+        ids["client"]["cells"].pop(c.CLIENT_CELLS[0])
+        with self.assertRaisesRegex(ValueError, "not the cells"):
+            d.dispose(ids, al, timing, units, t33, rec)
+
+
+def case_record(slope="pass", constant="pass"):
+    return dict(
+        cells={}, slopes=dict(setup=dict(alloc=[dict(decision=slope)])),
+        constants=dict(setup=dict(alloc=dict(decision=constant))))
+
+
+class AllocationShape(unittest.TestCase):
+    def test_case_words(self):
+        self.assertEqual(d.case_decisions(case_record()),
+                         dict(slope="pass", constant="pass"))
+        self.assertEqual(d.case_decisions(case_record("fail"))["slope"],
+                         "fail")
+        self.assertEqual(d.case_decisions(case_record(
+            "inconclusive", "fail")), dict(slope="inconclusive",
+                                           constant="fail"))
+        self.assertEqual(d.case_decisions(dict(cells={})),
+                         dict(slope="missing", constant="missing"))
+
+    def test_the_slope_shape_is_that_of_the_analysis(self):
+        # the analysis' own reader finds the slope decisions where this
+        # module reads them
+        self.assertEqual(an.case_decisions(case_record("fail")), ["fail"])
+
+    def test_case_records(self):
+        found = d.case_records("t", dict(cases=dict(
+            a=case_record(), b=case_record("fail"), c=dict(cells={}))))
+        self.assertEqual(found["t:a"]["failed"], [])
+        self.assertEqual(found["t:b"]["failed"], ["allocation slope: fail"])
+        self.assertEqual(found["t:c"]["owed"], ["allocation-rerun"])
+        self.assertEqual(len(found["t:c"]["missing"]), 2)
+
+
+class FakeLineage:
+    """What the readers need of task37_lineage.Lineage, without git."""
+    candidate = CAND
+
+    def __init__(self):
+        self.recorded = {}
+
+    def candidate_of(self, label, rev):
+        self.recorded[label] = rev
+        return rev
+
+    def harness(self, label, found, clean=False):
+        a.require(isinstance(found, dict), "%s: no harness" % label)
+        return found["head"]
 
 
 def write(path, value):
@@ -185,983 +351,658 @@ def write(path, value):
     Path(path).write_text(json.dumps(value))
 
 
-def workload(name, cls):
-    case, size = name.rsplit("-", 1)
-    metric = dict(decision="pass", reason="")
-    if cls == "fail":
-        metric = dict(decision="fail", reason="slow")
-    elif cls == "control_limited":
-        metric = dict(decision="inconclusive", reason=tg.CONTROL)
-    elif cls == "inconclusive":
-        metric = dict(decision="inconclusive", reason="wide")
-    return dict(case=case, size=int(size), protocol=cls != "protocol",
-                metrics=dict(cpu=metric))
-
-
-def identity_output(kind, names, status=None):
-    """The inventory and the decisions of an identity grid of table `kind`
-    over `names`, made by the real `decide` under the table's binding."""
-    status = status or {}
-    table = ti.tables()[kind]
-    infeasible = set(table.infeasible)
-    rows = []
-    for n in names:
-        if n in infeasible:
-            continue
-        case, size = c.split(n)
-        found = status.get(n, "identical")
-        rows.append(t31.row(
-            case, size, found, files=table.sources, attributed=[
-                dict(RECORD[0], path=RECORD[0]["path"])]
-            if found == "attributed" else ()))
-    found = t31.inventory(rows, expected=list(names))
-    found["attributed"]["file"] = a.seal(c.REVIEWED_FILE)
-    with ti.bound(table):
-        return found, idg.decide(found)
-
-
-class Inputs(unittest.TestCase):
-    """A complete synthetic input set in a temporary directory."""
+class Allocation(unittest.TestCase):
+    TASK = "task37-downstream"
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
-        self.counts = self.root / "counts"
-        self.counts.mkdir()
-        for table in grid.TABLES.values():
-            (self.counts / table.counts.name).write_text(
-                '{"counts": "%s"}' % table.name)
-        self.replays = []
-        self.attempts = []
-        self.broken = None
-        for target, value in (
-                ("COUNTS_DIR", self.counts),
-                ("required_pairs", lambda task: 3),
-                ("replay_identity", self.replay_identity),
-                ("replay_timing", self.replay_timing),
-                ("replay_allocation", self.replay_allocation),
-                ("table_attempts", lambda *args: list(self.attempts))):
-            patch = mock.patch.object(d, target, value)
-            patch.start()
-            self.addCleanup(patch.stop)
-        self.build()
+        self.ledger = self.root / "ledger"
+        self.ledger.touch()
+        patch = mock.patch.object(d, "required_pairs", lambda task: 3)
+        patch.start()
+        self.addCleanup(patch.stop)
 
-    def replay_identity(self, kind, root, repo, ledger):
-        self.replays.append(("identity", kind, Path(root).name, ledger))
-        if self.broken == ("identity", kind):
-            raise ValueError("the %s grid does not replay" % kind)
+    def make(self, status="pass", cases=None, **over):
+        harness = dict(head=CAND, dirty=False,
+                       tree_outside_performance="t")
+        write(self.root / "inventory.json", dict(
+            candidate=CAND, baseline=a.BASE, task=self.TASK, pairs=3,
+            harness=harness))
+        rows = [dict(case=n.rsplit("-", 1)[0],
+                     size=int(n.rsplit("-", 1)[1]), pairs=3,
+                     decision="pass", work="equal")
+                for n in c.DOWNSTREAM_CELLS]
+        write(self.root / "decisions.json", dict(dict(
+            candidate=CAND, baseline=a.BASE, complete=True,
+            infeasible=[], status=status, nondeterminism=[],
+            unresolved=[], work_status="pass", rows=rows,
+            cases=cases if cases is not None else {"k": case_record()}),
+            **over))
 
-    def replay_timing(self, engine, root, repo, ledger, pilot=None,
-                      replaces_pilot=None):
-        self.replays.append(("timing", engine.t.name, Path(root).name,
-                             pilot, replaces_pilot))
-        if self.broken == ("timing", engine.t.name):
-            raise ValueError("the %s output does not replay" %
-                             engine.t.name)
+    def read(self):
+        late = []
+        got = d.read_allocation(self.root, self.TASK, c.DOWNSTREAM_CELLS,
+                                (), FakeLineage(), self.ledger, late)
+        return got, late
 
-    def replay_allocation(self, root):
-        self.replays.append(("allocation", Path(root).name))
-        if self.broken == ("allocation", Path(root).name):
-            raise ValueError("the allocation does not replay")
+    def test_one_record_per_case_and_the_status_recorded(self):
+        self.make(cases={"k": case_record(), "m": case_record("fail")},
+                  status="fail")
+        got, late = self.read()
+        self.assertEqual(set(got["cases"]), {self.TASK + ":k",
+                                             self.TASK + ":m"})
+        self.assertEqual(got["state"]["status"], "fail")
+        self.assertEqual(got["state"]["nondeterminism"], 0)
+        self.assertEqual(len(late), 1)
 
-    def p(self, *parts):
-        return self.root.joinpath(*parts)
+    def test_a_grid_that_is_not_pass_and_explains_nothing_is_refused(self):
+        self.make(status="inconclusive")
+        with self.assertRaisesRegex(ValueError, "explains it"):
+            self.read()
+        self.make(status="inconclusive", unresolved=["x"])
+        self.read()
+        self.make(status="inconclusive",
+                  cases={"k": case_record("fail")})
+        self.read()
 
-    def header(self, **more):
-        return dict(dict(candidate=CAND, baseline=a.BASE,
-                         diagnostic=False), **more)
+    def test_the_pairs_are_the_tasks_own(self):
+        self.make()
+        with mock.patch.object(d, "required_pairs", lambda task: 5):
+            with self.assertRaisesRegex(ValueError, "not the task's 5"):
+                self.read()
 
-    def identity(self, name, kind, names, **status):
-        inventory, decisions = identity_output(kind, names, status)
-        write(self.p(name, "inventory.json"), inventory)
-        write(self.p(name, "decisions.json"), decisions)
-        self.p(name, "attempts.jsonl").touch()
+    def test_the_replay_and_the_ledger_run_late(self):
+        self.make()
+        calls = []
+        with mock.patch.object(d, "replay_allocation",
+                               lambda root: calls.append("replay")), \
+                mock.patch.object(d, "allocation_attempts",
+                                  lambda task, ledger: calls.append(
+                                      "ledger") or []):
+            got, late = self.read()
+            self.assertEqual(calls, [])
+            late[0][1]()
+        self.assertEqual(calls, ["replay", "ledger"])
 
-    def allocation(self, name, task, names, infeasible=(), pairs=3,
-                   rows=None):
-        write(self.p(name, "inventory.json"), self.header(
-            task=task, pairs=pairs))
-        rows = rows or {}
-        write(self.p(name, "decisions.json"), self.header(
-            complete=True, infeasible=sorted(infeasible), status="pass",
-            rows=[dict(dict(case=n.rsplit("-", 1)[0],
-                            size=int(n.rsplit("-", 1)[1]), pairs=pairs,
-                            decision="pass", work="equal"),
-                       **rows.get(n, {}))
-                  for n in names]))
+    def test_a_ledger_is_required(self):
+        self.make()
+        with self.assertRaisesRegex(ValueError, "no allocation attempts"):
+            d.read_allocation(self.root, self.TASK, c.DOWNSTREAM_CELLS, (),
+                              FakeLineage(), None, [])
 
-    def timing(self, name, key, names=None, classes=None, counts=None,
-               attempt="a1", seal=None, table=None):
-        """The final stage of shard `key`: the fields the dispose reads of
-        timing_grid's inventory and grid decision."""
-        classes = classes or {}
-        table = table or grid.TABLES[grid.name_of(key)]
-        counts = counts or table.counts.name
-        file = self.counts / counts
-        write(self.p(name, "inventory.json"), self.header(
-            schema=table.schema("experiment"), counts_file=counts,
-            iterations_seal=seal or a.seal(file), attempt=attempt))
-        write(self.p(name, "decisions.json"), dict(
-            status="inconclusive", retained_scaling=None,
-            workloads=[workload(n, classes.get(n, "pass"))
-                       for n in (grid.PARTS[key] if names is None
-                                 else names)]))
-        (self.p(name) / "ledger.jsonl").touch()
-
-    def receipts(self):
-        for gate in d.GATES + (d.D7,):
-            write(self.p(gate + ".json"), d.make_receipt(
-                gate, CAND, "pass", 0))
-
-    def build(self, classes=None):
-        classes = classes or {}
-        self.identity("id-client", "client", c.CLIENT_CELLS)
-        self.identity("id-matrix", "matrix", c.MATRIX_CELLS)
-        self.identity("id-down", "downstream", c.DOWNSTREAM_CELLS)
-        self.allocation("al-matrix", "task37-matrix", c.MATRIX_CELLS)
-        self.allocation("al-client", "task37-client", c.CLIENT_ALLOCATED,
-                        c.INFEASIBLE)
-        self.allocation("al-down", "task37-downstream", c.DOWNSTREAM_CELLS)
-        for key in KEYS:
-            self.timing("t-" + key, key, classes=classes)
-        write(self.p("task32.json"), dict(
-            candidate=CAND, status="pass", workloads={
-                u: dict(status="pass", note="first", stages=[])
-                for u in task32_cases.NAMES}))
-        keys = task33_dispose.expected_storage()
-        write(self.p("task33.json"), dict(
-            schema=task33_dispose.SCHEMA, candidate=CAND, status="pass",
-            decisions=[dict(case=k, kind=m, decision="pass", reason="",
-                            owed=None) for k, m in keys],
-            owed=[], attribution_needed=[], process_redraws=[]))
-        self.receipts()
-        for stream in ("matrix", "client"):
-            load.record(self.p("load-%s.jsonl" % stream), 1, stream, 1)
-
-    def argv(self, mode, out, drop=(), extra=()):
-        p = self.p
-        found = {
-            "identity-client": p("id-client"),
-            "identity-matrix": p("id-matrix"),
-            "identity-downstream": p("id-down"),
-            "alloc-matrix": p("al-matrix"), "alloc-client": p("al-client"),
-            "alloc-downstream": p("al-down"),
-            "task32": p("task32.json"), "task33": p("task33.json"),
-            "startup-gate": p("startup-gate.json"),
-            "loading-simplib": p("loading-simpLib.json"),
-            "loading-conglib": p("loading-congLib.json"),
-            "d7-build": p("d7-build.json")}
-        for k in drop:
-            found.pop(k.replace("_", "-"), None)
-        argv = ["--candidate", CAND[:12], "--" + mode, str(out),
-                "--repo", str(self.root)]
-        for k, v in found.items():
-            argv += ["--" + k, str(v)]
-        for kind in c_kinds():
-            if "identity_" + kind not in drop:
-                argv += ["--identity-ledger", "%s=%s" % (
-                    kind, p("id-" + {"downstream": "down"}.get(kind, kind),
-                            "attempts.jsonl"))]
-        for key in KEYS:
-            if "timing_" + key in drop:
-                continue
-            argv += ["--timing", "%s=%s" % (key, p("t-" + key)),
-                     "--ledger", "%s=%s" % (
-                         key, p("t-" + key, "ledger.jsonl"))]
-        argv += ["--load", "client-1=" + str(p("load-client.jsonl")),
-                 "--load", "matrix-1=" + str(p("load-matrix.jsonl"))]
-        return argv + list(extra)
-
-    def run_cmd(self, mode="record", out=None, drop=(), extra=()):
-        out = out or self.p("out")
-        stdout, stderr = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(stdout), \
-                contextlib.redirect_stderr(stderr):
-            rc = d.main(self.argv(mode, out, drop, extra))
-        return rc, stdout.getvalue(), stderr.getvalue()
-
-    def reset(self):
-        for name in ("disposition.json", "SUMMARY.txt"):
-            self.p("out", name).unlink(missing_ok=True)
-        if self.p("out").exists():
-            self.p("out").rmdir()
-
-    def record(self):
-        return json.loads((self.p("out") / "disposition.json").read_text())
-
-
-def realattempts(engine, root, repo, ledger):
-    return d.attempts_of(argparse.Namespace(repo=repo, ledger=ledger),
-                         engine, d.judged_attempts(engine, root))
-
-
-def c_kinds():
-    return d.KINDS
-
-
-class Command(Inputs):
-    def test_round_trip(self):
-        rc, out, err = self.run_cmd()
-        self.assertEqual((rc, err), (0, ""), out)
-        self.assertIn("TASK37 disposition: pass", out.splitlines()[-1])
-        record = self.record()
-        self.assertEqual(record["counts"]["fail"], 0)
-        self.assertEqual(len(record["cells"]), 595)
-        self.assertEqual(len(record["policies"]["D2"]), 33)
-        self.assertEqual(len(record["task32"]), 15)
-        self.assertEqual(record["allocation_pairs"], dict(
-            matrix=3, client=3, downstream=3))
-        self.assertEqual(record["candidate"], CAND)
-        self.assertEqual(sorted(record["shards"]),
-                         sorted(grid.TABLES))
-        self.assertTrue((self.p("out") / "SUMMARY.txt").is_file())
-        self.assertEqual(self.run_cmd("check", self.p("out"))[0], 0)
-        # recording again refuses to replace
-        self.assertEqual(self.run_cmd()[0], 3)
-
-    def test_every_input_is_replayed(self):
-        self.assertEqual(self.run_cmd()[0], 0)
-        found = [r[:2] for r in self.replays]
-        self.assertEqual(sorted(found), sorted(
-            [("identity", k) for k in d.KINDS] +
-            [("timing", n) for n in grid.TABLES] +
-            [("allocation", n) for n in ("al-matrix", "al-client",
-                                         "al-down")]))
-        ledgers = {r[1]: r[3] for r in self.replays if r[0] == "identity"}
-        self.assertEqual(ledgers["matrix"], self.p("id-matrix",
-                                                   "attempts.jsonl"))
-
-    def test_a_failed_replay_refuses_the_disposition(self):
-        for broken in (("identity", "matrix"), ("identity", "client"),
-                       ("timing", "task37-matrix-3"),
-                       ("timing", "task37-client-2"),
-                       ("allocation", "al-client")):
-            with self.subTest(broken):
-                self.broken = broken
-                self.reset()
-                rc, out, err = self.run_cmd()
-                self.assertEqual(rc, 3, out)
-                self.assertIn("does not replay", err)
-                self.assertFalse(self.p("out", "disposition.json").exists())
-
-    def test_check_detects_changes(self):
-        self.assertEqual(self.run_cmd()[0], 0)
-        self.assertEqual(self.run_cmd("check", self.p("out"))[0], 0)
-        self.allocation("al-down", "task37-downstream", c.DOWNSTREAM_CELLS,
-                        rows={c.DOWNSTREAM_CELLS[0]: dict(work="differs")})
-        rc, out, err = self.run_cmd("check", self.p("out"))
-        self.assertEqual(rc, 3, out)
-        self.assertIn("changed TASK37 disposition", err)
-
-    def test_check_code_history(self):
-        self.assertEqual(self.run_cmd()[0], 0)
-        path = self.p("out", "disposition.json")
-        record = json.loads(path.read_text())
-        old = dict(sha256="0" * 64, bytes=1)
-        record["code"]["acceptance.py"] = old
-        path.write_text(json.dumps(record))
-        rc, out, err = self.run_cmd("check", self.p("out"))
-        self.assertEqual(rc, 3)
-        self.assertIn("acceptance.py changed", err)
-        with mock.patch.dict(d.HISTORY, {"acceptance.py": [old]}):
-            self.assertEqual(self.run_cmd("check", self.p("out"))[0], 0)
-
-    def test_slowdown_fails(self):
-        name = c.MATRIX_SAMPLE[5]
-        self.build(classes={name: "fail"})
-        rc, out, err = self.run_cmd()
-        self.assertEqual(rc, 1, err)
-        self.assertIn("FAIL cell %s: timing: fail" % name, out)
-
-    def test_inconclusive_is_incomplete(self):
-        name = c.CLIENT_SAMPLE[0]
-        self.build(classes={name: "inconclusive"})
-        rc, out, err = self.run_cmd()
-        self.assertEqual(rc, 2, err)
-        self.assertIn(dict(workload=name, owed="followup"),
-                      self.record()["owed"])
-        self.assertEqual(self.record()["cells"][name]["status"],
-                         "incomplete")
-
-    def test_d4_policy_recorded(self):
-        self.build(classes={n: "control_limited" for n in D4})
-        rc, out, err = self.run_cmd()
-        self.assertEqual(rc, 0, err)
-        self.assertEqual(self.record()["policies"]["D4"], sorted(D4))
-        self.assertIn("policy D4", out)
-
-    def test_unsampled_cell_needs_no_timing(self):
-        self.assertEqual(self.run_cmd()[0], 0)
-        got = self.record()
-        name = next(n for n in c.MATRIX_CELLS
-                    if n not in c.MATRIX_SAMPLE)
-        self.assertEqual(got["cells"][name]["policy"], "stratified")
-        self.assertIsNone(got["cells"][name]["timing"])
-
-    def test_identity_different_fails(self):
-        name = c.MATRIX_CELLS[3]
-        self.identity("id-matrix", "matrix", c.MATRIX_CELLS,
-                      **{name: "different"})
-        self.assertEqual(self.run_cmd()[0], 1)
-
-    def test_allocation_differs_fails(self):
-        name = c.CLIENT_ALLOCATED[7]
-        self.allocation("al-client", "task37-client", c.CLIENT_ALLOCATED,
-                        c.INFEASIBLE, rows={name: dict(work="differs")})
-        rc, out, err = self.run_cmd()
-        self.assertEqual(rc, 1, err)
-        self.assertIn("allocation: the work row differs", out)
-
-    def test_void_attempts_are_recorded(self):
-        self.attempts = [dict(attempt="x", status="inconclusive",
-                              output="o", judged=False, void=True)]
-        self.assertEqual(self.run_cmd()[0], 0)
-        found = self.record()["timing_attempts"]
-        self.assertEqual(sorted(found), sorted(grid.TABLES))
-        self.assertTrue(found["task37-client-1"][0]["void"])
-
-    def test_a_refused_attempt_refuses(self):
-        def refuse(*args):
-            raise a.Blocked("attempt a2 is not void")
-        with mock.patch.object(d, "table_attempts", refuse):
-            rc, out, err = self.run_cmd()
-        self.assertEqual(rc, 3)
-        self.assertIn("not void", err)
-
-    def test_the_host_load_is_reported_and_never_a_gate(self):
-        self.assertEqual(self.run_cmd()[0], 0)
-        record = self.record()
-        self.assertEqual(sorted(record["host_load"]),
-                         ["client-1", "matrix-1"])
-        self.assertEqual(record["host_load"]["matrix-1"]["samples"], 1)
-        self.assertIn("load-matrix-1", record["inputs"])
-        # Without it the disposition is the same, but for the report.
-        self.reset()
-        rc, out, err = self.run_cmd(extra=())
-        self.reset()
-        argv = [x for x in self.argv("record", self.p("out"))]
-        i = argv.index("--load")
-        del argv[i:i + 4]
-        with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(d.main(argv), 0)
-        self.assertEqual(self.record()["host_load"], {})
-        # An absurd load changes no decision.
-        self.reset()
-        self.p("load-matrix.jsonl").write_text(json.dumps(dict(
-            stream="matrix", epoch=1, time="t", load=[999.0] * 3,
-            runnable=999, cpus=16)) + "\n")
-        self.assertEqual(self.run_cmd()[0], 0)
-        self.assertEqual(self.record()["host_load"]["matrix-1"][
-            "max_load"], [999.0] * 3)
-
-    def test_a_missing_or_malformed_load_recording_is_refused(self):
-        self.p("load-matrix.jsonl").unlink()
-        rc, out, err = self.run_cmd()
-        self.assertEqual(rc, 3)
-        self.assertIn("load recording", err)
-        self.p("load-matrix.jsonl").write_text("")
-        self.reset()
-        self.assertEqual(self.run_cmd()[0], 3)
-        rc, out, err = self.run_cmd(extra=["--load", "noequals"])
-        self.assertEqual(rc, 3)
-        self.assertIn("--load needs KEY=PATH", err)
-
-
-class Shards(Inputs):
-    def refused(self, text, **kw):
-        rc, out, err = self.run_cmd(**kw)
-        self.assertEqual(rc, 3, out)
-        self.assertIn(text, err)
-        self.assertFalse(self.p("out").exists())
-
-    def test_every_shard_is_required(self):
-        for key in KEYS:
-            with self.subTest(key):
-                self.refused("every shard is required",
-                             drop=("timing_" + key,))
-
-    def test_a_shard_needs_its_ledger(self):
-        self.p("t-matrix-2", "ledger.jsonl").unlink()
-        self.refused("no attempts ledger")
-
-    def test_unknown_or_repeated_shards_are_refused(self):
-        self.refused("--timing needs KEY=PATH with KEY one of", extra=[
-            "--timing", "matrix-9=%s" % self.p("t-matrix-1")])
-        self.refused("--timing names matrix-1 twice", extra=[
-            "--timing", "matrix-1=%s" % self.p("t-matrix-1")])
-        self.refused("--timing needs KEY=PATH", extra=["--timing", "x"])
-
-    def test_a_shard_has_exactly_its_part(self):
-        names = list(grid.PARTS["matrix-1"])
-        self.timing("t-matrix-1", "matrix-1", names[1:])
-        self.refused("not its part of the sample")
-        self.timing("t-matrix-1", "matrix-1", names + [
-            grid.PARTS["matrix-2"][0]])
-        self.refused("not its part of the sample")
-        # Another shard's cells in its place: the right count, the wrong
-        # cells.
-        self.timing("t-matrix-1", "matrix-1", grid.PARTS["matrix-2"][:len(
-            names)])
-        self.refused("not its part of the sample")
-
-    def test_the_union_must_be_the_sample(self):
-        with mock.patch.dict(grid.PARTS, {
-                "client-2": grid.PARTS["client-2"][:-1]}):
-            self.timing("t-client-2", "client-2")
-            with mock.patch.object(d.grid, "partition", lambda k: ()):
-                self.refused("do not join to the sample")
-
-    def test_the_shards_may_not_overlap(self):
-        shared = grid.PARTS["matrix-1"][0]
-        parts = dict(grid.PARTS, **{"matrix-2": grid.PARTS["matrix-2"] + (
-            shared,)})
-        with mock.patch.object(grid, "PARTS", parts):
-            self.timing("t-matrix-2", "matrix-2", parts["matrix-2"])
-            self.refused("shards overlap")
-
-    def test_the_counts_file_is_the_shards_own_and_committed(self):
-        (self.counts / "task37_matrix_3_iterations.json").write_text("{}")
-        self.refused("stale counts file")
-        self.timing("t-matrix-3", "matrix-3")
-        self.assertEqual(self.run_cmd()[0], 0)
-        self.reset()
-        self.timing("t-matrix-3", "matrix-3",
-                    counts="task37_matrix_4_iterations.json")
-        self.refused("names the counts file")
-        self.timing("t-matrix-3", "matrix-3")
-        # the un-sharded name of before is no counts file
-        (self.counts / "task37_matrix_iterations.json").write_text("{}")
-        self.timing("t-matrix-3", "matrix-3",
-                    counts="task37_matrix_iterations.json")
-        self.refused("names the counts file")
-
-    def test_a_shard_of_another_candidate_or_baseline_is_refused(self):
-        inv = json.loads(self.p("t-client-1", "inventory.json").read_text())
-        write(self.p("t-client-1", "inventory.json"), dict(
-            inv, candidate="d" * 40))
-        self.refused("another candidate")
-        write(self.p("t-client-1", "inventory.json"), dict(
-            inv, baseline="e" * 40))
-        self.refused("another baseline")
-
-    def test_each_shards_attempts_use_its_own_engine(self):
+    def test_the_adapter_names_the_part_c_function(self):
+        import allocation_matrix as am
         seen = []
-
-        def attempts(engine, root, repo, ledger):
-            seen.append((engine.t.name, Path(root).name, Path(ledger)))
-            return []
-        with mock.patch.object(d, "table_attempts", attempts):
-            self.assertEqual(self.run_cmd()[0], 0)
-        self.assertEqual(sorted(seen), sorted(
-            (n, "t-" + n[7:], self.p("t-" + n[7:], "ledger.jsonl"))
-            for n in grid.TABLES))
-
-    def test_the_timing_decision_of_a_shard_reaches_its_cells(self):
-        name = grid.PARTS["matrix-4"][2]
-        self.build(classes={name: "fail"})
-        rc, out, err = self.run_cmd()
-        self.assertEqual(rc, 1, err)
-        self.assertEqual(self.record()["cells"][name]["timing"], "fail")
+        with mock.patch.object(am, "attempts_of", create=True,
+                               new=lambda t, l: seen.append((t, l)) or []):
+            d.allocation_attempts("T", "L")
+        self.assertEqual(seen, [("T", "L")])
 
 
-class Followup(Inputs):
-    """A declared follow-up of a shard."""
+class Lineage(unittest.TestCase):
+    """The candidate equivalence, on a real repository."""
 
-    KEY = "client-1"
+    def git(self, *args):
+        return subprocess.run(
+            ["git", "-C", str(self.repo), "-c", "user.name=t", "-c",
+             "user.email=t@t", *args], check=True, text=True,
+            stdout=subprocess.PIPE).stdout.strip()
+
+    def commit(self, path, text):
+        p = self.repo / path
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text)
+        self.git("add", "-A")
+        self.git("commit", "-qm", text)
+        return self.git("rev-parse", "HEAD")
 
     def setUp(self):
-        super().setUp()
-        self.name = self.KEY and grid.name_of(self.KEY)
-        self.cell = grid.PARTS[self.KEY][1]
-        base = grid.GRIDS[self.name]
-        self.table = grid.followup_table(self.KEY, [self.cell], base)
-        engine = tg.Grid(self.table, doc="x")
-        for target, key, value in (
-                (grid.GRIDS, self.table.name, engine),
-                (grid.TABLES, self.table.name, self.table)):
-            patch = mock.patch.dict(target, {key: value})
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = Path(self.tmp.name).resolve()
+        self.git("init", "-q", ".")
+        perf = "src/simp/tests/performance/p.txt"
+        (self.repo / "src/simp/tests/performance").mkdir(parents=True)
+        (self.repo / "src/simp/tests/performance/p.txt").write_text("0")
+        self.c1 = self.commit("x.txt", "one")
+        self.c2 = self.commit(perf, "perf only")
+        self.c3 = self.commit(perf, "perf again")
+        self.other = self.commit("x.txt", "source change")
+        patch = mock.patch.object(
+            a, "HERE", self.repo / "src/simp/tests/performance")
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_only_the_checkout_that_holds_the_code(self):
+        with self.assertRaisesRegex(ValueError, "checkout that holds"):
+            lin.Lineage(self.repo / "src", self.c2)
+
+    def test_performance_only_commits_are_equivalent(self):
+        got = lin.Lineage(self.repo, self.c3)
+        self.assertEqual(got.equivalent("x", self.c2), self.c2)
+        self.assertEqual(got.equivalent("x", self.c1), self.c1)
+        self.assertEqual(got.candidate_of("t", self.c2), self.c2)
+        self.assertEqual(got.recorded["t"], self.c2)
+
+    def test_a_different_tree_is_refused(self):
+        got = lin.Lineage(self.repo, self.c3)
+        with self.assertRaisesRegex(ValueError, "tree outside"):
+            got.equivalent("x", self.other)
+
+    def test_a_non_ancestor_is_refused(self):
+        self.git("checkout", "-q", "-b", "side", self.c1)
+        side = self.commit("src/simp/tests/performance/q.txt", "side")
+        self.git("checkout", "-q", "-")
+        got = lin.Lineage(self.repo, self.c3)
+        with self.assertRaisesRegex(ValueError, "not an ancestor"):
+            got.equivalent("x", side)
+
+    def test_an_unknown_or_short_revision_is_refused(self):
+        got = lin.Lineage(self.repo, self.c3)
+        with self.assertRaisesRegex(ValueError, "no commit"):
+            got.equivalent("x", "d" * 40)
+        with self.assertRaisesRegex(ValueError, "ten hex"):
+            got.equivalent("x", "abc")
+
+    def test_harness(self):
+        got = lin.Lineage(self.repo, self.c3)
+        good = dict(head=self.c2, tree_outside_performance=got.tree,
+                    dirty=False)
+        self.assertEqual(got.harness("h", good, clean=True), self.c2)
+        with self.assertRaisesRegex(ValueError, "dirty"):
+            got.harness("h", dict(good, dirty=True))
+        with self.assertRaisesRegex(ValueError, "dirty"):
+            got.harness("h", {k: v for k, v in good.items()
+                              if k != "dirty"}, clean=True)
+        with self.assertRaisesRegex(ValueError, "another tree"):
+            got.harness("h", dict(good, tree_outside_performance="z"))
+        with self.assertRaisesRegex(ValueError, "no harness"):
+            got.harness("h", None)
+
+    def test_tie_records_the_candidate(self):
+        got = lin.Lineage(self.repo, self.c3)
+        self.assertEqual(d.tie("in", dict(candidate=self.c2), got),
+                         self.c2)
+        self.assertEqual(got.recorded["in"], self.c2)
+        with self.assertRaisesRegex(ValueError, "no candidate"):
+            d.tie("in", {}, got)
+        with self.assertRaisesRegex(ValueError, "another baseline"):
+            d.tie("in", dict(candidate=self.c2, baseline="x"), got)
+
+
+def fake_follow(table):
+    return types.SimpleNamespace(t=types.SimpleNamespace(
+        name=table + "-followup", fixed_seconds=True,
+        counts=types.SimpleNamespace(name="x"),
+        names=lambda: list(grid.PARTS[KEYS[0]][:1])))
+
+
+class Pilot(unittest.TestCase):
+    """The pilot reaches every replay of a fixed-seconds table."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.key = KEYS[0]
+        self.table = grid.name_of(self.key)
+        self.calls = []
+        self.engine = types.SimpleNamespace(
+            t=types.SimpleNamespace(
+                name=self.table, fixed_seconds=True,
+                counts=types.SimpleNamespace(name="x")),
+            h=types.SimpleNamespace(
+                attempt_counts=lambda ledger, cand: (1, 1)))
+        self.ledger = self.root / "ledger"
+        self.ledger.touch()
+        self.names = list(grid.PARTS[self.key])
+        for target, value in (
+                (d, ("timing_engine", lambda key: self.engine)),
+                (d, ("read_stage", self.stage)),
+                (d, ("check_counts", lambda *args: None)),
+                (d, ("pins_binding", lambda *args: {})),
+                (d, ("replay_timing", self.spy)),
+                (d, ("ledger_attempts", self.attempts)),
+                (d31, ("judged_attempts",
+                       lambda engine, root: {"a1": root})),
+                (tg, ("Ledger", lambda path: None))):
+            patch = mock.patch.object(target, *value)
             patch.start()
             self.addCleanup(patch.stop)
-        (self.counts / self.table.counts.name).write_text("{}")
-        self.build(classes={self.cell: "inconclusive"})
-        self.timing("f-out", self.KEY, [self.cell], table=self.table,
-                    attempt="f1")
-        write(self.p("pilot", "x"), 1)
-        write(self.p("fpilot", "x"), 1)
+        self.stages = {}
+        self.document = dict(entries=[])
 
-    def extra(self, **drop):
-        found = {"--followup": "%s=%s" % (self.KEY, self.p("f-out")),
-                 "--pilot": "%s=%s" % (self.KEY, self.p("pilot")),
-                 "--followup-pilot": "%s=%s" % (self.KEY,
-                                                self.p("fpilot"))}
-        out = []
-        for k, v in found.items():
-            if k[2:] not in drop:
-                out += [k, v]
-        return out
+    def stage(self, root, label, lineage):
+        found = self.stages.get(Path(root).name)
+        if found is None:
+            found = dict(
+                root=Path(root), first_root=Path(root),
+                inventory=dict(candidate=CAND), first_inventory={},
+                scaling=None, differing=[], seals={}, plan={},
+                final={n: "pass" for n in self.names},
+                first={n: "pass" for n in self.names})
+        return dict(found)
 
-    def test_followup_replaces_cells_and_is_replayed(self):
-        self.attempts = [dict(attempt="x", status="pass", output="o",
-                              judged=True, void=False)]
-        rc, out, err = self.run_cmd(extra=self.extra())
-        self.assertEqual(rc, 0, err)
-        chain = self.record()["cells"][self.cell]["timing_chain"]
-        self.assertTrue(chain["followup"])
-        self.assertEqual(chain["earlier"], ["inconclusive"])
-        found = [r for r in self.replays if r[1] == self.table.name]
-        self.assertEqual(len(found), 1)
-        self.assertEqual(found[0][3:], (self.p("fpilot").resolve(),
-                                        self.p("pilot").resolve()))
-        self.assertEqual(len(self.record()["timing_attempts"][self.name]),
-                         2)
+    def spy(self, engine, root, repo, ledger, pilot=None,
+            replaces_pilot=None):
+        self.calls.append(("replay", engine.t.name, pilot, replaces_pilot))
 
-    def test_without_a_follow_up_the_cell_is_owed_one(self):
-        rc, out, err = self.run_cmd()
-        self.assertEqual(rc, 2, err)
-        self.assertIn(dict(workload=self.cell, owed="followup"),
-                      self.record()["owed"])
+    def attempts(self, engine, judged, repo, ledger):
+        self.calls.append(("attempts", engine.t.name, dict(judged)))
+        return []
 
-    def test_a_follow_up_needs_both_pilots(self):
-        for drop in ("pilot", "followup-pilot"):
-            with self.subTest(drop):
-                self.reset()
-                rc, out, err = self.run_cmd(extra=self.extra(**{drop: 1}))
-                self.assertEqual(rc, 3, out)
-                self.assertIn("needs --pilot and --followup-pilot", err)
+    def options(self, **more):
+        base = dict(timing={self.key: self.root / "main"},
+                    ledger={self.key: self.ledger},
+                    pilot={self.key: self.root / "pilot"}, followup={})
+        base["followup-pilot"] = {}
+        base.update(more)
+        return base
 
-    def test_a_pilot_without_a_follow_up_is_refused(self):
-        rc, out, err = self.run_cmd(extra=self.extra(followup=1))
-        self.assertEqual(rc, 3, out)
-        self.assertIn("with no --followup", err)
+    def read(self, options, followup=None):
+        late = []
+        with mock.patch.object(d, "followup_engines",
+                               lambda: followup or {}):
+            held = d.read_shard(self.key, options, FakeLineage(), "repo",
+                                self.document, late)
+        return held, late
 
-    def test_the_follow_up_must_be_the_declared_cells(self):
-        self.timing("f-out", self.KEY, [grid.PARTS[self.KEY][2]],
-                    table=self.table, attempt="f1")
-        rc, out, err = self.run_cmd(extra=self.extra())
-        self.assertEqual(rc, 3, out)
-        self.assertIn("not the declared follow-up", err)
+    def test_the_pilot_is_required(self):
+        with self.assertRaisesRegex(ValueError, "no --pilot"):
+            self.read(self.options(pilot={}))
 
-    def test_a_follow_up_nobody_declared_is_refused(self):
-        with mock.patch.dict(grid.GRIDS):
-            del grid.GRIDS[self.table.name]
-            rc, out, err = self.run_cmd(extra=self.extra())
-        self.assertEqual(rc, 3, out)
-        self.assertIn("no follow-up is declared", err)
+    def test_the_pilot_reaches_the_main_replay_and_runs_late(self):
+        held, late = self.read(self.options())
+        self.assertEqual(self.calls, [])
+        late[0][1]()
+        replays = [x for x in self.calls if x[0] == "replay"]
+        self.assertEqual(replays, [("replay", self.table,
+                                    self.root / "pilot", None)])
+        self.assertEqual(held["counts"], [1, 1])
 
-    def test_a_stale_follow_up_counts_file_is_refused(self):
-        (self.counts / self.table.counts.name).write_text("{x}")
-        rc, out, err = self.run_cmd(extra=self.extra())
-        self.assertEqual(rc, 3, out)
-        self.assertIn("stale counts file", err)
+    def test_a_fixed_seconds_replay_without_a_pilot_is_refused(self):
+        with mock.patch.object(d, "replay_timing", ORIGINAL_REPLAY):
+            with self.assertRaisesRegex(ValueError, "needs its pilot"):
+                d.replay_timing(self.engine, self.root, "repo", None)
 
+    def test_a_declared_follow_up_is_judged_whether_or_not_given(self):
+        self.read_late = self.read(
+            self.options(), {self.table + "-followup":
+                             fake_follow(self.table)})
+        self.read_late[1][0][1]()
+        judged = [x for x in self.calls if x[0] == "attempts"]
+        self.assertEqual([x[1] for x in judged],
+                         [self.table, self.table + "-followup"])
+        self.assertEqual(judged[1][2], {})
 
-class Formats(Inputs):
-    """What the dispose reads is what the producers write."""
+    def test_a_follow_up_needs_a_declaration_and_its_pilot(self):
+        options = self.options(followup={self.key: self.root / "f"})
+        with self.assertRaisesRegex(ValueError, "no follow-up is declared"):
+            self.read(options)
+        with self.assertRaisesRegex(ValueError, "needs --followup-pilot"):
+            self.read(options, {self.table + "-followup":
+                                fake_follow(self.table)})
 
-    def test_identity_decisions_are_the_real_ones(self):
-        inventory, decisions = identity_output("downstream",
-                                               c.DOWNSTREAM_CELLS)
-        self.assertEqual(decisions["schema"], idg.DECISIONS)
-        self.assertEqual(sorted(decisions["cells"]),
-                         sorted(c.DOWNSTREAM_CELLS))
-        for key in ("status", "candidate", "baseline", "diagnostic",
-                    "unaccounted", "attributed", "cells"):
-            self.assertIn(key, decisions)
-        found = d.load_identity(
-            self.p("id-down"), "x", c.DOWNSTREAM_CELLS, CAND, "downstream",
-            self.p("id-down", "attempts.jsonl"), self.root)
-        self.assertEqual(found["status"], decisions["status"])
-        self.assertEqual(found["unaccounted"], decisions["unaccounted"])
+    def test_a_follow_up_pilot_without_a_follow_up_is_refused(self):
+        options = self.options()
+        options["followup-pilot"] = {self.key: self.root / "fp"}
+        with self.assertRaisesRegex(ValueError, "no --followup"):
+            self.read(options)
 
-    def test_an_attributed_cell_carries_its_real_record(self):
-        name = c.MATRIX_CELLS[10]
-        self.identity("id-matrix", "matrix", c.MATRIX_CELLS,
-                      **{name: "attributed"})
-        self.assertEqual(self.run_cmd()[0], 0)
-        found = self.record()["cells"][name]["attribution"]
-        self.assertEqual(found, [dict(path=RECORD[0]["path"],
-                                      reason=RECORD[0]["reason"])])
+    def test_the_follow_up_must_replace_the_shards_output(self):
+        first = self.names[0]
+        self.stages["f"] = dict(
+            root=self.root / "f", first_root=self.root / "f",
+            inventory=dict(candidate=CAND, replaces=dict(
+                grid="../elsewhere")),
+            first_inventory={}, scaling=None, differing=[], seals={},
+            plan={}, final={first: "pass"}, first={first: "pass"})
+        options = self.options(followup={self.key: self.root / "f"})
+        options["followup-pilot"] = {self.key: self.root / "fp"}
+        with self.assertRaisesRegex(ValueError, "does not replace"):
+            self.read(options, {self.table + "-followup":
+                                fake_follow(self.table)})
 
-    def test_the_infeasible_client_cells_derive_in_the_real_decision(self):
-        inventory, decisions = identity_output("client", c.CLIENT_CELLS)
-        for n in c.INFEASIBLE:
-            self.assertIn("derived from", decisions["cells"][n]["route"])
-        self.assertEqual(len(decisions["cells"]), 278)
-
-    def test_an_identity_grid_of_another_reviewed_table_is_refused(self):
-        inv = json.loads(self.p("id-matrix", "inventory.json").read_text())
-        inv["attributed"]["file"] = a.seal(
-            a.HERE / "task31_attributed.json")
-        write(self.p("id-matrix", "inventory.json"), inv)
-        rc, out, err = self.run_cmd()
-        self.assertEqual(rc, 3, out)
-        self.assertIn("not the committed", err)
-
-    def test_the_identity_ledger_is_required(self):
-        self.p("id-client", "attempts.jsonl").unlink()
-        rc, out, err = self.run_cmd()
-        self.assertEqual(rc, 3, out)
-        self.assertIn("no attempts ledger", err)
-        self.reset()
-        rc, out, err = self.run_cmd(drop=("identity_client",))
-        self.assertEqual(rc, 3, out)
-
-    def test_allocation_rows_are_those_of_cell_rows(self):
-        import allocation_matrix as am
-        task = am.task_named("task31")
-        found = am.assemble(set(), {}, {}, a.BASE, task, CAND)
-        for key in ("rows", "complete", "infeasible", "candidate",
-                    "baseline"):
-            self.assertIn(key, found)
-        cells = {("traversal_construct", 0)}
-        found = am.assemble(cells, {}, {}, a.BASE, task, CAND)
-        row, = found["rows"]
-        self.assertEqual(sorted(row), ["case", "decision", "pairs", "size",
-                                       "work"])
-        self.assertIn(row["decision"], d.DECISIONS)
-        self.assertIn(row["work"], d.WORK)
-        self.assertEqual(found["infeasible"], sorted(
-            "%s-%d" % k for k in task.infeasible))
-
-    def test_the_fields_read_from_timing_grid_exist_there(self):
-        text = (a.HERE / "timing_grid.py").read_text()
-        for field in ("counts_file", "iterations_seal", "grid_inventory",
-                      "grid_decisions", "remeasured", "plan", "attempt"):
-            self.assertIn(field, text)
-        self.assertEqual(
-            tg.Table.schema(grid.TABLES["task37-matrix-1"], "experiment"),
-            "task37-matrix-1-experiment-v1")
-        self.assertTrue(d.is_extension(dict(
-            schema=grid.TABLES["task37-matrix-1"].schema("extension"))))
-
-    def test_the_attempts_are_those_of_the_real_function(self):
-        """A ledger written by the engine: the judged attempt is found, and
-        an attempt of another output that is not void is refused (R-1)."""
-        key = "matrix-1"
-        engine = grid.GRIDS["task37-" + key]
-        ledger = self.p("real.jsonl")
-        root = self.p("t-" + key)
-        inventory = a.load(root / "inventory.json")
-        inventory["candidate"] = CAND
-        engine.record_attempt(ledger, "open", "first", inventory, root,
-                              self.root)
-        engine.close_attempt(ledger, "first", inventory, root, self.root,
-                             "pass")
-        with mock.patch.object(d, "table_attempts", types.FunctionType(
-                d.table_attempts.__code__, d.__dict__)) if False \
-                else contextlib.nullcontext():
-            pass
-        found = realattempts(engine, root, self.root, ledger)
-        self.assertEqual([(x["attempt"], x["judged"], x["void"])
-                          for x in found], [("a1", True, False)])
-        other = dict(inventory, attempt="zz")
-        engine.record_attempt(ledger, "open", "first", other,
-                              self.p("nowhere"), self.root)
-        engine.close_attempt(ledger, "first", other, self.p("nowhere"),
-                             self.root, "pass")
-        with self.assertRaises(ValueError) as caught:
-            realattempts(engine, root, self.root, ledger)
-        self.assertIn("not void", str(caught.exception))
+    def test_a_follow_up_that_replaces_the_output_gets_both_pilots(self):
+        first = self.names[0]
+        self.stages["f"] = dict(
+            root=self.root / "f", first_root=self.root / "f",
+            inventory=dict(candidate=CAND, replaces=dict(grid="../main")),
+            first_inventory={}, scaling=None, differing=[], seals={},
+            plan={}, final={first: "inconclusive"},
+            first={first: "inconclusive"})
+        options = self.options(followup={self.key: self.root / "f"})
+        options["followup-pilot"] = {self.key: self.root / "fp"}
+        # the shard's output is resolved, and so is what the follow-up
+        # names
+        (self.root / "f").mkdir()
+        (self.root / "main").mkdir()
+        held, late = self.read(options, {self.table + "-followup":
+                                         fake_follow(self.table)})
+        late[0][1]()
+        replays = [x for x in self.calls if x[0] == "replay"]
+        self.assertEqual(len(replays), 2)
+        self.assertEqual(replays[1][2:], (
+            (self.root / "fp").resolve(), (self.root / "pilot").resolve()))
+        self.assertEqual(held["cells"][first]["cls"], "inconclusive")
+        self.assertTrue(held["cells"][first]["followup"])
+        self.assertEqual(held["cells"][first]["earlier"], ["pass"])
 
 
-class Replays(unittest.TestCase):
-    """The replay functions call the producers' replays as they take them."""
+class RealReplay(ttg.Rig):
+    """`replay_timing` against a real `Grid.replay` (the rig's toy table,
+    with the pilot)."""
 
-    def test_the_identity_replay(self):
-        import task37_identity
+    def test_a_real_replay_through_replay_timing(self):
+        out, status, _ = self.first()
+        self.assertEqual(status, 0)
         seen = []
-        with mock.patch.object(task37_identity, "identity_replay",
-                               lambda args: seen.append(args) or 1):
-            d.replay_identity("matrix", Path("/x/out"), Path("/repo"),
-                              Path("/l"))
-        args, = seen
-        self.assertEqual((args.table, args.output, args.repo, args.ledger,
-                          args.attributed), ("matrix", Path("/x/out"),
-                                             Path("/repo"), Path("/l"),
-                                             None))
-        with mock.patch.object(task37_identity, "identity_replay",
-                               lambda args: 3):
-            with self.assertRaises(ValueError):
-                d.replay_identity("matrix", Path("/x"), None, None)
+        real = self.grid.replay
 
-    def test_the_timing_replay(self):
-        seen = []
-        engine = types.SimpleNamespace(
-            replay=lambda args: seen.append(args) or 2)
-        d.replay_timing(engine, Path("/x/out"), Path("/repo"), Path("/l"),
-                        pilot=Path("/p"), replaces_pilot=Path("/q"))
-        args, = seen
-        self.assertEqual((args.output, args.partial, args.repo, args.ledger,
-                          args.pilot, args.replaces_pilot),
-                         (Path("/x/out"), False, Path("/repo"), Path("/l"),
-                          Path("/p"), Path("/q")))
-        broken = types.SimpleNamespace(replay=lambda args: 3)
+        def spy(args):
+            seen.append(args.pilot)
+            return real(args)
+        self.grid.replay = spy
+        with contextlib.redirect_stdout(io.StringIO()):
+            d.replay_timing(self.grid, out, self.repo, None,
+                            pilot=self.pilot_dir)
+        self.assertEqual(seen, [self.pilot_dir])
+        self.assertTrue(self.table.fixed_seconds)
+
+    def test_a_fixed_seconds_replay_without_the_pilot_is_refused(self):
+        out, status, _ = self.first()
+        with self.assertRaisesRegex(ValueError, "needs its pilot"):
+            d.replay_timing(self.grid, out, self.repo, None)
+
+    def test_a_tampered_output_does_not_replay(self):
+        out, status, _ = self.first()
+        text = (out / "decisions.json").read_text()
+        (out / "decisions.json").write_text(text.replace(
+            '"pass"', '"fail"', 1))
         with self.assertRaises(ValueError):
-            d.replay_timing(broken, Path("/x"), None, None)
-
-    def test_the_allocation_replay(self):
-        import allocation_matrix as am
-        seen = []
-        with mock.patch.object(am, "replay",
-                               lambda args: seen.append(args) or 0):
-            d.replay_allocation(Path("/x/out"))
-        self.assertEqual(seen[0].output, Path("/x/out"))
-        with mock.patch.object(am, "replay", lambda args: 3):
-            with self.assertRaises(ValueError):
-                d.replay_allocation(Path("/x"))
-
-    def test_the_required_pairs_are_the_tasks_own(self):
-        import allocation_matrix as am
-        task = types.SimpleNamespace(pairs=3)
-        with mock.patch.object(am, "task_named", lambda n: task):
-            self.assertEqual(d.required_pairs("task37-matrix"), 3)
+            with contextlib.redirect_stdout(io.StringIO()):
+                d.replay_timing(self.grid, out, self.repo, None,
+                                pilot=self.pilot_dir)
 
 
-class Pairs(Inputs):
-    def test_the_inventory_pairs_are_the_tasks_own(self):
-        # a run of other pairs than the task's is refused, whatever it says
-        self.allocation("al-down", "task37-downstream", c.DOWNSTREAM_CELLS,
-                        pairs=2)
-        rc, out, err = self.run_cmd()
-        self.assertEqual(rc, 3, out)
-        self.assertIn("not the task's 3", err)
-        self.allocation("al-down", "task37-downstream", c.DOWNSTREAM_CELLS,
-                        pairs=10)
-        self.assertEqual(self.run_cmd()[0], 3)
+class Gates(unittest.TestCase):
+    def test_gate_records_by_status(self):
+        for status, expect in (("pass", "pass"), ("attributed", "pass"),
+                               ("fail", "fail"),
+                               ("inconclusive", "incomplete")):
+            r = gates.gate_record("g", status, ["why"], [], None)
+            self.assertEqual(d.finish(r)["status"], expect, status)
+        r = gates.gate_record("g", "attributed", [], [], None)
+        self.assertEqual((d.finish(r)["status"], r["owed"]),
+                         ("incomplete", ["attribution"]))
 
-    def test_a_passing_row_of_fewer_pairs_is_refused(self):
-        self.allocation("al-down", "task37-downstream", c.DOWNSTREAM_CELLS,
-                        rows={c.DOWNSTREAM_CELLS[0]: dict(pairs=2)})
-        rc, out, err = self.run_cmd()
-        self.assertEqual(rc, 3, out)
-        self.assertIn("fewer than the task's 3 pairs", err)
+    def test_startup_status_is_derived_and_a_null_must_pass(self):
+        header = dict(record_sha256=None)
+        got = gates.startup_gate(header, dict(decision="pass"),
+                                 dict(decision="pass"))
+        self.assertEqual(got["source"], "pass")
+        got = gates.startup_gate(header, dict(decision="smoke"),
+                                 dict(decision="pass"))
+        self.assertEqual(got["source"], "inconclusive")
+        got = gates.startup_gate(header, dict(decision="pass"),
+                                 dict(decision="fail"))
+        self.assertEqual(got["source"], "inconclusive")
+        got = gates.startup_gate(header, dict(decision="fail"),
+                                 dict(decision="fail"))
+        self.assertEqual(got["source"], "fail")
 
-    def test_the_task_and_the_cells(self):
-        self.allocation("al-down", "task37-matrix", c.DOWNSTREAM_CELLS)
-        self.assertIn("not a task37-downstream grid", self.run_cmd()[2])
-        self.allocation("al-matrix", "task37-matrix", c.MATRIX_CELLS[:-1])
-        self.assertIn("no row for", self.run_cmd()[2])
-        self.allocation("al-matrix", "task37-matrix", c.MATRIX_CELLS)
-        self.allocation("al-client", "task37-client", c.CLIENT_ALLOCATED)
-        self.assertIn("infeasible cells are not", self.run_cmd()[2])
-        self.allocation("al-client", "task37-client", c.CLIENT_CELLS,
-                        c.INFEASIBLE)
-        self.assertIn("not its", self.run_cmd()[2])
-        self.p("al-client", "decisions.json").unlink()
-        self.assertIn("partial", self.run_cmd()[2])
-
-    def test_candidate_mismatch_in_each_kind(self):
-        write(self.p("al-down", "inventory.json"), self.header(
-            task="task37-downstream", pairs=3, candidate="d" * 40))
-        rc, out, err = self.run_cmd()
-        self.assertEqual(rc, 3)
-        self.assertIn("another candidate", err)
-
-    def test_identity_cells_must_be_exact_and_not_a_diagnostic(self):
-        self.identity("id-matrix", "matrix", c.MATRIX_CELLS[:-1])
-        self.assertIn("not exactly the cells", self.run_cmd()[2])
-        self.identity("id-matrix", "matrix", c.MATRIX_CELLS)
-        doc = json.loads(self.p("id-client", "decisions.json").read_text())
-        doc["diagnostic"] = True
-        write(self.p("id-client", "decisions.json"), doc)
-        self.assertIn("diagnostic", self.run_cmd()[2])
-        self.identity("id-client", "client", c.CLIENT_CELLS)
-        self.p("id-down", "inventory.json").unlink()
-        self.assertIn("missing", self.run_cmd()[2])
-
-    def test_identity_candidate_mismatch(self):
-        write(self.p("id-matrix", "decisions.json"), dict(
-            json.loads(self.p("id-matrix", "decisions.json").read_text()),
-            candidate="d" * 40))
-        self.assertIn("another candidate", self.run_cmd()[2])
+    def test_loading_inconclusive_owes_stage2_then_attribution(self):
+        r = gates.loading_gate("loading-simpLib", dict(stage="first"),
+                               "inconclusive")
+        self.assertEqual(r["owed"], ["stage2"])
+        r = gates.loading_gate("loading-simpLib", dict(stage="second"),
+                               "inconclusive")
+        self.assertEqual(r["owed"], ["attribution"])
 
 
-class Refusals(Inputs):
-    def refused(self, text, **drop):
-        rc, out, err = self.run_cmd(drop=tuple(drop))
-        self.assertEqual(rc, 3, out)
-        self.assertIn(text, err)
+class Receipt(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.report = self.root / "report.txt"
+        self.report.write_text("report")
 
-    def test_each_input_is_required(self):
-        for opt in ("identity_client", "identity_matrix",
-                    "identity_downstream", "alloc_matrix", "alloc_client",
-                    "alloc_downstream", "task32", "task33",
-                    "startup_gate", "loading_simplib", "loading_conglib"):
-            with self.subTest(opt):
-                rc, out, err = self.run_cmd(drop=(opt,))
-                self.assertEqual(rc, 3, out)
-                self.assertIn("REFUSED", err)
+    def test_only_d7_has_a_receipt_and_it_needs_a_report(self):
+        with self.assertRaisesRegex(ValueError, "replayed"):
+            gates.make_receipt("startup-gate", CAND, "pass", 0,
+                               [self.report])
+        with self.assertRaisesRegex(ValueError, "at least one"):
+            gates.make_receipt(gates.D7, CAND, "pass", 0)
+        with self.assertRaisesRegex(ValueError, "not that of"):
+            gates.make_receipt(gates.D7, CAND, "inconclusive", 0,
+                               [self.report])
 
-    def test_d7_is_optional_and_not_a_gate(self):
-        rc, out, err = self.run_cmd(drop=("d7_build",))
-        self.assertEqual(rc, 0, err)
-        record = json.loads((self.p("out") / "disposition.json").read_text())
-        self.assertIsNone(record["reported"]["d7_build"])
-        self.p("out", "disposition.json").unlink()
-        self.p("out", "SUMMARY.txt").unlink()
-        self.p("out").rmdir()
-        write(self.p("d7-build.json"), d.make_receipt(
-            d.D7, CAND, "fail", 1))
-        rc, out, err = self.run_cmd()
-        self.assertEqual(rc, 0, err)
+    def test_round_trip_and_a_changed_report(self):
+        made = gates.make_receipt(gates.D7, CAND, "pass", 0, [self.report])
+        path = self.root / "r.json"
+        a.save(path, made)
+        got = gates.load_receipt(path, FakeLineage())
+        self.assertEqual(got["status"], "pass")
+        self.report.write_text("changed")
+        with self.assertRaisesRegex(ValueError, "changed or is missing"):
+            gates.load_receipt(path, FakeLineage())
 
-    def test_candidate_must_be_long_enough(self):
-        argv = self.argv("record", self.p("out"))
-        argv[1] = "abc"
+    def test_the_command(self):
+        out = self.root / "o.json"
+        code = d.main(["receipt", "--gate", "d7-build", "--candidate",
+                       CAND, "--status", "pass", "--exit", "0", "--out",
+                       str(out), "--report", str(self.report)])
+        self.assertEqual(code, 0)
+        self.assertEqual(a.load(out)["gate"], gates.D7)
+
+
+class Derive(unittest.TestCase):
+    """`derive` and the record/check round trip with the readers stood in
+    for: the order (replays last) and the record's assembly."""
+
+    tables = Dispose.tables
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.events = []
+        quiet = contextlib.redirect_stdout(io.StringIO())
+        quiet.__enter__()
+        self.addCleanup(quiet.__exit__, None, None, None)
+        ids, al, timing, units, t33, rec = self.tables()
+        kinds = dict(client=c.CLIENT_CELLS, matrix=c.MATRIX_CELLS,
+                     downstream=c.DOWNSTREAM_CELLS)
+
+        def late(label):
+            return lambda: self.events.append("replay " + label)
+
+        def read_identity(root, label, names, lineage, kind, ledger, repo,
+                          lates):
+            self.events.append("read " + label)
+            lates.append((label, late(label)))
+            return dict(ids[kind], seals={}, candidate=CAND)
+
+        def read_allocation(root, task, names, infeasible, lineage, ledger,
+                            lates):
+            self.events.append("read " + task)
+            lates.append((task, late(task)))
+            kind = task.split("-")[1]
+            return dict(al[kind], seals={})
+
+        def read_timing(kind, sample, options, lineage, repo, document,
+                        lates):
+            self.events.append("read timing " + kind)
+            lates.append((kind, late("timing " + kind)))
+            return {t: dict(v, seals={}, pins={}) for t, v in
+                    timing.items() if grid.KIND[t[len("task37-"):]] == kind}
+        self.fake = FakeLineage()
+        self.fake.repo, self.fake.tree = Path("."), "tree"
+        self.fake.candidate = CAND
+        receipts = {g: gates.gate_record(g, "pass", [], [], None)
+                    for g in gates.GATES}
+        patches = [
+            mock.patch.object(d.lineage_of, "Lineage",
+                              lambda repo, cand: self.fake),
+            mock.patch.object(d, "read_identity", read_identity),
+            mock.patch.object(d, "read_allocation", read_allocation),
+            mock.patch.object(d, "read_timing", read_timing),
+            mock.patch.object(d, "read_gates", lambda *args: (
+                receipts, None)),
+            mock.patch.object(gates, "read_task32", lambda p, l: (
+                units, {}, CAND)),
+            mock.patch.object(gates, "read_task33", lambda p, l: (
+                {}, [], {}, {}, CAND)),
+            mock.patch.object(gates, "replay_task32",
+                              lambda *args: self.events.append(
+                                  "replay task32")),
+            mock.patch.object(gates, "replay_task33",
+                              lambda *args: self.events.append(
+                                  "replay task33")),
+            mock.patch.object(d, "load_loads", lambda paths: ({}, {}))]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def args(self, *extra):
+        return d.parser().parse_args([
+            "--candidate", CAND, "--identity-client", "i",
+            "--identity-matrix", "i", "--identity-downstream", "i",
+            "--alloc-client", "a", "--alloc-matrix", "a",
+            "--alloc-downstream", "a", "--task32", "t",
+            "--task32-replay", "x", "--task33", "t",
+            "--task33-replay", "x", *extra])
+
+    def test_replays_come_after_every_read(self):
+        record = d.derive(self.args("--record", "o"))
+        first_replay = min(i for i, e in enumerate(self.events)
+                           if e.startswith("replay"))
+        self.assertTrue(all(e.startswith("read")
+                            for e in self.events[:first_replay]))
+        self.assertTrue(all(e.startswith("replay")
+                            for e in self.events[first_replay:]))
+        self.assertEqual(len([e for e in self.events
+                              if e.startswith("replay")]), 10)
+        self.assertEqual(record["status"], "pass")
+        self.assertEqual(record["candidates"], {})
+        self.assertEqual(record["tree_outside_performance"], "tree")
+        self.assertEqual(set(record["attempts"]),
+                         {"identity", "allocation", "timing_ledger"})
+
+    def test_record_then_check(self):
+        out = self.root / "out"
+        self.assertEqual(d.disposition(self.args("--record", str(out))), 0)
+        self.assertTrue((out / "SUMMARY.txt").is_file())
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(d.disposition(
+                self.args("--check", str(out))), 0)
+        held = json.loads((out / "disposition.json").read_text())
+        held["status"] = "fail"
+        (out / "disposition.json").write_text(json.dumps(held))
+        with self.assertRaisesRegex(ValueError, "changed TASK37"):
+            d.disposition(self.args("--check", str(out)))
+        with self.assertRaisesRegex(ValueError, "refusing to replace"):
+            d.disposition(self.args("--record", str(out)))
+
+
+class Command(unittest.TestCase):
+    def test_keyed(self):
+        self.assertEqual(d.keyed(["a=/x"], "o"), dict(a=Path("/x")))
+        with self.assertRaisesRegex(ValueError, "twice"):
+            d.keyed(["a=/x", "a=/y"], "o")
+        with self.assertRaisesRegex(ValueError, "needs KEY=PATH"):
+            d.keyed(["b=/x"], "o", ("a",))
+        with self.assertRaisesRegex(ValueError, "needs KEY=PATH"):
+            d.keyed(["nonsense"], "o")
+
+    def test_the_parser_has_the_pilot_and_ledger_options(self):
+        args = d.parser().parse_args(
+            ["--candidate", "c" * 10, "--pilot", "client-1=p",
+             "--alloc-ledger", "task37-client=l", "--record", "o",
+             "--identity-ledger", "client=i"])
+        self.assertEqual(args.pilot, ["client-1=p"])
+        self.assertEqual(args.alloc_ledger, ["task37-client=l"])
+        self.assertEqual(args.identity_ledger, ["client=i"])
+
+    def test_the_followup_accessor(self):
+        self.assertEqual(d.followup_engines(), {
+            n: e for n, e in grid.GRIDS.items()
+            if n.endswith("-followup")})
+        engines = {grid.name_of("client-1") + "-followup": "E"}
+        with mock.patch.object(d, "followup_engines", lambda: engines):
+            self.assertEqual(d.followup_of("client-1"), "E")
+            self.assertIsNone(d.followup_of("client-2"))
+
+    def test_main_refuses_with_three(self):
         err = io.StringIO()
-        with contextlib.redirect_stderr(err), \
-                contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(d.main(argv), 3)
+        with contextlib.redirect_stderr(err):
+            code = d.main(["--candidate", "x", "--record",
+                           "/nonexistent/out"])
+        self.assertEqual(code, tg.REFUSED)
+        self.assertIn("REFUSED", err.getvalue())
 
-    def test_task32_needs_candidate_and_units(self):
-        doc = json.loads(self.p("task32.json").read_text())
-        write(self.p("task32.json"), dict(doc, candidate="d" * 40))
-        self.refused("another candidate")
-        doc.pop("candidate")
-        write(self.p("task32.json"), doc)
-        self.refused("records no candidate")
-        doc["candidate"] = CAND
-        doc["workloads"].pop("rat")
-        write(self.p("task32.json"), doc)
-        self.refused("exactly the 15 units")
 
-    def test_task32_rows(self):
-        doc = json.loads(self.p("task32.json").read_text())
-        doc["workloads"]["rat"] = dict(status="followup", note="x",
-                                       stages=[])
-        doc["status"] = "blocked"
-        write(self.p("task32.json"), doc)
-        rc, out, err = self.run_cmd()
-        self.assertEqual(rc, 2, err)
-        record = json.loads((self.p("out") / "disposition.json").read_text())
-        self.assertIn(dict(workload="rat", owed="followup"),
-                      record["owed"])
-        doc["workloads"]["rat"] = dict(status="fail", note="x", stages=[])
-        doc["status"] = "fail"
-        write(self.p("task32.json"), doc)
-        self.p("out", "disposition.json").unlink()
-        self.p("out", "SUMMARY.txt").unlink()
-        self.p("out").rmdir()
-        self.assertEqual(self.run_cmd()[0], 1)
-
-    def test_task33_rows(self):
-        doc = json.loads(self.p("task33.json").read_text())
-        doc["decisions"][0]["decision"] = "inconclusive"
-        doc["status"] = "inconclusive"
-        write(self.p("task33.json"), doc)
-        self.assertEqual(self.run_cmd()[0], 2)
-        self.p("out", "disposition.json").unlink()
-        self.p("out", "SUMMARY.txt").unlink()
-        self.p("out").rmdir()
-        doc["decisions"][0]["decision"] = "fail"
-        doc["status"] = "fail"
-        write(self.p("task33.json"), doc)
-        self.assertEqual(self.run_cmd()[0], 1)
-
-    def test_task33_incomplete_or_inconsistent(self):
-        doc = json.loads(self.p("task33.json").read_text())
-        write(self.p("task33.json"), dict(doc, decisions=doc[
-            "decisions"][1:]))
-        self.refused("no decision for")
-        write(self.p("task33.json"), dict(doc, status="fail"))
-        self.refused("status is not that")
-        write(self.p("task33.json"), dict(doc, schema="x"))
-        self.refused("not a TASK33")
-
-    def test_receipts(self):
-        write(self.p("startup-gate.json"), d.make_receipt(
-            "startup-gate", CAND, "fail", 1))
-        self.assertEqual(self.run_cmd()[0], 1)
-        write(self.p("startup-gate.json"), d.make_receipt(
-            "startup-gate", CAND, "inconclusive", 2))
-        self.p("out", "disposition.json").unlink()
-        self.p("out", "SUMMARY.txt").unlink()
-        self.p("out").rmdir()
-        self.assertEqual(self.run_cmd()[0], 2)
-        write(self.p("startup-gate.json"), d.make_receipt(
-            "loading-simpLib", CAND, "pass", 0))
-        self.refused("not a startup-gate receipt")
-        write(self.p("startup-gate.json"), d.make_receipt(
-            "startup-gate", "d" * 40, "pass", 0))
-        self.refused("another candidate")
-
-    def test_receipt_attributed_needs_text_and_report_seal(self):
-        report = self.p("report.txt")
-        report.write_text("x")
-        write(self.p("startup-gate.json"), d.make_receipt(
-            "startup-gate", CAND, "attributed", 0, [report],
-            ["Cond_rewr.sig +2001 words"]))
-        self.assertEqual(self.run_cmd()[0], 0)
-        self.p("out", "disposition.json").unlink()
-        self.p("out", "SUMMARY.txt").unlink()
-        self.p("out").rmdir()
-        report.write_text("changed")
-        self.refused("changed or is missing")
-        write(self.p("startup-gate.json"), d.make_receipt(
-            "startup-gate", CAND, "attributed", 0))
-        self.assertEqual(self.run_cmd()[0], 2)
-
-    def test_make_receipt_checks(self):
-        with self.assertRaises(ValueError):
-            d.make_receipt("startup-gate", CAND, "pass", 1)
-        with self.assertRaises(ValueError):
-            d.make_receipt("nope", CAND, "pass", 0)
-
-    def test_receipt_command(self):
-        out = self.p("r.json")
-        rc = d.main(["receipt", "--gate", "loading-congLib",
-                     "--candidate", CAND, "--status", "pass", "--exit",
-                     "0", "--out", str(out)])
-        self.assertEqual(rc, 0)
-        self.assertEqual(json.loads(out.read_text())["gate"],
-                         "loading-congLib")
+def local_imports(path):
+    """Every module name imported anywhere in a file, function-local
+    imports included (by `ast`)."""
+    found = set()
+    for node in ast.walk(ast.parse(Path(path).read_text())):
+        if isinstance(node, ast.Import):
+            found |= {n.name.split(".")[0] for n in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            found.add(node.module.split(".")[0])
+    return found
 
 
 class Code(unittest.TestCase):
     def test_code_files_exist(self):
         for name in d.CODE:
             self.assertTrue((a.HERE / name).is_file(), name)
+        self.assertEqual(len(set(d.CODE)), len(d.CODE))
 
-    def test_the_engine_and_module_names_are_the_merged_ones(self):
-        self.assertIn("task37_identity.py", d.CODE)
-        self.assertNotIn("task37_matrix_identity.py", d.CODE)
-        self.assertNotIn("task30_dispose.py", d.CODE)
-        text = (a.HERE / "task37_dispose.py").read_text()
-        for stale in ("matrix_identity", "ENGINES_BY_KIND",
-                      "timing_engines", "task37_grid.ENGINES",
-                      "task37_client_iterations", "iterations.json\"",
-                      "task37_matrix_iterations"):
-            self.assertNotIn(stale, text)
+    def test_every_imported_module_is_sealed_function_local_too(self):
+        todo = ["task37_dispose", "task37_gates", "task37_lineage",
+                "task37_cases", "task37_identity", "task37_grid"]
+        seen = set()
+        while todo:
+            name = todo.pop()
+            if name in seen or not (a.HERE / (name + ".py")).is_file():
+                continue
+            seen.add(name)
+            todo += sorted(local_imports(a.HERE / (name + ".py")))
+        missing = sorted(n for n in seen if n + ".py" not in d.CODE)
+        self.assertEqual(missing, [])
 
-    def test_modules_imported_are_sealed(self):
-        text = (a.HERE / "task37_dispose.py").read_text()
-        import re
-        found = set(re.findall(r"^(?:import|from) (\w+)", text, re.M))
-        for name in found:
-            if (a.HERE / (name + ".py")).is_file():
-                self.assertIn(name + ".py", d.CODE)
+    def test_the_ast_finds_a_function_local_import(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "m.py"
+            f.write_text("def f():\n    import hidden_module\n")
+            self.assertIn("hidden_module", local_imports(f))
 
-    def test_no_pair_constant(self):
+    def test_note_second_is_imported_not_copied(self):
+        self.assertIs(gates.NOTE_SECOND, d32.NOTE_SECOND)
+        text = (a.HERE / "task37_gates.py").read_text()
+        self.assertNotIn('NOTE_SECOND = "', text)
+
+    def test_no_stale_claims(self):
         text = (a.HERE / "task37_dispose.py").read_text()
-        self.assertNotRegex(text, r"pairs[\"\]]*\s*>=\s*10")
-        self.assertNotIn("am.PAIRS", text)
+        self.assertNotIn("nothing is looked up in the repository", text)
+        self.assertNotIn("same_rev", text)
 
     def test_check_code_refusals(self):
-        seals = {n: a.seal(a.HERE / n) for n in d.CODE}
-        with mock.patch.object(d, "CODE", tuple(seals)):
-            d.check_code(seals)
-            with self.assertRaises(ValueError):
-                d.check_code({})
-            changed = dict(seals, **{"acceptance.py": dict(
-                sha256="0" * 64, bytes=1)})
-            with self.assertRaises(ValueError):
-                d.check_code(changed)
-
-    def test_same_rev(self):
-        self.assertTrue(d.same_rev("7e202dfbaa", "7e202dfbaa" + "1" * 30))
-        self.assertFalse(d.same_rev("7e202df", "7e202dfbaa" + "1" * 30))
-        self.assertFalse(d.same_rev("7e202dfbab", "7e202dfbaa" + "1" * 30))
+        with self.assertRaisesRegex(ValueError, "recorded code"):
+            d.check_code({})
+        now = d.seals()
+        d.check_code(now)
+        bad = dict(now, **{d.CODE[0]: dict(sha256="0")})
+        with self.assertRaisesRegex(ValueError, "changed"):
+            d.check_code(bad)
+        with mock.patch.object(d, "HISTORY",
+                               {d.CODE[0]: [bad[d.CODE[0]]]}):
+            d.check_code(bad)
 
 
 if __name__ == "__main__":

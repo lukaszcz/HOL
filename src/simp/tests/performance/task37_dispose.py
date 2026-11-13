@@ -5,9 +5,10 @@ TASK37 reruns the final performance gate at the final candidate. This
 command joins what the measurement stages produced into ONE disposition
 (`disposition.json`, with a short `SUMMARY.txt`), the way `task31_dispose.py`
 joins TASK31's three gates. Every input is named by an explicit path
-option: nothing is looked up in the repository, and the streams of the
-measurement may live in different clones (each timing table has its own
-ledger). A missing input is a refusal, never a pass.
+option, and the streams of the measurement may live in different clones
+(each timing table has its own ledger). A missing input is a refusal, never
+a pass. The one thing it looks up is git: the commits the inputs name are
+looked up in the checkout that holds this code.
 
 TASK37 protocol (the decision rule is design decision 11)
 ---------------------------------------------------------
@@ -20,9 +21,9 @@ sets, samples and policy lists are defined. A cell passes if and only if
 - identity: its row in the identity table of its kind is `identical` or
   `attributed` (`different` fails; anything else is not a decision);
 - allocation: the allocation task of its kind decided `pass` with a work
-  row `equal`, from at least the task's own number of pairs (taken from the
-  task's own, `allocation_matrix.task_named(task).pairs`, which its
-  inventory must record, never a constant here);
+  row `equal`, from at least the task's own number of pairs
+  (`allocation_matrix.task_named(task).pairs`, which its inventory must
+  record, never a constant here);
 - timing, where the cell is sampled: the timing table decided `pass`.
 
 An unsampled cell passes on identity and exact allocation (the stratified
@@ -37,77 +38,110 @@ Policies carried over, each recorded on the cell:
   identity-only; an attributed one also needs its family's measured cells
   (an allocation cell of at most 1000 assumptions that passed with an
   attributed identity, and a passing timing cell of the sample).
-- D4: the thirteen cells of `task37_cases.ATTRIBUTED` (TASK30's attributed
-  cells) get a fresh decision. The only carry-over: a timing chain whose
-  decisive first stage is control-limited is not owed a second stage; the
-  cell is then a pass with policy `D4` (its identity and exact allocation
-  still required). A pass or a fail of any stage decides as for any cell.
+- D4 (design decision 16): the 31 cells of `task37_cases.D4` (13 TASK29A
+  control-limited, 5 TASK29A attributed, 13 TASK30 attributed) get a fresh
+  decision. The only carry-over: a timing chain whose decisive first stage
+  is control-limited is not owed a second stage, and the cell is a pass with
+  policy `D4` when its identity is identical or attributed and its exact
+  allocation passes with its work rows `equal`. The policy is recorded on a
+  cell that passes by it, and on no other. A pass or a fail of any stage
+  decides as for any cell; any other control-limited cell is owed stage 2.
 - R-1: every attempt of a timing table in its ledger is judged or void
-  (`void_attempts.attempts_of`, through the shard's engine in
-  `task37_grid.GRIDS`); the attempts are recorded.
+  (`void_attempts.attempts_of`, through the shard's engine), the
+  follow-up's table (when one is declared) whether or not it is named, and
+  the allocation tasks' (`--alloc-ledger`: see ALLOCATION LEDGER below).
 
 Inconclusive never passes. A cell with no decision is `incomplete`, and
-what is owed is listed explicitly on it (`stage2`, `followup`,
-`attribution`, `redraw`) and in the top-level `owed`. A control-limited or
-inconclusive cell with no stage left is `blocked` (still incomplete, owing
-an attribution).
+what is owed is listed explicitly on it and in the top-level `owed`:
+`stage2`, `followup`, `attribution`, `redraw`, `identity-rerun`,
+`allocation-rerun`, `retained-slope`. TASK33's `second` is `stage2` here. A
+control-limited or inconclusive cell with no stage left is `blocked` (still
+incomplete, owing an attribution).
+
+Lineage (design decision 17). Dispose runs in the checkout that holds this
+code (`--repo` is that checkout or is refused). Every input records the
+candidate it was measured at; each is accepted only when it is a commit of
+that checkout, an ancestor of its HEAD, and has the tree outside the
+performance area of `--candidate` (`task37_lineage.Lineage`). Every
+checkout or harness an input records (identity and timing `checkout`,
+allocation `harness`, the startup gate's) must be clean and have that tree
+too, and an identity row's head is its own inventory's candidate. Every
+accepted revision is recorded per input (`candidates`).
 
 Timing inputs. The client sample (39 cells) runs as 2 shards and the matrix
 sample (87 cells) as 4 (`task37_grid.SHARDS`; design decision 14), each with
 its own ledger, in its own clone. Every shard is required, with the final
-stage directory (`--timing SHARD=DIR`: `inventory.json` and `decisions.json`
-of timing_grid; an extension names its first stage by `grid`, whose seals it
-carries and which is read too) and its ledger (`--ledger SHARD=FILE`); the
-cells of a shard's decisions are exactly its part of the sample
+stage directory (`--timing SHARD=DIR`: an extension names its first stage by
+`grid`, whose seals it carries and which is read too), its ledger
+(`--ledger SHARD=FILE`) and its pilot (`--pilot SHARD=DIR`: a table with
+fixed seconds is replayed with its pilot, the second stage too). The cells of
+a shard's decisions are exactly its part of the sample
 (`task37_grid.PARTS`), and the union of the shards' decisions is exactly the
-sample. A shard may have the declared follow-up of `task37_grid.
-FOLLOWUP_CELLS` (`--followup SHARD=DIR` with `--pilot SHARD=DIR` and
-`--followup-pilot SHARD=DIR`, which its replay needs), whose cells replace
-the shard's for those cells. The counts file an inventory names must be the
-shard's committed one (`counts_file` is the table's file and
-`iterations_seal` its seal now: a stale counts file is refused).
+sample. A declared follow-up of a shard (the engines `followup_engines`
+names) is judged for R-1 whether or not it is given; given
+(`--followup SHARD=DIR --followup-pilot SHARD=DIR`) it must replace exactly
+the shard's `--timing` output, and its cells replace the shard's. The counts
+file an inventory names must be the shard's committed one, and every
+inventory, resumption and first stage carries the pins of the committed
+`task37_attributed.json` for the shard's sources (the table's seal is
+recorded). A stage whose `source_identity.differing` is not empty is
+incomplete.
 
-Replays. The disposition does not only read and seal JSON: it replays every
-input, and a replay that fails refuses the disposition. Each identity table
-is replayed by `task37_identity.identity_replay` (archives, decisions, code
-seals, the reviewed table, the opening in `--identity-ledger KIND=FILE`);
-each timing shard and follow-up by its engine's `replay` (`task37_grid.
-GRIDS[table]`); each allocation task by `allocation_matrix.replay` (the task
-is the inventory's own). The identity tables were judged by the committed
-`task37_attributed.json` (their inventories' recorded seal is required to be
-its seal). The replays need the checkout of the grids' candidate (`--repo`).
+Replays (everything is replayed; a failed replay refuses). All reads, ties
+and checks come first, the replays last. Identity tables:
+`task37_identity.identity_replay`, with the opening in
+`--identity-ledger KIND=FILE` (never a fixed path) and the attempts
+recorded; timing shards and follow-ups: the engine's `replay` with its
+pilot (a follow-up with its own and the shard's: `engine.replay`'s
+provenance check refuses a fixed-seconds table without one); allocation:
+`allocation_matrix.replay`. The statuses of TASK32, TASK33, the startup gate
+and loading are those of their archives, whose replays recompute them
+(`task37_gates.py` says what each re-derives and what it cannot):
+
+    --task32 FILE --task32-replay ARGS   the disposition and the arguments of
+        its `task32_downstream.py dispose` (without --out)
+    --task33 FILE --task33-replay ARGS   the same for `task33_storage.py
+        dispose` (under --declared task37_declared.json)
+    --startup-gate DIR --startup-null DIR [--startup-record FILE]
+    --loading-simplib DIR --loading-conglib DIR [--loading-ledger FILE]
+
+Allocation grid. For each task: the grid's `status`, `nondeterminism` and
+`unresolved` are recorded, and one record per (task, case) decides the
+slopes and the size-zero constants from `decisions["cases"][CASE]["slopes"]`
+and `["constants"]` (each: {phase: {metric: [row] / row}} with a `decision`);
+a grid that is not `pass` with nothing that explains it (no row that is not
+pass/equal, no case record, no nondeterminism, no unresolved cell) is
+refused. ASSUMPTION (part C, not merged when this was written): the
+3-pair TASK37 tasks keep these keys.
+
+ALLOCATION LEDGER. `--alloc-ledger TASK=FILE` (one for each task) is judged
+by `allocation_matrix.attempts_of(task, ledger)`, expected to return what
+`void_attempts.attempts_of` returns. ASSUMPTION (part C): that function and
+`Task.pairs` exist once it merges; `allocation_attempts` is the one adapter.
 
 Host load. `--load STREAM=FILE` (repeatable, optional) names a recording of
 `task37_load.py record`; its summary (`task37_load.summarize`) is copied into
-the record under `host_load` and printed, reported only and never a gate.
-
-Other inputs. Identity tables: `task37_identity.py` (`task37-client-identity`,
-`task37-matrix-identity`, `task37-downstream-identity`), each a directory
-with `inventory.json` and `decisions.json` of `task31_identity_grid.decide`.
-Allocation: three `allocation_matrix` outputs (`task37-matrix`,
-`task37-client`, `task37-downstream`). TASK32: the disposition of
-`task32_downstream.py` (15 units; `followup` and `second stage owed` rows are
-owed, other blocked rows are blocked). TASK33: `task33_dispose.py`'s
-`disposition.json` (every expected storage decision present; its `owed`,
-`reported`, `attribution_needed` and `process_redraws` are carried). Both
-must carry a top-level `candidate` field: the candidate they were measured
-at. The startup gate and the two loading gates are receipts (`receipt`
-below), and the D7 build timing receipt is reported only, never a gate.
+the record under `host_load` and printed, reported only and never a gate. The
+D7 build timing receipt (`receipt`, with at least one sealed report) is
+reported only.
 
 Commands
 
-    task37_dispose.py --candidate REV --repo CHECKOUT
+    task37_dispose.py --candidate REV [--repo CHECKOUT]
         --identity-{client,matrix,downstream} DIR
         --identity-ledger KIND=FILE (three)
         --alloc-{matrix,client,downstream} DIR
-        --timing SHARD=DIR --ledger SHARD=FILE   (every shard)
-        [--followup SHARD=DIR --pilot SHARD=DIR --followup-pilot SHARD=DIR]
+        --alloc-ledger TASK=FILE (three)
+        --timing SHARD=DIR --ledger SHARD=FILE --pilot SHARD=DIR (6 each)
+        [--followup SHARD=DIR --followup-pilot SHARD=DIR]
         [--load STREAM=FILE ...]
-        --task32 FILE --task33 FILE --startup-gate FILE
-        --loading-simplib FILE --loading-conglib FILE [--d7-build FILE]
+        --task32 FILE --task32-replay ARGS --task33 FILE
+        --task33-replay ARGS --startup-gate DIR --startup-null DIR
+        [--startup-record FILE] --loading-simplib DIR --loading-conglib DIR
+        [--loading-ledger FILE] [--d7-build FILE]
         (--record OUTDIR | --check OUTDIR)
-    task37_dispose.py receipt --gate NAME --candidate REV --status S
-        --exit N --out FILE [--report FILE ...] [--attribution TEXT ...]
+    task37_dispose.py receipt --gate d7-build --candidate REV --status S
+        --exit N --out FILE --report FILE [--report FILE ...]
 
 `--record` writes OUTDIR/disposition.json and OUTDIR/SUMMARY.txt (OUTDIR
 must be new). `--check` derives the decisions again from the inputs and
@@ -121,44 +155,55 @@ Unsupported: aarch64 Linux only, Poly/ML 5.9.2, allocation only with the
 private counter, RSS reported only (recorded as `scope`).
 """
 import argparse
-import contextlib
-import io
 import json
 from pathlib import Path
 import sys
 
 sys.dont_write_bytecode = True
 import acceptance as a
+import task31_dispose as d31
 import task31_pins as reviewed
 import task37_cases as cases
+import task37_gates as gates
 import task37_grid as grid
+import task37_lineage as lineage_of
 import task37_load as load
 import timing_grid as tg
 from void_attempts import attempts_of
 
 SCHEMA = "task37-disposition-v1"
-RECEIPT_SCHEMA = "task37-receipt-v1"
 SCOPE = ("aarch64 Linux only; Poly/ML 5.9.2; allocation only with the "
          "private counter; RSS reported only")
-GATES = ("startup-gate", "loading-simpLib", "loading-congLib")
-D7 = "d7-build"
-RECEIPT_STATUS = ("pass", "attributed", "fail", "inconclusive")
+GATES = gates.GATES
+D7 = gates.D7
 # Where the committed counts files are (tests point this elsewhere).
 COUNTS_DIR = a.HERE
 KINDS = ("client", "matrix", "downstream")
 TASKS = dict(client="task37-client", matrix="task37-matrix",
              downstream="task37-downstream")
-# Every module whose decision or seal the record depends on.
-CODE = ("task37_dispose.py", "task37_cases.py", "task37_identity.py",
-        "task37_grid.py", "task37_load.py", "task31_identity_grid.py",
-        "task31_cases.py", "task31_pins.py", "task32_downstream.py",
-        "task32_cases.py", "task33_dispose.py", "task33_rules.py",
-        "task33_storage.py", "timing_grid.py", "acceptance.py",
+# Every module whose decision or seal the record depends on: the modules
+# this one, the gates, the lineage, the cell sets and the tables import (a
+# test pins it, function-local imports included).
+CODE = ("task37_dispose.py", "task37_gates.py", "task37_lineage.py",
+        "task37_cases.py", "task37_identity.py", "task37_grid.py",
+        "task37_load.py", "task31_dispose.py", "task31_identity_grid.py",
+        "task31_identity.py", "task31_attribution.py", "task31_cases.py",
+        "task31_followup.py", "task31_grid.py", "task31_pins.py",
+        "task30_cases.py", "task30_grid.py", "task29_gate.py",
+        "task29a_grid.py", "task32_downstream.py", "task32_cases.py",
+        "task33_dispose.py", "task33_rules.py", "task33_storage.py",
+        "startup_gate.py", "loading.py", "timing_grid.py", "acceptance.py",
         "void_attempts.py", "allocation_matrix.py", "allocation_schema.py",
-        "allocation_analysis.py", "matrix_schema.py")
+        "allocation_analysis.py", "matrix_schema.py", "evidence_bundle.py",
+        "allocation_boundary.py", "audit_evidence.py", "path_schema.py",
+        "performance_schema.py", "runtime_metrics.py", "summarize.py",
+        "task30_pins.py", "task31_snapshot.py", "task32_dat.py",
+        "task32_snapshots.py", "task33_cases.py", "task33_offline.py",
+        "task33_records.py")
 HISTORY = {}
 
 STATUS_FAIL, STATUS_INCOMPLETE, STATUS_PASS = "fail", "incomplete", "pass"
+FOLLOWUP_SUFFIX = "-followup"
 
 
 def seals():
@@ -185,34 +230,24 @@ def canonical(value):
     return json.dumps(value, sort_keys=True)
 
 
-def same_rev(given, found):
-    """Whether two revisions are the same, one possibly abbreviated (at
-    least ten digits)."""
-    if not (isinstance(given, str) and isinstance(found, str)):
-        return False
-    short, long = sorted((given, found), key=len)
-    return len(short) >= 10 and long.startswith(short)
-
-
-def tie(label, document, candidate, baseline=True):
-    """The document is of the candidate (and of the pinned baseline)."""
-    found = document.get("candidate") if isinstance(document, dict) else None
-    a.require(found is not None, "%s records no candidate" % label)
-    a.require(same_rev(candidate, found),
-              "%s is of another candidate (%s, not %s)" % (
-                  label, found, candidate))
-    if baseline and "baseline" in document:
-        a.require(document["baseline"] == a.BASE,
-                  "%s is against another baseline (%s)" % (
-                      label, document["baseline"]))
-    return found
-
-
 def read(path, label):
     a.require(path is not None, "no %s given" % label)
     path = Path(path)
     a.require(path.is_file(), "%s is missing: %s" % (label, path))
     return a.load(path)
+
+
+def tie(label, document, lineage, baseline=True):
+    """The document is of an equivalent candidate (and of the pinned
+    baseline); returns the candidate it records."""
+    found = document.get("candidate") if isinstance(document, dict) else None
+    a.require(found is not None, "%s records no candidate" % label)
+    full = lineage.candidate_of(label, found)
+    if baseline and "baseline" in document:
+        a.require(document["baseline"] == a.BASE,
+                  "%s is against another baseline (%s)" % (
+                      label, document["baseline"]))
+    return found
 
 
 # ------------------------------------------------------- command inputs
@@ -250,11 +285,18 @@ def replay_identity(kind, root, repo, ledger):
     seals, the reviewed table and the opening in `ledger`); a refusal
     refuses the disposition."""
     import task37_identity
-    with contextlib.redirect_stdout(io.StringIO()):
-        code = task37_identity.identity_replay(argparse.Namespace(
-            table=kind, output=Path(root).resolve(), repo=repo,
-            attributed=None, ledger=ledger))
+    code = gates.quiet(task37_identity.identity_replay, argparse.Namespace(
+        table=kind, output=Path(root).resolve(), repo=repo,
+        attributed=None, ledger=ledger))
     replayed(code, "the %s identity grid" % kind)
+
+
+def identity_attempts(kind, ledger, candidate):
+    """(attempts of the identity table in the ledger, those of the
+    candidate)."""
+    import task37_identity
+    return list(task37_identity.attempt_counts(
+        task37_identity.tables()[kind], ledger, candidate))
 
 
 def identity_binding(held, label):
@@ -268,21 +310,29 @@ def identity_binding(held, label):
               "%s: run it again" % (label, held["sha256"], now["sha256"]))
 
 
-def load_identity(root, label, names, candidate, kind=None, ledger=None,
-                  repo=None):
+def read_identity(root, label, names, lineage, kind, ledger, repo, late):
     """The identity table of `names` in directory `root` (inventory.json and
     decisions.json of task31_identity_grid.identity, through
-    task37_identity.py): {cells, status, unaccounted, attributed, seals},
-    after it was replayed."""
+    task37_identity.py): {cells, status, unaccounted, attributed, seals,
+    attempts}. Its replay is added to `late`."""
     root = Path(root)
     inventory = read(root / "inventory.json", label + " inventory")
     decisions = read(root / "decisions.json", label + " decisions")
-    tie(label + " inventory", inventory, candidate)
-    found = tie(label + " decisions", decisions, candidate)
+    found = tie(label + " inventory", inventory, lineage)
+    a.require(tie(label + " decisions", decisions, lineage) == found,
+              "%s: the inventory and the decisions are of different "
+              "candidates" % label)
     a.require(not decisions.get("diagnostic") and
               not inventory.get("diagnostic"),
               "%s is a diagnostic, not the whole table" % label)
+    lineage.harness(label + " checkout", inventory.get("checkout"))
     identity_binding((inventory.get("attributed") or {}).get("file"), label)
+    for run in inventory.get("runs", []):
+        row = run.get("row") or {}
+        a.require(row.get("head") == found and not row.get("dirty"),
+                  "%s: the cell %s-%s ran in another checkout than the "
+                  "candidate's, or a dirty one" % (
+                      label, run.get("case"), run.get("size")))
     cells = decisions.get("cells")
     a.require(isinstance(cells, dict) and set(cells) == set(names),
               "%s has not exactly the cells of its kind (%d expected)" % (
@@ -292,14 +342,19 @@ def load_identity(root, label, names, candidate, kind=None, ledger=None,
             row.get("status"), str), "malformed %s row: %s" % (label, name))
     a.require(ledger is not None and Path(ledger).is_file(),
               "no attempts ledger for %s: %s" % (label, ledger))
-    replay_identity(kind, root, repo, ledger)
-    return dict(cells=cells, status=decisions.get("status"),
+    held = dict(cells=cells, status=decisions.get("status"),
                 unaccounted=decisions.get("unaccounted", []),
                 attributed=decisions.get("attributed", []),
-                candidate=found,
+                candidate=found, attempts=None,
                 seals={"inventory": a.seal(root / "inventory.json"),
                        "decisions": a.seal(root / "decisions.json"),
                        "ledger": a.seal(Path(ledger))})
+
+    def replay():
+        replay_identity(kind, root, repo, ledger)
+        held["attempts"] = identity_attempts(kind, ledger, found)
+    late.append((label, replay))
+    return held
 
 
 # ----------------------------------------------------------- allocation
@@ -320,16 +375,65 @@ def replay_allocation(root):
     archives, the decisions and the results table, from the inventory's own
     task)."""
     import allocation_matrix as am
-    with contextlib.redirect_stdout(io.StringIO()):
-        code = am.replay(argparse.Namespace(output=Path(root).resolve()))
+    code = gates.quiet(am.replay, argparse.Namespace(
+        output=Path(root).resolve()))
     replayed(code, "the allocation grid in %s" % root)
 
 
-def load_allocation(root, task, names, infeasible, candidate):
-    """{rows: {name: {decision, work, pairs}}, pairs, seals} of an
-    allocation task (inventory.json and decisions.json of
+def allocation_attempts(task, ledger):
+    """The attempts of an allocation task in its ledger, each judged or
+    void (R-1), in the shape of `void_attempts.attempts_of`: the one
+    adapter to `allocation_matrix.attempts_of(task, ledger)`."""
+    import allocation_matrix as am
+    a.require(hasattr(am, "attempts_of"),
+              "allocation_matrix.attempts_of is not available: the "
+              "allocation attempts ledger is not part of this tree")
+    return am.attempts_of(task, ledger)
+
+
+def words(found):
+    """fail over pass over inconclusive of the decisions of a list."""
+    return ("fail" if "fail" in found else
+            "pass" if found and set(found) == {"pass"} else
+            "inconclusive")
+
+
+def case_decisions(record):
+    """{slope, constant}: the words of the slope and the size-zero constant
+    decisions of one case of an allocation grid
+    (`decisions["cases"][CASE]`), `missing` where the grid computed none."""
+    slopes, constants = record.get("slopes"), record.get("constants")
+    return dict(
+        slope="missing" if slopes is None else words(
+            [r["decision"] for phase in slopes.values()
+             for rows in phase.values() for r in rows]),
+        constant="missing" if constants is None else words(
+            [m["decision"] for phase in constants.values()
+             for m in phase.values()]))
+
+
+def case_records(task, decisions):
+    """One record per case of the grid for its slope and constant
+    decisions."""
+    found = {}
+    for case, record in sorted(decisions["cases"].items()):
+        words_ = case_decisions(record)
+        failed = ["allocation %s: fail" % k for k, v in words_.items()
+                  if v == "fail"]
+        missing = ["allocation %s: %s" % (k, v) for k, v in words_.items()
+                   if v not in ("pass", "fail")]
+        found["%s:%s" % (task, case)] = dict(
+            words_, failed=failed, missing=missing,
+            owed=["allocation-rerun"] if missing else [])
+    return found
+
+
+def read_allocation(root, task, names, infeasible, lineage, ledger, late):
+    """{rows: {name: {decision, work, pairs}}, pairs, cases, state, seals,
+    attempts} of an allocation task (inventory.json and decisions.json of
     allocation_matrix, `rows` of `cell_rows`); the pairs a passing row needs
-    are the task's own, which the inventory must record."""
+    are the task's own, which the inventory must record. Its replay and
+    ledger judgement are added to `late`."""
     root = Path(root)
     inventory = read(root / "inventory.json", task + " inventory")
     a.require(root.joinpath("decisions.json").is_file(),
@@ -338,8 +442,12 @@ def load_allocation(root, task, names, infeasible, candidate):
     a.require(inventory.get("task") == task,
               "the allocation grid is not a %s grid (%s)" % (
                   task, inventory.get("task")))
-    tie(task + " inventory", inventory, candidate)
-    tie(task + " decisions", decisions, candidate)
+    found = tie(task + " inventory", inventory, lineage)
+    a.require(tie(task + " decisions", decisions, lineage) == found,
+              "the %s inventory and decisions are of different "
+              "candidates" % task)
+    lineage.harness(task + " harness", inventory.get("harness"),
+                    clean=True)
     pairs = inventory.get("pairs")
     a.require(isinstance(pairs, int) and not isinstance(pairs, bool) and
               pairs >= 1, "the %s inventory has no pair count" % task)
@@ -372,10 +480,33 @@ def load_allocation(root, task, names, infeasible, candidate):
     missing = sorted(set(names) - set(rows))
     a.require(not missing, "the %s allocation has no row for: %s" % (
         task, ", ".join(missing[:5])))
-    replay_allocation(root)
-    return dict(rows=rows, pairs=pairs,
+    a.require(isinstance(decisions.get("cases"), dict),
+              "the %s allocation decisions have no cases" % task)
+    records = case_records(task, decisions)
+    state = dict(status=decisions.get("status"),
+                 nondeterminism=len(decisions.get("nondeterminism", [])),
+                 unresolved=list(decisions.get("unresolved", [])),
+                 work_status=decisions.get("work_status"))
+    explained = (any(r["decision"] != "pass" or r["work"] != "equal"
+                     for r in rows.values()) or
+                 any(r["failed"] or r["missing"] for r in records.values())
+                 or state["nondeterminism"] or state["unresolved"])
+    a.require(state["status"] == "pass" or explained,
+              "the %s allocation grid is %s, but no row, case or list "
+              "explains it" % (task, state["status"]))
+    a.require(ledger is not None and Path(ledger).is_file(),
+              "no allocation attempts ledger for %s: %s" % (task, ledger))
+    held = dict(rows=rows, pairs=pairs, cases=records, state=state,
+                attempts=None,
                 seals={"inventory": a.seal(root / "inventory.json"),
-                       "decisions": a.seal(root / "decisions.json")})
+                       "decisions": a.seal(root / "decisions.json"),
+                       "ledger": a.seal(Path(ledger))})
+
+    def replay():
+        replay_allocation(root)
+        held["attempts"] = allocation_attempts(task, ledger)
+    late.append((task, replay))
+    return held
 
 
 # --------------------------------------------------------------- timing
@@ -393,20 +524,28 @@ def class_map(decisions):
     return found, scaling
 
 
-def is_extension(inventory):
-    return str(inventory.get("schema", "")).endswith("-extension-v1")
+def differing_of(decisions, label):
+    found = decisions.get("source_identity")
+    a.require(isinstance(found, dict) and isinstance(
+        found.get("differing"), list),
+        "%s records no source identity" % label)
+    return list(found["differing"])
 
 
-def read_stage(root, label):
+def read_stage(root, label, lineage):
     """One timing output: its inventory (`inventory.json` of timing_grid),
     its cell classes, its first stage's classes (read and sealed through
-    `grid` for an extension) and the cells its second stage remeasured."""
+    the engine's schema for an extension) and the cells its second stage
+    remeasured, with the sources that differ in any stage."""
     root = Path(root).resolve()
     inventory = read(root / "inventory.json", label + " inventory")
     decisions = read(root / "decisions.json", label + " decisions")
+    tie(label + " inventory", inventory, lineage)
+    lineage.harness(label + " checkout", inventory.get("checkout"))
     final, scaling = class_map(decisions)
+    differing = differing_of(decisions, label)
     first, plan, first_root = final, {}, root
-    if is_extension(inventory):
+    if str(inventory.get("schema", "")).endswith("-extension-v1"):
         first_root = (root / inventory["grid"]).resolve()
         a.require(first_root.joinpath("decisions.json").is_file() and
                   a.seal(first_root / "inventory.json") ==
@@ -414,17 +553,23 @@ def read_stage(root, label):
                   a.seal(first_root / "decisions.json") ==
                   inventory.get("grid_decisions"),
                   "%s: the first stage is not the one sealed" % label)
-        first, _ = class_map(a.load(first_root / "decisions.json"))
+        first_decisions = a.load(first_root / "decisions.json")
+        first, _ = class_map(first_decisions)
+        differing += differing_of(first_decisions, label + " first stage")
         plan = {cases.name(c, s): p for c, s, p in
                 decisions["remeasured"]["plan"]}
     first_inventory = a.load(first_root / "inventory.json")
+    tie(label + " first stage inventory", first_inventory, lineage)
+    lineage.harness(label + " first stage checkout",
+                    first_inventory.get("checkout"))
     seal_files = [root / "inventory.json", root / "decisions.json"]
     if first_root != root:
         seal_files += [first_root / "inventory.json",
                        first_root / "decisions.json"]
-    return dict(root=root, inventory=inventory,
+    return dict(root=root, first_root=first_root, inventory=inventory,
                 first_inventory=first_inventory, final=final,
                 scaling=scaling, first=first, plan=plan,
+                differing=sorted(set(differing)),
                 seals={str(p): a.seal(p) for p in seal_files})
 
 
@@ -445,105 +590,156 @@ def check_counts(stage, label, expected):
     return a.seal(COUNTS_DIR / stage["inventory"]["counts_file"])
 
 
-def judged_attempts(engine, root):
-    """{attempt id: output} of a final stage of `engine`'s table and, for
-    a second stage, of its first."""
-    root = Path(root).resolve()
-    found = a.load(root / "inventory.json")
-    judged = {found["attempt"]: root}
-    if is_extension(found):
-        first = (root / found["grid"]).resolve()
-        judged[a.load(first / "inventory.json")["attempt"]] = first
-    return judged
+def pins_binding(engine, label, root, document):
+    """The pins a timing output (and each resumption and first stage of it)
+    was judged by must be the committed table's projection onto the sources
+    the table measures (`task31_pins.pins`, the function the table uses).
+    The seal of the file may be an earlier one, if its history keeps it:
+    adding an entry that is no source of the table changes no pin, while any
+    change to the entry of a measured source does. Returns the pins."""
+    expected = reviewed.pins(document["entries"], engine.t.sources)
+    for code in d31.pin_codes(engine, root):
+        found = engine.h.pins_for(code)
+        a.require(found == expected,
+                  "the %s was judged by pins that are not the committed "
+                  "table's for the sources it measures (%s against %s): "
+                  "a measured source's reviewed entry changed, so the "
+                  "grid is void" % (label, json.dumps(found, sort_keys=True),
+                                    json.dumps(expected, sort_keys=True)))
+    return expected
 
 
-def table_attempts(engine, root, repo, ledger):
-    """Every attempt of the table in `ledger`: judged or void (R-1)
-    (void_attempts.attempts_of with the shard's engine)."""
+def ledger_attempts(engine, judged, repo, ledger):
+    """Every attempt of `engine`'s table in `ledger`: those of `judged`
+    ({attempt: output}) and the others, which must be void (R-1)."""
     return attempts_of(argparse.Namespace(repo=repo, ledger=ledger),
-                       engine, judged_attempts(engine, root))
+                       engine, judged)
 
 
 def replay_timing(engine, root, repo, ledger, pilot=None,
                   replaces_pilot=None):
     """Replay a timing output with its engine (`timing_grid.Grid.replay`:
-    every archive, the decisions, the code, the counts and the ledger); a
-    follow-up names its pilot and the replaced grid's."""
-    with contextlib.redirect_stdout(io.StringIO()):
-        code = engine.replay(argparse.Namespace(
-            output=Path(root).resolve(), partial=False, repo=repo,
-            ledger=ledger, pilot=pilot, replaces_pilot=replaces_pilot))
+    every archive, the decisions, the code, the counts, the ledger, and the
+    counts derived again from the pilot, which a table with fixed seconds
+    needs: its second stage too); a follow-up names its own pilot and the
+    replaced grid's."""
+    a.require(pilot is not None or not engine.t.fixed_seconds,
+              "%s needs its pilot to replay" % engine.t.name)
+    code = gates.quiet(engine.replay, argparse.Namespace(
+        output=Path(root).resolve(), partial=False, repo=repo,
+        ledger=ledger, pilot=pilot, replaces_pilot=replaces_pilot))
     replayed(code, "the timing output %s" % root)
 
 
-def load_shard(key, root, followup, ledger, pilots, candidate, repo,
-               engines):
-    """One timing shard: {cells: {name: row}, scaling, attempts, seals}. A
-    cell's row: class, first (its decisive chain's first stage), stage2 and
-    followup (whether they ran), earlier (the classes the follow-up
-    replaced). `root` is the final stage directory of the shard, `followup`
-    the directory of its declared follow-up or None, `pilots` the (pilot,
-    follow-up pilot) the follow-up's replay needs."""
+def timing_engine(key):
+    """The engine of a shard's table."""
+    return grid.GRIDS[grid.name_of(key)]
+
+
+def followup_engines():
+    """{follow-up table name: engine} of the declared follow-ups: the one
+    place that knows where they are declared (`task37_grid.GRIDS` now)."""
+    return {n: e for n, e in grid.GRIDS.items()
+            if n.endswith(FOLLOWUP_SUFFIX)}
+
+
+def followup_of(key):
+    """The engine of the declared follow-up of a shard, or None."""
+    return followup_engines().get(grid.name_of(key) + FOLLOWUP_SUFFIX)
+
+
+def read_shard(key, options, lineage, repo, document, late):
+    """One timing shard: {cells: {name: row}, scaling, differing, attempts,
+    seals, pins}. A cell's row: class, first (its decisive chain's first
+    stage), stage2 and followup (whether they ran), earlier (the classes the
+    follow-up replaced). The replays and the ledger judgement are added to
+    `late`."""
     table = grid.name_of(key)
+    root, ledger = options["timing"].get(key), options["ledger"].get(key)
     a.require(root is not None, "no timing output for the shard %s" % key)
     a.require(ledger is not None and Path(ledger).is_file(),
               "no attempts ledger for %s: %s" % (table, ledger))
-    engine = engines[table]
-    expected = grid.PARTS[key]
-    main = read_stage(root, table)
-    tie(table + " inventory", main["inventory"], candidate)
+    pilot = options["pilot"].get(key)
+    a.require(pilot is not None, "no --pilot for the shard %s (a table with "
+              "fixed seconds is replayed with its pilot)" % key)
+    engine, expected = timing_engine(key), grid.PARTS[key]
+    main = read_stage(root, table, lineage)
     check_counts(main, table, engine.t.counts.name)
     a.require(set(main["final"]) == set(expected),
               "the %s table is not its part of the sample (%d cells)" % (
                   table, len(expected)))
-    replay_timing(engine, main["root"], repo, ledger)
+    pins = pins_binding(engine, table, main["root"], document)
     rows = {n: dict(cls=c, first=main["first"][n], stage2=n in main["plan"],
                     followup=False, earlier=[])
             for n, c in main["final"].items()}
     seals = dict(main["seals"])
-    attempts = list(table_attempts(engine, main["root"], repo, ledger))
-    if followup is not None:
-        name = table + "-followup"
-        a.require(name in engines, "no follow-up is declared for %s "
-                  "(task37_grid.FOLLOWUP_CELLS)" % table)
-        stage = read_stage(followup, "%s follow-up" % table)
-        tie(name + " inventory", stage["inventory"], candidate)
-        check_counts(stage, name, engines[name].t.counts.name)
-        a.require(set(stage["final"]) == set(engines[name].t.names()),
+    differing = list(main["differing"])
+    pending = [(engine, main["root"], pilot, None)]
+    judged = [(engine, d31.judged_attempts(engine, main["root"]))]
+    follow = followup_of(key)
+    given = options["followup"].get(key)
+    if given is not None:
+        name = table + FOLLOWUP_SUFFIX
+        a.require(follow is not None, "no follow-up is declared for %s "
+                  "(see followup_engines)" % table)
+        followup_pilot = options["followup-pilot"].get(key)
+        a.require(followup_pilot is not None, "a follow-up of %s needs "
+                  "--followup-pilot" % key)
+        stage = read_stage(given, "%s follow-up" % table, lineage)
+        check_counts(stage, name, follow.t.counts.name)
+        a.require(set(stage["final"]) == set(follow.t.names()),
                   "the %s cells are not the declared follow-up's" % name)
         a.require(stage["scaling"] is None,
                   "a %s follow-up has a retained slope" % table)
-        pilot, followup_pilot = pilots
-        a.require(pilot is not None and followup_pilot is not None,
-                  "a follow-up of %s needs --pilot and --followup-pilot"
-                  % key)
-        replay_timing(engines[name], stage["root"], repo, ledger,
-                      pilot=Path(followup_pilot).resolve(),
-                      replaces_pilot=Path(pilot).resolve())
-        attempts += table_attempts(engines[name], stage["root"], repo,
-                                   ledger)
+        pins_binding(follow, name, stage["root"], document)
+        replaced = (stage["inventory"].get("replaces") or
+                    stage["first_inventory"].get("replaces") or {})
+        a.require(isinstance(replaced.get("grid"), str) and
+                  (stage["first_root"] / replaced["grid"]).resolve() ==
+                  main["root"],
+                  "the %s follow-up does not replace the shard's --timing "
+                  "output %s" % (table, main["root"]))
+        pending.append((follow, stage["root"], Path(followup_pilot
+                                                    ).resolve(),
+                        Path(pilot).resolve()))
+        judged.append((follow, d31.judged_attempts(follow, stage["root"])))
+        differing += stage["differing"]
         for n, c in stage["final"].items():
             rows[n] = dict(cls=c, first=stage["first"][n],
                            stage2=n in stage["plan"], followup=True,
                            earlier=rows[n]["earlier"] + [rows[n]["cls"]])
         seals.update(stage["seals"])
+    else:
+        a.require(key not in options["followup-pilot"],
+                  "--followup-pilot names a shard with no --followup: %s"
+                  % key)
+        if follow is not None:
+            judged.append((follow, {}))
     seals["ledger"] = a.seal(Path(ledger))
-    return dict(cells=rows, scaling=main["scaling"], attempts=attempts,
-                seals=seals)
+    held = dict(cells=rows, scaling=main["scaling"],
+                differing=sorted(set(differing)), attempts=[], seals=seals,
+                pins=pins, counts=None)
+
+    def replay():
+        for each, where, pilot_, replaced_ in pending:
+            replay_timing(each, where, repo, ledger, pilot=pilot_,
+                          replaces_pilot=replaced_)
+        for each, found in judged:
+            held["attempts"] += ledger_attempts(each, found, repo, ledger)
+        held["counts"] = list(engine.h.attempt_counts(
+            tg.Ledger(ledger), main["inventory"]["candidate"]))
+    late.append((table, replay))
+    return held
 
 
-def load_timing(kind, sample, options, candidate, repo, engines):
+def read_timing(kind, sample, options, lineage, repo, document, late):
     """The shards of a sample, each required, joined: {table name: shard}.
     The union of the shards' final decisions is exactly `sample`."""
     found, union = {}, set()
     for key in grid.shards(kind):
         a.require(key in options["timing"], "no timing output for the "
                   "shard %s (every shard is required)" % key)
-        shard = load_shard(
-            key, options["timing"][key], options["followup"].get(key),
-            options["ledger"].get(key),
-            (options["pilot"].get(key), options["followup-pilot"].get(key)),
-            candidate, repo, engines)
+        shard = read_shard(key, options, lineage, repo, document, late)
         a.require(not union & set(shard["cells"]),
                   "the %s shards overlap" % kind)
         union |= set(shard["cells"])
@@ -569,162 +765,10 @@ def load_loads(paths):
     return found, seals
 
 
-# ---------------------------------------------------- TASK32, TASK33, gates
-
-NOTE_SECOND = "second stage owed"
-T32_STATUSES = ("pass", "fail", "followup", "blocked")
-
-
-def load_task32(path, candidate):
-    """{unit: decision record} of a TASK32 disposition."""
-    import task32_cases
-    doc = read(path, "the TASK32 disposition")
-    tie("the TASK32 disposition", doc, candidate, baseline=False)
-    work = doc.get("workloads")
-    a.require(isinstance(work, dict) and
-              set(work) == set(task32_cases.NAMES),
-              "the TASK32 disposition has not exactly the %d units" %
-              len(task32_cases.NAMES))
-    units = {}
-    for unit in task32_cases.NAMES:
-        row = work[unit]
-        a.require(isinstance(row, dict) and
-                  row.get("status") in T32_STATUSES,
-                  "malformed TASK32 unit: " + unit)
-        status, note = row["status"], row.get("note")
-        record = dict(unit=unit, source=status, note=note, failed=[],
-                      missing=[], owed=[], stages=row.get("stages"))
-        if status == "fail":
-            record["failed"].append("downstream timing: fail")
-        elif status == "followup":
-            record["missing"].append("downstream timing: inconclusive")
-            record["owed"].append("followup")
-        elif status == "blocked":
-            record["missing"].append("downstream timing: blocked")
-            record["owed"].append(
-                "stage2" if note == NOTE_SECOND else "attribution")
-        units[unit] = record
-    worst = ("fail" if any(r["status"] == "fail" for r in work.values())
-             else "pass" if all(r["status"] == "pass" for r in work.values())
-             else "blocked")
-    a.require(doc.get("status") == worst,
-              "the TASK32 disposition's status is not that of its units")
-    return units, a.seal(Path(path))
-
-
-def load_task33(path, candidate):
-    """The TASK33 decisions: ({key: record}, reported, carried, seal)."""
-    import task33_dispose
-    import task33_rules as rules
-    doc = read(path, "the TASK33 disposition")
-    tie("the TASK33 disposition", doc, candidate, baseline=False)
-    a.require(doc.get("schema") == task33_dispose.SCHEMA,
-              "not a TASK33 disposition")
-    found, reported = {}, []
-    for x in doc.get("decisions", []):
-        a.require(isinstance(x, dict) and "case" in x and "kind" in x and
-                  x.get("decision") in rules.GATES + (
-                      rules.REPORTED, rules.UNSUPPORTED),
-                  "malformed TASK33 decision: %r" % (x,))
-        key = "%s:%s" % (x["case"], x["kind"])
-        a.require(key not in found, "repeated TASK33 decision: " + key)
-        if x["decision"] in (rules.REPORTED, rules.UNSUPPORTED):
-            reported.append(dict(key=key, decision=x["decision"],
-                                 reason=x.get("reason", "")))
-            found[key] = None
-            continue
-        record = dict(key=key, source=x["decision"], failed=[], missing=[],
-                      owed=[x["owed"]] if x.get("owed") else [],
-                      reason=x.get("reason", ""))
-        if x["decision"] == rules.FAIL:
-            record["failed"].append("TASK33: fail")
-        elif x["decision"] != rules.PASS:
-            record["missing"].append("TASK33: " + x["decision"])
-            record["owed"] = record["owed"] or ["attribution"]
-        found[key] = record
-    keys = {"%s:%s" % k for k in task33_dispose.expected_storage()}
-    absent = sorted(keys - set(found))
-    a.require(not absent, "the TASK33 disposition has no decision for: " +
-              ", ".join(absent[:5]))
-    gates = [x["decision"] for x in doc["decisions"]
-             if x["decision"] in rules.GATES]
-    a.require(gates and doc.get("status") == rules.worst(gates),
-              "the TASK33 disposition's status is not that of its "
-              "decisions")
-    carried = {k: doc.get(k, []) for k in (
-        "owed", "attribution_needed", "process_redraws")}
-    return ({k: v for k, v in found.items() if v is not None}, reported,
-            carried, a.seal(Path(path)))
-
-
-def load_receipt(path, gate, candidate):
-    """A gate receipt (`receipt` command): its record and seal. The files
-    it names are sealed again, and must be as they were."""
-    doc = read(path, "the %s receipt" % gate)
-    a.require(doc.get("schema") == RECEIPT_SCHEMA and
-              doc.get("gate") == gate,
-              "not a %s receipt: %s" % (gate, path))
-    tie("the %s receipt" % gate, doc, candidate)
-    a.require(doc.get("status") in RECEIPT_STATUS and
-              isinstance(doc.get("exit"), int),
-              "the %s receipt has no status" % gate)
-    for held in doc.get("reports", []):
-        target = Path(held["path"])
-        a.require(target.is_file() and a.seal(target) == held["seal"],
-                  "the %s receipt's report changed or is missing: %s" % (
-                      gate, held["path"]))
-    return dict(doc, seal=a.seal(Path(path)))
-
-
-def gate_record(receipt):
-    status = receipt["status"]
-    record = dict(gate=receipt["gate"], source=status, failed=[],
-                  missing=[], owed=[], attribution=receipt.get(
-                      "attribution", []), exit=receipt["exit"])
-    if status == "fail":
-        record["failed"].append("%s: fail" % receipt["gate"])
-    elif status == "inconclusive":
-        record["missing"].append("%s: inconclusive" % receipt["gate"])
-        record["owed"].append("attribution")
-    elif status == "attributed" and not record["attribution"]:
-        record["missing"].append("%s: attributed with no attribution"
-                                 % receipt["gate"])
-        record["owed"].append("attribution")
-    return record
-
-
-def make_receipt(gate, candidate, status, exit_status, reports=(),
-                 attribution=(), note=""):
-    """The receipt of a gate the lead ran."""
-    a.require(gate in GATES + (D7,), "unknown gate " + gate)
-    a.require(status in RECEIPT_STATUS, "unknown status " + status)
-    want = {"pass": 0, "attributed": 0, "fail": 1}.get(status, 2)
-    a.require(status == "inconclusive" or exit_status == want or
-              gate == D7, "exit %d is not that of %s" % (exit_status,
-                                                         status))
-    return dict(schema=RECEIPT_SCHEMA, gate=gate, candidate=candidate,
-                baseline=a.BASE, status=status, exit=exit_status,
-                attribution=list(attribution), note=note,
-                reports=[dict(path=str(Path(p).resolve()),
-                              seal=a.seal(Path(p))) for p in reports])
-
-
 # ------------------------------------------------------------- the rule
 
 def family_of(name):
-    import task31_cases as c31
-    case = name.rsplit("-", 1)[0]
-    for family in c31.FAMILIES:
-        if case in ("tactic_%s_%s" % (family, stage) for stage in c31.STAGES):
-            return family
-    return None
-
-
-def size_of(name):
-    return int(name.rsplit("-", 1)[1])
-
-
-ALLOCATION_LIMIT = 1000
+    return d31.family_of(name)
 
 
 def measured_by(name, identity, allocated, timed):
@@ -732,32 +776,30 @@ def measured_by(name, identity, allocated, timed):
     cells of at most 1000 assumptions that passed allocation with an
     attributed identity, and its family's passing cells of the timing
     sample."""
-    family = family_of(name)
-    cells = [n for n in identity if family and family_of(n) == family and
-             n not in cases.INFEASIBLE]
+    family = d31.family_of(name)
+    cells = [n for n in identity if family and d31.family_of(n) == family
+             and n not in cases.INFEASIBLE]
     return dict(
-        allocation=sorted(n for n in cells if size_of(n) <= ALLOCATION_LIMIT
-                          and allocation_passed(allocated.get(n)) and
-                          identity[n]["status"] == "attributed"),
+        allocation=sorted(
+            n for n in cells if d31.size_of(n) <= d31.ALLOCATION_LIMIT and
+            d31.allocation_passed(allocated.get(n)) and
+            identity[n]["status"] == "attributed"),
         timing=sorted(n for n in cells if n in timed and
                       timed[n]["cls"] == "pass"))
 
 
-def allocation_passed(row):
-    return row is not None and row["decision"] == "pass" and \
-        row["work"] == "equal"
-
-
-def judge_identity(identity, failed, missing):
+def judge_identity(identity, failed, missing, owed):
     if identity["status"] == "different":
         failed.append("identity: the loaded closure or the work differs")
     elif identity["status"] not in IDENTITY_OK:
         missing.append("identity: " + str(identity["status"]))
+        owed.append("identity-rerun")
 
 
-def judge_allocation(row, failed, missing):
+def judge_allocation(row, failed, missing, owed):
     if row is None:
         missing.append("allocation: no decision")
+        owed.append("allocation-rerun")
         return
     if row["decision"] == "fail":
         failed.append("allocation: fail")
@@ -765,25 +807,26 @@ def judge_allocation(row, failed, missing):
         failed.append("allocation: the work row differs")
     if row["decision"] == "inconclusive":
         missing.append("allocation: inconclusive")
+        owed.append("allocation-rerun")
     elif row["decision"] == "pass" and row["work"] not in (
             "equal", "differs"):
         missing.append("allocation: the work row is %s" % (
             row["work"] or "missing"))
+        owed.append("allocation-rerun")
 
 
-def judge_timing(name, row, d4, found, failed, missing, owed):
-    """The timing decision of a sampled cell; sets `policy` on D4."""
+def judge_timing(name, row, d4, failed, missing, owed):
+    """The timing decision of a sampled cell; true when the cell's chain is
+    one policy D4 disposes (its decisive first stage control-limited: the
+    other gates still decide)."""
     cls = row["cls"]
     if cls == "pass":
-        return
+        return False
     if cls == "fail":
         failed.append("timing: fail")
     elif cls == "control_limited" and name in d4 and \
             row["first"] == "control_limited":
-        found["policy"] = "D4"
-        found["policy_note"] = (
-            "fresh decisive first stage control-limited: stage 2 skipped, "
-            "disposed by policy D4 with identity and exact allocation")
+        return True
     elif cls == "protocol":
         missing.append("timing: no admitted measurement")
         owed.append("redraw")
@@ -793,6 +836,7 @@ def judge_timing(name, row, d4, found, failed, missing, owed):
     else:
         missing.append("timing: inconclusive")
         owed.append("attribution" if row["followup"] else "followup")
+    return False
 
 
 def judge(name, identity, allocated, timed, d4, groups=None):
@@ -811,7 +855,8 @@ def judge(name, identity, allocated, timed, d4, groups=None):
         attribution=[dict(path=r["path"], reason=r["reason"])
                      for r in identity.get("attributed", [])])
     failed, missing, owed = [], [], []
-    judge_identity(identity, failed, missing)
+    by_d4 = False
+    judge_identity(identity, failed, missing, owed)
     if infeasible:
         found["policy"] = "D2"
         found["note"] = "heavy size-10000 tactic cell: identity only"
@@ -821,9 +866,9 @@ def judge(name, identity, allocated, timed, d4, groups=None):
                 missing.append("attribution not measured in its family")
                 owed.append("attribution")
     else:
-        judge_allocation(allocated, failed, missing)
+        judge_allocation(allocated, failed, missing, owed)
         if timed is not None:
-            judge_timing(name, timed, d4, found, failed, missing, owed)
+            by_d4 = judge_timing(name, timed, d4, failed, missing, owed)
         else:
             found["policy"] = "stratified"
             found["note"] = "unsampled: identity and exact allocation"
@@ -831,6 +876,12 @@ def judge(name, identity, allocated, timed, d4, groups=None):
     found["blocked"] = bool(missing) and owed == ["attribution"]
     found["status"] = (STATUS_FAIL if failed else
                        STATUS_INCOMPLETE if missing else STATUS_PASS)
+    if by_d4 and found["status"] == STATUS_PASS:
+        found["policy"] = "D4"
+        found["policy_note"] = (
+            "fresh decisive first stage control-limited: stage 2 skipped, "
+            "disposed by policy D4 with identity and exact allocation "
+            "(work rows equal)")
     return found
 
 
@@ -842,19 +893,28 @@ def status_of(records):
 
 
 def finish(record):
-    """Status of an auxiliary record from its failures and omissions."""
+    """Status of an auxiliary record from its failures and omissions; an
+    incomplete one must say what it owes."""
     record["status"] = (STATUS_FAIL if record["failed"] else
                         STATUS_INCOMPLETE if record["missing"]
                         else STATUS_PASS)
+    a.require(record["status"] != STATUS_INCOMPLETE or record["owed"],
+              "internal error: an incomplete record owes nothing: %s" %
+              "; ".join(record["missing"]))
     return record
+
+
+def grid_record(failed, missing, owed, **more):
+    return finish(dict(more, failed=failed, missing=missing, owed=owed))
 
 
 def dispose(identity, allocation, timing, units, decisions33, receipts,
             d4=None):
-    """Every workload's record, the status of the whole. `identity` and
+    """Every workload's record, the status of the whole. `identity`,
     `allocation` map their kind (client, matrix, downstream) to the loaded
-    tables, `timing` maps a table to its loaded rows."""
-    d4 = set(cases.ATTRIBUTED if d4 is None else d4)
+    tables, `timing` maps a table to its loaded rows, `receipts` maps a gate
+    to its record."""
+    d4 = set(cases.D4 if d4 is None else d4)
     ident = {n: row for k in identity.values() for n, row in
              k["cells"].items()}
     alloc = {n: row for k in allocation.values() for n, row in
@@ -871,46 +931,67 @@ def dispose(identity, allocation, timing, units, decisions33, receipts,
             if n in cases.INFEASIBLE else None
         records[n] = judge(n, ident[n], alloc.get(n), timed.get(n), d4,
                            groups)
-    workloads = dict(records)
     unit_records = {u: finish(dict(r)) for u, r in units.items()}
     t33 = {k: finish(dict(r)) for k, r in decisions33.items()}
-    gates = {g: finish(gate_record(r)) for g, r in receipts.items()}
+    gate_records = {g: finish(dict(r)) for g, r in receipts.items()}
+    identity_grids = {}
+    for kind, found in identity.items():
+        bad = found["status"] == "different" or bool(found["unaccounted"])
+        open_ = found["status"] not in IDENTITY_OK
+        identity_grids[kind] = grid_record(
+            ["identity grid %s: %s" % (kind, found["status"])] if bad
+            else [],
+            ["identity grid %s: %s" % (kind, found["status"])]
+            if open_ and not bad else [],
+            ["identity-rerun"] if open_ and not bad else [],
+            status_text=found["status"])
+    allocation_cases = {k: finish(dict(r)) for t in allocation.values()
+                        for k, r in t["cases"].items()}
+    timing_grids = {}
+    for table, found in timing.items():
+        diff = found["differing"]
+        timing_grids[table] = grid_record(
+            [], ["source identity: %s differ without a reviewed pin" %
+                 ", ".join(diff)] if diff else [],
+            ["attribution"] if diff else [], differing=diff)
     scaling = {t: v["scaling"] for t, v in timing.items()
                if v["scaling"] is not None}
-    scaling_records = {t: finish(dict(
-        failed=["retained slope: fail"] if s == "fail" else [],
-        missing=[] if s in ("pass", "fail") else
-        ["retained slope: " + s], owed=[], class_=s))
+    scaling_records = {t: grid_record(
+        ["retained slope: fail"] if s == "fail" else [],
+        [] if s in ("pass", "fail") else ["retained slope: " + s],
+        [] if s in ("pass", "fail") else ["retained-slope"], class_=s)
         for t, s in scaling.items()}
+    auxiliary = [("identity_grid", identity_grids),
+                 ("allocation_case", allocation_cases),
+                 ("timing_grid", timing_grids),
+                 ("retained_slope", scaling_records)]
     every = (list(records.values()) + list(unit_records.values()) +
-             list(t33.values()) + list(gates.values()) +
-             list(scaling_records.values()))
-    grid = [k["status"] for k in identity.values()]
-    status = status_of(every)
-    if "different" in grid:
-        status = STATUS_FAIL
-    elif status == STATUS_PASS and any(s not in IDENTITY_OK for s in grid):
-        status = STATUS_INCOMPLETE
+             list(t33.values()) + list(gate_records.values()) +
+             [r for _, rows in auxiliary for r in rows.values()])
     counts = {k: sum(r["status"] == k for r in every)
               for k in (STATUS_PASS, STATUS_FAIL, STATUS_INCOMPLETE)}
     owed = [dict(workload=w, owed=o) for w, r in (
         list(records.items()) + list(unit_records.items()) +
-        list(t33.items()) + list(gates.items())) for o in r["owed"]]
+        list(t33.items()) + list(gate_records.items()) +
+        [("%s:%s" % (label, k), r) for label, rows in auxiliary
+         for k, r in rows.items()]) for o in r["owed"]]
     policies = {p: sorted(n for n, r in records.items()
                           if r["policy"] == p)
                 for p in ("D2", "D4", "stratified")}
     return dict(
-        schema=SCHEMA, status=status, counts=counts,
+        schema=SCHEMA, status=status_of(every), counts=counts,
         kinds=dict(matrix=len(cases.MATRIX_CELLS),
                    client=len(cases.CLIENT_CELLS),
                    downstream=len(cases.DOWNSTREAM_CELLS),
                    task32_units=len(unit_records),
-                   task33_decisions=len(t33), gates=len(gates)),
+                   task33_decisions=len(t33), gates=len(gate_records)),
         identity_status={k: v["status"] for k, v in identity.items()},
         identity_unaccounted={k: v["unaccounted"] for k, v in
                               identity.items()},
-        cells=records, task32=unit_records, task33=t33, gates=gates,
-        retained_slope=scaling_records, policies=policies, owed=owed)
+        cells=records, task32=unit_records, task33=t33, gates=gate_records,
+        identity_grid=identity_grids, allocation_case=allocation_cases,
+        timing_grid=timing_grids, retained_slope=scaling_records,
+        policies=policies, owed=owed)
 
 
 # ------------------------------------------------------------- the command
@@ -928,14 +1009,59 @@ def timing_options(args):
     return found
 
 
+def read_gates(args, lineage, inputs, late):
+    """The gate records and the receipt of the D7 timing: the startup gate
+    and the two loading runs are read (their statuses are those of their
+    archives) and their replays added to `late`."""
+    found = {}
+    a.require(args.startup_gate is not None and
+              args.startup_null is not None,
+              "the startup gate needs --startup-gate and --startup-null")
+    header, decisions = gates.read_startup(args.startup_gate, False,
+                                           lineage)
+    null_header, null_decisions = gates.read_startup(
+        args.startup_null, True, lineage, "startup-gate null control")
+    a.require(not header["record_sha256"] or args.startup_record,
+              "the startup gate archive is sealed to a record: pass "
+              "--startup-record")
+    found[gates.STARTUP] = gates.startup_gate(header, decisions,
+                                              null_decisions)
+    inputs[gates.STARTUP] = {
+        n: a.seal(Path(d) / f) for n, d, f in (
+            ("header", args.startup_gate, "header.json"),
+            ("decisions", args.startup_gate, "decisions.json"),
+            ("null-header", args.startup_null, "header.json"),
+            ("null-decisions", args.startup_null, "decisions.json"))}
+    late.append((gates.STARTUP, lambda: (
+        gates.replay_startup(args.startup_gate, args.startup_record),
+        gates.replay_startup(args.startup_null, None))))
+    for gate, root in zip(sorted(gates.LOADING),
+                          (args.loading_conglib, args.loading_simplib)):
+        a.require(root is not None, "no loading run for " + gate)
+        report, status = gates.read_loading(root, gate, lineage)
+        found[gate] = gates.loading_gate(gate, report, status)
+        inputs[gate] = a.seal(Path(root) / "loading.json")
+        late.append((gate, lambda root=root: gates.replay_loading(
+            root, args.loading_ledger)))
+    d7 = None
+    if args.d7_build is not None:
+        d7 = gates.load_receipt(args.d7_build, lineage)
+        inputs[D7] = d7["seal"]
+    return found, d7
+
+
 def derive(args):
-    cand = args.candidate
-    a.require(isinstance(cand, str) and len(cand) >= 10,
-              "--candidate must be a revision of at least ten digits")
+    lineage = lineage_of.Lineage(args.repo, args.candidate)
+    repo = lineage.repo
     options = timing_options(args)
     identity_ledgers = keyed(args.identity_ledger, "identity-ledger", KINDS)
+    alloc_ledgers = keyed(args.alloc_ledger, "alloc-ledger",
+                          tuple(TASKS.values()))
     loads, load_seals = load_loads(keyed(args.load, "load"))
-    inputs = dict(load_seals)
+    document = reviewed.load(cases.REVIEWED_FILE)
+    inputs = dict(load_seals, reviewed=document["seal"])
+    late = []
+    # All reads, ties, joins and cheap checks come first.
     identity = {}
     for kind, root, names in (
             ("client", args.identity_client, cases.CLIENT_CELLS),
@@ -943,9 +1069,9 @@ def derive(args):
             ("downstream", args.identity_downstream,
              cases.DOWNSTREAM_CELLS)):
         a.require(root is not None, "no identity table for %s cells" % kind)
-        identity[kind] = load_identity(
-            root, "identity " + kind, names, cand, kind,
-            identity_ledgers.get(kind), args.repo)
+        identity[kind] = read_identity(
+            root, "identity " + kind, names, lineage, kind,
+            identity_ledgers.get(kind), repo, late)
         inputs["identity-" + kind] = identity[kind]["seals"]
     allocation = {}
     for kind, root, names, skipped in (
@@ -956,38 +1082,50 @@ def derive(args):
              ())):
         task = TASKS[kind]
         a.require(root is not None, "no allocation output for " + task)
-        allocation[kind] = load_allocation(root, task, names, skipped, cand)
+        allocation[kind] = read_allocation(
+            root, task, names, skipped, lineage, alloc_ledgers.get(task),
+            late)
         inputs["allocation-" + kind] = allocation[kind]["seals"]
     timing = {}
     for kind, sample in (("client", cases.CLIENT_SAMPLE),
                          ("matrix", cases.MATRIX_SAMPLE)):
-        timing.update(load_timing(kind, sample, options, cand, args.repo,
-                                  grid.GRIDS))
+        timing.update(read_timing(kind, sample, options, lineage, repo,
+                                  document, late))
+    extra = set(options["followup-pilot"]) - set(options["followup"])
+    a.require(not extra, "--followup-pilot names a shard with no "
+              "--followup: %s" % ", ".join(sorted(extra)))
     for table, found in timing.items():
         inputs[table] = found["seals"]
-    # Every shard option is used: a pilot or a follow-up of a shard that has
-    # no follow-up is a mistake, not a spare.
-    for kind in ("pilot", "followup-pilot"):
-        extra = set(options[kind]) - set(options["followup"])
-        a.require(not extra, "--%s names a shard with no --followup: %s"
-                  % (kind, ", ".join(sorted(extra))))
-    units, inputs["task32"] = load_task32(args.task32, cand)
-    t33, reported33, carried33, inputs["task33"] = load_task33(
-        args.task33, cand)
-    receipts = {}
-    for gate, path in zip(GATES, (args.startup_gate, args.loading_simplib,
-                                  args.loading_conglib)):
-        receipts[gate] = load_receipt(path, gate, cand)
-        inputs[gate] = receipts[gate]["seal"]
-    d7 = None
-    if args.d7_build is not None:
-        d7 = load_receipt(args.d7_build, D7, cand)
-        inputs[D7] = d7["seal"]
+        inputs[table + "-pins"] = found["pins"]
+    units, inputs["task32"], _ = gates.read_task32(args.task32, lineage)
+    a.require(args.task32_replay, "no --task32-replay arguments")
+    t33, reported33, carried33, inputs["task33"], _ = gates.read_task33(
+        args.task33, lineage)
+    a.require(args.task33_replay, "no --task33-replay arguments")
+    inputs["task32-replay"], inputs["task33-replay"] = (
+        args.task32_replay, args.task33_replay)
+    receipts, d7 = read_gates(args, lineage, inputs, late)
+    # The replays come last: they are the expensive part.
+    late.append(("task32", lambda: gates.replay_task32(
+        args.task32, args.task32_replay, lineage)))
+    late.append(("task33", lambda: gates.replay_task33(
+        args.task33, args.task33_replay, lineage)))
+    for _, replay in late:
+        replay()
     record = dispose(identity, allocation, timing, units, t33, receipts)
     record.update(
-        candidate=identity["client"]["candidate"], baseline=a.BASE,
+        candidate=lineage.candidate, baseline=a.BASE,
+        candidates=dict(sorted(lineage.recorded.items())),
+        tree_outside_performance=lineage.tree,
         scope=SCOPE, inputs=inputs, code=seals(),
         allocation_pairs={k: v["pairs"] for k, v in allocation.items()},
+        allocation_status={TASKS[k]: v["state"] for k, v in
+                           allocation.items()},
+        attempts=dict(
+            identity={k: v["attempts"] for k, v in identity.items()},
+            allocation={TASKS[k]: v["attempts"] for k, v in
+                        allocation.items()},
+            timing_ledger={t: v["counts"] for t, v in timing.items()}),
         timing_attempts={t: v["attempts"] for t, v in timing.items()},
         shards={t: sorted(v["cells"]) for t, v in timing.items()},
         host_load=loads,
@@ -1011,7 +1149,11 @@ def lines(record):
         out += ["FAIL identity %s: unaccounted difference %s" % (kind, p)
                 for p in paths]
     groups = [("cell", record["cells"]), ("task32", record["task32"]),
-              ("task33", record["task33"]), ("gate", record["gates"])]
+              ("task33", record["task33"]), ("gate", record["gates"]),
+              ("identity-grid", record["identity_grid"]),
+              ("allocation-case", record["allocation_case"]),
+              ("timing-grid", record["timing_grid"]),
+              ("retained-slope", record["retained_slope"])]
     for label, rows in groups:
         for name, r in rows.items():
             if r["status"] == STATUS_PASS and not r.get("policy") in (
@@ -1023,9 +1165,6 @@ def lines(record):
             out.append("%s %s %s: %s%s" % (
                 r["status"].upper(), label, name, "; ".join(why),
                 " [owed: %s]" % ", ".join(r["owed"]) if r["owed"] else ""))
-    for t, r in record["retained_slope"].items():
-        if r["status"] != STATUS_PASS:
-            out.append("%s retained slope %s" % (r["status"].upper(), t))
     return out
 
 
@@ -1074,16 +1213,16 @@ def disposition(args):
 def receipt_command(argv):
     p = argparse.ArgumentParser(prog="task37_dispose.py receipt")
     add = p.add_argument
-    add("--gate", required=True, choices=GATES + (D7,))
+    add("--gate", required=True, choices=(D7,))
     add("--candidate", required=True)
-    add("--status", required=True, choices=RECEIPT_STATUS)
+    add("--status", required=True, choices=gates.RECEIPT_STATUS)
     add("--exit", type=int, required=True, dest="exit_status")
     add("--out", type=Path, required=True)
     add("--report", type=Path, action="append", default=[])
     add("--attribution", action="append", default=[])
     add("--note", default="")
     args = p.parse_args(argv)
-    a.save(args.out, make_receipt(
+    a.save(args.out, gates.make_receipt(
         args.gate, args.candidate, args.status, args.exit_status,
         args.report, args.attribution, args.note))
     return 0
@@ -1099,27 +1238,39 @@ def parser():
     add("--identity-ledger", action="append", metavar="KIND=FILE",
         help="the attempts ledger of the identity grid of KIND (client, "
         "matrix, downstream); one for each kind")
+    add("--alloc-ledger", action="append", metavar="TASK=FILE",
+        help="the attempts ledger of an allocation task (task37-matrix, "
+        "task37-client, task37-downstream); one for each")
     add("--timing", action="append", metavar="SHARD=DIR",
         help="the final stage of a timing shard (client-1, client-2, "
         "matrix-1 ... matrix-4); every shard is required")
     add("--ledger", action="append", metavar="SHARD=FILE",
         help="the attempts ledger of a shard; one for each shard")
+    add("--pilot", action="append", metavar="SHARD=DIR",
+        help="the pilot of a shard; one for each shard")
     add("--followup", action="append", metavar="SHARD=DIR",
         help="the declared follow-up of a shard (at most one)")
-    add("--pilot", action="append", metavar="SHARD=DIR",
-        help="the pilot of a shard that has a follow-up")
     add("--followup-pilot", action="append", metavar="SHARD=DIR",
         help="the pilot of the follow-up of a shard")
     add("--load", action="append", metavar="STREAM=FILE",
         help="a host-load recording of a stream (task37_load.py), "
         "reported only")
     add("--task32", type=Path)
+    add("--task32-replay", metavar="ARGS", help="the arguments of "
+        "`task32_downstream.py dispose`, without --out, in one string")
     add("--task33", type=Path)
-    add("--startup-gate", type=Path, help="startup gate receipt")
-    add("--loading-simplib", type=Path)
-    add("--loading-conglib", type=Path)
+    add("--task33-replay", metavar="ARGS", help="the arguments of "
+        "`task33_storage.py dispose`, without --out, in one string")
+    add("--startup-gate", type=Path, help="the startup gate archive")
+    add("--startup-null", type=Path, help="its null control's archive")
+    add("--startup-record", type=Path, help="the record the gate is "
+        "sealed to")
+    add("--loading-simplib", type=Path, help="the loading run of simpLib")
+    add("--loading-conglib", type=Path, help="the loading run of congLib")
+    add("--loading-ledger", type=Path, help="the loading attempts ledger")
     add("--d7-build", type=Path, help="D7 build receipt (reported only)")
-    add("--repo", type=Path, default=a.HERE.parents[3])
+    add("--repo", type=Path, default=a.HERE.parents[3],
+        help="the checkout that holds this code (the only one accepted)")
     mode = p.add_mutually_exclusive_group(required=True)
     mode.add_argument("--record", type=Path, help="write to this new dir")
     mode.add_argument("--check", type=Path, help="require this recorded "

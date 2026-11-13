@@ -4516,44 +4516,70 @@ parallel, each in its own scratch; the records are those of a serial run.
 
 One disposition for every required workload, by the rule of design
 decision 11 and `task31_dispose.py`'s method. Every input is an explicit
-path; nothing is looked up. A cell passes if its identity row (its kind's
-table) is `identical` or `attributed`, its allocation decided `pass` with
-work `equal` from at least the task's own pairs (`allocation_matrix.
-task_named(task).pairs`, cross-checked against the inventory's `pairs`,
-never the legacy constant) and, where sampled, its timing decided `pass`.
-Unsampled cells pass on identity and allocation (policy `stratified`).
-D2 (heavy tactic cells identity-only), D4 (the 13 `task37_cases.ATTRIBUTED`
-cells: a control-limited first stage is not owed a second stage) and R-1
-(`void_attempts.attempts_of`, with each shard's engine from
-`task37_grid.GRIDS`) carry over and are recorded. Inconclusive never passes;
-what is owed is listed.
+path; the one thing looked up is git. A cell passes if its identity row
+(its kind's table) is `identical` or `attributed`, its allocation decided
+`pass` with work `equal` from at least the task's own pairs
+(`allocation_matrix.task_named(task).pairs`, cross-checked against the
+inventory's `pairs`, never a constant) and, where sampled, its timing
+decided `pass`. Unsampled cells pass on identity and allocation (policy
+`stratified`). D2 (heavy tactic cells identity-only) and R-1
+(`void_attempts.attempts_of`) carry over and are recorded. D4 (design
+decision 16) covers the 31 cells of `task37_cases.D4`: a timing chain whose
+decisive first stage is control-limited is not owed a second stage, and the
+cell passes with policy `D4` when identity and exact allocation (work rows
+`equal`) pass; the policy is recorded on a cell that passes by it and on no
+other. Inconclusive never passes, and every incomplete record lists what
+is owed (`stage2`, `followup`, `attribution`, `redraw`, `identity-rerun`,
+`allocation-rerun`, `retained-slope`; TASK33's `second` is `stage2`).
 
-    task37_dispose.py --candidate REV --repo CHECKOUT
+Lineage (design decision 17). Dispose runs in the main worktree that
+holds the code, and `--repo` must be it. An input's candidate is accepted
+when it is a commit of that worktree, an ancestor of its HEAD, and has the
+tree outside the performance area of `--candidate`; every checkout or
+harness an input records must have that tree (and be clean), and an
+identity row's head is its own inventory's candidate. The accepted
+revisions are recorded per input (`candidates`). `task37_lineage.py` is
+the one place that accepts a revision.
+
+    task37_dispose.py --candidate REV [--repo CHECKOUT]
         --identity-{client,matrix,downstream} DIR
         --identity-ledger KIND=FILE            (three)
         --alloc-{matrix,client,downstream} DIR
-        --timing SHARD=DIR --ledger SHARD=FILE (every shard, 6)
-        [--followup SHARD=DIR --pilot SHARD=DIR --followup-pilot SHARD=DIR]
+        --alloc-ledger TASK=FILE               (three)
+        --timing SHARD=DIR --ledger SHARD=FILE
+        --pilot SHARD=DIR                      (every shard, 6 of each)
+        [--followup SHARD=DIR --followup-pilot SHARD=DIR]
         [--load STREAM=FILE ...]
-        --task32 FILE --task33 FILE --startup-gate FILE
-        --loading-simplib FILE --loading-conglib FILE [--d7-build FILE]
+        --task32 FILE --task32-replay ARGS
+        --task33 FILE --task33-replay ARGS
+        --startup-gate DIR --startup-null DIR [--startup-record FILE]
+        --loading-simplib DIR --loading-conglib DIR [--loading-ledger FILE]
+        [--d7-build FILE]
         (--record OUTDIR | --check OUTDIR)
 
-Shards are joined by their explicit paths; every shard is required, each
-shard's decisions are exactly its part (`task37_grid.PARTS`) and the union
-is exactly the sample. Each input is replayed and a failed replay refuses:
-identity (`task37_identity.identity_replay`), each timing shard and
-follow-up (`Grid.replay` with the shard's engine, a follow-up with both
-pilots) and allocation (`allocation_matrix.replay`). An inventory's
-`counts_file` must be the shard's own committed file and its seal the
-current one. The identity records are those of `task31_identity_grid.decide`
-(`decisions.json`, `inventory.json`), the timing ones those of
-`timing_grid` (`inventory.json`, `decisions.json`, classified by
-`timing_grid.classify`) and the allocation ones those of
-`allocation_matrix` (`cell_rows` in `decisions.json`). `--load STREAM=FILE`
-takes `task37_load.py` recordings; the host load is reported, never a gate.
-TASK32/33 inputs need a top-level `candidate`. `receipt` makes a gate
-receipt for the startup gate, loading and D7.
+Shards are joined by their explicit paths; every shard is required with
+its ledger and pilot, each shard's decisions are exactly its part
+(`task37_grid.PARTS`) and the union is exactly the sample. A declared
+follow-up of a shard is judged for R-1 whether or not it is given; given,
+it must replace the shard's `--timing` output. Every input carries the pins
+of the committed `task37_attributed.json` for the sources it measures; a
+stage whose `source_identity.differing` is not empty is incomplete. All
+reads, ties and joins come first and the replays last, and a failed
+replay refuses: identity (`task37_identity.identity_replay`, attempts
+recorded), each timing shard and follow-up (`Grid.replay` with its pilot,
+a follow-up with its own and the shard's), allocation
+(`allocation_matrix.replay`, its ledger judged by `allocation_matrix.
+attempts_of`, part C), TASK32 and TASK33 (their `dispose` run again from
+the arguments in `--task32-replay` and `--task33-replay`), the startup
+gate and loading (`task37_gates.py` says what each re-derives and what it
+cannot). Their statuses are those of their archives, not typed. The
+allocation grid's `status`, `nondeterminism` and `unresolved` are recorded
+and one record per (task, case) decides the slopes and constants. An
+inventory's `counts_file` must be the shard's own committed file and its
+seal the current one. `--load STREAM=FILE` takes `task37_load.py`
+recordings; the host load is reported, never a gate. TASK32/33 inputs need
+a top-level `candidate`. `receipt` makes the receipt of the D7 build
+timing only, which is reported and never a gate.
 
 ## Matrix boundaries and final evidence
 
