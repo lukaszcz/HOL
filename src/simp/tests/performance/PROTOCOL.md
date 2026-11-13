@@ -4668,24 +4668,24 @@ follow-up of a shard (entered in `task37_followup.CELLS`, whose engines
 `task37_followup.GRIDS` are named `task37-<shard>-followup`; the shard
 tables are `task37_grid.GRIDS` alone) is judged for R-1 whether or not
 it is given; given, it must replace the shard's `--timing` output. Every
-input carries the pins of the committed `task37_attributed.json` for the sources it measures; a
-stage whose `source_identity.differing` is not empty is incomplete. All
-reads, ties and joins come first and the replays last, and a failed
-replay refuses: identity (`task37_identity.identity_replay`, attempts
-recorded), each timing shard and follow-up (`Grid.replay` with its pilot,
-a follow-up with its own and the shard's), allocation
+input carries the pins of the committed `task37_attributed.json` for the
+sources it measures; a stage whose `source_identity.differing` is not empty
+is incomplete. All reads, ties and joins come first and the replays last,
+and a failed replay refuses: identity (`task37_identity.identity_replay`,
+attempts recorded), each timing shard and follow-up (`Grid.replay` with its
+pilot, a follow-up with its own and the shard's), allocation
 (`allocation_matrix.replay`, its ledger judged by `allocation_matrix.
 attempts_of`, part C), TASK32 and TASK33 (their `dispose` run again from
-the arguments in `--task32-replay` and `--task33-replay`), the startup
-gate and loading (`task37_gates.py` says what each re-derives and what it
+the arguments in `--task32-replay` and `--task33-replay`), the startup gate
+and loading (`task37_gates.py` says what each re-derives and what it
 cannot). Their statuses are those of their archives, not typed. The
 allocation grid's `status`, `nondeterminism` and `unresolved` are recorded
 and one record per (task, case) decides the slopes and constants. An
 inventory's `counts_file` must be the shard's own committed file and its
 seal the current one. `--load STREAM=FILE` takes `task37_load.py`
 recordings; the host load is reported, never a gate. TASK32/33 inputs need
-a top-level `candidate`. `receipt` makes the receipt of the D7 build
-timing only, which is reported and never a gate.
+a top-level `candidate`. `receipt` makes the receipt of the D7 build timing
+only, which is reported and never a gate.
 
 ## Matrix boundaries and final evidence
 
