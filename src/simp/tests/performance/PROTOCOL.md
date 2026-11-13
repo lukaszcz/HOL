@@ -1779,11 +1779,21 @@ length encoded set of installed rules whose left side the net leaves alone and
 a hash of the theorems of the others; for a theorem its hypotheses and
 conclusion with types shown; for a conversion that of each of its terms; for a
 tactic the residual goals (types shown) and the proof; for a fragment its
-name, its length and a hash of the printed form of every rule it holds (an AC
-fragment: also what it does to the AC input); for the theory change the error
-with the function that raised it and its message. The fixture emits
+name, its length and a hash of the structural key of every rule it holds (an
+AC fragment: also what it does to the AC input); for the theory change the
+error with the function that raised it and its message. The fixture emits
 `work.first`, `work.second`, `work.use` and `result.digest` after
 `alloc.foreign`; the parser hashes the fingerprint with SHA-256.
+
+The hashed lists of the n rules, the fragment's and the simpset's others, are
+structural keys (`MatrixSupport.thmKey`): hypotheses and conclusion in prefix
+form, constants with their theory and type, every name with its length. The
+key is injective and linear in the terms, which printing is not (the TASK37
+allocation note below). The rest of the fingerprint is printed text, as
+before. A digest is compared only within one grid, base against candidate under
+the same fixture, and each inventory seals the fixture blob, which defines the
+digest. So the digests of grids under different fixture blobs are not
+comparable, and `STRUCTURE` stays "v1".
 
 **Outside the work phase.** The timed closures and the `verify` closures do not
 contain the work phase, so the operation and apply words of a case do not
@@ -5255,6 +5265,15 @@ private counter of `allocation_matrix.py`, in three tasks, one per clone.
 - Decisions. A case with no size-0 cell has `constants: None`, which the
   disposition reads as `n/a` (not a gate, never a failure); its slopes
   are still gated.
+
+Fingerprint cost. The first fingerprint of the n rules printed each rule
+(`Parse.term_to_string`). A print rebuilds the token list of
+`term_pp.avoid_symbolmerge`, which holds every known constant, and the n rules
+of a workload come with n fixture constants, so a print costs O(n) and the
+fingerprint O(n^2). The counting runtime traps on every allocation and
+multiplies that by about 12: a fragment cell at size 10000 took about 26
+minutes per process. The cost is outside every bracket, so no bracketed word
+depended on it. The structural key above removes it.
 
 ### TASK32/33, startup, loading, D7 (part D)
 

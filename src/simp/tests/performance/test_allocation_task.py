@@ -561,7 +561,8 @@ class StructureFixture(unittest.TestCase):
         # agreement with what verify already required
         start = self.support.index("fun fragText")
         body = self.support[start:self.support.index("fun fragworkWith")]
-        self.assertIn("map thmText actual", body)
+        self.assertIn("map thmKey actual", body)
+        self.assertNotIn("thmText", body)
         self.assertIn("hashText", body)
         self.assertNotIn("expected", body)
         # types are shown in goals as in theorems
@@ -572,7 +573,28 @@ class StructureFixture(unittest.TestCase):
         self.assertIn("Feedback.top_function_of e", self.support)
         # the theorems of the lookups that are not REFL are in the digest
         start = self.support.index("fun ssText")
-        self.assertIn("thmText th :: !others", self.support[start:])
+        body = self.support[start:self.support.index("type workload")]
+        self.assertIn("thmKey th :: !others", body)
+        self.assertNotIn("thmText", body)
+
+    def test_the_hashed_rule_lists_use_the_structural_key(self):
+        # printing n rules over n constants costs n^2 (PROTOCOL.md); the key
+        # is built from the term and type structure, never the printer
+        start = self.support.index("fun keyName")
+        end = self.support.index("fun hashText")
+        key = self.support[start:end]
+        for token in ("dest_term", "dest_thy_type", "dest_vartype",
+                      "VAR", "CONST", "COMB", "LAMB", "Thy", "Name", "Ty",
+                      "keyName", "tyKey", "tmKey", "hyp th", "concl th"):
+            self.assertIn(token, key)
+        # every name is length-prefixed, so the key decodes uniquely
+        self.assertIn('Int.toString (size s) ^ ":" ^ s', key)
+        for token in ("term_to_string", "thm_to_string", "termText",
+                      "thmText", "Parse."):
+            self.assertNotIn(token, key)
+        # the printed forms of the other fixtures are unchanged
+        self.assertIn("fun thmText th", self.support)
+        self.assertEqual(self.support.count("thmKey"), 3)
 
     def test_the_timing_fixture_knows_nothing_of_it(self):
         for token in ("workPhase", "fingerprint", "Listener", "Count."):

@@ -64,6 +64,26 @@ struct
                    termText (concl th)
   fun goalText (asl,w) =
     String.concatWith "," (map termText asl) ^ " ?- " ^ termText w
+  (* A theorem as its structure, for the hash of the n rules: hypotheses and
+     conclusion in prefix form, a constant with its theory, every type, each
+     name with its length. Distinct theorems get distinct keys. Not the
+     printer: Parse.term_to_string rebuilds term_pp.avoid_symbolmerge's
+     list of every known constant on each call, so printing n rules over
+     the n constants of a workload costs n^2. This is linear in the terms. *)
+  fun keyName s = Int.toString (size s) ^ ":" ^ s
+  fun tyKey ty acc =
+    if is_vartype ty then "'" :: keyName (dest_vartype ty) :: acc
+    else let val {Thy,Tyop,Args} = dest_thy_type ty in
+      "T" :: keyName Thy :: keyName Tyop :: Int.toString (length Args) ::
+      List.foldr (fn (a,acc) => tyKey a acc) acc Args end
+  fun tmKey tm acc = case dest_term tm of
+      VAR (s,ty) => "V" :: keyName s :: tyKey ty acc
+    | CONST {Thy,Name,Ty} => "C" :: keyName Thy :: keyName Name :: tyKey Ty acc
+    | COMB (f,x) => "A" :: tmKey f (tmKey x acc)
+    | LAMB (v,b) => "L" :: tmKey v (tmKey b acc)
+  fun thmKey th = String.concat (Int.toString (length (hyp th)) ::
+    List.foldr (fn (h,acc) => tmKey h acc) ("|" :: tmKey (concl th) [])
+               (hyp th))
   (* FNV-1a, 64 bits, in hex: a compact stand-in for a long text. *)
   fun hashText s = let
     val prime = Word64.fromInt 1099511628211
@@ -119,7 +139,7 @@ struct
     fun note (i,th) =
       if aconv (lhs (concl th)) (rhs (concl th))
       then untouched := i :: !untouched
-      else others := thmText th :: !others
+      else others := thmKey th :: !others
     val _ = lookups ss note
   in "names=" ^ String.concatWith "," (map optText (names ss)) ^
      ";dprocs=" ^ String.concatWith "," (map optText (dpnames ss)) ^
@@ -275,7 +295,7 @@ struct
   fun fragText extra f = let
     val actual = frag_rewrites f
   in optText (frag_name f) ^ ";" ^ Int.toString (length actual) ^ ";" ^
-     hashText (String.concatWith ";" (map thmText actual)) ^ ";" ^ extra f
+     hashText (String.concatWith ";" (map thmKey actual)) ^ ";" ^ extra f
   end
   fun fragworkWith extra build expected name checkExtra = let
     val slot = ref (build ())
