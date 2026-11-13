@@ -14,6 +14,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import stat
 import subprocess
 import tempfile
@@ -125,6 +126,26 @@ class Bed(unittest.TestCase):
         self.addCleanup(patcher.stop)
         return log
 
+    def after_start(self, action):
+        """Run `action` from a thread once a measuring process is live."""
+        def wait():
+            deadline = time.monotonic() + 30
+            while not loading.live() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            action()
+        threading.Thread(target=wait, daemon=True).start()
+
+    def sleeper(self, spawned, action):
+        def hook(grid, experiment, side, pair):
+            self.after_start(action)
+            started = time.perf_counter()
+            done = loading.execute(["sleep", "60"], self.root, os.environ,
+                                   120, ())
+            spawned.append(time.perf_counter() - started)
+            if done["exit"] != 0:
+                raise ValueError("measuring process failed")
+        return hook
+
     def quiet(self, function, *args):
         with contextlib.redirect_stdout(io.StringIO()):
             return function(*args)
@@ -138,22 +159,11 @@ class Cell(Bed):
 
     def test_a_halt_kills_the_in_flight_process_and_rejects_the_cell(self):
         """Decision 32: a stop signal kills the measuring process group at
-        once; the cell it was in is archived rejected as "terminated"."""
+        once; the cell it was in is archived rejected as "terminated", and
+        replay lists that archive among the rejections of its output."""
         spawned = []
-
-        def sleeper(grid, experiment, side, pair):
-            def stop():
-                time.sleep(0.5)
-                loading.halt()
-            threading.Thread(target=stop, daemon=True).start()
-            started = time.perf_counter()
-            done = loading.execute(["sleep", "60"], self.root, os.environ,
-                                   120, ())
-            spawned.append(time.perf_counter() - started)
-            if done["exit"] != 0:
-                raise ValueError("measuring process failed")
         self.addCleanup(loading.unhalt)
-        grid, log = self.grid(change=sleeper)
+        grid, log = self.grid(change=self.sleeper(spawned, loading.halt))
         self.out.mkdir()
         row = grid.cell(self.sb.job(), CASE, 0, self.out,
                         m.load_iterations())
@@ -165,6 +175,26 @@ class Cell(Bed):
         loading.unhalt()
         self.assertEqual(loading.execute(["true"], self.root, os.environ,
                                          5, ())["exit"], 0)
+        (self.out / "inventory.json").write_text(json.dumps(dict(
+            self.sb.header(), jobs=[1], runs=[row])))
+        import allocation_attempts as attempts
+        self.assertEqual(attempts.rejections(self.out), (
+            [(row["archive"], "unresolved cell (recorded: terminated)")],
+            None))
+
+    def test_a_process_is_not_orphaned_when_it_cannot_be_registered(self):
+        class Refusing(set):
+            def add(self, item):
+                self.item = item
+                raise KeyboardInterrupt
+        refusing = Refusing()
+        with mock.patch.object(loading, "_LIVE", refusing):
+            with self.assertRaises(KeyboardInterrupt):
+                loading.execute(["sleep", "60"], self.root, os.environ,
+                                120, ())
+        time.sleep(0.2)
+        with self.assertRaises(ProcessLookupError):
+            os.killpg(refusing.item, 0)
 
     def test_cell_runs_ab_ba_pairs_and_archives_them(self):
         grid, log = self.grid()
@@ -677,6 +707,32 @@ class Jobs(unittest.TestCase):
 class Run(Bed):
     def run_cells(self, only, **kw):
         return self.quiet(m.run, arguments(self.out, only, **kw))
+
+    def test_a_signal_halts_the_run_and_no_queued_cell_starts(self):
+        """The signal path: `terminating`'s handler halts, raises
+        `Terminated`, the cell in flight is rejected "terminated" and the
+        queued cells (cancelled, or returning at once) never start."""
+        spawned, first = [], []
+
+        def change(grid, experiment, side, pair):
+            if first:
+                return None
+            first.append(1)
+            return self.sleeper(spawned, lambda: os.kill(
+                os.getpid(), signal.SIGTERM))(grid, experiment, side, pair)
+        log = self.patched(change=change)
+        self.addCleanup(loading.unhalt)
+        before = signal.getsignal(signal.SIGTERM)
+        with self.assertRaises(m.Terminated):
+            self.run_cells(CELLS[:3], jobs=1)
+        self.assertLess(spawned[0], 30)
+        self.assertEqual(len(log["cells"]), 1)  # of the three
+        self.assertIn(log["cells"][0], CELLS[:3])
+        self.assertFalse(loading.halted())
+        self.assertEqual(signal.getsignal(signal.SIGTERM), before)
+        inventory = a.load(self.out / "inventory.json")
+        self.assertEqual([r["rejected"] for r in inventory["runs"]],
+                         ["terminated"])
 
     def test_run_writes_inventory_decisions_and_build_receipt(self):
         log = self.patched()

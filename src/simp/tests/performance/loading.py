@@ -413,10 +413,17 @@ def halted():
     return _HALT.is_set()
 
 
+def live():
+    """The process groups `execute` has running."""
+    with _GUARD:
+        return sorted(_LIVE)
+
+
 def execute(command, cwd, env, timeout, fds):
     """Like rp.execute, but preserve serial locks in child processes. The
     process is killed with its group by `halt`."""
     started = time.perf_counter()
+    expired = False
     with _GUARD:
         if _HALT.is_set():
             raise Halted("the run is stopping: %s not started" % command[0])
@@ -424,8 +431,12 @@ def execute(command, cwd, env, timeout, fds):
             command, cwd=cwd, env=env, text=True, stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             start_new_session=True, pass_fds=fds)
-        _LIVE.add(proc.pid)
-    expired = False
+        try:  # opened at once: a failure here must not orphan the child
+            _LIVE.add(proc.pid)
+        except BaseException:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.communicate()
+            raise
     try:
         text, _ = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:

@@ -260,6 +260,30 @@ def work_differences(base, cand):
             if base.get(key) != cand.get(key)]
 
 
+def selected_source(selected, name, seal=None):
+    """The selected source (an entry of `selected["sources"]`) that the
+    private file `name` stands for, or None: the source of that file name,
+    or, for a file `XTheory.{sml,sig,uo,ui,dat}`, the selected script
+    `XScript.sml` (the private Holmake builds the theory; TASK37 design
+    decision 34), exactly when the file is in the post-build record of the
+    private tree (`products`, taken after the build) with the `seal`
+    (`{sha256, bytes}`) given, else the call is refused. Without a seal the
+    record alone is consulted."""
+    sources = {Path(s["git_path"]).name: s for s in selected["sources"]}
+    base = Path(name).name
+    if base in sources:
+        return sources[base]
+    theory = THEORY_FILE.fullmatch(base)
+    if theory is not None and theory.group(1) + "Script.sml" in sources:
+        built = (selected.get("products") or {}).get(".hol/objs/" + base)
+        require(built is not None and (seal is None or seal == {
+            k: built.get(k) for k in seal}),
+            "the private theory file %s is not in the post-build record "
+            "of its process, or differs from it" % name)
+        return sources[theory.group(1) + "Script.sml"]
+    return None
+
+
 def attribute(different, closures, manifest, entries):
     """Split the differences of a cell into the attributed ones and the
     rest. A difference is attributable only if
@@ -271,16 +295,20 @@ def attribute(different, closures, manifest, entries):
       baseline blob is the blob the baseline selection took the file from
       and whose candidate blob is the candidate selection's.
 
+    A private `XTheory.*` file is mapped to the selected `XScript.sml` it
+    is built from (`selected_source`: it must be in the post-build record
+    of its process, with this seal, else the call is refused).
+
     A shared-file difference cannot occur in this harness (both sides read
     the one checkout), and an `only-*`, `physical`, `order` or `heap`
     difference is never attributable. Returns ({P: record}, the rest)."""
     by_path = {e["path"]: e for e in entries}
 
-    def selected(side, name):
-        for found in manifest["selections"][side]["sources"]:
-            if Path(found["git_path"]).name == name:
-                return found
-        return None
+    def selected(side, name, entry):
+        have = closures[side]["entries"].get(entry)
+        seal = None if have is None else dict(
+            sha256=have["source"], bytes=have["bytes"])
+        return selected_source(manifest["selections"][side], name, seal)
 
     attributed, rest = {}, []
     for found in different:
@@ -288,8 +316,8 @@ def attribute(different, closures, manifest, entries):
         kind, _, name = entry.partition("/")
         one = two = None
         if found["kind"] in ("source", "product") and kind == "private":
-            one, two = selected("baseline", Path(name).name), \
-                selected("candidate", Path(name).name)
+            one, two = selected("baseline", name, entry), \
+                selected("candidate", name, entry)
         reviewed = None
         if one is not None and two is not None and \
                 one["git_path"] == two["git_path"]:
@@ -379,25 +407,15 @@ def private_file(name, physical, selected, repo, seal=None):
     build). It is then the script's file. Without a seal (a spelling in the
     heap, whose entry is judged where it is loaded) the record alone is
     consulted."""
-    git_paths = {Path(s["git_path"]).name: s["git_path"]
-                 for s in selected["sources"]}
     products = (selected.get("shared_dependencies") or {}).get(
         "products") or {}
     origin = {key: Path(info["source"]).relative_to(repo).as_posix()
               for key, info in products.items() if "source" in info and
               Path(info["source"]).is_absolute() and
               Path(info["source"]).is_relative_to(repo)}
-    if Path(name).name in git_paths:
-        return git_paths[Path(name).name]
-    theory = THEORY_FILE.fullmatch(Path(name).name)
-    if theory is not None and theory.group(1) + "Script.sml" in git_paths:
-        built = (selected.get("products") or {}).get(
-            ".hol/objs/" + Path(name).name)
-        require(built is not None and (seal is None or seal == {
-            k: built.get(k) for k in seal}),
-            "the private theory file %s is not in the post-build record "
-            "of its process, or differs from it" % name)
-        return git_paths[theory.group(1) + "Script.sml"]
+    found = selected_source(selected, name, seal)
+    if found is not None:
+        return found["git_path"]
     if physical in origin:
         return tracked(origin[physical])
     if name in origin:

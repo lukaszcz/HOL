@@ -522,6 +522,21 @@ class Attempts(Fixture):
         self.failed(out)
         self.assertIn("no inventory", self.refused())
 
+    def test_the_recorded_reason_must_be_the_archives(self):
+        out, document = self.cells("why", "rejected")
+        document["runs"][0].update(rejected="another reason")
+        (out / "inventory.json").write_text(json.dumps(document))
+        self.failed(out)
+        self.assertIn("is refused as 'tool defect', the inventory records "
+                      "'another reason'", self.refused())
+
+    def test_a_row_with_no_binding_is_a_cell_not_shown_rejected(self):
+        out, document = self.cells("bind", "rejected")
+        del document["runs"][0]["places"]
+        (out / "inventory.json").write_text(json.dumps(document))
+        self.failed(out)
+        self.assertIn("has no binding to replay it by", self.refused())
+
     def test_a_resumed_or_decided_attempt_with_rejected_cells_is_judged(self):
         out, _ = self.cells("res", "rejected")
         self.failed(out, ("open", None), ("close", "failed"),

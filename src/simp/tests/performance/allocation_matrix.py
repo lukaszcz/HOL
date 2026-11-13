@@ -1206,9 +1206,12 @@ def built_product(receipt, source, relative):
     `XTheory.{sml,sig,uo,ui,dat}` (below `.hol/objs`, where HOL puts a
     theory's files) of a selected script `XScript.sml` of the side
     (`source`), and then its fingerprint is that of the same file in the
-    process's own post-build record of the private tree, `built` (TASK37
-    design decision 34): a theory is judged by its script, not copied from
-    the shared tree, and bytes are not compared across processes."""
+    job's post-build record of the private tree, `built`: the one seal
+    `make_job` takes after Holmake, copied into every receipt of the side
+    in the cell (TASK37 design decision 34). A theory is judged by its
+    script, not copied from the shared tree; the agreement check of a side
+    catches only an internally inconsistent archive, and no bytes are
+    compared across builds."""
     found = THEORY_FILE.fullmatch(relative)
     if found is None or found.group(1) + "Script.sml" not in source:
         return None
@@ -1845,6 +1848,8 @@ def run_grid(args, task, started):
         lock = threading.Lock()
 
         def work(key):
+            if loading.halted():  # stopping: a queued cell never starts
+                return
             job = pool.get()
             try:
                 print("START " + name_of(*key), flush=True)

@@ -102,6 +102,49 @@ class PrivateTheory(unittest.TestCase):
             self.file("yTheory.sml", self.selected())
 
 
+class AttributedTheory(unittest.TestCase):
+    """A difference on the theory of a reviewed script is attributed to
+    the script; one of an unreviewed script stays in the rest."""
+    PATH = "src/simp/src/xScript.sml"
+    SEAL = PrivateTheory.SEAL
+    selected = PrivateTheory.selected
+
+    def case(self, reviewed=True, seal_candidate=None):
+        sources = {"baseline": "b1", "candidate": "b2"}
+        manifest = dict(selections={})
+        closures = {}
+        for side in idt.SIDES:
+            selected = self.selected()
+            selected["sources"] = [dict(git_path=self.PATH,
+                                        git_blob=sources[side])]
+            manifest["selections"][side] = selected
+            seal = seal_candidate if side == "candidate" and \
+                seal_candidate else self.SEAL
+            closures[side] = dict(entries={
+                "private/xTheory.sml": dict(source=seal["sha256"],
+                                            bytes=seal["bytes"])})
+        different = [dict(kind="source", name="private/xTheory.sml")]
+        entries = [dict(path=self.PATH, kind="source", reason="r",
+                        baseline_blob="b1", candidate_blob="b2")] \
+            if reviewed else []
+        return different, closures, manifest, entries
+
+    def test_a_difference_of_a_reviewed_scripts_theory_is_attributed(self):
+        attributed, rest = idt.attribute(*self.case())
+        self.assertEqual((sorted(attributed), rest), ([self.PATH], []))
+        self.assertEqual(attributed[self.PATH]["entry"],
+                         "private/xTheory.sml")
+
+    def test_an_unreviewed_scripts_theory_stays_in_the_rest(self):
+        attributed, rest = idt.attribute(*self.case(reviewed=False))
+        self.assertEqual((attributed, len(rest)), ({}, 1))
+
+    def test_a_seal_that_is_not_the_post_build_one_is_refused(self):
+        other = dict(sha256="c" * 64, bytes=7)
+        with self.assertRaises(ValueError):
+            idt.attribute(*self.case(seal_candidate=other))
+
+
 class Closure(unittest.TestCase):
     def closures(self, **tweak):
         out = {}

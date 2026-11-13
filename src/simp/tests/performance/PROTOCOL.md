@@ -5389,10 +5389,12 @@ private counter of `allocation_matrix.py`, in three tasks, one per clone.
   to such a name is built by `paired.exe` from its script. The products
   of that theory (`.hol/objs/XTheory.{sml,sig,uo,ui,dat}`) are judged by
   the selected script (design decision 34), and only when their seal is
-  the one the same process's post-build record holds: `built` in an
-  allocation receipt (the entries of `.hol/objs/` of the private tree
-  after Holmake; the processes of a side must agree on it) and
-  `selections[side].products` in an identity manifest. A product that
+  the one the post-build record holds: `built` in an allocation
+  receipt and `selections[side].products` in an identity manifest. In
+  an allocation, `built` is the job's single seal of `.hol/objs/` taken
+  in `make_job` after Holmake and copied into every receipt of that side
+  in the cell; the agreement check on a side catches only an internally
+  inconsistent archive, and no bytes are compared across builds. A product that
   is absent from that record, or sealed otherwise, is refused. A receipt
   made before `built` existed has no such record: its theory is refused.
 - Counts. `task37_iterations.py {matrix,client,downstream,all} [--check]`

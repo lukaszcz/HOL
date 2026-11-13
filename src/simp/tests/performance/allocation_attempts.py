@@ -51,6 +51,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import tempfile
 import sys
 
 sys.dont_write_bytecode = True
@@ -181,6 +182,18 @@ class Attempt:
         return True
 
 
+UNRESOLVED = "unresolved cell"  # the refusal of `allocation_matrix`
+
+
+def archived_rejection(archive):
+    """The reason a cell archive records for its rejection (its meta)."""
+    import evidence_bundle as bundle
+    with tempfile.TemporaryDirectory(prefix="attempt-meta-") as tmp:
+        bundle.unpack(archive, Path(tmp) / "unpacked")
+        return a.load(Path(tmp) / "unpacked" / "meta.json.gz").get(
+            "rejected")
+
+
 def rejections(output):
     """([(archive, reason)], None) when every cell archive of `output`
     (`*.json.xz`) is rejected on replay, else ([], the condition it fails).
@@ -224,9 +237,21 @@ def rejections(output):
             return [], ("the inventory does not show the cell %s rejected "
                         "(rejected and status unresolved)" % name)
         try:
-            am.replay_cell(output / name, am.row_binding(inventory, row))
+            bind = am.row_binding(inventory, row)
+        except Exception as error:
+            return [], ("the archive %s has no binding to replay it by: "
+                        "%r" % (name, error))
+        try:
+            am.replay_cell(output / name, bind)
         except sc.InvalidAllocation as error:
             # the refusal of the replay, and the reason the run recorded
+            reason = str(error)
+            if reason == UNRESOLVED:  # the archive says why in its meta
+                reason = archived_rejection(output / name)
+            if reason != row["rejected"]:
+                return [], ("the archive %s is refused as %r, the "
+                            "inventory records %r" %
+                            (name, reason, row["rejected"]))
             found.append((name, "%s (recorded: %s)" % (
                 error, row["rejected"])))
         except Exception as error:
