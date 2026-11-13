@@ -5410,10 +5410,21 @@ private counter of `allocation_matrix.py`, in three tasks, one per clone.
   (`allocation_attempts.attempt_id`). It is void, and its settings may be
   drawn again as a new attempt, only if it admitted no measurement:
   exactly one close, `failed`; no resume; its output exists and holds no
-  cell archive (`*.json.xz`, also `.partial`), no decisions and no
-  inventory row. Anything else (left open, resumed, closed twice or with
-  another status, output missing or holding a cell) is judged, and a
-  judged attempt cannot be redrawn. The disposition takes the ledger with
+  decisions; and every cell archive it holds (`*.json.xz`) is rejected on
+  replay: `allocation_matrix.replay_cell`, with the binding of the
+  archive's inventory row, raises the archive's refusal (so it admitted no
+  record), and the row agrees (`rejected` set, status `unresolved`). Replay
+  decides, never the inventory alone: a row that says rejected over an
+  archive that replays to a record leaves the attempt judged. A `.partial`
+  archive, an archive with no inventory row to replay it by and one that
+  fails otherwise than by a refusal count as cells not shown rejected. So a
+  tool-defect refusal of every cell, which admitted nothing, is void and
+  may be redrawn (design decision 30, aligned with TASK32's "every archived
+  measuring process rejected"). Anything else (left open, resumed, closed
+  twice or with another status, output missing or holding decisions or a
+  cell not shown rejected) is judged, and a judged attempt cannot be
+  redrawn. The disposition lists a void attempt's rejections, each archive
+  with its reason. The disposition takes the ledger with
   `--alloc-ledger TASK=FILE` and the output of `--alloc-<task>` as the one
   judged attempt; an extra attempt that is not void, a judged attempt
   that is not in the ledger or ran in another output, and a missing or

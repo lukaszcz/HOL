@@ -204,7 +204,10 @@ refused. The 3-pair TASK37 tasks keep these keys (part C).
 ALLOCATION LEDGER. `--alloc-ledger TASK=FILE` (one for each task) is judged
 by `allocation_attempts.attempts_of(task, ledger, judged)` with the output
 named by `--alloc-<task>` as the judged attempt ({attempt, status, output,
-judged, void}, as `void_attempts.attempts_of` returns); its refusal
+judged, void}, as `void_attempts.attempts_of` returns, and for a void
+attempt its `rejections`, [{archive, reason}], listed in the record's lines);
+an attempt is void only if every cell archive it holds is rejected on replay
+(design decision 30: replay decides, never the inventory alone). Its refusal
 (`InvalidAllocation`) refuses the disposition. The pairs a passing row needs
 are `allocation_matrix.task_named(task).pairs`.
 
@@ -1455,6 +1458,15 @@ def lines(record):
                 table, x["attempt"], x["status"],
                 "void (no measurement admitted)" if x["void"]
                 else "judged"))
+    for task, found in record["attempts"]["allocation"].items():
+        for x in found or ():
+            out.append("ALLOCATION-ATTEMPT %s %s status %s: %s" % (
+                task, x["attempt"], x["status"],
+                "void (every cell archive rejected on replay)"
+                if x["void"] else "judged"))
+            out += ["ALLOCATION-ATTEMPT %s %s rejected %s: %s" % (
+                task, x["attempt"], r["archive"], r["reason"])
+                for r in x.get("rejections", ())]
     for x in record["startup_attempts"]:
         out.append("STARTUP-ATTEMPT %s %s: %s" % (
             x["attempt"], x["status"], "judged" if x["judged"] else

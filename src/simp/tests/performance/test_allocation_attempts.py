@@ -12,6 +12,8 @@ import acceptance as a
 import allocation_attempts as at
 import allocation_matrix as m
 import allocation_schema as sc
+import allocation_testbed as tb
+import evidence_bundle as bundle
 import test_task37_allocation as t37
 import timing_grid as tg
 
@@ -438,7 +440,98 @@ class Attempts(Fixture):
         found = at.attempts_of(TASK, self.ledger())
         self.assertEqual(
             found, [dict(attempt=key, status="failed", output=str(out),
-                         judged=False, void=True)])
+                         judged=False, void=True, rejections=[])])
+
+    def cells(self, name, *kinds, inventory=True):
+        """An output of real cell archives (the testbed's), one for each
+        of `kinds`: "rejected" (meta rejected, an unresolved row), "ok" (an
+        admitted cell, its row), "lying" (an admitted cell whose row says
+        rejected), "partial" (a .partial archive). Returns (output,
+        inventory)."""
+        sandbox = tb.Sandbox(Path(self.tmp.name) / (name + "-sb"), pairs=4)
+        out = self.out(name)
+        rows = []
+        for number, kind in enumerate(kinds):
+            cell = "cell%d" % number
+            if kind == "partial":
+                (out / (cell + ".json.xz.partial")).write_bytes(b"x")
+                continue
+            folder = Path(self.tmp.name) / ("%s-dir-%d" % (name, number))
+            sandbox.write_cell(folder)
+            if kind == "rejected":
+                tb.rewrite(folder / "meta.json.gz",
+                           lambda r: r.update(rejected="tool defect"))
+            archive = out / (cell + ".json.xz")
+            bundle.pack(folder, archive)
+            row = dict(case=tb.CASE, size=tb.SIZE, steady=tb.STEADY,
+                       archive=archive.name, seal=tb.seal(archive), files=0,
+                       places=m.places(sandbox.header()))
+            if kind == "rejected":
+                row.update(rejected="tool defect", status="unresolved")
+            else:
+                row.update(sandbox.inventory_row(archive), rejected=None)
+                if kind == "lying":
+                    row.update(rejected="tool defect", status="unresolved")
+            rows.append(row)
+        document = dict(sandbox.header(), jobs=[1], runs=rows)
+        if inventory:
+            (out / "inventory.json").write_text(json.dumps(document))
+        return out, document
+
+    def failed(self, out, *events):
+        return self.attempt(out, *(events or (("open", None),
+                                             ("close", "failed"))))
+
+    def test_an_attempt_whose_every_cell_was_rejected_is_void(self):
+        out, _ = self.cells("rej", "rejected", "rejected")
+        key = self.failed(out)
+        (found,) = at.attempts_of(TASK, self.ledger())
+        self.assertEqual((found["attempt"], found["void"]), (key, True))
+        self.assertEqual(
+            [(r["archive"], r["reason"]) for r in found["rejections"]],
+            [("cell0.json.xz", "unresolved cell"),
+             ("cell1.json.xz", "unresolved cell")])
+
+    def test_one_admitted_cell_makes_the_attempt_judged(self):
+        out, _ = self.cells("one", "rejected", "ok")
+        self.failed(out)
+        self.assertIn("is not void", self.refused())
+        self.assertIn("does not show the cell cell1", self.refused())
+
+    def test_a_partial_archive_is_a_cell_not_shown_rejected(self):
+        out, _ = self.cells("part", "rejected", "partial")
+        self.failed(out)
+        self.assertIn("not shown rejected", self.refused())
+
+    def test_the_inventory_alone_does_not_decide(self):
+        # the row says rejected, the archive replays to a record
+        out, _ = self.cells("lie", "lying")
+        self.failed(out)
+        self.assertIn("cell0.json.xz admitted a record on replay",
+                      self.refused())
+        # a row that does not say rejected over a rejected archive, and
+        # an archive without a row or inventory, are judged too
+        out, document = self.cells("agree", "rejected")
+        document["runs"][0].update(rejected=None, status="pass")
+        (out / "inventory.json").write_text(json.dumps(document))
+        self.ledger().unlink()
+        self.failed(out)
+        self.assertIn("does not show the cell", self.refused())
+        out, _ = self.cells("noinv", "rejected", inventory=False)
+        self.ledger().unlink()
+        self.failed(out)
+        self.assertIn("no inventory", self.refused())
+
+    def test_a_resumed_or_decided_attempt_with_rejected_cells_is_judged(self):
+        out, _ = self.cells("res", "rejected")
+        self.failed(out, ("open", None), ("close", "failed"),
+                    ("resume", None), ("close", "failed"))
+        self.assertIn("is not void", self.refused())
+        self.ledger().unlink()
+        out, _ = self.cells("dec", "rejected")
+        (out / "decisions-partial.json").write_text("{}")
+        self.failed(out)
+        self.assertIn("holds decisions", self.refused())
 
     def test_the_judged_attempt_stands_beside_the_void_one(self):
         void = self.out("v")

@@ -15,14 +15,23 @@ line names `table` (the task), `attempt`, `candidate` (the full sha),
 `attempt_id(output)`.
 
 An attempt is void, and its settings may be drawn again as a new attempt,
-only if it admitted no measurement, as `void_attempts.void_failure` says
-for the timing grids and here shown from its own output: exactly one close,
-`failed`; no resume; its output directory exists and holds no cell archive
-(`*.json.xz`, also a `.partial` one), no decisions and no inventory row.
-Everything else, an attempt left open, resumed, closed twice, closed with
-another status, or whose output is missing or holds a cell, is judged: it
-cannot be redrawn, and `attempts_of` refuses it unless it is the judged one.
-The legacy tasks write no ledger.
+only if it admitted no measurement (design decision 30, as the TASK32 rule
+"every archived measuring process rejected"): exactly one close, `failed`;
+no resume; its output directory exists and holds no decisions; and every
+cell archive it holds (`*.json.xz`) is rejected on replay: `rejections`
+replays each with `allocation_matrix.replay_cell` and the binding of its
+inventory row, which must raise the archive's refusal (so it admitted no
+record), and the row, if any, must agree (`rejected` set, status
+`unresolved`). Replay decides, never the inventory alone: a row that says
+rejected over an archive that replays to a record leaves the attempt
+judged. A `.partial` archive counts as a cell not shown rejected, and so
+does an archive that is not replayable (no inventory row for it, or a
+failure that is not a refusal). Everything else, an attempt left open,
+resumed, closed twice, closed with another status, whose output is missing
+or holds decisions or a cell that is not shown rejected, is judged: it
+cannot be redrawn, and `attempts_of` refuses it unless it is the judged
+one. The rejections of a void attempt (archive and reason) are in its entry
+and listed in the disposition. The legacy tasks write no ledger.
 
 One output, one attempt: an `open` (a run that is not a `--resume`) whose
 attempt is already in the ledger is refused before anything is built, so
@@ -172,6 +181,61 @@ class Attempt:
         return True
 
 
+def rejections(output):
+    """([(archive, reason)], None) when every cell archive of `output`
+    (`*.json.xz`) is rejected on replay, else ([], the condition it fails).
+    Replay decides: each archive is replayed (`allocation_matrix.
+    replay_cell`, with the binding of its inventory row) and must raise the
+    archive's refusal, so that it admitted no record; the reason is that
+    refusal. An archive that replays to a record, a `.partial` one, one with
+    no inventory row to replay it by, one whose row does not agree
+    (`rejected` set, status `unresolved`), a row with no archive, and an
+    archive that fails otherwise than by a refusal, are cells not shown
+    rejected. No archive at all is vacuously rejected."""
+    import allocation_matrix as am
+    output = Path(output)
+    held = sorted(p.name for p in output.iterdir() if ".json.xz" in p.name)
+    partial = [n for n in held if not n.endswith(".json.xz")]
+    if partial:
+        return [], ("its output holds an archive not shown rejected: %s"
+                    % ", ".join(partial[:3]))
+    inventory, rows = None, {}
+    if (output / "inventory.json").is_file():
+        inventory = a.load(output / "inventory.json")
+        runs = inventory.get("runs")
+        if not isinstance(runs, list):
+            return [], "its inventory has no list of cells"
+        rows = {r.get("archive"): r for r in runs if isinstance(r, dict)}
+        if len(rows) != len(runs):
+            return [], "its inventory has malformed or repeated cells"
+        missing = sorted(set(rows) - set(held))
+        if missing:
+            return [], ("its inventory has a cell with no archive: %s" %
+                        ", ".join(map(str, missing[:3])))
+    elif held:
+        return [], ("its output holds cell archives and no inventory to "
+                    "replay them by: %s" % ", ".join(held[:3]))
+    found = []
+    for name in held:
+        row = rows.get(name)
+        if row is None:
+            return [], "no inventory row for the archive %s" % name
+        if not row.get("rejected") or row.get("status") != "unresolved":
+            return [], ("the inventory does not show the cell %s rejected "
+                        "(rejected and status unresolved)" % name)
+        try:
+            am.replay_cell(output / name, am.row_binding(inventory, row))
+        except sc.InvalidAllocation as error:
+            found.append((name, str(error)))
+        except Exception as error:
+            return [], ("the archive %s does not replay to a refusal: %r" %
+                        (name, error))
+        else:
+            return [], ("the archive %s admitted a record on replay" %
+                        name)
+    return found, None
+
+
 def void_failure(output, row):
     """None when the attempt whose ledger output is `output` and whose
     ledger row (`Ledger.attempts`) is `row` is void, else the condition it
@@ -179,16 +243,8 @@ def void_failure(output, row):
     if output is None or not Path(output).is_dir():
         return "its output directory is missing"
     output = Path(output)
-    cells = sorted(p.name for p in output.iterdir()
-                   if ".json.xz" in p.name)
-    if cells:
-        return "its output holds cell archives: %s" % ", ".join(cells[:3])
     if list(output.glob("decisions*.json")):
         return "its output holds decisions"
-    if (output / "inventory.json").is_file():
-        runs = a.load(output / "inventory.json").get("runs")
-        if runs != []:
-            return "its inventory records cells"
     status = row["status"] if row else None
     if status is None or status == "interrupted":
         return "its ledger has no close (it was left open)"
@@ -200,7 +256,7 @@ def void_failure(output, row):
             return ("it closed more than once, as %s" %
                     ", ".join(row["statuses"]))
         return "its ledger closes it %s, not %s" % (status, FAILED)
-    return None
+    return rejections(output)[1]
 
 
 def attempts_of(task, ledger, judged=None):
@@ -208,7 +264,8 @@ def attempts_of(task, ledger, judged=None):
     `ledger_path` or another's, read-only): the judged ones (`judged`:
     {attempt id: output directory} of the runs a disposition is given) and
     the others, which must be void. [{attempt, status, output, judged,
-    void}], in the order the ledger names them. Refused: no ledger, an
+    void}, and for a void one `rejections`: [{archive, reason}] of the
+    cells it held], in the order the ledger names them. Refused: no ledger, an
     attempt of more than one output, a judged attempt in another output
     than the one given, a judged id the ledger does not know, and any other
     attempt that is not void (it may have measured: it needs a new policy
@@ -260,5 +317,7 @@ def attempts_of(task, ledger, judged=None):
                       "measurement) may stand beside the judged one" % (
                           key, name, row["status"], output, failed))
             entry["void"] = True
+            entry["rejections"] = [
+                dict(archive=n, reason=r) for n, r in rejections(output)[0]]
         found.append(entry)
     return found

@@ -635,6 +635,23 @@ class Allocation(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no attempts ledger"):
             d.allocation_attempts("task31", self.ledger, self.root)
 
+    def test_a_void_attempt_is_listed_with_its_rejections(self):
+        void = dict(attempt="k1", status="failed", judged=False, void=True,
+                    rejections=[dict(archive="x-1.json.xz",
+                                     reason="unresolved cell")])
+        judged = dict(attempt="k2", status="pass", judged=True, void=False)
+        record = dict(
+            timing_attempts={}, startup_attempts=[], identity_unaccounted={},
+            cells={}, task32={}, task33={}, gates={}, identity_grid={},
+            allocation_case={}, timing_grid={}, retained_slope={},
+            attempts=dict(allocation={"task37-downstream": [void, judged]}))
+        self.assertEqual(d.lines(record), [
+            "ALLOCATION-ATTEMPT task37-downstream k1 status failed: void "
+            "(every cell archive rejected on replay)",
+            "ALLOCATION-ATTEMPT task37-downstream k1 rejected "
+            "x-1.json.xz: unresolved cell",
+            "ALLOCATION-ATTEMPT task37-downstream k2 status pass: judged"])
+
 
 class Lineage(unittest.TestCase):
     """The candidate equivalence, on a real repository."""
