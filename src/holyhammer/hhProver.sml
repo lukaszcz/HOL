@@ -85,6 +85,21 @@ fun szs_name SzsTheorem = "Theorem"
   | szs_name (SzsUnknown text) = text
   | szs_name (RunFailure text) = "failure: " ^ text
 
+fun szs_to_string (SzsUnknown text) = "Unknown:" ^ text
+  | szs_to_string (RunFailure text) = "RunFailure:" ^ text
+  | szs_to_string szs = szs_name szs
+
+fun szs_of_string text =
+  if String.isPrefix "Unknown:" text then
+    SzsUnknown (String.extract (text, 8, NONE))
+  else if String.isPrefix "RunFailure:" text then
+    RunFailure (String.extract (text, 11, NONE))
+  else
+    case status_of_word text of
+        SzsUnknown _ => raise Fail ("invalid SZS status " ^ text)
+      | szs => if szs_name szs = text then szs
+               else raise Fail ("invalid SZS status " ^ text)
+
 fun szs_of_line line =
   let
     val marker = "SZS status "

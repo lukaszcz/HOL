@@ -30,15 +30,23 @@ type condition =
   {cond_id : string, regime : regime, selector : selector,
    engine : engine, timeout : int, reconstruct : bool}
 
+(* What a journal cell recorded: the prover's SZS verdict, or why no
+   prover verdict exists. *)
+datatype cell_status =
+    Szs of hhProver.szs
+  | EvalError
+  | BrokenDeps
+  | LoadFailure
+
 type journal_slice =
-  {slice : hhProver.slice, szs : string, time : real, cached : bool}
+  {slice : hhProver.slice, szs : hhProver.szs, time : real, cached : bool}
 
 type journal_entry =
   {run : string, thy : string, thm : string, goal_id : string,
    cond : string, regime : regime, selector : selector,
    engine : engine, ho : bool, fresh : bool, prover : string,
    prover_version : string option, nfacts : int,
-   timeout : int, szs : string, t_prover : real,
+   timeout : int, szs : cell_status, t_prover : real,
    axioms_used : string list option, recon_ok : bool option,
    recon_method : string option, t_recon : real option,
    stac : string option, error : string option, stop : string option,
@@ -418,9 +426,27 @@ fun json_slice
      ("extra_opts", JSON.ARRAY (map JSON.STRING extra_opts)),
      ("slice_size", json_int slice_size)]
 
+(* Journal spelling: a RunFailure's message lives in the entry's error
+   field, so the status itself is just "RunFailure". *)
+fun szs_name (hhProver.RunFailure _) = "RunFailure"
+  | szs_name szs = hhProver.szs_name szs
+
+fun szs_of_name "RunFailure" = hhProver.RunFailure ""
+  | szs_of_name name = hhProver.status_of_word name
+
+fun cell_status_name (Szs szs) = szs_name szs
+  | cell_status_name EvalError = "Error"
+  | cell_status_name BrokenDeps = "BrokenDeps"
+  | cell_status_name LoadFailure = "LoadFailure"
+
+fun cell_status_of_name "Error" = EvalError
+  | cell_status_of_name "BrokenDeps" = BrokenDeps
+  | cell_status_of_name "LoadFailure" = LoadFailure
+  | cell_status_of_name name = Szs (szs_of_name name)
+
 fun json_journal_slice {slice, szs, time, cached} =
   JSON.OBJECT
-    [("slice", json_slice slice), ("szs", JSON.STRING szs),
+    [("slice", json_slice slice), ("szs", JSON.STRING (szs_name szs)),
      ("time", JSON.FLOAT time), ("cached", JSON.BOOL cached)]
 
 fun journal_json
@@ -441,7 +467,8 @@ fun journal_json
        ("prover_version", json_string_option prover_version),
        ("nfacts", json_int nfacts),
        ("timeout", json_int timeout),
-       ("szs", JSON.STRING szs), ("t_prover", JSON.FLOAT t_prover),
+       ("szs", JSON.STRING (cell_status_name szs)),
+       ("t_prover", JSON.FLOAT t_prover),
        ("axioms_used", json_string_list_option axioms_used),
        ("recon_ok", json_bool_option recon_ok),
        ("recon_method", json_string_option recon_method),
@@ -488,7 +515,7 @@ fun parse_slice value : hhProver.slice =
 
 fun parse_journal_slice value : journal_slice =
   {slice = parse_slice (field "slice" value),
-   szs = string_field "szs" value,
+   szs = szs_of_name (string_field "szs" value),
    time = real_field "time" value,
    cached = bool_field "cached" value}
 
@@ -523,7 +550,8 @@ fun parse_journal_value value : journal_entry =
      prover = prover,
      prover_version = option_field JSONUtil.asString "prover_version" value,
      nfacts = int_field "nfacts" value, timeout = int_field "timeout" value,
-     szs = string_field "szs" value, t_prover = real_field "t_prover" value,
+     szs = cell_status_of_name (string_field "szs" value),
+     t_prover = real_field "t_prover" value,
      axioms_used = option_field string_list "axioms_used" value,
      recon_ok = option_field JSONUtil.asBool "recon_ok" value,
      recon_method = option_field JSONUtil.asString "recon_method" value,
@@ -576,7 +604,9 @@ fun read_journal path =
 (* Environment-level failures (no prover binary, prover would not start)
    say nothing about the cell, so they must not mark it done: otherwise a
    sweep started before the provers were installed can never be resumed. *)
-fun retryable_szs szs = szs = "Error" orelse szs = "RunFailure"
+fun retryable_szs EvalError = true
+  | retryable_szs (Szs (hhProver.RunFailure _)) = true
+  | retryable_szs _ = false
 
 fun add_completed entry pairs =
   if retryable_szs (#szs entry) then pairs
@@ -784,9 +814,9 @@ fun sched_cell entry = not (prover_cell entry)
 fun goal_ids entries predicate =
   sorted_unique (map #goal_id (List.filter predicate entries))
 
-fun proven_cell entry = #szs entry = "Theorem"
+fun proven_cell entry = #szs entry = Szs hhProver.SzsTheorem
 fun reconstructed_cell entry = #recon_ok entry = SOME true
-fun attempted_cell entry = #szs entry <> "BrokenDeps"
+fun attempted_cell entry = #szs entry <> BrokenDeps
 
 fun quantiles values =
   case dict_sort Real.compare values of
@@ -1247,9 +1277,6 @@ fun safe_component text =
 
 fun goal_id thy name = thy ^ "." ^ name
 
-fun szs_name (hhProver.RunFailure _) = "RunFailure"
-  | szs_name szs = hhProver.szs_name szs
-
 fun run_failure_error (hhProver.RunFailure message) = SOME message
   | run_failure_error _ = NONE
 
@@ -1294,7 +1321,7 @@ fun append_theory_error path expdir thy message =
        engine = Prover "", timeout = 0, reconstruct = false}
   in
     append_journal path
-      (base_entry expdir thy "__load__" condition false false 0 "LoadFailure"
+      (base_entry expdir thy "__load__" condition false false 0 LoadFailure
          0.0 NONE NONE (failed message))
   end
 
@@ -1467,7 +1494,7 @@ fun schedule_cell_entry expdir thy (name, thm) pool condition parameters =
        rankings = rankings,
        progress = SOME progress}
     val slices = map (fn (slice, status, elapsed, cached) =>
-      {slice = slice, szs = szs_name status, time = elapsed,
+      {slice = slice, szs = status, time = elapsed,
        cached = cached} : journal_slice) (#slices_run result)
     fun slice_result wanted =
       List.find (fn (slice, _, _, _) =>
@@ -1492,7 +1519,8 @@ fun schedule_cell_entry expdir thy (name, thm) pool condition parameters =
     case #suggestions result of
         suggestion :: _ =>
           finish (SOME (#slice suggestion)) (#prover suggestion)
-            (#nfacts (#slice suggestion)) "Theorem" (#t_prover suggestion)
+            (#nfacts (#slice suggestion)) (Szs hhProver.SzsTheorem)
+            (#t_prover suggestion)
             (SOME (#lemmas suggestion)) (SOME true) (SOME "metis")
             (SOME (#t_recon suggestion)) (SOME (#stac suggestion)) NONE
       | [] =>
@@ -1505,17 +1533,18 @@ fun schedule_cell_entry expdir thy (name, thm) pool condition parameters =
                        | NONE => 0.0
                  in
                    finish (SOME slice) (#prover slice) (#nfacts slice)
-                     "Theorem" elapsed (SOME lemmas) (SOME false)
-                     (SOME "metis") NONE NONE
+                     (Szs hhProver.SzsTheorem) elapsed (SOME lemmas)
+                     (SOME false) (SOME "metis") NONE NONE
                      (SOME "ATP proof found but reconstruction failed")
                  end
              | [] =>
                  (case #slices_run result of
                       (slice, status, elapsed, _) :: _ =>
                         finish NONE (#prover slice) (#nfacts slice)
-                          (szs_name status) elapsed NONE NONE NONE NONE NONE
+                          (Szs status) elapsed NONE NONE NONE NONE NONE
                           (run_failure_error status)
-                    | [] => finish NONE "" maximum "RunFailure" 0.0 NONE
+                    | [] => finish NONE "" maximum
+                        (Szs (hhProver.RunFailure "")) 0.0 NONE
                         NONE NONE NONE NONE
                         (SOME "schedule contained no runnable slices")))
   end
@@ -1536,7 +1565,7 @@ fun prover_cell_entry expdir thy (name, thm) pool condition prover_name =
         NONE => base_entry expdir thy name condition
           (is_higher_order_goal (list_mk_imp goal))
           (is_fresh_goal thy (list_mk_imp goal)) nfacts
-          "RunFailure" 0.0 NONE
+          (Szs (hhProver.RunFailure "")) 0.0 NONE
           NONE (failed ("unknown HolyHammer prover: " ^ prover_name))
       | SOME prover =>
           let
@@ -1560,7 +1589,7 @@ fun prover_cell_entry expdir thy (name, thm) pool condition prover_name =
             base_entry expdir thy name condition
               (is_higher_order_goal (list_mk_imp goal))
               (is_fresh_goal thy (list_mk_imp goal)) nfacts
-              (szs_name (#szs result)) (#time result)
+              (Szs (#szs result)) (#time result)
               (#used_axioms result) (#version result) outcome
           end
   end
@@ -1582,18 +1611,18 @@ fun run_cell expdir thy theorem pool condition =
              (base_entry expdir thy (#1 theorem) condition
                 (is_higher_order_goal (list_mk_imp (dest_thm (#2 theorem))))
                 (is_fresh_goal thy (list_mk_imp (dest_thm (#2 theorem))))
-                0 "Error" 0.0 NONE NONE (failed (General.exnMessage error)))
+                0 EvalError 0.0 NONE NONE (failed (General.exnMessage error)))
 
 fun broken_deps_cell expdir thy name goal condition =
   append_journal (journal_path expdir thy)
     (base_entry expdir thy name condition (is_higher_order_goal goal)
-       (is_fresh_goal thy goal) 0 "BrokenDeps" 0.0 NONE NONE
+       (is_fresh_goal thy goal) 0 BrokenDeps 0.0 NONE NONE
        no_outcome)
 
 fun evaluation_error_cell expdir thy name goal condition message =
   append_journal (journal_path expdir thy)
     (base_entry expdir thy name condition (is_higher_order_goal goal)
-       (is_fresh_goal thy goal) 0 "Error" 0.0 NONE NONE
+       (is_fresh_goal thy goal) 0 EvalError 0.0 NONE NONE
        (failed message))
 
 fun eval_loaded_theory expdir thy =
@@ -2107,7 +2136,7 @@ fun run_smoke {expdir, timeout} =
       val _ =
         if not (null (#slices repeated)) andalso
            List.all #cached (#slices repeated) andalso repeat_spawns = 0 andalso
-           #szs repeated = "Theorem" andalso
+           #szs repeated = Szs hhProver.SzsTheorem andalso
            #recon_ok repeated = SOME true andalso
            #stop repeated = SOME "MaxProofs"
         then ()
@@ -2121,7 +2150,8 @@ fun run_smoke {expdir, timeout} =
         smoke_goal_id item = #goal_id entry) smoke_goals
       val results = List.filter expected entries
       fun succeeded entry =
-        #szs entry = "Theorem" andalso #recon_ok entry = SOME true andalso
+        #szs entry = Szs hhProver.SzsTheorem andalso
+        #recon_ok entry = SOME true andalso
         #error entry = NONE andalso
         (case #engine entry of
              Prover _ => true

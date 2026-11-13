@@ -50,8 +50,13 @@ sig
   val default_provers : unit -> string list
 
   (* Human-readable rendering, for progress output.  Not a wire format:
-     hhCache keeps its own round-trippable encoding. *)
+     szs_to_string/szs_of_string are the round-trippable encoding.
+     status_of_word reads an SZS ontology word, so szs_name of every
+     status other than SzsUnknown and RunFailure reads back. *)
   val szs_name : szs -> string
+  val szs_to_string : szs -> string
+  val szs_of_string : string -> szs
+  val status_of_word : string -> szs
   val szs_of_line : string -> szs option
   val axioms_from_tstp : string list -> string list
 

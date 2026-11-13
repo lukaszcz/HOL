@@ -17,15 +17,22 @@ sig
     {cond_id : string, regime : regime, selector : selector,
      engine : engine, timeout : int, reconstruct : bool}
 
+  datatype cell_status =
+      Szs of hhProver.szs
+    | EvalError
+    | BrokenDeps
+    | LoadFailure
+
   type journal_slice =
-    {slice : hhProver.slice, szs : string, time : real, cached : bool}
+    {slice : hhProver.slice, szs : hhProver.szs, time : real,
+     cached : bool}
 
   type journal_entry =
     {run : string, thy : string, thm : string, goal_id : string,
      cond : string, regime : regime, selector : selector,
      engine : engine, ho : bool, fresh : bool, prover : string,
      prover_version : string option, nfacts : int,
-     timeout : int, szs : string, t_prover : real,
+     timeout : int, szs : cell_status, t_prover : real,
      axioms_used : string list option, recon_ok : bool option,
      recon_method : string option, t_recon : real option,
      stac : string option, error : string option, stop : string option,

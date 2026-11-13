@@ -2192,7 +2192,7 @@ fun test_hhEval root =
        prover = "e",
        prover_version = NONE,
        nfacts = 0, timeout = 5,
-       szs = "BrokenDeps", t_prover = 0.0, axioms_used = NONE,
+       szs = hhEval.BrokenDeps, t_prover = 0.0, axioms_used = NONE,
        recon_ok = NONE, recon_method = NONE, t_recon = NONE, stac = NONE,
        error = NONE, stop = NONE, t_total = NONE, winner = NONE, slices = []}
     val full_entry : hhEval.journal_entry =
@@ -2201,7 +2201,8 @@ fun test_hhEval root =
        engine = hhEval.Prover "e", ho = true, fresh = true,
        prover = "e",
        prover_version = SOME "3.2.5", nfacts = 128,
-       timeout = 10, szs = "Theorem", t_prover = 1.25,
+       timeout = 10, szs = hhEval.Szs hhProver.SzsTheorem,
+       t_prover = 1.25,
        axioms_used = SOME ["list.nil", "arithmetic.add"], recon_ok = SOME true,
        recon_method = SOME "metis", t_recon = SOME 0.5,
        stac = SOME "metis_tac [list_nil]", error = SOME "fixture",
@@ -2240,7 +2241,7 @@ fun test_hhEval root =
        engine = hhEval.Prover "e", ho = false, fresh = false,
        prover = "e",
        prover_version = NONE, nfacts = 0, timeout = 5,
-       szs = "Error", t_prover = 0.0, axioms_used = NONE,
+       szs = hhEval.EvalError, t_prover = 0.0, axioms_used = NONE,
        recon_ok = NONE, recon_method = NONE, t_recon = NONE, stac = NONE,
        error = SOME "transient harness failure", stop = NONE,
        t_total = NONE, winner = NONE, slices = []}
@@ -2257,7 +2258,8 @@ fun test_hhEval root =
        ho = #ho retry_entry, fresh = #fresh retry_entry,
        prover = #prover retry_entry,
        prover_version = NONE, nfacts = 0, timeout = 5,
-       szs = "RunFailure", t_prover = 0.0, axioms_used = NONE,
+       szs = hhEval.Szs (hhProver.RunFailure ""), t_prover = 0.0,
+       axioms_used = NONE,
        recon_ok = NONE, recon_method = NONE, t_recon = NONE, stac = NONE,
        error = SOME "prover binary was missing", stop = NONE,
        t_total = NONE, winner = NONE, slices = []}
@@ -2357,13 +2359,13 @@ fun test_hhEval root =
          {prover = "e", format = "fof", type_enc = "",
           lam_trans = "", nfacts = 256, filter = "mepo",
           extra_opts = ["--auto"], slice_size = 15},
-       szs = "Theorem", time = 1.75, cached = true}
+       szs = hhProver.SzsTheorem, time = 1.75, cached = true}
     val competing_schedule_slice : hhEval.journal_slice =
       {slice =
          {prover = "e", format = "tx0-", type_enc = "mono_native_fool",
           lam_trans = "lifting", nfacts = 256, filter = "mepo",
           extra_opts = ["--auto"], slice_size = 15},
-       szs = "Theorem", time = 1.5, cached = false}
+       szs = hhProver.SzsTheorem, time = 1.5, cached = false}
     val sched_entry : hhEval.journal_entry =
       {run = "fixture", thy = "list", thm = "scheduled",
        goal_id = "list.scheduled", cond = "sched",
@@ -2371,7 +2373,7 @@ fun test_hhEval root =
        engine = #engine sched_condition, ho = true, fresh = true,
        prover = "e",
        prover_version = SOME "3.2.5", nfacts = 256, timeout = 30,
-       szs = "Theorem", t_prover = 1.75,
+       szs = hhEval.Szs hhProver.SzsTheorem, t_prover = 1.75,
        axioms_used = SOME ["list.one"], recon_ok = SOME true,
        recon_method = SOME "metis", t_recon = SOME 0.25,
        stac = SOME "metis_tac [list_one]", error = NONE,
@@ -2529,28 +2531,30 @@ fun test_hhEval root =
     val _ = copy_fixture "list.jsonl"
     val _ = copy_fixture "arithmetic.jsonl"
     val _ = copy_fixture "sched.jsonl"
-    fun subset_entry thm ho fresh szs recon : hhEval.journal_entry =
+    fun subset_entry thm ho fresh recon : hhEval.journal_entry =
       {run = #run full_entry, thy = "subset", thm = thm,
        goal_id = "subset." ^ thm, cond = "subset-fixture",
        regime = hhEval.Bushy, selector = hhEval.Deps,
        engine = hhEval.Prover "e", ho = ho, fresh = fresh,
        prover = "e",
        prover_version = #prover_version full_entry, nfacts = 3, timeout = 6,
-       szs = szs, t_prover = 0.1, axioms_used = NONE,
+       szs = hhEval.Szs hhProver.SzsTheorem, t_prover = 0.1,
+       axioms_used = NONE,
        recon_ok = recon, recon_method = NONE, t_recon = NONE, stac = NONE,
        error = NONE, stop = NONE, t_total = NONE, winner = NONE, slices = []}
     val subset_journal = join report_journal "subset.jsonl"
     val _ = hhEval.append_journal subset_journal
-      (subset_entry "ho" true false "Theorem" (SOME true))
+      (subset_entry "ho" true false (SOME true))
     val _ = hhEval.append_journal subset_journal
-      (subset_entry "first_order" false true "Theorem" (SOME false))
+      (subset_entry "first_order" false true (SOME false))
     fun one_shot_entry cond thm selector : hhEval.journal_entry =
       {run = "fixture", thy = "ensemble", thm = thm,
        goal_id = "ensemble." ^ thm, cond = cond,
        regime = hhEval.Chainy, selector = selector,
        engine = hhEval.Prover "e", ho = false, fresh = false,
        prover = "e", prover_version = SOME "3.2.5", nfacts = 96,
-       timeout = 17, szs = "Theorem", t_prover = 0.2,
+       timeout = 17, szs = hhEval.Szs hhProver.SzsTheorem,
+       t_prover = 0.2,
        axioms_used = NONE, recon_ok = SOME true,
        recon_method = SOME "metis", t_recon = SOME 0.1,
        stac = SOME "metis_tac []", error = NONE, stop = NONE,
@@ -2572,14 +2576,16 @@ fun test_hhEval root =
       let
         val slice = collision_slice filter
         val journal_slice : hhEval.journal_slice =
-          {slice = slice, szs = "Theorem", time = 0.3, cached = false}
+          {slice = slice, szs = hhProver.SzsTheorem, time = 0.3,
+           cached = false}
       in
         {run = "fixture", thy = "collision", thm = thm,
          goal_id = "collision." ^ thm, cond = "filter-collision",
          regime = hhEval.Chainy, selector = hhEval.PerSlice,
          engine = collision_engine, ho = false, fresh = false,
          prover = "collision", prover_version = SOME "fixture",
-         nfacts = 77, timeout = 19, szs = "Theorem", t_prover = 0.3,
+         nfacts = 77, timeout = 19, szs = hhEval.Szs hhProver.SzsTheorem,
+         t_prover = 0.3,
          axioms_used = NONE, recon_ok = SOME recon,
          recon_method = SOME "metis", t_recon = SOME 0.1,
          stac = SOME "metis_tac []", error = NONE, stop = SOME "MaxProofs",

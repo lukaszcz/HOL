@@ -40,24 +40,6 @@ fun key_of ({prover, version, argv, problem} : key_parts) =
     aiLib.sha1_string material
   end
 
-fun szs_string (hhProver.SzsUnknown text) = "Unknown:" ^ text
-  | szs_string (hhProver.RunFailure text) = "RunFailure:" ^ text
-  | szs_string szs = hhProver.szs_name szs
-
-fun szs_of_string "Theorem" = hhProver.SzsTheorem
-  | szs_of_string "CounterSatisfiable" = hhProver.SzsCounterSat
-  | szs_of_string "Satisfiable" = hhProver.SzsSatisfiable
-  | szs_of_string "GaveUp" = hhProver.SzsGaveUp
-  | szs_of_string "Timeout" = hhProver.SzsTimeout
-  | szs_of_string "ResourceOut" = hhProver.SzsResourceOut
-  | szs_of_string "Inappropriate" = hhProver.SzsInappropriate
-  | szs_of_string text =
-      if String.isPrefix "Unknown:" text then
-        hhProver.SzsUnknown (String.extract (text, 8, NONE))
-      else if String.isPrefix "RunFailure:" text then
-        hhProver.RunFailure (String.extract (text, 11, NONE))
-      else raise Fail ("invalid cached SZS status " ^ text)
-
 fun json_string_option NONE = JSON.NULL
   | json_string_option (SOME text) = JSON.STRING text
 
@@ -68,7 +50,7 @@ fun json_string_list_option NONE = JSON.NULL
 fun result_json ({szs, used_axioms, time, version, ...}
                  : hhProver.run_result) =
   JSON.OBJECT
-    [("szs", JSON.STRING (szs_string szs)),
+    [("szs", JSON.STRING (hhProver.szs_to_string szs)),
      ("used_axioms", json_string_list_option used_axioms),
      ("time", JSON.FLOAT time),
      ("version", json_string_option version)]
@@ -79,7 +61,7 @@ fun optional decoder JSON.NULL = NONE
   | optional decoder value = SOME (decoder value)
 
 fun result_of_json value : hhProver.run_result =
-  {szs = szs_of_string (JSONUtil.asString (field "szs" value)),
+  {szs = hhProver.szs_of_string (JSONUtil.asString (field "szs" value)),
    used_axioms =
      optional (JSONUtil.arrayMap JSONUtil.asString)
        (field "used_axioms" value),
