@@ -269,6 +269,58 @@ class Ordering(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "exactly one commit"):
             self.check(again, again)
 
+    def test_the_declaration_precedes_the_pilot_head(self):
+        decl = self.commit(**{"decl.json": "{}"})
+        head = self.commit(**{"other.txt": "x"})
+        f.check_declaration_at_pilot(self.repo, self.KEY, head)
+        f.check_declaration_at_pilot(self.repo, self.KEY, decl)
+
+    def test_a_declaration_after_the_pilot_head_is_refused(self):
+        head = self.commit(**{"other.txt": "x"})
+        self.commit(**{"decl.json": "{}"})
+        with self.assertRaisesRegex(ValueError, "not committed in the"):
+            f.check_declaration_at_pilot(self.repo, self.KEY, head)
+
+    def test_an_untracked_or_uncommitted_declaration_is_refused_at_pilot(
+            self):
+        head = self.commit(**{"other.txt": "x"})
+        self.decl.write_text("{}")                   # untracked
+        with self.assertRaisesRegex(ValueError, "not committed"):
+            f.check_declaration_at_pilot(self.repo, self.KEY, head)
+        self.git("add", "decl.json")                 # staged only
+        with self.assertRaisesRegex(ValueError, "not committed"):
+            f.check_declaration_at_pilot(self.repo, self.KEY, head)
+        head = self.commit()
+        self.decl.write_text('{"edited": 1}')        # edited after commit
+        with self.assertRaisesRegex(ValueError, "not the committed one"):
+            f.check_declaration_at_pilot(self.repo, self.KEY, head)
+
+    def test_the_engine_pilot_and_inventory_check_the_declaration(self):
+        built, engine = f.declare(self.KEY, g.PARTS[self.KEY][:1])
+        with mock.patch.object(f, "check_declaration_at_pilot") as check, \
+                mock.patch.object(tg.Grid, "pilot",
+                                  return_value=0) as pilot:
+            self.commit(**{"other.txt": "x"})
+            head = self.git("rev-parse", "HEAD")
+            args = mock.Mock(repo=self.repo)
+            self.assertEqual(engine.pilot(args), 0)
+            check.assert_called_once_with(self.repo, self.KEY, head)
+            pilot.assert_called_once_with(args)
+        with mock.patch.object(f, "check_declaration_at_pilot",
+                               side_effect=ValueError("late")), \
+                mock.patch.object(tg.Grid, "pilot") as pilot:
+            with self.assertRaisesRegex(ValueError, "late"):
+                engine.pilot(mock.Mock(repo=self.repo))
+            pilot.assert_not_called()
+        with mock.patch.object(tg.Grid, "check_pilot_settings"), \
+                mock.patch.object(f, "repo_of_code",
+                                  return_value=self.repo), \
+                mock.patch.object(f, "check_declaration_at_pilot") as check:
+            engine.check_pilot_settings({"checkout": {"head": "h" * 40}})
+            check.assert_called_once_with(self.repo, self.KEY, "h" * 40)
+            with self.assertRaisesRegex(ValueError, "no checkout head"):
+                engine.check_pilot_settings({})
+
     def test_the_engine_checks_every_counts_commit_it_reads(self):
         built, engine = f.declare(
             self.KEY, g.PARTS[self.KEY][:1])

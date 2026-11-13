@@ -131,13 +131,16 @@ The gate's R2 load totals must equal them on every image or the gate FAILS
 record's inputs. `--startup-ledger` is the runner's attempts ledger: every
 attempt is listed in the record (R-1). The judged gate (and its null
 control) must be the last attempt and a COMPLETED one: closed with exit 0, or
-2 (the run completed, a soft step failed) with its `done` file (sealed); any
-other close (a failing step, `die`, a signal) or a missing `done` makes the
-attempt void, which refuses (the lead redraws). Each earlier attempt is
-judged: it is recorded with its gate decision, reasons and declared-delta
-problems, and a redraw is accepted only after an incomplete attempt (void) or
-a gate that failed on the declared deltas alone (`gates.earlier_attempt`);
-an earlier attempt that completed with a pass, or that failed for another
+2 (the run completed, a soft step failed) with its `done` file (the file
+`<output>/done`, not a ledger line; sealed); any other close (a failing
+step, `die`, a signal) or a missing `done` makes the attempt void, which
+refuses (the lead redraws). Each earlier attempt is judged by its gate
+decision whenever `gate/decisions.json` exists, complete or not: it is
+recorded with its gate decision, reasons and declared-delta problems (the
+sidecar bound to the attempt's record and sealed `inputs.txt`), and a
+redraw is accepted only after an attempt with no gate decision (void) or a
+gate that failed on the declared deltas alone (`gates.earlier_attempt`);
+an earlier attempt that was decided with a pass, or that failed for another
 reason, refuses the disposition. The api-audit receipt must be present and
 passing.
 The record holds D's HEAD (`head`), which must have no uncommitted change

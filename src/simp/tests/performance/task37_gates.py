@@ -37,10 +37,13 @@ What each replay re-derives, and what it cannot:
   disposition, never transferred). Every attempt of the runner is in an
   attempts ledger (`--startup-ledger`, R-1: a failed attempt stays), and
   the judged gate must be the last one (`startup_attempts`); an attempt
-  counts as complete only with its `done` line and a close status of 0 or
-  2 (2: completed with a soft step failed), every earlier attempt is
-  judged and recorded, and a redraw needs a void one or one that failed
-  on the declared deltas only. NOT
+  counts as complete only with its `done` file (`<output>/done`, written
+  by the runner at its end; it is not a ledger line) and a close status of
+  0 or 2 (2: completed with a soft step failed). Every earlier attempt is
+  judged by its gate decision whenever `gate/decisions.json` exists,
+  complete or not, and recorded; a redraw needs an attempt with no gate
+  decision (void) or one whose gate failed on the declared deltas alone
+  (its sidecar bound to its record and its sealed `inputs.txt`). NOT
   re-derived: the builds, the path-length cells
   (`startup_gate.py cell`) and the runner's `check_deltas` (whole load
   rows against the declared archive), which needs the built trees; the
@@ -505,21 +508,55 @@ def completed(row):
         Path(row["output"]) / "done").is_file()
 
 
+def bound_sidecar(out):
+    """The sidecar `declared-deltas.json` of the earlier attempt `out`,
+    bound as `read_declared` binds the current one: to the record of the
+    attempt (its `not-client-visible.md` has the sha256 the gate's
+    `header.json` seals, which is the sidecar's `record_sha256`) and to the
+    run's sealed `inputs.txt` (its `DECLARED_DELTAS_SHA256`). Returns the
+    sidecar, or None when the attempt has none."""
+    side = out / "declared-deltas.json"
+    if not side.is_file():
+        return None
+    where = "the earlier attempt " + str(out)
+    doc = a.load(side)
+    header = out / "gate" / "header.json"
+    a.require(header.is_file(), "%s has a sidecar and no gate header.json"
+              % where)
+    want = a.load(header).get("record_sha256")
+    record = out / "not-client-visible.md"
+    a.require(want and doc.get("record_sha256") == want and
+              record.is_file() and
+              hashlib.sha256(record.read_bytes()).hexdigest() == want,
+              "the sidecar of %s is not that of its record (swapped or "
+              "edited)" % where)
+    inputs = out / "inputs.txt"
+    a.require(inputs.is_file() and
+              "DECLARED_DELTAS_SHA256=%s" % hashlib.sha256(
+                  side.read_bytes()).hexdigest() in
+              inputs.read_text().splitlines(),
+              "the sidecar of %s is not the one its sealed inputs.txt "
+              "records" % where)
+    return doc
+
+
 def earlier_attempt(row):
     """What an attempt before the judged one shows, and whether its redraw
-    is allowed (decision 21): a redraw follows a gate that FAILED on the
-    declared deltas (the attempt completed with a gate whose own decision
-    has no reasons or blockers, and whose R2 load totals differ from the
-    totals its own record declared) or an attempt that is void (the runner
-    did not complete, or left no gate decision). Anything else, such as a
-    passing attempt or a gate that failed for another reason, is a draw
+    is allowed (decision 21, 25): an attempt is judged by its gate
+    decision whenever `gate/decisions.json` exists, complete or not (a
+    crash or a signal after a decided gate does not undo it). A redraw
+    follows only a gate that FAILED on the declared deltas alone (its own
+    decision has no reasons or blockers and passes or is attributed, and
+    its R2 load totals differ from the totals its own record declared,
+    the sidecar being bound to the record and the sealed inputs), or an
+    attempt that is void (it left no gate decision). Anything else, such as
+    a passing attempt or a gate that failed for another reason, is a draw
     that stays judged: the disposition is refused. Returns the row with
-    `verdict` (`void`, `declared-deltas`), `decision`, `reasons` and
-    `problems`."""
+    `verdict` (`void`, `declared-deltas`), `decision`, `reasons`,
+    `problems` and `complete`."""
     out = Path(row["output"])
-    found = dict(row, decision=None, reasons=[], problems=[])
-    if not completed(row):
-        return dict(found, verdict="void")
+    found = dict(row, decision=None, reasons=[], problems=[],
+                 complete=completed(row))
     path = out / "gate" / "decisions.json"
     if not path.is_file():
         return dict(found, verdict="void")
@@ -527,24 +564,26 @@ def earlier_attempt(row):
     found.update(decision=decisions.get("decision"),
                  reasons=list(decisions.get("reasons", [])) + list(
                      decisions.get("blockers", [])))
-    side = out / "declared-deltas.json"
-    if side.is_file():
-        declared = a.load(side)
-        if isinstance(declared.get("totals"), dict) and set(
+    declared = bound_sidecar(out)
+    if declared is not None and isinstance(
+            declared.get("totals"), dict) and set(
                 declared["totals"]) == set(LOAD_KINDS) and isinstance(
                     declared.get("archive"), str):
-            found["problems"] = declared_problems(declared, decisions)
+        found["problems"] = declared_problems(declared, decisions)
     a.require(found["problems"] and not found["reasons"] and
               found["decision"] in ("pass", "attributed"),
-              "the earlier startup attempt %s completed with gate decision "
+              "the earlier startup attempt %s (%s) has gate decision "
               "%s%s%s: a redraw is allowed only after a gate that failed "
-              "on the declared deltas alone (or an incomplete run), so "
-              "that attempt is a draw that stays judged (design decision "
-              "21)" % (row["attempt"], found["decision"],
-                       " (%s)" % "; ".join(found["reasons"])
-                       if found["reasons"] else "",
-                       "" if found["problems"] else ", which declared "
-                       "deltas it matched"))
+              "on the declared deltas alone (or an attempt with no gate "
+              "decision), so that attempt is a draw that stays judged "
+              "(design decisions 21, 25)" % (
+                  row["attempt"],
+                  "complete" if found["complete"] else "incomplete",
+                  found["decision"],
+                  " (%s)" % "; ".join(found["reasons"])
+                  if found["reasons"] else "",
+                  "" if found["problems"] else ", which declared "
+                  "deltas it matched"))
     return dict(found, verdict="declared-deltas")
 
 

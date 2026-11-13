@@ -170,13 +170,16 @@ def revisions_of(counts):
     for path in counts.parent.glob(counts.stem + "_*" + counts.suffix):
         match = pattern.fullmatch(path.name)
         a.require(match, "%s is no revision of %s by the engine's naming "
-                  "(%s_N%s, N from 2)" % (
-                      path.name, counts.name, counts.stem, counts.suffix))
+                  "(%s_N%s, N from 2): this is raised when task37_grid is "
+                  "imported, so every TASK37 command is refused until the "
+                  "file is moved away or renamed" % (
+                      path, counts.name, counts.stem, counts.suffix))
         found[int(match.group(1))] = path
     numbers = sorted(found)
     a.require(numbers == list(range(2, 2 + len(numbers))),
               "the revisions of %s are numbered %s, not from 2 without a "
-              "gap" % (counts.name, numbers))
+              "gap (files: %s)" % (counts.name, numbers, ", ".join(
+                  found[n].name for n in numbers)))
     return tuple(found[n] for n in numbers)
 
 

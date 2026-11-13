@@ -391,15 +391,18 @@ class Revisions(unittest.TestCase):
 
     def test_a_gap_or_an_odd_name_is_refused(self):
         self.touch("x_iterations_3.json")
-        with self.assertRaisesRegex(ValueError, "without a gap"):
+        with self.assertRaisesRegex(ValueError, "without a gap") as e:
             g.revisions_of(self.here / "x_iterations.json")
+        self.assertIn("x_iterations_3.json", str(e.exception))
         self.touch("x_iterations_2.json")
         g.revisions_of(self.here / "x_iterations.json")
         for odd in ("x_iterations_02.json", "x_iterations_rev1.json",
                     "x_iterations_1.json"):
             self.touch(odd)
-            with self.assertRaisesRegex(ValueError, "no revision of"):
+            with self.assertRaisesRegex(ValueError, "no revision of") as e:
                 g.revisions_of(self.here / "x_iterations.json")
+            # the error names the offending file, by its full path
+            self.assertIn(str(self.here / odd), str(e.exception))
             (self.here / odd).unlink()
 
     def table_with(self, key, names):

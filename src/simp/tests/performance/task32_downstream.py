@@ -293,6 +293,9 @@ class Table:
     probe_digest: object
     compiled_ref: object = None
     declared: object = None
+    # the name of the TASK32 table whose S3 archive the table's declaration
+    # binds (TASK33's tables only; `task33_offline.archive_table`)
+    archive_table: object = None
 
     def __post_init__(self):
         if self.unit_floor not in UNIT_FLOORS:
@@ -334,7 +337,7 @@ TABLES = {
         code=("task33_cases.py", "task32_downstream.py") + COMMON_CODE +
         task33_cases.CODE_FILES + STORAGE_CODE,
         history=TASK33_HISTORY, min_unit_cpu=0.2, unit_floor="sample", r_cap=8,
-        sample_cpu=1.0,
+        sample_cpu=1.0, archive_table="task32",
         claims="NOT release acceptance: startup and load timing only",
         cross_side=True, env_prefix="T33_",
         probe_sources=task33_cases.PROBE_FILES,
@@ -359,7 +362,8 @@ for _parent, _name, _label, _stem in (
         scratch="/dev/shm/" + _name.replace("task37-", "t37-"),
         history={}, compiled_ref=TASK37_COMPILED_REF,
         declared=HERE / "task37_declared.json" if _parent == "task33"
-        else None)
+        else None,
+        archive_table="task37-t32" if _parent == "task33" else None)
 del _parent, _name, _label, _stem
 DEFAULT_TABLE = "task32"
 ACTIVE = None
@@ -3449,7 +3453,8 @@ def disposition(chain, ledger, counts_path=None, relocated=None,
             "first stage used" % path)
     # `candidate`: the full pin the stages measured (the TASK37 join's key)
     return dict(status=overall, candidate=chain[0]["report"]["cand"],
-                **disposition_table(), workloads=rows, attempts=attempts, info_runs=infos,
+                **disposition_table(), workloads=rows, attempts=attempts,
+                info_runs=infos,
                 redraws=redraws(attempts, infos, a.load(path)),
                 chain=[dict(stage=e["stage"], run=str(e["folder"]),
                             seal=e["info"]["seal"],

@@ -205,6 +205,24 @@ class DeclaredPins(unittest.TestCase):
         self.selected(offline.DECLARED.parent / "task33_declared.json")
         storage.declared_ready()   # TASK33's own is valid
 
+    def test_the_archive_table_is_the_selected_tables_field(self):
+        self.assertEqual(offline.archive_table(), "task32")
+        self.selected(self.TASK37)
+        self.assertEqual(offline.archive_table(), "task37-t32")
+        self.assertEqual(
+            {n: t.archive_table for n, t in storage.d.TABLES.items()},
+            {"task32": None, "task33": "task32", "task37-t32": None,
+             "task37-t33": "task37-t32"})
+
+    def test_a_declaration_no_table_names_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            other = Path(tmp) / "other_declared.json"
+            other.write_text(self.TASK37.read_text())
+            self.selected(other)
+            with self.assertRaisesRegex(offline.Refusal,
+                                        "no table names"):
+                offline.archive_table()
+
     def test_a_placeholder_decision_is_a_refusal_not_a_traceback(self):
         self.selected(self.TASK37)
         with self.assertRaisesRegex(storage.d.Refusal, "not measured"):
@@ -873,7 +891,8 @@ class OfflineBinding(unittest.TestCase):
             seals[name] = dw.TASK33_HISTORY[name][0]
             with self.assertRaisesRegex(ValueError, "changed"):
                 offline.check_code(seals)
-        with offline.using_declared(self.TASK37):  # a table with none of its own
+        # a table with none of its own
+        with offline.using_declared(self.TASK37):
             seals = offline.code_seals()
             seals[name] = dw.TASK33_HISTORY[name][0]
             offline.check_code(seals)

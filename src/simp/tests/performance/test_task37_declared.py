@@ -266,6 +266,27 @@ class SameTree(unittest.TestCase):
             ok = Path(tmp) / "prefill.json"
             ok.write_text(json.dumps(data))
             t.check_selected(ok)
+            data["s2"]["total_delta"][0]["pending"] = ["x"]
+            data["s2"]["total_delta"][0]["mechanism"] = ["other"]
+            data["s2"]["total_delta"][0]["observed"] = {"base": 1}
+            ok.write_text(json.dumps(data))
+            t.check_selected(ok)    # all four filled keys may differ
+            for key, new in (("heap", "other.state"), ("kinds", ["x"]),
+                             ("rule", ["other"]), ("unit", "bytes"),
+                             ("paths", [])):   # a structural change
+                data["s2"]["total_delta"][0][key], old = new, \
+                    data["s2"]["total_delta"][0][key]
+                ok.write_text(json.dumps(data))
+                with self.assertRaisesRegex(t.Refusal, "contradicts",
+                                            msg=key):
+                    t.check_selected(ok)
+                data["s2"]["total_delta"][0][key] = old
+            ok.write_text(json.dumps(data))
+            data["s2"]["total_delta"].append(dict(heap="extra"))
+            ok.write_text(json.dumps(data))
+            with self.assertRaisesRegex(t.Refusal, "contradicts"):
+                t.check_selected(ok)
+            data["s2"]["total_delta"].pop()
             data["base"] = "b" * 40
             bad = Path(tmp) / "other.json"
             bad.write_text(json.dumps(data))

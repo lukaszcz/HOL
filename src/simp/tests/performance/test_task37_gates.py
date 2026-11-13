@@ -112,10 +112,16 @@ class StartupLedger(unittest.TestCase):
                 decision=decision, reasons=list(reasons), blockers=[],
                 R2=r2()))
         if declared is not None:
-            write(path / "declared-deltas.json", dict(
+            record = write(path / "not-client-visible.md", "record\n")
+            rsha = hashlib.sha256(record.read_bytes()).hexdigest()
+            write(path / "gate" / "header.json", dict(record_sha256=rsha))
+            side = write(path / "declared-deltas.json", dict(
+                record_sha256=rsha,
                 totals={"load-simpLib": declared[0],
                         "load-congLib": declared[1]},
                 archive="/x/round4/gate"))
+            write(path / "inputs.txt", "A=b\nDECLARED_DELTAS_SHA256=%s\n"
+                  % hashlib.sha256(side.read_bytes()).hexdigest())
         return path
 
     def attempts(self, *rows):
@@ -189,14 +195,39 @@ class StartupLedger(unittest.TestCase):
             self.attempts(*rows, ("last", 0)), last / "gate")
 
     def test_a_redraw_after_a_void_attempt_is_accepted(self):
+        # void: the attempt left no gate decision, whatever its exit
         self.run_dir("signal", done=True)                  # exit 143
-        self.run_dir("nodone", done=False, decision="pass")  # exit 0
+        self.run_dir("nodone", done=False)                 # exit 0
         self.run_dir("crashed")                            # no decisions
         self.run_dir("killed")                             # never closed
         got = self.judged(("signal", 143), ("nodone", 0), ("crashed", 2),
                           ("killed", None))
         self.assertEqual([x["verdict"] for x in got],
                          ["void", "void", "void", "void", "judged"])
+
+    def test_an_incomplete_attempt_is_judged_by_its_gate_decision(self):
+        # a decided gate is not undone by a crash or a signal after it
+        for name, exit_, done, decision, reasons in (
+                ("p1", 0, False, "pass", ()),        # passing: superseded
+                ("p2", 143, True, "pass", ()),
+                ("f1", 1, False, "fail", ("R1 differs",)),  # non-delta
+                ("f2", 130, False, "attributed", ("R3 noise",))):
+            self.run_dir(name, done=done, decision=decision,
+                         reasons=reasons, declared=(158440, 90000))
+            with self.assertRaisesRegex(ValueError, "stays judged",
+                                        msg=name):
+                self.judged((name, exit_))
+            import shutil
+            shutil.rmtree(self.root / name)
+            shutil.rmtree(self.root / "last", ignore_errors=True)
+
+    def test_an_incomplete_attempt_that_failed_on_the_declared_deltas(
+            self):
+        self.run_dir("cut", done=False, decision="pass",
+                     declared=(158441, 90000))
+        got = self.judged(("cut", 143))
+        self.assertEqual((got[0]["verdict"], got[0]["complete"]),
+                         ("declared-deltas", False))
 
     def test_a_redraw_after_a_gate_that_failed_on_the_declared_deltas(
             self):
@@ -211,6 +242,33 @@ class StartupLedger(unittest.TestCase):
                          ("pass", []))
         self.assertIn("load-simpLib", got[0]["problems"][0])
         self.assertIn("load-congLib", got[1]["problems"][0])
+
+    def test_a_swapped_sidecar_of_an_earlier_attempt_is_refused(self):
+        import shutil
+        other = self.run_dir("other", decision="pass",
+                             declared=(158441, 90000))
+        for what, text in (
+                ("sidecar", "not that of its record"),
+                ("record", "not that of its record"),
+                ("inputs", "sealed inputs.txt")):
+            run = self.run_dir("d1", decision="pass",
+                               declared=(158441, 90000))
+            if what == "sidecar":      # another attempt's sidecar
+                shutil.copy(other / "declared-deltas.json",
+                            run / "declared-deltas.json")
+                doc = a.load(run / "declared-deltas.json")
+                doc["record_sha256"] = "0" * 64
+                write(run / "declared-deltas.json", doc)
+            elif what == "record":
+                write(run / "not-client-visible.md", "edited\n")
+            else:                      # edited sidecar, same record
+                doc = a.load(run / "declared-deltas.json")
+                doc["totals"]["load-simpLib"] = 158440
+                write(run / "declared-deltas.json", doc)
+            with self.assertRaisesRegex(ValueError, text, msg=what):
+                self.judged(("d1", 2))
+            shutil.rmtree(run)
+            shutil.rmtree(self.root / "last", ignore_errors=True)
 
     def test_a_redraw_after_any_other_completed_gate_is_refused(self):
         for decision, reasons, declared in (

@@ -216,28 +216,36 @@ def write(path, data):
     tmp.replace(path)
 
 
+# What `fill` writes into an S2 total_delta entry (the rest is declared).
+FILLED_KEYS = ("value", "observed", "pending", "mechanism")
+
+
 def check_selected(path):
     """`observe` judges by the declaration the `task37-t33` table fixes: a
-    contradicting `--declared` is refused, but for the S2 closure total,
-    which is what the declaration lacks before `fill` (the throwaway smokes
-    are sealed with the pre-fill file, which must be given to replay
-    them)."""
+    contradicting `--declared` is refused, but for what `fill` writes into
+    the S2 closure total entries (`FILLED_KEYS`: the declaration lacks them
+    before `fill`; the throwaway smokes are sealed with the pre-fill file,
+    which must be given to replay them)."""
     import task32_downstream as d
     fixed = Path(d.TABLES[TABLE].declared).resolve()
     if Path(path).resolve() == fixed:
         return
 
     def without_total(file):
+        # only what `fill` writes is blanked, per entry of total_delta:
+        # `value`, `observed`, `pending` and `mechanism`; the rule, heap,
+        # kinds, unit and paths of an entry stay compared
         data = json.loads(Path(file).read_text())
-        data["s2"] = {k: v for k, v in data["s2"].items()
-                      if k != "total_delta"}
+        data["s2"] = dict(data["s2"], total_delta=[
+            {k: v for k, v in entry.items() if k not in FILLED_KEYS}
+            for entry in data["s2"]["total_delta"]])
         return data
     try:
         same = without_total(path) == without_total(fixed)
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         same = False
     require(same, "--declared %s contradicts table %s, which fixes %s (the "
-            "S2 closure total alone may differ)" % (path, TABLE, fixed))
+            "filled S2 closure total alone may differ)" % (path, TABLE, fixed))
 
 
 def observe_folders(folders, manifest, declared, heap=None):

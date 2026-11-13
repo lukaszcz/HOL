@@ -1639,9 +1639,9 @@ def status_code(decisions):
 
 
 class Terminated(KeyboardInterrupt):
-    """SIGHUP or SIGTERM turned into an exception, so that a run unwinds
-    (its attempt closes failed, its scratch and lock are released) as it
-    does for any other failure."""
+    """SIGHUP, SIGINT or SIGTERM turned into an exception, so that a run
+    unwinds (its attempt closes failed, its scratch and lock are released)
+    as it does for any other failure."""
 
 
 UNWIND_SIGNALS = (signal.SIGHUP, signal.SIGINT, signal.SIGTERM)
@@ -1663,9 +1663,11 @@ def require_default_signals(task):
 
 @contextlib.contextmanager
 def terminating():
-    """SIGHUP and SIGTERM raise `Terminated` in the main thread for the
-    length of the block (SIGINT already raises KeyboardInterrupt), and the
-    previous handlers are restored. A signal that was ignored when the
+    """SIGHUP, SIGINT and SIGTERM raise `Terminated` (a KeyboardInterrupt)
+    in the main thread for the length of the block, and the previous
+    handlers are restored (SIGINT too has `stop` as its handler, not
+    Python's default one, so that a second signal after a first Ctrl-C
+    cannot interrupt the unwind either). A signal that was ignored when the
     block began stays ignored (a grid under `nohup` survives its
     terminal; a ledger task refuses to start so, `require_default_signals`).
     Once a signal is taken, HUP, INT and TERM are ignored for the rest of
@@ -1677,7 +1679,7 @@ def terminating():
         raise Terminated("signal %d" % number)
     previous = {n: signal.getsignal(n) for n in UNWIND_SIGNALS}
     try:
-        for number in (signal.SIGHUP, signal.SIGTERM):
+        for number in UNWIND_SIGNALS:
             if previous[number] != signal.SIG_IGN:
                 signal.signal(number, stop)
         yield

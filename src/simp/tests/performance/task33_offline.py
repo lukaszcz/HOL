@@ -141,10 +141,8 @@ def report_path(out, command):
 # (`archive_table`): `archive_report` replays it under that table.
 T32 = d.TABLES["task32"]
 # The TASK32 table whose archive each declaration binds (design 24): the
-# C32 gate's proof builds under TASK33's declaration, TASK37's `task37-t32`
-# under any other (each is replayed under its own table: its counts, ledger
-# and code).
-TASK37_ARCHIVE_TABLE = "task37-t32"
+# `archive_table` of the tables that name it (`task32_downstream.TABLES`; each
+# is replayed under its own table: its counts, ledger and code).
 # The code a report is bound to: this file, the declaration, and the
 # TASK32 code it reuses (a record made by an earlier version of a TASK32
 # file is accepted as task32_downstream.check_code accepts it).
@@ -1993,10 +1991,17 @@ def reported_intervals(report):
 
 def archive_table():
     """The TASK32 table whose archive the selected declaration binds: the
-    C32 `task32` under TASK33's own declaration, TASK37's `task37-t32`
-    under another (design 24)."""
-    return T32.name if DECLARED == DEFAULT_DECLARED else \
-        TASK37_ARCHIVE_TABLE
+    `archive_table` of the table (`task32_downstream.TABLES`) that names the
+    declaration (a table's own `declared`, or TASK33's default for the C32
+    `task33`): `task32` under TASK33's own declaration, `task37-t32` under
+    TASK37's (design 24). A declaration no table names is refused."""
+    found = {t.archive_table for t in d.TABLES.values()
+             if t.archive_table is not None and
+             Path(t.declared or DEFAULT_DECLARED).resolve() ==
+             Path(DECLARED).resolve()}
+    require(len(found) == 1, "no table names the declaration %s, so the "
+            "TASK32 table of its archive is unknown" % DECLARED)
+    return found.pop()
 
 
 def archive_report(folder, repo, replay, checks, ledger=None):

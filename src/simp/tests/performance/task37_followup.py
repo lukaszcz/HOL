@@ -114,30 +114,68 @@ def file_of(key):
                                                                  number))
 
 
-def check_declaration_order(repo, candidate, key, counts_commit):
-    """The declaration file of shard `key` was committed alone (the one
-    commit of the candidate's history that touched it changed nothing else,
-    and the file is the committed one) and that commit is an ancestor of
-    the commit of the follow-up's counts file `counts_commit`: the cells
-    were fixed before the follow-up's counts, hence before any observation
-    of it (the counts-alone rule)."""
+def declaration_commit(repo, candidate, key):
+    """The one commit of the history of `candidate` that introduced the
+    declaration file of shard `key`; the file is the committed one (so not
+    untracked, staged only or edited) and that commit changed nothing
+    else."""
     path = declaration_file(key)
     name = tg.repo_relative(repo, path)
-    commit = tg.git_introduced(repo, candidate, name)
+    try:
+        commit = tg.git_introduced(repo, candidate, name)
+    except ValueError as error:
+        raise ValueError("the declaration file %s is not committed in the "
+                         "history of %s (an untracked or uncommitted "
+                         "declaration declares nothing): %s" % (
+                             name, str(candidate)[:12], error)) from None
     a.require(tg.git_blob(repo, candidate, name) ==
               a.git(repo, "hash-object", str(path)),
               "the declaration file %s is not the committed one" % name)
     a.require(set(tg.git_touched(repo, commit)) == {name},
               "the commit %s that introduced %s must change only that "
               "file: commit the declaration alone" % (commit[:12], name))
-    found = subprocess.run(
+    return commit
+
+
+def is_ancestor(repo, commit, descendant):
+    return subprocess.run(
         ["git", "-C", str(repo), "merge-base", "--is-ancestor", commit,
-         counts_commit], stdin=subprocess.DEVNULL)
-    a.require(commit != counts_commit and found.returncode == 0,
+         descendant], stdin=subprocess.DEVNULL).returncode == 0
+
+
+def check_declaration_order(repo, candidate, key, counts_commit):
+    """The declaration file of shard `key` was committed alone (the one
+    commit of the candidate's history that touched it changed nothing else,
+    and the file is the committed one) and that commit is an ancestor of
+    the commit of the follow-up's counts file `counts_commit`: the cells
+    were fixed before the follow-up's counts, hence before any observation
+    of it (the counts-alone rule of PROTOCOL.md)."""
+    commit = declaration_commit(repo, candidate, key)
+    a.require(commit != counts_commit and
+              is_ancestor(repo, commit, counts_commit),
               "the declaration %s (commit %s) is not an ancestor of the "
               "commit %s of the follow-up's counts file: declare the "
               "follow-up before its counts are made" % (
-                  name, commit[:12], counts_commit[:12]))
+                  declaration_file(key).name, commit[:12],
+                  counts_commit[:12]))
+
+
+def check_declaration_at_pilot(repo, key, head):
+    """The declaration of shard `key` was committed, alone, before the
+    follow-up's pilot: its commit is `head` or an ancestor of it (`head`:
+    the checkout head the pilot ran at, or runs at), and the file is the
+    committed one. An untracked or uncommitted declaration is refused: the
+    pilot's cells must have been fixed in git first."""
+    commit = declaration_commit(repo, head, key)
+    a.require(is_ancestor(repo, commit, head),
+              "the declaration %s (commit %s) is not an ancestor of the "
+              "pilot's checkout head %s" % (
+                  declaration_file(key).name, commit[:12], head[:12]))
+
+
+def repo_of_code():
+    """The repository this code is in (where the declaration files are)."""
+    return Path(a.git(a.HERE, "rev-parse", "--show-toplevel").strip())
 
 
 class Followup(tg.Grid):
@@ -147,6 +185,23 @@ class Followup(tg.Grid):
     def __init__(self, table, key, doc=None):
         super().__init__(table, doc=doc)
         self.key = key
+
+    def pilot(self, args):
+        """The pilot of the follow-up: the declaration is committed alone
+        first (HEAD of the pilot's repository holds it), so no untracked or
+        uncommitted declaration reaches a pilot."""
+        head = a.git(args.repo, "rev-parse", "HEAD").strip()
+        check_declaration_at_pilot(args.repo, self.key, head)
+        return super().pilot(args)
+
+    def check_pilot_settings(self, inventory, seconds=None):
+        """The shared checks, and the declaration's commit is an ancestor
+        of the checkout head the pilot inventory records."""
+        super().check_pilot_settings(inventory, seconds)
+        head = (inventory.get("checkout") or {}).get("head")
+        a.require(isinstance(head, str) and head,
+                  "the pilot inventory records no checkout head")
+        check_declaration_at_pilot(repo_of_code(), self.key, head)
 
     def counts_commit(self, repo, candidate, path):
         commit = super().counts_commit(repo, candidate, path)

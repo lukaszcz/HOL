@@ -222,6 +222,32 @@ class Recording(Fixture):
         self.assertIn("attempt is closed", caught.exception.detail)
         self.assertEqual(signal.getsignal(signal.SIGTERM), signal.SIG_DFL)
 
+    def test_a_second_signal_after_a_first_ctrl_c_cannot_interrupt(self):
+        import os
+        import signal
+        steps = []
+
+        def grid(args, task, started):
+            started(dict(candidate=CAND))
+            try:
+                os.kill(os.getpid(), signal.SIGINT)
+                signal.pthread_sigmask(signal.SIG_BLOCK, [])
+                raise AssertionError("the signal was not raised")
+            finally:
+                for number in (signal.SIGINT, signal.SIGHUP,
+                               signal.SIGTERM):
+                    os.kill(os.getpid(), number)
+                signal.pthread_sigmask(signal.SIG_BLOCK, [])
+                steps.append("cleaned")
+        with mock.patch.object(m, "run_grid", grid), \
+                self.assertRaises(m.Terminated) as caught:
+            m.run(namespace(self.repo, self.out()))
+        self.assertEqual(steps, ["cleaned"])
+        self.assertIn("signal 2", self.lines()[-1]["failure"])
+        self.assertIn("attempt is closed", caught.exception.detail)
+        self.assertEqual(signal.getsignal(signal.SIGINT),
+                         signal.default_int_handler)
+
     def test_the_close_is_written_once_and_is_not_claimed_when_not_made(
             self):
         # a close that cannot be written is reported, not claimed
