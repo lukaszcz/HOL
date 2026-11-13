@@ -594,8 +594,9 @@ class StructureFixture(unittest.TestCase):
         # the theory and the name of a constant, its type, the theory and
         # the operator of a type, and its arguments
         self.assertIn("tyKey Ty acc end", key)
-        self.assertIn("\"C\" :: keyName Thy ::", key)
-        self.assertIn('"T" :: keyName Thy :: ', key)
+        self.assertIn('idTag "T" "t" Tyop', key)
+        self.assertIn('idTag "C" "c" Name', key)
+        self.assertIn("shown = #Name (KernelSig.name_of_id id)", key)
         self.assertIn("Int.toString (length Args) ::", key)
         self.assertIn("List.foldr (fn (a,acc) => tyKey a acc) acc Args", key)
         # a constant or type operator by its display name, which keeps the

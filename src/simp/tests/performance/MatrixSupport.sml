@@ -69,23 +69,28 @@ struct
      and display name, every type, each name with its length. Equal keys
      imply equal dest_term structure, bound-variable names included. Names
      are the printer's display names, so a retired constant or type operator
-     keeps its generation. Not the printer: Parse.term_to_string rebuilds
-     term_pp.avoid_symbolmerge's list of every known constant on each call,
-     so printing n rules over n constants costs n^2. Here the work per node
-     is a lookup, so the cost is linear in binder-free terms (dest_abs scans
-     for clashes: nested binders cost size times depth). *)
+     keeps its generation, and a lower-case tag marks it, so that a live
+     name spelling a display name does not collide. Not the printer:
+     Parse.term_to_string rebuilds term_pp.avoid_symbolmerge's list of every
+     known constant on each call, so printing n rules over n constants
+     costs n^2. Here the work per node is a lookup, so the cost is linear
+     in binder-free terms (dest_abs scans for clashes: nested binders cost
+     size times depth). *)
   fun keyName s = Int.toString (size s) ^ ":" ^ s
+  fun idTag live retired id shown =
+    if shown = #Name (KernelSig.name_of_id id) then live else retired
   fun tyKey ty acc =
     if is_vartype ty then "'" :: keyName (dest_vartype ty) :: acc
     else let val {Thy,Tyop,Args} = Type.dest_thy_typeid ty in
-      "T" :: keyName Thy :: keyName (Type.display_name_of_id Tyop) ::
+      idTag "T" "t" Tyop (Type.display_name_of_id Tyop) :: keyName Thy ::
+      keyName (Type.display_name_of_id Tyop) ::
       Int.toString (length Args) ::
       List.foldr (fn (a,acc) => tyKey a acc) acc Args end
   fun tmKey tm acc = case dest_term tm of
       VAR (s,ty) => "V" :: keyName s :: tyKey ty acc
     | CONST _ => let val {Thy,Name,Ty} = Term.dest_thy_constid tm in
-        "C" :: keyName Thy :: keyName (Term.display_name_of_id Name) ::
-        tyKey Ty acc end
+        idTag "C" "c" Name (Term.display_name_of_id Name) :: keyName Thy ::
+        keyName (Term.display_name_of_id Name) :: tyKey Ty acc end
     | COMB (f,x) => "A" :: tmKey f (tmKey x acc)
     | LAMB (v,b) => "L" :: tmKey v (tmKey b acc)
   fun thmKey th = String.concat (Int.toString (length (hyp th)) ::
