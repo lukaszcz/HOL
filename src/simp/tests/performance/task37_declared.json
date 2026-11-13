@@ -145,9 +145,42 @@
           "U less the ordinary candidate's and its exclusive parts are an",
           "E2 reported row (`E2:u`), not an S2 decision."
         ],
-        "value": null,
+        "value": 553,
         "unit": "words",
-        "observed": null,
+        "observed": {
+          "base": 2873517,
+          "cand": 2874070,
+          "d_base": 2555187,
+          "d_cand": 2556111,
+          "exclusive": {
+            "simpLib": [
+              307102,
+              306734
+            ],
+            "Traverse": [
+              149848,
+              149482
+            ],
+            "Travrules": [
+              149061,
+              149049
+            ],
+            "Opening": [
+              2461,
+              2461
+            ],
+            "boolSimps": [
+              187043,
+              187037
+            ],
+            "pureSimps": [
+              182625,
+              182622
+            ]
+          },
+          "processes_per_side_per_kind": 2,
+          "repeats_per_process": 3
+        },
         "paths": [
           "src/1/ThmAttribute.sml",
           "src/1/ThmAttribute.sig",
@@ -155,14 +188,13 @@
           "src/simp/src/Cond_rewr.sig"
         ],
         "mechanism": [
-          "PLACEHOLDER: measured live, then filled in by",
-          "`task37_declared.py fill` (committed alone, before the",
-          "pilot). Expected shape: only D's own code and type structure",
-          "grow (ThmAttribute: one closure and one spec; Cond_rewr: the",
-          "exported note_rewrite slot and spec), no state and nothing",
-          "per object, and no exclusive part grows.",
-          "The value is observed candidate minus baseline closure total U on",
-          "bin/hol.state (state-empty, first-use)."
+          "Measured live (task37_declared.py observe): the closure total U",
+          "of bin/hol.state (state-empty and first-use) changes by",
+          "+553 words, from 2873517 to 2874070, with D (ThmAttribute and",
+          "Cond_rewr, structure and signature) 2555187 to 2556111, and no",
+          "exclusive part grows.",
+          "Only D's own code and type structure grow: no state, nothing per",
+          "object."
         ],
         "allowed_kinds": [
           "code"
@@ -175,8 +207,7 @@
           "TASK33 integration-fix live run, registry probe on bin/hol.state",
           "(state-empty and first-use) of the TASK32 snapshots; TASK31",
           "per-structure objSize over 4+2 images"
-        ],
-        "pending": true
+        ]
       }
     ]
   },
