@@ -4783,9 +4783,10 @@ waves 1 and 2. The `sources` fill is by hand, in `$M`:
     # all three tables (wave 2, before the grids): one diagnostic cell, then
     # its sources (the client's list starts from TASK31's; see Sources)
     $I cells --table T | head -3
-    $I identity --table T --only CELL --output $E/diag \
+    $I identity --table T --only CELL --output $E/diag-1 \
       --candidate $CAND --authorize-measurements
-    $I sources --output $E/diag
+    $I sources --output $E/diag-1
+    # a rerun of a diagnostic takes a fresh --output (diag-2, ...)
     # in $M: enter the printed lists in $P/task37_sources.py by hand
     # (MATRIX and DOWNSTREAM; CLIENT only under the rule in Sources),
     # review, and commit that file alone
@@ -5312,7 +5313,8 @@ files, those the final candidate elaborates that TASK31's closure lacks
 `CLIENT` is no longer TASK31's list: changing it is a tooling change to
 `task37_sources.CLIENT`, its docstring and the tests that pin it
 (`test_task37_sources.py`, `test_task37_identity.py`), committed alone
-before the client grid. Only the
+before ANY identity grid starts, because all three tables seal
+`task37_sources.py`. Only the
 identity tables seal `task37_sources.py` (tests: it is in no shard's or
 follow-up's `SEALED`, and is in `IDENTITY_CODE`), so filling a list voids no
 pilot or counts file. The identity code seals also include `task37_cases.py`
@@ -5323,11 +5325,15 @@ which `task37_cases.py` imports for the timing samples). The one-cell
 diagnostic of the matrix is the first real exercise of the matrix
 fixture's receipts by `task31_identity.cell`: they have never gone through
 it, so a first diagnostic may find a fixture or closure difference. The
-diagnostics are in wave 2, after the shard pilots may have started, so such
-a fix is a tooling change that voids the runs whose sealed code it touches,
-and they are redrawn: a fix in `task37_cases.py` or `task30_cases.py`
-voids the identity runs and the matrix shards' pilots and counts (both
-seal them); a fix in the identity code alone voids the identity runs only.
+diagnostics are at the start of wave 2, before any pilot can have
+started; what runs alongside them is the allocation of all three tasks.
+A fix they find is a tooling change that voids every run that seals the
+touched file, and those are redrawn: a fix in `task37_cases.py` voids the
+identity runs, all six shards, all three allocation tasks (the run in
+flight) and the follow-ups; a fix in `task30_cases.py` voids the identity
+runs, the matrix shards and all three allocation tasks; a fix in the
+identity code alone voids the identity runs only. A rerun of a diagnostic
+takes a fresh `--output` (`$E/diag-2`, ...).
 `--jobs N` runs cells in parallel, each in its
 own scratch; the records are those of a serial run.
 
@@ -5644,18 +5650,25 @@ binds each to its own table. A follow-up declaration is committed alone
 and must be an ancestor of the commit of the follow-up's counts file
 (checked by the follow-up engine and again by dispose).
 
-Startup attempts (decisions 21, 25, 26, 28, 31, 33). The last attempt holds the
-judged gate; it may be unclosed (ledger status `open`: incomplete). A gate
+Startup attempts (decisions 21, 25, 26, 28, 31, 33, 36). The last attempt
+holds the judged gate; it may be unclosed (ledger status `open`:
+incomplete). A gate
 decision counts iff every sha256 row of `gate/receipt.json` matches its file
 (it lists `header.json` and `decisions.json`;
 `startup_gate.write_archive`) AND `replay` of the archive, sealed to a
 record (`record_sha256`), with the attempt's own `not-client-visible.md`,
 returns 0 (dispose runs it quietly and in-process). Each attempt's gate
 and null are replayed with that attempt's own `startup_gate.py`: the blob at
-the commit in its `harness-head.txt`, loaded as a temporary module (its
-other imports are the dispose checkout's), so a later fix to the module,
-needed for a redraw, never locks the disposition out. A decided attempt
-with no readable harness commit or blob is refused, naming both.
+the commit in its `harness-head.txt`, together with every performance-area
+module it imports, transitively (decision 36): all are blobs at that
+commit, run as fresh modules in a private namespace whose imports resolve
+to one another first and then to the standard library (`sys.modules` and
+the dispose checkout's modules are untouched). The same harness checks the
+archive header (`SCHEMA`, `PAIRS`) and replays the null and the late
+replays, so a later fix to any of these modules, needed for a redraw,
+never locks the disposition out. A decided attempt whose blob cannot be
+read, compiled or loaded is refused, naming the attempt, the commit and
+the repository path.
 The runner's progress files never decide that, so a signal or crash after a
 decided, replayable gate (killed during `gate-null`, say) does not undo the
 decision. An archive that is absent, cut or does not replay gives no
@@ -5666,12 +5679,15 @@ shows progress past `replay-gate` (`done`, `replay-gate.exit` reading
 it was damaged after the run and dispose refuses it (earlier or last),
 never reads it as void. `done` present means every step ran: the attempt is
 complete whatever its close status (a signal after `done`, or never
-closed), and its gate must replay, else it is damaged. Exit 2 also comes
-from the soft steps (`who_pays_s1`, `gate`, `gate-null`, `check_deltas`),
-so: exit 0 without `done` is always damaged (the runner exits 0 only after
-`done`); exit 2 without `done` is damaged unless a hard step's `.exit`
-reads `exit=2` (the soft steps do not count); any other close without
-`done` is incomplete. The judged gate must be the `gate` of the last attempt
+closed), and its gate must replay, else it is damaged. A failed soft step
+(`who_pays_s1`, `gate`, `gate-null`, `check_deltas`) leads to `done` and
+exit 2; of their `.exit` files only `who_pays_s1`'s can read `exit=2`
+(`gate` and `gate-null` return 1, `check_deltas` 1), and the soft steps
+are left out of the test as a conservative choice. So: exit 0 without
+`done` is always damaged (the runner exits 0 only after `done`); exit 2
+without `done` is damaged unless a hard step's `.exit` reads `exit=2`; any
+other close without `done` is incomplete. The judged gate must be the
+`gate` of the last attempt
 and
 `--startup-declared` its `declared-deltas.json`. A complete attempt is
 judged by its gate and has a replayed null control (`--startup-null` is
@@ -5703,7 +5719,8 @@ N, Dc = M" parsed from the record) and, for an earlier one, to its
 record's sha256 in `gate/header.json` and to the `DECLARED_DELTAS_SHA256`
 of its sealed `inputs.txt`. The runner exits 0 when all steps pass, 2 when
 it completed but a soft step failed (the file `<output>/done` is written,
-not a ledger line), 1 on `die` or a step that failed with 2; an attempt is
+not a ledger line), 1 on `die`, or a failing hard step's own status
+(which may be 2); an attempt is
 complete iff it has `done`,
 whatever its close status. An `ATTEMPT` name is
 never reused and `EVTAG` is

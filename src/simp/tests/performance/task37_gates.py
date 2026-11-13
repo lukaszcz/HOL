@@ -53,8 +53,8 @@ What each replay re-derives, and what it cannot:
   replayed when its own `gate-null` holds a complete archive that
   replays, and is otherwise recorded as absent (it cannot change that
   verdict); it is found by itself, and an explicit `--startup-null` there
-  must be that complete archive, else it refuses (omit the flag). The
-  null of a complete attempt must replay (refused otherwise).
+  must be that complete archive and replay, else it refuses (omit the
+  flag). The null of a complete attempt must replay (refused otherwise).
   A gate decision counts iff the sha256 rows of its `gate/receipt.json`
   (which lists `header.json` and `decisions.json`) all match the files
   (`gate_decision`) AND `replay` of the archive, with the attempt's own
@@ -68,11 +68,17 @@ What each replay re-derives, and what it cannot:
   never read as void (`classify`); the reason the replay failed is in the
   message and in the attempt row (`replay`). So is an attempt that closed
   with exit 0 and no `done`, or with exit 2 and no `done` although no hard
-  step failed with 2 (`damaged_runner`; the soft steps also exit 2).
-  The replay is made with the attempt's own `startup_gate.py`, the blob at
-  the commit in its `harness-head.txt`, loaded as a temporary module
-  (decision 33; `attempt_startup_gate`): a later fix to the module never
-  locks a disposition out, and an attempt with no readable harness commit
+  step failed with 2 (`damaged_runner`).
+  An attempt is judged by its own harness (decisions 33, 36;
+  `load_harness`, `attempt_startup_gate`): `startup_gate.py` and every
+  performance-area module it imports, transitively, taken as blobs at the
+  commit in its `harness-head.txt` and run as fresh modules in a private
+  namespace (the checkout's modules and `sys.modules` are untouched). The
+  replay, the null, the late replays and the `SCHEMA` and `PAIRS` checks of
+  `read_startup` all use it, so a later fix to any of those modules never
+  locks a disposition out. An attempt with no harness commit, or a blob
+  that cannot be read, compiled or loaded, is refused (the message names
+  the attempt, the commit and the repository path).
   or blob is refused. A gate not sealed to a record gives no decision. Every
   earlier attempt is judged by
   its gate decision when it has one, complete or not, and recorded; it
@@ -333,11 +339,14 @@ def check_declared(held, path, lineage):
 
 # ---------------------------------------------------------- startup gate
 
-def read_startup(out, null, lineage, label=STARTUP):
+def read_startup(out, null, lineage, label=STARTUP, module=None):
     """The startup gate archive `out` (a gate, or with `null` its null
     control): its header and decisions, with the candidate and harness it
-    names accepted. Returns (header, decisions)."""
+    names accepted. The schema and the pair count it must have are those of
+    `module` (the attempt's harness, `attempt_startup_gate`; by default
+    this checkout's `startup_gate`). Returns (header, decisions)."""
     import startup_gate as sg
+    sg = module or sg
     out = Path(out)
     header = read(out / "header.json", label + " header")
     decisions = read(out / "decisions.json", label + " decisions")
@@ -489,10 +498,11 @@ def declared_problems(declared, decisions):
 
 
 # The steps of the runner (run_startup_gate.sh). A SOFT step that fails
-# does not stop the run: its status (2 for who_pays_s1, gate, gate-null and
-# check_deltas) is recorded and the run goes on, to `done` and an exit 2. A
-# HARD step that fails stops it, with its own status as the exit status
-# (which may be 2) and no `done`. Design decision 33.
+# does not stop the run: its status is recorded and the run goes on, to
+# `done` and an exit 2 (only who_pays_s1 returns 2 itself; gate and
+# gate-null return 1, check_deltas 1). A HARD step that fails stops it,
+# with its own status as the exit status (which may be 2) and no `done`.
+# Design decision 33.
 SOFT_STEPS = ("who_pays_s1", "gate", "gate-null", "check_deltas")
 HARD_STEPS = ("build", "who_pays", "fill_record", "replay-gate",
               "replay-null", "cell-o1-19", "cell-o1-24", "cell-o1-33",
@@ -575,13 +585,14 @@ def past_replay_gate(row):
 def damaged_runner(row):
     """Why the closing status of the attempt `row` contradicts its files,
     or "" (design decision 33). The runner exits 0 only after it wrote
-    `done`, so exit 0 without `done` is damage. It exits 2 with `done` when
-    a soft step failed, and without `done` only when a hard step failed
-    with 2 (`HARD_STEPS`; its `.exit` reads `exit=2`): exit 2 without
-    `done` is damage unless a hard step's `.exit` reads `exit=2` (the soft
-    steps, `SOFT_STEPS`, also write `exit=2` and do not count). Any other
-    close without `done` (a failing step, `die`, a signal) is an incomplete
-    attempt, not damage."""
+    `done`, so exit 0 without `done` is damage. Any soft step that failed
+    leads to `done` and exit 2, so exit 2 without `done` comes only from a
+    hard step that failed with 2 (`HARD_STEPS`; its `.exit` reads
+    `exit=2`): it is damage unless one does. Of the soft steps' `.exit`
+    files only who_pays_s1's can read `exit=2`; the soft steps are left
+    out of the test, as a conservative choice. Any other close without
+    `done` (a failing step, `die`, a signal) is an incomplete attempt, not
+    damage."""
     out = Path(row["output"])
     if (out / "done").is_file():
         return ""
@@ -589,8 +600,9 @@ def damaged_runner(row):
             step_exit(out, step + ".exit") == "exit=2"
             for step in HARD_STEPS)):
         return ("the startup attempt %s closed with exit %d and wrote no "
-                "`done`, and no hard step failed with 2: it was damaged "
-                "after the run (R-1)" % (row["attempt"], row["exit"]))
+                "`done`%s: it was damaged after the run (R-1)" % (
+                    row["attempt"], row["exit"], "" if row["exit"] == 0
+                    else ", and no hard step failed with 2"))
     return ""
 
 
@@ -656,11 +668,10 @@ def archive_complete(out):
 def replays(out, record=None, null=False, module=None):
     """(ok, reason): the startup gate archive `out` replays (the `replay`
     of `module`, by default this checkout's `startup_gate`, returns 0),
-    quietly and in-process; `reason` says why not. A gate (not `null`) must be
-    sealed to a record
-    (`record_sha256`), which is passed to the replay; a null control has
-    none. An archive that cannot be read or does not replay, for whatever
-    reason, does not replay."""
+    quietly and in-process; `reason` says why not. A gate (not `null`) must
+    be sealed to a record (`record_sha256`), which is passed to the replay;
+    a null control has none. An archive that cannot be read or does not
+    replay, for whatever reason, does not replay."""
     import startup_gate as sg
     import argparse
     out = Path(out)
@@ -680,49 +691,178 @@ def replays(out, record=None, null=False, module=None):
         return False, "%s: %s" % (type(error).__name__, error)
 
 
+def harness_prefix(path):
+    """The path of the directory of the file `path` in its repository, with
+    a trailing slash ("" at the top): where the harness modules are at any
+    commit."""
+    import subprocess
+    return subprocess.run(
+        ("git", "-C", str(Path(path).resolve().parent), "rev-parse",
+         "--show-prefix"), capture_output=True, check=True,
+        stdin=subprocess.DEVNULL, text=True).stdout.strip()
+
+
 def harness_source(head, path=None):
-    """The bytes of `startup_gate.py` (`path`, by default this checkout's)
-    at the commit `head` of the repository that holds it."""
+    """The bytes of the module file `path` (by default this checkout's
+    `startup_gate.py`) at the commit `head` of the repository that holds
+    it."""
     import startup_gate as sg
     import subprocess
     path = Path(path or sg.__file__).resolve()
-
-    def git(*argv):
-        return subprocess.run(
-            ("git", "-C", str(path.parent)) + argv, capture_output=True,
-            check=True, stdin=subprocess.DEVNULL, text=True).stdout
+    where = path.name
     try:
-        prefix = git("rev-parse", "--show-prefix").strip()
-        blob = "%s:%s%s" % (head, prefix, path.name)
+        where = harness_prefix(path) + path.name
         return subprocess.run(
-            ("git", "-C", str(path.parent), "show", blob),
+            ("git", "-C", str(path.parent), "show", "%s:%s" % (head, where)),
             capture_output=True, check=True,
             stdin=subprocess.DEVNULL).stdout
     except (OSError, subprocess.CalledProcessError):
         raise ValueError("cannot read %s at the harness commit %s" % (
-            path.name, head)) from None
+            where, head)) from None
+
+
+def harness_names(head, path=None):
+    """The names of the modules (`x` for `x.py`) in the directory of `path`
+    (by default this checkout's `startup_gate.py`) at the commit `head`."""
+    import startup_gate as sg
+    import subprocess
+    path = Path(path or sg.__file__).resolve()
+    try:
+        listing = subprocess.run(
+            ("git", "-C", str(path.parent), "ls-tree", "--name-only", head),
+            capture_output=True, check=True, stdin=subprocess.DEVNULL,
+            text=True).stdout.split("\n")
+    except (OSError, subprocess.CalledProcessError):
+        raise ValueError("cannot list the modules of %s at the harness "
+                         "commit %s" % (path.parent.name, head)) from None
+    return {n[:-3] for n in listing if n.endswith(".py")}
+
+
+class LoadFailure(ImportError):
+    """A harness module (`name`) failed to load, with `error`."""
+    def __init__(self, name, error):
+        super().__init__("%s: %s" % (type(error).__name__, error))
+        self.name, self.error = name, error
+
+
+class PrivateSys:
+    """The `sys` that the modules of a harness see: the real one, except
+    that `modules` holds the harness's own modules first (a module that
+    looks itself up, `sys.modules[__name__]`, finds its private self) and
+    then the real ones, and a write to it stays private."""
+    def __init__(self, loaded):
+        import collections
+        import sys
+        object.__setattr__(self, "modules", collections.ChainMap(
+            loaded, sys.modules))
+
+    def __getattr__(self, name):
+        import sys
+        return getattr(sys, name)
+
+    def __setattr__(self, name, value):
+        import sys
+        if name == "modules":
+            object.__setattr__(self, name, value)
+        else:
+            setattr(sys, name, value)
+
+
+def load_harness(head, path=None):
+    """The module closure of the harness at the commit `head` (design
+    decision 36): `startup_gate.py` (`path`, by default this checkout's)
+    and every module of its directory that it imports, directly or
+    transitively (`ast`; the names that are `.py` files of the directory at
+    `head`), all taken as blobs at `head` and run as fresh module objects
+    in a private namespace. The import statements of these modules resolve
+    to one another first and then to the standard library. `sys.modules`
+    and this checkout's modules are not touched. Returns {name: module}.
+    A blob that cannot be read, compiled or loaded is refused (ValueError
+    naming the commit and the repository path)."""
+    import ast
+    import builtins
+    import startup_gate as sg
+    import types
+    entry = Path(path or sg.__file__).resolve()
+    available = harness_names(head, entry)
+    try:
+        prefix = harness_prefix(entry)
+    except Exception:
+        prefix = ""
+    codes, order = {}, [entry.stem]
+    for name in order:
+        where = prefix + name + ".py"
+        raw = harness_source(head, entry.with_name(name + ".py"))
+        try:
+            tree = ast.parse(raw, where)
+            codes[name] = compile(tree, "%s:%s" % (head[:12], where),
+                                  "exec")
+        except Exception as error:
+            raise ValueError("cannot compile %s at the harness commit %s: "
+                             "%s: %s" % (where, head, type(error).__name__,
+                                         error)) from None
+        for node in ast.walk(tree):
+            names = [n.name for n in node.names] if isinstance(
+                node, ast.Import) else [node.module] if isinstance(
+                node, ast.ImportFrom) and node.level == 0 and \
+                node.module else []
+            order.extend(n for n in (m.split(".")[0] for m in names)
+                         if n in available and n not in order)
+    loaded, real = {}, builtins.__import__
+    private = PrivateSys(loaded)
+
+    def importer(name, globals=None, locals=None, fromlist=(), level=0):
+        if level == 0 and name.split(".")[0] in codes:
+            return load(name.split(".")[0])
+        if level == 0 and name == "sys":
+            return private
+        return real(name, globals, locals, fromlist, level)
+
+    def load(name):
+        if name not in loaded:
+            module = types.ModuleType(name)
+            module.__file__ = str(entry.with_name(name + ".py"))
+            module.__dict__["__builtins__"] = dict(
+                vars(builtins), __import__=importer)
+            loaded[name] = module
+            try:
+                exec(codes[name], module.__dict__)
+            except LoadFailure:
+                del loaded[name]
+                raise
+            except BaseException as error:
+                del loaded[name]
+                raise LoadFailure(name, error) from None
+        return loaded[name]
+    for name in order:
+        try:
+            load(name)
+        except LoadFailure as failure:
+            error = failure.error
+            raise ValueError("cannot load %s at the harness commit %s: "
+                             "%s: %s" % (prefix + failure.name + ".py",
+                                         head, type(error).__name__, error)
+                             ) from None
+    return loaded
 
 
 def attempt_startup_gate(row):
     """The `startup_gate` module as the harness of the attempt `row` had it
-    (design decision 33): the blob at the commit in its `harness-head.txt`,
-    loaded as a temporary module under a name of its own (`sys.modules`
-    keeps this checkout's), its other imports being this checkout's.
-    Refused when the attempt records no harness commit or the blob cannot
-    be read."""
-    import startup_gate as sg
-    import types
+    (design decisions 33, 36): the module of the closure (`load_harness`)
+    at the commit in its `harness-head.txt`, so `replay`, `SCHEMA`, `PAIRS`
+    and everything they use are the attempt's own. Refused (ValueError
+    naming the attempt) when the attempt records no harness commit or the
+    closure cannot be read, compiled or loaded."""
     out = Path(row["output"])
     head = step_exit(out, "harness-head.txt") or ""
     a.require(re.fullmatch(r"[0-9a-f]{40}", head) is not None,
               "the startup attempt %s records no harness commit "
               "(harness-head.txt)" % row["attempt"])
-    source = harness_source(head)
-    module = types.ModuleType("startup_gate_" + head[:12])
-    module.__file__ = sg.__file__
-    exec(compile(source, "%s:startup_gate.py" % head, "exec"),
-         module.__dict__)
-    return module
+    try:
+        return load_harness(head)["startup_gate"]
+    except ValueError as error:
+        raise ValueError("the startup attempt %s: %s" % (
+            row["attempt"], error)) from None
 
 
 def judge_gate(row):

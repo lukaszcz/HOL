@@ -155,16 +155,20 @@ its `gate/receipt.json` all match the files it lists AND the archive,
 sealed to a record, replays with the attempt's own record (design decisions
 28, 33; the runner's progress files never decide it, so a signal after a
 decided, replayable gate does not undo the decision). The replay is made
-with the attempt's own `startup_gate.py` (the blob at the commit in its
-`harness-head.txt`, loaded as a temporary module; refused when it cannot
-be read), so a later fix to the module never locks a disposition out. An
-archive that
+with the attempt's own harness (design decisions 33, 36): `startup_gate.py`
+and every performance-area module it imports, transitively, as blobs at
+the commit in its `harness-head.txt`, loaded as fresh modules in a private
+namespace (`sys.modules` is untouched; refused, naming the attempt, the
+commit and the path, when a blob cannot be read, compiled or loaded). The
+same harness checks the header (`SCHEMA`, `PAIRS`) and replays the null and
+the late replays, so a later fix to any of those modules never locks a
+disposition out. An archive that
 gives no decision makes the attempt void (a redraw is allowed; the reason
 is in the attempt row) unless the attempt shows progress past
 `replay-gate` (`done`, `replay-gate.exit` reading `exit=0`, a later step
 file): it is then damaged and refused, as is an attempt that closed with
 exit 0 and no `done`, or with exit 2 and no `done` although no hard step
-failed with 2 (the soft steps also exit 2).
+failed with 2.
 Each
 earlier attempt is judged by its gate decision when it has one, complete
 or not: it is recorded
@@ -1259,8 +1263,11 @@ def read_gates(args, lineage, inputs, late, extra):
               ", ".join(sorted(LOADING_KEYS.values())))
     a.require(args.startup_gate is not None,
               "the startup gate needs --startup-gate")
+    attempts = gates.startup_attempts(args.startup_ledger,
+                                      args.startup_gate)
+    module = gates.attempt_startup_gate(attempts[-1])
     header, decisions = gates.read_startup(args.startup_gate, False,
-                                           lineage)
+                                           lineage, module=module)
     record_seal = gates.check_record(header, args.startup_record, lineage)
     inputs[gates.STARTUP] = {
         n: a.seal(Path(d) / f) for n, d, f in (
@@ -1270,10 +1277,7 @@ def read_gates(args, lineage, inputs, late, extra):
     declared, inputs[gates.STARTUP]["declared"] = gates.read_declared(
         args.startup_declared, header, args.startup_record)
     problems = gates.declared_problems(declared, decisions)
-    attempts = gates.startup_attempts(args.startup_ledger,
-                                      args.startup_gate)
     attempt = Path(args.startup_gate).resolve().parent
-    module = gates.attempt_startup_gate(attempts[-1])
     a.require(Path(args.startup_declared).resolve() ==
               attempt / "declared-deltas.json",
               "--startup-declared %s is not the declared-deltas.json of "
@@ -1290,7 +1294,7 @@ def read_gates(args, lineage, inputs, late, extra):
             null).resolve().parent,
             "the startup gate and its null control are not of one attempt")
         _, null_decisions = gates.read_startup(
-            null, True, lineage, "startup-gate null control")
+            null, True, lineage, "startup-gate null control", module)
         inputs[gates.STARTUP]["null-header"] = a.seal(
             Path(null) / "header.json")
         inputs[gates.STARTUP]["null-decisions"] = a.seal(

@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import shutil
 import tempfile
 import types
@@ -117,24 +118,67 @@ FINISHED = {n + ".exit": "exit=0\n" for n in gates.SOFT_STEPS +
             gates.HARD_STEPS}
 
 
+# the hard steps of run_startup_gate.sh, as written there (not
+# `gates.HARD_STEPS`, which a test of it must not read)
+RUNNER_HARD_STEPS = (
+    "build", "who_pays", "fill_record", "replay-gate", "replay-null",
+    "cell-o1-19", "cell-o1-24", "cell-o1-33", "cell-o2-24")
 HARNESS = "ab" * 20
+LOADED = {}        # Ledgers.fake_load
 
 
 class Ledgers(unittest.TestCase):
     """A directory of attempts and their ledger. The harness commit an
     attempt records (`harness-head.txt`, `HARNESS`) has the checkout's
-    `startup_gate.py`, unless a test says otherwise (`self.frozen`)."""
+    modules, unless a test says otherwise (`self.sources`: bytes by module
+    name, or by (commit, name))."""
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name).resolve()
         import startup_gate as sg
-        self.frozen = Path(sg.__file__).read_bytes()
+        self.here = Path(sg.__file__).resolve().parent
+        self.sources = {}
         self.real_harness_source = gates.harness_source
-        patch = mock.patch.object(gates, "harness_source",
-                                  lambda head: self.frozen)
-        patch.start()
-        self.addCleanup(patch.stop)
+        self.real_harness_names = gates.harness_names
+        self.real_load_harness = gates.load_harness
+        for name, fake in (("harness_source", self.fake_source),
+                           ("harness_names", self.fake_names),
+                           ("load_harness", self.fake_load)):
+            patch = mock.patch.object(gates, name, fake)
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def fake_source(self, head, path=None):
+        name = Path(path or self.here / "startup_gate.py").stem
+        for key in ((head, name), name):
+            if key in self.sources:
+                return self.sources[key]
+        return (self.here / (name + ".py")).read_bytes()
+
+    def fake_load(self, head, path=None):
+        """`gates.load_harness`, remembered per (commit, sources): loading
+        the 27 modules of the closure takes 0.4 s. The real one is tested
+        in `use_real_git`, `ClosureLoading` and `ReplayValidity`."""
+        key = (head, str(path), tuple(sorted(
+            (str(k), hashlib.sha256(v).hexdigest())
+            for k, v in self.sources.items())))
+        if key not in LOADED:
+            LOADED[key] = self.real_load_harness(head, path)
+        return LOADED[key]
+
+    def fake_names(self, head, path=None):
+        return {p.stem for p in self.here.glob("*.py")}
+
+    def use_real_git(self):
+        """The attempts' harness is read from git, not from the checkout's
+        files."""
+        for name, real in (("harness_source", self.real_harness_source),
+                           ("harness_names", self.real_harness_names),
+                           ("load_harness", self.real_load_harness)):
+            patch = mock.patch.object(gates, name, real)
+            patch.start()
+            self.addCleanup(patch.stop)
 
     def ledger(self, *lines):
         return write(self.root / "attempts.jsonl", "".join(
@@ -230,8 +274,10 @@ class StartupLedger(Ledgers):
         for exit_ in (0, 2):
             cases += [(exit_, {}, True), (exit_, soft, True)]
         cases += [(0, hard, True)]
-        cases += [(2, hard, False), (2, dict(hard, **soft), False),
-                  (2, {"build.exit": "exit=2\n"}, False)]
+        cases += [(2, hard, False), (2, dict(hard, **soft), False)]
+        # a hard step that failed with 2 leaves it incomplete, whichever
+        cases += [(2, {step + ".exit": "exit=2\n"}, False)
+                  for step in RUNNER_HARD_STEPS]
         for exit_ in (1, 143, 130, None):
             cases += [(exit_, {}, False), (exit_, soft, False),
                       (exit_, hard, False)]
@@ -264,11 +310,24 @@ class StartupLedger(Ledgers):
                         "judged-incomplete", case)
                 shutil.rmtree(out)
                 shutil.rmtree(self.root / "last", ignore_errors=True)
+        # the message: a hard step is mentioned for exit 2 only
+        out = self.run_dir("m", done=False)
+        for exit_, hard in ((0, False), (2, True)):
+            message = gates.damaged_runner(dict(
+                attempt="m", output=str(out), exit=exit_))
+            self.assertIn(damaged, message)
+            self.assertEqual("no hard step failed with 2" in message, hard)
+        shutil.rmtree(out)
         # exit 0 with no step file at all (done and the last cell gone)
         out = self.run_dir("z", done=False, decision="pass",
                            declared=(158440, 90000))
         with self.assertRaisesRegex(ValueError, damaged):
             gates.startup_attempts(self.attempts(("z", 0)), out / "gate")
+
+    def test_the_hard_steps_are_those_of_the_runner(self):
+        self.assertEqual(gates.HARD_STEPS, RUNNER_HARD_STEPS)
+        self.assertEqual(gates.SOFT_STEPS, (
+            "who_pays_s1", "gate", "gate-null", "check_deltas"))
 
     def test_done_makes_an_attempt_complete_whatever_its_close_status(self):
         for exit_ in (129, 130, 143, 1, None):
@@ -300,12 +359,12 @@ class StartupLedger(Ledgers):
         with self.assertRaisesRegex(ValueError, "records no harness"):
             gates.startup_attempts(ledger, out / "gate")
         write(out / "harness-head.txt", "0" * 40 + "\n")
-        with mock.patch.object(gates, "harness_source",
-                               self.real_harness_source):
-            with self.assertRaisesRegex(
-                    ValueError, "cannot read startup_gate.py at the "
-                    "harness commit " + "0" * 40):
-                gates.startup_attempts(ledger, out / "gate")
+        self.use_real_git()
+        with self.assertRaisesRegex(
+                ValueError, "the startup attempt a: cannot list the "
+                "modules of .* at the "
+                "harness commit " + "0" * 40):
+            gates.startup_attempts(ledger, out / "gate")
         # no gate decision, nothing to replay: the harness is not read
         void = self.run_dir("v", done=False)
         (void / "harness-head.txt").unlink()
@@ -333,9 +392,11 @@ class StartupLedger(Ledgers):
         where = repo / "sub" / "startup_gate.py"
         self.assertEqual([self.real_harness_source(c, where)
                           for c in shas], [b"one\n", b"two\n"])
-        with self.assertRaisesRegex(ValueError, "cannot read"):
+        with self.assertRaisesRegex(ValueError, "cannot read sub/startup_"
+                                    "gate.py at the harness commit 0"):
             self.real_harness_source("0" * 40, where)
-        with self.assertRaisesRegex(ValueError, "cannot read"):
+        with self.assertRaisesRegex(ValueError, "cannot read startup_gate"
+                                    ".py at the harness commit"):
             self.real_harness_source(shas[0], repo / "startup_gate.py")
 
     def test_a_judged_gate_that_is_not_the_last_attempt_is_refused(self):
@@ -713,8 +774,10 @@ class ReplayValidity(Ledgers):
         self.addCleanup(patch.stop)
         # the attempt's own module, loaded from its source, has the
         # archives' pair count too
-        self.frozen = self.frozen.replace(b"PAIRS = 10  #", b"PAIRS = 2  #")
-        self.assertIn(b"PAIRS = 2  #", self.frozen)
+        text = (self.here / "startup_gate.py").read_bytes()
+        self.sources["startup_gate"] = text.replace(b"PAIRS = 10  #",
+                                                    b"PAIRS = 2  #")
+        self.assertIn(b"PAIRS = 2  #", self.sources["startup_gate"])
 
     def run_dir(self, name, fail=False, done=False, steps=None):
         """An attempt whose gate is a real archive: attributed, or with
@@ -832,24 +895,98 @@ class ReplayValidity(Ledgers):
         out = self.run_dir("g", fail=True)
         write(out / "harness-head.txt", head + "\n")
         row = self.row(out)
-        with mock.patch.object(gates, "harness_source",
-                               self.real_harness_source):
-            module = gates.attempt_startup_gate(row)
-            self.assertIs(sys.modules["startup_gate"], self.sg)
-            self.assertIsNot(module, self.sg)
-            self.assertNotIn(module.__name__, sys.modules)
-            # real blob, real replay of a real archive (its pair count is
-            # the archive's)
-            with mock.patch.object(module, "PAIRS", tsg.TEST_PAIRS):
-                self.assertEqual(gates.replays(
-                    out / "gate", out / "not-client-visible.md",
-                    module=module), (True, ""))
+        self.use_real_git()
+        before = dict(sys.modules)
+        module = gates.attempt_startup_gate(row)
+        self.assertEqual(sys.modules, before)
+        self.assertIs(sys.modules["startup_gate"], self.sg)
+        self.assertIsNot(module, self.sg)
+        # real blobs, real replay of a real archive (its pair count is
+        # the archive's)
+        with mock.patch.object(module, "PAIRS", tsg.TEST_PAIRS):
+            self.assertEqual(gates.replays(
+                out / "gate", out / "not-client-visible.md",
+                module=module), (True, ""))
+
+    def test_the_replay_uses_the_harness_commits_allocation_schema(self):
+        import sys
+        import allocation_schema
+        out = self.run_dir("g", fail=True)
+        self.assertFalse(hasattr(allocation_schema, "HARNESS_MARK"))
+        self.sources["allocation_schema"] = (
+            self.here / "allocation_schema.py").read_bytes() + \
+            b"\nHARNESS_MARK = 'harness'\n"
+        self.sources["startup_gate"] += (
+            b"\n\ndef replay(args):\n"
+            b"    return 0 if sc.HARNESS_MARK == 'harness' else 9\n")
+        before = dict(sys.modules)
+        got = gates.classify(self.row(out))
+        self.assertEqual((got["kind"], got["replay"]), ("fail", ""))
+        module = gates.attempt_startup_gate(self.row(out))
+        self.assertEqual(sys.modules, before)
+        self.assertIsNot(module.sc, allocation_schema)
+        self.assertIs(sys.modules["allocation_schema"], allocation_schema)
+        # the other harness modules are the harness's too
+        self.assertIsNot(module.a, sys.modules["acceptance"])
+        # and the checkout's own is not what decides
+        del self.sources["allocation_schema"]
+        self.assertEqual(gates.classify(self.row(out))["kind"], "void")
+
+    def test_each_attempt_is_replayed_by_its_own_harness_commit(self):
+        old, new = "11" * 20, "22" * 20
+        self.sources[(old, "startup_gate")] = \
+            b"def replay(args):\n    return 7\n"
+        self.sources[(new, "startup_gate")] = \
+            b"def replay(args):\n    return 0\n"
+        one, two = self.run_dir("one", fail=True), \
+            self.run_dir("two", fail=True, done=True)
+        write(one / "harness-head.txt", old + "\n")
+        write(two / "harness-head.txt", new + "\n")
+        got = gates.startup_attempts(
+            self.attempts(("one", 143), ("two", 0)), two / "gate")
+        self.assertEqual([(x["attempt"], x["verdict"]) for x in got],
+                         [("one", "void"), ("two", "judged")])
+        self.assertIn("returned 7", got[0]["replay"])
+        self.assertEqual(got[1]["replay"], "")
+        # the other way round
+        write(one / "harness-head.txt", new + "\n")
+        write(two / "harness-head.txt", old + "\n")
+        self.assertEqual(gates.classify(self.row(one))["kind"], "fail")
+        self.assertEqual(gates.classify(self.row(two, 0))["kind"], "void")
+
+    def test_a_harness_blob_that_cannot_load_is_refused_by_name(self):
+        out = self.run_dir("g", fail=True)
+        where = re.escape(gates.harness_prefix(gates.__file__))
+        for name, source, message in (
+                ("startup_gate", b"raise ImportError('boom')\n",
+                 "cannot load %sstartup_gate.py at the harness commit "
+                 "%s: ImportError: boom"),
+                ("startup_gate", b"import no_such_module_anywhere\n",
+                 "cannot load %sstartup_gate.py at the harness commit "
+                 "%s: ModuleNotFoundError"),
+                ("allocation_schema", b"raise ImportError('boom')\n",
+                 "cannot load %sallocation_schema.py at the harness "
+                 "commit %s: ImportError: boom"),
+                ("loading", b"def (:\n",
+                 "cannot compile %sloading.py at the harness commit "
+                 "%s: SyntaxError")):
+            self.sources.clear()
+            self.sources[name] = source
+            if name != "startup_gate":
+                self.sources["startup_gate"] = (
+                    self.here / "startup_gate.py").read_bytes()
+            expect = "the startup attempt g: " + message % (where, HARNESS)
+            with self.assertRaisesRegex(ValueError, expect, msg=name):
+                gates.attempt_startup_gate(self.row(out))
+            with self.assertRaisesRegex(ValueError, expect, msg=name):
+                gates.startup_attempts(self.attempts(("g", 143)),
+                                       out / "gate")
 
     def test_the_attempts_version_of_the_replay_is_the_one_used(self):
         out = self.run_dir("g", fail=True)
         self.assertEqual(gates.classify(self.row(out))["kind"], "fail")
         # an attempt whose harness had another `replay`
-        self.frozen = b"def replay(args):\n    return 7\n"
+        self.sources["startup_gate"] = b"def replay(args):\n    return 7\n"
         got = gates.classify(self.row(out))
         self.assertEqual(got["kind"], "void")
         self.assertIn("returned 7", got["replay"])
@@ -924,6 +1061,89 @@ def archive_fixture(root, simp=158440, cong=90000, name="round4",
         totals={"load-simpLib": simp, "load-congLib": cong},
         archive=str(archive), archive_sha256=sha))
     return archive, record, side, dict(record_sha256=rsha)
+
+
+class HarnessClosure(unittest.TestCase):
+    """`gates.load_harness` over a real git repository whose commits hold
+    a small harness: `sub/startup_gate.py` and the modules it imports."""
+    FILES = {
+        "startup_gate.py": (
+            "import json\nimport allocation_schema as sc\n"
+            "from helper import VALUE\n"
+            "def counts():\n    return sc.COUNTS, VALUE, json.dumps(1)\n"
+            "def late():\n    import lazy\n    return lazy.LAZY\n"),
+        "helper.py": ("import sys\nimport allocation_schema\n"
+                      "VALUE = allocation_schema.COUNTS * 2\n"
+                      "ME = sys.modules[__name__]\n"),
+        "allocation_schema.py": "COUNTS = %d\n",
+        "lazy.py": "LAZY = %d\n",
+        "unrelated.py": "raise SystemExit('never imported')\n"}
+
+    def setUp(self):
+        import subprocess
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = Path(self.tmp.name).resolve() / "repo"
+        (self.repo / "sub").mkdir(parents=True)
+        self.git("init", "-q")
+        self.shas = []
+        for n in (3, 4):
+            for name, text in self.FILES.items():
+                (self.repo / "sub" / name).write_text(
+                    text % n if "%d" in text else text)
+            self.git("add", ".")
+            self.git("-c", "user.name=t", "-c", "user.email=t@t",
+                     "commit", "-q", "-m", "x")
+            self.shas.append(self.git("rev-parse", "HEAD").strip())
+        self.entry = self.repo / "sub" / "startup_gate.py"
+        self.subprocess = subprocess
+
+    def git(self, *argv):
+        import subprocess
+        return subprocess.run(
+            ("git", "-C", str(self.repo)) + argv, check=True,
+            capture_output=True, text=True,
+            stdin=subprocess.DEVNULL).stdout
+
+    def test_each_commit_is_loaded_as_its_own_closure(self):
+        import sys
+        import allocation_schema
+        before = dict(sys.modules)
+        for sha, n in zip(self.shas, (3, 4)):
+            mods = gates.load_harness(sha, self.entry)
+            self.assertEqual(sorted(mods), [
+                "allocation_schema", "helper", "lazy", "startup_gate"])
+            self.assertEqual(mods["startup_gate"].counts(),
+                             (n, 2 * n, "1"))
+            self.assertEqual(mods["startup_gate"].late(), n)
+            # the imports resolve inside the closure
+            self.assertIs(mods["startup_gate"].sc,
+                          mods["allocation_schema"])
+            self.assertIs(mods["helper"].allocation_schema,
+                          mods["allocation_schema"])
+            self.assertIs(mods["helper"].ME, mods["helper"])
+        self.assertEqual(sys.modules, before)
+        self.assertNotIn("helper", sys.modules)
+        self.assertIs(sys.modules["allocation_schema"], allocation_schema)
+
+    def test_a_module_that_is_not_imported_is_not_loaded(self):
+        self.assertNotIn("unrelated",
+                         gates.load_harness(self.shas[0], self.entry))
+
+    def test_a_missing_module_commit_or_blob_is_refused_by_name(self):
+        with self.assertRaisesRegex(ValueError, "cannot list the modules "
+                                    "of sub at the harness commit 0"):
+            gates.load_harness("0" * 40, self.entry)
+        (self.repo / "sub" / "helper.py").write_text("import nope_at_all\n")
+        self.git("add", ".")
+        self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit",
+                 "-q", "-m", "y")
+        with self.assertRaisesRegex(
+                ValueError, "cannot load sub/helper.py at the harness "
+                "commit %s: ModuleNotFoundError" % self.git(
+                    "rev-parse", "HEAD").strip()):
+            gates.load_harness(self.git("rev-parse", "HEAD").strip(),
+                               self.entry)
 
 
 class Declared(unittest.TestCase):
@@ -1294,7 +1514,9 @@ class StartupPath(Ledgers):
         args = self.make(done=False)
         args.startup_null = None
         self.read(args)
-        module = object()
+        import startup_gate as sg
+        module = types.ModuleType("mine")
+        module.SCHEMA, module.PAIRS = sg.SCHEMA, sg.PAIRS
         self.assertEqual(sorted({(n, null) for n, null, _ in self.replayed}),
                          [("gate", False), ("gate-null", True)])
         # the late replays, and the null's, use the attempt's own module
@@ -1307,6 +1529,39 @@ class StartupPath(Ledgers):
         self.assertEqual({m for _, _, m in self.replayed}, {module})
         self.assertEqual([c.args[-1] for c in replay.call_args_list],
                          [module, module])
+
+    def test_the_header_is_checked_by_the_attempts_own_module(self):
+        import startup_gate as sg
+        args = self.make(done=False)
+        args.startup_null = None
+        for what, value, message in (
+                ("SCHEMA", "other", "is not a startup gate archive"),
+                ("PAIRS", sg.PAIRS * 1000, "fewer than")):
+            fields = dict(SCHEMA=sg.SCHEMA, PAIRS=sg.PAIRS)
+            fields[what] = value
+            with mock.patch.object(gates, "attempt_startup_gate",
+                                   lambda row: types.SimpleNamespace(
+                                       **fields)):
+                with self.assertRaisesRegex(ValueError, message,
+                                            msg=what):
+                    self.read(args)
+        self.read(args)      # this checkout's own are the same
+
+    def test_the_gate_and_its_null_are_both_read_with_the_attempts_module(
+            self):
+        import startup_gate as sg
+        module = types.ModuleType("mine")
+        module.SCHEMA, module.PAIRS = sg.SCHEMA, sg.PAIRS
+        args = self.make(done=True)
+        with mock.patch.object(gates, "attempt_startup_gate",
+                               lambda row: module), \
+                mock.patch.object(gates, "read_startup",
+                                  wraps=gates.read_startup) as read:
+            self.read(args)
+        self.assertEqual([c.kwargs.get("module", c.args[-1])
+                          for c in read.call_args_list], [module, module])
+        self.assertEqual([c.args[1] for c in read.call_args_list],
+                         [False, True])
 
     def test_the_replay_reason_is_in_the_attempt_line(self):
         record = dict(timing_attempts={}, identity_unaccounted={},
@@ -1402,7 +1657,7 @@ class StartupPath(Ledgers):
     def test_an_incomplete_attempt_with_no_decision_is_refused(self):
         args = self.make(done=False)
         (self.ev / "gate" / "decisions.json").unlink()
-        with self.assertRaisesRegex(ValueError, "decisions"):
+        with self.assertRaisesRegex(ValueError, "void.*no gate decision"):
             self.read(args)
 
     def test_the_attempt_inputs_must_exist(self):
