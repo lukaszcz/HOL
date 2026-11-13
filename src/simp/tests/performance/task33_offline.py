@@ -1758,10 +1758,11 @@ def printed_text(text):
 
 # `tprint` cuts a text that does not fit the line to `<prefix> ...` (`crush`,
 # at the width Holmake_tools.getWidth gives: `stty size`, then `tput cols`,
-# else 80, so 80 when the build has no terminal, and the measured builds run
-# with stdin on /dev/null). At width 80 a text of up to 73 characters fits,
-# so 60 leaves margin; a longer text is refused. A line cut on a narrower
-# terminal shows up only as a loud failure ("0 times").
+# otherwise 80; that is usually the width when the build has no terminal,
+# but `tput cols` may still report one, from COLUMNS or a tty stderr). At
+# width 80 a text of up to 73 characters fits, so 60 leaves margin; a
+# longer text is refused. A line cut at a narrower width shows up only as a
+# loud failure ("0 times").
 TPRINT_MAX = 60
 
 
