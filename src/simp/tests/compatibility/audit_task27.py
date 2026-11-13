@@ -49,9 +49,13 @@ REVIEWED_31 = {
         reason='TASK31 own pure is_var_perm (audited token-equal to '
                'develop) and reporting through Cond_rewr.note_rewrite'),
     SRC + 'simpExtLib.sml': dict(
-        blob='c146d65ff7b1d7014f71bcfb46fe4ed4c88e9d05',
+        blob='853b4b30baaa143c19ef253bc19ec1b9457752a2',
         reason='TASK17-24 tracked installation, policy/quota and explicit '
                'recipes; TASK31 track is Cond_rewr.with_tracking'),
+    SRC + 'splitLib.sml': dict(
+        blob='5b52231e20fca7e6e5d77390c561f88efdc68125',
+        reason='TASK36 qualify List.foldr: no toplevel-shadowable basis '
+               'name in a module compiled by load'),
     SRC + 'simpExtLib.sig': dict(
         blob='247f6a892c57f90a74035b2186fbab6bac174aea',
         reason='TASK17-24 explicit tracked API; TASK31 documents the one '
@@ -68,7 +72,7 @@ REVIEWED_31 = {
         reason='TASK17-22 child-first staging, aborts and configured '
                'traversal; TASK34 reducer_kind for the abstract reducer'),
     SRC + 'congExtLib.sml': dict(
-        blob='42e535d4924e82a7aa55804673fa3a8e27220852',
+        blob='ee7d82483e7f178ff6c0d71756a7fee2dafc354c',
         reason='TASK34 eq_reducer_wrapper reads any reducer through '
                'reducer_config_data; the reducer type is abstract'),
     # TASK34 removes the ambient attribute_fns; only attribute_fns_of stays.
@@ -129,6 +133,7 @@ DELTAS = {
     SRC + 'simpMarkerLib.sig':
         'TASK20 explicit prepared directive interface',
     SRC + 'SplitData.sml': REVIEWED_31[SRC + 'SplitData.sml']['reason'],
+    SRC + 'splitLib.sml': REVIEWED_31[SRC + 'splitLib.sml']['reason'],
     SRC + 'splitLib.sig':
         'TASK23 explicit persistence API documentation',
     SRC + 'combinSimpsExt.sml':
@@ -173,8 +178,9 @@ LOCAL_NAMES = {
 # Seal of sorted per-defining-input holdeptool observations on the immutable
 # references. This prevents an empty/stale/replaced analyzer passing merely
 # because it produces the same wrong answer on both snapshots.
+# TASK36: congExtLib now names the basis structure List (List.foldr).
 ANALYSIS_SHA256 = (
-    'd01da425ad91723363c9cec0284636af6bd88a21cfc56d07743fdcbcf8b781c1')
+    '56ff553845cf05fd895552cb17aaacd3266dab4e086c18fabf36913a24427bf3')
 
 require, seal, git_source = prior.require, prior.seal, prior.git_source
 

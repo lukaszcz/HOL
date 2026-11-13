@@ -1,5 +1,6 @@
 HOLHEAP = $(HOLDIR)/bin/hol.state0
 EXTRA_CLEANS = selftest.exe simp-selftest.log fresh-load-selftest.exe \
+  fresh-load-shadowed.exe \
   fragment-contracts.log compiled-core.log literal-exclusions.log \
   fragments-python-tests.log compiled-core-python-tests.log \
   interfaces-design-check.log \
@@ -44,6 +45,10 @@ selftest.exe: selftest.uo boolSimps.uo Cond_rewr.uo simpLib.uo
 # Clean-heap namespace/syntax regressions. Only the launcher is linked;
 # library prerequisites are not imports.
 FRESH_LOAD = ../tests/fresh-load
+# The extension modules the shadowed-load launcher loads (it scans this
+# directory by the same name rules).
+FRESH_EXT_UO = $(patsubst %.sml,%.uo,\
+  $(wildcard *Ext*.sml split*.sml SplitData.sml simpMarker*Lib.sml))
 FRESH_SCENARIOS = control attribute-first set-first attribute-after set-after \
   syntax-first
 
@@ -53,14 +58,29 @@ fresh-load-selftest.exe: $(FRESH_LOAD)/selftest.sml simpLib.uo boolSimps.uo \
 	  -C $(FRESH_LOAD) selftest.uo
 	$(HOLMOSMLC) -o $@ $(FRESH_LOAD)/selftest.uo
 
+# The shadowed-load scenario has its own launcher, so selftest.sml is
+# unchanged.
+fresh-load-shadowed.exe: $(FRESH_LOAD)/shadowed.sml simpLib.uo boolSimps.uo \
+  $(FRESH_EXT_UO) Holmakefile
+	$(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
+	  -C $(FRESH_LOAD) shadowed.uo
+	$(HOLMOSMLC) -o $@ $(FRESH_LOAD)/shadowed.uo
+
+.PHONY: fresh-load-shadowed-load
+fresh-load-shadowed-load: fresh-load-shadowed.exe
+	SIMP_COMPAT_SCENARIO=shadowed-load SIMP_COMPAT_PATH=$$(pwd)/simpLib \
+	  ./fresh-load-shadowed.exe
+
 .PHONY: fresh-load-regressions $(patsubst %,fresh-load-%,$(FRESH_SCENARIOS))
-fresh-load-regressions: fresh-load-selftest.exe
+fresh-load-regressions: fresh-load-selftest.exe fresh-load-shadowed.exe
 	@status=0; for s in $(FRESH_SCENARIOS); do \
 	  SIMP_COMPAT_SCENARIO=$$s \
 	  SIMP_COMPAT_PATH=$$(pwd)/simpLib \
 	  SIMP_COMPAT_CONTROL=$$(pwd)/$(FRESH_LOAD)/control.ML \
 	  SIMP_COMPAT_IDENTITY_PREFIX=$$(pwd)/$(FRESH_LOAD)/identity- \
-	  ./fresh-load-selftest.exe || status=1; done; exit $$status
+	  ./fresh-load-selftest.exe || status=1; done; \
+	SIMP_COMPAT_SCENARIO=shadowed-load SIMP_COMPAT_PATH=$$(pwd)/simpLib \
+	  ./fresh-load-shadowed.exe || status=1; exit $$status
 
 fresh-load-control fresh-load-attribute-first fresh-load-set-first \
   fresh-load-attribute-after fresh-load-set-after fresh-load-syntax-first: \

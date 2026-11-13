@@ -1052,7 +1052,7 @@ val case_prefix = "split.case "
 fun case_display_exists display =
   String.isPrefix case_prefix display andalso
   let
-    val wanted = String.extract (display,size case_prefix,NONE)
+    val wanted = String.extract (display,String.size case_prefix,NONE)
     fun names tyinfo =
       let val (thy,tyop) = TypeBasePure.ty_name_of tyinfo
       in

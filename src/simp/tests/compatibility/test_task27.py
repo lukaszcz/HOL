@@ -137,7 +137,7 @@ class LiveSourceGate(unittest.TestCase):
             if audit.baseline_source(path) != self.sources[path]:
                 actual_deltas.add(path)
         self.assertEqual(actual_deltas, set(audit.DELTAS))
-        self.assertEqual(len(actual_deltas), 14)
+        self.assertEqual(len(actual_deltas), 15)
         for path, delta in audit.delta_records().items():
             self.assertTrue(delta['reason'])
             self.assertNotEqual(delta['baseline'], delta['reviewed'])
@@ -197,7 +197,8 @@ class LiveSourceGate(unittest.TestCase):
             audit.SRC + n for n in ('Cond_rewr.sig', 'Cond_rewrExt.sml',
                                     'simpExtLib.sml', 'simpExtLib.sig',
                                     'SplitData.sml', 'TraverseExt.sig',
-                                    'congExtLib.sml', 'TraverseExt.sml')} | {
+                                    'congExtLib.sml', 'TraverseExt.sml',
+                                    'splitLib.sml')} | {
             'src/1/ThmAttribute.sig', 'src/1/ThmAttribute.sml'})
         for path, record in audit.REVIEWED_31.items():
             with self.subTest(path=path):

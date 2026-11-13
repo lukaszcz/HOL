@@ -158,7 +158,7 @@ val cong_reducer =
               Ho_Net.enter (boundvars, concl, (boundvars_set, thm)) net
             end) handle _ => net
         in
-          (foldr insert_one net flatThms)
+          (List.foldr insert_one net flatThms)
         end
 
       fun addcontext (context,thms) =

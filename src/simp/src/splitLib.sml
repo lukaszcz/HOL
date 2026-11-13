@@ -373,7 +373,7 @@ fun candidates want_asm cmap head =
       then rules @ acc
       else acc
   in
-    foldr add [] (Symtab.lookup_list cmap (head_key head))
+    List.foldr add [] (Symtab.lookup_list cmap (head_key head))
   end
 
 (* Reach argument [i] of an [n]-ary application: strip the later arguments
