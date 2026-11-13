@@ -6,17 +6,10 @@
 structure hhSlice :> hhSlice =
 struct
 
-(* Each name consumes the next unused entry of that prover's slice table in
-   hhProver, so this order must track those tables: the first eight entries
-   are the FOF anchors, the next eight the rest of the unfiltered tables,
-   and the final eight the filtered ensemble slices. *)
-val rotation =
-  ["vampire", "e", "zipperposition", "vampire", "e", "vampire",
-   "zipperposition", "vampire",
-   "vampire", "e", "zipperposition", "e", "vampire", "e", "vampire",
-   "zipperposition",
-   "vampire", "e", "zipperposition", "vampire", "e", "vampire", "e",
-   "vampire"]
+(* Each name consumes the next unused entry of that prover's slice table.
+   The built-in tables are subsequences of hhProver.portfolio, so walking
+   its prover names reproduces the portfolio order. *)
+val rotation = map #prover hhProver.portfolio
 
 val distinct = aiLib.mk_sameorder_set String.compare
 

@@ -43,6 +43,9 @@ sig
      legacy : bool}
 
   val same_slice : slice -> slice -> bool
+  (* The built-in slices in scheduling order; each built-in prover's
+     slice table is its subsequence of this list. *)
+  val portfolio : slice list
 
   val all : unit -> prover_config list
   val lookup : string -> prover_config option

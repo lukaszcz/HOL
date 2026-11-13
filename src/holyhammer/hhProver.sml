@@ -353,24 +353,58 @@ fun z3_version output =
 
 fun same_slice (left : slice) right = left = right
 
-fun mk_slice prover (format, type_enc, lam_trans) nfacts extra_opts : slice =
-  {prover = prover, format = format, type_enc = type_enc, lam_trans = lam_trans,
-   nfacts = nfacts, filter = "knn", extra_opts = extra_opts,
-   slice_size = 1}
-
-fun mk_filtered_slice prover (format, type_enc, lam_trans) filter nfacts
-    extra_opts : slice =
+fun mk_slice prover (format, type_enc, lam_trans) filter nfacts : slice =
   {prover = prover, format = format, type_enc = type_enc,
    lam_trans = lam_trans, nfacts = nfacts, filter = filter,
-   extra_opts = extra_opts, slice_size = 1}
+   extra_opts = [], slice_size = 1}
 
-fun slices prover entries () =
-  map (fn (triple, nfacts, extra_opts) =>
-    mk_slice prover triple nfacts extra_opts) entries
+val legacy_fof = ("fof", "", "")
 
-fun filtered_slices prover entries =
-  map (fn (triple, filter, nfacts, extra_opts) =>
-    mk_filtered_slice prover triple filter nfacts extra_opts) entries
+(* The built-in slice portfolio, in scheduling order: the first eight
+   entries are the FOF anchors, the next eight the typed and remaining
+   unfiltered slices, and the final eight the filtered ensemble slices.
+   Each built-in prover's slice table is its subsequence of this list. *)
+val portfolio =
+  [mk_slice "vampire" legacy_fof "knn" 96,
+   mk_slice "e" legacy_fof "knn" 128,
+   mk_slice "zipperposition" legacy_fof "knn" 128,
+   mk_slice "vampire" legacy_fof "knn" 512,
+   mk_slice "e" legacy_fof "knn" 512,
+   mk_slice "vampire" legacy_fof "knn" 32,
+   mk_slice "zipperposition" legacy_fof "knn" 512,
+   mk_slice "vampire" legacy_fof "knn" 1024,
+
+   mk_slice "vampire" ("tx0", "mono_native_fool", "lifting") "knn" 96,
+   mk_slice "e" ("tx0-", "mono_native_fool", "lifting") "knn" 128,
+   mk_slice "zipperposition" ("th1", "mono_native_higher_fool", "keep_lams")
+     "knn" 128,
+   mk_slice "e" ("th0", "mono_native_higher", "keep_lams") "knn" 512,
+   (* Substitution: Vampire 5.0.1 rejects TF1 rank-1 type quantifiers (!>)
+      as higher-order types.  TH0 is its next tested table candidate; this
+      is a parser-equivalence correction, not a tuning change. *)
+   mk_slice "vampire" ("th0", "mono_native_higher", "keep_lams") "knn" 512,
+   (* Substitution: E 3.2.5-ho rejects the generated TF0 polymorphic proxy
+      declaration used by combs_and_lifting.  TX0- preserves that lambda
+      mode and is its parser-supported candidate. *)
+   mk_slice "e" ("tx0-", "mono_native_fool", "combs_and_lifting") "knn" 1024,
+   mk_slice "vampire" ("tx0", "mono_native_fool", "combs") "knn" 512,
+   (* Substitution: Zipperposition 2.1 rejects FOF guard proxy helpers as
+      a prop/individual type clash.  Its legacy FOF/32 candidate parses;
+      this is a parser-equivalence correction. *)
+   mk_slice "zipperposition" legacy_fof "knn" 32,
+
+   mk_slice "vampire" legacy_fof "mesh" 96,
+   mk_slice "e" legacy_fof "mesh" 128,
+   mk_slice "zipperposition" ("th1", "mono_native_higher_fool", "keep_lams")
+     "mesh" 128,
+   mk_slice "vampire" ("tx0", "mono_native_fool", "lifting") "mesh" 512,
+   mk_slice "e" legacy_fof "mepo" 512,
+   mk_slice "vampire" legacy_fof "mepo" 1024,
+   mk_slice "e" ("tx0-", "mono_native_fool", "lifting") "mash" 128,
+   mk_slice "vampire" legacy_fof "mash" 256]
+
+fun portfolio_slices name () =
+  List.filter (fn slice => #prover slice = name) portfolio
 
 (* Pinned E 3.2.5-ho, Vampire 5.0.1, and Zipperposition 2.1 smoke
    recordings validate these TPTP-3 dialect choices for every typed slice.
@@ -412,22 +446,7 @@ val e_config : prover_config =
    supported_formats = ["fof", "tf0", "tx0-", "th0"],
    mk_command = e_command,
    parse_output = parse_tstp, mono_instances = 128,
-   slices = fn () =>
-     slices "e"
-       [(("fof", "", ""), 128, []),
-        (("fof", "", ""), 512, []),
-        (("tx0-", "mono_native_fool", "lifting"), 128, []),
-        (("th0", "mono_native_higher", "keep_lams"), 512, []),
-        (* Substitution: E 3.2.5-ho rejects the generated TF0
-           polymorphic proxy declaration used by combs_and_lifting.  TX0-
-           preserves that lambda mode and is its parser-supported
-           candidate. *)
-        (("tx0-", "mono_native_fool", "combs_and_lifting"), 1024, [])] () @
-     filtered_slices "e"
-       [(("fof", "", ""), "mesh", 128, []),
-        (("fof", "", ""), "mepo", 512, []),
-        (("tx0-", "mono_native_fool", "lifting"), "mash", 128, [])],
-   legacy = false}
+   slices = portfolio_slices "e", legacy = false}
 
 val vampire_config : prover_config =
   {name = "vampire", exec_names = ["vampire"],
@@ -436,25 +455,7 @@ val vampire_config : prover_config =
    supported_formats = ["fof", "tf0", "tf1", "tx0", "th0", "th1"],
    mk_command = vampire_command,
    parse_output = parse_vampire, mono_instances = 256,
-   slices = fn () =>
-     slices "vampire"
-       [(("fof", "", ""), 96, []),
-        (("fof", "", ""), 512, []),
-        (("fof", "", ""), 32, []),
-        (("fof", "", ""), 1024, []),
-        (("tx0", "mono_native_fool", "lifting"), 96, []),
-        (* Substitution: Vampire 5.0.1 rejects TF1 rank-1 type
-           quantifiers (!>) as higher-order types.  TH0 is its next tested
-           table candidate; this is a parser-equivalence correction, not a
-           tuning change. *)
-        (("th0", "mono_native_higher", "keep_lams"), 512, []),
-        (("tx0", "mono_native_fool", "combs"), 512, [])] () @
-     filtered_slices "vampire"
-       [(("fof", "", ""), "mesh", 96, []),
-        (("tx0", "mono_native_fool", "lifting"), "mesh", 512, []),
-        (("fof", "", ""), "mepo", 1024, []),
-        (("fof", "", ""), "mash", 256, [])],
-   legacy = false}
+   slices = portfolio_slices "vampire", legacy = false}
 
 val zipperposition_config : prover_config =
   {name = "zipperposition", exec_names = ["zipperposition"],
@@ -463,19 +464,7 @@ val zipperposition_config : prover_config =
    supported_formats = ["fof", "th1"],
    mk_command = zipperposition_command, parse_output = parse_tstp,
    mono_instances = 100,
-   slices = fn () =>
-     slices "zipperposition"
-       [(("fof", "", ""), 128, []),
-        (("fof", "", ""), 512, []),
-        (("th1", "mono_native_higher_fool", "keep_lams"), 128, []),
-        (* Substitution: Zipperposition 2.1 rejects FOF guard proxy
-           helpers as a prop/individual type clash.  Its legacy FOF/32
-           candidate parses; this is a parser-equivalence correction. *)
-        (("fof", "", ""), 32, [])] () @
-     filtered_slices "zipperposition"
-       [(("th1", "mono_native_higher_fool", "keep_lams"),
-         "mesh", 128, [])],
-   legacy = false}
+   slices = portfolio_slices "zipperposition", legacy = false}
 
 val z3_config : prover_config =
   {name = "z3", exec_names = ["z3_tptp", "z3"],
