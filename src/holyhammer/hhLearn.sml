@@ -256,14 +256,16 @@ type score_parts =
    negative : real,
    total : real}
 
-type sparse_frequency = (int, int) Redblackmap.dict
+(* A fact's features in increasing order, each with its frequency and
+   its precomputed term of the negative (absent-from-goal) sum. *)
+type fact_feature = {feature : int, frequency : int, negative : real}
 type nb_model =
   {constants : constants,
    idf : idf_table,
    names : mlThmData.thmid vector,
    indices : (mlThmData.thmid, int) Redblackmap.dict,
    tfreq : int vector,
-   sfreq : sparse_frequency vector}
+   sfreq : fact_feature vector vector}
 
 fun add_index ((fact : fact_info), (index, table)) =
   let val thmid = #thmid fact in
@@ -348,10 +350,20 @@ fun train_nb constants idf dependencies facts =
           learn (index + 1)
         end
     val _ = learn 0
+    fun fact_features index =
+      let
+        val total_frequency = Real.fromInt (Array.sub (tfreq, index))
+        fun entry (feature, frequency) =
+          {feature = feature, frequency = frequency,
+           negative = valOf (idf_of idf feature) * Math.ln
+             (1.0 - Real.fromInt (frequency - 1) / total_frequency)}
+      in
+        Vector.fromList (map entry (dlist (Array.sub (sfreq, index))))
+      end
   in
     {constants = constants, idf = idf, names = names,
      indices = indices, tfreq = Array.vector tfreq,
-     sfreq = Array.vector sfreq}
+     sfreq = Vector.tabulate (number, fact_features)}
   end
 
 fun conclusion_of thmid =
@@ -381,12 +393,17 @@ fun nb_tfreq (model as {tfreq, ...} : nb_model) thmid =
 
 fun nb_sfreq (model as {sfreq, ...} : nb_model) thmid feature =
   case model_index model thmid of
-      SOME index => Redblackmap.peek (Vector.sub (sfreq, index), feature)
+      SOME index =>
+        Option.map #frequency
+          (Vector.find (fn entry => #feature entry = feature)
+             (Vector.sub (sfreq, index)))
     | NONE => NONE
 
 fun nb_knows_feature ({idf, ...} : nb_model) feature =
   Option.isSome (idf_of idf feature)
 
+(* The goal's known features in increasing order, with summed weights
+   and their IDF. *)
 fun known_goal_features ({idf, ...} : nb_model) goal_features =
   let
     fun add ((feature, weight), table) =
@@ -396,14 +413,14 @@ fun known_goal_features ({idf, ...} : nb_model) goal_features =
           | NONE => dadd feature weight table
       else table
   in
-    dlist (foldl add (dempty Int.compare) goal_features)
+    map (fn (feature, weight) =>
+      (feature, weight, valOf (idf_of idf feature)))
+      (dlist (foldl add (dempty Int.compare) goal_features))
   end
 
-fun model_idf ({idf, ...} : nb_model) feature =
-  case idf_of idf feature of
-      SOME weight => weight
-    | NONE => raise ERR "nb_score_parts" "model feature has no IDF weight"
-
+(* Both feature lists are increasing, so one merge pass splits them into
+   shared, goal-only and fact-only features.  Each sum accumulates in the
+   same order as a goal-ordered fold followed by a fact-ordered fold. *)
 fun nb_score_parts_prepared (model as
       {constants, tfreq, sfreq, ...} : nb_model)
       prepared_goal_features thmid =
@@ -413,34 +430,41 @@ fun nb_score_parts_prepared (model as
         let
           val total_frequency = Real.fromInt (Vector.sub (tfreq, index))
           val fact_features = Vector.sub (sfreq, index)
-          fun add_goal ((feature, weight),
-                (positive, absent, remaining)) =
-            let val feature_idf = model_idf model feature in
-              case Redblackmap.peek (remaining, feature) of
-                  SOME frequency =>
-                    (positive + weight * feature_idf *
-                       Math.ln (#pos_weight constants *
-                         Real.fromInt frequency / total_frequency),
-                     absent, drem feature remaining)
-                | NONE =>
-                    (positive,
-                     absent + weight * feature_idf *
-                       #def_val constants,
-                     remaining)
-            end
+          val size = Vector.length fact_features
+          fun absent_term weight feature_idf =
+            weight * feature_idf * #def_val constants
+          fun walk goal position (positive, absent, negative) =
+            if position = size then
+              (positive,
+               foldl (fn ((_, weight, feature_idf), sum) =>
+                 sum + absent_term weight feature_idf) absent goal,
+               negative)
+            else
+              let val entry = Vector.sub (fact_features, position) in
+                case goal of
+                    [] => walk goal (position + 1)
+                      (positive, absent, negative + #negative entry)
+                  | (feature, weight, feature_idf) :: rest =>
+                      if feature < #feature entry then
+                        walk rest position
+                          (positive,
+                           absent + absent_term weight feature_idf,
+                           negative)
+                      else if feature > #feature entry then
+                        walk goal (position + 1)
+                          (positive, absent, negative + #negative entry)
+                      else
+                        walk rest (position + 1)
+                          (positive + weight * feature_idf *
+                             Math.ln (#pos_weight constants *
+                               Real.fromInt (#frequency entry) /
+                               total_frequency),
+                           absent, negative)
+              end
           val prior = #init_val constants * Math.ln total_frequency
-          val (positive, absent, remaining) = foldl add_goal
-            (0.0, 0.0, fact_features)
-            prepared_goal_features
-          fun add_negative (feature, frequency, sum) =
-            let
-              val feature_idf = model_idf model feature
-            in
-              sum + feature_idf * Math.ln
-                (1.0 - Real.fromInt (frequency - 1) / total_frequency)
-            end
-          val negative = #tau constants *
-            dfoldl add_negative 0.0 remaining
+          val (positive, absent, negative_sum) =
+            walk prepared_goal_features 0 (0.0, 0.0, 0.0)
+          val negative = #tau constants * negative_sum
           val total = prior + positive + absent + negative
         in
           SOME {prior = prior, positive = positive, absent = absent,
@@ -507,12 +531,22 @@ fun normalize_scores _ [] = []
         map (fn (fact, score) => (fact, score / mean)) scores
       end
 
-fun member_by eq facts fact =
-  List.exists (fn other => eq (fact, other)) facts
+(* Facts are compared through a key that maps every fact stating the same
+   proposition to one representative. *)
+fun key_set key facts =
+  foldl (fn (fact, set) => Redblackset.add (set, key fact))
+    (Redblackset.empty String.compare) facts
 
-fun distinct_by eq facts =
-  rev (foldl (fn (fact, result) =>
-    if member_by eq result fact then result else fact :: result) [] facts)
+fun distinct_by key facts =
+  let
+    fun add (fact, (seen, result)) =
+      let val fact_key = key fact in
+        if Redblackset.member (seen, fact_key) then (seen, result)
+        else (Redblackset.add (seen, fact_key), fact :: result)
+      end
+  in
+    rev (#2 (foldl add (Redblackset.empty String.compare, []) facts))
+  end
 
 val distinct = mk_sameorder_set String.compare
 
@@ -526,35 +560,46 @@ fun scaled_average [] = 0
         foldl op+ 0.0 values) div length values
 
 fun mesh_facts_by _ max_facts [] = []
-  | mesh_facts_by fact_eq max_facts [(_, (selected, unknown))] =
-      distinct_by fact_eq
+  | mesh_facts_by key max_facts [(_, (selected, unknown))] =
+      distinct_by key
         (map #1 (take max_facts selected) @
          take (max_facts - Int.min (max_facts, length selected)) unknown)
-  | mesh_facts_by fact_eq max_facts channels =
+  | mesh_facts_by key max_facts channels =
       if max_facts <= 0 then []
       else
         let
+          (* A fact's score in a channel is that of the first entry with
+             its key. *)
+          fun first_scores scores =
+            foldl (fn ((fact, score), table) =>
+              let val fact_key = key fact in
+                if dmem fact_key table then table
+                else dadd fact_key score table
+              end) (dempty String.compare) scores
           fun prepare (weight, (selected, unknown)) =
             (weight,
-             normalize_scores max_facts selected,
-             unknown)
+             first_scores (normalize_scores max_facts selected),
+             key_set key unknown)
           val prepared = map prepare channels
-          fun insert_candidate fact candidates =
-            if member_by fact_eq candidates fact then candidates
-            else fact :: candidates
-          fun add_channel ((_, (selected, _)), candidates) =
-            foldl (fn ((fact, _), result) =>
-              insert_candidate fact result) candidates
+          fun add_channel ((_, (selected, _)), (seen, candidates)) =
+            foldl (fn ((fact, _), (seen, result)) =>
+              let val fact_key = key fact in
+                if Redblackset.member (seen, fact_key) then (seen, result)
+                else (Redblackset.add (seen, fact_key), fact :: result)
+              end) (seen, candidates)
               (take max_facts selected)
-          val candidates = foldl add_channel [] channels
-          fun contribution fact (weight, selected, unknown) =
-            case List.find (fn (other, _) => fact_eq (fact, other))
-                selected of
-                SOME (_, score) => SOME (weight * score)
+          val (_, candidates) =
+            foldl add_channel (Redblackset.empty String.compare, [])
+              channels
+          fun contribution fact_key (weight, scores, unknown) =
+            case Redblackmap.peek (scores, fact_key) of
+                SOME score => SOME (weight * score)
               | NONE =>
-                  if member_by fact_eq unknown fact then NONE else SOME 0.0
+                  if Redblackset.member (unknown, fact_key) then NONE
+                  else SOME 0.0
           fun score index fact =
-            (scaled_average (List.mapPartial (contribution fact) prepared),
+            (scaled_average
+               (List.mapPartial (contribution (key fact)) prepared),
              index, fact)
           fun compare ((left, left_index, _),
                        (right, right_index, _)) =
@@ -569,20 +614,24 @@ fun mesh_facts_by _ max_facts [] = []
         end
 
 fun mesh_facts max_facts channels =
-  mesh_facts_by (op =) max_facts channels
+  mesh_facts_by I max_facts channels
 
-fun intersection_in_order_by eq right left =
-  filter (member_by eq right) left
+fun intersection_in_order_by key right left =
+  let val keys = key_set key right in
+    filter (fn fact => Redblackset.member (keys, key fact)) left
+  end
 
-fun subtract_by eq removed items =
-  filter (not o member_by eq removed) items
+fun subtract_by key removed items =
+  let val keys = key_set key removed in
+    filter (fn fact => not (Redblackset.member (keys, key fact))) items
+  end
 
-fun merge_mash_channels_by fact_eq
+fun merge_mash_channels_by key
       {max_facts, suggestions, facts, chained, unknown} =
   let
     val proximate = take (#max_proximity_facts default_constants) facts
-    val unknown_chained = intersection_in_order_by fact_eq unknown chained
-    val unknown_proximate = intersection_in_order_by fact_eq unknown proximate
+    val unknown_chained = intersection_in_order_by key unknown chained
+    val unknown_proximate = intersection_in_order_by key unknown proximate
     val used_unknown = unknown_chained @ unknown_proximate
     val channels =
       [(#chained_weight default_constants,
@@ -593,12 +642,12 @@ fun merge_mash_channels_by fact_eq
        (#learner_weight default_constants,
         (weight_facts_steeply suggestions, unknown))]
   in
-    (mesh_facts_by fact_eq max_facts channels,
-     subtract_by fact_eq used_unknown unknown)
+    (mesh_facts_by key max_facts channels,
+     subtract_by key used_unknown unknown)
   end
 
 fun merge_mash_channels parameters =
-  merge_mash_channels_by (op =) parameters
+  merge_mash_channels_by I parameters
 
 fun over_request n =
   n * #over_request_numerator default_constants div
@@ -614,7 +663,7 @@ type context =
    statures : hhStature.statures,
    mepo : hhMePo.context,
    dependencies : dep_table,
-   fact_eq : mlThmData.thmid * mlThmData.thmid -> bool,
+   fact_key : mlThmData.thmid -> mlThmData.thmid,
    pool_order : mlThmData.thmid list}
 
 type cache_key = string * (mlThmData.thmid * mlFeature.fea) list
@@ -629,21 +678,27 @@ fun same_key ((left_current, left_facts),
               (right_current, right_facts)) =
   left_current = right_current andalso left_facts = right_facts
 
-fun conclusion_table facts =
-  foldl
-    (fn ((thmid, _), table) =>
+(* Facts whose conclusions are alpha-equivalent state the same
+   proposition; each such class is represented by its first fact.  Other
+   names, including those without a fetchable theorem, represent
+   themselves. *)
+fun proposition_key facts =
+  let
+    fun add ((thmid, _), (conclusions, representatives)) =
       case conclusion_of thmid of
-          SOME conclusion => dadd thmid conclusion table
-        | NONE => table)
-    (dempty String.compare) facts
-
-fun same_proposition conclusions (left, right) =
-  left = right orelse
-  case (Redblackmap.peek (conclusions, left),
-        Redblackmap.peek (conclusions, right)) of
-      (SOME left_conclusion, SOME right_conclusion) =>
-        Term.aconv left_conclusion right_conclusion
-    | _ => false
+          SOME conclusion =>
+            (dadd thmid conclusion conclusions,
+             if dmem conclusion representatives then representatives
+             else dadd conclusion thmid representatives)
+        | NONE => (conclusions, representatives)
+    val (conclusions, representatives) =
+      foldl add (dempty String.compare, dempty Term.compare) facts
+  in
+    fn thmid =>
+      case Redblackmap.peek (conclusions, thmid) of
+          SOME conclusion => dfind conclusion representatives
+        | NONE => thmid
+  end
 
 fun make_context_for current
       {thmdata = thmdata as (_, facts),
@@ -654,12 +709,12 @@ fun make_context_for current
     val statures = hhStature.create_statures_for current
     val model = train_nb_from_thmdata default_constants idf dependencies
       statures model_thmdata
-    val fact_eq = same_proposition (conclusion_table facts)
+    val fact_key = proposition_key facts
   in
     {thmdata = thmdata, idf = idf, model = model,
      statures = statures,
      mepo = hhMePo.create_context_for current thmdata statures,
-     dependencies = dependencies, fact_eq = fact_eq,
+     dependencies = dependencies, fact_key = fact_key,
      pool_order = map #1 facts}
   end
 
@@ -722,7 +777,7 @@ type mash_result =
    learner : mlThmData.thmid list,
    max_suggestions : int}
 
-fun mash_leg ({model, dependencies, fact_eq, ...} : context)
+fun mash_leg ({model, dependencies, fact_key, ...} : context)
       restricted goal max_facts =
   if max_facts <= 0 then
     {ranking = [], unknown = [], learner = [], max_suggestions = 0}
@@ -746,7 +801,7 @@ fun mash_leg ({model, dependencies, fact_eq, ...} : context)
           (weight_facts_steeply nb, [])),
          (#knn_mesh_weight default_constants,
           (weight_facts_steeply knn, []))]
-      val (merged, remaining_unknown) = merge_mash_channels_by fact_eq
+      val (merged, remaining_unknown) = merge_mash_channels_by fact_key
         {max_facts = max_suggestions, suggestions = learner,
          facts = pool, chained = [], unknown = unknown_facts model facts}
     in
@@ -761,17 +816,18 @@ fun mash_details context {pool, goal, max_facts} =
 fun is_induction statures thmid =
   #induction (hhStature.stature_of statures thmid)
 
-fun rank (context as {model, statures, mepo, fact_eq, ...} : context)
+fun rank (context as {statures, mepo, fact_key, ...} : context)
       {filter, pool, goal, n} =
   let
     val restricted as (_, facts) = restrict_thmdata context pool
     val pool_names = map #1 facts
-    val mepo_context =
-      case pool of
-          NONE => mepo
-        | SOME _ => hhMePo.restrict_context mepo pool_names
     val generous = over_request n
-    fun mepo_leg () = hhMePo.mepo_rank mepo_context goal generous
+    fun mepo_leg () =
+      hhMePo.mepo_rank
+        (case pool of
+             NONE => mepo
+           | SOME _ => hhMePo.restrict_context mepo pool_names)
+        goal generous
     fun mash () = mash_leg context restricted goal generous
     fun finish ranking =
       exclude_and_take (is_induction statures) n ranking
@@ -794,7 +850,7 @@ fun rank (context as {model, statures, mepo, fact_eq, ...} : context)
             val mash_ranking = finish (#ranking mash_result)
             val unknown = #unknown mash_result
           in
-            mesh_facts_by fact_eq n
+            mesh_facts_by fact_key n
               [(#final_mepo_weight default_constants,
                 (weight_facts_steeply mepo_ranking, [])),
                (#final_mash_weight default_constants,

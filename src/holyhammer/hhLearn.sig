@@ -101,9 +101,11 @@ sig
   val weight_facts_steeply : mlThmData.thmid list -> scored_facts
   val weight_facts_smoothly : mlThmData.thmid list -> scored_facts
 
-  (* Each channel is (global weight, (ranked facts, unknown facts)). *)
+  (* Each channel is (global weight, (ranked facts, unknown facts)).  The
+     key maps facts stating the same proposition to one representative;
+     mesh_facts uses the identity. *)
   val mesh_facts_by :
-    (mlThmData.thmid * mlThmData.thmid -> bool) -> int ->
+    (mlThmData.thmid -> mlThmData.thmid) -> int ->
     mesh_channel list -> mlThmData.thmid list
   val mesh_facts : int -> mesh_channel list -> mlThmData.thmid list
   val merge_mash_channels :

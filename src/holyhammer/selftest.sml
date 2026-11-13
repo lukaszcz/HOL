@@ -4462,14 +4462,12 @@ fun test_hhLearn_curves_and_mesh () =
     val fall_out_known = hhLearn.mesh_facts 3
       [(0.5, (hhLearn.weight_facts_steeply ["other", "fallout"], [])),
        (0.5, ([("recent", 1.0)], ["far_unknown"]))]
-    fun alias_eq (left, right) =
-      left = right orelse
-      (left = "same_prop" andalso right = "same_prop_alias") orelse
-      (left = "same_prop_alias" andalso right = "same_prop")
-    val proposition_dedup = hhLearn.mesh_facts_by alias_eq 3
+    fun alias_key "same_prop_alias" = "same_prop"
+      | alias_key name = name
+    val proposition_dedup = hhLearn.mesh_facts_by alias_key 3
       [(0.5, ([("same_prop", 1.0), ("left", 0.5)], [])),
        (0.5, ([("same_prop_alias", 1.0), ("right", 0.5)], []))]
-    val proposition_unknown = hhLearn.mesh_facts_by alias_eq 2
+    val proposition_unknown = hhLearn.mesh_facts_by alias_key 2
       [(0.5, ([("same_prop", 1.0)], [])),
        (0.5, ([("right", 1.0)], ["same_prop_alias"]))]
     fun is_induct name = name = "induct"
