@@ -1,6 +1,7 @@
 """Static check: modules added by the simplifier project (compiled by `load`
 in the user's toplevel when not in the default heap) must not use basis
 names that HOL libraries designed for toplevel `open` re-export."""
+import fnmatch
 import re
 import subprocess
 import sys
@@ -13,13 +14,23 @@ from run_paired import require_revisions  # noqa: E402
 
 ROOT = HERE.parents[4]
 BASE = "cccaa27d70"
-# Derived from the *Lib/*Utils signatures that re-export a basis toplevel
-# value: patriciaLib.size, hurdUtils.concat, liteLib.foldr.  The dynamic
-# test src/simp/tests/fresh-load/shadowed.sml carries the same list; the
-# two are cross-checked below.
-SHADOWED = ["size", "concat", "foldr"]
-FALLBACK_GLOBS = ["*Ext*.sml", "split*.sml", "SplitData.sml",
-                  "simpMarker*.sml", "trackedSimpDefaults.sml"]
+SIMP_SRC = ROOT / "src" / "simp" / "src"
+LAUNCHER = HERE.parents[1] / "fresh-load" / "shadowed.sml"
+HOLMAKEFILE = SIMP_SRC / "Holmakefile"
+# Basis names rebound by libraries designed for toplevel `open`: size
+# (patriciaLib) and concat (hurdUtils) are type-incompatible re-exports;
+# foldr (liteLib, same type) is kept defensively by decision.  Not every
+# re-export is listed (liteLib.foldl and hurdUtils.map are compatible).
+# The list itself lives in the launcher and is parsed from it here.
+SHADOWED_RE = r"val shadowed = \[([^\]]*)\]"
+
+
+def parse_shadowed():
+    m = re.search(SHADOWED_RE, LAUNCHER.read_text())
+    return re.findall(r'"([^"]*)"', m.group(1)) if m else []
+
+
+SHADOWED = parse_shadowed()
 
 
 def strip_comments_strings(text):
@@ -59,7 +70,8 @@ def unqualified(text, names=SHADOWED):
     code = strip_comments_strings(text)
     hits = []
     for m in re.finditer(r"[A-Za-z_][A-Za-z0-9_']*", code):
-        if m.group(0) in names and code[max(0, m.start() - 1):m.start()] != ".":
+        before = code[max(0, m.start() - 1):m.start()]
+        if m.group(0) in names and before != ".":
             hits.append((code.count("\n", 0, m.start()) + 1, m.group(0)))
     return hits
 
@@ -73,19 +85,38 @@ def added_files():
     files = []
     for line in out:
         status, _, path = line.partition("\t")
+        parts = Path(path).parts
         if (status == "A" and path.endswith(".sml") and
-                "/tests/" not in path and not path.endswith("Script.sml")):
+                "tests" not in parts and ".hol" not in parts and
+                not path.endswith("Script.sml")):
             files.append(ROOT / path)
     return files
 
 
+def launcher_patterns():
+    """The name patterns of the launcher's SML selection rule."""
+    m = re.search(r"val ext_patterns = \[([^\]]*)\]", LAUNCHER.read_text())
+    return re.findall(r'"([^"]*)"', m.group(1)) if m else []
+
+
+def holmake_patterns():
+    """The wildcard patterns of FRESH_EXT_UO, with .sml dropped."""
+    m = re.search(r"\$\(wildcard ([^)]*)\)", HOLMAKEFILE.read_text())
+    return [w[:-4] for w in m.group(1).split()] if m else []
+
+
+def select(patterns, scripts=False):
+    """src/simp/src/*.sml basenames matching a pattern; the launcher skips
+    theory scripts, the Holmake wildcard cannot (scripts=True)."""
+    return {p.stem for p in SIMP_SRC.glob("*.sml")
+            if (scripts or not p.stem.endswith("Script")) and
+            any(fnmatch.fnmatchcase(p.stem, pat) for pat in patterns)}
+
+
 def fallback_files():
-    found = set()
-    for g in FALLBACK_GLOBS:
-        found.update(p for p in (ROOT / "src").rglob(g)
-                     if "/tests/" not in str(p) and
-                     not p.name.endswith("Script.sml"))
-    return sorted(found)
+    """Without git objects: the same name rules, in the same directory."""
+    return sorted(SIMP_SRC / (n + ".sml") for n in
+                  select(launcher_patterns()))
 
 
 def candidates():
@@ -106,15 +137,20 @@ class ShadowedNames(unittest.TestCase):
         self.assertEqual(unqualified(
             '(* size (* nested *) concat *) val s = "foldr size"'), [])
 
-    def test_single_source_list(self):
-        sml = (HERE.parents[1] / "fresh-load" / "shadowed.sml").read_text()
-        m = re.search(r"val shadowed = \[([^\]]*)\]", sml)
-        self.assertIsNotNone(m)
-        self.assertEqual(re.findall(r'"([^"]*)"', m.group(1)), SHADOWED)
+    def test_shadowed_list_parsed(self):
+        self.assertTrue(SHADOWED)
+        self.assertEqual(len(SHADOWED), len(set(SHADOWED)))
+
+    def test_one_module_selection_rule(self):
+        added = {f.stem for f in added_files()
+                 if f.parent == SIMP_SRC}
+        self.assertTrue(added)
+        self.assertEqual(select(launcher_patterns()), added)
+        self.assertEqual(select(holmake_patterns(), scripts=True), added)
 
     def test_added_modules_qualify_shadowed_names(self):
         files = candidates()
-        self.assertGreaterEqual(len(files), 10)
+        self.assertTrue(files)
         bad = ["%s:%d: unqualified %s" % (f.relative_to(ROOT), ln, nm)
                for f in files for ln, nm in unqualified(f.read_text())]
         self.assertEqual(bad, [])

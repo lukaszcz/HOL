@@ -30,12 +30,15 @@ import source_manifest as prior
 HERE, ROOT, SRC = prior.HERE, prior.ROOT, prior.SRC
 BASE, START = prior.BASE, prior.START
 REVIEW = 'c707baca802d7e0d22e7e8045a0dc5d3567bd7a9'
-# Reviewed deltas of TASK31 and TASK34.  TASK31: one rewrite-tracking extent,
-# owned by develop's Cond_rewr and shared by both engines through the one
-# added Cond_rewr.note_rewrite spec; Cond_rewr.sml itself is pinned develop
+# Reviewed deltas of TASK31, TASK34 and TASK36.  TASK31: one rewrite-tracking
+# extent, owned by develop's Cond_rewr and shared by both engines through the
+# one added Cond_rewr.note_rewrite spec; Cond_rewr.sml itself is pinned develop
 # again, and Cond_rewrExt keeps its own is_var_perm.  TASK34: the abstract
 # TraverseExt.reducer, its congExtLib client, SplitData.preflight using
-# is_attribute, and ThmAttribute.attribute_fns_of.  The files
+# is_attribute, and ThmAttribute.attribute_fns_of.  TASK36: simpExtLib,
+# congExtLib and splitLib qualify String.size / List.foldr, so no
+# toplevel-shadowable basis name is used unqualified in a module that load
+# compiles in the user's toplevel.  The files
 # below are sealed by content (git blob id), not by the id of a commit, so
 # the seal survives rebases and squashes.  A change to one of them needs a
 # new blob and a new reason here.
@@ -51,11 +54,12 @@ REVIEWED_31 = {
     SRC + 'simpExtLib.sml': dict(
         blob='853b4b30baaa143c19ef253bc19ec1b9457752a2',
         reason='TASK17-24 tracked installation, policy/quota and explicit '
-               'recipes; TASK31 track is Cond_rewr.with_tracking'),
+               'recipes; TASK31 track is Cond_rewr.with_tracking; '
+               'TASK36 qualify String.size'),
     SRC + 'splitLib.sml': dict(
         blob='5b52231e20fca7e6e5d77390c561f88efdc68125',
-        reason='TASK36 qualify List.foldr: no toplevel-shadowable basis '
-               'name in a module compiled by load'),
+        reason='TASK10-11 explicit split registration and persistence; '
+               'TASK36 qualify List.foldr'),
     SRC + 'simpExtLib.sig': dict(
         blob='247f6a892c57f90a74035b2186fbab6bac174aea',
         reason='TASK17-24 explicit tracked API; TASK31 documents the one '
@@ -74,7 +78,8 @@ REVIEWED_31 = {
     SRC + 'congExtLib.sml': dict(
         blob='ee7d82483e7f178ff6c0d71756a7fee2dafc354c',
         reason='TASK34 eq_reducer_wrapper reads any reducer through '
-               'reducer_config_data; the reducer type is abstract'),
+               'reducer_config_data; the reducer type is abstract; '
+               'TASK36 qualify List.foldr'),
     # TASK34 removes the ambient attribute_fns; only attribute_fns_of stays.
     # SplitData.preflight uses ThmAttribute.is_attribute, develop's lookup.
     SRC + 'SplitData.sml': dict(
@@ -178,7 +183,9 @@ LOCAL_NAMES = {
 # Seal of sorted per-defining-input holdeptool observations on the immutable
 # references. This prevents an empty/stale/replaced analyzer passing merely
 # because it produces the same wrong answer on both snapshots.
-# TASK36: congExtLib now names the basis structure List (List.foldr).
+# TASK36: congExtLib's foldr (liteLib.foldr, opened by congExtLib) becomes
+# List.foldr: the same right fold, so behaviour is preserved, but a
+# different binding; the observations change accordingly.
 ANALYSIS_SHA256 = (
     '56ff553845cf05fd895552cb17aaacd3266dab4e086c18fabf36913a24427bf3')
 

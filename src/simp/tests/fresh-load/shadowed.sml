@@ -40,13 +40,15 @@ fun require_result label (succeeded,silent) =
   (check (label ^ " succeeds") succeeded;
    check (label ^ " without warnings") silent)
 
-(* Basis names that HOL libraries designed for toplevel `open` re-export:
-   patriciaLib.size, hurdUtils.concat and liteLib.foldr (found from the
-   *Lib/*Utils signatures that re-export a basis toplevel value).  `load`
-   compiles modules absent from the heap in the user's toplevel, so such
-   modules must not use these names unqualified.  The static check
-   tests/compatibility/interfaces/test_shadowed.py keeps its own copy of this
-   list and compares it with this one. *)
+(* Basis names rebound by libraries designed for toplevel `open`.  size
+   (patriciaLib) and concat (hurdUtils) are type-incompatible re-exports, so
+   an unqualified use in a module compiled by `load` after such an open
+   fails to compile.  foldr (liteLib, same type) is kept defensively by
+   decision.  Not every re-export is listed: liteLib.foldl and hurdUtils.map
+   are compatible with the basis and are excluded.  `load` compiles modules
+   absent from the heap in the user's toplevel, so these names must be
+   qualified there.  The static check
+   tests/compatibility/interfaces/test_shadowed.py parses this list. *)
 val shadowed = ["size", "concat", "foldr"]
 
 fun compile_string src =
@@ -58,24 +60,27 @@ fun compile_string src =
       else NONE
   in
     PolyML.compiler
-      (next, [PolyML.Compiler.CPNameSpace PolyML.globalNameSpace]) ()
+      (next, [PolyML.Compiler.CPNameSpace PolyML.globalNameSpace,
+              PolyML.Compiler.CPOutStream (fn _ => ())]) ()
   end
 fun compiles src = (compile_string src; true) handle _ => false
 
-(* The extension modules: every added source of this directory, found with
-   the same name rules as the static check (extension, split*, SplitData and
-   simpMarker* modules; not theory scripts). *)
+(* The extension modules: every source of this directory matching one of
+   ext_patterns (`*` only), minus theory scripts.  The same patterns appear
+   in the Holmakefile wildcard FRESH_EXT_UO; the static check compares both
+   with the added modules. *)
+val ext_patterns = ["*Ext*", "split*", "SplitData", "simpMarker*Lib"]
+fun glob [] [] = true
+  | glob (#"*" :: ps) s =
+      glob ps s orelse (case s of [] => false | _ :: t => glob (#"*" :: ps) t)
+  | glob (p :: ps) (c :: cs) = p = c andalso glob ps cs
+  | glob _ _ = false
 fun is_extension f =
-  let
-    val {base,ext} = OS.Path.splitBaseExt f
-    fun has sub = Substring.size (#2 (Substring.position sub
-                                        (Substring.full base))) > 0
-    fun prefix p = String.isPrefix p base
+  let val {base,ext} = OS.Path.splitBaseExt f
   in
-    ext = SOME "sml" andalso base <> "selftest" andalso
-    not (String.isSuffix "Script" base) andalso
-    (has "Ext" orelse prefix "split" orelse base = "SplitData" orelse
-     prefix "simpMarker")
+    ext = SOME "sml" andalso not (String.isSuffix "Script" base) andalso
+    List.exists (fn p => glob (String.explode p) (String.explode base))
+                ext_patterns
   end
 fun extension_modules dir =
   let
@@ -92,20 +97,30 @@ fun shadowed_load () =
   let
     val dir = OS.Path.dir (env "SIMP_COMPAT_PATH")
     val modules = extension_modules dir
-    val _ = check "extension modules found" (length modules >= 12)
+    val _ = check "extension modules found" (not (null modules))
     val _ = List.app (fn n => obs "shadowed.module" n) modules
-    (* Develop sources outside the added set (HolSat) use these names
-       unqualified; load them first so only the added modules are tested. *)
-    val _ = List.app Meta.load ["tautLib", "combinTheory", "refuteLib"]
+    (* Develop sources outside the added set use these names unqualified,
+       and are out of scope here: src/HolSat/dimacsTools.sml:147,149
+       (foldr, via tautLib) and src/combin/combinpp.sml:196 (size, via
+       combinTheory).  Load them before shadowing so only the added modules
+       are tested. *)
+    val _ = List.app Meta.load ["tautLib", "combinTheory"]
+    val _ = check "no extension module is preloaded" (List.all (fn m =>
+      not (List.exists (fn l => l = m) (Meta.loaded ()))) modules)
     val _ = check "shadowing compiles" (List.all (fn n =>
       compiles ("val " ^ n ^ " = ();")) shadowed)
-    val _ = check "shadowing is incompatible with the basis" (not
-      (compiles ("val _ = size \"x\"; val _ = concat [];" ^
-                 " val _ = foldr op+ 0 [];")))
+    (* One declaration per call: the first failure would hide the rest. *)
+    val _ = check "size no longer compiles at the basis type"
+      (not (compiles "val _ = size \"x\";"))
+    val _ = check "concat no longer compiles at the basis type"
+      (not (compiles "val _ = concat [\"a\"];"))
+    val _ = check "foldr no longer compiles at the basis type"
+      (not (compiles "val _ = foldr op+ 0 [1];"))
   in
     List.app (fn m =>
       require_result ("shadowed-toplevel load of " ^ m)
-        (observed ("load." ^ m) (fn () => Meta.load (OS.Path.concat (dir, m)))))
+        (observed ("load." ^ m)
+           (fn () => Meta.load (OS.Path.concat (dir, m)))))
       modules
   end
 

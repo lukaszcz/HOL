@@ -45,8 +45,11 @@ selftest.exe: selftest.uo boolSimps.uo Cond_rewr.uo simpLib.uo
 # Clean-heap namespace/syntax regressions. Only the launcher is linked;
 # library prerequisites are not imports.
 FRESH_LOAD = ../tests/fresh-load
-# The extension modules the shadowed-load launcher loads (it scans this
-# directory by the same name rules).
+# The extension modules the shadowed-load launcher loads.  Its SML name
+# rule (ext_patterns in the launcher) lists the same four patterns; the
+# static check tests/compatibility/interfaces/test_shadowed.py compares both
+# with the added modules, so a theory script matching a pattern (Holmake has
+# no filter-out; the launcher skips scripts) fails that check.
 FRESH_EXT_UO = $(patsubst %.sml,%.uo,\
   $(wildcard *Ext*.sml split*.sml SplitData.sml simpMarker*Lib.sml))
 FRESH_SCENARIOS = control attribute-first set-first attribute-after set-after \
@@ -58,21 +61,12 @@ fresh-load-selftest.exe: $(FRESH_LOAD)/selftest.sml simpLib.uo boolSimps.uo \
 	  -C $(FRESH_LOAD) selftest.uo
 	$(HOLMOSMLC) -o $@ $(FRESH_LOAD)/selftest.uo
 
-# The shadowed-load scenario has its own launcher, so selftest.sml is
-# unchanged.
-fresh-load-shadowed.exe: $(FRESH_LOAD)/shadowed.sml simpLib.uo boolSimps.uo \
-  $(FRESH_EXT_UO) Holmakefile
+.PHONY: fresh-load-regressions $(patsubst %,fresh-load-%,$(FRESH_SCENARIOS))
+fresh-load-regressions: fresh-load-selftest.exe simpLib.uo boolSimps.uo \
+  $(FRESH_EXT_UO) $(FRESH_LOAD)/shadowed.sml
 	$(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
 	  -C $(FRESH_LOAD) shadowed.uo
-	$(HOLMOSMLC) -o $@ $(FRESH_LOAD)/shadowed.uo
-
-.PHONY: fresh-load-shadowed-load
-fresh-load-shadowed-load: fresh-load-shadowed.exe
-	SIMP_COMPAT_SCENARIO=shadowed-load SIMP_COMPAT_PATH=$$(pwd)/simpLib \
-	  ./fresh-load-shadowed.exe
-
-.PHONY: fresh-load-regressions $(patsubst %,fresh-load-%,$(FRESH_SCENARIOS))
-fresh-load-regressions: fresh-load-selftest.exe fresh-load-shadowed.exe
+	$(HOLMOSMLC) -o fresh-load-shadowed.exe $(FRESH_LOAD)/shadowed.uo
 	@status=0; for s in $(FRESH_SCENARIOS); do \
 	  SIMP_COMPAT_SCENARIO=$$s \
 	  SIMP_COMPAT_PATH=$$(pwd)/simpLib \
