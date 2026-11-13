@@ -20,10 +20,16 @@ chosen: elaborated sets as the runs saw them, printed by `sources`.
               and not copied. The one-cell diagnostic of the client table
               is still run at the final candidate: it shows any file the
               final candidate elaborates that TASK31's closure lacked.
-  MATRIX      the 306 matrix cells (TASK29 and TASK30 cases). No identity
-              grid has seen them as such, so the list is `()` until it is
-              derived (below).
-  DOWNSTREAM  the 11 downstream cells. `()` until derived (below).
+  MATRIX      the 306 matrix cells (TASK29 and TASK30 cases). Derived
+              (below) at the final candidate: one diagnostic cell of each
+              family (compile, exclude, frag, history, storage_graph)
+              printed the same 23 files, entered here.
+  DOWNSTREAM  the 11 downstream cells. Derived (below) at the final
+              candidate: one cell of each case (downstream_arithmetic,
+              downstream_reduce, downstream_boss) printed exactly
+              task31_cases.SOURCES (the downstream workloads load the
+              client's modules), so the list is taken from there and not
+              copied.
 
 Deriving a list (a tooling commit of this file alone, before the full
 identity grids; pilots do not depend on it):
@@ -48,5 +54,29 @@ sys.dont_write_bytecode = True
 import task31_cases as cases31
 
 CLIENT = tuple(cases31.SOURCES)
-MATRIX = ()
-DOWNSTREAM = ()
+MATRIX = (
+    "src/lite/liteLib.sig",
+    "src/lite/liteLib.sml",
+    "src/marker/markerLib.sig",
+    "src/marker/markerLib.sml",
+    "src/marker/markerScript.sml",
+    "src/marker/markerSyntax.sig",
+    "src/marker/markerSyntax.sml",
+    "src/parse/testutils.sig",
+    "src/parse/testutils.sml",
+    "src/simp/src/Cond_rewr.sig",
+    "src/simp/src/Cond_rewr.sml",
+    "src/simp/src/Opening.sig",
+    "src/simp/src/Opening.sml",
+    "src/simp/src/Trace.sig",
+    "src/simp/src/Trace.sml",
+    "src/simp/src/Traverse.sig",
+    "src/simp/src/Traverse.sml",
+    "src/simp/src/Travrules.sig",
+    "src/simp/src/Travrules.sml",
+    "src/simp/src/pureSimps.sig",
+    "src/simp/src/pureSimps.sml",
+    "src/simp/src/simpLib.sig",
+    "src/simp/src/simpLib.sml",
+)
+DOWNSTREAM = tuple(cases31.SOURCES)
