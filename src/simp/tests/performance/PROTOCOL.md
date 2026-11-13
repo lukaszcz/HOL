@@ -3967,6 +3967,21 @@ undeclared S2 or L2 difference fails; it is not explained after the fact. A
 `total_delta` value is measured live (k = 2 per side, deterministic) before
 the declaration is committed.
 
+Pooled log groups (E1 harvest). Suites that build the same theories run in
+parallel, and whichever takes Holmake's lock first builds them: the OK lines
+of the theory scripts land in its log and the other skips the build. The
+sum over such suites is fixed, its split between their logs is not, and it
+changes from run to run. `task33_offline.POOLED_LOGS` names the groups (now
+`split-lifecycle` and `split-persistence`, with the shared theory scripts
+`splitParent`, `splitChild` and `splitDescendant`). The harvest judges a
+group as one check, `E1.logs.<log>+<log>`, in place of the per-log checks:
+the sum of the OK lines of its logs equals the sum of their `log_counts`
+(declared per log, as for any log), and each OK line the shared scripts
+print, read from their `tprint` strings in the candidate snapshot, occurs
+exactly once across the group's logs. A script that cannot be read that way
+refuses the harvest. Each log of a group still passes every check of its
+kind except its own count.
+
 ### Counts, ledger, redraws
 
 Counts files (each committed alone: `check_counts_commit`, exactly one

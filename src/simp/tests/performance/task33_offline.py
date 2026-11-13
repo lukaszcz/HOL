@@ -170,11 +170,13 @@ def check_code(recorded):
     # TASK33's history is accepted besides TASK32's, for the files of this
     # CODE it names (`task32_downstream.py`, this file): the reports of the
     # kept TASK33 records carry the versions that made them. Only under a
-    # table with no declaration of its own (the C32 `task33`): TASK37's
-    # reports have no history.
+    # table with no declaration of its own (the C32 `task33`); under a
+    # TASK37 table the history is TASK37's (`task32_downstream.
+    # TASK37_HISTORY`: this file before the pooled logs).
     own = d.ACTIVE.declared is None
     known = {n: list(T32.history.get(n, ())) +
-             list(d.TASK33_HISTORY.get(n, ())) if own else []
+             list(d.TASK33_HISTORY.get(n, ())) if own else
+             list(d.TASK37_HISTORY.get(n, ()))
              for n in now}
     changed = [n for n in now if recorded[n] != now[n] and
                recorded[n] not in known[n]]
@@ -1538,12 +1540,13 @@ def needs_count(name):
     return bool(rule) and rule[0] in COUNT_KEY and "marker" not in rule[1]
 
 
-def judge_log(path, text, declared=None):
+def judge_log(path, text, declared=None, pooled=False):
     """(passed, reasons, counts) of one log, by the rule of its path or
     name, read without ANSI escapes and backspaces. `declared` is the
     declaration (task33_declared.json): given it, a marker-less suite
     must have exactly the reviewed count (`log_counts`) and no skipped
-    unittest tests beyond `log_skips`."""
+    unittest tests beyond `log_skips`. A log of a pooled group (`pooled`,
+    see POOLED_LOGS) is not held to its own count: the group is."""
     stem, rule = rule_for(path)
     if rule is None:
         return False, ["no pass criterion defined for " + stem], {}
@@ -1608,7 +1611,7 @@ def judge_log(path, text, declared=None):
         else:
             counts["marker"] = found.group(0)
     if declared is not None and kind in COUNT_KEY and \
-            "marker" not in options:
+            "marker" not in options and not pooled:
         key, want = COUNT_KEY[kind], \
             declared.get("log_counts", {}).get(count_key(path))
         if want is None:
@@ -1617,6 +1620,112 @@ def judge_log(path, text, declared=None):
             reasons.append("%s is %s, reviewed %s" % (
                 key, counts.get(key), want))
     return not reasons, reasons, counts
+
+
+# Logs judged as one group. Suites that build the same theories run in
+# parallel, and the build of a theory happens in whichever suite takes
+# Holmake's lock first: the OK lines of the theory scripts land in that
+# suite's log, the others skip the build. The sum over the group is fixed,
+# its split between the logs is not (it differs from run to run, and
+# between a build that runs the suites in parallel and one that runs them
+# in turn). `logs` are the log names (as in LOGS_REQUIRED) and `scripts`
+# the theory scripts they share, by repo path. The group passes when the
+# OK lines of its logs add up to the sum of their reviewed counts
+# (`log_counts`, unchanged) and each OK line the scripts print (read from
+# their `tprint` strings, in the candidate snapshot) occurs exactly once in
+# the group. Besides, each log passes the checks of its kind other than
+# its own count.
+POOLED_LOGS = (
+    dict(logs=("split-lifecycle", "split-persistence"),
+         scripts=("src/simp/tests/split-persistence/splitParentScript.sml",
+                  "src/simp/tests/split-persistence/splitChildScript.sml",
+                  "src/simp/tests/split-persistence/"
+                  "splitDescendantScript.sml")),
+)
+# A `tprint "..."` call of an SML theory script (plain strings only).
+TPRINT_CALL = re.compile(r'\btprint\s*"((?:[^"\\]|\\.)*)"')
+SML_COMMENT = re.compile(r"\(\*.*?\*\)", re.S)
+
+
+def pooled_id(group):
+    return "E1.logs." + "+".join(group["logs"])
+
+
+def pooled_of(path):
+    """The pooled group of the log at `path`, or None."""
+    name = count_key(path)
+    for group in POOLED_LOGS:
+        if name in group["logs"]:
+            return group
+    return None
+
+
+def shared_ok_lines(root, group):
+    """The text before ` ... OK` of each OK line the shared theory scripts
+    of `group` print, read from their `tprint` strings under `root`.
+    Refuses when a script is missing, has no such string or has one that
+    cannot be read as a line (an escape), or when two lines are equal
+    (they could not be told apart)."""
+    lines = []
+    for script in group["scripts"]:
+        path = Path(root) / script
+        require(path.is_file(), "cannot derive the OK lines of the pooled "
+                "logs %s: no script %s under %s" % (
+                    ", ".join(group["logs"]), script, root))
+        source = SML_COMMENT.sub("", path.read_text(errors="replace"))
+        found = TPRINT_CALL.findall(source)
+        require(found, "cannot derive the OK lines of the pooled logs %s: "
+                "no tprint string in %s" % (", ".join(group["logs"]),
+                                            script))
+        require(not any("\\" in x for x in found), "cannot derive the OK "
+                "lines of the pooled logs %s: an escape in a tprint "
+                "string of %s" % (", ".join(group["logs"]), script))
+        lines += found
+    require(len(set(lines)) == len(lines), "cannot derive the OK lines of "
+            "the pooled logs %s: a tprint string occurs twice in %s" % (
+                ", ".join(group["logs"]), ", ".join(group["scripts"])))
+    return lines
+
+
+def count_line(text, line):
+    """How often the OK line of the tprint string `line` occurs in `text`
+    (a cleaned log)."""
+    return len(re.findall(r"^%s\s*\.\.\.\s*(?:\(\S+s\)\s*)?OK\s*$" %
+                          re.escape(line), text, re.M))
+
+
+def judge_pooled(group, lines, found, declared):
+    """(passed, reasons, data) of one pooled group. `found` maps each
+    present log name of the group to (passed, reasons, counts, text) where
+    passed and reasons leave out the log's own count; `lines` are the
+    shared OK lines."""
+    reasons = []
+    for name in group["logs"]:
+        if name not in found:
+            reasons.append("no %s log" % name)
+        elif not found[name][0]:
+            reasons.append("%s: %s" % (name, "; ".join(found[name][1])))
+    counts = {n: (declared or {}).get("log_counts", {}).get(n)
+              for n in group["logs"]}
+    missing = [n for n, c in counts.items() if c is None]
+    if missing:
+        reasons.append("no reviewed ok_lines declared for " +
+                       ", ".join(missing))
+    have = {n: found[n][2].get("ok_lines") for n in found}
+    data = dict(id=pooled_id(group), logs=list(group["logs"]),
+                ok_lines=have, reviewed=counts, shared={})
+    if not reasons:
+        total, want = sum(have.values()), sum(counts.values())
+        data.update(total=total, reviewed_total=want)
+        if total != want:
+            reasons.append("%d OK lines in all, reviewed %d" % (total, want))
+        for line in lines:
+            n = sum(count_line(found[x][3], line) for x in found)
+            data["shared"][line] = n
+            if n != 1:
+                reasons.append("OK line `%s` occurs %d times in the logs, "
+                               "not once" % (line, n))
+    return not reasons, reasons, data
 
 
 def flat_name(rel):
@@ -1645,10 +1754,16 @@ def harvest(root, out_dir, checks, declared):
     files, sums = [], []
     rels = log_files(root)
     require(rels, "no log under %s" % root)
+    shared, pooled = {}, {}
+    for group in POOLED_LOGS:
+        if any(pooled_of(rel) is group for rel in rels):
+            shared[pooled_id(group)] = shared_ok_lines(root, group)
     for rel in rels:
         raw = (Path(root) / rel).read_bytes()
         text = raw.decode("utf-8", errors="replace")
-        passed, reasons, counts = judge_log(rel, text, declared)
+        group = pooled_of(rel)
+        passed, reasons, counts = judge_log(rel, text, declared,
+                                            pooled=group is not None)
         gz = out_dir / "logs" / flat_name(rel)
         gz.write_bytes(gzip.compress(raw, mtime=0))
         seal = a.seal(gz)
@@ -1657,15 +1772,30 @@ def harvest(root, out_dir, checks, declared):
                           bytes=len(raw), gz="logs/" + gz.name,
                           gz_seal=seal, passed=passed, reasons=reasons,
                           counts=counts))
-        checks.ok("E1.log." + rel, "E1", passed,
-                  "; ".join(reasons), "suite passed")
+        if group is None:
+            checks.ok("E1.log." + rel, "E1", passed,
+                      "; ".join(reasons), "suite passed")
+        else:
+            pooled.setdefault(pooled_id(group), {})[count_key(rel)] = (
+                passed, reasons, counts, clean_log(text))
+    summary = []
+    for group in POOLED_LOGS:
+        gid = pooled_id(group)
+        if gid not in shared:
+            continue
+        passed, reasons, data = judge_pooled(
+            group, shared[gid], pooled.get(gid, {}), declared)
+        checks.ok(gid, "E1", passed, "; ".join(reasons),
+                  "pooled logs passed")
+        summary.append(data)
     (out_dir / "SHA256SUMS").write_text("".join(sums))
     have = set().union(*(log_names(f["path"]) for f in files))
     missing = [n for n in LOGS_REQUIRED if n not in have]
     checks.ok("E1.required-logs", "E1", not missing,
               "missing log(s): " + ", ".join(missing),
               "every required suite log is present")
-    return dict(root=str(root), files=files, required=list(LOGS_REQUIRED))
+    return dict(root=str(root), files=files, required=list(LOGS_REQUIRED),
+                pooled=summary)
 
 
 # ------------------------------------------------------------- archive

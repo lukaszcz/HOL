@@ -472,7 +472,8 @@ class Tables37(unittest.TestCase):
              "task37-t33-1", "task37-t33-loading", "task37-t33",
              ".agent-files/scratch/task37-t33", "/dev/shm/t37-t33"))
 
-    def test_a_task37_table_is_its_parent_with_no_history(self):
+    def test_a_task37_table_is_its_parent_with_the_kept_records_history(
+            self):
         for new, parent in (("task37-t32", "task32"),
                             ("task37-t33", "task33")):
             one, two = dw.TABLES[new], dw.TABLES[parent]
@@ -481,7 +482,8 @@ class Tables37(unittest.TestCase):
                           "env_prefix", "probe_sources", "probe_digest"):
                 self.assertEqual(getattr(one, field), getattr(two, field),
                                  (new, field))
-            self.assertEqual(one.history, {})
+            self.assertEqual(one.history, dw.TASK37_HISTORY if
+                             new == "task37-t33" else dw.TASK37_T32_HISTORY)
             self.assertTrue(two.history or parent == "task32")
 
     def test_the_c32_tables_are_unchanged(self):
@@ -902,6 +904,17 @@ class OfflineBinding(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "changed"):
                 offline.check_code(old)
 
+    def test_the_task37_history_is_accepted_under_the_task37_table(self):
+        with offline.using_declared(self.TASK37), dw.using_table("task37-t33"):
+            for name, seals in dw.TASK37_HISTORY.items():
+                old = dict(offline.code_seals())
+                old[name] = seals[0]
+                offline.check_code(old)
+                # not the TASK33 or TASK32 history, nor an unknown seal
+                old[name] = dict(seals[0], bytes=seals[0]["bytes"] + 1)
+                with self.assertRaisesRegex(ValueError, "changed"):
+                    offline.check_code(old)
+
     def test_a_command_runs_and_writes_under_its_declaration(self):
         seen = []
         args = mock.Mock(command="archive", archive="f", ledger=None,
@@ -1191,6 +1204,8 @@ class HistoryOfTheKeptRecords(unittest.TestCase):
     """The histories hold the seals of the versions the kept records were
     made with (7e202dfbaa) and no intermediate version."""
     KEPT = "7e202dfbaa63a48514c36fece89e3ab3f69b3696"
+    # the head the kept TASK37 records were made with
+    TASK37_KEPT = "b6052eb65f"
     PERF = "src/simp/tests/performance/"
     FILES = ("task32_downstream.py", "task32_snapshots.py",
              "task33_offline.py", "task33_storage.py", "task33_rules.py",
@@ -1237,9 +1252,21 @@ class HistoryOfTheKeptRecords(unittest.TestCase):
                     self.assertNotIn(seal, history.get(name, []),
                                      (rev, name))
 
-    def test_the_task37_tables_have_no_history(self):
-        for name in ("task37-t32", "task37-t33"):
-            self.assertEqual(dw.TABLES[name].history, {})
+    def test_the_task37_histories_hold_the_kept_versions(self):
+        """The versions that made the kept TASK37 records (b6052eb65f,
+        before the pooled logs) and nothing else."""
+        for name, seals in dw.TASK37_HISTORY.items():
+            self.assertEqual(seals, [self.seal_at(self.TASK37_KEPT, name)],
+                             name)
+        self.assertEqual(sorted(dw.TASK37_HISTORY),
+                         ["task32_downstream.py", "task33_offline.py"])
+        self.assertEqual(dw.TABLES["task37-t33"].history, dw.TASK37_HISTORY)
+        self.assertEqual(dw.TABLES["task37-t32"].history,
+                         {"task32_downstream.py":
+                          dw.TASK37_HISTORY["task32_downstream.py"]})
+        now = dw.code_seals()
+        self.assertNotIn(now["task32_downstream.py"],
+                         dw.TASK37_HISTORY["task32_downstream.py"])
 
 
 if __name__ == "__main__":

@@ -193,6 +193,24 @@ TASK33_HISTORY = {
                    "b181735536e12cabb6", "bytes": 26854}],
 }
 
+# The TASK37 tables' histories: the versions of `task32_downstream.py` and
+# `task33_offline.py` before the harvest pooled the logs of suites that
+# build the same theories in a race (`task33_offline.POOLED_LOGS`), which
+# made the kept TASK37 records (the t32 smoke, the t33 stages, the timing
+# counts and the api-audit). The t33 table holds both, the t32 table the
+# driver (it does not bind `task33_offline.py`); `task33_offline.check_code`
+# accepts them under the TASK37 tables.
+TASK37_HISTORY = {
+    "task32_downstream.py": [
+        {"sha256": "e030bcb8f76691a1d3c945e6e42d23"
+                   "d8822c08bcb0391890e7b4d55fe493ce57", "bytes": 186819}],
+    "task33_offline.py": [
+        {"sha256": "f817b9a2f3ad3a124ae9ab0b06b6d5"
+                   "64ba15ee57bfa8219b8c95b8dd409a4146", "bytes": 95782}],
+}
+TASK37_T32_HISTORY = {
+    "task32_downstream.py": TASK37_HISTORY["task32_downstream.py"]}
+
 
 def require(ok, message):
     if not ok:
@@ -347,8 +365,9 @@ TABLES = {
 # and code under the final candidate, with their own counts and follow-up
 # counts, seeds, ledger, journals and scratch, so that no run of the final
 # gate shares or rewrites anything of the C32 tables, whose counts files
-# bind the C32 candidate. No history: the code of a TASK37 run is the code
-# of the final tooling.
+# bind the C32 candidate. The history is that of the kept records
+# (`TASK37_HISTORY`); otherwise the code of a TASK37 run is the code of the
+# final tooling.
 for _parent, _name, _label, _stem in (
         ("task32", "task37-t32", "TASK37 T32", "task37_t32"),
         ("task33", "task37-t33", "TASK37 T33", "task37_t33")):
@@ -360,7 +379,9 @@ for _parent, _name, _label, _stem in (
         followup_counts=HERE / (_stem + "_followup_counts.json"),
         seed=_name + "-1", journals=".agent-files/scratch/" + _name,
         scratch="/dev/shm/" + _name.replace("task37-", "t37-"),
-        history={}, compiled_ref=TASK37_COMPILED_REF,
+        history=TASK37_HISTORY if _parent == "task33" else
+        TASK37_T32_HISTORY,
+        compiled_ref=TASK37_COMPILED_REF,
         declared=HERE / "task37_declared.json" if _parent == "task33"
         else None,
         archive_table="task37-t32" if _parent == "task33" else None)
