@@ -3981,13 +3981,17 @@ undeclared S2 or L2 difference fails; it is not explained after the fact. A
 `total_delta` value is measured live (k = 2 per side, deterministic) before
 the declaration is committed.
 
-Redrawn harvests. A failed harvest stays in the evidence (R-1: refused
-attempts are never moved or deleted), and a redraw goes to a fresh `--out`
-(the harvest needs an empty directory of its own). The disposition records
-the harvest it took as `offline.harvest`, `{path, seal}`, and
-`dispose-snapshots` selects the harvest by that record: exactly one
-`harvest.json` under `--evidence` with that path and seal, and it must be
-a successful, sealed report.
+Redrawn harvests (decision 39). A failed harvest stays in the evidence
+(R-1: refused attempts are never moved or deleted), and a redraw goes to a
+fresh `--out` (the harvest needs an empty directory of its own). The
+disposition records the harvest it took as `offline.harvest`,
+`{path, seal}`, and `dispose-snapshots` selects the harvest by that
+record: exactly one `harvest.json` under `--evidence` with that path and
+seal, and it must be a successful, sealed report. The recorded path is an
+absolute host path and the match is on the resolved path, so
+`dispose-snapshots` must run where the disposition was made, on the same
+mount of the evidence; another mount refuses loudly and never selects
+another file.
 
 Pooled log groups (E1 harvest). Suites that build the same theories run in
 parallel, and whichever takes Holmake's lock first builds them: the OK lines
@@ -4398,8 +4402,9 @@ use ends.
 
 `dispose-snapshots` requires, in `--evidence`: the successful sealed
 `harvest.json` the disposition records (see "Redrawn harvests"), exactly
-one successful `audit` stage with its sealed receipt (a pass), and exactly one sealed `disposition.json` of the current
-schema that owes nothing (no `owed` row: no stage may still run for any row;
+one successful `audit` stage with its sealed receipt (a pass), and
+exactly one sealed `disposition.json` of the current schema that owes
+nothing (no `owed` row: no stage may still run for any row;
 `attribution_needed` is a handoff duty, not a condition). It
 refuses a scratch root other than `/dev/shm/t33` and any path the manifest
 does not name where the snapshot driver puts it (roots under
