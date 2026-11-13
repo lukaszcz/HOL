@@ -594,17 +594,20 @@ class StructureFixture(unittest.TestCase):
         # the theory and the name of a constant, its type, the theory and
         # the operator of a type, and its arguments
         self.assertIn("tyKey Ty acc end", key)
-        self.assertIn('idTag "T" "t" Tyop', key)
-        self.assertIn('idTag "C" "c" Name', key)
-        self.assertIn("shown = #Name (KernelSig.name_of_id id)", key)
+        self.assertIn("if shown = #Name (KernelSig.name_of_id id) then live "
+                      "else retired", key)
         self.assertIn("Int.toString (length Args) ::", key)
         self.assertIn("List.foldr (fn (a,acc) => tyKey a acc) acc Args", key)
         # a constant or type operator by its display name, which keeps the
         # generation of a retired one
         self.assertIn("Term.dest_thy_constid tm", key)
-        self.assertIn("keyName (Term.display_name_of_id Name)", key)
+        self.assertIn("val shown = Term.display_name_of_id Name", key)
+        self.assertIn('idTag "C" "c" Name shown :: keyName Thy :: '
+                      "keyName shown ::", key)
         self.assertIn("Type.dest_thy_typeid ty", key)
-        self.assertIn("keyName (Type.display_name_of_id Tyop)", key)
+        self.assertIn("val shown = Type.display_name_of_id Tyop", key)
+        self.assertIn('idTag "T" "t" Tyop shown :: keyName Thy :: '
+                      "keyName shown ::", key)
         self.assertNotIn("uptodate", key)
         # the hypotheses (counted, in order) and the conclusion
         self.assertIn("Int.toString (length (hyp th))", key)

@@ -82,15 +82,17 @@ struct
   fun tyKey ty acc =
     if is_vartype ty then "'" :: keyName (dest_vartype ty) :: acc
     else let val {Thy,Tyop,Args} = Type.dest_thy_typeid ty in
-      idTag "T" "t" Tyop (Type.display_name_of_id Tyop) :: keyName Thy ::
-      keyName (Type.display_name_of_id Tyop) ::
-      Int.toString (length Args) ::
-      List.foldr (fn (a,acc) => tyKey a acc) acc Args end
+      let val shown = Type.display_name_of_id Tyop in
+        idTag "T" "t" Tyop shown :: keyName Thy :: keyName shown ::
+        Int.toString (length Args) ::
+        List.foldr (fn (a,acc) => tyKey a acc) acc Args end end
   fun tmKey tm acc = case dest_term tm of
       VAR (s,ty) => "V" :: keyName s :: tyKey ty acc
-    | CONST _ => let val {Thy,Name,Ty} = Term.dest_thy_constid tm in
-        idTag "C" "c" Name (Term.display_name_of_id Name) :: keyName Thy ::
-        keyName (Term.display_name_of_id Name) :: tyKey Ty acc end
+    | CONST _ => let
+        val {Thy,Name,Ty} = Term.dest_thy_constid tm
+        val shown = Term.display_name_of_id Name
+      in idTag "C" "c" Name shown :: keyName Thy :: keyName shown ::
+         tyKey Ty acc end
     | COMB (f,x) => "A" :: tmKey f (tmKey x acc)
     | LAMB (v,b) => "L" :: tmKey v (tmKey b acc)
   fun thmKey th = String.concat (Int.toString (length (hyp th)) ::
