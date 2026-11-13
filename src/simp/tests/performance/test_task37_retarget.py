@@ -21,7 +21,7 @@ import task33_offline as offline
 import task33_storage as storage
 import task37_cases as cases37
 import task37_gates as gates
-from test_task37_declared import prefill
+from task37_declared_testbed import prefill
 
 
 def git(repo, *argv):
@@ -899,7 +899,7 @@ class OfflineBinding(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "changed"):
                     offline.check_code(made)
 
-    TABLES = ("task32", "task33", "task37-t32", "task37-t33")
+    TABLES = tuple(dw.TABLES)   # every table: the C32 two and the TASK37 two
 
     def with_seal(self, name, seal):
         seals = dict(offline.code_seals())

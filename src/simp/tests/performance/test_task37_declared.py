@@ -18,6 +18,7 @@ import task33_offline as offline
 import task33_rules as rules
 import task37_cases as cases37
 import task37_declared as t
+from task37_declared_testbed import prefill
 
 KINDS = ["state-empty", "first-use"]
 HEAP = "bin/hol.state"
@@ -39,19 +40,6 @@ def groups(base=1000, cand=1010, n=2, rows_c=None, kinds=KINDS):
 
 def load():
     return offline.load_declared(t.DECLARED)
-
-
-def prefill():
-    """The committed declaration as it was before `fill`: its S2 closure
-    total entry is the placeholder (an in-test fixture for the paths that
-    handle a placeholder; the committed file is filled). Shared with
-    test_task37_retarget."""
-    data = json.loads(t.DECLARED.read_text())
-    entry = data["s2"]["total_delta"][0]
-    entry.update(value=None, observed=None, pending=True,
-                 mechanism=["PLACEHOLDER: measured live, then filled in by",
-                            "`task37_declared.py fill`."])
-    return data
 
 
 class TheDeclaration(unittest.TestCase):

@@ -1674,7 +1674,7 @@ OTHER_PRINTERS = frozenset((
     "require_msgk"))
 SML_IDENT = re.compile(
     r"[A-Za-z_][A-Za-z0-9_']*(?:\.[A-Za-z_][A-Za-z0-9_']*)*")
-STRING_ESCAPES = {"n": " ", "t": " ", "\\": "\\", '"': '"'}
+STRING_ESCAPES = {"n": "\n", "t": "\t", "\\": "\\", '"': '"'}
 
 
 class SmlRefusal(Refusal):
@@ -1682,8 +1682,10 @@ class SmlRefusal(Refusal):
 
 
 def sml_tokens(source):
-    """The tokens of SML `source` outside comments (which nest, and in
-    which a string literal may hide `*)`) as (kind, value): `id` (a
+    """The tokens of SML `source` outside comments as (kind, value). A
+    comment nests and only `(*` and `*)` count in it (not string literals,
+    as in Poly/ML and HOL's lexer: `(* "*)" x *)` ends at the first `*)`);
+    a string literal outside comments is read with its escapes. Kinds: `id` (a
     possibly qualified name), `str` (a string literal, decoded: the
     escapes `\\n \\t \\\\ \\"` only, any other escape is refused) and `sym`
     (any other character, one at a time)."""
@@ -1716,8 +1718,6 @@ def sml_tokens(source):
                     depth, i = depth + 1, i + 2
                 elif source.startswith("*)", i):
                     depth, i = depth - 1, i + 2
-                elif source[i] == '"':
-                    i = string(i)[1]
                 else:
                     i += 1
         elif c == '"':
@@ -1735,15 +1735,33 @@ def sml_tokens(source):
     return out
 
 
+SML_SPACE = " \t\n\v\f\r"   # Char.isSpace (ASCII only)
+
+
 def printed_text(text):
-    """The text `tprint` prints for the string `text`: newlines and tabs
-    to spaces, runs of spaces squeezed (testutils' `rmNLs` and
-    `squish_spaces`)."""
-    return " ".join(text.split())
+    """The text `tprint` prints before ` ...` for the string `text`: an
+    exact port of testutils.sml at 7e202dfbaa (lines 25-47). `rmNLs` maps
+    `\\n` and `\\t` to a space. `squish_spaces` finds the first two-space
+    run, keeps what precedes it, drops the leading `Char.isSpace`
+    characters of the rest, and repeats; the pieces are joined with one
+    space (so a single leading space stays, `"a  "` gives `"a "`, and a
+    non-ASCII space is untouched)."""
+    text = text.replace("\n", " ").replace("\t", " ")
+    pieces = []
+    while True:
+        k = text.find("  ")
+        if k < 0:
+            return " ".join(pieces + [text])
+        pieces.append(text[:k])
+        text = text[k:].lstrip(SML_SPACE)
 
 
-# `tprint` cuts a text that does not fit the line (the width is the
-# terminal's, 80 at least) to `<prefix> ...`: a longer text is refused.
+# `tprint` cuts a text that does not fit the line to `<prefix> ...` (`crush`,
+# at the width Holmake_tools.getWidth gives: `stty size`, then `tput cols`,
+# else 80, so 80 when the build has no terminal, and the measured builds run
+# with stdin on /dev/null). At width 80 a text of up to 73 characters fits,
+# so 60 leaves margin; a longer text is refused. A line cut on a narrower
+# terminal shows up only as a loud failure ("0 times").
 TPRINT_MAX = 60
 
 
@@ -1752,7 +1770,13 @@ def script_ok_lines(source):
     its `tprint "<string>"` calls. Raises SmlRefusal when a `tprint` is not
     followed by a string literal, when another testutils printer is named
     (OTHER_PRINTERS), when a text is too long to be sure of, or when the
-    number of `OK ()` calls differs from the number of lines."""
+    number of `OK ()` calls differs from the number of lines.
+
+    Limitation: SML scopes are not parsed. A `tprint` inside a function
+    that is called several times gives one derived line, and the log holds
+    it as many times, so the harvest fails with "occurs N times" (the
+    message names this cause). That can only fail loudly, never pass
+    silently."""
     tokens = sml_tokens(source)
     lines, oks = [], 0
     for k, (kind, value) in enumerate(tokens):
@@ -1821,7 +1845,7 @@ def shared_ok_lines(root, group):
 def count_line(text, line):
     """How often the OK line of the tprint string `line` occurs in `text`
     (a cleaned log)."""
-    return len(re.findall(r"^%s[ \t]*\.\.\.[ \t]*%sOK[ \t]*$" %
+    return len(re.findall(r"^%s \.\.\.[ \t]*%sOK[ \t]*$" %
                           (re.escape(line), OK_ANNOTATION), text, re.M))
 
 
@@ -1854,12 +1878,16 @@ def judge_pooled(group, lines, found, declared):
             n = sum(count_line(found[x][3], line) for x in found)
             data["shared"][line] = n
             if n != 1:
-                reasons.append("OK line `%s` occurs %d times in the logs, "
-                               "not once" % (line, n))
+                reasons.append(
+                    "OK line `%s` occurs %d times in the logs, not once "
+                    "(a race between the builds of the shared theories, or "
+                    "a script printing the line from a function called "
+                    "more than once)" % (line, n))
         # A race moves only the shared lines: what is left in a log is
         # its own, and may differ from the reviewed count by at most the
-        # k shared lines (so a test lost in one log and duplicated in the
-        # other is not hidden by the sum).
+        # k shared lines. So a shift of more than k lines between the
+        # logs is not hidden by the sum; a shift of k lines or fewer
+        # cannot be told from the race.
         k = len(lines)
         for name in group["logs"]:
             own = have[name] - sum(count_line(found[name][3], line)

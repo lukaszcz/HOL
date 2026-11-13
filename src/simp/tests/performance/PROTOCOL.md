@@ -3990,10 +3990,14 @@ exactly once across the group's logs. A race moves only those shared
 lines, so each log also keeps the lines of its own within bounds: with k
 shared lines, a log's OK lines less the shared ones it holds lie between
 its declared count less k and the count. The scripts are read with an SML
-lexer (nested comments, strings and their escapes); a script that calls
-another testutils printer, has a `tprint` not followed by a string
+lexer (string literals with their escapes outside comments; inside a
+comment only nesting `(*` and `*)` count, as in Poly/ML); a script that
+calls another testutils printer, has a `tprint` not followed by a string
 literal, or has a number of `OK ()` calls other than its `tprint` strings
-cannot be read that way and refuses the harvest. Each log of a group still
+cannot be read that way and refuses the harvest. SML scopes are not
+parsed: a `tprint` in a function called several times derives one line
+while the log holds it several times, so the group fails ("occurs N
+times"); that is a loud failure, never a silent pass. Each log of a group still
 passes every check of its kind except its own count.
 
 ### Counts, ledger, redraws

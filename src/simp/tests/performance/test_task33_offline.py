@@ -1419,9 +1419,6 @@ class HarvestTest(unittest.TestCase):
             with self.assertRaises(t.Refusal):
                 t.harvest(root, out, t.Checks(), self.DECL)
 
-
-# ----------------------------------------------------- the fake archive
-
     # ---- pooled logs (split-lifecycle + split-persistence)
 
     def pool(self, life, pers, decl=None):
@@ -1638,9 +1635,19 @@ class HarvestTest(unittest.TestCase):
         # nested comments
         self.assertEqual(lines('(* (* *) tprint "inner" OK () *)\n'
                                'val _ = tprint "outer"\n' + ok), ["outer"])
-        # a string inside a comment may hide the close
-        self.assertEqual(lines('(* "*)" tprint "no" *) tprint "yes"\n' + ok),
-                         ["yes"])
+        # inside a comment only (* and *) count, as in Poly/ML: the first
+        # *) closes it, quotes or not, so what follows is code
+        self.assertEqual(lines('val a = 1 (* " *) tprint "x" ' + ok),
+                         ["x"])
+        # so `(* "*)" ...` ends at the first *) and leaves a lone quote
+        with self.assertRaisesRegex(t.SmlRefusal, "unterminated string"):
+            lines('val a = 1 (* "*)" tprint "x" ' + ok)
+        self.assertEqual(lines(
+            'tprint "z"; OK(); (* " *) val _ = tprint "a" val _ = OK () '
+            '(* " *)'), ["z", "a"])
+        # a lone quote in a comment (a ruler, an inch mark) is a comment
+        self.assertEqual(lines('(* 12" ruler *)\ntprint "t"\n' + ok +
+                               '(* it\'s a "quote *)\n'), ["t"])
         # escapes: the printed text is squeezed like tprint's
         self.assertEqual(lines('tprint "a\\n  b\\"c\\\\"\n' + ok),
                          ['a b"c\\'])
@@ -1663,6 +1670,39 @@ class HarvestTest(unittest.TestCase):
         self.assertEqual(lines('val my_convtest = 1\n'
                                'val _ = tprint "a"\n' + ok), ["a"])
 
+    def test_printed_text_is_testutils_rmNLs_and_squish_spaces(self):
+        # worked by hand from testutils.sml (7e202dfbaa, lines 25-47)
+        for text, want in (
+                ("a  b", "a b"), ("a   b", "a b"), (" a", " a"),
+                ("  a", " a"), ("a  ", "a "), ("a   ", "a "),
+                ("a \tb", "a b"), ("a\nb", "a b"), ("a  \n b", "a b"),
+                ("a  b  c", "a b c"), ("a b", "a b"), ("", ""),
+                ("a\u00a0 \u00a0b", "a\u00a0 \u00a0b"),
+                ("a  \u00a0b", "a \u00a0b"), ("a  \x0b\x0cb", "a b")):
+            with self.subTest(text):
+                self.assertEqual(t.printed_text(text), want)
+
+    def test_a_line_is_compared_exactly_with_the_text_tprint_prints(self):
+        # `tprint` prints `<text> ...` padded: the text keeps its single
+        # leading and its trailing space, before the ` ...`
+        lead, trail = t.printed_text(" a"), t.printed_text("b  ")
+        self.assertEqual((lead, trail), (" a", "b "))
+        self.assertEqual(t.count_line(" a ...       OK\n", lead), 1)
+        self.assertEqual(t.count_line("a ...       OK\n", lead), 0)
+        self.assertEqual(t.count_line("b  ...      OK\n", trail), 1)
+        self.assertEqual(t.count_line("b ...       OK\n", trail), 0)
+        self.assertEqual(t.count_line("xa ...   OK\n", "a"), 0)
+
+    def test_a_repeated_line_names_both_causes(self):
+        decl = dict(log_counts=dict(COUNTS, **{"split-lifecycle": 5,
+                                               "split-persistence": 1}))
+        _, rows = self.pool((1, SHARED_LINES + SHARED_LINES[:1]), (1, []),
+                            decl)
+        reason = rows[POOL_ID]["reason"]
+        self.assertIn("occurs 2 times", reason)
+        self.assertIn("race between the builds", reason)
+        self.assertIn("function called more than once", reason)
+
     def test_the_real_scripts_give_the_four_lines(self):
         root = Path(__file__).resolve().parents[4]
         script = root / "src/simp/tests/split-persistence"
@@ -1671,6 +1711,9 @@ class HarvestTest(unittest.TestCase):
         self.assertEqual(
             sorted(t.shared_ok_lines(root, t.POOLED_LOGS[0])),
             sorted(SHARED_LINES))
+
+
+# ----------------------------------------------------- the fake archive
 
 
 class Archive:
