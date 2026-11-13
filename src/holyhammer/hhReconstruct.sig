@@ -9,7 +9,11 @@ sig
   val reconstruction_timeout : real ref
 
   (* Reconstruction *)
-  val hh_reconstruct_with : bool -> string list -> goal -> (string * tactic)
+  type settings =
+    {minimize : bool, preplay_timeout : real, minimize_timeout : real}
+  val hh_reconstruct_with :
+    settings -> string list -> goal -> (string * tactic)
+  (* Minimizes, with the timeouts in the references above. *)
   val hh_reconstruct : string list -> goal -> (string * tactic)
 
 end

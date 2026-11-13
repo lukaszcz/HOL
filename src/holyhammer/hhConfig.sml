@@ -493,11 +493,6 @@ fun print_params () =
     List.app print_one (ListPair.zip (hh_params (), option_specs))
   end
 
-val reconstruction_timeouts = ref (fn (_ : real, _ : real) => ())
-
-fun register_reconstruction_timeouts setter =
-  reconstruction_timeouts := setter
-
 
 fun optional_string value =
   if trim value = "" then NONE else SOME value
@@ -555,20 +550,16 @@ fun snapshot_with overrides =
     val cache_dir = required "cache_dir" SOME
     val cache_max_entries = required "cache_max_entries" int_value
     val debug_dir = required "debug_dir" (SOME o optional_string)
-    val result : hh_options =
-      {timeout = timeout, max_proofs = max_proofs, provers = provers,
-       slices = slices, cores = cores, filter = filter,
-       max_facts = max_facts, format = format, type_enc = type_enc,
-       lam_trans = lam_trans, mono_iters = mono_iters,
-       mono_instances = mono_instances, minimize = minimize,
-       preplay_timeout = preplay_timeout,
-       minimize_timeout = minimize_timeout, cache = cache,
-       cache_dir = cache_dir, cache_max_entries = cache_max_entries,
-       debug_dir = debug_dir}
-    val _ = (!reconstruction_timeouts)
-      (preplay_timeout, minimize_timeout)
   in
-    result
+    {timeout = timeout, max_proofs = max_proofs, provers = provers,
+     slices = slices, cores = cores, filter = filter,
+     max_facts = max_facts, format = format, type_enc = type_enc,
+     lam_trans = lam_trans, mono_iters = mono_iters,
+     mono_instances = mono_instances, minimize = minimize,
+     preplay_timeout = preplay_timeout,
+     minimize_timeout = minimize_timeout, cache = cache,
+     cache_dir = cache_dir, cache_max_entries = cache_max_entries,
+     debug_dir = debug_dir}
   end
 
 fun snapshot () = snapshot_with []

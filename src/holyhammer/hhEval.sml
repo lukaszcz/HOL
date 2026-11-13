@@ -1376,6 +1376,12 @@ fun selected_premises thy condition pool thm goal =
 fun json_string_list values =
   JSONPrinter.valueToString (JSON.ARRAY (map JSON.STRING values))
 
+fun reconstruction_settings () : hhReconstruct.settings =
+  let val options = hhConfig.snapshot () in
+    {minimize = true, preplay_timeout = #preplay_timeout options,
+     minimize_timeout = #minimize_timeout options}
+  end
+
 fun reconstruct condition result goal =
   if not (#reconstruct condition) orelse
      #szs result <> hhProver.SzsTheorem then
@@ -1386,7 +1392,8 @@ fun reconstruct condition result goal =
       | SOME axioms =>
           ((let
               val ((stac, _), elapsed) =
-                add_time (hhReconstruct.hh_reconstruct axioms) goal
+                add_time (hhReconstruct.hh_reconstruct_with
+                  (reconstruction_settings ()) axioms) goal
             in
               (SOME true, SOME "metis", SOME elapsed, SOME stac)
             end)

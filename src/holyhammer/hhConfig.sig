@@ -47,8 +47,6 @@ sig
 
   (* Initialisation hooks break dependency cycles with these later modules. *)
   val register_prover_validator : (string -> bool) -> unit
-  val register_reconstruction_timeouts :
-    (real * real -> unit) -> unit
 
   val platform : unit -> string
   val find_exec_with_env : string -> string -> string list -> string option

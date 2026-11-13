@@ -226,10 +226,10 @@ fun test_child root =
        #cache_dir options = join (hhConfig.state_dir ()) "cache" andalso
        #cache_max_entries options = 100000 andalso
        #debug_dir options = SOME (join root "debug"))
-    val _ = expect "snapshot assigns reconstruction timeouts"
-      (Real.abs (!hhReconstruct.reconstruction_timeout - 2.5) < 0.000001
+    val _ = expect "snapshot parses reconstruction timeouts"
+      (Real.abs (#preplay_timeout options - 2.5) < 0.000001
        andalso
-       Real.abs (!hhReconstruct.minimization_timeout - 3.5) < 0.000001)
+       Real.abs (#minimize_timeout options - 3.5) < 0.000001)
     val _ = expect "hh_params reports all four provenance layers"
       (has_parameter "timeout" "23" "set" andalso
        has_parameter "cores" "3" "config" andalso

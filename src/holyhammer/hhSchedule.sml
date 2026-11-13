@@ -422,7 +422,10 @@ fun run_in root {options, goal, rankings, progress} =
                 add_time
                   (smlRedirect.hidef
                     (hhReconstruct.hh_reconstruct_with
-                      (#minimize options) lemmas))
+                      {minimize = #minimize options,
+                       preplay_timeout = #preplay_timeout options,
+                       minimize_timeout = #minimize_timeout options}
+                      lemmas))
                   goal
               val suggestion : suggestion =
                 {stac = stac, tac = tac, lemmas = lemmas,
@@ -495,10 +498,6 @@ fun run_in root {options, goal, rankings, progress} =
     if schedule_length = 0 then finish Exhausted
     else
       let
-        val _ = hhReconstruct.reconstruction_timeout :=
-          #preplay_timeout options
-        val _ = hhReconstruct.minimization_timeout :=
-          #minimize_timeout options
         fun launch () =
           let
             val consumer = Thread.fork (reconstruction_worker, [])
