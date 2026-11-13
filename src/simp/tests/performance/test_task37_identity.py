@@ -404,6 +404,8 @@ class Commands(t31.Commands):
     def setUp(self):
         super().setUp()
         self.broken = set()
+        self.hold = set()        # cells that wait for a registered failure
+        self.registered = threading.Event()
         self.scratch = self.root / "tmp"
         self.scratch.mkdir()
         patch = mock.patch.object(tempfile, "tempdir", str(self.scratch))
@@ -418,12 +420,25 @@ class Commands(t31.Commands):
             with self.guard:
                 self.commands = self.commands + [command]
             Path(log).write_text("log\n")
+            if "%s-%s" % (case, size) in self.hold:
+                self.assertTrue(self.registered.wait(60), "no failure")
             if "%s-%s" % (case, size) in self.broken:
                 return dict(exit=1, timed_out=False)
             (folder / "cell").write_text("%s %s\n" % (case, size))
             return dict(exit=0, timed_out=False)
         self.guard = threading.Lock()
         self.commands = []
+
+        class Registered(m.Failure):
+            """The Failure of a job is made after the pool recorded the
+            failure, so no job starts a cell after this is signalled."""
+
+            def __init__(failure, *args):
+                super().__init__(*args)
+                self.registered.set()
+        patch = mock.patch.object(m, "Failure", Registered)
+        patch.start()
+        self.addCleanup(patch.stop)
         patch = mock.patch.object(g, "run_one", run_one)
         patch.start()
         self.addCleanup(patch.stop)
@@ -760,6 +775,10 @@ class Commands(t31.Commands):
         self.start()
         names = self.tables["matrix"].names()
         self.broken = {names[5]}
+        # The cells the pool could start next hold their workers until the
+        # failure is recorded: of the jobs 3, at most the two others run
+        # beyond it, and every later cell finds the failure and is skipped.
+        self.hold = set(names[6:])
         code, text, out = self.run_whole(jobs=3)
         self.assertEqual(code, tg.REFUSED, text)
         inv = a.load(out / "inventory.json")
@@ -772,6 +791,8 @@ class Commands(t31.Commands):
         self.assertEqual([t.name for t in threading.enumerate()
                           if t.name.startswith("identity")], [])
         self.assertLess(len(self.commands), len(names))
+        self.assertLessEqual(len(self.commands), 8)   # names[:5], [5], two
+        self.hold = set()
         # The resume measures the cells that are missing, with the
         # records of an uninterrupted run.
         self.broken = set()

@@ -141,12 +141,19 @@ refuses (the lead redraws); one with a gate decision is judged by it
 (a failure on the declared deltas alone included: a `fail`, a redraw
 allowed), is the gate's result (`judged-incomplete`), and only a pass
 leaves the attempt incomplete owing a `redraw` (`owes-redraw`). Its
-null control is read and replayed when `--startup-null` is given or the
-attempt's `gate-null` holds a complete archive, and is otherwise
-recorded as absent (the attempt ended before the null gate). A gate
-decision counts only with a `gate/receipt.json` whose sha256 rows match
-its `header.json` and `decisions.json`. Each earlier attempt is judged
-by its gate decision when it has one, complete or not: it is recorded
+null control is neither read nor replayed (not applicable; the
+`--startup-null` flag is refused there), except for an attempt owing a
+redraw: its own `gate-null` is read and replayed when it holds a complete
+archive (an explicit `--startup-null` must be that archive), and is
+otherwise recorded as absent (the attempt ended before the null gate).
+The judged gate is the `gate` of the last attempt and `--startup-declared`
+its `declared-deltas.json`. A gate decision counts only with a
+`gate/receipt.json` whose sha256 rows all match the files it lists, and,
+for an incomplete attempt, only after `replay-gate.exit` reads `exit=0`
+(otherwise a redraw is allowed); an attempt that completed or got through
+`replay-gate` and shows no decision now is damaged and refused. Each
+earlier attempt is judged by its gate decision when it has one, complete
+or not: it is recorded
 with its gate decision, reasons and declared-delta problems (the sidecar
 bound to the attempt's record and sealed `inputs.txt`). A redraw is
 accepted after an attempt with no gate decision (void), a gate that
@@ -1176,23 +1183,41 @@ LOADING_KEYS = {gate: module.lower() for gate, module in
 
 
 NO_NULL = "absent (attempt ended before the null gate)"
+NULL_NA = ("not applicable (the gate failed or was blocked: the null "
+           "control is neither read nor replayed)")
 
 
-def startup_null(args, complete):
-    """The null control archive of the judged startup attempt, or None for
-    an incomplete attempt that has none. A complete attempt always has a
-    replayed null control, so `--startup-null` is required. An incomplete
-    one (it may have ended before the null gate) reads the archive given,
-    or the `gate-null` of its attempt when that holds a complete archive,
-    and is recorded without one otherwise."""
-    if complete:
+def startup_null(args, verdict):
+    """The null control archive of the judged startup attempt (its
+    `verdict`, `gates.startup_attempts`), or None when it is not read. A
+    complete attempt (`judged`) always has a replayed null control, so
+    `--startup-null` is required. A `judged-incomplete` one (the gate failed
+    or was blocked) is never read, so the flag is refused there. One owing
+    a redraw (`owes-redraw`) may have ended before the null gate: its own
+    `gate-null` is read when it holds a complete archive and is otherwise
+    absent; the flag, when given, must be that complete archive."""
+    if verdict == "judged":
         a.require(args.startup_null is not None,
                   "a complete startup attempt needs --startup-null")
         return args.startup_null
+    a.require(verdict in ("owes-redraw", "judged-incomplete"),
+              "unexpected startup verdict " + verdict)
+    own = Path(args.startup_gate).resolve().parent / "gate-null"
+    if verdict == "judged-incomplete":
+        a.require(args.startup_null is None,
+                  "--startup-null is for a complete attempt only: the null "
+                  "control of an incomplete attempt whose gate failed or "
+                  "was blocked is not read (omit the flag)")
+        return None
     if args.startup_null is not None:
-        return args.startup_null
-    found = Path(args.startup_gate).resolve().parent / "gate-null"
-    return found if gates.archive_complete(found) else None
+        a.require(Path(args.startup_null).resolve() == own and
+                  gates.archive_complete(own),
+                  "--startup-null %s is not the complete gate-null archive "
+                  "of the incomplete attempt (%s): omit the flag, the null "
+                  "of an incomplete attempt is found by itself" % (
+                      args.startup_null, own))
+        return own
+    return own if gates.archive_complete(own) else None
 
 
 def read_gates(args, lineage, inputs, late, extra):
@@ -1222,11 +1247,18 @@ def read_gates(args, lineage, inputs, late, extra):
     problems = gates.declared_problems(declared, decisions)
     attempts = gates.startup_attempts(args.startup_ledger,
                                       args.startup_gate)
-    null = startup_null(args, attempts[-1]["verdict"] == "judged")
+    attempt = Path(args.startup_gate).resolve().parent
+    a.require(Path(args.startup_declared).resolve() ==
+              attempt / "declared-deltas.json",
+              "--startup-declared %s is not the declared-deltas.json of "
+              "the judged attempt (%s)" % (args.startup_declared, attempt))
+    verdict = attempts[-1]["verdict"]
+    null = startup_null(args, verdict)
     null_decisions = None
     if null is None:
-        inputs[gates.STARTUP]["null-header"] = NO_NULL
-        inputs[gates.STARTUP]["null-decisions"] = NO_NULL
+        why = NULL_NA if verdict == "judged-incomplete" else NO_NULL
+        inputs[gates.STARTUP]["null-header"] = why
+        inputs[gates.STARTUP]["null-decisions"] = why
     else:
         a.require(Path(args.startup_gate).resolve().parent == Path(
             null).resolve().parent,
@@ -1240,14 +1272,18 @@ def read_gates(args, lineage, inputs, late, extra):
     found[gates.STARTUP] = gates.startup_gate(header, decisions,
                                               null_decisions, problems)
     inputs[gates.STARTUP]["ledger"] = a.seal(Path(args.startup_ledger))
-    attempt = Path(args.startup_gate).resolve().parent
     a.require((attempt / "inputs.txt").is_file(),
               "the judged startup attempt has no sealed inputs.txt: %s" %
               attempt)
     inputs[gates.STARTUP]["attempt-inputs"] = a.seal(attempt / "inputs.txt")
     inputs[gates.STARTUP]["done"] = a.seal(attempt / "done") \
         if (attempt / "done").is_file() else "absent"
-    if attempts[-1]["verdict"] == "owes-redraw":
+    if verdict == "judged-incomplete":
+        a.require(found[gates.STARTUP]["source"] in ("fail", "inconclusive"),
+                  "the incomplete startup attempt's gate failed or was "
+                  "blocked and its status is %s, not fail or inconclusive"
+                  % found[gates.STARTUP]["source"])
+    if verdict == "owes-redraw":
         found[gates.STARTUP] = gates.owe_redraw(found[gates.STARTUP],
                                                 attempts[-1])
     extra["startup_attempts"] = attempts

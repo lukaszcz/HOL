@@ -46,12 +46,21 @@ What each replay re-derives, and what it cannot:
   is judged by it (decision 26): a fail or blocked decision, on any
   grounds, the declared deltas alone included, is the gate's result
   (`fail` or inconclusive; a delta-only failure allows a redraw), and
-  only a pass leaves it incomplete owing a `redraw`. Its null control is
-  read and replayed when `gate-null` holds a complete archive and is
-  otherwise recorded as absent (the attempt ended before the null gate).
-  A gate decision counts only with a `gate/receipt.json` whose sha256
-  rows match `header.json` and `decisions.json` (`gate_decision`),
-  otherwise the attempt has none. Every earlier attempt is judged by
+  only a pass leaves it incomplete owing a `redraw`. The null control of
+  a failed or blocked incomplete attempt is neither read nor replayed
+  (recorded as not applicable). That of one owing a redraw is read and
+  replayed when its own `gate-null` holds a complete archive, and is
+  otherwise recorded as absent (the attempt ended before the null gate);
+  it is found by itself, and an explicit `--startup-null` there must be
+  that complete archive, else it refuses (omit the flag).
+  A gate decision counts only with a `gate/receipt.json` that lists
+  `header.json` and `decisions.json` and whose sha256 rows all match the
+  files (`gate_decision`), and, for an incomplete attempt, only when its
+  `replay-gate.exit` reads `exit=0` (`replay_gate_ok`): a gate that died
+  at its replay decided nothing, and a redraw is allowed. An attempt
+  that completed, or got through `replay-gate`, and shows no decision now
+  was damaged after the run: it is refused, never read as void
+  (`classify`). Every earlier attempt is judged by
   its gate decision when it has one, complete or not, and recorded; it
   blocks a redraw only when it is complete and passed, or decided fail
   or blocked on grounds other than the declared deltas (void attempts,
@@ -556,21 +565,33 @@ def bound_sidecar(out):
 def gate_decision(out):
     """The decisions of the gate archive `out` (`startup_gate.
     write_archive`), or None when the attempt has no gate decision: it
-    counts only when `receipt.json` exists and its sha256 rows for
-    `header.json` and `decisions.json` are those of the files (a gate cut
-    short, or a truncated or edited file, decided nothing)."""
+    counts only when `receipt.json` exists, lists `header.json` and
+    `decisions.json`, and the sha256 of EVERY file it lists is that of the
+    file (a gate cut short, or a truncated, edited or missing file, decided
+    nothing)."""
     out = Path(out)
     try:
         receipt = json.loads((out / "receipt.json").read_text())
-        names = ("header.json", "decisions.json")
-        if not (isinstance(receipt, dict) and all(
-                receipt.get(n) == hashlib.sha256(
-                    (out / n).read_bytes()).hexdigest() for n in names)):
+        if not (isinstance(receipt, dict) and
+                {"header.json", "decisions.json"} <= set(receipt) and
+                all(isinstance(d, str) and
+                    d == hashlib.sha256((out / n).read_bytes()).hexdigest()
+                    for n, d in receipt.items())):
             return None
         decisions = json.loads((out / "decisions.json").read_text())
     except (OSError, ValueError):
         return None
     return decisions if isinstance(decisions, dict) else None
+
+
+def replay_gate_ok(row):
+    """The runner of the attempt `row` got through `replay-gate`
+    (`replay-gate.exit` reads `exit=0`)."""
+    try:
+        return (Path(row["output"]) / "replay-gate.exit"
+                ).read_text().strip() == "exit=0"
+    except OSError:
+        return False
 
 
 def archive_complete(out):
@@ -588,11 +609,22 @@ def classify(row):
     the sidecar being bound to the record and the sealed inputs: the
     disposition fails it on the declared deltas alone) or `fail` (any
     other decision or reasons: fail, blocked, a smoke), with `decision`,
-    `reasons`, `problems` and `complete`."""
+    `reasons`, `problems`, `complete` and `damaged`. A decision counts
+    for an incomplete attempt only when it got through `replay-gate`
+    (`replay_gate_ok`): a gate that died at its replay decided nothing (a
+    redraw is allowed). `damaged`: the attempt is complete, or its
+    `replay-gate.exit` reads `exit=0`, and yet it shows no gate decision
+    now (the archive was damaged after the run, which a redraw must not
+    hide)."""
     out = Path(row["output"])
     found = dict(row, decision=None, reasons=[], problems=[],
-                 complete=completed(row), kind="void")
+                 complete=completed(row), kind="void", damaged=False)
     decisions = gate_decision(out / "gate")
+    if decisions is not None and not found["complete"] and \
+            not replay_gate_ok(row):
+        decisions = None
+    elif decisions is None:
+        found["damaged"] = found["complete"] or replay_gate_ok(row)
     if decisions is None:
         return found
     found.update(decision=decisions.get("decision"),
@@ -611,9 +643,20 @@ def classify(row):
     return found
 
 
+def damaged_message(found):
+    """Why the attempt `found` (`classify`) is refused as damaged."""
+    return ("the startup attempt %s %s and its gate archive shows no "
+            "gate decision now (a receipt row differs or a file is "
+            "missing): it was damaged after the run, which a redraw "
+            "would hide (R-1)" % (
+                found["attempt"], "completed" if found["complete"]
+                else "got through replay-gate"))
+
+
 def earlier_attempt(row):
     """What an attempt before the judged one shows, and whether a redraw
-    after it is allowed (decisions 21, 25, 26). A redraw is blocked only
+    after it is allowed (decisions 21, 25, 26). A damaged attempt
+    (`classify`) is refused outright. A redraw is blocked only
     by a draw that stays judged: a COMPLETE attempt whose gate passed
     (superseded), or an attempt, complete or not, whose gate decided fail
     or blocked on grounds other than the declared deltas. It is allowed
@@ -625,6 +668,7 @@ def earlier_attempt(row):
     is not allowed."""
     found = classify(row)
     kind = found.pop("kind")
+    a.require(not found.pop("damaged"), damaged_message(found))
     if kind == "void":
         return dict(found, verdict="void")
     if kind == "delta-only":
@@ -649,10 +693,11 @@ def earlier_attempt(row):
 def startup_attempts(ledger, judged):
     """Every attempt of the startup-gate runner in `ledger`, oldest first:
     [{attempt, output, exit, status, judged, verdict, decision, reasons,
-    problems}]. The judged gate directory `judged` must lie in the output
-    of the LAST attempt, which may be open (never closed: incomplete, as
-    one closed with another status than 0 or 2). Its verdict is `judged`
-    when it completed (`completed`: exit 0 or 2 and `done`). An incomplete last
+    problems}]. The judged gate directory `judged` must be the `gate` of
+    the output of the LAST attempt, which may be open (never closed:
+    incomplete, as one closed with another status than 0 or 2). Its
+    verdict is `judged` when it completed (`completed`: exit 0 or 2 and
+    `done`). An incomplete last
     attempt with no gate decision is void and cannot be judged (the lead
     redraws); one with a gate decision is judged by it (decision 26):
     `judged-incomplete` when the gate failed or was blocked, on any
@@ -663,16 +708,19 @@ def startup_attempts(ledger, judged):
     a redraw that was not allowed refuses."""
     rows = read_ledger(ledger)
     last = rows[-1]
-    inside = Path(judged).resolve().parent == Path(
-        last["output"]).resolve()
-    a.require(inside, "the judged startup gate %s is not in the last "
-              "attempt of the ledger (%s): a later attempt exists, or this "
-              "is an earlier one" % (judged, last["output"]))
+    inside = Path(judged).resolve() == Path(
+        last["output"]).resolve() / "gate"
+    a.require(inside, "the judged startup gate %s is not the gate of the "
+              "last attempt of the ledger (%s): a later attempt exists, "
+              "or this is an earlier one" % (judged, last["output"]))
     found = [dict(earlier_attempt(row), judged=False) for row in rows[:-1]]
     if completed(last):
+        a.require(gate_decision(Path(last["output"]) / "gate") is not None,
+                  damaged_message(dict(last, complete=True)))
         return found + [dict(last, judged=True, verdict="judged",
                              decision=None, reasons=[], problems=[])]
     seen = classify(last)
+    a.require(not seen.pop("damaged"), damaged_message(seen))
     a.require(seen["kind"] != "void",
               "the last startup attempt %s is void (exit %s, `done` %s, no "
               "gate decision): the runner did not complete, so it cannot "
