@@ -93,12 +93,28 @@ def r2(simp=158440, cong=90000, images=("b1", "s1")):
                              for i in images}}
 
 
+def set_head(attempt, head):
+    """The harness commit of the attempt directory `attempt`: its
+    `harness-head.txt`, and the harness commit its gate header records."""
+    attempt = Path(attempt)
+    write(attempt / "harness-head.txt", head + "\n")
+    header = attempt / "gate" / "header.json"
+    held = json.loads(header.read_text()) if header.is_file() else {}
+    held["harness"] = dict(held.get("harness") or {}, head=head)
+    write(header, held)
+    receipt = attempt / "gate" / "receipt.json"
+    if receipt.is_file():       # the receipt of an archive follows
+        rows = json.loads(receipt.read_text())
+        write(receipt, {n: hashlib.sha256(
+            (header.parent / n).read_bytes()).hexdigest() for n in rows})
+
+
 def seal_gate(directory):
     """The `receipt.json` of a gate archive (`startup_gate.write_archive`)
     for its header and decisions."""
     directory = Path(directory)
     if not (directory / "header.json").exists():
-        write(directory / "header.json", {})
+        write(directory / "header.json", {"harness": {"head": HARNESS}})
     write(directory / "receipt.json", {
         n: hashlib.sha256((directory / n).read_bytes()).hexdigest()
         for n in ("header.json", "decisions.json")})
@@ -222,7 +238,7 @@ class StartupLedger(Ledgers):
         a gate archive that does not replay."""
         path = self.root / name
         (path / "gate").mkdir(parents=True)
-        write(path / "harness-head.txt", HARNESS + "\n")
+        set_head(path, HARNESS)
         if done:
             write(path / "done", "done\n")
             steps = dict(FINISHED, **(steps or {}))
@@ -233,7 +249,10 @@ class StartupLedger(Ledgers):
         if declared is not None:
             record = write(path / "not-client-visible.md", "record\n")
             rsha = hashlib.sha256(record.read_bytes()).hexdigest()
-            write(path / "gate" / "header.json", dict(record_sha256=rsha))
+            set_head(path, HARNESS)
+            held = json.loads((path / "gate" / "header.json").read_text())
+            write(path / "gate" / "header.json",
+                  dict(held, record_sha256=rsha))
             side = write(path / "declared-deltas.json", dict(
                 record_sha256=rsha,
                 totals={"load-simpLib": declared[0],
@@ -369,7 +388,7 @@ class StartupLedger(Ledgers):
         (out / "harness-head.txt").unlink()
         with self.assertRaisesRegex(ValueError, "records no harness"):
             gates.startup_attempts(ledger, out / "gate")
-        write(out / "harness-head.txt", "0" * 40 + "\n")
+        set_head(out, "0" * 40)
         self.use_real_harness()
         with self.assertRaisesRegex(
                 ValueError, "the startup attempt a: cannot build the "
@@ -764,7 +783,8 @@ class ReplayValidity(Ledgers):
         text = json.dumps(tsg.declared_data_raw())
         header = dict(
             schema=sg.SCHEMA, sides=tsg.SIDES, null=False, pairs=pairs,
-            record_sha256=record, clock_mentions=[],
+            harness=dict(head=HARNESS), record_sha256=record,
+            clock_mentions=[],
             hol={l: "/s/%s/hol-source" % l for l in tsg.BASE + tsg.CAND},
             holdir_length=len("/s/b1/hol-source"), sources=tsg.SOURCES,
             declared_text=text,
@@ -780,13 +800,13 @@ class ReplayValidity(Ledgers):
         `fail` failed (an undeclared file carries words), sealed to the
         attempt's own record, of `pairs` pairs."""
         path = self.root / name
-        write(path / "harness-head.txt", HARNESS + "\n")
         record = write(path / "not-client-visible.md", "record\n")
         records = tsg.world(delta=dict(tsg.DELTA, **(
             {"Other.sml": 3} if fail else {})), pairs=pairs)
         (path / "gate").mkdir()
         self.write_archive(path / "gate", records, self.sg.sha_file(record),
                            pairs)
+        set_head(path, HARNESS)
         if done:
             write(path / "done", "done\n")
         for step, text in (steps or {}).items():
@@ -889,7 +909,7 @@ class ReplayValidity(Ledgers):
              "HEAD"), check=True, capture_output=True, text=True,
             stdin=subprocess.DEVNULL).stdout.strip()
         out = self.run_dir("g", fail=True, pairs=self.sg.PAIRS * 5)
-        write(out / "harness-head.txt", head + "\n")
+        set_head(out, head)
         self.use_real_harness()
         path, modules = list(sys.path), dict(sys.modules)
         harness = gates.attempt_harness(self.row(out))
@@ -921,8 +941,8 @@ class ReplayValidity(Ledgers):
         self.sources[new] = STAND_IN % 0
         one, two = self.run_dir("one", fail=True), \
             self.run_dir("two", fail=True, done=True)
-        write(one / "harness-head.txt", old + "\n")
-        write(two / "harness-head.txt", new + "\n")
+        set_head(one, old)
+        set_head(two, new)
         got = gates.startup_attempts(
             self.attempts(("one", 143), ("two", 0)), two / "gate")
         self.assertEqual([(x["attempt"], x["verdict"]) for x in got],
@@ -930,8 +950,8 @@ class ReplayValidity(Ledgers):
         self.assertIn("returned 7", got[0]["replay"])
         self.assertEqual(got[1]["replay"], "")
         # the other way round
-        write(one / "harness-head.txt", new + "\n")
-        write(two / "harness-head.txt", old + "\n")
+        set_head(one, new)
+        set_head(two, old)
         self.assertEqual(gates.classify(self.row(one))["kind"], "fail")
         self.assertEqual(gates.classify(self.row(two, 0))["kind"], "void")
 
@@ -1076,14 +1096,15 @@ class HarnessTree(unittest.TestCase):
         return self.git("rev-parse", "HEAD").strip()
 
     def harness(self, sha, name="a"):
-        row = dict(attempt=name, output=str(self.repo / ("out-" + name)))
-        write(Path(row["output"]) / "harness-head.txt", sha + "\n")
+        row = dict(attempt=name,
+                   output=str(self.repo.parent / ("out-" + name)))
+        set_head(Path(row["output"]), sha)
         return gates.attempt_harness(row, self.entry)
 
     def archive(self, null=True):
         """An archive directory whose header says only whether it is a
         sealed gate."""
-        out = self.repo / "archive"
+        out = self.repo.parent / "archive"
         write(out / "header.json", {} if null else {"record_sha256": "x"})
         return out
 
@@ -1194,11 +1215,18 @@ class HarnessTree(unittest.TestCase):
     def test_the_environment_reaches_the_harness_and_python_vars_do_not(
             self):
         import os
+        # `-E` is pinned by a `sitecustomize.py` on PYTHONPATH that, if the
+        # child imported it, would set T37_POISON, which the replay checks
+        # is absent. `-s` (the user site, outside the test's reach) is
+        # pinned by the argument check in the test of the child's command.
         poison = self.repo / "poison"
         write(poison / "private_runtime.py", "CODE = 99\n")
+        write(poison / "sitecustomize.py",
+              "import os\nos.environ['T37_POISON'] = '1'\n")
         sha = self.commit(0, 0, self.GATE.replace(
             "    return private_runtime.CODE + sc.COUNTS\n",
-            "    return 0 if os.environ.get('T37_MARKER') == 'x' else 9\n"
+            "    return 0 if os.environ.get('T37_MARKER') == 'x' and \\\n"
+            "        'T37_POISON' not in os.environ else 9\n"
             "def code():\n    return private_runtime.CODE\n"))
         harness = self.harness(sha)
         with mock.patch.dict(os.environ, {"T37_MARKER": "x",
@@ -1281,7 +1309,8 @@ class HarnessTree(unittest.TestCase):
             gates.replay_startup(self.archive(), None, harness)
         sha = self.commit(0, 0, (
             "SCHEMA, PAIRS = 'x', 1\ndef replay(args):\n    return 4\n"))
-        with self.assertRaisesRegex(ValueError, "did not replay"):
+        with self.assertRaisesRegex(ValueError,
+                                    "did not replay \\(returned 4\\)"):
             gates.replay_startup(self.archive(), None, self.harness(sha))
 
     def test_paths_given_to_the_child_are_absolute(self):
@@ -1295,14 +1324,14 @@ class HarnessTree(unittest.TestCase):
         harness = self.harness(sha)
         self.archive()
         old = os.getcwd()
-        os.chdir(self.repo)
+        os.chdir(self.repo.parent)
         self.addCleanup(os.chdir, old)
         self.assertEqual(gates.replays(Path("archive"), null=True,
                                        harness=harness), (True, ""))
         gates.replay_startup(Path("archive"), None, harness)
-        write(self.repo / "archive" / "header.json",
+        write(self.repo.parent / "archive" / "header.json",
               {"record_sha256": "x"})
-        write(self.repo / "rec.md", "x\n")
+        write(self.repo.parent / "rec.md", "x\n")
         gates.replay_startup("archive", "rec.md", harness)
 
     def test_symlinks_and_modes_are_kept(self):
@@ -1313,6 +1342,15 @@ class HarnessTree(unittest.TestCase):
                          "allocation_schema.py")
         self.assertTrue(os.access(tree / "tool.sh", os.X_OK))
         self.assertFalse(os.access(tree / "allocation_schema.py", os.X_OK))
+
+    def outside(self, change):
+        """A commit on the current HEAD whose `change` touches the
+        repository outside the performance area; returns its sha."""
+        change(self.repo / "tools")
+        self.git("add", "-A")
+        self.git("-c", "user.name=t", "-c", "user.email=t@t", "commit",
+                 "-q", "-m", "outside")
+        return self.git("rev-parse", "HEAD").strip()
 
     def test_a_harness_outside_the_lineage_is_refused(self):
         write(self.repo / "tools" / "marker.txt", "changed\n")
@@ -1325,15 +1363,80 @@ class HarnessTree(unittest.TestCase):
         with self.assertRaisesRegex(
                 ValueError, "the startup attempt a: cannot build the "
                 "harness tree .* tree outside src/simp/tests/performance/ "
-                "differs from the checkout HEAD's.*\\(1 paths, first: "
+                "differs from the checkout HEAD's.*\\(1 path, first: "
                 "tools/marker.txt"):
             self.harness(other)
         self.assertEqual(gates.HARNESS_TMP, [])
         # only the performance area differs: accepted
         self.assertTrue(self.harness(self.shas[0]).directory.is_dir())
+        gates.release_harness_trees()
+        # a mode-only change outside the area
+        mode = self.outside(lambda t: (t / "marker.txt").chmod(0o755))
+        self.git("reset", "-q", "--hard", self.shas[1])
+        with self.assertRaisesRegex(
+                ValueError, "differs from the checkout HEAD's.*"
+                "\\(1 path, first: tools/marker.txt"):
+            self.harness(mode)
+        # a file added outside the area at HEAD, absent at the harness
+        added = self.outside(lambda t: write(t / "added.txt", "x\n"))
+        with self.assertRaisesRegex(
+                ValueError, "differs from the checkout HEAD's.*"
+                "\\(1 path, first: tools/added.txt"):
+            self.harness(self.shas[1])
+        # and the other way round: absent at HEAD, present at the harness
+        self.git("reset", "-q", "--hard", self.shas[1])
+        with self.assertRaisesRegex(ValueError, "tools/added.txt"):
+            self.harness(added)
+        self.assertEqual(gates.HARNESS_TMP, [])
+
+    def test_the_lineage_check_agrees_with_private_runtimes_listing(self):
+        import sys
+        sys.path.insert(0, str(Path(gates.__file__).parent /
+                               "allocator-counter"))
+        self.addCleanup(sys.path.pop, 0)
+        import private_runtime as pr
+        shas = list(self.shas)
+        shas.append(self.outside(lambda t: write(t / "marker.txt", "2\n")))
+        shas.append(self.outside(lambda t: (t / "marker.txt").chmod(0o755)))
+        shas.append(self.outside(lambda t: write(t / "added.txt", "x\n")))
+        shas.append(self.commit(0, 1))              # area only
+        shas.append(self.outside(lambda t: (t / "added.txt").unlink()))
+        for tip in shas:
+            self.git("reset", "-q", "--hard", tip)
+            gates.release_harness_trees()
+            for sha in shas:
+                same = pr.tree_outside_performance(self.repo, sha) == \
+                    pr.tree_outside_performance(self.repo, "HEAD")
+                try:
+                    self.harness(sha)
+                    accepted = True
+                except gates.HarnessRefused:
+                    accepted = False
+                self.assertEqual(accepted, same, (tip, sha))
+
+    def test_a_missing_or_unrelated_header_refuses_the_attempt(self):
+        row = dict(attempt="h", output=str(self.repo.parent / "out-h"))
+        out = Path(row["output"])
+        write(out / "harness-head.txt", self.shas[0] + "\n")
+        header = out / "gate" / "header.json"
+        for text, why in ((None, "header is missing"),
+                          ("{", "header is not JSON"),
+                          ("[]", "records no harness"),
+                          ("{}", "records no harness"),
+                          ('{"harness": {}}', "records None"),
+                          ('{"harness": {"head": "%s"}}' % self.shas[1],
+                           "records " + self.shas[1])):
+            if text is not None:
+                header.parent.mkdir(parents=True, exist_ok=True)
+                header.write_text(text)
+            with self.assertRaisesRegex(
+                    gates.HarnessRefused, "the startup attempt h ran at "
+                    "harness commit %s.*%s" % (self.shas[0], why)):
+                gates.attempt_harness(row, self.entry)
+        self.assertEqual(gates.HARNESS_TMP, [])
 
     def test_the_harness_head_must_be_the_one_the_header_records(self):
-        row = dict(attempt="h", output=str(self.repo / "out-h"))
+        row = dict(attempt="h", output=str(self.repo.parent / "out-h"))
         write(Path(row["output"]) / "harness-head.txt", self.shas[0] + "\n")
         write(Path(row["output"]) / "gate" / "header.json",
               {"harness": {"head": self.shas[1]}})
@@ -1354,13 +1457,18 @@ class HarnessTree(unittest.TestCase):
         harness = self.harness(sha)
         made, real = [], subprocess.Popen
 
-        def popen(*args, **kw):
-            made.append(real(*args, **kw))
-            return made[-1]
         timer = threading.Timer(
             1.0, lambda: os.kill(os.getpid(), signal.SIGINT))
+
+        def popen(*args, **kw):
+            made.append(real(*args, **kw))
+            timer.start()       # the interrupt comes once the child runs
+            return made[-1]
+        # a background shell starts Python with SIGINT ignored
+        self.addCleanup(signal.signal, signal.SIGINT,
+                        signal.getsignal(signal.SIGINT))
+        signal.signal(signal.SIGINT, signal.default_int_handler)
         start = time.time()
-        timer.start()
         try:
             with mock.patch.object(subprocess, "Popen", popen):
                 with self.assertRaises(KeyboardInterrupt):
@@ -1545,7 +1653,7 @@ class StartupPath(Ledgers):
         """The attempt: closed with `exit_` (by default 0 with `done`, 143
         without), open when None."""
         self.ev.mkdir(exist_ok=True)
-        write(self.ev / "harness-head.txt", HARNESS + "\n")
+        set_head(self.ev, HARNESS)
         if exit_ == "auto":
             exit_ = 0 if done else 143
         self.archive_of(self.ev / "gate", False, total)

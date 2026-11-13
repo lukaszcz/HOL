@@ -370,6 +370,9 @@ def read_startup(out, null, lineage, harness, label=STARTUP):
               header["pairs"] >= pairs, "%s has fewer than %d pairs" % (
                   label, pairs))
     lineage.harness(label, header.get("harness"), clean=True)
+    a.require(header["harness"].get("head") == harness.head,
+              "%s was made by harness commit %s, not the attempt's %s" % (
+                  label, header["harness"].get("head"), harness.head))
     a.require(bool(header.get("record_sha256")) != null,
               "%s %s" % (label, "has a record, which a null control "
                          "never has" if null else
@@ -752,7 +755,9 @@ def harness_tree(head, entry=None):
     default this checkout's `startup_gate.py`) at `head`, at its repository
     path, modes and symlinks kept; at each ancestor level, symlinks to the
     checkout's siblings (`.git` included), so every other path resolves to
-    the checkout. ValueError when `head` or a blob cannot be read."""
+    the checkout. Refused (HarnessRefused, a ValueError) when the tree
+    outside the area differs from the checkout HEAD's (not a harness of this
+    lineage), or when `head` or a blob cannot be read."""
     import startup_gate as sg
     entry = Path(entry or sg.__file__).resolve()
     key = (head, str(entry))
@@ -782,8 +787,9 @@ def harness_tree(head, entry=None):
         if differ:
             raise ValueError(
                 "its tree outside %s differs from the checkout HEAD's, so "
-                "it is not a harness of this lineage (%d paths, first: %s)"
-                % (where, len(differ), ", ".join(differ[:5])))
+                "it is not a harness of this lineage (%d path%s, first: %s)"
+                % (where, len(differ), "" if len(differ) == 1 else "s",
+                   ", ".join(differ[:5])))
         listing = [e.split(b"\t", 1) for e in git(
             "ls-tree", "-r", "-z", head, "--", where,
             cwd=root).split(b"\0") if e]
@@ -839,7 +845,9 @@ def attempt_harness(row, entry=None):
     """The harness of the attempt `row` (design decision 38): its commit
     (`harness-head.txt`) and the tree made for it (`harness_tree`). Refused
     (ValueError naming the attempt) when the attempt records no harness
-    commit or the tree cannot be built."""
+    commit, its gate header (`gate/header.json`) does not record that same
+    commit as its harness (the gate and the null are tied to one harness
+    in `read_startup`), or the tree cannot be built."""
     import startup_gate as sg
     entry = Path(entry or sg.__file__).resolve()
     out = Path(row["output"])
@@ -848,16 +856,25 @@ def attempt_harness(row, entry=None):
               "the startup attempt %s records no harness commit "
               "(harness-head.txt)" % row["attempt"])
     header = out / "gate" / "header.json"
-    if header.is_file():
-        try:
-            held = a.load(header).get("harness")
-        except ValueError:
-            held = None
-        held = held.get("head") if isinstance(held, dict) else None
-        a.require(held is None or held == head,
-                  "the startup attempt %s ran at harness commit %s "
-                  "(harness-head.txt), but its gate header records %s" % (
-                      row["attempt"], head, held))
+    who = "the startup attempt %s" % row["attempt"]
+    try:
+        held = json.loads(header.read_text())
+    except OSError:
+        raise HarnessRefused("%s ran at harness commit %s, but its gate "
+                             "header is missing (%s)" % (who, head, header)
+                             ) from None
+    except ValueError:
+        raise HarnessRefused("%s ran at harness commit %s, but its gate "
+                             "header is not JSON (%s)" % (who, head, header)
+                             ) from None
+    held = held.get("harness") if isinstance(held, dict) else None
+    if not isinstance(held, dict):
+        raise HarnessRefused("%s ran at harness commit %s, but its gate "
+                             "header records no harness" % (who, head))
+    if held.get("head") != head:
+        raise HarnessRefused("%s ran at harness commit %s "
+                             "(harness-head.txt), but its gate header "
+                             "records %s" % (who, head, held.get("head")))
     try:
         directory = harness_tree(head, entry)
     except HarnessRefused as error:
@@ -1147,7 +1164,7 @@ def replay_startup(out, record, harness):
     a.require(result.get("code") == 0,
               "the startup gate in %s did not replay%s" % (
                   out, ": " + result["error"] if "error" in result
-                  else ""))
+                  else " (returned %s)" % result.get("code")))
 
 
 def startup_gate(header, decisions, null_decisions, problems=()):

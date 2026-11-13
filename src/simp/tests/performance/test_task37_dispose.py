@@ -1214,7 +1214,7 @@ class Gates(unittest.TestCase):
     def test_a_startup_gate_is_sealed_to_the_record_made_in_its_run(self):
         import hashlib
         import startup_gate as sg
-        harness = gates.Harness("t", "0" * 40, Path("."), "x")
+        harness = gates.Harness("t", CAND, Path("."), "x")
         patch = mock.patch.object(gates, "harness_constants",
                                   lambda h: (sg.SCHEMA, sg.PAIRS))
         patch.start()
@@ -1243,6 +1243,15 @@ class Gates(unittest.TestCase):
                     root / "n", True, sha), True, lin_, harness)
             gates.read_startup(self.startup_archive(
                 root / "n2", True, None), True, lin_, harness)
+            # a gate or null made by another harness than the attempt's
+            other_harness = gates.Harness("t", "d" * 40, Path("."), "x")
+            for null, name in ((False, "g3"), (True, "n3")):
+                with self.assertRaisesRegex(
+                        ValueError, "made by harness commit %s, not the "
+                        "attempt's %s" % (CAND, "d" * 40)):
+                    gates.read_startup(self.startup_archive(
+                        root / name, null, None if null else sha), null,
+                        lin_, other_harness)
             # no record given, another file, a record naming other revisions
             with self.assertRaisesRegex(ValueError, "pass it"):
                 gates.check_record(header, None, lin_)

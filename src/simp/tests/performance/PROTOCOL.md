@@ -5670,9 +5670,14 @@ ancestor level (`.git` too); one tree per commit, removed when dispose
 exits, also on an error. The tree is that harness's only if its tree
 outside the performance area equals the checkout HEAD's (the lineage rule):
 dispose compares the two once per commit and refuses a mismatch, naming the
-attempt, the commit and the first differing paths; it also refuses an
-attempt whose `harness-head.txt` is not the harness head in its gate
-header. The `.git` symlink makes the tree a work tree of the checkout's
+attempt, the commit and the first differing paths. An earlier attempt
+made before a commit that changed something outside the performance area
+therefore refuses the whole disposition, by design. Dispose also refuses
+an attempt whose `gate/header.json` is missing, is not JSON, records no
+harness or records a harness head other than its `harness-head.txt` (a
+missing harness head is a refusal, not a skip), and a gate or null whose
+header names a harness head other than the attempt's: the gate and the
+null are tied to one harness. The `.git` symlink makes the tree a work tree of the checkout's
 repository with another performance area, so the replay contract runs no
 git command there (a harness that did would see it dirty). A child
 `python3 -B -E -s` process (stdin `/dev/null`, dispose's environment, no
