@@ -230,6 +230,10 @@ TASK37_HISTORY = {
     "task33_offline.py": [
         {"sha256": "f817b9a2f3ad3a124ae9ab0b06b6d5"
                    "64ba15ee57bfa8219b8c95b8dd409a4146", "bytes": 95782}],
+    # before the disposal took the harvest the disposition names
+    "task33_dispose.py": [
+        {"sha256": "014a8860938753d609bc4462e8b03d"
+                   "ced7e2a95de99293e3ab0da0398bfaff9c", "bytes": 27801}],
 }
 TASK37_T32_HISTORY = {
     "task32_downstream.py": TASK37_DRIVER,

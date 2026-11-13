@@ -903,6 +903,11 @@ class OfflineBinding(unittest.TestCase):
 
     TABLES = tuple(dw.TABLES)   # every table: the C32 two and the TASK37 two
 
+    def offline_history(self):
+        """The TASK37 history of the files the offline reports seal."""
+        return [(n, v) for n, v in dw.TASK37_HISTORY.items()
+                if n in offline.code_seals()]
+
     def with_seal(self, name, seal):
         seals = dict(offline.code_seals())
         seals[name] = seal
@@ -942,14 +947,14 @@ class OfflineBinding(unittest.TestCase):
             copy = Path(tmp) / "other_declared.json"
             copy.write_text(self.TASK37.read_text())
             with offline.using_declared(copy):
-                for name, seals in dw.TASK37_HISTORY.items():
+                for name, seals in self.offline_history():
                     with self.assertRaisesRegex(ValueError, "changed"):
                         offline.check_code(self.with_seal(name, seals[0]))
                 self.assertEqual(offline.history_of_declared(), {})
 
     def test_an_unknown_seal_is_refused_under_the_task37_declaration(self):
         with offline.using_declared(self.TASK37):
-            for name, seals in dw.TASK37_HISTORY.items():
+            for name, seals in self.offline_history():
                 old = self.with_seal(name, dict(
                     seals[0], bytes=seals[0]["bytes"] + 1))
                 with self.assertRaisesRegex(ValueError, "changed"):
@@ -1304,7 +1309,8 @@ class HistoryOfTheKeptRecords(unittest.TestCase):
                 kept.append(self.seal_at(self.HARVEST2, name))
             self.assertEqual(seals, kept, name)
         self.assertEqual(sorted(dw.TASK37_HISTORY), [
-            "loading.py", "task32_downstream.py", "task33_offline.py"])
+            "loading.py", "task32_downstream.py", "task33_dispose.py",
+            "task33_offline.py"])
         self.assertEqual(dw.TABLES["task37-t33"].history, dw.TASK37_HISTORY)
         self.assertEqual(
             dw.TABLES["task37-t32"].history,

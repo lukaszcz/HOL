@@ -511,14 +511,20 @@ that pins the history constant is edited with it:
   `task32_downstream.py` also holds the seal of the code that made the
   counts file and runs the first decision stage (`e1fef186b2`), and that of
   the last driver before it became a driver of tables (`a2a7d3c487`, so that
-  TASK32's records still replay);
+  TASK32's records still replay); and `loading.py` before the halt of
+  in-flight processes (decision 32, `c8d74077`), which those records ran;
 - the TASK33 table (`task32_downstream.TASK33_HISTORY`): the driver seal
   `TASK33_DRIVER_SEALS`, the `task33_offline.py` seal, and it includes the
-  `task33_storage.py` seals of `task33_storage.UNDIVIDED_CAP`;
+  `task33_storage.py` seals of `task33_storage.UNDIVIDED_CAP`, and the
+  same `loading.py` seal;
   `task33_offline.check_code` accepts that history besides TASK32's.
 - the TASK37 tables (`task32_downstream.TASK37_HISTORY` for `task37-t33`,
   `TASK37_T32_HISTORY` for `task37-t32`): the seals of `task32_downstream.py`
-  and `task33_offline.py` before the pooled logs of the harvest.
+  and `task33_offline.py` before the pooled logs of the harvest, and of
+  `loading.py` before the halt of in-flight processes (decision 32); the
+  t33 table alone also lists the driver of fe2ea792d9 (the pooled logs,
+  which made the redrawn harvest `offline/harvest2`) and
+  `task33_dispose.py` before it took the harvest the disposition names.
   `task33_offline.check_code` takes the history from the table that names
   the selected declaration (`history_of_declared`, as `archive_table`), not
   from the active table: TASK33's declaration accepts TASK32's and TASK33's
@@ -4886,6 +4892,11 @@ pair must be built with the scratch `$CL/.agent-files/scratch/task32`
     C="--repo . --base-root $S/base --cand-root $S/cand \
       --manifest $E/snapshots.json"
     D=$P/task37_declared.json
+    # the harvest the storage counts and the disposition bind: the last
+    # passing harvest drawn. A failed harvest is redrawn into a fresh
+    # output (decision 33's redraw rule) and stays in the evidence; the
+    # disposition names the one it took by seal (`task33_dispose`)
+    HV=$E/offline/harvest2/harvest.json
     # wave 2, the S2 closure total (measured live, committed alone)
     $Q smoke $C --output $E/s-smoke-a --authorize-measurements
     $Q smoke $C --output $E/s-smoke-b --authorize-measurements
@@ -4920,7 +4931,7 @@ pair must be built with the scratch `$CL/.agent-files/scratch/task32`
     # after the t32 first stage and its archive report:
     $Q predeclare $C --pilot $E/s-pilot --smoke $E/s-smoke \
       --control $E/s-control --offline $E/offline/audit.json \
-      --offline $E/offline/harvest/harvest.json \
+      --offline $HV \
       --offline $EV/t32/offline/archive.json \
       --out $P/task37_t33_storage_counts.json
     # commit task37_t33_storage_counts.json alone in main (Commit rule: cp,
@@ -4930,7 +4941,7 @@ pair must be built with the scratch `$CL/.agent-files/scratch/task32`
     # before dispose: the TASK33 disposition (its last stages)
     $Q dispose --repo . --stage $E/s-run --stage $E/s-audit \
       --timing-stage $E/t-run --offline $E/offline/audit.json \
-      --offline $E/offline/harvest/harvest.json \
+      --offline $HV \
       --offline $EV/t32/offline/archive.json --out $E/disposition.json
 
 The stage 2 and follow-up recipes of `t33`, as owed (each counts file is
@@ -5159,7 +5170,7 @@ replaces):
     R33="--stage $EV/t33/s-run --stage $EV/t33/s-audit"
     R33="$R33 --timing-stage $EV/t33/t-run"
     R33="$R33 --offline $EV/t33/offline/audit.json"
-    R33="$R33 --offline $EV/t33/offline/harvest/harvest.json"
+    R33="$R33 --offline $EV/t33/offline/harvest2/harvest.json"   # $HV
     R33="$R33 --offline $EV/t32/offline/archive.json"
     G=$EV/startup-gate/TAG      # TAG: the last startup attempt
     # env --default-signal: Ctrl-C reaches dispose from a background shell
@@ -5503,8 +5514,10 @@ without editing what their kept records depend on.
   (`/dev/shm/t37-t32`, `/dev/shm/t37-t33`, the storage stages below the
   latter in `storage`), and the units, policy and code of their parents,
   with no history but that of the kept TASK37 records (`TASK37_HISTORY`,
-  `TASK37_T32_HISTORY`: the versions of `task32_downstream.py` and, for
-  `task37-t33`, `task33_offline.py` before the pooled logs). TASK37
+  `TASK37_T32_HISTORY`: the versions of `task32_downstream.py`, of
+  `loading.py` before the halt and, for `task37-t33`, `task33_offline.py`
+  before the pooled logs, the harvest2 driver and `task33_dispose.py`
+  before it selected the harvest by seal). TASK37
   passes `--table task37-t32` or `--table
   task37-t33` (before the command, to the storage driver as well), and
   each table gets its own smoke, pilot and predeclare at the final

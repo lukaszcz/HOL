@@ -26,6 +26,7 @@ import task31_dispose as d31
 import task32_downstream as d32
 import task37_cases as c
 import task37_dispose as d
+from task37_dispose_testbed import lines_record
 import task37_gates as gates
 import task37_followup as followup
 import task37_grid as grid
@@ -640,11 +641,8 @@ class Allocation(unittest.TestCase):
                     rejections=[dict(archive="x-1.json.xz",
                                      reason="unresolved cell")])
         judged = dict(attempt="k2", status="pass", judged=True, void=False)
-        record = dict(
-            timing_attempts={}, startup_attempts=[], identity_unaccounted={},
-            cells={}, task32={}, task33={}, gates={}, identity_grid={},
-            allocation_case={}, timing_grid={}, retained_slope={},
-            attempts=dict(allocation={"task37-downstream": [void, judged]}))
+        record = lines_record(attempts=dict(
+            allocation={"task37-downstream": [void, judged]}))
         self.assertEqual(d.lines(record), [
             "ALLOCATION-ATTEMPT task37-downstream k1 status failed: void "
             "(every cell archive rejected on replay)",

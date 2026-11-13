@@ -18,6 +18,7 @@ from unittest import mock
 import acceptance as a
 import test_startup_gate as tsg
 import task37_dispose as d
+from task37_dispose_testbed import lines_record
 import task37_gates as gates
 
 
@@ -1901,15 +1902,10 @@ class StartupPath(Ledgers):
                          [False, True])
 
     def test_the_replay_reason_is_in_the_attempt_line(self):
-        record = dict(timing_attempts={}, identity_unaccounted={},
-                      cells={}, task32={}, task33={}, gates={},
-                      identity_grid={}, allocation_case={},
-                      timing_grid={}, retained_slope={},
-                      attempts=dict(allocation={}),
-                      startup_attempts=[dict(
-                          attempt="a", status="failed", judged=False,
-                          verdict="void", decision=None, problems=[],
-                          replay="the replay returned 7")])
+        record = lines_record(startup_attempts=[dict(
+            attempt="a", status="failed", judged=False, verdict="void",
+            decision=None, problems=[],
+            replay="the replay returned 7")])
         self.assertIn("replay: the replay returned 7", d.lines(record)[0])
 
     def test_the_null_that_does_not_replay_is_recorded_absent(self):

@@ -395,13 +395,21 @@ def tree_bytes(path):
     return total
 
 
-def sealed_evidence(evidence):
+def sealed_evidence(evidence, disposition):
     """The harvest and the api-audit receipt under `evidence`, both
-    sealed: {harvest, audit}; refuses when either is absent or changed."""
+    sealed: {harvest, audit}; refuses when either is absent or changed.
+    The harvest is the one the sealed `disposition` names (its
+    `offline["harvest"]` seal): a failed harvest stays in the evidence
+    beside the passing one drawn after it, and exactly one harvest report
+    has the named seal."""
     evidence = Path(evidence).resolve(strict=True)
-    harvests = sorted(evidence.rglob("harvest.json"))
-    d.require(len(harvests) == 1, "%d harvest reports under %s, not one" %
-              (len(harvests), evidence))
+    named = a.load(Path(disposition["path"])).get("offline", {}).get(
+        "harvest")
+    harvests = [p for p in sorted(evidence.rglob("harvest.json"))
+                if named is not None and a.seal(p) == named]
+    d.require(len(harvests) == 1, "%d harvest reports under %s have the "
+              "seal the disposition names, not one" % (
+                  len(harvests), evidence))
     path = harvests[0]
     report = a.load(path)
     d.require(report.get("schema") == offline.SCHEMA and
@@ -568,8 +576,9 @@ def dispose_snapshots(args):
         for path, how in plan:
             d.require(os.path.lexists(path), "%s is absent: the snapshots "
                       "are not whole (nothing was removed)" % path)
-    sealed = sealed_evidence(evidence)
-    sealed["disposition"] = sealed_disposition(evidence)
+    disposition = sealed_disposition(evidence)
+    sealed = sealed_evidence(evidence, disposition)
+    sealed["disposition"] = disposition
     sides = {s: dict(root=Path(manifest["sides"][s]["root"]),
                      pin=manifest["sides"][s]["pin"],
                      tree=manifest["sides"][s]["tree"]) for s in LABELS}

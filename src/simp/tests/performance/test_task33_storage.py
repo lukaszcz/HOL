@@ -2100,19 +2100,22 @@ class FakeTree:
         self.audit()
         self.disposition()
 
-    def harvest(self, **change):
-        path = self.evidence / "harvest.json"
+    def harvest(self, where=".", **change):
+        path = self.evidence / where / "harvest.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(dw.dumps(dict(dict(
             schema=offline.SCHEMA, command="harvest", success=True),
             **change)))
         Path(str(path) + ".seal").write_text(dw.dumps(acc.seal(path)))
 
     def disposition(self, **change):
-        """A sealed disposition.json that owes nothing."""
+        """A sealed disposition.json that owes nothing and names the
+        harvest at the top of the evidence (`offline.harvest`)."""
         path = self.evidence / "disposition.json"
         path.write_text(dw.dumps(dict(dict(
             schema=dispose.SCHEMA, status="pass", owed=[],
-            attribution_needed=[]), **change)))
+            attribution_needed=[], offline=dict(harvest=acc.seal(
+                self.evidence / "harvest.json"))), **change)))
         Path(str(path) + ".seal").write_text(dw.dumps(acc.seal(path)))
 
     def audit(self, ok=True):
@@ -2230,15 +2233,46 @@ class DisposeSnapshots(unittest.TestCase):
     def test_no_harvest_or_an_unsealed_one_refuses_and_removes_nothing(self):
         t = self.tree
         t.harvest(extra=1)
+        t.disposition()
         Path(str(t.evidence / "harvest.json") + ".seal").write_text(
             dw.dumps(dict(sha256="0" * 64, bytes=1)))
         self.refused("harvest seal")
         (t.evidence / "harvest.json").unlink()
         self.refused("0 harvest reports")
 
-    def test_a_failed_harvest_refuses(self):
+    def test_a_failed_harvest_the_disposition_names_refuses(self):
         self.tree.harvest(success=False)
+        self.tree.disposition()
         self.refused("not a successful offline report")
+
+    def test_a_failed_harvest_beside_the_named_passing_one_is_kept(self):
+        t = self.tree
+        t.harvest("redrawn", extra="passing")
+        t.harvest(success=False)         # the first draw stays, failed
+        t.disposition(offline=dict(harvest=acc.seal(
+            t.evidence / "redrawn/harvest.json")))
+        failed = t.evidence / "harvest.json"
+        before = failed.read_bytes()
+        sealed = dispose.sealed_evidence(
+            t.evidence, dispose.sealed_disposition(t.evidence))
+        self.assertEqual(sealed["harvest"]["path"],
+                         str(t.evidence / "redrawn/harvest.json"))
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(dispose.dispose_snapshots(t.args()), 0)
+        self.assertEqual(failed.read_bytes(), before)
+
+    def test_a_harvest_no_report_has_the_seal_of_is_refused(self):
+        t = self.tree
+        t.harvest("redrawn", extra="passing")
+        t.disposition(offline=dict(harvest=dict(sha256="0" * 64, bytes=1)))
+        self.refused("0 harvest reports .* the disposition names")
+        t.disposition(offline={})
+        self.refused("0 harvest reports .* the disposition names")
+
+    def test_two_harvests_of_the_named_seal_are_refused(self):
+        t = self.tree
+        t.harvest("copy")             # the same bytes: the same seal
+        self.refused("2 harvest reports .* the disposition names")
 
     def test_the_audit_receipt_must_be_the_sealed_pass(self):
         t = self.tree
