@@ -6944,6 +6944,9 @@ local
   val NEGATED_IMPLICATION_ANTECEDENT = Library.prove
     (``!p q. ~(p ==> q) ==> p``, tautLib.TAUT_TAC)
 
+  val DOUBLE_NEGATION_ELIMINATION = Library.prove
+    (``!p. ~~p ==> p``, tautLib.TAUT_TAC)
+
   (* Extract equality facts by a fixed, structurally decreasing derivation.
      The source theorem remains an exact hypothesis throughout.  In
      particular, this does not inspect consequents, disjunctions, or arbitrary
@@ -6967,16 +6970,28 @@ local
           val _ = depth <= max_facts orelse
             raise ERR "asserted_equality_theorems"
               "assertion structure exceeds equality extraction bound"
-        in
-          if boolSyntax.is_eq conclusion then
+          fun fact theorem =
             (facts_seen := !facts_seen + 1;
              !facts_seen <= max_facts orelse
                raise ERR "asserted_equality_theorems"
                  "too many explicit equality components";
              [theorem])
+        in
+          if boolSyntax.is_eq conclusion then fact theorem
+          (* solve-eqs also eliminates an asserted Boolean variable or its
+             negation, as the equation p = T or p = F. *)
+          else if Term.is_var conclusion then fact (Drule.EQT_INTRO theorem)
+          else if boolSyntax.is_neg conclusion andalso
+              Term.is_var (boolSyntax.dest_neg conclusion) then
+            fact (Drule.EQF_INTRO theorem)
           else if boolSyntax.is_conj conclusion then
             derive (depth + 1) (Thm.CONJUNCT1 theorem) @
             derive (depth + 1) (Thm.CONJUNCT2 theorem)
+          else if boolSyntax.is_neg conclusion andalso
+              boolSyntax.is_neg (boolSyntax.dest_neg conclusion) then
+            derive (depth + 1) (Thm.MP (Thm.SPEC
+              (boolSyntax.dest_neg (boolSyntax.dest_neg conclusion))
+              DOUBLE_NEGATION_ELIMINATION) theorem)
           else
             let
               val implication = boolSyntax.dest_neg conclusion
@@ -6999,12 +7014,14 @@ local
       facts
     end
 
-  (* Substitution is the only use made of replayed assertions.  Most solve-eqs
+  (* Substitution is the only use made of the assertions.  Most solve-eqs
      residues become reflexive immediately.  Integer min/max certificates use
      complementary < and <= conditionals; after substitution that narrowly
      admitted linear-conditional residue is sent to the existing arithmetic
-     owner, with no assertion context. *)
-  fun asserted_equality_substitution_prove assertions target =
+     owner, with no assertion context.  A substituted constructor can leave
+     a case/destructor redex; that residue goes to the existing datatype
+     owner, again with no assertion context. *)
+  fun asserted_equality_substitution_prove admit assertions target =
     let
       val equalities = asserted_equality_theorems assertions
       val _ = not (List.null equalities) orelse
@@ -7048,6 +7065,9 @@ local
             end
           val decision = reflexive ()
             handle Feedback.HOL_ERR _ => integer_conditional ()
+            handle Feedback.HOL_ERR _ =>
+              SmtDatatypeProve.datatype_prove_with_admission admit
+                substituted
         in
           Thm.EQ_MP (Thm.SYM substitution) decision
         end
@@ -7743,12 +7763,22 @@ local
        removed from the set of hypotheses of the final theorem. *)
 
     (* solve-eqs may substitute only explicit equality facts reconstructed from
-       assertions that this proof has already replayed. *)
+       assertions: first those this proof has already replayed, then the
+       goal's own assertions.  Z3 4.11 eliminates a solved equality without
+       ever asserting it in the proof; the final hypothesis check still
+       confines every source to the goal. *)
     (let
+       fun substitute assertions =
+         asserted_equality_substitution_prove (#datatype_admit state)
+           (HOLset.listItems assertions) t
        val theorem = rewrite_profile "asserted-equality-substitution"
          "rewrite(25c)(asserted-equality-substitution)"
-         (asserted_equality_substitution_prove
-           (HOLset.listItems (#asserted_hyps state))) t
+         (fn () => substitute (#asserted_hyps state)
+            handle Feedback.HOL_ERR holerr =>
+              if SmtResource.is_resource_gate holerr then
+                raise Feedback.HOL_ERR holerr
+              else substitute (HOLset.union (#asserted_hyps state,
+                #allowed_asserted_hyps state))) ()
      in
        (state_cache_thm state theorem, theorem)
      end
@@ -10878,8 +10908,9 @@ in
   val arith_prove_ediv_emod_for_test = arith_prove_ediv_emod
   val definition_normalization_prove_for_test =
     definition_normalization_prove
-  val asserted_equality_substitution_prove_for_test =
+  fun asserted_equality_substitution_prove_for_test assertions =
     asserted_equality_substitution_prove
+      (SmtDatatypeProve.default_admission ()) assertions
   val ground_subterm_eval_conv_for_test =
     profiled_ground_subterm_eval_conv
   val ground_subterm_eval_max_nodes_for_test =

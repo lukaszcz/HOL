@@ -22,6 +22,23 @@ fun assert (x, msg) = if x then () else die ("FAIL: " ^ msg)
 fun check_oracle_tags name thm =
   Library.check_oracle_tags "HolSmtLib" name thm
 
+(* Budget for a guard against algorithmic blowup (e.g. unfolding a shared
+   Type DAG as a tree).  Charge mutator CPU only: GC time, including the
+   full collection inside each PolyML.shareCommonData, scales with the
+   whole process heap rather than the fixture, and wall-clock time with
+   host load.  A generous wall-clock guard still stops runaway work. *)
+fun within_mutator_seconds seconds f x =
+  let
+    val timer = Timer.startCPUTimer ()
+    val result = Timeout.apply (Time.fromSeconds (60 * seconds)) f x
+    val {nongc = {usr, sys}, ...} = Timer.checkCPUTimes timer
+    val mutator = Time.+ (usr, sys)
+  in
+    if Time.> (mutator, Time.fromSeconds seconds) then
+      raise Timeout.TIMEOUT mutator
+    else result
+  end
+
 fun with_temp_file contents f =
 let
   val path = OS.FileSys.tmpName ()
@@ -23550,7 +23567,7 @@ let
     val q = ``compact_ac_other:bool``
     fun verify prove (left,right) =
       let
-        val theorem = Timeout.apply (Time.fromSeconds 5) prove (left,right)
+        val theorem = within_mutator_seconds 5 prove (left,right)
         val (actual,expected) = boolSyntax.dest_eq (Thm.concl theorem)
       in
         assert (Portable.pointer_eq (actual,left) andalso
@@ -23793,7 +23810,7 @@ let
       ``((n:num) = n) /\ ((p:bool) = p)`` false
   in () end
   val _ = print "TASK28_BOUNDARY independent-DAG\n"
-  val _ = Timeout.apply (Time.fromSeconds 5) (fn () =>
+  val _ = within_mutator_seconds 5 (fn () =>
     let
       val source = boolSyntax.mk_eq (left,right)
       val normalized = checked source SmtReplayCanon.cpc_canon_conv
@@ -23804,7 +23821,7 @@ let
       "independent shared reflexivity did not reduce") end) ()
   (* Exercise the repaired cross-Type path with shared operands and an
      independently allocated copy, without native whole-DAG comparison. *)
-  val _ = Timeout.apply (Time.fromSeconds 5) (fn () =>
+  val _ = within_mutator_seconds 5 (fn () =>
     List.app (fn branch =>
       let
         val q = Term.mk_var ("compact_conditional_leaf",Type.bool)
@@ -23817,7 +23834,7 @@ let
       [left,right]) ()
   (* Exercise the actual entry wrapper too: QCHANGED_CONV would compare
      the independent whole result after the compact converter returned. *)
-  val _ = Timeout.apply (Time.fromSeconds 5) (fn () =>
+  val _ = within_mutator_seconds 5 (fn () =>
     let
       val target = boolSyntax.mk_eq (left,right)
       val initial = Z3_Proof.empty_proof "4.11.2"
@@ -23838,7 +23855,7 @@ let
   val y = Term.mk_var ("compact_canon_y",ty)
   val source = boolSyntax.mk_eq (y,x)
   val _ = print "TASK28_BOUNDARY binder-compatibility-and-metrics\n"
-  val _ = Timeout.apply (Time.fromSeconds 5) (fn () =>
+  val _ = within_mutator_seconds 5 (fn () =>
     let
       val b = Term.mk_var ("compact_canon_bound",Type.bool)
       fun unchanged source = assert (Portable.pointer_eq
@@ -23947,14 +23964,14 @@ let
       "dispatch no longer rejects the first original excess DAG node")
   in () end
   val _ = print "TASK28_BOUNDARY polymorphic-schema\n"
-  val _ = Timeout.apply (Time.fromSeconds 5) (fn () =>
+  val _ = within_mutator_seconds 5 (fn () =>
     let
       val result = checked source SmtReplayCanon.reorient_equality_conv
       val (a,b) = boolSyntax.dest_eq result
     in assert (order (a,x) = EQUAL andalso order (b,y) = EQUAL,
       "generic typed orientation lost an opaque operand") end) ()
   (* An absent optional index must not enable whole-term alpha validation. *)
-  val _ = Timeout.apply (Time.fromSeconds 5) (fn () =>
+  val _ = within_mutator_seconds 5 (fn () =>
     assert ((ignore (SmtSkeletonProve.validate_theorem_with (fn _ => NONE)
         "no-index" left (Thm.REFL right));false)
       handle HOL_ERR detail => String.isSubstring "made no progress"
@@ -23976,7 +23993,7 @@ let
     in assert (Portable.pointer_eq (opened,body),
       "count-only bridge changed the stored experimental body") end
   val _ = print "TASK28_BOUNDARY schema-binder-frontier\n"
-  val _ = Timeout.apply (Time.fromSeconds 1) (fn () =>
+  val _ = within_mutator_seconds 1 (fn () =>
     let
       val graph = SmtReplayGraph.new ()
       val scope = SmtReplayGraph.root_scope graph
@@ -23992,7 +24009,7 @@ let
     end) ()
   (* Pointer-summary misses must stay optional and linearly bounded.
      This annotation is genuinely unshared, not another repeated DAG. *)
-  val _ = Timeout.apply (Time.fromSeconds 2) (fn () =>
+  val _ = within_mutator_seconds 2 (fn () =>
     let
       fun independent 0 = Type.bool
         | independent n = Type.--> (independent (n-1),independent (n-1))
@@ -24047,7 +24064,7 @@ let
     !(#edges context) = 8002,
     "metadata exhaustion changed native admission, IDs or original metrics")
   val _ = print "TASK28_BOUNDARY metadata-fallback-diagnostic\n"
-  val _ = Timeout.apply (Time.fromSeconds 5) (fn () =>
+  val _ = within_mutator_seconds 5 (fn () =>
     let
       fun product 0 = Type.bool
         | product n = let val ty = product (n - 1)
@@ -24609,7 +24626,7 @@ let
      equal prefix. Type IDs only reject; they do not establish equality. *)
   fun late_type suffix = Type.mk_type ("prod",
     [poly_product 79, Type.mk_vartype suffix])
-  val _ = Timeout.apply (Time.fromSeconds 2)
+  val _ = within_mutator_seconds 2
     (fn () => assert (
       ((ignore (SmtSkeletonProve.bounded_nodewise_equality 16
           (variable (late_type "'task21_left"))
@@ -24621,10 +24638,10 @@ let
       "late Type mismatch entered native equality")) ()
   val poly_leaf = variable (poly_product 80)
   val _ = equal "polymorphic pointer depth80" poly_leaf poly_leaf
-  val _ = Timeout.apply (Time.fromSeconds 2)
+  val _ = within_mutator_seconds 2
     (fn () => equal "shared polymorphic Type depth80" poly_leaf
       (variable (Term.type_of poly_leaf))) ()
-  val _ = Timeout.apply (Time.fromSeconds 2)
+  val _ = within_mutator_seconds 2
     (fn () => assert (
       ((ignore (SmtSkeletonProve.bounded_nodewise_equality 16 poly_leaf
           (Term.mk_var ("task21_other_leaf", Term.type_of poly_leaf)));
@@ -24647,7 +24664,7 @@ let
   val _ = assert (not (SmtReplayLeafProof.large_type_pair (fn _ => ())
       partial_left partial_right),
     "shared Type suffix was mistaken for expensive built-in equality")
-  val _ = Timeout.apply (Time.fromSeconds 2) (fn () =>
+  val _ = within_mutator_seconds 2 (fn () =>
     equal "shared suffix" (variable partial_left) (variable partial_right)) ()
   val _ = assert (SmtReplayLeafProof.large_type_pair (fn _ => ())
       (poly_product 80) (poly_product 80),
@@ -24660,12 +24677,12 @@ let
       val right = make right_type
       val _ = assert (not (Portable.pointer_eq (left_type, right_type)),
         label ^ " Type allocations were not independent")
-    in Timeout.apply (Time.fromSeconds 2)
+    in within_mutator_seconds 2
       (fn () => equal (label ^ Int.toString depth) left right) () end
   val _ = List.app (fn make => List.app (independent_poly make) [21, 80])
     [("independent polymorphic variable", variable),
      ("independent polymorphic constant", constant)]
-  val _ = Timeout.apply (Time.fromSeconds 2)
+  val _ = within_mutator_seconds 2
     (fn () => equal "shared polymorphic constant"
       (constant (Term.type_of poly_leaf))
       (constant (Term.type_of poly_leaf))) ()
@@ -24673,7 +24690,7 @@ let
     (boolSyntax.mk_eq (poly_leaf, poly_leaf),
      let val leaf = variable (poly_product 80)
      in boolSyntax.mk_eq (leaf, leaf) end)
-  val _ = Timeout.apply (Time.fromSeconds 2) (fn () =>
+  val _ = within_mutator_seconds 2 (fn () =>
     let
       val {root = SmtSkeletonProve.GraphNode {equality, ...}, ...} =
         SmtSkeletonProve.build_cnf_graph graph_target
@@ -24713,7 +24730,7 @@ let
     [Type.mk_vartype "'task21_prefix", product 80])
   val prefix = variable prefix_type
   val _ = equal "polymorphic prefix" prefix prefix
-  val _ = Timeout.apply (Time.fromSeconds 2)
+  val _ = within_mutator_seconds 2
     (fn () => equal "shared polymorphic prefix" prefix
       (variable prefix_type)) ()
   (* Conversely a late variable does not make the preceding ground walk
@@ -24727,12 +24744,12 @@ let
     (operator, Term.mk_var ("task21_domain_value", domain))
   val _ = rejected "actual application result" application application
   val huge_binder = identity 80
-  val _ = Timeout.apply (Time.fromSeconds 2)
+  val _ = within_mutator_seconds 2
     (fn () => rejected "binder before count-only native opening"
       huge_binder huge_binder) ()
   (* Exercise the graph's separate raw preflight and nested binder callback.
      No construction of equality at the huge result Type is needed here. *)
-  val graph_rejected = Timeout.apply (Time.fromSeconds 2)
+  val graph_rejected = within_mutator_seconds 2
     (fn () =>
       ((ignore (SmtSkeletonProve.build_cnf_graph huge_binder); false)
        handle Feedback.HOL_ERR error =>
@@ -24743,7 +24760,7 @@ let
     Term.type_of huge_binder --> Type.bool)
   val nested = Term.mk_abs (Term.mk_var ("task21_outer", Type.bool),
     Term.mk_comb (consume, huge_binder))
-  val _ = Timeout.apply (Time.fromSeconds 2)
+  val _ = within_mutator_seconds 2
     (fn () => rejected "nested count-only Type admission" nested nested) ()
   (* Count-only opening uses the range, not the larger function Type.
      Admission of this outer frame does not compare the inner binder. *)
@@ -26959,17 +26976,58 @@ let
   fun exact_source source theorem =
     List.length (Thm.hyp theorem) = 1 andalso
     List.exists (Term.aconv source) (Thm.hyp theorem)
+  (* A negated goal x <> y arrives as ~~(x = y). *)
+  val double_negation = ``~~((asserted_x:int) = asserted_y)``
   val direct_theorem = prove direct
   val conjunction_theorem = prove conjunction
   val negated_theorem = prove negated_implication
+  val double_negation_theorem = prove double_negation
   fun rejects source =
     ((ignore (prove source); false) handle Feedback.HOL_ERR _ => true)
+  (* Substituting a constructor leaves a case redex for the datatype owner;
+     an unequal residue must still be refused. *)
+  val sum_source = ``(asserted_s:int + bool) = INR T``
+  fun sum_target body = boolSyntax.mk_eq
+    (``OUTL (INR (sum_CASE (asserted_s:int + bool) (\x:int. ARB)
+         ^body) : int + bool)``, ``OUTL (INR T : int + bool)``)
+  val sum_target_ok = sum_target ``\b:bool. b``
+  val sum_theorem =
+    Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+      [sum_source] sum_target_ok
+  (* An asserted Boolean variable or its negation is a solve-eqs equation. *)
+  val atom = ``asserted_p:bool``
+  val atom_target =
+    ``OUTL (INR asserted_p : int + bool) = OUTL (INR T : int + bool)``
+  val atom_theorem =
+    Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+      [atom] atom_target
+  val negated_atom = ``~(asserted_p:bool)``
+  val negated_atom_target =
+    ``(if asserted_p then asserted_x else asserted_y:int) =
+      (if F then asserted_x else asserted_y)``
+  val negated_atom_theorem =
+    Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+      [negated_atom] negated_atom_target
+  val sum_rejected =
+    (ignore (Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+       [sum_source] (sum_target ``\b:bool. ~b``)); false)
+    handle Feedback.HOL_ERR _ => true
 in
   assert (List.all (fn (source, theorem) =>
       Thm.concl theorem ~~ target andalso exact_source source theorem)
       [(direct, direct_theorem), (conjunction, conjunction_theorem),
-       (negated_implication, negated_theorem)],
+       (negated_implication, negated_theorem),
+       (double_negation, double_negation_theorem)],
     "closed equality substitution changed its source hypothesis");
+  assert (Thm.concl sum_theorem ~~ sum_target_ok andalso
+      exact_source sum_source sum_theorem andalso sum_rejected,
+    "datatype residue after substitution was not decided exactly");
+  check_oracle_tags "asserted equality datatype residue" sum_theorem;
+  assert (Thm.concl atom_theorem ~~ atom_target andalso
+      exact_source atom atom_theorem andalso
+      Thm.concl negated_atom_theorem ~~ negated_atom_target andalso
+      exact_source negated_atom negated_atom_theorem,
+    "asserted Boolean variable was not substituted exactly");
   assert (rejects ``(asserted_x:int) = asserted_y ==> asserted_guard`` andalso
       rejects ``~(asserted_guard ==> (asserted_x:int) = asserted_y)`` andalso
       rejects ``asserted_guard \/ asserted_other_guard``,
@@ -32248,13 +32306,13 @@ let
       checked graph (#node a) (#node b)
         (G.equality graph (#node a,#node b))
     end
-  val _ = Timeout.apply (Time.fromSeconds 2) (fn () =>
+  val _ = within_mutator_seconds 2 (fn () =>
     List.app typed_import
       [fn ty => Term.mk_var ("identity_poly_leaf",ty),
        boolSyntax.mk_arb]) ()
   (* Constructors also accept separately interned representatives, without
      a prior leaf bridge that could have shared their annotation fields. *)
-  val _ = Timeout.apply (Time.fromSeconds 2) (fn () =>
+  val _ = within_mutator_seconds 2 (fn () =>
     let
       val graph = G.new ()
       val root = G.root_scope graph
