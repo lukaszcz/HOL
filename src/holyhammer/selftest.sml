@@ -723,11 +723,11 @@ fun test_hhLamTrans () =
          DB.fetch "combin" "o_THM"] tm)) handle UNCHANGED => tm)
     fun has_name stem definitions =
       List.exists (fn (name, _) => name = stem) definitions
-    val (lifted, lift_defs) = hhLamTrans.translate "lifting" fixtures
-    val (combs, comb_defs) = hhLamTrans.translate "combs" fixtures
+    val (lifted, lift_defs) = hhLamTrans.translate hhLamTrans.Lifting fixtures
+    val (combs, comb_defs) = hhLamTrans.translate hhLamTrans.Combs fixtures
     val (both, both_defs) =
-      hhLamTrans.translate "combs_and_lifting" fixtures
-    val (kept, kept_defs) = hhLamTrans.translate "keep_lams" fixtures
+      hhLamTrans.translate hhLamTrans.CombsAndLifting fixtures
+    val (kept, kept_defs) = hhLamTrans.translate hhLamTrans.KeepLams fixtures
     val _ = expect "lambda lifting has deterministic names"
       (map #1 lift_defs = List.tabulate (length lift_defs,
        fn index => "lam." ^ Int.toString index))
@@ -758,7 +758,13 @@ fun test_hhLamTrans () =
       (null kept_defs andalso List.exists formula_abs kept andalso
        length kept = length fixtures)
     val _ = expect "empty lambda mode is rejected outside the legacy path"
-      ((ignore (hhLamTrans.translate "" fixtures); false) handle Fail _ => true)
+      ((ignore (hhLamTrans.mode_of_string ""); false)
+       handle Fail _ => true)
+    val _ = expect "lambda mode names round trip"
+      (List.all (fn mode =>
+         hhLamTrans.mode_of_string (hhLamTrans.mode_name mode) = mode)
+         [hhLamTrans.Lifting, hhLamTrans.Combs, hhLamTrans.CombsAndLifting,
+          hhLamTrans.KeepLams])
   in
     ()
   end
@@ -967,8 +973,8 @@ fun test_hhProblemGen () =
     val cond_tf0 = #conjecture (presimp tf0 (input cond_tm))
     val cond_tx0 = #conjecture (presimp tx0 (input cond_tm))
     val lambda = mk_eq (Term.mk_abs (x, x), Term.mk_abs (x, x))
-    val downgraded = pass_lambda tf0 "keep_lams" (input lambda)
-    val kept = pass_lambda th0 "keep_lams" (input lambda)
+    val downgraded = pass_lambda tf0 hhLamTrans.KeepLams (input lambda)
+    val kept = pass_lambda th0 hhLamTrans.KeepLams (input lambda)
     val goal = eq_nil (list_ty num)
     val schematic = eq_nil (list_ty alpha)
     val mono = pass_monomorph (hhTypeEnc.of_string "mono_native")
@@ -1018,13 +1024,14 @@ fun test_hhProblemGen () =
     val _ = expect "hhProblemGen composes its front-end passes"
       (#proxies (translate_front
         {format = fof, type_enc = hhTypeEnc.of_string "mono_guards",
-         lam_trans = "lifting", mono_iters = 3, mono_instances = 100}
+         lam_trans = hhLamTrans.Lifting, mono_iters = 3, mono_instances = 100}
         (input logical_argument)) = ["not"])
     fun problem format encoding terms =
       string_of_problem format "hhProblemGen pass 6--8"
         (generate_problem
           {format = format, type_enc = hhTypeEnc.of_string encoding,
-           lam_trans = "lifting", mono_iters = 3, mono_instances = 100}
+           lam_trans = hhLamTrans.Lifting, mono_iters = 3,
+           mono_instances = 100}
           terms)
     fun occurrences needle text =
       let
@@ -1172,7 +1179,7 @@ fun test_hhProblemGen () =
     val output2 = OS.FileSys.tmpName ()
     val export_options =
       {format = tf0, type_enc = hhTypeEnc.of_string "mono_native",
-       lam_trans = "lifting", mono_iters = 3, mono_instances = 100}
+       lam_trans = hhLamTrans.Lifting, mono_iters = 3, mono_instances = 100}
     val theorem = DB.fetch "bool" "TRUTH"
     val exported = (``free_goal:bool`` : Term.term, [("truth", theorem)])
     val _ = export_pb_in memo export_options output1 exported
@@ -1192,7 +1199,7 @@ fun test_hhProblemGen () =
     val comb_problem = string_of_problem tf0 "combin helpers"
       (generate_problem
         {format = tf0, type_enc = hhTypeEnc.of_string "mono_native",
-         lam_trans = "combs", mono_iters = 3, mono_instances = 100}
+         lam_trans = hhLamTrans.Combs, mono_iters = 3, mono_instances = 100}
         (input lambda))
     val _ = expect "hhProblemGen fetches combinator helpers only for combs"
       (String.isSubstring "help_2Ecombin_2EI" comb_problem andalso
@@ -1221,7 +1228,8 @@ fun test_hhProblemGen () =
       let
         val options =
           {format = format, type_enc = hhTypeEnc.of_string encoding,
-           lam_trans = mode, mono_iters = 3, mono_instances = 100}
+           lam_trans = hhLamTrans.mode_of_string mode, mono_iters = 3,
+           mono_instances = 100}
         val temporary = OS.FileSys.tmpName ()
         val _ = export_pb options temporary golden_exported
         val actual = String.concat (read_lines temporary)
@@ -1606,6 +1614,10 @@ fun test_hhSlice () =
        close 10.0 (hhSlice.slice_budget 65 budget_options first_slice) andalso
        close 30.0 (hhSlice.slice_budget 65 budget_options large_slice) andalso
        close 0.0 (hhSlice.slice_budget 0 budget_options first_slice))
+    fun slice_of format type_enc lam_trans : hhProver.slice =
+      {prover = "e", format = format, type_enc = type_enc,
+       lam_trans = lam_trans, nfacts = 0, filter = "none", extra_opts = [],
+       slice_size = 1}
     val triple_options : hhConfig.hh_options =
       {timeout = 30, max_proofs = 4, provers = ["e"], slices = 1, cores = 1,
        filter = "knn", max_facts = NONE, format = "tf0",
@@ -1620,6 +1632,13 @@ fun test_hhSlice () =
                          #type_enc slice = "mono_native" andalso
                          #lam_trans slice = "lifting"
          | _ => false)
+    val _ = expect "slice encodings dispatch on the parsed type encoding"
+      (hhSlice.encoding_of (slice_of "fof" "" "") = hhSlice.Legacy andalso
+       (case hhSlice.encoding_of (slice_of "fof" "mono_guards" "combs") of
+            hhSlice.Generated {lam_trans, ...} => lam_trans = hhLamTrans.Combs
+          | hhSlice.Legacy => false) andalso
+       ((ignore (hhSlice.encoding_of (slice_of "fof" "" "lifting")); false)
+        handle Fail _ => true))
     fun invalid_triple format type_enc lam_trans =
       let
         val options : hhConfig.hh_options =

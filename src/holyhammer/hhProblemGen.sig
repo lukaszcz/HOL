@@ -33,7 +33,8 @@ sig
 
   (* Pass 2.  Runs lambda translation jointly over the conjecture and facts;
      keep_lams is downgraded to lifting outside THF. *)
-  val pass_lambda : hhTptpProblem.format -> string -> named_terms -> named_terms
+  val pass_lambda :
+    hhTptpProblem.format -> hhLamTrans.mode -> named_terms -> named_terms
 
   (* Pass 3.  Only mono encodings invoke hhMonomorph; polymorphic native and
      legacy encodings preserve the ranked premise list unchanged. *)
@@ -48,19 +49,18 @@ sig
      builtins, according to the target's HO/FOOL/syntax capabilities. *)
   val introduce_proxies : hhTptpProblem.format -> formula_ir -> proxy_ir
 
-  (* The compositional front end consumed by the remaining generator passes. *)
-  val translate_front :
+  type problem_options =
     {format : hhTptpProblem.format, type_enc : hhTypeEnc.type_enc,
-     lam_trans : string, mono_iters : int, mono_instances : int}
-    -> named_terms -> proxy_ir
+     lam_trans : hhLamTrans.mode, mono_iters : int, mono_instances : int}
+
+  (* The compositional front end consumed by the remaining generator passes. *)
+  val translate_front : problem_options -> named_terms -> proxy_ir
 
   (* Passes 6--8: first-orderize, run the ?? monotonicity oracle, and apply
      the selected type encoding.  This is pure so pass-level selftests can
      inspect the TPTP AST before it is written to a file. *)
   val generate_problem :
-    {format : hhTptpProblem.format, type_enc : hhTypeEnc.type_enc,
-     lam_trans : string, mono_iters : int, mono_instances : int}
-    -> named_terms -> hhTptpProblem.problem
+    problem_options -> named_terms -> hhTptpProblem.problem
 
   (* A memo is local to one scheduler export pass.  It deliberately has no
      process-global backing: lambda translation is goal-dependent. *)
@@ -68,17 +68,11 @@ sig
   val new_export_memo : unit -> export_memo
   val memo_lambda_runs : export_memo -> int
 
-  val export_pb_in : export_memo ->
-    {format : hhTptpProblem.format, type_enc : hhTypeEnc.type_enc,
-     lam_trans : string, mono_iters : int, mono_instances : int}
-    -> string
+  val export_pb_in : export_memo -> problem_options -> string
     -> term * (string * thm) list
     -> unit
 
-  val export_pb :
-    {format : hhTptpProblem.format, type_enc : hhTypeEnc.type_enc,
-     lam_trans : string, mono_iters : int, mono_instances : int}
-    -> string
+  val export_pb : problem_options -> string
     -> term * (string * thm) list
     -> unit
 

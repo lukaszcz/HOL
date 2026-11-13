@@ -5,9 +5,21 @@ struct
 
   fun fail message = raise Fail ("hhLamTrans: " ^ message)
 
-  fun valid_mode mode =
-    List.exists (fn known => known = mode)
-      ["lifting", "combs", "combs_and_lifting", "keep_lams"]
+  datatype mode = Lifting | Combs | CombsAndLifting | KeepLams
+
+  val modes =
+    [("lifting", Lifting), ("combs", Combs),
+     ("combs_and_lifting", CombsAndLifting), ("keep_lams", KeepLams)]
+
+  fun mode_of_string string =
+    case List.find (fn (name, _) => name = string) modes of
+        SOME (_, mode) => mode
+      | NONE => fail ("unknown lambda mode " ^ String.toString string)
+
+  fun mode_name mode = #1 (valOf (List.find (fn (_, m) => m = mode) modes))
+
+  fun valid_mode string =
+    List.exists (fn (name, _) => name = string) modes
 
   fun generated_symbol variable =
     let val name = #1 (dest_var variable) in
@@ -185,10 +197,10 @@ struct
       mk_eq (head, list_mk_abs (args, right))
     end
 
-  fun translate "lifting" formulas = lift formulas
-    | translate "combs" formulas =
+  fun translate Lifting formulas = lift formulas
+    | translate Combs formulas =
         (map (eliminate_abs o close_formula) formulas, [])
-    | translate "combs_and_lifting" formulas =
+    | translate CombsAndLifting formulas =
         let
           val (rewritten, definitions) = lift formulas
           val combinator_definitions = map (fn (name, definition) =>
@@ -197,9 +209,7 @@ struct
         in
           (rewritten, definitions @ combinator_definitions)
         end
-    | translate "keep_lams" formulas =
+    | translate KeepLams formulas =
         (map (eta_contract o close_formula) formulas, [])
-    | translate "" _ = fail "the empty lambda mode belongs to the legacy path"
-    | translate mode _ = fail ("unknown lambda mode " ^ String.toString mode)
 
 end

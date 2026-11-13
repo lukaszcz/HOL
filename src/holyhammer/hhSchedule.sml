@@ -156,17 +156,15 @@ fun export_problems root options goal rankings schedule =
         val named = named_for (#filter slice) (#nfacts slice)
         val _ = hhConfig.ensure_dir directory
       in
-        if #format slice = "fof" andalso #type_enc slice = "" then
-          hhExportFof.fof_export_pb directory (conjecture, named)
-        else
-          hhProblemGen.export_pb_in memo
-            {format = hhTypeEnc.format_of_string (#format slice),
-             type_enc = hhTypeEnc.adjust_type_enc
-               (hhTypeEnc.format_of_string (#format slice))
-               (hhTypeEnc.of_string (#type_enc slice)),
-             lam_trans = #lam_trans slice, mono_iters = #mono_iters options,
-             mono_instances = mono_instances options config}
-            (problem_path root slice) (conjecture, named)
+        case hhSlice.encoding_of slice of
+            hhSlice.Legacy =>
+              hhExportFof.fof_export_pb directory (conjecture, named)
+          | hhSlice.Generated {format, type_enc, lam_trans} =>
+              hhProblemGen.export_pb_in memo
+                {format = format, type_enc = type_enc, lam_trans = lam_trans,
+                 mono_iters = #mono_iters options,
+                 mono_instances = mono_instances options config}
+                (problem_path root slice) (conjecture, named)
       end
   in
     List.app export slices

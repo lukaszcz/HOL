@@ -47,27 +47,42 @@ fun cap NONE nfacts = nfacts
 
 fun overridden override value = if override = "" then value else override
 
+datatype encoding =
+    Legacy
+  | Generated of {format : hhTptpProblem.format,
+                  type_enc : hhTypeEnc.type_enc,
+                  lam_trans : hhLamTrans.mode}
+
+fun encoding_of ({format, type_enc, lam_trans, ...} : hhProver.slice) =
+  let
+    val parsed_format = hhTypeEnc.format_of_string format
+    val parsed_type_enc = hhTypeEnc.adjust_type_enc parsed_format
+      (hhTypeEnc.of_string type_enc)
+    fun invalid () =
+      raise Fail ("invalid HolyHammer lambda translation '" ^ lam_trans ^
+        "' for (" ^ format ^ ", " ^ type_enc ^ ")")
+  in
+    case parsed_type_enc of
+        hhTypeEnc.LegacySP => if lam_trans = "" then Legacy else invalid ()
+      | _ =>
+          if hhLamTrans.valid_mode lam_trans then
+            Generated {format = parsed_format, type_enc = parsed_type_enc,
+                       lam_trans = hhLamTrans.mode_of_string lam_trans}
+          else invalid ()
+  end
+
 fun validate_slice (config : hhProver.prover_config)
     (slice : hhProver.slice) =
   let
     val format = #format slice
-    val type_enc = #type_enc slice
-    val lam_trans = #lam_trans slice
     val filter = #filter slice
-    val _ = ignore (hhTypeEnc.adjust_type_enc
-      (hhTypeEnc.format_of_string format) (hhTypeEnc.of_string type_enc))
+    val _ = encoding_of slice
     val _ =
       if List.exists (fn supported => supported = format)
           (#supported_formats config)
       then ()
       else raise Fail ("HolyHammer prover '" ^ #name config ^
         "' does not support format '" ^ format ^ "'")
-    val legacy = format = "fof" andalso type_enc = ""
-    val _ =
-      if legacy andalso lam_trans = "" orelse
-         not legacy andalso hhLamTrans.valid_mode lam_trans then ()
-      else raise Fail ("invalid HolyHammer lambda translation '" ^ lam_trans ^
-        "' for (" ^ format ^ ", " ^ type_enc ^ ")")
     val _ =
       if filter <> "" andalso filter = hhConfig.trim filter andalso
          hhConfig.valid_filter filter then ()
