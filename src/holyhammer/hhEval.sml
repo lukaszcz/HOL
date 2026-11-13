@@ -1328,10 +1328,9 @@ fun append_theory_error path expdir thy message =
 fun journal_theory_error expdir thy message =
   append_theory_error (journal_path expdir thy) expdir thy message
 
-fun pool_ids (thyl, thmidl) =
-  map (fn (theory, name) => theory ^ "Theory." ^ name)
-    (List.concat (map hhExportLib.thmidl_in_thy thyl) @ thmidl)
-
+(* Each theorem's pool is its theory's older theorems followed by every
+   theorem of the earlier theories.  Pools are only ever used as sets, so
+   they all share one list of the earlier theories' ids as their tail. *)
 fun chainy_pools thy =
   let
     val order = hhExportLib.sorted_ancestry [thy]
@@ -1339,14 +1338,14 @@ fun chainy_pools thy =
       if List.exists (fn name => name = thy) order then
         hhExportLib.before_elem thy order
       else order
+    fun qualify theory (name, _) = theory ^ "Theory." ^ name
+    val earlier_ids = List.concat (map (fn theory =>
+      map (qualify theory) (DB.thms theory)) earlier_theories)
     fun one (name, thm) =
-      let
-        val earlier_theorems =
-          List.filter (hhExportLib.older_than thm) (DB.thms thy)
-        val current_ids = map (fn (other, _) => (thy, other)) earlier_theorems
-      in
-        (name, pool_ids (earlier_theories, current_ids))
-      end
+      (name,
+       map (qualify thy)
+         (List.filter (hhExportLib.older_than thm) (DB.thms thy)) @
+       earlier_ids)
   in
     map one (DB.theorems thy)
   end
