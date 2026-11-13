@@ -190,11 +190,13 @@ New tools
 ---------
 
 -   HOLyHammer now invokes external provers through a declarative registry,
-    without shell scripts.  Pinned provers can be installed with
-    `tools/download-provers`; supported binaries on `PATH` also work.
-    Executables can be selected through `prover.<name>.executable` in the
-    hammer configuration or the `HOL4_<PROVER>_EXECUTABLE` environment
-    variables.
+    without shell scripts.  E, Vampire, and the newly supported
+    Zipperposition form the default prover set.  Pinned provers can be
+    installed with `tools/download-provers`; supported binaries on `PATH`
+    also work.  Executables can be selected through
+    `prover.<name>.executable` in the hammer configuration or the
+    `HOL4_<PROVER>_EXECUTABLE` environment variables (for E,
+    `HOL4_EPROVER_EXECUTABLE`).
 
 -   HOLyHammer now runs exclusively through its parallel slice scheduler and
     returns on the first reconstruction-verified suggestion.  Its default
@@ -204,8 +206,9 @@ New tools
     for `hhConfig.hh_set ("timeout", ...)`.
 
 -   HOLyHammer schedules TPTP formats, type encodings, and lambda
-    translations per prover slice.  Alongside its legacy FOF exporter it can
-    generate typed `tf0`, `tf1`, `tx0`, `tx0-`, `th0`, and `th1` problems,
+    translations per prover slice.  Besides FOF, it now proves goals
+    through typed `tf0`, `tf1`, `tx0`, `tx0-`, `th0`, and `th1` problems
+    (`tx0` and `tx0-` are new; the others were previously export-only),
     with used-axiom parse-back and Metis reconstruction.  The new
     `hhConfig` keys `format`, `type_enc`, and `lam_trans` provide
     schedule-wide overrides; `mono_iters` and `mono_instances` control the
@@ -214,12 +217,20 @@ New tools
 
 -   HOLyHammer's premise selection now includes MePo relevance filtering, a
     sparse-Naive-Bayes plus kNN MaSh learner, and their MeSh combination.  Its
-    default 24-slice schedule keeps the previous 16 kNN slices as a prefix and
-    adds eight ensemble slices.  The `filter` option accepts `knn`, `mepo`,
+    default 24-slice schedule runs 16 kNN slices followed by eight slices
+    using these ensemble filters.  The `filter` option accepts `knn`, `mepo`,
     `mash`, `mesh`, and `none`; its empty default retains each slice's tested
     filter, while a nonempty value overrides the whole schedule.  Premise
     rankings, exported problems, result-cache keys, and evaluation journals
     are filter-aware.
+
+-   `hhEval` is a resumable HOLyHammer evaluation harness.  `run_eval`
+    evaluates experimental conditions (regime, premise selector, single
+    prover or full schedule) over a set of theories in parallel, recording
+    each result in per-theory JSONL journals; `report` summarizes an
+    experiment as `summary.json` and `report.md`.  `smoke.exe` in
+    `src/holyhammer` runs a fixed end-to-end smoke suite against the
+    installed provers.
 
 -   `statementDossierLib` generates Markdown and standalone HTML reports
     of stored theorem statements, their trust tags, assumptions, defining
@@ -247,19 +258,21 @@ Incompatibilities
 -   The `holyHammer.prover` datatype has been removed.  Provers are now
     identified by registry strings such as `"e"`, `"vampire"`,
     `"zipperposition"`, and `"z3"`.  Accordingly, `holyHammer.hh_pb` now
-    takes a `string list`.  The file-based `hhReconstruct.get_lemmas` API and
+    takes a `string list` of prover names.  The evaluation helpers
+    `holyHammer.hh_pb_eval_thm` and `hh_pb_eval_thy` have been removed in
+    favor of `hhEval`.  The file-based `hhReconstruct.get_lemmas` API and
     its status/output-file protocol have also been removed.  The types of
-    `hh`, `holyhammer`, `hh_fork`, `hh_goal`, `hh_pb`, `main_hh`, and
-    `main_hh_lemmas` are unchanged.
+    `hh`, `holyhammer`, `hh_fork`, `main_hh`, and `main_hh_lemmas` are
+    unchanged.
 
--   The old HolyHammer execution controls `timeout_glob`, `all_atps`, and
-    `premise_selection_flag` have been removed.  Use the `timeout`, `provers`,
-    and `filter` options through `hhConfig.hh_set`; in particular,
+-   The `holyHammer.premise_selection_flag` reference has been removed.
+    Execution is controlled by the `timeout`, `provers`, and `filter`
+    options through `hhConfig.hh_set`; in particular,
     `premise_selection_flag := false` becomes
     `hhConfig.hh_set ("filter", "none")`.  The race-result reference
-    `lemmas_glob` has been removed in favor of `main_hh_lemmas`.  The
-    Phase 0-only `e-legacy` and `vampire-legacy` prover registry entries have
-    also been removed; `z3` remains registered but has no scheduler slices.
+    `holyHammer.lemmas_glob` has been removed in favor of `main_hh_lemmas`.
+    Z3 is no longer in the default prover set: `z3` remains registered but
+    has no scheduler slices.
 
 -   `Term.subst` now fails if the same redex occurs more than once in its theta-list, whether or not the repeats map it to the same residue.
     Previously such a theta-list was silently resolved by letting the last entry win, which did not agree with the first-match lookup used while terms are being matched.
