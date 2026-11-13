@@ -32,6 +32,8 @@ sig
     | FormLine of string * role * tptp_formula
   type problem = (string * line list) list
 
+  val syntax_of : format -> syntax
+  val format_name : format -> string
   val string_of_problem : format -> string -> problem -> string
 
 end

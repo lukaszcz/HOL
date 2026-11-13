@@ -141,21 +141,9 @@ fun run_schedule caller parent options rankings goal =
       | [] => failed caller root options (!found)
   end
 
-fun distinct_filter_maxima schedule =
-  let
-    fun add slice [] = [(#filter slice, #nfacts slice)]
-      | add slice ((filter, maximum) :: rest) =
-          if #filter slice = filter then
-            (filter, Int.max (maximum, #nfacts slice)) :: rest
-          else
-            (filter, maximum) :: add slice rest
-  in
-    foldl (fn ((_, slice), maxima) => add slice maxima) [] schedule
-  end
-
 fun explicit_rankings schedule premises =
   map (fn (filter, _) => (filter, premises))
-    (distinct_filter_maxima schedule)
+    (hhSlice.filter_maxima schedule)
 
 fun options_for caller wanted_atps =
   let
@@ -184,7 +172,7 @@ fun main_hh_result caller directory thmdata goal =
     fun rank (filter, maximum) =
       (filter, hhLearn.rank context
         {filter = filter, pool = NONE, goal = goal, n = maximum})
-    val rankings = map rank (distinct_filter_maxima schedule)
+    val rankings = map rank (hhSlice.filter_maxima schedule)
   in
     run_schedule caller directory options rankings goal
   end

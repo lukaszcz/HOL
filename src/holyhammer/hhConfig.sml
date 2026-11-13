@@ -68,11 +68,8 @@ fun home_dir () =
 
 fun holdir () =
   case test_root () of
-      SOME root => SOME (join root "holdir")
-    | NONE =>
-        (case OS.Process.getEnv "HOLDIR" of
-             NONE => SOME Globals.HOLDIR
-           | directory => directory)
+      SOME root => join root "holdir"
+    | NONE => Option.getOpt (OS.Process.getEnv "HOLDIR", Globals.HOLDIR)
 
 fun state_dir () =
   let
@@ -175,18 +172,13 @@ fun first_hits entries =
 fun config_entries () =
   let
     val user = join (join (home_dir ()) ".hol4") "hammer/config"
-    val system =
-      case holdir () of
-          NONE => []
-        | SOME dir => read_config (join (join dir "etc") "hammer-config")
+    val system = read_config (join (join (holdir ()) "etc") "hammer-config")
   in
     first_hits (read_config user @ system)
   end
 
 fun default_eval_dir () =
-  case holdir () of
-      SOME directory => join (join (join directory "src") "holyhammer") "eval"
-    | NONE => join (state_dir ()) "eval"
+  join (join (join (holdir ()) "src") "holyhammer") "eval"
 
 type option_spec =
   {name : string,
@@ -347,11 +339,13 @@ fun env_name key =
   String.map (fn c =>
     if c = #"." then #"_" else Char.toUpper c) key
 
-fun value_with_source key =
+(* Callers that resolve many keys pass the config entries they read once;
+   reading them lazily keeps runtime-set keys from touching the disk. *)
+fun value_with_source_in entries key =
   case lookup key (!runtime) of
       SOME value => SOME (value, "set")
     | NONE =>
-      (case lookup key (config_entries ()) of
+      (case lookup key (entries ()) of
            SOME value => SOME (value, "config")
          | NONE =>
            (case OS.Process.getEnv (env_name key) of
@@ -360,6 +354,11 @@ fun value_with_source key =
                 (case default key of
                      SOME value => SOME (value, "default")
                    | NONE => NONE)))
+
+fun value_with_source key = value_with_source_in config_entries key
+
+fun read_config_once () =
+  let val entries = config_entries () in fn () => entries end
 
 val queried = ref ([] : string list)
 
@@ -408,11 +407,12 @@ fun unique [] = []
 
 fun dump () =
   let
-    val config_keys = map #1 (config_entries ())
+    val entries = read_config_once ()
+    val config_keys = map #1 (entries ())
     val default_keys = map #1 defaults
     val keys = unique (config_keys @ default_keys @ !queried)
     fun render key =
-      case value_with_source key of
+      case value_with_source_in entries key of
           NONE => NONE
         | SOME (value, source) => SOME (key, source ^ ": " ^ value)
   in
@@ -460,17 +460,17 @@ fun hh_unset key =
   let val _ = checked_spec "hh_unset" key
   in runtime := remove_key key (!runtime) end
 
-fun effective_option caller ({name, default, ...} : option_spec) =
-  case value_with_source name of
+fun effective_option_in entries ({name, default, ...} : option_spec) =
+  case value_with_source_in entries name of
       SOME result => result
-    | NONE =>
-        let val value = default ()
-        in (value, "default") end
+    | NONE => (default (), "default")
+
+fun effective_option spec = effective_option_in config_entries spec
 
 fun hh_get key =
   let
     val spec = checked_spec "hh_get" key
-    val (value, _) = effective_option "hh_get" spec
+    val (value, _) = effective_option spec
   in
     value
   end
@@ -479,9 +479,11 @@ fun parameter_source "environment" = "env"
   | parameter_source source = source
 
 fun hh_params () =
-  map (fn (spec as {name, ...} : option_spec) =>
-    let val (value, source) = effective_option "hh_params" spec
-    in (name, value, parameter_source source) end) option_specs
+  let val entries = read_config_once () in
+    map (fn (spec as {name, ...} : option_spec) =>
+      let val (value, source) = effective_option_in entries spec
+      in (name, value, parameter_source source) end) option_specs
+  end
 
 fun print_params () =
   let
@@ -496,10 +498,10 @@ val reconstruction_timeouts = ref (fn (_ : real, _ : real) => ())
 fun register_reconstruction_timeouts setter =
   reconstruction_timeouts := setter
 
-fun required caller key parse =
+fun required_in entries caller key parse =
   let
     val spec = checked_spec caller key
-    val (value, _) = effective_option caller spec
+    val (value, _) = effective_option_in entries spec
     val _ = check_value caller spec value
   in
     case parse value of
@@ -519,45 +521,47 @@ fun detected_cores () =
 
 fun snapshot () =
   let
-    val timeout = required "snapshot" "timeout" int_value
-    val max_proofs = required "snapshot" "max_proofs" int_value
-    val provers = required "snapshot" "provers" (SOME o prover_names)
-    val configured_slices = required "snapshot" "slices" int_value
-    val configured_cores = required "snapshot" "cores" int_value
+    val entries = read_config_once ()
+    fun required key parse = required_in entries "snapshot" key parse
+    val timeout = required "timeout" int_value
+    val max_proofs = required "max_proofs" int_value
+    val provers = required "provers" (SOME o prover_names)
+    val configured_slices = required "slices" int_value
+    val configured_cores = required "cores" int_value
     val cores = if configured_cores = 0 then detected_cores ()
                 else configured_cores
     val slices = if configured_slices = 0 then 24 * cores
                  else configured_slices
-    val filter = required "snapshot" "filter" (SOME o trim)
+    val filter = required "filter" (SOME o trim)
     val max_facts =
-      required "snapshot" "max_facts"
+      required "max_facts"
         (fn value =>
           if trim value = "" then SOME NONE
           else Option.map SOME (int_value value))
-    val format = required "snapshot" "format" (SOME o trim)
-    val type_enc = required "snapshot" "type_enc" (SOME o trim)
-    val lam_trans = required "snapshot" "lam_trans" (SOME o trim)
-    val mono_iters = required "snapshot" "mono_iters" int_value
+    val format = required "format" (SOME o trim)
+    val type_enc = required "type_enc" (SOME o trim)
+    val lam_trans = required "lam_trans" (SOME o trim)
+    val mono_iters = required "mono_iters" int_value
     (* NONE means "no explicit cap": the per-prover value wins. *)
     val mono_instances =
       let
         val spec = checked_spec "snapshot" "mono_instances"
-        val (value, source) = effective_option "snapshot" spec
+        val (value, source) = effective_option_in entries spec
         val _ = check_value "snapshot" spec value
       in
         if source = "default" then NONE else int_value value
       end
-    val minimize = required "snapshot" "minimize" bool_value
+    val minimize = required "minimize" bool_value
     val preplay_timeout =
-      required "snapshot" "preplay_timeout" real_value
+      required "preplay_timeout" real_value
     val minimize_timeout =
-      required "snapshot" "minimize_timeout" real_value
-    val cache = required "snapshot" "cache" bool_value
-    val cache_dir = required "snapshot" "cache_dir" SOME
+      required "minimize_timeout" real_value
+    val cache = required "cache" bool_value
+    val cache_dir = required "cache_dir" SOME
     val cache_max_entries =
-      required "snapshot" "cache_max_entries" int_value
+      required "cache_max_entries" int_value
     val debug_dir =
-      required "snapshot" "debug_dir" (SOME o optional_string)
+      required "debug_dir" (SOME o optional_string)
     val result : hh_options =
       {timeout = timeout, max_proofs = max_proofs, provers = provers,
        slices = slices, cores = cores, filter = filter,
@@ -597,10 +601,6 @@ fun platform () =
     arch ^ "-" ^ os
   end
 
-fun first_some f [] = NONE
-  | first_some f (x :: xs) =
-      case f x of NONE => first_some f xs | result => result
-
 fun path_exec names =
   let
     fun direct name =
@@ -617,11 +617,11 @@ fun path_exec names =
           (case OS.Process.getEnv "PATH" of
                NONE => NONE
              | SOME path =>
-               first_some (fn dir => in_dir
+               Portable.get_first (fn dir => in_dir
                  (if dir = "" then "." else dir) name)
                  (String.fields (fn c => c = #":") path))
   in
-    first_some on_path names
+    Portable.get_first on_path names
   end
 
 fun all_digits s =
@@ -694,7 +694,7 @@ fun install_exec root prover names =
     val plat = platform ()
     fun in_version (_, name) = path_exec_in (join (join root name) plat) names
   in
-    case first_some in_version versions of
+    case Portable.get_first in_version versions of
         SOME path => SOME path
       (* Legacy flat layout: the binary sits directly in provers/, as the
          pre-download-provers instructions told users to install it. *)
@@ -703,7 +703,7 @@ fun install_exec root prover names =
 
 and path_exec_in dir names =
   if is_dir dir then
-    first_some (fn name =>
+    Portable.get_first (fn name =>
       let val path = join dir name
       in if executable path then SOME path else NONE end) names
   else NONE
@@ -730,16 +730,13 @@ fun find_exec_with_env prover env_var names =
         | NONE => NONE
     fun installed root = install_exec root prover names
     fun system_install () =
-      case holdir () of
-          NONE => NONE
-        | SOME dir => installed (join (join (join dir "src") "holyhammer")
-                                   "provers")
+      installed (join (join (join (holdir ()) "src") "holyhammer") "provers")
     fun state_install () = installed (join (state_dir ()) "provers")
     fun user_install () =
       installed (join (join (join (home_dir ()) ".hol4") "hammer")
                  "provers")
   in
-    first_some (fn source => source ())
+    Portable.get_first (fn source => source ())
       [configured, environment, fn () => path_exec names,
        system_install, state_install, user_install]
   end

@@ -1,5 +1,5 @@
-(* The front half of the unified HolyHammer problem generator.  The IR keeps
-   the original HOL terms until TASK_06 first-orderizes them into
+(* The unified HolyHammer problem generator.  The IR keeps the original HOL
+   terms until generate_problem first-orderizes them into
    hhTptpProblem.tptp_term values. *)
 signature hhProblemGen =
 sig
@@ -56,7 +56,7 @@ sig
 
   (* Passes 6--8: first-orderize, run the ?? monotonicity oracle, and apply
      the selected type encoding.  This is pure so pass-level selftests can
-     inspect the TPTP AST before TASK_07 writes it to a file. *)
+     inspect the TPTP AST before it is written to a file. *)
   val generate_problem :
     {format : hhTptpProblem.format, type_enc : hhTypeEnc.type_enc,
      lam_trans : string, mono_iters : int, mono_instances : int}

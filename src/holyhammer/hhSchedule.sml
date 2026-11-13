@@ -32,8 +32,6 @@ fun join left right = OS.Path.concat (left, right)
 val with_mutex = hhProver.with_mutex
 val elapsed = hhProver.elapsed
 
-fun real_min left right = if left < right then left else right
-
 fun time_before left right = Time.compare (left, right) = LESS
 
 fun time_min left right = if time_before left right then left else right
@@ -62,16 +60,14 @@ fun problem_key (slice : hhProver.slice) =
                        Int.toString (#nfacts slice)])
 
 (* mkdir reserves each invocation even across processes and saved heaps. *)
-val directory_mutex = Mutex.mutex ()
-val directory_counter = ref 0
+val next_directory_serial = Portable.make_counter {init = 1, inc = 1}
 
 fun new_problem_dir parent =
   let
     val _ = hhConfig.ensure_dir parent
     fun reserve () =
       let
-        val serial = with_mutex directory_mutex (fn () =>
-          (directory_counter := !directory_counter + 1; !directory_counter))
+        val serial = next_directory_serial ()
         val directory = join parent
           (Portable.unique_tmp_suffix () ^ "." ^ Int.toString serial)
       in
@@ -213,7 +209,7 @@ fun run_in root {options, goal, rankings, progress} =
            "HolyHammer progress callback failed: " ^
            General.exnMessage error ^ "\n"))
     val _ = export_problems root options goal rankings schedule
-    val _ = if #cache options then hhCache.prune options else ()
+    val _ = hhCache.prune options
     (* Probe once on the calling thread.  Besides keeping version probes out
        of the worker pool, this avoids concurrent access to hhProver's probe
        memo table and makes cache hits process-free after the first run. *)
@@ -230,7 +226,6 @@ fun run_in root {options, goal, rankings, progress} =
       ([] : (hhProver.slice * hhProver.szs * real * bool) list)
     val suggestions = ref ([] : suggestion list)
     val verified_keys = ref ([] : string list)
-    val verified = ref 0
     val stopping = ref false
     val reason = ref (NONE : stop_reason option)
     val running = ref ([] : (int * bool ref * (unit -> unit)) list)
@@ -345,7 +340,7 @@ fun run_in root {options, goal, rankings, progress} =
         val now = Time.now ()
         val remaining = Time.toReal (Time.- (deadline, now)) + 2.0
         val wanted = hhSlice.slice_budget schedule_length options slice
-        val budget = Real.max (0.001, real_min wanted remaining)
+        val budget = Real.max (0.001, Real.min (wanted, remaining))
         val request : hhProver.run_request =
           {timeout = Real.ceil budget, format = #format slice,
            problem = problem_path root slice, extra = #extra_opts slice,
@@ -439,8 +434,7 @@ fun run_in root {options, goal, rankings, progress} =
               val reached = with_mutex state_mutex (fn () =>
                 (suggestions := suggestion :: !suggestions;
                  verified_keys := key :: !verified_keys;
-                 verified := !verified + 1;
-                 !verified >= #max_proofs options))
+                 length (!suggestions) >= #max_proofs options))
               val _ = emit (Verified suggestion)
             in
               if reached then kill_all MaxProofs else ()

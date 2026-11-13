@@ -105,22 +105,6 @@ type dep_info =
   {fetchable : mlThmData.thmid list, intact : bool, count : int}
 type dep_table = (mlThmData.thmid, dep_info) Redblackmap.dict
 
-fun sha1_text text =
-  let
-    val bytes = Byte.stringToBytes text
-    val size = Word8Vector.length bytes
-    fun read (offset, wanted) =
-      let
-        val count = Int.min (wanted, size - offset)
-        val chunk = Word8Vector.tabulate
-          (count, fn index => Word8Vector.sub (bytes, offset + index))
-      in
-        (chunk, offset + count)
-      end
-  in
-    SHA1.sha1String read 0
-  end
-
 fun frame text = Int.toString (String.size text) ^ ":" ^ text
 
 fun canonical_sequence tag values =
@@ -190,7 +174,7 @@ fun structural_goal_text (assumptions, conclusion) =
      canonical_sequence "conclusion" [canonical_term conclusion]]
 
 fun thmdata_inventory_sha1 entries =
-  sha1_text (canonical_sequence "hh-target-thmdata-inventory-v1"
+  aiLib.sha1_string (canonical_sequence "hh-target-thmdata-inventory-v1"
     (map (fn (name, theorem) => canonical_sequence "theorem"
        [name, structural_goal_text (dest_thm theorem)]) entries))
 
@@ -588,14 +572,12 @@ fun member_by eq facts fact =
   List.exists (fn other => eq (fact, other)) facts
 
 fun distinct_by eq facts =
-  foldl (fn (fact, result) =>
-    if member_by eq result fact then result else result @ [fact]) [] facts
+  rev (foldl (fn (fact, result) =>
+    if member_by eq result fact then result else fact :: result) [] facts)
 
-fun distinct facts = distinct_by (op =) facts
+val distinct = mk_sameorder_set String.compare
 
-fun name_set names =
-  foldl (fn (name, set) => dadd name () set)
-    (dempty String.compare) names
+fun name_set names = dset String.compare names
 
 fun member_set set item = dmem item set
 

@@ -26,10 +26,6 @@ struct
 
   val sort = Listsort.sort
 
-  fun take 0 _ = []
-    | take _ [] = []
-    | take count (item :: items) = item :: take (count - 1) items
-
   fun mem_type ty = List.exists (fn other => other = ty)
 
   fun insert_type ty [] = [ty]
@@ -198,7 +194,7 @@ struct
       fun same_subst left right = subst_compare (left, right) = EQUAL
       fun add_best subst result =
         if List.exists (fn old => same_subst subst old) result then result
-        else take limit
+        else aiLib.first_n limit
           (Listsort.sort subst_compare (subst :: result))
       (* The exhaustive branch still visits the same bounded search tree,
          but only its canonical best [limit] substitutions can reach the
@@ -299,7 +295,7 @@ struct
                 (round, subst, Term.inst subst theorem))
                 substs
               val candidates = unique_terms candidates (!instances)
-              val selected = if room <= 0 then [] else take room candidates
+              val selected = aiLib.first_n room candidates
               val _ = instances := !instances @ selected
               val _ = remaining := !remaining - length selected
             in

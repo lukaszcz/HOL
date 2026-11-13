@@ -58,14 +58,9 @@ sig
   val encode_condition : condition -> string
   val parse_condition : string -> condition
 
-  val theories_from_srcfile_lines : string list -> string list
-  val theories_from_srcfiles : string -> string list
-  val coverage_check :
-    {srcfiles : string list, dat_theories : string list} -> string list
   val stdlib_coverage : unit -> corpus_coverage
   val stdlib_theories : unit -> string list
 
-  val eval_dir : unit -> string
   val experiment_dir : string -> string
   val journal_path : string -> string -> string
 
@@ -84,7 +79,6 @@ sig
     string list -> (string * 'a) list -> (string * 'a) list
 
   val loaded_corpus_entry : string -> corpus_entry
-  val current_prover_identities : condition list -> prover_identity list
   val new_run_header :
     {expname : string, corpus : corpus_entry list,
      added_from_dat : string list, conditions : condition list,
@@ -93,15 +87,10 @@ sig
   val validate_run_header : string -> run_header -> unit
 
   val sample_goal : int -> string -> bool
-  val goal_partition : {part : int, parts : int} -> string -> bool
 
   val set_worker_settings : {conditions : condition list, sample : int} -> unit
-  val set_worker_goal_ids : string list -> unit
-  val set_worker_partition : {part : int, parts : int} -> unit
-  val worker_theory_complete : string -> string -> bool
   val evalscript_path : string -> string -> string
   val write_evalscript : string -> string -> condition list -> int -> string
-  val journal_theory_error : string -> string -> string -> unit
   val eval_thy : string -> string -> unit
   val run_eval :
     {expname : string, ncore : int, thyl : string list,

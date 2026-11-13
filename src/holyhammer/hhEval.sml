@@ -4,7 +4,7 @@
 (*
    Schedule cells own [cores] prover processes apiece.  Callers of run_eval
    therefore size ncore to machine_cores div cores_per_cell; the predictable
-   peak load is ncore * cores_per_cell, as in the Phase 0 prover-cell driver.
+   peak load is ncore * cores_per_cell.
 *)
 (* ========================================================================= *)
 
@@ -265,11 +265,7 @@ fun parse_json text =
 
 fun field name value = JSONUtil.lookupField value name
 
-fun optional_field name (JSON.OBJECT fields) =
-      (case List.find (fn (label, _) => label = name) fields of
-           SOME (_, value) => SOME value
-         | NONE => NONE)
-  | optional_field _ _ = NONE
+fun optional_field name value = JSONUtil.findField value name
 
 fun string_field name value = JSONUtil.asString (field name value)
 fun int_field name value = JSONUtil.asInt (field name value)
@@ -760,13 +756,6 @@ fun sample_goal factor goal_id =
   if factor < 1 then raise Fail "--sample must be a positive integer"
   else IntInf.mod (sample_hash goal_id, IntInf.fromInt factor) = 0
 
-fun goal_partition {part, parts} goal_id =
-  if parts < 1 then raise Fail "partition count must be positive"
-  else if part < 0 orelse part >= parts then
-    raise Fail "partition index is outside its partition count"
-  else IntInf.mod (sample_hash goal_id, IntInf.fromInt parts) =
-    IntInf.fromInt part
-
 (* -------------------------------------------------------------------------
    Experiment reports
    ------------------------------------------------------------------------- *)
@@ -1050,9 +1039,7 @@ fun schedule_distribution_json name entries =
   let
     val slice_counts = map (length o #slices) entries
     val stops = sorted_unique (List.mapPartial #stop entries)
-    val slice_values =
-      Portable.sort (fn left => fn right => left <= right)
-        (mk_sameorder_set Int.compare slice_counts)
+    val slice_values = mk_fast_set Int.compare slice_counts
   in
     JSON.OBJECT
       [("cond", JSON.STRING name),
@@ -1116,8 +1103,7 @@ fun theory_markdown theory name entries =
 
 fun int_distribution values =
   let
-    val distinct = Portable.sort (fn left => fn right => left <= right)
-      (mk_sameorder_set Int.compare values)
+    val distinct = mk_fast_set Int.compare values
   in
     if null distinct then "-"
     else String.concatWith ", " (map (fn value =>
@@ -1336,48 +1322,15 @@ fun report expdir =
 
 val worker_conditions = ref ([] : condition list)
 val worker_sample = ref 1
-val worker_partition = ref (NONE : {part : int, parts : int} option)
-val worker_goal_ids = ref (NONE : string Binaryset.set option)
 
 fun set_worker_settings {conditions, sample} =
   if sample < 1 then raise Fail "eval.sample must be a positive integer"
   else
     (app validate_condition conditions;
      worker_conditions := conditions;
-     worker_sample := sample;
-     worker_partition := NONE;
-     worker_goal_ids := NONE)
+     worker_sample := sample)
 
-fun set_worker_goal_ids ids =
-  let
-    val goals = Binaryset.addList (Binaryset.empty String.compare, ids)
-  in
-    if null ids then raise Fail "worker goal inventory must be nonempty"
-    else if Binaryset.numItems goals <> length ids then
-      raise Fail "worker goal inventory contains duplicates"
-    else worker_goal_ids := SOME goals
-  end
-
-fun set_worker_partition partition =
-  (ignore (goal_partition partition "");
-   worker_partition := SOME partition)
-
-fun worker_selects goal_id =
-  sample_goal (!worker_sample) goal_id andalso
-  (case !worker_goal_ids of
-       NONE => true
-     | SOME goals => Binaryset.member (goals, goal_id)) andalso
-  (case !worker_partition of
-       NONE => true
-     | SOME partition => goal_partition partition goal_id)
-
-fun worker_journal_path expdir thy =
-  case !worker_partition of
-      NONE => journal_path expdir thy
-    | SOME {part, parts} =>
-        journal_path expdir
-          (thy ^ ".part-" ^ Int.toString part ^ "-of-" ^
-           Int.toString parts)
+fun worker_selects goal_id = sample_goal (!worker_sample) goal_id
 
 fun run_name expdir = OS.Path.file expdir
 
@@ -1388,22 +1341,14 @@ fun safe_component text =
 
 fun goal_id thy name = thy ^ "." ^ name
 
-fun szs_name hhProver.SzsTheorem = "Theorem"
-  | szs_name hhProver.SzsCounterSat = "CounterSatisfiable"
-  | szs_name hhProver.SzsSatisfiable = "Satisfiable"
-  | szs_name hhProver.SzsGaveUp = "GaveUp"
-  | szs_name hhProver.SzsTimeout = "Timeout"
-  | szs_name hhProver.SzsResourceOut = "ResourceOut"
-  | szs_name hhProver.SzsInappropriate = "Inappropriate"
-  | szs_name (hhProver.SzsUnknown name) = name
-  | szs_name (hhProver.RunFailure _) = "RunFailure"
+fun szs_name (hhProver.RunFailure _) = "RunFailure"
+  | szs_name szs = hhProver.szs_name szs
 
 fun run_failure_error (hhProver.RunFailure message) = SOME message
   | run_failure_error _ = NONE
 
 (* The tail of a journal entry, i.e. everything only known once the prover
-   has run.  Keeping it a separate record means the entry is built in one
-   place: adding a journal field touches base_entry and nothing else. *)
+   has run. *)
 type outcome =
   {recon_ok : bool option, recon_method : string option,
    t_recon : real option, stac : string option, error : string option}
@@ -1568,27 +1513,7 @@ fun max_schedule_facts schedule =
   foldl Int.max 0 (map (#nfacts o #2) schedule)
 
 fun rankings_for_schedule schedule premises =
-  let
-    fun add ((_, slice), rankings) =
-      if List.exists (fn (filter, _) => filter = #filter slice) rankings then
-        rankings
-      else
-        rankings @ [(#filter slice, premises)]
-  in
-    foldl add [] schedule
-  end
-
-fun filter_maxima schedule =
-  let
-    fun add slice [] = [(#filter slice, #nfacts slice)]
-      | add slice ((filter, maximum) :: rest) =
-          if #filter slice = filter then
-            (filter, Int.max (maximum, #nfacts slice)) :: rest
-          else
-            (filter, maximum) :: add slice rest
-  in
-    foldl (fn ((_, slice), maxima) => add slice maxima) [] schedule
-  end
+  map (fn (filter, _) => (filter, premises)) (hhSlice.filter_maxima schedule)
 
 fun per_slice_rankings thy schedule pool goal =
   let
@@ -1598,7 +1523,7 @@ fun per_slice_rankings thy schedule pool goal =
       (filter, hhLearn.rank context
         {filter = filter, pool = SOME pool, goal = goal, n = maximum})
   in
-    map rank (filter_maxima schedule)
+    map rank (hhSlice.filter_maxima schedule)
   end
 
 fun version_of_prover name =
@@ -1743,31 +1668,31 @@ fun run_cell expdir thy theorem pool condition =
         | Prover prover_name =>
             prover_cell_entry expdir thy theorem pool condition prover_name
   in
-    append_journal (worker_journal_path expdir thy) entry
+    append_journal (journal_path expdir thy) entry
   end
   handle Interrupt => raise Interrupt
        | error =>
-           append_journal (worker_journal_path expdir thy)
+           append_journal (journal_path expdir thy)
              (base_entry expdir thy (#1 theorem) condition
                 (is_higher_order_goal (list_mk_imp (dest_thm (#2 theorem))))
                 (is_fresh_goal thy (list_mk_imp (dest_thm (#2 theorem))))
                 0 "Error" 0.0 NONE NONE (failed (General.exnMessage error)))
 
 fun broken_deps_cell expdir thy name goal condition =
-  append_journal (worker_journal_path expdir thy)
+  append_journal (journal_path expdir thy)
     (base_entry expdir thy name condition (is_higher_order_goal goal)
        (is_fresh_goal thy goal) 0 "BrokenDeps" 0.0 NONE NONE
        no_outcome)
 
 fun evaluation_error_cell expdir thy name goal condition message =
-  append_journal (worker_journal_path expdir thy)
+  append_journal (journal_path expdir thy)
     (base_entry expdir thy name condition (is_higher_order_goal goal)
        (is_fresh_goal thy goal) 0 "Error" 0.0 NONE NONE
        (failed message))
 
 fun eval_loaded_theory expdir thy =
   let
-    val completed = read_completed (worker_journal_path expdir thy)
+    val completed = read_completed (journal_path expdir thy)
     val pools =
       if List.exists (fn condition => #regime condition = Chainy)
          (!worker_conditions)
@@ -1808,32 +1733,8 @@ fun eval_loaded_theory expdir thy =
 fun eval_thy expdir thy =
   (eval_loaded_theory expdir thy
    handle Interrupt => raise Interrupt
-        | error => append_theory_error (worker_journal_path expdir thy)
+        | error => append_theory_error (journal_path expdir thy)
             expdir thy (General.exnMessage error))
-
-fun worker_theory_complete expdir thy =
-  let
-    fun cells (name, _) =
-      let val id = goal_id thy name in
-        if worker_selects id then
-          map (fn condition => (id, #cond_id condition)) (!worker_conditions)
-        else []
-      end
-    val expected =
-      case !worker_goal_ids of
-          NONE => List.concat (map cells (DB.theorems thy))
-        | SOME goals =>
-            List.concat
-              (map (fn id =>
-                 if worker_selects id then
-                   map (fn condition => (id, #cond_id condition))
-                     (!worker_conditions)
-                 else [])
-               (Binaryset.listItems goals))
-  in
-    journal_complete (worker_journal_path expdir thy)
-      expected
-  end
 
 fun condition_text condition =
   "hhEval.parse_condition " ^ Portable.mlquote (encode_condition condition)
@@ -1961,7 +1862,6 @@ fun run_eval {expname, ncore, thyl, conditions} =
       val _ = ensure_dir (join expdir "journal")
       val _ = ensure_dir (join expdir "out")
       val _ = ensure_dir (join expdir "pb")
-      val _ = ensure_dir (join expdir "scripts")
       val {added_from_dat, ...} = stdlib_coverage ()
       val included_from_dat = List.filter (fn name =>
         List.exists (fn thy => thy = name) thyl) added_from_dat
@@ -2078,7 +1978,7 @@ fun smoke_options expdir timeout : hhConfig.hh_options =
 
 (* The format smoke test validates the typed slices.  Select them by
    encoding, not position: the rotation is tuning data and reorders. *)
-fun phase2_smoke_slices options =
+fun typed_smoke_slices options =
   List.filter (fn (_, slice) => #type_enc slice <> "")
     (hhSlice.mk_schedule options)
 
@@ -2144,7 +2044,7 @@ fun soundness_schedule options goal =
 
 fun has_theorem (_, status, _, _) = status = hhProver.SzsTheorem
 
-(* The complete Phase 2 encoding matrix.  The final three rows deliberately
+(* The complete typed-slice encoding matrix.  The final three rows deliberately
    retain the parser-rejected table triples: a substitution removes a slice
    from the schedule, but must not remove its encoding from soundness checks. *)
 fun soundness_slice prover format type_enc lam_trans nfacts : hhProver.slice =
@@ -2257,7 +2157,7 @@ fun run_smoke {expdir, timeout} =
       val _ = app load_theory theories
       val options = smoke_options expdir timeout
       val _ = app (run_format_smoke expdir timeout options)
-        (phase2_smoke_slices options)
+        (typed_smoke_slices options)
       val corpus = map loaded_corpus_entry theories
       val _ = write_run_header expdir
         (new_run_header {expname = OS.Path.file expdir, corpus = corpus,

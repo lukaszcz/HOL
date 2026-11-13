@@ -239,23 +239,20 @@ fun axioms_from_tstp lines =
     else from_files
   end
 
-val first_some = hhConfig.first_some
-
 fun parse_tstp lines =
-  let
-    val status =
-      case first_some szs_of_line lines of
-          SOME result => result
-        | NONE =>
-            if List.exists (String.isSubstring "Time limit reached!") lines
-            then SzsTimeout
-            else RunFailure "no SZS status"
-    val axioms = axioms_from_tstp lines
-  in
-    case status of
-        SzsTheorem => (status, SOME axioms)
-      | _ => (status, NONE)
-  end
+  case Portable.get_first szs_of_line lines of
+      SOME SzsTheorem => (SzsTheorem, SOME (axioms_from_tstp lines))
+    | SOME status => (status, NONE)
+    | NONE => (RunFailure "no SZS status", NONE)
+
+(* Vampire may report its own time limit without any SZS line. *)
+fun parse_vampire lines =
+  case parse_tstp lines of
+      (RunFailure _, _) =>
+        if List.exists (String.isSubstring "Time limit reached!") lines
+        then (SzsTimeout, NONE)
+        else (RunFailure "no SZS status", NONE)
+    | result => result
 
 fun core_axioms lines =
   let
@@ -285,7 +282,7 @@ fun core_axioms lines =
 fun parse_z3 lines =
   let
     val status =
-      case first_some szs_of_line lines of
+      case Portable.get_first szs_of_line lines of
           SOME result => result
         | NONE => RunFailure "no SZS status"
   in
@@ -339,13 +336,7 @@ fun z3_version output =
       SOME version => SOME version
     | NONE => version_between "Z3tptp [" "]" output
 
-fun same_slice (left : slice) (right : slice) =
-  #prover left = #prover right andalso #format left = #format right andalso
-  #type_enc left = #type_enc right andalso
-  #lam_trans left = #lam_trans right andalso
-  #nfacts left = #nfacts right andalso #filter left = #filter right andalso
-  #extra_opts left = #extra_opts right andalso
-  #slice_size left = #slice_size right
+fun same_slice (left : slice) right = left = right
 
 fun mk_slice prover (format, type_enc, lam_trans) nfacts extra_opts : slice =
   {prover = prover, format = format, type_enc = type_enc, lam_trans = lam_trans,
@@ -367,7 +358,7 @@ fun filtered_slices prover entries =
     mk_filtered_slice prover triple filter nfacts extra_opts) entries
 
 (* Pinned E 3.2.5-ho, Vampire 5.0.1, and Zipperposition 2.1 smoke
-   recordings validate these TPTP-3 dialect choices for every Phase 2 slice.
+   recordings validate these TPTP-3 dialect choices for every typed slice.
    E's --tstp-in and Zipperposition's --input tptp are base command options;
    Vampire alone requires its explicit TPTP input selector. *)
 fun e_command executable {timeout, problem, extra, ...} =
@@ -412,7 +403,7 @@ val e_config : prover_config =
         (("fof", "", ""), 512, []),
         (("tx0-", "mono_native_fool", "lifting"), 128, []),
         (("th0", "mono_native_higher", "keep_lams"), 512, []),
-        (* §4.7 substitution: E 3.2.5-ho rejects the generated TF0
+        (* Substitution: E 3.2.5-ho rejects the generated TF0
            polymorphic proxy declaration used by combs_and_lifting.  TX0-
            preserves that lambda mode and is its parser-supported
            candidate. *)
@@ -429,7 +420,7 @@ val vampire_config : prover_config =
    parse_version = vampire_version, tested_versions = ["5.0.1"],
    supported_formats = ["fof", "tf0", "tf1", "tx0", "th0", "th1"],
    mk_command = vampire_command,
-   parse_output = parse_tstp, mono_instances = SOME 256,
+   parse_output = parse_vampire, mono_instances = SOME 256,
    slices = fn () =>
      slices "vampire"
        [(("fof", "", ""), 96, []),
@@ -437,7 +428,7 @@ val vampire_config : prover_config =
         (("fof", "", ""), 32, []),
         (("fof", "", ""), 1024, []),
         (("tx0", "mono_native_fool", "lifting"), 96, []),
-        (* §4.7 substitution: Vampire 5.0.1 rejects TF1 rank-1 type
+        (* Substitution: Vampire 5.0.1 rejects TF1 rank-1 type
            quantifiers (!>) as higher-order types.  TH0 is its next tested
            table candidate; this is a parser-equivalence correction, not a
            tuning change. *)
@@ -462,7 +453,7 @@ val zipperposition_config : prover_config =
        [(("fof", "", ""), 128, []),
         (("fof", "", ""), 512, []),
         (("th1", "mono_native_higher_fool", "keep_lams"), 128, []),
-        (* §4.7 substitution: Zipperposition 2.1 rejects FOF guard proxy
+        (* Substitution: Zipperposition 2.1 rejects FOF guard proxy
            helpers as a prop/individual type clash.  Its legacy FOF/32
            candidate parses; this is a parser-equivalence correction. *)
         (("fof", "", ""), 32, [])] () @
@@ -509,25 +500,15 @@ fun default_provers () =
 
 fun elapsed started = Time.toReal (Time.- (Time.now (), started))
 
-fun with_mutex mutex f =
-  let
-    val _ = Mutex.lock mutex
-  in
-    (f () before Mutex.unlock mutex)
-    handle exn => (Mutex.unlock mutex; raise exn)
-  end
+fun with_mutex mutex f = Multithreading.synchronized "hhProver" mutex f
 
-val spawn_mutex = Mutex.mutex ()
-val spawn_counter = ref 0
+val spawns = Portable.syncref 0
 
-fun spawn_count () =
-  with_mutex spawn_mutex (fn () => !spawn_counter)
+fun spawn_count () = #get spawns ()
 
-fun reset_spawn_count () =
-  with_mutex spawn_mutex (fn () => spawn_counter := 0)
+fun reset_spawn_count () = #upd spawns (fn _ => ((), 0))
 
-fun note_spawn () =
-  with_mutex spawn_mutex (fn () => spawn_counter := !spawn_counter + 1)
+fun note_spawn () = #upd spawns (fn n => ((), n + 1))
 
 fun text_instream fd =
   let
@@ -769,10 +750,9 @@ fun next_output directory name =
       OS.Path.concat (directory, name ^ "-" ^ Int.toString n ^ ".out")
     fun exists path = OS.FileSys.access (path, []) handle OS.SysErr _ => false
     fun fresh n = if exists (candidate n) then fresh (n + 1) else n
-    val _ = Mutex.lock output_mutex
-    val n = fresh (!output_counter + 1)
-    val _ = output_counter := n
-    val _ = Mutex.unlock output_mutex
+    val n = with_mutex output_mutex (fn () =>
+      let val n = fresh (!output_counter + 1)
+      in output_counter := n; n end)
   in
     candidate n
   end

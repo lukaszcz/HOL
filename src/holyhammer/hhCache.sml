@@ -12,22 +12,6 @@ type key_parts =
 
 fun join a b = OS.Path.concat (a, b)
 
-fun sha1_text text =
-  let
-    val bytes = Byte.stringToBytes text
-    val length = Word8Vector.length bytes
-    fun read (offset, requested) =
-      let
-        val count = Int.min (requested, length - offset)
-        val chunk = Word8Vector.tabulate
-          (count, fn index => Word8Vector.sub (bytes, offset + index))
-      in
-        (chunk, offset + count)
-      end
-  in
-    SHA1.sha1String read 0
-  end
-
 fun frame text = Int.toString (String.size text) ^ ":" ^ text
 
 fun normalized_argument problem content_hash argument =
@@ -53,18 +37,12 @@ fun key_of ({prover, version, argv, problem} : key_parts) =
           (prover :: version_string :: Int.toString (length normalized) ::
            normalized @ [content_hash]))
   in
-    sha1_text material
+    aiLib.sha1_string material
   end
 
-fun szs_string hhProver.SzsTheorem = "Theorem"
-  | szs_string hhProver.SzsCounterSat = "CounterSatisfiable"
-  | szs_string hhProver.SzsSatisfiable = "Satisfiable"
-  | szs_string hhProver.SzsGaveUp = "GaveUp"
-  | szs_string hhProver.SzsTimeout = "Timeout"
-  | szs_string hhProver.SzsResourceOut = "ResourceOut"
-  | szs_string hhProver.SzsInappropriate = "Inappropriate"
-  | szs_string (hhProver.SzsUnknown text) = "Unknown:" ^ text
+fun szs_string (hhProver.SzsUnknown text) = "Unknown:" ^ text
   | szs_string (hhProver.RunFailure text) = "RunFailure:" ^ text
+  | szs_string szs = hhProver.szs_name szs
 
 fun szs_of_string "Theorem" = hhProver.SzsTheorem
   | szs_of_string "CounterSatisfiable" = hhProver.SzsCounterSat
@@ -178,18 +156,19 @@ fun is_hex character =
 fun is_entry_name name =
   String.size name = 40 andalso List.all is_hex (String.explode name)
 
-fun cache_entries directory =
+fun entry_names directory =
+  List.filter is_entry_name (hhConfig.directory_names directory)
+
+fun cache_entries directory names =
   let
     fun entry name =
-      if not (is_entry_name name) then NONE
-      else
-        let val path = join directory name in
-          if hhConfig.is_dir path then NONE
-          else SOME (OS.FileSys.modTime path, name, path)
-        end
-        handle OS.SysErr _ => NONE
+      let val path = join directory name in
+        if hhConfig.is_dir path then NONE
+        else SOME (OS.FileSys.modTime path, name, path)
+      end
+      handle OS.SysErr _ => NONE
   in
-    List.mapPartial entry (hhConfig.directory_names directory)
+    List.mapPartial entry names
   end
 
 fun entry_before (time1, name1, _) (time2, name2, _) =
@@ -206,12 +185,15 @@ fun prune (options : hhConfig.hh_options) =
   if not (#cache options) then ()
   else
     ((let
-        val entries = cache_entries (#cache_dir options)
+        val directory = #cache_dir options
+        val names = entry_names directory
         val maximum = #cache_max_entries options
       in
-        if length entries <= maximum then ()
+        (* Count names first: stat every entry only when over the limit. *)
+        if length names <= maximum then ()
         else
           let
+            val entries = cache_entries directory names
             val target = ninety_percent maximum
             val oldest = aiLib.first_n (length entries - target)
               (Portable.sort entry_before entries)

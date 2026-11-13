@@ -2469,23 +2469,6 @@ fun test_hhEval root =
       (hhEval.sample_goal 7 "list.nil" = hhEval.sample_goal 7 "list.nil")
     val _ = expect "invalid sample factor is rejected"
       ((hhEval.sample_goal 0 "list.nil"; false) handle Fail _ => true)
-    val partition_ids =
-      List.tabulate (100, fn index => "fixture.goal" ^ Int.toString index)
-    fun selected_parts id =
-      List.filter (fn part =>
-        hhEval.goal_partition {part = part, parts = 7} id)
-        (List.tabulate (7, fn part => part))
-    val _ = expect "goal partitions are disjoint and exhaustive"
-      (List.all (fn id => length (selected_parts id) = 1) partition_ids)
-    val _ = expect "invalid goal partitions are rejected"
-      (((hhEval.goal_partition {part = 7, parts = 7} "list.nil";
-          false) handle Fail _ => true) andalso
-       ((hhEval.goal_partition {part = 0, parts = 0} "list.nil";
-          false) handle Fail _ => true))
-    val _ = expect "empty and duplicate worker goal inventories are rejected"
-      (((hhEval.set_worker_goal_ids []; false) handle Fail _ => true) andalso
-       ((hhEval.set_worker_goal_ids ["list.nil", "list.nil"];
-          false) handle Fail _ => true))
     val worker_options =
       [("filter", "mepo"), ("format", "tf0"),
        ("type_enc", "mono_native"), ("lam_trans", "lifting"),

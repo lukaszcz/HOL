@@ -33,11 +33,8 @@ fun escapeString s = let
         if Char.ord c < 32 orelse Char.ord c = 127
         then controlEscape c
         else str c
-  fun loop (i, pieces) =
-      if i = size s then String.concat (List.rev pieces)
-      else loop (i + 1, escape (String.sub (s, i)) :: pieces)
 in
-  "\"" ^ loop (0, []) ^ "\""
+  "\"" ^ String.translate escape s ^ "\""
 end
 
 fun numberString n =

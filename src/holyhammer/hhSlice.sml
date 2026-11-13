@@ -6,9 +6,10 @@
 structure hhSlice :> hhSlice =
 struct
 
-(* The first eight entries are the frozen Phase 1 gate anchors.  The next
-   eight consume the Phase 2 table order in hhProver exactly.  The final
-   eight consume the Phase 3 ensemble entries. *)
+(* Each name consumes the next unused entry of that prover's slice table in
+   hhProver, so this order must track those tables: the first eight entries
+   are the FOF anchors, the next eight the rest of the unfiltered tables,
+   and the final eight the filtered ensemble slices. *)
 val rotation =
   ["vampire", "e", "zipperposition", "vampire", "e", "vampire",
    "zipperposition", "vampire",
@@ -126,6 +127,19 @@ fun mk_schedule (options : hhConfig.hh_options) =
                 end
   in
     walk tables [] names []
+  end
+
+(* Each distinct filter in first-use order, with its largest fact count. *)
+fun filter_maxima schedule =
+  let
+    fun add slice [] = [(#filter slice, #nfacts slice)]
+      | add slice ((filter, maximum) :: rest) =
+          if #filter slice = filter then
+            (filter, Int.max (maximum, #nfacts slice)) :: rest
+          else
+            (filter, maximum) :: add slice rest
+  in
+    foldl (fn ((_, slice), maxima) => add slice maxima) [] schedule
   end
 
 fun slice_budget schedule_len (options : hhConfig.hh_options)
