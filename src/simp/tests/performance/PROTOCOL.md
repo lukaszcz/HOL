@@ -5788,9 +5788,11 @@ are decided exactly by the TASK33 S1 records (`fragment`, `compiled`,
 `compiled_bool`, `merge`, `projection`, `conversion`) and the
 `storage_graph` allocation case, and the record lists them as `decided_by`
 and takes their state: failed if any failed (naming it), else incomplete
-(owing `retained-slope`) if any is not pass or none exists, else pass. A
-blocked slope missing a size of the part is a measurement gap and, like a
-measured slope, is judged as before.
+(owing `retained-slope`) if any is not pass or absent, else pass. A blocked
+slope missing a size of the part is a measurement gap (it arises in a part
+with two or more `storage_graph` sizes; a failed `storage_graph` protocol in
+a one-size part yields no slope at all, `retained_scaling` being None, and
+the cell owes its redraw) and, like a measured slope, is judged as before.
 
 Owed stage and decisive stage. The decisive stage of a cell is the final
 class of its chain of timing stages (the chain's last stage, not the first

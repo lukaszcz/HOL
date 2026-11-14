@@ -66,6 +66,13 @@ what is owed is listed explicitly on it and in the top-level `owed`:
 control-limited or inconclusive cell with no stage left is `blocked` (still
 incomplete, owing an attribution).
 
+Retained slope (design decision 44): a shard owes `retained-slope` only
+where it samples it. A slope blocked for exactly the sizes of `storage_graph`
+its part does not hold is `not-sampled` and takes the state of the TASK33 S1
+records and the `storage_graph` allocation case that decide it exactly (any
+failed: fail; any absent or not pass: incomplete; else pass); a blocked slope
+missing a size of the part is a measurement gap and stays owed.
+
 Lineage (design decision 17). Dispose runs in the checkout that holds this
 code (`--repo` is that checkout or is refused). Every input records the
 candidate it was measured at; each is accepted only when it is a commit of
@@ -687,7 +694,9 @@ def owes_stage2(row):
 
 def read_stage(root, label, lineage):
     """One timing output: its inventory (`inventory.json` of timing_grid),
-    its cell classes, its first stage's classes (read and sealed through
+    its cell classes, its retained slope (`scaling`, and `scaling_raw`: the
+    status and missing sizes where it is not measured), its first stage's
+    classes (read and sealed through
     the engine's schema for an extension) and the cells its second stage
     remeasured, with the sources that differ in any stage."""
     root = Path(root).resolve()
@@ -819,7 +828,9 @@ def followup_of(key):
 
 
 def read_shard(key, options, lineage, repo, document, late):
-    """One timing shard: {cells: {name: row}, scaling, differing, attempts,
+    """One timing shard: {cells: {name: row}, scaling, scaling_raw (status and
+    missing sizes of an unmeasured retained slope, else None), differing,
+    attempts,
     seals, pins}. A cell's row: class, first (its decisive chain's first
     stage), stage2 and followup (whether they ran), earlier (the classes the
     follow-up replaced). The replays and the ledger judgement are added to
@@ -896,7 +907,7 @@ def read_shard(key, options, lineage, repo, document, late):
             judged.append((follow, {}))
     seals["ledger"] = a.seal(Path(ledger))
     held = dict(cells=rows, scaling=main["scaling"],
-                scaling_raw=main.get("scaling_raw"),
+                scaling_raw=main["scaling_raw"],
                 differing=sorted(set(differing)), attempts=[], seals=seals,
                 pins=pins, counts=None)
 
@@ -1132,14 +1143,16 @@ def unsampled_sizes(table):
     return None, None
 
 
-def retained_record(table, s, raw, t33, allocation_cases, allocation):
+def retained_record(table, s, raw, t33, allocation_cases):
     """The retained-slope record of a shard. A slope the shard does not
     sample (blocked, missing exactly the sizes of the six its part does not
     hold) is `not-sampled` and takes the state of the records that decide
-    the retained graph size and every adjacent slope exactly (the TASK33
-    S1 records, the allocation case of `storage_graph`); no decider is
-    incomplete, never a pass. Any other blocked slope is a measurement
-    gap, and a measured one is judged as measured: both as before."""
+    the retained graph size and every adjacent slope exactly: the TASK33
+    S1 records and the shard's allocation case of `storage_graph`, each
+    named and looked up directly. One that fails fails it; a missing
+    decider makes it incomplete, never a pass. Any other blocked slope is a
+    measurement gap, and a measured one is judged as measured: both as
+    before."""
     key, absent = unsampled_sizes(table)
     if not (raw and raw.get("status") == "blocked" and absent and
             sorted(raw.get("missing_sizes", [])) == absent):
@@ -1147,26 +1160,19 @@ def retained_record(table, s, raw, t33, allocation_cases, allocation):
             ["retained slope: fail"] if s == "fail" else [],
             [] if s in ("pass", "fail") else ["retained slope: " + s],
             [] if s in ("pass", "fail") else ["retained-slope"], class_=s)
-    kind = grid.KIND[key]
-    found = {k: r for k, r in t33.items()
-             if r is not None and k.split(":", 1)[0] == RETAINED_CASE and
-             k.split(":", 1)[-1] in RETAINED_KINDS}
-    found.update({k: r for k, r in allocation_cases.items()
-                  if k.rsplit(":", 1)[-1] == RETAINED_ALLOCATION and
-                  k in allocation.get(kind, {}).get("cases", {})})
+    named = [("%s:%s" % (RETAINED_CASE, k), t33) for k in RETAINED_KINDS]
+    named.append(("%s:%s" % (TASKS[grid.KIND[key]], RETAINED_ALLOCATION),
+                  allocation_cases))
+    state = {k: (src.get(k) or dict(status="absent"))["status"]
+             for k, src in named}
     failed = ["retained slope: decided by %s, which failed" % k
-              for k, r in sorted(found.items())
-              if r["status"] == STATUS_FAIL]
-    missing = ["retained slope: decided by %s, which is %s" % (
-        k, r["status"]) for k, r in sorted(found.items())
-        if r["status"] == STATUS_INCOMPLETE]
-    if not found:
-        missing = ["retained slope: no deciding %s (%s) or %s allocation "
-                   "record" % (RETAINED_CASE, ", ".join(RETAINED_KINDS),
-                               RETAINED_ALLOCATION)]
+              for k, v in sorted(state.items()) if v == STATUS_FAIL]
+    missing = ["retained slope: decided by %s, which is %s" % (k, v)
+               for k, v in sorted(state.items())
+               if v not in (STATUS_PASS, STATUS_FAIL)]
     return grid_record(failed, [] if failed else missing,
                        ["retained-slope"] if missing and not failed else [],
-                       class_="not-sampled", decided_by=sorted(found))
+                       class_="not-sampled", decided_by=sorted(state))
 
 
 def dispose(identity, allocation, timing, units, decisions33, receipts,
@@ -1216,8 +1222,8 @@ def dispose(identity, allocation, timing, units, decisions33, receipts,
                  ", ".join(diff)] if diff else [],
             ["attribution"] if diff else [], differing=diff)
     scaling_records = {
-        t: retained_record(t, v["scaling"], v.get("scaling_raw"), t33,
-                           allocation_cases, allocation)
+        t: retained_record(t, v["scaling"], v["scaling_raw"], t33,
+                           allocation_cases)
         for t, v in timing.items() if v["scaling"] is not None}
     auxiliary = [("identity_grid", identity_grids),
                  ("allocation_case", allocation_cases),
@@ -1555,12 +1561,15 @@ def lines(record):
               ("retained-slope", record["retained_slope"])]
     for label, rows in groups:
         for name, r in rows.items():
-            if r["status"] == STATUS_PASS and not r.get("policy") in (
-                    "D2", "D4"):
+            slope = r.get("class_") == "not-sampled"
+            if r["status"] == STATUS_PASS and not slope and \
+                    not r.get("policy") in ("D2", "D4"):
                 continue
-            why = r["failed"] + r["missing"] or [
-                "policy %s: %s" % (r["policy"], r.get("policy_note") or
-                                   r.get("note"))]
+            why = r["failed"] + r["missing"] or (
+                ["not-sampled, decided by " + ", ".join(r["decided_by"])]
+                if slope else [
+                    "policy %s: %s" % (r["policy"], r.get("policy_note")
+                                       or r.get("note"))])
             out.append("%s %s %s: %s%s" % (
                 r["status"].upper(), label, name, "; ".join(why),
                 " [owed: %s]" % ", ".join(r["owed"]) if r["owed"] else ""))

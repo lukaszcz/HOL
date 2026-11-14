@@ -283,7 +283,8 @@ class Dispose(unittest.TestCase):
         for key in KEYS:
             timing[grid.name_of(key)] = dict(
                 cells={n: classes.get(n, trow()) for n in grid.PARTS[key]},
-                scaling=scaling, differing=list(differing),
+                scaling=scaling, scaling_raw=None,
+                differing=list(differing),
                 attempts=[], counts=[1, 1])
         units = {"u1": dict(unit="u1", failed=[], missing=[], owed=[])}
         return ids, al, timing, units, {}, {}
@@ -378,12 +379,17 @@ class Dispose(unittest.TestCase):
         return name, (ids, al, timing, units, t33, rec)
 
     def test_retained_slope_is_a_record(self):
-        # a blocked slope missing a size of the part is a measurement gap
+        # a blocked slope missing a size its part holds is a measurement
+        # gap: patch in a part with two storage_graph sizes, one missing
         key = self.slope_key()
+        parts = dict(grid.PARTS)
+        parts[key] = tuple(parts[key]) + ("storage_graph-10",)
         t = self.tables(scaling="inconclusive")
-        t[2][grid.name_of(key)]["scaling_raw"] = self.blocked(
-            key, drop=[min(self.part_sizes(key))])
-        r = d.dispose(*t)
+        t[2][grid.name_of(key)]["scaling_raw"] = dict(
+            status="blocked", missing_sizes=sorted(
+                set(a.SIZES) - {10, 1000} | {10}))
+        with mock.patch.object(grid, "PARTS", parts):
+            r = d.dispose(*t)
         self.assertEqual(r["status"], "incomplete")
         self.assertTrue(any(o["owed"] == "retained-slope"
                             for o in r["owed"]))
@@ -403,6 +409,10 @@ class Dispose(unittest.TestCase):
         self.assertEqual(rec["decided_by"], sorted(
             ["S1:" + k for k in S1] + ["task37-matrix:storage_graph"]))
         self.assertEqual(r["status"], "pass")
+        self.assertTrue(any(
+            l.startswith("PASS retained-slope %s: not-sampled, decided by"
+                         % name) for l in d.lines(lines_record(
+                retained_slope=r["retained_slope"]))))
 
     def test_not_sampled_slope_with_a_failing_decider_fails(self):
         S1 = {k: "pass" for k in d.RETAINED_KINDS}
@@ -417,6 +427,14 @@ class Dispose(unittest.TestCase):
         self.assertEqual(rec["status"], "fail")
         self.assertTrue(any("storage_graph" in f for f in rec["failed"]))
 
+    def test_a_failing_s1_kind_outside_the_six_is_not_a_decider(self):
+        S1 = {k: "pass" for k in d.RETAINED_KINDS}
+        S1["cong"] = "fail"
+        name, t = self.sampled(S1)
+        rec = d.dispose(*t)["retained_slope"][name]
+        self.assertEqual(rec["status"], "pass")
+        self.assertNotIn("S1:cong", rec["decided_by"])
+
     def test_not_sampled_slope_with_an_incomplete_decider(self):
         S1 = {k: "pass" for k in d.RETAINED_KINDS}
         S1["fragment"] = "incomplete"
@@ -426,23 +444,23 @@ class Dispose(unittest.TestCase):
         self.assertEqual(rec["missing"], [
             "retained slope: decided by S1:fragment, which is incomplete"])
         self.assertEqual(rec["owed"], ["retained-slope"])
-        # no decider at all is never a pass
-        name, t = self.sampled({}, case=False)
-        rec = d.dispose(*t)["retained_slope"][name]
-        self.assertEqual(rec["status"], "incomplete")
-        self.assertEqual(rec["owed"], ["retained-slope"])
-        self.assertEqual(rec["decided_by"], [])
 
-    def test_blocked_slope_with_a_part_size_missing_stays_owed(self):
-        S1 = {k: "pass" for k in d.RETAINED_KINDS}
-        key = self.slope_key()
-        name, t = self.sampled(
-            S1, drop=[min(self.part_sizes(key))])
+    def test_not_sampled_slope_with_absent_deciders_is_never_a_pass(self):
+        # none, only a subset of the S1 kinds, only the allocation case
+        for found, case in (({}, False), ({"merge": "pass"}, False),
+                            ({}, True)):
+            name, t = self.sampled(found, case=case)
+            rec = d.dispose(*t)["retained_slope"][name]
+            self.assertEqual(rec["status"], "incomplete", (found, case))
+            self.assertEqual(rec["owed"], ["retained-slope"])
+            self.assertEqual(len(rec["decided_by"]),
+                             len(d.RETAINED_KINDS) + 1)
+            self.assertTrue(all("which is absent" in m
+                                for m in rec["missing"]))
+        name, t = self.sampled({"merge": "pass"}, case=False)
         rec = d.dispose(*t)["retained_slope"][name]
-        self.assertEqual(rec["class_"], "inconclusive")
-        self.assertEqual(rec["status"], "incomplete")
-        self.assertEqual(rec["owed"], ["retained-slope"])
-        self.assertNotIn("decided_by", rec)
+        self.assertNotIn("S1:merge", " ".join(rec["missing"]))
+        self.assertEqual(len(rec["missing"]), len(d.RETAINED_KINDS))
 
     def test_identity_grid_status(self):
         ids, al, timing, units, t33, rec = self.tables()
@@ -938,7 +956,8 @@ class Pilot(unittest.TestCase):
             found = dict(
                 root=Path(root), first_root=Path(root),
                 inventory=dict(candidate=CAND), first_inventory={},
-                scaling=None, differing=[], seals={}, plan={},
+                scaling=None, scaling_raw=None,
+            differing=[], seals={}, plan={},
                 final={n: "pass" for n in self.names},
                 first={n: "pass" for n in self.names})
         return dict(found)
@@ -1015,7 +1034,8 @@ class Pilot(unittest.TestCase):
             root=self.root / "f", first_root=self.root / "f",
             inventory=dict(candidate=CAND, replaces=dict(
                 grid="../elsewhere")),
-            first_inventory={}, scaling=None, differing=[], seals={},
+            first_inventory={}, scaling=None, scaling_raw=None,
+            differing=[], seals={},
             plan={}, final={first: "pass"}, first={first: "pass"})
         options = self.options(followup={self.key: self.root / "f"})
         options["followup-pilot"] = {self.key: self.root / "fp"}
@@ -1028,7 +1048,8 @@ class Pilot(unittest.TestCase):
         self.stages["f"] = dict(
             root=self.root / "f", first_root=self.root / "f",
             inventory=dict(candidate=CAND, replaces=dict(grid="../main")),
-            first_inventory={}, scaling=None, differing=[], seals={},
+            first_inventory={}, scaling=None, scaling_raw=None,
+            differing=[], seals={},
             plan={}, final={first: "inconclusive"},
             first={first: "inconclusive"})
         options = self.options(followup={self.key: self.root / "f"})
@@ -1053,7 +1074,8 @@ class Pilot(unittest.TestCase):
         self.stages["main"] = dict(
             root=self.root / "main", first_root=self.root / "main",
             inventory=dict(candidate=CAND), first_inventory={},
-            scaling=None, differing=[], seals={}, plan={},
+            scaling=None, scaling_raw=None,
+            differing=[], seals={}, plan={},
             final={n: main_class if n == first else "pass"
                    for n in self.names},
             first={n: main_class if n == first else "pass"
@@ -1061,7 +1083,8 @@ class Pilot(unittest.TestCase):
         self.stages["f"] = dict(
             root=self.root / "f", first_root=self.root / "f",
             inventory=dict(candidate=CAND, replaces=dict(grid="../main")),
-            first_inventory={}, scaling=None, differing=[], seals={},
+            first_inventory={}, scaling=None, scaling_raw=None,
+            differing=[], seals={},
             plan={}, final={first: follow_class},
             first={first: follow_class})
         (self.root / "f").mkdir(exist_ok=True)
@@ -1114,7 +1137,8 @@ class Pilot(unittest.TestCase):
             root=extension, first_root=first,
             inventory=dict(candidate=CAND, replaces=replaces_ext),
             first_inventory=dict(candidate=CAND, replaces=replaces_first),
-            scaling=None, differing=[], seals={}, plan={},
+            scaling=None, scaling_raw=None,
+            differing=[], seals={}, plan={},
             final={cell: "pass"}, first={cell: "pass"})
         options = self.options(followup={self.key: self.root / "f"})
         options["followup-pilot"] = {self.key: self.root / "fp"}
@@ -1180,6 +1204,27 @@ class ReadStage(unittest.TestCase):
             workloads=rows, retained_scaling=None,
             source_identity=dict(differing=[])))
         return d.read_stage(self.root, "t", FakeLineage())
+
+    def test_the_unsampled_slope_is_read_and_disposed(self):
+        """The slope of a part holding storage_graph at 1000 only is
+        blocked by acceptance.retained_scaling; read_stage keeps that and
+        dispose records it as not-sampled."""
+        row = dict(candidate=dict(case="storage_graph", size=1000))
+        raw = a.retained_scaling([row])
+        write(self.root / "inventory.json", dict(
+            candidate=CAND, checkout=dict(head=CAND)))
+        write(self.root / "decisions.json", dict(
+            workloads=[workload("storage_graph", 1000)],
+            retained_scaling=raw, source_identity=dict(differing=[])))
+        found = d.read_stage(self.root, "t", FakeLineage())
+        self.assertEqual(found["scaling"], "inconclusive")
+        self.assertEqual(found["scaling_raw"]["missing_sizes"],
+                         [0, 1, 10, 100, 10000])
+        rec = d.retained_record(
+            "task37-matrix-3", found["scaling"], found["scaling_raw"],
+            {}, {})
+        self.assertEqual(rec["class_"], "not-sampled")
+        self.assertEqual(rec["status"], "incomplete")
 
     def test_a_protocol_failed_cell_has_no_metrics_to_inspect(self):
         """A cell with no admitted measurement has no `metrics`: it is
