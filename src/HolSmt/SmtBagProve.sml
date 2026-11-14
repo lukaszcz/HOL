@@ -757,12 +757,20 @@ struct
                 val _ = List.app (fn (_,n) => ignore (represent n)) roots
                 val entries = Redblackmap.listItems (!bindings)
                 (* Only CLOSED source fields can be substituted globally.
-                   Dependent fields occur inside their enclosing projection. *)
-                val naming = List.map (fn (actual,n) =>
-                    {redex=actual,residue=represent n}) roots @
-                  List.mapPartial (fn (_,(n,_,_)) =>
-                    if null (deps n) then SOME
-                      {redex=syntax n,residue=represent n} else NONE) entries
+                   Dependent fields occur inside their enclosing projection.
+                   A root may also be a closed entry; Term.subst rejects a
+                   repeated redex, so keep only the last maplet for each. *)
+                val naming = #1 (List.foldr
+                  (fn (m as {redex,...},(kept,seen)) =>
+                     if HOLset.member (seen,redex) then (kept,seen)
+                     else (m::kept,HOLset.add (seen,redex)))
+                  ([],Term.empty_tmset)
+                  (List.map (fn (actual,n) =>
+                     {redex=actual,residue=represent n}) roots @
+                   List.mapPartial (fn (_,(n,_,_)) =>
+                     if null (deps n) then SOME
+                       {redex=syntax n,residue=represent n} else NONE)
+                     entries))
                 val _ = List.app (fn {redex,residue} =>
                   List.app admit [redex,residue]) naming
                 fun compact term =
