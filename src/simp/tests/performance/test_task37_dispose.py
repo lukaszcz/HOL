@@ -304,8 +304,48 @@ class Dispose(unittest.TestCase):
             return real(name, identity, allocated, timed, d4, groups)
         with mock.patch.object(d, "judge", spy):
             d.dispose(*self.tables())
-        self.assertEqual(seen[0], set(c.D4))
-        self.assertEqual(len(seen[0]), 31)
+        self.assertEqual(seen[0], set(c.D4) | set(d.D4_TASK37))
+        self.assertEqual(len(seen[0]), 32)
+
+    def test_the_d4_of_a_disposition_adds_the_user_cells(self):
+        self.assertEqual(d.D4_TASK37, ("frag_named-10000",))
+        self.assertEqual(d.d4_cells(), set(c.D4) | set(d.D4_TASK37))
+        self.assertEqual(len(d.d4_cells()), 32)
+        seen = []
+        real = d.judge
+
+        def spy(name, identity, allocated, timed, d4, groups=None):
+            seen.append(set(d4))
+            return real(name, identity, allocated, timed, d4, groups)
+        with mock.patch.object(d, "judge", spy):
+            d.dispose(*self.tables())
+        self.assertEqual(seen[0], d.d4_cells())
+
+    def test_a_d4_task37_cell_passes_by_d4(self):
+        name = d.D4_TASK37[0]
+        self.assertNotIn(name, c.D4)
+        ids = {name: "attributed"}
+        r = d.dispose(*self.tables({name: trow("control_limited",
+                                               stage2=True)},
+                                   identity=ids))
+        self.assertEqual((r["cells"][name]["status"],
+                          r["cells"][name]["policy"]), ("pass", "D4"))
+        self.assertIn(name, r["policies"]["D4"])
+        # allocation that differs still fails it
+        r = d.dispose(*self.tables({name: trow("control_limited",
+                                               stage2=True)},
+                                   identity=ids,
+                                   rows={name: dict(work="differs")}))
+        self.assertEqual(r["cells"][name]["status"], "fail")
+        self.assertNotIn(name, r["policies"]["D4"])
+
+    def test_d4_task37_must_be_sample_cells_outside_d4(self):
+        for bad in (("frag_create-100",), (c.D4[0],),
+                    ("frag_named-10000", "frag_named-10000")):
+            with mock.patch.object(d, "D4_TASK37", bad):
+                with self.assertRaisesRegex(ValueError, "D4_TASK37"):
+                    d.dispose(*self.tables())
+                self.assertRaises(ValueError, d.d4_cells)
 
     def test_d4_flag_set_only_for_a_d4_pass(self):
         name = c.D4[0]
@@ -1752,6 +1792,7 @@ class Derive(unittest.TestCase):
         quiet.__enter__()
         self.addCleanup(quiet.__exit__, None, None, None)
         ids, al, timing, units, t33, rec = self.tables()
+        self.timing = timing
         kinds = dict(client=c.CLIENT_CELLS, matrix=c.MATRIX_CELLS,
                      downstream=c.DOWNSTREAM_CELLS)
 
@@ -1873,6 +1914,86 @@ class Derive(unittest.TestCase):
         path.write_text(json.dumps(held))
         with self.assertRaisesRegex(ValueError, "changed TASK37"):
             d.disposition(self.args("--check", str(out)))
+
+    # Decision 45: an attempt void by an environment refusal needs an event
+    # file, an event needs such an attempt, the record holds its seal and
+    # `--check` derives it again.
+    TABLE = "task37-client-1"
+    REFUSAL = "runtime/tool changed during pair"
+
+    def void(self, environment=True):
+        x = dict(attempt="V", status="inconclusive", output="o",
+                 judged=False, void=True)
+        if environment:
+            x["environment"] = [self.REFUSAL]
+        self.timing[self.TABLE]["attempts"] = [x]
+
+    def event(self):
+        path = self.root / "dpkg.log"
+        path.write_text("upgrade libc6\n")
+        return path
+
+    def test_an_environment_void_attempt_needs_an_event(self):
+        self.void()
+        with self.assertRaisesRegex(
+                ValueError, "no --environment-event.*%s V" % self.TABLE):
+            d.derive(self.args("--record", "o"))
+        self.events.clear()
+        record = d.derive(self.args(
+            "--record", "o", "--environment-event", str(self.event())))
+        (found,) = record["environment_events"]
+        self.assertEqual(found["seal"], a.seal(self.event()))
+        self.assertEqual(found["path"], str(self.event()))
+        self.assertEqual(found["attempts"], [dict(
+            table=self.TABLE, attempt="V", refusals=[self.REFUSAL])])
+        self.assertIn("void (environment: %s)" % self.REFUSAL,
+                      "\n".join(d.lines(record)))
+
+    def test_an_event_with_no_attempt_it_voids_is_refused(self):
+        self.void(environment=False)
+        with self.assertRaisesRegex(
+                ValueError, "an environment event with no attempt it "
+                "voids"):
+            d.derive(self.args("--record", "o", "--environment-event",
+                               str(self.event())))
+        with self.assertRaisesRegex(ValueError, "event is missing"):
+            d.derive(self.args("--record", "o", "--environment-event",
+                               str(self.root / "none")))
+
+    def test_no_event_and_no_void_attempt_records_none(self):
+        self.void(environment=False)
+        self.assertEqual(d.derive(self.args(
+            "--record", "o"))["environment_events"], [])
+        self.assertIn("void (no measurement admitted)",
+                      "\n".join(d.lines(d.derive(self.args(
+                          "--record", "o")))))
+
+    def test_the_event_is_replayed_by_check(self):
+        self.void()
+        event = self.event()
+        out = self.root / "out"
+        more = ("--environment-event", str(event))
+        self.assertEqual(d.disposition(
+            self.args("--record", str(out), *more)), 0)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(d.disposition(
+                self.args("--check", str(out), *more)), 0)
+        event.write_text("another\n")
+        with self.assertRaisesRegex(ValueError, "changed TASK37"):
+            d.disposition(self.args("--check", str(out), *more))
+        event.write_text("upgrade libc6\n")
+        with self.assertRaisesRegex(ValueError, "no --environment-event"):
+            d.disposition(self.args("--check", str(out)))
+
+    def test_the_timing_ledger_passes_the_refusals(self):
+        seen = []
+
+        def spy(args, engine, judged, refusals=frozenset()):
+            seen.append(refusals)
+            return []
+        with mock.patch.object(d, "attempts_of", spy):
+            d.ledger_attempts("engine", {}, "repo", "ledger")
+        self.assertEqual(seen, [d.ENVIRONMENT_REFUSALS])
 
 
 class Command(unittest.TestCase):

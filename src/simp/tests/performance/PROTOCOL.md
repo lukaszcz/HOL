@@ -1615,6 +1615,12 @@ it.
     logic it never ran. Where a record lacks the file, `check_code`'s
     refusal of an edit states this rule and names no `HISTORY` entry. A
     record made by the current code carries the file.
+    TASK37 decision 45 threaded an optional `refusals` argument (default
+    none, with which every result is the held one) through the three moved
+    functions and added `ENVIRONMENT_REFUSALS` and `environment_refusals`: the
+    held seal and both pinned hashes were replaced after that review, and the
+    previous seal of the file is in `HISTORY` of `task30_dispose` and
+    `task31_dispose` for the records made with it.
   - TASK30's *set* of sealed names is frozen by its Y records: adding a file
     to `task30_grid.INSTALLED` or `SEALED` (which also feeds the
     follow-up's `SEALED`) makes every Y replay refuse "changed sealed
@@ -5240,19 +5246,21 @@ replaces). `RUN-T` is the output of the last attempt of allocation task
       --loading-ledger simplib=$(lg load-simplib task31-loading) \
       --loading-ledger conglib=$(lg load-conglib task31-loading) \
       [--d7-build $EV/builds/run/d7.json] \
+      [--environment-event $EV/environment/dpkg.log] \
       [--load host=$EV/load/host.jsonl] --record $EV/dispose
 
 Every `[..]` is optional (`--followup` and `--followup-pilot` once for each
-shard that has a follow-up). `--startup-null` is for a complete attempt only
-(then required); omit it for an incomplete attempt (its null is
-auto-discovered, or not read). The inputs are produced by the steps above:
-the identity grids and allocation runs by their streams (the grid and run
+shard that has a follow-up; `--environment-event` once for each system record,
+see "Environment refusals" below). `--startup-null` is for a complete attempt
+only (then required); omit it for an incomplete attempt (its null is
+auto-discovered, or not read). The inputs are produced by the steps above: the
+identity grids and allocation runs by their streams (the grid and run
 directories), the shard stages and pilots by the shard recipe, the TASK32 and
 TASK33 dispositions by their `dispose` commands, the startup attempt by the
 runner, the loading runs by `run_loading.sh` and the D7 receipt by
 `task37_dispose.py receipt`. `--check $EV/dispose` replays a recorded
-disposition. After a `pass`, the `t33` snapshots are disposed (above), and
-the cleanup removes `$W/t37-tmp` (every stream's TMPDIR) with the clones.
+disposition. After a `pass`, the `t33` snapshots are disposed (above), and the
+cleanup removes `$W/t37-tmp` (every stream's TMPDIR) with the clones.
 
 The identity source lists are the exception to the counts-alone ordering
 (design decision 19): `task37_sources.py` is sealed by the identity tables
@@ -5272,7 +5280,30 @@ outside the window, the candidate not a reproducible slowdown), identity is
 identical or attributed, and exact allocation passes, work rows included.
 Any other control-limited cell blocks and owes stage 2; if cells outside D4
 are still control-limited after stage 2 the lead asks the user, and D4 is
-not extended.
+not extended. The user extended D4 to `frag_named-10000` (matrix-3, design
+decision 46: control-limited after stage 2, identity attributed, exact
+allocation and work equal), listed as `D4_TASK37` in `task37_dispose.py`
+(`task37_cases.py` is sealed by every measurement and is not edited): D4 of
+the disposition is `task37_cases.D4` and `D4_TASK37` (32 cells), and each
+`D4_TASK37` cell must be a matrix sample cell outside `task37_cases.D4`.
+
+Environment refusals (design decision 45, a user amendment of R-1). The pair
+runner refuses a comparison with "runtime/tool changed during pair" (and the
+other `void_attempts.ENVIRONMENT_REFUSALS`: shared input/product, loaded
+source, loaded dependency product, harness input) after its pairs were
+admitted, when something it ran from changed under it (an unattended
+upgrade replacing the system libc). Such a refusal is independent of the
+outcome, so it selects nothing: a timing attempt whose cell archives show
+one (acceptance failed, no command timed out, each command left a runner
+manifest, one has `success` false and a listed `failure`, every other has no
+admitted run or succeeded) is void and is redrawn into a new output (one
+output, one attempt; the void output stays). Dispose requires one
+`--environment-event FILE` (the system record of the change, e.g. an
+apt/dpkg log excerpt) when any timing attempt is void by this rule, refuses
+an event when none is, and records each event's path, seal and the attempts
+it accounts for in `environment_events`; `--check` derives them again. Any
+other failure with an admitted run stays judged. Allocation attempts have
+their own rule.
 
 Every workload gets a decision. A reproducible slowdown of any size fails;
 an inconclusive result does not pass. Experiments are improved, or the

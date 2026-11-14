@@ -775,6 +775,14 @@ class Code(unittest.TestCase):
                 {"sha256": "0"}]}):
             d.check_code(bad)
 
+    def test_the_seal_before_the_environment_rule_is_history(self):
+        # TASK37 decision 45 added the optional environment refusals to
+        # void_attempts.py; a record made with the file before it checks.
+        old = dict(bytes=10622, sha256="da75214c5971dbb70ffb05dd302ed2fe"
+                                       "9e89120d4a162723b6385cae8ea1216b")
+        self.assertEqual(d.HISTORY["void_attempts.py"], (old,))
+        d.check_code(dict(d.seals(), **{"void_attempts.py": old}))
+
     def test_the_code_includes_the_allocation_gate_and_its_schemas(self):
         for name in ("allocation_boundary.py", "path_schema.py",
                      "task31_identity_grid.py", "void_attempts.py"):

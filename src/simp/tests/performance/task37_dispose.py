@@ -47,6 +47,9 @@ Policies carried over, each recorded on the cell:
   allocation passes with its work rows `equal`. The policy is recorded on a
   cell that passes by it, and on no other. A pass or a fail of any stage
   decides as for any cell; any other control-limited cell is owed stage 2.
+  The user extended D4 to `D4_TASK37` (design decision 46: `frag_named-10000`,
+  control-limited after stage 2, identity attributed, exact allocation and
+  work equal): D4 is `task37_cases.D4` and `D4_TASK37`.
 - A fail of any stage of a cell's timing chain decides: a first stage, a
   second stage or an earlier grid that failed is not undone by a later stage
   or follow-up that passed (D4 cannot dispose it). The owed stage 2 of a cell
@@ -58,6 +61,13 @@ Policies carried over, each recorded on the cell:
   (`void_attempts.attempts_of`, through the shard's engine), the
   follow-up's table (when one is declared) whether or not it is named, and
   the allocation tasks' (`--alloc-ledger`: see ALLOCATION LEDGER below).
+  User amendment (design decision 45): a timing attempt whose cell archives
+  show the pair runner's environment-integrity refusal after pairs were
+  admitted (`void_attempts.ENVIRONMENT_REFUSALS`) selects nothing: it is
+  void, and the settings are redrawn into a new output (the void output
+  stays). Such an attempt needs `--environment-event FILE` (the system
+  record of the change; sealed and recorded with the attempts it voids), and
+  an event with no such attempt is refused.
 
 Inconclusive never passes. A cell with no decision is `incomplete`, and
 what is owed is listed explicitly on it and in the top-level `owed`:
@@ -233,7 +243,7 @@ Commands
         --alloc-ledger TASK=FILE (three)
         --timing SHARD=DIR --ledger SHARD=FILE --pilot SHARD=DIR (6 each)
         [--followup SHARD=DIR --followup-pilot SHARD=DIR]
-        [--load STREAM=FILE ...]
+        [--load STREAM=FILE ...] [--environment-event FILE ...]
         --task32 FILE --task32-replay ARGS --task33 FILE
         --task33-replay ARGS --startup-gate DIR --startup-null DIR
         --startup-record FILE --startup-declared FILE --startup-ledger FILE
@@ -270,7 +280,7 @@ import task37_grid as grid
 import task37_lineage as lineage_of
 import task37_load as load
 import timing_grid as tg
-from void_attempts import attempts_of
+from void_attempts import ENVIRONMENT_REFUSALS, attempts_of
 
 SCHEMA = "task37-disposition-v1"
 SCOPE = ("aarch64 Linux only; Poly/ML 5.9.2; allocation only with the "
@@ -304,6 +314,11 @@ CODE = ("task37_dispose.py", "task37_gates.py", "task37_lineage.py",
         "task32_snapshots.py", "task33_cases.py", "task33_offline.py",
         "task33_records.py")
 HISTORY = {}
+# Cells the user added to `task37_cases.D4` for this disposition (2026-11-14,
+# design decision 46): `frag_named-10000` (matrix-3) is control-limited after
+# stage 2 with identity attributed and exact allocation and work equal.
+# task37_cases.py is sealed by every TASK37 measurement and is not edited.
+D4_TASK37 = ("frag_named-10000",)
 
 STATUS_FAIL, STATUS_INCOMPLETE, STATUS_PASS = "fail", "incomplete", "pass"
 
@@ -791,9 +806,10 @@ def pins_binding(engine, label, root, document):
 
 def ledger_attempts(engine, judged, repo, ledger):
     """Every attempt of `engine`'s table in `ledger`: those of `judged`
-    ({attempt: output}) and the others, which must be void (R-1)."""
+    ({attempt: output}) and the others, which must be void (R-1), an
+    environment-integrity refusal included (decision 45)."""
     return attempts_of(argparse.Namespace(repo=repo, ledger=ledger),
-                       engine, judged)
+                       engine, judged, ENVIRONMENT_REFUSALS)
 
 
 def replay_timing(engine, root, repo, ledger, pilot=None,
@@ -1175,13 +1191,24 @@ def retained_record(table, s, raw, t33, allocation_cases):
                        class_="not-sampled", decided_by=sorted(state))
 
 
+def d4_cells():
+    """The cells policy D4 disposes: `task37_cases.D4` and `D4_TASK37`,
+    each of which must be a cell of the matrix sample outside D4."""
+    extra = list(D4_TASK37)
+    a.require(len(set(extra)) == len(extra) and all(
+        n in cases.MATRIX_SAMPLE and n not in cases.D4 for n in extra),
+        "D4_TASK37 is not a set of matrix sample cells outside "
+        "task37_cases.D4: %s" % ", ".join(extra))
+    return set(cases.D4) | set(extra)
+
+
 def dispose(identity, allocation, timing, units, decisions33, receipts,
             d4=None):
     """Every workload's record, the status of the whole. `identity`,
     `allocation` map their kind (client, matrix, downstream) to the loaded
     tables, `timing` maps a table to its loaded rows, `receipts` maps a gate
     to its record."""
-    d4 = set(cases.D4 if d4 is None else d4)
+    d4 = d4_cells() if d4 is None else set(d4)
     ident = {n: row for k in identity.values() for n, row in
              k["cells"].items()}
     alloc = {n: row for k in allocation.values() for n, row in
@@ -1259,6 +1286,25 @@ def dispose(identity, allocation, timing, units, decisions33, receipts,
 
 
 # ------------------------------------------------------------- the command
+
+def environment_events(paths, timing):
+    """The environment events (`--environment-event`) and the void attempts
+    of the timing tables they account for: [{path, seal, attempts:
+    [{table, attempt, refusals}]}]. Every attempt void by the environment
+    rule needs an event, and an event needs such an attempt (decision 45)."""
+    voided = [dict(table=t, attempt=x["attempt"],
+                   refusals=x["environment"])
+              for t, found in timing.items() for x in found["attempts"]
+              if x.get("environment")]
+    names = ", ".join("%s %s" % (v["table"], v["attempt"])
+                      for v in voided)
+    a.require(not voided or paths, "no --environment-event for the "
+              "attempt(s) void by an environment refusal: %s" % names)
+    a.require(not paths or voided, "an environment event with no attempt "
+              "it voids")
+    return [dict(path=str(p), seal=a.seal(p), attempts=voided)
+            for p in paths]
+
 
 def timing_options(args):
     """The per-shard options of the command, by option name."""
@@ -1440,6 +1486,9 @@ def derive(args, held=None):
     alloc_ledgers = keyed(args.alloc_ledger, "alloc-ledger",
                           tuple(TASKS.values()))
     loads, load_seals = load_loads(keyed(args.load, "load"))
+    events = [Path(p) for p in args.environment_event or ()]
+    for p in events:
+        a.require(p.is_file(), "the environment event is missing: %s" % p)
     document = reviewed.load(cases.REVIEWED_FILE)
     inputs = dict(load_seals, reviewed=document["seal"])
     late = []
@@ -1495,6 +1544,7 @@ def derive(args, held=None):
         args.task33, args.task33_replay, lineage)))
     for _, replay in late:
         replay()
+    events = environment_events(events, timing)
     record = dispose(identity, allocation, timing, units, t33, receipts)
     record.update(
         candidate=lineage.candidate, baseline=a.BASE, head=head,
@@ -1513,6 +1563,7 @@ def derive(args, held=None):
                         allocation.items()},
             timing_ledger={t: v["counts"] for t, v in timing.items()}),
         timing_attempts={t: v["attempts"] for t, v in timing.items()},
+        environment_events=events,
         shards={t: sorted(v["cells"]) for t, v in timing.items()},
         host_load=loads,
         reported=dict(
@@ -1531,6 +1582,8 @@ def lines(record):
         for x in found:
             out.append("TIMING-ATTEMPT %s %s status %s: %s" % (
                 table, x["attempt"], x["status"],
+                "void (environment: %s)" % "; ".join(x["environment"])
+                if x.get("environment") else
                 "void (no measurement admitted)" if x["void"]
                 else "judged"))
     for task, found in record["attempts"]["allocation"].items():
@@ -1665,6 +1718,10 @@ def parser():
         help="the declared follow-up of a shard (at most one)")
     add("--followup-pilot", action="append", metavar="SHARD=DIR",
         help="the pilot of the follow-up of a shard")
+    add("--environment-event", action="append", metavar="FILE",
+        help="the system record (an apt/dpkg log excerpt) of an environment "
+        "change that voided a timing attempt (decision 45); required for "
+        "such an attempt, refused without one")
     add("--load", action="append", metavar="STREAM=FILE",
         help="a host-load recording of a stream (task37_load.py), "
         "reported only")

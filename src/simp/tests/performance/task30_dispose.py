@@ -137,8 +137,8 @@ CODE = ("task30_dispose.py", "task30_grid.py", "task30_followup.py",
 ADDED = {"void_attempts.py": ("task30_dispose.py", (dict(
     bytes=50202, sha256="687e5e64c85b571d305b6e00fe1d2c34"
                    "8e864bf5d9298ce73366c88a069cef59"),), dict(
-    bytes=10622, sha256="da75214c5971dbb70ffb05dd302ed2fe9e89120d4a162723"
-                   "b6385cae8ea1216b"))}
+    bytes=13420, sha256="d20ab39236aedc66fe7d2e98a11ac5cf1354afbf6a108f4"
+                   "590a2f963c99638c1"))}
 # Per file of CODE, the seals it had when a disposition was recorded, once
 # it has changed since. The seals of 40e176538f are those before the harness
 # gave its children /dev/null for stdin and dropped the "exclusive window"
@@ -146,6 +146,9 @@ ADDED = {"void_attempts.py": ("task30_dispose.py", (dict(
 # TASK31 task and the client fixture family (and each file's own entries for
 # the histories below).
 HISTORY = {
+    "void_attempts.py": (dict(
+        bytes=10622, sha256="da75214c5971dbb70ffb05dd302ed2fe9e89120d4a162723"
+                       "b6385cae8ea1216b"),),
     "task30_dispose.py": (dict(
         bytes=50202, sha256="687e5e64c85b571d305b6e00fe1d2c34"
                        "8e864bf5d9298ce73366c88a069cef59"),),

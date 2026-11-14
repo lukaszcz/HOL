@@ -270,6 +270,9 @@ class Spec(unittest.TestCase):
         # The seals of 40e176538f, before the harness gave its children
         # /dev/null for stdin.
         self.assertEqual(td.HISTORY, {
+            "void_attempts.py": (dict(
+                bytes=10622, sha256="da75214c5971dbb70ffb05dd302ed2fe"
+                               "9e89120d4a162723b6385cae8ea1216b"),),
             "task30_dispose.py": (dict(
                 bytes=50202, sha256="687e5e64c85b571d305b6e00fe1d2c34"
                                "8e864bf5d9298ce73366c88a069cef59"),),
@@ -1100,8 +1103,8 @@ class Seals(Toy):
             "task30_dispose.py", (dict(
                 bytes=50202, sha256="687e5e64c85b571d305b6e00fe1d2c34"
                                "8e864bf5d9298ce73366c88a069cef59"),), dict(
-                bytes=10622, sha256="da75214c5971dbb70ffb05dd302ed2fe"
-                               "9e89120d4a162723b6385cae8ea1216b"))})
+                bytes=13420, sha256="d20ab39236aedc66fe7d2e98a11ac5cf"
+                               "1354afbf6a108f4590a2f963c99638c1"))})
         self.assertIn("void_attempts.py", td.CODE)
         self.dispose(record=True)
         recorded = self.load(self.out / "disposition.json")["code"]
@@ -1184,15 +1187,21 @@ class Seals(Toy):
     # option and file names) stays in the dump. A `"..." % (...)` that is
     # the value of an assignment is not blanked.
     MOVED = ("runner_failure", "void_failure", "attempts_of")
-    MOVED_HASH = ("110356114fd57b31fda1ff5318634235897125e8edbfbcb79b7106"
-                  "44a8c5e2e0")
+    #
+    # TASK37 decision 45 threaded the optional `refusals` (default: none)
+    # through the three functions, and added ENVIRONMENT_REFUSALS and
+    # `environment_refusals`; with no refusals every result is the host's
+    # (reviewed), and the hashes below are of that version. The seal of the
+    # version before (the host's code, 10622 bytes) is in HISTORY.
+    MOVED_HASH = ("6f9c7e6e5199f39ea33185b193770637fca29cedbae50b9609e2ad"
+                  "e9385869bc")
     # The second pinned hash: the rest of the held version of
     # void_attempts.py, the module body without its docstring and the
     # three moved functions (imports, constants, other functions and
     # module statements), dumped with the same rules and hashed. Only the
     # held version has it; the host's module level is another file's.
-    REST_HASH = ("ebe927409873e78a1a464ed17cd68dd1599c895b3ff749f71c0bd9"
-                 "6e356490d7")
+    REST_HASH = ("f4af64bc403741998c935393fced9fbb8d88823704cf6832d22943"
+                 "6cdb178585")
 
     @classmethod
     def normalised_tree(cls, node):

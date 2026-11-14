@@ -109,6 +109,9 @@ HISTORY = {
     "allocation_matrix.py": (dict(
         bytes=74810, sha256="935b2a4962cd6c2b4270805a1f94758d"
                        "f07d62c757b14f38d315041c050c9ef5"),),
+    "void_attempts.py": (dict(
+        bytes=10622, sha256="da75214c5971dbb70ffb05dd302ed2fe9e89120d4a162723"
+                       "b6385cae8ea1216b"),),
     "task31_dispose.py": (dict(
         bytes=31264, sha256="551f76142534cb62820a40b8c324eaa1"
                        "7843adbb742b142ca5697842de2eab3c"),)}

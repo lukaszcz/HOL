@@ -10,6 +10,11 @@ the settings are not drawn again beside it. `attempts_of` applies the rule
 to the ledger of an engine (`timing_grid.Grid`) and returns the attempts;
 `void_failure` and `runner_failure` say why an attempt is not void. Both
 dispositions seal this module in their `CODE` (PROTOCOL.md, "Seal histories").
+
+An environment-integrity refusal of the pair runner (`ENVIRONMENT_REFUSALS`)
+is outcome-independent, so it selects nothing: with `refusals` given, a cell
+archive whose runner refused after admitting pairs for such a reason is
+void too (`environment_refusals`). The default, no refusals, is the rule above.
 """
 from pathlib import Path
 import sys
@@ -20,14 +25,52 @@ import acceptance as a
 import timing_grid as tg
 
 
-def runner_failure(folder, name):
+# The runner failure texts of an environment-integrity refusal: the pair
+# runner (compatibility/run_paired.py) refuses a comparison after admitting
+# its pairs when something it ran from or on changed under it (a system
+# upgrade replacing the libc, a rebuilt product). Which pairs it had admitted
+# does not depend on the outcome the refusal hides (the user's amendment of
+# R-1 for TASK37; a test pins the texts against run_paired.py).
+ENVIRONMENT_REFUSALS = frozenset((
+    "runtime/tool changed during pair",
+    "shared input/product changed during pair",
+    "loaded source changed during pair",
+    "loaded dependency product changed during pair",
+    "harness input changed during experiment"))
+
+
+def environment_refusals(folder, refusals):
+    """The sorted refusal texts of the runner manifests of the unpacked
+    archive `folder` when the archive shows an environment refusal, else
+    []: at least one manifest has `success` false and a `failure` in
+    `refusals`, and every other manifest either records no admitted run
+    (`runs` empty, `success` false) or succeeded."""
+    if not refusals:
+        return []
+    found = []
+    for manifest in sorted(folder.rglob("manifest.json")):
+        info = a.load(manifest)
+        if info.get("success") is False and \
+                info.get("failure") in refusals:
+            found.append(info["failure"])
+        elif info.get("success") is True or (
+                info.get("runs") == [] and info.get("success") is False):
+            continue
+        else:
+            return []
+    return sorted(set(found))
+
+
+def runner_failure(folder, name, refusals=frozenset(), environment=None):
     """None when the unpacked archive `folder` of the cell `name` shows no
     measurement, else the text of the condition it fails: acceptance's own
     `success` is false; no command it recorded timed out, and each left a
     runner manifest in the folder of its `--output` (one killed while
     measuring leaves none, but receipts); and no runner manifest, of a
     command or not, records an admitted run (`runs` empty, `success`
-    false)."""
+    false). With `refusals` (see `environment_refusals`) an archive that
+    shows an environment refusal passes that last condition, and its
+    refusal texts are appended to the list `environment`."""
     report = a.load(folder / "acceptance.json")
     if report.get("success") is not False:
         return "the acceptance of %s did not fail (success %r)" % (
@@ -51,13 +94,19 @@ def runner_failure(folder, name):
     for manifest in sorted(folder.rglob("manifest.json")):
         found = a.load(manifest)
         if found.get("runs") != [] or found.get("success") is not False:
+            texts = environment_refusals(folder, refusals)
+            if texts:
+                if environment is not None:
+                    environment.extend(texts)
+                break
             return ("the archive of %s holds a runner manifest that "
                     "records an admitted run (%s)" % (
                         name, manifest.relative_to(folder)))
     return None
 
 
-def void_failure(new, key, output, row=None):
+def void_failure(new, key, output, row=None, refusals=frozenset(),
+                 environment=None):
     """None when the attempt `key` (id, stage), whose ledger output is `output`
     and whose ledger row (`Ledger.attempts`) is `row`, is void, else the
     text of the condition it fails. Void: the output directory exists
@@ -73,7 +122,8 @@ def void_failure(new, key, output, row=None):
     with the combined status of both stages, so a void second stage is
     accepted only when its first stage has no fail; a fail there is final
     and the later stage blocks anyway. An attempt left open, resumed, closed
-    more than once or closed otherwise may have measured."""
+    more than once or closed otherwise may have measured. `refusals` and
+    `environment` are those of `runner_failure`."""
     if output is None or not Path(output).is_dir():
         return "its output directory is missing"
     output = Path(output)
@@ -113,7 +163,7 @@ def void_failure(new, key, output, row=None):
         with tempfile.TemporaryDirectory(prefix="void-attempt-") as scratch:
             folder = Path(scratch) / "unpacked"
             tg.bundle.unpack(archive, folder)
-            failed = runner_failure(folder, name)
+            failed = runner_failure(folder, name, refusals, environment)
             if failed is not None:
                 return failed
     status = row["status"] if row else None
@@ -137,7 +187,7 @@ def void_failure(new, key, output, row=None):
     return None
 
 
-def attempts_of(args, new, judged):
+def attempts_of(args, new, judged, refusals=frozenset()):
     """Every attempt of the table `new` in the ledger: the judged ones
     (`judged`: {attempt id: output directory} of the table's final
     stage and, where it is a second stage, of its first) and the others,
@@ -152,7 +202,9 @@ def attempts_of(args, new, judged):
     interrupted or resumed one included, may have measured, and is
     refused: it needs a new policy decision, or the option that names
     the grid names the wrong stage (name the final one). [{attempt,
-    status, output, judged, void}], in the order the ledger names them."""
+    status, output, judged, void}], in the order the ledger names them.
+    With `refusals` (`ENVIRONMENT_REFUSALS`), a void attempt that is void
+    only by that rule also has `environment`, the sorted refusal texts."""
     path = new.attempts_file(args, False)
     a.require(path is not None and Path(path).is_file(),
               "no attempts ledger: %s" % path)
@@ -185,7 +237,9 @@ def attempts_of(args, new, judged):
                       "the ledger has it in %s" % (
                           key[0], table, judged[key[0]], output))
         else:
-            failed = void_failure(new, key, output, row)
+            environment = []
+            failed = void_failure(new, key, output, row, refusals,
+                                  environment)
             a.require(
                 failed is None,
                 "attempt %s of table %s (status %s, output %s) is not "
@@ -198,5 +252,7 @@ def attempts_of(args, new, judged):
                 "stage exists leaves the second unjudged)" % (
                     key[0], table, row["status"], output, failed))
             entry["void"] = True
+            if environment:
+                entry["environment"] = sorted(set(environment))
         found.append(entry)
     return found
