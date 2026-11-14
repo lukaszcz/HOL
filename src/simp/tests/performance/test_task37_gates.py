@@ -1637,7 +1637,8 @@ class StartupPath(Ledgers):
             return False, "marked as not replaying"
         return True, ""
 
-    def archive_of(self, directory, null, total=(158440, 90000)):
+    def archive_of(self, directory, null, total=(158440, 90000),
+                   more=None):
         import startup_gate as sg
         trees = {"b1": dict(rev=a.BASE), "b2": dict(rev=a.BASE),
                  "s1": dict(rev=a.BASE if null else self.cand),
@@ -1650,18 +1651,21 @@ class StartupPath(Ledgers):
             harness=dict(head=HARNESS, tree_outside_performance="t",
                          dirty=False)))
         write(directory / "decisions.json", dict(
-            decision="pass", R2=r2(*total)))
+            dict(decision="pass", R2=r2(*total)), **(more or {})))
         seal_gate(directory)
 
-    def make(self, exit_="auto", total=(158440, 90000), done=True):
+    def make(self, exit_="auto", total=(158440, 90000), done=True,
+             more=None):
         """The attempt: closed with `exit_` (by default 0 with `done`, 143
         without), open when None."""
         self.ev.mkdir(exist_ok=True)
         set_head(self.ev, HARNESS)
         if exit_ == "auto":
             exit_ = 0 if done else 143
-        self.archive_of(self.ev / "gate", False, total)
-        self.archive_of(self.ev / "gate-null", True)
+        self.archive_of(self.ev / "gate", False, total, more)
+        self.archive_of(self.ev / "gate-null", True, more=dict(
+            attributed=dict(ignored={"f": dict(reason="ignored")}))
+            if more else None)
         if done:
             write(self.ev / "done", "done\n")
         write(self.ev / "inputs.txt", "A=b\nDECLARED_DELTAS_SHA256=%s\n"
@@ -1709,6 +1713,21 @@ class StartupPath(Ledgers):
                           for x in extra["startup_attempts"]],
                          [("attempt", True)])
         self.assertEqual(len(late), 3)    # the gate and both loadings
+
+    def test_an_attributed_gate_is_attributed_by_its_declared_words(self):
+        path = "$(HOLDIR)/src/simp/src/simpLib.sml"
+        args = self.make(more=dict(
+            decision="attributed", notes=["a note"],
+            attributed={"load-simpLib": {path: dict(
+                delta=3, reason="new words", mechanism="m")}}))
+        found, _, _, _ = self.read(args)
+        record = found[gates.STARTUP]
+        self.assertEqual((record["source"], record["exit"], record["missing"],
+                          record["owed"], record["failed"]),
+                         ("attributed", 0, [], [], []))
+        self.assertEqual(record["attribution"],
+                         ["load-simpLib %s: new words" % path])
+        self.assertIn("note: a note", record["reasons"])
 
     def test_a_soft_failure_exit_2_is_judged_and_the_totals_decide(self):
         args = self.make(exit_=2, total=(158441, 90000))

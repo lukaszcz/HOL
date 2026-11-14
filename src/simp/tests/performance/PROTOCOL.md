@@ -4678,6 +4678,12 @@ Waves (a stream starts a wave when the edges into it hold):
   `DECLARED_ARCHIVE` is then that failed attempt's own `gate`), after a void
   attempt or after an incomplete pass (`DECLARED_ARCHIVE` is then the one the
   redrawn attempt used: omit it for the default); see Startup gate.
+
+TASK37 reads the startup gate's status from its decision (design decision
+49): an `attributed` gate's attribution is its declared words, one string
+per load kind and file with its reason, sorted (an `attributed` decision with
+none owes the attribution), and the gate's notes go to the record's reasons
+as `note: ...`.
 - Wave 5, dispose, in main (`task37_dispose.py`, below), then the TASK33
   `dispose-snapshots`.
 

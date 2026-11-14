@@ -1394,6 +1394,45 @@ class Gates(unittest.TestCase):
                                  dict(decision="fail"))
         self.assertEqual(got["source"], "fail")
 
+    def test_startup_attribution_is_the_declared_words(self):
+        header = dict(record_sha256="x")
+        words = {"load-simpLib": {
+            "$(HOLDIR)/src/simp/src/simpLib.sml": dict(
+                delta=5, reason="uses the new entry", mechanism="m"),
+            "$(HOLDIR)/src/simp/src/Cond_rewr.sig": dict(
+                delta=1, reason="the new signature", mechanism="m")},
+            "load-congLib": {"$(HOLDIR)/src/simp/src/congLib.sml": dict(
+                delta=2, reason="rewires", mechanism="m")}}
+        got = gates.startup_gate(
+            header, dict(decision="attributed", attributed=words,
+                         notes=["informational"]), dict(decision="pass"))
+        self.assertEqual((got["source"], got["exit"], got["missing"],
+                          got["owed"], got["failed"]),
+                         ("attributed", 0, [], [], []))
+        self.assertEqual(got["attribution"], [
+            "load-congLib $(HOLDIR)/src/simp/src/congLib.sml: rewires",
+            "load-simpLib $(HOLDIR)/src/simp/src/Cond_rewr.sig: "
+            "the new signature",
+            "load-simpLib $(HOLDIR)/src/simp/src/simpLib.sml: "
+            "uses the new entry"])
+        self.assertIn("note: informational", got["reasons"])
+        self.assertEqual(
+            d.finish(got)["status"], d.STATUS_PASS)
+
+    def test_attributed_without_declared_words_owes_attribution(self):
+        header = dict(record_sha256="x")
+        for extra in ({}, dict(attributed={}),
+                      dict(attributed={"load-simpLib": {}}),
+                      dict(attributed="x")):
+            got = gates.startup_gate(
+                header, dict(decision="attributed", notes=["n"], **extra),
+                dict(decision="pass"))
+            self.assertEqual(got["owed"], ["attribution"], extra)
+            self.assertIn("attributed with no attribution",
+                          got["missing"][0])
+            self.assertEqual(got["attribution"], [])
+            self.assertIn("note: n", got["reasons"])
+
     BASE = a.BASE
 
     class Revs(FakeLineage):

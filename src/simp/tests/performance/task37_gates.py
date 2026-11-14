@@ -1204,20 +1204,25 @@ def replay_startup(out, record, harness):
 
 def startup_gate(header, decisions, null_decisions, problems=()):
     """The gate record of the startup gate: its status is that of its
-    decision (`pass`, `attributed` with the notes as the attribution,
-    `fail`; anything else, a blocked or a smoke run, is inconclusive), and
-    a null control that did not pass makes it inconclusive (`null_decisions`
-    is None when the null is not read: a judged-incomplete attempt, whose
-    gate failed or was blocked, or an attempt owing a redraw whose null is
-    absent or does not replay, which `task37_dispose.py` accepts for an
-    incomplete attempt only). `problems`
+    decision (`pass`, `attributed` with the gate's declared words as the
+    attribution, `fail`; anything else, a blocked or a smoke run, is
+    inconclusive), and a null control that did not pass makes it
+    inconclusive (`null_decisions` is None when the null is not read: a
+    judged-incomplete attempt, whose gate failed or was blocked, or an
+    attempt owing a redraw whose null is absent or does not replay, which
+    `task37_dispose.py` accepts for an incomplete attempt only). `problems`
     (`declared_problems`) make it `fail`: the record's declared deltas are
-    not the gate's, and nothing is transferred."""
+    not the gate's, and nothing is transferred. The attribution is the
+    declared words (design decision 49): one string per load kind and file
+    of `decisions["attributed"]` with its reason, sorted; an `attributed`
+    decision with none owes the attribution (`gate_record`). The gate's
+    notes are informational: they go to the reasons as `note: ...`."""
     decision = decisions.get("decision")
     status = decision if decision in ("pass", "attributed", "fail") \
         else "inconclusive"
     reasons = list(decisions.get("reasons", [])) + list(
         decisions.get("blockers", []))
+    reasons += ["note: %s" % n for n in decisions.get("notes", [])]
     if problems:
         status = "fail"
         reasons += ["declared deltas: " + p for p in problems]
@@ -1226,8 +1231,26 @@ def startup_gate(header, decisions, null_decisions, problems=()):
         status = "inconclusive"
         reasons.append("the null control is %s, not pass" %
                        null_decisions.get("decision"))
-    return gate_record(STARTUP, status, list(decisions.get("notes", [])),
+    return gate_record(STARTUP, status, declared_words(decisions),
                        reasons, header["record_sha256"])
+
+
+def declared_words(decisions):
+    """The declared words of a startup gate's `decisions`: `"KIND FILE:
+    REASON"` for each load kind and file of `attributed`, sorted (empty
+    when there are none or the field is malformed)."""
+    found = decisions.get("attributed")
+    words = []
+    if isinstance(found, dict):
+        for kind, files in found.items():
+            if not isinstance(files, dict):
+                continue
+            for path, entry in files.items():
+                reason = entry.get("reason") if isinstance(entry, dict) \
+                    else None
+                if isinstance(reason, str) and reason.strip():
+                    words.append("%s %s: %s" % (kind, path, reason))
+    return sorted(words)
 
 
 # --------------------------------------------------------------- loading
