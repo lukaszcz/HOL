@@ -5778,6 +5778,20 @@ it and on no other. Any other control-limited cell blocks and owes stage
 is owed (`stage2`, `followup`, `attribution`, `redraw`, `identity-rerun`,
 `allocation-rerun`, `retained-slope`; TASK33's `second` is `stage2`).
 
+Retained slope (design decision 44). A shard's retained slope is owed
+(`retained-slope`) only where the shard samples it. The matrix sample holds
+`storage_graph` at one size, so that shard's slope is blocked by
+construction, missing exactly the six sizes less the `storage_graph` sizes
+of its part (derived from `task37_grid.PARTS` and `acceptance.SIZES`). Such
+a slope is `not-sampled`: the retained graph size and every adjacent slope
+are decided exactly by the TASK33 S1 records (`fragment`, `compiled`,
+`compiled_bool`, `merge`, `projection`, `conversion`) and the
+`storage_graph` allocation case, and the record lists them as `decided_by`
+and takes their state: failed if any failed (naming it), else incomplete
+(owing `retained-slope`) if any is not pass or none exists, else pass. A
+blocked slope missing a size of the part is a measurement gap and, like a
+measured slope, is judged as before.
+
 Owed stage and decisive stage. The decisive stage of a cell is the final
 class of its chain of timing stages (the chain's last stage, not the first
 that decided). A stage-2 rule is owed exactly where the engine's own rule

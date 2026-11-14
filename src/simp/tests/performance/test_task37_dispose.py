@@ -338,13 +338,111 @@ class Dispose(unittest.TestCase):
         self.assertEqual(r["allocation_case"]["task37-matrix:k"]["status"],
                          "fail")
 
+    def part_sizes(self, key):
+        return {c.split(n)[1] for n in grid.PARTS[key]
+                if c.split(n)[0] == "storage_graph"}
+
+    def blocked(self, key, drop=()):
+        absent = sorted(set(a.SIZES) - self.part_sizes(key) | set(drop))
+        return dict(status="blocked", missing_sizes=absent)
+
+    def slope_key(self):
+        return [k for k in KEYS if self.part_sizes(k)][0]
+
+    def sampled(self, found=None, case=True, raw=None, drop=()):
+        """Tables where the shard holding storage_graph has a blocked
+        retained slope that is not its own to measure; `found` maps S1
+        kinds to a status, `case` is the allocation case's status."""
+        key = self.slope_key()
+        ids, al, timing, units, t33, rec = self.tables()
+        name = grid.name_of(key)
+        timing[name]["scaling"] = "inconclusive"
+        timing[name]["scaling_raw"] = raw or self.blocked(key, drop)
+        for kind, status in (found or {}).items():
+            t33["S1:" + kind] = dict(
+                key="S1:" + kind, failed=["TASK33: fail"]
+                if status == "fail" else [], missing=[
+                    "TASK33: " + status] if status == "incomplete" else [],
+                owed=["attribution"] if status == "incomplete" else [])
+        if case:
+            al["matrix"]["cases"]["task37-matrix:storage_graph"] = dict(
+                slope="pass", constant="pass", failed=[], missing=[],
+                owed=[])
+            if case in ("fail", "incomplete"):
+                al["matrix"]["cases"]["task37-matrix:storage_graph"].update(
+                    failed=["allocation slope: fail"] if case == "fail"
+                    else [], missing=["allocation slope: x"]
+                    if case == "incomplete" else [],
+                    owed=["allocation-rerun"] if case == "incomplete"
+                    else [])
+        return name, (ids, al, timing, units, t33, rec)
+
     def test_retained_slope_is_a_record(self):
-        r = d.dispose(*self.tables(scaling="inconclusive"))
+        # a blocked slope missing a size of the part is a measurement gap
+        key = self.slope_key()
+        t = self.tables(scaling="inconclusive")
+        t[2][grid.name_of(key)]["scaling_raw"] = self.blocked(
+            key, drop=[min(self.part_sizes(key))])
+        r = d.dispose(*t)
         self.assertEqual(r["status"], "incomplete")
         self.assertTrue(any(o["owed"] == "retained-slope"
                             for o in r["owed"]))
+        self.assertEqual(r["retained_slope"][grid.name_of(key)]["class_"],
+                         "inconclusive")
         r = d.dispose(*self.tables(scaling="fail"))
         self.assertEqual(r["status"], "fail")
+
+    def test_not_sampled_slope_passes_on_its_deciders(self):
+        S1 = {k: "pass" for k in d.RETAINED_KINDS}
+        name, t = self.sampled(S1)
+        r = d.dispose(*t)
+        rec = r["retained_slope"][name]
+        self.assertEqual(rec["class_"], "not-sampled")
+        self.assertEqual(rec["status"], "pass")
+        self.assertEqual(rec["owed"], [])
+        self.assertEqual(rec["decided_by"], sorted(
+            ["S1:" + k for k in S1] + ["task37-matrix:storage_graph"]))
+        self.assertEqual(r["status"], "pass")
+
+    def test_not_sampled_slope_with_a_failing_decider_fails(self):
+        S1 = {k: "pass" for k in d.RETAINED_KINDS}
+        S1["merge"] = "fail"
+        name, t = self.sampled(S1)
+        rec = d.dispose(*t)["retained_slope"][name]
+        self.assertEqual(rec["status"], "fail")
+        self.assertTrue(any("S1:merge" in f for f in rec["failed"]))
+        name, t = self.sampled({k: "pass" for k in d.RETAINED_KINDS},
+                               case="fail")
+        rec = d.dispose(*t)["retained_slope"][name]
+        self.assertEqual(rec["status"], "fail")
+        self.assertTrue(any("storage_graph" in f for f in rec["failed"]))
+
+    def test_not_sampled_slope_with_an_incomplete_decider(self):
+        S1 = {k: "pass" for k in d.RETAINED_KINDS}
+        S1["fragment"] = "incomplete"
+        name, t = self.sampled(S1)
+        rec = d.dispose(*t)["retained_slope"][name]
+        self.assertEqual(rec["status"], "incomplete")
+        self.assertEqual(rec["missing"], [
+            "retained slope: decided by S1:fragment, which is incomplete"])
+        self.assertEqual(rec["owed"], ["retained-slope"])
+        # no decider at all is never a pass
+        name, t = self.sampled({}, case=False)
+        rec = d.dispose(*t)["retained_slope"][name]
+        self.assertEqual(rec["status"], "incomplete")
+        self.assertEqual(rec["owed"], ["retained-slope"])
+        self.assertEqual(rec["decided_by"], [])
+
+    def test_blocked_slope_with_a_part_size_missing_stays_owed(self):
+        S1 = {k: "pass" for k in d.RETAINED_KINDS}
+        key = self.slope_key()
+        name, t = self.sampled(
+            S1, drop=[min(self.part_sizes(key))])
+        rec = d.dispose(*t)["retained_slope"][name]
+        self.assertEqual(rec["class_"], "inconclusive")
+        self.assertEqual(rec["status"], "incomplete")
+        self.assertEqual(rec["owed"], ["retained-slope"])
+        self.assertNotIn("decided_by", rec)
 
     def test_identity_grid_status(self):
         ids, al, timing, units, t33, rec = self.tables()

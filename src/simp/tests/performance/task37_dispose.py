@@ -644,6 +644,18 @@ def class_map(decisions):
     return found, scaling
 
 
+def raw_scaling(decisions):
+    """The status and missing sizes of a grid decision's retained slope
+    where it is not measured (None where it is, or where there is none):
+    what `dispose` needs to tell a slope the shard does not sample from a
+    measurement gap."""
+    found = decisions.get("retained_scaling")
+    if not isinstance(found, dict) or found.get("status") == "measured":
+        return None
+    return dict(status=found.get("status"),
+                missing_sizes=list(found.get("missing_sizes", [])))
+
+
 def differing_of(decisions, label):
     found = decisions.get("source_identity")
     a.require(isinstance(found, dict) and isinstance(
@@ -712,7 +724,8 @@ def read_stage(root, label, lineage):
                        first_root / "decisions.json"]
     return dict(root=root, first_root=first_root, inventory=inventory,
                 first_inventory=first_inventory, final=final,
-                scaling=scaling, first=first, plan=plan,
+                scaling=scaling, scaling_raw=raw_scaling(decisions),
+                first=first, plan=plan,
                 control_open=control_open,
                 differing=sorted(set(differing)),
                 seals={str(p): a.seal(p) for p in seal_files})
@@ -883,6 +896,7 @@ def read_shard(key, options, lineage, repo, document, late):
             judged.append((follow, {}))
     seals["ledger"] = a.seal(Path(ledger))
     held = dict(cells=rows, scaling=main["scaling"],
+                scaling_raw=main.get("scaling_raw"),
                 differing=sorted(set(differing)), attempts=[], seals=seals,
                 pins=pins, counts=None)
 
@@ -1099,6 +1113,62 @@ def grid_record(failed, missing, owed, **more):
     return finish(dict(more, failed=failed, missing=missing, owed=owed))
 
 
+# the TASK33 S1 kinds that decide the retained graph size and its slopes
+RETAINED_CASE = "S1"
+RETAINED_KINDS = ("fragment", "compiled", "compiled_bool", "merge",
+                  "projection", "conversion")
+RETAINED_ALLOCATION = "storage_graph"
+
+
+def unsampled_sizes(table):
+    """The retained slope's sizes the shard of `table` does not sample (the
+    six sizes less the `storage_graph` sizes of its part), or None where
+    `table` is no shard."""
+    for key, part in grid.PARTS.items():
+        if grid.name_of(key) == table:
+            held = {s for n in part for c_, s in [cases.split(n)]
+                    if c_ == RETAINED_ALLOCATION}
+            return key, sorted(set(a.SIZES) - held)
+    return None, None
+
+
+def retained_record(table, s, raw, t33, allocation_cases, allocation):
+    """The retained-slope record of a shard. A slope the shard does not
+    sample (blocked, missing exactly the sizes of the six its part does not
+    hold) is `not-sampled` and takes the state of the records that decide
+    the retained graph size and every adjacent slope exactly (the TASK33
+    S1 records, the allocation case of `storage_graph`); no decider is
+    incomplete, never a pass. Any other blocked slope is a measurement
+    gap, and a measured one is judged as measured: both as before."""
+    key, absent = unsampled_sizes(table)
+    if not (raw and raw.get("status") == "blocked" and absent and
+            sorted(raw.get("missing_sizes", [])) == absent):
+        return grid_record(
+            ["retained slope: fail"] if s == "fail" else [],
+            [] if s in ("pass", "fail") else ["retained slope: " + s],
+            [] if s in ("pass", "fail") else ["retained-slope"], class_=s)
+    kind = grid.KIND[key]
+    found = {k: r for k, r in t33.items()
+             if r is not None and k.split(":", 1)[0] == RETAINED_CASE and
+             k.split(":", 1)[-1] in RETAINED_KINDS}
+    found.update({k: r for k, r in allocation_cases.items()
+                  if k.rsplit(":", 1)[-1] == RETAINED_ALLOCATION and
+                  k in allocation.get(kind, {}).get("cases", {})})
+    failed = ["retained slope: decided by %s, which failed" % k
+              for k, r in sorted(found.items())
+              if r["status"] == STATUS_FAIL]
+    missing = ["retained slope: decided by %s, which is %s" % (
+        k, r["status"]) for k, r in sorted(found.items())
+        if r["status"] == STATUS_INCOMPLETE]
+    if not found:
+        missing = ["retained slope: no deciding %s (%s) or %s allocation "
+                   "record" % (RETAINED_CASE, ", ".join(RETAINED_KINDS),
+                               RETAINED_ALLOCATION)]
+    return grid_record(failed, [] if failed else missing,
+                       ["retained-slope"] if missing and not failed else [],
+                       class_="not-sampled", decided_by=sorted(found))
+
+
 def dispose(identity, allocation, timing, units, decisions33, receipts,
             d4=None):
     """Every workload's record, the status of the whole. `identity`,
@@ -1145,13 +1215,10 @@ def dispose(identity, allocation, timing, units, decisions33, receipts,
             [], ["source identity: %s differ without a reviewed pin" %
                  ", ".join(diff)] if diff else [],
             ["attribution"] if diff else [], differing=diff)
-    scaling = {t: v["scaling"] for t, v in timing.items()
-               if v["scaling"] is not None}
-    scaling_records = {t: grid_record(
-        ["retained slope: fail"] if s == "fail" else [],
-        [] if s in ("pass", "fail") else ["retained slope: " + s],
-        [] if s in ("pass", "fail") else ["retained-slope"], class_=s)
-        for t, s in scaling.items()}
+    scaling_records = {
+        t: retained_record(t, v["scaling"], v.get("scaling_raw"), t33,
+                           allocation_cases, allocation)
+        for t, v in timing.items() if v["scaling"] is not None}
     auxiliary = [("identity_grid", identity_grids),
                  ("allocation_case", allocation_cases),
                  ("timing_grid", timing_grids),
