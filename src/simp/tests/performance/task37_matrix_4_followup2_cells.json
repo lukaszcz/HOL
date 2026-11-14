@@ -1,0 +1,10 @@
+{
+  "cells": [
+    "compile_ac-1000"
+  ],
+  "decision": "user, 2026-11-14: second follow-up (design decision 47)",
+  "pairs": 80,
+  "round": 2,
+  "schema": "task37-followup-round-v1",
+  "shard": "matrix-4"
+}
