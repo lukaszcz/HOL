@@ -1299,7 +1299,9 @@ class HistoryOfTheKeptRecords(unittest.TestCase):
                     self.assertNotIn(seal, history.get(name, []),
                                      (rev, name))
 
-    ENTRY = "025d23c440"    # before the script entry ran the named module
+    # ENTRY: the version that made the t32 follow-up and the t33 storage
+    # records; ENTRY_FILES: the files edited since
+    ENTRY = "025d23c440"
     ENTRY_FILES = ("task32_downstream.py", "task33_offline.py",
                    "task33_storage.py", "task33_dispose.py")
 
@@ -1307,10 +1309,9 @@ class HistoryOfTheKeptRecords(unittest.TestCase):
         """The versions that made the kept TASK37 records (b6052eb65f,
         before the pooled logs and the halt of in-flight processes), for
         the t33 table the driver that made the redrawn harvest, and the
-        files edited since (the script entry runs the named module) at
-        ENTRY, the version that made the t32 follow-up and the t33 storage
-        records (for task33_offline.py also the redrawn harvest
-        offline/harvest2)."""
+        files edited since at ENTRY, the version that made the t32
+        follow-up and the t33 storage records (for task33_offline.py
+        also the redrawn harvest offline/harvest2)."""
         for name, seals in dw.TASK37_HISTORY.items():
             kept = [self.seal_at(self.TASK37_KEPT, name)]
             if name == "task32_downstream.py":

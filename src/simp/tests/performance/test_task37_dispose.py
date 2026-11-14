@@ -2221,6 +2221,15 @@ class Code(unittest.TestCase):
                                {d.CODE[0]: [bad[d.CODE[0]]]}):
             d.check_code(bad)
 
+    def test_every_history_seal_differs_from_the_current_one(self):
+        now = d.seals()
+        for name, seals in d.HISTORY.items():
+            self.assertIn(name, d.CODE)
+            self.assertTrue(seals, name)
+            for seal in seals:
+                self.assertNotEqual(seal, now[name], name)
+                self.assertEqual(set(seal), {"sha256", "bytes"}, name)
+
 
 if __name__ == "__main__":
     unittest.main()

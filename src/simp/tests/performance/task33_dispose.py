@@ -17,8 +17,9 @@
                      the harvest and the api-audit receipt are sealed under
                      the evidence directory and that a sealed
                      disposition.json owes no stage, write an intent journal
-                     (snapshot-disposal.intent.json; a repeated command
-                     resumes it), remove exactly the paths the snapshot
+                     with the verify record (snapshot-disposal.intent.json;
+                     a repeated command resumes it and records
+                     that verify), remove exactly the paths the snapshot
                      manifest names (the two roots, their HOMEs, the
                      sequence copy, the scratch directory when no journal
                      is pending, the declared scratch root, the then empty
@@ -45,7 +46,7 @@ import task33_rules as rules
 import task33_storage as storage
 
 SCHEMA = "task33-disposition-v2"
-DISPOSAL_SCHEMA = "task33-snapshot-disposal-v1"
+DISPOSAL_SCHEMA = "task33-snapshot-disposal-v2"
 INTENT_SCHEMA = "task33-snapshot-disposal-intent-v1"
 OFFLINE = storage.OFFLINE_COMMANDS
 ATTRIBUTED = ("gc_cpu", "maxrss")  # the timing intervals scanned
@@ -591,6 +592,21 @@ def toolchain_of(record):
     return dict(status=record["status"], changed=list(record["changed"]))
 
 
+def journal_verify(record, path):
+    """The verify record an intent journal carries (the one `verified`
+    returned); a journal without a well-formed one is refused."""
+    ok = (isinstance(record, dict) and record.get("exit") == 0
+          and isinstance(record.get("argv"), list))
+    if ok:
+        try:
+            toolchain_of(record.get("toolchain"))
+        except d.Refusal:
+            ok = False
+    d.require(ok, "the disposal intent journal %s carries no well-formed "
+              "verify record (nothing was removed)" % path)
+    return record
+
+
 def dispose_snapshots(args):
     """`task33_storage.py dispose-snapshots` (design section 5). The
     intent journal is written before anything is removed; a command that
@@ -613,8 +629,12 @@ def dispose_snapshots(args):
     intent = intent_of(manifest_path, plan, scratch_root)
     resumed = intent_path.exists()
     if resumed:
-        d.require(a.load(intent_path) == intent, "the disposal intent "
-                  "journal %s is of another plan" % intent_path)
+        journal = a.load(intent_path)
+        d.require(isinstance(journal, dict) and {
+            k: v for k, v in journal.items() if k != "verify"} == intent,
+            "the disposal intent journal %s is of another plan"
+            % intent_path)
+        final = journal_verify(journal.get("verify"), intent_path)
     else:
         for path, how in plan:
             d.require(os.path.lexists(path), "%s is absent: the snapshots "
@@ -634,9 +654,9 @@ def dispose_snapshots(args):
     with a.serial_lock(repo) as fds:
         d.require(not pending(repo), "a restore journal is pending: "
                   "`recover` first (nothing was removed)")
-        final = None if resumed else verified(verify, repo, fds)
         if not resumed:
-            write_intent(intent_path, intent)
+            final = verified(verify, repo, fds)
+            write_intent(intent_path, dict(intent, verify=final))
         removed = [str(p) for p, how in plan if remove_path(p, how)]
         if scratch_root.exists():
             shutil.rmtree(scratch_root)

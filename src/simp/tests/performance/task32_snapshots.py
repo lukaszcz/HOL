@@ -20,8 +20,8 @@
            candidate with C31 (`--compiled-ref REV` names another
            revision, e.g. TASK37's final candidate), no stale products,
            every product seal and mtime inside the build interval, no
-           shared inodes, identical argv/env, the toolchain, no nested
-           roots.
+           shared inodes, identical argv/env, the toolchain (or only
+           reported, `--toolchain report`), no nested roots.
   compare  the untimed behaviour comparison: every common untracked
            `*Theory.sig` and `*Theory.dat` and the normalized selftest logs
            of the two trees. Any unexplained difference makes the result
@@ -385,8 +385,9 @@ def toolchain_changes(recorded, live):
 
 def same_toolchain(recorded, live):
     changed = toolchain_changes(recorded, live)
-    require("poly_v" not in changed, "toolchain: poly -v changed")
-    require(not changed, "toolchain changed: " + ", ".join(changed[:1]))
+    if changed:
+        require(changed[0] != "poly_v", "toolchain: poly -v changed")
+        require(False, "toolchain changed: " + changed[0])
 
 
 # -- running -----------------------------------------------------------
@@ -1405,6 +1406,7 @@ def main(argv=None):
     common(c)
     pins(c)
     c.add_argument("--output", type=Path, required=True)
+    c.set_defaults(toolchain="refuse")
     args = p.parse_args(argv)
     with a.serial_lock(args.repo) as fds:
         if args.command == "build":
@@ -1421,7 +1423,7 @@ def main(argv=None):
         manifest = json.loads(args.manifest.read_text())
         summary = verify(manifest, args.base_pin, args.cand_pin, args.c31,
                          probe=probe_toolchain, poly=args.poly,
-                         toolchain=getattr(args, "toolchain", "refuse"))
+                         toolchain=args.toolchain)
         if args.command == "verify":
             print(json.dumps(summary, indent=2))
             return 0

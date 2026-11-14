@@ -327,7 +327,22 @@ CODE = ("task37_dispose.py", "task37_gates.py", "task37_lineage.py",
         "task30_pins.py", "task31_snapshot.py", "task32_dat.py",
         "task32_snapshots.py", "task33_cases.py", "task33_offline.py",
         "task33_records.py")
-HISTORY = {}
+# The seals the disposition recorded at 4fa8f36f5b was made by (design
+# decision 50).
+HISTORY = {
+    "task37_dispose.py": (
+        {"sha256": "d573b4f4be222ca7bc4bdb7ebf9e4a40"
+                   "240531aab4191c20d963c5d97e15fdca", "bytes": 97113},),
+    "task32_downstream.py": (
+        {"sha256": "f5ed2b02aeea0f1ebf805134d33a7199"
+                   "a16077b8c470693b7e24620202cc1ab9", "bytes": 191155},),
+    "task33_dispose.py": (
+        {"sha256": "69f8fad7f5a4e0d17d529269e3289c46"
+                   "ff665ace9c5d05fa9b1d7d22d05319a2", "bytes": 28905},),
+    "task32_snapshots.py": (
+        {"sha256": "3a5f0261f3847935aad8a0c83ed9e367"
+                   "9694de5dfbb2d2457907d40c51ce7252", "bytes": 61892},),
+}
 # Cells the user added to `task37_cases.D4` for this disposition (2026-11-14,
 # design decision 46): `frag_named-10000` (matrix-3) is control-limited after
 # stage 2 with identity attributed and exact allocation and work equal.

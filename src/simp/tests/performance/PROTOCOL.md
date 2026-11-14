@@ -2950,11 +2950,6 @@ which only TASK36 builds, on the candidate.
 Recipe (`task32_snapshots.py build`; flags `--repo`, `--manifest`,
 `--root`, `--evidence`, `--scratch`, `--side`, `--pin`, `--mktool`,
 `--cand-pin`, `--jobs` (default 8), `--poly`, `--table`, `--tmpdir`).
-`verify` also takes `--toolchain {refuse,report}` (default `refuse`): a live
-toolchain that differs from the recorded one is refused, or, under `report`,
-only listed in the summary (`"toolchain": {"status": "same"|"changed",
-"changed": [keys]}`; `poly_v` by `poly_version_matches`, every other key by
-equality). Every other check refuses in both modes; `compare` is `refuse`.
 Relative paths
 are resolved against the current directory (and recorded absolute). Both
 sides use the same four paths:
@@ -3066,8 +3061,15 @@ go to `--evidence`, outside both roots). Further:
   toolchain (`poly -v`, hashes of `poly`, `polyc`, `libpolymain.a` and
   every library `ldd` resolves) and the host.
 
-`verify` (`--base-pin`, `--cand-pin`, `--c31`) is fail-closed and only
-reads. It checks both pins and trees, that only the base is patched and
+`verify` (`--base-pin`, `--cand-pin`, `--c31`, `--toolchain {refuse,report}`)
+is fail-closed and only reads. `--toolchain` (default `refuse`): a live
+toolchain that differs from the recorded one is refused, or, under `report`,
+only listed in the summary (`"toolchain": {"status": "same"|"changed",
+"changed": [keys]}`; `poly_v` by `poly_version_matches`, every other key by
+equality). The refuse-mode summary carries `{"status": "same", "changed":
+[]}`, and `compare` (always `refuse`) records that summary, `toolchain`
+included, as its behaviour record's `pins`. Every other check refuses in
+both modes. It checks both pins and trees, that only the base is patched and
 that the patch is still the sealed one, the input hashes, the commands and
 their `env -i` shape (identical keys), log seals, the sequence, the
 required products, every product seal and that its mtime lies inside that
@@ -4446,8 +4448,11 @@ pending restore journal. Then, under the serial lock, it runs `verify
 since the snapshots' last use is reported, not refused; exit 0 and the
 summary's `toolchain` recorded, and a summary that is not a passing one with
 a well-formed `toolchain` refuses before anything is removed), writes an
-intent journal (`snapshot-disposal.intent.json`; a repeated command resumes
-it), removes exactly those paths, the scratch root and the then empty
+intent journal (`snapshot-disposal.intent.json`: the intent and, in its
+`verify` field, the verify record with its toolchain; a repeated command
+resumes it if the rest equals the intent and the `verify` field is
+well formed, and records that verify, with `resumed: true`), removes
+exactly those paths, the scratch root and the then empty
 parents, and writes `snapshot-disposal.json` with the manifest seal, sizes,
 the final verify (with its toolchain), the removed paths, the sealed evidence
 and the recreate recipe

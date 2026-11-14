@@ -2384,7 +2384,7 @@ class DisposeSnapshots(unittest.TestCase):
         self.assertEqual(data["verify"]["exit"], 0)
         self.assertNotIn("stdout", data["verify"])
 
-    def test_the_default_verify_reports_a_toolchain_change(self):
+    def test_the_default_verify_asks_for_a_toolchain_report(self):
         t = self.tree
         seen = []
 
@@ -2517,6 +2517,7 @@ class DisposeSnapshots(unittest.TestCase):
 
     def test_an_interrupted_disposal_is_resumed_from_its_journal(self):
         t = self.tree
+        changed = dict(status="changed", changed=["poly_v"])
         real = dispose.remove_path
         count = []
 
@@ -2527,7 +2528,8 @@ class DisposeSnapshots(unittest.TestCase):
             return real(path, how)
         with mock.patch.object(dispose, "remove_path", die):
             with self.assertRaises(KeyboardInterrupt):
-                dispose.dispose_snapshots(t.args())
+                dispose.dispose_snapshots(t.args(
+                    verify_argv=summary_argv(changed)))
         self.assertTrue(
             (t.evidence / "snapshot-disposal.intent.json").is_file())
         gone = [p for p in t.listed() if not p.exists()]
@@ -2543,9 +2545,28 @@ class DisposeSnapshots(unittest.TestCase):
         data = json.loads((t.evidence / "snapshot-disposal.json"
                            ).read_text())
         self.assertTrue(data["resumed"])
-        self.assertIsNone(data["verify"])
+        self.assertEqual(data["verify"]["toolchain"], changed)
+        self.assertEqual(data["verify"]["exit"], 0)
         self.assertFalse(
             (t.evidence / "snapshot-disposal.intent.json").exists())
+
+    def journal(self, **change):
+        """The journal of an interrupted disposal, edited by `change`
+        (a value None removes the key)."""
+        t = self.tree
+        path = t.evidence / "snapshot-disposal.intent.json"
+        with mock.patch.object(dispose, "remove_path",
+                               side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                dispose.dispose_snapshots(t.args())
+        data = json.loads(path.read_text())
+        for key, value in change.items():
+            if value is None:
+                data.pop(key)
+            else:
+                data[key] = value
+        path.write_text(dw.dumps(data))
+        return data
 
     def test_a_journal_of_another_plan_is_not_resumed(self):
         t = self.tree
@@ -2553,6 +2574,26 @@ class DisposeSnapshots(unittest.TestCase):
         journal.write_text(dw.dumps(dict(
             schema=dispose.INTENT_SCHEMA, paths=[["/x", "tree"]])))
         self.refused("another plan")
+
+    def test_a_journal_whose_intent_differs_is_not_resumed(self):
+        self.journal(scratch_root="/dev/shm/other")
+        self.refused("another plan")
+
+    def test_a_journal_without_a_verify_record_is_not_resumed(self):
+        self.journal(verify=None)
+        self.refused("no well-formed verify record")
+
+    def test_a_journal_with_a_malformed_verify_record_is_refused(self):
+        good = self.journal()["verify"]
+        for bad in ("x", [], dict(good, exit=1), dict(good, argv="x"),
+                    dict(good, toolchain=None),
+                    dict(good, toolchain=dict(status="changed",
+                                              changed=[]))):
+            path = self.tree.evidence / "snapshot-disposal.intent.json"
+            data = json.loads(path.read_text())
+            data["verify"] = bad
+            path.write_text(dw.dumps(data))
+            self.refused("no well-formed verify record")
 
 
 def offline_report(command, checks, pins=None, **data):
