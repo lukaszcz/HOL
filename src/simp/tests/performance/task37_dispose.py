@@ -1780,6 +1780,11 @@ def lines(record):
     for label, rows in groups:
         for name, r in rows.items():
             slope = r.get("class_") == "not-sampled"
+            if label == "gate" and r["status"] == STATUS_PASS and \
+                    r.get("source") == "attributed":
+                out.append("PASS gate %s: attributed (%d declared files)"
+                           % (name, len(r["attribution"])))
+                continue
             if r["status"] == STATUS_PASS and not slope and \
                     not r.get("policy") in ("D2", "D4"):
                 continue

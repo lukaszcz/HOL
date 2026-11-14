@@ -1663,8 +1663,11 @@ class StartupPath(Ledgers):
         if exit_ == "auto":
             exit_ = 0 if done else 143
         self.archive_of(self.ev / "gate", False, total, more)
+        # the null control also declares words (and a malformed entry)
+        # whenever the gate does: they must be ignored there (PROTOCOL:
+        # declared entries are ignored in the null)
         self.archive_of(self.ev / "gate-null", True, more=dict(
-            attributed=dict(ignored={"f": dict(reason="ignored")}))
+            attributed=dict(ignored={"f": "not even a dict"}))
             if more else None)
         if done:
             write(self.ev / "done", "done\n")
@@ -1719,14 +1722,16 @@ class StartupPath(Ledgers):
         args = self.make(more=dict(
             decision="attributed", notes=["a note"],
             attributed={"load-simpLib": {path: dict(
-                delta=3, reason="new words", mechanism="m")}}))
+                delta=dict(code=0, heap=3, interpreter=0, native=3, rts=0,
+                           total=3), reason="new words",
+                mechanism="m")}}))
         found, _, _, _ = self.read(args)
         record = found[gates.STARTUP]
         self.assertEqual((record["source"], record["exit"], record["missing"],
                           record["owed"], record["failed"]),
                          ("attributed", 0, [], [], []))
         self.assertEqual(record["attribution"],
-                         ["load-simpLib %s: new words" % path])
+                         ["load-simpLib %s: +3 words: new words" % path])
         self.assertIn("note: a note", record["reasons"])
 
     def test_a_soft_failure_exit_2_is_judged_and_the_totals_decide(self):

@@ -4678,12 +4678,6 @@ Waves (a stream starts a wave when the edges into it hold):
   `DECLARED_ARCHIVE` is then that failed attempt's own `gate`), after a void
   attempt or after an incomplete pass (`DECLARED_ARCHIVE` is then the one the
   redrawn attempt used: omit it for the default); see Startup gate.
-
-TASK37 reads the startup gate's status from its decision (design decision
-49): an `attributed` gate's attribution is its declared words, one string
-per load kind and file with its reason, sorted (an `attributed` decision with
-none owes the attribution), and the gate's notes go to the record's reasons
-as `note: ...`.
 - Wave 5, dispose, in main (`task37_dispose.py`, below), then the TASK33
   `dispose-snapshots`.
 
@@ -5719,6 +5713,19 @@ without editing what their kept records depend on.
 - Dispositions. Both the TASK32 and the TASK33 disposition carry a top-level
   `candidate` (the full pin the stages measured; TASK33 refuses stages that
   measured different candidates), which `task37_dispose.py` joins on.
+- The startup gate's attribution (design decision 49). `startup_gate.py`
+  decides `attributed` and keeps the declared words in
+  `decisions["attributed"]` (per load kind, per file: delta, reason,
+  mechanism). TASK37's attribution is those words, one string per (kind,
+  file), `KIND FILE: +N words: REASON` (N the file's `delta.total`), sorted;
+  the gate's notes are informational and go to the record's reasons as
+  `note: ...`. An `attributed` decision with no declared words owes the
+  attribution; a malformed `attributed` (a kind or entry that is not a dict,
+  no reason, a delta without an integer total) is refused. The record
+  carries the words only when its final status is `attributed`: a failed,
+  inconclusive (a null control that did not pass) or owe-redraw record has
+  none. `lines` shows an attributed gate as `PASS gate startup-gate:
+  attributed (N declared files)`.
 - Decisions of several sources (design decision 48). TASK33 decides each
   offline check id in every offline report that runs it (`offline:audit`,
   `offline:harvest`), so a `case:kind` can have one decision per source.

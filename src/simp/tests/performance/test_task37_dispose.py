@@ -1394,36 +1394,45 @@ class Gates(unittest.TestCase):
                                  dict(decision="fail"))
         self.assertEqual(got["source"], "fail")
 
+    @staticmethod
+    def word(total, reason, mechanism="m"):
+        return dict(delta=dict(code=0, heap=total, interpreter=0,
+                               native=total, rts=0, total=total),
+                    reason=reason, mechanism=mechanism)
+
+    def attributed(self):
+        sig = "$(HOLDIR)/src/simp/src/Cond_rewr.sig"
+        sml = "$(HOLDIR)/src/simp/src/simpLib.sml"
+        # the real shape: the same file under two kinds, per kind
+        return {"load-simpLib": {
+            sml: self.word(6107, "uses the new entry"),
+            sig: self.word(12, "the new signature")},
+            "load-congLib": {sig: self.word(-3, "shrinks")}}
+
     def test_startup_attribution_is_the_declared_words(self):
         header = dict(record_sha256="x")
-        words = {"load-simpLib": {
-            "$(HOLDIR)/src/simp/src/simpLib.sml": dict(
-                delta=5, reason="uses the new entry", mechanism="m"),
-            "$(HOLDIR)/src/simp/src/Cond_rewr.sig": dict(
-                delta=1, reason="the new signature", mechanism="m")},
-            "load-congLib": {"$(HOLDIR)/src/simp/src/congLib.sml": dict(
-                delta=2, reason="rewires", mechanism="m")}}
         got = gates.startup_gate(
-            header, dict(decision="attributed", attributed=words,
+            header, dict(decision="attributed", attributed=self.attributed(),
                          notes=["informational"]), dict(decision="pass"))
         self.assertEqual((got["source"], got["exit"], got["missing"],
                           got["owed"], got["failed"]),
                          ("attributed", 0, [], [], []))
+        sig = "$(HOLDIR)/src/simp/src/Cond_rewr.sig"
         self.assertEqual(got["attribution"], [
-            "load-congLib $(HOLDIR)/src/simp/src/congLib.sml: rewires",
-            "load-simpLib $(HOLDIR)/src/simp/src/Cond_rewr.sig: "
-            "the new signature",
+            "load-congLib %s: -3 words: shrinks" % sig,
+            "load-simpLib %s: +12 words: the new signature" % sig,
             "load-simpLib $(HOLDIR)/src/simp/src/simpLib.sml: "
-            "uses the new entry"])
+            "+6107 words: uses the new entry"])
         self.assertIn("note: informational", got["reasons"])
+        self.assertEqual(d.finish(got)["status"], d.STATUS_PASS)
         self.assertEqual(
-            d.finish(got)["status"], d.STATUS_PASS)
+            d.lines(lines_record(gates={gates.STARTUP: d.finish(got)})),
+            ["PASS gate startup-gate: attributed (3 declared files)"])
 
     def test_attributed_without_declared_words_owes_attribution(self):
         header = dict(record_sha256="x")
         for extra in ({}, dict(attributed={}),
-                      dict(attributed={"load-simpLib": {}}),
-                      dict(attributed="x")):
+                      dict(attributed={"load-simpLib": {}})):
             got = gates.startup_gate(
                 header, dict(decision="attributed", notes=["n"], **extra),
                 dict(decision="pass"))
@@ -1432,6 +1441,53 @@ class Gates(unittest.TestCase):
                           got["missing"][0])
             self.assertEqual(got["attribution"], [])
             self.assertIn("note: n", got["reasons"])
+
+    def test_only_an_attributed_record_carries_the_words(self):
+        header = dict(record_sha256="x")
+        decisions = dict(decision="attributed",
+                         attributed=self.attributed())
+        got = gates.startup_gate(header, decisions, dict(decision="fail"))
+        self.assertEqual((got["source"], got["attribution"]),
+                         ("inconclusive", []))
+        got = gates.startup_gate(header, decisions, dict(decision="pass"),
+                                 ["the total differs"])
+        self.assertEqual((got["source"], got["attribution"]), ("fail", []))
+        got = gates.startup_gate(header, dict(decision="fail",
+                                              attributed={"junk": 1}),
+                                 dict(decision="pass"))
+        self.assertEqual((got["source"], got["attribution"]), ("fail", []))
+        got = gates.startup_gate(header, decisions, dict(decision="pass"))
+        self.assertTrue(got["attribution"])
+        row = dict(attempt="x", exit=143, decision="attributed",
+                   problems=[])
+        got = gates.owe_redraw(got, row)
+        self.assertEqual((got["source"], got["attribution"],
+                          got["owed"]), ("inconclusive", [], ["redraw"]))
+
+    def test_a_malformed_attributed_decision_is_refused(self):
+        header = dict(record_sha256="x")
+        ok = self.word(1, "r")
+        bad = [
+            "x", {"load-simpLib": "x"}, {"load-simpLib": {"f": "x"}},
+            {"load-simpLib": {"f": dict(ok, reason="")}},
+            {"load-simpLib": {"f": dict(ok, reason="  \n")}},
+            {"load-simpLib": {"f": {k: v for k, v in ok.items()
+                                    if k != "reason"}}},
+            {"load-simpLib": {"f": dict(ok, delta={})}},
+            {"load-simpLib": {"f": dict(ok, delta=dict(total="1"))}},
+            {"load-simpLib": {"f": dict(ok, delta=dict(total=True))}},
+            {"load-simpLib": {"f": dict(ok, delta=5)}}]
+        for found in bad:
+            with self.assertRaises(ValueError, msg=found):
+                gates.startup_gate(
+                    header, dict(decision="attributed", attributed=found),
+                    dict(decision="pass"))
+            # not read for another decision
+            got = gates.startup_gate(
+                header, dict(decision="pass", attributed=found),
+                dict(decision="pass"))
+            self.assertEqual((got["source"], got["attribution"]),
+                             ("pass", []))
 
     BASE = a.BASE
 

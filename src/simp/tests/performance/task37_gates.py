@@ -1185,7 +1185,7 @@ def owe_redraw(record, attempt):
                attempt["attempt"], attempt["exit"], attempt["decision"],
                "; declared deltas: " + "; ".join(attempt["problems"])
                if attempt["problems"] else ""))
-    return dict(record, source="inconclusive", failed=[],
+    return dict(record, source="inconclusive", failed=[], attribution=[],
                 missing=["%s: %s" % (STARTUP, why)], owed=["redraw"],
                 exit=EXITS["inconclusive"],
                 reasons=list(record["reasons"]) + [why])
@@ -1214,10 +1214,13 @@ def startup_gate(header, decisions, null_decisions, problems=()):
     (`declared_problems`) make it `fail`: the record's declared deltas are
     not the gate's, and nothing is transferred. The attribution is the
     declared words (design decision 49): one string per load kind and file
-    of `decisions["attributed"]` with its reason, sorted; an `attributed`
-    decision with none owes the attribution (`gate_record`). The gate's
-    notes are informational: they go to the reasons as `note: ...`."""
+    of `decisions["attributed"]` with its word total and reason, sorted
+    (`declared_words`, which refuses a malformed one of an `attributed`
+    decision); an `attributed` decision with none owes the attribution
+    (`gate_record`). Only a record whose final status is `attributed`
+    carries them. The gate's notes go to the reasons as `note: ...`."""
     decision = decisions.get("decision")
+    words = declared_words(decisions) if decision == "attributed" else []
     status = decision if decision in ("pass", "attributed", "fail") \
         else "inconclusive"
     reasons = list(decisions.get("reasons", [])) + list(
@@ -1231,25 +1234,36 @@ def startup_gate(header, decisions, null_decisions, problems=()):
         status = "inconclusive"
         reasons.append("the null control is %s, not pass" %
                        null_decisions.get("decision"))
-    return gate_record(STARTUP, status, declared_words(decisions),
-                       reasons, header["record_sha256"])
+    return gate_record(STARTUP, status, words if status == "attributed"
+                       else [], reasons, header["record_sha256"])
 
 
 def declared_words(decisions):
-    """The declared words of a startup gate's `decisions`: `"KIND FILE:
-    REASON"` for each load kind and file of `attributed`, sorted (empty
-    when there are none or the field is malformed)."""
-    found = decisions.get("attributed")
+    """The declared words of an `attributed` startup gate decision:
+    `"KIND FILE: +N words: REASON"` for each load kind and file of
+    `decisions["attributed"]` (N its `delta.total`), sorted. None declared
+    is empty; a malformed entry (a kind or entry that is not a dict, no
+    reason, a delta without an integer total) is refused."""
+    found = decisions.get("attributed", {})
+    a.require(isinstance(found, dict),
+              "the startup gate's attributed is not a dict")
     words = []
-    if isinstance(found, dict):
-        for kind, files in found.items():
-            if not isinstance(files, dict):
-                continue
-            for path, entry in files.items():
-                reason = entry.get("reason") if isinstance(entry, dict) \
-                    else None
-                if isinstance(reason, str) and reason.strip():
-                    words.append("%s %s: %s" % (kind, path, reason))
+    for kind, files in found.items():
+        a.require(isinstance(files, dict), "the startup gate's attributed "
+                  "%s is not a dict of files" % kind)
+        for path, entry in files.items():
+            who = "the startup gate's attributed %s %s" % (kind, path)
+            a.require(isinstance(entry, dict), who + " is not a dict")
+            reason = entry.get("reason")
+            a.require(isinstance(reason, str) and reason.strip(),
+                      who + " has no reason")
+            delta = entry.get("delta")
+            total = delta.get("total") if isinstance(delta, dict) else None
+            a.require(isinstance(total, int) and
+                      not isinstance(total, bool),
+                      who + " has no integer delta total")
+            words.append("%s %s: %+d words: %s" % (kind, path, total,
+                                                   reason))
     return sorted(words)
 
 
