@@ -30,6 +30,14 @@ val _ = Datatype ‘
 
 val res = define_from_to “:tree”
 
+(* an operator inside another, mentioned on its own first: the encoder
+   for `ztree option list` needs the one for `ztree option` *)
+val _ = Datatype ‘
+  ztree = ZTip | ZLink (ztree option) | ZFork (ztree option list)
+’
+
+val res = from_to_thm_for “:ztree”
+
 val _ = Datatype ‘
   t1 = T1 num (t1 list)
 ’
@@ -374,3 +382,8 @@ val thy = fetch "-" "cv_str_fmap_test_thm"
             |> dest_thy_const |> #Thy;
 
 val _ = (thy = "cv_string_fmap") orelse fail();
+
+val _ = testutils.convtest
+  ("cv_eval finite-set cardinality with duplicates", cv_eval,
+   “finite_set$fCARD (finite_set$fset_ABS [1; 2; 1; 3; 2] : num fset)”,
+   “3:num”);
