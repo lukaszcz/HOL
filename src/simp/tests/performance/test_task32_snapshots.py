@@ -870,7 +870,8 @@ class BuildTests(unittest.TestCase):
         with self.assertRaises(s.Terminated):
             s.build_side(wt, "cand", w.cand_pin, w.root, w.manifest,
                          w.dir / "ev", w.dir / "scratch", runner=killed,
-                         probe=w.probe, harness=(w.harness, s.SEQUENCE_REL))
+                         tmpdir=w.dir / "tmp", probe=w.probe,
+                         harness=(w.harness, s.SEQUENCE_REL))
         record = w.doc()["sides"]["cand"]
         self.assertEqual(record["repo"], str(wt.resolve()))
         target = Path(record["root"])
@@ -902,7 +903,8 @@ class BuildTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "inside a snapshot"):
             s.build_side(w.repo, "cand", w.cand_pin, w.root, w.manifest,
                          w.root / "cand" / "ev", w.dir / "sc",
-                         runner=w.fake, probe=w.probe)
+                         tmpdir=w.dir / "tmp", runner=w.fake,
+                         probe=w.probe)
         self.assertTrue(s.nested("/a/b", "/a/b/c"))
         self.assertTrue(s.nested("/a/b", "/a/b"))
         self.assertFalse(s.nested("/a/base", "/a/cand"))
