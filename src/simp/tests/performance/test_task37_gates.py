@@ -2030,6 +2030,114 @@ class StartupPath(Ledgers):
             self.read(args)
 
 
+class Task33Combination(unittest.TestCase):
+    """Design decision 48: a TASK33 check decided by several sources is
+    one record under `case:kind`, which lists its sources."""
+    CAND = "c" * 40
+    OFFLINE = ("L2:declared.valid", "R2:declared.valid",
+               "R3:declared.valid", "L2:manifest.roots",
+               "E1:manifest.roots", "L2:manifest.pins", "E1:manifest.pins",
+               "L2:manifest.build", "E1:manifest.build")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.lineage = mock.Mock()
+        self.lineage.candidate_of = lambda label, rev: rev
+
+    @staticmethod
+    def row(key, decision, source, **more):
+        case, kind = key.split(":")
+        return dict(case=case, kind=kind, decision=decision,
+                    source=source, reason=source + " says " + decision,
+                    **more)
+
+    def read(self, extra, status="pass"):
+        import task33_dispose
+        import task33_rules
+        rows = [dict(case=c, kind=k, decision="pass", source="timing:x",
+                     reason="")
+                for c, k in task33_dispose.expected_storage()]
+        rows += extra
+        path = write(self.root / "d.json", dict(
+            schema=task33_dispose.SCHEMA, table=gates.TABLE33,
+            candidate=self.CAND, status=status, decisions=rows))
+        write(str(path) + ".seal", a.seal(path))
+        return gates.read_task33(path, self.lineage)
+
+    def both(self, key, first, second, **more):
+        return [self.row(key, first, "offline:audit", **more),
+                self.row(key, second, "offline:harvest")]
+
+    def test_a_two_source_pass_is_one_record_listing_its_sources(self):
+        rows = []
+        for key in self.OFFLINE:
+            rows += self.both(key, "pass", "pass")
+        found, reported, _, _, _ = self.read(rows)
+        for key in self.OFFLINE:
+            self.assertEqual(found[key]["source"], "pass")
+            self.assertEqual(found[key]["failed"], [])
+            self.assertEqual(found[key]["missing"], [])
+            self.assertEqual(
+                [(x["source"], x["decision"], x["reason"])
+                 for x in found[key]["sources"]],
+                [("offline:audit", "pass", "offline:audit says pass"),
+                 ("offline:harvest", "pass",
+                  "offline:harvest says pass")])
+        self.assertEqual(reported, [])
+        import task33_dispose
+        single = found["L1:" + next(
+            k for c, k in task33_dispose.expected_storage() if c == "L1")]
+        self.assertNotIn("sources", single)
+
+    def test_one_failing_source_fails_the_key(self):
+        found, _, _, _, _ = self.read(
+            self.both("L2:manifest.pins", "pass", "fail"), status="fail")
+        record = found["L2:manifest.pins"]
+        self.assertEqual(record["source"], "fail")
+        self.assertEqual(record["failed"], ["TASK33: fail"])
+
+    def test_a_pass_with_an_inconclusive_source_is_missing_and_owed(self):
+        found, _, _, _, _ = self.read(
+            self.both("L2:manifest.pins", "pass", "inconclusive"),
+            status="inconclusive")
+        record = found["L2:manifest.pins"]
+        self.assertEqual(record["missing"], ["TASK33: inconclusive"])
+        self.assertEqual(record["owed"], ["attribution"])
+
+    def test_the_owed_of_the_sources_is_their_sorted_union(self):
+        rows = [self.row("L2:x", "inconclusive", "offline:harvest",
+                         owed="second"),
+                self.row("L2:x", "inconclusive", "offline:audit",
+                         owed="followup")]
+        found, _, _, _, _ = self.read(rows, status="inconclusive")
+        self.assertEqual(found["L2:x"]["owed"], ["followup", "stage2"])
+        self.assertEqual([x["source"] for x in found["L2:x"]["sources"]],
+                         ["offline:audit", "offline:harvest"])
+
+    def test_the_same_case_kind_and_source_twice_is_refused(self):
+        rows = [self.row("L2:x", "pass", "offline:audit")] * 2
+        with self.assertRaisesRegex(ValueError, "repeated TASK33"):
+            self.read(rows)
+
+    def test_a_gated_decision_with_a_reported_one_is_refused(self):
+        rows = self.both("L2:x", "pass", "reported")
+        with self.assertRaisesRegex(ValueError, "inconsistent TASK33"):
+            self.read(rows)
+
+    def test_reported_from_two_sources_is_reported_once(self):
+        rows = self.both("L2:x", "reported", "reported")
+        found, reported, _, _, _ = self.read(rows)
+        self.assertNotIn("L2:x", found)
+        (one,) = [r for r in reported if r["key"] == "L2:x"]
+        self.assertEqual(one["decision"], "reported")
+        self.assertEqual(one["reason"], "offline:audit says reported; "
+                         "offline:harvest says reported")
+        self.assertEqual([x["source"] for x in one["sources"]],
+                         ["offline:audit", "offline:harvest"])
+
+
 class AuditReceipt(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

@@ -5713,6 +5713,18 @@ without editing what their kept records depend on.
 - Dispositions. Both the TASK32 and the TASK33 disposition carry a top-level
   `candidate` (the full pin the stages measured; TASK33 refuses stages that
   measured different candidates), which `task37_dispose.py` joins on.
+- Decisions of several sources (design decision 48). TASK33 decides each
+  offline check id in every offline report that runs it (`offline:audit`,
+  `offline:harvest`), so a `case:kind` can have one decision per source.
+  `task37_gates.read_task33` combines the rows of a key into one record:
+  a repeated (case, kind, source) is refused, the decision is
+  `task33_rules.worst` of the gated rows (any fail fails, any other
+  non-pass is missing, with the union of the rows' `owed`, sorted, or
+  `attribution`), a key mixing gated and reported/unsupported rows is
+  refused, and a key whose rows are all reported/unsupported is reported
+  once (reasons joined in source order). A combined key's record lists
+  its `sources` (source, decision, reason); a single-source key has no
+  `sources` field.
 - Declaration. TASK37's reviewed data is `task37_declared.json` (schema
   `task33-declared-v4`, as `task33_declared.json`, which stays for the kept
   r4 records). The `task37-t33` table selects it itself (`--table
