@@ -1,5 +1,5 @@
 """The no-redraw rule for the attempts of a judged timing table, shared by
-the TASK30 and TASK31 dispositions.
+the TASK30, TASK31 and TASK37 dispositions (only TASK37 passes refusals).
 
 A table is measured once: every attempt of it in the ledger is either
 judged (the `attempt` of the output a disposition is given, or of that
@@ -8,7 +8,7 @@ any cell. An attempt that measured, or may have (left open, resumed, closed
 more than once or otherwise), is refused: it needs a new policy decision, and
 the settings are not drawn again beside it. `attempts_of` applies the rule
 to the ledger of an engine (`timing_grid.Grid`) and returns the attempts;
-`void_failure` and `runner_failure` say why an attempt is not void. Both
+`void_failure` and `runner_failure` say why an attempt is not void. The
 dispositions seal this module in their `CODE` (PROTOCOL.md, "Seal histories").
 
 An environment-integrity refusal of the pair runner (`ENVIRONMENT_REFUSALS`)
@@ -51,7 +51,8 @@ def environment_refusals(folder, refusals):
     for manifest in sorted(folder.rglob("manifest.json")):
         info = a.load(manifest)
         if info.get("success") is False and \
-                info.get("failure") in refusals:
+                isinstance(info.get("failure"), str) and \
+                info["failure"] in refusals:
             found.append(info["failure"])
         elif info.get("success") is True or (
                 info.get("runs") == [] and info.get("success") is False):

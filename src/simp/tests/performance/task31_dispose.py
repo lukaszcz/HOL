@@ -104,7 +104,8 @@ CODE = ("task31_dispose.py", "task31_grid.py", "task31_identity_grid.py",
         "allocation_schema.py", "allocation_boundary.py", "path_schema.py")
 # Per file of CODE, the seals it had when a disposition was recorded, once it
 # has changed since. The seals of 7e202dfbaa: allocation_matrix.py before it
-# took a pair count per task (TASK37), and this file before it named that.
+# took a pair count per task (TASK37), and this file before it named that;
+# void_attempts.py before TASK37 decision 45 (the environment refusals).
 HISTORY = {
     "allocation_matrix.py": (dict(
         bytes=74810, sha256="935b2a4962cd6c2b4270805a1f94758d"

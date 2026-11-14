@@ -1114,6 +1114,8 @@ def judge(name, identity, allocated, timed, d4, groups=None):
             "decisive timing stage control-limited (%s): disposed by "
             "policy D4 with identity and exact allocation (work rows "
             "equal)" % chain_text(timed))
+        if name in D4_TASK37:
+            found["policy_note"] += " (user extension, design decision 46)"
     return found
 
 
@@ -1288,10 +1290,11 @@ def dispose(identity, allocation, timing, units, decisions33, receipts,
 # ------------------------------------------------------------- the command
 
 def environment_events(paths, timing):
-    """The environment events (`--environment-event`) and the void attempts
-    of the timing tables they account for: [{path, seal, attempts:
-    [{table, attempt, refusals}]}]. Every attempt void by the environment
-    rule needs an event, and an event needs such an attempt (decision 45)."""
+    """The environment events (`--environment-event`, resolved paths) and
+    the void attempts of the timing tables they account for: {events:
+    [{path, seal}], attempts: [{table, attempt, refusals}]}. At least one
+    event is needed when an attempt is void by the environment rule, and an
+    event needs such an attempt (decision 45)."""
     voided = [dict(table=t, attempt=x["attempt"],
                    refusals=x["environment"])
               for t, found in timing.items() for x in found["attempts"]
@@ -1302,8 +1305,8 @@ def environment_events(paths, timing):
               "attempt(s) void by an environment refusal: %s" % names)
     a.require(not paths or voided, "an environment event with no attempt "
               "it voids")
-    return [dict(path=str(p), seal=a.seal(p), attempts=voided)
-            for p in paths]
+    return dict(events=[dict(path=str(p), seal=a.seal(p)) for p in paths],
+                attempts=voided)
 
 
 def timing_options(args):
@@ -1486,7 +1489,8 @@ def derive(args, held=None):
     alloc_ledgers = keyed(args.alloc_ledger, "alloc-ledger",
                           tuple(TASKS.values()))
     loads, load_seals = load_loads(keyed(args.load, "load"))
-    events = [Path(p) for p in args.environment_event or ()]
+    events = sorted({Path(p).resolve()
+                     for p in args.environment_event or ()})
     for p in events:
         a.require(p.is_file(), "the environment event is missing: %s" % p)
     document = reviewed.load(cases.REVIEWED_FILE)
@@ -1563,7 +1567,7 @@ def derive(args, held=None):
                         allocation.items()},
             timing_ledger={t: v["counts"] for t, v in timing.items()}),
         timing_attempts={t: v["attempts"] for t, v in timing.items()},
-        environment_events=events,
+        environment_events=events, d4_extension=list(D4_TASK37),
         shards={t: sorted(v["cells"]) for t, v in timing.items()},
         host_load=loads,
         reported=dict(

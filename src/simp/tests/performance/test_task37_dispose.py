@@ -331,6 +331,11 @@ class Dispose(unittest.TestCase):
         self.assertEqual((r["cells"][name]["status"],
                           r["cells"][name]["policy"]), ("pass", "D4"))
         self.assertIn(name, r["policies"]["D4"])
+        self.assertIn("(user extension, design decision 46)",
+                      r["cells"][name]["policy_note"])
+        other = c.D4[0]
+        r = d.dispose(*self.tables({other: trow("control_limited")}))
+        self.assertNotIn("user extension", r["cells"][other]["policy_note"])
         # allocation that differs still fails it
         r = d.dispose(*self.tables({name: trow("control_limited",
                                                stage2=True)},
@@ -1941,9 +1946,9 @@ class Derive(unittest.TestCase):
         self.events.clear()
         record = d.derive(self.args(
             "--record", "o", "--environment-event", str(self.event())))
-        (found,) = record["environment_events"]
-        self.assertEqual(found["seal"], a.seal(self.event()))
-        self.assertEqual(found["path"], str(self.event()))
+        found = record["environment_events"]
+        self.assertEqual(found["events"], [dict(
+            path=str(self.event().resolve()), seal=a.seal(self.event()))])
         self.assertEqual(found["attempts"], [dict(
             table=self.TABLE, attempt="V", refusals=[self.REFUSAL])])
         self.assertIn("void (environment: %s)" % self.REFUSAL,
@@ -1963,7 +1968,8 @@ class Derive(unittest.TestCase):
     def test_no_event_and_no_void_attempt_records_none(self):
         self.void(environment=False)
         self.assertEqual(d.derive(self.args(
-            "--record", "o"))["environment_events"], [])
+            "--record", "o"))["environment_events"],
+            dict(events=[], attempts=[]))
         self.assertIn("void (no measurement admitted)",
                       "\n".join(d.lines(d.derive(self.args(
                           "--record", "o")))))
@@ -1984,6 +1990,33 @@ class Derive(unittest.TestCase):
         event.write_text("upgrade libc6\n")
         with self.assertRaisesRegex(ValueError, "no --environment-event"):
             d.disposition(self.args("--check", str(out)))
+
+    def test_paths_are_resolved_deduplicated_and_sorted(self):
+        self.void()
+        event = self.event()
+        other = self.root / "other.log"
+        other.write_text("x\n")
+        out = self.root / "out"
+        cwd = Path.cwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, cwd)
+        self.assertEqual(d.disposition(self.args(
+            "--record", str(out), "--environment-event", "other.log",
+            "--environment-event", "dpkg.log",
+            "--environment-event", str(event))), 0)
+        held = json.loads((out / "disposition.json").read_text())
+        self.assertEqual(
+            [e["path"] for e in held["environment_events"]["events"]],
+            [str(event.resolve()), str(other.resolve())])
+        os.chdir(cwd)
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(d.disposition(self.args(
+                "--check", str(out), "--environment-event", str(other),
+                "--environment-event", str(event))), 0)
+
+    def test_the_disposition_records_the_d4_extension(self):
+        self.assertEqual(d.derive(self.args("--record", "o"))[
+            "d4_extension"], list(d.D4_TASK37))
 
     def test_the_timing_ledger_passes_the_refusals(self):
         seen = []

@@ -1608,19 +1608,24 @@ it.
     covers the rest of the added file (imports, constants, other functions
     and module statements, without the module docstring), normalised by the
     same rules. An edit of the added file is non-behavioural when both
-    hashes are unchanged; it then replaces the held seal, after that
-    review. A behavioural edit
+    hashes are unchanged, or when the moved functions with the parameters
+    that default to the old behaviour (and the arguments passing them) and
+    their guarded blocks removed hash to the host's (`HOST_HASH`; the test's
+    strip names exactly those shapes and counts them); it then replaces the
+    held seal, after that review. A behavioural edit
     is not allowed while a record depends on the held seal: a seal in
     `HISTORY[file]` accepts every later file, so it would bind the record to
     logic it never ran. Where a record lacks the file, `check_code`'s
     refusal of an edit states this rule and names no `HISTORY` entry. A
     record made by the current code carries the file.
-    TASK37 decision 45 threaded an optional `refusals` argument (default
-    none, with which every result is the held one) through the three moved
-    functions and added `ENVIRONMENT_REFUSALS` and `environment_refusals`: the
-    held seal and both pinned hashes were replaced after that review, and the
-    previous seal of the file is in `HISTORY` of `task30_dispose` and
-    `task31_dispose` for the records made with it.
+    TASK37 decision 45 threaded the optional `refusals` and `environment`
+    arguments (default none: every result is the held one) through the three
+    moved functions and added `ENVIRONMENT_REFUSALS` and
+    `environment_refusals`. It is an edit of the second kind: the held seal
+    and both pinned hashes were replaced, and the moved functions without
+    those shapes hash to `HOST_HASH`. The previous seal of the file is in
+    `task31_dispose.HISTORY` for the TASK31 record made with it (no TASK30
+    record carries it).
   - TASK30's *set* of sealed names is frozen by its Y records: adding a file
     to `task30_grid.INSTALLED` or `SEALED` (which also feeds the
     follow-up's `SEALED`) makes every Y replay refuse "changed sealed
@@ -5250,8 +5255,9 @@ replaces). `RUN-T` is the output of the last attempt of allocation task
       [--load host=$EV/load/host.jsonl] --record $EV/dispose
 
 Every `[..]` is optional (`--followup` and `--followup-pilot` once for each
-shard that has a follow-up; `--environment-event` once for each system record,
-see "Environment refusals" below). `--startup-null` is for a complete attempt
+shard that has a follow-up; one or more `--environment-event FILE`, at least
+one required when an attempt is void by the environment rule, see
+"Environment refusals" below). `--startup-null` is for a complete attempt
 only (then required); omit it for an incomplete attempt (its null is
 auto-discovered, or not read). The inputs are produced by the steps above: the
 identity grids and allocation runs by their streams (the grid and run
@@ -5297,11 +5303,12 @@ outcome, so it selects nothing: a timing attempt whose cell archives show
 one (acceptance failed, no command timed out, each command left a runner
 manifest, one has `success` false and a listed `failure`, every other has no
 admitted run or succeeded) is void and is redrawn into a new output (one
-output, one attempt; the void output stays). Dispose requires one
+output, one attempt; the void output stays). Dispose takes one or more
 `--environment-event FILE` (the system record of the change, e.g. an
-apt/dpkg log excerpt) when any timing attempt is void by this rule, refuses
-an event when none is, and records each event's path, seal and the attempts
-it accounts for in `environment_events`; `--check` derives them again. Any
+apt/dpkg log excerpt; paths resolved, deduplicated and sorted), at least
+one required when any timing attempt is void by this rule, refuses an event
+when none is, and records `environment_events` = `{events: [{path, seal}],
+attempts: [{table, attempt, refusals}]}`; `--check` derives them again. Any
 other failure with an admitted run stays judged. Allocation attempts have
 their own rule.
 
@@ -5797,8 +5804,10 @@ inventory's `pairs`, never a constant) and, where sampled, its timing
 decided `pass`. Unsampled cells pass on identity and allocation (policy
 `stratified`). D2 (heavy tactic cells identity-only) and R-1
 (`void_attempts.attempts_of`) carry over and are recorded. D4 (design
-decision 16) covers all 31 cells of `task37_cases.D4` (13 TASK29A
-control-limited, 5 TASK29A attributed, 13 TASK30 attributed), only when
+decision 16) covers `task37_cases.D4` (31 cells: 13 TASK29A
+control-limited, 5 TASK29A attributed, 13 TASK30 attributed) and
+`D4_TASK37` (`frag_named-10000`, design decision 46): 32 cells, recorded in
+`d4_extension`, the extension noted on the cell's policy, only when
 the decisive timing stage is control-limited (the B/B control outside the
 window, the candidate not a reproducible slowdown), identity is identical
 or attributed and exact allocation passes, work rows included (the

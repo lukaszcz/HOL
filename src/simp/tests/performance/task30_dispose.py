@@ -129,16 +129,21 @@ CODE = ("task30_dispose.py", "task30_grid.py", "task30_followup.py",
 # non-message strings (test_task30_dispose.py `normalised` names them and
 # pins the hash); and the rest of the file (imports, constants, other
 # functions, module statements) is pinned by a second hash under the same
-# rules. An edit of the file that keeps both hashes replaces the third
-# element, after that review. An edit that changes behaviour is
+# rules. An edit of the file is non-behavioural, and replaces the third
+# element after review, when either both hashes are kept, or the moved
+# functions with the parameters that default to the old behaviour (and the
+# arguments passing them) and their guarded blocks removed hash to the
+# host's (test_task30_dispose.py HOST_HASH: the strip names exactly those
+# shapes). TASK37 decision 45's edit (`refusals`, `environment`) is of the
+# second kind. An edit that changes behaviour is
 # not allowed while a record depends on the element: a seal listed in
 # HISTORY accepts every later file, so it would rebind the record to logic
 # it never ran.
 ADDED = {"void_attempts.py": ("task30_dispose.py", (dict(
     bytes=50202, sha256="687e5e64c85b571d305b6e00fe1d2c34"
                    "8e864bf5d9298ce73366c88a069cef59"),), dict(
-    bytes=13420, sha256="d20ab39236aedc66fe7d2e98a11ac5cf1354afbf6a108f4"
-                   "590a2f963c99638c1"))}
+    bytes=13512, sha256="504c2724e414ca815ef23bd5a9b732982b1351a33bf324c7"
+                   "719505ff8a70d053"))}
 # Per file of CODE, the seals it had when a disposition was recorded, once
 # it has changed since. The seals of 40e176538f are those before the harness
 # gave its children /dev/null for stdin and dropped the "exclusive window"
@@ -146,9 +151,6 @@ ADDED = {"void_attempts.py": ("task30_dispose.py", (dict(
 # TASK31 task and the client fixture family (and each file's own entries for
 # the histories below).
 HISTORY = {
-    "void_attempts.py": (dict(
-        bytes=10622, sha256="da75214c5971dbb70ffb05dd302ed2fe9e89120d4a162723"
-                       "b6385cae8ea1216b"),),
     "task30_dispose.py": (dict(
         bytes=50202, sha256="687e5e64c85b571d305b6e00fe1d2c34"
                        "8e864bf5d9298ce73366c88a069cef59"),),
@@ -572,7 +574,9 @@ def held_refusal(name):
         "%s: this record lacks the file and so depends on the held seal "
         "%s (task30_dispose.ADDED); an edit that is non-behavioural (the "
         "moved functions and the rest of the file both keep the normalised "
-        "hash that test_task30_dispose.py pins) replaces the held seal in "
+        "hash that test_task30_dispose.py pins, or the moved functions "
+        "without the defaulted parameters and guarded blocks of a reviewed "
+        "addition hash to its HOST_HASH) replaces the held seal in "
         "ADDED, after review; any other "
         "edit is not allowed while a record depends on the held seal, and "
         "no HISTORY entry may be added for it (PROTOCOL.md, \"Seal "

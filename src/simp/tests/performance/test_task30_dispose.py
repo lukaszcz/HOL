@@ -270,9 +270,6 @@ class Spec(unittest.TestCase):
         # The seals of 40e176538f, before the harness gave its children
         # /dev/null for stdin.
         self.assertEqual(td.HISTORY, {
-            "void_attempts.py": (dict(
-                bytes=10622, sha256="da75214c5971dbb70ffb05dd302ed2fe"
-                               "9e89120d4a162723b6385cae8ea1216b"),),
             "task30_dispose.py": (dict(
                 bytes=50202, sha256="687e5e64c85b571d305b6e00fe1d2c34"
                                "8e864bf5d9298ce73366c88a069cef59"),),
@@ -1103,8 +1100,8 @@ class Seals(Toy):
             "task30_dispose.py", (dict(
                 bytes=50202, sha256="687e5e64c85b571d305b6e00fe1d2c34"
                                "8e864bf5d9298ce73366c88a069cef59"),), dict(
-                bytes=13420, sha256="d20ab39236aedc66fe7d2e98a11ac5cf"
-                               "1354afbf6a108f4590a2f963c99638c1"))})
+                bytes=13512, sha256="504c2724e414ca815ef23bd5a9b732982"
+                               "b1351a33bf324c7719505ff8a70d053"))})
         self.assertIn("void_attempts.py", td.CODE)
         self.dispose(record=True)
         recorded = self.load(self.out / "disposition.json")["code"]
@@ -1181,18 +1178,23 @@ class Seals(Toy):
     # them, with the message strings blanked. Derived: ast.parse the file,
     # take the module level FunctionDefs runner_failure, void_failure and
     # attempts_of in order, ast.dump each of the normalised nodes (see
-    # `normalised`), join with "\n" and take the SHA-256. It is the same for
-    # the host's three functions and for the held version of
-    # void_attempts.py. Every other string (event names, statuses, keys,
-    # option and file names) stays in the dump. A `"..." % (...)` that is
-    # the value of an assignment is not blanked.
+    # `normalised`), join with "\n" and take the SHA-256. HOST_HASH is that
+    # of the host's three functions. Every other string (event names,
+    # statuses, keys, option and file names) stays in the dump. A
+    # `"..." % (...)` that is the value of an assignment is not blanked.
     MOVED = ("runner_failure", "void_failure", "attempts_of")
-    #
-    # TASK37 decision 45 threaded the optional `refusals` (default: none)
-    # through the three functions, and added ENVIRONMENT_REFUSALS and
-    # `environment_refusals`; with no refusals every result is the host's
-    # (reviewed), and the hashes below are of that version. The seal of the
-    # version before (the host's code, 10622 bytes) is in HISTORY.
+    HOST_HASH = ("110356114fd57b31fda1ff5318634235897125e8edbfbcb79b710644"
+                 "a8c5e2e0")
+    # TASK37 decision 45 threaded the optional `refusals` and `environment`
+    # (defaults: none) through the three functions, and added
+    # ENVIRONMENT_REFUSALS and `environment_refusals`; with no refusals every
+    # result is the host's. That edit is of the second kind of
+    # non-behavioural edit (task30_dispose.ADDED): `strip_decision_45`
+    # removes exactly its shapes and the result hashes to HOST_HASH
+    # (test_the_decision_45_edit_is_the_host_code_with_guards_removed).
+    # MOVED_HASH is the hash of the held version as it is, REST_HASH that
+    # of the rest of it. The previous held version (10622 bytes) is in
+    # task31_dispose.HISTORY only: no TASK30 record carries it.
     MOVED_HASH = ("6f9c7e6e5199f39ea33185b193770637fca29cedbae50b9609e2ad"
                   "e9385869bc")
     # The second pinned hash: the rest of the held version of
@@ -1200,8 +1202,8 @@ class Seals(Toy):
     # three moved functions (imports, constants, other functions and
     # module statements), dumped with the same rules and hashed. Only the
     # held version has it; the host's module level is another file's.
-    REST_HASH = ("f4af64bc403741998c935393fced9fbb8d88823704cf6832d22943"
-                 "6cdb178585")
+    REST_HASH = ("d0fa1e64fb177f74f0a28776d9aaf070ce12d77495066899ecaa6e"
+                 "df5b39ab15")
 
     @classmethod
     def normalised_tree(cls, node):
@@ -1341,6 +1343,102 @@ class Seals(Toy):
                 self.assertNotEqual(reworded, text)
                 self.assertEqual(self.moved_hash(reworded), self.MOVED_HASH)
                 self.assertEqual(self.rest_hash(reworded), self.REST_HASH)
+
+    GUARDED = ("refusals", "environment", "texts")
+
+    @classmethod
+    def strip_decision_45(cls, source):
+        """(source, counts): `source` without the shapes of decision 45
+        in the three moved functions, and how many of each were removed:
+        the defaulted parameters `refusals` and `environment`, the
+        arguments passing them to a call, the assignments of `texts` and
+        `environment` and the `if texts:` / `if environment:` blocks
+        (each guard test is the bare name)."""
+        import ast
+        counts = dict(params=0, defaults=0, arguments=0, assigns=0,
+                      guards=0)
+        names = set(cls.GUARDED)
+
+        class Strip(ast.NodeTransformer):
+            def visit_FunctionDef(self, node):
+                args = node.args
+                keep = len(args.args) - len(args.defaults)
+                for i in reversed(range(len(args.args))):
+                    if args.args[i].arg in names:
+                        counts["params"] += 1
+                        if i >= keep:
+                            counts["defaults"] += 1
+                            del args.defaults[i - keep]
+                        del args.args[i]
+                        keep -= i < keep
+                return self.generic_visit(node)
+
+            def visit_Call(self, node):
+                before = len(node.args)
+                node.args = [x for x in node.args if not (
+                    isinstance(x, ast.Name) and x.id in names)]
+                counts["arguments"] += before - len(node.args)
+                return self.generic_visit(node)
+
+            def generic_visit(self, node):
+                for field in ("body", "orelse"):
+                    block = getattr(node, field, None)
+                    if isinstance(block, list):
+                        kept = []
+                        for x in block:
+                            if isinstance(x, ast.Assign) and len(
+                                    x.targets) == 1 and isinstance(
+                                    x.targets[0], ast.Name) and \
+                                    x.targets[0].id in ("texts",
+                                                        "environment"):
+                                counts["assigns"] += 1
+                            elif isinstance(x, ast.If) and isinstance(
+                                    x.test, ast.Name) and x.test.id in (
+                                    "texts", "environment"):
+                                counts["guards"] += 1
+                            else:
+                                kept.append(x)
+                        setattr(node, field, kept)
+                return super().generic_visit(node)
+        tree = ast.parse(source)
+        tree.body = [Strip().visit(n) if isinstance(
+            n, ast.FunctionDef) and n.name in cls.MOVED else n
+            for n in tree.body]
+        return ast.unparse(tree), counts
+
+    STRIPPED = dict(params=5, defaults=5, arguments=4, assigns=2,
+                    guards=2)
+
+    def test_the_decision_45_edit_is_the_host_code_with_guards_removed(
+            self):
+        text = (a.HERE / "void_attempts.py").read_text()
+        stripped, counts = self.strip_decision_45(text)
+        self.assertEqual(counts, self.STRIPPED)
+        self.assertEqual(self.moved_hash(stripped), self.HOST_HASH)
+        # the hash of the file as it is differs: the strip does something
+        self.assertNotEqual(self.moved_hash(text), self.HOST_HASH)
+        # without those shapes the strip removes nothing
+        _, none = self.strip_decision_45(stripped)
+        self.assertEqual(set(none.values()), {0})
+        # a behavioural change anywhere else is still another hash
+        for old, new in (('if row["resumed"]:', "if False:"),
+                         ('"--output" not in argv', '"--out" not in argv')):
+            changed, counts = self.strip_decision_45(
+                text.replace(old, new))
+            self.assertEqual(counts, self.STRIPPED)
+            self.assertNotEqual(self.moved_hash(changed), self.HOST_HASH)
+        # ... and so is a change inside a guarded shape's neighbour: an
+        # extra statement in the loop of runner_failure
+        changed, _ = self.strip_decision_45(text.replace(
+            "            return (\"the archive of %s holds a runner",
+            "            name = None\n"
+            "            return (\"the archive of %s holds a runner"))
+        self.assertNotEqual(self.moved_hash(changed), self.HOST_HASH)
+
+    def test_no_refusals_do_no_io(self):
+        import void_attempts as va
+        self.assertEqual(va.environment_refusals(
+            Path("/nonexistent"), frozenset()), [])
 
     def test_a_plain_string_require_message_is_not_in_the_hash(self):
         # Rule (4): neither file has one (all their messages are `%`

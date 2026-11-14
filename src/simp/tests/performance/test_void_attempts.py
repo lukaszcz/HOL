@@ -84,17 +84,32 @@ class Environment(World):
     def test_other_manifests_may_be_unrun_or_succeeded(self):
         unrun = dict(runs=[], success=False, failure="harness died")
         done = dict(runs=ADMITTED, success=True)
-        for other in (unrun, done):
-            judged = self.attempt("ok", self.cell(
-                "ok", other, self.refused()))
-            found = self.run_attempts(judged, va.ENVIRONMENT_REFUSALS)
-            self.assertTrue(found[0]["void"])
-            self.setUp()
+        # `out0`, `out1` ...: the order the archive is read in is sorted,
+        # so the refusal is first in one case and last in the other
+        for label, others, first in (
+                ("unrun", (unrun,), False), ("done", (done,), False),
+                ("refusal first, unrun after", (unrun,), True),
+                ("refusal first, done after", (done,), True)):
+            with self.subTest(label):
+                manifests = (self.refused(),) + others if first else \
+                    others + (self.refused(),)
+                name = "case%d" % len(list(self.root.glob("case*.xz")))
+                judged = self.attempt(name, self.cell(name, *manifests))
+                found = self.run_attempts(judged, va.ENVIRONMENT_REFUSALS)
+                self.assertTrue(found[0]["void"])
+                self.assertEqual(found[0]["environment"], [REFUSAL])
+                self.ledger.unlink()  # the next case: a fresh ledger
 
     def test_a_failure_that_is_not_an_environment_refusal_stays_judged(
             self):
         other = dict(runs=ADMITTED, success=False, failure="a test failed")
         judged = self.attempt("other", self.cell("other", other))
+        with self.assertRaisesRegex(ValueError, "admitted run"):
+            self.run_attempts(judged, va.ENVIRONMENT_REFUSALS)
+
+    def test_a_failure_that_is_no_string_stays_judged(self):
+        odd = dict(runs=ADMITTED, success=False, failure=[REFUSAL])
+        judged = self.attempt("odd", self.cell("odd", odd))
         with self.assertRaisesRegex(ValueError, "admitted run"):
             self.run_attempts(judged, va.ENVIRONMENT_REFUSALS)
 
@@ -113,15 +128,15 @@ class Environment(World):
             self.run_attempts(judged, va.ENVIRONMENT_REFUSALS)
 
     def test_the_other_conditions_still_hold_with_the_set(self):
-        timed = self.attempt("timed", self.cell(
-            "timed", self.refused(), timed_out=True))
-        with self.assertRaisesRegex(ValueError, "timed out"):
-            self.run_attempts(timed, va.ENVIRONMENT_REFUSALS)
-        self.setUp()
-        won = self.attempt("won", self.cell(
-            "won", self.refused(), success=True))
-        with self.assertRaisesRegex(ValueError, "did not fail"):
-            self.run_attempts(won, va.ENVIRONMENT_REFUSALS)
+        for name, more, message in (
+                ("timed", dict(timed_out=True), "timed out"),
+                ("won", dict(success=True), "did not fail")):
+            with self.subTest(name):
+                judged = self.attempt(name, self.cell(
+                    name, self.refused(), **more))
+                with self.assertRaisesRegex(ValueError, message):
+                    self.run_attempts(judged, va.ENVIRONMENT_REFUSALS)
+                self.ledger.unlink()
 
     def test_the_default_is_the_rule_without_refusals(self):
         unrun = dict(runs=[], success=False, failure="harness died")
