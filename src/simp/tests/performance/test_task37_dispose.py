@@ -285,7 +285,7 @@ class Dispose(unittest.TestCase):
                 cells={n: classes.get(n, trow()) for n in grid.PARTS[key]},
                 scaling=scaling, scaling_raw=None,
                 differing=list(differing),
-                attempts=[], counts=[1, 1])
+                attempts=[], counts=[1, 1], rounds=[])
         units = {"u1": dict(unit="u1", failed=[], missing=[], owed=[])}
         return ids, al, timing, units, {}, {}
 
@@ -988,7 +988,8 @@ class Pilot(unittest.TestCase):
                 (d, ("ledger_attempts", self.attempts)),
                 (d31, ("judged_attempts",
                        lambda engine, root: {"a1": root})),
-                (tg, ("Ledger", lambda path: None))):
+                (tg, ("Ledger", lambda path: types.SimpleNamespace(
+                    records=[])))):
             patch = mock.patch.object(target, *value)
             patch.start()
             self.addCleanup(patch.stop)

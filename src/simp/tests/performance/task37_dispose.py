@@ -110,11 +110,16 @@ given; given
 the shard's `--timing` output, and its cells replace the shard's. The further
 rounds of a follow-up (task37_rounds.py, decision 47; `--followup
 SHARD.R=DIR --followup-pilot SHARD.R=DIR`, R >= 2) are required where
-declared and none is accepted undeclared: round R's cells are all
-inconclusive in the round before, its declaration precedes its counts and
-follows the round before's, and its declared pairs are the rule's from the
-replay of the round before's decisive stage (checked with the replays); a
-cell is judged by its last round's chain. The counts
+declared and none is accepted undeclared: round R's cells are exactly the
+cells the round before left inconclusive, its declaration precedes its
+counts and follows every counts file of the round before, and its declared
+pairs are the rule's from the replay of the round before's decisive stage
+(checked with the replays); a cell is judged by its last round's chain. The
+record cites each round's entry (`followup_rounds`: table, cells, pairs and
+the recorded user decision its declaration names; a round declared without
+one is out of protocol). A shard's ledger holds no attempt of a follow-up
+table that is not round 1 or a declared round (a deleted declaration of a
+measured round is refused). The counts
 file an inventory names must be one the shard's table names (its counts
 file or a revision of it, `Table.file_named`), and every
 inventory, resumption and first stage carries the pins of the committed
@@ -273,6 +278,7 @@ private counter, RSS reported only (recorded as `scope`).
 """
 import argparse
 import json
+import re
 from pathlib import Path
 import sys
 
@@ -879,6 +885,29 @@ def declared_rounds(key):
             if rounds.name_of(key, n) in engines]
 
 
+def round_declaration(key, number):
+    """The declaration of round `number` >= 2 of a shard (`task37_rounds.
+    DECLARED`): {cells, pairs, decision}."""
+    return rounds.DECLARED[key][number]
+
+
+def check_ledger_tables(key, state, allowed):
+    """The ledger of a shard holds no attempt of a follow-up table this
+    disposition did not judge: a table `task37-<shard>-followup<digits>`
+    other than `allowed` (round 1 and the declared rounds) is a measured
+    round whose declaration was deleted, or one not given."""
+    pattern = re.compile(r"%s-followup[0-9]*" % re.escape(
+        grid.name_of(key)))
+    found = sorted({r["table"] for r in state.records
+                    if isinstance(r.get("table"), str) and
+                    pattern.fullmatch(r["table"]) and
+                    r["table"] not in allowed})
+    a.require(not found, "the attempts ledger of %s holds attempts of "
+              "follow-up tables this disposition does not judge: %s (a "
+              "round that was measured is judged, so its declaration "
+              "stays)" % (key, ", ".join(found)))
+
+
 def check_round_declaration(key, number, stage, repo):
     """The declaration of round `number` precedes each counts file of the
     round the stage used (`task37_rounds.check_declaration_order`, which
@@ -921,6 +950,7 @@ def read_shard(key, options, lineage, repo, document, late):
             for n, c in main["final"].items()}
     seals = dict(main["seals"])
     differing = list(main["differing"])
+    entries = []
     pending = [(engine, main["root"], pilot, None)]
     judged = [(engine, d31.judged_attempts(engine, main["root"]))]
     follow = followup_of(key)
@@ -982,7 +1012,7 @@ def read_shard(key, options, lineage, repo, document, late):
         for n in chain:
             previous = read_round(
                 key, n, previous, options, lineage, repo, document, rows,
-                seals, differing, pending, judged, after)
+                seals, differing, pending, judged, after, entries)
     else:
         a.require(key not in options["followup-pilot"],
                   "--followup-pilot names a shard with no --followup: %s"
@@ -993,7 +1023,9 @@ def read_shard(key, options, lineage, repo, document, late):
     held = dict(cells=rows, scaling=main["scaling"],
                 scaling_raw=main["scaling_raw"],
                 differing=sorted(set(differing)), attempts=[], seals=seals,
-                pins=pins, counts=None)
+                pins=pins, counts=None, rounds=entries)
+    allowed = {followup.name_of(key)} | {
+        rounds.name_of(key, n) for n in declared_rounds(key)}
 
     def replay():
         for each, where, pilot_, replaced_ in pending:
@@ -1001,23 +1033,28 @@ def read_shard(key, options, lineage, repo, document, late):
                           replaces_pilot=replaced_)
         for check in after:
             check()
+        state = tg.Ledger(ledger)
+        check_ledger_tables(key, state, allowed)
         for each, found in judged:
             held["attempts"] += ledger_attempts(each, found, repo, ledger)
         held["counts"] = list(engine.h.attempt_counts(
-            tg.Ledger(ledger), main["inventory"]["candidate"]))
+            state, main["inventory"]["candidate"]))
     late.append((table, replay))
     return held
 
 
 def read_round(key, number, previous, options, lineage, repo, document,
-               rows, seals, differing, pending, judged, after):
+               rows, seals, differing, pending, judged, after, entries):
     """Round `number` >= 2 of the follow-up of shard `key` (decision 47),
     chained to the engine `previous` of the round before: its cells are the
-    declared ones, all inconclusive in the round before (`rows` holds that
-    round's classes and takes this one's), the declaration precedes its
-    counts, and its pairs are the rule's from the sealed decisive stage of
-    the round before (checked after the replays, from the replay of that
-    stage). Returns the engine."""
+    declared ones and exactly the cells the round before left inconclusive
+    (`rows` holds that round's classes and takes this one's), the
+    declaration precedes its counts and follows every counts file of the
+    round before, and its pairs are the rule's from the sealed decisive
+    stage of the round before (checked after the replays, from the replay of
+    that stage). Its entry (round, table, cells, pairs and the recorded user
+    decision of the declaration) is added to `entries`. Returns the
+    engine."""
     option = rounds.key_text(key, number)
     name = rounds.name_of(key, number)
     engine = round_engines()[name]
@@ -1034,9 +1071,20 @@ def read_round(key, number, previous, options, lineage, repo, document,
               "round before: %s" % (number, key, ", ".join(sorted(
                   n for n in stage["final"]
                   if rows[n]["cls"] != "inconclusive"))))
+    opened = sorted(n for n in previous.t.names()
+                    if rows[n]["cls"] == "inconclusive")
+    a.require(sorted(engine.t.names()) == opened,
+              "the cells of round %d of %s (%s) are not exactly the cells "
+              "round %d left inconclusive (%s)" % (
+                  number, key, ", ".join(sorted(engine.t.names())),
+                  number - 1, ", ".join(opened) or "none"))
     a.require(stage["scaling"] is None,
               "a %s follow-up has a retained slope" % name)
     pins_binding(engine, name, stage["root"], document)
+    entries.append(dict(
+        round=number, table=name, cells=sorted(engine.t.names()),
+        pairs=engine.t.pairs,
+        decision=round_declaration(key, number)["decision"]))
     pending.append((engine, stage["root"], Path(fpilot).resolve(), None))
     judged.append((engine, d31.judged_attempts(engine, stage["root"])))
     differing += stage["differing"]
@@ -1681,6 +1729,7 @@ def derive(args, held=None):
         timing_attempts={t: v["attempts"] for t, v in timing.items()},
         environment_events=events, d4_extension=list(D4_TASK37),
         shards={t: sorted(v["cells"]) for t, v in timing.items()},
+        followup_rounds={t: v["rounds"] for t, v in timing.items()},
         host_load=loads,
         reported=dict(
             task33=reported33, task33_carried=carried33,

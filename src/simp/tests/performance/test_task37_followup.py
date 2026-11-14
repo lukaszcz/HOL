@@ -20,11 +20,16 @@ import timing_grid as tg
 
 
 class Declaration(unittest.TestCase):
-    def test_none_is_declared_yet(self):
-        self.assertEqual(f.CELLS, {})
-        self.assertEqual((f.TABLES, f.GRIDS), ({}, {}))
+    def test_the_engines_are_those_of_the_declaration_files(self):
+        self.assertEqual(f.CELLS, f.declared())
+        self.assertEqual(set(f.GRIDS),
+                         {f.name_of(k) for k in f.CELLS})
+        self.assertEqual(set(f.TABLES), set(f.GRIDS))
+        for key, cells in f.CELLS.items():
+            self.assertEqual(set(f.TABLES[f.name_of(key)].names()),
+                             set(cells))
+        self.assertEqual(set(f.commands()), set(f.CELLS))
         self.assertIsNone(f.declare("matrix-1", ()))
-        self.assertEqual(f.commands(), {})
 
     def test_a_follow_up_is_a_valid_replacing_table(self):
         key = "matrix-2"
@@ -72,22 +77,24 @@ class Declaration(unittest.TestCase):
         built, engine = f.declare(key, cells)
         self.assertEqual(built.name, "task37-client-1-followup")
         self.assertIsInstance(engine, tg.Grid)
-        with mock.patch.dict(f.GRIDS, {built.name: engine}):
+        before = dict(f.GRIDS)
+        with mock.patch.dict(f.GRIDS, {built.name: engine}, clear=True):
             self.assertEqual(f.commands(), {"client-1": engine})
             with mock.patch.object(engine, "main", return_value=5) as run:
                 self.assertEqual(f.main(["client-1", "pilot", "--x"]), 5)
             run.assert_called_once_with(["pilot", "--x"])
-        self.assertEqual(f.GRIDS, {})
+        self.assertEqual(f.GRIDS, before)
 
     def test_the_table_name_of_a_shards_follow_up(self):
         built, _ = f.declare("matrix-4", g.PARTS["matrix-4"][:1])
         self.assertEqual(built.name, f.name_of("matrix-4"))
         self.assertEqual(f.name_of("matrix-4"), "task37-matrix-4-followup")
 
-    def test_every_command_is_refused_while_none_is_declared(self):
+    def test_every_command_is_refused_where_none_is_declared(self):
         for argv in ([], ["matrix-1", "run"], ["matrix-1-followup", "run"]):
             err = io.StringIO()
-            with contextlib.redirect_stderr(err):
+            with mock.patch.dict(f.GRIDS, {}, clear=True), \
+                    contextlib.redirect_stderr(err):
                 self.assertEqual(f.main(argv), tg.REFUSED, argv)
             self.assertIn("no such TASK37 follow-up", err.getvalue())
 

@@ -4514,32 +4514,7 @@ voids no pilot, counts file or record. The declaration file is committed
 alone, before any observation of the follow-up. Its commands are
 `task37_followup.py SHARD COMMAND`, its counts file is
 `task37_<kind>_<n>_followup_iterations.json`, and its engines are
-`task37_followup.GRIDS`, by table name. A cell that stays inconclusive
-after its follow-up may be followed up again, in *rounds* (design decision
-47, `task37_rounds.py`; round 1 is the follow-up above and is unchanged): a
-round R >= 2 is a targeted table with no `replaces` link (the engine cannot
-replay a follow-up of a follow-up: replaying a replaced follow-up needs the
-pilot of the grid that follow-up replaced), `task37-<shard>-followup<R>`
-(label `TASK37-<SHARD>-FOLLOWUP<R>`, key `SHARD.R`: `matrix-4.2`), declared
-by `task37_<kind>_<n>_followup<R>_cells.json`
-(`{"schema": "task37-followup-round-v1", "shard": "matrix-4", "round": 2,
-"cells": [..], "pairs": N}`: the cells a non-empty subset of round R-1's,
-the pairs a positive integer; rounds 1..R-1 must be declared, a gap is
-refused). It takes the shard's constants as round 1 does, with counts
-`task37_<kind>_<n>_followup<R>_iterations.json`, layout seed `<table
-name>-layout-1`, the shard's ledger, and seals the shard's sealed files,
-`task37_followup.py` and every declaration file of rounds 1..R. Its pairs are
-the second-stage rule applied to the develop/develop control of the
-round before: for each cell, the control half width of its report in round
-R-1's decisive stage (its second stage where it had one, else its first)
-and that report's pairs give `second_stage_pairs(w, P, target, cap)` with
-the shard's limits, and the table's one pair count is the largest of the
-cells' (nothing of a candidate enters). `task37_rounds.py SHARD.R
-derive-pairs --grid DIR` prints it and the declaration to commit (read-only;
-DIR is round R-1's last stage); `task37_dispose.py` recomputes it from the
-replay of that stage and refuses a declaration that differs. The declaration
-is committed alone, after round R-1's counts commit and before round R's
-pilot head and counts commit (the engine and dispose check it).
+`task37_followup.GRIDS`, by table name.
 Each table: the `warmup` schedule
 (count rule, headroom 1), 20 first-stage pairs of 5 samples, alternating
 AB/BA with a B/B control per round, 3% on inclusive CPU and wall, GC
@@ -4555,6 +4530,46 @@ build/heap/source differences from B are
 `task37_attributed.json` (format of `task31_attributed.json`): the pins of
 the tables' sources (`Cond_rewr.sig`) and the heap and build entries
 (`ThmAttribute.{sig,sml}`, Holmakefiles, `holproject.toml`, the sequence).
+
+A cell that stays inconclusive after its follow-up may be followed up again,
+in *rounds* (design decision 47, `task37_rounds.py`; round 1 is the follow-up
+above and is unchanged). Each round R >= 2 needs its own recorded decision of
+the user (the policy owner), and nothing else limits the number of rounds: a
+round declared without one is out of protocol, and the disposition record
+cites each round's decision. A round R >= 2 is a targeted table with no
+`replaces` link (the engine cannot replay a follow-up of a follow-up:
+replaying a replaced follow-up needs the pilot of the grid that follow-up
+replaced), `task37-<shard>-followup<R>` (label
+`TASK37-<SHARD>-FOLLOWUP<R>`, key `SHARD.R`: `matrix-4.2`), declared by
+`task37_<kind>_<n>_followup<R>_cells.json`
+(`{"schema": "task37-followup-round-v1", "shard": "matrix-4", "round": 2,
+"cells": [..], "pairs": N, "decision": "<reference>"}`: the cells exactly the
+cells round R-1 left inconclusive (not a subset: a subset could be chosen
+after the candidate is seen), the pairs a positive integer, the decision a
+non-empty reference to the recorded user decision; rounds 1..R-1 must be
+declared, a gap is refused). It takes the shard's constants as round 1 does,
+with counts `task37_<kind>_<n>_followup<R>_iterations.json`, layout seed
+`<table name>-layout-1`, the shard's ledger, and seals the shard's sealed
+files, `task37_followup.py` and every declaration file of rounds 1..R. Its
+pairs are the second-stage rule applied to the develop/develop control of the
+round before: for each cell, the control half width of its report in round
+R-1's decisive stage (its second stage where it had one, else its first)
+and that report's pairs give `second_stage_pairs(w, P, target, cap)` with
+the shard's limits, and the table's one pair count is the largest of the
+cells' (nothing of a candidate enters). `task37_rounds.py SHARD.R
+derive-pairs --grid DIR` prints the cells, the pairs and the declaration to
+commit, with a placeholder decision to replace (read-only; DIR is round R-1's
+LAST stage, its extension where it has one; a first stage whose second stage
+is still to come is refused), `task37_rounds.py SHARD.R predeclare` takes the
+same stage as a required `--after DIR` and checks the declaration's cells and
+pairs against it before anything else, and `task37_dispose.py` recomputes
+them from the replay of that stage and refuses a declaration that differs.
+The declaration is committed alone, after the commit of every counts file of
+round R-1 (its first file and each revision of it) and before round R's pilot
+head and counts commit (the engine and dispose check it). The ledger of the
+shard may hold attempts of no follow-up table that dispose does not judge
+(round 1 and the declared rounds): a measured round is never dropped by
+deleting its declaration.
 
 ### Sample rule (design decision 4; counts pinned by tests)
 
@@ -5111,37 +5126,57 @@ S=$E/fpilot`, and still `--timing S=` and `--pilot S=` of the shard.
 
 A further round R >= 2 of the cells that stay inconclusive
 (`T="python3 -B $P/task37_rounds.py S.R"`; the same clone, after the last
-stage of round R-1; no `--replaces`):
+stage of round R-1; no `--replaces`). It needs its own recorded decision of
+the user (policy owner), whose reference goes in the declaration: a round
+declared without one is out of protocol. `--grid` of `derive-pairs` and
+`--after` of `predeclare` name round R-1's LAST stage: its extension where it
+has one. For `matrix-4`, whose round 1 has an extension, round 2 names round
+1's `$E/followup2` (the extension), never `$E/followup`. The directories of
+round 2 are `round2` (first stage), `round2-ext` (extension) and
+`fpilot-round2` (pilot), which cannot be taken for round 1's extension
+`followup2`:
 
-    $T derive-pairs --grid $E/<round R-1 last stage> [--cells A,B]
-    # in $M: the declaration, by hand, from that output:
+    $T derive-pairs --grid $E/<round R-1 last stage>
+    # in $M: the declaration, by hand, from that output, with the
+    # reference to the recorded user decision in place of the placeholder:
     #   $P/task37_<kind>_<n>_followup<R>_cells.json
     #   {"schema": "task37-followup-round-v1", "shard": "S", "round": R,
-    #    "cells": [..], "pairs": N}
+    #    "cells": [..], "pairs": N, "decision": "<reference>"}
     git -C $M add $P/task37_<kind>_<n>_followup<R>_cells.json
     git -C $M commit -m "TASK37: follow-up round R declaration S"  # alone
     forward $CL         # the declaration must be an ancestor of the pilot
     $T prepare          # if needed
-    $T pilot --output $E/fpilotR --authorize-measurements
-    $T predeclare --grid $E/fpilotR \
+    $T pilot --output $E/fpilot-roundR --authorize-measurements
+    $T predeclare --grid $E/fpilot-roundR \
+      --after $E/<round R-1 last stage> \
       --output $P/task37_<kind>_<n>_followup<R>_iterations.json
     # commit the counts file alone in main, rm the clone's copy, forward $CL
-    $T verify-counts --grid $E/fpilotR
-    $T run --candidate $(git rev-parse HEAD) --output $E/followup-R \
-      --pilot $E/fpilotR --authorize-measurements
-    $T extend --grid $E/followup-R --output $E/followup-R-2 \
-      --pilot $E/fpilotR --authorize-measurements          # if owed
+    $T verify-counts --grid $E/fpilot-roundR
+    $T run --candidate $(git rev-parse HEAD) --output $E/roundR \
+      --pilot $E/fpilot-roundR --authorize-measurements
+    # stage 2, if owed: the clone is NOT brought forward between `run` and
+    # `extend` (`extend` binds the first stage's HEAD, `bind_checkout`)
+    $T extend --grid $E/roundR --output $E/roundR-ext \
+      --pilot $E/fpilot-roundR --authorize-measurements
 
-(`R` is the round number, e.g. `fpilot2`, `followup-2`, `followup-2-2`;
-the first rounds' directories keep their names. Round R's declaration must
-follow round R-1's counts commit, and its counts commit must follow it.)
+(`R` is the round number: for round 2, `round2`, `round2-ext`,
+`fpilot-round2`; round 1's directories keep their names. The declaration
+names exactly the cells round R-1 left inconclusive, and `predeclare`
+refuses one whose cells or pairs differ from the stage `--after` names, or
+whose stage is a first stage with a second stage still to come. Round R's
+declaration must follow the commit of every counts file of round R-1
+(revisions included), and its counts commit must follow it.)
 Dispose takes `--followup S.R=<round R last stage> --followup-pilot
-S.R=$E/fpilotR` for every declared round, besides round 1's `S=`: a declared
-round with no `--followup`, a round given and not declared, and a round
-given while one before it is not, are refused. A cell is judged by its last
-round's chain (a fail in any earlier round or stage still decides), its
-cells must all be inconclusive in the round before, and a declared round's
-pairs must equal the rule from the round before's replay.
+S.R=$E/fpilot-roundR` for every declared round, besides round 1's `S=`: a
+declared round with no `--followup`, a round given and not declared, and a
+round given while one before it is not, are refused. A cell is judged by its
+last round's chain (a fail in any earlier round or stage still decides), a
+round's cells must be exactly the cells inconclusive in the round before
+(neither a subset nor a superset), a declared round's pairs must equal the
+rule from the round before's replay, and the ledger of the shard must hold no
+attempt of a follow-up table that is neither round 1 nor a declared round.
+The record cites each round's declaration (`followup_rounds`: table, cells,
+pairs and the recorded user decision).
 
 The startup gate (wave 4b, once; deterministic, so `nice -n 19`). Every
 variable is required but `EVTAG` and `DECLARED_ARCHIVE`:

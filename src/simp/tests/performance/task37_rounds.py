@@ -18,16 +18,27 @@ into the shard's ledger), seconds, samples, schedule, baseline, sources, pins
 and limits exactly as round 1 does. Its command line key is `SHARD.R`
 (`matrix-4.2`); round 1 keeps `SHARD` (task37_followup.py).
 
+Each round R >= 2 needs its own recorded decision of the user (the policy
+owner); nothing else limits the number of rounds. A round declared without
+one is out of protocol, and the disposition record cites the decision of
+each round (the "decision" field below).
+
 A round is declared by one data file, committed alone,
 `task37_<kind>_<n>_followup<R>_cells.json`:
 
   {"schema": "task37-followup-round-v1", "shard": "matrix-4", "round": 2,
-   "cells": ["compile_ac-1000"], "pairs": 80}
+   "cells": ["compile_ac-1000"], "pairs": 80,
+   "decision": "<reference to the recorded user decision>"}
 
 where "shard" and "round" are those of the file name (R >= 2), the cells are
-a non-empty subset, without repeats, of the cells round R-1 declared (round
-1's: task37_followup.load_declaration), and "pairs" is a positive integer
-(the table has one pair count for all its cells). Round R is declared only
+EXACTLY the cells round R-1 left inconclusive (a cell cannot be left out
+after the candidate is seen; the file names them, without repeats, a subset
+of the cells round R-1 declared: round 1's is
+task37_followup.load_declaration; that they are all the inconclusive ones is
+checked against round R-1's decisions by `derive-pairs`, `predeclare` and
+task37_dispose.py), "pairs" is a positive integer (the table has one pair
+count for all its cells) and "decision" is a non-empty reference to the
+recorded user decision that authorized the round. Round R is declared only
 if rounds 1..R-1 are (a gap is refused). This module discovers the files
 that exist; its text never changes on a declaration.
 
@@ -42,17 +53,25 @@ count, so the declared "pairs" is the largest of the cells' (a cell with
 fewer is measured with more than its rule, none with less). `derive-pairs`
 prints them and the declaration to commit:
 
-  task37_rounds.py SHARD.R derive-pairs --grid DIR [--cells A,B]
+  task37_rounds.py SHARD.R derive-pairs --grid DIR
 
-(read-only; DIR is the last stage of round R-1; it recomputes the cells'
+(read-only; DIR is the LAST stage of round R-1, its extension where it has
+one, and a first stage whose second stage is still to come is refused; the
+cells are every cell that stage left inconclusive; it recomputes the cells'
 reports from the archives, as the replay of that stage does, without the
-checks of its code and checkout, which `replay` and task37_dispose.py make).
+checks of its code and checkout, which `replay` and task37_dispose.py make;
+the declaration it prints has a placeholder "decision" to replace). The
+`predeclare` command of a round takes the same stage as a required
+`--after DIR` and checks the declaration's cells and pairs against it before
+anything else, so a wrong declaration is found before a decision-grade
+measurement.
 
 Order. The declaration of round R is committed alone, is a descendant of the
-commit of round R-1's counts file (round 1's: task37_followup.file_of), is
-an ancestor of the pilot's checkout head, and of the commit of round R's
-counts file. The engine (`Rounds`) checks that wherever it reads a counts
-commit, and task37_dispose.py again.
+commit of EVERY counts file of round R-1 (its first file, round 1's:
+task37_followup.file_of, and each revision of it) in the candidate's
+history, is an ancestor of the pilot's checkout head, and of the commit of
+round R's counts file. The engine (`Rounds`) checks that wherever it reads
+a counts commit, and task37_dispose.py again.
 
   task37_rounds.py SHARD.R COMMAND ...
 
@@ -79,6 +98,10 @@ import timing_grid as tg
 SCHEMA = "task37-followup-round-v1"
 # The latest round a file name can declare (a guard, not a policy).
 MAX_ROUND = 9
+# The round pattern below is one digit.
+assert 2 <= MAX_ROUND <= 9
+# What `derive-pairs` prints for "decision"; no declaration holds it.
+PLACEHOLDER = "REPLACE-WITH-THE-RECORDED-USER-DECISION"
 
 
 def parse_key(text):
@@ -89,7 +112,7 @@ def parse_key(text):
     a.require(shard in base.SHARD_KEYS, "no such shard: %r" % (text,))
     if not sep:
         return shard, 1
-    a.require(re.fullmatch(r"[2-9]", number) is not None and
+    a.require(re.fullmatch("[2-%d]" % MAX_ROUND, number) is not None and
               int(number) <= MAX_ROUND,
               "no such follow-up round: %r (rounds are 2..%d; round 1 is "
               "the shard key alone)" % (text, MAX_ROUND))
@@ -145,18 +168,20 @@ def previous_cells(key, number):
 
 
 def load_declaration(key, number, path=None, previous=None):
-    """{cells, pairs} the declaration file of round `number` of shard `key`
-    (or `path`, for a test; `previous`: the cells of the round before, for
-    a test) declares, validated: the schema, the shard and round of the
-    file name, a non-empty subset of the cells of the round before without
-    repeats, and a positive integer of pairs. Round `number` needs the
-    rounds before it declared."""
+    """{cells, pairs, decision} the declaration file of round `number` of
+    shard `key` (or `path`, for a test; `previous`: the cells of the round
+    before, for a test) declares, validated: the schema, the shard and round
+    of the file name, a non-empty subset of the cells of the round before
+    without repeats (that they are all the cells it left inconclusive needs
+    its decisions: `check_cells`), a positive integer of pairs and the
+    reference to the recorded user decision. Round `number` needs the rounds
+    before it declared."""
     a.require(key in base.SHARD_KEYS, "no such shard: %r" % (key,))
     path = declaration_file(key, number) if path is None else path
     before = previous_cells(key, number) if previous is None else previous
     found = a.load(path)
     a.require(isinstance(found, dict) and set(found) == {
-        "schema", "shard", "round", "cells", "pairs"} and
+        "schema", "shard", "round", "cells", "pairs", "decision"} and
         found["schema"] == SCHEMA,
         "%s is not a %s declaration" % (path, SCHEMA))
     a.require(found["shard"] == key and type(found["round"]) is int and
@@ -165,6 +190,11 @@ def load_declaration(key, number, path=None, previous=None):
               "its file name" % (path, found["round"], found["shard"],
                                  number, key))
     cells, pairs = found["cells"], found["pairs"]
+    decision = found["decision"]
+    a.require(isinstance(decision, str) and decision.strip() and
+              decision != PLACEHOLDER,
+              "%s declares no decision: \"decision\" is a non-empty "
+              "reference to the recorded user decision of the round" % path)
     a.require(isinstance(cells, list) and cells and all(
         isinstance(c, str) for c in cells) and
         len(set(cells)) == len(cells) and set(cells) <= set(before),
@@ -172,7 +202,7 @@ def load_declaration(key, number, path=None, previous=None):
         "of round %d of shard %s, or repeats one" % (path, number - 1, key))
     a.require(type(pairs) is int and pairs > 0,
               "%s declares pairs that are not a positive integer" % path)
-    return dict(cells=tuple(cells), pairs=pairs)
+    return dict(cells=tuple(cells), pairs=pairs, decision=decision)
 
 
 def declared():
@@ -211,29 +241,41 @@ def declaration_commit(repo, candidate, path):
     return commit
 
 
-def previous_counts_commit(repo, candidate, key, number):
-    """The commit that introduced the first counts file of round `number`
-    - 1, in the history of `candidate`."""
-    path = followup.file_of(key) if number == 2 else file_of(key,
-                                                              number - 1)
-    name = tg.repo_relative(repo, path)
-    return tg.git_introduced(repo, candidate, name)
+def previous_counts_files(key, number):
+    """Every counts file of round `number` - 1: its first file and each
+    revision of it."""
+    return engine_before(key, number).t.files()
+
+
+def previous_counts_commits(repo, candidate, key, number):
+    """{counts file name: the commit that introduced it, in the history of
+    `candidate`} for every counts file of round `number` - 1."""
+    found = {}
+    for path in previous_counts_files(key, number):
+        name = tg.repo_relative(repo, path)
+        found[name] = tg.git_introduced(repo, candidate, name)
+    return found
 
 
 def check_after_previous(repo, candidate, key, number, commit):
-    """The declaration commit follows round `number` - 1's counts commit."""
-    prior = previous_counts_commit(repo, candidate, key, number)
-    a.require(prior != commit and followup.is_ancestor(repo, prior, commit),
-              "the declaration of round %d of %s (commit %s) is not a "
-              "descendant of the commit %s of round %d's counts file: "
-              "declare a round after the one before it" % (
-                  number, key, commit[:12], prior[:12], number - 1))
+    """The declaration commit follows the commit of every counts file of
+    round `number` - 1 (so no revision of it is made after round
+    `number` is declared)."""
+    for name, prior in previous_counts_commits(
+            repo, candidate, key, number).items():
+        a.require(prior != commit and
+                  followup.is_ancestor(repo, prior, commit),
+                  "the declaration of round %d of %s (commit %s) is not a "
+                  "descendant of the commit %s of round %d's counts file "
+                  "%s: declare a round after the one before it, revisions "
+                  "included" % (number, key, commit[:12], prior[:12],
+                                number - 1, name))
 
 
 def check_declaration_order(repo, candidate, key, number, counts_commit):
-    """The declaration of round `number` was committed alone, after the
-    counts of round `number` - 1 and before (an ancestor of) the commit of
-    this round's counts file `counts_commit`."""
+    """The declaration of round `number` was committed alone, after every
+    counts file of round `number` - 1 and before (an ancestor of) the commit
+    of this round's counts file `counts_commit`."""
     path = declaration_file(key, number)
     commit = declaration_commit(repo, candidate, path)
     a.require(commit != counts_commit and
@@ -247,8 +289,8 @@ def check_declaration_order(repo, candidate, key, number, counts_commit):
 
 def check_declaration_at_pilot(repo, key, number, head):
     """The declaration of round `number` was committed alone before the
-    pilot (an ancestor of, or, `head`), after the counts of round `number`
-    - 1."""
+    pilot (an ancestor of, or, `head`), after every counts file of round
+    `number` - 1."""
     path = declaration_file(key, number)
     commit = declaration_commit(repo, head, path)
     a.require(followup.is_ancestor(repo, commit, head),
@@ -323,6 +365,32 @@ class Rounds(tg.Grid):
                                 commit)
         return commit
 
+    def parser(self):
+        """`predeclare` names the last stage of the round before
+        (`--after`), required."""
+        parser, sub = super().parser()
+        sub.choices["predeclare"].add_argument(
+            "--after", type=Path, required=True, metavar="DIR",
+            help="the LAST stage of round %d (its extension where it has "
+            "one): the declaration's cells and pairs are checked against it "
+            "before anything else" % (self.number - 1))
+        return parser, sub
+
+    def check_after(self, grid):
+        """The declaration's cells and pairs agree with the last stage of
+        the round before (`derive_pairs` gives the same)."""
+        before = engine_before(self.key, self.number)
+        root = Path(grid).resolve()
+        check_cells(open_cells(a.load(root / "decisions.json")),
+                    self.t.names(), self.number)
+        check_pairs(before, stage_reports(before, root), self.t.names(),
+                    self.t.pairs)
+
+    def dispatch(self, args):
+        if args.action == "predeclare":
+            self.check_after(args.after)
+        return super().dispatch(args)
+
 
 def declare(key, number, declaration):
     """The (table, engine) of round `number` of shard `key`."""
@@ -361,8 +429,9 @@ def engine_before(key, number):
 def stage_reports(engine, grid):
     """What the last stage `grid` of `engine`'s table holds, recomputed
     from its archives (as its replay does, but without the checks of its
-    code and checkout): {inventory, first (the first stage's inventory),
-    stage1, stage2: {(case, size): report}}."""
+    code and checkout; a first stage with a second stage still to come is
+    refused, as `bind_replaced` refuses it): {inventory, first (the first
+    stage's inventory), stage1, stage2: {(case, size): report}}."""
     root = Path(grid).resolve()
     inventory = a.load(root / "inventory.json")
     if inventory["schema"] == engine.t.schema("extension"):
@@ -378,8 +447,12 @@ def stage_reports(engine, grid):
                     stage2=engine.replay_rows(root, inventory))
     a.require(inventory["schema"] == engine.t.schema("experiment"),
               "%s is not a stage of %s" % (root, engine.t.name))
-    return dict(inventory=inventory, first=inventory,
-                stage1=engine.replay_rows(root, inventory), stage2={})
+    stage1 = engine.replay_rows(root, inventory)
+    a.require(not engine.planned(stage1, inventory),
+              "%s is not final: its second stage is still to come, name "
+              "the second stage" % root)
+    return dict(inventory=inventory, first=inventory, stage1=stage1,
+                stage2={})
 
 
 def decisive_pairs(engine, found, names):
@@ -425,42 +498,52 @@ def check_pairs(engine, found, names, pairs):
                   engine.t.name))
 
 
-def derive_pairs(key, number, grid, cells=None):
+def open_cells(decisions):
+    """The cells a stage's decisions leave inconclusive, sorted."""
+    return sorted("%s-%d" % (w["case"], w["size"])
+                  for w in decisions["workloads"]
+                  if tg.classify_row(w) == "inconclusive")
+
+
+def check_cells(opened, names, number):
+    """The cells of round `number` are exactly the cells round `number` - 1
+    left inconclusive (`opened`): a round cannot take a subset, which could
+    be chosen after the candidate is seen."""
+    a.require(opened and sorted(names) == sorted(opened),
+              "the cells of round %d must be exactly the cells round %d "
+              "left inconclusive (%s), not %s" % (
+                  number, number - 1, ", ".join(opened) or "none",
+                  ", ".join(sorted(names)) or "none"))
+
+
+def derive_pairs(key, number, grid):
     """(declaration, per-cell pairs) for round `number` from `grid`, the
-    last stage of round `number` - 1: the cells are `cells` (a subset of
-    its open cells) or all the cells it left inconclusive."""
+    last stage of round `number` - 1: the cells are all the cells it left
+    inconclusive. The declaration's "decision" is a placeholder."""
     engine = engine_before(key, number)
     root = Path(grid).resolve()
-    decisions = a.load(root / "decisions.json")
-    opened = sorted("%s-%d" % (w["case"], w["size"])
-                    for w in decisions["workloads"]
-                    if tg.classify_row(w) == "inconclusive")
-    chosen = opened if cells is None else list(cells)
-    a.require(chosen and len(set(chosen)) == len(chosen) and
-              set(chosen) <= set(opened),
-              "the cells of round %d must be a non-empty subset of the "
-              "cells round %d left inconclusive (%s)" % (
-                  number, number - 1, ", ".join(opened) or "none"))
+    chosen = open_cells(a.load(root / "decisions.json"))
+    check_cells(chosen, chosen, number)
     pairs, per = declared_pairs(engine, stage_reports(engine, root), chosen)
-    return dict(schema=SCHEMA, shard=key, round=number, cells=sorted(chosen),
-                pairs=pairs), per
+    return dict(schema=SCHEMA, shard=key, round=number, cells=chosen,
+                pairs=pairs, decision=PLACEHOLDER), per
 
 
 def derive_main(key, number, argv):
     parser = argparse.ArgumentParser(
         prog="task37_rounds.py %s derive-pairs" % key_text(key, number),
-        description="the pairs of a round from the last stage of the round "
-        "before (read-only)")
+        description="the cells and pairs of a round from the last stage of "
+        "the round before (read-only)")
     parser.add_argument("--grid", type=Path, required=True,
-                        help="the last stage of round %d" % (number - 1))
-    parser.add_argument("--cells", help="comma-separated cells (default: "
-                        "every cell it left inconclusive)")
+                        help="the LAST stage of round %d (its extension "
+                        "where it has one)" % (number - 1))
     args = parser.parse_args(argv)
-    chosen = None if args.cells is None else args.cells.split(",")
-    declaration, per = derive_pairs(key, number, args.grid, chosen)
+    declaration, per = derive_pairs(key, number, args.grid)
     for name, pairs in sorted(per.items()):
         print("%s: %d pairs by the rule" % (name, pairs))
-    print("declare (the largest, for all cells):")
+    print("declare (all the cells it left inconclusive, the largest pairs "
+          "for all of them; replace \"decision\" by the reference to the "
+          "recorded user decision):")
     print(json.dumps(declaration, sort_keys=True))
     return 0
 

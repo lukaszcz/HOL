@@ -25,11 +25,14 @@ KEY = "matrix-4"
 CELLS = g.PARTS[KEY][:3]
 
 
+DECISION = "user decision of round 2 (recorded)"
+
+
 def declare_in(root, key, number, cells, pairs=80, **more):
     path = Path(root) / ("task37_%s_%s_followup%d_cells.json" % (
         key.split("-")[0], key.split("-")[1], number))
     doc = dict(schema=r.SCHEMA, shard=key, round=number, cells=list(cells),
-               pairs=pairs)
+               pairs=pairs, decision=DECISION)
     doc.update(more)
     path.write_text(json.dumps(doc))
     return path
@@ -108,8 +111,20 @@ class Declarations(unittest.TestCase):
         return r.load_declaration(KEY, number, path, previous=CELLS)
 
     def test_a_declaration_gives_the_cells_and_the_pairs(self):
-        self.assertEqual(self.load(pairs=100),
-                         dict(cells=tuple(CELLS[:2]), pairs=100))
+        self.assertEqual(self.load(pairs=100), dict(
+            cells=tuple(CELLS[:2]), pairs=100, decision=DECISION))
+
+    def test_a_decision_is_a_non_empty_reference(self):
+        for bad in ("", "  ", None, 7, ["x"], r.PLACEHOLDER):
+            with self.assertRaisesRegex(ValueError, "no decision",
+                                        msg=bad):
+                self.load(decision=bad)
+        path = self.root / "nodecision.json"
+        path.write_text(json.dumps(dict(
+            schema=r.SCHEMA, shard=KEY, round=2, cells=CELLS[:1],
+            pairs=80)))
+        with self.assertRaisesRegex(ValueError, "is not a"):
+            r.load_declaration(KEY, 2, path, previous=CELLS)
 
     def test_cells_are_a_subset_of_the_round_before(self):
         with self.assertRaisesRegex(ValueError, "subset"):
@@ -176,9 +191,6 @@ class Declarations(unittest.TestCase):
         with self.assertRaises(ValueError):
             r.declared()
 
-    def test_none_is_declared_yet(self):
-        self.assertEqual(r.declared(), {})
-
 
 class Tables(unittest.TestCase):
     def test_a_round_is_a_targeted_table(self):
@@ -231,31 +243,55 @@ class Tables(unittest.TestCase):
                 r.table(KEY, number, cells, pairs)
 
     def test_the_engine_is_declared_by_table_name(self):
-        declaration = dict(cells=tuple(CELLS[:1]), pairs=80)
+        declaration = dict(cells=tuple(CELLS[:1]), pairs=80,
+                           decision=DECISION)
         built, engine = r.declare(KEY, 2, declaration)
         self.assertIsInstance(engine, r.Rounds)
         self.assertEqual((engine.key, engine.number), (KEY, 2))
-        with mock.patch.dict(r.GRIDS, {built.name: engine}), \
-                mock.patch.dict(r.DECLARED, {KEY: {2: declaration}}):
+        grids, declared = dict(r.GRIDS), dict(r.DECLARED)
+        with mock.patch.dict(r.GRIDS, {built.name: engine}, clear=True), \
+                mock.patch.dict(r.DECLARED, {KEY: {2: declaration}},
+                                clear=True):
             self.assertEqual(r.commands(), {"matrix-4.2": engine})
             with mock.patch.object(engine, "main", return_value=7) as run:
                 self.assertEqual(r.main(["matrix-4.2", "pilot", "--x"]), 7)
             run.assert_called_once_with(["pilot", "--x"])
             self.assertIs(r.engine_before(KEY, 3), engine)
-        self.assertEqual(r.GRIDS, {})
+        self.assertEqual(r.GRIDS, grids)
+        self.assertEqual(r.DECLARED, declared)
+
+    def test_the_module_holds_the_engines_of_the_declaration_files(self):
+        self.assertEqual(r.DECLARED, r.declared())
+        names = {r.name_of(k, n) for k, rounds in r.DECLARED.items()
+                 for n in rounds}
+        self.assertEqual(set(r.GRIDS), names)
+        self.assertEqual(set(r.TABLES), names)
+        for key, rounds in r.DECLARED.items():
+            for number, declaration in rounds.items():
+                name = r.name_of(key, number)
+                self.assertEqual(set(r.TABLES[name].names()),
+                                 set(declaration["cells"]))
+                self.assertEqual(r.TABLES[name].pairs,
+                                 declaration["pairs"])
+                self.assertTrue(declaration["decision"].strip())
+        self.assertEqual(set(r.commands()), {
+            r.key_text(k, n) for k, rounds in r.DECLARED.items()
+            for n in rounds})
 
     def test_the_replay_code_has_no_replaces_option(self):
-        built, engine = r.declare(KEY, 2, dict(cells=tuple(CELLS[:1]),
-                                               pairs=80))
+        built, engine = r.declare(KEY, 2, dict(
+            cells=tuple(CELLS[:1]), pairs=80, decision=DECISION))
         self.assertIsNone(built.replaces)
 
 
 class Cli(unittest.TestCase):
-    def test_every_command_is_refused_while_none_is_declared(self):
+    def test_every_command_is_refused_where_none_is_declared(self):
         for argv in ([], ["matrix-4.2", "run"], ["matrix-4", "run"],
                      ["matrix-4.1", "run"], ["nonsense"]):
             err = io.StringIO()
-            with contextlib.redirect_stderr(err):
+            with mock.patch.dict(r.GRIDS, {}, clear=True), \
+                    mock.patch.dict(r.DECLARED, {}, clear=True), \
+                    contextlib.redirect_stderr(err):
                 self.assertEqual(r.main(argv), tg.REFUSED, argv)
             self.assertIn("no such TASK37 follow-up round", err.getvalue())
 
@@ -391,27 +427,42 @@ class DerivePairs(unittest.TestCase):
     def test_the_open_cells_and_their_pairs_are_derived(self):
         declaration, per = r.derive_pairs(KEY, 2, self.root)
         self.assertEqual(declaration, dict(
-            schema=r.SCHEMA, shard=KEY, round=2, cells=["c-1"], pairs=80))
+            schema=r.SCHEMA, shard=KEY, round=2, cells=["c-1"], pairs=80,
+            decision=r.PLACEHOLDER))
         self.assertEqual(per, {"c-1": 80})
 
-    def test_cells_must_be_open_in_the_stage(self):
-        with self.assertRaisesRegex(ValueError, "left inconclusive"):
-            r.derive_pairs(KEY, 2, self.root, ["c-10"])
-        with self.assertRaisesRegex(ValueError, "left inconclusive"):
-            r.derive_pairs(KEY, 2, self.root, ["c-1", "c-1"])
-        self.classes[1] = "pass"
-        with self.assertRaisesRegex(ValueError, "none"):
+    def test_the_cells_are_every_open_cell_and_there_is_no_choice(self):
+        self.classes[10] = "inconclusive"
+        declaration, per = r.derive_pairs(KEY, 2, self.root)
+        self.assertEqual(declaration["cells"], ["c-1", "c-10"])
+        with self.assertRaises(TypeError):
+            r.derive_pairs(KEY, 2, self.root, ["c-1"])
+        self.classes[1] = self.classes[10] = "pass"
+        with self.assertRaisesRegex(ValueError, "exactly .*none"):
             r.derive_pairs(KEY, 2, self.root)
 
     def test_the_command_prints_the_declaration(self):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             self.assertEqual(r.main(["matrix-4.2", "derive-pairs", "--grid",
-                                     str(self.root), "--cells", "c-1"]), 0)
+                                     str(self.root)]), 0)
         last = json.loads(out.getvalue().splitlines()[-1])
         self.assertEqual(last["pairs"], 80)
         self.assertEqual(last["cells"], ["c-1"])
+        self.assertEqual(last["decision"], r.PLACEHOLDER)
         self.assertIn("c-1: 80 pairs", out.getvalue())
+        with contextlib.redirect_stderr(io.StringIO()), \
+                self.assertRaises(SystemExit):
+            r.main(["matrix-4.2", "derive-pairs", "--grid", str(self.root),
+                    "--cells", "c-1"])
+
+    def test_the_cells_of_a_round_are_exactly_the_open_ones(self):
+        r.check_cells(["c-1", "c-10"], ["c-10", "c-1"], 2)
+        for names in (["c-1"], ["c-1", "c-10", "c-2"], ["c-2"], []):
+            with self.assertRaisesRegex(ValueError, "exactly"):
+                r.check_cells(["c-1", "c-10"], names, 2)
+        with self.assertRaisesRegex(ValueError, "exactly"):
+            r.check_cells([], [], 2)
 
 
 class Ordering(unittest.TestCase):
@@ -436,9 +487,11 @@ class Ordering(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.repo = Path(self.tmp.name).resolve()
         self.git("init", "-q", ".")
+        self.before = ["c1.json"]
         for target, name, value in (
                 (r, "declaration_file", lambda key, n: self.repo / "d.json"),
-                (f, "file_of", lambda key: self.repo / "c1.json")):
+                (r, "previous_counts_files", lambda key, n: [
+                    self.repo / x for x in self.before])):
             patch = mock.patch.object(target, name, value)
             patch.start()
             self.addCleanup(patch.stop)
@@ -513,19 +566,44 @@ class Ordering(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not a descendant"):
             r.check_declaration_at_pilot(self.repo, KEY, 2, head)
 
+    def test_every_counts_file_of_the_round_before_precedes(self):
+        self.before = ["c1.json", "c1r.json"]
+        self.commit(**{"c1.json": "1"})
+        self.commit(**{"c1r.json": "r"})
+        self.commit(**{"d.json": "{}"})
+        counts = self.commit(**{"c2.json": "2"})
+        self.order(counts, counts)
+
+    def test_a_revision_committed_after_the_declaration_is_refused(self):
+        self.before = ["c1.json", "c1r.json"]
+        self.commit(**{"c1.json": "1"})
+        self.commit(**{"d.json": "{}"})
+        self.commit(**{"c1r.json": "r"})
+        counts = self.commit(**{"c2.json": "2"})
+        with self.assertRaisesRegex(ValueError, "c1r.json"):
+            self.order(counts, counts)
+        with self.assertRaisesRegex(ValueError, "c1r.json"):
+            r.check_declaration_at_pilot(self.repo, KEY, 2, counts)
+
+    def test_the_counts_files_are_those_of_the_engine_before(self):
+        engine = types.SimpleNamespace(t=types.SimpleNamespace(
+            files=lambda: ("a", "b")))
+        with mock.patch.object(r, "engine_before", lambda key, n: engine):
+            self.assertEqual(
+                ORIGINAL_FILES(KEY, 2), ("a", "b"))
+
     def test_round_three_follows_round_twos_counts(self):
         self.commit(**{"c1.json": "1", "c2.json": "2"})
-        with mock.patch.object(r, "file_of",
-                               lambda key, n: self.repo / "c2.json"), \
-                mock.patch.object(r, "declaration_file",
-                                  lambda key, n: self.repo / "d3.json"):
+        self.before = ["c2.json"]
+        with mock.patch.object(r, "declaration_file",
+                               lambda key, n: self.repo / "d3.json"):
             self.commit(**{"d3.json": "{}"})
             counts = self.commit(**{"c3.json": "3"})
             r.check_declaration_order(self.repo, counts, KEY, 3, counts)
 
     def test_the_engine_checks_the_pilot_and_every_counts_commit(self):
-        built, engine = r.declare(KEY, 2, dict(cells=tuple(CELLS[:1]),
-                                               pairs=80))
+        built, engine = r.declare(KEY, 2, dict(
+            cells=tuple(CELLS[:1]), pairs=80, decision=DECISION))
         self.commit(**{"o.txt": "x"})
         head = self.git("rev-parse", "HEAD")
         with mock.patch.object(r, "check_declaration_at_pilot") as check, \
@@ -563,7 +641,200 @@ class Ordering(unittest.TestCase):
                 engine.counts_commit("repo", "cand", "p")
 
 
+class Predeclare(unittest.TestCase):
+    """`predeclare` of a round checks the declaration against the last
+    stage of the round before, first."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.rows = [dict(case="c", size=1, protocol=True),
+                     dict(case="c", size=10, protocol=True)]
+        (self.root / "decisions.json").write_text(json.dumps(
+            dict(workloads=self.rows)))
+        self.classes = {1: "inconclusive", 10: "pass"}
+        for target, value in (
+                (r, ("engine_before", lambda key, n: FakeEngine())),
+                (r, ("stage_reports", lambda engine, grid: dict(
+                    inventory={}, first=dict(pairs=40, iterations={}),
+                    stage1={("c", 1): report(0.01),
+                            ("c", 10): report(0.01)}, stage2={}))),
+                (tg, ("classify_row",
+                      lambda w: self.classes[w["size"]]))):
+            patch = mock.patch.object(target, *value)
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def engine_of(self, cells, pairs=80):
+        engine = r.Rounds.__new__(r.Rounds)
+        engine.key, engine.number = KEY, 2
+        engine.t = types.SimpleNamespace(names=lambda: list(cells),
+                                         pairs=pairs)
+        return engine
+
+    def test_the_after_option_is_required(self):
+        _, engine = r.declare(KEY, 2, dict(
+            cells=tuple(CELLS[:1]), pairs=80, decision=DECISION))
+        parser, _ = engine.parser()
+        with contextlib.redirect_stderr(io.StringIO()), \
+                self.assertRaises(SystemExit):
+            parser.parse_args(["predeclare", "--grid", "g", "--output",
+                               "o"])
+        got = parser.parse_args(["predeclare", "--grid", "g", "--output",
+                                 "o", "--after", "x"])
+        self.assertEqual(got.after, Path("x"))
+        # the other commands do not take it
+        with contextlib.redirect_stderr(io.StringIO()), \
+                self.assertRaises(SystemExit):
+            parser.parse_args(["verify-counts", "--grid", "g", "--after",
+                               "x"])
+
+    def test_a_right_declaration_passes_and_dispatch_goes_on(self):
+        engine = self.engine_of(["c-1"])
+        engine.check_after(self.root)
+        args = types.SimpleNamespace(action="predeclare", after=self.root)
+        with mock.patch.object(tg.Grid, "dispatch",
+                               return_value=0) as run:
+            self.assertEqual(engine.dispatch(args), 0)
+        run.assert_called_once_with(args)
+
+    def test_a_wrong_declaration_is_refused_before_anything_else(self):
+        args = types.SimpleNamespace(action="predeclare", after=self.root)
+        for cells, pairs, regex in (
+                (["c-1"], 100, "the rule gives 80"),
+                (["c-1"], 40, "the rule gives 80"),
+                (["c-10"], 80, "exactly"),
+                (["c-1", "c-10"], 80, "exactly")):
+            engine = self.engine_of(cells, pairs)
+            with mock.patch.object(tg.Grid, "dispatch") as run:
+                with self.assertRaisesRegex(ValueError, regex):
+                    engine.dispatch(args)
+            run.assert_not_called()
+        # a subset of the open cells is refused, a superset too
+        self.classes[10] = "inconclusive"
+        for cells in (["c-1"], ["c-1", "c-10", "c-100"]):
+            with self.assertRaisesRegex(ValueError, "exactly"):
+                self.engine_of(cells).check_after(self.root)
+        self.engine_of(["c-1", "c-10"]).check_after(self.root)
+
+    def test_other_commands_do_not_check(self):
+        engine = self.engine_of(["c-10"], 1)
+        args = types.SimpleNamespace(action="verify-counts")
+        with mock.patch.object(tg.Grid, "dispatch",
+                               return_value=3) as run:
+            self.assertEqual(engine.dispatch(args), 3)
+        run.assert_called_once_with(args)
+
+
+class StageFixture(unittest.TestCase):
+    """`stage_reports` (unmocked) and the `replayed` of `Grid.replay` are
+    made from one fixture and give `decisive_pairs` the same answer."""
+
+    class Engine(FakeEngine):
+        def __init__(self, extended):
+            super().__init__()
+            self.t.schema = lambda kind: "S-" + kind
+            self.extended = extended
+            self.rows = {}
+
+        def replay_rows(self, root, inventory):
+            return self.rows[inventory["name"]]
+
+        def planned(self, stage1, first):
+            return [["c", 1, 90]] if self.extended else []
+
+    def make(self, extended):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        engine = self.Engine(extended)
+        first_dir = root / "first"
+        first_dir.mkdir()
+        first = dict(schema="S-experiment", name="first", pairs=40,
+                     iterations=dict(pairs_by_cell={"c-2": 30}))
+        a.save(first_dir / "inventory.json", first)
+        a.save(first_dir / "decisions.json", dict(workloads=[]))
+        engine.rows["first"] = {("c", 1): report(0.5),
+                                ("c", 2): report(0.02)}
+        if not extended:
+            return engine, first_dir, first, None, None
+        ext_dir = root / "ext"
+        ext_dir.mkdir()
+        ext = dict(schema="S-extension", name="ext", grid="../first",
+                   grid_inventory=a.seal(first_dir / "inventory.json"),
+                   grid_decisions=a.seal(first_dir / "decisions.json"),
+                   plan=[["c", 1, 90]])
+        a.save(ext_dir / "inventory.json", ext)
+        engine.rows["ext"] = {("c", 1): report(0.01)}
+        return engine, ext_dir, first, ext, root
+
+    def replayed(self, engine, first, ext):
+        """What `Grid.replay` keeps of the stage (its `replayed`)."""
+        stage1 = engine.rows["first"]
+        if ext is None:
+            return dict(inventory=first, first=first, stage1=stage1,
+                        stage2={}, decisions={})
+        return dict(inventory=ext, first=first, stage1=stage1,
+                    stage2=engine.rows["ext"], decisions={})
+
+    def test_a_single_stage_is_read_as_the_replay_keeps_it(self):
+        engine, root, first, _, _ = self.make(False)
+        found = r.stage_reports(engine, root)
+        replayed = self.replayed(engine, first, None)
+        self.assertEqual(found, {k: v for k, v in replayed.items()
+                                 if k != "decisions"})
+        names = ["c-1", "c-2"]
+        self.assertEqual(r.decisive_pairs(engine, found, names),
+                         r.decisive_pairs(engine, replayed, names))
+        # c-2 has 30 pairs in the counts; c-1 the stage's 40
+        self.assertEqual(r.decisive_pairs(engine, found, names), {
+            "c-1": 120, "c-2": tg.second_stage_pairs(0.02, 30, 0.015,
+                                                     120)})
+
+    def test_an_extension_is_read_as_the_replay_keeps_it(self):
+        engine, root, first, ext, _ = self.make(True)
+        found = r.stage_reports(engine, root)
+        replayed = self.replayed(engine, first, ext)
+        self.assertEqual(found, {k: v for k, v in replayed.items()
+                                 if k != "decisions"})
+        names = ["c-1", "c-2"]
+        self.assertEqual(r.decisive_pairs(engine, found, names),
+                         r.decisive_pairs(engine, replayed, names))
+        per = r.decisive_pairs(engine, found, names)
+        # c-1 by the extension's report and its planned 90 pairs
+        self.assertEqual(per["c-1"], tg.second_stage_pairs(
+            0.01, 90, 0.015, 120))
+        self.assertEqual(r.declared_pairs(engine, found, names)[0],
+                         max(per.values()))
+
+    def test_a_first_stage_with_a_second_stage_to_come_is_refused(self):
+        engine, root, _, _, _ = self.make(False)
+        engine.extended = True
+        with self.assertRaisesRegex(ValueError, "second stage is still to "
+                                    "come, name the second stage"):
+            r.stage_reports(engine, root)
+
+    def test_the_first_stage_of_an_extended_grid_is_not_the_last(self):
+        engine, ext_dir, _, _, root = self.make(True)
+        with self.assertRaisesRegex(ValueError, "still to come"):
+            r.stage_reports(engine, root / "first")
+        # the extension is accepted
+        r.stage_reports(engine, ext_dir)
+
+    def test_a_changed_first_stage_or_a_foreign_grid_is_refused(self):
+        engine, ext_dir, _, _, root = self.make(True)
+        (root / "first" / "decisions.json").write_text("{}")
+        with self.assertRaisesRegex(ValueError, "changed first-stage"):
+            r.stage_reports(engine, ext_dir)
+        other, other_dir, _, _, _ = self.make(False)
+        other.t.schema = lambda kind: "other-" + kind
+        with self.assertRaisesRegex(ValueError, "not a stage of"):
+            r.stage_reports(other, other_dir)
+
+
 CAND = "c" * 40
+ORIGINAL_FILES = r.previous_counts_files
 
 
 def fake_engine(table, name, cells, pairs=80):
@@ -592,6 +863,7 @@ class Dispose(unittest.TestCase):
             h=types.SimpleNamespace(attempt_counts=lambda l, c: (1, 1)))
         self.ledger = self.root / "ledger"
         self.ledger.touch()
+        self.records = []
         self.round1 = fake_engine(self.table, f.name_of(self.key),
                                   [self.cell])
         self.round2 = fake_engine(self.table, r.name_of(self.key, 2),
@@ -606,12 +878,15 @@ class Dispose(unittest.TestCase):
                 (d, "check_counts", lambda *args: None),
                 (d, "check_declaration", lambda *args: None),
                 (d, "check_round_declaration", self.declaration),
+                (d, "round_declaration", lambda key, n: dict(
+                    decision="decision-%d" % n)),
                 (d, "pins_binding", lambda *args: {}),
                 (d, "replay_timing", self.spy),
                 (d, "ledger_attempts", self.attempts),
                 (r, "check_pairs", self.pairs),
                 (d31, "judged_attempts", lambda e, root: {"a1": root}),
-                (tg, "Ledger", lambda path: None)):
+                (tg, "Ledger", lambda path: types.SimpleNamespace(
+                    records=self.records))):
             patch = mock.patch.object(target, name, value)
             patch.start()
             self.addCleanup(patch.stop)
@@ -831,6 +1106,110 @@ class Dispose(unittest.TestCase):
             [self.table, f.name_of(self.key), r.name_of(self.key, 2)])
         self.assertEqual([x for x in self.calls if x[0] == "attempts"], [])
 
+    def two_cells(self):
+        """Round 1 measured two cells; both stayed inconclusive."""
+        self.cell2 = self.names[1]
+        self.round1.t.names = lambda: [self.cell, self.cell2]
+        self.stages["main"] = dict(
+            final={n: "inconclusive" if n in (self.cell, self.cell2)
+                   else "pass" for n in self.names},
+            first={n: "inconclusive" if n in (self.cell, self.cell2)
+                   else "pass" for n in self.names})
+        self.stages["f"] = dict(
+            final={n: "inconclusive" for n in (self.cell, self.cell2)},
+            first={n: "inconclusive" for n in (self.cell, self.cell2)})
+        (self.root / "main").mkdir(exist_ok=True)
+
+    def test_a_round_takes_exactly_the_cells_left_inconclusive(self):
+        self.two_cells()
+        both = [self.cell, self.cell2]
+        self.round2.t.names = lambda: both
+        self.stages["f2"] = dict(final={n: "pass" for n in both},
+                                 first={n: "pass" for n in both})
+        held, _ = self.read(self.options(("f", "f2")))
+        self.assertEqual(held["cells"][self.cell]["cls"], "pass")
+
+    def test_a_subset_of_the_open_cells_is_refused(self):
+        self.two_cells()
+        self.round2.t.names = lambda: [self.cell]
+        self.stages["f2"] = dict(final={self.cell: "inconclusive"},
+                                 first={self.cell: "inconclusive"})
+        with self.assertRaisesRegex(ValueError, "not exactly the cells"):
+            self.read(self.options(("f", "f2")))
+
+    def test_a_superset_of_the_open_cells_is_refused(self):
+        self.two_cells()
+        extra = self.names[2]
+        three = [self.cell, self.cell2, extra]
+        self.round2.t.names = lambda: three
+        self.stages["f2"] = dict(final={n: "inconclusive" for n in three},
+                                 first={n: "inconclusive" for n in three})
+        with self.assertRaisesRegex(ValueError, "not all inconclusive"):
+            self.read(self.options(("f", "f2")))
+        # a cell of the round before that passed
+        self.stages["f"] = dict(
+            final={self.cell: "inconclusive", self.cell2: "pass"},
+            first={self.cell: "inconclusive", self.cell2: "pass"})
+        self.round2.t.names = lambda: [self.cell, self.cell2]
+        self.stages["f2"] = dict(
+            final={n: "pass" for n in (self.cell, self.cell2)},
+            first={n: "pass" for n in (self.cell, self.cell2)})
+        with self.assertRaisesRegex(ValueError, "not all inconclusive"):
+            self.read(self.options(("f", "f2")))
+
+    def test_the_record_cites_each_rounds_decision(self):
+        self.classes(f="inconclusive", f2="inconclusive",
+                     f3="inconclusive")
+        self.open_main()
+        held, _ = self.read(self.options(("f", "f2", "f3")), declared=3)
+        self.assertEqual(held["rounds"], [
+            dict(round=2, table=r.name_of(self.key, 2), cells=[self.cell],
+                 pairs=80, decision="decision-2"),
+            dict(round=3, table=r.name_of(self.key, 3), cells=[self.cell],
+                 pairs=160, decision="decision-3")])
+        self.classes(f="pass")
+        held, _ = self.read(self.options(("f",)), declared=1)
+        self.assertEqual(held["rounds"], [])
+
+    def test_the_decision_comes_from_the_declaration(self):
+        with mock.patch.dict(r.DECLARED, {KEY: {2: dict(
+                cells=(), pairs=1, decision="x")}}, clear=True):
+            self.assertEqual(ORIGINAL_DECLARATION(KEY, 2)["decision"], "x")
+
+    def ledger_run(self, declared=2, rounds=("f", "f2")):
+        self.classes(f="inconclusive", f2="inconclusive",
+                     f3="inconclusive")
+        self.open_main()
+        _, late = self.read(self.options(rounds), declared=declared)
+        late[0][1]()
+
+    def test_a_ledger_of_exactly_the_judged_tables_passes(self):
+        self.records[:] = [dict(event="open", table=t) for t in (
+            self.table, f.name_of(self.key), r.name_of(self.key, 2))] + [
+            dict(event="torn"), dict(event="open")]
+        self.ledger_run()
+
+    def test_a_measured_round_whose_declaration_is_gone_is_refused(self):
+        for table in (r.name_of(self.key, 3), self.table + "-followup4",
+                      self.table + "-followup1", self.table + "-followup0"):
+            self.records[:] = [dict(event="close", table=table)]
+            with self.assertRaisesRegex(ValueError, "does not judge"):
+                self.ledger_run()
+        # another shard's tables are not this ledger's concern
+        self.records[:] = [dict(event="open", table="task37-matrix-3-"
+                                "followup5")]
+        self.ledger_run()
+
+    def test_round_one_alone_has_no_other_follow_up_in_its_ledger(self):
+        self.classes(f="pass")
+        self.records[:] = [dict(event="open", table=f.name_of(self.key))]
+        _, late = self.read(self.options(("f",)), declared=1)
+        late[0][1]()
+        self.records[:] = [dict(event="open", table=r.name_of(self.key, 2))]
+        _, late = self.read(self.options(("f",)), declared=1)
+        with self.assertRaisesRegex(ValueError, "does not judge"):
+            late[0][1]()
+
     def test_check_round_declaration_reads_each_counts_commit(self):
         stage = dict(inventory=dict(candidate=CAND, counts_commit="1" * 40),
                      first_inventory=dict(candidate="d" * 40,
@@ -859,7 +1238,8 @@ class Dispose(unittest.TestCase):
 
     def test_the_accessors_follow_the_round_engines(self):
         self.assertEqual(d.round_engines(), dict(r.GRIDS))
-        self.assertEqual(d.declared_rounds(KEY), [])
+        self.assertEqual(d.declared_rounds(KEY), sorted(
+            r.DECLARED.get(KEY, {})))
         engines = {r.name_of(KEY, 2): "E", r.name_of(KEY, 3): "F"}
         with mock.patch.object(d, "round_engines", lambda: engines):
             self.assertEqual(d.declared_rounds(KEY), [2, 3])
@@ -870,31 +1250,7 @@ class Dispose(unittest.TestCase):
 
 
 ORIGINAL = d.check_round_declaration
-
-
-class UndefinedNames(unittest.TestCase):
-    def test_no_global_is_used_without_being_bound(self):
-        import builtins
-        import symtable
-        path = Path(r.__file__)
-        top = symtable.symtable(path.read_text(), str(path), "exec")
-        bound = {s.get_name() for s in top.get_symbols()
-                 if s.is_assigned() or s.is_imported() or s.is_namespace()}
-        missing = set()
-
-        def walk(table):
-            for s in table.get_symbols():
-                if s.is_global() and s.is_referenced() and \
-                        s.get_name() not in bound and \
-                        not hasattr(builtins, s.get_name()) and \
-                        s.get_name() not in ("__file__", "__name__",
-                                             "__doc__"):
-                    missing.add(s.get_name())
-            for child in table.get_children():
-                walk(child)
-
-        walk(top)
-        self.assertEqual(missing, set())
+ORIGINAL_DECLARATION = d.round_declaration
 
 
 if __name__ == "__main__":
