@@ -80,7 +80,14 @@ class MatrixProtocolTests(unittest.TestCase):
         self.assertIsNone(a.retained_scaling([]))
 
     def test_reentrant_inherited_locks(self):
-        repo = HERE.parents[3]
+        # A throwaway repository: the real checkout's lock may be held
+        # by a real benchmark and must not be written by a unit test.
+        temp = tempfile.TemporaryDirectory(prefix="matrix-lock-")
+        self.addCleanup(temp.cleanup)
+        repo = Path(temp.name) / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True,
+                       stdin=subprocess.DEVNULL)
         with a.serial_lock(repo) as fds:
             env = dict(os.environ,
                        HOL4_PERF_LOCK_FDS=",".join(map(str, fds)))

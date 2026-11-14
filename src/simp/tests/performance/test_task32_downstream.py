@@ -693,7 +693,7 @@ class Pieces(unittest.TestCase):
             self.assertEqual(path.stat().st_mtime_ns, 5 * 10 ** 18)
 
     def test_move_stray_merges_directories_and_keeps_collisions(self):
-        with tempfile.TemporaryDirectory(dir="/dev/shm") as tmp:
+        with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             (tmp / "a/d").mkdir(parents=True)
             (tmp / "a/d/x").write_text("new")
@@ -710,7 +710,7 @@ class Pieces(unittest.TestCase):
             self.assertFalse((tmp / "s/a/d/d").exists())
 
     def test_move_stray_goes_around_a_file_in_the_parent_chain(self):
-        with tempfile.TemporaryDirectory(dir="/dev/shm") as tmp:
+        with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             (tmp / "a/b").mkdir(parents=True)
             (tmp / "a/b/x").write_text("new")
@@ -728,7 +728,7 @@ class Pieces(unittest.TestCase):
                 dw.clear_parents(tmp / "t/x", tmp / "t"), tmp / "t/x")
 
     def test_an_outside_make_deps_that_cannot_be_removed_is_moved(self):
-        with tempfile.TemporaryDirectory(dir="/dev/shm") as tmp:
+        with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp, "root")
             (root / "x/.hol").mkdir(parents=True)
             folder, stray = root / "u", Path(tmp, "stray")
@@ -743,7 +743,7 @@ class Pieces(unittest.TestCase):
             self.assertFalse((root / "x/.hol/make-deps").exists())
 
     def test_a_directory_that_cannot_be_removed_is_moved_as_stray(self):
-        with tempfile.TemporaryDirectory(dir="/dev/shm") as tmp:
+        with tempfile.TemporaryDirectory() as tmp:
             folder, stray = Path(tmp, "f"), Path(tmp, "stray")
             folder.mkdir()
             before = dw.scan(folder)

@@ -122,7 +122,11 @@ class StatisticsTests(unittest.TestCase):
 
 class ControlTests(unittest.TestCase):
     def test_genuine_subprocess_controls(self):
-        # No HOL workloads/builds here. Still honor the shared performance lock.
+        # No HOL workloads/builds here, but these genuine subprocess
+        # controls must not run concurrently with real benchmarks. So this
+        # test deliberately takes the shared lock on the real checkout,
+        # whose home is its .agent-files/hol4-performance-<uid>.lock; that
+        # creates (and keeps) the lock file there by design.
         with a.serial_lock(a.HERE.parents[3]):
             report = a.negative_controls()
         controls = report["controls"]
