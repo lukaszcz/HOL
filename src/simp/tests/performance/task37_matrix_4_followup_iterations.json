@@ -1,0 +1,189 @@
+{
+  "schema": "task37-matrix-4-followup-iterations-v1",
+  "source": {
+    "sha256": "a828b89d4aad057039e7b94d159d3dad17c40d61645e0accfaea494c3ebc9879",
+    "bytes": 12627
+  },
+  "baseline": "cccaa27d7099cbadc886983020cbe745db7793f3",
+  "headroom": 1,
+  "rule": "max over develop processes of ceil(HEADROOM * seconds * n / wall), (n, wall) the final calibration batch of a pilot process, in exact decimal arithmetic",
+  "iterations": {
+    "compile_ac-1000": 8
+  },
+  "schedule": "warmup",
+  "pairs_by_cell": {
+    "compile_ac-1000": 40
+  },
+  "replaces": {
+    "grid": "../second",
+    "files": {
+      "../first/decisions.json": {
+        "sha256": "d21af24b6273cf15f4f475acb08100d3ca0a152820ee01216844acbb97e164c4",
+        "bytes": 25701
+      },
+      "../first/inventory.json": {
+        "sha256": "fa0bfc1bf01c70f7d2f812098dcf707b8d7a3c435c7552e910ebab33f4d84b35",
+        "bytes": 81118
+      },
+      "decisions.json": {
+        "sha256": "d2ebe953560d84ede2d8ca948739ce96995a537903da6b3b6e454138f45cc0eb",
+        "bytes": 26043
+      },
+      "inventory.json": {
+        "sha256": "ec4a21882478a973a0fe791857becf12b9a9422aa3c362552cb0e46f7581a41c",
+        "bytes": 77311
+      }
+    },
+    "open": [
+      "compile_ac-1000"
+    ],
+    "code": {
+      "acceptance.py": {
+        "sha256": "b17503214bc235115376e27f3e9b90ad5797bf12b5d62934a7381c00fd2e424c",
+        "bytes": 40828
+      },
+      "allocator-counter/private_runtime.py": {
+        "sha256": "f8edb1cdd7eba3477d5123d4bd807a5d3b1297c35e4df088c333cfe25efc1877",
+        "bytes": 13112
+      },
+      "audit_evidence.py": {
+        "sha256": "c6398887f110850e83c76b885c794311a41c47b631aa6719dd4ed43a4dc3b088",
+        "bytes": 17914
+      },
+      "runtime_metrics.py": {
+        "sha256": "8b5ef218a1402710450786adb432f608fa82ca74917c1747a95f24b64a1b9dcb",
+        "bytes": 15446
+      },
+      "summarize.py": {
+        "sha256": "fd2c9cbce1c334bcc8bdd98e0a905d54ecdd3ed50eab7632ba1d9923279d4d24",
+        "bytes": 4637
+      },
+      "task37_attributed.json": {
+        "sha256": "24f53e2f48a48c5ee3396ebe7cf0a79bd1ab557a93f9a7cb96541b470c9d5888",
+        "bytes": 6018
+      },
+      "task37_matrix_4_iterations.json": {
+        "sha256": "b085ec093ea43c3b9b39d24dc7af27e034c3304a22977ffadc061f17b0f7d293",
+        "bytes": 8379
+      },
+      "timing_grid.py": {
+        "sha256": "38a87d57b87acea8da744e85e9ed04611bece90e8dcb6a2aa180085ed9af860b",
+        "bytes": 190314
+      }
+    }
+  },
+  "seconds": {
+    "compile_ac-1000": 0.3
+  },
+  "layout_seed": "task37-matrix-4-followup-layout-1",
+  "pairs": 40,
+  "samples": 5,
+  "target": 0.015,
+  "max_pairs": 120,
+  "sealed": {
+    "task37_cases.py": {
+      "sha256": "e7f7f5e0768402d127bd02cb8647a8484dd05a56bd12bde07e88c9d3963a21e1",
+      "bytes": 9626
+    },
+    "task31_pins.py": {
+      "sha256": "d48dc6410cae50fbb4156b9d1c6a7a1888dda68e16a63f88e91f24dad5df4362",
+      "bytes": 5128
+    },
+    "task29_gate.py": {
+      "sha256": "1fa432bb20521f42fa81ac5b02cfe09721585f1310a4647d37b9fa84c72c55fd",
+      "bytes": 9793
+    },
+    "task29a_grid.py": {
+      "sha256": "94a8016c7f6325412995bbd933a3747afa75469409a780c20c466ba0941b72bb",
+      "bytes": 9917
+    },
+    "task30_cases.py": {
+      "sha256": "6e8beb40a27c22e10c84fe8b1cedbd8fdb6e4ff03cd9300f9bc80ee33e574360",
+      "bytes": 3530
+    },
+    "matrix_schema.py": {
+      "sha256": "c138f68cfccda5fad42634de7c1d0c923e32a22fd2769be7a2a1fc0e789d5d63",
+      "bytes": 24114
+    },
+    "performance_schema.py": {
+      "sha256": "a294e485de0730238b3241e23939bc3cdda134410aa8071e90a130a259764ec9",
+      "bytes": 13055
+    },
+    "evidence_bundle.py": {
+      "sha256": "a989e8b177e6237d9cb1a5b3001aa73c1dac5bac060627fb055fd44ae3c78807",
+      "bytes": 4040
+    },
+    "MatrixPerformance.sml": {
+      "sha256": "d90345728402fc5342e0af32784dc773755d527e28c4a72f800d4fcaf30c7810",
+      "bytes": 6072
+    },
+    "MatrixSupport.sml": {
+      "sha256": "cd6fa121fece0d84f2dd8285d245d43257517cacacfca624497163ba02808205",
+      "bytes": 37775
+    },
+    "RuntimeMetrics.sml": {
+      "sha256": "7b5ac22e6bbbe56fbe9401ae0b6a30c8f3d3d79fcc7a0eff3bbcfa09521a0dbd",
+      "bytes": 7326
+    },
+    "review-20261021/abicheck.sml": {
+      "sha256": "0326ab4522fed21de2253eaa0a511556162abf4577bc39459587bc15a6f6a75f",
+      "bytes": 5435
+    },
+    "../compatibility/run_paired.py": {
+      "sha256": "50a8121db507732f479b424337119c15b33e434f52073b0b8ba9a7eb758e475c",
+      "bytes": 50755
+    },
+    "matrix.json": {
+      "sha256": "45070ad52a09e594e5a0b8e3605bb28e1c90fa5eab7c59e449cae58d54b6e1ce",
+      "bytes": 24048
+    },
+    "../compatibility/paired/CheckSupport.sml": {
+      "sha256": "29ddc7757b9b7836f5e52730f56fec2ee7714aa7d49afdb8e5ba56fd80443ecc",
+      "bytes": 208
+    },
+    "../compatibility/paired/Deferred.sml": {
+      "sha256": "ed36fcce0415ed72169e5748730ee666740c850ad5bb936bf1eb8145aa789a42",
+      "bytes": 136
+    },
+    "../compatibility/paired/Holmakefile": {
+      "sha256": "81f45c792e78bd184e1cdef836a66cd6cadccd35d546729730b64380a38c44cf",
+      "bytes": 241
+    },
+    "../compatibility/paired/Paired.sml": {
+      "sha256": "a930932897e0728e72c048124b0fce7f038bed469e062affa8ebc23a7c8e47b7",
+      "bytes": 1043
+    },
+    "../compatibility/paired/PriorLimits.sml": {
+      "sha256": "a4063fa794aeef77bc0b752a2a28cd0aac870ce1b53348da185579749b14adc4",
+      "bytes": 2191
+    },
+    "../compatibility/paired/runner.sml": {
+      "sha256": "d680c3ff8e66ee190adaa60b8f01fcfdabb04e0f0d0f087139e70276c96fbdb6",
+      "bytes": 2974
+    },
+    "../compatibility/paired/selftest.sml": {
+      "sha256": "41583212047d466d897c4f9478b00ce20cefa7d0fb8d98b659c8ffc29a085aa5",
+      "bytes": 2125
+    },
+    "task37_grid.py": {
+      "sha256": "c11aca2201a1987b2b16280d2cec0e13bad91de7bf8f781cc6ee20f1f85307e2",
+      "bytes": 11155
+    },
+    "task37_matrix_4_followup_cells.json": {
+      "sha256": "f6866638d6c3ce44aecb49214170a93987716c73bed67241aa9f76a5c699edb5",
+      "bytes": 90
+    }
+  },
+  "pilot": {
+    "inventory": {
+      "sha256": "0df373d13321c132de865dec311ea192f61588a5fd2e162f735e08c73b0edbce",
+      "bytes": 5084
+    },
+    "archives": {
+      "compile_ac-1000": {
+        "sha256": "179ac6d278bd1a4e5945ec736489e05c3b8b28c73974ab7a94e54626618fb9de",
+        "bytes": 223880
+      }
+    }
+  }
+}
