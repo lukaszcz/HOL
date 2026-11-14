@@ -107,7 +107,14 @@ sample. A declared follow-up of a shard (its declaration file
 engines `followup_engines` names) is judged for R-1 whether or not it is
 given; given
 (`--followup SHARD=DIR --followup-pilot SHARD=DIR`) it must replace exactly
-the shard's `--timing` output, and its cells replace the shard's. The counts
+the shard's `--timing` output, and its cells replace the shard's. The further
+rounds of a follow-up (task37_rounds.py, decision 47; `--followup
+SHARD.R=DIR --followup-pilot SHARD.R=DIR`, R >= 2) are required where
+declared and none is accepted undeclared: round R's cells are all
+inconclusive in the round before, its declaration precedes its counts and
+follows the round before's, and its declared pairs are the rule's from the
+replay of the round before's decisive stage (checked with the replays); a
+cell is judged by its last round's chain. The counts
 file an inventory names must be one the shard's table names (its counts
 file or a revision of it, `Table.file_named`), and every
 inventory, resumption and first stage carries the pins of the committed
@@ -242,7 +249,7 @@ Commands
         --alloc-{matrix,client,downstream} DIR
         --alloc-ledger TASK=FILE (three)
         --timing SHARD=DIR --ledger SHARD=FILE --pilot SHARD=DIR (6 each)
-        [--followup SHARD=DIR --followup-pilot SHARD=DIR]
+        [--followup SHARD[.R]=DIR --followup-pilot SHARD[.R]=DIR]
         [--load STREAM=FILE ...] [--environment-event FILE ...]
         --task32 FILE --task32-replay ARGS --task33 FILE
         --task33-replay ARGS --startup-gate DIR --startup-null DIR
@@ -276,6 +283,7 @@ import task31_pins as reviewed
 import task37_cases as cases
 import task37_gates as gates
 import task37_followup as followup
+import task37_rounds as rounds
 import task37_grid as grid
 import task37_lineage as lineage_of
 import task37_load as load
@@ -297,7 +305,7 @@ TASKS = dict(client="task37-client", matrix="task37-matrix",
 # test pins it, function-local imports included).
 CODE = ("task37_dispose.py", "task37_gates.py", "task37_lineage.py",
         "task37_cases.py", "task37_identity.py", "task37_grid.py",
-        "task37_followup.py", "task37_sources.py",
+        "task37_followup.py", "task37_rounds.py", "task37_sources.py",
         "task37_load.py", "task31_dispose.py", "task31_identity_grid.py",
         "task31_identity.py", "task31_attribution.py", "task31_cases.py",
         "task31_followup.py", "task31_grid.py", "task31_pins.py",
@@ -383,6 +391,21 @@ def keyed(values, label, allowed=None):
         a.require(key not in found, "--%s names %s twice" % (label, key))
         found[key] = Path(path)
     return found
+
+
+def keyed_rounds(values, label, shards):
+    """`keyed` for the follow-up options, whose key is a shard (round 1) or
+    `SHARD.R` (round R >= 2, task37_rounds.parse_key)."""
+    for value in values or []:
+        key = str(value).partition("=")[0]
+        try:
+            shard, _ = rounds.parse_key(key)
+        except ValueError:
+            shard = None
+        a.require(shard in shards, "--%s needs KEY=PATH with KEY a shard "
+                  "(%s) or SHARD.R for a round R >= 2, not %r" % (
+                      label, ", ".join(shards), value))
+    return keyed(values, label)
 
 
 def replayed(code, label):
@@ -843,6 +866,32 @@ def followup_of(key):
     return followup_engines().get(followup.name_of(key))
 
 
+def round_engines():
+    """{table name: engine} of the declared follow-up rounds 2.. (decision
+    47; `task37_rounds.GRIDS`)."""
+    return dict(rounds.GRIDS)
+
+
+def declared_rounds(key):
+    """The rounds >= 2 declared for a shard, in order."""
+    engines = round_engines()
+    return [n for n in range(2, rounds.MAX_ROUND + 1)
+            if rounds.name_of(key, n) in engines]
+
+
+def check_round_declaration(key, number, stage, repo):
+    """The declaration of round `number` precedes each counts file of the
+    round the stage used (`task37_rounds.check_declaration_order`, which
+    the round's engine checks too)."""
+    for inventory in (stage["inventory"], stage["first_inventory"]):
+        a.require(isinstance(inventory.get("counts_commit"), str),
+                  "round %d of the follow-up of %s records no counts "
+                  "commit" % (number, key))
+        rounds.check_declaration_order(
+            repo, inventory["candidate"], key, number,
+            inventory["counts_commit"])
+
+
 def read_shard(key, options, lineage, repo, document, late):
     """One timing shard: {cells: {name: row}, scaling, scaling_raw (status and
     missing sizes of an unmeasured retained slope, else None), differing,
@@ -876,6 +925,20 @@ def read_shard(key, options, lineage, repo, document, late):
     judged = [(engine, d31.judged_attempts(engine, main["root"]))]
     follow = followup_of(key)
     given = options["followup"].get(key)
+    after = []
+    chain = [n for n in range(2, rounds.MAX_ROUND + 1)
+             if rounds.key_text(key, n) in options["followup"]]
+    for n in declared_rounds(key):
+        a.require(rounds.key_text(key, n) in options["followup"],
+                  "round %d of the follow-up of %s is declared and has no "
+                  "--followup %s=DIR" % (n, key, rounds.key_text(key, n)))
+    for n in chain:
+        a.require(n in declared_rounds(key), "round %d of the follow-up of "
+                  "%s is not declared (see task37_rounds)" % (n, key))
+        a.require(given is not None and (n == 2 or n - 1 in chain),
+                  "--followup %s needs the rounds before it (--followup "
+                  "%s ...)" % (rounds.key_text(key, n), rounds.key_text(
+                      key, n - 1)))
     if given is not None:
         name = followup.name_of(key)
         a.require(follow is not None, "no follow-up is declared for %s "
@@ -915,6 +978,11 @@ def read_shard(key, options, lineage, repo, document, late):
                            control_open=n in stage.get("control_open", ()),
                            earlier=rows[n]["earlier"] + [rows[n]["cls"]])
         seals.update(stage["seals"])
+        previous = follow
+        for n in chain:
+            previous = read_round(
+                key, n, previous, options, lineage, repo, document, rows,
+                seals, differing, pending, judged, after)
     else:
         a.require(key not in options["followup-pilot"],
                   "--followup-pilot names a shard with no --followup: %s"
@@ -931,12 +999,56 @@ def read_shard(key, options, lineage, repo, document, late):
         for each, where, pilot_, replaced_ in pending:
             replay_timing(each, where, repo, ledger, pilot=pilot_,
                           replaces_pilot=replaced_)
+        for check in after:
+            check()
         for each, found in judged:
             held["attempts"] += ledger_attempts(each, found, repo, ledger)
         held["counts"] = list(engine.h.attempt_counts(
             tg.Ledger(ledger), main["inventory"]["candidate"]))
     late.append((table, replay))
     return held
+
+
+def read_round(key, number, previous, options, lineage, repo, document,
+               rows, seals, differing, pending, judged, after):
+    """Round `number` >= 2 of the follow-up of shard `key` (decision 47),
+    chained to the engine `previous` of the round before: its cells are the
+    declared ones, all inconclusive in the round before (`rows` holds that
+    round's classes and takes this one's), the declaration precedes its
+    counts, and its pairs are the rule's from the sealed decisive stage of
+    the round before (checked after the replays, from the replay of that
+    stage). Returns the engine."""
+    option = rounds.key_text(key, number)
+    name = rounds.name_of(key, number)
+    engine = round_engines()[name]
+    fpilot = options["followup-pilot"].get(option)
+    a.require(fpilot is not None, "round %d of the follow-up of %s needs "
+              "--followup-pilot %s=DIR" % (number, key, option))
+    stage = read_stage(options["followup"][option], name, lineage)
+    check_counts(stage, name, engine.t)
+    check_round_declaration(key, number, stage, repo)
+    a.require(set(stage["final"]) == set(engine.t.names()),
+              "the %s cells are not the declared round's" % name)
+    a.require(all(rows[n]["cls"] == "inconclusive" for n in stage["final"]),
+              "the cells of round %d of %s are not all inconclusive in the "
+              "round before: %s" % (number, key, ", ".join(sorted(
+                  n for n in stage["final"]
+                  if rows[n]["cls"] != "inconclusive"))))
+    a.require(stage["scaling"] is None,
+              "a %s follow-up has a retained slope" % name)
+    pins_binding(engine, name, stage["root"], document)
+    pending.append((engine, stage["root"], Path(fpilot).resolve(), None))
+    judged.append((engine, d31.judged_attempts(engine, stage["root"])))
+    differing += stage["differing"]
+    for n, c in stage["final"].items():
+        rows[n] = dict(cls=c, first=stage["first"][n],
+                       stage2=n in stage["plan"], followup=True,
+                       control_open=n in stage.get("control_open", ()),
+                       earlier=rows[n]["earlier"] + [rows[n]["cls"]])
+    seals.update(stage["seals"])
+    after.append(lambda: rounds.check_pairs(
+        previous, previous.replayed, engine.t.names(), engine.t.pairs))
+    return engine
 
 
 def read_timing(kind, sample, options, lineage, repo, document, late):
@@ -1315,10 +1427,10 @@ def timing_options(args):
     found = dict(
         timing=keyed(args.timing, "timing", keys),
         ledger=keyed(args.ledger, "ledger", keys),
-        followup=keyed(args.followup, "followup", keys),
+        followup=keyed_rounds(args.followup, "followup", keys),
         pilot=keyed(args.pilot, "pilot", keys))
-    found["followup-pilot"] = keyed(args.followup_pilot, "followup-pilot",
-                                    keys)
+    found["followup-pilot"] = keyed_rounds(args.followup_pilot,
+                                           "followup-pilot", keys)
     return found
 
 
@@ -1718,10 +1830,11 @@ def parser():
         help="the attempts ledger of a shard; one for each shard")
     add("--pilot", action="append", metavar="SHARD=DIR",
         help="the pilot of a shard; one for each shard")
-    add("--followup", action="append", metavar="SHARD=DIR",
-        help="the declared follow-up of a shard (at most one)")
-    add("--followup-pilot", action="append", metavar="SHARD=DIR",
-        help="the pilot of the follow-up of a shard")
+    add("--followup", action="append", metavar="SHARD[.R]=DIR",
+        help="the declared follow-up of a shard (SHARD=DIR) and of each "
+        "further declared round (SHARD.R=DIR)")
+    add("--followup-pilot", action="append", metavar="SHARD[.R]=DIR",
+        help="the pilot of the follow-up (round R) of a shard")
     add("--environment-event", action="append", metavar="FILE",
         help="the system record (an apt/dpkg log excerpt) of an environment "
         "change that voided a timing attempt (decision 45); required for "

@@ -4514,7 +4514,33 @@ voids no pilot, counts file or record. The declaration file is committed
 alone, before any observation of the follow-up. Its commands are
 `task37_followup.py SHARD COMMAND`, its counts file is
 `task37_<kind>_<n>_followup_iterations.json`, and its engines are
-`task37_followup.GRIDS`, by table name. Each table: the `warmup` schedule
+`task37_followup.GRIDS`, by table name. A cell that stays inconclusive
+after its follow-up may be followed up again, in *rounds* (design decision
+47, `task37_rounds.py`; round 1 is the follow-up above and is unchanged): a
+round R >= 2 is a targeted table with no `replaces` link (the engine cannot
+replay a follow-up of a follow-up: replaying a replaced follow-up needs the
+pilot of the grid that follow-up replaced), `task37-<shard>-followup<R>`
+(label `TASK37-<SHARD>-FOLLOWUP<R>`, key `SHARD.R`: `matrix-4.2`), declared
+by `task37_<kind>_<n>_followup<R>_cells.json`
+(`{"schema": "task37-followup-round-v1", "shard": "matrix-4", "round": 2,
+"cells": [..], "pairs": N}`: the cells a non-empty subset of round R-1's,
+the pairs a positive integer; rounds 1..R-1 must be declared, a gap is
+refused). It takes the shard's constants as round 1 does, with counts
+`task37_<kind>_<n>_followup<R>_iterations.json`, layout seed `<table
+name>-layout-1`, the shard's ledger, and seals the shard's sealed files,
+`task37_followup.py` and every declaration file of rounds 1..R. Its pairs are
+the second-stage rule applied to the develop/develop control of the
+round before: for each cell, the control half width of its report in round
+R-1's decisive stage (its second stage where it had one, else its first)
+and that report's pairs give `second_stage_pairs(w, P, target, cap)` with
+the shard's limits, and the table's one pair count is the largest of the
+cells' (nothing of a candidate enters). `task37_rounds.py SHARD.R
+derive-pairs --grid DIR` prints it and the declaration to commit (read-only;
+DIR is round R-1's last stage); `task37_dispose.py` recomputes it from the
+replay of that stage and refuses a declaration that differs. The declaration
+is committed alone, after round R-1's counts commit and before round R's
+pilot head and counts commit (the engine and dispose check it).
+Each table: the `warmup` schedule
 (count rule, headroom 1), 20 first-stage pairs of 5 samples, alternating
 AB/BA with a B/B control per round, 3% on inclusive CPU and wall, GC
 reported, no outlier removal, a second stage sized from the control (the
@@ -5083,6 +5109,40 @@ the shard's last stage, since it brings the clone forward):
 Dispose then takes `--followup S=<its last stage> --followup-pilot
 S=$E/fpilot`, and still `--timing S=` and `--pilot S=` of the shard.
 
+A further round R >= 2 of the cells that stay inconclusive
+(`T="python3 -B $P/task37_rounds.py S.R"`; the same clone, after the last
+stage of round R-1; no `--replaces`):
+
+    $T derive-pairs --grid $E/<round R-1 last stage> [--cells A,B]
+    # in $M: the declaration, by hand, from that output:
+    #   $P/task37_<kind>_<n>_followup<R>_cells.json
+    #   {"schema": "task37-followup-round-v1", "shard": "S", "round": R,
+    #    "cells": [..], "pairs": N}
+    git -C $M add $P/task37_<kind>_<n>_followup<R>_cells.json
+    git -C $M commit -m "TASK37: follow-up round R declaration S"  # alone
+    forward $CL         # the declaration must be an ancestor of the pilot
+    $T prepare          # if needed
+    $T pilot --output $E/fpilotR --authorize-measurements
+    $T predeclare --grid $E/fpilotR \
+      --output $P/task37_<kind>_<n>_followup<R>_iterations.json
+    # commit the counts file alone in main, rm the clone's copy, forward $CL
+    $T verify-counts --grid $E/fpilotR
+    $T run --candidate $(git rev-parse HEAD) --output $E/followup-R \
+      --pilot $E/fpilotR --authorize-measurements
+    $T extend --grid $E/followup-R --output $E/followup-R-2 \
+      --pilot $E/fpilotR --authorize-measurements          # if owed
+
+(`R` is the round number, e.g. `fpilot2`, `followup-2`, `followup-2-2`;
+the first rounds' directories keep their names. Round R's declaration must
+follow round R-1's counts commit, and its counts commit must follow it.)
+Dispose takes `--followup S.R=<round R last stage> --followup-pilot
+S.R=$E/fpilotR` for every declared round, besides round 1's `S=`: a declared
+round with no `--followup`, a round given and not declared, and a round
+given while one before it is not, are refused. A cell is judged by its last
+round's chain (a fail in any earlier round or stage still decides), its
+cells must all be inconclusive in the round before, and a declared round's
+pairs must equal the rule from the round before's replay.
+
 The startup gate (wave 4b, once; deterministic, so `nice -n 19`). Every
 variable is required but `EVTAG` and `DECLARED_ARCHIVE`:
 
@@ -5255,12 +5315,13 @@ replaces). `RUN-T` is the output of the last attempt of allocation task
       [--load host=$EV/load/host.jsonl] --record $EV/dispose
 
 Every `[..]` is optional (`--followup` and `--followup-pilot` once for each
-shard that has a follow-up; one or more `--environment-event FILE`, at least
-one required when an attempt is void by the environment rule, see
-"Environment refusals" below). `--startup-null` is for a complete attempt
-only (then required); omit it for an incomplete attempt (its null is
-auto-discovered, or not read). The inputs are produced by the steps above: the
-identity grids and allocation runs by their streams (the grid and run
+shard that has a follow-up, and once more as `SHARD.R=` for each further
+round declared; one or more `--environment-event FILE`, at least one
+required when an attempt is void by the environment rule, see "Environment
+refusals" below). `--startup-null` is for a complete attempt only (then
+required); omit it for an incomplete attempt (its null is auto-discovered,
+or not read). The inputs are produced by the steps above: the identity
+grids and allocation runs by their streams (the grid and run
 directories), the shard stages and pilots by the shard recipe, the TASK32 and
 TASK33 dispositions by their `dispose` commands, the startup attempt by the
 runner, the loading runs by `run_loading.sh` and the D7 receipt by
@@ -5964,7 +6025,7 @@ the one place that accepts a revision.
         --alloc-ledger TASK=FILE               (three)
         --timing SHARD=DIR --ledger SHARD=FILE
         --pilot SHARD=DIR                      (every shard, 6 of each)
-        [--followup SHARD=DIR --followup-pilot SHARD=DIR]
+        [--followup SHARD[.R]=DIR --followup-pilot SHARD[.R]=DIR]
         [--load STREAM=FILE ...]
         --task32 FILE --task32-replay ARGS
         --task33 FILE --task33-replay ARGS
@@ -5982,7 +6043,9 @@ follow-up of a shard (declared by `task37_<kind>_<n>_followup_cells.json`,
 whose engines
 `task37_followup.GRIDS` are named `task37-<shard>-followup`; the shard
 tables are `task37_grid.GRIDS` alone) is judged for R-1 whether or not
-it is given; given, it must replace the shard's `--timing` output. Every
+it is given; given, it must replace the shard's `--timing` output. The
+further rounds of a follow-up (`task37_rounds.GRIDS`, `SHARD.R=DIR`) are
+required where declared, each chained to the round before. Every
 input carries the pins of the committed `task37_attributed.json` for the
 sources it measures; a stage whose `source_identity.differing` is not empty
 is incomplete. All reads, ties and joins come first and the replays last,
