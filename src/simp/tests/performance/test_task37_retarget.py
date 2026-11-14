@@ -1301,7 +1301,7 @@ class HistoryOfTheKeptRecords(unittest.TestCase):
 
     ENTRY = "025d23c440"    # before the script entry ran the named module
     ENTRY_FILES = ("task32_downstream.py", "task33_offline.py",
-                   "task33_storage.py")
+                   "task33_storage.py", "task33_dispose.py")
 
     def test_the_task37_histories_hold_the_kept_versions(self):
         """The versions that made the kept TASK37 records (b6052eb65f,
@@ -1319,14 +1319,15 @@ class HistoryOfTheKeptRecords(unittest.TestCase):
                 kept.append(self.seal_at(self.ENTRY, name))
             self.assertEqual(seals, kept, name)
         self.assertEqual(sorted(dw.TASK37_HISTORY), [
-            "loading.py", "task32_downstream.py", "task33_dispose.py",
-            "task33_offline.py", "task33_storage.py"])
+            "loading.py", "task32_downstream.py", "task32_snapshots.py",
+            "task33_dispose.py", "task33_offline.py", "task33_storage.py"])
         self.assertEqual(dw.TABLES["task37-t33"].history, dw.TASK37_HISTORY)
         self.assertEqual(
             dw.TABLES["task37-t32"].history,
             {"task32_downstream.py":
              dw.TASK37_HISTORY["task32_downstream.py"][:1] +
              dw.TASK37_HISTORY["task32_downstream.py"][-1:],
+             "task32_snapshots.py": dw.TASK37_HISTORY["task32_snapshots.py"],
              "loading.py": dw.TASK37_HISTORY["loading.py"]})
         for table, history in (("task37-t33", dw.TASK37_HISTORY),
                                ("task37-t32", dw.TASK37_T32_HISTORY)):

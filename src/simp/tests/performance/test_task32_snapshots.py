@@ -1444,6 +1444,50 @@ class VerifyTests(unittest.TestCase):
             TOOLCHAIN, poly_v="Poly/ML 5.9.3 RTS version: x")
         self.fails("poly -v changed")
 
+    def test_changed_toolchain_is_reported_in_report_mode(self):
+        self.assertEqual(self.w.verify()["toolchain"],
+                         {"status": "same", "changed": []})
+        self.w.probe = lambda p, e: dict(
+            TOOLCHAIN, files={"poly": {"path": "/p", "sha256": "2" * 64}},
+            poly_v="Poly/ML 5.9.3 RTS version: x", extra="1")
+        summary = self.w.verify(toolchain="report")
+        self.assertEqual(summary["status"], "pass")
+        self.assertEqual(summary["toolchain"], {
+            "status": "changed", "changed": ["extra", "files", "poly_v"]})
+        self.fails("toolchain", toolchain="refuse")
+        self.fails("toolchain")
+
+    def test_poly_v_is_compared_by_poly_version_matches(self):
+        with mock.patch.object(a, "poly_version_matches",
+                               return_value=True) as same:
+            self.w.probe = lambda p, e: dict(TOOLCHAIN, poly_v="other")
+            for mode in ("refuse", "report"):
+                self.assertEqual(self.w.verify(toolchain=mode)[
+                    "toolchain"]["status"], "same")
+        self.assertEqual(same.call_count, 2)
+
+    def test_other_checks_still_refuse_in_report_mode(self):
+        put(self.cand / "src/f.txt", "dirty\n")
+        self.fails("dirty or patched", toolchain="report")
+
+    def test_unknown_toolchain_mode(self):
+        self.fails("toolchain mode", toolchain="ignore")
+
+    def test_toolchain_option_of_the_command_line(self):
+        self.w.probe = lambda p, e: dict(TOOLCHAIN, cc="gcc 2")
+        stream = io.StringIO()
+        with mock.patch.object(s, "probe_toolchain", self.w.probe), \
+                contextlib.redirect_stdout(stream):
+            code = s.main(self.w.argv("verify", "--toolchain", "report"))
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(stream.getvalue())["toolchain"],
+                         {"status": "changed", "changed": ["cc"]})
+        with mock.patch.object(s, "probe_toolchain", self.w.probe), \
+                self.assertRaisesRegex(ValueError, "toolchain changed: cc"):
+            s.main(self.w.argv("verify"))
+        with self.assertRaises(SystemExit):
+            s.main(self.w.argv("compare", "--toolchain", "report"))
+
     def test_failed_command(self):
         self.fails("exited 1", self.edit("cand", "commands", 1, "exit",
                                          value=1))

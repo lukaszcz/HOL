@@ -2950,6 +2950,11 @@ which only TASK36 builds, on the candidate.
 Recipe (`task32_snapshots.py build`; flags `--repo`, `--manifest`,
 `--root`, `--evidence`, `--scratch`, `--side`, `--pin`, `--mktool`,
 `--cand-pin`, `--jobs` (default 8), `--poly`, `--table`, `--tmpdir`).
+`verify` also takes `--toolchain {refuse,report}` (default `refuse`): a live
+toolchain that differs from the recorded one is refused, or, under `report`,
+only listed in the summary (`"toolchain": {"status": "same"|"changed",
+"changed": [keys]}`; `poly_v` by `poly_version_matches`, every other key by
+equality). Every other check refuses in both modes; `compare` is `refuse`.
 Relative paths
 are resolved against the current directory (and recorded absolute). Both
 sides use the same four paths:
@@ -4436,12 +4441,16 @@ refuses a scratch root other than `/dev/shm/t33` and any path the manifest
 does not name where the snapshot driver puts it (roots under
 `.agent-files/snapshots/task32/{base,cand}`, HOMEs
 `scratch/task32/home-<side>-a<n>`, the `task32-<sha>.seq` copy), a link or a
-pending restore journal. Then, under the serial lock, it runs `verify` (exit
-0 recorded), writes an intent journal
-(`snapshot-disposal.intent.json`; a repeated command resumes it), removes
-exactly those paths, the scratch root and the then empty parents, and writes
-`snapshot-disposal.json` with the manifest seal, sizes, the final verify,
-the removed paths, the sealed evidence and the recreate recipe
+pending restore journal. Then, under the serial lock, it runs `verify
+--toolchain report` (disposal measures nothing: a toolchain that changed
+since the snapshots' last use is reported, not refused; exit 0 and the
+summary's `toolchain` recorded, and a summary that is not a passing one with
+a well-formed `toolchain` refuses before anything is removed), writes an
+intent journal (`snapshot-disposal.intent.json`; a repeated command resumes
+it), removes exactly those paths, the scratch root and the then empty
+parents, and writes `snapshot-disposal.json` with the manifest seal, sizes,
+the final verify (with its toolchain), the removed paths, the sealed evidence
+and the recreate recipe
 (`task32_snapshots.py build --side ... --pin ...`, then `verify` and
 `compare`). It never uses `task32_snapshots.py discard`: that rewrites
 `snapshots.json`, whose seal the committed TASK32 counts carry. TASK32

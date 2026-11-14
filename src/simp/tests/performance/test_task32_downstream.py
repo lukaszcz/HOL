@@ -1202,7 +1202,7 @@ class VerifyInterface(Base):
         seen = []
 
         def fake(manifest, base_pin, cand_pin, c31=None, probe=None,
-                 poly=None):
+                 poly=None, toolchain="refuse"):
             seen.append((manifest["schema"], base_pin, cand_pin, c31))
             return dict(status="pass")
         with mock.patch.object(snap, "verify", fake):

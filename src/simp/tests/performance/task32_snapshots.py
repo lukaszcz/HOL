@@ -369,13 +369,24 @@ def probe_host():
             "memory": memory}
 
 
+TOOLCHAIN_MODES = ("refuse", "report")
+
+
+def toolchain_changes(recorded, live):
+    """The sorted keys in which `live` differs from `recorded`: `poly_v`
+    by `poly_version_matches`, every other key by equality."""
+    changed = []
+    if not a.poly_version_matches(recorded["poly_v"], live["poly_v"]):
+        changed.append("poly_v")
+    changed += [key for key in set(recorded) | set(live)
+                if key != "poly_v" and recorded.get(key) != live.get(key)]
+    return sorted(changed)
+
+
 def same_toolchain(recorded, live):
-    require(a.poly_version_matches(recorded["poly_v"], live["poly_v"]),
-            "toolchain: poly -v changed")
-    for key in sorted(set(recorded) | set(live)):
-        if key != "poly_v":
-            require(recorded.get(key) == live.get(key),
-                    "toolchain changed: " + key)
+    changed = toolchain_changes(recorded, live)
+    require("poly_v" not in changed, "toolchain: poly -v changed")
+    require(not changed, "toolchain changed: " + ", ".join(changed[:1]))
 
 
 # -- running -----------------------------------------------------------
@@ -1077,9 +1088,12 @@ def verify_side(record, label, expected_pin):
 
 
 def verify(manifest, base_pin, cand_pin, c31=C31, probe=probe_toolchain,
-           poly=POLY):
+           poly=POLY, toolchain="refuse"):
     """Audit a manifest (a dict) against the live trees; raises on any
-    failure and returns the summary otherwise."""
+    failure and returns the summary otherwise. A live toolchain that
+    differs from the recorded one is a failure under `toolchain`
+    "refuse"; under "report" it is only listed in the summary."""
+    require(toolchain in TOOLCHAIN_MODES, "unknown --toolchain mode")
     require_schema(manifest)
     sides = manifest.get("sides", {})
     require(set(sides) == set(LABELS), "both sides must be recorded")
@@ -1134,12 +1148,18 @@ def verify(manifest, base_pin, cand_pin, c31=C31, probe=probe_toolchain,
             "configured Systeml.sml differs between sides")
     require(base["build_interval_ns"][1] <= cand["build_interval_ns"][0],
             "builds were not serial")
-    same_toolchain(manifest["toolchain"],
-                   probe(poly, environment("/nonexistent")))
+    live_toolchain = probe(poly, environment("/nonexistent"))
+    if toolchain == "refuse":
+        same_toolchain(manifest["toolchain"], live_toolchain)
+        changed = []
+    else:
+        changed = toolchain_changes(manifest["toolchain"], live_toolchain)
     return {"schema": SCHEMA, "base_pin": base["pin"],
             "cand_pin": cand["pin"], "c31": c31,
             "base_products": len(products["base"]),
-            "cand_products": len(products["cand"]), "status": "pass"}
+            "cand_products": len(products["cand"]), "status": "pass",
+            "toolchain": {"status": "changed" if changed else "same",
+                          "changed": changed}}
 
 
 # -- compare -----------------------------------------------------------
@@ -1377,6 +1397,10 @@ def main(argv=None):
     v = sub.add_parser("verify")
     common(v)
     pins(v)
+    v.add_argument("--toolchain", choices=TOOLCHAIN_MODES,
+                   default="refuse", help="a live toolchain that differs "
+                   "from the recorded one is refused (default) or only "
+                   "reported in the summary")
     c = sub.add_parser("compare")
     common(c)
     pins(c)
@@ -1396,7 +1420,8 @@ def main(argv=None):
             return 0
         manifest = json.loads(args.manifest.read_text())
         summary = verify(manifest, args.base_pin, args.cand_pin, args.c31,
-                         probe=probe_toolchain, poly=args.poly)
+                         probe=probe_toolchain, poly=args.poly,
+                         toolchain=getattr(args, "toolchain", "refuse"))
         if args.command == "verify":
             print(json.dumps(summary, indent=2))
             return 0

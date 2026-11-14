@@ -2094,6 +2094,15 @@ class Audit(Chain34):
                             timing_counts=a.timing_counts)
 
 
+def summary_argv(toolchain=None, **change):
+    """A verify command that prints a passing summary (with `toolchain`,
+    else an unchanged one), as `task32_snapshots.py verify` does."""
+    summary = dict(schema=dw.snap.SCHEMA, status="pass", toolchain=(
+        toolchain or dict(status="same", changed=[])))
+    summary.update(change)
+    return [sys.executable, "-c", "print(%r)" % json.dumps(summary)]
+
+
 class FakeTree:
     """A fake `.agent-files` of a repository with the two snapshots, their
     HOMEs and sequence copies as the snapshot driver lays them out, a
@@ -2173,7 +2182,7 @@ class FakeTree:
     def args(self, **extra):
         values = dict(evidence=self.evidence, manifest=self.manifest,
                       repo=self.repo, scratch_root=self.scratch_root,
-                      verify_argv=[sys.executable, "-c", "pass"])
+                      verify_argv=summary_argv())
         values.update(extra)
         return argparse.Namespace(**values)
 
@@ -2236,8 +2245,7 @@ class DisposeSnapshots(unittest.TestCase):
         return ["dispose-snapshots", "--evidence", str(t.evidence),
                 "--manifest", str(t.manifest), "--repo", str(t.repo),
                 "--scratch-root", str(t.scratch_root),
-                "--verify-argv",
-                "%s -c pass" % shlex.quote(sys.executable), *extra]
+                "--verify-argv", shlex.join(summary_argv()), *extra]
 
     def test_the_command_line_disposes_the_fixture_snapshots(self):
         t = self.tree
@@ -2363,6 +2371,63 @@ class DisposeSnapshots(unittest.TestCase):
     def test_a_failing_verification_removes_nothing(self):
         self.refused("verif|failed", verify_argv=[sys.executable, "-c",
                                                    "raise SystemExit(1)"])
+
+    def test_the_record_carries_the_verified_toolchain(self):
+        t = self.tree
+        changed = dict(status="changed", changed=["files", "poly_v"])
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(dispose.dispose_snapshots(t.args(
+                verify_argv=summary_argv(changed))), 0)
+        data = json.loads((t.evidence / "snapshot-disposal.json"
+                           ).read_text())
+        self.assertEqual(data["verify"]["toolchain"], changed)
+        self.assertEqual(data["verify"]["exit"], 0)
+        self.assertNotIn("stdout", data["verify"])
+
+    def test_the_default_verify_reports_a_toolchain_change(self):
+        t = self.tree
+        seen = []
+
+        def run(argv, cwd, fds, capture=False):
+            seen.append((argv, capture))
+            return dict(argv=argv, exit=0, seconds=0.0, stdout_sha256="x",
+                        stdout=json.dumps(dict(
+                            schema=dw.snap.SCHEMA, status="pass",
+                            toolchain=dict(status="same", changed=[]))))
+
+        with mock.patch.object(dw, "run_verify", run), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(dispose.dispose_snapshots(
+                t.args(verify_argv=None)), 0)
+        argv, capture = seen[0]
+        self.assertTrue(capture)
+        self.assertEqual(argv[argv.index("--toolchain") + 1], "report")
+        self.assertEqual(argv[3], "verify")
+        self.assertEqual(argv[:-2], dw.default_verify(
+            t.repo, t.manifest, {s: dict(pin=t.sides[s]["pin"])
+                                 for s in ("base", "cand")}))
+
+    def test_a_verify_without_a_well_formed_summary_refuses(self):
+        bad = [
+            [sys.executable, "-c", "pass"],
+            [sys.executable, "-c", "print('not json')"],
+            [sys.executable, "-c", "print('[]')"],
+            summary_argv(status="fail"),
+            summary_argv(schema="other"),
+            [sys.executable, "-c", "print(%r)" % json.dumps(dict(
+                schema=dw.snap.SCHEMA, status="pass"))],
+            summary_argv(dict(status="same", changed=["files"])),
+            summary_argv(dict(status="changed", changed=[])),
+            summary_argv(dict(status="maybe", changed=[])),
+            summary_argv(dict(status="changed", changed=["b", "a"])),
+            summary_argv(dict(status="changed", changed=[1])),
+            summary_argv(dict(status="same", changed=[], extra=1)),
+        ]
+        for argv in bad:
+            with self.subTest(argv=argv[2:]):
+                self.refused("summary|toolchain", verify_argv=argv)
+                self.assertFalse((self.tree.evidence /
+                                  "snapshot-disposal.intent.json").exists())
 
     def test_a_missing_snapshot_refuses_without_removing_the_others(self):
         t = self.tree

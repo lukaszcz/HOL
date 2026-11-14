@@ -561,6 +561,36 @@ def write_intent(path, data):
     os.replace(tmp, path)
 
 
+def verified(argv, repo, fds):
+    """The disposal's verify entry: the run record with the `toolchain`
+    of the summary the command printed. A summary that is not whole
+    refuses, before anything is removed."""
+    final = d.run_verify(argv, repo, fds, capture=True)
+    text = final.pop("stdout")
+    try:
+        summary = json.loads(text)
+    except ValueError:
+        summary = None
+    d.require(isinstance(summary, dict) and summary.get(
+        "schema") == d.snap.SCHEMA and summary.get("status") == "pass",
+        "the snapshot verification printed no passing summary (nothing "
+        "was removed): %s" % text[-400:])
+    final["toolchain"] = toolchain_of(summary.get("toolchain"))
+    return final
+
+
+def toolchain_of(record):
+    ok = (isinstance(record, dict) and set(record) == {"status", "changed"}
+          and record["status"] in ("same", "changed")
+          and isinstance(record["changed"], list)
+          and all(isinstance(k, str) for k in record["changed"])
+          and record["changed"] == sorted(set(record["changed"]))
+          and (record["status"] == "changed") == bool(record["changed"]))
+    d.require(ok, "the snapshot verification summary has no well-formed "
+              "toolchain (nothing was removed)")
+    return dict(status=record["status"], changed=list(record["changed"]))
+
+
 def dispose_snapshots(args):
     """`task33_storage.py dispose-snapshots` (design section 5). The
     intent journal is written before anything is removed; a command that
@@ -595,15 +625,16 @@ def dispose_snapshots(args):
     sides = {s: dict(root=Path(manifest["sides"][s]["root"]),
                      pin=manifest["sides"][s]["pin"],
                      tree=manifest["sides"][s]["tree"]) for s in LABELS}
-    verify = args.verify_argv or d.default_verify(
-        repo, manifest_path, sides, getattr(args, "compiled_ref", None))
+    verify = args.verify_argv or [*d.default_verify(
+        repo, manifest_path, sides, getattr(args, "compiled_ref", None)),
+        "--toolchain", "report"]
     sizes = {str(p): (tree_bytes(p) if how == "tree" else
                       os.lstat(p).st_size) if os.path.lexists(p) else None
              for p, how in plan}
     with a.serial_lock(repo) as fds:
         d.require(not pending(repo), "a restore journal is pending: "
                   "`recover` first (nothing was removed)")
-        final = None if resumed else d.run_verify(verify, repo, fds)
+        final = None if resumed else verified(verify, repo, fds)
         if not resumed:
             write_intent(intent_path, intent)
         removed = [str(p) for p, how in plan if remove_path(p, how)]

@@ -231,9 +231,15 @@ TASK37_HARVEST_DRIVER = [
 TASK37_ENTRY_DRIVER = [
     {"sha256": "f12719eb77f22c92c7a8d9c9695f2c"
                "15dbe4875c47b1b3ebe555a6e22eb0f598", "bytes": 189967}]
+# `task32_snapshots.py` before `verify --toolchain`, which made the kept
+# TASK37 records
+TASK37_SNAPSHOTS = [
+    {"sha256": "3a5f0261f3847935aad8a0c83ed9e3679694de5d"
+               "fbb2d2457907d40c51ce7252", "bytes": 61892}]
 TASK37_HISTORY = {
     "task32_downstream.py": (TASK37_DRIVER + TASK37_HARVEST_DRIVER +
                              TASK37_ENTRY_DRIVER),
+    "task32_snapshots.py": TASK37_SNAPSHOTS,
     "loading.py": TASK37_LOADING,
     "task33_offline.py": [
         {"sha256": "f817b9a2f3ad3a124ae9ab0b06b6d5"
@@ -242,10 +248,13 @@ TASK37_HISTORY = {
         # 54f4083d93: it also made the redrawn harvest `offline/harvest2`)
         {"sha256": "9a23682e94601b94145d727d108bcb"
                    "48250dbd38e3cca81892799ba7c84acdb5", "bytes": 109634}],
-    # before the disposal took the harvest the disposition names
+    # before the disposal took the harvest the disposition names, and
+    # before it reported the toolchain (the t33 storage records)
     "task33_dispose.py": [
         {"sha256": "014a8860938753d609bc4462e8b03d"
-                   "ced7e2a95de99293e3ab0da0398bfaff9c", "bytes": 27801}],
+                   "ced7e2a95de99293e3ab0da0398bfaff9c", "bytes": 27801},
+        {"sha256": "69f8fad7f5a4e0d17d529269e3289c"
+                   "46ff665ace9c5d05fa9b1d7d22d05319a2", "bytes": 28905}],
     # before the storage predeclare bound the timing counts as a record
     "task33_storage.py": [
         {"sha256": "06b4dee630d4c65bc8254026d32ef516"
@@ -256,6 +265,7 @@ TASK37_HISTORY = {
 }
 TASK37_T32_HISTORY = {
     "task32_downstream.py": TASK37_DRIVER + TASK37_ENTRY_DRIVER,
+    "task32_snapshots.py": TASK37_SNAPSHOTS,
     "loading.py": TASK37_LOADING}
 
 
@@ -672,15 +682,20 @@ def default_verify(repo, manifest, sides, ref=None):
             "--compiled-ref", resolve_ref(ref)]
 
 
-def run_verify(argv, cwd, fds):
+def run_verify(argv, cwd, fds, capture=False):
     """The snapshots-unchanged command; a nonzero exit refuses the run. It
-    takes the serial lock again, so it inherits ours."""
+    takes the serial lock again, so it inherits ours. With `capture` the
+    result also holds the command's whole output as `stdout`."""
     env = dict(os.environ, HOL4_PERF_LOCK_FDS=",".join(map(str, fds)))
     done = loading.execute(argv, cwd, env, 3600, fds)
     require(done["exit"] == 0 and not done["timed_out"],
             "snapshot verification failed: %s" % done["stdout"][-400:])
-    return dict(argv=done["command"], exit=0, seconds=done["process_wall"],
-                stdout_sha256=done["stdout_sha256"])
+    record = dict(argv=done["command"], exit=0,
+                  seconds=done["process_wall"],
+                  stdout_sha256=done["stdout_sha256"])
+    if capture:
+        record["stdout"] = done["stdout"]
+    return record
 
 
 def check_candidate(repo, sides, ref=None):
