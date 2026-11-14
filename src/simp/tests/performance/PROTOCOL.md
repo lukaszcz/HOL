@@ -5716,15 +5716,23 @@ without editing what their kept records depend on.
 - Decisions of several sources (design decision 48). TASK33 decides each
   offline check id in every offline report that runs it (`offline:audit`,
   `offline:harvest`), so a `case:kind` can have one decision per source.
-  `task37_gates.read_task33` combines the rows of a key into one record:
-  a repeated (case, kind, source) is refused, the decision is
+  `task37_gates.read_task33` combines the rows of a key into one record,
+  but only when every row's source is offline: a repeated (case, kind,
+  source), or a key repeated across any other sources (storage, timing),
+  is refused as a repeated TASK33 decision. The decision is
   `task33_rules.worst` of the gated rows (any fail fails, any other
-  non-pass is missing, with the union of the rows' `owed`, sorted, or
-  `attribution`), a key mixing gated and reported/unsupported rows is
-  refused, and a key whose rows are all reported/unsupported is reported
-  once (reasons joined in source order). A combined key's record lists
-  its `sources` (source, decision, reason); a single-source key has no
-  `sources` field.
+  non-pass is missing). `owed` is the sorted union of what each row owes
+  alone (its own `owed`, or `attribution` for a missing row with none),
+  fail included, as a single row keeps its `owed` when it fails. The
+  `failed` and `missing` entries name the origins that did not pass, e.g.
+  `TASK33: fail (offline:harvest)`. A key mixing gated and
+  reported/unsupported rows is refused; a key whose rows are all reported
+  or unsupported is reported once, and reported with unsupported is
+  unsupported. The reasons of the rows are joined with `; ` in source
+  order, without duplicates, for gated and reported keys alike. A
+  combined key's record lists its `origins` (origin, decision, reason); a
+  single-source key has no `origins` field. The disposition's `kinds`
+  counts the keys (`task33_keys`), not the rows.
 - Declaration. TASK37's reviewed data is `task37_declared.json` (schema
   `task33-declared-v4`, as `task33_declared.json`, which stays for the kept
   r4 records). The `task37-t33` table selects it itself (`--table

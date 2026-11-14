@@ -278,13 +278,19 @@ def read_task33(path, lineage):
         rows.setdefault(key, []).append(x)
     found, reported = {}, []
     for key, group in rows.items():
-        # Design decision 48: a check decided by several sources (one
-        # offline check id is decided in every offline report that runs
-        # it) is one record, under the key `case:kind`.
+        # Design decision 48: a check decided by several offline
+        # sources (one offline check id is decided in every offline
+        # report that runs it) is one record, under the key `case:kind`.
+        a.require(len(group) == 1 or all(
+            x.get("source", "").startswith("offline:") for x in group),
+            "repeated TASK33 decision: " + key)
         group = sorted(group, key=lambda x: x.get("source", ""))
-        listed = [dict(source=x.get("source", ""), decision=x["decision"],
+        listed = [dict(origin=x.get("source", ""),
+                       decision=x["decision"],
                        reason=x.get("reason", "")) for x in group]
-        shown = {} if len(group) == 1 else dict(sources=listed)
+        shown = {} if len(group) == 1 else dict(origins=listed)
+        reason = "; ".join(dict.fromkeys(
+            x["reason"] for x in listed if x["reason"]))
         gated = [x for x in group if x["decision"] in rules.GATES]
         a.require(not gated or len(gated) == len(group),
                   "inconsistent TASK33 decisions (gated and reported "
@@ -293,23 +299,27 @@ def read_task33(path, lineage):
             kinds = sorted({x["decision"] for x in group})
             reported.append(dict(
                 key=key, decision=kinds[0] if len(kinds) == 1 else
-                rules.UNSUPPORTED,
-                reason="; ".join(x["reason"] for x in listed
-                                 if x["reason"]), **shown))
+                rules.UNSUPPORTED, reason=reason, **shown))
             found[key] = None
             continue
         decision = rules.worst([x["decision"] for x in gated])
-        owed = sorted({OWED_NAMES.get(x["owed"], x["owed"])
-                       for x in gated if x.get("owed")})
-        record = dict(key=key, source=decision, failed=[], missing=[],
-                      owed=owed, reason="; ".join(
-                          x["reason"] for x in listed if x["reason"])
-                      if shown else listed[0]["reason"], **shown)
-        if decision == rules.FAIL:
-            record["failed"].append("TASK33: fail")
-        elif decision != rules.PASS:
-            record["missing"].append("TASK33: " + decision)
-            record["owed"] = record["owed"] or ["attribution"]
+        owed = set()
+        for x in gated:
+            if x.get("owed"):
+                owed.add(OWED_NAMES.get(x["owed"], x["owed"]))
+            elif x["decision"] not in (rules.PASS, rules.FAIL):
+                owed.add("attribution")
+
+        def named(x, text):
+            return text if not shown else "%s (%s)" % (
+                text, x.get("source", ""))
+        record = dict(
+            key=key, source=decision, owed=sorted(owed), reason=reason,
+            failed=[named(x, "TASK33: fail") for x in gated
+                    if x["decision"] == rules.FAIL],
+            missing=[named(x, "TASK33: " + x["decision"]) for x in gated
+                     if x["decision"] not in (rules.PASS, rules.FAIL)],
+            **shown)
         found[key] = record
     keys = {"%s:%s" % k for k in task33_dispose.expected_storage()}
     absent = sorted(keys - set(found))

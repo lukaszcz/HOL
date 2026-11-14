@@ -1437,7 +1437,7 @@ def dispose(identity, allocation, timing, units, decisions33, receipts,
                    client=len(cases.CLIENT_CELLS),
                    downstream=len(cases.DOWNSTREAM_CELLS),
                    task32_units=len(unit_records),
-                   task33_decisions=len(t33), gates=len(gate_records)),
+                   task33_keys=len(t33), gates=len(gate_records)),
         identity_status={k: v["status"] for k, v in identity.items()},
         identity_unaccounted={k: v["unaccounted"] for k, v in
                               identity.items()},

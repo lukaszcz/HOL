@@ -20,6 +20,9 @@ import test_startup_gate as tsg
 import task37_dispose as d
 from task37_dispose_testbed import lines_record
 import task37_gates as gates
+import task33_dispose
+import task33_rules
+import test_task37_dispose as td
 
 
 def write(path, value):
@@ -2032,7 +2035,7 @@ class StartupPath(Ledgers):
 
 class Task33Combination(unittest.TestCase):
     """Design decision 48: a TASK33 check decided by several sources is
-    one record under `case:kind`, which lists its sources."""
+    one record under `case:kind`, which lists its origins."""
     CAND = "c" * 40
     OFFLINE = ("L2:declared.valid", "R2:declared.valid",
                "R3:declared.valid", "L2:manifest.roots",
@@ -2054,8 +2057,6 @@ class Task33Combination(unittest.TestCase):
                     **more)
 
     def read(self, extra, status="pass"):
-        import task33_dispose
-        import task33_rules
         rows = [dict(case=c, kind=k, decision="pass", source="timing:x",
                      reason="")
                 for c, k in task33_dispose.expected_storage()]
@@ -2066,11 +2067,11 @@ class Task33Combination(unittest.TestCase):
         write(str(path) + ".seal", a.seal(path))
         return gates.read_task33(path, self.lineage)
 
-    def both(self, key, first, second, **more):
-        return [self.row(key, first, "offline:audit", **more),
+    def both(self, key, first, second):
+        return [self.row(key, first, "offline:audit"),
                 self.row(key, second, "offline:harvest")]
 
-    def test_a_two_source_pass_is_one_record_listing_its_sources(self):
+    def test_a_two_source_pass_is_one_record_listing_its_origins(self):
         rows = []
         for key in self.OFFLINE:
             rows += self.both(key, "pass", "pass")
@@ -2080,30 +2081,34 @@ class Task33Combination(unittest.TestCase):
             self.assertEqual(found[key]["failed"], [])
             self.assertEqual(found[key]["missing"], [])
             self.assertEqual(
-                [(x["source"], x["decision"], x["reason"])
-                 for x in found[key]["sources"]],
+                [(x["origin"], x["decision"], x["reason"])
+                 for x in found[key]["origins"]],
                 [("offline:audit", "pass", "offline:audit says pass"),
                  ("offline:harvest", "pass",
                   "offline:harvest says pass")])
         self.assertEqual(reported, [])
-        import task33_dispose
+        self.assertEqual(found["L2:manifest.pins"]["reason"],
+                         "offline:audit says pass; "
+                         "offline:harvest says pass")
         single = found["L1:" + next(
             k for c, k in task33_dispose.expected_storage() if c == "L1")]
-        self.assertNotIn("sources", single)
+        self.assertNotIn("origins", single)
 
     def test_one_failing_source_fails_the_key(self):
         found, _, _, _, _ = self.read(
             self.both("L2:manifest.pins", "pass", "fail"), status="fail")
         record = found["L2:manifest.pins"]
         self.assertEqual(record["source"], "fail")
-        self.assertEqual(record["failed"], ["TASK33: fail"])
+        self.assertEqual(record["failed"],
+                         ["TASK33: fail (offline:harvest)"])
 
     def test_a_pass_with_an_inconclusive_source_is_missing_and_owed(self):
         found, _, _, _, _ = self.read(
             self.both("L2:manifest.pins", "pass", "inconclusive"),
             status="inconclusive")
         record = found["L2:manifest.pins"]
-        self.assertEqual(record["missing"], ["TASK33: inconclusive"])
+        self.assertEqual(record["missing"],
+                         ["TASK33: inconclusive (offline:harvest)"])
         self.assertEqual(record["owed"], ["attribution"])
 
     def test_the_owed_of_the_sources_is_their_sorted_union(self):
@@ -2113,8 +2118,76 @@ class Task33Combination(unittest.TestCase):
                          owed="followup")]
         found, _, _, _, _ = self.read(rows, status="inconclusive")
         self.assertEqual(found["L2:x"]["owed"], ["followup", "stage2"])
-        self.assertEqual([x["source"] for x in found["L2:x"]["sources"]],
+        self.assertEqual([x["origin"] for x in found["L2:x"]["origins"]],
                          ["offline:audit", "offline:harvest"])
+
+    def test_blocked_without_owed_and_inconclusive_owe_both(self):
+        rows = [self.row("L2:x", "blocked", "offline:audit"),
+                self.row("L2:x", "inconclusive", "offline:harvest",
+                         owed="second")]
+        found, _, _, _, _ = self.read(rows, status="blocked")
+        record = found["L2:x"]
+        self.assertEqual(record["owed"], ["attribution", "stage2"])
+        self.assertEqual(record["missing"], [
+            "TASK33: blocked (offline:audit)",
+            "TASK33: inconclusive (offline:harvest)"])
+
+    def test_a_failing_key_keeps_the_owed_of_its_rows(self):
+        rows = [self.row("L2:x", "fail", "offline:audit"),
+                self.row("L2:x", "inconclusive", "offline:harvest",
+                         owed="followup")]
+        found, _, _, _, _ = self.read(rows, status="fail")
+        record = found["L2:x"]
+        self.assertEqual(record["source"], "fail")
+        self.assertEqual(record["owed"], ["followup"])
+        self.assertEqual(record["failed"],
+                         ["TASK33: fail (offline:audit)"])
+
+    def test_duplicate_reasons_are_joined_once(self):
+        rows = [dict(self.row("L2:x", "pass", s), reason="well formed")
+                for s in ("offline:audit", "offline:harvest")]
+        found, _, _, _, _ = self.read(rows)
+        self.assertEqual(found["L2:x"]["reason"], "well formed")
+        rows = [dict(self.row("L2:y", "reported", s), reason="same")
+                for s in ("offline:audit", "offline:harvest")]
+        _, reported, _, _, _ = self.read(rows)
+        (one,) = [r for r in reported if r["key"] == "L2:y"]
+        self.assertEqual(one["reason"], "same")
+
+    def test_only_offline_sources_combine(self):
+        for sources in (("storage:x", "offline:audit"),
+                        ("timing:x", "storage:x"),
+                        ("offline:audit", "timing:x")):
+            rows = [self.row("L2:x", "pass", s) for s in sources]
+            with self.assertRaisesRegex(
+                    ValueError, "repeated TASK33 decision: L2:x"):
+                self.read(rows)
+
+    def test_reported_with_unsupported_is_unsupported(self):
+        rows = self.both("L2:x", "reported", "unsupported")
+        _, reported, _, _, _ = self.read(rows)
+        (one,) = [r for r in reported if r["key"] == "L2:x"]
+        self.assertEqual(one["decision"], "unsupported")
+
+    def test_a_combined_key_is_disposed_with_its_origins_named(self):
+        rows = [self.row("L2:x", "fail", "offline:audit"),
+                self.row("L2:x", "inconclusive", "offline:harvest",
+                         owed="followup"),
+                self.row("L2:y", "blocked", "offline:audit"),
+                self.row("L2:y", "pass", "offline:harvest")]
+        found, _, _, _, _ = self.read(rows, status="fail")
+        ids, al, timing, units, _, rec = td.Dispose().tables()
+        record = d.dispose(ids, al, timing, units, {
+            k: found[k] for k in ("L2:x", "L2:y")}, rec)
+        self.assertEqual(record["kinds"]["task33_keys"], 2)
+        mine = [o for o in record["owed"] if o["workload"] == "L2:x"]
+        self.assertEqual(mine, [dict(workload="L2:x", owed="followup")])
+        self.assertIn("origins", record["task33"]["L2:x"])
+        shown = d.lines(lines_record(task33=record["task33"]))
+        text = [l for l in shown if " task33 L2:x:" in l]
+        self.assertEqual(text, ["FAIL task33 L2:x: TASK33: fail "
+                                "(offline:audit); TASK33: inconclusive "
+                                "(offline:harvest) [owed: followup]"])
 
     def test_the_same_case_kind_and_source_twice_is_refused(self):
         rows = [self.row("L2:x", "pass", "offline:audit")] * 2
@@ -2134,7 +2207,7 @@ class Task33Combination(unittest.TestCase):
         self.assertEqual(one["decision"], "reported")
         self.assertEqual(one["reason"], "offline:audit says reported; "
                          "offline:harvest says reported")
-        self.assertEqual([x["source"] for x in one["sources"]],
+        self.assertEqual([x["origin"] for x in one["origins"]],
                          ["offline:audit", "offline:harvest"])
 
 
