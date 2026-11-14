@@ -1446,7 +1446,9 @@ def derive(args, held=None):
             task33=reported33, task33_carried=carried33,
             d7_build=None if d7 is None else dict(
                 status=d7["status"], exit=d7["exit"],
-                note=d7.get("note", ""), gate=False)))
+                note=d7.get("note", ""), gate=False,
+                **({"build_base": d7["build_base"]}
+                   if d7.get("build_base") is not None else {}))))
     return record
 
 
@@ -1514,8 +1516,13 @@ def summary(record):
     text = lines(record) + ["", verdict(record), "scope: " + record["scope"]]
     d7 = reported["d7_build"]
     text.append("D7 build (reported, not a gate): " + (
-        "not provided" if d7 is None else "%s, exit %s %s" % (
-            d7["status"], d7["exit"], d7["note"])))
+        "not provided" if d7 is None else "%s, exit %s %s%s" % (
+            d7["status"], d7["exit"], d7["note"],
+            "" if d7.get("build_base") is None else
+            " [timed base %s, child of %s changing %s: %s]" % (
+                d7["build_base"]["commit"], d7["build_base"]["parent"],
+                ", ".join(d7["build_base"]["paths"]),
+                d7["build_base"]["why"]))))
     return "\n".join(text) + "\n"
 
 

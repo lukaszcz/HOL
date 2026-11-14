@@ -5698,6 +5698,43 @@ without editing what their kept records depend on.
   left out of every median of `attribute`, and makes `run` and `attribute`
   exit with the distinct status 5; `attribute` joins the per-directory
   build lines of the two sides.
+  D7 build base. The baseline B does not build from a fresh tree (upstream
+  1a3864f654 moved the directory scan of `theorystats` into `theoryfiles`
+  but left `src/portableML/rawtheory/mktool.ML` without it), so the timed
+  base may be a declared build base (`task37_gates.BUILD_BASES`): B' =
+  cc64561e81, the child of B whose only change is the candidate's
+  `mktool.ML` (cf1f863b4e's `useB "theoryfiles";`). The receipt check takes
+  `pins.base` = B or a declared base, the same in every report (reports
+  are told apart by full path), and for a declared one looks in the
+  report's `pins.repo` (and, when `load_receipt` has one, the
+  disposition's own repository) and verifies, with replacement objects
+  ignored, that the commit exists, its only parent is the declared parent
+  (B), `git diff-tree -r --no-renames --name-only` between them is exactly
+  the declared paths, and each path has the candidate's own mode and
+  object (`git ls-tree`); a repository that is unreadable or lacks the
+  commit is refused. The D7 receipt keeps `baseline` = B and records the
+  base timed as `build_base` (commit, parent, paths, why; only the first
+  three are checked on load); the disposition record and `SUMMARY.txt`
+  show it. Dispose and `--check` verify B' again, and B' is in no branch
+  (loose objects that `git gc` may prune), so recreate it when missing,
+  in the repository (a temporary index; no ref is touched):
+
+      export GIT_INDEX_FILE=$(git rev-parse --git-dir)/t37-tmp-index
+      git read-tree cccaa27d7099cbadc886983020cbe745db7793f3
+      BLOB=40eb8fb07b6f0278a9525b4704896a5958652390
+      git update-index --cacheinfo \
+        100644,$BLOB,src/portableML/rawtheory/mktool.ML
+      git write-tree     # ef4d1a91b0946b8e5ac127b5189592ef15d686c2
+      GIT_AUTHOR_NAME=t37 GIT_COMMITTER_NAME=t37 \
+        GIT_AUTHOR_EMAIL=t37@local GIT_COMMITTER_EMAIL=t37@local \
+        GIT_AUTHOR_DATE=2026-11-13T00:00:00Z \
+        GIT_COMMITTER_DATE=2026-11-13T00:00:00Z \
+        git commit-tree ef4d1a91b0946b8e5ac127b5189592ef15d686c2 \
+        -p cccaa27d7099cbadc886983020cbe745db7793f3 \
+        -m "D7 base: B with the theorytool build fix (useB theoryfiles)"
+        # must print cc64561e81e19167427c0e2a89067e2894ad3b50
+      rm -f $GIT_INDEX_FILE; unset GIT_INDEX_FILE
+
 - Allocation runs. A run of a ledger task (`task37-matrix`, `-client`,
   `-downstream`) refuses to start with HUP, INT or TERM ignored (start it
   with `setsid -w env --default-signal=HUP,INT,TERM ...`), like the

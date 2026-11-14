@@ -1297,14 +1297,110 @@ def same_rev(one, other):
 
 BUILDS_SCHEMA = "task37-builds-v1"
 
+# The build bases D7 accepts besides the baseline a.BASE: the full sha of
+# a commit, mapped to its declaration. The commit is the baseline's child
+# that changes exactly `paths` (and nothing else), each to the candidate's
+# own blob, so that the baseline builds from a fresh tree. It need not be
+# in any branch, only readable in the repository the report names
+# (`pins["repo"]`); `check_builds_reports` verifies all of this there.
+BUILD_BASES = {
+    "cc64561e81e19167427c0e2a89067e2894ad3b50": dict(
+        parent=a.BASE,
+        paths=("src/portableML/rawtheory/mktool.ML",),
+        why="the baseline does not build from a fresh tree (upstream "
+        "1a3864f654 moved the directory scan of theorystats into "
+        "theoryfiles but left mktool.ML without it); the candidate's "
+        "fix (cf1f863b4e)"),
+}
 
-def check_builds_reports(candidate, reports):
+
+# What would redirect git away from the repository a report names.
+GIT_REDIRECTS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE",
+                 "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES")
+
+
+def git_out(repo, *argv):
+    """The output of `git -C repo argv` (replacement objects ignored, the
+    environment's repository redirections removed), or None when it
+    fails."""
+    env = {k: v for k, v in os.environ.items() if k not in GIT_REDIRECTS}
+    try:
+        done = subprocess.run(
+            ("git", "--no-replace-objects", "-C", str(repo)) + argv,
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, text=True, env=env)
+    except OSError:
+        return None
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
+def check_build_base(name, pins, base, fallback=None):
+    """The declared build base `base` of the report `name`, verified in
+    the repository the report names (`pins["repo"]`, else `fallback`, the
+    disposition's own): the commit exists there, its only parent is the
+    declared parent (which is the baseline), it differs from the parent in
+    exactly the declared paths, and each of them is the candidate's own
+    (same mode and object)."""
+    declared = BUILD_BASES[base]
+    a.require(declared["parent"] == a.BASE,
+              "the %s build base %s is declared over %s, not the baseline "
+              "%s" % (D7, base, declared["parent"], a.BASE))
+    repos = [r for r in (pins.get("repo"), fallback)
+             if isinstance(r, (str, Path)) and Path(r).is_dir()]
+    a.require(repos, "the %s report %s names build base %s, declared, but "
+              "its repository %s is not readable, so it cannot be "
+              "verified" % (D7, name, base, pins.get("repo")))
+    found = [r for r in repos
+             if git_out(r, "cat-file", "-t", base) == "commit"]
+    a.require(found, "the %s build base %s is not a commit of %s; "
+              "recreate it as PROTOCOL.md, D7 build base, says" % (
+                  D7, base, " or ".join(str(r) for r in repos)))
+    repo = found[0]
+    commits = {}
+    for label, rev in (("parent", declared["parent"]),
+                       ("candidate", pins.get("cand"))):
+        commits[label] = git_out(
+            repo, "rev-parse", "--verify", "--quiet",
+            "%s^{commit}" % rev) if isinstance(rev, str) else None
+        a.require(commits[label],
+                  "the %s build base check of %s: the %s %s is not a "
+                  "commit of %s" % (D7, name, label, rev, repo))
+    raw = (git_out(repo, "cat-file", "commit", base) or "").split("\n\n")[0]
+    parents = [x.split()[1] for x in raw.splitlines()
+               if x.startswith("parent ") and len(x.split()) == 2]
+    a.require(parents == [commits["parent"]],
+              "the %s build base %s has parents %s, not only %s" % (
+                  D7, base, parents, commits["parent"]))
+    changed = (git_out(repo, "diff-tree", "-r", "--no-renames",
+                       "--name-only", commits["parent"], base)
+               or "").splitlines()
+    a.require(sorted(changed) == sorted(declared["paths"]),
+              "the %s build base %s changes %s, not exactly %s" % (
+                  D7, base, sorted(changed), sorted(declared["paths"])))
+    for path in declared["paths"]:
+        mine, theirs = (
+            (git_out(repo, "ls-tree", rev, "--", path) or "").split("\t")[0]
+            for rev in (base, commits["candidate"]))
+        a.require(mine and mine == theirs,
+                  "the %s build base %s has %s as [%s], not the "
+                  "candidate's [%s]" % (D7, base, path, mine, theirs))
+    return dict(commit=base, parent=declared["parent"],
+                paths=list(declared["paths"]), why=declared["why"])
+
+
+def check_builds_reports(candidate, reports, fallback=None):
     """The sealed reports of the D7 receipt are JSON, and every one that
     carries `pins` or a `task37-builds-v1` schema (the build timing and
-    its attribution, `task37-builds-v1-attribution`) names the baseline
-    and the candidate of the receipt (`candidate` may abbreviate its
-    pin); at least one is a build-timing receipt itself."""
+    its attribution, `task37-builds-v1-attribution`) names the candidate
+    of the receipt (`candidate` may abbreviate its pin) and one baseline:
+    a.BASE or one build base of BUILD_BASES (verified, see
+    `check_build_base`; `fallback` is a repository to look in when the
+    report's own has gone), the same in every report; at least one is a
+    build-timing receipt itself. Returns the declaration of the build base
+    timed, or None when it is a.BASE."""
     receipts = 0
+    bases = []
+    build = None
     for report in reports:
         name = Path(report).name
         try:
@@ -1322,21 +1418,32 @@ def check_builds_reports(candidate, reports):
         pins = doc.get("pins")
         a.require(isinstance(pins, dict),
                   "the %s report %s has no pins" % (D7, name))
-        a.require(pins.get("base") == a.BASE,
-                  "the %s report %s measured baseline %s, not %s" % (
-                      D7, name, pins.get("base"), a.BASE))
+        base = pins.get("base")
+        a.require(base == a.BASE or base in BUILD_BASES,
+                  "the %s report %s measured baseline %s, not %s or a "
+                  "declared build base (%s)" % (
+                      D7, name, base, a.BASE, ", ".join(BUILD_BASES)))
+        bases.append((str(Path(report).resolve()), base))
         a.require(same_rev(candidate, pins.get("cand")),
                   "the %s receipt names candidate %s, the build timing %s "
                   "measured %s" % (D7, candidate, name, pins.get("cand")))
+        if base != a.BASE:
+            build = check_build_base(name, pins, base, fallback)
     a.require(receipts, "none of the %s reports is a %s build-timing "
               "receipt" % (D7, BUILDS_SCHEMA))
+    a.require(len({b for _, b in bases}) == 1,
+              "the %s reports name different baselines: %s" % (
+                  D7, ", ".join("%s: %s" % kv for kv in bases)))
+    return build
 
 
 def make_receipt(gate, candidate, status, exit_status, reports=(),
                  attribution=(), note=""):
     """The receipt of the D7 build timing, which is reported and never a
     gate: its status and exit are typed, so the exit must be that of the
-    status, and at least one sealed report must back it."""
+    status, and at least one sealed report must back it. `baseline` is the
+    gate's; a declared build base that was timed instead is recorded as
+    `build_base`."""
     a.require(gate == D7, "a receipt is made for %s only; the other gates "
               "are replayed" % D7)
     a.require(status in RECEIPT_STATUS, "unknown status " + status)
@@ -1344,12 +1451,25 @@ def make_receipt(gate, candidate, status, exit_status, reports=(),
               "exit %d is not that of %s (%d)" % (
                   exit_status, status, EXITS[status]))
     a.require(reports, "a receipt needs at least one sealed --report")
-    check_builds_reports(candidate, reports)
-    return dict(schema=RECEIPT_SCHEMA, gate=gate, candidate=candidate,
+    build = check_builds_reports(candidate, reports)
+    made = dict(schema=RECEIPT_SCHEMA, gate=gate, candidate=candidate,
                 baseline=a.BASE, status=status, exit=exit_status,
                 attribution=list(attribution), note=note,
                 reports=[dict(path=str(Path(p).resolve()),
                               seal=a.seal(Path(p))) for p in reports])
+    if build is not None:
+        made["build_base"] = build
+    return made
+
+
+def same_build_base(recorded, found):
+    """The recorded build base is the one verified: the commit, its parent
+    and its paths (the prose `why` is recorded, not checked)."""
+    if recorded is None or found is None:
+        return recorded is None and found is None
+    return (isinstance(recorded, dict) and
+            all(recorded.get(k) == found[k] for k in ("commit", "parent"))
+            and sorted(recorded.get("paths") or ()) == sorted(found["paths"]))
 
 
 def load_receipt(path, lineage):
@@ -1369,6 +1489,10 @@ def load_receipt(path, lineage):
         a.require(target.is_file() and a.seal(target) == held["seal"],
                   "the %s receipt's report changed or is missing: %s" % (
                       D7, held["path"]))
-    check_builds_reports(doc["candidate"],
-                         [held["path"] for held in doc["reports"]])
+    build = check_builds_reports(
+        doc["candidate"], [held["path"] for held in doc["reports"]],
+        getattr(lineage, "repo", None))
+    a.require(same_build_base(doc.get("build_base"), build),
+              "the %s receipt records build base %s, its reports timed %s"
+              % (D7, doc.get("build_base"), build))
     return dict(doc, seal=a.seal(Path(path)))

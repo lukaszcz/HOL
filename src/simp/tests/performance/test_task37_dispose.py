@@ -1331,6 +1331,12 @@ class Receipt(unittest.TestCase):
         self.report.write_text(json.dumps(dict(
             schema="task37-builds-v1", pins=dict(base=a.BASE, cand=CAND))))
 
+    def test_the_shipped_declaration_names_the_baseline_as_parent(self):
+        for base, declared in gates.BUILD_BASES.items():
+            self.assertEqual(len(base), 40)
+            self.assertEqual(declared["parent"], a.BASE)
+            self.assertTrue(declared["paths"])
+
     def test_only_d7_has_a_receipt_and_it_needs_a_report(self):
         with self.assertRaisesRegex(ValueError, "replayed"):
             gates.make_receipt("startup-gate", CAND, "pass", 0,
@@ -1358,6 +1364,234 @@ class Receipt(unittest.TestCase):
                        str(out), "--report", str(self.report)])
         self.assertEqual(code, 0)
         self.assertEqual(a.load(out)["gate"], gates.D7)
+
+
+class BuildBase(unittest.TestCase):
+    """The declared build base of D7: a tiny repository stands for the
+    baseline's tree (parent), the base (a child that changes exactly the
+    declared path) and the candidate."""
+
+    PATH = "src/mk.ML"
+    OTHER = "src/other.sml"
+
+    def git(self, *argv):
+        env = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null",
+                   GIT_CONFIG_NOSYSTEM="1")
+        return subprocess.run(
+            ("git", "-c", "commit.gpgsign=false", "-c",
+             "core.hooksPath=/dev/null", "-C", str(self.repo)) + argv,
+            check=True, text=True, stdin=subprocess.DEVNULL, env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+        ).stdout.strip()
+
+    def commit(self, files):
+        """A commit of `files` (path to text) over the work tree as it
+        is, its sha."""
+        for path, text in files.items():
+            target = self.repo / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(text)
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "c%d" % self.count)
+        self.count += 1
+        return self.git("rev-parse", "HEAD")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.repo = self.root / "repo"
+        self.repo.mkdir()
+        self.count = 0
+        self.git("init", "-q")
+        self.git("config", "user.email", "t@example.com")
+        self.git("config", "user.name", "t")
+        self.parent = self.commit({self.PATH: "old\n",
+                                   self.OTHER: "x\n"})
+        self.base = self.commit({self.PATH: "fixed\n"})
+        self.cand = self.commit({self.PATH: "fixed\n",
+                                 self.OTHER: "y\n"})
+        patch = mock.patch.object(a, "BASE", self.parent)
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.declare()
+
+    def declare(self, base=None, **over):
+        entry = dict(parent=self.parent, paths=(self.PATH,), why="a test")
+        entry.update(over)
+        patch = mock.patch.object(gates, "BUILD_BASES",
+                                  {base or self.base: entry})
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def report(self, name, base=None, schema="task37-builds-v1",
+               repo=None, folder=None, pinrepo=True):
+        path = (folder or self.root) / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        pins = dict(base=base or self.base, cand=self.cand)
+        if pinrepo:
+            pins["repo"] = str(repo or self.repo)
+        path.write_text(json.dumps(dict(schema=schema, pins=pins)))
+        return path
+
+    def check(self, *reports, **kw):
+        return gates.check_builds_reports(self.cand, reports, **kw)
+
+    def test_declared_base_is_accepted_and_recorded(self):
+        got = self.check(self.report("r.json"),
+                         self.report("at.json", schema="task37-builds-v1-"
+                                     "attribution"))
+        self.assertEqual(got["commit"], self.base)
+        self.assertEqual(got["parent"], self.parent)
+        self.assertEqual(got["paths"], [self.PATH])
+        made = gates.make_receipt(gates.D7, self.cand, "pass", 0,
+                                  [self.report("r.json")])
+        self.assertEqual(made["baseline"], a.BASE)
+        self.assertEqual(made["build_base"], got)
+        out = self.root / "d7.json"
+        a.save(out, made)
+        loaded = gates.load_receipt(out, FakeLineage())
+        self.assertEqual(loaded["build_base"], got)
+        other = self.root / "d7-prose.json"
+        a.save(other, dict(made, build_base=dict(got, why="else")))
+        gates.load_receipt(other, FakeLineage())
+        for bad in (None, dict(got, commit=self.cand),
+                    dict(got, paths=[self.OTHER])):
+            out = self.root / ("d7-%s.json" % self.count)
+            self.count += 1
+            a.save(out, dict(made, build_base=bad))
+            with self.assertRaisesRegex(ValueError, "records build base"):
+                gates.load_receipt(out, FakeLineage())
+
+    def test_the_baseline_itself_records_no_build_base(self):
+        report = self.root / "b.json"
+        report.write_text(json.dumps(dict(
+            schema="task37-builds-v1", pins=dict(base=a.BASE,
+                                                 cand=self.cand))))
+        self.assertIsNone(self.check(report))
+        made = gates.make_receipt(gates.D7, self.cand, "pass", 0, [report])
+        self.assertNotIn("build_base", made)
+
+    def test_the_summary_line_shows_the_build_base(self):
+        build = self.check(self.report("r.json"))
+        record = dict(scope="s", reported=dict(d7_build=dict(
+            status="pass", exit=0, note="n", gate=False,
+            build_base=build)))
+        with mock.patch.object(d, "lines", lambda r: []), \
+                mock.patch.object(d, "verdict", lambda r: "v"):
+            shown = d.summary(record)
+        self.assertIn("timed base " + self.base, shown)
+        self.assertIn(self.PATH, shown)
+
+    def test_a_second_changed_path_is_refused(self):
+        self.git("checkout", "-q", self.parent)
+        base = self.commit({self.PATH: "fixed\n", self.OTHER: "z\n"})
+        self.declare(base=base)
+        with self.assertRaisesRegex(ValueError, "not exactly"):
+            self.check(self.report("r.json", base=base))
+
+    def test_a_wrong_parent_is_refused(self):
+        self.declare(parent=self.cand)
+        with mock.patch.object(a, "BASE", self.cand):
+            with self.assertRaisesRegex(ValueError, "has parents"):
+                self.check(self.report("r.json"))
+
+    def test_a_declared_parent_other_than_the_baseline_is_refused(self):
+        self.declare(parent=self.cand)
+        with self.assertRaisesRegex(ValueError, "not the baseline"):
+            self.check(self.report("r.json"))
+
+    def test_an_extra_parent_is_refused(self):
+        self.git("checkout", "-q", "-b", "side", self.parent)
+        self.commit({"side.txt": "s\n"})
+        self.git("checkout", "-q", "-")
+        self.git("merge", "-q", "--no-ff", "-m", "m", "side")
+        merged = self.git("rev-parse", "HEAD")
+        self.declare(base=merged, parent=self.cand, paths=("side.txt",))
+        with mock.patch.object(a, "BASE", self.cand):
+            with self.assertRaisesRegex(ValueError, "has parents"):
+                self.check(self.report("r.json", base=merged))
+
+    def test_content_unlike_the_candidates_is_refused(self):
+        self.git("checkout", "-q", self.parent)
+        base = self.commit({self.PATH: "other fix\n"})
+        self.declare(base=base)
+        with self.assertRaisesRegex(ValueError, "not the candidate's"):
+            self.check(self.report("r.json", base=base))
+
+    def test_a_path_the_candidate_lacks_is_refused(self):
+        self.declare(paths=(self.PATH,))
+        self.git("checkout", "-q", self.parent)
+        self.git("rm", "-q", self.PATH)
+        self.git("commit", "-q", "-m", "rm")
+        cand = self.git("rev-parse", "HEAD")
+        report = self.report("r.json")
+        doc = json.loads(report.read_text())
+        doc["pins"]["cand"] = cand
+        report.write_text(json.dumps(doc))
+        with self.assertRaisesRegex(ValueError, "not the candidate's"):
+            gates.check_builds_reports(cand, [report])
+
+    def test_a_rename_is_two_changed_paths(self):
+        self.git("checkout", "-q", self.parent)
+        self.git("mv", self.PATH, "src/moved.ML")
+        self.git("commit", "-q", "-m", "mv")
+        base = self.git("rev-parse", "HEAD")
+        self.declare(base=base, paths=("src/moved.ML",))
+        with self.assertRaisesRegex(ValueError, "not exactly"):
+            self.check(self.report("r.json", base=base))
+
+    def test_an_undeclared_base_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "measured baseline"):
+            self.check(self.report("r.json", base=self.cand))
+
+    def test_two_reports_of_different_bases_are_refused(self):
+        plain = self.root / "b.json"
+        plain.write_text(json.dumps(dict(
+            schema="task37-builds-v1-attribution",
+            pins=dict(base=a.BASE, cand=self.cand))))
+        with self.assertRaisesRegex(ValueError, "different baselines"):
+            self.check(self.report("r.json"), plain)
+
+    def test_same_named_reports_of_different_bases_are_refused(self):
+        plain = self.root / "one" / "receipt.json"
+        plain.parent.mkdir()
+        plain.write_text(json.dumps(dict(
+            schema="task37-builds-v1",
+            pins=dict(base=a.BASE, cand=self.cand))))
+        mine = self.report("receipt.json", folder=self.root / "two")
+        for order in ((plain, mine), (mine, plain)):
+            with self.assertRaisesRegex(ValueError,
+                                        "different baselines.*one/rec"):
+                self.check(*order)
+
+    def test_an_unreadable_repository_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "not readable"):
+            self.check(self.report("r.json", repo=self.root / "none"))
+        with self.assertRaisesRegex(ValueError, "not a commit.*PROTOCOL"):
+            self.check(self.report("r.json", repo=self.root))
+
+    def test_a_report_without_a_repository_needs_the_fallback(self):
+        report = self.report("r.json", pinrepo=False)
+        with self.assertRaisesRegex(ValueError, "not readable"):
+            self.check(report)
+        got = self.check(report, fallback=self.repo)
+        self.assertEqual(got["commit"], self.base)
+
+    def test_the_lineage_repository_is_a_fallback(self):
+        made = gates.make_receipt(gates.D7, self.cand, "pass", 0,
+                                  [self.report("r.json")])
+        out = self.root / "d7.json"
+        a.save(out, made)
+        gone = self.report("g.json", repo=self.root / "none")
+        a.save(self.root / "d7g.json", dict(
+            made, reports=[dict(path=str(gone), seal=a.seal(gone))]))
+        lineage = FakeLineage()
+        with self.assertRaisesRegex(ValueError, "not readable"):
+            gates.load_receipt(self.root / "d7g.json", lineage)
+        lineage.repo = self.repo
+        got = gates.load_receipt(self.root / "d7g.json", lineage)
+        self.assertEqual(got["build_base"]["commit"], self.base)
 
 
 class Derive(unittest.TestCase):
