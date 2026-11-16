@@ -37,35 +37,31 @@ sig
   include Abbrev
   type controlled_thm = BoundedRewrites.controlled_thm
   val ac_term_ord    : term * term -> order
-
-  (* Whether an equation is permutative: its two sides are the same term
-     up to where the variables sit, and they carry the same variables.
-     This is the test COND_REWR_CONV applies before refusing a rewrite
-     that a term ordering does not take downwards. *)
-  val is_var_perm    : term * term -> bool
   val mk_cond_rewrs  : controlled_thm -> controlled_thm list
   val IMP_EQ_CANON   : controlled_thm -> controlled_thm list
   val COND_REWR_CONV : string * thm -> bool ->
                        (term list -> term -> thm) -> term list -> conv
 
-  (* As COND_REWR_CONV, but with the side-condition depth and the
-     permutative term order supplied by the caller rather than taken from
-     the user-level defaults.  This is the form a Traverse.CONTEXT_REDUCER
-     can hand its traversal's own settings to; COND_REWR_CONV is this one
-     at cond_depth = !stack_limit and term_ord = ac_term_ord. *)
-  val COND_REWR_CONV_WITH_CONTEXT :
-                       string * thm -> bool ->
-                       {solver : term list -> term -> thm,
-                        stack : term list,
-                        cond_depth : int,
-                        term_ord : term * term -> order} -> conv
+  (* COND_REWR_CONV's matcher, prepared once, behind two runners.  legacy
+     is COND_REWR_CONV.  configured takes the side-condition depth (NONE:
+     read stack_limit at each application) and the order deciding whether
+     a permutative rewrite applies. *)
+  type config =
+    {solver : term list -> term -> thm, stack : term list,
+     cond_depth : int option, term_ord : term * term -> order}
+  type runners =
+    {legacy : (term list -> term -> thm) -> term list -> conv,
+     configured : config -> conv}
+  val COND_REWR_CONVS : string * thm -> bool -> runners
+  val is_var_perm : term * term -> bool
   val QUANTIFY_CONDITIONS : controlled_thm -> controlled_thm list
-
-  (* The user-level default for the side-condition depth.  It applies to
-     every traversal whose simpset does not configure the depth. *)
   val stack_limit : int ref
 
   (* run something, and report which rewrites fired while it ran *)
   val with_tracking : ('a -> 'b) -> 'a -> 'b * thm list
+
+  (* report a fired rewrite to the current tracking extent, if any;
+     used by the extension engine so both share one extent *)
+  val note_rewrite : thm -> unit
 
 end

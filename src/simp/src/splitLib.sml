@@ -80,7 +80,7 @@ fun split_thm_name th =
        theory that sees it, while [DB.Local] is only the current theory's
        name for a theorem it has not exported -- so a local alias of a
        stored theorem is the name no caller writes.  The name goes into
-       the looper display [del_split] and an [Excl] marker match, so
+       the looper display [del_split] and an [ExclX] marker match, so
        taking the alias would answer a retraction written against the
        stored name with no match at all. *)
     case stored locations of
@@ -104,38 +104,12 @@ fun split_thm_name th =
                  end)
   end
 
-(* A REMOVE delta carries a table key and is applied as it stands.  This
-   is the path every descendant theory's replay takes, so resolving an
-   unqualified name against the loading theory would make one delta
-   designate a different entry in every theory below it; a retraction
-   has to be resolved where it is written, as [ThmSetData.toKName] and
-   [KernelSig.name_toString] do for a caller that has the writing
-   theory current. *)
-fun apply_split_delta delta db =
-  case delta of
-      ThmSetData.ADD (name, th) =>
-        let val _ = is_asm_split th
-        in Symtab.update (persistent_name name, th) db
-        end
-    | ThmSetData.REMOVE key => Symtab.delete_safe key db
-
-val _ =
-  if List.exists (equal "split") (ThmSetData.all_set_types ()) orelse
-     ThmAttribute.is_attribute "split"
-  then raise ERR "registration" "settype or attribute split already exists"
-  else ()
-
-val split_data =
-  ThmSetData.export_with_ancestry
-    {settype="split",
-     delta_ops=
-       {apply_to_global=apply_split_delta,
-        thy_finaliser=NONE,
-        uptodate_delta=K true,
-        initial_value=Symtab.empty,
-        apply_delta=apply_split_delta}}
-
-fun named_split_thms () = Symtab.dest (#get_global_value split_data ())
+(* Persistence owns its decoder, attribute and dispatcher entirely within
+   src/simp; the split algorithms only supply rule validation. *)
+fun enable_split_attribute () =
+  SplitData.initialize {validate=ignore o is_asm_split}
+val exclude_split = SplitData.exclude
+val named_split_thms = SplitData.named_rules
 fun split_thms () = map #2 (named_split_thms ())
 
 (* Turn a conclusion split rule [!P. P (c ...) = ...] into the rule for a
@@ -399,7 +373,7 @@ fun candidates want_asm cmap head =
       then rules @ acc
       else acc
   in
-    foldr add [] (Symtab.lookup_list cmap (head_key head))
+    List.foldr add [] (Symtab.lookup_list cmap (head_key head))
   end
 
 (* Reach argument [i] of an [n]-ary application: strip the later arguments

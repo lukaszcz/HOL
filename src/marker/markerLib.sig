@@ -20,15 +20,8 @@ sig
   val AC     : thm -> thm -> thm
   val unAC   : thm -> thm * thm
 
-  val Cong      : thm -> thm
-  val unCong    : thm -> thm
-  val Split     : thm -> thm
-  val destSplit : thm -> thm
-
-  val genmktagged : thm -> string -> thm
-  val gendest_tagged : term -> thm -> string option
-  val genCong : thm -> thm -> thm
-  val genUnCong : term -> thm -> thm -> thm option
+  val Cong   : thm -> thm
+  val unCong : thm -> thm
 
   val Excl   : string -> thm
   val destExcl : thm -> string option
@@ -53,7 +46,6 @@ sig
   datatype directive =
       DAC of thm * thm
     | DCong of thm
-    | DSplit of thm
     | DExcl of string
     | DExclSF of string
     | DFRAG of string
@@ -66,8 +58,6 @@ sig
     | DLabel of string
   val dest_directive : thm -> directive option
   val is_directive   : thm -> bool
-  (* The payload under any Req0, ReqD and bound wrappers. *)
-  val strip_wrappers : thm -> thm
 
   val ABB                 : term -> term -> tactic
   val ABB'                : {redex : term, residue : term} -> tactic
@@ -138,9 +128,6 @@ sig
   val NoAsms : thm
 
   val process_taclist_then : {arg: thm list} -> (thm list -> tactic) -> tactic
-  val process_taclist_then_recur :
-    {arg: thm list} ->
-    (((thm list -> tactic) -> tactic) -> thm list -> tactic) -> tactic
 
   val suspend : string -> tactic
   val prim_resume : (thm * string * tactic) -> {updated_main: thm, subresult:thm}
@@ -165,6 +152,8 @@ sig
   val resumption_to_goal : (int * term) list -> (term list * term)
   val extract_suspended_goal : thm list -> string -> (int * term) list
   val RESUME_TAC : tactic
+
+  val PAT_ABBREV_TAC_match_var_const : HOLFlags.bflag
 
 end (* sig *)
 

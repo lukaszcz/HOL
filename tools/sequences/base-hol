@@ -49,6 +49,9 @@ src/datatype
 !src/datatype/theory_tests
 src/monad
 src/list/src
+# Full native simplifier coverage needs the option/list exports, not just
+# the bootstrap bool cases available when src/simp/src is first built.
+!src/simp/tests/native-extension
 src/quantHeuristics
 src/pattern_matches
 !src/pattern_matches/interactive_tests
@@ -59,6 +62,7 @@ src/boss
 # Up to this point is needed for hol (which loads bossLib).
 # (Maybe unwind could be omitted).
 [poly]bin/hol
+[poly]!tools/Holmake/tests/theory_modules
 src/statementdossier
 
 # The LSP tests are not here: they are INCLUDES of

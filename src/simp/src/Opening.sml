@@ -153,12 +153,16 @@ fun beta_reduce_rebuilt nconds abstraction thm =
 
 (* ---------------------------------------------------------------------
  * CONGPROC : REFL -> congrule -> congproc
+ * THREADED_CONGPROC : REFL -> congrule -> congproc
  *
+ * The threaded variant also lets an antecedent state an intermediate
+ * result that a later antecedent consumes, and beta-reduces the rebuilt
+ * term (see beta_reduce_rebuilt).
  * ---------------------------------------------------------------------*)
 
 val equality = boolSyntax.equality
 
-fun CONGPROC refl congrule =
+fun GEN_CONGPROC threaded refl congrule =
 let
 
    (* this discharges each antecedent of the congruence rule.  Each
@@ -193,22 +197,29 @@ let
       term only where it is an operator or sits inside the arguments of a
       non-constant operator (a matched variable may become an abstraction
       that applies it); a variable renamed by the matcher is not a rule
-      variable and is always reduced. *)
-   fun applicable tm acc =
-       case dest_term tm of
-           COMB _ =>
-             let val (f,args) = strip_comb tm
-             in
-               if is_const f then itlist applicable args acc
-               else map (#1 o dest_var) (free_vars tm) @ acc
-             end
-         | LAMB (_,b) => applicable b acc
-         | _ => acc
-   val applied_names = applicable (rand conc) []
-   val var_names = map (#1 o dest_var) vars
-   fun may_leave_redex genv =
-       let val name = #1 (dest_var genv)
-       in not (mem name var_names) orelse mem name applied_names end
+      variable and is always reduced.  Only threaded construction
+      reduces. *)
+   val may_leave_redex =
+       if not threaded then K false
+       else
+       let
+           fun applicable tm acc =
+               case dest_term tm of
+                   COMB _ =>
+                     let val (f,args) = strip_comb tm
+                     in
+                       if is_const f then itlist applicable args acc
+                       else map (#1 o dest_var) (free_vars tm) @ acc
+                     end
+                 | LAMB (_,b) => applicable b acc
+                 | _ => acc
+           val applied_names = applicable (rand conc) []
+           val var_names = map (#1 o dest_var) vars
+         in
+           fn genv =>
+             let val name = #1 (dest_var genv)
+             in not (mem name var_names) orelse mem name applied_names end
+       end
 
 in fn relation =>
   if not (samerel rel relation) andalso not (same_const rel relation) then
@@ -221,27 +232,35 @@ in fn relation =>
     val match_thm = matcher (mk_comb(relation',tm))
     val _ = trace(3,OPENING(tm,match_thm))
     val (_,conc) = strip_n_imp nconds (concl match_thm)
-    (* Every rule variable the match did not determine is a result the
-       traversal has to supply, whether the conclusion names it or a
-       later antecedent does.  Reading them off the conclusion alone
-       would call an antecedent that states an intermediate result --
-       the rebuilt form a further antecedent consumes -- a side
+    (* The results the traversal has to supply.  Ordinarily these are the
+       genvars of the right-hand side.  Threaded: every rule variable the
+       match did not determine is a result, whether the conclusion names
+       it or a later antecedent does.  Reading them off the conclusion
+       alone would call an antecedent that states an intermediate result
+       -- the rebuilt form a further antecedent consumes -- a side
        condition, and hand a term with an unknown in it to the solver.
        The right-hand side answers the usual case cheaply; the whole
-       conclusion, which holds the traversed term, is scanned at most once
-       and only for a genvar the right-hand side lacks. *)
+       conclusion, which holds the traversed term, is scanned at most
+       once and only for a genvar the right-hand side lacks. *)
     val rhs_genvars = filter is_genvar (free_vars (rand conc))
-    val all_genvars = ref NONE
-    fun conclusion_genvars () =
-        case !all_genvars of
-            SOME gvs => gvs
-          | NONE =>
-              let val gvs = filter is_genvar (free_vars (concl match_thm))
-              in all_genvars := SOME gvs; gvs end
-    fun is_result v =
-        is_genvar v andalso
-        (op_mem aconv v rhs_genvars orelse
-         op_mem aconv v (conclusion_genvars ()))
+    val is_result =
+        if not threaded then (fn v => op_mem aconv v rhs_genvars)
+        else
+        let
+            val all_genvars = ref NONE
+            fun conclusion_genvars () =
+                case !all_genvars of
+                    SOME gvs => gvs
+                  | NONE =>
+                      let
+                        val gvs = filter is_genvar
+                                         (free_vars (concl match_thm))
+                      in all_genvars := SOME gvs; gvs end
+          in
+            fn v => is_genvar v andalso
+                    (op_mem aconv v rhs_genvars orelse
+                     op_mem aconv v (conclusion_genvars ()))
+        end
 
     (* this function does all the work of solving the side conditions
        one by one.  The integer is the number of side conditions
@@ -337,6 +356,9 @@ in fn relation =>
     else (trace(3,PRODUCE(tm,"congruence rule",final_thm)); final_thm)
   end
 end;
+
+val CONGPROC = GEN_CONGPROC false
+val THREADED_CONGPROC = GEN_CONGPROC true
 
 
 (* ---------------------------------------------------------------------

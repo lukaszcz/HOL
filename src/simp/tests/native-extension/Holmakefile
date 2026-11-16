@@ -1,0 +1,21 @@
+HOLHEAP = $(HOLDIR)/bin/hol.state0
+INCLUDES = ../../src
+EXTRA_CLEANS = selftest.exe
+
+all: selftest.exe
+.PHONY: all
+
+selftest.exe: selftest.uo
+	$(HOLMOSMLC) -o $@ $<
+
+# Integration suite of the extension engine; it imports both engines, so it
+# is never linked into the ordinary selftest.
+.PHONY: check
+check: selftest.exe
+	./selftest.exe
+
+# tools/sequences/base-hol also runs this directory after list/src, when the
+# option/pair/list cases that an earlier run skips are available.
+ifdef HOLSELFTESTLEVEL
+all: check
+endif
