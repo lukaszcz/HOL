@@ -2,13 +2,12 @@
 signature WordCancelLiteral =
 sig
   type classification = {negative:bool,minimum:bool}
-  (* Optional metadata for live, canonical numeric widths 1..32 and bounded
-     n2w/negation/subtraction expressions. NONE selects the existing worker. *)
+  (* Sign and word_L tests for live, canonical numeric widths 1..32 and
+     bounded n2w/negation/subtraction expressions, computed without
+     evaluation.  NONE leaves the test to wordsLib's evaluation. *)
   val classify : Term.term -> classification option
-  (* Separate copy of wordsLib's WORD_CANCEL_CONV/WORD_CANCEL_ss that routes
-     coefficients through classify before the original evaluation-based
-     tests. It returns the same theorems; the wordsLib originals are
-     unchanged. *)
+  (* wordsLib's WORD_CANCEL_CONV/WORD_CANCEL_ss with classify; same
+     theorems. *)
   val WORD_CANCEL_CONV : Conv.conv
   val WORD_CANCEL_ss : simpLib.ssfrag
   (* blastLib's word normalizer with WORD_CANCEL_ss above; same theorems. *)
