@@ -189,6 +189,69 @@ struct
         (simpLib.frag_rewrites fragment)))
       (simpLib.ssfrags_of numLib.std_ss)))
 
+  (* The simpset's source rewrites, fragment by fragment, with zero-based
+     source slots. The predicate tests a canonical rewrite's one-based
+     suffix against deletions AFTER this particular addition; NONE means
+     all suffixes survive. Read-only: no canonicalization is performed. *)
+  fun rewrite_sources ss =
+    let
+      (* Decode each successful deletion event once. The event was already
+         validated by simpLib.-*; its theory qualification must not depend
+         on a later ancestry change. *)
+      fun pattern key =
+          case String.fields (Lib.equal #".") key of
+              [_] => (NONE,key)
+            | [a,b] => if CharVector.all Char.isDigit b then (NONE,key)
+                       else (SOME a,b)
+            | [a,b,c] => (SOME a,b ^ "." ^ c)
+            | _ => raise ERR "rewrite_sources" "invalid deletion event"
+      fun tail key =
+          let val last = List.last (String.fields (Lib.equal #".") key)
+          in if size last > 0 andalso CharVector.all Char.isDigit last
+             then SOME last else NONE end
+      fun sources [] _ _ = []
+        | sources (simpLib.DELETE_EVENT names :: rest) deleted suffixes =
+            sources rest (map pattern names @ deleted)
+              (List.mapPartial tail names @ suffixes)
+        | sources (simpLib.ADDWEAKENER _ :: rest) deleted suffixes =
+            sources rest deleted suffixes
+        | sources (simpLib.ADDFRAG frag :: rest) deleted suffixes =
+            let
+              fun source (rank,(name,th)) =
+                  let
+                    fun active suffix = null deleted orelse
+                        let
+                          val (thypart,base) = case name of
+                              NONE => (NONE,"<anonymous>")
+                            | SOME {Thy,Name} => (SOME Thy,Name ^ suffix)
+                        in not (simpCommon.entry_name_match
+                                  (thypart,"rewrite:" ^ base) deleted) end
+                    (* Named entries ALWAYS have a generated suffix. Only
+                       a prefix covering every child can remove the source
+                       before canonicalization. In particular, the accepted
+                       key "rewrite:name" matches no child of "name". *)
+                    val removed = case name of
+                        NONE => not (active "")
+                      | SOME {Thy,Name} => List.exists (fn (thy,base) =>
+                          (thy = NONE orelse thy = SOME Thy) andalso
+                          String.isPrefix ("rewrite:" ^ base ^ ".")
+                            ("rewrite:" ^ Name ^ ".")) deleted
+                    val selective = List.exists
+                      (fn suffix => not (active ("." ^ suffix))) suffixes
+                  in if not removed then
+                       SOME (rank,th,if selective then
+                         SOME (fn n => active ("." ^ Int.toString n))
+                         else NONE)
+                     else NONE end
+              val rewrs = #rewrs (simpLib.dest_ssfrag frag)
+              val numbered = ListPair.zip
+                (List.tabulate (length rewrs,Lib.I),rewrs)
+            in (frag,List.mapPartial source numbered) ::
+               sources rest deleted suffixes end
+      (* dest_simpset lists oldest first; walk newest first so each
+         addition sees only the deletions made after it *)
+    in sources (rev (#history (simpLib.dest_simpset ss))) [] [] end
+
   fun index_sources (fragment,sources) =
     let
       val index = case List.find (fn (saved,_) =>
@@ -371,7 +434,7 @@ struct
       | NONE => fresh_indices current
     end
   and fresh_indices current =
-    let val indices = List.map index_sources (simpLib.rewrite_sources current)
+    let val indices = List.map index_sources (rewrite_sources current)
         val _ = exported_indices := SOME (current,indices)
     in indices end
 
