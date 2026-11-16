@@ -1,6 +1,6 @@
 open HolKernel Parse boolLib testutils HolSatLib
 
-val _ = set_trace "Unicode" 0
+val _ = HOLFlags.set_bflag (Parse.avoid_unicode, true)
 
 (* These callbacks never run a SAT executable.  In particular, failures in
    command construction must get the same cleanup as solver/replay failures. *)
@@ -446,10 +446,9 @@ local
   val _ = control "binary cache: future uses and final result survive"
     (fn () =>
       let
-        val saved_profile = !minisatResolve.sat_profile
-        val result = Exn.capture (fn () =>
+        val result = Exn.capture (HOLFlags.with_bflags
+          [(minisatResolve.sat_profile_flag, true)] (fn () =>
           let
-            val _ = minisatResolve.sat_profile := true
             (* Exercise both streaming small files and buffered large
                files. Deletions neither consume IDs nor revoke facts. *)
             val padding = List.concat
@@ -463,8 +462,7 @@ local
                   (fn (name,n) => name="last-use-releases" andalso n>0)
                   (minisatResolve.get_replay_counts ())
               in valid andalso released end
-          in List.all retained [[],padding] end) ()
-        val _ = minisatResolve.sat_profile := saved_profile
+          in List.all retained [[],padding] end)) ()
       in Exn.release result end)
 
   val _ = control "binary metadata preserves the first replay exception"

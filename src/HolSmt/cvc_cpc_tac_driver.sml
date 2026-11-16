@@ -83,7 +83,7 @@ fun cvc_cpc_goal queries =
 
 fun cvc_cpc_run path expected_logic =
   let
-    val _ = Library.trace := 0
+    val _ = HOLFlags.set_flag (Library.trace_flag, 0)
     val (state, scoped_parse_error) =
       (SmtLib_Parser.parse_file_state_with_options
          {dict_logic = NONE, solver = SOME "cvc5",

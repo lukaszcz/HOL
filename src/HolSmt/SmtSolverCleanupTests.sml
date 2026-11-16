@@ -250,7 +250,7 @@ struct
            else if stage="output" andalso propagates then
              !observations=["input","output"] andalso !posts=0
            else !observations=["input","output"] andalso !posts=1) end
-    in Lib.with_flag (Library.trace,0) (fn () =>
+    in HOLFlags.with_flags [(Library.trace_flag,0)] (fn () =>
       List.app (fn strict => List.app (fn stage =>
         List.app (one strict stage) (primaries ()))
         ["writer","input","output","post","validate"]) [false,true]) () end

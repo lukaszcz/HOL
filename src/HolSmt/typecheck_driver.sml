@@ -65,7 +65,7 @@ fun typecheck_query_fragment_terms queries =
 
 fun typecheck_ok path expected_logic elaborate_datatypes =
 let
-  val _ = Library.trace := 0
+  val _ = HOLFlags.set_flag (Library.trace_flag, 0)
   val state: SmtLib_Parser.command_state_snapshot =
     SmtLib_Parser.parse_file_state_with_options
       {dict_logic = NONE, solver = NONE,

@@ -453,7 +453,7 @@ fun z3_tac_checked_result goal =
 
 fun z3_tac_ok_snapshot path expected_logic =
 let
-  val _ = Library.trace := 0
+  val _ = HOLFlags.set_flag (Library.trace_flag, 0)
   val script_diagnostic = z3_tac_script_diagnostic path
   val _ =
     case script_diagnostic of

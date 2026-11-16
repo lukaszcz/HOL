@@ -34,16 +34,17 @@ struct
          models, proofs)
      4 - moreover, temporary files (for communication with the SMT solver) are
          not removed after solver invocation *)
-  val trace = ref 2
-
-  val _ = Feedback.register_trace ("HolSmtLib", trace, 4)
+  val {get = trace, flag = trace_flag, ...} =
+      HOLFlags.create_trace ({group = "HolSmtLib", name = "trace"},
+                             {initial = 2, max = 4})
 
   (* HolSmt's replay support contains a handful of precomputed theorems.
      They are built while the library is loaded, which can happen before a
      client has opened a theory (notably when running the HolSmt selftests).
      Give those declaration-time proofs an explicit, otherwise unchanged
-     context.  Keeping the trace bracket here also prevents an implementation
-     detail of the checked replay path from leaking into a client's transcript.
+     context.  Keeping the Metis trace bracket here also prevents an
+     implementation detail of the checked replay path from leaking into a
+     client's transcript.
      Calls made while a theory is active retain that theory in the snapshot. *)
   fun proof_context () =
     let
@@ -61,8 +62,7 @@ struct
     end
 
   fun prove (tm, tac) =
-    Feedback.with_traces
-      [("metis", 0), ("ambient context inside proof", 0)]
+    HOLFlags.with_flags [(metisTools.metis_trace, 0)]
       (fn () => Feedback.quiet_messages
         (fn () => Tactical.prove_in (proof_context ()) (tm, tac)) ()) ()
 
@@ -236,7 +236,7 @@ struct
       ()
     else
       (warned_solver_versions := key :: !warned_solver_versions;
-       if !trace > 0 then
+       if trace () > 0 then
          Feedback.HOL_WARNING "Library" "resolve_solver_version" message
        else ())
 
@@ -376,7 +376,7 @@ struct
             SOME token => (buffer := NONE; token)
           | NONE => aux [] (get_char ())
       in
-        if !trace > 3 then
+        if trace() > 3 then
           Feedback.HOL_MESG ("HolSmtLib: next token is '" ^ token ^ "'")
         else ();
         token
@@ -487,7 +487,7 @@ struct
     fun hyps_to_string hyps =
       String.concatWith ", " (List.map term_to_string hyps)
     val hyps_contents =
-      if !Globals.show_assums then
+      if HOLFlags.get_bflag Parse.show_assums then
         hyps_to_string (Thm.hyp thm)
       else
         "."

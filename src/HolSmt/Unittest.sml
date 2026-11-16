@@ -104,7 +104,7 @@ in
 end
 
 fun term_with_types t =
-  Lib.with_flag (show_types, true) Hol_pp.term_to_string t
+  HOLFlags.with_bflags [(Parse.show_types, true)] Hol_pp.term_to_string t
 
 fun string_get_char text =
 let
@@ -31265,21 +31265,21 @@ fun yices_tac_is_fail_closed_without_reconstruction () =
 fun cvc_replay_suppresses_tool_chatter () =
 let
   exception ReplayFailure
-  val old_metis = Feedback.current_trace "metis"
+  val old_metis = HOLFlags.get_flag metisTools.metis_trace
   val old_grobner = !Grobner.verbose
   fun restore () =
-    (Feedback.set_trace "metis" old_metis;
+    (HOLFlags.set_flag (metisTools.metis_trace, old_metis);
      Grobner.verbose := old_grobner)
   fun run () =
     let
-      val () = Feedback.set_trace "metis" 3
+      val () = HOLFlags.set_flag (metisTools.metis_trace, 3)
       val () = Grobner.verbose := true
       val (metis_during, grobner_during) = CVC.quiet_replay
         (fn () =>
-          (Feedback.current_trace "metis", !Grobner.verbose)) ()
+          (HOLFlags.get_flag metisTools.metis_trace, !Grobner.verbose)) ()
       val () = assert (metis_during = 0 andalso not grobner_during,
         "CVC replay did not suppress Metis and Grobner chatter")
-      val () = assert (Feedback.current_trace "metis" = 3 andalso
+      val () = assert (HOLFlags.get_flag metisTools.metis_trace = 3 andalso
                        !Grobner.verbose,
         "CVC replay did not restore chatter settings after success")
       val () =
@@ -31287,7 +31287,7 @@ let
           die "FAIL: quiet CVC replay swallowed an exception")
          handle ReplayFailure => ())
     in
-      assert (Feedback.current_trace "metis" = 3 andalso
+      assert (HOLFlags.get_flag metisTools.metis_trace = 3 andalso
               !Grobner.verbose,
         "CVC replay did not restore chatter settings after an exception")
     end
@@ -36790,7 +36790,9 @@ fun cpc_complete_resolution_obligation_success () =
        ":premises (@a @np @unused) :args (" ^ destination ^
        " (@list true true) (@list p s))))")
     val _ = Profile.reset_all ()
-    val theorem = Feedback.trace ("CPC_resolution_profile", 1)
+    val theorem =
+      HOLFlags.with_bflags
+        [(CPC_ProofReplay.resolution_profile_flag, true)]
       CPC_ProofReplay.replay_root_for_test (proof "(or q r)")
     val _ = assert (Thm.concl theorem ~~ ``q \/ r``,
       "complete resolution obligation changed its recorded target")
@@ -36805,7 +36807,9 @@ fun cpc_complete_resolution_obligation_success () =
        "complete Boolean obligation entered normalization or deep alignment")
     val _ = check_oracle_tags "CPC complete resolution obligation" theorem
     val _ = Profile.reset_all ()
-    val nested = Feedback.trace ("CPC_resolution_profile", 1)
+    val nested =
+      HOLFlags.with_bflags
+        [(CPC_ProofReplay.resolution_profile_flag, true)]
       CPC_ProofReplay.replay_root_for_test
       (parse_cpc_proof_string
         "((declare-const p Bool) (declare-const q Bool) \

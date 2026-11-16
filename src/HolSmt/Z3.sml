@@ -357,7 +357,7 @@ structure Z3 = struct
        "underlying HOL_ERR: " ^ hol_err_string holerr)
 
   fun quiet f =
-    Feedback.trace ("metis", 0)
+    HOLFlags.with_flags [(metisTools.metis_trace, 0)]
       (fn () =>
         Feedback.quiet_messages
           (fn () => Feedback.quiet_warnings (fn () => f ()) ()) ()) ()
@@ -510,11 +510,11 @@ structure Z3 = struct
                   SolverSpec.UNSAT NONE =>
                   let
                     val (As, g) = goal
-                    val _ = if !Library.trace > 1 then
+                    val _ = if Library.trace () > 1 then
                         Feedback.HOL_MESG "HolSmtLib: parsing Z3 proof"
                       else ()
                     val proof = quiet (fn () => parse_proof proof_start)
-                    val _ = if !Library.trace > 1 then
+                    val _ = if Library.trace () > 1 then
                         Feedback.HOL_MESG "HolSmtLib: checking Z3 proof"
                       else ()
                     val thm = quiet (fn () =>

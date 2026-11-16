@@ -331,10 +331,10 @@ structure CVC = struct
      suppressed inside the checked solver boundary. *)
   fun quiet_replay replay input =
     Lib.with_flag (Grobner.verbose, false)
-      (Feedback.trace ("metis", 0) replay) input
+      (HOLFlags.with_flags [(metisTools.metis_trace, 0)] replay) input
 
   fun quiet f =
-    Feedback.trace ("metis", 0)
+    HOLFlags.with_flags [(metisTools.metis_trace, 0)]
       (fn () =>
         Feedback.quiet_messages
           (fn () => Feedback.quiet_warnings (fn () => f ()) ()) ()) ()
@@ -352,7 +352,7 @@ structure CVC = struct
               let
                 val dicts = quiet (fn () =>
                   SmtLib.parser_dicts_for_solver_translation "cvc5" translation)
-                val _ = if !Library.trace > 1 then
+                val _ = if Library.trace () > 1 then
                     Feedback.HOL_MESG "HolSmtLib: parsing CVC proof"
                   else ()
                 val proof = quiet (fn () =>
@@ -377,7 +377,7 @@ structure CVC = struct
         SOME proof =>
         let
           val (As, g) = goal
-          val _ = if !Library.trace > 1 then
+          val _ = if Library.trace () > 1 then
               Feedback.HOL_MESG "HolSmtLib: checking CVC proof"
             else ()
           val replay_checked = fn () =>

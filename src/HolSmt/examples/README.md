@@ -140,14 +140,14 @@ Tracing is helpful when a supported-looking term is translated as an
 uninterpreted symbol or a solver rejects the generated query:
 
 ```sml
-val _ = Feedback.set_trace "HolSmtLib" 4;
+val _ = HOLFlags.set_trace "HolSmtLib.trace" 4;
 ```
 
 Higher levels show more translation detail and temporary file names.  Reset
 the trace after debugging:
 
 ```sml
-val _ = Feedback.reset_trace "HolSmtLib";
+val _ = HOLFlags.reset_trace "HolSmtLib.trace";
 ```
 
 The authoritative operator-by-operator support contract is the coverage

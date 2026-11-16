@@ -8187,7 +8187,7 @@ in
       : command_state_snapshot =
   let
     (* parse the file contents *)
-    val _ = if !Library.trace > 1 then
+    val _ = if Library.trace() > 1 then
         Feedback.HOL_MESG
           ("HolSmtLib: parsing SMT-LIB 2 benchmark file '" ^ path ^ "'" ^
            (case dict_logic of

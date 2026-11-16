@@ -70,16 +70,17 @@ local
 
   (* Opt-in diagnostics.  Timers include exceptional exits and never select
      a proof route.  The command loop can enable them for a step interval. *)
-  val resolution_profile_enabled = ref false
-  val _ = Feedback.register_btrace
-    ("CPC_resolution_profile", resolution_profile_enabled)
+  val {get = resolution_profile_enabled,
+       flag = resolution_profile_flag, ...} =
+    HOLFlags.create_btrace
+      ({group = "CPC", name = "resolution_profile"}, false)
   val resolution_profile_counts = ref ([] : (string * int) list)
   fun resolution_profile name action input =
-    if !resolution_profile_enabled then
+    if resolution_profile_enabled () then
       profile ("CPC(resolution-detail:" ^ name ^ ")") action input
     else action input
   fun resolution_count name amount =
-    if not (!resolution_profile_enabled) then ()
+    if not (resolution_profile_enabled ()) then ()
     else
       let
         fun add [] = [(name, amount)]
@@ -13305,7 +13306,7 @@ local
       val root = #circuit graph
         (boolSyntax.mk_imp (source, destination))
       val definitions = #definitions graph ()
-      val _ = if not (!resolution_profile_enabled) then () else
+      val _ = if not (resolution_profile_enabled ()) then () else
         let val {nodes, leaves} = #counts graph () in
           resolution_count "tseitin/nodes" nodes;
           resolution_count "tseitin/leaves" leaves;
@@ -14650,7 +14651,7 @@ local
           fun semantic_tseitin_with procedure destination theorem =
             let
               val source = Thm.concl theorem
-              val _ = if not (!resolution_profile_enabled) then ()
+              val _ = if not (resolution_profile_enabled ()) then ()
                 else
                   let val source = Thm.concl theorem in
                     resolution_count "tseitin/attempts" 1;
@@ -22176,8 +22177,9 @@ local
                 (replay_step strong_canon state) step
             in
               if selected then
-                Feedback.trace ("CPC_resolution_profile", 1)
-                  (Feedback.trace ("HolSatLib_profile", 1) work) ()
+                HOLFlags.with_bflags
+                  [(resolution_profile_flag, true),
+                   (minisatResolve.sat_profile_flag, true)] work ()
               else replay_step strong_canon state step
             end
       val _ = if trace_steps then
@@ -22465,6 +22467,7 @@ local
 
 
 in
+  val resolution_profile_flag = resolution_profile_flag
   type replay_operation_statistics = operation_statistics
   val with_operation_statistics = with_operation_statistics_internal
 

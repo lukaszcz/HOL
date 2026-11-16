@@ -11,14 +11,15 @@ open satCommonTools dimacsTools satTheory
 in
 
 (* One switch is shared with minisatProve's opt-in HolSatLib profile. *)
-val sat_profile = ref false
+val {get = sat_profile, flag = sat_profile_flag, ...} =
+    HOLFlags.create_btrace ({group = "HolSatLib", name = "profile"}, false)
 fun profile_stage name action input =
-    if !sat_profile then
+    if sat_profile () then
       Profile.profile_with_exn_name ("HolSat(" ^ name ^ ")") action input
     else action input
 val replay_counts = ref ([] : (string * int) list)
 fun count name amount =
-    if not (!sat_profile) then () else
+    if not (sat_profile ()) then () else
       let val prior = case List.find (fn (saved, _) => saved = name)
           (!replay_counts) of SOME (_, value) => value | NONE => 0 in
         replay_counts := (name, prior + amount) ::
@@ -222,7 +223,7 @@ fun resolveChain lfn sva cl (nl,lnl) rci =
         (* Dual clauses carry their surviving literals as hypotheses, plus
            the root context.  Count these as such rather than claim they
            are ordinary clause literals.  This walk is diagnostic only. *)
-        val _ = if not (!sat_profile) then () else
+        val _ = if not (sat_profile ()) then () else
           count "derived-dual-hypotheses" (List.length (hyp res))
         val _ = Dynarray.update(cl,rci,res)
     in () end

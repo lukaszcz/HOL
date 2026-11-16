@@ -6411,7 +6411,7 @@ local
     (* E1(a): BBLAST decides the finite bit-vector fragment. *)
     profile "word-decide(1)(BBLAST)"
       (word_decider_attempt "word_decide(BBLAST)"
-        (Feedback.trace ("print blast counterexamples", 0)
+        (HOLFlags.with_bflags [(blastLib.print_counterexamples, false)]
           Library.replay_bblast_prove)) target
 
   fun word_decide target =
@@ -6584,7 +6584,8 @@ local
               val word_route = bv_next_rung decompose_once
                 (rewrite_profile "rewrite(18)(BBLAST)"
                   (word_decider_attempt "z3_rewrite(BBLAST)"
-                    (Feedback.trace ("print blast counterexamples", 0)
+                    (HOLFlags.with_bflags
+                       [(blastLib.print_counterexamples, false)]
                       Library.replay_bblast_prove)))
             in
               if boolean_residue then
@@ -9951,7 +9952,7 @@ local
     if Thm.concl thm !~ concl then
       raise ERR "check_thm" (name ^ ": conclusion is " ^ Library.term_to_string
         (Thm.concl thm) ^ ", expected: " ^ Library.term_to_string concl)
-    else if !Library.trace > 2 then
+    else if Library.trace() > 2 then
       Feedback.HOL_MESG
         ("HolSmtLib: " ^ name ^ " proved: " ^ Library.thm_to_string thm)
     else ()
@@ -10252,7 +10253,7 @@ local
               fun cache_result ((state, proof), thm) =
                 let
                   val _ =
-                    if !Library.trace > 2 then
+                    if Library.trace () > 2 then
                       Feedback.HOL_MESG
                         ("HolSmtLib: updating proof at ID " ^
                          Int.toString id)
@@ -10281,7 +10282,7 @@ local
                   ((state, proof), thm)
                 end
               fun replay () =
-                (if !Library.trace > 2 then
+                (if Library.trace () > 2 then
                    Feedback.HOL_MESG
                      ("HolSmtLib: replaying proof at ID " ^ Int.toString id)
                  else ();
@@ -10351,7 +10352,8 @@ local
              bv_resource_prove "remove-definitions-self-word-identity"
                (word_decider_attempt
                  "remove_definitions:self-word-identity"
-                 (Feedback.trace ("print blast counterexamples", 0)
+                 (HOLFlags.with_bflags
+                    [(blastLib.print_counterexamples, false)]
                    Library.replay_BBLAST_PROVE)) definition) definition)
      else NONE)
     handle Feedback.HOL_ERR holerr =>
@@ -11742,7 +11744,7 @@ in
   SmtSeqProve.with_admission_errors (fn () =>
   let
     val _ = replay_completed_steps := 0
-    val _ = if !Library.trace > 1 then
+    val _ = if Library.trace () > 1 then
         Feedback.HOL_MESG "HolSmtLib: checking Z3 proof"
       else ()
 

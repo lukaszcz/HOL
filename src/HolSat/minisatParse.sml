@@ -142,7 +142,7 @@ fun addClause_using next lfn roots cl sva vc clauseth lit1 id =
     let val orc = (rshift lit1)-1
           (*-1 because right now orc's in proof log start at 1*)
         val l = getIntRoot_using next (next ())
-        val _ = if not (!sat_profile) then () else
+        val _ = if not (sat_profile ()) then () else
           (count "root-clauses" 1;
            count "root-literal-occurrences" (List.length l))
           (*val _ = (print "\nR ";

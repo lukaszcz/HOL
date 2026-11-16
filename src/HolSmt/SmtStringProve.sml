@@ -33,7 +33,7 @@ struct
   val metis_limit : mlibMeter.limit = {time = SOME 1.0, infs = SOME 5000}
   fun with_metis_limit f =
     Lib.with_flag (metisTools.limit, metis_limit)
-      (Feedback.trace ("metis", 0) f)
+      (HOLFlags.with_flags [(metisTools.metis_trace, 0)] f)
 
   fun unsupported theory t =
     raise ERR (theory ^ "_prove")

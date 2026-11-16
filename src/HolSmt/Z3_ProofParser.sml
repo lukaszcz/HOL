@@ -1470,7 +1470,7 @@ local
       (("=", Z3_ProofConstructors.equality),
        tmdict)
     (* parse the stream *)
-    val _ = if !Library.trace > 1 then
+    val _ = if Library.trace() > 1 then
         Feedback.HOL_MESG "HolSmtLib: parsing Z3 proof"
       else ()
     val get_token = SmtLib_Parser.make_proof_stream_tokenizer instream
@@ -1482,7 +1482,7 @@ local
       (parse_proof get_token) (tydict, tmdict, initial_proof)
     val proof = SmtResource.profile_phase "z3/graph-finalization"
       discover_bit_decompositions parsed
-    val _ = if !Library.trace > 0 then
+    val _ = if Library.trace () > 0 then
         (WARNING "parse_stream" ("ignoring token '" ^ get_token () ^
           "' (and perhaps others) after proof")
            handle Feedback.HOL_ERR _ => ())

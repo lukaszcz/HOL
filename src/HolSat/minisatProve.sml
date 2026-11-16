@@ -16,15 +16,16 @@ exception SAT_satisfiable of unit
 
 val mk_sat_oracle_thm = mk_oracle_thm "HolSatLib";
 
-val sat_warn = ref true (* control interactive warnings *)
 val sat_limit = ref 100
   (* if > sat_limit clauses then interactive warning if using SML prover *)
-val _ = register_btrace ("HolSatLib_warn",sat_warn);
 
-val sat_profile = minisatResolve.sat_profile
-val _ = register_btrace ("HolSatLib_profile", sat_profile)
+val {get = sat_warn,...} = HOLFlags.create_btrace(
+      {group = "HolSatLib", name = "warn"},
+      true
+    )
+
 fun profile_stage name action input =
-    if !sat_profile then
+    if minisatResolve.sat_profile () then
       Profile.profile_with_exn_name ("HolSat(" ^ name ^ ")") action input
     else action input
 
@@ -37,10 +38,10 @@ fun sat_tracer () =
     else (fn _ => ())
 
 fun warn ss =
-    if !Globals.interactive andalso !sat_warn
+    if !Globals.interactive andalso sat_warn()
     then print ("\nHolSat WARNING: "^ss^
                 "\nTo turn off this warning, type: \
-                \set_trace \"HolSatLib_warn\" 0; RET\n\n")
+                \HOLFlags.set_trace \"HolSatLib.warn\" 0; RET\n\n")
     else ()
 
 fun fallback check_sat_model clauseth lfn ntm =

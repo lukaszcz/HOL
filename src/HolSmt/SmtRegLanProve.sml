@@ -70,7 +70,8 @@ struct
   fun metis facts target =
     Lib.with_flag (metisTools.limit,
       {time = SOME 1.0, infs = SOME 5000} : mlibMeter.limit)
-      (Feedback.trace ("metis", 0) (metisLib.METIS_PROVE facts)) target
+      (HOLFlags.with_flags [(metisTools.metis_trace, 0)]
+        (metisLib.METIS_PROVE facts)) target
 
   (* The compact boundary supplies the same laws in its injective local
      namespace, including variables absent from a law's consequence. *)

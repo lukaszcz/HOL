@@ -57,15 +57,15 @@ end
 (*****************************************************************************)
 
 (*
-val _ = Globals.show_tags := true
-val _ = Globals.show_assums := true
-val _ = Globals.show_types := true
+val _ = HOLFlags.set_bflag (HOLFlags.show_tags, true)
+val _ = HOLFlags.set_bflag (Parse.show_assums, true)
+val _ = HOLFlags.set_bflag (Parse.show_types, true)
 val _ = wordsLib.add_word_cast_printer ()
 *)
-val _ = Feedback.set_trace "PP.avoid_unicode" 1
-val _ = Feedback.set_trace "HolSmtLib" 0
+val _ = HOLFlags.set_bflag (Parse.avoid_unicode, true)
+val _ = HOLFlags.set_flag (Library.trace_flag, 0)
 (*
-val _ = Feedback.set_trace "HolSmtLib" 4
+val _ = HOLFlags.set_flag (Library.trace_flag, 4)
 *)
 
 (*****************************************************************************)
@@ -89,7 +89,7 @@ local
 
 val die = Unittest.die
 
-fun term_with_types t = Lib.with_flag(show_types, true) Hol_pp.term_to_string t
+fun term_with_types t = HOLFlags.with_bflags [(Parse.show_types, true)] Hol_pp.term_to_string t
 
 (* provable terms: theorem expected *)
 fun expect_thm check_oracles name smt_tac t =
@@ -23274,15 +23274,17 @@ in
             (interrupted andalso count "action" = 1)
           val _ = testutils.tprint
             "Local diagnostics preserve enabled/disabled tracing"
-          val trace_name = "HolSmt observation control"
-          val _ = Feedback.register_btrace (trace_name, ref false)
+          val {get = trace_on, flag = trace_flag, ...} =
+            HOLFlags.create_btrace
+              ({group = "HolSmt", name = "observation_control"}, false)
           val traces = ref 0
           fun trace_event () =
-            if Feedback.current_trace trace_name = 1 then traces := !traces + 1
+            if trace_on () then traces := !traces + 1
             else ()
           fun traced_action () = (trace_event (); action ())
           fun traced_observer _ = (trace_event (); ignore (traced_action ()))
-          fun traced mode level = Feedback.trace (trace_name, level)
+          fun traced mode level =
+            HOLFlags.with_flags [(HOLFlags.flag_of_bflag trace_flag, level)]
             (fn () => with_observer mode (fn () =>
               O.run inputs project traced_action)) ()
           val _ = traced NONE 0
@@ -23290,7 +23292,7 @@ in
           val _ = traced NONE 1
           val _ = traced (SOME traced_observer) 1
           val _ = ensure "observer changed trace state or hid reentrant traces"
-            (!traces = 4 andalso Feedback.current_trace trace_name = 0)
+            (!traces = 4 andalso not (trace_on ()))
           val _ = Profile.reset_all ()
         in () end
       val result = Exn.capture controls ()
@@ -58112,8 +58114,8 @@ local
 in
   val _ = run_postlude 337 "strict-solver-capture-cleanup-5" (fn () =>
     let
-      val saved_trace = !Library.trace
-      val _ = Library.trace := 0
+      val saved_trace = Library.trace ()
+      val _ = HOLFlags.set_flag (Library.trace_flag, 0)
       val outcome = Exn.capture (fn () =>
         let
   val (input_cancel, input_events, input_paths, input_output) =
@@ -58163,7 +58165,7 @@ in
     (failed "pre-primary" pre_result andalso !pre_events = ["pre"])
 
         in () end) ()
-      val _ = Library.trace := saved_trace
+      val _ = HOLFlags.set_flag (Library.trace_flag, saved_trace)
     in Exn.release outcome end)
 end
 
@@ -62745,8 +62747,8 @@ local
 in
   val _ = run_postlude 362 "streamed-solver-input-4" (fn () =>
     let
-      val old_trace = !Library.trace
-      val _ = Library.trace := 0
+      val old_trace = Library.trace ()
+      val _ = HOLFlags.set_flag (Library.trace_flag, 0)
       val outcome = Exn.capture (fn () =>
         let
           val _ = test "Streaming and legacy input have identical process IO"
@@ -62793,7 +62795,7 @@ in
                  #observed result=[expected_input] andalso
                  List.all gone (#paths result)) end)
         in () end) ()
-      val _ = Library.trace := old_trace
+      val _ = HOLFlags.set_flag (Library.trace_flag, old_trace)
     in Exn.release outcome end)
 end
 
@@ -79148,13 +79150,13 @@ local
           require "fixed solver query exceeds its bounded fixture oracle"
             (String.size text<=4096);text)end
   fun test label action=
-    let val trace= !Library.trace
-        val _=Library.trace:=0
+    let val trace= Library.trace ()
+        val _=HOLFlags.set_flag (Library.trace_flag, 0)
         val _=Count.counting_thms true
         val outcome=Exn.capture(fn()=>
           (testutils.tprint label;action();testutils.OK()))()
         val _=Count.counting_thms false
-        val _=Library.trace:=trace
+        val _=HOLFlags.set_flag (Library.trace_flag, trace)
     in Exn.release outcome end
 in
   val _=run_postlude 415 "configured-streamed-owned-value-solver-10"(fn()=>
