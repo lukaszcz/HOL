@@ -3,7 +3,7 @@
 
 ``` hol4
 clasimpLib.add_simp_wrapper :
-  simpLib.simpset -> thm list ->
+  simpExtLib.simpset -> thm list ->
   clasetLib.claset -> clasetLib.claset
 ```
 
@@ -14,8 +14,10 @@ Adds assumption-aware full simplification as an unsafe classical wrapper.
 `add_simp_wrapper ss controls cs` returns `cs` with a wrapper named
 `"asm_full_simp_tac"`. Around an unsafe classical step, the wrapper offers
 a changed full-simplification transition using `ss` and `controls`, followed
-by the original step's transitions. The control list accepts the ordinary
-simplifier markers, including `Excl`, `Cong`, and `SF`. Search can therefore
+by the original step's transitions. The input is an extension simpset,
+constructed through `simpExtLib`, not an ordinary `srw_ss ()`. Controls
+include literal `markerLib.Excl` and `Cong`, and extension `simpExtLib.SF`,
+`Split` and explicit `ExclX`. Search can therefore
 simplify at unsafe choice points without losing the unsimplified
 alternatives.
 

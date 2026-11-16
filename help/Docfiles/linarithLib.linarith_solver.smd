@@ -2,7 +2,7 @@
 ## `linarith_solver`
 
 ``` hol4
-linarithLib.linarith_solver : Traverse.ssolver
+linarithLib.linarith_solver : TraverseExt.ssolver
 ```
 
 ------------------------------------------------------------------------
@@ -22,9 +22,11 @@ so they refute nothing without an arithmetic context assumption to
 refute it with. The solver is
 already installed in the clasimp and Aesop
 simpsets. It can be added to another simpset with
-`simpLib.add_unsafe_solver`, suppressed for one invocation with
-`Excl "lin_arith"`, or removed from a simpset with
-`simpLib.remove_solver "lin_arith"`.
+`simpExtLib.add_unsafe_solver`, suppressed for one invocation with
+`simpExtLib.ExclX "solver:lin_arith"`, or removed with
+`simpExtLib.remove_solver "lin_arith"`. Ordinary `Excl` is literal rule
+exclusion, not solver suppression. This solver consumes extension traversal
+contexts; ordinary `LINARITH_ss` remains available for ordinary simpsets.
 
 Here *unsafe* determines when the simplifier tries the solver. Every
 successful result remains a kernel-checked theorem.
@@ -39,14 +41,14 @@ as the solver being inapplicable and may try another solver.
 
 ``` hol4
 val arithmetic_ss =
-  simpLib.add_unsafe_solver linarithLib.linarith_solver
-    (bossLib.srw_ss ());
+  simpExtLib.add_unsafe_solver linarithLib.linarith_solver
+    (simpExtLib.lift_simpset (BasicProvers.srw_ss ()));
 
 Theorem linarith_solver_example:
   !x y z : num. x <= y /\ y <= z ==> x <= z
 Proof
   rpt strip_tac >>
-  simpLib.FULL_SIMP_TAC arithmetic_ss []
+  simpExtLib.FULL_SIMP_TAC arithmetic_ss []
 QED
 ```
 
@@ -54,6 +56,6 @@ QED
 
 [`linarithLib`](#linarithLib),
 [`linarithLib.LINARITH_ss`](#linarithLib.LINARITH_ss),
-[`simpLib.add_unsafe_solver`](#simpLib.add_unsafe_solver),
-[`simpLib.remove_solver`](#simpLib.remove_solver),
+[`simpExtLib.add_unsafe_solver`](#simpExtLib.add_unsafe_solver),
+[`simpExtLib.remove_solver`](#simpExtLib.remove_solver),
 [`linarithData.arith`](#linarithData.arith)

@@ -3,7 +3,7 @@
 
 ``` hol4
 clasimpLib.add_safe_simp_wrapper :
-  simpLib.simpset -> thm list ->
+  simpExtLib.simpset -> thm list ->
   clasetLib.claset -> clasetLib.claset
 ```
 
@@ -14,8 +14,10 @@ Adds safe assumption-aware full simplification as a safe wrapper.
 `add_safe_simp_wrapper ss controls cs` returns `cs` with a wrapper named
 `"safe_asm_full_simp_tac"`. The wrapper first runs the wrapped safe
 classical step. Only when that step has no result does it offer a changed
-safe-simplification transition using `ss` and `controls`. The control list
-accepts the ordinary simplifier markers, including `Excl`, `Cong`, and `SF`.
+safe-simplification transition using `ss` and `controls`. The input is an
+extension simpset, not an ordinary `srw_ss ()`. Controls include literal
+`markerLib.Excl` and `Cong`, and extension `simpExtLib.SF`, `Split` and
+explicit `ExclX`.
 
 Safe mode selects the safe final-solver list for the residual goal. It
 does not change rewriting: conditional-rewrite side conditions still use

@@ -1,5 +1,5 @@
 INCLUDES = .. ../../../integer ../../../num/reduce/src \
-           ../../../real ../../../rational
+           ../../../real ../../../rational ../../../simp/src
 
 all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all

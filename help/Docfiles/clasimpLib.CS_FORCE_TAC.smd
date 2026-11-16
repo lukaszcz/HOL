@@ -3,7 +3,7 @@
 
 ``` hol4
 clasimpLib.CS_FORCE_TAC :
-  clasetLib.claset -> simpLib.simpset -> tactic
+  clasetLib.claset -> simpExtLib.simpset -> tactic
 ```
 
 ------------------------------------------------------------------------

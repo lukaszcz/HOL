@@ -951,7 +951,7 @@ fun branchString ({pairs, lits, vars, lim} : branch) =
 
 (* [branches] is forced only when the trace is printed. *)
 fun traceState depth branches =
-  if Feedback.current_trace "blast" >= 3 then
+  if HOLFlags.current_trace "blast.trace" >= 3 then
     Feedback.HOL_MESG
       ("Blast trace at depth " ^ Int.toString depth ^ ":\n" ^
        String.concatWith "\n" (map branchString (branches ())))
@@ -1452,7 +1452,7 @@ fun runGoal resumable cleanup_policy instrumentation
             preserve
               (fn PROOF_FAILED =>
                     SOME (fn () =>
-                      (if Feedback.current_trace "blast" >= 1 then
+                      (if HOLFlags.current_trace "blast.trace" >= 1 then
                          Feedback.HOL_MESG
                            ("PROOF FAILED for depth " ^
                             Int.toString depth)

@@ -4,7 +4,7 @@
 ``` hol4
 aesopLib.CS_AESOP_SAFE_TAC :
   aesopLib.aesop_config ->
-  clasetLib.claset -> simpLib.simpset -> tactic
+  clasetLib.claset -> simpExtLib.simpset -> tactic
 ```
 
 ------------------------------------------------------------------------
@@ -12,7 +12,9 @@ aesopLib.CS_AESOP_SAFE_TAC :
 Constructs the context-explicit, configurable form of `AESOP_SAFE_TAC`.
 
 `CS_AESOP_SAFE_TAC config cs ss` normalises and safely saturates with the
-supplied claset and simpset. It leaves the exact safe frontier and tries no
+supplied claset and extension simpset. Use a tracked construction such as
+`aesopData.aesop_ss ()`, not an ordinary `srw_ss ()`. It leaves the safe
+frontier and tries no
 unsafe rules. `config.max_depth` bounds branch depth and normalisation.
 Both configuration fields must be non-negative; `max_rapps` is relevant
 only to the unsafe search performed by `CS_AESOP_TAC`.
@@ -35,7 +37,7 @@ negative.
 ``` hol4
 val safe_aesop =
   aesopLib.CS_AESOP_SAFE_TAC aesopLib.default_config
-    (clasetLib.the_claset ()) (bossLib.srw_ss ());
+    (clasetLib.the_claset ()) (aesopData.aesop_ss ());
 ```
 
 ### See also

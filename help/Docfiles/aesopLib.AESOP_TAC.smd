@@ -11,7 +11,10 @@ Solves a goal by normalisation, safe reasoning, and best-first search.
 
 `AESOP_TAC thms` uses the claset and Aesop simpset current where the
 tactic is applied, so a tactic value bound before a declaration still sees
-that declaration. It repeatedly normalises each goal, commits
+that declaration. The Aesop simpset is derived from `srw_ss ()`, lifted
+into the extension engine, independently of clasimp's split-enabled
+simpset; it follows updates to `srw_ss ()` and context restoration.
+It repeatedly normalises each goal, commits
 deterministic safe rules, and explores unsafe rules in probability order.
 The search keeps metavariable-dependent goals together, copies affected
 sibling goals when a metavariable is assigned, and replays a successful
@@ -33,8 +36,8 @@ semantics: success always closes the supplied goal.
 Unmarked theorems in `thms` are inserted as assumptions. Classical rule
 markers modify the invocation claset. `Norm`, `Forward`, and `SForward`
 add temporary Aesop rules; `Simp` adds a temporary rewrite; and `Iff` adds
-temporary rewrite and classical views. Generic simplifier controls are
-forwarded to normalisation.
+temporary rewrite and classical views. Generic simplifier controls and
+extension `simpExtLib.Split`/`ExclX` controls are forwarded to normalisation.
 
 ### Failure
 

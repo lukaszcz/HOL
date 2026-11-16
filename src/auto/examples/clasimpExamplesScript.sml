@@ -16,14 +16,16 @@
      CLARSIMP_TAC    safe steps + simplification only;
                      no unsafe search                    (clarsimp)
 
-   The simplifier side uses the ambient srw_ss() simpset, so
-   everything a bare simp[] knows is available, and the claset side
-   uses the ambient claset (clasetExamplesScript).  Beyond facts and
-   the claset markers, the [thm list] accepts:
+   The simplifier side uses the ambient srw_ss() simpset, lifted into
+   the extension engine, so everything a bare simp[] knows is
+   available, and the claset side uses the ambient claset
+   (clasetExamplesScript).  Beyond facts and the claset markers, the
+   [thm list] accepts:
 
      Simp th      use th as a rewrite for this invocation
      Iff th       install th as claset rules AND rewrite, both ways
-     markerLib controls (NoAsms, Excl "name", ...) as for simp
+     markerLib controls (NoAsms, literal Excl "name", ...)
+     simpExtLib.Split and ExclX for extension controls
 
    and the [iff] theorem attribute is the persistent form of Iff.
    ========================================================================== *)

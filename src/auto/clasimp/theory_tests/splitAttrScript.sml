@@ -1,6 +1,9 @@
 Theory splitAttr[bare]
 Libs
-  HolKernel Parse boolLib simpLib BasicProvers splitLib boolSimps
+  HolKernel Parse boolLib BasicProvers simpExtLib splitLib
+  splitPersistLib
+
+val bool_ss = simpExtLib.lift_simpset boolSimps.bool_ss
 
 Definition pick_def:
   pick b (x:'a) y = if b then x else y
@@ -27,7 +30,7 @@ val split_goal =
 val excluded_goals =
   #1 (Tactical.VALID
         (SIMP_TAC (bool_ss ++ split_ss)
-                  [Excl "split splitAttr$attr_pick_split"])
+                  [ExclX "split:splitAttr$attr_pick_split"])
         ([],split_goal) (Context.snapshot()))
 val _ =
   case excluded_goals of

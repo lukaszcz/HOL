@@ -760,14 +760,14 @@ val _ =
            GENL [p, q, r]
              (DISCH p (DISCH q (DISCH r (ASSUME r))))
          val output = ref ([] : string list)
-         val old_trace = Feedback.current_trace "blast"
+         val old_trace = HOLFlags.current_trace "blast.trace"
          fun collect text = output := text :: !output
-         val _ = Feedback.set_trace "blast" 1
+         val _ = HOLFlags.set_trace "blast.trace" 1
          val converted =
            Lib.with_flag (Feedback.WARNING_outstream, collect)
              (fn () =>
                 blastRule.convertElim (blastRule.newCache ()) [] weak) ()
-         val _ = Feedback.set_trace "blast" old_trace
+         val _ = HOLFlags.set_trace "blast.trace" old_trace
          val warning = String.concat (rev (!output))
          val message =
            "Ignoring weak elimination rule\n" ^ Parse.thm_to_string weak
@@ -4055,7 +4055,7 @@ val _ =
               ("bad-left", bad)] clasetLib.empty_cs
          val attempts = ref 0
          val messages = ref ([] : string list)
-         val old_trace = Feedback.current_trace "blast"
+         val old_trace = HOLFlags.current_trace "blast.trace"
          fun accept proof =
            let
              val _ = attempts := !attempts + 1
@@ -4064,12 +4064,12 @@ val _ =
                  SOME result => (proof, result)
                | NONE => raise blastSearch.PROOF_FAILED
            end
-         val _ = Feedback.set_trace "blast" 1
+         val _ = HOLFlags.set_trace "blast.trace" 1
          val result =
            Lib.with_flag (Feedback.MESG_outstream,
              fn message => messages := message :: !messages)
              (fn () => blastSearch.searchGoal cs 1 goal accept) ()
-         val _ = Feedback.set_trace "blast" old_trace
+         val _ = HOLFlags.set_trace "blast.trace" old_trace
          val traced =
            List.exists
              (String.isSubstring "PROOF FAILED for depth 1")
@@ -4746,14 +4746,14 @@ val _ =
 
 fun blast_trace_messages level tactic goal =
   let
-    val old_trace = Feedback.current_trace "blast"
+    val old_trace = HOLFlags.current_trace "blast.trace"
     val messages = ref ([] : string list)
-    val _ = Feedback.set_trace "blast" level
+    val _ = HOLFlags.set_trace "blast.trace" level
     val result =
       Lib.with_flag (Feedback.MESG_outstream,
         fn message => messages := message :: !messages)
         (fn () => blast_solves tactic goal) ()
-    val _ = Feedback.set_trace "blast" old_trace
+    val _ = HOLFlags.set_trace "blast.trace" old_trace
   in
     (result, !messages)
   end
@@ -5530,20 +5530,20 @@ val halting_ii =
       (?w. C w /\ (!y. C y ==> !z. D w y z))) /\
     (!w. C w /\ (!u. C u ==> !v. D w u v) ==>
       !y z.
-        (C y /\ P y z ==> Q w y z /\ OO w g) /\
-        (C y /\ ~P y z ==> Q w y z /\ OO w b)) /\
+        (C y /\ P y z ==> Q w y z /\ HaltingOutcome w g) /\
+        (C y /\ ~P y z ==> Q w y z /\ HaltingOutcome w b)) /\
     ((?w. C w /\
-       (!y. (C y /\ P y y ==> Q w y y /\ OO w g) /\
-            (C y /\ ~P y y ==> Q w y y /\ OO w b))) ==>
+       (!y. (C y /\ P y y ==> Q w y y /\ HaltingOutcome w g) /\
+            (C y /\ ~P y y ==> Q w y y /\ HaltingOutcome w b))) ==>
      (?v. C v /\
-       (!y. (C y /\ P y y ==> P v y /\ OO v g) /\
-            (C y /\ ~P y y ==> P v y /\ OO v b))))) ==>
+       (!y. (C y /\ P y y ==> P v y /\ HaltingOutcome v g) /\
+            (C y /\ ~P y y ==> P v y /\ HaltingOutcome v b))))) ==>
    (((?v. C v /\
-       (!y. (C y /\ P y y ==> P v y /\ OO v g) /\
-            (C y /\ ~P y y ==> P v y /\ OO v b))) ==>
+       (!y. (C y /\ P y y ==> P v y /\ HaltingOutcome v g) /\
+            (C y /\ ~P y y ==> P v y /\ HaltingOutcome v b))) ==>
      (?u. C u /\
        (!y. (C y /\ P y y ==> ~P u y) /\
-            (C y /\ ~P y y ==> P u y /\ OO u b)))) ==>
+            (C y /\ ~P y y ==> P u y /\ HaltingOutcome u b)))) ==>
     ~(?x. A x /\ (!y. C y ==> !z. D x y z)))”
 
 val _ =
@@ -5583,10 +5583,10 @@ val _ =
            GENL [p, q, r]
              (DISCH p (DISCH q (DISCH r (ASSUME r))))
          val output = ref ([] : string list)
-         val old_trace = Feedback.current_trace "blast"
+         val old_trace = HOLFlags.current_trace "blast.trace"
          val started = Time.now ()
          fun collect text = output := text :: !output
-         val _ = Feedback.set_trace "blast" 1
+         val _ = HOLFlags.set_trace "blast.trace" 1
          val (solved, skipped) =
            Lib.with_flag (Feedback.WARNING_outstream, collect)
              (fn () =>
@@ -5607,7 +5607,7 @@ val _ =
                            length (clasetLib.rules_of tagged) = 1 andalso
                            not (Option.isSome converted))
                 end) ()
-         val _ = Feedback.set_trace "blast" old_trace
+         val _ = HOLFlags.set_trace "blast.trace" old_trace
          val warning = String.concat (rev (!output))
        in
          solved andalso skipped andalso

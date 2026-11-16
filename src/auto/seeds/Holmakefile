@@ -1,13 +1,14 @@
 INCLUDES = ../rules ../classical ../blast ../linarith ../clasimp ../aesop \
            ../linarith/instances ../../pred_set/src ../../finite_maps \
            ../../integer ../../real ../../rational ../../string ../../sort \
-           ../../list/src
+           ../../list/src ../../simp/src
 
 all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
 
-selftest.uo: seedAudit.uo seedCollections.uo autoSeedTheory.uo \
-             ../linarith/instances/intLinarith.uo
+selftest.uo: seedAudit.uo seedCollections.uo \
+             autoSeedTheory.uo ../linarith/instances/intLinarith.uo \
+             ../../simp/src/simpExtLib.uo
 
 selftest.exe: selftest.uo seedAudit.uo seedCollections.uo
 	$(HOLMOSMLC) -o $@ $<

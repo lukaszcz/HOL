@@ -33,7 +33,7 @@ literals already assumed, so a disjunction whose other cases are already
 refuted costs one branch rather than two.
 
 The split corpus consists of persistent `[arith_split]` declarations,
-per-instance rules, and arguments marked `markerLib.Split th`. Classical,
+per-instance rules, and arguments marked `simpExtLib.Split th`. Classical,
 simplifier, and Iff markers are rejected. The default `neq_limit` and
 `split_limit` are both 9. The tactic has close-or-fail semantics.
 

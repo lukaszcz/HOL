@@ -9,6 +9,8 @@ INCLUDES = $(HOLDIR)/src/auto/rules \
 all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
 
+aesopData.uo: $(HOLDIR)/src/simp/src/simpExtLib.uo
+aesopRule.uo: aesopData.uo
 aesopTree.uo: aesopRule.uo
 aesopNorm.uo: aesopRule.uo aesopTree.uo
 aesopSearch.uo: aesopNorm.uo aesopRule.uo aesopTree.uo

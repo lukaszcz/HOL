@@ -236,8 +236,8 @@ fun ambient_candidates entry =
                 {name = location_name location, theorem = theorem})
               (DB.revlookup theorem))
           (List.concat
-            (map simpLib.frag_rewrites
-              (simpLib.ssfrags_of (clasimpLib.clasimp_ss ())))))
+            (map simpExtLib.frag_rewrites
+              (simpExtLib.ssfrags_of (clasimpLib.clasimp_ss ())))))
   in
     distinct_by_name
       (List.filter

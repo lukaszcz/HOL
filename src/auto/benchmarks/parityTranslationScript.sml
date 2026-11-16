@@ -7761,12 +7761,12 @@ Theorem source_set_zip:
          pair = (EL index xs, EL index ys) /\
          index < MIN (LENGTH xs) (LENGTH ys))
 Proof
-  simpLib.SIMP_TAC (clasimpLib.clasimp_ss ())
+  simpExtLib.SIMP_TAC (clasimpLib.clasimp_ss ())
     [pred_setTheory.EXTENSION, pred_setTheory.IN_ABS,
      pairTheory.FORALL_PROD, source_set_conv_nth,
      listTheory.LENGTH_ZIP_MIN, source_el_zip_min,
      source_fst_el_zip_min, source_snd_el_zip_min,
-     simpLib.Cong source_rev_conj_cong]
+     simpExtLib.Cong source_rev_conj_cong]
 QED
 
 (* Isabelle/HOL src/HOL/Product_Type.thy:1005 [Sigma], a plain

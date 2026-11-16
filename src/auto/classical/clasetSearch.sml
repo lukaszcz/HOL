@@ -24,7 +24,7 @@
   actual binding dependency is both stronger and more selective: rigid
   subtrees commit, while shared metavariables retain the needed choices.
 
-  The "classical" trace family is registered by clasetReplay.  Level 1
+  The "classical.trace" trace is registered by clasetReplay.  Level 1
   reports exhausted/bounded searches, level 2 reports expansions, bounds,
   and pruning, and level 3 prints complete candidate nodes.
 *)

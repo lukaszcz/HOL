@@ -1,3 +1,4 @@
+(* All source-sensitive public inputs/outputs are explicitly tracked. *)
 signature clasimpLib =
 sig
   include Abbrev
@@ -7,7 +8,7 @@ sig
      which is what makes it usable in a normalisation phase.  Exported so
      that simpsets derived elsewhere (aesop) share this one solver stack
      rather than restating it. *)
-  val safe_solver : Traverse.ssolver
+  val safe_solver : TraverseExt.ssolver
 
   (* The subgoaler of the clasimp simpset: the traversal's own recursion,
      then, on a side condition [QUANTIFY_CONDITIONS] left existentially
@@ -17,11 +18,11 @@ sig
      subgoaler is not one of those -- a caller that rebuilds this simpset
      restates it, as it already restates the solvers and the condition
      depth. *)
-  val witness_subgoaler : Traverse.subgoaler
+  val witness_subgoaler : TraverseExt.subgoaler
   (* The same witness search with candidate charges for each context
      theorem match, and normalization/application charges for replay. *)
   val witness_subgoaler_budgeted :
-    searchBudget.budget -> Traverse.subgoaler
+    searchBudget.budget -> TraverseExt.subgoaler
 
   (* Replaces the conditional congruence of a simpset by the weak form,
      which simplifies the condition and leaves the branches to whatever
@@ -29,27 +30,27 @@ sig
      derived elsewhere in this layer (aesop) share the arrangement
      rather than restating it.  Reports a simpset with no conditional
      congruence to replace rather than returning it unchanged. *)
-  val weaken_cond_congruence : simpLib.simpset -> simpLib.simpset
+  val weaken_cond_congruence : simpExtLib.simpset -> simpExtLib.simpset
 
   (* The conditional-rewrite depth of this layer's simpsets. *)
   val cond_depth : int
 
-  val clasimp_ss : unit -> simpLib.simpset
+  val clasimp_ss : unit -> simpExtLib.simpset
 
   (* From-scratch certified LHS-view candidates, for derivation and its
      exactness/performance checks. Each triple retains its original
      source and name. This does not install views or alter rewrite
      controls. Derivation has a finite per-source allowance; the caller's
      charge callback is shared by both normalization attempts. *)
-  val derive_lhs_views : (unit -> unit) -> simpLib.simpset ->
-    (simpLib.thname option * thm * thm) list
+  val derive_lhs_views : (unit -> unit) -> simpExtLib.simpset ->
+    (simpExtLib.thname option * thm * thm) list
 
   datatype lhs_view_rejection =
       NoReducibleArguments | UnchangedLHS | JoinableLHS
     | RenamingUnstable | DerivationLimited | UnsupportedLHS
   type lhs_view_entry =
-    {origin : simpLib.rewrite_source,
-     source : simpLib.thname option * thm, view : thm option,
+    {origin : simpExtLib.rewrite_source,
+     source : simpExtLib.thname option * thm, view : thm option,
      rejection : lhs_view_rejection option, footprint : term list,
      abstraction_positions : (KernelSig.kernelid * int) list,
      normalization : int}
@@ -58,12 +59,12 @@ sig
      installed views are not sources for another derivation.
      An unchanged LHS after failed conditional work
      is distinguished from an indexed proof of irreducibility. *)
-  val derive_lhs_view_entries : (unit -> unit) -> simpLib.simpset ->
+  val derive_lhs_view_entries : (unit -> unit) -> simpExtLib.simpset ->
     lhs_view_entry list
   (* Fresh derivation with a complete explicit abstraction-position policy,
      for comparison with invocation tables adjusted by supplied rules. *)
   val derive_lhs_view_entries_with_positions : (unit -> unit) ->
-    simpLib.simpset -> (KernelSig.kernelid * int) list -> lhs_view_entry list
+    simpExtLib.simpset -> (KernelSig.kernelid * int) list -> lhs_view_entry list
 
   type lhs_view_table
   (* Eight identity-memoized tables with exact dependency invalidation.
@@ -72,7 +73,7 @@ sig
      This constructor does not install a table in the public tactics.
      Stats describe construction work; identity hits do no derivation. *)
   val make_lhs_view_cache : (unit -> unit) ->
-    simpLib.simpset -> lhs_view_table
+    simpExtLib.simpset -> lhs_view_table
   val lhs_view_table_entries : lhs_view_table -> lhs_view_entry list
   val lhs_view_table_generation : lhs_view_table -> int
   val lhs_view_table_stats : lhs_view_table ->
@@ -85,34 +86,34 @@ sig
      Plain decisions never force view construction. A failed construction
      can be retried and does not insert a partial predecessor table. *)
   val make_working_simpset_cache : (unit -> unit) ->
-    simpLib.simpset -> working_simpset
-  val working_original : working_simpset -> simpLib.simpset
+    simpExtLib.simpset -> working_simpset
+  val working_original : working_simpset -> simpExtLib.simpset
   val working_view_table : working_simpset -> lhs_view_table
-  val working_full_simpset : working_simpset -> simpLib.simpset
+  val working_full_simpset : working_simpset -> simpExtLib.simpset
   val working_decision_base : working_simpset ->
-    {stripped : simpLib.simpset, order : bool, linarith : bool}
+    {stripped : simpExtLib.simpset, order : bool, linarith : bool}
   val working_plain_decision_base : working_simpset ->
-    {stripped : simpLib.simpset, order : bool, linarith : bool}
+    {stripped : simpExtLib.simpset, order : bool, linarith : bool}
   (* The default state is owned by the stateful derivation hook. Explicit
      simpsets test the last requested default's identity first, then use
      the same bounded cache without forcing an unused default derivation.
      Public tactic placement of view construction remains independent. *)
   val clasimp_working_simpset : unit -> working_simpset
-  val working_simpset_of : simpLib.simpset -> working_simpset
+  val working_simpset_of : simpExtLib.simpset -> working_simpset
 
   type supplied_rule_binding
   (* Compile originals before a first pass without priming the ambient set;
      deferred views retain their origins and remaining allowances. *)
-  val prepare_supplied_rules : simpLib.simpset -> thm list ->
+  val prepare_supplied_rules : simpExtLib.simpset -> thm list ->
     supplied_rule_binding
   val supplied_rule_controls : supplied_rule_binding -> thm list
   val supplied_rule_originals : supplied_rule_binding -> thm list
   (* Use cached compiled positions, including filter/exclusion decisions,
      together with the given ambient set; never recompile raw arguments. *)
-  val supplied_rule_policy : (unit -> unit) -> simpLib.simpset ->
-    supplied_rule_binding -> Traverse.child_first_policy
+  val supplied_rule_policy : (unit -> unit) -> simpExtLib.simpset ->
+    supplied_rule_binding -> TraverseExt.child_first_policy
   val install_supplied_rules : supplied_rule_binding ->
-    simpLib.simpset -> simpLib.simpset
+    simpExtLib.simpset -> simpExtLib.simpset
 
   type supplied_view_binding
   (* Detect ambient converses by one parallel rewrite, then derive bound
@@ -133,20 +134,20 @@ sig
      the exact original ambient occurrences suspended for this binding. *)
   val supplied_view_table : supplied_view_binding -> lhs_view_table
   val supplied_view_suspended : supplied_view_binding ->
-    simpLib.rewrite_source list
+    simpExtLib.rewrite_source list
   val supplied_view_stats : supplied_view_binding ->
     {normalization : int, derived : int, memoized : int}
   val supplied_view_policy : (unit -> unit) -> supplied_view_binding ->
-    Traverse.child_first_policy
+    TraverseExt.child_first_policy
   (* Materialize the binding's adjusted ambient table, sharing its cached
      viewed simpset and decision base without re-deriving the raw table.
      This does not install supplied originals or select public placement. *)
   val working_simpset_for : supplied_view_binding -> working_simpset
   val install_supplied_views : supplied_view_binding ->
-    simpLib.simpset -> simpLib.simpset
+    simpExtLib.simpset -> simpExtLib.simpset
   (* Add only views after a first pass; never reinstall the originals. *)
   val add_supplied_views : supplied_view_binding ->
-    simpLib.simpset -> simpLib.simpset
+    simpExtLib.simpset -> simpExtLib.simpset
 
   type supplied_converse_binding
   (* Before a first pass, detect converses from native patterns without
@@ -156,14 +157,15 @@ sig
      native inventories and masked sets, plus 256 completed theorem groups,
      are retained; hits replay charges and incomplete groups are absent. *)
   val make_supplied_converse_cache : unit -> (unit -> unit) ->
-    simpLib.simpset -> supplied_rule_binding -> supplied_converse_binding
+    simpExtLib.simpset -> supplied_rule_binding -> supplied_converse_binding
   val supplied_converse_rules : supplied_converse_binding ->
     supplied_rule_binding
-  val supplied_converse_working : supplied_converse_binding -> simpLib.simpset
+  val supplied_converse_working : supplied_converse_binding ->
+    simpExtLib.simpset
   val supplied_converse_policy : supplied_converse_binding ->
-    Traverse.child_first_policy
+    TraverseExt.child_first_policy
   val supplied_converse_suspended : supplied_converse_binding ->
-    simpLib.rewrite_source list
+    simpExtLib.rewrite_source list
   val supplied_converse_stats : supplied_converse_binding ->
     {normalization : int, derived : int, memoized : int}
   val make_supplied_view_cache_after : unit -> lhs_view_table ->
@@ -178,12 +180,12 @@ sig
      keep precedence over newly attached ambient views. The provider may
      be eager, deferred or backed by a persisted table. *)
   val make_bound_simplification :
-    (simpLib.simpset -> simpLib.simpset) -> (unit -> lhs_view_table) ->
+    (simpExtLib.simpset -> simpExtLib.simpset) -> (unit -> lhs_view_table) ->
     supplied_converse_binding -> bound_simplification
   val bound_simplification_simpset : bool -> bound_simplification ->
-    simpLib.simpset
+    simpExtLib.simpset
   val bound_simplification_policy : bound_simplification ->
-    Traverse.child_first_policy
+    TraverseExt.child_first_policy
   (* Select raw or viewed state explicitly; each consumer retains the
      installed originals and their solver context. Extra arguments are
      local/dynamic rules, not the already bound original citations. *)
@@ -198,8 +200,8 @@ sig
      resolve goal-dependent abbreviations and label references first;
      the public standalone entry points perform that resolution. *)
   val prepare_bound_simplification :
-    (simpLib.simpset -> simpLib.simpset) -> (unit -> unit) ->
-    simpLib.simpset -> thm list -> bound_simplification
+    (simpExtLib.simpset -> simpExtLib.simpset) -> (unit -> unit) ->
+    simpExtLib.simpset -> thm list -> bound_simplification
   val add_simp_wrapper_bound : bool -> bound_simplification -> thm list ->
     clasetLib.claset -> clasetLib.claset
   val add_safe_simp_wrapper_bound : bool -> bound_simplification -> thm list ->
@@ -217,7 +219,7 @@ sig
      method built from HOL4's simplifier directly -- the parity corpus
      builds its simp method that way -- takes the step the layer's own
      methods take, rather than restating it. *)
-  val with_extensionality : simpLib.simpset -> tactic -> tactic
+  val with_extensionality : simpExtLib.simpset -> tactic -> tactic
 
   (* True where the pointwise reading of an equation between functions is
      its membership and not its application: a side is headed by a
@@ -231,7 +233,7 @@ sig
      Applied to the simpset alone it collects the compiled heads once,
      including installed views and respecting removals and filters.
      Exported for the same reason as [states_a_reading] below. *)
-  val reads_as_membership : simpLib.simpset -> term -> bool
+  val reads_as_membership : simpExtLib.simpset -> term -> bool
 
   (* True of a rewrite that states how an equation between functions is
      to be read -- its own left-hand side is such an equation, which is
@@ -245,13 +247,13 @@ sig
 
   (* Bind citations once, suspending ambient converses for this invocation.
      Public ambient views remain pending the construction-placement choice. *)
-  val asm_full_simp : simpLib.simpset -> thm list -> tactic
-  val safe_asm_full_simp : simpLib.simpset -> thm list -> tactic
+  val asm_full_simp : simpExtLib.simpset -> thm list -> tactic
+  val safe_asm_full_simp : simpExtLib.simpset -> thm list -> tactic
 
   val add_simp_wrapper :
-    simpLib.simpset -> thm list -> clasetLib.claset -> clasetLib.claset
+    simpExtLib.simpset -> thm list -> clasetLib.claset -> clasetLib.claset
   val add_safe_simp_wrapper :
-    simpLib.simpset -> thm list -> clasetLib.claset -> clasetLib.claset
+    simpExtLib.simpset -> thm list -> clasetLib.claset -> clasetLib.claset
 
   (* Pure [iff] decision tree.  Callers choose where to install the
      derived claset rules and the normalized simpset rewrite. *)
@@ -294,7 +296,9 @@ sig
      is offered the subject the other rules have finished with, which is
      the only subject Isabelle's order ever offers it.  The rewrites are
      unconditional equations, as the declaration's are. *)
-  val normalised_subject_fragment : thm list -> simpLib.ssfrag
+  val normalised_subject_fragment : thm list -> simpExtLib.ssfrag
+  (* Ordinary comparison/default clients keep their independent engine. *)
+  val normalised_subject_fragment_ordinary : thm list -> simpLib.ssfrag
 
   (* Whether the simplifier can make a rewrite of this argument that is
      able to fire.  A conditional rule whose conclusion is an equation
@@ -308,34 +312,34 @@ sig
 
   val extend_invocation :
     {iff_prefix : string, simp_rules : thm list, iff_rules : thm list,
-     claset : clasetLib.claset, simpset : simpLib.simpset} ->
-    clasetLib.claset * simpLib.simpset
+     claset : clasetLib.claset, simpset : simpExtLib.simpset} ->
+    clasetLib.claset * simpExtLib.simpset
 
   (* Shared packaging for theorem-list clasimp tactics. The body receives
      the temporary claset, temporary simpset, and unchanged simp controls.
      CS consumers inside the callback reuse compiled supplied origins and
      its fact environment. The binding expires on return or exception. *)
   val process_clasimp_args :
-    (clasetLib.claset -> simpLib.simpset -> thm list -> tactic) ->
-    clasetLib.claset -> simpLib.simpset -> thm list -> tactic
+    (clasetLib.claset -> simpExtLib.simpset -> thm list -> tactic) ->
+    clasetLib.claset -> simpExtLib.simpset -> thm list -> tactic
 
   (* Keep declaration payloads apart from ambient view reducers. Resolve
      labels before one binding; retain the invocation fact environment. *)
   val process_clasimp_bound_args : clasetLib.fact_consumer ->
-    searchBudget.budget -> (simpLib.simpset -> simpLib.simpset) ->
+    searchBudget.budget -> (simpExtLib.simpset -> simpExtLib.simpset) ->
     (bound_simplification -> clasetLib.claset ->
      clasetFacts.environment -> tactic) ->
-    clasetLib.claset -> simpLib.simpset -> thm list -> tactic
+    clasetLib.claset -> simpExtLib.simpset -> thm list -> tactic
 
   (* Retry open work with certified fact/rule transport, retaining the
      bound originals, policy and fact environment. Derivation restores
      remaining quotas; aliases require compiled sources. The boolean selects
      raw or viewed state explicitly, without choosing a public default. *)
   val process_clasimp_bound_fact_views : bool -> clasetLib.fact_consumer ->
-    searchBudget.budget -> (simpLib.simpset -> simpLib.simpset) ->
+    searchBudget.budget -> (simpExtLib.simpset -> simpExtLib.simpset) ->
     (bound_simplification -> clasetLib.claset ->
      clasetFacts.environment -> tactic) ->
-    clasetLib.claset -> simpLib.simpset -> thm list -> tactic
+    clasetLib.claset -> simpExtLib.simpset -> thm list -> tactic
 
   (* Contextual AUTO, FORCE, FASTFORCE, SLOWSIMP, BESTSIMP and CLARSIMP
      retain the supplied claset, then retry unfinished goals with
@@ -343,7 +347,7 @@ sig
      shares one budget and preserves the original rule role and support. *)
   val CS_AUTO_TAC :
     {blast : int, depth : int} ->
-    clasetLib.claset -> simpLib.simpset -> tactic
+    clasetLib.claset -> simpExtLib.simpset -> tactic
   type force_slice =
     {candidates : int, applications : int, normalization : int}
   type force_schedule =
@@ -353,15 +357,15 @@ sig
      tableau retain their search state across turns. *)
   val force_schedule : force_schedule ref
   val CS_FORCE_TAC :
-    clasetLib.claset -> simpLib.simpset -> tactic
+    clasetLib.claset -> simpExtLib.simpset -> tactic
   val CS_FASTFORCE_TAC :
-    clasetLib.claset -> simpLib.simpset -> tactic
+    clasetLib.claset -> simpExtLib.simpset -> tactic
   val CS_SLOWSIMP_TAC :
-    clasetLib.claset -> simpLib.simpset -> tactic
+    clasetLib.claset -> simpExtLib.simpset -> tactic
   val CS_BESTSIMP_TAC :
-    clasetLib.claset -> simpLib.simpset -> tactic
+    clasetLib.claset -> simpExtLib.simpset -> tactic
   val CS_CLARSIMP_TAC :
-    clasetLib.claset -> simpLib.simpset -> tactic
+    clasetLib.claset -> simpExtLib.simpset -> tactic
 
   (* Driver stages retain one bound invocation across direct and nested
      simplification. View selection remains explicit for table placement. *)

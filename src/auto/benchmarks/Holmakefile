@@ -1,6 +1,6 @@
 INCLUDES = ../rules ../classical ../blast ../linarith ../clasimp ../aesop \
            ../linarith/instances ../seeds ../../integer ../../real \
-           ../../rational ../../num/reduce/src
+           ../../rational ../../num/reduce/src ../../simp/src
 
 all: $(DEFAULT_TARGETS) selftest.exe focus.exe genparity.exe guards.exe
 .PHONY: all
@@ -88,7 +88,8 @@ guards.uo: parityLib.uo benchGuards.uo
 guards.exe: guards.uo parityLib.uo benchGuards.uo
 	$(HOLMOSMLC) -o $@ $<
 
-benchLib.uo: ../linarith/instances/intLinarith.uo \
+benchLib.uo: ../../simp/src/simpExtLib.uo \
+             ../linarith/instances/intLinarith.uo \
              ../linarith/instances/realLinarith.uo \
              ../linarith/instances/ratLinarith.uo
 

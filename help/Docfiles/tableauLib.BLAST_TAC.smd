@@ -33,7 +33,7 @@ reconstruction, and tracing retain their existing behaviour.
 
 A candidate tableau is replayed through HOL's typed inference kernel. If
 replay fails, search backtracks and tries another candidate. Set the
-`"blast"` trace with `Feedback.set_trace`: level 1 reports replay failures
+`"blast.trace"` trace with `HOLFlags.set_trace`: level 1 reports replay failures
 and rejected elimination rules, level 2 also reports search statistics,
 and level 3 or more includes full tableau traces.
 
@@ -75,4 +75,4 @@ QED
 [`classicalLib.DEEPEN_TAC`](#classicalLib.DEEPEN_TAC),
 [`classicalLib.SAFE_TAC`](#classicalLib.SAFE_TAC),
 [`classicalLib.CLARIFY_TAC`](#classicalLib.CLARIFY_TAC),
-[`Feedback.set_trace`](#Feedback.set_trace)
+[`HOLFlags.set_trace`](#HOLFlags.set_trace)

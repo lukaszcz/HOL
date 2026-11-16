@@ -133,8 +133,8 @@ fun freshName _ prefix =
   (skolem_names := !skolem_names + 1;
    prefix ^ Int.toString (!skolem_names))
 
-val blast_trace = ref 0
-val _ = Feedback.register_trace ("blast", blast_trace, 7)
+val _ = HOLFlags.create_trace ({group = "blast", name = "trace"},
+                               {initial = 0, max = 7})
 
 val generic_cache :
   (KernelSig.kernelname, hol_type * hol_type list) Redblackmap.dict ref =
@@ -532,7 +532,7 @@ fun convertIntro cache vars theorem =
   convertIntroMeasured (fn () => ()) cache vars theorem
 
 fun weak_warning theorem =
-  if Feedback.current_trace "blast" >= 1 then
+  if HOLFlags.current_trace "blast.trace" >= 1 then
     HOL_WARNING "blastRule" "convertElim"
       ("Ignoring weak elimination rule\n" ^ Parse.thm_to_string theorem)
   else ()
@@ -618,7 +618,7 @@ fun convertElimMeasured checkpoint cache vars theorem =
   end
   handle ElimBadPrem => (weak_warning theorem; NONE)
        | ElimBadConcl =>
-           (if Feedback.current_trace "blast" >= 1 then
+           (if HOLFlags.current_trace "blast.trace" >= 1 then
               Feedback.HOL_MESG (bad_conclusion_message theorem)
             else ();
             NONE)

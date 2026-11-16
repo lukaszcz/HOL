@@ -325,7 +325,7 @@ fun split_rules () : split_ruleset =
   end
 
 fun is_no_asms theorem =
-  case markerLib.dest_directive (markerLib.strip_wrappers theorem) of
+  case markerLib.dest_directive (simpMarkerLib.strip_wrappers theorem) of
       SOME markerLib.DNoAsms => true
     | _ => false
 
@@ -335,7 +335,7 @@ fun simp_rule_with {name, simpset, controls} : rule =
        therefore selects its safe conclusion-only counterpart. *)
     val tactic =
       if List.exists is_no_asms controls then
-        simpLib.GEN_SIMP_TAC {safe = true} simpset controls
+        simpExtLib.GEN_SIMP_TAC {safe = true} simpset controls
       else
         clasimpLib.safe_asm_full_simp simpset controls
   in
@@ -349,8 +349,8 @@ fun simp_rule arguments =
     val {simp_rules, simp_controls, ...} =
       clasetLib.classify_simp_args arguments
     val invocation_ss =
-      simpLib.++
-        (aesopData.aesop_ss (), simpLib.rewrites simp_rules)
+      simpExtLib.++
+        (aesopData.aesop_ss (), simpExtLib.rewrites simp_rules)
   in
     simp_rule_with
       {name = "simp", simpset = invocation_ss,

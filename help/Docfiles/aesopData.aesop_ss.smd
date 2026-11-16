@@ -1,0 +1,27 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `aesop_ss`
+
+``` hol4
+aesopData.aesop_ss : unit -> simpExtLib.simpset
+```
+
+------------------------------------------------------------------------
+
+Returns Aesop's simplifier default.
+
+The base is `srw_ss ()`, lifted into the extension engine with
+`simpExtLib.lift_simpset`; it is not the split-enabled `clasimp_ss ()`.
+Derivation weakens conditional congruence, installs ETA matching, fixes
+conditional depth at 40, and replaces both solver lists with Aesop's
+selected safe and unsafe solvers. The additive `[aesop_simp]` rewrites are
+then installed. Splitting remains the search engine's responsibility.
+
+The result is derived from `srw_ss ()` when that changes; a change to the
+`[aesop_simp]` rewrites alone is derived once more, keyed on the identity
+of both inputs. Both follow `Context.restore`. Scope temporary changes to
+the base with `BasicProvers.with_simpset_updates`.
+
+### See also
+
+[`aesopLib.AESOP_TAC`](#aesopLib.AESOP_TAC),
+[`aesopLib.CS_AESOP_TAC`](#aesopLib.CS_AESOP_TAC)

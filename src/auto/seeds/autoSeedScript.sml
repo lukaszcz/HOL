@@ -5,7 +5,7 @@ Ancestors
   realAutoSeed stringAutoSeed rich_listAutoSeed sortingAutoSeed
   relationAutoSeed set_relationAutoSeed
 Libs
-  clasimpLib splitLib
+  clasimpLib splitPersistLib
 
 (* Declarations stay in their per-theory promotion units. *)
 

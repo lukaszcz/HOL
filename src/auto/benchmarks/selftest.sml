@@ -322,6 +322,43 @@ fun recipe_solves recipe goal =
     benchLib.outcome_solved outcome
   end
 
+(* Claset-derived names need not name any simpset entry. Their kernel
+   spelling must still cross the legacy Excl parser without becoming an
+   ExclX target lookup, or changing the name passed to claset deletion. *)
+val _ =
+  check
+    ("kernel-spelled claset-only exclusions stay silent in simp and auto",
+     fn () =>
+       List.all
+         (fn tactic =>
+           let
+             val recipe = benchLib.Invoke (tactic, [])
+             val entry : benchLib.corpus_goal =
+               {id = "unit-derived-exclusion", goal = #goal solved_goal,
+                source_method = "exclusion selftest", recipe = recipe,
+                excl = [{name = "bool$bench_absent.__clasimp_iff_intro",
+                         theorem = REFL p}],
+                provenance = provenance, representative = true}
+           in
+             benchLib.outcome_solved
+               (benchLib.run_goal (Time.fromSeconds 5) recipe entry)
+           end)
+         [benchLib.Simp, benchLib.Auto])
+
+val _ =
+  check
+    ("kernel-spelled rewrite deletions stay literal in simp and auto",
+     fn () =>
+       List.all
+         (fn tactic =>
+           recipe_solves
+             (benchLib.Invoke
+                (tactic,
+                 [benchLib.RewriteDelete
+                    "bool$bench_absent.__clasimp_iff_intro"]))
+             (#goal solved_goal))
+         [benchLib.Simp, benchLib.Auto])
+
 val conjunction_commute = boolTheory.CONJ_COMM
 val disjunction_commute = boolTheory.DISJ_COMM
 val r = mk_var ("bench_unit_r", bool)
@@ -622,16 +659,19 @@ val _ =
        let
          val rules_before = map (#1 o #2) (clasetLib.rules_of
            (clasetLib.the_claset ()))
-         val fragments_before = simpLib.all_named_frags ()
+         val fragments_before = simpExtLib.all_named_frags ()
+         val ordinary_fragments_before = simpLib.all_named_frags ()
          val _ = recipe_solves intro_recipe length_reverse_goal
          val _ = recipe_solves rewrite_recipe
            (Thm.concl conjunction_commute)
          val rules_after = map (#1 o #2) (clasetLib.rules_of
            (clasetLib.the_claset ()))
-         val fragments_after = simpLib.all_named_frags ()
+         val fragments_after = simpExtLib.all_named_frags ()
+         val ordinary_fragments_after = simpLib.all_named_frags ()
        in
          rules_before = rules_after andalso
-         fragments_before = fragments_after
+         fragments_before = fragments_after andalso
+         ordinary_fragments_before = ordinary_fragments_after
        end)
 
 val paired_length_reverse =
@@ -2211,7 +2251,7 @@ val symmetry_through_a_moved_bound : Abbrev.goal =
 
 fun simp_closes theorems =
   (case Tactical.VALID
-          (simpLib.SIMP_TAC (clasimpLib.clasimp_ss ()) theorems)
+          (simpExtLib.SIMP_TAC (clasimpLib.clasimp_ss ()) theorems)
           symmetry_through_a_moved_bound of
        ([], _) => true
      | _ => false)

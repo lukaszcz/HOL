@@ -4,7 +4,7 @@
 ``` hol4
 aesopLib.CS_AESOP_TAC :
   aesopLib.aesop_config ->
-  clasetLib.claset -> simpLib.simpset -> tactic
+  clasetLib.claset -> simpExtLib.simpset -> tactic
 ```
 
 ------------------------------------------------------------------------
@@ -12,9 +12,11 @@ aesopLib.CS_AESOP_TAC :
 Constructs the context-explicit, configurable form of `AESOP_TAC`.
 
 `CS_AESOP_TAC config cs ss` performs full Aesop search with the supplied
-claset and simpset. `config.max_rapps` bounds installed rule applications,
-and `config.max_depth` bounds branch depth and normalisation. Both bounds
-must be non-negative.
+claset and extension simpset. Construct `ss` through the tracked API,
+for example `aesopData.aesop_ss ()`; an ordinary `srw_ss ()` is not an
+extension simpset and cannot be promoted. `config.max_rapps` bounds
+applications, and `config.max_depth` bounds branch depth and
+normalisation. Both bounds must be non-negative.
 
 The tactic processes no theorem list. The caller is responsible for
 inserting facts and adding any temporary claset rules or rewrites to `cs`
@@ -33,7 +35,7 @@ configuration bound is negative.
 ``` hol4
 val aesop =
   aesopLib.CS_AESOP_TAC aesopLib.default_config
-    (clasetLib.the_claset ()) (bossLib.srw_ss ());
+    (clasetLib.the_claset ()) (aesopData.aesop_ss ());
 ```
 
 ### See also

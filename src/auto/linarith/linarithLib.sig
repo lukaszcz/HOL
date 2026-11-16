@@ -46,7 +46,8 @@ sig
   val CACHED_LINARITH : thm list -> conv
   val LINARITH_REDUCER : Traverse.reducer
   val LINARITH_ss : simpLib.ssfrag
-  val linarith_solver : Traverse.ssolver
+  val LINARITH_ext_ss : simpExtLib.ssfrag
+  val linarith_solver : TraverseExt.ssolver
   (* These closures charge the owning invocation for arithmetic search and
      replay inside simplification.  The values above are unbudgeted and
      share the process-wide result cache. *)
@@ -54,7 +55,9 @@ sig
     Context.t -> searchBudget.budget -> Traverse.reducer
   val LINARITH_ss_budgeted :
     Context.t -> searchBudget.budget -> simpLib.ssfrag
+  val LINARITH_ext_ss_budgeted :
+    Context.t -> searchBudget.budget -> simpExtLib.ssfrag
   val linarith_solver_budgeted :
-    Context.t -> searchBudget.budget -> Traverse.ssolver
+    Context.t -> searchBudget.budget -> TraverseExt.ssolver
   val clear_linarith_caches : unit -> unit
 end

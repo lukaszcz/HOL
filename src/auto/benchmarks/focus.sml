@@ -20,13 +20,13 @@ fun set_trace_from_environment environment trace =
     | SOME text =>
         (case Int.fromString text of
              SOME trace_level =>
-               Feedback.set_trace trace trace_level
+               HOLFlags.set_trace trace trace_level
            | NONE =>
                raise Fail (environment ^ " must be an integer"))
 
-val _ = set_trace_from_environment "HOLBENCHBLASTTRACE" "blast"
-val _ = set_trace_from_environment "HOLBENCHCLASSICALTRACE" "classical"
-val _ = set_trace_from_environment "HOLBENCHLINARITHTRACE" "linarith"
+val _ = set_trace_from_environment "HOLBENCHBLASTTRACE" "blast.trace"
+val _ = set_trace_from_environment "HOLBENCHCLASSICALTRACE" "classical.trace"
+val _ = set_trace_from_environment "HOLBENCHLINARITHTRACE" "linarith.trace"
 
 fun family_goals () =
   case family of

@@ -1006,6 +1006,9 @@ val table : (string * (unit -> resolution)) list =
    translated "source_list_ex1_def"),
   ("list_ex_iff",
    library "list" "EXISTS_MEM"),
+  (* LIST_REL_rules stores the same general cons introduction as its
+     second conjunct.  Extract it by kernel inference rather than citing
+     LIST_REL_cons_I, which this HOL4 dependency does not export. *)
   ("listrel.intros",
    bundle [library "list" "LIST_REL_NIL",
            later_cases (library "list" "LIST_REL_rules")]),

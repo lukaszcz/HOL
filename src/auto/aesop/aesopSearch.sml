@@ -56,7 +56,7 @@ val postponed_percent = 90
 fun charge NONE _ = ()
   | charge (SOME budget) kind = searchBudget.charge budget kind
 
-fun traced level = level <= Feedback.current_trace "aesop"
+fun traced level = level <= HOLFlags.current_trace "aesop.trace"
 
 fun trace level message =
   if traced level then Feedback.HOL_MESG ("Aesop: " ^ message ())

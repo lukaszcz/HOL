@@ -115,8 +115,8 @@ fun plain_argument function theorem =
    so an entry that rejects splits still rejects a malformed split as
    malformed rather than as a split. *)
 fun classify_split_argument function theorem =
-  case markerLib.dest_directive theorem of
-      SOME (markerLib.DSplit split) =>
+  case simpMarkerLib.dest_directive theorem of
+      SOME (simpMarkerLib.DSplit split) =>
         (linarithData.check_asm_split function
            "Split theorem (expected P-form)" split;
          SOME split)
@@ -1560,6 +1560,14 @@ fun linarith_ss reducer =
         convs = [], rewrs = [], congs = [], filter = NONE,
         ac = [], dprocs = [reducer]}]
 
+(* Lift the existing reducer, retaining its context and cache closures. *)
+fun linarith_ext_ss reducer =
+  simpExtLib.named_merge_ss "LINARITH"
+    [simpExtLib.SSFRAG
+       {name = SOME "LINARITH_DP",
+        convs = [], rewrs = [], congs = [], filter = NONE,
+        ac = [], dprocs = [TraverseExt.lift reducer]}]
+
 fun LINARITH_REDUCER_BUDGETED ctxt budget =
   linarith_reducer
     (decide "CACHED_LINARITH" o memo_budgeted_with_arith ctxt budget)
@@ -1570,6 +1578,10 @@ fun LINARITH_ss_budgeted ctxt budget =
 val LINARITH_REDUCER = linarith_reducer CACHED_LINARITH
 
 val LINARITH_ss = linarith_ss LINARITH_REDUCER
+val LINARITH_ext_ss = linarith_ext_ss LINARITH_REDUCER
+
+fun LINARITH_ext_ss_budgeted ctxt budget =
+  linarith_ext_ss (LINARITH_REDUCER_BUDGETED ctxt budget)
 
 (* Whether a context could refute F at all.  Every row the procedure
    builds comes from a premise it can decompose, and the nonnegativity
@@ -1654,7 +1666,7 @@ fun refutable_context theorems =
    every call, since neither the question nor its answer would depend
    on the condition being asked about.  That is a state to report, not
    one to spend a search per side condition rediscovering. *)
-fun linarith_solver_with prove : Traverse.ssolver =
+fun linarith_solver_with prove : TraverseExt.ssolver =
   {name = "lin_arith",
    solve = fn {context_thms, ...} => fn tm =>
      (if cache_check tm then prove context_thms tm

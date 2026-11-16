@@ -1891,7 +1891,7 @@ val _ =
     ("SIMPLE_LINARITH_TAC loudly rejects foreign argument markers",
      fn () =>
        List.all marker_error_name
-         [markerLib.Split (hd (#pre_split num_instance)),
+         [simpMarkerLib.Split (hd (#pre_split num_instance)),
           clasetLib.Intro boolTheory.TRUTH,
           clasetLib.Simp boolTheory.TRUTH,
           clasetLib.Iff boolTheory.TRUTH,
@@ -2320,7 +2320,7 @@ val _ =
          tactic_fails (linarithLib.LINARITH_TAC []) goal andalso
          valid_closes
            (linarithLib.LINARITH_TAC
-             [markerLib.Split public_bool_split]) goal
+             [simpMarkerLib.Split public_bool_split]) goal
        end)
 
 fun full_marker_error marker =
@@ -2337,6 +2337,36 @@ val _ =
          [clasetLib.Intro boolTheory.TRUTH,
           clasetLib.Simp boolTheory.TRUTH,
           clasetLib.Norm boolTheory.TRUTH])
+
+val _ =
+  check
+    ("Split validation precedes rejection and preserves first-error order",
+     fn () =>
+       let
+         val malformed = simpMarkerLib.Split boolTheory.TRUTH
+         val valid = simpMarkerLib.Split public_bool_split
+         val foreign = simpMarkerLib.ExclX "rule:linarith-selftest"
+         fun error tactic arguments =
+           ((ignore (tactic arguments); NONE)
+            handle Feedback.HOL_ERR error =>
+              SOME (Feedback.top_structure_of error,
+                    Feedback.top_function_of error,
+                    Feedback.message_of error))
+         fun expected function message =
+           SOME ("linarithLib", function, message)
+         val bad = "Malformed Split theorem (expected P-form)"
+       in
+         error linarithLib.SIMPLE_LINARITH_TAC [malformed] =
+           SOME ("linarithData", "SIMPLE_LINARITH_TAC", bad) andalso
+         error linarithLib.SIMPLE_LINARITH_TAC [valid] =
+           expected "SIMPLE_LINARITH_TAC"
+             "Split marker is not accepted by SIMPLE_LINARITH_TAC" andalso
+         error linarithLib.LINARITH_TAC [malformed, foreign] =
+           SOME ("linarithData", "CFG_LINARITH_TAC", bad) andalso
+         error linarithLib.LINARITH_TAC [foreign, malformed] =
+           expected "CFG_LINARITH_TAC"
+             "simplifier-control marker is not accepted by CFG_LINARITH_TAC"
+       end)
 
 val full_neq_one : linarithLib.linarith_config =
   {neq_limit = 1, split_limit = 9}
@@ -2767,6 +2797,46 @@ val _ =
                  | _ => false)
        in
          closed andalso #candidates used > 0 andalso cutoff
+       end)
+
+val _ =
+  check
+    ("LINARITH_ext_ss lifts contexts, nested charges and typed cutoff",
+     fn () =>
+       let
+         val ctxt = Context.snapshot ()
+         fun simpset fragment =
+           simpExtLib.++
+             (simpExtLib.++
+                (simpExtLib.empty_ss, simpExtLib.rewrites [min_le_rule]),
+              fragment)
+         val goal = ([public_x_le_y, public_y_le_z], min_side_goal)
+         fun closes fragment =
+           valid_closes
+             (simpExtLib.FULL_SIMP_TAC (simpset fragment) []) goal
+         val funded = searchBudget.unbounded ()
+         val ordinary_lift = closes linarithLib.LINARITH_ext_ss
+         val budgeted_lift =
+           closes (linarithLib.LINARITH_ext_ss_budgeted ctxt funded)
+         val zero =
+           searchBudget.create
+             {candidates = SOME 0, applications = NONE,
+              normalization = NONE}
+         val cutoff =
+           ((ignore
+               (Tactical.VALID
+                 (simpExtLib.FULL_SIMP_TAC
+                   (simpset
+                     (linarithLib.LINARITH_ext_ss_budgeted ctxt zero)) [])
+                 goal ctxt);
+             false)
+            handle searchBudget.LimitReached
+                     (searchBudget.Candidate, usage) =>
+                     #candidates usage = 0
+                 | _ => false)
+       in
+         ordinary_lift andalso budgeted_lift andalso
+         #candidates (searchBudget.usage funded) > 0 andalso cutoff
        end)
 
 val _ =
@@ -3841,7 +3911,7 @@ val _ =
      fn () =>
        let
          val hoisted =
-           linarithLib.LINARITH_TAC [markerLib.Split public_bool_split]
+           linarithLib.LINARITH_TAC [simpMarkerLib.Split public_bool_split]
          fun closes tm =
            valid_closes hoisted ([], tm)
            handle Feedback.HOL_ERR _ => false

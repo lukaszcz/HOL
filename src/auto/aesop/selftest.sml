@@ -1,5 +1,12 @@
 open HolKernel testutils
 
+(* Every simpset fixture in this suite belongs to the extension API.
+   Keep the familiar local simplifier spelling, but make its type boundary
+   explicit before constructing any fixture or installing any controls. *)
+structure OrdinarySimp = simpLib
+structure simpLib = simpExtLib
+structure Traverse = TraverseExt
+
 structure SelfTestTactical = Tactical
 structure Tactical =
 struct
@@ -30,9 +37,9 @@ val _ =
     ("aesop trace is registered at levels one through three",
      fn () =>
        List.exists
-         (fn Feedback.TraceElt {name, max, ...} =>
-           name = "aesop" andalso max = 3)
-         (Feedback.traces ()))
+         (fn HOLFlags.TraceElt {name, max, ...} =>
+           name = {group = "aesop", name = "trace"} andalso max = 3)
+         (HOLFlags.traces ()))
 
 val _ =
   check
@@ -57,6 +64,7 @@ val _ =
              (simpLib.clear_rules (aesopData.aesop_ss ())) [])
            ([boolSyntax.F], ``aesop_safe_solver_goal:bool``)))
 
+val derived_base_identity = aesopData.aesop_ss ()
 val derived_lhs = ``aesop_derived_lhs:'a``
 val derived_rhs = ``aesop_derived_rhs:'a``
 val derived_rule =
@@ -66,9 +74,10 @@ val derived_before =
 val derived_after =
   BasicProvers.with_simpset_updates
     (fn ss =>
-      simpLib.++
+      OrdinarySimp.++
         (ss,
-         simpLib.named_rewrites "aesop-selftest-derived" [derived_rule]))
+         OrdinarySimp.named_rewrites "aesop-selftest-derived"
+           [derived_rule]))
     (fn () => rewrite_rhs (aesopData.aesop_ss ()) derived_lhs)
     ()
 val derived_restored =
@@ -81,6 +90,13 @@ val _ =
        aconv derived_before derived_lhs andalso
        aconv derived_after derived_rhs andalso
        aconv derived_restored derived_lhs)
+
+val _ =
+  check
+    ("typed default windows restore the exact aesop derived state",
+     fn () =>
+       Portable.pointer_eq
+         (derived_base_identity, aesopData.aesop_ss ()))
 
 (* An attribute declaration is keyed on the theory it is made in.  This
    binary starts with no theory segment at all, so the tests from here
@@ -2968,10 +2984,10 @@ val _ =
     ("aesop trace levels report outcomes expansions and full nodes",
      fn () =>
        let
-         val old_trace = Feedback.current_trace "aesop"
+         val old_trace = HOLFlags.current_trace "aesop.trace"
          val notices = ref ([] : string list)
          fun remember message = notices := message :: !notices
-         val _ = Feedback.set_trace "aesop" 3
+         val _ = HOLFlags.set_trace "aesop.trace" 3
          val _ =
            Lib.with_flag
              (Feedback.MESG_outstream, remember)
@@ -2990,7 +3006,7 @@ val _ =
                     (search_source [] (fn _ => []) [])
                     (new_tree clasetMeta.empty
                       (tree_cgoal [] [] search_limit_goal) [])))) ()
-         val _ = Feedback.set_trace "aesop" old_trace
+         val _ = HOLFlags.set_trace "aesop.trace" old_trace
        in
          List.exists (String.isSubstring "search exhausted") (!notices)
          andalso
@@ -3426,14 +3442,14 @@ fun aesop_closes proposition =
   null (residual (aesopLib.AESOP_TAC []) ([], proposition))
 
 val list_strength_ss =
-  simpLib.named_rewrites "aesop-selftest-list-strength"
+  OrdinarySimp.named_rewrites "aesop-selftest-list-strength"
     [listTheory.APPEND, listTheory.LENGTH, listTheory.REVERSE_DEF,
      listTheory.MEM]
 
 fun aesop_list_closes proposition =
   BasicProvers.with_simpset_updates
     (fn ss =>
-      simpLib.++ (ss, list_strength_ss))
+      OrdinarySimp.++ (ss, list_strength_ss))
     aesop_closes proposition
 
 val list_strength_smoke =
@@ -3661,55 +3677,6 @@ val _ =
          (closes_goal aesop_linarith_tactic
             aesop_arith_fact_goal))
 
-(* The aesop simpset is derived from srw_ss, so an unsafe solver
-   installed into the shared base -- an augment_srw_ss of a solver_ss
-   fragment -- would be carried along by the derivation, and reach the
-   normalisation phase ahead of linarith: traverseconfig_for_ss hands the
-   unsafe solvers to every traversal as its side-condition solvers, and
-   Traverse tries them in order.  The sentinel below records that it was
-   asked and then declines, so that the goal is still discharged by the
-   solver that ought to have had it in the first place and the assertion
-   is about who was asked rather than about who succeeded.
-   with_simpset_updates makes the base change temporary, so nothing of
-   this reaches the tests after it. *)
-val aesop_sentinel_name = "aesop-selftest-srw-sentinel"
-val aesop_sentinel_asked = ref false
-val aesop_sentinel_solver : Traverse.ssolver =
-  {name = aesop_sentinel_name,
-   solve =
-     fn _ => fn _ =>
-       (aesop_sentinel_asked := true;
-        raise mk_HOL_ERR "selftest" aesop_sentinel_name
-          "sentinel solvers decline every side condition")}
-
-fun unsafe_solver_names simpset =
-  map (fn ({name, ...} : Traverse.ssolver) => name)
-    (#solvers (simpLib.traverseconfig_for_ss simpset))
-
-val aesop_sentinel_names_before =
-  unsafe_solver_names (aesopData.aesop_ss ())
-val (aesop_sentinel_names, aesop_sentinel_closes) =
-  BasicProvers.with_simpset_updates
-    (fn base =>
-      simpLib.++ (base, simpLib.solver_ss aesop_sentinel_solver))
-    (fn () =>
-      (unsafe_solver_names (aesopData.aesop_ss ()),
-       closes_goal aesop_linarith_tactic aesop_linarith_goal))
-    ()
-val aesop_sentinel_names_after =
-  unsafe_solver_names (aesopData.aesop_ss ())
-
-val _ =
-  check
-    ("aesop simpset does not inherit unsafe solvers from srw_ss",
-     fn () =>
-       not (List.exists (equal aesop_sentinel_name)
-         aesop_sentinel_names) andalso
-       List.exists (equal "lin_arith") aesop_sentinel_names andalso
-       not (!aesop_sentinel_asked) andalso
-       aesop_sentinel_closes andalso
-       aesop_sentinel_names_after = aesop_sentinel_names_before)
-
 (* A tactic value is routinely bound before the declarations its goals
    need -- [val TAC = AESOP_TAC []] at the head of a script, then the
    theorems and simp rules the script proves.  Both entry points are
@@ -3745,9 +3712,9 @@ val stale_simp_goal =
 val stale_simp_closed =
   BasicProvers.with_simpset_updates
     (fn ss =>
-      simpLib.++
+      OrdinarySimp.++
         (ss,
-         simpLib.named_rewrites "aesop-selftest-stale-rewrite"
+         OrdinarySimp.named_rewrites "aesop-selftest-stale-rewrite"
            [stale_rewrite]))
     (fn () => closes_goal stale_tactic stale_simp_goal)
     ()

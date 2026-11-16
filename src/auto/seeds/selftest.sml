@@ -1,11 +1,42 @@
 open HolKernel testutils autoSeedTheory simpLib
 
+(* Ordinary collections and their tests below stay ordinary.  Callers of
+   extension-facing clasimp APIs use the lifted default. *)
+fun lifted_default () = simpExtLib.lift_simpset (BasicProvers.srw_ss ())
+
 val _ = intLinarith.instance
 val _ = Theory.new_theory "seedCollectionSelftest"
 
 fun check (name, predicate) =
   (tprint name;
    if predicate () then OK () else die "failed")
+
+val seed_bottom_up_rule = new_definition
+  ("seed_decl_g_def", ``seed_decl_g (p:bool) = p``)
+
+val _ =
+  check
+    ("bottom-up declarations and retractions rewind with the context",
+     fn () =>
+       let
+         val saved = Context.snapshot ()
+         fun run () =
+           let
+             val name = "seed_bottom_up_context"
+             val _ = boolLib.save_thm
+               (name ^ "[simp_bottom_up]", seed_bottom_up_rule)
+             val declared = Context.snapshot ()
+             fun reduces () = aconv
+               (boolSyntax.rhs (concl
+                 (Conv.QCONV (simpExtLib.SIMP_CONV (lifted_default ()) [])
+                    ``seed_decl_g p``))) ``p:bool``
+             val added = reduces ()
+             val _ = clasimpLib.remove_simp_bottom_up name
+             val removed = not (reduces ())
+             val _ = Context.restore declared
+             val restored = reduces ()
+           in added andalso removed andalso restored andalso reduces () end
+       in Portable.finally (fn () => Context.restore saved) run () end)
 
 val _ =
   check
@@ -402,7 +433,7 @@ val _ =
     ("universal image membership simplifies through an implication",
      fn () =>
        solved
-         (simpLib.FULL_SIMP_TAC (clasimpLib.clasimp_ss ()) [])
+         (simpExtLib.FULL_SIMP_TAC (clasimpLib.clasimp_ss ()) [])
          ``(!y. y IN IMAGE (f : 'a -> 'b) source ==> property y) ==>
            !x. x IN source ==> property (f x)``)
 
@@ -447,7 +478,7 @@ val _ =
          val excluded =
            result
              [markerLib.Excl
-                "realAutoSeed$REAL_INV_1OVER_FIELD"]
+                "realAutoSeed.REAL_INV_1OVER_FIELD"]
        in
          if not (aconv normal ``1 / (x : real)``) then
            raise Fail
@@ -625,7 +656,7 @@ val _ =
      fn () =>
        let
          val rewritten =
-           simpLib.SIMP_CONV (clasimpLib.clasimp_ss ())
+           simpExtLib.SIMP_CONV (clasimpLib.clasimp_ss ())
              [order_side_condition_rule] order_side_condition_goal
        in
          Term.aconv (boolSyntax.rhs (Thm.concl rewritten)) boolSyntax.T
@@ -981,7 +1012,7 @@ val _ =
     ("a flattened list standing as a set is read as a union",
      fn () =>
        closes_within 20
-         (clasimpLib.asm_full_simp (BasicProvers.srw_ss ()) [])
+         (clasimpLib.asm_full_simp (lifted_default ()) [])
          ([], ``!(xss : 'a list list) (measure : 'a set -> num).
                   measure (set (FLAT xss)) =
                   measure (BIGUNION (IMAGE set (set xss)))``))
@@ -998,7 +1029,7 @@ val _ =
     ("a zip of two appends with equal prefixes comes apart",
      fn () =>
        closes_within 20
-         (clasimpLib.asm_full_simp (BasicProvers.srw_ss ()) [])
+         (clasimpLib.asm_full_simp (lifted_default ()) [])
          ([], ``!(xs : 'a list) ys zs pair.
                   MEM pair (ZIP (xs ++ ys, xs ++ zs)) <=>
                   MEM pair (ZIP (xs, xs)) \/ MEM pair (ZIP (ys, zs))``))
@@ -1027,7 +1058,7 @@ val _ =
     ("a filtered membership is read the way the source states it",
      fn () =>
        closes_within 20
-         (clasimpLib.asm_full_simp (BasicProvers.srw_ss ()) [])
+         (clasimpLib.asm_full_simp (lifted_default ()) [])
          ([], ``!(xs : num list) P Q.
                   (!x. MEM x xs /\ P x <=> Q x) ==>
                   !y. MEM y (FILTER P xs) ==> Q y``))
@@ -1277,7 +1308,7 @@ val _ =
      fn () =>
        let
          val rewritten =
-           simpLib.SIMP_CONV (clasimpLib.clasimp_ss ())
+           simpExtLib.SIMP_CONV (clasimpLib.clasimp_ss ())
              [image_domain_rule] image_domain_goal
        in
          Term.aconv (boolSyntax.rhs (Thm.concl rewritten)) boolSyntax.T
@@ -1304,7 +1335,7 @@ val _ =
             Term.aconv
               (boolSyntax.rhs
                  (Thm.concl
-                    (simpLib.SIMP_CONV (clasimpLib.clasimp_ss ()) [] goal)))
+                    (simpExtLib.SIMP_CONV (clasimpLib.clasimp_ss ()) [] goal)))
               boolSyntax.T
             handle Conv.UNCHANGED => false)
          [``(!e. MEM e (seed_cons_a::seed_cons_b::seed_cons_xs) ==>
@@ -1453,7 +1484,7 @@ val _ =
             (Term.aconv
                (boolSyntax.rhs
                   (Thm.concl
-                     (simpLib.SIMP_CONV (clasimpLib.clasimp_ss ())
+                     (simpExtLib.SIMP_CONV (clasimpLib.clasimp_ss ())
                         [miniscoping_rule] goal)))
                boolSyntax.T
              handle Conv.UNCHANGED => false))

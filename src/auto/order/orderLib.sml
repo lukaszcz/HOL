@@ -239,15 +239,29 @@ fun make_order_reducer budget =
          CTXT {theorems = [], contexts = [], sites = ref []}}
   end
 
-fun order_ss budget =
+fun order_ss reducer =
   simpLib.named_merge_ss "ORDER"
     [simpLib.SSFRAG
        {name = SOME "ORDER_DP",
         convs = [], rewrs = [], congs = [], filter = NONE,
-        ac = [], dprocs = [make_order_reducer budget]}]
+        ac = [], dprocs = [reducer]}]
 
-val ORDER_ss = order_ss NONE
+(* Both boundaries use the same ordinary collector and apply closure. *)
+fun order_ext_ss reducer =
+  simpExtLib.named_merge_ss "ORDER"
+    [simpExtLib.SSFRAG
+       {name = SOME "ORDER_DP",
+        convs = [], rewrs = [], congs = [], filter = NONE,
+        ac = [], dprocs = [TraverseExt.lift reducer]}]
 
-fun ORDER_ss_budgeted budget = order_ss (SOME budget)
+val order_reducer = make_order_reducer NONE
+val ORDER_ss = order_ss order_reducer
+val ORDER_ext_ss = order_ext_ss order_reducer
+
+fun ORDER_ss_budgeted budget =
+  order_ss (make_order_reducer (SOME budget))
+
+fun ORDER_ext_ss_budgeted budget =
+  order_ext_ss (make_order_reducer (SOME budget))
 
 end

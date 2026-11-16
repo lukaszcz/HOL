@@ -19,6 +19,10 @@ be reset with `linarithLib.clear_linarith_caches ()`.
 installed in `srw_ss()`. It uses direct forward arithmetic rather than the
 full tactic's operator-splitting and Boolean preprocessing.
 
+This fragment remains ordinary. For an extension simpset use the distinct
+`linarithLib.LINARITH_ext_ss` recipe before installation; do not promote
+an already compiled ordinary set.
+
 ### Failure
 
 The fragment construction itself does not fail. Its reducer declines terms
@@ -44,6 +48,7 @@ QED
 
 [`linarithLib`](#linarithLib),
 [`linarithLib.linarith_solver`](#linarithLib.linarith_solver),
+[`linarithLib.LINARITH_ext_ss`](#linarithLib.LINARITH_ext_ss),
 [`linarithLib.LINARITH_TAC`](#linarithLib.LINARITH_TAC),
 [`simpLib.++`](#simpLib.++),
 [`simpLib.SSFRAG`](#simpLib.SSFRAG)

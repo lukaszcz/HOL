@@ -523,3 +523,43 @@ val _ =
        in
          null remaining andalso #candidates used > 0 andalso cutoff
        end)
+
+val _ =
+  check
+    ("ORDER_ext_ss lifts context collection and budget cutoffs",
+     fn () =>
+       let
+         val goal =
+           ``!le a b c.
+               relation$WeakLinearOrder le ==>
+               le a b /\ le b c ==> le a c``
+         fun run fragment =
+           let
+             val ss = simpExtLib.++ (simpExtLib.lift_simpset boolSimps.bool_ss, fragment)
+             val (remaining, validation) =
+               Tactical.VALID
+                 (Tactical.THEN
+                    (Tactical.REPEAT Tactic.STRIP_TAC,
+                     simpExtLib.ASM_SIMP_TAC ss []))
+                 ([], goal) (Context.snapshot ())
+           in
+             if null remaining then (ignore (validation []); true)
+             else false
+           end
+         val funded = searchBudget.unbounded ()
+         val zero =
+           searchBudget.create
+             {candidates = SOME 0, applications = NONE,
+              normalization = NONE}
+         val ordinary_lift = run ORDER_ext_ss
+         val budgeted_lift = run (ORDER_ext_ss_budgeted funded)
+         val cutoff =
+           ((ignore (run (ORDER_ext_ss_budgeted zero)); false)
+            handle searchBudget.LimitReached
+                     (searchBudget.Candidate, usage) =>
+                     #candidates usage = 0
+                 | _ => false)
+       in
+         ordinary_lift andalso budgeted_lift andalso
+         #candidates (searchBudget.usage funded) > 0 andalso cutoff
+       end)

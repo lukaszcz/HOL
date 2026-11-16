@@ -3,6 +3,11 @@ struct
 
 open Abbrev HolKernel
 
+(* All simplifier flows in this harness use clasimp's extension simpsets.
+   This local spelling deliberately denotes the extension API, including
+   fragment registration and SF transport, before any rule installation. *)
+structure simpLib = simpExtLib
+
 val ERR = mk_HOL_ERR "benchLib"
 
 (* Force the post-boss carrier registrations into every benchmark image. *)
@@ -239,11 +244,20 @@ val primitive_definitions =
    (pred_setTheory.INTER_DEF, pred_setTheory.IN_INTER),
    (pred_setTheory.DIFF_DEF, pred_setTheory.IN_DIFF)]
 
+(* Legacy Excl uses Thy.Name, not the kernel's Thy$Name spelling used
+   by the corpus and claset. Keep it literal (and silent for a claset-only
+   rule); ExclX would instead require a matching simplifier target. *)
+fun rewrite_exclusion name =
+  markerLib.Excl
+    (case String.fields (equal #"$") name of
+         [thy, rule] => thy ^ "." ^ rule
+       | _ => name)
+
 fun controls exclusions =
   List.concat
     (map
       (fn ({name, ...} : exclusion) =>
-        map clasetLib.Del (claset_names name) @ [markerLib.Excl name])
+        map clasetLib.Del (claset_names name) @ [rewrite_exclusion name])
       exclusions)
 
 fun beta_eta_normalise term =
@@ -826,7 +840,7 @@ fun class_args (RewriteAdd {theorem, ...}) = [clasetLib.Simp theorem]
      none. *)
   | class_args (RewriteAddBottomUp _) = []
   | class_args (RewriteDelete name) =
-      map clasetLib.Del (claset_names name) @ [markerLib.Excl name]
+      map clasetLib.Del (claset_names name) @ [rewrite_exclusion name]
   | class_args (SplitAdd {theorem, ...}) = [simpLib.Split theorem]
   | class_args (IntroAdd (SafeRule, {theorem, ...})) =
       [clasetLib.SIntro theorem]
@@ -929,7 +943,7 @@ fun simp_arg (RewriteAdd {theorem, ...}) =
       else NONE
   (* Not a rewrite of the invocation: see [class_args] above. *)
   | simp_arg (RewriteAddBottomUp _) = NONE
-  | simp_arg (RewriteDelete name) = SOME (simpLib.Excl name)
+  | simp_arg (RewriteDelete name) = SOME (rewrite_exclusion name)
   | simp_arg (SplitAdd {theorem, ...}) = SOME (simpLib.Split theorem)
   | simp_arg (CongruenceAdd {theorem, ...}) = SOME (simpLib.Cong theorem)
   | simp_arg (DefinitionAdd {theorem, ...}) = SOME theorem

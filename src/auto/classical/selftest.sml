@@ -2034,17 +2034,17 @@ val _ =
          val rule = GEN x (DISCH premise boolTheory.TRUTH)
          val cs =
            clasetLib.add_sintros [("unfixed", rule)] clasetLib.empty_cs
-         val old_trace = Feedback.current_trace "classical"
+         val old_trace = HOLFlags.current_trace "classical.trace"
          val notices = ref ([] : string list)
          fun record_notice message =
            notices := message :: !notices
-         val _ = Feedback.set_trace "classical" 1
+         val _ = HOLFlags.set_trace "classical.trace" 1
          val result =
            Lib.with_flag
              (Feedback.MESG_outstream, record_notice)
              (fn () =>
                first_step safe_step cs ([], boolSyntax.T)) ()
-         val _ = Feedback.set_trace "classical" old_trace
+         val _ = HOLFlags.set_trace "classical.trace" old_trace
        in
          not (Option.isSome result) andalso
          List.exists
@@ -2867,7 +2867,9 @@ val _ =
             clasetLib.Del "not-present"]
          val passthrough =
            [markerLib.Cong boolTheory.TRUTH,
-            markerLib.Excl "simp-rule"]
+            simpMarkerLib.Split boolTheory.OR_CLAUSES,
+            markerLib.Excl "simp-rule",
+            simpMarkerLib.ExclX "rule:simp-rule"]
          val (_, leftovers) =
            clasetLib.process_claset_tags passthrough clasetLib.empty_cs
        in
@@ -2888,6 +2890,21 @@ val _ =
              (classicalLib.SAFE_TAC
                [markerLib.Excl "bool$AND_INTRO_THM"])
              goal
+       in
+         same_goals residues [([], phase1_pa), ([], phase1_qa)]
+       end)
+
+val _ =
+  test
+    ("classical tactics discard Split and ExclX without a simpset",
+     fn () =>
+       let
+         val goal = ([], boolSyntax.mk_conj (phase1_pa, phase1_qa))
+         val controls =
+           [simpMarkerLib.Split boolTheory.OR_CLAUSES,
+            simpMarkerLib.ExclX "rule:bool.AND_INTRO_THM"]
+         val (residues, _) =
+           Tactical.VALID (classicalLib.SAFE_TAC controls) goal
        in
          same_goals residues [([], phase1_pa), ([], phase1_qa)]
        end)
@@ -6114,10 +6131,10 @@ val _ =
     ("classical trace levels report summaries and full candidates",
      fn () =>
        let
-         val old_trace = Feedback.current_trace "classical"
+         val old_trace = HOLFlags.current_trace "classical.trace"
          val notices = ref ([] : string list)
          fun remember message = notices := message :: !notices
-         val _ = Feedback.set_trace "classical" 3
+         val _ = HOLFlags.set_trace "classical.trace" 3
          val _ =
            Lib.with_flag
              (Feedback.MESG_outstream, remember)
@@ -6127,7 +6144,7 @@ val _ =
                    (clasetSearch.BEST_FIRST (fn _ => false)
                      (fn _ => seq.empty)
                      (search_singleton best_root_tm)))) ()
-         val _ = Feedback.set_trace "classical" old_trace
+         val _ = HOLFlags.set_trace "classical.trace" old_trace
        in
          List.exists (String.isSubstring "best-first expansion") (!notices)
          andalso

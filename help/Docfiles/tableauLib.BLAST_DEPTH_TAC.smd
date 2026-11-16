@@ -23,7 +23,7 @@ assumption before tableau translation. Content-bearing generic simplifier
 wrappers are unwrapped and inserted; inert generic controls are ignored.
 
 Found tableaux are replayed through typed HOL inference. A replay failure
-causes internal backtracking. Trace family `"blast"` reports such failures
+causes internal backtracking. Trace `"blast.trace"` reports such failures
 and rule warnings at level 1, statistics at level 2, and full tableau
 states at level 3 and above.
 
@@ -63,4 +63,4 @@ QED
 [`classicalLib.FAST_TAC`](#classicalLib.FAST_TAC),
 [`classicalLib.SAFE_TAC`](#classicalLib.SAFE_TAC),
 [`classicalLib.CLARIFY_TAC`](#classicalLib.CLARIFY_TAC),
-[`Feedback.set_trace`](#Feedback.set_trace)
+[`HOLFlags.set_trace`](#HOLFlags.set_trace)

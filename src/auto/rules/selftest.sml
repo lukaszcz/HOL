@@ -3031,12 +3031,14 @@ val _ =
          val iff2 = boolTheory.NOT_CLAUSES
          val control1 = markerLib.Excl "claset-selftest-one"
          val control2 = BoundedRewrites.Once boolTheory.TRUTH
+         val control3 = simpMarkerLib.Split boolTheory.OR_CLAUSES
+         val control4 = simpMarkerLib.ExclX "rule:claset-selftest"
          val fact1 = boolTheory.EQ_REFL
          val fact2 = boolTheory.FORALL_SIMP
          val {simp_rules, iff_rules, simp_controls, rest} =
            classify_simp_args
              [Simp simp1, control1, fact1, Iff iff1,
-              Simp simp2, control2, Iff iff2, fact2]
+              control3, Simp simp2, control2, Iff iff2, fact2, control4]
          fun same_list left right =
            ListPair.allEq
              (fn (theorem1, theorem2) => same_thm theorem1 theorem2)
@@ -3044,7 +3046,8 @@ val _ =
        in
          same_list simp_rules [simp1, simp2] andalso
          same_list iff_rules [iff1, iff2] andalso
-         same_list simp_controls [control1, control2] andalso
+         same_list simp_controls
+           [control1, control3, control2, control4] andalso
          same_list rest [fact1, fact2]
        end)
 
@@ -3054,6 +3057,9 @@ val _ =
      fn () =>
        List.all
          (not o markerLib.is_directive)
+         claset_marker_theorems andalso
+       List.all
+         (not o simpMarkerLib.is_directive)
          claset_marker_theorems)
 
 val _ =
@@ -3170,14 +3176,19 @@ val _ =
 
 val _ =
   test
-    ("inert generic simp markers do not change invocation facts",
+    ("inert generic and extension controls do not change invocation facts",
      fn () =>
        let
          val plain = boolTheory.TRUTH
          val markers =
            [markerLib.AC boolTheory.AND_CLAUSES boolTheory.OR_CLAUSES,
             markerLib.Cong boolTheory.AND_CLAUSES,
-            markerLib.Split boolTheory.OR_CLAUSES,
+            simpMarkerLib.Split boolTheory.OR_CLAUSES,
+            simpMarkerLib.ExclX "rule:claset-selftest",
+            markerLib.mk_Req0
+              (simpMarkerLib.Split boolTheory.OR_CLAUSES),
+            markerLib.mk_ReqD
+              (simpMarkerLib.ExclX "rule:claset-wrapped"),
             markerLib.Excl "claset-selftest",
             markerLib.ExclSF "claset-selftest",
             markerLib.FRAG "claset-selftest",
@@ -3191,7 +3202,7 @@ val _ =
              (List.take (markers, 4) @ [plain] @
               List.drop (markers, 4))
        in
-         List.all markerLib.is_directive markers andalso
+         List.all simpMarkerLib.is_directive markers andalso
          same_rules (rules_of baseline_cs) (rules_of with_markers_cs)
            andalso
          null (rules_of with_markers_cs) andalso
@@ -3216,6 +3227,58 @@ val _ =
          null (rules_of cs) andalso
          ListPair.allEq (fn (left, right) => same_thm left right)
            (facts, [payload])
+       end)
+
+val _ =
+  test
+    ("mixed simp controls forward unchanged once, outside the facts",
+     fn () =>
+       let
+         val plain = boolTheory.TRUTH
+         val controls =
+           [markerLib.Excl "claset-forward",
+            simpMarkerLib.Split boolTheory.OR_CLAUSES,
+            simpMarkerLib.ExclX "rule:claset-forward",
+            markerLib.mk_Req0
+              (simpMarkerLib.ExclX "rule:claset-forward"),
+            BoundedRewrites.Once boolTheory.TRUTH]
+         val extended = ref 0
+         val called = ref 0
+         val observed = ref false
+         fun extend {simp_rules, iff_rules, claset, simpset, iff_prefix} =
+           (extended := !extended + 1;
+            observed :=
+              (ListPair.allEq (fn (a, b) => same_thm a b)
+                 (simp_rules, [boolTheory.AND_CLAUSES]) andalso
+               ListPair.allEq (fn (a, b) => same_thm a b)
+                 (iff_rules, [boolTheory.IMP_CLAUSES]));
+            (claset, simpset))
+         fun body cs ss forwarded environment =
+           (called := !called + 1;
+            observed := (!observed andalso Option.isSome ss andalso
+              null (rules_of cs) andalso
+              ListPair.allEq
+                (fn (a, b) => same_thm a b andalso
+                              Portable.pointer_eq (a, b))
+                (forwarded, controls) andalso
+              ListPair.allEq (fn (a, b) => same_thm a b)
+                (map clasetFacts.source (clasetFacts.facts environment),
+                 [plain]));
+            Tactical.ALL_TAC)
+         val tactic =
+           with_invocation_fact_env
+             {iff_prefix = "__selftest_controls_",
+              extra_markers = fn ths => fn cs => (cs, ths),
+              consumer = SafeFacts}
+             body empty_cs (SOME {base = (), extend = extend})
+             (hd controls :: Simp boolTheory.AND_CLAUSES :: plain ::
+              Iff boolTheory.IMP_CLAUSES :: tl controls)
+         val _ = tactic ([], boolSyntax.T) (Context.snapshot ())
+       in
+         !extended = 1 andalso !called = 1 andalso !observed andalso
+         not (markerLib.is_directive (List.nth (controls, 1))) andalso
+         not (markerLib.is_directive
+                (simpMarkerLib.ExclX "rule:claset-forward"))
        end)
 
 (* Assumption order is observable: it is the recency tie-break the search

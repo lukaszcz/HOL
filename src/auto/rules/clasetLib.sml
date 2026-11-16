@@ -1370,7 +1370,7 @@ fun simp_arg_bucket theorem =
       SOME {name="Simp",payload=Theorem rule,...} => (SimpRule,rule)
     | SOME {name="Iff",payload=Theorem rule,...} => (IffRule,rule)
     | _ =>
-        if markerLib.is_directive theorem
+        if simpMarkerLib.is_directive theorem
         then (SimpControl, theorem)
         else (Plain, theorem)
 
@@ -1415,7 +1415,7 @@ fun check_aesop_markers function theorems =
 fun invocation_facts theorems =
   let
     val {simp_rules, iff_rules, rest, ...} =
-      classify_simp_args (map markerLib.strip_wrappers theorems)
+      classify_simp_args (map simpMarkerLib.strip_wrappers theorems)
   in
     if not (null simp_rules) then
       raise mk_HOL_ERR "clasetLib" "invocation_facts"

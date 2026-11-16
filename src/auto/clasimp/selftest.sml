@@ -1,5 +1,24 @@
 open HolKernel testutils
 
+(* Fixtures are tracked from construction, before installing any rewrites.
+   Keep the independent ordinary engine explicit at comparison sites. *)
+structure OrdinarySimp = simpLib
+structure simpLib = simpExtLib
+structure boolSimps =
+struct
+  val bool_ss = simpExtLib.lift_simpset boolSimps.bool_ss
+  val ETA_ss = simpExtLib.lift_ssfrag boolSimps.ETA_ss
+end
+structure pureSimps =
+struct
+  val pure_ss = simpExtLib.lift_simpset pureSimps.pure_ss
+end
+structure Traverse = TraverseExt
+
+(* The ambient default, lifted into the extension engine.  Updates go to
+   the ordinary srw_ss, which also invalidates clasimp's derived caches. *)
+fun lifted_srw_ss () = simpExtLib.lift_simpset (BasicProvers.srw_ss ())
+
 structure SelfTestTactical = Tactical
 structure Tactical =
 struct
@@ -320,8 +339,8 @@ fun public_binding_fixture () =
                     then compiles := !compiles + 1 else ()
           in [item] end handle HOL_ERR _ => [item]
         val _ = BasicProvers.augment_srw_ss
-          [simpLib.named_rewrites "public_binding_converse" [backward],
-           simpLib.SSFRAG
+          [OrdinarySimp.named_rewrites "public_binding_converse" [backward],
+           OrdinarySimp.SSFRAG
              {name=SOME "public_binding_compile",convs=[],rewrs=[],
               ac=[],dprocs=[],congs=[],filter=SOME record}]
         val checked_valid = ref false
@@ -867,8 +886,8 @@ val derived_before =
 val derived_after =
   BasicProvers.with_simpset_updates
     (fn ss =>
-      simpLib.++
-        (ss, simpLib.named_rewrites "clasimp-selftest-derived"
+      OrdinarySimp.++
+        (ss, OrdinarySimp.named_rewrites "clasimp-selftest-derived"
                [derived_rule]))
     (fn () =>
       Conv.QCONV
@@ -948,7 +967,7 @@ val _ =
      fn () =>
        same_goals
          (residual
-            (clasimpLib.asm_full_simp BasicProvers.bool_ss [])
+            (clasimpLib.asm_full_simp boolSimps.bool_ss [])
             mutual_goal)
          mutual_expected)
 
@@ -965,7 +984,7 @@ val _ =
      fn () =>
        same_goals
          (residual
-            (clasimpLib.asm_full_simp BasicProvers.bool_ss [])
+            (clasimpLib.asm_full_simp boolSimps.bool_ss [])
             chain_goal)
          chain_expected)
 
@@ -1083,8 +1102,8 @@ fun install_iff name theorem =
       clasimpLib.iff_declaration name theorem
     val cs = clasimpLib.add_iff_rules rules clasetLib.empty_cs
     val ss =
-      simpLib.++
-        (BasicProvers.bool_ss, simpLib.rewrites [rewrite])
+      OrdinarySimp.++
+        (BasicProvers.bool_ss, OrdinarySimp.rewrites [rewrite])
   in
     (rules, cs, ss)
   end
@@ -1092,7 +1111,7 @@ fun install_iff name theorem =
 fun simp_rewrites_to ss source target =
   let
     val theorem =
-      Conv.QCONV (simpLib.SIMP_CONV ss []) source
+      Conv.QCONV (OrdinarySimp.SIMP_CONV ss []) source
   in
     Term.aconv
       (snd (boolSyntax.dest_eq (concl theorem))) target
@@ -1184,6 +1203,7 @@ val has_named_claset_rule = iffTestSupport.has_rule
 
 (* The theory tests probe the persistent views the same way. *)
 val has_iff_rewrite = iffTestSupport.rewrite_changes
+val has_extension_iff_rewrite = iffTestSupport.extension_rewrite_changes
 
 fun persistent_iff_rule_name name suffix =
   name ^ ".__clasimp_iff_" ^ suffix
@@ -1216,7 +1236,7 @@ val _ =
            has_named_claset_rule
              (persistent_iff_rule_name persistent_name "dest") andalso
            has_iff_rewrite persistent_name (BasicProvers.srw_ss ()) andalso
-           has_iff_rewrite persistent_name (clasimpLib.clasimp_ss ())
+           has_extension_iff_rewrite persistent_name (clasimpLib.clasimp_ss ())
          val _ = clasimpLib.remove_iff local_name
        in
          added andalso
@@ -1229,7 +1249,8 @@ val _ =
          not
            (has_iff_rewrite persistent_name (BasicProvers.srw_ss ())) andalso
          not
-           (has_iff_rewrite persistent_name (clasimpLib.clasimp_ss ()))
+           (has_extension_iff_rewrite persistent_name
+              (clasimpLib.clasimp_ss ()))
        end)
 
 val _ =
@@ -1349,16 +1370,16 @@ val clasimp_bu_head =
 
 fun clasimp_bu_normalise term =
   let
-    val ss =
-      simpLib.++ (BasicProvers.srw_ss (), simpLib.rewrites [clasimp_bu_head])
+    val ss = OrdinarySimp.++
+      (BasicProvers.srw_ss (), OrdinarySimp.rewrites [clasimp_bu_head])
   in
-    boolSyntax.rhs (concl (Conv.QCONV (simpLib.SIMP_CONV ss []) term))
+    boolSyntax.rhs (concl (Conv.QCONV (OrdinarySimp.SIMP_CONV ss []) term))
   end
 
 fun clasimp_bu_child_normalise term =
   let
     val ss =
-      simpLib.++ (BasicProvers.srw_ss (),
+      simpLib.++ (lifted_srw_ss (),
                   simpLib.rewrites [clasimp_bu_head])
   in
     boolSyntax.rhs
@@ -1404,7 +1425,7 @@ val _ =
            has_named_claset_rule
              (persistent_iff_rule_name persistent_name "dest") andalso
            has_iff_rewrite persistent_name (BasicProvers.srw_ss ()) andalso
-           has_iff_rewrite persistent_name (clasimpLib.clasimp_ss ())
+           has_extension_iff_rewrite persistent_name (clasimpLib.clasimp_ss ())
          val _ = clasimpLib.remove_iff_bottom_up local_name
        in
          added andalso
@@ -1417,7 +1438,8 @@ val _ =
          not
            (has_iff_rewrite persistent_name (BasicProvers.srw_ss ())) andalso
          not
-           (has_iff_rewrite persistent_name (clasimpLib.clasimp_ss ()))
+           (has_extension_iff_rewrite persistent_name
+              (clasimpLib.clasimp_ss ()))
        end)
 
 (* The same theorem declared [iff] reaches the term first and leaves the
@@ -1469,11 +1491,15 @@ val _ =
    a declaration: added plainly it reaches the term first and leaves the
    subject in a form the rule about that subject's head no longer
    addresses. *)
-val clasimp_bu_head_ss =
-  simpLib.++ (BasicProvers.srw_ss (), simpLib.rewrites [clasimp_bu_head])
+val clasimp_bu_head_ss = OrdinarySimp.++
+  (BasicProvers.srw_ss (), OrdinarySimp.rewrites [clasimp_bu_head])
+val clasimp_bu_head_ext_ss =
+  simpLib.++ (lifted_srw_ss (), simpLib.rewrites [clasimp_bu_head])
 
-fun clasimp_bu_reduce ss term =
-  boolSyntax.rhs (concl (Conv.QCONV (simpLib.SIMP_CONV ss []) term))
+fun clasimp_bu_reduce_with simp_conv ss term =
+  boolSyntax.rhs (concl (Conv.QCONV (simp_conv ss []) term))
+val clasimp_bu_reduce = clasimp_bu_reduce_with OrdinarySimp.SIMP_CONV
+val clasimp_bu_reduce_ext = clasimp_bu_reduce_with simpLib.SIMP_CONV
 
 val _ =
   check
@@ -1483,16 +1509,16 @@ val _ =
          val term = ``~clasimp_bu_wrap (clasimp_bu_step m)``
        in
          aconv
-           (clasimp_bu_reduce
+           (clasimp_bu_reduce_ext
               (simpLib.++
-                 (clasimp_bu_head_ss,
+                 (clasimp_bu_head_ext_ss,
                   clasimpLib.normalised_subject_fragment [clasimp_bu_rule]))
               term)
            boolSyntax.T andalso
          aconv
            (clasimp_bu_reduce
-              (simpLib.++ (clasimp_bu_head_ss,
-                           simpLib.rewrites [clasimp_bu_rule]))
+              (OrdinarySimp.++ (clasimp_bu_head_ss,
+                                OrdinarySimp.rewrites [clasimp_bu_rule]))
               term)
            ``clasimp_bu_view (clasimp_bu_step m)``
        end)
@@ -1502,9 +1528,9 @@ val _ =
     ("a rewrite installed for one invocation reduces a bare subject",
      fn () =>
        aconv
-         (clasimp_bu_reduce
+         (clasimp_bu_reduce_ext
             (simpLib.++
-               (clasimp_bu_head_ss,
+               (clasimp_bu_head_ext_ss,
                 clasimpLib.normalised_subject_fragment [clasimp_bu_rule]))
             ``~clasimp_bu_wrap v``)
          ``clasimp_bu_view v``)
@@ -1543,7 +1569,7 @@ val _ =
              (local_name ^ "[simp_bottom_up]", clasimp_bu_rule)
          val declared =
            has_iff_rewrite persistent_name (BasicProvers.srw_ss ()) andalso
-           has_iff_rewrite persistent_name (clasimpLib.clasimp_ss ())
+           has_extension_iff_rewrite persistent_name (clasimpLib.clasimp_ss ())
          val claset_rules =
            List.exists
              (fn suffix =>
@@ -1554,7 +1580,8 @@ val _ =
        in
          declared andalso not claset_rules andalso
          not (has_iff_rewrite persistent_name (BasicProvers.srw_ss ())) andalso
-         not (has_iff_rewrite persistent_name (clasimpLib.clasimp_ss ()))
+         not (has_extension_iff_rewrite persistent_name
+                (clasimpLib.clasimp_ss ()))
        end)
 
 (* The matcher the reducer uses.  A law stated as a higher-order pattern --
@@ -1571,9 +1598,9 @@ val _ =
     ("a bottom-up rewrite is matched as a higher-order pattern",
      fn () =>
        aconv
-         (clasimp_bu_reduce
+         (clasimp_bu_reduce_ext
             (simpLib.++
-               (BasicProvers.srw_ss (),
+               (lifted_srw_ss (),
                 clasimpLib.normalised_subject_fragment
                   [clasimp_bu_higher_order]))
             ``!n:num.
@@ -1985,7 +2012,7 @@ end
 val generic_simp_markers =
   [markerLib.AC boolTheory.AND_CLAUSES boolTheory.OR_CLAUSES,
    markerLib.Cong boolTheory.AND_CLAUSES,
-   markerLib.Split boolTheory.OR_CLAUSES,
+   simpLib.Split boolTheory.OR_CLAUSES,
    markerLib.Excl "clasimp-selftest",
    markerLib.ExclSF "clasimp-selftest",
    markerLib.FRAG "clasimp-selftest",
@@ -2188,9 +2215,9 @@ val wrapper_control_ss =
          CONJUNCT2 (CONJUNCT2 boolTheory.NOT_CLAUSES)),
         (wrapper_spare_name, pred_setTheory.EMPTY_SUBSET)])
 
-(* [clasimpSelftest] names no loaded theory, and that is the point: a
-   rewrite is excludable by the qualified name it was installed under
-   whether or not that theory part is an ancestor of the one being built.
+(* [clasimpSelftest] names no loaded theory, and that is the point: the
+   explicit [ExclX "rule:..."] control excludes the installed source name
+   without interpreting its theory part as a loaded ancestor.
 
    Failing to close the goal is how the search reports both a control that
    took effect and a control the simp step refused -- [NTactical.LIFT]
@@ -2210,9 +2237,9 @@ val _ =
                 (clasimpLib.add_simp_wrapper wrapper_control_ss controls
                    clasetLib.empty_cs))
          val without_control =
-           [markerLib.Excl "clasimpSelftest.wrapper_control"]
+           [simpMarkerLib.ExclX "rule:clasimpSelftest.wrapper_control"]
          val without_spare =
-           [markerLib.Excl "clasimpSelftest.wrapper_spare"]
+           [simpMarkerLib.ExclX "rule:clasimpSelftest.wrapper_spare"]
        in
          valid_closes (fast []) wrapper_goal andalso
          valid_closes (fast []) wrapper_spare_goal andalso
@@ -3012,7 +3039,7 @@ val _ =
             ``clasimp_auto_split_result:bool``)
          val plain =
            residual
-             (simpLib.SIMP_TAC (BasicProvers.srw_ss ()) [])
+             (OrdinarySimp.SIMP_TAC (BasicProvers.srw_ss ()) [])
              goal
          val automatic =
            residual (clasimpLib.AUTO_TAC []) goal
@@ -3037,7 +3064,7 @@ val _ =
             ``clasimp_auto_case_result:bool``)
          val plain =
            residual
-             (simpLib.SIMP_TAC (BasicProvers.srw_ss ()) [])
+             (OrdinarySimp.SIMP_TAC (BasicProvers.srw_ss ()) [])
              goal
          val automatic =
            residual (clasimpLib.AUTO_TAC []) goal
@@ -3468,7 +3495,7 @@ val ambient_normalized_goal : goal =
 
 val _ =
   BasicProvers.augment_srw_ss
-    [simpLib.named_rewrites "clasimpAmbientProbe" [ambient_normal_form]]
+    [OrdinarySimp.named_rewrites "clasimpAmbientProbe" [ambient_normal_form]]
 
 val _ =
   check
@@ -3533,12 +3560,12 @@ val _ =
      fn () =>
        let
          val term = ``(as:'a list) ++ (bs ++ cs)``
-         fun renests ss =
-           (ignore (simpLib.SIMP_CONV ss [] term); true)
+         fun renests simp_conv ss =
+           (ignore (simp_conv ss [] term); true)
            handle Conv.UNCHANGED => false
        in
-         renests (BasicProvers.srw_ss ()) andalso
-         not (renests (clasimpLib.clasimp_ss ()))
+         renests OrdinarySimp.SIMP_CONV (BasicProvers.srw_ss ()) andalso
+         not (renests simpLib.SIMP_CONV (clasimpLib.clasimp_ss ()))
        end)
 
 val _ =
@@ -3799,7 +3826,7 @@ val membership_goal : Abbrev.goal =
          set (FILTER clasimp_ext_p clasimp_ext_xs)``)
 
 val membership_ss =
-  simpLib.++ (BasicProvers.srw_ss (),
+  simpLib.++ (lifted_srw_ss (),
               simpLib.rewrites [listTheory.MEM_FILTER])
 
 val _ =
@@ -3838,8 +3865,8 @@ val _ =
     ("an equation between predicates keeps the reading its context has",
      fn () =>
        valid_closes
-         (clasimpLib.with_extensionality (BasicProvers.srw_ss ())
-            (clasimpLib.asm_full_simp (BasicProvers.srw_ss ()) []))
+         (clasimpLib.with_extensionality (lifted_srw_ss ())
+            (clasimpLib.asm_full_simp (lifted_srw_ss ()) []))
          applied_goal)
 
 (* The reading is this layer's default and not the invocation's.
@@ -3860,7 +3887,7 @@ val supplied_reading_goal : Abbrev.goal =
              clasimp_ext_p clasimp_element``)
 
 val supplied_reading_ss =
-  simpLib.++ (BasicProvers.srw_ss (),
+  simpLib.++ (lifted_srw_ss (),
               simpLib.rewrites
                 [boolTheory.FUN_EQ_THM, listTheory.EVERY_MEM])
 
@@ -3890,7 +3917,7 @@ val predicate_reading_goal : Abbrev.goal =
              clasimp_ext_q clasimp_item``)
 
 val predicate_reading_ss =
-  simpLib.++ (BasicProvers.srw_ss (),
+  simpLib.++ (lifted_srw_ss (),
               simpLib.rewrites [listTheory.EVERY_MEM])
 
 val _ =
@@ -4721,7 +4748,7 @@ fun supplied_view_fixture () =
         val controls =
           [markerLib.Excl "supplied",markerLib.ExclSF "supplied",
            markerLib.FRAG "supplied",markerLib.Cong original,
-           markerLib.Split original,markerLib.AC reducer original,
+           simpLib.Split original,markerLib.AC reducer original,
            markerLib.mk_Req0 original,markerLib.mk_ReqD original,
            markerLib.NoAsms,markerLib.IgnAsm [QUOTE "supplied"],
            clasetLib.Simp original,clasetLib.Iff original,
@@ -5179,7 +5206,8 @@ fun working_simpset_fixture () =
           !charged = units andalso
           converted (#stripped decision) ``work_c (work_h x)`` ``work_k x``
         val with_decisions = simpLib.++
-          (simpLib.++ (ambient,orderLib.ORDER_ss),linarithLib.LINARITH_ss)
+          (simpLib.++ (ambient,orderLib.ORDER_ext_ss),
+           linarithLib.LINARITH_ext_ss)
         val decision_state = get with_decisions
         val prior = !charged
         val original_decision = plain decision_state
@@ -5232,7 +5260,8 @@ fun working_simpset_fixture () =
           (BoundedRewrites.Once original)
           (named "work_reducer" reducer simpLib.empty_ss)
         val once_state = get (simpLib.++
-          (simpLib.++ (decision_once,orderLib.ORDER_ss),linarithLib.LINARITH_ss))
+          (simpLib.++ (decision_once,orderLib.ORDER_ext_ss),
+           linarithLib.LINARITH_ext_ss))
         val once_decision = #stripped (decisions once_state)
         val decision_quota = converted once_decision
           ``work_c (work_h x)`` ``work_k x`` andalso
@@ -5262,8 +5291,8 @@ fun working_simpset_fixture () =
         val before_identity = Portable.pointer_eq
           (before_state,clasimpLib.working_simpset_of previous_raw)
         val _ = BasicProvers.augment_srw_ss
-          [simpLib.name_ss "work_default"
-             (simpLib.rewrites_with_names
+          [OrdinarySimp.name_ss "work_default"
+             (OrdinarySimp.rewrites_with_names
                [({Thy=current_theory (),Name="work_default_source"},original),
                 ({Thy=current_theory (),Name="work_default_reducer"},
                  reducer)])]
@@ -5322,8 +5351,8 @@ fun working_simpset_fixture () =
           in Portable.pointer_eq
                (saved_state,clasimpLib.clasimp_working_simpset ()) end
         val default_compiles = ref 0
-        val instrumented = simpLib.++
-          (BasicProvers.srw_ss (),simpLib.SSFRAG
+        val instrumented = OrdinarySimp.++
+          (BasicProvers.srw_ss (),OrdinarySimp.SSFRAG
             {name=NONE,convs=[],rewrs=[],ac=[],dprocs=[],congs=[],
              filter=SOME (fn theorem =>
                (default_compiles := !default_compiles + 1; [theorem]))})
@@ -5581,7 +5610,8 @@ fun bound_working_fixture () =
         val no_arguments = generation (table bare) = generation (table initial)
           andalso Portable.pointer_eq (full bare,old_full)
         val with_dp = simpLib.++
-          (simpLib.++ (ambient,orderLib.ORDER_ss),linarithLib.LINARITH_ss)
+          (simpLib.++ (ambient,orderLib.ORDER_ext_ss),
+           linarithLib.LINARITH_ext_ss)
         val dp_binding = bind (get with_dp) [consumer]
         val dp_state = clasimpLib.working_simpset_for dp_binding
         val dp = decisions dp_state
@@ -5596,7 +5626,8 @@ fun bound_working_fixture () =
         (* An earlier plain pass must not regain a consumed ambient rule. *)
         val once_ss = named "bw_once" (BoundedRewrites.Once source) reducing
         val once_dp = simpLib.++
-          (simpLib.++ (once_ss,orderLib.ORDER_ss),linarithLib.LINARITH_ss)
+          (simpLib.++ (once_ss,orderLib.ORDER_ext_ss),
+           linarithLib.LINARITH_ext_ss)
         val first = Conv.QCONV (simpLib.SIMP_CONV once_dp [])
           ``bw_app (\v. bw_g v) x``
         val consumed = aconv (boolSyntax.rhs (concl first)) result
@@ -5607,7 +5638,8 @@ fun bound_working_fixture () =
         val twice_ss = named "bw_twice" (BoundedRewrites.Ntimes source 2)
           reducing
         val twice_dp = simpLib.++
-          (simpLib.++ (twice_ss,orderLib.ORDER_ss),linarithLib.LINARITH_ss)
+          (simpLib.++ (twice_ss,orderLib.ORDER_ext_ss),
+           linarithLib.LINARITH_ext_ss)
         val twice_binding = bind (get twice_dp) [consumer]
         val twice_state = clasimpLib.working_simpset_for twice_binding
         val shared = converted twice_binding (full twice_state) retained result
@@ -6106,7 +6138,7 @@ fun bound_pipeline_fixture () =
               (Tactical.TRY (rung configured)) direct_target)
           in [baseline andalso first,remaining] end
         val rungs = List.concat (map check steps)
-        val bound = state [simpLib.Excl "rule:boundPipelineFixture.reducer",
+        val bound = state [simpLib.ExclX "rule:boundPipelineFixture.reducer",
           source]
         val controlled = not (valid_closes
           (clasimpLib.asm_full_simp_bound true bound []) target)

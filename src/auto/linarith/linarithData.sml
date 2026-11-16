@@ -416,10 +416,11 @@ type linarith_config = {neq_limit : int, split_limit : int}
 
 val default_config : linarith_config = {neq_limit = 9, split_limit = 9}
 
-val trace_level = ref 0
-val _ = Feedback.register_trace ("linarith", trace_level, 3)
+val {get = trace_level, ...} =
+    HOLFlags.create_trace ({group = "linarith", name = "trace"},
+                           {initial = 0, max = 3})
 
-fun tracing level = !trace_level >= level
+fun tracing level = trace_level () >= level
 
 (* Rendering a theorem or a term list costs more than the test that
    decides whether anyone will read it, so every helper asks first.  A

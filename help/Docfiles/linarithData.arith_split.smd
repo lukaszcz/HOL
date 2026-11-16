@@ -19,8 +19,9 @@ through theory ancestry, and used by
 `SIMPLE_LINARITH_TAC`, the forward prover, reducer, or simplifier solver.
 
 This set is distinct from the simplifier's `[split]` attribute. The
-per-invocation counterpart is `markerLib.Split th` (also available as
-`simpLib.Split th`). The persistent attribute is named `[arith_split]`,
+per-invocation counterpart is `simpExtLib.Split th`, owned by the
+simplifier extension vocabulary, not `markerLib`. Arithmetic argument
+classification needs no extension simpset. The attribute is `[arith_split]`,
 not `[linarith_split]`. Use `linarithData.remove_arith_split` for
 persistent removal.
 

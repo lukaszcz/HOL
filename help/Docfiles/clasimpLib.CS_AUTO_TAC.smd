@@ -4,7 +4,7 @@
 ``` hol4
 clasimpLib.CS_AUTO_TAC :
   {blast : int, depth : int} ->
-  clasetLib.claset -> simpLib.simpset -> tactic
+  clasetLib.claset -> simpExtLib.simpset -> tactic
 ```
 
 ------------------------------------------------------------------------

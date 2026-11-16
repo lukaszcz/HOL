@@ -4,7 +4,7 @@ struct
 open Abbrev HolKernel boolSyntax
 
 fun trace level message =
-  if level <= Feedback.current_trace "classical" then
+  if level <= HOLFlags.current_trace "classical.trace" then
     Feedback.HOL_MESG ("Classical reasoner: " ^ message ())
   else ()
 
@@ -66,8 +66,8 @@ datatype replay_outcome =
     Replayed of goal list * validation
   | ReplayFailed of replay_failure
 
-val classical_trace = ref 0
-val _ = Feedback.register_trace ("classical", classical_trace, 7)
+val _ = HOLFlags.create_trace ({group = "classical", name = "trace"},
+                               {initial = 0, max = 7})
 
 fun make_record fields = StepRecord fields
 

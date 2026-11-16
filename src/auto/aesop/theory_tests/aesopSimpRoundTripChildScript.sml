@@ -12,7 +12,7 @@ val result =
     (boolSyntax.dest_eq
       (concl
         (Conv.QCONV
-          (simpLib.SIMP_CONV (aesopData.aesop_ss ()) [])
+          (simpExtLib.SIMP_CONV (aesopData.aesop_ss ()) [])
           source)))
 
 val _ =

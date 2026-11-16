@@ -2,7 +2,10 @@ Theory splitIntegration[bare]
 Ancestors
   option
 Libs
-  HolKernel Parse boolLib Tactic Datatype simpLib splitLib boolSimps
+  HolKernel Parse boolLib Tactic Datatype simpExtLib splitLib
+  splitPersistLib
+
+val bool_ss = simpExtLib.lift_simpset boolSimps.bool_ss
 
 Datatype:
   split_local = SplitLocalA | SplitLocalB num

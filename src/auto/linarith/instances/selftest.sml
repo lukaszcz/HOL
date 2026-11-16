@@ -809,6 +809,23 @@ val _ =
        valid_closes (simpLib.FULL_SIMP_TAC side_ss [])
          ([qleq qx qy, qleq qy qz], conditional_goal (qleq qx qz)))
 
+val _ =
+  check
+    ("LINARITH_ext_ss discharges int real and rat side conditions",
+     fn () =>
+       let
+         val ss =
+           simpExtLib.++ (simpExtLib.lift_simpset boolSimps.bool_ss, linarithLib.LINARITH_ext_ss)
+         val tactic = simpExtLib.FULL_SIMP_TAC ss []
+       in
+         valid_closes tactic
+           ([ileq ix iy, ileq iy iz], conditional_goal (ileq ix iz)) andalso
+         valid_closes tactic
+           ([rleq rx ry, rleq ry rz], conditional_goal (rleq rx rz)) andalso
+         valid_closes tactic
+           ([qleq qx qy, qleq qy qz], conditional_goal (qleq qx qz))
+       end)
+
 (* Translation of the 20 lemma goals in Isabelle's Arith_Examples.thy at
    f7e02b7e1f31 that need int, real or rat syntax, in source order.  The
    other 34 are num/bool and are stated in linarithCorpus, which both

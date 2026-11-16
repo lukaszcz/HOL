@@ -42,4 +42,4 @@ val visited = #fullTrace report;
 [`tableauLib.BLAST_TAC`](#tableauLib.BLAST_TAC),
 [`tableauLib.BLAST_DEPTH_TAC`](#tableauLib.BLAST_DEPTH_TAC),
 [`tableauLib.depth_limit`](#tableauLib.depth_limit),
-[`Feedback.set_trace`](#Feedback.set_trace)
+[`HOLFlags.set_trace`](#HOLFlags.set_trace)

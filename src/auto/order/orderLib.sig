@@ -21,4 +21,7 @@ sig
      second position would decide nothing the first does not. *)
   val ORDER_ss : simpLib.ssfrag
   val ORDER_ss_budgeted : searchBudget.budget -> simpLib.ssfrag
+  (* Explicit lifting into the extension traversal; no source import. *)
+  val ORDER_ext_ss : simpExtLib.ssfrag
+  val ORDER_ext_ss_budgeted : searchBudget.budget -> simpExtLib.ssfrag
 end

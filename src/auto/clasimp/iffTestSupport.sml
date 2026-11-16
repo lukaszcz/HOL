@@ -13,7 +13,7 @@ fun fetch_persistent name =
       [thy, theorem] => DB.fetch thy theorem
     | _ => raise Fail ("malformed persistent theorem name: " ^ name)
 
-fun rewrite_changes name ss =
+fun rewrite_changes_with simp_conv name ss =
   let
     val rewrite = Drule.SPEC_ALL (fetch_persistent name)
     val (_, final) = boolSyntax.strip_imp_only (concl rewrite)
@@ -21,14 +21,17 @@ fun rewrite_changes name ss =
       if boolSyntax.is_eq final then fst (boolSyntax.dest_eq final)
       else if boolSyntax.is_neg final then boolSyntax.dest_neg final
       else final
-    val result = Conv.QCONV (simpLib.SIMP_CONV ss []) source
+    val result = Conv.QCONV (simp_conv ss []) source
   in
     not (aconv (snd (boolSyntax.dest_eq (concl result))) source)
   end
 
+val rewrite_changes = rewrite_changes_with simpLib.SIMP_CONV
+val extension_rewrite_changes = rewrite_changes_with simpExtLib.SIMP_CONV
+
 fun has_iff_rewrite name =
   rewrite_changes name (BasicProvers.srw_ss ()) andalso
-  rewrite_changes name (clasimpLib.clasimp_ss ())
+  extension_rewrite_changes name (clasimpLib.clasimp_ss ())
 
 fun has_rule name =
   List.exists
@@ -89,15 +92,15 @@ fun iff_fragment_count names ss =
 
 fun rewrites_to source target =
   let
-    fun changes ss =
+    fun changes simp_conv ss =
       let
-        val result = Conv.QCONV (simpLib.SIMP_CONV ss []) source
+        val result = Conv.QCONV (simp_conv ss []) source
       in
         aconv (snd (boolSyntax.dest_eq (concl result))) target
       end
   in
-    changes (BasicProvers.srw_ss ()) andalso
-    changes (clasimpLib.clasimp_ss ())
+    changes simpLib.SIMP_CONV (BasicProvers.srw_ss ()) andalso
+    changes simpExtLib.SIMP_CONV (clasimpLib.clasimp_ss ())
   end
 
 end

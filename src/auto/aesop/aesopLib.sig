@@ -14,14 +14,14 @@ sig
   val AESOP_SAFE_TAC : thm list -> tactic
 
   val CS_AESOP_TAC :
-    aesop_config -> clasetLib.claset -> simpLib.simpset -> tactic
+    aesop_config -> clasetLib.claset -> simpExtLib.simpset -> tactic
   val CS_AESOP_SAFE_TAC :
-    aesop_config -> clasetLib.claset -> simpLib.simpset -> tactic
+    aesop_config -> clasetLib.claset -> simpExtLib.simpset -> tactic
 
   (* A resumable search under an invocation-owned operational budget. *)
   val CS_AESOP_SESSION :
     searchBudget.budget -> aesop_config ->
-    clasetLib.claset -> simpLib.simpset -> Abbrev.goal ->
+    clasetLib.claset -> simpExtLib.simpset -> Abbrev.goal ->
     aesopSearch.budget_session
 
   (* Tactic rules are session-local closures and are never persisted. *)

@@ -92,7 +92,7 @@ sig
     {name : string, theorem : thm} ->
     {conclusion : rule, assumption : rule}
   val simp_rule_with :
-    {name : string, simpset : simpLib.simpset,
+    {name : string, simpset : simpExtLib.simpset,
      controls : thm list} -> rule
   val simp_rule : thm list -> rule
 
@@ -129,6 +129,6 @@ sig
      conclusion : term,
      assumptions : term list,
      qvars : term HOLset.set,
-     simpset : simpLib.simpset,
+     simpset : simpExtLib.simpset,
      simp_controls : thm list} -> ruleset
 end

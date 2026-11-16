@@ -17,7 +17,7 @@ changes.
 
 Clarification normally avoids branching. Nevertheless, a premise splitter
 in the simpset can split a subgoal during simplification. The standard
-clasimpset contains `simpLib.split_ss`, so `CLARSIMP_TAC` does not promise
+clasimpset contains `simpExtLib.split_ss`, so `CLARSIMP_TAC` does not promise
 to preserve a single subgoal.
 
 Unmarked theorems are inserted as assumptions. Explicit classical markers,
@@ -43,4 +43,4 @@ QED
 [`clasimpLib.CS_CLARSIMP_TAC`](#clasimpLib.CS_CLARSIMP_TAC),
 [`clasimpLib.AUTO_TAC`](#clasimpLib.AUTO_TAC),
 [`classicalLib.CLARIFY_TAC`](#classicalLib.CLARIFY_TAC),
-[`simpLib.split_ss`](#simpLib.split_ss)
+[`simpExtLib.split_ss`](#simpExtLib.split_ss)

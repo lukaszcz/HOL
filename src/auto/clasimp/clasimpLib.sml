@@ -3,6 +3,13 @@ struct
 
 open Abbrev HolKernel
 
+(* Select the tracked engine before constructing any clasimp fragments or
+   binding sources. Ordinary persistence is deliberately a separate path. *)
+structure OrdinarySimp = simpLib
+structure OrdinaryTraverse = Traverse
+structure simpLib = simpExtLib
+structure Traverse = TraverseExt
+
 val ERR = mk_HOL_ERR "clasimpLib"
 
 (* Load-time congruence proofs run before a theory is selected.  VALID checks
@@ -12,11 +19,11 @@ fun prove (term, tactic) =
       ([], validation) => validation []
     | _ => raise ERR "prove" "load-time proof left goals"
 
-val clasimp_trace = ref 0
-val _ = Feedback.register_trace ("clasimp", clasimp_trace, 3)
+val _ = HOLFlags.create_trace ({group = "clasimp", name = "trace"},
+                               {initial = 0, max = 3})
 
 fun trace level message =
-  if level <= Feedback.current_trace "clasimp" then
+  if level <= HOLFlags.current_trace "clasimp.trace" then
     Feedback.HOL_MESG ("Clasimp: " ^ message ())
   else ()
 
@@ -348,16 +355,19 @@ val bounded_exists_congs =
        (membership_bounds element))
 end
 
-val weak_cong_ss =
-  simpLib.SSFRAG
-    {name = SOME "CONGWEAK",
-     congs =
-       [Rewrite.REWRITE_RULE [Conv.GSYM boolTheory.AND_IMP_INTRO]
-          boolTheory.IMP_CONG,
-        cond_weak_cong,
-        boolTheory.RES_FORALL_CONG,
-        boolTheory.RES_EXISTS_CONG] @ bounded_exists_congs,
-     convs = [], rewrs = [], filter = NONE, ac = [], dprocs = []}
+val weak_cong_ss = simpLib.named_merge_ss "CONGWEAK"
+  [simpLib.SSFRAG
+     {name = NONE,
+      congs =
+        [Rewrite.REWRITE_RULE [Conv.GSYM boolTheory.AND_IMP_INTRO]
+           boolTheory.IMP_CONG,
+         cond_weak_cong,
+         boolTheory.RES_FORALL_CONG,
+         boolTheory.RES_EXISTS_CONG],
+      convs = [], rewrs = [], filter = NONE, ac = [], dprocs = []},
+   (* Later premises use the functions computed by earlier premises.
+      The ordinary congruence opener cannot thread these instantiations. *)
+   simpLib.threaded_cong_ss bounded_exists_congs]
 
 (* HOL4's list-equation procedure is the analogue of the one src/HOL/
    List.thy installs over [append1_eq_conv], [append_same_eq] and
@@ -511,7 +521,7 @@ fun derive_clasimp_ss ss _ =
      writes the abstraction and the simplifier contracts it only
      sometimes.  The classical search does close some such goals on its
      own -- it is the rewriting that stops at the mismatch. *)
-  |> (fn ss' => simpLib.++ (ss', boolSimps.ETA_ss))
+  |> (fn ss' => simpLib.++ (ss', simpExtLib.lift_ssfrag boolSimps.ETA_ss))
   (* The same mismatch one spelling further on.  Isabelle normalises the
      natural number 1 to [Suc 0] -- One_nat_def is a simp rule there --
      so a fact stated on SUC fires against a goal that bounds by a
@@ -520,7 +530,7 @@ fun derive_clasimp_ss ss _ =
      closes the gap from HOL4's side, deriving the numeral-matching
      variant of each SUC rule as it enters, which leaves HOL4's normal
      form alone. *)
-  |> (fn ss' => simpLib.++ (ss', numSimps.SUC_FILTER_ss))
+  |> (fn ss' => simpLib.++ (ss', simpExtLib.lift_ssfrag numSimps.SUC_FILTER_ss))
   (* The same mismatch again, and this one HOL4's normal form cannot be
      left alone through.  Isabelle's [append_assoc] is a simp rule that
      reads into the right-nested form and its [append_Cons] keeps a cons
@@ -569,7 +579,7 @@ fun derive_clasimp_ss ss _ =
      about an atom wherever the traversal meets one: the atom the
      rewriting has left standing, and the side condition of a conditional
      rewrite, which is simplified with this same simpset. *)
-  |> (fn ss' => simpLib.++ (ss', orderLib.ORDER_ss))
+  |> (fn ss' => simpLib.++ (ss', orderLib.ORDER_ext_ss))
   (* Isabelle decides an arithmetic atom wherever the traversal meets
      one.  [Fields.thy]'s [fast_arith_nat] and [Int.thy]'s [fast_arith]
      are simprocs on [m < n], [m <= n] and [m = n], and the comment on
@@ -580,7 +590,7 @@ fun derive_clasimp_ss ss _ =
      fast_nat_arith_simproc anyway".  The layer carried only that half,
      so an unfolded interval left a linear fact about num -- an atom in
      the goal rather than the condition of a rewrite -- standing. *)
-  |> (fn ss' => simpLib.++ (ss', linarithLib.LINARITH_ss))
+  |> (fn ss' => simpLib.++ (ss', linarithLib.LINARITH_ext_ss))
   (* The other half of that layer.  HOL4's own arithmetic simproc
      fragment normalises a linear term as well as deciding an atom --
      [std_ss ++ numSimps.ARITH_DP_ss] answers [LENGTH l - 1 - n] with
@@ -591,7 +601,7 @@ fun derive_clasimp_ss ss _ =
      own, and it is num only; the int and real instances have no AC
      fragment to point at, which is a limit of this line and not of the
      argument for it. *)
-  |> (fn ss' => simpLib.++ (ss', numSimps.ARITH_AC_ss))
+  |> (fn ss' => simpLib.++ (ss', simpExtLib.lift_ssfrag numSimps.ARITH_AC_ss))
   |> simpLib.set_safe_solvers [safe_solver]
   |> simpLib.add_unsafe_solver linarithLib.linarith_solver
   |> simpLib.set_subgoaler witness_subgoaler
@@ -1115,9 +1125,10 @@ fun make_lhs_view_cache caller_charge =
 
 fun marker_skip theorem =
   Option.isSome (clasetLib.marker_of theorem) orelse
-  (case markerLib.dest_directive theorem of
+  (case simpMarkerLib.dest_directive theorem of
        NONE => false
-     | SOME (markerLib.DBounded (body,_)) => marker_skip body
+     | SOME (simpMarkerLib.Legacy (markerLib.DBounded (body,_))) =>
+         marker_skip body
      | SOME _ => true)
 
 datatype supplied_rule_binding = SuppliedRuleBinding of
@@ -1675,14 +1686,14 @@ fun working_simpset_for (SuppliedViewBinding {table,...}) =
         full= #full data,decisions= #decisions data,plain= #plain data}
   end
 
-(* BasicProvers supplies the initialization seed, not the predecessor.
-   The bounded identity/source memo above retains completed tables across
-   changes; the derived value owns its lazy working state. Public tactic
-   placement of view construction is separate from this cached value. *)
+(* BasicProvers supplies the initialization seed, not the predecessor,
+   lifted into the extension engine.  The bounded identity/source memo
+   above retains completed tables across changes; the derived value owns
+   its lazy working state. *)
 val {get = clasimp_derived, get_of = _} =
   BasicProvers.make_simpset_derived_value "clasimpLib.clasimp_ss"
     (fn ss => fn _ =>
-       let val full = derive_clasimp_ss ss ()
+       let val full = derive_clasimp_ss (simpExtLib.lift_simpset ss) ()
        in {full = full,
            positions = positions_of_sources
              (#1 (simpLib.rewrite_sources full [])),
@@ -1760,12 +1771,12 @@ fun budgeted_decisions_of ctxt budget
   let
     val with_order =
       if order then
-        simpLib.++ (stripped, orderLib.ORDER_ss_budgeted budget)
+        simpLib.++ (stripped, orderLib.ORDER_ext_ss_budgeted budget)
       else stripped
     val with_linarith =
       if linarith then
         simpLib.++
-          (with_order, linarithLib.LINARITH_ss_budgeted ctxt budget)
+          (with_order, linarithLib.LINARITH_ext_ss_budgeted ctxt budget)
       else with_order
   in
     if linarith then
@@ -2410,7 +2421,7 @@ fun install_persistent_iffs thyname declarations =
       if null rewrites then ()
       else
         BasicProvers.augment_srw_ss
-          [simpLib.named_rewrites_with_names (iff_fragment_name thyname)
+          [OrdinarySimp.named_rewrites_with_names (iff_fragment_name thyname)
              (map
                 (fn (kname, theorem) =>
                   (iff_simp_kname kname, Drule.SPEC_ALL theorem))
@@ -2573,39 +2584,50 @@ val bottom_up_fragment_name = "clasimp-bottom-up"
    fragment would mean removing it -- which forces the srw_ss state, and the
    replay of an ancestor's deltas at load time has no theory to force it
    in. *)
-val bottom_up_rewrites = ref ([] : thm list)
+val bottom_up_rewrites : thm list Context.Data.slot = Context.Data.new
+  {name = "clasimp.iff_bottom_up", empty = [],
+   pp = fn _ => "<iff bottom-up declarations>"}
 
 (* The same reducer carries [simp_bottom_up], which is this declaration
    without the claset halves: Isabelle states a law whose subject must be
    normal as [simp] as well as as [iff], and a rule the source declares
    [simp] may not seed the claset. *)
-val simp_bottom_up_rewrites = ref ([] : thm list)
+val simp_bottom_up_rewrites : thm list Context.Data.slot = Context.Data.new
+  {name = "clasimp.simp_bottom_up", empty = [],
+   pp = fn _ => "<simp bottom-up declarations>"}
 
-val bottom_up_installed = ref false
+val bottom_up_installed : bool Context.Data.slot = Context.Data.new
+  {name = "clasimp.bottom_up_installed", empty = false,
+   pp = Bool.toString}
 
 (* A reducer rewriting with [rewrites ()] as the simplifier matches its own
    rewrites.  Isabelle's laws of this kind are higher-order patterns --
    [all_simps] reads a body as [P x] -- and a first-order matcher offers
    them only a body that is literally a variable applied to the bound one,
    so the rule would be silently inert on every other goal. *)
-fun ho_rewrite_fragment name rewrites =
-  simpLib.SSFRAG
-    {name = SOME name, convs = [], rewrs = [], ac = [], filter = NONE,
-     congs = [],
-     dprocs =
-       [Traverse.REDUCER
-          {name = SOME name,
-           initial = bottom_up_context,
-           addcontext = fn (context, _) => context,
-           apply =
-             fn _ => fn term =>
-               Conv.FIRST_CONV
-                 (map (Conv.HO_REWR_CONV o Drule.SPEC_ALL) (rewrites ()))
-                 term}]}
+fun ho_rewrite_reducer name rewrites =
+  OrdinaryTraverse.REDUCER
+    {name = SOME name,
+     initial = bottom_up_context,
+     addcontext = fn (context, _) => context,
+     apply = fn _ => fn term =>
+       Conv.FIRST_CONV
+         (map (Conv.HO_REWR_CONV o Drule.SPEC_ALL) (rewrites ())) term}
 
-val bottom_up_fragment =
-  ho_rewrite_fragment bottom_up_fragment_name
-    (fn () => !bottom_up_rewrites @ !simp_bottom_up_rewrites)
+fun ho_rewrite_fragment name rewrites =
+  simpLib.name_ss name
+    (simpLib.dproc_ss (Traverse.lift (ho_rewrite_reducer name rewrites)))
+
+(* Installed in srw_ss, so the extension engine sees it through
+   simpExtLib.lift_simpset. *)
+val bottom_up_fragment = OrdinarySimp.name_ss bottom_up_fragment_name
+  (OrdinarySimp.dproc_ss
+     (ho_rewrite_reducer bottom_up_fragment_name
+        (fn () =>
+           let val ctxt = Context.snapshot ()
+           in Context.Data.get bottom_up_rewrites ctxt @
+              Context.Data.get simp_bottom_up_rewrites ctxt
+           end)))
 
 (* The same mechanism for a rule installed for one invocation rather than
    declared: the rewrites are fixed when the fragment is built, where the
@@ -2615,20 +2637,27 @@ val normalised_subject_fragment_name = "clasimp-normalised-subject"
 fun normalised_subject_fragment rewrites =
   ho_rewrite_fragment normalised_subject_fragment_name (K rewrites)
 
+fun normalised_subject_fragment_ordinary rewrites =
+  OrdinarySimp.name_ss normalised_subject_fragment_name
+    (OrdinarySimp.dproc_ss
+      (ho_rewrite_reducer normalised_subject_fragment_name (K rewrites)))
+
 (* The fragment is installed by the first declaration and then stays, inert
    while nothing is declared. *)
 fun ensure_bottom_up_fragment () =
-  if !bottom_up_installed then ()
+  if Context.Data.get bottom_up_installed (Context.snapshot ()) then ()
   else
-    (bottom_up_installed := true;
-     BasicProvers.augment_srw_ss [bottom_up_fragment])
+    (BasicProvers.augment_srw_ss [bottom_up_fragment];
+     Context.update (Context.Data.put bottom_up_installed true))
 
 fun install_bottom_up_fragment table =
-  (bottom_up_rewrites := map #2 (Symtab.dest table);
+  (Context.update
+     (Context.Data.put bottom_up_rewrites (map #2 (Symtab.dest table)));
    ensure_bottom_up_fragment ())
 
 fun install_simp_bottom_up_fragment table =
-  (simp_bottom_up_rewrites := map #2 (Symtab.dest table);
+  (Context.update
+     (Context.Data.put simp_bottom_up_rewrites (map #2 (Symtab.dest table)));
    ensure_bottom_up_fragment ())
 
 fun bottom_up_rules kname theorem =
