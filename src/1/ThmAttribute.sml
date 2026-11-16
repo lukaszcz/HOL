@@ -84,7 +84,6 @@ struct
 
   fun all_attributes () = Map.keys (funstore ())
   fun is_attribute a = Map.defined (funstore ()) a
-  fun attribute_fns_of ctxt a = Map.lookup (funstore_of ctxt) a
 
    (* "induction=name" is handled by tools/Holmake/HOLSource, and so is
       basically invisible to all later code *)

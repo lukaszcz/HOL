@@ -51,8 +51,9 @@ Private identities:
 | Generic split set/exporter | none |
 
 `SplitData.dispatch` is the sole private global listener; each event selects
-operations from the active context, with ownership checked by attribute
-record pointer identity. No old theory-data witness is captured globally.
+operations from the active context: the registration lives in a Context
+slot alongside the attribute it installed, so both rewind together. No old
+theory-data witness is captured globally.
 Initialization preflights foreign attribute/set/syntax/listener claims;
 allocation or ancestor replay errors restore the exact entry Context and
 remove only a dispatcher newly installed by that attempt. Duplicate init
@@ -123,17 +124,10 @@ Additional coverage here (not a replacement for those suites):
   disable TypeBase and check imported alias identity, one/all exclusions and
   a fully closed persistent-only tactic proof, including **all hypotheses**.
 - `repair.sml`: independently compiled regression. Remove the private
-  dispatcher from an owned registration, explicitly initialize, check exact
-  dispatcher/Context/rule identity, then reject a foreign replacement. The
-  source-isolated negative must compile successfully and fail the repair
-  assertion, not a deferred static error.
-  A final check replaces the direct `split` attribute with a counting handler
-  (the foreign dispatcher removed first) and requires initialization to fail
-  as a conflict with that handler and persistent removal to refuse with
-  "persistent split registration not owned"; neither calls the handler.
-  `repair.sml` imports only `SplitData` from `src/simp/src`: the negative
-  loads a private `SplitData` copy and rejects every loaded `src/simp/src`
-  path, including the production `SplitData`.
+  dispatcher from an enabled registration, explicitly initialize, check
+  exact dispatcher/Context/rule identity, then reject a foreign function
+  under the dispatcher's name. It imports only `SplitData` from
+  `src/simp/src`.
 
 The launcher statically imports only kernel/test helpers. A library build
 prerequisite is not a linked import. `Meta.loaded` **and** the runtime global

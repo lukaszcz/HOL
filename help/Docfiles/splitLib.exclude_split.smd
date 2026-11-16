@@ -23,15 +23,15 @@ delete the theorem from the database. Add rules with an explicitly enabled
 under `splitLib.enable_split_attribute`.
 
 Unlike `simpExtLib.del_split` and `ExclX "split:Thy$Name"`, this is persistent
-rather than an exclusion in a local simpset. It requires explicit, currently
-library-owned registration and never initializes or adopts a foreign set.
+rather than an exclusion in a local simpset. It requires the registration to
+be enabled and never initializes or adopts a foreign set.
 Queries return no persistent rules before opt-in; local and TypeBase
 splitting remain available without it.
 
 ### Failure
 
-Fails without mutation if registration is absent or its attribute is
-foreign-owned, or if the name is malformed. Also rejects retractions
+Fails without mutation if registration is absent, or if the name is
+malformed. Also rejects retractions
 inside a pinned context rather than writing to a different live context.
 
 ### See also

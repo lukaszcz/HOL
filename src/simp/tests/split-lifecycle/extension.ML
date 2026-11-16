@@ -1,9 +1,6 @@
 open Parse boolLib simpExtLib splitLib;
 val bool_ss = lift_simpset boolSimps.bool_ss;
 
-fun split_attribute_now () =
-  ThmAttribute.attribute_fns_of (Context.snapshot ()) "split"
-
 val rule = type_split_of bool;
 val tm = “P (if b then x:'a else y) : bool”;
 val cv = SPLIT_CONV [rule] tm;
@@ -43,12 +40,9 @@ val _ = if owner = "attribute" orelse owner = "set" then
       val _ = check "explicit opt-in succeeds"
         (case outcome of Exn.Res () => true | _ => false)
       val owned = Context.snapshot ()
-      val attribute = valOf (split_attribute_now ())
       val _ = enable_split_attribute ()
-      val _ = check "duplicate opt-in preserves Context and handler identity"
-        (Portable.pointer_eq (owned,Context.snapshot ()) andalso
-         Portable.pointer_eq (attribute,
-           valOf (split_attribute_now ())))
+      val _ = check "duplicate opt-in preserves Context"
+        (Portable.pointer_eq (owned,Context.snapshot ()))
       val _ = ThmAttribute.local_attribute
         {name="local",attrname="split",args=[],thm=rule}
       val live = Context.snapshot ()

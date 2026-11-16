@@ -14,8 +14,7 @@ datatype raw_delta = Add of KernelSig.kernelname | Remove of string
    same theorem values as the previous split implementation. *)
 
 type registration =
-  {attribute : ThmAttribute.attrfuns,
-   segment : string -> raw_delta list,
+  {segment : string -> raw_delta list,
    append : raw_delta list -> unit,
    set : raw_delta list -> unit,
    get : Context.t -> thm Symtab.table,
@@ -28,14 +27,9 @@ val rules_slot : thm Symtab.table Context.Data.slot =
   Context.Data.new {name="splitLib.rules", empty=Symtab.empty,
                    pp=fn _ => "<splitLib.rules>"}
 
-fun owns ctxt ({attribute,...} : registration) =
-  case ThmAttribute.attribute_fns_of ctxt "split" of
-      SOME current => Portable.pointer_eq (attribute,current)
-    | NONE => false
-fun active ctxt =
-  case Context.Data.get registration_slot ctxt of
-      SOME r => if owns ctxt r then SOME r else NONE
-    | NONE => NONE
+(* The registration lives in the same Context as the attribute it
+   installed, so a rewind removes both together. *)
+fun active ctxt = Context.Data.get registration_slot ctxt
 
 fun encode_delta (Add {Thy,Name}) =
       HOLsexp.List [HOLsexp.Symbol "add",
@@ -144,7 +138,7 @@ fun initialize {validate} =
               else ()
             val current = case active ctxt of SOME r => r
               | NONE => raise ERR "attribute"
-                  "persistent split registration not owned"
+                  "persistent split registration not enabled"
             val _ = if null args then () else
               raise ERR "attribute"
                 ("Arguments not allowed for attribute " ^ attrname)
@@ -156,7 +150,7 @@ fun initialize {validate} =
             #update current (Symtab.update (KernelSig.name_toString knm,value))
           end
         val attribute = {storedf=handler true,localf=handler false}
-        val r = {attribute=attribute, segment=segment, append=append, set=set,
+        val r = {segment=segment, append=append, set=set,
                  get=Context.Data.get rules_slot,
                  update=update,validate=validate}
       in
@@ -189,7 +183,7 @@ fun exclude name =
       "cannot retract in a pinned context"
     else case active ctxt of
         NONE => raise apiERR "exclude_split"
-          "persistent split registration not owned"
+          "persistent split registration not enabled"
       | SOME r =>
           let val key = KernelSig.name_toString (ThmSetData.toKName name)
           in

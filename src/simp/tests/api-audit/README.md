@@ -24,12 +24,12 @@ each other.
   Extension modules and private splitter/marker modules are forbidden.
   Actual requested, used and loaded paths are printed separately; this is
   not a dependency-name-only scan.
-- Attribute/exporter record pointers, foreign theorem data and callback
-  behavior survive ordinary and explicit extension imports. Imports/proofs
-  invoke no foreign attribute/exporter initialization callbacks. Existing
-  Theory listener function pointers/order are retained; ordinary additions
-  must be the exact legacy list. Extension imports/use add no listeners and
-  never initialize split persistence.
+- Exporter record pointers, the attribute's presence, foreign theorem data
+  and callback behavior survive ordinary and explicit extension imports.
+  Imports/proofs invoke no foreign attribute/exporter initialization
+  callbacks. Existing Theory listener function pointers/order are retained;
+  ordinary additions must be the exact legacy list. Extension imports/use
+  add no listeners and never initialize split persistence.
 - Original `Cond_rewr.stack_limit`, `Trace.trace_hook` and the registered
   `simplifier` traces are captured before extension import. Saved ordinary
   and extension conversions see live shared depth changes; explicit

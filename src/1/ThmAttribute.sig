@@ -16,10 +16,6 @@ sig
   val reserve_word : string -> unit
 
 
-  (* Read-only lookup of the exact installed handler record in the
-     supplied context. It invokes no callbacks and changes nothing.
-     Useful for context-specific ownership checks. *)
-  val attribute_fns_of : Context.t -> string -> attrfuns option
   val is_attribute : string -> bool
   val all_attributes : unit -> string list
   val store_at_attribute : attrfun

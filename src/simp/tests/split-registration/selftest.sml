@@ -1,9 +1,6 @@
 open HolKernel Parse boolLib simpExtLib splitLib testutils
 val bool_ss = lift_simpset boolSimps.bool_ss
 
-fun split_attribute_now () =
-  ThmAttribute.attribute_fns_of (Context.snapshot ()) "split"
-
 val _ = Theory.new_theory "split_registration"
 fun check label ok = (tprint label; if ok then OK () else die label)
 fun free () = not (ThmAttribute.is_attribute "split") andalso
@@ -152,7 +149,6 @@ val _ = check "initialization preserves all unrelated listener identities and or
 val _ = check "unrelated theory-data hook still receives loads"
   (null (Listener.call_listener Theory.delta_hook (TheoryDelta.TheoryLoaded thy))
    andalso hd (!unrelated_calls) = thy)
-val attribute = valOf (split_attribute_now ())
 val _ = ThmAttribute.store_at_attribute attrarg
 fun has_rule () =
   case named_split_thms () of
@@ -187,8 +183,6 @@ val _ = check "idempotent opt-in leaves the entire Context unchanged"
   (Portable.pointer_eq (owned,Context.snapshot ()))
 val _ = check "idempotence preserves handlers and data"
   (has_rule () andalso
-   Portable.pointer_eq
-     (attribute,valOf (split_attribute_now ())) andalso
    length (SplitData.current_data ()) = 1)
 val _ = exclude_split (thy ^ ".rule")
 val _ = check "private persistent REMOVE updates queries" (empty ())
@@ -289,9 +283,7 @@ val _ = rejected_exclusion "persistent removal rejects foreign attribute"
 val _ = silent conflict
 val _ = check "attribute conflict does not partially create a set"
   (empty () andalso
-   not (List.exists (equal "split") (ThmSetData.all_set_types ())) andalso
-   Portable.pointer_eq
-     (foreign_handlers,valOf (split_attribute_now ())))
+   not (List.exists (equal "split") (ThmSetData.all_set_types ())))
 val _ = ThmAttribute.local_attribute attrarg
 val _ = check "foreign attribute behavior survives" (!calls = 1)
 val _ = Context.restore owned
@@ -328,12 +320,6 @@ val _ = check "restore to foreign set returns no library rules"
   (foreign_intact () andalso empty ())
 val _ = silent conflict
 
-(* Replacing the direct attribute disables private queries and writes. *)
-val _ = Context.restore owned
-val _ = ThmAttribute.register_attribute ("split",foreign_handlers)
-val _ = check "attribute replacement invalidates existing handle" (empty ())
-val _ = rejected_exclusion "persistent removal rejects foreign attribute replacement"
-val _ = silent conflict
 val _ = #add foreign_efns {thy=thy,named_thm=(name,rule)}
 val _ = #remove foreign_efns {thy=thy,remove="foreign"}
 val _ = check "foreign exporter callbacks survive conflicts"

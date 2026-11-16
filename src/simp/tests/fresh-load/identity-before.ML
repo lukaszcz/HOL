@@ -1,9 +1,8 @@
 (* Native ownership inspection only; never a pinned-develop dependency. *)
 
-fun split_attribute_now () =
-  ThmAttribute.attribute_fns_of (Context.snapshot ()) "split"
-
-val foreign_attribute_before = split_attribute_now ();
+(* Presence only; the selftest's attribute_identity checks which handler
+   answers by dispatching to it. *)
+val foreign_attribute_before = ThmAttribute.is_attribute "split";
 val foreign_exporter_before = ThmSetData.data_exportfns {settype="split"};
 
 val listeners_before = Listener.listeners Theory.delta_hook;

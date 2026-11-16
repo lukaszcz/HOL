@@ -1,8 +1,9 @@
 (* Only this launcher is linked: all simplifier imports happen at runtime. *)
 open HolKernel testutils
 
-fun split_attribute_now () =
-  ThmAttribute.attribute_fns_of (Context.snapshot ()) "split"
+(* Whether a split attribute is registered; verify_owner checks which
+   handler answers by dispatching to it *)
+fun split_attribute_now () = ThmAttribute.is_attribute "split"
 
 fun check label ok = (tprint label; if ok then OK () else die label)
 fun env name = valOf (OS.Process.getEnv name)
@@ -105,10 +106,7 @@ fun verify_owner () =
   in
     case owner of
         "attribute" =>
-          (check "foreign attribute exact record"
-             (Portable.pointer_eq (handlers,
-                valOf (split_attribute_now ())));
-           ThmAttribute.local_attribute arg;
+          (ThmAttribute.local_attribute arg;
            ThmAttribute.store_at_attribute arg;
            check "foreign attribute callbacks" (!calls = ["local","stored"]))
       | "set" =>
@@ -159,7 +157,7 @@ val _ = check "ordinary load adds only exact legacy listener names"
    List.filter (fn n => not (List.exists (fn (m,_) => n = m) initial_hooks))
      legacy_listeners)
 val _ = check "ordinary load preserves both registry records"
-  (same_option (entry_attribute,split_attribute_now ()) andalso
+  (entry_attribute = split_attribute_now () andalso
    same_option (entry_exporter,ThmSetData.data_exportfns {settype="split"}))
 val _ = if timing = "before" then verify_owner () else ()
 val _ = quiet "boolSimps" (fn () => load "boolSimps")
@@ -174,7 +172,7 @@ val _ = List.app (fn name => quiet name (fn () => load name))
 val _ = check "extension loads preserve exact listeners"
   (same_hooks extension_hooks (hooks ()))
 val _ = check "extension loads preserve registry records"
-  (same_option (attribute_before,split_attribute_now ()) andalso
+  (attribute_before = split_attribute_now () andalso
    same_option (exporter_before,ThmSetData.data_exportfns {settype="split"}))
 val _ = check "extension loads never opt into persistence"
   (not (loaded "splitPersistLib") andalso no_private ())

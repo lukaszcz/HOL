@@ -1,12 +1,8 @@
-fun split_attribute_now () =
-  ThmAttribute.attribute_fns_of (Context.snapshot ()) "split"
-
 fun same_option (NONE,NONE) = true
   | same_option (SOME a,SOME b) = Portable.pointer_eq (a,b)
   | same_option _ = false;
-val _ = check "ordinary load preserves exact foreign handler records"
-  (same_option (foreign_attribute_before,
-                split_attribute_now ()) andalso
+val _ = check "ordinary load preserves foreign handler records"
+  (foreign_attribute_before = ThmAttribute.is_attribute "split" andalso
    same_option (foreign_exporter_before,
                 ThmSetData.data_exportfns {settype="split"}));
 

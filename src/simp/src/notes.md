@@ -196,8 +196,9 @@ is also supported.
 `splitLib.exclude_split "Thy.Name"` persistently retracts a named ancestor
 rule (not its DB theorem). Unqualified names resolve in the writing theory;
 exported REMOVE keys cannot remove a descendant's same-named rule. This is
-not local `del_split`/`ExclX`. Foreign ownership causes initialization/removal
-to fail, never replacement. Registration follows `Context.restore`, but the
+not local `del_split`/`ExclX`. An existing `split` attribute or set makes
+initialization fail rather than replace it; removal requires an enabled
+registration. Registration follows `Context.restore`, but the
 ML loader is global: after rewind before opt-in, explicitly initialize again;
 loading an already-loaded module need not rerun it. Initialization is serial,
 not an operation during concurrent proofs or arbitrary late-segment replay.
