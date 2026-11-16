@@ -17097,6 +17097,19 @@ struct
   type eqc_ports=
     {statement:Term.term,body:Term.term,quantifier_variable:Term.term,
      tag:Tag.tag,bare:bool,closed:bool}
+  (* The fixed law |- !t. t = (t = T) behind Drule.EQT_INTRO, derived
+     once from EQ_CLAUSES as Drule derives it; reads are proof-free. *)
+  val eqt_law_ports:eqc_ports=
+    let val clauses=boolTheory.EQ_CLAUSES
+        val(argument,_)=boolSyntax.dest_forall(Thm.concl clauses)
+        val law=Thm.GEN argument(Thm.SYM(Thm.CONJUNCT1
+          (Thm.CONJUNCT2(Thm.SPEC argument clauses))))
+        val statement=Thm.concl law
+        val(_,body)=boolSyntax.dest_forall statement
+    in {statement=statement,body=body,quantifier_variable=argument,
+        tag=Thm.tag law,bare=Term.is_var argument,
+        closed=null(Thm.hyp law)}end
+  fun eqt_intro_cache_data()=eqt_law_ports
   type source_eqt_cache_data=
     {valid:bool,body_nodes:int,type_nodes:int,name_bytes:int,
      closed:bool,bare:bool}
@@ -17116,7 +17129,7 @@ struct
      if Type.type_epoch()=epoch andalso Term.term_epoch()=symbols then ()
        else eqc_fail "cached read epoch changed";
      debit();
-     let val actual=Drule.eqt_intro_cache_data()
+     let val actual=eqt_intro_cache_data()
      in if Portable.pointer_eq(#statement actual,#statement ports)andalso
          Term.term_eq(#body actual)(#body ports)andalso
          Term.term_eq(#quantifier_variable actual)
@@ -17136,7 +17149,7 @@ struct
       val limits=W.semantic_limits expected
       fun guard()=eqc_context expected graph scope sources limits
       val _=guard()
-      val ports:eqc_ports=Drule.eqt_intro_cache_data()
+      val ports:eqc_ports=eqt_intro_cache_data()
       val _=if #bare ports andalso #closed ports then ()else
         eqc_fail "fixed producer has no closed bare origin"
       val _=W.spend expected eqc_schema_fee

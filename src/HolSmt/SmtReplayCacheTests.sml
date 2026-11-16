@@ -209,7 +209,7 @@ struct
            if !calls=1 then retire () else ();
            if boolSyntax.is_eq term andalso
                wordsSyntax.is_word_type (Term.type_of (boolSyntax.lhs term))
-           then blastLib.WORD_SIMP_CANCEL_LITERAL_CONV term
+           then WordCancelLiteral.WORD_SIMP_CONV term
            else raise Conv.UNCHANGED)
         val theorem = W.normalize_with_node_conversion callback word_target
       in
@@ -253,7 +253,7 @@ struct
          blastLib.BIT_BLAST_CONV term)
       val (theorem,metrics) =
         W.normalize_using_with_metrics
-          {word_conversion=blastLib.WORD_SIMP_CANCEL_LITERAL_CONV,
+          {word_conversion=WordCancelLiteral.WORD_SIMP_CONV,
            bit_conversion=callback,
            node_conversion=fn _ => raise Conv.UNCHANGED} input
       val cold = W.normalize input

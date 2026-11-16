@@ -1,19 +1,19 @@
 signature blastLib =
 sig
-    (* Checked word normalization primitives.  BIT_BLAST_CONV performs its
-       internal tree scans, so callers must use it only on separately bounded
-       inputs (for example, small schematic terms). *)
-    val WORD_SIMP_CONV   : Conv.conv
+    (* BIT_BLAST_CONV performs internal tree scans, so callers must use it
+       only on separately bounded inputs (for example, small schematic
+       terms). *)
     val BIT_BLAST_CONV   : Conv.conv
-    (* WORD_SIMP_CONV whose cancellation step consults
-       WordCancelLiteral.classify; same theorems, used by the replay
-       workers below. *)
-    val WORD_SIMP_CANCEL_LITERAL_CONV : Conv.conv
+    (* The word normalizer before bit-blasting, with the given fragment in
+       place of wordsLib.WORD_CANCEL_ss. *)
+    val WORD_SIMP_CONV_WITH_CANCEL : simpLib.ssfrag -> Conv.conv
     val BBLAST_CONV      : Conv.conv
+    (* BBLAST_CONV with the given word normalizer, and a wrapper (e.g. a
+       profiler) around the propositional phase. *)
     val BBLAST_CONV_WITH_PROFILES :
-      (Conv.conv -> Conv.conv) -> (Conv.conv -> Conv.conv) -> Conv.conv
+      Conv.conv -> (Conv.conv -> Conv.conv) -> Conv.conv
     val BBLAST_CONV_WITH_STAGES :
-      {word_simp : Conv.conv -> Conv.conv,
+      {word_simp : Conv.conv,
        bit_blast : Conv.conv -> Term.term list -> Thm.thm list,
        rewrite : Thm.thm list -> Conv.conv,
        prover : Conv.conv -> Conv.conv} -> Conv.conv

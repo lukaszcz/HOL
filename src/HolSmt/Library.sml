@@ -102,11 +102,12 @@ struct
 
   val replay_word_simp_conv =
     Conv.THENC (replay_word_normalize_conv,
-                blastLib.WORD_SIMP_CANCEL_LITERAL_CONV)
+                WordCancelLiteral.WORD_SIMP_CONV)
 
   (* blastLib's BBLAST_CONV, BBLAST_PROVE and BBLAST_TAC, but normalizing
-     with blastLib.WORD_SIMP_CANCEL_LITERAL_CONV; same theorems. *)
-  val replay_BBLAST_CONV = blastLib.BBLAST_CONV_WITH_PROFILES Lib.I Lib.I
+     with WordCancelLiteral.WORD_SIMP_CONV; same theorems. *)
+  val replay_BBLAST_CONV =
+    blastLib.BBLAST_CONV_WITH_PROFILES WordCancelLiteral.WORD_SIMP_CONV Lib.I
   val replay_BBLAST_PROVE =
     blastLib.BBLAST_PROVE_WITH_CONVERSION replay_BBLAST_CONV
   val replay_BBLAST_TAC = Tactic.CONV_TAC replay_BBLAST_CONV

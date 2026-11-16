@@ -10,6 +10,14 @@ val _ =
 
 val _ = print "Testing HolSmtLib\n"
 
+(* Cond_rewr's conditional form, CONJ_DISCH ants th, of a theorem th
+   concluding c = T, read through the exported IMP_EQ_CANON.  BOUNDED
+   keeps a boolean-variable c as the left-hand side. *)
+fun stock_conj_disch ants th =
+  #1 (hd (Cond_rewr.IMP_EQ_CANON
+    (List.foldr (fn (a,t) => Thm.DISCH a t) th ants,
+     BoundedRewrites.BOUNDED (ref 0))))
+
 (* BEGIN REPLAY GRAPH UNIFIER MIGRATION TESTS *)
 val _ = let
   open SmtReplayGraph SmtReplayUnify
@@ -24433,14 +24441,6 @@ in
     (Type.compare(domain,Type.bool)<>EQUAL andalso
      matcher_control Type.bool false)
 
-  val _=testutils.tprint "Fixed law reads do not advance public genvar"
-  val _=let val first=Term.genvar Type.alpha
-        val((a,b),counts)=observed(fn()=>
-          (Drule.eqt_intro_cache_data(),Drule.eqt_intro_cache_data()))
-        val second=Term.genvar Type.alpha
-    in ensure "law reader allocated a proof or advanced genvar"
-      (Term.term_eq(#body a)(#body b)andalso #total counts=0 andalso
-       counter second=counter first+1)end
 
     in () end)
 end
@@ -25261,7 +25261,7 @@ local
         val incoming=O.receipt_validation_for(#work e)(#incoming e)
         val selected=P.realize_source_condition_evidence(#work e)
           (List.nth(#entries incoming,#index e))
-        val expected=Cond_rewr.CONJ_DISCH[a]
+        val expected=stock_conj_disch[a]
           (Drule.EQT_INTRO(Drule.UNDISCH selected))
         val(raw,inc,ann)=actual_metric(Thm.concl actual)
         val(hr,hi,ha)=actual_hyp_metric(Thm.hyp actual)
@@ -25635,7 +25635,6 @@ local
         Feedback.message_of error=
           "original cumulative work allowance exhausted"
     | _=>false
-  val _=Drule.eqt_intro_cache_data
   val _=SmtReplayProof.prepare_source_conditional_effect_origins
   fun effects(e:env)token=P.prepare_source_conditional_effect_origins
     (#work e)(#lower(Conditional.completed_for(#work e)token))
@@ -25648,7 +25647,7 @@ local
         val ants= #1(liteLib.strip_imp(Thm.concl theorem))
         fun undisch current=if boolSyntax.is_imp_only(Thm.concl current)
           then undisch(Drule.UNDISCH current)else current
-    in Cond_rewr.CONJ_DISCH ants
+    in stock_conj_disch ants
       (Drule.EQT_INTRO(undisch theorem))end
   fun exact_effect actual expected=
     Term.aconv(Thm.concl actual)(Thm.concl expected)andalso
@@ -25776,7 +25775,7 @@ local
         val ants= #1(liteLib.strip_imp(Thm.concl expected_input))
         fun undisch theorem=if boolSyntax.is_imp_only(Thm.concl theorem)
           then undisch(Drule.UNDISCH theorem)else theorem
-        val expected=Cond_rewr.CONJ_DISCH ants
+        val expected=stock_conj_disch ants
           (Drule.EQT_INTRO(undisch expected_input))
         val actual_law=case #import data of NONE=>
             raise Fail "two-ant genuine input did not quote its law"
@@ -26217,7 +26216,6 @@ local
         Feedback.message_of error=
           "original cumulative work allowance exhausted"
     | _=>false
-  val _=Drule.eqt_intro_cache_data
   val _=SmtReplayProof.prepare_source_conditional_effect_origins
   fun effects(e:env)token=P.prepare_source_conditional_effect_origins
     (#work e)(#lower(Conditional.completed_for(#work e)token))
@@ -26230,7 +26228,7 @@ local
         val ants= #1(liteLib.strip_imp(Thm.concl theorem))
         fun undisch current=if boolSyntax.is_imp_only(Thm.concl current)
           then undisch(Drule.UNDISCH current)else current
-    in Cond_rewr.CONJ_DISCH ants
+    in stock_conj_disch ants
       (Drule.EQT_INTRO(undisch theorem))end
   fun exact_effect actual expected=
     Term.aconv(Thm.concl actual)(Thm.concl expected)andalso
@@ -26534,7 +26532,7 @@ local
         val incoming=O.receipt_validation_for(#work e)(#incoming e)
         val selected=P.realize_source_condition_evidence(#work e)
           (List.nth(#entries incoming,#index e))
-        val expected=Cond_rewr.CONJ_DISCH[a]
+        val expected=stock_conj_disch[a]
           (Drule.EQT_INTRO(Drule.UNDISCH selected))
         val(r,i,a)=actual_metric(Thm.concl actual)
     in Term.aconv(Thm.concl actual)(Thm.concl expected)andalso
@@ -40100,7 +40098,7 @@ local
   structure Eq=SmtLib_OwnedBooleanImpEq
   val _=SmtLib_OwnedBooleanImpEq.prepare
   val _=Cond_rewr.IMP_EQ_CANON
-  val _=Cond_rewr.false_template
+  val _=SmtReplayConj.false_template
   val _=SmtReplayRuleObservation.with_statistics
   val p=``raw_canon_p:bool`` val q=``raw_canon_q:bool``
   val r=``raw_canon_r:bool`` val z=``raw_canon_z:bool``
@@ -40197,13 +40195,14 @@ in
   val _ = run_postlude 241 "postlude-0330-line-37620" (fn () =>
     let
   val _=testutils.tprint "F selectors retain exact existing stock templates"
-  val _=let val f=Cond_rewr.false_template Cond_rewr.FalseConclusion
-      val tf=Cond_rewr.false_template Cond_rewr.TruthEqualsFalse
-      val ft=Cond_rewr.false_template Cond_rewr.FalseEqualsTruth
+  val _=let open SmtReplayConj
+      val f=false_template FalseConclusion
+      val tf=false_template TruthEqualsFalse
+      val ft=false_template FalseEqualsTruth
       val(a,counts)=SmtReplayRuleObservation.with_statistics(fn()=>
-        (Cond_rewr.false_template_data f,Cond_rewr.false_template_data tf,
-         Cond_rewr.false_template_data ft))
-      val(df,dt,ds)=a val again=Cond_rewr.false_template_data f
+        (false_template_data f,false_template_data tf,
+         false_template_data ft))
+      val(df,dt,ds)=a val again=false_template_data f
       val target= #result df
       val same=Portable.pointer_eq(#proof df,#proof again)andalso
         Term.aconv target(#result dt)andalso Term.aconv target(#result ds)
@@ -40229,8 +40228,8 @@ in
       val incoming= #entries(O.entries_for (#work e)raw)
       (* Stock F branch does not consume hypfvs: only its exact captured
          x_eq_false is needed. Avoid unused huge Hyp FVL in oracle only. *)
-      val fixed= #proof(Cond_rewr.false_template_data
-        (Cond_rewr.false_template Cond_rewr.FalseConclusion))
+      val fixed= #proof(SmtReplayConj.false_template_data
+        (SmtReplayConj.false_template SmtReplayConj.FalseConclusion))
       val expected=List.map(fn evidence=>Thm.MP fixed(proof e evidence))
         incoming
       val actual=List.map(proof e)(#entries(Eq.entries_for (#work e)
@@ -40274,8 +40273,8 @@ in
   val _=let val e=setup[boolSyntax.F]val work= #work e
       val raw=raw_receipt e 0
       val evidence=hd(#entries(O.entries_for work raw))
-      val fixed= #proof(Cond_rewr.false_template_data
-        (Cond_rewr.false_template Cond_rewr.FalseConclusion))
+      val fixed= #proof(SmtReplayConj.false_template_data
+        (SmtReplayConj.false_template SmtReplayConj.FalseConclusion))
       val statement=Thm.concl fixed
       val ready=P.admit_source_false_law work
         (P.prepare_source_false_law work{evidence=evidence,
@@ -40332,7 +40331,7 @@ local
   structure Eq=SmtLib_OwnedBooleanImpEq
   val _=SmtLib_OwnedBooleanImpEq.prepare
   val _=Cond_rewr.IMP_EQ_CANON
-  val _=Cond_rewr.false_template
+  val _=SmtReplayConj.false_template
   val _=SmtReplayRuleObservation.with_statistics
   val p=``raw_canon_p:bool`` val q=``raw_canon_q:bool``
   val r=``raw_canon_r:bool`` val z=``raw_canon_z:bool``
@@ -40860,7 +40859,7 @@ local
   structure Eq=SmtLib_OwnedBooleanImpEq
   val _=SmtLib_OwnedBooleanImpEq.prepare
   val _=Cond_rewr.IMP_EQ_CANON
-  val _=Cond_rewr.false_template
+  val _=SmtReplayConj.false_template
   val _=SmtReplayRuleObservation.with_statistics
   val p=``raw_canon_p:bool`` val q=``raw_canon_q:bool``
   val r=``raw_canon_r:bool`` val z=``raw_canon_z:bool``
@@ -41296,7 +41295,7 @@ open HolKernel Parse boolLib bossLib;
 val _=case Thm.getCT()of NONE=>new_theory "scratch" | SOME _=>()
 val _=SmtLib_OwnedPairedEqTFlip.prepare
 val _=SmtReplayProof.prepare_source_eqt_flip
-val _=Cond_rewr.eq_sym_template_data
+val _=SmtReplayConj.eq_sym_template_data
 local
   structure G=SmtReplayGraph
   structure S=SmtReplaySource
@@ -41358,10 +41357,10 @@ in
     let
   val _=testutils.tprint "EQT selector keeps exact law without proof"
   val _=let val(start,counts)=count(fn()=>
-        let val one=Cond_rewr.eq_sym_template_data
-              (Cond_rewr.eq_sym_template())
-            val two=Cond_rewr.eq_sym_template_data
-              (Cond_rewr.eq_sym_template())
+        let val one=SmtReplayConj.eq_sym_template_data
+              (SmtReplayConj.eq_sym_template())
+            val two=SmtReplayConj.eq_sym_template_data
+              (SmtReplayConj.eq_sym_template())
         in Portable.pointer_eq(#proof one,boolTheory.EQ_SYM_EQ)andalso
           Portable.pointer_eq(#proof one,#proof two)andalso
           Portable.pointer_eq(#statement one,Thm.concl(#proof one))end)
@@ -41781,7 +41780,7 @@ local
     let val ants= #1(liteLib.strip_imp(Thm.concl theorem))
         fun undisch current=if boolSyntax.is_imp_only(Thm.concl current)
           then undisch(Drule.UNDISCH current)else current
-    in Cond_rewr.CONJ_DISCH ants(Drule.EQT_INTRO(undisch theorem))end
+    in stock_conj_disch ants(Drule.EQT_INTRO(undisch theorem))end
   fun chain ants=List.foldr(fn(ant,rest)=>boolSyntax.mk_imp(ant,rest))body ants
   fun result e check_type=P.realize_source_condition_evidence(#work e)
     (Batch.execute(#work e)(Batch.prepare(#work e)

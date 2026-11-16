@@ -147,7 +147,8 @@ struct
       val _ = List.app (agree (WordCancelLiteral.WORD_CANCEL_CONV,
                                wordsLib.WORD_CANCEL_CONV))
                 (all [1,2,3,7,8,16,31,32,33,64])
-      val _ = List.app (agree (blastLib.WORD_SIMP_CANCEL_LITERAL_CONV,
-                               blastLib.WORD_SIMP_CONV)) (all [1,8,32,33])
+      val _ = List.app (agree (WordCancelLiteral.WORD_SIMP_CONV,
+                 blastLib.WORD_SIMP_CONV_WITH_CANCEL wordsLib.WORD_CANCEL_ss))
+                (all [1,8,32,33])
     in OK () end
 end

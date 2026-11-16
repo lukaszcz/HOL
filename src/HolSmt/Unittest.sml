@@ -35689,7 +35689,7 @@ in
                  else conversion term)
             val result = Exn.capture normalize
               {word_conversion =
-                 callback "word" blastLib.WORD_SIMP_CANCEL_LITERAL_CONV,
+                 callback "word" WordCancelLiteral.WORD_SIMP_CONV,
                bit_conversion = callback "bit" blastLib.BIT_BLAST_CONV,
                node_conversion = callback "node"
                  (fn _ => raise Conv.UNCHANGED)}
@@ -35854,7 +35854,7 @@ let
             wordsSyntax.is_index (G.representative graph node)) original),
           "generated-projection fixture already contains a projection")
         val (plan,metrics) = SmtWordGraph.graph_normalize_using_with_metrics
-          {word_conversion=record blastLib.WORD_SIMP_CANCEL_LITERAL_CONV,
+          {word_conversion=record WordCancelLiteral.WORD_SIMP_CONV,
            bit_conversion=record (fn term =>
              (bits := !bits+1; blastLib.BIT_BLAST_CONV term)),
            node_conversion=record unchanged} graph scope source
@@ -36138,7 +36138,7 @@ let
            conversion term)
         val (theorem,metrics) = SmtWordGraph.normalize_using_with_metrics
           {word_conversion=
-             record word_calls blastLib.WORD_SIMP_CANCEL_LITERAL_CONV,
+             record word_calls WordCancelLiteral.WORD_SIMP_CONV,
            bit_conversion=record bit_calls blastLib.BIT_BLAST_CONV,
            node_conversion=record node_calls unchanged} source
         val (cached,cached_metrics) = SmtWordGraph.normalize_with_metrics source

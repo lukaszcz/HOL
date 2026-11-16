@@ -25,4 +25,29 @@ struct
   fun conj_discharge_constructor_data ConjDischargeTemplate =
     let val {proof,bare,closed,...} = !producer
     in {statement=concl proof,tag=tag proof,bare=bare,closed=closed} end
+
+  datatype false_template_kind = FalseConclusion | TruthEqualsFalse
+    | FalseEqualsTruth
+  datatype false_template = FalseTemplate of false_template_kind
+  local
+    fun stock tm = fst (hd (Cond_rewr.IMP_EQ_CANON
+      (ASSUME tm,BoundedRewrites.UNBOUNDED)))
+    (* [F] |- x = F, discharged to Cond_rewr's x_eq_false statement *)
+    val x_eq_false = DISCH F (stock F)
+    val tf_eq_f = stock (mk_eq (T,F))
+    val ft_eq_f = stock (mk_eq (F,T))
+    fun hyp_law th = {proof=th,condition=hd (hyp th),result=concl th}
+  in
+    fun false_template kind = FalseTemplate kind
+    fun false_template_data (FalseTemplate FalseConclusion) =
+        let val (condition,result) = dest_imp_only (concl x_eq_false)
+        in {proof=x_eq_false,condition=condition,result=result} end
+      | false_template_data (FalseTemplate TruthEqualsFalse) = hyp_law tf_eq_f
+      | false_template_data (FalseTemplate FalseEqualsTruth) = hyp_law ft_eq_f
+  end
+
+  datatype eq_sym_template = EqSymTemplate
+  fun eq_sym_template () = EqSymTemplate
+  fun eq_sym_template_data EqSymTemplate =
+    {proof=EQ_SYM_EQ,statement=concl EQ_SYM_EQ}
 end

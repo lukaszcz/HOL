@@ -215,4 +215,5 @@ struct
             pats = [boolSyntax.mk_eq (Term.mk_var ("w", word_alpha),
                                       Term.mk_var ("y", word_alpha))]}]
   end
+  val WORD_SIMP_CONV = blastLib.WORD_SIMP_CONV_WITH_CANCEL WORD_CANCEL_ss
 end

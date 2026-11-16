@@ -57,7 +57,8 @@ val fallback_cache=SmtBitBlastProve.new_context_with_for_test
  {bit=decline,boolean=Lib.I};
 val declined=Conv.QCONV (SmtBitBlastProve.convert fallback_cache) source;
 val expected=Conv.QCONV (blastLib.BBLAST_CONV_WITH_STAGES
- {word_simp=I,bit_blast=fn worker=>Lib.mapfilter (decline worker),
+ {word_simp=WordCancelLiteral.WORD_SIMP_CONV,
+  bit_blast=fn worker=>Lib.mapfilter (decline worker),
   rewrite=Rewrite.ONCE_REWRITE_CONV,prover=I}) source;
 val _=valid source declined;
 val _=assert (Term.aconv (Thm.concl expected)) (Thm.concl declined);

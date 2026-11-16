@@ -11,4 +11,6 @@ sig
      unchanged. *)
   val WORD_CANCEL_CONV : Conv.conv
   val WORD_CANCEL_ss : simpLib.ssfrag
+  (* blastLib's word normalizer with WORD_CANCEL_ss above; same theorems. *)
+  val WORD_SIMP_CONV : Conv.conv
 end

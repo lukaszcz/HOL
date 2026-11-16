@@ -13239,7 +13239,7 @@ local
                     "Skeleton" "word-graph-input"
                     (SmtResource.dag_nodes_up_to maximum term)
                 in #1 (SmtWordGraph.graph_normalize_using_with_metrics
-                  {word_conversion=blastLib.WORD_SIMP_CANCEL_LITERAL_CONV,
+                  {word_conversion=WordCancelLiteral.WORD_SIMP_CONV,
                    bit_conversion=blastLib.BIT_BLAST_CONV,
                    node_conversion=xor_conversion}
                   graph scope (syntax term)) end

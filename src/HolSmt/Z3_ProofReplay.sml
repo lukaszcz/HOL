@@ -8593,7 +8593,8 @@ local
       simpLib.empty_ss [boolTheory.COND_RAND, boolTheory.COND_RATOR]
     val PROFILED_BBLAST_CONV =
       blastLib.BBLAST_CONV_WITH_PROFILES
-        (profile "th_lemma[bv](3)(COND_BBLAST:WORD_SIMP_CONV)")
+        (profile "th_lemma[bv](3)(COND_BBLAST:WORD_SIMP_CONV)"
+           WordCancelLiteral.WORD_SIMP_CONV)
         (profile "th_lemma[bv](3)(COND_BBLAST:BIT_TAUT_CONV)")
   in
     fn t =>

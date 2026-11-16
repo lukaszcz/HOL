@@ -10,19 +10,19 @@ struct
   structure Scope=SmtReplayOwnedScopeReceipt
   val _=SmtReplayProof.source_condition_statement_for
   val _=SmtLib_OwnedContextImpCanon.receipt_validation_for
-  val _=Cond_rewr.false_template
+  val _=SmtReplayConj.false_template
   val _=SmtReplayProof.prepare_source_false_law
   val ERR=Feedback.mk_HOL_ERR "SmtLib_OwnedBooleanImpEq"
   type incoming={work:W.portfolio,validation:O.receipt_validation,
     hypotheses:P.source_hyp_fv_origins list,
     equality_hyp:H.receipt option ref}
   datatype action=DiscardTruth | Positive | Negative | KeepEquality
-    | LoopEquality | FixedFalse of Cond_rewr.false_template
+    | LoopEquality | FixedFalse of SmtReplayConj.false_template
     | FlipEquality | NeedEqualityHyp
   datatype false_plan=FalsePlan of
     {work:W.portfolio,raw:incoming,
      evidence:P.source_condition_evidence,frame:Scope.receipt,
-     template:Cond_rewr.false_template,template_proof:Thm.thm,
+     template:SmtReplayConj.false_template,template_proof:Thm.thm,
      statement:Term.term,closing:Term.term option,
      types:Type.hol_type list,check_type:Type.hol_type -> unit,
      lower:P.source_false_law_plan}
@@ -65,7 +65,7 @@ struct
          "false_guard" "foreign expected Work";
        raw_guard expected raw;
        ignore(P.source_condition_statement_for expected evidence);
-       let val data=Cond_rewr.false_template_data template
+       let val data=SmtReplayConj.false_template_data template
            val proof= #proof data
        in if null(Tag.axioms_of(Thm.tag proof))andalso
            List.all(fn name=>name="DISK_THM")
@@ -83,7 +83,7 @@ struct
         val(template_proof,condition,result,statement,closing,types)=
           W.with_step expected(fn()=>
           let val _=live()
-              val data=Cond_rewr.false_template_data template
+              val data=SmtReplayConj.false_template_data template
               val proof= #proof data val condition= #condition data
               val result= #result data
               val template_limit= #template_limit limits
@@ -339,8 +339,8 @@ struct
                     val action=if constant statement boolSyntax.T then
                         DiscardTruth
                       else if constant statement boolSyntax.F then
-                        FixedFalse(Cond_rewr.false_template
-                          Cond_rewr.FalseConclusion)
+                        FixedFalse(SmtReplayConj.false_template
+                          SmtReplayConj.FalseConclusion)
                       else if boolSyntax.is_imp_only statement then
                         prerequisite "CONJ_DISCH conditional rule"
                       else if boolSyntax.is_eq statement then
@@ -355,12 +355,12 @@ struct
                         in if loop then LoopEquality
                           else if constant left boolSyntax.T andalso
                               constant right boolSyntax.F then
-                            FixedFalse(Cond_rewr.false_template
-                              Cond_rewr.TruthEqualsFalse)
+                            FixedFalse(SmtReplayConj.false_template
+                              SmtReplayConj.TruthEqualsFalse)
                           else if constant left boolSyntax.F andalso
                               constant right boolSyntax.T then
-                            FixedFalse(Cond_rewr.false_template
-                              Cond_rewr.FalseEqualsTruth)
+                            FixedFalse(SmtReplayConj.false_template
+                              SmtReplayConj.FalseEqualsTruth)
                           else if constant left boolSyntax.T orelse
                               constant left boolSyntax.F then
                             prerequisite "constant-left orientation/template"

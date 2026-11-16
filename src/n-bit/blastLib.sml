@@ -704,10 +704,6 @@ local
     val WORD_SUM_ZERO_CONV =
        Conv.REWR_CONV thm THENC Conv.RHS_CONV wordsLib.WORD_EVAL_CONV
 
-   val word_ss = std_ss++wordsLib.SIZES_ss++wordsLib.WORD_ARITH_ss++
-                 wordsLib.WORD_LOGIC_ss++wordsLib.WORD_SHIFT_ss++
-                 wordsLib.WORD_CANCEL_ss
-
    val SYM_WORD_NOT_LOWER = GSYM WORD_NOT_LOWER
 
    val bit_rwts = [word_lsb_def, word_msb_def, word_bit_def]
@@ -725,40 +721,17 @@ local
       WORD_0_LS, WORD_LESS_0_word_T,
       WORD_LS_word_0, WORD_LO_word_0]
 in
-   val WORD_SIMP_CONV =
-      SIMP_CONV word_ss bit_rwts
+   (* The word simpset takes its cancellation fragment as a parameter. *)
+   fun WORD_SIMP_CONV_WITH_CANCEL cancel_ss =
+      SIMP_CONV (std_ss++wordsLib.SIZES_ss++wordsLib.WORD_ARITH_ss++
+                 wordsLib.WORD_LOGIC_ss++wordsLib.WORD_SHIFT_ss++cancel_ss)
+                bit_rwts
       THENC Conv.TRY_CONV WORD_SUM_ZERO_CONV
       THENC REWRITE_CONV order_rwts
       THENC Conv.DEPTH_CONV wordsLib.SIZES_CONV
       THENC Conv.DEPTH_CONV SMART_MUL_LSL_CONV
       THENC Conv.DEPTH_CONV WORD_DIV_LSR_CONV
-   (* Separate replay normalizer: WORD_SIMP_CONV with
-      WordCancelLiteral.WORD_CANCEL_ss in place of wordsLib.WORD_CANCEL_ss.
-      It is built on first use, not when blastLib is loaded. *)
-   local
-      val classified = ref (NONE : conv option)
-      fun classified_conv () =
-         case !classified of
-            SOME c => c
-          | NONE =>
-            let
-               val cancel_ss =
-                  std_ss++wordsLib.SIZES_ss++wordsLib.WORD_ARITH_ss++
-                  wordsLib.WORD_LOGIC_ss++wordsLib.WORD_SHIFT_ss++
-                  WordCancelLiteral.WORD_CANCEL_ss
-               val c =
-                  SIMP_CONV cancel_ss bit_rwts
-                  THENC Conv.TRY_CONV WORD_SUM_ZERO_CONV
-                  THENC REWRITE_CONV order_rwts
-                  THENC Conv.DEPTH_CONV wordsLib.SIZES_CONV
-                  THENC Conv.DEPTH_CONV SMART_MUL_LSL_CONV
-                  THENC Conv.DEPTH_CONV WORD_DIV_LSR_CONV
-            in
-               classified := SOME c; c
-            end
-   in
-      fun WORD_SIMP_CANCEL_LITERAL_CONV tm = classified_conv () tm
-   end
+   val WORD_SIMP_CONV = WORD_SIMP_CONV_WITH_CANCEL wordsLib.WORD_CANCEL_ss
 end
 
 (* ------------------------------------------------------------------------
@@ -1348,12 +1321,9 @@ in
 
   fun BBLAST_CONV tm = bblast_with WORD_SIMP_CONV Lib.I tm
 
-  (* Separate opt-in replay worker.  Ordinary BBLAST_CONV does not construct
-     or invoke profiling callbacks.  Callers bound the input independently;
-     this worker preserves the ordinary conversion phases and exceptions. *)
-  fun BBLAST_CONV_WITH_PROFILES word_simp_profile bit_taut_profile tm =
-     bblast_with (word_simp_profile WORD_SIMP_CANCEL_LITERAL_CONV)
-       bit_taut_profile tm
+  (* BBLAST_CONV with the caller's word normalizer, and a wrapper (e.g. a
+     profiler) around the propositional phase. *)
+  val BBLAST_CONV_WITH_PROFILES = bblast_with
   (* Replay callers may retain checked bit conversions and supply a native
      Boolean prover. Collection owns ordinary declines and terminal errors;
      the caller supplies the rewrite over those same completed conversions.
@@ -1364,7 +1334,7 @@ in
         val _ = Term.type_of tm = Type.bool orelse
                 raise ERR "BBLAST_CONV" "not a bool term"
         val (vars,tm') = boolSyntax.strip_forall tm
-        val thm = Conv.QCONV (word_simp WORD_SIMP_CANCEL_LITERAL_CONV) tm'
+        val thm = Conv.QCONV word_simp tm'
         val tms =
             Lib.op_mk_set aconv (HolKernel.find_terms is_blastable (rhsc thm))
         val thms = bit_blast BIT_BLAST_CONV tms
@@ -1415,59 +1385,7 @@ local
         s2 @ (List.filter (okay o #redex) s1)
      end
 in
-  fun BBLAST_PROVE tm =
-     let
-        val (vars,tm') = boolSyntax.strip_exists tm
-        val thm = Conv.QCONV BBLAST_CONV tm'
-     in
-        if List.null vars
-           then Drule.EQT_ELIM thm
-                handle HOL_ERR _ =>
-                  let
-                     val body = snd (boolSyntax.strip_forall tm)
-                     val fvars = Term.free_vars body
-                     val w_subst = Lib.mapfilter mk_zero_subst fvars
-                     val counter =
-                        add_subst (w_subst, counterexample (rhsc thm))
-                  in
-                     if not (List.null counter) andalso
-                        Lib.can (order_counter fvars) counter
-                        then let
-                                val () = if blast_counter()
-                                            then print_counterexample counter
-                                         else ()
-                                val ctm =
-                                   Term.subst [arb_num_tm |-> numSyntax.zero_tm]
-                                              (Term.subst counter body)
-                          in
-                             raise HolSatLib.SAT_cex
-                                     (wordsLib.WORD_EVAL_CONV ctm)
-                          end
-                     else raise ERR "BBLAST_PROVE" "Couldn't prove goal."
-                  end
-        else let
-                val ctm = rhsc thm
-             in
-                if Teq ctm
-                   then Drule.EQT_ELIM
-                           ((PURE_ONCE_REWRITE_CONV [thm]
-                             THENC REPEATC Conv.EXISTS_SIMP_CONV) tm)
-                else let
-                        val counter = counterexample (boolSyntax.mk_neg ctm)
-                        val counter = order_counter vars counter
-                        val ctms = counter_terms counter
-                                     [boolSyntax.list_mk_exists (vars, ctm)]
-                        val cthm =
-                           Drule.EQT_ELIM
-                              (wordsLib.WORD_EVAL_CONV (Term.subst counter ctm))
-                        val cthm' = build_exists (List.rev counter) ctms cthm
-                     in
-                        PURE_ONCE_REWRITE_RULE [GSYM thm] cthm'
-                     end
-        end
-     end
-  (* Preserve BBLAST_PROVE's countermodel and existential handling while
-     allowing the separately bounded replay converter above. *)
+  (* BBLAST_PROVE, deciding the goal's body with converter. *)
   fun BBLAST_PROVE_WITH_CONVERSION converter tm =
      let
         val (vars,tm') = boolSyntax.strip_exists tm
@@ -1519,6 +1437,7 @@ in
                      end
         end
      end
+  val BBLAST_PROVE = BBLAST_PROVE_WITH_CONVERSION BBLAST_CONV
 end
 
 val BBLAST_RULE = Conv.CONV_RULE BBLAST_CONV

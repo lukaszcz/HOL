@@ -166,7 +166,7 @@ fun exact_rewrite laws source =
     if !complete then protect (exact_rewrite laws) input
     else protect (Conv.QCONV (Rewrite.ONCE_REWRITE_CONV laws)) input
   in blastLib.BBLAST_CONV_WITH_STAGES
-    {word_simp=Lib.I,bit_blast=bit,rewrite=rewrite,
+    {word_simp=WordCancelLiteral.WORD_SIMP_CONV,bit_blast=bit,rewrite=rewrite,
      prover=fn worker=>if boolean then
        protect (prover_override (with_fallback worker))
        else fn _=>raise Conv.UNCHANGED}
