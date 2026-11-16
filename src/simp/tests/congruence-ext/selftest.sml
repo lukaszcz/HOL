@@ -1,5 +1,8 @@
 (* Focused congExtLib contracts. The extended primitives retain the original
    congproc, travrules and preorder types; ordinary semantics stay separate. *)
+structure selftest =
+struct
+
 open HolKernel Parse boolLib boolSyntax testutils
 structure S = simpExtLib
 val ext_pure_ss = simpExtLib.lift_simpset pureSimps.pure_ss
@@ -362,3 +365,5 @@ end
 val _ = print ("Congruence extension focused checks: " ^
                Int.toString (!checks) ^ "\n")
 val _ = OS.Process.exit OS.Process.success
+
+end (* struct *)

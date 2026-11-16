@@ -1,4 +1,7 @@
 (* Invocation binding, recursive directives and local replay. *)
+structure tactics =
+struct
+
 open HolKernel Parse boolLib boolSyntax testutils
 structure S = simpExtLib
 val ext_pure_ss = simpExtLib.lift_simpset pureSimps.pure_ss
@@ -128,13 +131,13 @@ val _ = let
   exception PrematureBinding
   fun bind _ _ = (bound := !bound + 1; raise PrematureBinding)
   val _ = check "failed pretactic never invokes the binding callback"
-    (case error (simpMarkerLib.process_taclist_then_bind {arg=args} bind) of
+    (case error (markerLib.process_taclist_then_bind {arg=args} bind) of
          SOME e => String.isSubstring "No assumption of the form"
                      (Feedback.message_of e) andalso !bound = 0
        | NONE => false)
   val _ = check "successful pretactic invokes binding exactly once"
     (case Exn.capture (fn () => runtac
-       (simpMarkerLib.process_taclist_then_bind {arg=[]} bind) g) () of
+       (markerLib.process_taclist_then_bind {arg=[]} bind) g) () of
          Exn.Exn PrematureBinding => !bound = 1
        | _ => false)
 in () end
@@ -142,17 +145,17 @@ in () end
 (* Multiple bound hypotheses on a real rule are not content directives.
    Preserve the selected allowance and every other hypothesis verbatim. *)
 val _ = List.app (fn nested => let
-  val (_,before) = BoundedRewrites.DEST_BOUNDED nested
+  val (_,limit_before) = BoundedRewrites.DEST_BOUNDED nested
   val (_,prepared) = S.prepare_rewrite_arguments S.empty_ss [nested]
   val _ = check "nested genuine rewrite survives preparation verbatim"
     (length prepared = 1 andalso same (hd prepared) nested)
   val (plain,after) = BoundedRewrites.DEST_BOUNDED (hd prepared)
   val _ = check "nested genuine rewrite retains the initially selected bound"
-    (before = after)
+    (limit_before = after)
   val installed = S.++ (S.empty_ss,S.rewrites prepared)
   val cv = S.SIMP_CONV installed []
   val _ = List.app (fn _ => result "nested allowance spends selected control"
-    cv fT plain) (List.tabulate (before,I))
+    cv fT plain) (List.tabulate (limit_before,I))
 in result "nested allowance stays exhausted on saved conversion"
   cv fT (REFL fT) end)
   [Once (Ntimes rule 2),Ntimes (Once rule) 2,
@@ -238,8 +241,8 @@ val _ = let
   val _ = tactic "generic marker tactic forwards extension markers inertly"
     (markerLib.process_taclist_then {arg=markers}
       (fn ths => (seen := ths; ALL_TAC))) ([],target) [([],target)]
-  val _ = check "generic directive classifier does not recognize extensions"
-    (List.all (not o markerLib.is_directive) markers andalso
+  val _ = check "generic tactic passes recognised extension markers on"
+    (List.all markerLib.is_directive markers andalso
      ListPair.allEq (fn (a,b) => same a b) (!seen,markers))
 in check "extension/generic tactic execution creates no split registrations"
   (registrations = ThmSetData.all_set_types () andalso
@@ -319,3 +322,5 @@ val _ = print ("EXTENSION_TACTICS_OK checks=" ^
   "\n")
 val _ = Context.restore saved_context
 val _ = OS.Process.exit OS.Process.success
+
+end (* struct *)

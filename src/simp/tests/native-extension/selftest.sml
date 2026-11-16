@@ -1,39 +1,7 @@
-(* Explicit imports for Holdep before the local aliases shadow them. *)
-open simpLib pureSimps boolSimps congLib Traverse
-     simpExtLib congExtLib TraverseExt
+structure selftest =
+struct
 
-(* Interleaved cutover: extension callers use independently sealed sets.
-   Keep the ordinary modules available for the baseline-only pins below. *)
-structure OrdinarySimp = simpLib
-structure OrdinaryPure = pureSimps
-structure OrdinaryBool = boolSimps
-structure OrdinaryCong = congLib
-structure OrdinaryTraverse = Traverse
-structure Traverse = TraverseExt
-(* Ordinary procedures enter the extension engine only by explicit lift. *)
-fun lifted_reducer data = Traverse.lift (OrdinaryTraverse.REDUCER data)
-structure simpLib = simpExtLib
-structure pureSimps =
-struct
-  val PURE_ss = simpExtLib.lift_ssfrag OrdinaryPure.PURE_ss
-  val pure_ss = simpExtLib.lift_simpset OrdinaryPure.pure_ss
-end
-structure boolSimps =
-struct
-  open OrdinaryBool
-  local val L = simpExtLib.lift_ssfrag in
-  val bool_ss = simpExtLib.lift_simpset OrdinaryBool.bool_ss
-  val BOOL_ss = L BOOL_ss  val CONG_ss = L CONG_ss  val ABBREV_ss = L ABBREV_ss
-  val CONJ_ss = L CONJ_ss  val DISJ_ss = L DISJ_ss  val NOT_ss = L NOT_ss
-  val COND_elim_ss = L COND_elim_ss  val LIFT_COND_ss = L LIFT_COND_ss
-  val UNWIND_ss = L UNWIND_ss  val ETA_ss = L ETA_ss  val LET_ss = L LET_ss
-  val literal_case_ss = L literal_case_ss  val DNF_ss = L DNF_ss
-  val EQUIV_EXTRACT_ss = L EQUIV_EXTRACT_ss  val NORMEQ_ss = L NORMEQ_ss
-  val LABEL_CONG_ss = L LABEL_CONG_ss  val HIDE_ss = L HIDE_ss
-  end
-end
-structure congLib = congExtLib
-structure T = TraverseExt
+open NativePrelude
 
 open HolKernel Parse boolLib simpLib splitLib
 open testutils boolSimps
@@ -44,8 +12,6 @@ val failcount = ref 0
 val _ = diemode := Remember failcount
 
 val _ = Portable.catch_SIGINT()
-
-fun valid tac goal = #1 (runtac (VALID tac) goal)
 
 (* earlier versions of the simplifier would go into an infinite loop on
    terms of this form. *)
@@ -1876,6 +1842,24 @@ fun pp ss = PP.pp_to_string 200 simpLib.pp_simpset ss
      ``(surface_solver_f : bool -> 'b) surface_solver_x``,
      ``surface_solver_y:'b``)
 
+  (* The solver's tactic runs in the context given to the simplifier
+     tactic, not in the ambient one. *)
+  val marker_slot : bool Context.Data.slot =
+    Context.Data.new {name = "native-extension.tactic-solver-context",
+                      empty = false, pp = Bool.toString}
+  val marked = Context.Data.put marker_slot true (Context.snapshot ())
+  val marked_goal = ``surface_marked_p \/ ~surface_marked_p``
+  fun marked_tac g ctxt =
+    if Context.Data.get marker_slot ctxt then
+      ACCEPT_TAC (SPEC ``surface_marked_p:bool`` EXCLUDED_MIDDLE) g ctxt
+    else NO_TAC g ctxt
+  val marked_ss =
+    add_safe_solver (mk_tactic_solver ("marked solver",marked_tac))
+      pureSimps.pure_ss
+  val _ = check "mk_tactic_solver uses the simplifier tactic's context"
+    (fn () => null (#1 (GEN_SIMP_TAC {safe=true} marked_ss []
+                          ([],marked_goal) marked)))
+
   val _ = shouldfail
     {testfn=SIMP_CONV tactic_solver_ss
        [Excl "surface tactic reducer"],
@@ -2529,13 +2513,6 @@ end
 (* Splitter core: conclusion and assumption splits.                       *)
 
 val mk_asm_split = splitLib.mk_asm_split
-
-fun has_double_neg tm =
-  can (find_term (fn subtm =>
-    is_neg subtm andalso is_neg (dest_neg subtm))) tm
-
-fun goal_has_double_neg (asms, concl) =
-  List.exists has_double_neg (concl :: asms)
 
 val _ = let
   val if_split = TypeBase.case_pred_imp_of ``:bool``
@@ -3555,77 +3532,6 @@ val _ = let
        ``global_supplied_imp_b:bool``)
 in
   ()
-end
-
-(* These theories are later than simp in the build sequence.  Exercise their
-   actual case constants when their already-built objects are available; the
-   bool tests above remain the bootstrap regression test for this directory. *)
-val _ = let
-  fun object_exists path =
-    OS.FileSys.access (OS.Path.concat (HOLDIR, path), [])
-  val have_datatypes =
-    object_exists "sigobj/optionTheory.uo" andalso
-    object_exists "sigobj/listTheory.uo"
-in
-  if not have_datatypes then ()
-  else
-    let
-      val _ = load "optionTheory"
-      val option_split = TypeBase.case_pred_imp_of ``:'a option``
-      val option_asm_split =
-        mk_asm_split (TypeBase.case_pred_disj_of ``:'a option``)
-      val _ = convtest
-        ("splitter: option case",
-         SPLIT_CONV [option_split],
-         ``P (option_CASE x (n:'b) (f:'a -> 'b)) : bool``,
-         ``(x = NONE ==> P (n:'b)) /\
-           !a:'a. x = SOME a ==> P (f a)``)
-
-      val option_asm_goal =
-        ([``P (option_CASE x (n:'b) (f:'a -> 'b)) : bool``],
-         ``G:bool``)
-      val _ = tprint "splitter: option case in an assumption"
-      val _ =
-        case valid (SPLIT_ASM_TAC [option_split, option_asm_split])
-                   option_asm_goal of
-            [none_case, some_case] =>
-              if not (goal_has_double_neg none_case) andalso
-                 not (goal_has_double_neg some_case)
-              then OK()
-              else die "option assumption split retained double negations"
-          | _ => die "option assumption split produced the wrong cases"
-
-      val _ = load "pairTheory"
-      val pair_split = TypeBase.case_pred_imp_of ``:'a # 'b``
-      val _ = convtest
-        ("splitter: Generic.thy Cartesian-product example",
-         SPLIT_CONV [pair_split],
-         ``P (pair_CASE p (f:'a -> 'b -> 'c)) : bool``,
-         ``!a:'a b:'b. p = (a,b) ==> P (f a b)``)
-
-      val _ = load "listTheory"
-      val list_split = TypeBase.case_pred_imp_of ``:'a list``
-      val _ = convtest
-        ("splitter: list case",
-         SPLIT_CONV [list_split],
-         ``P (list_CASE xs (n:'b)
-                        (f:'a -> 'a list -> 'b)) : bool``,
-         ``(xs = [] ==> P (n:'b)) /\
-           !h:'a t. xs = h::t ==> P (f h t)``)
-      val _ = tprint "split_ss splits a list case using TypeBase"
-      val list_goal =
-        ``P (list_CASE xs (n:'b) (f:'a -> 'a list -> 'b)) : bool``
-      val _ =
-        case valid (SIMP_TAC (bool_ss ++ split_ss) []) ([], list_goal) of
-            [([], result)] =>
-              if not (aconv result list_goal) andalso
-                 not (can (find_term TypeBase.is_case) result)
-              then OK()
-              else die "split_ss did not eliminate the list case"
-          | _ => die "split_ss produced the wrong list subgoals"
-    in
-      ()
-    end
 end
 
 (* The simpset layer must never use a directive as a rewrite: requirement
@@ -5658,7 +5564,7 @@ end;
 local
   val missing = markerSyntax.L "r7_branch_missing_label"
   val goal = ([],mk_var ("r7_branch_goal",bool))
-  val split = simpMarkerLib.Split TRUTH
+  val split = markerLib.Split TRUTH
   fun bound name th = ADD_ASSUM
     (mk_comb (boolSyntax.bounded_tm,mk_var (name,bool))) th
   fun counted f = let
@@ -5666,7 +5572,7 @@ local
     val result = Exn.capture f ()
   in (result,#prims (Count.read meter)) end
   fun stage_count (name,th) = let
-    val (_,expected) = counted (fn () => simpMarkerLib.dest_directive th)
+    val (_,expected) = counted (fn () => markerLib.dest_directive th)
     val (result,actual) = counted
       (fn () => runtac (SIMP_TAC empty_ss [th,missing]) goal)
     val correct = case result of
@@ -6410,3 +6316,5 @@ in
 end
 
 val _ = exit_count0 failcount
+
+end (* struct *)

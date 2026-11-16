@@ -2867,9 +2867,9 @@ val _ =
             clasetLib.Del "not-present"]
          val passthrough =
            [markerLib.Cong boolTheory.TRUTH,
-            simpMarkerLib.Split boolTheory.OR_CLAUSES,
+            markerLib.Split boolTheory.OR_CLAUSES,
             markerLib.Excl "simp-rule",
-            simpMarkerLib.ExclX "rule:simp-rule"]
+            markerLib.ExclX "rule:simp-rule"]
          val (_, leftovers) =
            clasetLib.process_claset_tags passthrough clasetLib.empty_cs
        in
@@ -2901,8 +2901,8 @@ val _ =
        let
          val goal = ([], boolSyntax.mk_conj (phase1_pa, phase1_qa))
          val controls =
-           [simpMarkerLib.Split boolTheory.OR_CLAUSES,
-            simpMarkerLib.ExclX "rule:bool.AND_INTRO_THM"]
+           [markerLib.Split boolTheory.OR_CLAUSES,
+            markerLib.ExclX "rule:bool.AND_INTRO_THM"]
          val (residues, _) =
            Tactical.VALID (classicalLib.SAFE_TAC controls) goal
        in

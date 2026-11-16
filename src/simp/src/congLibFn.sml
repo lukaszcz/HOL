@@ -94,9 +94,9 @@ fun extract_preorder_const (Travrules.PREORDER(t,_,_)) = t
    Tactical.prove. *)
 val AP_TERM_THM =
   let
-    val f = mk_var("f", ``:'a -> 'a -> bool``)
-    val x = mk_var("x", ``:'a``)
-    val y = mk_var("y", ``:'a``)
+    val f = mk_var("f", Type.alpha --> Type.alpha --> Type.bool)
+    val x = mk_var("x", Type.alpha)
+    val y = mk_var("y", Type.alpha)
     val f_x_x = list_mk_comb(f, [x, x])
     val eqn = mk_eq(x, y)
     val h1 = ASSUME f_x_x
@@ -337,7 +337,7 @@ fun CONGRUENCE_SIMP_CONV relation (cs as (CS csdata)) ss =
   end;
 
 
-val CONGRUENCE_EQ_SIMP_CONV = CONGRUENCE_SIMP_CONV ``$=``;
+val CONGRUENCE_EQ_SIMP_CONV = CONGRUENCE_SIMP_CONV boolSyntax.equality;
 
 
 fun CONGRUENCE_SIMP_RULE cs ss =

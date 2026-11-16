@@ -325,7 +325,7 @@ fun split_rules () : split_ruleset =
   end
 
 fun is_no_asms theorem =
-  case markerLib.dest_directive (simpMarkerLib.strip_wrappers theorem) of
+  case markerLib.dest_directive (markerLib.strip_wrappers theorem) of
       SOME markerLib.DNoAsms => true
     | _ => false
 

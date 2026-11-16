@@ -52,8 +52,8 @@ fun same_rewrite_source
 
 local open markerTheory in end;
 
-fun ERR x      = STRUCT_ERR "simpLib" x ;
-fun WRAP_ERR x = STRUCT_WRAP "simpLib" x;
+fun ERR x      = STRUCT_ERR "simpExtLib" x ;
+fun WRAP_ERR x = STRUCT_WRAP "simpExtLib" x;
 
 val option_cases = simpCommon.option_cases
 val op oo = simpCommon.oo
@@ -874,7 +874,7 @@ fun del_looper_quiet name = del_looper_id_quiet (OrdinaryLooper,name)
 
 fun del_looper name ss =
   if has_looper_id (OrdinaryLooper,name) ss then del_looper_quiet name ss
-  else (HOL_WARNING "simpLib" "del_looper" ("No looper called " ^ name); ss)
+  else (HOL_WARNING "simpExtLib" "del_looper" ("No looper called " ^ name); ss)
 
 fun remove_solver name ss =
   if has_solver name ss then strategy_op (REMOVE_SOLVER_EVENT name) ss else ss
@@ -1131,11 +1131,37 @@ fun apply_exclusions ss requests =
     flush (List.foldl step (ss,[]) requests)
   end
 
+(* A tactic solver runs a tactic, which needs a context, but is called from
+   conversions, which have none.  The simplifier tactics below record the
+   context they are given, on their thread, for the length of the call.
+   Outside one, a tactic solver proves against the ambient context. *)
+local
+  val current : Context.t option ThreadLocal.t = ThreadLocal.new ()
+  fun get () = Option.join (ThreadLocal.get current)
+in
+  fun tactic_context () = get ()
+  fun with_tactic_context (tac : tactic) : tactic = fn g => fn ctxt =>
+    let
+      val old = get ()
+      fun reset () = ThreadLocal.set (current, old)
+      val () = ThreadLocal.set (current, SOME ctxt)
+      val result = tac g ctxt handle e => (reset (); raise e)
+    in
+      reset (); result
+    end
+end
+
 fun mk_tactic_solver (name,tac) =
   let
-    fun solve {context_thms,...} c =
-      TAC_PROOF ((map concl context_thms,c),tac)
-      |> Lib.itlist PROVE_HYP context_thms
+    fun solve ({context_thms,...} : TraverseExt.simp_prover_ctxt) c =
+      let
+        val g = (map concl context_thms,c)
+        val th = case tactic_context () of
+                     SOME ctxt => Tactical.TAC_PROOF_in ctxt (g,tac)
+                   | NONE => TAC_PROOF (g,tac)
+      in
+        Lib.itlist PROVE_HYP context_thms th
+      end
   in
     {name=name,solve=solve}
   end
@@ -1928,15 +1954,15 @@ fun rewrite_context_changes (SS old,SS current) =
      | _ => TraverseExt.XTRAVERSE (xtraversedata_for_ss ss);
 
 val Cong   = markerLib.Cong
-val Split  = simpMarkerLib.Split
+val Split  = markerLib.Split
 val AC     = markerLib.AC;
 val Excl   = markerLib.Excl
-val ExclX  = simpMarkerLib.ExclX
+val ExclX  = markerLib.ExclX
 val ExclSF = markerLib.ExclSF
 val Req0   = markerLib.mk_Req0
 val ReqD   = markerLib.mk_ReqD
 
-local open markerLib simpMarkerLib
+local open markerLib
 in
 val frag_of = simpCommon.frag_of lookup_named_frag
 
@@ -1961,7 +1987,7 @@ fun add_split_marker report split ss =
     add_split split ss
     handle HOL_ERR e =>
       (if report then
-         HOL_WARNING "simpLib" "process_tags"
+         HOL_WARNING "simpExtLib" "process_tags"
                      ("Ignoring unusable Split rule: " ^ message_of e)
        else ();
        ss)
@@ -1985,7 +2011,7 @@ fun process_tags0 {report,preserve} ss thl =
          DEST_BOUNDED selects the same allowance as before preparation. *)
       fun bounds_on_directive th =
         case dest_directive th of
-            SOME (Legacy (DBounded (plain,_))) => bounds_on_directive plain
+            SOME (DBounded (plain,_)) => bounds_on_directive plain
           | NONE => false
           | _ => true
       fun sort (th, acc as (congs, splits, acs, excls, exclfrags, frags,
@@ -1993,39 +2019,39 @@ fun process_tags0 {report,preserve} ss thl =
           case dest_directive th of
               NONE =>
                 (congs, splits, acs, excls, exclfrags, frags, th :: rest)
-            | SOME (Legacy (DCong c)) =>
+            | SOME (DCong c) =>
                 (normCong c :: congs, splits, acs, excls, exclfrags, frags,
                  rest)
             | SOME (DSplit sp) =>
                 (congs, sp :: splits, acs, excls, exclfrags, frags, rest)
-            | SOME (Legacy (DAC p)) =>
+            | SOME (DAC p) =>
                 (congs, splits, p :: acs, excls, exclfrags, frags, rest)
-            | SOME (Legacy (DExcl nm)) =>
+            | SOME (DExcl nm) =>
                 (congs, splits, acs, LiteralExclusion nm :: excls,
                  exclfrags, frags, rest)
             | SOME (DExclX nm) =>
                 (congs, splits, acs, ExtendedExclusion nm :: excls,
                  exclfrags, frags, rest)
-            | SOME (Legacy (DExclSF nm)) =>
+            | SOME (DExclSF nm) =>
                 (congs, splits, acs, excls, nm :: exclfrags, frags, rest)
-            | SOME (Legacy (DFRAG nm)) =>
+            | SOME (DFRAG nm) =>
                 (congs, splits, acs, excls, exclfrags, frag_of nm :: frags,
                  rest)
-            | SOME (Legacy (DBounded (plain,_))) =>
+            | SOME (DBounded (plain,_)) =>
                 (* Bounds on directives do not turn them into rewrite
                    facts. Genuine rewrite bounds retain their controls. *)
                 if bounds_on_directive plain then sort (plain,acc)
                 else (congs, splits, acs, excls, exclfrags, frags, th :: rest)
-            | SOME (Legacy (DReq0 _)) =>
+            | SOME (DReq0 _) =>
                 if report then tactic_only "Req0"
                 else (congs, splits, acs, excls, exclfrags, frags, th :: rest)
-            | SOME (Legacy (DReqD _)) =>
+            | SOME (DReqD _) =>
                 if report then tactic_only "ReqD"
                 else (congs, splits, acs, excls, exclfrags, frags, th :: rest)
-            | SOME (Legacy DNoAsms) => acc
-            | SOME (Legacy (DIgnAsm _)) => acc
-            | SOME (Legacy (DAbbr _)) => acc
-            | SOME (Legacy (DLabel _)) => acc
+            | SOME DNoAsms => acc
+            | SOME (DIgnAsm _) => acc
+            | SOME (DAbbr _) => acc
+            | SOME (DLabel _) => acc
       val (congs, splits, acs, excludes, exclfrags, frags, rst) =
           List.foldr sort ([], [], [], [], [], [], []) thl
     in
@@ -2085,7 +2111,7 @@ fun rewrite_sources (SS data) thl =
       let
         val plain = #1 (BoundedRewrites.DEST_BOUNDED th)
                     handle HOL_ERR _ => th
-        val _ = case simpMarkerLib.dest_directive plain of
+        val _ = case markerLib.dest_directive plain of
                     NONE => ()
                   | SOME _ => raise ERR ("rewrite_sources",
                       "prepare directives with prepare_rewrite_arguments")
@@ -2255,7 +2281,7 @@ fun simp_conv_with_xdata traversal xdata reducer_context solver_context =
   TRY_CONV
     (SIMP_QCONV_WITH_XDATA traversal xdata reducer_context solver_context)
 
-fun final_solver_tac traversal xdata mode ss
+fun final_solver_tac traversal xdata (mode : simp_mode) ss
       reducer_context solver_context =
   let
     val s = strategy_of ss
@@ -2313,7 +2339,7 @@ fun bounded_looper rounds tac g =
 (* [xdata_of] extracts traversal data from a marker-adjusted tracked set. *)
 fun gen_simp_tac_with_rounds rounds traversal
       xdata_of solver_context (mode : simp_mode) ss ths =
-  fn g =>
+  with_tactic_context (fn g =>
     let
       fun start supplied recur =
         let
@@ -2348,8 +2374,8 @@ fun gen_simp_tac_with_rounds rounds traversal
           main
         end
     in
-      simpMarkerLib.process_taclist_then_bind {arg=ths} start g
-    end
+      markerLib.process_taclist_then_bind {arg=ths} start g
+    end)
 
 fun gen_simp_tac_with_xdata traversal xdata solver_context mode ss ths g =
   gen_simp_tac_with_rounds (ref (getlimit ss)) traversal
@@ -2373,7 +2399,7 @@ fun strategy_free ss ths =
        bound falls through to that same head. Do not build proofs or run
        monitor hooks here, nor inspect payloads underneath AC or Cong. *)
     fun arg_free th =
-      if (same_const simpMarkerLib.Split_tm
+      if (same_const markerSyntax.Split_tm
             (#1 (strip_comb (concl th))) handle HOL_ERR _ => false) then
         false
       else
@@ -2401,10 +2427,16 @@ val simp_tac = SIMP_TAC
 type simptac_config = simpCommon.simptac_config
 val BF_ASSUME_TAC = simpCommon.BF_ASSUME_TAC
 
-val {FULL_SIMP_TAC, REV_FULL_SIMP_TAC, NO_STRIP_FULL_SIMP_TAC,
-     NO_STRIP_REV_FULL_SIMP_TAC} =
-    simpCommon.full_simp_tacs {simp_rule = SIMP_RULE,
-                               asm_simp_tac = ASM_SIMP_TAC}
+local
+  val tacs = simpCommon.full_simp_tacs {simp_rule = SIMP_RULE,
+                                        asm_simp_tac = ASM_SIMP_TAC}
+  fun wrap tac ss ths = with_tactic_context (tac ss ths)
+in
+  val FULL_SIMP_TAC = wrap (#FULL_SIMP_TAC tacs)
+  val REV_FULL_SIMP_TAC = wrap (#REV_FULL_SIMP_TAC tacs)
+  val NO_STRIP_FULL_SIMP_TAC = wrap (#NO_STRIP_FULL_SIMP_TAC tacs)
+  val NO_STRIP_REV_FULL_SIMP_TAC = wrap (#NO_STRIP_REV_FULL_SIMP_TAC tacs)
+end
 val full_simp_tac = FULL_SIMP_TAC
 val rev_full_simp_tac = REV_FULL_SIMP_TAC
 
@@ -2416,8 +2448,9 @@ fun popper_of (cfg : simptac_config) =
 fun psr (cfg : simptac_config) ss =
     let val popper = if #oldestfirst cfg then pop_last_assum else pop_assum
     in
-      popper (fn th =>
-                 ASSUM_LIST (fn asms => stdcon cfg (SIMP_RULE ss asms th)))
+      with_tactic_context
+        (popper (fn th =>
+                    ASSUM_LIST (fn asms => stdcon cfg (SIMP_RULE ss asms th))))
     end
 
 fun allasms cfg ss (g as (asl,_)) = ntac (length asl) (psr cfg ss) g
@@ -2432,10 +2465,10 @@ fun same_goals (goals1,goals2) = boolSyntax.goals_eq goals1 goals2
    validation functions. *)
 fun map_annotated next annotated ctxt =
     let
-      val results = map (fn (g,state) => next state g ctxt) annotated
-      val output = List.concat (map #1 results)
-      val validations = map #2 results
-      val lengths = map (length o #1) results
+      val (outputs,validations) =
+          ListPair.unzip (map (fn (g,state) => next state g ctxt) annotated)
+      val output = List.concat outputs
+      val lengths = map length outputs
       val validate = mapshape lengths validations
     in
       (output,validate)
@@ -2552,7 +2585,7 @@ fun gen_global_simp_tac_with_bound traversal bound mode
        In particular the already installed bundle must not be reconstructed
        as supplied arguments, or repaired by a second history replay. *)
   in
-    markerLib.mk_require_tac (
+    with_tactic_context o markerLib.mk_require_tac (
       markerLib.ABBRS_THEN (
         markerLib.LLABEL_RES_THEN (
           fn thl =>
@@ -2561,13 +2594,13 @@ fun gen_global_simp_tac_with_bound traversal bound mode
                   Retain them for every changing proof context. *)
                val assumption_controls = List.filter
                      (fn th => case markerLib.dest_directive
-                                      (simpMarkerLib.strip_wrappers th) of
+                                      (markerLib.strip_wrappers th) of
                          SOME markerLib.DNoAsms => true
                        | SOME (markerLib.DIgnAsm _) => true
                        | _ => false) thl
                val assumptions =
                  if null assumption_controls then ASSUM_LIST
-                 else fn next => simpMarkerLib.process_taclist_then_bind
+                 else fn next => markerLib.process_taclist_then_bind
                    {arg=assumption_controls} (fn _ => fn _ => next)
                fun selected_context context target ctxt =
                  if null assumption_controls then context

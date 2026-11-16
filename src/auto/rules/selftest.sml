@@ -3031,8 +3031,8 @@ val _ =
          val iff2 = boolTheory.NOT_CLAUSES
          val control1 = markerLib.Excl "claset-selftest-one"
          val control2 = BoundedRewrites.Once boolTheory.TRUTH
-         val control3 = simpMarkerLib.Split boolTheory.OR_CLAUSES
-         val control4 = simpMarkerLib.ExclX "rule:claset-selftest"
+         val control3 = markerLib.Split boolTheory.OR_CLAUSES
+         val control4 = markerLib.ExclX "rule:claset-selftest"
          val fact1 = boolTheory.EQ_REFL
          val fact2 = boolTheory.FORALL_SIMP
          val {simp_rules, iff_rules, simp_controls, rest} =
@@ -3059,7 +3059,7 @@ val _ =
          (not o markerLib.is_directive)
          claset_marker_theorems andalso
        List.all
-         (not o simpMarkerLib.is_directive)
+         (not o markerLib.is_directive)
          claset_marker_theorems)
 
 val _ =
@@ -3183,12 +3183,12 @@ val _ =
          val markers =
            [markerLib.AC boolTheory.AND_CLAUSES boolTheory.OR_CLAUSES,
             markerLib.Cong boolTheory.AND_CLAUSES,
-            simpMarkerLib.Split boolTheory.OR_CLAUSES,
-            simpMarkerLib.ExclX "rule:claset-selftest",
+            markerLib.Split boolTheory.OR_CLAUSES,
+            markerLib.ExclX "rule:claset-selftest",
             markerLib.mk_Req0
-              (simpMarkerLib.Split boolTheory.OR_CLAUSES),
+              (markerLib.Split boolTheory.OR_CLAUSES),
             markerLib.mk_ReqD
-              (simpMarkerLib.ExclX "rule:claset-wrapped"),
+              (markerLib.ExclX "rule:claset-wrapped"),
             markerLib.Excl "claset-selftest",
             markerLib.ExclSF "claset-selftest",
             markerLib.FRAG "claset-selftest",
@@ -3202,7 +3202,7 @@ val _ =
              (List.take (markers, 4) @ [plain] @
               List.drop (markers, 4))
        in
-         List.all simpMarkerLib.is_directive markers andalso
+         List.all markerLib.is_directive markers andalso
          same_rules (rules_of baseline_cs) (rules_of with_markers_cs)
            andalso
          null (rules_of with_markers_cs) andalso
@@ -3237,10 +3237,10 @@ val _ =
          val plain = boolTheory.TRUTH
          val controls =
            [markerLib.Excl "claset-forward",
-            simpMarkerLib.Split boolTheory.OR_CLAUSES,
-            simpMarkerLib.ExclX "rule:claset-forward",
+            markerLib.Split boolTheory.OR_CLAUSES,
+            markerLib.ExclX "rule:claset-forward",
             markerLib.mk_Req0
-              (simpMarkerLib.ExclX "rule:claset-forward"),
+              (markerLib.ExclX "rule:claset-forward"),
             BoundedRewrites.Once boolTheory.TRUTH]
          val extended = ref 0
          val called = ref 0
@@ -3275,10 +3275,7 @@ val _ =
               Iff boolTheory.IMP_CLAUSES :: tl controls)
          val _ = tactic ([], boolSyntax.T) (Context.snapshot ())
        in
-         !extended = 1 andalso !called = 1 andalso !observed andalso
-         not (markerLib.is_directive (List.nth (controls, 1))) andalso
-         not (markerLib.is_directive
-                (simpMarkerLib.ExclX "rule:claset-forward"))
+         !extended = 1 andalso !called = 1 andalso !observed
        end)
 
 (* Assumption order is observable: it is the recency tie-break the search

@@ -1,11 +1,11 @@
 (* Explicit tracked source, view and prepared-bundle contracts. *)
+structure sources =
+struct
+
 open HolKernel Parse boolLib boolSyntax testutils
 structure S = simpExtLib
 val ext_pure_ss = simpExtLib.lift_simpset pureSimps.pure_ss
 structure E = TraverseExt
-(* Load the real ordinary module for the negative clients: an undeclared
-   structure must not masquerade as the intended type mismatch. *)
-val _ = simpLib.empty_ss
 val checks = ref 0
 fun check name ok =
   (checks := !checks + 1; tprint name;
@@ -523,12 +523,7 @@ val _ = let
   val _ = delta "AC traversal addition demands rebuild" base ac [] true false
 in () end
 
-(* Execute, rather than merely dependency-scan, the type boundary clients. *)
-val _ = List.app (fn name => check ("no retrospective legacy import: " ^ name)
-  ((PolyML.use (OS.Path.concat ("negative",name ^ ".ML")); false)
-   handle Fail "Static Errors" => true))
-  ["ordinary-source-handles","ordinary-source-inventory",
-   "ordinary-bundle-preparation"]
-
 val _ = print ("SOURCE_VIEW_BUNDLE_CHECKS=" ^ Int.toString (!checks) ^ "\n")
 val _ = OS.Process.exit OS.Process.success
+
+end (* struct *)

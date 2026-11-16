@@ -169,9 +169,9 @@ sig
      iff_rules : thm list,
      simp_controls : thm list,
      rest : thm list}
-  (* Recognition uses simpMarkerLib's combined directive boundary.
-     Controls (including Split/ExclX) retain identity and input order;
-     this does not require or construct an extension simpset. *)
+  (* Recognition uses markerLib.is_directive.  Controls (including
+     Split/ExclX) retain identity and input order; this does not require
+     or construct an extension simpset. *)
   val classify_simp_args : thm list -> simp_arg_split
 
   (* Assemble the classical rules and inserted facts for one tactic

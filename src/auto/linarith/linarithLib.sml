@@ -115,8 +115,8 @@ fun plain_argument function theorem =
    so an entry that rejects splits still rejects a malformed split as
    malformed rather than as a split. *)
 fun classify_split_argument function theorem =
-  case simpMarkerLib.dest_directive theorem of
-      SOME (simpMarkerLib.DSplit split) =>
+  case markerLib.dest_directive theorem of
+      SOME (markerLib.DSplit split) =>
         (linarithData.check_asm_split function
            "Split theorem (expected P-form)" split;
          SOME split)

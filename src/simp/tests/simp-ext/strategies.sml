@@ -3,6 +3,9 @@
    child-first traversal, and mutual/counting global simplification groups.
    Additive: the 642 native checks remain in place. Bound replay and nested
    directive wrappers have separate coverage; no ordinary-set promotion. *)
+structure strategies =
+struct
+
 open HolKernel Parse boolLib boolSyntax testutils
 structure S = simpExtLib
 val ext_bool_ss = simpExtLib.lift_simpset boolSimps.bool_ss
@@ -548,3 +551,5 @@ val _ = print ("simpExtLib strategy checks: " ^ Int.toString (!checks) ^
   "; executed validations: " ^ Int.toString (!validations) ^ "\n")
 val _ = Context.restore saved_context
 val _ = OS.Process.exit OS.Process.success
+
+end (* struct *)

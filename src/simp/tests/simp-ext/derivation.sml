@@ -1,4 +1,7 @@
 (* Private child-first derivation, not invocation simplification. *)
+structure derivation =
+struct
+
 open HolKernel Parse boolLib boolSyntax testutils
 val _ = simpExtLib.empty_ss
 val _ = TraverseExt.default_config
@@ -698,3 +701,5 @@ in result "preparation did not increase caller's declared allowance"
 val _ = print ("DERIVATION_CHECKS=" ^ Int.toString (!checks) ^ "\n")
 val _ = if null (!failures) then OS.Process.exit OS.Process.success
         else die (Int.toString (length (!failures)) ^ " derivation failures")
+
+end (* struct *)

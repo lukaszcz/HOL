@@ -1125,9 +1125,9 @@ fun make_lhs_view_cache caller_charge =
 
 fun marker_skip theorem =
   Option.isSome (clasetLib.marker_of theorem) orelse
-  (case simpMarkerLib.dest_directive theorem of
+  (case markerLib.dest_directive theorem of
        NONE => false
-     | SOME (simpMarkerLib.Legacy (markerLib.DBounded (body,_))) =>
+     | SOME (markerLib.DBounded (body,_)) =>
          marker_skip body
      | SOME _ => true)
 

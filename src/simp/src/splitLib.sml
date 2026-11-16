@@ -334,7 +334,7 @@ fun head_key head =
   in persistent_name {Thy=Thy, Name=Name}
   end
 
-fun insert_rule rule cmap =
+fun insert_rule (rule : split_rule) cmap =
   let
     val rule_key = {head= #head rule, asm= #asm rule}
     fun insert [] = [(rule_key, [rule])]
@@ -367,7 +367,7 @@ type split_pack =
 fun candidates want_asm cmap head =
   let
     val head_type = type_of head
-    fun add (({head=key_head,asm,...}, rules), acc) =
+    fun add (({head=key_head,asm} : split_key, rules), acc) =
       if asm = want_asm andalso same_const key_head head andalso
          can (Type.match_type (type_of key_head)) head_type
       then rules @ acc
@@ -381,7 +381,7 @@ fun candidates want_asm cmap head =
 fun prefix_path n i =
   StringCvt.padLeft #"l" (n - i - 1) "" ^ "r"
 
-fun matching rule redex =
+fun matching (rule : split_rule) redex =
   can (match_term (#pattern rule)) redex
 
 fun scan want_asm cmap tm =
@@ -481,7 +481,7 @@ fun fresh_parts th =
     (sth, pred, pattern)
   end
 
-fun instantiate rule target body =
+fun instantiate (rule : split_rule) target body =
   let
     val (sth, pred, pattern) = fresh_parts (#thm rule)
     val (terminst, typeinst) = match_term pattern target

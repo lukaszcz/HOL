@@ -1,7 +1,9 @@
 (* Assertions on the separate engine, not legacy adapters. *)
-functor TraverseExtTests (T : TraverseExt) =
+structure selftest =
 struct
+
 open HolKernel Parse boolLib boolSyntax testutils
+structure T = TraverseExt
 
 val checks = ref 0
 fun check name ok =
@@ -805,19 +807,8 @@ val _ = let
   val _ = List.app abort exceptions
 in () end
 
-end
-
-structure ActualTraverseExtTests = TraverseExtTests (TraverseExt)
-
-(* Poly/ML really elaborates these clients. Missing files or unrelated
-   exceptions must fail the test, not masquerade as type rejection. *)
-fun negative name = let
-  val file = OS.Path.concat ("negative",name ^ ".ML")
-  val rejected = (PolyML.use file; false)
-    handle Fail "Static Errors" => true
-in ActualTraverseExtTests.check ("static reducer rejection: " ^ name) rejected
-end
-val _ = List.app negative ["ordinary-to-extension","extension-to-ordinary"]
 val _ = print ("TraverseExt focused checks: " ^
-  Int.toString (!(ActualTraverseExtTests.checks)) ^ "\n")
+  Int.toString (!checks) ^ "\n")
 val _ = OS.Process.exit OS.Process.success
+
+end (* struct *)

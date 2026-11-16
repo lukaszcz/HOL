@@ -1891,7 +1891,7 @@ val _ =
     ("SIMPLE_LINARITH_TAC loudly rejects foreign argument markers",
      fn () =>
        List.all marker_error_name
-         [simpMarkerLib.Split (hd (#pre_split num_instance)),
+         [markerLib.Split (hd (#pre_split num_instance)),
           clasetLib.Intro boolTheory.TRUTH,
           clasetLib.Simp boolTheory.TRUTH,
           clasetLib.Iff boolTheory.TRUTH,
@@ -2320,7 +2320,7 @@ val _ =
          tactic_fails (linarithLib.LINARITH_TAC []) goal andalso
          valid_closes
            (linarithLib.LINARITH_TAC
-             [simpMarkerLib.Split public_bool_split]) goal
+             [markerLib.Split public_bool_split]) goal
        end)
 
 fun full_marker_error marker =
@@ -2343,9 +2343,9 @@ val _ =
     ("Split validation precedes rejection and preserves first-error order",
      fn () =>
        let
-         val malformed = simpMarkerLib.Split boolTheory.TRUTH
-         val valid = simpMarkerLib.Split public_bool_split
-         val foreign = simpMarkerLib.ExclX "rule:linarith-selftest"
+         val malformed = markerLib.Split boolTheory.TRUTH
+         val valid = markerLib.Split public_bool_split
+         val foreign = markerLib.ExclX "rule:linarith-selftest"
          fun error tactic arguments =
            ((ignore (tactic arguments); NONE)
             handle Feedback.HOL_ERR error =>
@@ -3911,7 +3911,7 @@ val _ =
      fn () =>
        let
          val hoisted =
-           linarithLib.LINARITH_TAC [simpMarkerLib.Split public_bool_split]
+           linarithLib.LINARITH_TAC [markerLib.Split public_bool_split]
          fun closes tm =
            valid_closes hoisted ([], tm)
            handle Feedback.HOL_ERR _ => false

@@ -2237,9 +2237,9 @@ val _ =
                 (clasimpLib.add_simp_wrapper wrapper_control_ss controls
                    clasetLib.empty_cs))
          val without_control =
-           [simpMarkerLib.ExclX "rule:clasimpSelftest.wrapper_control"]
+           [markerLib.ExclX "rule:clasimpSelftest.wrapper_control"]
          val without_spare =
-           [simpMarkerLib.ExclX "rule:clasimpSelftest.wrapper_spare"]
+           [markerLib.ExclX "rule:clasimpSelftest.wrapper_spare"]
        in
          valid_closes (fast []) wrapper_goal andalso
          valid_closes (fast []) wrapper_spare_goal andalso

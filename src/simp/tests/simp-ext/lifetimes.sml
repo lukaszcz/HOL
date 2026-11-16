@@ -2,6 +2,9 @@
    single-step roots, retained generic contexts through opaque callbacks,
    failed saved applications, and eta policy with selected congruence descent.
    All expected results are kernel proofs, including complete hypotheses. *)
+structure lifetimes =
+struct
+
 (* Explicit import: Holdep does not follow the local structure alias. *)
 open TraverseExt HolKernel Parse boolLib boolSyntax testutils
 structure E = TraverseExt
@@ -512,3 +515,5 @@ end
 val _ = print ("TraverseExt lifetime checks: " ^ Int.toString (!checks) ^
                "\n")
 val _ = OS.Process.exit OS.Process.success
+
+end (* struct *)

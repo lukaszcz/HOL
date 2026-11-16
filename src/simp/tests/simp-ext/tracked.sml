@@ -1,4 +1,7 @@
 (* Authoritative tracked installation and inert projections. *)
+structure tracked =
+struct
+
 open HolKernel Parse boolLib boolSyntax testutils
 val _ = simpExtLib.empty_ss
 val _ = TraverseExt.default_config
@@ -425,3 +428,5 @@ in remaining cv end) [1,2]
 
 val _ = print ("TRACKED_COMPILER_CHECKS=" ^ Int.toString (!checks) ^ "\n")
 val _ = OS.Process.exit OS.Process.success
+
+end (* struct *)

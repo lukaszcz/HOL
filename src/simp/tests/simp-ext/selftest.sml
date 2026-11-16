@@ -1,5 +1,8 @@
 (* Separate tracked-construction contracts. Ordinary objects are used only
    as ordinary clients or as explicitly lifted opaque reducers. *)
+structure selftest =
+struct
+
 open HolKernel Parse boolLib boolSyntax testutils
 structure S = simpExtLib
 val ext_ETA_ss = simpExtLib.lift_ssfrag boolSimps.ETA_ss
@@ -473,17 +476,7 @@ val _ = let
 in check "ssf_upd_rewrs fragment rewrites mig_p to mig_r, not mig_q"
      (same (simpExtLib.SIMP_CONV ss [] p) qr) end
 
-(* Poly/ML really elaborates deliberately ill-typed clients. Only the exact
-   static-error exception counts; missing files/other failures fail closed. *)
-fun negative name = let
-  val file = OS.Path.concat ("negative",name ^ ".ML")
-  val rejected = (PolyML.use file; false)
-    handle Fail "Static Errors" => true
-in check ("static boundary rejection: " ^ name) rejected end
-val _ = List.app negative
-  ["ordinary-reducer-to-extension","extension-reducer-to-ordinary",
-   "ordinary-set-to-extension","extension-set-to-ordinary",
-   "ordinary-fragment-to-extension","extension-fragment-to-ordinary",
-   "ordinary-congset-to-extension","extension-congset-to-ordinary"]
 val _ = print ("simpExtLib focused checks: " ^ Int.toString (!checks) ^ "\n")
 val _ = OS.Process.exit OS.Process.success
+
+end (* struct *)

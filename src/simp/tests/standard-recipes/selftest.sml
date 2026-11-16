@@ -1,5 +1,8 @@
 (* Independent standard recipes: compare ordinary and tracked public APIs.
    All proof comparisons include the entire hypothesis set. *)
+structure selftest =
+struct
+
 open HolKernel Parse boolLib boolSyntax testutils
 structure O = simpLib
 structure S = simpExtLib
@@ -420,3 +423,5 @@ in check "engine ordinary and lifted callback counts are exact"
 
 val _ = print ("STANDARD_RECIPE_CHECKS=" ^ Int.toString (!checks) ^ "\n")
 val _ = OS.Process.exit OS.Process.success
+
+end (* struct *)
