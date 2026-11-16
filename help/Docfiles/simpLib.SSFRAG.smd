@@ -11,7 +11,7 @@ simpLib.SSFRAG : { ac : (thm * thm) list,
            dprocs : Traverse.reducer list,
            filter : (controlled_thm -> controlled_thm list) option,
            name   : string option,
-           rewrs  : (simpLib.thname option * thm) list } -> ssfrag
+           rewrs  : thm list } -> ssfrag
 ```
 
 ------------------------------------------------------------------------
@@ -126,12 +126,8 @@ at all (if it looks as if it will loop, and the bound is `UNBOUNDED`, it
 should be dropped, but it may choose to keep it if there is bound
 present).
 
-The `rewrs` field is a list of optional kernel names paired with rewrite
-theorems. A kernel name has type `simpLib.thname`, that is,
-`KernelSig.kernelname` (`{Thy : string, Name : string}`). Use `(NONE, th)`
-for an anonymous rewrite or `(SOME {Thy = thy, Name = name}, th)` for a
-named one. For a theorem list without explicit names, `simpLib.rewrites`
-is the simpler constructor.
+The `rewrs` field of the record is a list of rewrite theorems that are
+to be applied.
 
 The `name` field of the record is an optional name for the simpset
 fragment that is used when it, and simpsets that it becomes part of are
@@ -156,14 +152,14 @@ Given a conversion `MUL_CONV` to calculate multiplications, the
 following illustrates how this can be added to a simpset:
 
 ``` hol4
-   - val ssd = SSFRAG {name = NONE, ac = [], congs = [],
+   - val ssd = SSFRAG {ac = [], congs = [],
                         convs = [{conv = K (K MUL_CONV),
                                   key= SOME ([], Term`x * y`),
                                   name = "MUL_CONV",
                                   trace = 2}],
                         dprocs = [], filter = NONE, rewrs = []};
    > val ssd =
-       SSFRAG{name = NONE, ac = [], congs = [],
+       SSFRAG{ac = [], congs = [],
                convs =
                  [{conv = fn, key = SOME([], `x * y`), name = "MUL_CONV",
                    trace = 2}], dprocs = [], filter = NONE, rewrs = []}
@@ -178,13 +174,11 @@ Given the theorems `ADD_SYM` and `ADD_ASSOC` from `arithmeticTheory`, we
 can construct a normaliser for additive terms.
 
 ``` hol4
-   - val ssd2 = SSFRAG {name = NONE,
-                         ac = [(SPEC_ALL ADD_ASSOC, SPEC_ALL ADD_SYM)],
+   - val ssd2 = SSFRAG {ac = [(SPEC_ALL ADD_ASSOC, SPEC_ALL ADD_SYM)],
                          congs = [], convs = [], dprocs = [],
                          filter = NONE, rewrs = []};
    > val ssd2 =
-       SSFRAG{name = NONE,
-               ac = [(|- m + n + p = (m + n) + p, |- m + n = n + m)],
+       SSFRAG{ac = [(|- m + n + p = (m + n) + p, |- m + n = n + m)],
                congs = [], convs = [], dprocs = [], filter = NONE,
                rewrs = []}
        : ssfrag

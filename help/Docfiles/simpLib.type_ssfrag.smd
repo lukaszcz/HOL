@@ -17,7 +17,7 @@ that have constructors at the outermost level.
 
 ### Failure
 
-Fails if the type argument does not correspond to a type stored in the
+Fails if the string argument does not correspond to a type stored in the
 `TypeBase`.
 
 ### Example
