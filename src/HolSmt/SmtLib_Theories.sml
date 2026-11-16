@@ -217,6 +217,12 @@ in
     f (Lib.pair_of_list xs handle Feedback.HOL_ERR _ =>
       decline "two_args" "two arguments expected")
 
+  (* applies HolSmt's smt_bvudiv, smt_bvsdiv or smt_bvsmod, which equal
+     SMT-LIB's bvudiv, bvsdiv and bvsmod (zero divisor included) *)
+  fun mk_smt_bv name (s, t) =
+    boolSyntax.list_mk_icomb (Term.prim_mk_const {Thy="HolSmt", Name=name},
+      [s, t])
+
   fun three_args f xs =
     f (Lib.triple_of_list xs handle Feedback.HOL_ERR _ =>
       decline "three_args" "three arguments expected")
@@ -1953,7 +1959,7 @@ in
         (leftassoc wordsSyntax.mk_word_mul),
       official_entry "bvudiv" (soundness_audit_attributes no_attributes)
         ["(bvudiv (_ BitVec m) (_ BitVec m) (_ BitVec m)); division-by-zero semantics require soundness audit"]
-        (K_zero_two wordsSyntax.mk_word_div),
+        (K_zero_two (mk_smt_bv "smt_bvudiv")),
       official_entry "bvurem" (soundness_audit_attributes no_attributes)
         ["(bvurem (_ BitVec m) (_ BitVec m) (_ BitVec m)); division-by-zero semantics require soundness audit"]
         (K_zero_two wordsSyntax.mk_word_mod),
@@ -1971,13 +1977,13 @@ in
         (K_zero_two wordsSyntax.mk_word_compare),
       official_entry "bvsdiv" (soundness_audit_attributes no_attributes)
         ["(bvsdiv (_ BitVec m) (_ BitVec m) (_ BitVec m)); division-by-zero semantics require soundness audit"]
-        (K_zero_two wordsSyntax.mk_word_quot),
+        (K_zero_two (mk_smt_bv "smt_bvsdiv")),
       official_entry "bvsrem" (soundness_audit_attributes no_attributes)
         ["(bvsrem (_ BitVec m) (_ BitVec m) (_ BitVec m)); division-by-zero semantics require soundness audit"]
         (K_zero_two wordsSyntax.mk_word_rem),
       official_entry "bvsmod" (soundness_audit_attributes no_attributes)
         ["(bvsmod (_ BitVec m) (_ BitVec m) (_ BitVec m)); division-by-zero semantics require soundness audit"]
-        (K_zero_two integer_wordSyntax.mk_word_smod),
+        (K_zero_two (mk_smt_bv "smt_bvsmod")),
       official_entry "bvshl" no_attributes
         ["(bvshl (_ BitVec m) (_ BitVec m) (_ BitVec m))"]
         (K_zero_two wordsSyntax.mk_word_lsl_bv),

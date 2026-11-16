@@ -24,6 +24,9 @@ val string_semantic_reason =
   "consumes its derived compute or transition rules"
 val string_proof_reason =
   "general theory-proof scaffold used to derive consumed string or regex rules"
+val smtlib_conformance_reason =
+  "HOL transcription of an SMT-LIB operator's definition, stating that the " ^
+  "translation's constant matches the standard; replay does not use it"
 val fp_definition_reason =
   "public floating-point semantic definition, representation, or " ^
   "specification theorem; it is not a replay-table entry"
@@ -47,6 +50,13 @@ val non_replay_exports : exemption list =
       "smt_ediv_bounds_pos_bridge",
       "smt_emod_ediv_neg",
       "smt_emod_ediv_pos"
+    ] @
+  exempt "HolSmt" smtlib_conformance_reason [
+      "smt_bvsdiv_smtlib",
+      "smt_bvsmod_smtlib",
+      "smt_bvudiv_smtlib",
+      "word_mod_smtlib",
+      "word_rem_smtlib"
     ] @
   exempt "HolSmt" generated_definition_reason [
       "smt_seq_replace_all_aux_compute",

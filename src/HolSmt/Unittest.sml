@@ -21574,7 +21574,9 @@ let
   fun covered spec = List.exists (matches_spec spec) complete
   val goal = ([],
     ``word_compare (a:word8) b = (0w:word1) /\
-      integer$ediv (x:int) y = x /\ integer$emod x y = x``)
+      integer$ediv (x:int) y = x /\ integer$emod x y = x /\
+      HolSmt$smt_bvudiv a b = a /\ HolSmt$smt_bvsdiv a b = a /\
+      HolSmt$smt_bvsmod a b = a``)
   val (translation, _) = SmtLib.goal_to_SmtLib_translation NONE goal
   val emitted = SmtLib.translation_definitions translation
   val replay_heads = List.map SmtLib.emitted_definition_head emitted
@@ -21609,7 +21611,10 @@ let
   val terms = [
     ``word_compare (a:word8) b``,
     ``HolSmt$smt_ediv_total (x:int) y``,
-    ``HolSmt$smt_emod_total (x:int) y``
+    ``HolSmt$smt_emod_total (x:int) y``,
+    ``HolSmt$smt_bvudiv (a:word8) b``,
+    ``HolSmt$smt_bvsdiv (a:word8) b``,
+    ``HolSmt$smt_bvsmod (a:word8) b``
   ]
   fun converted term =
     let
@@ -22332,7 +22337,19 @@ let
     ("rewrite/bvsmod_i",
       "((declare-fun a () (_ BitVec 8)) (declare-fun b () (_ BitVec 8)) \
         \(proof (rewrite (= (bvsmod a b) (bvsmod_i a b)))))",
-      ``word_smod (a:word8) b = word_smod a b``),
+      ``HolSmt$smt_bvsmod (a:word8) b = HolSmt$smt_bvsmod a b``),
+    ("rewrite/bvudiv_i",
+      "((declare-fun a () (_ BitVec 8)) (declare-fun b () (_ BitVec 8)) \
+        \(proof (rewrite (= (bvudiv a b) (bvudiv_i a b)))))",
+      ``HolSmt$smt_bvudiv (a:word8) b = HolSmt$smt_bvudiv a b``),
+    ("rewrite/bvsdiv_i",
+      "((declare-fun a () (_ BitVec 8)) (declare-fun b () (_ BitVec 8)) \
+        \(proof (rewrite (= (bvsdiv a b) (bvsdiv_i a b)))))",
+      ``HolSmt$smt_bvsdiv (a:word8) b = HolSmt$smt_bvsdiv a b``),
+    ("rewrite/bvudiv0",
+      "((declare-fun a () (_ BitVec 8)) \
+        \(proof (rewrite (= (bvudiv a #x00) (bvudiv0 a)))))",
+      ``HolSmt$smt_bvudiv (a:word8) 0w = HolSmt$smt_bvudiv a 0w``),
     ("sk",
       "((declare-fun z () Bool) (proof (sk (= (exists ((x Bool)) x) z))))",
       ``(?x:bool. x) = z``),
@@ -37198,6 +37215,123 @@ in
   check_oracle_tags "instantiate after quantified transitivity" theorem
 end
 
+(* The preprocessing rewrite of word_div, word_quot and word_smod: a literal
+   divisor leaves no condition, word_smod by 0w stays as it is. *)
+fun word_division_rewrite_success () =
+let
+  fun rewritten t =
+    let
+      val th = Library.WORD_DIV_CONV t
+    in
+      check_oracle_tags "word division rewrite" th;
+      boolSyntax.rhs (Thm.concl th)
+    end
+  val cases = [
+    (``(x:word8) // 4w``, ``HolSmt$smt_bvudiv (x:word8) 4w``),
+    (``word_quot (x:word8) 4w``, ``HolSmt$smt_bvsdiv (x:word8) 4w``),
+    (``word_smod (x:word8) 4w``, ``HolSmt$smt_bvsmod (x:word8) 4w``),
+    (``(x:word8) // 0w``, ``0w:word8``),
+    (``word_quot (x:word8) 0w``, ``0w:word8``),
+    (``(x:word8) // y``,
+     ``if y = 0w then 0w else HolSmt$smt_bvudiv (x:word8) y``),
+    (``word_smod (x:word8) y``,
+     ``if y = 0w then word_smod x 0w else HolSmt$smt_bvsmod (x:word8) y``)]
+in
+  List.app (fn (t, expected) =>
+    assert (Term.aconv (rewritten t) expected,
+      "word division rewrite of " ^ Hol_pp.term_to_string t)) cases;
+  assert (not (Lib.can Library.WORD_DIV_CONV ``word_smod (x:word8) 0w``),
+    "word_smod by 0w was rewritten")
+end
+
+(* Z3 and cvc5 on HolSmt's translation of a goal without its preprocessing,
+   so that HOL neither evaluates nor rewrites the operators under test *)
+fun unpreprocessed_solvers () =
+  (if Z3.is_configured () then
+     [("Z3", SolverSpec.make_solver
+        (fn goal => ((), Lib.snd (Z3.goal_to_SmtLib_translation_for_version
+          (Z3.configured_version ()) goal)))
+        (Z3.executable_string () ^ " -smt2 -file:") (Lib.K Z3.is_sat_file))]
+   else []) @
+  (if CVC.is_configured () then
+     [("cvc5", SolverSpec.make_solver
+        (fn goal => ((), Lib.snd (CVC.goal_to_SmtLib_translation goal)))
+        (CVC.executable_string () ^ " --quiet --lang smt ")
+        (Lib.K CVC.is_sat_file))]
+   else [])
+
+(* The solvers' bvudiv, bvsdiv, bvsmod, bvurem and bvsrem agree with EVAL of
+   the HOL operators translated to them, on every operand pair of widths 1-3,
+   zero divisors included. *)
+fun word_division_smtlib_differential () =
+let
+  val ops = [SmtLib_Theories.mk_smt_bv "smt_bvudiv",
+    SmtLib_Theories.mk_smt_bv "smt_bvsdiv",
+    SmtLib_Theories.mk_smt_bv "smt_bvsmod",
+    wordsSyntax.mk_word_mod, wordsSyntax.mk_word_rem]
+  fun words width =
+    List.tabulate (Word.toInt (Word.<< (0w1, Word.fromInt width)),
+      fn i => wordsSyntax.mk_wordii (i, width))
+  fun entry mk (s, t) =
+    let
+      val lhs = mk (s, t)
+      (* EVAL leaves k MOD 0, which MOD_0 in srw_ss settles *)
+      val value = boolSyntax.rhs (Thm.concl (Conv.THENC (bossLib.EVAL,
+        simpLib.SIMP_CONV (bossLib.srw_ss ()) []) lhs))
+    in
+      assert (wordsSyntax.is_word_literal value,
+        "EVAL did not evaluate " ^ Hol_pp.term_to_string lhs);
+      boolSyntax.mk_eq (lhs, value)
+    end
+  fun width_entries width =
+    let
+      val ws = words width
+      val pairs = List.concat (List.map (fn s =>
+        List.map (fn t => (s, t)) ws) ws)
+    in
+      List.concat (List.map (fn mk => List.map (entry mk) pairs) ops)
+    end
+  val table = boolSyntax.list_mk_conj
+    (List.concat (List.map width_entries [1, 2, 3]))
+  (* bvudiv by zero is all ones, never 0 *)
+  val wrong = boolSyntax.mk_eq
+    (SmtLib_Theories.mk_smt_bv "smt_bvudiv"
+      (wordsSyntax.mk_wordii (1, 2), wordsSyntax.mk_wordii (0, 2)),
+     wordsSyntax.mk_wordii (0, 2))
+  fun check (name, solver) =
+    ((case solver ([], table) of
+        SolverSpec.UNSAT _ => ()
+      | _ => die (name ^ " disagrees with EVAL of the word division operators"));
+     (case solver ([], wrong) of
+        SolverSpec.SAT _ => ()
+      | _ => die (name ^ " accepted a wrong bvudiv value")))
+in
+  List.app check (unpreprocessed_solvers ())
+end
+
+(* word_div, word_quot and word_smod have no SMT-LIB counterpart in the
+   translation: without the preprocessing that rewrites them, they are
+   uninterpreted, so nothing about a zero divisor follows. *)
+fun word_division_untranslated_operators () =
+let
+  val undecided = [``(w:word8) // 0w = 255w``, ``(w:word8) // 0w = 0w``,
+    ``word_quot (w:word8) 0w <> 0w``, ``word_quot (w:word8) 0w = 0w``]
+  val two_widths =
+    ``(word_smod (a:word8) b = word_smod a b) /\
+      (word_smod (c:word16) d = word_smod c d)``
+  fun check (name, solver) =
+    (List.app (fn t =>
+       case solver ([], t) of
+         SolverSpec.SAT _ => ()
+       | _ => die (name ^ " decided " ^ Hol_pp.term_to_string t))
+       undecided;
+     case solver ([], two_widths) of
+       SolverSpec.UNSAT _ => ()
+     | _ => die (name ^ " failed on word_smod at two widths"))
+in
+  List.app check (unpreprocessed_solvers ())
+end
+
 fun run_unittests () =
 let
   val () = print "Running unit tests...\n\n"
@@ -37227,6 +37361,11 @@ let
     ("cpc_graph_typed_parser", fn () =>
       (CPC_GraphParserTests.run ();CPC_ConstructorAliasReviewTests.run ())),
     ("z3_bv1_concat_replay_success", z3_bv1_concat_replay_success),
+    ("word_division_rewrite_success", word_division_rewrite_success),
+    ("word_division_smtlib_differential",
+      word_division_smtlib_differential),
+    ("word_division_untranslated_operators",
+      word_division_untranslated_operators),
     ("cvc_native_bag_goal_nested_application_success",
       cvc_native_bag_goal_nested_application_success),
     ("smt_resource_diagnostic_contract",

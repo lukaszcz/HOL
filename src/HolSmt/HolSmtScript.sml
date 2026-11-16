@@ -3,7 +3,7 @@
 (* Various theorems for HolSmtLib *)
 Theory HolSmt
 Ancestors[qualified]
-  bool realax real intreal integer combin words rich_list
+  bool realax real intreal integer combin words integer_word rich_list
 
   val op >> = Tactical.>>
 
@@ -2442,6 +2442,157 @@ Proof
   `LENGTH l' = 0` by
     decide_tac >>
   fs []
+QED
+
+(* SMT-LIB's bit-vector division operators.  bvudiv, bvsdiv and bvsmod agree
+   with HOL's word_div, word_quot and word_smod only for a nonzero divisor:
+   SMT-LIB fixes the zero-divisor results, HOL's differ (word_div, word_quot)
+   or are unspecified (word_smod).  The translation emits these constants,
+   whose zero-divisor branches are SMT-LIB's, and rewrites HOL's operators to
+   them with the word_*_smt_bv* theorems.  bvurem and bvsrem agree with
+   word_mod and word_rem everywhere. *)
+Definition smt_bvudiv_def:
+  smt_bvudiv (s :'a word) t = if t = 0w then UINT_MAXw else word_div s t
+End
+
+Definition smt_bvsdiv_def:
+  smt_bvsdiv (s :'a word) t =
+    if t = 0w then (if word_msb s then 1w else UINT_MAXw) else word_quot s t
+End
+
+Definition smt_bvsmod_def:
+  smt_bvsmod (s :'a word) t = if t = 0w then s else integer_word$word_smod s t
+End
+
+Theorem word_div_smt_bvudiv:
+  !s t. word_div s t = if t = 0w then 0w else smt_bvudiv s t
+Proof
+  rw [smt_bvudiv_def, wordsTheory.word_div_def]
+QED
+
+Theorem word_quot_smt_bvsdiv:
+  !s t. word_quot s t = if t = 0w then 0w else smt_bvsdiv s t
+Proof
+  rw [smt_bvsdiv_def, wordsTheory.word_quot_def, wordsTheory.word_div_def]
+QED
+
+Theorem word_smod_smt_bvsmod:
+  !s t. integer_word$word_smod s t =
+          if t = 0w then integer_word$word_smod s 0w else smt_bvsmod s t
+Proof
+  rw [smt_bvsmod_def]
+QED
+
+(* The definitions above agree with the SMT-LIB standard: bvudiv and bvurem
+   as given by the FixedSizeBitVectors theory
+   (https://smt-lib.org/theories-FixedSizeBitVectors.shtml), bvsdiv, bvsrem
+   and bvsmod as the abbreviations of the QF_BV logic
+   (https://smt-lib.org/logics-all.shtml#QF_BV), with the most significant
+   bit read by word_msb. *)
+Theorem smt_bvudiv_smtlib:
+  !s t. smt_bvudiv s t =
+          if w2n t = 0 then UINT_MAXw else n2w (w2n s DIV w2n t)
+Proof
+  rw [smt_bvudiv_def, wordsTheory.word_div_def] >> fs []
+QED
+
+Theorem word_mod_smtlib:
+  !s t. word_mod s t = if w2n t = 0 then s else n2w (w2n s MOD w2n t)
+Proof
+  rw [wordsTheory.word_mod_def]
+QED
+
+Theorem smt_bvsdiv_smtlib:
+  !s t. smt_bvsdiv s t =
+          if ~word_msb s /\ ~word_msb t then smt_bvudiv s t
+          else if word_msb s /\ ~word_msb t then -smt_bvudiv (-s) t
+          else if ~word_msb s /\ word_msb t then -smt_bvudiv s (-t)
+          else smt_bvudiv (-s) (-t)
+Proof
+  rw [smt_bvsdiv_def, smt_bvudiv_def, wordsTheory.word_quot_def] >> fs []
+QED
+
+Theorem word_rem_smtlib:
+  !s t. word_rem s t =
+          if ~word_msb s /\ ~word_msb t then word_mod s t
+          else if word_msb s /\ ~word_msb t then -word_mod (-s) t
+          else if ~word_msb s /\ word_msb t then word_mod s (-t)
+          else -word_mod (-s) (-t)
+Proof
+  rpt gen_tac >> Cases_on `word_msb s` >> Cases_on `word_msb t` >>
+  asm_simp_tac bool_ss [wordsTheory.word_rem_def]
+QED
+
+Theorem int_mod_rem[local]:
+  !a b :int. b <> 0 ==>
+        (int_mod a b =
+         if (int_rem a b = 0) \/ ((a < 0) <=> (b < 0)) then int_rem a b
+         else int_rem a b + b)
+Proof
+  rpt strip_tac >> Cases_on `a = 0`
+  >- simp [integerTheory.INT_REM0, integerTheory.INT_MOD0] >>
+  irule integerTheory.INT_MOD_UNIQUE >>
+  qspec_then `b` mp_tac integerTheory.INT_REMQUOT >> asm_rewrite_tac [] >>
+  disch_then (qspec_then `a` strip_assume_tac) >>
+  qabbrev_tac `r = int_rem a b` >> qabbrev_tac `q = int_quot a b` >>
+  rw [] >>
+  FIRST [
+    qexists_tac `q` >> qabbrev_tac `qb = q * b` >>
+    fs [integerTheory.INT_ABS] >> rw [] >> fs [] >> intLib.ARITH_TAC,
+    qexists_tac `q - 1` >> simp [integerTheory.INT_SUB_RDISTRIB] >>
+    qabbrev_tac `qb = q * b` >>
+    fs [integerTheory.INT_ABS] >> rw [] >> fs [] >> intLib.ARITH_TAC]
+QED
+
+Theorem word_smod_rem[local]:
+  !s t. t <> 0w ==>
+        (integer_word$word_smod s t =
+         let r = word_rem s t in
+         if (r = 0w) \/ (word_msb s <=> word_msb t) then r else r + t)
+Proof
+  rpt strip_tac >>
+  simp [integer_wordTheory.word_smod_def, integer_wordTheory.word_rem] >>
+  `w2i t <> 0` by simp [integer_wordTheory.w2i_eq_0] >>
+  simp [int_mod_rem] >>
+  qspec_then `w2i t` mp_tac integerTheory.INT_REMQUOT >> asm_rewrite_tac [] >>
+  disch_then (qspec_then `w2i s` strip_assume_tac) >>
+  qabbrev_tac `r = int_rem (w2i s) (w2i t)` >>
+  `w2i (i2w r : 'a word) = r` by (
+     irule integer_wordTheory.w2i_i2w >>
+     assume_tac (Q.ISPEC `t:'a word` integer_wordTheory.w2i_ge) >>
+     assume_tac (Q.ISPEC `t:'a word` integer_wordTheory.w2i_le) >>
+     fs [integer_wordTheory.INT_MIN_def, integer_wordTheory.INT_MAX_def,
+         integerTheory.INT_ABS] >>
+     rw [] >> fs [] >> intLib.ARITH_TAC) >>
+  `(i2w r = 0w :'a word) <=> (r = 0)` by
+    metis_tac [integer_wordTheory.w2i_eq_0] >>
+  simp [integer_wordTheory.w2i_lt_0, GSYM wordsTheory.word_msb_neg] >>
+  rw [] >> fs [] >>
+  qpat_x_assum `w2i (i2w r) = r` (fn th =>
+    CONV_TAC (LAND_CONV (RAND_CONV (LAND_CONV (REWR_CONV (SYM th)))))) >>
+  ONCE_REWRITE_TAC [wordsTheory.WORD_ADD_COMM] >>
+  REWRITE_TAC [integer_wordTheory.word_add_i2w]
+QED
+
+Theorem smt_bvsmod_smtlib:
+  !s t. smt_bvsmod s t =
+          let abs_s = (if ~word_msb s then s else -s);
+              abs_t = (if ~word_msb t then t else -t);
+              u = word_mod abs_s abs_t
+          in
+            if u = 0w then u
+            else if ~word_msb s /\ ~word_msb t then u
+            else if word_msb s /\ ~word_msb t then -u + t
+            else if ~word_msb s /\ word_msb t then u + t
+            else -u
+Proof
+  rpt gen_tac >> Cases_on `t = 0w`
+  >- (simp [smt_bvsmod_def, wordsTheory.word_mod_def] >> rw [] >>
+      fs [wordsTheory.word_msb_neg] >> pop_assum mp_tac >> rw [] >>
+      fs [GSYM wordsTheory.WORD_NEG_MUL]) >>
+  simp [smt_bvsmod_def, word_smod_rem, word_rem_smtlib] >>
+  Cases_on `word_msb s` >> Cases_on `word_msb t` >>
+  asm_simp_tac bool_ss [LET_THM] >> rw [] >> fs []
 QED
 
 (* cvc5's CPC proof format totalizes integer Euclidean division and modulus.
