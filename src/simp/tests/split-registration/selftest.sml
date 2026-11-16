@@ -250,7 +250,7 @@ val _ = ThmAttribute.store_at_attribute
   {name="typed_rule",attrname="split",args=[],thm=typed_rule}
 val _ = Theory.delete_type "split_retired_type"
 val _ = Theory.scrub ()
-(* Develop's DB removes retired bindings at ExportTheory. As with
+(* The theorem DB removes retired bindings at ExportTheory. As with
    AncestryData.gen_other_tds, raw ADDs are pruned after that DB update. *)
 val _ = check "type retirement export hooks succeed"
   (null (Listener.call_listener Theory.delta_hook (TheoryDelta.ExportTheory thy)))

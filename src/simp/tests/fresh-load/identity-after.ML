@@ -15,8 +15,8 @@ val _ = check "ordinary load preserves listener functions and order"
 val added_listeners = List.filter (fn (n,_) =>
   not (List.exists (fn (old,_) => n = old) listeners_before))
   (Listener.listeners Theory.delta_hook);
-(* These are precisely the listeners installed by unchanged develop
-   markerLib, in Listener's most-recent-first order. *)
+(* These are precisely the listeners installed by generic markerLib,
+   in Listener's most-recent-first order. *)
 val legacy_listeners =
   ["markerLib.no_suspended_in_DB",
    "ThmSetData.onload.suspension.resumptions.parents",

@@ -168,21 +168,21 @@ val _ = let
             congs = [bounded_exists_cong], convs = [], rewrs = [],
             ac = [], filter = NONE, dprocs = []}
   val tm = ``?x:'a. (x = x) /\ C x``
-  val develop_result = ``?x:'a. (\x:'a. T) x /\ C x``
+  val ordinary_result = ``?x:'a. (\x:'a. T) x /\ C x``
   val mixed_ss = bool_ss ++ merge_ss
     [ordinary_cong_ss, threaded_cong_ss [boolTheory.COND_CONG]]
   val merged_ss = bool_ss ++ merge_ss [empty_ssfrag, cong_ss]
   val replayed_ss = remove_ssfrags ["CONG_REPLAY_DECOY"]
     (merged_ss ++ name_ss "CONG_REPLAY_DECOY" empty_ssfrag)
   val _ = convtest
-    ("ordinary applied-result congruence keeps develop's beta redex",
-     SIMP_CONV (bool_ss ++ ordinary_cong_ss) [], tm, develop_result)
+    ("ordinary applied-result congruence keeps the ordinary beta redex",
+     SIMP_CONV (bool_ss ++ ordinary_cong_ss) [], tm, ordinary_result)
   val _ = convtest
-    ("Cong marker keeps develop's applied-result handling",
-     SIMP_CONV bool_ss [Cong bounded_exists_cong], tm, develop_result)
+    ("Cong marker keeps ordinary applied-result handling",
+     SIMP_CONV bool_ss [Cong bounded_exists_cong], tm, ordinary_result)
   val _ = convtest
     ("threaded rules do not opt ordinary rules in",
-     SIMP_CONV mixed_ss [], tm, develop_result)
+     SIMP_CONV mixed_ss [], tm, ordinary_result)
   val _ = convtest
     ("SF carries threaded congruences",
      SIMP_CONV bool_ss [SF cong_ss], tm, ``?x:'a. T /\ C x``)
@@ -243,10 +243,10 @@ val _ = let
   val rewrs = [ASSUME ``!y:'a. bnd y ==> (bdy y <=> bdy' y)``]
   val tm = ``?x:'a. bnd x /\ bdy x``
   val _ = convtest
-    ("ordinary intermediate-result congruence keeps develop's result",
+    ("ordinary intermediate-result congruence keeps the ordinary result",
      QCONV (SIMP_CONV (bool_ss ++ ordinary_cong_ss) rewrs), tm, tm)
   val _ = convtest
-    ("Cong marker keeps develop's intermediate-result handling",
+    ("Cong marker keeps ordinary intermediate-result handling",
      QCONV (SIMP_CONV bool_ss (Cong threaded_cong :: rewrs)), tm, tm)
 in
   convtest ("congruence threads an intermediate result",
@@ -656,7 +656,7 @@ in
 end
 
 (* ---------------------------------------------------------------------- *)
-(* Old tactic dispatch: develop's passes versus the counted-pass engine.  *)
+(* Plain tactic dispatch: whole passes versus the counted-pass engine.   *)
 
 val _ = let
   val cfg = {strip=false,elimvars=false,droptrues=false,oldestfirst=true}
@@ -669,7 +669,7 @@ val _ = let
                  (fn gs => printgoals (gs,())) (valid tac) goal)
 
   (* This conversion is deliberately not idempotent: its second visit to
-     a expands it. Develop repeats the entire pass after b changes; the
+     a expands it. simpLib repeats the entire pass after b changes; the
      counted engine skips a, which was unchanged after b in the first
      pass. Expansion fires only once, so both schedules terminate. *)
   fun fixture () =
@@ -697,8 +697,8 @@ val _ = let
       (ss,([a,b0,c],w),[([mk_conj(a,T),b1,c],w)],[([a,b1,c],w)])
     end
   fun old_call msg update ths =
-    let val (ss,goal,develop,_) = fixture ()
-    in check msg develop (global_simp_tac cfg (update ss) ths) goal end
+    let val (ss,goal,whole,_) = fixture ()
+    in check msg whole (global_simp_tac cfg (update ss) ths) goal end
   fun new_call msg update ths =
     let val (ss,goal,_,counted) = fixture ()
     in check msg counted (global_simp_tac cfg (update ss) ths) goal end
@@ -707,10 +707,10 @@ val _ = let
           in check "explicit GEN_GLOBAL_SIMP_TAC keeps counted passes"
                counted (GEN_GLOBAL_SIMP_TAC {safe=false} xcfg ss []) goal
           end
-  val _ = old_call "bare Excl preserves the develop global schedule" I
+  val _ = old_call "bare Excl preserves the ordinary global schedule" I
                    [Excl "dispatch_unmatched_rule"]
   val plain_frag = name_ss "dispatch strategy-free fragment" (rewrites [])
-  val _ = old_call "strategy-free SF preserves the develop schedule" I
+  val _ = old_call "strategy-free SF preserves the ordinary schedule" I
                    [SF plain_frag]
 
   val failing_solver = mk_tactic_solver ("dispatch solver",NO_TAC)
@@ -754,11 +754,11 @@ val _ = let
     let val expected =
           valid (legacy_asm bool_ss (markerLib.NoAsms::ths)) goal
     in check msg expected (SIMP_TAC bool_ss ths) goal end
-  val _ = parity "strategy-free SIMP_TAC preserves develop Req0"
+  val _ = parity "strategy-free SIMP_TAC preserves ordinary Req0"
                    [Req0 AND_CLAUSES] ([],``dispatch_p /\ T``)
-  val _ = parity "strategy-free SIMP_TAC preserves develop ReqD"
+  val _ = parity "strategy-free SIMP_TAC preserves ordinary ReqD"
                    [ReqD AND_CLAUSES] ([],``dispatch_p /\ T``)
-  val _ = parity "strategy-free SIMP_TAC preserves develop ReqD/Once"
+  val _ = parity "strategy-free SIMP_TAC preserves ordinary ReqD/Once"
                    [ReqD (Once AND_CLAUSES)]
                    ([],``dispatch_p /\ T /\ dispatch_q /\ T``)
 in
@@ -2214,7 +2214,7 @@ local
     else die "an uninstalled theorem made the looper's name ambiguous"
 
   (* An unqualified Excl that matches nothing in the simpset is a silent
-     no-op, as on develop.  Only the simpset decides: a theorem that exists
+     no-op, as in simpLib.  Only the simpset decides: a theorem that exists
      but is not installed is as much a no-op as a name that denotes
      nothing. ExclX explicitly selects a target, so matching nothing there
      aborts. *)
@@ -2237,12 +2237,12 @@ local
      excl_true_t, ``selftest_catalogue_p:bool``)
   val uninstalled_warned = excl_warned "CONJ_COMM"
   val _ = convtest
-    ("bare kernel-spelled Excl is a no-op, as on develop",
+    ("bare kernel-spelled Excl is a no-op, as in simpLib",
      SIMP_CONV bool_ss [Excl "bool$AND_CLAUSES"],
      excl_true_t, ``selftest_catalogue_p:bool``)
   val bare_kernel_warned = excl_warned "bool$AND_CLAUSES"
   val _ = convtest
-    ("-* leaves the kernel spelling uninterpreted, as on develop",
+    ("-* leaves the kernel spelling uninterpreted, as in simpLib",
      SIMP_CONV (bool_ss -* ["bool$AND_CLAUSES"]) [],
      excl_true_t, ``selftest_catalogue_p:bool``)
   val _ = shouldfail
@@ -2287,7 +2287,7 @@ local
   (* A simpset entry keeps whatever theory its rewrite was named with, and
      nothing requires that theory to be an ancestor of the one being
      built.  The rule: namespace reaches such an entry by its qualified
-     name in either spelling.  Bare Excl retains develop's strict parser. *)
+     name in either spelling.  Bare Excl retains simpLib's strict parser. *)
   val unloaded_thy = "no_such_ancestor_selftest"
   val unloaded_rwt =
     ASSUME ``(unloaded_rule_left:'a) = unloaded_rule_right``
@@ -2320,7 +2320,7 @@ local
        SIMP_CONV unloaded_ss [Excl (unloaded_thy ^ ".unloaded_identity")]
          unloaded_lhs,
      printresult=thm_to_string,
-     printarg=K "bare dotted Excl rejects a non-ancestor, as on develop",
+     printarg=K "bare dotted Excl rejects a non-ancestor, as in simpLib",
      checkexn=fn HOL_ERR error =>
        String.isSubstring "bad theory name" (Feedback.message_of error)
        | _ => false} ()
@@ -2348,7 +2348,7 @@ local
 
   (* An unmatched bare Excl still records a deletion.  Removing a filter
      recompiles surviving fragments, but must not revive the deleted rule.
-     These constructions use only develop's public simplifier API. *)
+     These constructions use only simpLib's public API. *)
   val history_filter =
     SSFRAG
       {name=SOME "exclusion history filter", convs=[], rewrs=[], ac=[],
@@ -2384,7 +2384,7 @@ local
      history_lhs, history_lhs)
 
   (* Strict history reparses under the current theory ancestry, just as
-     develop's DELETE_EVENT did.  Link a temporary ancestor without
+     simpLib's DELETE_EVENT does.  Link a temporary ancestor without
      exporting a theory, then restore the context before replaying. *)
   val _ = let
     val saved = Context.snapshot ()
@@ -3717,8 +3717,8 @@ val _ =
                    "solver:missing", "split:missing", "case:missing"]
   end
 
-(* Branch-only namespace selection and collision matrix. The
-   legacy-only prefix/parser matrix lives in exclusion-contracts. *)
+(* Extension namespace selection and collision matrix. The ordinary
+   prefix/parser matrix lives in exclusion-contracts. *)
 val _ = let
   fun check name b = (tprint name; if b then OK () else die name)
   fun silent label f = let
@@ -5146,11 +5146,11 @@ in
        ("CONGRUENCE_SIMP_QCONV mixed",cong_qconv)])
     [("contextual",contextual),("configured",configured)]
 
-  (* The old total wrappers deliberately construct their QCONV inside tm
-     on develop too. Do not move their construction ahead of tm. *)
-  val _ = lifetime "SIMP_CONV (develop's delayed wrapper)"
+  (* The ordinary total wrappers deliberately construct their QCONV
+     inside tm. Do not move their construction ahead of tm. *)
+  val _ = lifetime "SIMP_CONV (ordinary delayed wrapper)"
     SIMP_CONV [0,1,2]
-  val _ = lifetime "CONGRUENCE_SIMP_CONV (develop's delayed wrapper)"
+  val _ = lifetime "CONGRUENCE_SIMP_CONV (ordinary delayed wrapper)"
     (congLib.CONGRUENCE_SIMP_CONV boolSyntax.equality
        (congLib.mk_congset [])) [0,1,2]
 
@@ -5569,7 +5569,7 @@ local
       "wrong old-stage error winner"
 
   (* Actual Cong rewrite monitor changes ordinary fragment Context before
-     process_tags performs its own fresh lookup. No branch-only fields. *)
+     process_tags performs its own fresh lookup. No extension-only fields. *)
   fun context_case kind = let
     val saved = Context.snapshot ()
     val name = "r7_context_" ^ kind
@@ -5653,7 +5653,7 @@ in
   val _ = List.app context_case ["register","restore","change","remove"]
 end;
 
-(* R7 branch-only controls: projection through wrapper metadata, no descent
+(* R7 extension-only controls: projection through wrapper metadata, no descent
    into AC/Cong, and initial goal-time Context still selects the strategy. *)
 local
   val missing = markerSyntax.L "r7_branch_missing_label"

@@ -16,7 +16,7 @@ All paths below are relative to `src/simp/src/`:
 - `simpMarkerScript.sml`: owns `simpMarker$Split` and `$ExcludeX`. Removes
   their unqualified overloads so foreign syntax survives. No persistence.
 - `simpMarkerLib.sml`: constructors/decoders and extension argument helpers;
-  depends on `simpMarkerTheory` and unchanged generic `markerLib`.
+  depends on `simpMarkerTheory` and generic `markerLib`.
 - `splitLib.sml`: pure/local splitting and TypeBase derivation caches;
   `enable_split_attribute ()` explicitly calls
   `SplitData.initialize {validate=ignore o is_asm_split}`.
@@ -61,8 +61,8 @@ preserves records/data. If its listener was removed, explicit init restores
 the exact dispatcher without ancestor replay or rule changes. A foreign
 replacement is never overwritten.
 
-Ordinary loading adds only develop's generic marker listeners. Loading
-`congLib` also adds unchanged `computeLib` listeners; the new matrix checks
+Ordinary loading adds only the generic marker listeners. Loading
+`congLib` also adds `computeLib`'s listeners; the matrix checks
 all eight exact names/order, and every pre-existing callback's identity.
 Full extension loads add no listeners and do not enable split persistence.
 Only explicit API/module opt-in adds `splitLib.persistence.onload`.
@@ -95,9 +95,9 @@ not rerun its body: after rewind use `enable_split_attribute ()` explicitly.
 
 ## Coverage map
 
-Existing assertions and source-tied historical streams remain unchanged:
+Related suites:
 
-| Existing suite | Retained contracts |
+| Suite | Contracts |
 | --- | --- |
 | `../markers/` | Simplifier-owned markers and generic marker cleanup |
 | `../fresh-load/` | Clean simp imports, foreign handlers/data/syntax, exact listeners |

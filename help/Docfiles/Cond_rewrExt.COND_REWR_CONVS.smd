@@ -12,8 +12,8 @@ Cond_rewrExt.COND_REWR_CONVS : string * thm -> bool ->
 
 ------------------------------------------------------------------------
 
-This branch extension requires an explicit `Cond_rewrExt` dependency.
-Ordinary `Cond_rewr` clients need no migration.
+This is part of the opt-in extension engine and requires an explicit
+`Cond_rewrExt` dependency.
 
 Prepares a conditional rewrite once, returning two runners that share its
 higher-order matcher. The string names the rewrite for tracing; the boolean

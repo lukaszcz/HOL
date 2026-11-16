@@ -56,7 +56,7 @@ Local replay preserves all installed controls, including partially spent or
 exhausted ambient rules; `BOUND` never reinstalls or recompiles its bundle.
 Attached views reuse their compiled matchers and share surviving controls.
 Use an extension recipe from the start, not an ordinary simpset converted
-at this boundary. Ordinary `simpLib` callers remain unchanged.
+at this boundary.
 
 ### Failure
 

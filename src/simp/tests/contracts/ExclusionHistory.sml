@@ -1,5 +1,5 @@
-(* Legacy-only history contracts: identical executable input on develop
-   and the branch, also called by the normal exclusion-contracts target. *)
+(* Ordinary-engine exclusion history contracts, called by the normal
+   exclusion-contracts target. *)
 structure ExclusionHistory =
 struct
 open HolKernel Parse boolLib simpLib testutils

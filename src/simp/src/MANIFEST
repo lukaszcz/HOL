@@ -1,11 +1,10 @@
 High-level view of what the simplifier files in this directory do
 
-Ordinary develop clients need no migration. Extensions depend on ordinary
-and shared facilities, never the reverse. Ordinary simpLib/congLib imports
-omit extension strategies, source inventories, split caches/registrations
-and the opt-in tracked default provider. Signatures define the compiled API;
-notes.md gives the final construction/type migration, module ownership
-and rebuilding caveats.
+The extension engine depends on ordinary and shared facilities, never the
+reverse. Ordinary simpLib/congLib imports omit extension strategies, source
+inventories, split caches/registrations and the opt-in tracked default
+provider. Signatures define the compiled API; notes.md describes the types,
+the two engines and module ownership.
 
 Cache.sml:     Caching for context-aware decision procedures.
 
@@ -84,7 +83,7 @@ SplitData.sml: Private split-rule event stream, attribute ownership and
 
 simpMarkerScript.sml, simpMarkerLib.sml:
                Simplifier-owned Split/ExcludeX constants and recursive
-               tactic argument processing. Legacy markerLib is unchanged.
+               tactic argument processing; generic markerLib is not involved.
 
 splitLib.sml:  Pure/local datatype splitting and explicit persistent-rule
                registration. Queries alone claim no attribute namespace.
@@ -94,12 +93,12 @@ splitPersistLib.sml:
                Record it with Theory.add_ML_dependency in exports so fresh
                imports initialize before theory-data replay.
 
-selftest.sml:  Complete unchanged develop regression input. Extension tests
+selftest.sml:  Regression tests for the ordinary engine. Extension tests
                execute in separate processes under ../tests; no extension
                prerequisite is linked into this ordinary launcher. The full
                native suite is ../tests/native-extension/selftest.sml.
                ../tests/api-audit checks actual fresh paths, callbacks,
-               control identities and executable migration examples.
+               control identities and executable usage examples.
 
 simpLib.sml:   Puts it all together. The simpset data structure is
                implemented here, as is the code that wraps up

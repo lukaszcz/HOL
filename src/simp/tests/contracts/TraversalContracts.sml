@@ -290,7 +290,7 @@ fun factories record = let
   val foreign = stop (Stop token)
   val interrupt = stop Portable.Interrupt
   val _ = record "apply-throwing-factory"
-  (* Develop's mapfilter rejects foreign factory exceptions as well as
+  (* Traverse's mapfilter rejects foreign factory exceptions as well as
      HOL_ERR, but never Interrupt. Term-application payloads above escape. *)
   val _ = check "foreign factory exception is rejected, not propagated"
     (same (foreign a) ab)

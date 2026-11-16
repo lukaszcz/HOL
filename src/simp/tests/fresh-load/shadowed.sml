@@ -98,7 +98,7 @@ fun shadowed_load () =
     val modules = extension_modules dir
     val _ = check "extension modules found" (not (null modules))
     val _ = List.app (fn n => obs "shadowed.module" n) modules
-    (* Develop sources outside the added set use these names unqualified,
+    (* HOL sources outside the added set use these names unqualified,
        and are out of scope here: src/HolSat/dimacsTools.sml:147,149
        (foldr, via tautLib) and src/combin/combinpp.sml:196 (size, via
        combinTheory).  Load them before shadowing so only the added modules

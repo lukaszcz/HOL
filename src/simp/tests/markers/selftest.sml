@@ -198,7 +198,7 @@ val goals_print =
       HOLPP.pr_list goalStack.pp_goal [HOLPP.NL, HOLPP.NL]
     )
 
-(* The non-recursive entry point retains develop's ordering: filter the
+(* The non-recursive entry point retains the ordinary ordering: filter the
    goal assumptions first, then strip every Req0/ReqD payload.  Only the
    final theorem's requirement checks survive across arguments. *)
 val _ =
@@ -233,9 +233,10 @@ val _ =
         “p /\ q”, "REQUIRE_DECREASE_TAC")]
   end
 
-(* Develop restarts wrapper construction from the original tactic for
-   each argument: even an unmarked final theorem drops earlier checks.
-   Check payload stripping/order as well as the surviving requirement. *)
+(* The ordinary entry point restarts wrapper construction from the
+   original tactic for each argument: even an unmarked final theorem
+   drops earlier checks. Check payload stripping/order as well as the
+   surviving requirement. *)
 val _ =
   let
     val goal = ([], “p /\ T”)
@@ -293,8 +294,9 @@ val _ =
     ]
   end
 
-(* This distinguishes develop's entry point from a delegation to [recur]:
-   the latter strips only the supplied arguments, not goal assumptions. *)
+(* This distinguishes the ordinary entry point from a delegation to
+   [recur]: the latter strips only the supplied arguments, not goal
+   assumptions. *)
 val _ =
   let
     val req0 = prim_mk_const {Thy = "marker", Name = "Req0"}

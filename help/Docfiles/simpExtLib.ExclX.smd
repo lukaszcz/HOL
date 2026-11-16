@@ -83,7 +83,7 @@ This simplifier-specific marker uses `simpMarker$ExcludeX` and preserves
 the string literally. It introduces no unqualified parser mapping.
 `Req0`, `ReqD`, and bounded wrappers are processed before the marker.
 Generic marker tactics do not interpret this extension; use it only in
-simplifier theorem lists. The legacy `markerLib` interface is unchanged.
+simplifier theorem lists.
 
 ### Failure
 

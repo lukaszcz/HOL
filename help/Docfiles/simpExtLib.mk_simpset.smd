@@ -15,10 +15,10 @@ Merge order matters for rewrite makers and congruences.
 
 ### Typed construction
 
-Ordinary `simpLib.ssfrag`, `simpLib.simpset` and `Traverse.reducer` retain
-their ordinary APIs; develop clients need no migration or extension load.
-Branch-only configured, source-sensitive and child-first clients must choose
-extension construction **before** installing the rules they need to track:
+Ordinary `simpLib.ssfrag`, `simpLib.simpset` and `Traverse.reducer` values
+are distinct from the extension types and need no extension load.
+Configured, source-sensitive and child-first clients must choose extension
+construction **before** installing the rules they need to track:
 
 - Use `simpExtLib.empty_ss`, or an ordinary simpset lifted by
   `simpExtLib.lift_simpset` (e.g. `simpExtLib.lift_simpset boolSimps.bool_ss`)
@@ -62,13 +62,6 @@ allowances when they replay; their `_preserving_controls` variants retain
 compatible surviving sources' actual counters, including exhaustion and
 sharing with existing views. Local extension tactic directive replay also
 preserves installed controls.
-
-Branch clients must rebuild ML dependencies and saved heaps after the type
-split; old mixed `simpLib` values are not binary-compatible extension sets.
-Rebuild theories/heaps containing old `marker$Split`/`marker$ExcludeX` terms
-or the old persistent split format as described under
-`splitLib.enable_split_attribute`. Ordinary develop marker constants and
-theory-data formats are unchanged.
 
 ### Failure
 

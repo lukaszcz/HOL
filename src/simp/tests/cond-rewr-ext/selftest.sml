@@ -189,10 +189,9 @@ val _ = let
        (``(cond_ext_f:bool -> bool) cond_ext_t``,
         ``(cond_ext_f:bool -> bool) cond_ext_t``)] =
      [true,false,true,false,false,true])
-  (* Cond_rewr no longer exports is_var_perm (develop's signature), and
-     Cond_rewrExt keeps a copy.  The copies agree iff both engines accept
-     and refuse the same permutative rewrites, whichever way the term
-     ordering points. *)
+  (* Cond_rewr.COND_REWR_CONV and the legacy runner of
+     Cond_rewrExt.COND_REWR_CONVS must accept and refuse the same
+     permutative rewrites, whichever way the term ordering points. *)
   val x = ``cond_ext_x:bool``
   val y = ``cond_ext_y:bool``
   val z = ``cond_ext_z:bool``

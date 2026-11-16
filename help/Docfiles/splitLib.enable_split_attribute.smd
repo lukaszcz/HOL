@@ -70,12 +70,7 @@ Registration is serialized theory initialization, not a concurrent proof
 operation. Arbitrary late/current-segment replay is not the supported
 ordering contract.
 
-The private stream is `splitLib.persistent.rules.v1`. Rebuild split-bearing
-theories and saved heaps produced by this branch before the cleanup.
-Also rebuild extension consumers containing the old `marker$Split` or
-`marker$ExcludeX` constants: their replacements belong to `simpMarker`.
-These branch artifacts are not binary compatible. Develop's ordinary
-theory-data formats and marker constants are unchanged.
+The private stream is `splitLib.persistent.rules.v1`.
 
 ### See also
 

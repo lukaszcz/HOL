@@ -126,8 +126,7 @@ called, and complete hypotheses and ordered goals compared.
 | Bound local replay | Native `bound_global_fixture`; independent spent ambient quota plus partially spent/exhausted installed bundle and attached view, exact maker/collector schedule, zero bundle/view recompilation traces, same adjusted object observed by loopers and old saved conversions |
 | Generic isolation | Generic classifier/tactic forwards extension markers inertly, no new split set/attribute registrations |
 
-The original 642 native assertions and ordinary saved tactic/staging/load
-fixtures remain unchanged. No fallback promotion or ordinary API is involved.
+No fallback promotion or ordinary API is involved.
 Local replay preserves all installed controls directly, rather than resetting
 then repairing only the bundle via a second history replay. Installed view
 matchers (including rejected shapes) are cached immutably in extension history;
@@ -136,8 +135,7 @@ ordinary-reset replay still refreshes declared allowances. A public excluded
 addition returns its exact input before entering compilation.
 
 `APIExamples.sml` compiles explicit strategy, global, child-first and bound
-clients. Branch-only help examples now use `simpExtLib`/`TraverseExt` and tracked
-recipes; ordinary callers require no migration.
+clients. Help examples use `simpExtLib`/`TraverseExt` and tracked recipes.
 
 ## Sources, views and prepared bundles
 
@@ -198,5 +196,4 @@ integer depth, custom order, root-condition full traversal, context ordering,
 capture avoidance, default/configured factory schedules, limit rollback and
 unchanged observer/reducer/solver/charge counts. `strategies.sml` retains
 safe/unsafe solver validation, counted global passes, looper limits and real
-proof reconstruction. Native tests and frozen legacy traversal streams are
-unchanged.
+proof reconstruction.

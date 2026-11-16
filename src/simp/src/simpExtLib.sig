@@ -312,7 +312,7 @@ sig
       Policy exceptions, including late native ETA checks, propagate with
       their original identity, without later candidate or solver callbacks.
       Saved conversions recover after an abort.
-      The ordinary SIMP_CONV strategy is unchanged. *)
+      SIMP_CONV keeps the ordinary strategy. *)
    val SIMP_CONV_CHILD_FIRST :
      TraverseExt.child_first_policy -> simpset -> thm list -> conv
 
@@ -448,8 +448,8 @@ sig
       This is the same extent as simpLib.track, not a copy: both engines
       report into it, so the result lists the rewrites of the ordinary
       and the extension engine together, in the order they fired.  A
-      nested extent of either function reports only its own rewrites, as
-      on develop, and the enclosing extent does not see them.            *)
+      nested extent of either function reports only its own rewrites,
+      and the enclosing extent does not see them.                        *)
    (* ---------------------------------------------------------------------*)
 
    val track : ('a -> 'b) -> 'a -> 'b * thm list

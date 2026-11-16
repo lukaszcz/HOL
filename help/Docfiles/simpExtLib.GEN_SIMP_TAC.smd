@@ -31,9 +31,8 @@ they do not turn them into rewrite rules.
 
 The child-first variant explicitly selects `TraverseExt` traversal. Both
 variants require extension sets constructed from, for example,
-`simpExtLib.lift_simpset boolSimps.bool_ss`. Ordinary
-`simpLib` callers need no migration. Conversions do not run final solvers or
-loopers.
+`simpExtLib.lift_simpset boolSimps.bool_ss`. Conversions do not run final
+solvers or loopers.
 
 ### Failure
 

@@ -16,9 +16,8 @@ constant; no unqualified parser mapping is installed.
 
 Nested requirement and bounded wrappers are processed before the directive.
 A bound qualifies the directive; it does not install the marker as a rewrite
-or count split applications. Generic `markerLib` constructors, classification
-and datatype identity are unchanged; generic marker tactics do not interpret
-this simplifier-owned extension.
+or count split applications. Generic marker tactics do not interpret this
+simplifier-owned extension.
 
 ### Failure
 

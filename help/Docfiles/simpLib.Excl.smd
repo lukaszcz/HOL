@@ -41,7 +41,6 @@ as `-*`; it is not discarded just because no current rule matches.
 Strict names are reparsed when that history is replayed, in the then-current
 theory context (including after `Context.restore`). A later addition may
 reinstall a deleted rule; this is not a prohibition on future additions.
-Ordinary clients require no migration; `Excl` retains its literal contract.
 
 ### Failure
 

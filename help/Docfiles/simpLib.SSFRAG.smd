@@ -138,7 +138,6 @@ Configured reducers belong to the distinct `TraverseExt.reducer` type and
 must be installed with `simpExtLib.SSFRAG` or `simpExtLib.dproc_ss` in an
 extension set. `TraverseExt.lift` explicitly adapts an ordinary reducer;
 it does not recover an inventory of rewrites hidden inside its closure.
-Ordinary fragments and simpsets need no migration.
 
 ### Failure
 

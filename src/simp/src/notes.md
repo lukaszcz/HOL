@@ -1,45 +1,146 @@
-# Simplifier engines, construction and migration
+# Note on the Simplifier Code
 
-## Ordinary develop clients: no migration
+## Important Types
 
-Keep `simpLib`, `congLib`, `Traverse`, `Cond_rewr`, `Opening`, `Travrules`,
-`pureSimps`, `boolSimps` and `combinSimps`. Their ordinary types, callbacks,
-construction stages and literal exclusions remain the develop interfaces.
-In particular, `Traverse.reducer` has exactly the original `REDUCER`
-constructor. `simpLib.traversedata_for_ss` always returns ordinary traversal
-data; there is no eligibility scan or extension dispatch.
+**simpset**
 
-Ordinary fragments hold rewrite/AC theorems, conversions, congruences,
-reducers and a rewrite-maker filter. Ordinary simpsets compile these into
-rewrite nets and traversal rules, retaining history, limits and exclusions.
-They contain **no** strategy records, source handles, paired runners,
-tracking inventories or extension companions. Importing ordinary `simpLib`
-or `congLib` does not import the extension engines, markers, splitter,
-private split registrations or tracked default provider.
+:   (From `simpLib`.)
+    Typically built by bundling *fragments* together, but is actually a collection of four important components:
 
-Do not change literal `Excl`/`-*` names because they contain `rule:`,
-`solver:`, `looper:`, `split:` or `case:`. These prefixes acquire no namespace
-meaning in ordinary exclusions. Strict dotted-name parsing, ancestry checks,
-unmatched deletion history and current-theory reparsing on replay remain.
+    -   `mk_rewrs` function.
+        This processes “arbitrary” user-provided theorems to turn them into proper rewrites.
 
-## Branch-only migration: choose types before installing rules
+    -   `net` a higher-order term-net containing simplifier-conversions
 
-The earlier mixed branch APIs are not develop APIs. Their final owners are:
+    -   `dprocs` a list of “decision procedures” (lower priority routines), which are *reducer*s.
 
-| Earlier branch use | Final module/type/construction |
+    -   `travrules`, a *travrules* value
+
+**ssfrag** (a ‘simpset fragment’)
+
+:   (From `simpLib`.)
+    A collection of user-provided data that gets pushed into *simpset*s.
+    Includes rewrites, conversions, congruences, AC rewrites, decision procedures, relation-simplification data and an optional `filter`, which is used to adjust the simpset `mk_rewrs` function.
+
+**reducer**
+
+:   (From `Traverse`.)
+    A bundled piece of code/data that is capable of producing theorems relating input terms to fresh “outputs”.
+    Each reducer has its own notion of “context”, values to which clients can add theorems.
+    (These contexts are implemented with exceptions to give existential types.)
+    Such added theorems may be goal assumptions, or provided by congruence rules.
+
+    Each reducer has an `apply` function, which is passed a context, a `solver` for handling side conditions, a `stack` of already attempted side conditions, a continuation `conv`, a `relation` field and an input term.
+    The `apply` function is expected to return a theorem of the form
+
+        |- input  R   output
+
+    where `R` might be as given in the `relation` field.
+
+    Arithmetic decision procedures are `reducer`s.
+    Their context is the list of theorems that they believe to be relevant (*i.e.*, Presburger terms), and they ignore all of the information provided by `apply` except the context.
+
+    Reducers don’t depend on anything else in the simplification code base (though their `conv` and `solver`  continuations will call back into simplifier code).
+
+**preorder**
+
+:   (From `Travrules`.)
+    A preorder encodes information enough to identify a relation (type `'a -> 'a -> bool`) as something that is reflexive and transitive.
+    The preorder stores the constant of the particular relation, and two functions to implement transitivity and reflexivity.
+    The former takes two theorems as input, while the latter takes both the argument to the relation and a relation term itself, which, if polymorphic, must have been instantiated so that it can be applied to the argument.
+    For the equality case, this data is thus (`min$=`, `TRANS` and (essentially) `REFL`).
+
+**travrules**
+
+:   (From `Travrules`.)
+    Embodies a list of *preorders* and two lists of *congprocs*: the “standard congprocs” (`congprocs`), and the “weakening congprocs” (`weakenprocs`).
+    The “default” travrules value is `EQ_tr`, and contains the equality preorder, and the equality congproc as a standard congproc.
+    (I.e., it has no weakening congprocs.)
+
+    The travrules is a static piece of information for guiding simplification.
+    The dynamic data that is maintained during simplification (containing context values, the relation currently being used and the context’s free variables) is a `trav_state`, which is private to module `Traverse`.
+
+    Each simpset contains a list of `travrules` values.
+
+**congproc**
+
+:   (From `Opening`.)
+    A congproc is a function that will set up recursive simplification of an input term.
+    With the exception of the core equality congruences (`MK_COMB` and `ABS`) these are all built with the function `CONGPROC`.
+    In addition to the term, the congproc is passed a record of important data containing
+
+    -   `depther`: a function which will be applied to subterms to produce simplified sub-terms
+    -   `solver`: used to handle side-conditions in congruence rules
+    -   `relation`: identifies the relation we’re using
+    -   `freevars`: the free variables of the context, which may be relevant if descending under a binder
+
+    `congproc` values are stored in `travrules`.
+
+## Important Functions
+
+`SIMP_QCONV`
+
+:   (From `simpLib`.)
+    Calls `TRAVERSE` after building initial context values for all of the embedded reducers (giving a trav_state)
+
+`TRAVERSE`
+
+:   (From `Traverse`.)
+    Implements the logic of the simplifier’s traversal of terms.
+    In particular, this is where the preorder/top-down nature of the simplifier wrt its equality rewrites is decided, because of the way it begins with
+
+        repeat high_priority then descend ...
+
+    The `high_priority` stuff here is to do fire the equality reducer.
+    Descent is then the recursive simplification of sub-terms.
+    The `...` portion is where decision procedures get to fire, and where weakenprocs get a chance to fire.
+    These effectively see the term in bottom-up fashion as a result.
+
+`CONGPROC`
+
+:   (From `Opening`.)
+    This builds a *congproc* given a `congrule` theorem and a general notion of reflexivity in the function `refl`.
+    It’s important that `refl` be able to generate reflexivity theorems for multiple relations at once: this allows different relations to appear in the assumptions of `congrule`; the conclusion might want to draw conclusions about equality even as one of the assumptions is about another relation again (as happens in weakening congruences).
+
+    One problem here is that reprocessing of assumptions can unnecessarily descend into terms that have already been processed once.
+    For example, in the rule for conditional expressions, we have
+
+        p = p’ ==> (p’ ==> t = t’) ==> (~p’ ==> e = e’) ==>
+        (COND p t e = COND p’ t’ e’)
+
+    and the reprocess flag will be set to true for the `~p’` assumption (it’s not just a variable).
+    Sure, if negation descends over a disjunction or similar, this is an important thing to do (though the `mk_cond_rewr` could presumably do it too), but if nothing simplifies at the top level, it’s painful to have to descend into `p’` again.
+
+# The extension engine
+
+`simpLib`, `congLib`, `Traverse`, `Cond_rewr`, `Opening`, `Travrules`,
+`pureSimps`, `boolSimps` and `combinSimps` make up the ordinary simplifier
+described above. A second, opt-in engine lives alongside it, in `simpExtLib`,
+`TraverseExt`, `Cond_rewrExt`, `congExtLib`, `splitLib` and `simpMarkerLib`.
+Importing `simpLib` or `congLib` does not import the extension engine,
+its markers, the splitter, persistent split registration or tracking.
+
+Ordinary simpsets contain **no** strategy records, source handles, paired
+runners or tracking inventories, and `simpLib.traversedata_for_ss` always
+returns ordinary traversal data. Ordinary `Excl`/`-*` names are literal: the
+prefixes `rule:`, `solver:`, `looper:`, `split:` and `case:` have no
+meaning there.
+
+## Where things live
+
+| Feature | Module/type |
 | --- | --- |
-| `Traverse.CONTEXT_REDUCER`, `CONFIG_REDUCER`, configuration/solver/policy types, `XTRAVERSE`, root/observed/child-first traversal | `TraverseExt`; use `TraverseExt.reducer` at the reducer factory. |
-| Paired/context/configured conditional constructors | `Cond_rewrExt`; ordinary `Cond_rewr.COND_REWR_CONV` stays direct. Both engines build their conversions with the one `Cond_rewr.COND_REWR_CONVS`; `Cond_rewrExt.is_var_perm` is `Cond_rewr.is_var_perm`. |
-| `Opening.THREADED_CONGPROC`, `Travrules.mk_threaded_travrules`, `simpLib.threaded_cong_ss` | `Opening.THREADED_CONGPROC`, `Travrules.mk_threaded_travrules`, `simpExtLib.threaded_cong_ss`. `Opening.CONGPROC` and `Travrules.mk_travrules` are unchanged. |
-| Extended `dproc_ss`, `SSFRAG`, fragments/sets/weakener data | `simpExtLib.ssfrag/simpset`, with `TraverseExt.reducer`, from the first relevant construction. |
-| Configured `congLib` calls | `congExtLib`; construct its distinct congset before installation and pass an extension simpset. |
-| Strategy fragments/setters, loopers, safe/unsafe solvers, subgoaler/depth/order | `simpExtLib`, with `TraverseExt.ssolver/subgoaler` types. |
-| `Split`, `ExclX` | `simpExtLib`; marker inspection/recursive processing is `simpMarkerLib`, not generic `markerLib`. |
-| Source handles/views/bundles, filtering/preserving replay, child-first preparation | `simpExtLib`; start with tracked ingredients before source-sensitive rules, makers or reducers are installed. |
-| Configured `GEN_*`, global/child-first/BOUND tactics | `simpExtLib`, taking its simpset and `TraverseExt` policy. BOUND requires the bundle already installed. |
-| Configured extraction from an earlier mixed set | `simpExtLib.xtraversedata_for_ss` returns the full pair for `TraverseExt.XTRAVERSE`. |
-| Optional `legacy_traversedata_for_ss` | Removed, not a conversion API. Use total `simpLib.traversedata_for_ss` for an ordinary set, or `simpExtLib.traversedata_for_ss` for a tracked set. |
-| PURE/BOOL/COMBIN and other ordinary fragments for extension consumers | `simpExtLib.lift_ssfrag`; ordinary simpsets (including `BasicProvers.srw_ss()`) by `simpExtLib.lift_simpset`. |
+| `CONTEXT_REDUCER`, `CONFIG_REDUCER`, configuration/solver/policy types, `XTRAVERSE`, root/observed/child-first traversal | `TraverseExt`, with its own `TraverseExt.reducer` type. |
+| Paired/context/configured conditional rewriting | `Cond_rewrExt`. Both engines build their conversions with `Cond_rewr.COND_REWR_CONVS`; `Cond_rewr.COND_REWR_CONV` is its legacy runner. |
+| Threaded congruences | `Opening.THREADED_CONGPROC`, `Travrules.mk_threaded_travrules`, `simpExtLib.threaded_cong_ss`. `Opening.CONGPROC` and `Travrules.mk_travrules` do not thread. |
+| Extension fragments, simpsets, `dproc_ss`, `SSFRAG`, weakener data | `simpExtLib.ssfrag`/`simpset`, with `TraverseExt.reducer`. |
+| Configured preorder simplification | `congExtLib`, with its own congset type and an extension simpset. |
+| Loopers, safe/unsafe solvers, subgoaler, condition depth, term order | `simpExtLib`, with the `TraverseExt.ssolver`/`subgoaler` types. |
+| `Split`, `ExclX` | `simpExtLib`; marker inspection and recursive processing are in `simpMarkerLib`, not generic `markerLib`. |
+| Source handles/views/bundles, control-preserving replay, child-first preparation | `simpExtLib`; build tracked ingredients before installing source-sensitive rules, makers or reducers. |
+| Configured `GEN_*`, global/child-first/BOUND tactics | `simpExtLib`, taking its simpset and a `TraverseExt` policy. BOUND requires the bundle already installed. |
+| Configured traversal data for a simpset | `simpExtLib.xtraversedata_for_ss`, for `TraverseExt.XTRAVERSE`. |
+| Ordinary fragments/simpsets (`PURE_ss`, `BOOL_ss`, `srw_ss()`, ...) in the extension engine | `simpExtLib.lift_ssfrag`, `simpExtLib.lift_simpset`. |
 
 The adapters are one-way. `TraverseExt.lift` wraps an ordinary reducer while
 retaining its context/callbacks; `simpExtLib.lift_ssfrag` lifts an ordinary
@@ -118,9 +219,9 @@ bin/Holmake --holstate="$PWD/bin/hol.state0" \
 
 Reducers carry exception-valued private contexts. Ordinary `Traverse.TRAVERSE`
 initializes contexts at conversion construction and eagerly constructs its
-congruence/weakener factories at the original stage. There is no mixed-state
-or all-REDUCER eligibility branch. Extended `TRAVERSE` retains the default
-schedule; configured/context/observed entry points explicitly refresh.
+congruence/weakener factories at that stage. Extended `TRAVERSE` retains
+the default schedule; configured/context/observed entry points explicitly
+refresh.
 `TRAVERSE_WITH_CONTEXT` separates reducer facts from solver-only facts;
 solver facts also protect binders but do not install rewrites a second time.
 
@@ -146,19 +247,19 @@ work. Both traversal engines are `TraverseCore`, parameterised by how a
 reducer is applied; `congLib` and `congExtLib` are both `congLibFn`; code
 common to `simpLib` and `simpExtLib` is in `simpCommon`.
 Both engines use the same original `Trace` action/hook/ref and registered
-`simplifier` knob; rewrite tracking is one extent, owned by `Cond_rewr`
-(develop's, byte-identical apart from the `note_rewrite` spec added to its
-signature). `Cond_rewrExt` reports through `Cond_rewr.note_rewrite`, and
+`simplifier` knob; rewrite tracking is one extent, owned by `Cond_rewr`.
+`Cond_rewrExt` reports through `Cond_rewr.note_rewrite`, and
 `simpExtLib.track` is `Cond_rewr.with_tracking`. `simpLib.track` and
 `simpExtLib.track` are therefore the same extent: either sees the rewrites
 of both engines in the order they fired. A nested extent of either kind
-reports only its own rewrites and the enclosing extent does not see them,
-as on develop; exceptions restore the enclosing extent.
+reports only its own rewrites and the enclosing extent does not see them;
+exceptions restore the enclosing extent.
 Existing `BoundedRewrites.control`, `Conv.UNCHANGED`, `Feedback.HOL_ERR` and
 `Portable.Interrupt` identities are not copied. Named-fragment registries are
 intentionally **different typed Context slots**, `simpLib.ssfragDB` and
-`simpExtLib.ssfragDB`: SF syntax is shared, but lookup is late and solely in
-the consuming engine's registry, with no fallback to the other.
+`simpExtLib.ssfragDB`. SF syntax is shared and lookup is late. `simpLib`
+never consults the extension registry; `simpExtLib` falls back to
+`simpLib`'s, lifting what it finds.
 
 ## Extended arguments and exclusions
 
@@ -205,8 +306,8 @@ not an operation during concurrent proofs or arbitrary late-segment replay.
 
 Persistence uses one private ordered event stream,
 `splitLib.persistent.rules.v1`, one direct attribute and one private listener;
-there is no generic ThmSetData split set/exporter. Generic markerLib,
-ThmSetData and postkernel ownership remain unchanged. Query
+there is no generic ThmSetData split set/exporter, and generic markerLib,
+ThmSetData and postkernel code are not involved. Query
 `splitLib.split_thms`/`named_split_thms`. Fresh-process export, rewind,
 ownership repair and heap-reload fixtures are normal selftests:
 
@@ -214,13 +315,6 @@ ownership repair and heap-reload fixtures are normal selftests:
 bin/Holmake --holstate="$PWD/bin/hol.state0" \
   -C src/simp/src split-persistence split-lifecycle
 ```
-
-Rebuild **branch-extension** theories/heaps from their scripts: private
-persistence format changed and `marker$Split`/`marker$ExcludeX` moved to
-`simpMarker$Split`/`simpMarker$ExcludeX`. Rebuild extension theorem consumers
-and compiled ML clients against the distinct new types. No old mixed-branch
-binary/heap compatibility is promised. Ordinary develop source clients and
-generic marker formats need no migration.
 
 ## Tests
 

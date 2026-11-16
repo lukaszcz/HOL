@@ -1,4 +1,4 @@
-(* Importing congLib loads what develop's congLib opened *)
+(* Importing congLib still loads the modules it opened before congLibFn *)
 local open liteLib computeLib Trace Travrules Cond_rewr in end
 
 structure congLib :> congLib =

@@ -152,7 +152,7 @@ type weakener_data =
    net's entries against; [original] is the spelling a decision procedure
    is registered under, and the two are not interchangeable.  A rule
    exclusion carries its parsed pattern for immediate application.  Strict
-   Excl names are reparsed on history replay, as on develop; ExclX rule
+   Excl names are reparsed on history replay, as in simpLib; ExclX rule
    targets keep their resolved patterns across theory contexts. *)
 type rule_exclusion =
   {original : string, pattern : string option * string, strict : bool}
@@ -497,7 +497,7 @@ fun name_match ({thypart,ci,...}:net_conv_info) pats =
    [Thy.Name] spelling, or with no theory part at all.  A dot is not
    decisive on its own: a theorem name can carry a numeric suffix, and can
    itself contain a dot.  This extended reading is reserved for [rule:]
-   exclusions; bare exclusions and [-*] use develop's parser below. *)
+   exclusions; bare exclusions and [-*] use simpLib's parser below. *)
 fun parse_simpset_name {unknown_thy} p =
   let
     fun known_thy (thy,name) =
@@ -519,7 +519,7 @@ fun parse_simpset_name {unknown_thy} p =
       | _ => dotted ()
   end
 
-(* Develop's [munge_pat], used by [-*] and every [Excl] name. *)
+(* simpLib's [munge_pat], used by [-*] and every [Excl] name. *)
 val munge_simpset_name = simpCommon.munge_simpset_name
 
 (* [rule:] exclusions have to be able to name what is installed.  A net
@@ -991,7 +991,7 @@ fun case_display_exists display =
     List.exists names (TypeBase.elts ())
   end
 
-(* Only ExclX resolves targets. Bare names first use develop's rule
+(* Only ExclX resolves targets. Bare names first use simpLib's rule
    reading; only when that matches nothing do they fall through to the
    strategy targets. Multiple strategy kinds are ambiguous. Unlike literal
    Excl, an explicit extended exclusion with no target is an error. *)
@@ -1198,7 +1198,7 @@ fun mk_tactic_solver (name,tac) =
  fun compile_native_rewrite event mk_rewrs {item=(nm,th),token} =
    compile_native event mk_rewrs token 0 (nm,dest_tagged_rewrite th)
 
- (* Preserve develop's ++ schedule: decode every ordinary tag, derive all
+ (* Preserve simpLib's ++ schedule: decode every ordinary tag, derive all
     AC rules, run every rewrite maker, and only then make conversions.
     Carry origins through these stages without allocating new tokens. *)
  fun compile_frag_native event mk_rewrs ac rewrs =
@@ -2362,7 +2362,7 @@ fun GEN_SIMP_TAC_CHILD_FIRST policy mode =
   gen_simp_tac_with_xdata (ChildFirst policy)
     (fn ss => xtraversedata_for_ss_prepared (ChildFirst policy) ss []) [] mode
 
-(* Old tactic entry points retain develop's marker processing and pass
+(* Plain tactic entry points retain simpLib's marker processing and pass
    schedule unless the invocation opts into a traversal strategy. *)
 fun strategy_free ss ths =
   let

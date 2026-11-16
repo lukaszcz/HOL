@@ -1,4 +1,4 @@
-(* Native ownership inspection only; never a pinned-develop dependency. *)
+(* Native ownership inspection only. *)
 
 (* Presence only; the selftest's attribute_identity checks which handler
    answers by dispatching to it. *)

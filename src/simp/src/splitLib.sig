@@ -52,8 +52,7 @@ sig
      and rules follow Context.restore; after rewinding before opt-in,
      call this API again rather than relying on a cached module load.
      Serialized theory initialization, not a concurrent proof operation.
-     Registers no generic ThmSetData set. Pre-cleanup branch theories and
-     heaps must be rebuilt: the private stream and marker theory changed. *)
+     Registers no generic ThmSetData set. *)
   val enable_split_attribute : unit -> unit
 
   (* Persistently retract [Thy.]Name, resolving an unqualified name in the

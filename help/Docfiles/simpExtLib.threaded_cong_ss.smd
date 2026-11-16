@@ -32,8 +32,8 @@ Applied higher-order result variables are beta-reduced in the rebuilt
 right-hand side after instantiation. This does not beta-reduce the
 original term on the left-hand side. These extensions apply only to
 rules in `threaded_cong_ss`; the `congs` field of `simpExtLib.SSFRAG`
-and `simpExtLib.Cong` retain ordinary congruence handling. Ordinary
-`simpLib.SSFRAG` and `simpLib.Cong` are unchanged and need no migration.
+and `simpExtLib.Cong`, like `simpLib.SSFRAG` and `simpLib.Cong`, use
+ordinary congruence handling.
 
 ### Failure
 

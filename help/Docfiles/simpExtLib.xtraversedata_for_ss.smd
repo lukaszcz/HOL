@@ -42,11 +42,10 @@ Construction or application can fail as for the selected traversal.
 >> TraverseExt.XTRAVERSE pair [] “T ∧ p”;
 ```
 
-Ordinary clients continue using `simpLib.traversedata_for_ss` and `Traverse`
-with ordinary recipes, without migration. The branch-only optional legacy
-eligibility accessor has been removed. Extension callers use the default
-or configured projection of their already tracked object, not an optional
-ordinary projection.
+Ordinary simpsets use `simpLib.traversedata_for_ss` and `Traverse`.
+Extension callers use the default or configured projection of their
+already tracked object; there is no ordinary projection of an extension
+simpset.
 
 Start with an extension recipe before installing source-sensitive rules.
 There is no transparent import from an ordinary simpset: recompiling known
