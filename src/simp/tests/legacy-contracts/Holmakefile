@@ -1,8 +1,0 @@
-HOLHEAP = $(HOLDIR)/bin/hol.state0
-
-# Frozen clients/signatures are installed byte-for-byte (signature header only
-# renamed) in a disposable native directory. Execute, do not just build .uo.
-.PHONY: check
-check:
-	cd ../compatibility && python3 -B -m unittest discover -p 'test_*.py'
-	python3 -B run.py

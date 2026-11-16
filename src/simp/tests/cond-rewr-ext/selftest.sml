@@ -1,4 +1,4 @@
-(* TASK_12: ordinary construction is the direct comparison, never an
+(* Ordinary construction is the direct comparison, never an
    extension projection. All successful proofs compare hypotheses too. *)
 open HolKernel Parse boolLib boolSyntax testutils
 

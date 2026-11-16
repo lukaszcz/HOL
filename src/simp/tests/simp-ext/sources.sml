@@ -1,4 +1,4 @@
-(* TASK_21: explicit tracked source, view and prepared-bundle contracts. *)
+(* Explicit tracked source, view and prepared-bundle contracts. *)
 open HolKernel Parse boolLib boolSyntax testutils
 structure S = simpExtLib
 structure E = TraverseExt

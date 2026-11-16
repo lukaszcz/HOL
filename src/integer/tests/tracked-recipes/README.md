@@ -1,4 +1,4 @@
-# Tracked integer logged recipes (TASK24)
+# Tracked integer logged recipes
 
 Opt-in exports, with no default installation or main wiring:
 
@@ -33,8 +33,7 @@ updates, rather than testing against a guessed reconstruction.
 Run from the repository root:
 
 ```sh
-sh src/simp/tests/compatibility/tools/root-wrapper.sh \
-  sh -c 'cd src/integer/tests/tracked-recipes && Holmake check'
+bin/Holmake -C src/integer/tests/tracked-recipes check
 ```
 
 The check prints `INTEGER_RECIPE_CHECKS=<n>` on success.  Also run

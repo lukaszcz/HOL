@@ -45,12 +45,10 @@ conditions, including symbolic positive-modulus assumptions.
 
 ## Running
 
-From the repository root, use the configured-path wrapper (it need not be
-executable):
+From the repository root:
 
 ```sh
-sh src/simp/tests/compatibility/tools/root-wrapper.sh \
-  sh -c 'cd src/num/arith/tests/tracked-recipes && Holmake check'
+bin/Holmake -C src/num/arith/tests/tracked-recipes check
 ```
 
 The standalone test Holmakefile is opt-in; existing Holmakefiles and main

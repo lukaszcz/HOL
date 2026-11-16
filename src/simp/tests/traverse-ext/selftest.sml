@@ -1,5 +1,5 @@
-(* TASK_09: assertions on the separate engine, not legacy adapters. *)
-functor TraverseExtTests (T : Task08TraverseExt) =
+(* Assertions on the separate engine, not legacy adapters. *)
+functor TraverseExtTests (T : TraverseExt) =
 struct
 open HolKernel Parse boolLib boolSyntax testutils
 
@@ -541,7 +541,8 @@ val _ = let
 in () end
 
 (* Failed recursive proofs restore traversal allowances. These are the
-   first five TASK_06 PriorLimits assertions, with explicitly lifted inputs. *)
+   first five ordinary traversal-limit assertions, with explicitly lifted
+   inputs. *)
 val _ = let
   val side = ``ext_limit_side:bool``
   val unsolved = ``ext_limit_unsolved:bool``
@@ -806,7 +807,6 @@ in () end
 
 end
 
-val _ = SignatureWitness.lift
 structure ActualTraverseExtTests = TraverseExtTests (TraverseExt)
 
 (* Poly/ML really elaborates these clients. Missing files or unrelated

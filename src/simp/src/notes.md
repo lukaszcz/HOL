@@ -55,11 +55,6 @@ reducer while retaining its context/callbacks; `congExtLib.lift_fragment`
 lifts public ordinary fragment data. Neither imports an opaque compiled set.
 There is no reverse adapter into ordinary traversal.
 
-The per-family, consumer and identity closure is checked by
-`../tests/compatibility/audit_task27.py`. The prototype API tables in
-`../tests/compatibility/migration/` keep their original coordinates; final
-compiled signatures, not prototype spelling, are authoritative.
-
 ## Executable tracked construction and projections
 
 Load extension modules explicitly (or list them in a Script's `Libs`).
@@ -229,16 +224,10 @@ and compiled ML clients against the distinct new types. No old mixed-branch
 binary/heap compatibility is promised. Ordinary develop source clients and
 generic marker formats need no migration.
 
-## Audit and acceptance boundary
+## Tests
 
-`MANIFEST` gives module ownership. The final source gate is
-`../tests/compatibility/audit_task27.py`; fresh ordinary load paths,
+`MANIFEST` gives module ownership. Fresh ordinary load paths,
 initialization callbacks, shared controls and executable examples are checked
-in `../tests/api-audit`. Physical coverage ownership is in
-`../tests/compatibility/task26_relocation.py` with the coverage ledger
-`../tests/compatibility/coverage-ledger.json.gz` (the unchanged develop
-selftest is separate from the complete native-extension suite).
+in `../tests/api-audit`; the complete extension integration suite is
+`../tests/native-extension`, separate from the ordinary `selftest.sml`.
 
-These are documentation/dependency/identity gates. They establish readiness
-for expanded acceptance measurements, **not** final runtime/allocation,
-independent clean-build, full regression or release approval.

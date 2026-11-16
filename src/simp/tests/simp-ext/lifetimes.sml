@@ -1,4 +1,4 @@
-(* TASK22 intersections not covered by the native traversal/strategy pins:
+(* Intersections not covered by the native traversal/strategy pins:
    single-step roots, retained generic contexts through opaque callbacks,
    failed saved applications, and eta policy with selected congruence descent.
    All expected results are kernel proofs, including complete hypotheses. *)

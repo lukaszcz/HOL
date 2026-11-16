@@ -1,4 +1,4 @@
-# Focused simpExtLib contracts (TASK_10)
+# Focused simpExtLib contracts
 
 Run from the repository root, once `simpExtLib` is available:
 
@@ -25,7 +25,7 @@ theorems/conversions; no ordinary fragment/set is promoted, inspected, or
 reconstructed via `ssfrags_of`. BOOL retains the ordered recipe
 `PURE -> BOOL -> NOT -> CONG -> UNWIND`; ETA is opt-in.
 
-`APIExamples.sml` elaborates clients against the actual sealed production
+`APIExamples.sml` elaborates clients against the actual production
 modules. It checks the complete recipe catalog, explicit ordinary-reducer
 lifting, configured reducers, both **extension-typed** projections, argument
 preparation, bundle installation, and immutable AC/TypeBase/relational/threaded
@@ -70,24 +70,7 @@ hypotheses, not just the resulting term. Open conditional fixtures compare the
 complete expected theorem/hypothesis set. Saved-tactic checks run through
 `VALID`. Context snapshots, listeners and the global depth control are restored.
 
-## Additive provenance
-
-These tests add separate-type assertions; they do not move or weaken original
-cases or alter the sealed coverage ledger. Comment anchors map to the
-existing original contracts as follows:
-
-| New block | Original semantic provenance |
-| --- | --- |
-| `The standard recipe order` | ordinary PURE/BOOL construction recipes |
-| `A saved NONE stays live` | main selftest configured depth surface; TraverseExt live-depth contracts |
-| `Lift construction and projection` | TraverseExt lifting and construction/reuse contracts |
-| `Exhaust before extracting` / `Getter/source extraction` | main selftest compiled projection/source lifetime contracts |
-| `Prepared bundles retain` | main selftest `combined_bundle_fixture` |
-| `Child-first changes overlap` | main selftest `prepared_normalization_fixture`, observer/child-first contracts |
-| `Two typed Context slots` | main selftest R4 late FRAG lookup and Context restoration |
-| `One tracking slot` | singleton tracking/control ownership contract |
-
-## Tracked compiler gate (TASK_14)
+## Tracked compiler gate
 
 `tracked.sml` adds focused installation, identity and actual-control tests:
 projection extraction before use, after partial use and after exhaustion in
@@ -103,7 +86,7 @@ The inventory getter `rewrite_sources` now rejects directives. First call
 This is bounded tracked-compiler acceptance, not exhaustive view/bundle
 validation or performance acceptance.
 
-## Exclusion and replay gate (TASK_19)
+## Exclusion and replay gate
 
 `exclusions.sml` adds 159 checks on explicitly tracked objects. Both default
 and configured projections are extracted/used in both orders. Complete
@@ -117,11 +100,10 @@ conclusions and hypothesis sets, not just endpoints, are compared.
 | `Prohibition is distinct` | native named-fragment removal/strategy replay; force-add, duplicates, no-op identity, exact maker/opaque-collector ordering, limits and retained prohibition |
 | `Namespace separation` | native strategy namespace/split suppression; ordinary loopers colliding with split/case displays survive suppression, later additions and preserving replay |
 
-No original assertion is moved or relaxed. `src/selftest.sml` still runs its
-642 source-tied native checks, including parser/warning/ambiguity contracts,
-strategy targets, local/ambient split suppression, mixed views and failures.
-The unchanged coverage ledger verifies those assertions and the 929-check
-legacy exclusion suite. Dependent-view invalidation is covered under
+No original assertion is moved or relaxed. `../native-extension` still runs
+its native checks, including parser/warning/ambiguity contracts, strategy
+targets, local/ambient split suppression, mixed views and failures.
+Dependent-view invalidation is covered under
 "Sources, views and prepared bundles" below.
 
 Only extension-owned `looper_tac` changes: split/case suppression applies to
@@ -130,7 +112,7 @@ strict reparsing versus resolved replay, and ordinary-reset versus explicit
 preserving-control replay stay unchanged. There is no legacy-history identity
 inference, new ordinary import, or ordinary representation change.
 
-## Configured tactics and strategies (TASK_20)
+## Configured tactics and strategies
 
 `strategies.sml` adds **186 checks / 63 executed validations**;
 `tactics.sml` adds **88 checks / 18 executed validations**. All proofs are
@@ -162,7 +144,7 @@ addition returns its exact input before entering compilation.
 clients. Branch-only help examples now use `simpExtLib`/`TraverseExt` and tracked
 recipes; ordinary callers require no migration.
 
-## Sources, views and prepared bundles (TASK_21)
+## Sources, views and prepared bundles
 
 `sources.sml` adds **407 checks**, including three executed static boundary
 rejections. Conversion checks compare complete conclusions and hypothesis
@@ -192,7 +174,7 @@ and compiled statements in installation order, not only history-event identity
 or final membership. All work remains extension-owned; no legacy
 allocation, cache, representation, registration or callback path changes.
 
-## Child-first derivation and solver lifetimes (TASK_22)
+## Child-first derivation and solver lifetimes
 
 `derivation.sml` adds **1,392 checks**, including 270 prior review-regression
 checks and 276 checks for post-abort dispatch and nested continuations.

@@ -147,17 +147,6 @@ path = "src/simp/src"
 linelen = 0
 
 [[h4pedant.dir]]
-# abicheck.sml is installed into every measured process and sealed by hash;
-# retain its original bytes, not reformatted SML.
-path = "src/simp/tests/performance/review-20261021"
-linelen = 0
-
-[[h4pedant.dir]]
-# Exact pinned signatures/selftest, including the original long congLib lines.
-path = "src/simp/tests/compatibility/inputs/develop"
-linelen = 0
-
-[[h4pedant.dir]]
 # mostly generated
 path = "src/tactictoe/selftest"
 linelen = 0

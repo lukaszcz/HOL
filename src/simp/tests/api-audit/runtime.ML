@@ -69,7 +69,7 @@ fun extension_once () = S.SIMP_CONV pureSimpsExt.pure_ss
 val _ = let
   val saved = HOLFlags.current_trace "simplifier.trace"
   val events = ref ([] : (term * thm) list)
-  val name = "TASK27 shared Trace listener"
+  val name = "api-audit shared Trace listener"
   fun watch (_,Trace.REWRITING (_,tm,th)) = events := !events @ [(tm,th)]
     | watch _ = ()
   val _ = Listener.add_listener original_trace_hook (name,watch)
@@ -160,8 +160,8 @@ in check "no stale tracking after nested scopes" (null empty) end;
    name: opposite lookup AND opposite SF consumption must fail. *)
 val _ = let
   val saved = Context.snapshot ()
-  val oname = "TASK27_ordinary_only"
-  val ename = "TASK27_extension_only"
+  val oname = "api_audit_ordinary_only"
+  val ename = "api_audit_extension_only"
   fun missing name tac tm =
     check ("opposite SF consumer rejects " ^ name)
       (case Exn.capture (fn () => runtac (VALID tac) ([],tm)) () of

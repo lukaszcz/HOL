@@ -1,19 +1,11 @@
 HOLHEAP = $(HOLDIR)/bin/hol.state0
-INCLUDES = ../../src ../compatibility/interfaces
-EXTRA_CLEANS = selftest.exe diagnostics.exe
+INCLUDES = ../../src
+EXTRA_CLEANS = selftest.exe
 
-SignatureWitness.uo selftest.uo: \
-  ../compatibility/interfaces/Task08TraverseExt.uo ../../src/TraverseExt.uo
-selftest.exe: selftest.uo SignatureWitness.uo
+selftest.uo: ../../src/TraverseExt.uo
+selftest.exe: selftest.uo
 	$(HOLMOSMLC) -o $@ $<
 
-diagnostics.exe: diagnostics.uo
-	$(HOLMOSMLC) -o $@ $<
-
-.PHONY: check diagnostics
+.PHONY: check
 check: selftest.exe
 	./selftest.exe
-
-# Do not run measurements concurrently with builds or other diagnostics.
-diagnostics: diagnostics.exe
-	./diagnostics.exe

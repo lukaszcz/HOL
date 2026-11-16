@@ -5,15 +5,18 @@ EXTRA_CLEANS = selftest.exe
 selftest.exe: selftest.uo
 	$(HOLMOSMLC) -o $@ $<
 
-# Receipts go below $(API_AUDIT_OUTPUT), an absolute path outside the
-# repository; run.py refuses a path inside it, and the receipts are kept
-# there.  Unset or empty: the receipts go to a temporary directory that is
-# removed when the audit finishes, whatever its result.
+# One fresh process per import order, foreign owner kind and owner timing.
+# Documentation.sml is compiled against the real signatures, not linked.
 .PHONY: check
 check: selftest.exe Documentation.uo
-	out="$(API_AUDIT_OUTPUT)"; \
-	if [ -z "$$out" ]; then \
-	  tmp=$$(mktemp -d); trap 'rm -rf "$$tmp"' EXIT HUP INT TERM; \
-	  out="$$tmp/receipts"; \
-	fi; \
-	python3 run.py --output "$$out"
+	@status=0; \
+	for order in simp-first cong-first; do \
+	  for kind in attribute exporter; do \
+	    for owner in before after; do \
+	      echo "api-audit: $$order $$kind $$owner"; \
+	      API_AUDIT_SRC=$$(pwd)/../../src API_AUDIT_ORDER=$$order \
+	      API_AUDIT_KIND=$$kind API_AUDIT_OWNER=$$owner \
+	        ./selftest.exe < /dev/null || status=1; \
+	    done; \
+	  done; \
+	done; exit $$status

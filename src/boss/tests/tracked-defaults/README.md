@@ -7,12 +7,11 @@ bin/Holmake --no-project --no-cache \
   -C src/boss/tests/tracked-defaults -j1 check
 ```
 
-On the configured-path/bwrap checkout used during development:
+From the repository root:
 
 ```sh
-sh src/simp/tests/compatibility/tools/root-wrapper.sh \
-  bin/Holmake --no-project --no-cache \
-  -C src/boss/tests/tracked-defaults -j1 check
+bin/Holmake --no-project --no-cache -C src/boss/tests/tracked-defaults \
+  -j1 check
 ```
 
 `check` builds and runs `selftest.sml` using `testutils` and `hol.state0`,

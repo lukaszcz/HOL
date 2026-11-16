@@ -1,4 +1,4 @@
-(* TASK22: private child-first derivation, not invocation simplification. *)
+(* Private child-first derivation, not invocation simplification. *)
 open HolKernel Parse boolLib boolSyntax testutils
 val _ = simpExtLib.empty_ss
 val _ = TraverseExt.default_config
@@ -45,13 +45,13 @@ exception Stop of unit ref
 val token = ref ()
 fun exact (Stop r) = Portable.pointer_eq (r,token) | exact _ = false
 val holpayload = Feedback.mk_hol_error
-  "derivation" "callback" locn.Loc_Unknown "TASK22 payload"
+  "derivation" "callback" locn.Loc_Unknown "derivation payload"
 val holerror = HOL_ERR holpayload
 fun exact_hol (HOL_ERR e) =
       Portable.pointer_eq (e,holpayload) andalso
       Feedback.top_structure_of e = "derivation" andalso
       Feedback.top_function_of e = "callback" andalso
-      Feedback.message_of e = "TASK22 payload"
+      Feedback.message_of e = "derivation payload"
   | exact_hol _ = false
 val errors = [("foreign",Stop token,exact),
               ("HOL_ERR",holerror,exact_hol),

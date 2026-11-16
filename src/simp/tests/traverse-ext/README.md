@@ -1,4 +1,4 @@
-# Focused TraverseExt contracts (TASK_09)
+# Focused TraverseExt contracts
 
 Run from the repository root, with the core heap:
 
@@ -7,11 +7,10 @@ bin/Holmake --holstate="$PWD/bin/hol.state0" --no-project --no-cache \
   -C src/simp/tests/traverse-ext -j1 check
 ```
 
-`check` builds **and executes** `selftest.exe`. Building `.uo` files alone
-is not validation. No `bin/hol` input pipelines or mixed simpset adapters are
-used. `SignatureWitness.sml` applies the complete traversal signature
-to the actual `TraverseExt` structure. `selftest.sml` also instantiates its
-signature-parameterized test body with that actual structure.
+`check` builds **and executes** `selftest.exe`. No `bin/hol` input
+pipelines or mixed simpset adapters are used. `selftest.sml` instantiates
+its signature-parameterized test body with the actual `TraverseExt`
+structure.
 
 Coverage:
 
@@ -56,41 +55,3 @@ Successful execution prints `TraverseExt focused checks: 131` and exits zero.
 The counter includes `convtest` assertions and the two negative clients.
 The parent `../../src/Holmakefile` runs this separate target at selftest level 1;
 ordinary `selftest.sml` does not import the new engine.
-
-## Additive coverage map
-
-These anchors identify duplicated invariants, **not relocated original cases**.
-All 2,153 coverage-ledger IDs/bodies remain at their original sealed
-destinations and are checked by `../compatibility/coverage_ledger.py`. The new
-tests add explicit lifting and apply the same contracts to the separate
-type/engine.
-
-| New selftest block (exact comment anchor) | Coverage-ledger case/body provenance |
-| --- | --- |
-| `Lifting and both record views are inert` / `Native adapter views` | New explicit boundary; interface adapter contracts |
-| `The lifted callbacks also receive` | `traversal:0001-0009` private recursive contexts; explicit stack/relation checks added |
-| `Atomic terms isolate initial collection` | `native:0503,0512,0514,0518-0520`; `traversal:0001-0009` |
-| `NONE must reach the native candidate` | `traversal:0029-0032`; `native:0612-0613,0617-0630` live/configured controls |
-| `Generic solver facts must not leak` | `native:0607-0610` binder/fact-order assertions |
-| `Root selection applies only outside` | `native:0554`; original root/child-first blocks at selftest:730-1533,3446 |
-| `Eta preservation is policy-selected` / `Observer failure must survive` | `native:0491-0502` child-first composite assertions, selftest:3871-5019 |
-| `Failed recursive proofs restore` | `limits:0001-0005` (explicitly lifted); pipeline proof transport is additional |
-| `Construction and factory exception scopes` | `traversal:0011-0028`; `native:0548-0555` factory schedules |
-
-Original assertions are not weakened or replaced by this subset map. Fresh native
-receipts compare the entire original ordered streams; paired receipts compare
-all 47 traversal checks/273 OBS events (plus original/exclusion/limit suites).
-
-## Separate construction/reuse diagnostic
-
-Build `diagnostics.exe` with the same Holmake flags, then, **after builds finish**:
-
-```
-(cd src/simp/tests/traverse-ext && ./diagnostics.exe)
-```
-
-This retains/exercises 20,000 constructed conversions separately from saved
-conversion reuse, for ordinary default, extended default, old mixed refresh and
-separate refresh. Every result's conclusion/hypotheses and exact callback counts
-are consumed. CPU and wall displays are single-process diagnostics only, not
-calibrated performance acceptance, independent builds or a legacy cost claim.

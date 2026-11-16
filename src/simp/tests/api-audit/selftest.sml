@@ -55,7 +55,7 @@ fun no_private () = not (member "splitLib.persistence.onload"
   (map #1 (hooks ())))
 val _ = check "fail-fast testutils" (!diemode = ProcessExit)
 val _ = boolTheory.TRUTH
-val _ = Theory.new_theory "task27_api_audit"
+val _ = Theory.new_theory "api_audit"
 val _ = ordinary_only "entry"
 val _ = check "fresh launcher has neither ordinary library"
   (not (loaded "simpLib") andalso not (loaded "congLib"))

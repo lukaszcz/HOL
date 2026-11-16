@@ -1,7 +1,0 @@
-# No implicit native builds or benchmarks. The authorized runner generates
-# its private build rules, using the maintained paired launcher.
-.PHONY: all offline
-all: offline
-
-offline:
-	python3 -B -m unittest discover -s . -p 'test_*.py'

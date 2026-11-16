@@ -1,4 +1,4 @@
-# Focused Cond_rewrExt contracts (TASK_12)
+# Focused Cond_rewrExt contracts
 
 From the repository root, after the core heap is available:
 
@@ -64,8 +64,7 @@ separate target rather than an import of ordinary `../../src/selftest.sml`.
   private exception retains its original payload identity; it is raised
   outside the conditional engine and is not subject to its wrapper.
 - `Cond_rewrExt.is_var_perm` is its own copy of Cond_rewr's unexported
-  predicate (audited token-equal to develop's by `audit_task27.py`);
-  permutative rewrites are accepted and refused identically by
+  predicate; permutative rewrites are accepted and refused identically by
   `Cond_rewr.COND_REWR_CONV` and both extension runners.
 
 Every successful rewrite assertion compares both conclusion and hypothesis
@@ -76,6 +75,4 @@ The executable establishes observable sharing and construction/application
 contracts. This suite does not establish that matcher preparation occurs
 **exactly once**: a black-box late-projection test cannot detect rebuilding
 an equivalent matcher while preserving its counter.  That ordinary loading
-has no extension dependency is checked by `../api-audit`.  Timing and
-allocation acceptance belongs to the separate paired probes, not this
-deterministic regression suite.
+has no extension dependency is checked by `../api-audit`.

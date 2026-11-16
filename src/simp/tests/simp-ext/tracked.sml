@@ -1,4 +1,4 @@
-(* TASK_14: authoritative tracked installation and inert projections. *)
+(* Authoritative tracked installation and inert projections. *)
 open HolKernel Parse boolLib boolSyntax testutils
 val _ = simpExtLib.empty_ss
 val _ = TraverseExt.default_config

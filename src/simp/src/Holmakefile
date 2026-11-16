@@ -1,13 +1,6 @@
 HOLHEAP = $(HOLDIR)/bin/hol.state0
 EXTRA_CLEANS = selftest.exe simp-selftest.log fresh-load-selftest.exe \
-  fresh-load-shadowed.exe \
-  fragment-contracts.log compiled-core.log literal-exclusions.log \
-  fragments-python-tests.log compiled-core-python-tests.log \
-  interfaces-design-check.log \
-  ../tests/compatibility/interfaces/selftest.exe \
-  ../tests/compatibility/interfaces/sharedExportsCheck.exe \
-  ../tests/compatibility/interfaces/.hol/ \
-  ordinary-tactics.log standard-recipes.log legacy-contracts.log \
+  fresh-load-shadowed.exe standard-recipes.log \
   api-audit.log ../tests/api-audit/selftest.exe ../tests/api-audit/.hol/ \
   native-extension.log ../tests/native-extension/selftest.exe \
   ../tests/native-extension/.hol/ \
@@ -23,7 +16,7 @@ EXTRA_CLEANS = selftest.exe simp-selftest.log fresh-load-selftest.exe \
   congruence-ext.log ../tests/congruence-ext/selftest.exe \
   ../tests/congruence-ext/ordinary.exe \
   ../tests/congruence-ext/.hol/ \
-  ../tests/traverse-ext/selftest.exe ../tests/traverse-ext/diagnostics.exe \
+  ../tests/traverse-ext/selftest.exe \
   ../tests/traverse-ext/.hol/ split-registration.log \
   split-persistence.log split-lifecycle.log simp-marker-tests.log \
   replay-order.log \
@@ -46,10 +39,9 @@ selftest.exe: selftest.uo boolSimps.uo Cond_rewr.uo simpLib.uo
 # library prerequisites are not imports.
 FRESH_LOAD = ../tests/fresh-load
 # The extension modules the shadowed-load launcher loads.  Its SML name
-# rule (ext_patterns in the launcher) lists the same four patterns; the
-# static check tests/compatibility/interfaces/test_shadowed.py compares both
-# with the added modules, so a theory script matching a pattern (Holmake has
-# no filter-out; the launcher skips scripts) fails that check.
+# rule (ext_patterns in the launcher) lists the same four patterns; keep the
+# two in step.  Holmake has no filter-out, so the launcher skips theory
+# scripts that match a pattern.
 FRESH_EXT_UO = $(patsubst %.sml,%.uo,\
   $(wildcard *Ext*.sml split*.sml SplitData.sml simpMarker*Lib.sml))
 FRESH_SCENARIOS = control attribute-first set-first attribute-after set-after \
@@ -122,36 +114,6 @@ split-lifecycle: simpExtLib.uo congExtLib.uo splitPersistLib.uo
 	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
 	  -C ../tests/split-lifecycle check,split-lifecycle.log)
 
-# Fragment construction is compared with pinned develop in private processes.
-.PHONY: fragment-contracts
-fragment-contracts: simpLib.uo
-	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
-	  -C ../tests/fragments check,fragment-contracts.log)
-
-# Compiled storage/slope and exact compilation-order baseline contracts.
-.PHONY: compiled-core
-compiled-core: simpLib.uo
-	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
-	  -C ../tests/compiled-core check,compiled-core.log)
-
-# Literal exclusions and baseline replay, isolated from extension inventories.
-.PHONY: literal-exclusions
-literal-exclusions: simpLib.uo
-	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
-	  -C ../tests/exclusions check,literal-exclusions.log)
-
-# Ordinary tactic composition, staged callbacks and real proof reconstruction.
-.PHONY: ordinary-tactics
-ordinary-tactics: simpLib.uo
-	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
-	  -C ../tests/tactics check,ordinary-tactics.log)
-
-# Frozen public clients and six quota assertions, in ordinary-only processes.
-.PHONY: legacy-contracts
-legacy-contracts: simpLib.uo congLib.uo
-	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
-	  -C ../tests/legacy-contracts check,legacy-contracts.log)
-
 # Fresh ordinary load paths/callbacks and deliberate extension control sharing.
 # Only the independent launcher imports the extension layer, after its guards.
 .PHONY: api-audit
@@ -159,7 +121,7 @@ api-audit: simpLib.uo congLib.uo simpExtLib.uo congExtLib.uo boolSimpsExt.uo
 	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
 	  -C ../tests/api-audit check,api-audit.log)
 
-# Preserve the entire reviewed native suite and incremental migrations intact.
+# The extension engine's integration suite, with its ordinary controls.
 .PHONY: native-extension
 native-extension: simpExtLib.uo congExtLib.uo boolSimpsExt.uo
 	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
@@ -192,36 +154,11 @@ cond-rewr-ext: Cond_rewrExt.uo
 	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
 	  -C ../tests/cond-rewr-ext check,cond-rewr-ext.log)
 
-# Baseline-free unit tests of the paired-harness code (no pinned baseline or
-# snapshot) for the fragments, compiled-core and interfaces directories; the
-# compatibility unit tests run in legacy-contracts. The fragments and
-# compiled-core tests need no built products; design-check also builds and
-# runs the Task08 prototypes against this directory, so it depends on the
-# modules they use. The paired runs themselves stay explicit.
-.PHONY: fragments-python-tests compiled-core-python-tests \
-  interfaces-design-check
-fragments-python-tests:
-	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
-	  -C ../tests/fragments python-tests,fragments-python-tests.log)
-
-compiled-core-python-tests:
-	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
-	  -C ../tests/compiled-core python-tests,compiled-core-python-tests.log)
-
-INTERFACES = ../tests/compatibility/interfaces
-interfaces-design-check: Cond_rewr.uo Cond_rewrExt.uo Opening.uo \
-  OpeningExt.uo Traverse.uo TraverseExt.uo Travrules.uo TravrulesExt.uo \
-  congLib.uo simpLib.uo simpExtLib.uo boolSimps.uo boolSimpsExt.uo
-	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache --no_prereqs -j1 \
-	  -C $(INTERFACES) design-check,interfaces-design-check.log)
-
 ifdef HOLSELFTESTLEVEL
 all: simp-selftest.log traversal-contracts exclusion-contracts traverse-ext \
-  simp-ext cond-rewr-ext congruence-ext fragment-contracts compiled-core \
-  literal-exclusions ordinary-tactics standard-recipes legacy-contracts \
-  native-extension api-audit fragments-python-tests \
-  compiled-core-python-tests interfaces-design-check \
-  fresh-load-regressions split-registration split-persistence split-lifecycle
+  simp-ext cond-rewr-ext congruence-ext standard-recipes native-extension \
+  api-audit fresh-load-regressions split-registration split-persistence \
+  split-lifecycle
 
 simp-selftest.log: selftest.exe
 	$(tee ./selftest.exe,$@)

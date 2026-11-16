@@ -1,25 +1,13 @@
-# Split lifecycle boundary (TASK23)
+# Split lifecycle boundary
 
 Run from the repository root:
 
 ```sh
 bin/Holmake --holstate="$PWD/bin/hol.state0" --no-project --no-cache \
   -C src/simp/tests/split-lifecycle -j1 check
-python3 -B src/simp/tests/compatibility/run_task23_lifecycle.py \
-  --output /tmp/lifecycle
 ```
 
-`check` is also part of `src/simp/src`'s selftest-enabled `all`. The Python
-runner exports the parent/child/descendant fixtures into a newly created
-private directory, executes the tests, inspects the generated ML dependency
-order, and removes all private products. It additionally builds and executes
-a semantic negative using a private `SplitData` with only dispatcher repair
-removed. Output directories contain receipts, source/runtime hashes and
-compact dependency observations, not build trees or heaps. Actual traced
-source uses and `Meta.fileDirMap` inventories are resolved through HOL's
-`.hol/objs` mapping, checked against this checkout, and hashed together with
-the simplifier's `.uo`/`.ui` dependency products. Requested load paths alone
-are not treated as execution provenance.
+`check` is also part of `src/simp/src`'s selftest-enabled `all`.
 
 ## Ownership and module graph
 

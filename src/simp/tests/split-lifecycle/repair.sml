@@ -58,8 +58,8 @@ val _ = ThmAttribute.register_attribute
   ("split",{localf=replacement_attr,storedf=replacement_attr})
 val replaced = Context.snapshot ()
 val replaced_result = Exn.capture init ()
-(* repair.sml must import nothing from src/simp/src except SplitData, so the
-   TASK23 source-isolated negative stays isolated; hence SplitData.exclude,
+(* repair.sml must import nothing from src/simp/src except SplitData, so
+   that the source-isolated negative stays isolated; hence SplitData.exclude,
    not splitLib.exclude_split. *)
 val replaced_exclusion =
   Exn.capture SplitData.exclude "split_listener_repair$local"

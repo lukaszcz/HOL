@@ -1,4 +1,4 @@
-# Logged real recipes (TASK24)
+# Logged real recipes
 
 `realSimpsExt` exports only REAL_REDUCE, RMULCANON and RMULRELNORM,
 matching the ordinary real log's append order. It reconstructs the ordered
@@ -12,13 +12,10 @@ not need the ordinary pair fragment or arithmetic decision procedure.
 Every resulting rewrite is checked against the ordinary ordered ingredients,
 including its complete conclusion and exact hypothesis set.
 
-From the repository root, using the configured-path wrapper:
+From the repository root:
 
 ```sh
-W=src/simp/tests/compatibility/tools/root-wrapper.sh
-sh "$W" sh -c 'cd src/real/tests/tracked-recipes && Holmake check'
-sh "$W" bin/build -t --seq=tools/sequences/upto-parallel
-sh "$W" tools/h4pedant/h4pedant src/real
+bin/Holmake -C src/real/tests/tracked-recipes check
 ```
 
 The check prints `REAL_RECIPE_CHECKS=<n>` on success.

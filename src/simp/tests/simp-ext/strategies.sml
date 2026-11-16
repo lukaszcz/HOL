@@ -1,4 +1,4 @@
-(* TASK_20 maintained configured-strategy regressions.
+(* Maintained configured-strategy regressions.
    Provenance: src/selftest.sml strategy surface, solver/looper pipeline,
    child-first traversal, and mutual/counting global simplification groups.
    Additive: the 642 native checks remain in place. Bound replay and nested

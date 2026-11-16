@@ -3700,7 +3700,7 @@ val _ =
                    "solver:missing", "split:missing", "case:missing"]
   end
 
-(* TASK_09: branch-only namespace selection and collision matrix. The
+(* Branch-only namespace selection and collision matrix. The
    legacy-only prefix/parser matrix lives in exclusion-contracts. *)
 val _ = let
   fun check name b = (tprint name; if b then OK () else die name)
@@ -6196,7 +6196,7 @@ local
 
   val ordinary_eligibility = let
     open OrdinarySimp OrdinaryBool
-    (* TASK_16 removes optional/configured getters from ordinary sets.
+    (* Ordinary sets have no optional/configured getters.
        Their total baseline projection is inert for every ordinary input;
        all strategy/configured cases remain in the tracked tests above. *)
     val additions = ref 0

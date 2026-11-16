@@ -47,8 +47,7 @@ fun require_result label (succeeded,silent) =
    decision.  Not every re-export is listed: liteLib.foldl and hurdUtils.map
    are compatible with the basis and are excluded.  `load` compiles modules
    absent from the heap in the user's toplevel, so these names must be
-   qualified there.  The static check
-   tests/compatibility/interfaces/test_shadowed.py parses this list. *)
+   qualified there. *)
 val shadowed = ["size", "concat", "foldr"]
 
 fun compile_string src =

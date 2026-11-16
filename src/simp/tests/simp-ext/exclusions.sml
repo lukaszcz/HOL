@@ -1,4 +1,4 @@
-(* TASK_19: tracked exclusions, suppression and actual replay controls. *)
+(* Tracked exclusions, suppression and actual replay controls. *)
 open HolKernel Parse boolLib boolSyntax testutils
 structure S = simpExtLib
 structure E = TraverseExt
@@ -292,6 +292,6 @@ val _ = scoped (fn () => let
   val _ = scenario ("split " ^ key,"split:" ^ key,S.add_split split)
 in () end)
 
-val _ = print ("TASK19_EXTENSION_EXCLUSIONS_OK checks=" ^
+val _ = print ("EXTENSION_EXCLUSIONS_OK checks=" ^
                Int.toString (!checks) ^ "\n")
 val _ = OS.Process.exit OS.Process.success

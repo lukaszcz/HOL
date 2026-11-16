@@ -1,30 +1,21 @@
-# Standalone API/runtime audit
+# Ordinary/extension engine isolation and sharing
 
 This fixture owns no production code. It uses `testutils` with fail-fast
 executable launchers, not SML piped into `hol`.
 
-From the repository root (no routine/full build is requested):
+From the repository root:
 
 ```sh
 bin/Holmake -C src/simp/tests/api-audit check
 ```
 
-Receipts are written outside the repository, below `API_AUDIT_OUTPUT`, which
-must be an **absolute** path (`run.py` refuses one inside the repository).
-Without it (or if it is empty) `check` writes the receipts to a temporary
-directory and removes it when the audit finishes, pass or fail; set
-`API_AUDIT_OUTPUT` to keep them. Run `python3 run.py --output DIR` directly to
-choose the directory (without `--output`, `run.py` makes a directory with
-`mkdtemp` and prints its path). If the checkout is mounted at a different root
-than the one the build was configured with, run the command through
-`src/simp/tests/compatibility/tools/root-wrapper.sh`.
-
-`check` compiles `Documentation.sml` against the real sealed signatures but
-**does not link it into the launcher**. `run.py` starts eight fresh processes:
-`simpLib` then `congLib`, or the reverse, each with a foreign split attribute
-or exporter owner installed before or after the ordinary imports. Exporters
-install their own attribute dispatcher, so the two foreign owners are tested
-in separate processes, not registered over each other.
+`check` compiles `Documentation.sml` against the real signatures but
+**does not link it into the launcher**. It then runs `selftest.exe` in
+eight fresh processes: `simpLib` then `congLib`, or the reverse, each with a
+foreign split attribute or exporter owner installed before or after the
+ordinary imports. Exporters install their own attribute dispatcher, so the
+two foreign owners are tested in separate processes, not registered over
+each other.
 
 ## Executed contracts
 
@@ -57,9 +48,3 @@ in separate processes, not registered over each other.
   lifts, prepared bundles and source views. Its executable examples prove
   the lifts work and that bundle/view aliases share remaining/exhausted
   actual controls. No opaque simpset or congset promotion is offered.
-
-Each invocation writes a unique `<UTC>-<nonce>/` receipt directory with source
-hashes, exact executable commands/environment, compressed complete logs,
-observed paths and hashes of existing observed files. Failed invocations
-remain failures. These bounded checks are not a routine/full build,
-performance comparison, saved-heap/persistence audit or cross-platform claim.

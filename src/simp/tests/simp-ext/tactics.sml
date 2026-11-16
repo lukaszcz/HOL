@@ -1,4 +1,4 @@
-(* TASK20: invocation binding, recursive directives and local replay. *)
+(* Invocation binding, recursive directives and local replay. *)
 open HolKernel Parse boolLib boolSyntax testutils
 structure S = simpExtLib
 structure E = TraverseExt
@@ -290,7 +290,7 @@ val _ = List.app (fn count => let
            String.isSubstring "invocation_f" (text ())
         then recompiles := !recompiles + 1 else ()
     | watch _ = ()
-  val listener = "TASK20 bound local replay"
+  val listener = "bound local replay"
   val _ = Listener.add_listener Trace.trace_hook (listener,watch)
   val _ = Portable.finally
     (fn () => ignore (Listener.remove_listener Trace.trace_hook listener))
@@ -313,7 +313,7 @@ val _ = List.app (fn count => let
     (REFL fT)
 in () end) [1,2]
 
-val _ = print ("TASK20_EXTENSION_TACTICS_OK checks=" ^
+val _ = print ("EXTENSION_TACTICS_OK checks=" ^
   Int.toString (!checks) ^ " validations=" ^ Int.toString (!validations) ^
   "\n")
 val _ = Context.restore saved_context

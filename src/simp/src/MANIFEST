@@ -5,7 +5,7 @@ and shared facilities, never the reverse. Ordinary simpLib/congLib imports
 omit extension strategies, source inventories, split caches/registrations
 and the opt-in tracked default provider. Signatures define the compiled API;
 notes.md gives the final construction/type migration, module ownership
-and rebuilding caveats; ../tests/compatibility/audit_task27.py checks them.
+and rebuilding caveats.
 
 Cache.sml:     Caching for context-aware decision procedures.
 

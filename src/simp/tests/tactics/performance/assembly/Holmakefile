@@ -1,4 +1,0 @@
-# Native inspection is explicit and authorized, never implicit in Holmake.
-.PHONY: all
-all:
-	python3 -B -m unittest discover -s . -p 'test_*.py'

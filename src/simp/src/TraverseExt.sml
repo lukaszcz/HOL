@@ -1,5 +1,4 @@
-(* Extended traversal extracted additively from Traverse.
-   The mixed legacy implementation remains until TASK_11. Shared Trace,
+(* Extended traversal extracted additively from Traverse.  Shared Trace,
    Cond_rewr controls, Opening/Travrules types and exceptions are referenced,
    never copied. There is no reverse reducer/traversal adapter. *)
 structure TraverseExt :> TraverseExt =

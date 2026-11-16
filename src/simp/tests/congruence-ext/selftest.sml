@@ -1,4 +1,4 @@
-(* Focused TASK_13 contracts. The extended primitives retain the original
+(* Focused congExtLib contracts. The extended primitives retain the original
    congproc, travrules and preorder types; ordinary semantics stay separate. *)
 open HolKernel Parse boolLib boolSyntax testutils
 structure S = simpExtLib
@@ -334,7 +334,7 @@ val _ = let
   val cong = DISCH (mk_eq (a,b)) (AP_TERM f ab)
   fun capture proc = let
     val seen = ref ([] : (int * Trace.action) list)
-    val key = "TASK_13 congruence trace"
+    val key = "congruence-ext trace"
     val _ = Listener.add_listener Trace.trace_hook
       (key,fn event => seen := event :: !seen)
     val th = Portable.finally
