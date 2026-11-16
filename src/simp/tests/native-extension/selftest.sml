@@ -1842,6 +1842,24 @@ fun pp ss = PP.pp_to_string 200 simpLib.pp_simpset ss
      ``(surface_solver_f : bool -> 'b) surface_solver_x``,
      ``surface_solver_y:'b``)
 
+  (* The solver's tactic runs in the context given to the simplifier
+     tactic, not in the ambient one. *)
+  val marker_slot : bool Context.Data.slot =
+    Context.Data.new {name = "native-extension.tactic-solver-context",
+                      empty = false, pp = Bool.toString}
+  val marked = Context.Data.put marker_slot true (Context.snapshot ())
+  val marked_goal = ``surface_marked_p \/ ~surface_marked_p``
+  fun marked_tac g ctxt =
+    if Context.Data.get marker_slot ctxt then
+      ACCEPT_TAC (SPEC ``surface_marked_p:bool`` EXCLUDED_MIDDLE) g ctxt
+    else NO_TAC g ctxt
+  val marked_ss =
+    add_safe_solver (mk_tactic_solver ("marked solver",marked_tac))
+      pureSimps.pure_ss
+  val _ = check "mk_tactic_solver uses the simplifier tactic's context"
+    (fn () => null (#1 (GEN_SIMP_TAC {safe=true} marked_ss []
+                          ([],marked_goal) marked)))
+
   val _ = shouldfail
     {testfn=SIMP_CONV tactic_solver_ss
        [Excl "surface tactic reducer"],
@@ -5546,7 +5564,7 @@ end;
 local
   val missing = markerSyntax.L "r7_branch_missing_label"
   val goal = ([],mk_var ("r7_branch_goal",bool))
-  val split = simpMarkerLib.Split TRUTH
+  val split = markerLib.Split TRUTH
   fun bound name th = ADD_ASSUM
     (mk_comb (boolSyntax.bounded_tm,mk_var (name,bool))) th
   fun counted f = let
@@ -5554,7 +5572,7 @@ local
     val result = Exn.capture f ()
   in (result,#prims (Count.read meter)) end
   fun stage_count (name,th) = let
-    val (_,expected) = counted (fn () => simpMarkerLib.dest_directive th)
+    val (_,expected) = counted (fn () => markerLib.dest_directive th)
     val (result,actual) = counted
       (fn () => runtac (SIMP_TAC empty_ss [th,missing]) goal)
     val correct = case result of
