@@ -1,4 +1,4 @@
->>__ load "boolSimpsExt";
+>>__ load "simpExtLib";
 >>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
 ## `GEN_SIMP_TAC`
 
@@ -31,7 +31,7 @@ they do not turn them into rewrite rules.
 
 The child-first variant explicitly selects `TraverseExt` traversal. Both
 variants require extension sets constructed from, for example,
-`boolSimpsExt.bool_ss`; there is no ordinary-set promotion. Ordinary
+`simpExtLib.lift_simpset boolSimps.bool_ss`. Ordinary
 `simpLib` callers need no migration. Conversions do not run final solvers or
 loopers.
 
@@ -46,7 +46,7 @@ Invalid directives or failed requirement checks can raise `HOL_ERR`.
 >> val c = Context.snapshot();
 >>_ val ss = simpExtLib.add_safe_solver
      (simpExtLib.mk_tactic_solver ("arith", DECIDE_TAC))
-     boolSimpsExt.bool_ss;
+     (simpExtLib.lift_simpset boolSimps.bool_ss);
 >> simpExtLib.GEN_SIMP_TAC {safe = true} ss [] ([], “x < x + 1”) c;
 >> simpExtLib.GEN_SIMP_TAC_CHILD_FIRST
      (TraverseExt.charge_only (fn () => ())) {safe = false}

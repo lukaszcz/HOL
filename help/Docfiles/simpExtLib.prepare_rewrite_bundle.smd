@@ -1,4 +1,4 @@
->>__ load "boolSimpsExt";
+>>__ load "simpExtLib";
 >>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
 ## `prepare_rewrite_bundle`
 
@@ -57,8 +57,9 @@ bindings/installations and invalid attached views are rejected.
 ### Example
 
 ``` hol4
+>>_ val ext_bool_ss = simpExtLib.lift_simpset boolSimps.bool_ss;
 >>_ val (base, rules) = simpExtLib.prepare_rewrite_arguments
-     boolSimpsExt.bool_ss [BoundedRewrites.Once boolTheory.AND_CLAUSES];
+     ext_bool_ss [BoundedRewrites.Once boolTheory.AND_CLAUSES];
 >>_ val bundle : simpExtLib.rewrite_bundle =
      simpExtLib.prepare_rewrite_bundle base rules;
 >>_ val invocation : simpExtLib.simpset =

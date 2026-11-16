@@ -1,4 +1,4 @@
->>__ load "boolSimpsExt";
+>>__ load "simpExtLib";
 >>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
 ## `add_safe_solver`
 
@@ -22,7 +22,8 @@ Never fails at installation.
 ``` hol4
 >> val c = Context.snapshot();
 >> val decide : TraverseExt.ssolver = {name = "decide", solve = K DECIDE};
->>_ val ss = simpExtLib.add_safe_solver decide boolSimpsExt.bool_ss;
+>>_ val ext_bool_ss = simpExtLib.lift_simpset boolSimps.bool_ss;
+>>_ val ss = simpExtLib.add_safe_solver decide ext_bool_ss;
 >> simpExtLib.GEN_SIMP_TAC {safe = true} ss [] ([], “x < x + 1”) c;
 ```
 

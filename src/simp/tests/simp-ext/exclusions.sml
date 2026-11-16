@@ -1,6 +1,7 @@
 (* Tracked exclusions, suppression and actual replay controls. *)
 open HolKernel Parse boolLib boolSyntax testutils
 structure S = simpExtLib
+val ext_pure_ss = simpExtLib.lift_simpset pureSimps.pure_ss
 structure E = TraverseExt
 val checks = ref 0
 fun check name ok =
@@ -48,7 +49,7 @@ val removals =
    Exercise both projection orders and native/prepared unrelated sources. *)
 val _ = List.app (fn prepared => List.app (fn reverse =>
   List.app (fn (label,remove) => let
-    val initial = S.++ (pureSimpsExt.pure_ss,drop)
+    val initial = S.++ (ext_pure_ss,drop)
     val ss = S.++ (initial,named "exclusion-pair" (Ntimes (CONJ a b) 3))
     val survivor = source cb ss
     val deleted = source ca ss
@@ -122,7 +123,7 @@ val _ = List.app (fn reverse => let
     (projection reverse revived) (input a) a
   val _ = result "unmatched literal deletion survives maker removal"
     (projection reverse retained) (input a) (REFL (input a))
-  val ss = S.++ (pureSimpsExt.pure_ss,
+  val ss = S.++ (ext_pure_ss,
     named "exclusion-failure" (Ntimes a 2))
   val old = projection reverse ss
   val hs = handles ss
@@ -144,7 +145,7 @@ val _ = scoped (fn () => let
   val saved = Context.snapshot ()
   val thy = "trackedExclusionHistory"
   val _ = Theory.link_parents (thy,"selftest") []
-  val ss = S.++ (S.++ (S.++ (pureSimpsExt.pure_ss,drop),
+  val ss = S.++ (S.++ (S.++ (ext_pure_ss,drop),
     named "exclusion-survivor" (Ntimes a 2)),
     S.merge_ss [S.rewrites_with_names [({Thy=thy,Name="gone"},b)],
                 S.rewrites [d]])

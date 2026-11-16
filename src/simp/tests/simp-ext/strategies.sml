@@ -5,6 +5,8 @@
    directive wrappers have separate coverage; no ordinary-set promotion. *)
 open HolKernel Parse boolLib boolSyntax testutils
 structure S = simpExtLib
+val ext_bool_ss = simpExtLib.lift_simpset boolSimps.bool_ss
+val ext_pure_ss = simpExtLib.lift_simpset pureSimps.pure_ss
 structure E = TraverseExt
 val saved_context = Context.snapshot ()
 val _ = new_theory "simpExtStrategies"
@@ -225,7 +227,7 @@ val _ = let
   val r1 = ASSUME (mk_imp (q,mk_eq (p,T)))
   val r2 = ASSUME (mk_eq (q,T))
   val expected = MP r0 (EQT_ELIM (MP r1 (EQT_ELIM r2)))
-  val ss = S.++ (pureSimpsExt.pure_ss,S.rewrites [r0,r1,r2])
+  val ss = S.++ (ext_pure_ss,S.rewrites [r0,r1,r2])
   val live = E.XTRAVERSE (S.xtraversedata_for_ss ss) []
   val explicit = E.XTRAVERSE
     (S.xtraversedata_for_ss (S.set_cond_depth 40 ss)) []
@@ -265,7 +267,7 @@ val _ = let
   val input = ``strategy_order_x:'a = strategy_order_y``
   val output = ``strategy_order_y:'a = strategy_order_x``
   val expected = REWR_CONV boolTheory.EQ_SYM_EQ input
-  val base = S.++ (pureSimpsExt.pure_ss,S.rewrites [boolTheory.EQ_SYM_EQ])
+  val base = S.++ (ext_pure_ss,S.rewrites [boolTheory.EQ_SYM_EQ])
   val ss = S.set_term_ord reverse base
   val cv = S.SIMP_CONV ss []
   val policy = E.charge_only (fn () => ())
@@ -364,11 +366,11 @@ val _ = let
   val _ = fails "child-first tactic propagates charge exception payload" exact
     (fn () => runtac (VALID (S.GEN_SIMP_TAC_CHILD_FIRST
        (E.charge_only (fn () => raise Stop token)) unsafe
-       pureSimpsExt.pure_ss [])) goal)
+       ext_pure_ss [])) goal)
   val _ = fails "child-first global propagates charge exception payload" exact
     (fn () => runtac (VALID (S.GEN_GLOBAL_SIMP_TAC_CHILD_FIRST
        (E.charge_only (fn () => raise Stop token)) unsafe
-       (xcfg true false false) pureSimpsExt.pure_ss [])) goal)
+       (xcfg true false false) ext_pure_ss [])) goal)
   fun solver th : E.ssolver = {name="invalid",solve=fn _ => fn _ => th}
   val bad_hyp = ADD_ASSUM ``strategy_unavailable:bool`` target_th
   val _ = List.app (fn (name,th) => let
@@ -398,7 +400,7 @@ val _ = let
   val input = ``~(strategy_overlap_q /\ T)``
   val parent = ``strategy_overlap_q ==> F``
   val child = ``strategy_overlap_q = F``
-  val ss = S.++ (pureSimpsExt.pure_ss,S.rewrites rules)
+  val ss = S.++ (ext_pure_ss,S.rewrites rules)
   val charges = ref 0
   val policy = E.charge_only (fn () => charges := !charges + 1)
   val _ = conversion "parent-first overlap kernel proof"
@@ -428,15 +430,15 @@ val _ = let
   val mutual_expected =
     [([``P (strategy_b:'a):bool``,``strategy_a:'a = strategy_b``],target)]
   val _ = tactic "global later assumptions simplify earlier ones"
-    (global unsafe false false false boolSimpsExt.bool_ss)
+    (global unsafe false false false ext_bool_ss)
     mutual mutual_expected
   val premise = ([],mk_imp (``P (strategy_a:'a):bool``,
     mk_imp (``strategy_a:'a = strategy_b``,target)))
   val _ = tactic "imp_premises false keeps leading implications"
-    (TRY (global unsafe false false false boolSimpsExt.bool_ss))
+    (TRY (global unsafe false false false ext_bool_ss))
     premise [premise]
   val _ = tactic "imp_premises true supplies the mutual fixpoint"
-    (global unsafe false false true boolSimpsExt.bool_ss) premise
+    (global unsafe false false true ext_bool_ss) premise
     [([``strategy_a:'a = strategy_b``,``P (strategy_b:'a):bool``],target)]
   val a = ``strategy_schedule_a:bool``
   val b0 = ``strategy_schedule_b /\ T``
@@ -532,7 +534,7 @@ val _ = let
   val side = ``(strategy_root_P:bool -> bool) (T /\ T)``
   val rule = ASSUME (mk_imp (side,mk_eq (root,``strategy_root_result:bool``)))
   val fact = ASSUME ``(strategy_root_P:bool -> bool) T``
-  val side_ss = S.++ (pureSimpsExt.pure_ss,
+  val side_ss = S.++ (ext_pure_ss,
     S.rewrites [boolTheory.AND_CLAUSES,rule])
   val side_proof = EQ_MP
     (SYM (AP_TERM ``strategy_root_P:bool -> bool``

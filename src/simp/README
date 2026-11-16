@@ -5,11 +5,11 @@ Ordinary develop clients need no migration. Use simpLib/congLib, Traverse,
 pureSimps/boolSimps/combinSimps as before. Ordinary loads do not import the
 extension engine, strategy state, source inventories or split persistence.
 
-Branch-only extension clients explicitly choose simpExtLib/TraverseExt types
-and tracked recipes before installing source-sensitive rules. There is no
-transparent promotion of arbitrary ordinary simpsets or replay in getters.
-Configured congruence uses congExtLib; threaded factories use OpeningExt and
-TravrulesExt; paired conditional compilation uses Cond_rewrExt.
+Extension clients use simpExtLib/TraverseExt types; ordinary fragments and
+simpsets enter by simpExtLib.lift_ssfrag/lift_simpset. Configured congruence
+uses congExtLib; threaded factories are Opening.THREADED_CONGPROC and
+Travrules.mk_threaded_travrules; paired conditional compilation uses
+Cond_rewrExt. Both engines share TraverseCore, congLibFn and simpCommon.
 
 Current documentation and ownership:
   src/notes.md                           migration, controls, rebuild caveats

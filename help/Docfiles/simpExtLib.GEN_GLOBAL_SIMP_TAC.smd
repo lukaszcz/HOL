@@ -1,4 +1,4 @@
->>__ load "boolSimpsExt";
+>>__ load "simpExtLib";
 >>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
 ## `GEN_GLOBAL_SIMP_TAC`
 
@@ -70,11 +70,12 @@ May diverge. Invalid directives and failed requirements can raise `HOL_ERR`.
      {base = {strip = true, elimvars = false,
               droptrues = true, oldestfirst = true},
       concl_in_fixpoint = true, imp_rebuild = false, imp_premises = true};
+>>_ val ext_bool_ss = simpExtLib.lift_simpset boolSimps.bool_ss;
 >> simpExtLib.GEN_GLOBAL_SIMP_TAC {safe = false} cfg
-     boolSimpsExt.bool_ss [] ([], “x = 1 ⇒ y = x ⇒ P y”) c;
+     ext_bool_ss [] ([], “x = 1 ⇒ y = x ⇒ P y”) c;
 >>_ val policy = TraverseExt.charge_only (fn () => ());
 >>_ val (base,args) = simpExtLib.prepare_rewrite_arguments
-     boolSimpsExt.bool_ss [BoundedRewrites.Once boolTheory.AND_CLAUSES];
+     ext_bool_ss [BoundedRewrites.Once boolTheory.AND_CLAUSES];
 >>_ val bundle = simpExtLib.prepare_rewrite_bundle base args;
 >>_ val invocation = simpExtLib.install_rewrite_bundle bundle [] base;
 >> simpExtLib.GEN_GLOBAL_SIMP_TAC_CHILD_FIRST_BOUND policy {safe = false}

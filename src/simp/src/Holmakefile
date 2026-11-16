@@ -35,6 +35,14 @@ all: $(DEFAULT_TARGETS) selftest.exe
 selftest.exe: selftest.uo boolSimps.uo Cond_rewr.uo simpLib.uo
 	$(HOLMOSMLC) -o $@ $<
 
+# Holdep does not see functor applications (cf. num/arith's GenRelNorm),
+# and with an explicit command, sigobj imports must be listed too.
+CONGLIB_SIGOBJ = liteLib computeLib
+congLib.uo: congLib.sml congLib.ui congLibFn.uo \
+            $(patsubst %,$(dprot $(SIGOBJ)/%.ui),$(CONGLIB_SIGOBJ))
+	$(HOLMOSMLC) -c $(protect $(SIGOBJ)/Overlay.ui) \
+	  $(patsubst %,$(protect $(SIGOBJ)/%.ui),$(CONGLIB_SIGOBJ)) congLibFn.ui $<
+
 # Clean-heap namespace/syntax regressions. Only the launcher is linked;
 # library prerequisites are not imports.
 FRESH_LOAD = ../tests/fresh-load
@@ -117,13 +125,13 @@ split-lifecycle: simpExtLib.uo congExtLib.uo splitPersistLib.uo
 # Fresh ordinary load paths/callbacks and deliberate extension control sharing.
 # Only the independent launcher imports the extension layer, after its guards.
 .PHONY: api-audit
-api-audit: simpLib.uo congLib.uo simpExtLib.uo congExtLib.uo boolSimpsExt.uo
+api-audit: simpLib.uo congLib.uo simpExtLib.uo congExtLib.uo boolSimps.uo
 	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
 	  -C ../tests/api-audit check,api-audit.log)
 
 # The extension engine's integration suite, with its ordinary controls.
 .PHONY: native-extension
-native-extension: simpExtLib.uo congExtLib.uo boolSimpsExt.uo
+native-extension: simpExtLib.uo congExtLib.uo boolSimps.uo
 	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
 	  -C ../tests/native-extension check,native-extension.log)
 
@@ -134,18 +142,18 @@ traverse-ext: TraverseExt.uo
 	  -C ../tests/traverse-ext check,traverse-ext.log)
 
 .PHONY: simp-ext
-simp-ext: simpExtLib.uo pureSimpsExt.uo boolSimpsExt.uo congExtLib.uo
+simp-ext: simpExtLib.uo pureSimps.uo boolSimps.uo congExtLib.uo
 	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
 	  -C ../tests/simp-ext check,simp-ext.log)
 
 # Independent tracked catalog, TypeBase builders and explicit reducer lifts.
 .PHONY: standard-recipes
-standard-recipes: combinSimpsExt.uo boolSimpsExt.uo
+standard-recipes: combinSimps.uo boolSimps.uo
 	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
 	  -C ../tests/standard-recipes check,standard-recipes.log)
 
 .PHONY: congruence-ext
-congruence-ext: OpeningExt.uo TravrulesExt.uo congExtLib.uo
+congruence-ext: congExtLib.uo
 	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
 	  -C ../tests/congruence-ext check,congruence-ext.log)
 

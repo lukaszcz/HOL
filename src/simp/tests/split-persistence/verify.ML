@@ -1,4 +1,5 @@
-open Parse boolLib boolSimpsExt simpExtLib splitLib;
+open Parse boolLib simpExtLib splitLib;
+val bool_ss = lift_simpset boolSimps.bool_ss;
 val expected = if scenario = "parent" then
                  ["splitParent$drop","splitParent$keep"]
                else ["splitChild$drop","splitParent$keep"];

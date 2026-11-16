@@ -1,6 +1,7 @@
 (* Explicit tracked source, view and prepared-bundle contracts. *)
 open HolKernel Parse boolLib boolSyntax testutils
 structure S = simpExtLib
+val ext_pure_ss = simpExtLib.lift_simpset pureSimps.pure_ss
 structure E = TraverseExt
 (* Load the real ordinary module for the negative clients: an undeclared
    structure must not masquerade as the intended type mismatch. *)
@@ -44,7 +45,7 @@ fun source th ss = valOf (List.find
 fun attach ss = S.++ (ss,S.name_ss "sources-views"
   (S.rewrite_views [(source ca ss,av),(source cb ss,bv)]))
 fun fresh prepared n = let
-  val base = S.++ (pureSimpsExt.pure_ss,drop)
+  val base = S.++ (ext_pure_ss,drop)
 in
   if not prepared then attach (S.++ (base,
     named "sources-pair" (Ntimes (CONJ a b) n)))
@@ -73,7 +74,7 @@ fun watched f =
    Views are visible as installed rewrites, never as new native identities. *)
 val _ = let
   val fragment = named "sources-order" (CONJ a b)
-  val ss = S.++ (S.++ (pureSimpsExt.pure_ss,fragment),S.rewrites [u])
+  val ss = S.++ (S.++ (ext_pure_ss,fragment),S.rewrites [u])
   val hs = handles ss
   val _ = check "new fragments prepend; conjuncts retain maker order"
     (ListPair.allEq (fn (h,th) => same (#2 (S.source_rewrite h)) th)
@@ -89,7 +90,7 @@ val _ = let
        (visible,[av,bv,u,ca,cb]) andalso
      map #1 (List.take (visible,2)) =
        map (#1 o S.source_rewrite) (tl hs))
-  val duplicates = S.++ (S.++ (pureSimpsExt.pure_ss,fragment),
+  val duplicates = S.++ (S.++ (ext_pure_ss,fragment),
     S.merge_ss [fragment,fragment])
   val ds = handles duplicates
   val _ = check "merged slots and installation events remain distinct"
@@ -325,7 +326,7 @@ in () end) [false,true]
 (* Failed matcher preparation is cached too. An inactive foreign handle
    must not acquire a retrospective identity or borrow an unrelated quota. *)
 val _ = List.app (fn reverse => watched (fn () => let
-  val base = S.++ (pureSimpsExt.pure_ss,drop)
+  val base = S.++ (ext_pure_ss,drop)
   val bundle = S.prepare_rewrite_bundle base [Once a]
   val h = hd (#2 (hd (S.rewrite_bundle_rules bundle)))
   val foreign = hd (handles (S.++ (base,S.rewrites [Once a])))
@@ -359,7 +360,7 @@ in () end)) [false,true]
    that old view retroactively. A fresh attachment is explicit construction,
    and must still share the bundle's actual controls with saved projections. *)
 val _ = List.app (fn reverse => let
-  val base = S.++ (pureSimpsExt.pure_ss,drop)
+  val base = S.++ (ext_pure_ss,drop)
   val bundle = S.prepare_rewrite_bundle base [Ntimes a 3]
   val h = hd (#2 (hd (S.rewrite_bundle_rules bundle)))
   val installed = S.install_rewrite_bundle bundle [] base
@@ -394,7 +395,7 @@ in () end) [false,true]
    Conversely different proofs/generalization of an identical compiled view
    must not force reconstruction. All installations still share controls. *)
 val _ = List.app (fn reverse => let
-  val base = pureSimpsExt.pure_ss
+  val base = ext_pure_ss
   val bundle = S.prepare_rewrite_bundle base [Ntimes a 3]
   val h = hd (#2 (hd (S.rewrite_bundle_rules bundle)))
   val left = S.install_rewrite_bundle bundle [(h,av)] base
@@ -446,7 +447,7 @@ val _ = List.app (fn reverse => let
              #1 o BoundedRewrites.DEST_BOUNDED) ths))
         | _ => raise Fail "apply identity";
         NO_CONV tm)}
-  val base = S.++ (S.++ (pureSimpsExt.pure_ss,S.dproc_ss opaque),drop)
+  val base = S.++ (S.++ (ext_pure_ss,S.dproc_ss opaque),drop)
   val ss = attach (S.++ (base,named "sources-pair"
     (Ntimes (CONJ a b) 2)))
   val suspended = S.suspend_rewrite_sources [source ca ss] ss

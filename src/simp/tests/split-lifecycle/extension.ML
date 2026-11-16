@@ -1,4 +1,5 @@
-open Parse boolLib boolSimpsExt simpExtLib splitLib;
+open Parse boolLib simpExtLib splitLib;
+val bool_ss = lift_simpset boolSimps.bool_ss;
 
 fun split_attribute_now () =
   ThmAttribute.attribute_fns_of (Context.snapshot ()) "split"

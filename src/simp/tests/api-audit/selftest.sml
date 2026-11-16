@@ -11,14 +11,10 @@ fun loaded name = member name (Meta.loaded ()) orelse
   Option.isSome (#lookupStruct PolyML.globalNameSpace name)
 fun forbidden name = String.isSuffix "Ext" name orelse
   String.isSuffix "ExtLib" name orelse String.isPrefix "simpMarker" name
-  orelse member name ["trackedSimpDefaults","SplitData","splitLib",
-                     "splitPersistLib"]
+  orelse member name ["SplitData","splitLib","splitPersistLib"]
 val forbidden_names =
-  ["TraverseExt","Cond_rewrExt","OpeningExt","TravrulesExt",
-   "simpExtLib","congExtLib","pureSimpsExt","boolSimpsExt",
-   "combinSimpsExt","numSimpsExt","pred_setSimpsExt","listSimpsExt",
-   "intReduceExt","integer_wordLibExt","realSimpsExt",
-   "trackedSimpDefaults","simpMarkerTheory",
+  ["TraverseExt","Cond_rewrExt",
+   "simpExtLib","congExtLib","simpMarkerTheory",
    "simpMarkerLib","SplitData","splitLib","splitPersistLib"]
 val used = ref ([] : string list)
 fun files stage = List.app (fn (file,dir) =>
@@ -164,8 +160,8 @@ val extension_hooks = hooks ()
 val extension_attributes = ThmAttribute.all_attributes ()
 val extension_set_types = ThmSetData.all_set_types ()
 val _ = List.app (fn name => quiet name (fn () => load name))
-  (if order = "simp-first" then ["simpExtLib","congExtLib","boolSimpsExt"]
-   else ["congExtLib","simpExtLib","boolSimpsExt"])
+  (if order = "simp-first" then ["simpExtLib","congExtLib"]
+   else ["congExtLib","simpExtLib"])
 val _ = check "explicit extension imports preserve exact listeners"
   (same_hooks extension_hooks (hooks ()))
 val _ = check "extension imports create no attribute or exporter slots"
@@ -183,9 +179,8 @@ val _ = check "use leaves exact Theory listeners unchanged"
 val _ = check "use leaves attribute and exporter registries unchanged"
   (extension_attributes = ThmAttribute.all_attributes () andalso
    extension_set_types = ThmSetData.all_set_types ())
-val _ = check "never imports persistence or tracked default provider"
-  (no_private () andalso not (loaded "splitPersistLib") andalso
-   not (loaded "trackedSimpDefaults"))
+val _ = check "never imports persistence"
+  (no_private () andalso not (loaded "splitPersistLib"))
 val _ = files "final"
 val _ = check "all imports and proofs warning-free" (null (!warnings))
 val _ = Feedback.WARNING_outstream := old_warning

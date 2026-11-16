@@ -1,4 +1,5 @@
-open HolKernel Parse boolLib boolSimpsExt simpExtLib splitLib testutils
+open HolKernel Parse boolLib simpExtLib splitLib testutils
+val bool_ss = lift_simpset boolSimps.bool_ss
 
 fun split_attribute_now () =
   ThmAttribute.attribute_fns_of (Context.snapshot ()) "split"

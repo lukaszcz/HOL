@@ -1,4 +1,4 @@
->>__ load "boolSimpsExt";
+>>__ load "simpExtLib";
 >>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
 ## `set_subgoaler`
 
@@ -23,8 +23,9 @@ Never fails at installation.
 
 ``` hol4
 >> fun arith_subgoaler _ c = EQT_INTRO (DECIDE c);
+>>_ val ext_bool_ss = simpExtLib.lift_simpset boolSimps.bool_ss;
 >> simpExtLib.SIMP_CONV
-     (simpExtLib.set_subgoaler arith_subgoaler boolSimpsExt.bool_ss)
+     (simpExtLib.set_subgoaler arith_subgoaler ext_bool_ss)
      [arithmeticTheory.LESS_MOD] “x MOD (x + 1)”;
 ```
 

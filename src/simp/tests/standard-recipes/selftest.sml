@@ -3,6 +3,27 @@
 open HolKernel Parse boolLib boolSyntax testutils
 structure O = simpLib
 structure S = simpExtLib
+val ext_ABBREV_ss = simpExtLib.lift_ssfrag boolSimps.ABBREV_ss
+val ext_BOOL_ss = simpExtLib.lift_ssfrag boolSimps.BOOL_ss
+val ext_COMBIN_ss = simpExtLib.lift_ssfrag combinSimps.COMBIN_ss
+val ext_COND_elim_ss = simpExtLib.lift_ssfrag boolSimps.COND_elim_ss
+val ext_CONG_ss = simpExtLib.lift_ssfrag boolSimps.CONG_ss
+val ext_CONJ_ss = simpExtLib.lift_ssfrag boolSimps.CONJ_ss
+val ext_DISJ_ss = simpExtLib.lift_ssfrag boolSimps.DISJ_ss
+val ext_DNF_ss = simpExtLib.lift_ssfrag boolSimps.DNF_ss
+val ext_EQUIV_EXTRACT_ss = simpExtLib.lift_ssfrag boolSimps.EQUIV_EXTRACT_ss
+val ext_ETA_ss = simpExtLib.lift_ssfrag boolSimps.ETA_ss
+val ext_HIDE_ss = simpExtLib.lift_ssfrag boolSimps.HIDE_ss
+val ext_LABEL_CONG_ss = simpExtLib.lift_ssfrag boolSimps.LABEL_CONG_ss
+val ext_LET_ss = simpExtLib.lift_ssfrag boolSimps.LET_ss
+val ext_LIFT_COND_ss = simpExtLib.lift_ssfrag boolSimps.LIFT_COND_ss
+val ext_NORMEQ_ss = simpExtLib.lift_ssfrag boolSimps.NORMEQ_ss
+val ext_NOT_ss = simpExtLib.lift_ssfrag boolSimps.NOT_ss
+val ext_PURE_ss = simpExtLib.lift_ssfrag pureSimps.PURE_ss
+val ext_UNWIND_ss = simpExtLib.lift_ssfrag boolSimps.UNWIND_ss
+val ext_bool_ss = simpExtLib.lift_simpset boolSimps.bool_ss
+val ext_literal_case_ss = simpExtLib.lift_ssfrag boolSimps.literal_case_ss
+val ext_pure_ss = simpExtLib.lift_simpset pureSimps.pure_ss
 structure E = TraverseExt
 val checks = ref 0
 fun check label ok =
@@ -29,59 +50,59 @@ fun fails label f = check label
 
 (* The whole exported boolean catalog, including intentionally opt-in items. *)
 val catalog =
-  [("PURE",pureSimps.PURE_ss,pureSimpsExt.PURE_ss),
-   ("BOOL",boolSimps.BOOL_ss,boolSimpsExt.BOOL_ss),
-   ("CONG",boolSimps.CONG_ss,boolSimpsExt.CONG_ss),
-   ("ABBREV",boolSimps.ABBREV_ss,boolSimpsExt.ABBREV_ss),
-   ("CONJ",boolSimps.CONJ_ss,boolSimpsExt.CONJ_ss),
-   ("DISJ",boolSimps.DISJ_ss,boolSimpsExt.DISJ_ss),
-   ("NOT",boolSimps.NOT_ss,boolSimpsExt.NOT_ss),
-   ("COND_elim",boolSimps.COND_elim_ss,boolSimpsExt.COND_elim_ss),
-   ("LIFT_COND",boolSimps.LIFT_COND_ss,boolSimpsExt.LIFT_COND_ss),
-   ("UNWIND",boolSimps.UNWIND_ss,boolSimpsExt.UNWIND_ss),
-   ("ETA",boolSimps.ETA_ss,boolSimpsExt.ETA_ss),
-   ("LET",boolSimps.LET_ss,boolSimpsExt.LET_ss),
+  [("PURE",pureSimps.PURE_ss,ext_PURE_ss),
+   ("BOOL",boolSimps.BOOL_ss,ext_BOOL_ss),
+   ("CONG",boolSimps.CONG_ss,ext_CONG_ss),
+   ("ABBREV",boolSimps.ABBREV_ss,ext_ABBREV_ss),
+   ("CONJ",boolSimps.CONJ_ss,ext_CONJ_ss),
+   ("DISJ",boolSimps.DISJ_ss,ext_DISJ_ss),
+   ("NOT",boolSimps.NOT_ss,ext_NOT_ss),
+   ("COND_elim",boolSimps.COND_elim_ss,ext_COND_elim_ss),
+   ("LIFT_COND",boolSimps.LIFT_COND_ss,ext_LIFT_COND_ss),
+   ("UNWIND",boolSimps.UNWIND_ss,ext_UNWIND_ss),
+   ("ETA",boolSimps.ETA_ss,ext_ETA_ss),
+   ("LET",boolSimps.LET_ss,ext_LET_ss),
    ("literal_case",boolSimps.literal_case_ss,
-      boolSimpsExt.literal_case_ss),
-   ("DNF",boolSimps.DNF_ss,boolSimpsExt.DNF_ss),
+      ext_literal_case_ss),
+   ("DNF",boolSimps.DNF_ss,ext_DNF_ss),
    ("EQUIV_EXTRACT",boolSimps.EQUIV_EXTRACT_ss,
-      boolSimpsExt.EQUIV_EXTRACT_ss),
-   ("NORMEQ",boolSimps.NORMEQ_ss,boolSimpsExt.NORMEQ_ss),
-   ("LABEL_CONG",boolSimps.LABEL_CONG_ss,boolSimpsExt.LABEL_CONG_ss),
-   ("HIDE",boolSimps.HIDE_ss,boolSimpsExt.HIDE_ss)]
+      ext_EQUIV_EXTRACT_ss),
+   ("NORMEQ",boolSimps.NORMEQ_ss,ext_NORMEQ_ss),
+   ("LABEL_CONG",boolSimps.LABEL_CONG_ss,ext_LABEL_CONG_ss),
+   ("HIDE",boolSimps.HIDE_ss,ext_HIDE_ss)]
 val _ = List.app (fn (n,oFrag,tFrag) => fragment n oFrag tFrag) catalog
 val _ = check "bool recipe order matches ordinary and stays explicit"
-  (map S.frag_name (S.ssfrags_of boolSimpsExt.bool_ss) =
+  (map S.frag_name (S.ssfrags_of ext_bool_ss) =
    map O.frag_name (O.ssfrags_of boolSimps.bool_ss) andalso
-   map S.frag_name (List.rev (S.ssfrags_of boolSimpsExt.bool_ss)) =
+   map S.frag_name (List.rev (S.ssfrags_of ext_bool_ss)) =
    map SOME ["PURE","BOOL","NOT","CONG","UNWIND"])
 val _ = check "PURE installs no rewrite sources"
-  (null (S.rewrite_source_handles pureSimpsExt.pure_ss))
+  (null (S.rewrite_source_handles ext_pure_ss))
 val boolInputs =
   [``(\x:bool. x /\ T) p``,
    ``if p then (f:bool -> bool) p else g p``,
    ``p ==> (p /\ q)``, ``?x:bool. (x = p) /\ Q x``,
    ``~(p \/ q)``, ``\x:bool. f x:bool``]
 val _ = List.app (compare "bool ordinary/tracked theorem"
-  boolSimps.bool_ss boolSimpsExt.bool_ss []) boolInputs
-val _ = expected "BOOL beta and clause result" boolSimpsExt.bool_ss
+  boolSimps.bool_ss ext_bool_ss []) boolInputs
+val _ = expected "BOOL beta and clause result" ext_bool_ss
   ``(\x:bool. x /\ T) p`` ``p:bool``
 val _ = expected "BOOL congruence carries branch context"
-  boolSimpsExt.bool_ss ``if p then (f:bool -> bool) p else g p``
+  ext_bool_ss ``if p then (f:bool -> bool) p else g p``
   ``if p then (f:bool -> bool) T else g F``
-val _ = expected "ETA is not in bool_ss" boolSimpsExt.bool_ss
+val _ = expected "ETA is not in bool_ss" ext_bool_ss
   ``\x:bool. f x:bool`` ``\x:bool. f x:bool``
 val _ = expected "PURE has no implicit beta conversion"
-  pureSimpsExt.pure_ss ``(\x:bool. x) p`` ``(\x:bool. x) p``
+  ext_pure_ss ``(\x:bool. x) p`` ``(\x:bool. x) p``
 val _ = let
   val conditional = ASSUME ``p ==> ((pure_f:bool -> bool) x = y)``
   val premise = ASSUME ``p:bool``
   val tm = ``(pure_f:bool -> bool) x``
   val rules = [conditional,premise]
   val _ = compare "PURE conditional rewrite maker agrees"
-    pureSimps.pure_ss pureSimpsExt.pure_ss rules tm
+    pureSimps.pure_ss ext_pure_ss rules tm
 in check "PURE conditional maker retains complete proof"
-     (same (total (S.SIMP_CONV pureSimpsExt.pure_ss rules) tm,
+     (same (total (S.SIMP_CONV ext_pure_ss rules) tm,
             MP conditional premise)) end
 val examples =
   [("PURE", ``(\x:bool. x) p``),
@@ -106,23 +127,23 @@ val _ = List.app (fn (name,tm) => let
   val (_,ofrag,tfrag) = valOf (List.find (fn (n,_,_) => n=name) catalog)
 in compare (name ^ ": installed recipe theorem")
      (O.++ (pureSimps.pure_ss,ofrag))
-     (S.++ (pureSimpsExt.pure_ss,tfrag)) [] tm end) examples
+     (S.++ (ext_pure_ss,tfrag)) [] tm end) examples
 val _ = check "SimpLHS/SimpRHS theorem markers agree"
-  (same (boolSimps.SimpLHS,boolSimpsExt.SimpLHS) andalso
-   same (boolSimps.SimpRHS,boolSimpsExt.SimpRHS))
+  (same (boolSimps.SimpLHS,boolSimps.SimpLHS) andalso
+   same (boolSimps.SimpRHS,boolSimps.SimpRHS))
 val _ = check "SimpL/SimpR theorem constructors agree"
-  (same (boolSimps.SimpL conjunction,boolSimpsExt.SimpL conjunction) andalso
-   same (boolSimps.SimpR disjunction,boolSimpsExt.SimpR disjunction))
+  (same (boolSimps.SimpL conjunction,boolSimps.SimpL conjunction) andalso
+   same (boolSimps.SimpR disjunction,boolSimps.SimpR disjunction))
 
 (* COMBIN is constructed from named theorem inputs, not an ordinary fragment. *)
-val _ = fragment "COMBIN" combinSimps.COMBIN_ss combinSimpsExt.COMBIN_ss
+val _ = fragment "COMBIN" combinSimps.COMBIN_ss ext_COMBIN_ss
 val combinO = O.++ (boolSimps.bool_ss,combinSimps.COMBIN_ss)
-val combinT = S.++ (boolSimpsExt.bool_ss,combinSimpsExt.COMBIN_ss)
+val combinT = S.++ (ext_bool_ss,ext_COMBIN_ss)
 val combinNames =
   ["I_THM","I_o_ID","K_THM","S_THM","o_ASSOC'","o_THM","W_THM","C_THM",
    "K_o_THM","UPDATE_EQ","UPDATE_APPLY_ID_RWT","UPDATE_APPLY1"]
 val _ = check "COMBIN exact immutable theorem order"
-  (thms (S.frag_rewrites combinSimpsExt.COMBIN_ss)
+  (thms (S.frag_rewrites ext_COMBIN_ss)
     (map (DB.fetch "combin") combinNames))
 val _ = List.app (fn tm => compare "COMBIN ordinary/tracked theorem"
   combinO combinT [] tm)
@@ -139,7 +160,7 @@ val _ = check "COMBIN native sources retain theory-qualified names"
         List.exists (fn n => String.isPrefix (n ^ ".") Name) combinNames
     | NONE => false)
     (S.rewrite_source_handles
-      (S.++ (pureSimpsExt.pure_ss,combinSimpsExt.COMBIN_ss))))
+      (S.++ (ext_pure_ss,ext_COMBIN_ss))))
 
 (* TypeBase direct construction and lookup share data, not compiled sources.
    Stored names and fallback names both remain available in tracked sources. *)
@@ -153,7 +174,7 @@ val _ = check "TypeBase direct/lookup ordered contents agree"
         (S.frag_rewrites (S.tyi_to_ssdata boolInfo)))
 val _ = compare "TypeBase bool ordinary/tracked theorem"
   (O.++ (pureSimps.pure_ss,O.type_ssfrag bool))
-  (S.++ (pureSimpsExt.pure_ss,S.type_ssfrag bool)) []
+  (S.++ (ext_pure_ss,S.type_ssfrag bool)) []
   ``bool_CASE T (p:bool) q``
 val _ = fails "tracked TypeBase missing type rejected"
   (fn () => S.type_ssfrag (mk_vartype "'standard_missing"))
@@ -168,7 +189,7 @@ val _ = let
   val _ = fragment "TypeBase mixed names" ofrag tfrag
   val _ = check "TypeBase reverses original rewrite order"
     (thms (S.frag_rewrites tfrag) [rule,boolTheory.NOT_CLAUSES])
-  val ss = S.++ (S.++ (pureSimpsExt.pure_ss,
+  val ss = S.++ (S.++ (ext_pure_ss,
     S.named_rewrites "type-removable" []),tfrag)
   val hs = S.rewrite_source_handles ss
   val sources = map S.source_rewrite hs
@@ -184,7 +205,7 @@ val _ = let
   val _ = check "TypeBase native identities survive history replay"
     (ListPair.allEq S.same_rewrite_source
        (hs,S.rewrite_source_handles replay))
-  val independent = S.++ (pureSimpsExt.pure_ss,S.tyi_to_ssdata info)
+  val independent = S.++ (ext_pure_ss,S.tyi_to_ssdata info)
   val _ = check "TypeBase fresh construction has independent occurrences"
     (not (S.same_rewrite_source
       (hd hs,hd (S.rewrite_source_handles independent))))
@@ -211,7 +232,7 @@ val _ = let
   val ofrag = O.tyi_to_ssdata (info ordinaryCalls)
   val tfrag = S.tyi_to_ssdata (info trackedCalls)
   val os = O.++ (pureSimps.pure_ss,ofrag)
-  val ts = S.++ (pureSimpsExt.pure_ss,tfrag)
+  val ts = S.++ (ext_pure_ss,tfrag)
   val _ = check "TypeBase conversion construction/install is inert"
     (!ordinaryCalls = 0 andalso !trackedCalls = 0 andalso
      null (S.rewrite_source_handles ts))

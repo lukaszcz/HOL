@@ -1,4 +1,4 @@
->>__ load "boolSimpsExt";
+>>__ load "simpExtLib";
 >>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
 ## `clear_rules`
 
@@ -20,9 +20,10 @@ Never fails.
 ### Example
 
 ``` hol4
+>>_ val ext_bool_ss = simpExtLib.lift_simpset boolSimps.bool_ss;
 >>+ simpExtLib.SIMP_CONV
-      (simpExtLib.clear_rules boolSimpsExt.bool_ss) [] “p ∧ T”;
->> simpExtLib.SIMP_CONV (simpExtLib.clear_rules boolSimpsExt.bool_ss)
+      (simpExtLib.clear_rules ext_bool_ss) [] “p ∧ T”;
+>> simpExtLib.SIMP_CONV (simpExtLib.clear_rules ext_bool_ss)
      [boolTheory.AND_CLAUSES] “p ∧ T”;
 ```
 

@@ -11,12 +11,9 @@ fun loaded name = List.exists (equal name) (Meta.loaded ()) orelse
 fun absent names = List.app (fn name =>
   check ("not loaded: " ^ name) (not (loaded name))) names
 val extensions =
-  ["TraverseExt","Cond_rewrExt","OpeningExt","TravrulesExt",
-   "simpExtLib","congExtLib","pureSimpsExt","boolSimpsExt",
-   "combinSimpsExt","numSimpsExt","pred_setSimpsExt","listSimpsExt",
-   "intReduceExt","integer_wordLibExt","realSimpsExt",
-   "simpMarkerTheory","simpMarkerLib","splitLib","SplitData",
-   "splitPersistLib"]
+  ["TraverseExt","Cond_rewrExt",
+   "simpExtLib","congExtLib","simpMarkerTheory",
+   "simpMarkerLib","splitLib","SplitData","splitPersistLib"]
 val mode = env "SPLIT_LIFECYCLE_MODE"
 val _ = print ("OBS mode=" ^ mode ^ "\n")
 val _ = boolTheory.TRUTH
@@ -61,7 +58,7 @@ val _ = if mode = "export-save" then
   (Meta.loadPlan traced_use (env "SPLIT_LIFECYCLE_THEORY");
    check "export import initializes without loading simplifier"
      (loaded "splitPersistLib" andalso not (loaded "simpLib"));
-   load "boolSimpsExt"; use "persistent.ML";
+   load "boolSimps"; load "simpExtLib"; use "persistent.ML";
    files "OBS loaded.path=";
    PolyML.SaveState.saveState "split-proof.state";
    print "OBS heap=saved\nOBS result=pass\n";
@@ -172,8 +169,8 @@ val extension_hooks = hooks ()
 val attribute_before = split_attribute_now ()
 val exporter_before = ThmSetData.data_exportfns {settype="split"}
 val _ = List.app (fn name => quiet name (fn () => load name))
-  (if order = "simp" then ["simpExtLib","congExtLib","boolSimpsExt"]
-   else ["congExtLib","simpExtLib","boolSimpsExt"])
+  (if order = "simp" then ["simpExtLib","congExtLib"]
+   else ["congExtLib","simpExtLib"])
 val _ = check "extension loads preserve exact listeners"
   (same_hooks extension_hooks (hooks ()))
 val _ = check "extension loads preserve registry records"

@@ -3,7 +3,7 @@ signature TraverseExt =
 sig
   include Abbrev
 
-  type context = exn
+  type context = TraverseCore.context
   type reducer_config_data =
     {name : string option, initial : context,
      addcontext : context * thm list -> context,
@@ -43,10 +43,9 @@ sig
   val reducer_data : reducer -> reducer_context_data
   val addctxt : thm list -> reducer -> reducer
 
-  type simp_prover_ctxt =
-    {stack : term list, context_thms : thm list, recurse : term -> thm}
-  type ssolver = {name : string, solve : simp_prover_ctxt -> term -> thm}
-  type subgoaler = simp_prover_ctxt -> term -> thm
+  type simp_prover_ctxt = TraverseCore.simp_prover_ctxt
+  type ssolver = TraverseCore.ssolver
+  type subgoaler = TraverseCore.subgoaler
   type traverse_data =
     {rewriters : reducer list, limit : int option, dprocs : reducer list,
      travrules : Travrules.travrules, relation : term}
@@ -62,9 +61,8 @@ sig
      Extended entry points construct congruence factories on attempted use. *)
   val XTRAVERSE : xtraverse_data -> thm list -> conv
 
-  type child_first_policy =
-    {charge : unit -> unit, keep_abstraction : term -> bool}
-  datatype traversal_policy = ParentFirst | ChildFirst of child_first_policy
+  type child_first_policy = TraverseCore.child_first_policy
+  datatype traversal_policy = datatype TraverseCore.traversal_policy
   val charge_only : (unit -> unit) -> child_first_policy
   val keep_abstraction : child_first_policy -> term -> bool
   (* Normalize proper arguments/body while preserving the root. Repeat

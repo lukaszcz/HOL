@@ -26,11 +26,10 @@ The total `simpLib.SIMP_CONV` wrapper delays construction until application;
 its lifetime must not be inferred from raw `TRAVERSE`.
 
 Configured extraction is a separate extension API:
-`simpExtLib.xtraversedata_for_ss` takes a `simpExtLib.simpset` constructed
-from an extension recipe, such as `boolSimpsExt.bool_ss`, and returns data
-for `TraverseExt.XTRAVERSE`. Consumers needing only configured reducer data
-use `#1 (simpExtLib.xtraversedata_for_ss ss)` on that extension set; this
-is not an adapter for an ordinary simpset.
+`simpExtLib.xtraversedata_for_ss` takes a `simpExtLib.simpset`, such as
+`simpExtLib.lift_simpset boolSimps.bool_ss`, and returns data for
+`TraverseExt.XTRAVERSE`. Consumers needing only configured reducer data
+use `#1 (simpExtLib.xtraversedata_for_ss ss)` on that extension set.
 
 ### Failure
 

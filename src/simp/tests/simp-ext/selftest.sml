@@ -2,6 +2,9 @@
    as ordinary clients or as explicitly lifted opaque reducers. *)
 open HolKernel Parse boolLib boolSyntax testutils
 structure S = simpExtLib
+val ext_ETA_ss = simpExtLib.lift_ssfrag boolSimps.ETA_ss
+val ext_bool_ss = simpExtLib.lift_simpset boolSimps.bool_ss
+val ext_pure_ss = simpExtLib.lift_simpset pureSimps.pure_ss
 structure E = TraverseExt
 val _ = APIExamples.fragments
 
@@ -30,23 +33,23 @@ fun uses rules th =
 (* The standard recipe order is unchanged, and ETA stays opt-in. These are
    new tracked constructions from immutable inputs, not converted sets. *)
 val _ = check "BOOL recipe keeps PURE/BOOL/NOT/CONG/UNWIND order"
-  (map S.frag_name (List.rev (S.ssfrags_of boolSimpsExt.bool_ss)) =
+  (map S.frag_name (List.rev (S.ssfrags_of ext_bool_ss)) =
    map SOME ["PURE","BOOL","NOT","CONG","UNWIND"])
 val _ = converted "tracked BOOL beta and boolean rewriting"
-  (S.SIMP_CONV boolSimpsExt.bool_ss [])
+  (S.SIMP_CONV ext_bool_ss [])
   ``(\x:bool. x /\ T) p`` ``p:bool``
 val _ = converted "tracked BOOL contextual COND congruence"
-  (S.SIMP_CONV boolSimpsExt.bool_ss [])
+  (S.SIMP_CONV ext_bool_ss [])
   ``if p then (f:bool -> bool) p else g p``
   ``if p then (f:bool -> bool) T else g F``
 val _ = converted "ETA is not silently installed in BOOL"
-  (S.SIMP_CONV boolSimpsExt.bool_ss []) ``\x:bool. f x:bool``
+  (S.SIMP_CONV ext_bool_ss []) ``\x:bool. f x:bool``
   ``\x:bool. f x:bool``
 val _ = converted "tracked ETA is explicitly installable"
-  (S.SIMP_CONV (S.++ (pureSimpsExt.pure_ss,boolSimpsExt.ETA_ss)) [])
+  (S.SIMP_CONV (S.++ (ext_pure_ss,ext_ETA_ss)) [])
   ``(f:(bool -> bool) -> bool) (\x. g x)`` ``f (g:bool -> bool):bool``
 val _ = List.app (fn tm => converted "ETA excludes logical binders"
-  (S.SIMP_CONV (S.++ (pureSimpsExt.pure_ss,boolSimpsExt.ETA_ss)) []) tm tm)
+  (S.SIMP_CONV (S.++ (ext_pure_ss,ext_ETA_ss)) []) tm tm)
   [``!x:bool. P x``, ``?x:bool. P x``, ``@x:bool. P x``]
 
 (* A saved NONE stays live; an explicit depth does not modify the shared
@@ -60,7 +63,7 @@ val _ = let
   val r1 = ASSUME (mk_imp (q,mk_eq (p,T)))
   val r2 = ASSUME (mk_eq (q,T))
   val expected = MP r0 (EQT_ELIM (MP r1 (EQT_ELIM r2)))
-  val ss = S.++ (pureSimpsExt.pure_ss,S.rewrites [r0,r1,r2])
+  val ss = S.++ (ext_pure_ss,S.rewrites [r0,r1,r2])
   val saved = !Cond_rewr.stack_limit
   fun run () = let
     val _ = Cond_rewr.stack_limit := 0
@@ -148,7 +151,7 @@ val _ = scoped (fn () => let
   val alias = ``ext_c (ext_h x)``
   val output = ``ext_k x``
   val dummy = S.name_ss "removable" S.empty_ssfrag
-  fun base rule = S.++ (S.++ (pureSimpsExt.pure_ss,dummy),
+  fun base rule = S.++ (S.++ (ext_pure_ss,dummy),
     S.named_rewrites_with_names "originals"
       [({Thy=current_theory (),Name="source"},rule)])
   fun source ss = hd (S.rewrite_source_handles ss)
@@ -242,16 +245,16 @@ val _ = scoped (fn () => let
     (maker_count > 0 andalso !makers = maker_count andalso !compilations = 0)
 
   (* Prepared bundles retain existing event bindings and actual counters. *)
-  val bundle = S.prepare_rewrite_bundle pureSimpsExt.pure_ss
+  val bundle = S.prepare_rewrite_bundle ext_pure_ss
     [Ntimes original 2]
   val bundle_source = hd (#2 (hd (S.rewrite_bundle_rules bundle)))
-  val installed = S.install_rewrite_bundle bundle [] pureSimpsExt.pure_ss
+  val installed = S.install_rewrite_bundle bundle [] ext_pure_ss
   val _ = converted "bundle original spends first use" (cv installed)
     tm output
-  val other = S.prepare_rewrite_bundle pureSimpsExt.pure_ss [Once reducer]
+  val other = S.prepare_rewrite_bundle ext_pure_ss [Once reducer]
   val combined = S.combine_rewrite_bundles [bundle,other]
   val bound = S.install_rewrite_bundle combined [(bundle_source,view)]
-    pureSimpsExt.pure_ss
+    ext_pure_ss
   val _ = check "combined bundle preserves original handle"
     (S.same_rewrite_source
       (bundle_source,hd (#2 (hd (S.rewrite_bundle_rules combined)))) andalso
@@ -270,13 +273,13 @@ val _ = scoped (fn () => let
   val charges = ref 0
   fun charge () = charges := !charges + 1
   val policy = E.charge_only charge
-  val overlap = S.++ (pureSimpsExt.pure_ss,S.rewrites [original,reducer])
+  val overlap = S.++ (ext_pure_ss,S.rewrites [original,reducer])
   val _ = converted "parent-first takes overlapping root" (cv overlap)
     tm output
   val _ = converted "child-first takes overlapping child first"
     (S.SIMP_CONV_CHILD_FIRST policy overlap []) tm alias
   val _ = check "child-first charges traversal" (!charges > 0)
-  val private_ss = S.++ (pureSimpsExt.pure_ss,S.rewrites [Once reducer,c])
+  val private_ss = S.++ (ext_pure_ss,S.rewrites [Once reducer,c])
   val private = S.prepare_child_first policy private_ss
   val _ = converted "argument normalization preserves reducible root"
     (#arguments private []) tm alias
@@ -316,7 +319,7 @@ val _ = scoped (fn () => let
     val osf = simpLib.SF ofrag
     val esf = S.SF efrag
     val otac = simpLib.SIMP_TAC pureSimps.pure_ss [osf]
-    val etac = S.SIMP_TAC pureSimpsExt.pure_ss [esf]
+    val etac = S.SIMP_TAC ext_pure_ss [esf]
     val present = Context.snapshot ()
     fun pin label tac expected = let
       val (goals,_) = runtac (VALID tac) ([],``ext_g x``)
@@ -352,12 +355,12 @@ val _ = scoped (fn () => let
     val _ = pin "ordinary consumer of extension SF stays ordinary"
       (simpLib.SIMP_TAC pureSimps.pure_ss [esf]) ``ext_h x``
   in pin "extension consumer of ordinary SF stays tracked"
-       (S.SIMP_TAC pureSimpsExt.pure_ss [osf]) ``ext_k x`` end)
+       (S.SIMP_TAC ext_pure_ss [osf]) ``ext_k x`` end)
 
   (* One tracking extent across the two engines. Nested tracking isolates its
      report and restores the outer slot even after a foreign exception. *)
   val ordinary = simpLib.SIMP_CONV pureSimps.pure_ss [reducer]
-  val extension = S.SIMP_CONV pureSimpsExt.pure_ss [original]
+  val extension = S.SIMP_CONV ext_pure_ss [original]
   fun ordinary_once () = ordinary ``ext_g x``
   fun extension_once () = extension tm
   val traced = ref ([] : term list)
@@ -386,7 +389,7 @@ val _ = scoped (fn () => let
   fun rule f = ASSUME (mk_eq (mk_comb (fv f, ``ord_x:bool``), ``ord_y:bool``))
   val eA = rule "ord_ea" val eC = rule "ord_ec"
   val oB = rule "ord_ob" val oD = rule "ord_od"
-  fun ext r = S.SIMP_CONV pureSimpsExt.pure_ss [r]
+  fun ext r = S.SIMP_CONV ext_pure_ss [r]
   fun ord r = simpLib.SIMP_CONV pureSimps.pure_ss [r]
   fun lhs_of r = lhs (concl r)
   fun interleaved () =
@@ -448,7 +451,7 @@ val _ = let
   val p = ``mig_p:bool``
   val data : simpExtLib.relsimpdata = {refl=boolTheory.EQ_REFL,
     trans=boolTheory.EQ_TRANS,weakenings=[],subsets=[],rewrs=[pq]}
-  val ss = simpExtLib.add_relsimp data pureSimpsExt.pure_ss
+  val ss = simpExtLib.add_relsimp data ext_pure_ss
   val _ = check ("add_relsimp installs a relsimp reducer whose rule "
                  ^ "rewrites (equality relation)")
     (same (simpExtLib.SIMP_CONV ss [] p) pq)
@@ -456,7 +459,7 @@ val _ = let
     {name=SOME "migration weakener",initial=MigState (),
      addcontext=fn (c,_) => c,
      apply=fn _ => fn tm => if aconv tm p then pq else NO_CONV tm}))
-  val plain = boolSimpsExt.bool_ss
+  val plain = ext_bool_ss
   val weak = simpExtLib.add_weakener wd plain
   val _ = check "add_weakener: plain simpset leaves mig_p unchanged"
     (same (total (simpExtLib.SIMP_CONV plain []) p) (REFL p))
@@ -466,7 +469,7 @@ val _ = let
                (simpExtLib.rewrites [pq])
   val _ = check "ssf_upd_rewrs replaces the fragment rules"
     (uses [qr] (simpExtLib.frag_rewrites frag))
-  val ss = simpExtLib.++ (pureSimpsExt.pure_ss,frag)
+  val ss = simpExtLib.++ (ext_pure_ss,frag)
 in check "ssf_upd_rewrs fragment rewrites mig_p to mig_r, not mig_q"
      (same (simpExtLib.SIMP_CONV ss [] p) qr) end
 

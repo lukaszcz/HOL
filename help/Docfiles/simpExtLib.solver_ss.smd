@@ -1,4 +1,4 @@
->>__ load "boolSimpsExt";
+>>__ load "simpExtLib";
 >>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
 ## `solver_ss`
 
@@ -19,8 +19,9 @@ Never fails.
 
 ``` hol4
 >> val decide : TraverseExt.ssolver = {name = "decide", solve = K DECIDE};
+>>_ val ext_bool_ss = simpExtLib.lift_simpset boolSimps.bool_ss;
 >> simpExtLib.SIMP_CONV
-     (simpExtLib.++ (boolSimpsExt.bool_ss,simpExtLib.solver_ss decide))
+     (simpExtLib.++ (ext_bool_ss,simpExtLib.solver_ss decide))
      [arithmeticTheory.LESS_MOD] “x MOD (x + 1)”;
 ```
 

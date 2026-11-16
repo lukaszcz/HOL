@@ -1,4 +1,4 @@
->>__ load "boolSimpsExt";
+>>__ load "simpExtLib";
 >>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
 ## `xtraversedata_for_ss`
 
@@ -34,7 +34,8 @@ Construction or application can fail as for the selected traversal.
 ### Example
 
 ``` hol4
->>_ val ss = simpExtLib.set_cond_depth 2 boolSimpsExt.bool_ss;
+>>_ val ext_bool_ss = simpExtLib.lift_simpset boolSimps.bool_ss;
+>>_ val ss = simpExtLib.set_cond_depth 2 ext_bool_ss;
 >>_ val pair = simpExtLib.xtraversedata_for_ss ss;
 >> val TraverseExt.ConfigReducer =
      TraverseExt.reducer_kind (hd (#rewriters (#1 pair)));

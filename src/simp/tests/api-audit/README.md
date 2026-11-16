@@ -21,15 +21,15 @@ each other.
 
 - Entry, each ordinary import and ordinary recipes check loaded modules,
   global structure bindings, actual used files and the loader's file map.
-  Extension modules, private splitter/marker modules, `combinSimpsExt` and
-  `trackedSimpDefaults` are forbidden. Actual requested, used and loaded
-  paths are printed separately; this is not a dependency-name-only scan.
+  Extension modules and private splitter/marker modules are forbidden.
+  Actual requested, used and loaded paths are printed separately; this is
+  not a dependency-name-only scan.
 - Attribute/exporter record pointers, foreign theorem data and callback
   behavior survive ordinary and explicit extension imports. Imports/proofs
   invoke no foreign attribute/exporter initialization callbacks. Existing
   Theory listener function pointers/order are retained; ordinary additions
   must be the exact legacy list. Extension imports/use add no listeners and
-  never initialize split persistence or import the tracked default provider.
+  never initialize split persistence.
 - Original `Cond_rewr.stack_limit`, `Trace.trace_hook` and the registered
   `simplifier` traces are captured before extension import. Saved ordinary
   and extension conversions see live shared depth changes; explicit

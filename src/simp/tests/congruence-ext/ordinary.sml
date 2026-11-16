@@ -24,7 +24,7 @@ val _ = check "ordinary builder constructs only requested rules"
   (length congprocs = 1 andalso null weakenprocs andalso
    length relations = 1)
 fun forbidden s = List.exists (fn n => s = n)
-  ["OpeningExt","TravrulesExt","TraverseExt","Cond_rewrExt",
+  ["TraverseExt","Cond_rewrExt",
    "simpExtLib","congExtLib","simpLib","congLib"]
 val modules = Meta.loaded ()
 val _ = print ("ORDINARY_LOADED " ^ String.concatWith "," modules ^ "\n")

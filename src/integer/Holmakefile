@@ -3,8 +3,7 @@ INCLUDES = ../n-bit ../finite_maps ../res_quan/src
 all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
 
-EXTRA_CLEANS = selftest.exe integer-selftest.log tracked-recipes.log \
-  tests/tracked-recipes/selftest.exe tests/tracked-recipes/.hol/
+EXTRA_CLEANS = selftest.exe integer-selftest.log
 
 intLib.uo: int_arithTheory.uo intLib.sml
 
@@ -28,13 +27,8 @@ install: hol4-integer.thy hol4-integer.art
 	opentheory install --reinstall $<
 endif
 
-.PHONY: tracked-recipes
-tracked-recipes: intReduceExt.uo integer_wordLibExt.uo
-	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
-	  -C tests/tracked-recipes check,tracked-recipes.log)
-
 ifdef HOLSELFTESTLEVEL
-all: integer-selftest.log tracked-recipes
+all: integer-selftest.log
 
 integer-selftest.log: selftest.exe
 	$(tee ./selftest.exe 2>&1, $@)

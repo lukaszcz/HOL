@@ -1,4 +1,4 @@
->>__ load "boolSimpsExt";
+>>__ load "simpExtLib";
 >>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
 ## `set_term_ord`
 
@@ -22,8 +22,9 @@ Never fails.
 
 ``` hol4
 >> fun reverse_ord p = Cond_rewr.ac_term_ord (swap p);
+>>_ val ext_bool_ss = simpExtLib.lift_simpset boolSimps.bool_ss;
 >> simpExtLib.SIMP_CONV
-     (simpExtLib.set_term_ord reverse_ord boolSimpsExt.bool_ss)
+     (simpExtLib.set_term_ord reverse_ord ext_bool_ss)
      [arithmeticTheory.ADD_COMM] “a + b”;
 ```
 

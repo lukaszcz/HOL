@@ -1,18 +1,18 @@
-(* Compiled clients of the actual, sealed production modules. No promotion
-   from an ordinary simpset or fragment is available or needed. *)
+(* Compiled clients of the actual, sealed production modules.  Ordinary
+   simpsets and fragments enter by lift_simpset and lift_ssfrag. *)
 structure APIExamples =
 struct
-  val pure : simpExtLib.simpset = pureSimpsExt.pure_ss
-  val bools : simpExtLib.simpset = boolSimpsExt.bool_ss
+  val pure : simpExtLib.simpset = simpExtLib.lift_simpset pureSimps.pure_ss
+  val bools : simpExtLib.simpset = simpExtLib.lift_simpset boolSimps.bool_ss
   val fragments : simpExtLib.ssfrag list =
-    [pureSimpsExt.PURE_ss, boolSimpsExt.BOOL_ss, boolSimpsExt.NOT_ss,
-     boolSimpsExt.CONG_ss, boolSimpsExt.UNWIND_ss, boolSimpsExt.ETA_ss,
-     boolSimpsExt.NORMEQ_ss, boolSimpsExt.ABBREV_ss,
-     boolSimpsExt.LABEL_CONG_ss, boolSimpsExt.HIDE_ss,
-     boolSimpsExt.CONJ_ss, boolSimpsExt.DISJ_ss,
-     boolSimpsExt.COND_elim_ss, boolSimpsExt.LIFT_COND_ss,
-     boolSimpsExt.LET_ss, boolSimpsExt.literal_case_ss,
-     boolSimpsExt.DNF_ss, boolSimpsExt.EQUIV_EXTRACT_ss]
+    map simpExtLib.lift_ssfrag
+      [pureSimps.PURE_ss, boolSimps.BOOL_ss, boolSimps.NOT_ss,
+       boolSimps.CONG_ss, boolSimps.UNWIND_ss, boolSimps.ETA_ss,
+       boolSimps.NORMEQ_ss, boolSimps.ABBREV_ss, boolSimps.LABEL_CONG_ss,
+       boolSimps.HIDE_ss, boolSimps.CONJ_ss, boolSimps.DISJ_ss,
+       boolSimps.COND_elim_ss, boolSimps.LIFT_COND_ss, boolSimps.LET_ss,
+       boolSimps.literal_case_ss, boolSimps.DNF_ss,
+       boolSimps.EQUIV_EXTRACT_ss]
 
   fun install_opaque ss (r : Traverse.reducer) : simpExtLib.simpset =
     simpExtLib.++ (ss,simpExtLib.dproc_ss (TraverseExt.lift r))

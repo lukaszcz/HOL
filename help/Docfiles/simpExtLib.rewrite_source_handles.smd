@@ -1,4 +1,4 @@
->>__ load "pureSimpsExt";
+>>__ load "simpExtLib";
 >>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
 ## `rewrite_source_handles`
 
@@ -49,11 +49,10 @@ through source handles, not just the returned conversion keys.
 ### Construction caveat
 
 Start with `simpExtLib` recipes before installing source-sensitive rules.
-There is no transparent ordinary-set promotion. Recompiling recipes cannot
-recover old source identities or spent quotas, and `ssfrags_of` alone loses
-history. Use `prepare_rewrite_arguments` before inspecting theorem-list
-directives; `rewrite_sources ss ths` is read-only and rejects directives
-rather than applying them implicitly.
+Lifting or recompiling recipes cannot recover spent quotas, and
+`ssfrags_of` alone loses history. Use `prepare_rewrite_arguments` before
+inspecting theorem-list directives; `rewrite_sources ss ths` is read-only
+and rejects directives rather than applying them implicitly.
 
 ### Failure
 
@@ -64,7 +63,7 @@ subsequent history operations may raise exceptions.
 
 ``` hol4
 >>_ val ss : simpExtLib.simpset = simpExtLib.++
-     (pureSimpsExt.pure_ss,
+     (simpExtLib.lift_simpset pureSimps.pure_ss,
       simpExtLib.rewrites [BoundedRewrites.Once boolTheory.AND_CLAUSES]);
 >>_ val sources : simpExtLib.rewrite_source list =
      simpExtLib.rewrite_source_handles ss;

@@ -29,8 +29,8 @@ The earlier mixed branch APIs are not develop APIs. Their final owners are:
 | Earlier branch use | Final module/type/construction |
 | --- | --- |
 | `Traverse.CONTEXT_REDUCER`, `CONFIG_REDUCER`, configuration/solver/policy types, `XTRAVERSE`, root/observed/child-first traversal | `TraverseExt`; use `TraverseExt.reducer` at the reducer factory. |
-| Paired/context/configured conditional constructors | `Cond_rewrExt`; ordinary `Cond_rewr.COND_REWR_CONV` stays direct. `Cond_rewrExt.is_var_perm` is its own copy of Cond_rewr's unexported predicate (tested to agree); `Cond_rewr.sig` is develop's plus the `note_rewrite` spec. |
-| `Opening.THREADED_CONGPROC`, `Travrules.mk_threaded_travrules`, `simpLib.threaded_cong_ss` | `OpeningExt`, `TravrulesExt`, `simpExtLib.threaded_cong_ss`. Ordinary congruence factories are unchanged. |
+| Paired/context/configured conditional constructors | `Cond_rewrExt`; ordinary `Cond_rewr.COND_REWR_CONV` stays direct. Both engines build their conversions with the one `Cond_rewr.COND_REWR_CONVS`; `Cond_rewrExt.is_var_perm` is `Cond_rewr.is_var_perm`. |
+| `Opening.THREADED_CONGPROC`, `Travrules.mk_threaded_travrules`, `simpLib.threaded_cong_ss` | `Opening.THREADED_CONGPROC`, `Travrules.mk_threaded_travrules`, `simpExtLib.threaded_cong_ss`. `Opening.CONGPROC` and `Travrules.mk_travrules` are unchanged. |
 | Extended `dproc_ss`, `SSFRAG`, fragments/sets/weakener data | `simpExtLib.ssfrag/simpset`, with `TraverseExt.reducer`, from the first relevant construction. |
 | Configured `congLib` calls | `congExtLib`; construct its distinct congset before installation and pass an extension simpset. |
 | Strategy fragments/setters, loopers, safe/unsafe solvers, subgoaler/depth/order | `simpExtLib`, with `TraverseExt.ssolver/subgoaler` types. |
@@ -39,30 +39,29 @@ The earlier mixed branch APIs are not develop APIs. Their final owners are:
 | Configured `GEN_*`, global/child-first/BOUND tactics | `simpExtLib`, taking its simpset and `TraverseExt` policy. BOUND requires the bundle already installed. |
 | Configured extraction from an earlier mixed set | `simpExtLib.xtraversedata_for_ss` returns the full pair for `TraverseExt.XTRAVERSE`. |
 | Optional `legacy_traversedata_for_ss` | Removed, not a conversion API. Use total `simpLib.traversedata_for_ss` for an ordinary set, or `simpExtLib.traversedata_for_ss` for a tracked set. |
-| PURE/BOOL/COMBIN for extension consumers | `pureSimpsExt`, `boolSimpsExt`, `combinSimpsExt`, before installation; do not pass ordinary fragments to an extension set. |
-| Source-sensitive use of BasicProvers defaults/updates | Explicit `trackedSimpDefaults` recipes and extension-typed updates/windows; ordinary BasicProvers remains ordinary. |
+| PURE/BOOL/COMBIN and other ordinary fragments for extension consumers | `simpExtLib.lift_ssfrag`; ordinary simpsets (including `BasicProvers.srw_ss()`) by `simpExtLib.lift_simpset`. |
 
-These replacements are not transparent compatibility wrappers. No operation
-promotes an arbitrary ordinary simpset/congset, recovers an opaque reducer's
-source inventory, or translates an already-applied ordinary update closure.
-`ssfrags_of` is inspection, **not** reconstruction: it omits exclusions,
-limits, maker changes and history. Rebuilding a fresh recipe creates fresh
-identities and allowances and may run makers/collectors again. It cannot
-preserve previously consumed controls. Bind sources before consumption.
-
-Only two one-way public adapters exist: `TraverseExt.lift` wraps an ordinary
-reducer while retaining its context/callbacks; `congExtLib.lift_fragment`
-lifts public ordinary fragment data. Neither imports an opaque compiled set.
-There is no reverse adapter into ordinary traversal.
+The adapters are one-way. `TraverseExt.lift` wraps an ordinary reducer while
+retaining its context/callbacks; `simpExtLib.lift_ssfrag` lifts an ordinary
+fragment (its reducers by `TraverseExt.lift`), and lifting the same named
+fragment again returns the same extension fragment, with the same rewrite
+sources; `simpExtLib.lift_simpset` replays an ordinary simpset's history
+(fragments, deletions, weakeners), limit and exclusions through these lifts;
+`congExtLib.lift_fragment` lifts public ordinary congruence fragment data.
+`simpExtLib.lookup_named_frag` (and so `SF`) also finds fragments registered
+with `simpLib`, lifted, unless a fragment of the same name is registered
+with `simpExtLib`. A lift does not recover an opaque reducer's source
+inventory, and there is no reverse adapter into ordinary traversal.
 
 ## Executable tracked construction and projections
 
 Load extension modules explicitly (or list them in a Script's `Libs`).
-For example, after loading `boolSimpsExt`:
+For example:
 
 ```sml
 val tracked : simpExtLib.simpset =
-  simpExtLib.++ (pureSimpsExt.pure_ss, boolSimpsExt.BOOL_ss);
+  simpExtLib.++ (simpExtLib.lift_simpset pureSimps.pure_ss,
+                 simpExtLib.lift_ssfrag boolSimps.BOOL_ss);
 val default_data : TraverseExt.traverse_data =
   simpExtLib.traversedata_for_ss tracked;
 val configured_data : TraverseExt.xtraverse_data =
@@ -76,13 +75,8 @@ construction-once private contexts with `TraverseExt.TRAVERSE`; configured
 projection does not recompile, invoke collectors or reset actual counters.
 Both retain the tracked object's installed bounded controls, including zero.
 
-`boolSimpsExt.bool_ss` is the parallel tracked BOOL recipe; threaded CONG and
-ETA remain explicit choices. Further typed catalogs are `numSimpsExt`,
-`pred_setSimpsExt`, `listSimpsExt`, `intReduceExt`, `integer_wordLibExt` and
-`realSimpsExt`. `trackedSimpDefaults` (in `src/boss`) installs an ordered
-recipe/provider explicitly. Its getters only retrieve prepared state;
-missing-provider updates fail instead of falling back to `srw_ss()`.
-Ordinary local/logged/window updates are not automatically mirrored.
+Threaded CONG and ETA remain explicit choices. A lifted simpset is a
+snapshot: later ordinary local/logged/window updates are not mirrored.
 
 Typed construction, reducer/public-fragment lifts, paired projections and
 actual bundle/view sharing are executable in
@@ -145,9 +139,12 @@ A `CONTEXT_REDUCER` samples an integer immediately before its callback;
 otherwise defaults to `Cond_rewr.ac_term_ord`. No temporary global setting
 implements configured invocation.
 
-`OpeningExt`/`TravrulesExt` share the original structural congruence/preorder
-identities while threading earlier results into later premises and
-beta-reducing rebuilt RHS terms. Ordinary factories do no such extra work.
+`Opening.THREADED_CONGPROC`/`Travrules.mk_threaded_travrules` share the
+ordinary factories' code while threading earlier results into later premises
+and beta-reducing rebuilt RHS terms. The ordinary factories do no such extra
+work. Both traversal engines are `TraverseCore`, parameterised by how a
+reducer is applied; `congLib` and `congExtLib` are both `congLibFn`; code
+common to `simpLib` and `simpExtLib` is in `simpCommon`.
 Both engines use the same original `Trace` action/hook/ref and registered
 `simplifier` knob; rewrite tracking is one extent, owned by `Cond_rewr`
 (develop's, byte-identical apart from the `note_rewrite` spec added to its

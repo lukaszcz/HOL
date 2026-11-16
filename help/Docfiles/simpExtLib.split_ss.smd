@@ -1,4 +1,4 @@
->>__ load "boolSimpsExt";
+>>__ load "simpExtLib";
 >>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
 ## `split_ss`
 
@@ -32,7 +32,8 @@ Never fails.
 
 ``` hol4
 >> val c = Context.snapshot();
->>_ val ss = simpExtLib.++ (boolSimpsExt.bool_ss,simpExtLib.split_ss);
+>>_ val ext_bool_ss = simpExtLib.lift_simpset boolSimps.bool_ss;
+>>_ val ss = simpExtLib.++ (ext_bool_ss,simpExtLib.split_ss);
 >> simpExtLib.GEN_SIMP_TAC {safe = false} ss []
      ([], “P (if b then 1 else 2) : bool”) c;
 >> simpExtLib.GEN_SIMP_TAC {safe = false} ss

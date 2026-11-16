@@ -2,6 +2,7 @@
    congproc, travrules and preorder types; ordinary semantics stay separate. *)
 open HolKernel Parse boolLib boolSyntax testutils
 structure S = simpExtLib
+val ext_pure_ss = simpExtLib.lift_simpset pureSimps.pure_ss
 structure E = TraverseExt
 val _ = new_theory "congruenceExtContracts"
 
@@ -42,10 +43,10 @@ val chain = prove
 val input = mk_comb (f,mk_comb (g,a))
 val gbc = ASSUME (mk_eq (mk_comb (g,b),c))
 val expected = TRANS (AP_TERM f (AP_TERM g ab)) (AP_TERM f gbc)
-val threaded : Opening.congproc = OpeningExt.THREADED_CONGPROC eqrefl chain
+val threaded : Opening.congproc = Opening.THREADED_CONGPROC eqrefl chain
 val ordinary : Opening.congproc = Opening.CONGPROC eqrefl chain
 val rules : Travrules.travrules =
-  TravrulesExt.mk_threaded_travrules [Travrules.EQ_preorder] [chain]
+  Travrules.mk_threaded_travrules [Travrules.EQ_preorder] [chain]
 val _ = let
   val calls = ref ([] : term list)
   val solvers = ref 0
@@ -94,7 +95,7 @@ val _ = let
        (same_const rel equality);
      EQT_INTRO (prove (sub,REWRITE_TAC [])))
   fun proof output = prove (mk_eq (tm,output),REWRITE_TAC [])
-  val ext = run (OpeningExt.THREADED_CONGPROC eqrefl cong) reject depther
+  val ext = run (Opening.THREADED_CONGPROC eqrefl cong) reject depther
   val old = run (Opening.CONGPROC eqrefl cong) reject depther
   val th = ext tm
   val _ = check "rebuilt RHS beta cleanup preserves original redex LHS"
@@ -123,7 +124,7 @@ val _ = let
        (same_const Rinst equality andalso aconv arg a); REFL arg)
   fun depth _ sub = (depths := !depths + 1; NO_CONV sub)
   fun solver sub = (solves := !solves + 1; NO_CONV sub)
-  val cv = run (OpeningExt.THREADED_CONGPROC refl cong) solver depth
+  val cv = run (Opening.THREADED_CONGPROC refl cong) solver depth
   val _ = fails "failed depther and reflexivity report UNCHANGED"
     unchanged (fn () => cv tm)
   val _ = fails "saved failed depther conversion is not poisoned"
@@ -131,7 +132,7 @@ val _ = let
   val _ = check "reflexivity fallback counts, no solver use"
     (!refls = 2 andalso !depths = 2 andalso !solves = 0)
   val _ = fails "failed side condition rejects before descent" holerr
-    (fn () => run (OpeningExt.THREADED_CONGPROC refl side)
+    (fn () => run (Opening.THREADED_CONGPROC refl side)
       solver depth tm)
   val _ = check "side failure does not invoke depther/reflexivity"
     (!solves = 1 andalso !depths = 2 andalso !refls = 2)
@@ -143,17 +144,17 @@ val _ = let
       fn Portable.Interrupt => true | _ => false)]
   fun abort (label,error,pred) = let
     val _ = fails ("depther preserves " ^ label) pred
-      (fn () => run (OpeningExt.THREADED_CONGPROC refl cong) reject
+      (fn () => run (Opening.THREADED_CONGPROC refl cong) reject
         (fn _ => fn _ => raise error) tm)
     val _ = fails ("solver preserves " ^ label) pred
-      (fn () => run (OpeningExt.THREADED_CONGPROC refl side)
+      (fn () => run (Opening.THREADED_CONGPROC refl side)
         (fn _ => raise error) depth tm)
-    val badrefl = OpeningExt.THREADED_CONGPROC (fn _ => raise error) cong
+    val badrefl = Opening.THREADED_CONGPROC (fn _ => raise error) cong
   in fails ("reflexivity preserves " ^ label) pred
        (fn () => run badrefl reject depth tm) end
   val _ = List.app abort errors
   val _ = fails "failed supplied reflexivity remains a HOL_ERR" holerr
-    (fn () => run (OpeningExt.THREADED_CONGPROC
+    (fn () => run (Opening.THREADED_CONGPROC
       (fn {arg,...} => NO_CONV arg) cong) reject depth tm)
 in () end
 
@@ -247,12 +248,12 @@ val _ = let
   val proof = MATCH_MP imp_cong (DISCH p body_proof)
   val cs = congExtLib.mk_congset
     [congExtLib.CSFRAG {rewrs=[],relations=[],dprocs=[],congs=[cong]}]
-  val ss = S.++ (pureSimpsExt.pure_ss,S.rewrites [ab,conditional])
+  val ss = S.++ (ext_pure_ss,S.rewrites [ab,conditional])
   val saved = congExtLib.CONGRUENCE_SIMP_QCONV equality cs ss []
   val base_data = S.traversedata_for_ss ss
   val contextual = E.XTRAVERSE
     ({limit=NONE,rewriters= #rewriters base_data,dprocs=[],
-      relation=equality,travrules=TravrulesExt.mk_threaded_travrules
+      relation=equality,travrules=Travrules.mk_threaded_travrules
         [Travrules.EQ_preorder] [cong]},E.default_config) []
   val _ = check "threaded builder supplies later-premise local context"
     (same (contextual tm) proof)
@@ -345,7 +346,7 @@ val _ = let
   val (old,old_events) = capture
     (Opening.CONGPROC eqrefl cong)
   val (ext,ext_events) = capture
-    (OpeningExt.THREADED_CONGPROC eqrefl cong)
+    (Opening.THREADED_CONGPROC eqrefl cong)
   fun action (Trace.OPENING (t,th),Trace.OPENING (u,uh)) =
         aconv t u andalso same (GEN_ALL th) (GEN_ALL uh)
     | action (Trace.PRODUCE (t,n,th),Trace.PRODUCE (u,m,uh)) =

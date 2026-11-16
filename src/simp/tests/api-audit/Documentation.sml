@@ -4,10 +4,12 @@ structure Documentation =
 struct
   open HolKernel Parse boolLib testutils
   structure S = simpExtLib
+  val ext_pure_ss = S.lift_simpset pureSimps.pure_ss
 
-  (* Choose tracked ingredients before installation, never promote a set. *)
+  (* Ordinary fragments, lifted *)
   val tracked : S.simpset = S.mk_simpset
-    [pureSimpsExt.PURE_ss,boolSimpsExt.BOOL_ss,boolSimpsExt.NOT_ss]
+    (map S.lift_ssfrag
+       [pureSimps.PURE_ss,boolSimps.BOOL_ss,boolSimps.NOT_ss])
   fun default_data (ss : S.simpset) : TraverseExt.traverse_data =
     S.traversedata_for_ss ss
   fun configured_data (ss : S.simpset) : TraverseExt.xtraverse_data =
@@ -64,7 +66,7 @@ struct
       (congruence tracked public_fragment [])
       ``T /\ audit_p`` ``audit_p:bool``
     val (installed,bundle,inventory) =
-      bind pureSimpsExt.pure_ss [BoundedRewrites.Ntimes original 2]
+      bind ext_pure_ss [BoundedRewrites.Ntimes original 2]
     val source = hd (#2 (hd inventory))
     val _ = check "documented bundle has one installed native source"
       (length inventory = 1 andalso
@@ -75,7 +77,7 @@ struct
     val _ = converted "documented view spends original allowance"
       (S.SIMP_CONV aliased []) ``F \/ audit_p`` ``audit_p:bool``
     val second = S.install_rewrite_bundle bundle [(source,view)]
-      pureSimpsExt.pure_ss
+      ext_pure_ss
     val _ = converted "documented bundle reuse shares remaining allowance"
       (S.SIMP_CONV second []) ``T /\ audit_p`` ``audit_p:bool``
     val _ = converted "documented original remains exhausted"

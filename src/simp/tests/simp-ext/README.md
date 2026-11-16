@@ -16,14 +16,9 @@ from `negative/*.ML` are normal successful test output.
 
 ## Construction and compiled clients
 
-`../../src/pureSimpsExt.{sig,sml}` and
-`../../src/boolSimpsExt.{sig,sml}` mechanically reproduce the ordinary
-recipes using extension constructors, in the original order. The full BOOL
-catalog is available, including optional ETA, ordinary versus explicitly
-threaded congruences, conversions, and named fragments. Inputs are immutable
-theorems/conversions; no ordinary fragment/set is promoted, inspected, or
-reconstructed via `ssfrags_of`. BOOL retains the ordered recipe
-`PURE -> BOOL -> NOT -> CONG -> UNWIND`; ETA is opt-in.
+The ordinary PURE/BOOL catalog reaches extension simpsets through
+`simpExtLib.lift_ssfrag` and `simpExtLib.lift_simpset`; a lifted `bool_ss`
+retains the ordered recipe `PURE -> BOOL -> NOT -> CONG -> UNWIND`.
 
 `APIExamples.sml` elaborates clients against the actual production
 modules. It checks the complete recipe catalog, explicit ordinary-reducer

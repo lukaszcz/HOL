@@ -25,10 +25,6 @@ Cond_rewrExt.sml: Explicit paired/configured conditional compilation.
 Opening.sml:   Moving into a term under the control of a congruence
                rule.
 
-OpeningExt.sml, TravrulesExt.sml:
-               Explicit threaded congruence construction. Alias the original
-               congproc/preorder/travrules types rather than copying them.
-
 Satisfy.sml:   Simplistic code to try to simplify existential goals
                through unification and examination of context.
                Available through the simpset fragment in
@@ -47,6 +43,10 @@ Traverse.sml:  High-level specification of traversal strategy.
                  something changed, then try for another rewrite.  If
                  there is one, loop.  Otherwise, try a decision
                  procedures.  If any succeeds, loop.
+
+TraverseCore.sml:
+               The traversal engine itself, shared by Traverse and
+               TraverseExt; polymorphic in the reducer type.
 
 TraverseExt.sml:
                Distinct extended reducer/configuration/policy types;
@@ -74,14 +74,6 @@ boolSimps.sml: Basic simplification data for booleans.  Includes
 combinSimps.sml:
                Simplification data for combinators.  Just a collection
                of rewrites.
-
-pureSimpsExt.sml, boolSimpsExt.sml, combinSimpsExt.sml:
-               Independent tracked recipes built from ingredients, not
-               imports of installed ordinary simpsets. Threaded congruence
-               and ETA are explicit choices. Later typed numeric/set/list/
-               integer/real catalogs and src/boss/trackedSimpDefaults build
-               an explicit ordered recipe/provider; no automatic ordinary
-               update mirroring. The provider is not in ordinary hol.state.
 
 pureSimps.sml: A simpset that transforms rewrites according to
                mk_cond_rewr from Cond_rewr.sml, but wrapping each in
@@ -114,6 +106,8 @@ simpLib.sml:   Puts it all together. The simpset data structure is
                user-supplied conversions and rewrites, and makes them
                fit into the simplifier's data structures.
 
+simpCommon.sml: Code shared by simpLib and simpExtLib.
+
 simpExtLib.sml:
                Separate opaque tracked simpsets/fragments, paired runners,
                source handles/views/bundles, preserving replay, strategies,
@@ -121,6 +115,8 @@ simpExtLib.sml:
                Source slots/serials belong here alone. Projections share
                actual installed controls and do not compile or collect.
                No arbitrary ordinary set import or ssfrags_of reconstruction.
+
+congLibFn.sml: The congLib functor, instantiated by congLib and congExtLib.
 
 congLib.sml:   Ordinary preorder simplification with ordinary simpsets.
 

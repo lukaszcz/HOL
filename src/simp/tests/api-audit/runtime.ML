@@ -1,6 +1,7 @@
 (* Dynamically used after both ordinary and explicit extension imports. *)
 open Parse boolLib;
 structure S = simpExtLib;
+val ext_pure_ss = simpExtLib.lift_simpset pureSimps.pure_ss
 structure E = TraverseExt;
 fun same th expected = aconv (concl th) (concl expected) andalso
   HOLset.equal (hypset th,hypset expected);
@@ -28,7 +29,7 @@ val _ = let
   val r2 = ASSUME (boolSyntax.mk_eq (q,boolSyntax.T))
   val expected = MP r0 (EQT_ELIM (MP r1 (EQT_ELIM r2)))
   val ordinary = simpLib.SIMP_CONV pureSimps.pure_ss [r0,r1,r2]
-  val ss = S.++ (pureSimpsExt.pure_ss,S.rewrites [r0,r1,r2])
+  val ss = S.++ (ext_pure_ss,S.rewrites [r0,r1,r2])
   val live = E.XTRAVERSE (S.xtraversedata_for_ss ss) []
   val configured = E.XTRAVERSE
     (S.xtraversedata_for_ss (S.set_cond_depth 40 ss)) []
@@ -61,7 +62,7 @@ val ordinary_term = ``(audit_of:bool -> bool) audit_x``;
 val extension_term = ``(audit_ef:bool -> bool) audit_x``;
 fun ordinary_once () = simpLib.SIMP_CONV pureSimps.pure_ss
   [ordinary_rule] ordinary_term;
-fun extension_once () = S.SIMP_CONV pureSimpsExt.pure_ss
+fun extension_once () = S.SIMP_CONV ext_pure_ss
   [extension_rule] extension_term;
 
 (* The one simplifier.trace flag is the level both engines report at.
@@ -106,7 +107,7 @@ val extension_rule2 = ASSUME
   ``(audit_ef2:bool -> bool) audit_x = audit_z``;
 fun ordinary_twice () = simpLib.SIMP_CONV pureSimps.pure_ss
   [ordinary_rule2] ``(audit_of2:bool -> bool) audit_x``;
-fun extension_twice () = S.SIMP_CONV pureSimpsExt.pure_ss
+fun extension_twice () = S.SIMP_CONV ext_pure_ss
   [extension_rule2] ``(audit_ef2:bool -> bool) audit_x``;
 
 val _ = let
@@ -157,7 +158,8 @@ val _ = let
 in check "no stale tracking after nested scopes" (null empty) end;
 
 (* Single-sided names, not two different fragments registered under one
-   name: opposite lookup AND opposite SF consumption must fail. *)
+   name.  The extension registry also resolves ordinary names (lifted);
+   the ordinary registry never resolves extension names. *)
 val _ = let
   val saved = Context.snapshot ()
   val oname = "api_audit_ordinary_only"
@@ -177,11 +179,12 @@ val _ = let
     val ofrag = simpLib.register_frag
       (simpLib.named_rewrites oname [ordinary_rule])
     val osf = simpLib.SF ofrag
-    val _ = check "ordinary-only name absent in opposite registry"
+    val _ = check "ordinary name resolves, lifted, in extension registry"
       (Option.isSome (simpLib.lookup_named_frag oname) andalso
-       not (Option.isSome (S.lookup_named_frag oname)))
-    val _ = missing oname
-      (S.SIMP_TAC pureSimpsExt.pure_ss [osf]) ordinary_term
+       (case S.lookup_named_frag oname of
+          SOME f => S.frag_name f = SOME oname andalso
+                    Portable.pointer_eq (f, S.lift_ssfrag ofrag)
+        | NONE => false))
     val efrag = S.register_frag (S.named_rewrites ename [extension_rule])
     val esf = S.SF efrag
     val _ = check "extension-only name absent in opposite registry"
@@ -189,9 +192,8 @@ val _ = let
        not (Option.isSome (simpLib.lookup_named_frag ename)))
     val _ = missing ename
       (simpLib.SIMP_TAC pureSimps.pure_ss [esf]) extension_term
-    val _ = check "failed SF consumption never populates opposite registry"
-      (not (Option.isSome (S.lookup_named_frag oname)) andalso
-       not (Option.isSome (simpLib.lookup_named_frag ename)))
+    val _ = check "failed SF consumption never populates ordinary registry"
+      (not (Option.isSome (simpLib.lookup_named_frag ename)))
     fun pin label tac rule tm expected = let
       val assumptions = hyp rule
       val (goals,_) = runtac (VALID tac) (assumptions,tm)
@@ -200,8 +202,11 @@ val _ = let
       (simpLib.SIMP_TAC pureSimps.pure_ss [osf]) ordinary_rule
       ordinary_term ``audit_y:bool``
     val _ = pin "extension-only SF resolves in its own registry"
-      (S.SIMP_TAC pureSimpsExt.pure_ss [esf]) extension_rule
+      (S.SIMP_TAC ext_pure_ss [esf]) extension_rule
       extension_term ``audit_z:bool``
+    val _ = pin "ordinary SF resolves in extension tactics"
+      (S.SIMP_TAC ext_pure_ss [osf]) ordinary_rule
+      ordinary_term ``audit_y:bool``
   in () end
 in Portable.finally (fn () => Context.restore saved) run () end;
 

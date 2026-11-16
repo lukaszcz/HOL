@@ -1,4 +1,4 @@
->>__ load "boolSimpsExt";
+>>__ load "simpExtLib";
 >>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
 ## `set_safe_solvers`
 
@@ -19,9 +19,10 @@ Never fails.
 ### Example
 
 ``` hol4
+>>_ val ext_bool_ss = simpExtLib.lift_simpset boolSimps.bool_ss;
 >>_ val ss = simpExtLib.add_safe_solver
      (simpExtLib.mk_tactic_solver ("decide", DECIDE_TAC))
-     boolSimpsExt.bool_ss;
+     ext_bool_ss;
 >>_ val no_safe_solvers = simpExtLib.set_safe_solvers [] ss;
 ```
 

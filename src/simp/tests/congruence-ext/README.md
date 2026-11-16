@@ -15,8 +15,8 @@ ordinary primitives and rejects any loaded simplifier extension module.
 `selftest.sml` uses the maintained executable/testutils harness (57 checks).
 It checks:
 
-- `OpeningExt.THREADED_CONGPROC` and
-  `TravrulesExt.mk_threaded_travrules` retain the shared ordinary types;
+- `Opening.THREADED_CONGPROC` and
+  `Travrules.mk_threaded_travrules` retain the shared ordinary types;
 - intermediate results consumed by later premises, including reuse;
 - beta cleanup of rebuilt right-hand sides without changing an input
   containing beta redexes; ordinary congruences retain their raw RHS;

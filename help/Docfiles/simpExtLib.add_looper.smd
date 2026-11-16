@@ -1,4 +1,4 @@
->>__ load "boolSimpsExt";
+>>__ load "simpExtLib";
 >>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
 ## `add_looper`
 
@@ -26,8 +26,9 @@ Never fails at installation.
 
 ``` hol4
 >> val c = Context.snapshot();
+>>_ val ext_bool_ss = simpExtLib.lift_simpset boolSimps.bool_ss;
 >>_ val ss = simpExtLib.add_looper ("conj", fn _ => CONJ_TAC)
-     boolSimpsExt.bool_ss;
+     ext_bool_ss;
 >> simpExtLib.GEN_SIMP_TAC {safe = false} ss [] ([], “p ∧ q”) c;
 >> simpExtLib.GEN_SIMP_TAC {safe = false} ss
      [simpExtLib.ExclX "looper:conj"] ([], “p ∧ q”) c;

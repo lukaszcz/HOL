@@ -1,6 +1,7 @@
 (* Run both after a fresh exported import and in a separately restored heap.
    Disable TypeBase so every successful split must use the persisted aliases. *)
-open Parse boolLib boolSimpsExt simpExtLib splitLib;
+open Parse boolLib simpExtLib splitLib;
+val bool_ss = lift_simpset boolSimps.bool_ss;
 val expected = ["splitChild$drop","splitParent$keep"];
 val _ = check "persisted aliases reflect ordered ancestor retraction"
   (map #1 (named_split_thms ()) = expected);

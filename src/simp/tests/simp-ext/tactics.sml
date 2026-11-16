@@ -1,6 +1,7 @@
 (* Invocation binding, recursive directives and local replay. *)
 open HolKernel Parse boolLib boolSyntax testutils
 structure S = simpExtLib
+val ext_pure_ss = simpExtLib.lift_simpset pureSimps.pure_ss
 structure E = TraverseExt
 val saved_context = Context.snapshot ()
 val _ = new_theory "simpExtTactics"
@@ -203,7 +204,7 @@ val _ = let
     val goal = ([p],em p)
     val _ = List.app (fn control =>
       tactic "wrapped NoAsms/IgnAsm retains unbound global policy"
-        (S.GEN_GLOBAL_SIMP_TAC unsafe cfg pureSimpsExt.pure_ss [control])
+        (S.GEN_GLOBAL_SIMP_TAC unsafe cfg ext_pure_ss [control])
         goal [goal])
       [Once markerLib.NoAsms,S.Req0 markerLib.NoAsms,
        Once (markerLib.IgnAsm [QUOTE "invocation_policy_p"])]

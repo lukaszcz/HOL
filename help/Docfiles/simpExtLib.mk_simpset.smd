@@ -1,4 +1,4 @@
->>__ load "boolSimpsExt";
+>>__ load "simpExtLib";
 >>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
 ## `mk_simpset`
 
@@ -20,11 +20,12 @@ their ordinary APIs; develop clients need no migration or extension load.
 Branch-only configured, source-sensitive and child-first clients must choose
 extension construction **before** installing the rules they need to track:
 
-- Use `simpExtLib.empty_ss`, `pureSimpsExt.pure_ss` or
-  `boolSimpsExt.bool_ss` as the base, and `simpExtLib` fragment constructors
-  and update operations thereafter. `pureSimpsExt.PURE_ss`, the
-  `boolSimpsExt` fragment catalog and `combinSimpsExt.COMBIN_ss` are typed
-  extension recipes, not imports of already compiled ordinary sets.
+- Use `simpExtLib.empty_ss`, or an ordinary simpset lifted by
+  `simpExtLib.lift_simpset` (e.g. `simpExtLib.lift_simpset boolSimps.bool_ss`)
+  as the base, and `simpExtLib` fragment constructors and update operations
+  thereafter. `simpExtLib.lift_ssfrag` lifts ordinary fragments, such as
+  `pureSimps.PURE_ss`, the `boolSimps` catalog or `combinSimps.COMBIN_ss`;
+  lifting the same named fragment again returns the same fragment.
 - `simpExtLib.dproc_ss` and the `dprocs` field of `simpExtLib.SSFRAG` take
   `TraverseExt.reducer` values. Use `TraverseExt.lift ordinary_reducer`
   explicitly for an opaque ordinary reducer. Lifting preserves its callback
@@ -34,28 +35,25 @@ extension construction **before** installing the rules they need to track:
   `(KernelSig.kernelname option * thm) list`; use `rewrites` for plain
   theorem lists. Native rewrites, not arbitrary conversions or lifted
   reducer internals, populate source inventories.
-- Named fragment registries are separate. Register extension fragments with
-  `simpExtLib.register_frag` and use `simpExtLib.SF`/extension tactics to
-  resolve them. Ordinary registration does not register an extension copy.
+- Register extension fragments with `simpExtLib.register_frag`.
+  `simpExtLib.SF` and extension tactics also resolve names registered with
+  `simpLib.register_frag`, lifted, unless an extension fragment of the same
+  name is registered. Ordinary tactics never see extension registrations.
 - Configured congruence clients use `congExtLib` with an extension simpset
   and a newly built extension congset. `congExtLib.lift_fragment` adapts
   public ordinary `congLib.CSFRAG` data, explicitly lifting its reducers;
   it does not promote an opaque compiled `congLib.congset`.
 
-### Rebuilding is not promotion
+### Lifting rebuilds
 
-There is no import/promotion of an arbitrary ordinary simpset. Rebuilding
-from known theorem/fragment recipes creates new compiled objects: makers,
-collectors and compilation traces may run again, source identities are new,
-and declared bounded allowances start anew. It cannot preserve an ordinary
-set's partially consumed or exhausted counters.
-
-In particular, `ssfrags_of` is inspection, not a complete reconstruction
-recipe: fragments alone lose deletions, excluded-fragment state, limits,
-rewrite-maker changes and other history. Do not hide rebuilding in source
-getters or projection accessors. Typed extension default providers and update
-functions must start from extension recipes, not mirror opaque ordinary
-updates after they have happened.
+`simpExtLib.lift_simpset` replays the ordinary simpset's history (fragments,
+deletions and weakeners), limit and exclusions, creating new compiled
+objects: makers, collectors and compilation traces run again, and declared
+bounded allowances start anew. It cannot preserve an ordinary set's
+partially consumed or exhausted counters, and later ordinary updates are not
+mirrored. `ssfrags_of` is inspection, not a reconstruction recipe:
+fragments alone lose deletions, excluded-fragment state, limits and other
+history.
 
 For an already tracked set, both traversal projections share installed
 controls without recompilation or quota refresh. History operations are a
@@ -82,7 +80,7 @@ Fragment compilation and user callbacks can fail or raise exceptions.
 >>_ val fragment : simpExtLib.ssfrag =
      simpExtLib.rewrites [boolTheory.AND_CLAUSES];
 >>_ val ss : simpExtLib.simpset =
-     simpExtLib.mk_simpset [pureSimpsExt.PURE_ss, fragment];
+     simpExtLib.mk_simpset [simpExtLib.lift_ssfrag pureSimps.PURE_ss, fragment];
 >>_ val data : TraverseExt.xtraverse_data =
      simpExtLib.xtraversedata_for_ss ss;
 >> TraverseExt.XTRAVERSE data [] “T ∧ p”;

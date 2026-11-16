@@ -1,4 +1,4 @@
->>__ load "boolSimpsExt";
+>>__ load "simpExtLib";
 >>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
 ## `add_split`
 
@@ -23,8 +23,9 @@ Fails if the theorem is not a split rule.
 ### Example
 
 ``` hol4
+>>_ val ext_bool_ss = simpExtLib.lift_simpset boolSimps.bool_ss;
 >>_ val ss = simpExtLib.add_split (splitLib.type_split_of “:'a option”)
-     boolSimpsExt.bool_ss;
+     ext_bool_ss;
 >> val c = Context.snapshot();
 >> simpExtLib.GEN_SIMP_TAC {safe = false} ss []
      ([], “P (case x of NONE => 0 | SOME n => n + 1) : bool”) c;

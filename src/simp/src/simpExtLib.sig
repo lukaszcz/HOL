@@ -61,8 +61,8 @@ sig
   type controlled_thm = BoundedRewrites.controlled_thm
 
   (* Choose tracked construction before installing source-sensitive rules.
-     These are distinct from simpLib objects. There is no promotion/import of
-     arbitrary ordinary simpsets, nor reconstruction hidden in projections. *)
+     These are distinct from simpLib objects; ordinary ones enter by
+     lift_ssfrag and lift_simpset, never implicitly. *)
   type ssfrag
   type simpset
   type rewrite_source
@@ -84,8 +84,15 @@ sig
   val frag_name : ssfrag -> string option
 
   val register_frag : ssfrag -> ssfrag
+  (* Also finds fragments registered with simpLib (lifted), unless one of
+     the same name is registered here *)
   val lookup_named_frag : string -> ssfrag option
   val all_named_frags : unit -> string list
+
+  (* Ordinary fragments and simpsets, for this engine.  Lifting the same
+     named fragment again gives the same fragment. *)
+  val lift_ssfrag : simpLib.ssfrag -> ssfrag
+  val lift_simpset : simpLib.simpset -> simpset
 
   (*------------------------------------------------------------------------*)
   (* Easy building of common kinds of ssfrag objects                        *)

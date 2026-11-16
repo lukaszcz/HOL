@@ -1,4 +1,4 @@
->>__ load "boolSimpsExt";
+>>__ load "simpExtLib";
 >>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
 ## `filter_rewrites`
 
@@ -40,10 +40,11 @@ The predicate and replay callbacks can raise exceptions.
 
 ``` hol4
 >> fun keep (_, th) = not (aconv (concl th) (concl AND_CLAUSES));
+>>_ val ext_bool_ss = simpExtLib.lift_simpset boolSimps.bool_ss;
 >>+ simpExtLib.SIMP_CONV
-      (simpExtLib.filter_rewrites keep boolSimpsExt.bool_ss) [] “p ∧ T”;
+      (simpExtLib.filter_rewrites keep ext_bool_ss) [] “p ∧ T”;
 >> simpExtLib.SIMP_CONV
-     (simpExtLib.filter_rewrites keep boolSimpsExt.bool_ss) [] “p ∨ F”;
+     (simpExtLib.filter_rewrites keep ext_bool_ss) [] “p ∨ F”;
 ```
 
 ### See also

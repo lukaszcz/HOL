@@ -4,7 +4,7 @@ EXTRA_CLEANS = selftest.exe repair.exe split-proof.state
 
 # Prerequisites are built, never linked into the clean launcher heap.
 selftest.exe: selftest.uo ../../src/simpExtLib.uo ../../src/congExtLib.uo \
-  ../../src/boolSimpsExt.uo ../../src/splitPersistLib.uo
+  ../../src/boolSimps.uo ../../src/splitPersistLib.uo
 	$(HOLMOSMLC) -o $@ $<
 
 repair.exe: repair.uo

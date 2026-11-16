@@ -1,6 +1,4 @@
-EXTRA_CLEANS = selftest.exe boss-selftest.log tracked-defaults.log \
-  tests/tracked-defaults/selftest.exe tests/tracked-defaults/ordinary.exe \
-  tests/tracked-defaults/.hol/
+EXTRA_CLEANS = selftest.exe boss-selftest.log
 
 ifdef POLY
 EXTRA_CLEANS += $(TARGET)
@@ -23,7 +21,7 @@ endif
 
 UOFILES = holTheory.uo selftest.uo
 
-all: selftest.exe $(UOFILES) trackedSimpDefaults.uo
+all: selftest.exe $(UOFILES)
 .PHONY: all
 
 selftest.exe: selftest.uo holTheory.uo
@@ -98,14 +96,8 @@ all: hol4-base.art
 
 endif
 
-# Opt-in tracked recipes are available to clients, not loaded in hol.state.
-.PHONY: tracked-defaults
-tracked-defaults: trackedSimpDefaults.uo
-	$(tee $(HOLDIR)/bin/Holmake --no-project --no-cache -j1 \
-	  -C tests/tracked-defaults check,tracked-defaults.log)
-
 ifdef HOLSELFTESTLEVEL
-all: boss-selftest.log tracked-defaults
+all: boss-selftest.log
 
 boss-selftest.log: selftest.exe
 	$(tee ./$<, $@)
