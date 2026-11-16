@@ -5470,17 +5470,17 @@ local
     (tprint label; if condition then OK () else die detail)
 
   fun with_hooks fmt out action = let
-    val saved_mon = !Rewrite.monitoring
+    val saved_mon = HOLFlags.get_bflag Rewrite.monitoring
     val saved_emit = !Feedback.emit_MESG
     val saved_fmt = !Feedback.MESG_to_string
     val saved_out = !Feedback.MESG_outstream
     fun restore () =
-      (Rewrite.monitoring := saved_mon;
+      (HOLFlags.set_bflag (Rewrite.monitoring, saved_mon);
        Feedback.emit_MESG := saved_emit;
        Feedback.MESG_to_string := saved_fmt;
        Feedback.MESG_outstream := saved_out)
     fun run () =
-      (Rewrite.monitoring := true;
+      (HOLFlags.set_bflag (Rewrite.monitoring, true);
        Feedback.emit_MESG := true;
        Feedback.MESG_to_string := fmt;
        Feedback.MESG_outstream := out;

@@ -425,7 +425,7 @@ in
 val SUC_TO_NUMERAL_DEFN_CONV_hook =
       ref (fn _ => raise ERR "SUC_TO_NUMERAL_DEFN_CONV_hook" "not initialized")
 fun add_defs_to_EVAL l =
-  if not (!computeLib.auto_import_definitions) then () else
+  if not (computeLib.get_auto_import_definitions()) then () else
     let val has_lhs_SUC = List.exists
               (can (find_term is_suc) o lhs o #2 o strip_forall)
                                       o strip_conj o concl
@@ -449,13 +449,14 @@ end;
 
 val mesg = with_flag(MESG_to_string, Lib.I) HOL_MESG
 
+val {get = chatting, flag = storage_message, ...} =
+    HOLFlags.create_btrace ({group = "Definition",
+                             name = "storage_message"}, true)
 local
-  val chatting = ref true
-  val _ = Feedback.register_btrace("Definition.storage_message", chatting)
 in
 fun been_stored (s,thm) =
   (add_defs_to_EVAL [(s,thm)];
-   if !chatting then
+   if chatting() then
      mesg (if !Globals.interactive then
              "Definition has been stored under " ^ Lib.quote s ^ "\n"
            else
@@ -494,7 +495,7 @@ fun store_at loc (stem,eqs,ind) =
       val ind_bind = indSuffix stem
       fun save x =
          case Theory.oracle_string_of (snd x)
-          of NONE => Feedback.trace ("Theory.save_thm_reporting", 0)
+          of NONE => HOLFlags.with_flags [(Theory.save_thm_reporting, 0)]
                                     (save_thm_at loc) x
            | SOME _ => save_thm_at loc x
       val   _  = save (ind_bind, ind)
@@ -502,7 +503,7 @@ fun store_at loc (stem,eqs,ind) =
       val _ = add_defs_to_EVAL [(eqs_bind,eqs)]
          handle e => HOL_MESG ("Unable to add "^eqs_bind^" to global compset")
   in
-    if !chatting then
+    if chatting() then
        mesg (if !Globals.interactive then
                String.concat ["Equations stored under ", Lib.quote eqs_bind,
                               ".\nInduction stored under ", Lib.quote ind_bind,
@@ -852,6 +853,11 @@ fun nestrec thy bindstem {proto_def,SV,WFR,pats,extracta} =
 
 (*---------------------------------------------------------------------------
       Performs tupling and also eta-expansion.
+
+      A call can supply more arguments than the function's equations take
+      when its range is a function type (f x = \y. ...).  Only as many
+      arguments as the equations take are tupled; the surplus is applied
+      to the tupled call.
  ---------------------------------------------------------------------------*)
 
 fun tuple_args alist =
@@ -873,7 +879,11 @@ fun tuple_args alist =
              in
                list_mk_abs(nvs', comb')
              end
-          else mk_comb(stem', list_mk_pair args')
+          else
+             let val (targs, rest) = split_after (length argtys) args'
+             in
+               list_mk_comb (mk_comb (stem', list_mk_pair targs), rest)
+             end
         end
  in
    tupelo
@@ -1090,14 +1100,47 @@ fun move_arg tm =
     (fn (f, (v, b)) => boolSyntax.mk_eq (Term.mk_comb (f, v), b))
     (Lib.total ((Lib.I ## Term.dest_abs) o boolSyntax.dest_eq) tm)
 
+(*---------------------------------------------------------------------------
+      True when some call of f in tm supplies more than arity arguments.
+      Such a definition recurses through the range of f, so where the
+      equations are a single clause the abstraction is moved into the
+      arguments before f is tupled.
+ ---------------------------------------------------------------------------*)
+
+fun over_applied f arity tm =
+  let
+    fun chk tm =
+      if is_abs tm then chk (body tm)
+      else if is_comb tm then
+        let val (g, args) = strip_comb tm
+        in
+          (aconv g f andalso length args > arity) orelse List.exists chk args
+        end
+      else false
+  in
+    chk tm
+  end
+
 fun pairf (stem, eqs0) =
  let
    val ((f, args), rhs) = dest_hd_eqn eqs0
    val argslen = length args
    val argtys = map type_of args
+   val moved = if over_applied f argslen eqs0 then move_arg eqs0 else NONE
  in
-   if argslen = 1   (* not curried ... do eta-expansion *)
-     then (tuple_args [(f, (f, argtys))] eqs0, stem, I)
+   case moved of
+     SOME tm => pairf (stem, tm)
+   | NONE =>
+   if argslen = 1 then
+     (* One argument needs no tupling, so tuple_args would do nothing
+        here but eta-expand the calls that supply f too few arguments.
+        That expansion survives into the saved equation, which is why
+        a definition recursing through MAP or EVERY was stored as
+        MAP (\a. f a) l rather than the MAP f l that was written.
+        Extraction fills a congruence's function variable from the
+        call's own head when the left-hand side is not an abstraction,
+        so nothing downstream needs the expansion. *)
+     (eqs0, stem, I)
    else
      let
        val stem'name = stem ^ DefnBase.tupled_suffix
@@ -1119,7 +1162,64 @@ fun pairf (stem, eqs0) =
            val def  = new_definition (argMunge stem,
                         mk_eq (list_mk_comb (fvar, def_args),
                                list_mk_comb (tuplecSV, [list_mk_pair defvars])))
-           val rules' = map (Rewrite.PURE_REWRITE_RULE [GSYM def]) rules
+           (* Tupling a curried function has to eta-expand a call that
+              supplies it too few arguments: g n becomes
+              \a. g_tupled (n,a), the partial application having no
+              other form.  GSYM def has just turned that back into
+              \a. g n a, which is the g n that was written, so
+              contracting it here keeps the saved equation in the
+              shape it was given.  Only calls of the function being
+              defined are contracted, and only below the top of a
+              right-hand side, so an equation whose value genuinely is
+              an abstraction keeps it. *)
+           val defc =
+               #1 (strip_comb
+                     (boolSyntax.lhs (snd (strip_forall (concl def)))))
+           (* tuple_args names the variables it invents "a", and both
+              it and extraction vary that name by priming, so an
+              abstraction over such a name is one this pass put there.
+              A binder the specification wrote -- a case branch's
+              arguments, a lambda over a tuple -- is part of the shape
+              the equation was given in, and contracting it changes
+              that shape rather than restoring it. *)
+           fun invented v =
+             let val nm = #1 (dest_var v)
+             in
+               String.sub (nm, 0) = #"a" andalso
+               CharVector.all (fn c => c = #"'" orelse Char.isDigit c)
+                              (String.extract (nm, 1, NONE))
+             end handle HOL_ERR _ => false
+           fun ETA_CALL_CONV tm =
+             let val (v, bdy) = dest_abs tm
+             in
+               if invented v andalso aconv (#1 (strip_comb bdy)) defc then
+                 ETA_CONV tm
+               else raise ERR "ETA_CALL_CONV" "not a call this pass made"
+             end
+           (* Naming is the whole criterion: a binder the specification
+              wrote is left alone wherever it sits, including inside a
+              paired abstraction, and one this pass invented is
+              contracted wherever it sits.  Excluding paired
+              abstractions as well would leave the equations and the
+              induction contracted in different places, which is a
+              worse state than either. *)
+           fun contractConv tm =
+             if is_abs tm then
+               (ABS_CONV contractConv THENC TRY_CONV ETA_CALL_CONV) tm
+             else if is_comb tm then
+               (RATOR_CONV contractConv THENC RAND_CONV contractConv) tm
+             else ALL_CONV tm
+           val contract_etas =
+             CONV_RULE
+               (TRY_CONV (STRIP_QUANT_CONV (RHS_CONV (SUB_CONV contractConv))))
+           (* The equations and the induction principle describe the
+              same recursion, so they have to agree: contracting only
+              the equations left <fn>_def saying MAP f and <fn>_ind
+              saying MAP (\a. f a), and a proof that unfolded one and
+              inducted with the other no longer matched itself. *)
+           val contract_all = CONV_RULE (TRY_CONV contractConv)
+           val rules' =
+             map (contract_etas o Rewrite.PURE_REWRITE_RULE [GSYM def]) rules
            val induction' =
              let
                val P = fst (dest_var (fst (dest_forall (concl induction))))
@@ -1132,18 +1232,12 @@ fun pairf (stem, eqs0) =
                    (SPEC tm (Rewrite.PURE_REWRITE_RULE [GSYM def] induction)))
              end
          in
-           (rules', induction')
+           (rules', contract_all induction')
          end
      in
        (tuple_args [(f, (stem', argtys))] eqs0, stem'name, untuple_args)
      end
  end
- handle e as HOL_ERR herr =>
-   if message_of herr = "incompatible types" then
-      (case move_arg eqs0
-        of SOME tm => pairf (stem, tm)
-         | NONE => raise e)
-   else raise e
 
 (*---------------------------------------------------------------------------*)
 (* Abbreviation or prim. rec. definitions.                                   *)
@@ -1779,7 +1873,7 @@ fun parse_absyn absyn0 = let
   val _ =
       app (ignore o Parse.hide) (nonconstructor_parameter_names @ fn_names)
   fun restore() = temp_set_grammars(type_grammar(), oldg)
-  val quiet = Feedback.trace ("show_typecheck_errors", 0)
+  val quiet = HOLFlags.with_bflags [(Parse.show_typecheck_errors, false)]
   val tm  = quiet defn_absyn_to_term absyn handle e => (restore(); raise e)
 in
   restore();
@@ -1909,7 +2003,8 @@ fun tgoal_no_defn0 (def,ind) =
     end) handle HOL_ERR _ => raise ERR "tgoal" "";
 
 fun tgoal_no_defn (def,ind) =
-  Lib.with_flag (proofManagerLib.chatting,false) tgoal_no_defn0 (def,ind);
+  HOLFlags.with_bflags [(proofManagerLib.chatting, false)]
+                       tgoal_no_defn0 (def,ind);
 
 fun tgoal0 defn =
    (let val (_, (g,validation)) = tc_obligation defn
@@ -1917,7 +2012,8 @@ fun tgoal0 defn =
          (Manager.new_goalstack g Manager.id_tacm validation)
     end) handle HOL_ERR _ => raise ERR "tgoal" "";
 
-fun tgoal defn = Lib.with_flag (proofManagerLib.chatting,false) tgoal0 defn;
+fun tgoal defn =
+    HOLFlags.with_bflags [(proofManagerLib.chatting, false)] tgoal0 defn;
 
 (*---------------------------------------------------------------------------
      The error handling here is pretty coarse.
@@ -1958,7 +2054,7 @@ fun tprove2 mk_obligation (arg,tactic) =
 fun tprove1 mk_obligation p =
   let
     val (eqns,ind) = tprove2 mk_obligation p
-    val () = if not (!computeLib.auto_import_definitions) then ()
+    val () = if not (computeLib.get_auto_import_definitions()) then ()
              else computeLib.add_funs
                     [eqns, CONV_RULE (!SUC_TO_NUMERAL_DEFN_CONV_hook) eqns]
   in

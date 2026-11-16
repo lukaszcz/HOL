@@ -33,30 +33,32 @@ val WARN   = HOL_WARNING "TotalDefn";
 (* Set up traces                                                             *)
 (*---------------------------------------------------------------------------*)
 
+val {get = monitoring, flag = termination_candidates, ...} =
+    HOLFlags.create_trace ({group = "Definition",
+                            name = "termination_candidates"},
+                           {initial = 0, max = 4})
 local
-  val monitoring = ref 0
-  val _ = register_trace
-             ("Definition.termination candidates", monitoring, 4)
 in
 fun lztrace(i,title,msgf) =
-  if i <= !monitoring then
+  if i <= monitoring() then
      Lib.say $ String.concat ["\n", title, msgf()]
   else ()
 end
 
-val allow_schema_definition = ref false
-val _ = Feedback.register_btrace
-         ("Definition.allow_schema_definition", allow_schema_definition)
+val {get = get_allow_schema_definition, flag = allow_schema_definition, ...} =
+    HOLFlags.create_btrace ({group = "Definition",
+                             name = "allow_schema_definition"}, false)
 
-val auto_tgoal = ref true
-val _ = Feedback.register_btrace("Definition.auto Defn.tgoal", auto_tgoal)
+val {get = get_auto_tgoal, flag = auto_tgoal, ...} =
+    HOLFlags.create_btrace ({group = "Definition",
+                             name = "auto_tgoal"}, true)
 
-val deleting_support = ref true
-val _ = Feedback.register_btrace
-          ("Definition.delete support defs", deleting_support)
+val {get = deleting_support, ...} =
+    HOLFlags.create_btrace ({group = "Definition",
+                             name = "delete_support_defs"}, true)
 
 fun delete_support defn s2 s1 =
-   if !deleting_support then
+   if deleting_support() then
       DefnBase.delete_support defn s2 s1
    else ()
 
@@ -247,22 +249,30 @@ val base_ss =
 (* where n and m need not be equal.                                          *)
 (*---------------------------------------------------------------------------*)
 
-local
-fun foo [] _  = raise ERR "foo" "empty arg."
-  | foo _ []  = raise ERR "foo" "empty arg."
-  | foo [x] Y = [(x,pairSyntax.list_mk_pair Y)]
-  | foo X [y] = [(pairSyntax.list_mk_pair X, y)]
-  | foo (x::rst) (y::rst1) = (x,y)::foo rst rst1
-in
-fun dest tm =
+fun pair_up [] _  = raise ERR "pair_up" "empty arg."
+  | pair_up _ []  = raise ERR "pair_up" "empty arg."
+  | pair_up [x] Y = [(x,pairSyntax.list_mk_pair Y)]
+  | pair_up X [y] = [(pairSyntax.list_mk_pair X, y)]
+  | pair_up (x::rst) (y::rst1) = (x,y)::pair_up rst rst1;
+
+(*---------------------------------------------------------------------------*)
+(* The two values a termination condition compares: the argument of the      *)
+(* recursive call, and the argument the call was made from.                  *)
+(*---------------------------------------------------------------------------*)
+
+fun dest_tc tm =
   let val Ryx = (snd o strip_imp o snd o strip_forall) tm
       val (Ry, x) = dest_comb Ryx
-      val y = rand Ry
+  in
+     (rand Ry, x)
+  end;
+
+fun dest tm =
+  let val (y,x) = dest_tc tm
       open pairSyntax
   in
-     foo (spine_pair y) (spine_pair x)
-  end
-end;
+     pair_up (spine_pair y) (spine_pair x)
+  end;
 
 (*---------------------------------------------------------------------------*)
 (* Is a list-of-lists rectangular, filling in with false on short rows       *)
@@ -401,6 +411,120 @@ fun flat_type_size ty =
     | _ => TypeBasePure.type_size (TypeBase.theTypeBase()) ty end
 
 (*---------------------------------------------------------------------------*)
+(* A mutual recursion's domain is a sum, with one leaf per function.  Give   *)
+(* each leaf a measure of its own and add them up, without counting the sum  *)
+(* constructors that brought the functions into one domain: those say which  *)
+(* function a call is to, not how big its argument is.                       *)
+(*                                                                           *)
+(* A leaf is measured the way a flat domain is -- a column that never        *)
+(* shrinks weighs nothing -- so an argument a function merely carries, an    *)
+(* accumulator say, need not shrink for the call to.  A leaf's columns are   *)
+(* read off the conditions with both sides at that leaf, and failing those,  *)
+(* off the conditions that reach it from another leaf.                       *)
+(*---------------------------------------------------------------------------*)
+
+fun sum_leaves ty =
+  case total sumSyntax.dest_sum ty
+   of NONE => [ty]
+    | SOME (lty,rty) => sum_leaves lty @ sum_leaves rty;
+
+(*---------------------------------------------------------------------------*)
+(* The leaf a value was injected at, and the value injected.                 *)
+(*---------------------------------------------------------------------------*)
+
+fun leaf_of ty tm =
+  case total sumSyntax.dest_sum ty
+   of NONE => (0,tm)
+    | SOME (lty,rty) =>
+      case total sumSyntax.dest_inl tm
+       of SOME (t,_) => leaf_of lty t
+        | NONE =>
+          case total sumSyntax.dest_inr tm
+           of SOME (t,_) =>
+                let val (i,u) = leaf_of rty t
+                in (length (sum_leaves lty) + i, u)
+                end
+            | NONE => raise ERR "leaf_of" "not an injection";
+
+fun leaf_measures domty tcs =
+ let val tysize = TypeBasePure.type_size (TypeBase.theTypeBase())
+     val sided = mapfilter (fn tc =>
+            let val (y,x) = dest_tc tc
+            in (leaf_of domty x, leaf_of domty y)
+            end) tcs
+     fun rows i =
+       List.mapPartial
+         (fn ((ix,px),(iy,py)) =>
+             if ix = i andalso iy = i then
+               total (pair_up (pairSyntax.spine_pair py))
+                     (pairSyntax.spine_pair px)
+             else NONE)
+         sided
+     (* A leaf no condition compares with itself is still reached from
+        the others.  A column a call descended into is a proper subterm
+        of a column of the argument the call was made from; which column
+        that was does not matter, and need not even exist, because the
+        leaves need not take their parameters the same way. *)
+     fun reached i =
+       List.mapPartial
+         (fn ((ix,px),(iy,py)) =>
+             if iy = i andalso ix <> i then
+               let val src = pairSyntax.spine_pair px
+               in SOME (map (fn c => List.exists (proper_subterm c) src)
+                            (pairSyntax.spine_pair py))
+               end
+             else NONE)
+         sided
+     fun from_rows [] = NONE
+       | from_rows rws =
+           let val chf = projects rws
+           in if exists I chf then SOME chf else NONE
+           end
+     fun mask i = from_rows (map (map (uncurry proper_subterm)) (rows i))
+     val leaves = sum_leaves domty
+     val indices = Lib.upto 0 (length leaves - 1)
+     val masks = map mask indices
+     val reaching = map (from_rows o reached) indices
+     val known = List.mapPartial I masks
+     fun sized chf ty = list_mk_prod_tyl (strip_prod_ty chf ty)
+     fun By chf ty = (sized chf ty handle HOL_ERR _ => tysize ty)
+     fun whole _ ty = tysize ty
+     fun own i ty =
+       case List.nth(masks,i)
+        of SOME chf => By chf ty
+         | NONE => tysize ty
+     fun reach i ty =
+       case List.nth(masks,i)
+        of SOME chf => By chf ty
+         | NONE =>
+           case List.nth(reaching,i)
+            of SOME chf => By chf ty
+             | NONE => tysize ty
+     (* a leaf no condition compares with itself still shares the other
+        functions' parameters, so borrow a mask that fits it *)
+     fun shared i ty =
+       case List.nth(masks,i)
+        of SOME _ => own i ty
+         | NONE =>
+           case List.find (fn chf => Lib.can (sized chf) ty) known
+            of SOME chf => sized chf ty
+             | NONE => tysize ty
+     fun build leafm ty i =
+       case total sumSyntax.dest_sum ty
+        of NONE => (leafm i ty, i+1)
+         | SOME (lty,rty) =>
+             let val (ml,i1) = build leafm lty i
+                 val (mr,i2) = build leafm rty i1
+             in (basicSizeSyntax.mk_sum_size2(ml,mr), i2)
+             end
+ in
+   if Lib.can sumSyntax.dest_sum domty
+   then mapfilter (fn lm => fst (build lm domty 0)) [reach, own, shared, whole]
+   else []
+ end
+ handle HOL_ERR _ => [];
+
+(*---------------------------------------------------------------------------*)
 (* Among the termination_simps() are theorems of the form                    *)
 (*                                                                           *)
 (*   constraints ==> f t1 < f t2                                             *)
@@ -498,6 +622,7 @@ fun guessR defn =
            val lex_combs = mk_sized_subsets argvars subset
            val allrels = [mk_cmeasure domty0, mk_cmeasure (tysize domty),
                           mk_cmeasure (flat_type_size domty)]
+                         @ map mk_cmeasure (leaf_measures domty tcs)
                          @ it_prim_rec @ lex_combs
            val allrels' = mk_term_set (map simplifyR allrels)
            val () = report_num_guesses(length allrels')
@@ -653,7 +778,7 @@ local open Defn
          null (op_intersect aconv (free_varsl tcs) rhs_frees)
       end
   fun fvs_on_rhs V =
-      if !allow_schema_definition then ()
+      if get_allow_schema_definition() then ()
       else complain_about_rhsfvs "defnDefine" V
 
   fun msg1 defName thm_src_loc =
@@ -689,7 +814,7 @@ local open Defn
          val goalstring =  (* grab this in any case *)
              PP.pp_to_string (!Globals.linewidth)
                  proofManagerLib.std_goal_pp (proofManagerLib.top_goal())
-         val _ = if not (!auto_tgoal) then
+         val _ = if not (get_auto_tgoal()) then
                     ignore $ proofManagerLib.drop ()
                  else ()
      in
@@ -800,7 +925,7 @@ fun located_tDefine loc stem q tac =
        let val snap1 = thy_consts (current_theory())
            val defn = Hol_defn stem q
            val ps = params_of defn
-           val _ = null ps orelse !allow_schema_definition orelse
+           val _ = null ps orelse get_allow_schema_definition() orelse
                    complain_about_rhsfvs "tDefine" ps
        in
         if triv_defn defn then
@@ -873,14 +998,18 @@ fun located_qDefine loc stem q tacopt (_ : Context.t) =
                     ("Unknown attributes: " ^
                      String.concatWith ", " (map #1 unknown))
       fun fmod f =
-          f |> (if nocomp then trace ("computeLib.auto_import_definitions", 0)
+          f |> (if nocomp then
+                  HOLFlags.with_bflags
+                    [(computeLib.auto_import_definitions, false)]
                 else (fn f => f))
-            |> (if svarsok then trace ("Definition.allow_schema_definition", 1)
+            |> (if svarsok then
+                  HOLFlags.with_bflags [(allow_schema_definition, true)]
                 else (fn f => f))
             |> with_flag(Defn.def_suffix, "")
             |> (case indopt of NONE => with_flag(Defn.ind_suffix, "")
                              | SOME s => with_flag(Defn.ind_suffix, " " ^ s))
-            |> (if rebindok then trace ("Theory.allow_rebinds", 1)
+            |> (if rebindok then
+                  HOLFlags.with_bflags [(Theory.allow_rebinds, true)]
                 else (fn f => f))
       val (thm,indopt) =
           case (tailrecp, tacopt) of
@@ -1002,9 +1131,9 @@ val std_apiDefineq = apiDefineq guessR mk_term_tac;
  ---------------------------------------------------------------------------*)
 
 fun xDefineSchema stem =
-   with_flag(allow_schema_definition,true) (xDefine stem);
+   HOLFlags.with_bflags [(allow_schema_definition,true)] (xDefine stem);
 
 val DefineSchema =
-   with_flag(allow_schema_definition,true) Define;
+   HOLFlags.with_bflags [(allow_schema_definition,true)] Define;
 
 end

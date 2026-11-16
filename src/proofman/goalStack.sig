@@ -4,12 +4,23 @@ sig
 
    type gstk
 
-   val chatting : bool ref
+   val chatting     : HOLFlags.bflag
+   val print_fvs    : HOLFlags.bflag
+   val subgoal_print_count : HOLFlags.flag
+   val printed_assums_count : HOLFlags.flag
+   val other_subgoals_limit : HOLFlags.flag
+   val stack_subgoal_count  : HOLFlags.bflag
+   val goal_at_top          : HOLFlags.bflag
+   val assums_reversed      : HOLFlags.bflag
 
    val expand       : tactic -> gstk -> gstk
    val expandf      : tactic -> gstk -> gstk
    val expand_list  : list_tactic -> gstk -> gstk
    val expand_listf : list_tactic -> gstk -> gstk
+   (* As expandf and expand_listf, but the tactic runs in the given
+      context rather than in a snapshot of the live one. *)
+   val expandf_in      : Context.t -> tactic -> gstk -> gstk
+   val expand_listf_in : Context.t -> list_tactic -> gstk -> gstk
    val print_tac    : string -> tactic
    val note_tac     : string -> tactic
    val extract_thm  : gstk -> thm

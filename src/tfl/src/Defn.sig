@@ -62,6 +62,14 @@ sig
   val parse_absyn : absyn -> term * string list
   val parse_quote : term quotation -> term list
 
+  (* The name a proof of the termination obligation is reported under,
+     the goal itself, and the validation that turns a proof of that goal
+     into `eqns /\ ind'.  `tgoal' parks the pair in the proof manager
+     and `tprove' discharges it; a reader that only wants to show the
+     goal -- the LSP's goal-state handler -- can do neither, the proof
+     manager being process-global state a request thread must not
+     touch.  Raises `ERR "tgoal"' when there is nothing to prove. *)
+  val tc_obligation : defn -> string * (goal * (thm -> thm))
   val tgoal      : defn -> proofs
   val tprove0    : defn * tactic -> thm * thm
   val tprove     : defn * tactic -> thm * thm
@@ -83,5 +91,7 @@ sig
 
   val extract_tcs : term quotation -> (thm * term list * bool) list
   val extract_tcs_from_term : term -> (thm * term list * bool) list
+
+  val storage_message : HOLFlags.bflag
 
 end

@@ -522,7 +522,9 @@ class LiveSourceGate(unittest.TestCase):
                  b'structure SimpTracking = struct '
                  b'fun note_rewrite _ = () end'),
                 (audit.SRC + 'simpExtLib.sml',
-                 b'val trace_level = ref (!Trace.trace_level)'),
+                 b'val trace_level = HOLFlags.create_trace '
+                 b'({group = "simplifier", name = "level"}, '
+                 b'{initial = 0, max = 7})'),
                 (audit.SRC + 'simpExtLib.sml',
                  b'val trace_hook = Listener.new_listener ()')):
             with self.subTest(path=path, extra=extra):

@@ -1,6 +1,7 @@
 open HolKernel boolLib bossLib Parse
 open EmitTeX combinSyntax PP
 open testutils
+local open stringTheory in end
 
 val _ = new_theory "scratch"
 
@@ -59,10 +60,10 @@ val _ = if s = "(\\HOLFreeVar{\\HOLKeyword{if}})" then OK() else gotdie s
 
 open Feedback
 val _ = tprint "Testing paren-less dollarised syntax /\\"
-val _ = set_trace "EmitTeX: dollar parens" 0
+val _ = HOLFlags.set_bflag (EmitTeX.dollar_parens_flag, false)
 val s = pp_to_string 70 pp_term_as_tex conjunction
 val _ = if s = "\\HOLSymConst{\\HOLTokenConj{}}" then OK() else gotdie s
-val _ = set_trace "EmitTeX: dollar parens" 1
+val _ = HOLFlags.set_bflag (EmitTeX.dollar_parens_flag, true)
 
 val _ = tprint "Testing UNIV printing (:'a)"
 val s = pp_to_string 70 pp_term_as_tex (pred_setSyntax.mk_univ alpha)
@@ -105,7 +106,7 @@ val expected_inconsistent =
   \\\HOLTokenBar{} \\HOLConst{D} (\\ensuremath{\\alpha} \\HOLTyOp{foo}) \\ensuremath{\\alpha} (\\HOLTyOp{num} \\HOLTyOp{list})\n\
   \  \\HOLTokenBar{} \\HOLConst{Econ} (\\ensuremath{\\alpha} \\HOLTyOp{foo}) (\\ensuremath{\\alpha} \\HOLTyOp{foo}) \\ensuremath{\\alpha}"
 val _ = tprint "Testing datatype printing (compact)"
-val s = trace ("EmitTeX: print datatypes compactly", 1)
+val s = HOLFlags.with_bflags [(EmitTeX.print_datatypes_compactly, true)]
               (dtype_test 55) "foo"
 val _ = if s = expected_inconsistent then OK()
         else die("Expected\n" ^ expected_inconsistent ^ "\nGot:\n" ^ s)
@@ -145,11 +146,25 @@ val _ = require_msg (check_result (equal "\\alpha{} \\HOLTokenMap{} \\beta{}"))
                     String.toString
                     (pp_to_string 70 pp_type_as_tex) (alpha --> beta)
 
-val _ = tprint "Testing printing of fn update syntax"
-val expected =
-  "\\HOLFreeVar{f}\\HOLTokenLLens{}\\HOLFreeVar{k} \\HOLTokenMapto{}\
-  \ \\HOLFreeVar{v}\\HOLTokenRLens{}"
-val _ = require_msg (check_result (equal expected)) String.toString
-                    (pp_to_string 70 pp_term_as_tex)
-                    “f (| k |-> v |)”
+fun textmtest (nm, t, expected) = (
+  tprint ("Testring printing of " ^ nm);
+  require_msg (check_result (equal expected)) (fn s => s)
+              (pp_to_string 70 pp_term_as_tex) t
+);
+
+val _ = app textmtest [
+      ("fn update syntax", “f (| k |-> v |)”,
+       "\\HOLFreeVar{f}\\HOLTokenLLens{}\\HOLFreeVar{k} \\HOLTokenMapto{}\
+       \ \\HOLFreeVar{v}\\HOLTokenRLens{}"),
+      ("\" in CharLit", “#"\""”, "\\HOLCharLit{\"}"),
+      ("\" in StringLit", “"\""”, "\\HOLStringLit{\"}"),
+      ("{ in CharLit", “#"{"”, "\\HOLCharLit{\{}"),
+      ("{ in StringLit", “"{"”, "\\HOLStringLit{\{}"),
+      ("} in CharLit", “#"}"”, "\\HOLCharLit{\}}"),
+      ("} in StringLit", “"}"”, "\\HOLStringLit{\}}"),
+      ("\\n in StringLit", “"\n"”, "\\HOLStringLit{\\HOLTokenBackslash{}n}")
+    ]
+
+
+
 val _ = exit_count0 errcount

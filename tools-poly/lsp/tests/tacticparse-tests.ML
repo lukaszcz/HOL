@@ -367,6 +367,299 @@ in
   ()
 end
 
+(* ----------------------------------------------------------------------
+    TacticLeafSource
+
+    Shared leaf-source lowering and leaf-kind classification.  Synthesised
+    source is compiled in the ordinary session namespace rather than only
+    compared as text.
+   ---------------------------------------------------------------------- *)
+
+structure LeafSrcTest = struct
+  (* PolyML.compiler assigns compiled values through these qualified names. *)
+  val tac: Abbrev.tactic option ref = ref NONE
+  val ltac: Abbrev.list_tactic option ref = ref NONE
+end
+
+local
+  open TacticParse ProofStepPlan TacticLeafSource
+  fun assert msg true = OK ()
+    | assert msg false = die msg
+  fun parseTactic source = let
+    val fed = ref false
+    fun read _ = if !fed then "" else (fed := true; source)
+    fun ignoreParseError _ _ _ = ()
+    val result = HOLSourceParser.parseSML
+      "<TacticLeafSource selftest>" read ignoreParseError
+      HOLSourceParser.initialScope
+    in
+      case #parseDec result () of
+        SOME (HOLSourceAST.DecExp expression) => parseTacticBlock expression
+      | _ => raise Fail "expected tactic expression"
+    end
+
+  (* Compile through the same quotation filter as the walker. *)
+  fun compilesAs holder src = let
+    val wrapped = holder ^ " := SOME (" ^ src ^ ");"
+    val filtered =
+        HOLSource.fromString {quietOpen = true, print = fn _ => ()} wrapped
+    val i = ref 0
+    val n = String.size filtered
+    fun read () = if !i >= n then NONE
+                  else SOME (String.sub (filtered, !i)) before i := !i + 1
+    fun swallow _ = ()
+    val () = (LeafSrcTest.tac := NONE; LeafSrcTest.ltac := NONE)
+    val _ = Portable.total (fn () => PolyML.compiler
+              (read, [PolyML.Compiler.CPErrorMessageProc swallow,
+                      PolyML.Compiler.CPPrintStream swallow,
+                      PolyML.Compiler.CPOutStream swallow]) ()) ()
+    in
+      Option.isSome (!LeafSrcTest.tac) orelse
+      Option.isSome (!LeafSrcTest.ltac)
+    end
+  fun compiles TacticLeaf src = compilesAs "LeafSrcTest.tac" src
+    | compiles ListTacticLeaf src = compilesAs "LeafSrcTest.ltac" src
+
+  fun firstLeaf source =
+      case fromTactic (parseTactic source) of
+        Leaf {kind, tactic} :: _ => (kind, tactic)
+      | Select {body = Leaf {kind, tactic} :: _, ...} :: _ => (kind, tactic)
+      | _ => raise Fail ("no leading leaf in: " ^ source)
+
+  fun synthesised source =
+      case leafSource source (#2 (firstLeaf source)) of
+        SOME (Synthesised text) => SOME text
+      | _ => NONE
+
+  val byText = "`a = b` by ACCEPT_TAC TRUTH"
+  val _ = tprint "TacticLeafSource lowers a by-assertion applicatively"
+  val _ = assert "by leaf did not lower through BasicProvers.byA"
+    (case synthesised byText of
+       SOME text => String.isPrefix "BasicProvers.byA (" text andalso
+                    String.isSubstring "Tactical.ALL_TAC" text
+     | NONE => false)
+
+  (* `q by ALL_TAC' fails because `by' must discharge q. *)
+  val _ = tprint "TacticLeafSource avoids by's failing surface form"
+  val _ = assert "the surface rendering was already applicative"
+    (case printTacAsSML byText (#2 (firstLeaf byText)) of
+       SOME text => not (String.isSubstring "byA" text)
+     | NONE => false)
+
+  val sufficesText = "`a = b` suffices_by ACCEPT_TAC TRUTH"
+  val _ = tprint "TacticLeafSource lowers suffices_by applicatively"
+  val _ = assert "suffices_by leaf did not lower through suffices_byA"
+    (case synthesised sufficesText of
+       SOME text => String.isPrefix "BasicProvers.suffices_byA (" text
+     | NONE => false)
+
+  val subgoalText = "sg `a = b`"
+  val _ = tprint "TacticLeafSource qualifies sg through its own structure"
+  val _ = assert "sg was left as surface syntax"
+    (case synthesised subgoalText of
+       SOME text => String.isPrefix "BasicProvers.subgoal" text
+     | NONE => false)
+
+  (* ProofStepPlan keeps Group wrappers; linearize removes them. *)
+  val _ = tprint "TacticLeafSource agrees on a grouped and a bare leaf"
+  val _ = assert "grouping changed the answer"
+    (let val grouped = parseTactic subgoalText
+         fun strip (Group (_, _, e)) = e
+           | strip e = e
+     in
+       Option.map sourceText (leafSource subgoalText grouped) =
+       Option.map sourceText (leafSource subgoalText (strip grouped))
+     end)
+
+  val _ = tprint "TacticLeafSource answers NONE for a spanless no-op"
+  val _ = assert "a no-op leaf offered source"
+    (not (Option.isSome (leafSource "" (Then []))))
+
+  val _ = tprint "TacticLeafSource routes a tactic in a list as a tactic"
+  val _ = assert "OOpaque was misrouted as a list_tactic"
+    (fragmentLeafKind (OOpaque (0, (0, 0))) = TacticLeaf)
+  val _ = tprint "TacticLeafSource routes goal reordering as a list_tactic"
+  val _ = assert "LReverse was misrouted as a tactic"
+    (fragmentLeafKind LReverse = ListTacticLeaf)
+
+  (* Synthesised source must not depend on script-local opens. *)
+  val corpus =
+    [byText, sufficesText, subgoalText,
+     "RENAME_TAC [`x`]",
+     "MAP_EVERY ACCEPT_TAC [TRUTH]",
+     "CONJ_TAC"]
+  fun checkCompiles source = let
+    val (kind, tactic) = firstLeaf source
+    in
+      case leafSource source tactic of
+        NONE => ()
+      | SOME (Verbatim _) => ()   (* User source may depend on local opens. *)
+      | SOME (Synthesised text) =>
+        (tprint ("TacticLeafSource compiles: " ^ text);
+         assert ("synthesised source did not compile: " ^ text)
+                (compiles kind text))
+    end
+  val _ = List.app checkCompiles corpus
+in
+  ()
+end
+
+(* ----------------------------------------------------------------------
+    HOLSourceParser declaration spans
+   ---------------------------------------------------------------------- *)
+
+local
+  fun decSpansOf text = let
+    val consumed = ref false
+    fun read _ = if !consumed then "" else (consumed := true; text)
+    fun err _ _ _ = ()
+    val {parseDec, ...} =
+      HOLSourceParser.parseSML "decspan_selftest" read err
+                               HOLSourceParser.initialScope
+    fun loop acc =
+      case parseDec () of
+          NONE => rev acc
+        | SOME d => loop (HOLSourceAST.decSpan d :: acc)
+    in loop [] end
+  fun covers text =
+      case decSpansOf text of
+          [(s, e)] => SOME (String.substring (text, s, e - s))
+        | _ => NONE
+  fun check (text, expected) = (
+    tprint ("decSpan covers " ^ String.toString expected);
+    case covers text of
+        NONE => die "did not parse as one declaration"
+      | SOME got => if got = expected then OK ()
+                    else die ("got " ^ String.toString got))
+in
+  val _ = List.app check [
+    (* Every `and'-list form, plus representative single bindings. *)
+    ("fun f x = g x\nand g x = x + 1\n", "fun f x = g x\nand g x = x + 1"),
+    ("val x = 1 and y = 2\n", "val x = 1 and y = 2"),
+    ("type a = int and b = bool\n", "type a = int and b = bool"),
+    ("datatype t = A and u = B\n", "datatype t = A and u = B"),
+    ("exception E and F\n", "exception E and F"),
+    ("structure A = B and C = D\n", "structure A = B and C = D"),
+    ("fun f x = x\n", "fun f x = x"),
+    ("fun f x = x | f y = y\n", "fun f x = x | f y = y"),
+    ("val x = (1, 2)\n", "val x = (1, 2)")]
+end
+
+(* ----------------------------------------------------------------------
+    HOLSourceParser: the shape of a `Termination ... End' block
+
+    TacticParse is not involved, but this is the only harness that drives
+    the source parser, and the LSP's goal-state handler rests on two
+    properties of it that nothing else pins:
+
+      - the quote body ends at `Termination', so the slice between the
+        colon and that keyword is exactly the equations `Hol_defn' is
+        given; and
+      - an *empty* body parses to `ExpEmpty' positioned between the two
+        keywords, rather than swallowing `End' as a tactic.  That is
+        what makes an empty block answer with the initial termination
+        goal instead of with nothing.
+   ---------------------------------------------------------------------- *)
+
+local
+  open HOLSourceAST
+  (* `testutils.assert' takes a predicate; the blocks above each
+     define this shorthand for a plain bool, and so does this one. *)
+  fun assert msg true = OK ()
+    | assert msg false = die msg
+  fun decsOf text = let
+    val consumed = ref false
+    fun read _ = if !consumed then "" else (consumed := true; text)
+    fun errSink _ _ _ = ()
+    val {parseDec, ...} =
+        HOLSourceParser.parseSML "" read errSink HOLSourceParser.initialScope
+    fun loop acc = case parseDec () of
+                       NONE => List.rev acc
+                     | SOME d => loop (d :: acc)
+    in loop [] end
+  fun theDefinition text =
+      case List.filter (fn HOLDefinition _ => true | _ => false)
+                       (decsOf text) of
+          [d] => d
+        | ds => raise Fail ("expected one Definition, got " ^
+                            Int.toString (List.length ds))
+  val withTac =
+      "Definition f_def:\n  f x = x + 1\nTermination\n  tac\nEnd\n"
+  val empty = "Definition f_def:\n  f x = x + 1\nTermination\nEnd\n"
+in
+  val _ = tprint "HOLSourceParser ends a Definition quote at Termination"
+  val _ = assert "the equations are the slice colon+1 .. Termination"
+    (case theDefinition withTac of
+         HOLDefinition {colon = SOME c, termination = SOME {termination_, ...},
+                        ...} =>
+         String.substring (withTac, c + 1, termination_ - c - 1)
+         = "\n  f x = x + 1\n"
+       | _ => false)
+  val _ = tprint "HOLSourceParser gives an empty Termination body ExpEmpty"
+  val _ = assert "the empty body sits between Termination and End"
+    (case theDefinition empty of
+         HOLDefinition {termination = SOME {termination_, tac = ExpEmpty p},
+                        end_ = SOME e, stop, ...} =>
+         termination_ < p andalso p <= e andalso stop = e + 3
+       | _ => false)
+  val _ = tprint "HOLSourceParser spans a written Termination body"
+  val _ = assert "the tactic's span is the text between the keywords"
+    (case theDefinition withTac of
+         HOLDefinition {termination = SOME {termination_, tac},
+                        end_ = SOME e, ...} => let
+           val (s, stop) = expSpan tac
+         in termination_ < s andalso stop <= e
+            andalso String.substring (withTac, s, stop - s) = "tac"
+         end
+       | _ => false)
+end
+
+(* ----------------------------------------------------------------------
+    HOLSourceParser: an unterminated literal stops at its line
+
+    SML admits a newline inside a string or character literal only
+    inside a `\ ... \' gap, so a raw one means the closing quote is
+    missing.  Scanning on regardless takes the rest of the file into
+    the literal -- the `QED' delimiting the enclosing proof included,
+    after which the LSP answered a cursor in a later theorem with the
+    broken theorem's goal and no error.
+   ---------------------------------------------------------------------- *)
+
+local
+  fun theoremNames src = let
+    val consumed = ref false
+    fun read _ = if !consumed then "" else (consumed := true; src)
+    fun err _ _ _ = ()
+    val {parseDec, ...} =
+      HOLSourceParser.parseSML "untermd_selftest" read err
+                               HOLSourceParser.initialScope
+    fun go acc =
+      case parseDec () of
+        NONE => List.rev acc
+      | SOME (HOLSourceAST.HOLTheoremDecl {id = (_, nm), ...}) =>
+          go (nm :: acc)
+      | SOME _ => go acc
+  in go [] end
+  fun twoTheorems body =
+    "Theory t\nAncestors arithmetic\n\nTheorem half_typed:\n\
+    \  !n:num. n + 0 = n\nProof\n" ^ body ^
+    "\nQED\n\nTheorem healthy:\n  !m:num. m + 0 = m\nProof\n  rw[]\nQED\n"
+  fun check what body = let
+    val _ = tprint ("HOLSourceParser: " ^ what ^ " leaves the next theorem")
+    in case theoremNames (twoTheorems body) of
+         ["half_typed", "healthy"] => OK()
+       | ns => die ("saw [" ^ String.concatWith ", " ns ^ "]")
+    end
+in
+  val _ = check "an unterminated string" "  rw[] >> simp[\"abc]"
+  val _ = check "an unterminated char"   "  rw[] >> simp[#\"a]"
+  val _ = check "an unterminated quote"  "  rw[] >> `n < 10"
+  (* The positive control: a `\ ... \' gap is the one way a literal may
+     span lines, and it has to keep working. *)
+  val _ = check "a string spanning lines by a gap"
+                "  simp[\"ab\\\n   \\cd\"]"
+end
+
 val () = OS.Process.exit
            (if !failcount = 0 then OS.Process.success
             else OS.Process.failure)

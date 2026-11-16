@@ -647,10 +647,11 @@ IDENTITIES = {
         (SRC + 'Cond_rewrExt.sml', b'before Portable.dec r', 2)),
     'trace': (
         (SRC + 'Trace.sml', b'datatype action =', 1),
-        (SRC + 'Trace.sml', b'val trace_level = ref 0', 1),
         (SRC + 'Trace.sml', b'Listener.new_listener()', 1),
+        (SRC + 'Trace.sml', b'HOLFlags.create_trace(', 1),
+        (SRC + 'Trace.sml', b'{group = "simplifier", name = "trace"}', 1),
         (SRC + 'Trace.sml',
-         b'Feedback.register_trace("simplifier", trace_level, 7)', 1)),
+         b'HOLFlags.current_trace "simplifier.trace"', 1)),
     'shared_types': (
         (SRC + 'OpeningExt.sml', b'type congproc = Opening.congproc', 1),
         (SRC + 'TravrulesExt.sml', b'type preorder = Travrules.preorder', 1),

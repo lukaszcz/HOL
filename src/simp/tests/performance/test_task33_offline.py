@@ -795,7 +795,9 @@ class AuditTest(unittest.TestCase):
             "trace-registration": [
                 "val _ = Feedback.register_trace (n, r, 1)",
                 "val _ = Feedback.register_ftrace (n, f, 1)",
-                "val _ = Feedback.register_btrace (n, r)"]}
+                "val _ = Feedback.register_btrace (n, r)",
+                "val t = HOLFlags.create_trace (n, {initial = 0, max = 1})",
+                "val b = HOLFlags.create_btrace (n, false)"]}
         for name, texts in lines.items():
             for text in texts:
                 with self.subTest(text):

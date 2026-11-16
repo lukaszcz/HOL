@@ -58,7 +58,7 @@ struct
   fun retaining text use = (fingerprint := text; useResult := use)
   fun printable s = String.translate (fn c =>
     if Char.isPrint c andalso c <> #"\\" then str c else Char.toString c) s
-  fun termText tm = Lib.with_flag (Globals.show_types,true)
+  fun termText tm = HOLFlags.with_bflags [(Parse.show_types,true)]
     (fn () => printable (Parse.term_to_string tm)) ()
   fun thmText th = String.concatWith "," (map termText (hyp th)) ^ " |- " ^
                    termText (concl th)

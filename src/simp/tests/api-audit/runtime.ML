@@ -9,8 +9,8 @@ fun uses expected actual = ListPair.allEq
 fun total cv = QCONV (TRY_CONV cv);
 val _ = check "extension preserves original Cond_rewr ref"
   (Portable.pointer_eq (original_stack_limit,Cond_rewr.stack_limit));
-val _ = check "extension preserves original Trace ref and hook"
-  (Portable.pointer_eq (original_trace_level,Trace.trace_level) andalso
+val _ = check "extension preserves original simplifier traces and hook"
+  (simplifier_traces () = original_simplifier_traces andalso
    Portable.pointer_eq (original_trace_hook,Trace.trace_hook));
 val _ = check "extension preserves exact original trace listeners"
   (same_hooks original_trace_listeners
@@ -64,22 +64,23 @@ fun ordinary_once () = simpLib.SIMP_CONV pureSimps.pure_ss
 fun extension_once () = S.SIMP_CONV pureSimpsExt.pure_ss
   [extension_rule] extension_term;
 
-(* Feedback's registered knob is the original Trace ref, in both directions.
+(* The one simplifier.trace flag is the level both engines report at.
    The one original listener observes actual proofs from both compilers. *)
 val _ = let
-  val saved = !original_trace_level
+  val saved = HOLFlags.current_trace "simplifier.trace"
   val events = ref ([] : (term * thm) list)
   val name = "TASK27 shared Trace listener"
   fun watch (_,Trace.REWRITING (_,tm,th)) = events := !events @ [(tm,th)]
     | watch _ = ()
   val _ = Listener.add_listener original_trace_hook (name,watch)
   fun run () =
-    (Feedback.set_trace "simplifier" 1;
-     check "Feedback sets original Trace ref"
-       (!original_trace_level = 1 andalso !Trace.trace_level = 1);
-     original_trace_level := 0;
-     check "original Trace ref sets Feedback knob"
-       (Feedback.get_tracefn "simplifier" () = 0);
+    (HOLFlags.set_trace "simplifier.trace" 1;
+     check "HOLFlags sets the simplifier trace level"
+       (HOLFlags.current_trace "simplifier.trace" = 1);
+     HOLFlags.set_trace "simplifier.trace" 0;
+     check "simplifier.trace is the only simplifier trace"
+       (simplifier_traces () = ["trace"] andalso
+        HOLFlags.current_trace "simplifier.trace" = 0);
      check "ordinary rewrite has full expected theorem"
        (same (ordinary_once ()) ordinary_rule);
      check "extension rewrite has full expected theorem"
@@ -91,7 +92,7 @@ val _ = let
                    (extension_term,extension_rule)])))
   fun cleanup () =
     (ignore (Listener.remove_listener original_trace_hook name);
-     original_trace_level := saved)
+     HOLFlags.set_trace "simplifier.trace" saved)
 in Portable.finally cleanup run () end;
 val _ = check "shared trace listener cleanup restores exact listener list"
   (same_hooks original_trace_listeners

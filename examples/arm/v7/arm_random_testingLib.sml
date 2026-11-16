@@ -8,9 +8,8 @@ local open armLib in end;
 
 val ERR = Feedback.mk_HOL_ERR "arm_random_testingLib";
 
-val arm_random_trace = ref true;
-
-val _ = Feedback.register_btrace ("arm random", arm_random_trace);
+val {get = arm_random_trace, ...} =
+    HOLFlags.create_btrace ({group = "arm", name = "random"}, true);
 
 datatype arch = ARMv4 | ARMv4T
               | ARMv5T | ARMv5TE
@@ -683,9 +682,12 @@ local
                  | ("ARM_ARCH", [_])               => arch
                  | _ => raise ERR "component_subst" "")
 
+  (* find_terms returns every occurrence, so a component read twice gives
+     two identical maplets, which Term.subst rejects *)
   fun component_substs tm =
         Term.subst (List.map component_subst
-          (HolKernel.find_terms (Lib.can component_subst) tm)) tm
+          (Lib.op_mk_set aconv
+             (HolKernel.find_terms (Lib.can component_subst) tm))) tm
 
   val component_substs = component_substs o component_substs
 
@@ -733,7 +735,7 @@ in
   fun step_updates (pass,arch) (opc,ass:string,block) = let
       val opt = String.concat [arch, ", ", block, ", ",
                                if pass then "pass" else "fail"]
-      val _ = if !arm_random_trace then
+      val _ = if arm_random_trace() then
                 print (String.concat ["Processing... ", ass, "\n"])
               else
                 ()

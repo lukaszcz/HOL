@@ -86,8 +86,8 @@ struct
   fun is_attribute a = Map.defined (funstore ()) a
   fun attribute_fns_of ctxt a = Map.lookup (funstore_of ctxt) a
 
-   (* "induction=name" is handled by tools/Holmake/HOLSource, and so is basically
-      invisible to all later code *)
+   (* "induction=name" is handled by tools/Holmake/HOLSource, and so is
+      basically invisible to all later code *)
   fun reserve_word s =
       if Lib.mem s (reserved_words ()) then
         if !Globals.interactive then
@@ -182,7 +182,8 @@ struct
           fun categorise (U,R,A) attrs =
               case attrs of
                   [] =>
-                    {thmname = thmname, attrs = List.rev A, unknown = List.rev U,
+                    {thmname = thmname, attrs = List.rev A,
+                     unknown = List.rev U,
                      reserved = List.rev R}
                 | (a as (k,vs)) :: rest =>
                   if is_attribute k then categorise(U,R,a::A) rest

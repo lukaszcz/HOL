@@ -566,7 +566,7 @@ class StructureFixture(unittest.TestCase):
         self.assertIn("hashText", body)
         self.assertNotIn("expected", body)
         # types are shown in goals as in theorems
-        self.assertIn("Globals.show_types,true", self.support)
+        self.assertIn("[(Parse.show_types,true)]", self.support)
         start = self.support.index("fun goalText")
         self.assertIn("termText", self.support[start:start + 120])
         # the theory change keeps the function that raised the error
@@ -618,7 +618,7 @@ class StructureFixture(unittest.TestCase):
             self.assertNotIn(token, key)
         # the printed forms of the other fixtures are as they were
         for text in (
-                "fun termText tm = Lib.with_flag (Globals.show_types,true)\n"
+                "fun termText tm = HOLFlags.with_bflags [(Parse.show_types,true)]\n"
                 "    (fn () => printable (Parse.term_to_string tm)) ()\n",
                 "fun thmText th = String.concatWith \",\" (map termText "
                 "(hyp th)) ^ \" |- \" ^\n                   termText "

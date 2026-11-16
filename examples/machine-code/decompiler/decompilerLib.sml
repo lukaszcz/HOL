@@ -13,7 +13,7 @@ struct
    val (Type, Term) = parse_from_grammars $ valOf $ grammarDB {thyname="address"}
 end
 
-fun allow_rebinds f x = Feedback.trace ("Theory.allow_rebinds", 1) f x
+fun allow_rebinds f x = HOLFlags.with_bflags [(Theory.allow_rebinds, true)] f x
 val new_definition =
     allow_rebinds Definition.new_definition (* not boolSyntax! *)
 val save_thm = allow_rebinds save_thm
@@ -1593,8 +1593,11 @@ fun extract_function name th entry exit function_in_out = let
      mk_var((implode o drop 4 o explode o fst o dest_var) v, type_of v)
   val output = var_sorter (map strip_tag output)
   fun rm_pc tm = let
-    val xs = find_terms (fn x => fst (dest_eq x) ~~ mk_var("set@p",pc_type)
-                                 handle HOL_ERR _ => false) tm
+    (* find_terms returns every occurrence, so the same equation can be
+       found twice, and Term.subst rejects the repeated redex *)
+    val xs = op_mk_set aconv
+               (find_terms (fn x => fst (dest_eq x) ~~ mk_var("set@p",pc_type)
+                                    handle HOL_ERR _ => false) tm)
     in subst (map (fn x => x |-> T) xs) tm end
   val iii = (list_mk_pair o var_sorter o filter (not o is_new_var) o
                free_vars o rm_pc o ftree2tm o leaves t)

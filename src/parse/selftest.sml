@@ -663,6 +663,37 @@ local
   fun sufA t = mk_comb(mk_var("sufA", b2b), t)
   fun sufB t = mk_comb(mk_var("sufB", b2b), t)
 in
+(* term_pp keys its printing rules by term name, keeping the list for each
+   name newest-first, and picks the first entry that suits the term being
+   printed.  Three rules on one name, with the newest not applicable, is
+   what distinguishes a sorted insert from one that only looks at the
+   head: the head is right either way, so the mistake only shows once the
+   head has been filtered out.  boolLib's own grammar has four rules on
+   `case_arg'. *)
+local
+  open term_grammar term_grammar_dtype
+  fun mrule_infix prec tok =
+      add_rule {term_name = "mrule", fixity = Infix(LEFT, prec),
+                pp_elements = [mTOK tok], paren_style = OnlyIfNecessary,
+                block_style = (AroundEachPhrase, (HOLPP.CONSISTENT, 0))}
+  fun mrule_suffix prec tok =
+      add_rule {term_name = "mrule", fixity = Suffix prec,
+                pp_elements = [mTOK tok], paren_style = OnlyIfNecessary,
+                block_style = (AroundEachPhrase, (HOLPP.CONSISTENT, 0))}
+  (* added oldest first, so the timestamps ascend as the precedences
+     descend and the three arrive newest-first *)
+  val m_g = g0 |> mrule_infix 700 "<A>"
+               |> mrule_infix 600 "<B>"
+               |> mrule_suffix 500 "<C>"
+  val b2b2b = bool --> bool --> bool
+  val mv = mk_var("mrule", b2b2b)
+  val applied2 = mk_comb(mk_comb(mv, mk_var("x", bool)), mk_var("y", bool))
+in
+(* the suffix rule is newest but takes one argument, so it is filtered
+   out; of the two infix rules left, <B> is the newer and must win *)
+val _ = tpp "term_pp: newest *applicable* rule wins" "x<B>y" m_g applied2
+end
+
 val _ = tpp "ParoundPrec: lone suffix is unparenthesised at top"
             "x@" pp_g (sufA xt)
 val _ = tpp "ParoundPrec: stacked same-name suffix parenthesises inner"
@@ -694,6 +725,60 @@ val lfcono_g =
 
 val _ = tpp "Printing nil (const, double-overload)" "[x]" lfcono_g
             (cmk_list "x")
+
+(* Overload.strip_comb stamps, into the fake constant it builds, the
+   "original" constant that a print-map pattern stands for.  That is only
+   meaningful when the pattern is its head constant applied to exactly its
+   own bound variables -- an eta-expansion of that constant.  The test for
+   it compared the bound variables against the arguments with
+   ListPair.all, which stops at the shorter list, so a pattern carrying an
+   argument that is not one of its bound variables passed too, and the
+   fake constant claimed to stand for a constant it does not.
+   FCNet.label_of indexes the term net on that field. *)
+local
+  val fone_t = Term.prim_new_const {Thy = "parseSelftest", Name = "fone"}
+                                   (bool --> bool)
+  val ftwo_t = Term.prim_new_const {Thy = "parseSelftest", Name = "ftwo"}
+                                   (bool --> bool --> bool)
+  val xv = mk_var("x", bool)
+  val yv = mk_var("y", bool)
+  fun oi_for term = Overload.add_overloading ("fakeOne", term)
+                                             Overload.null_oinfo
+  (* add_overloading keys the print map on the body after strip_abs, so
+     the lookup term is that body.  Rendered as a string because
+     testutils.die returns unit rather than raising, and so cannot stand
+     as a branch producing a value. *)
+  fun original_of term =
+      case Overload.oi_strip_comb (oi_for term)
+                                  (#2 (Term.strip_abs term)) of
+          NONE => "no match"
+        | SOME (f, _) =>
+          case GrammarSpecials.dest_fakeconst_name (#1 (Term.dest_var f)) of
+              NONE => "not a fake constant"
+            | SOME {original = NONE, fake = _} => "NONE"
+            | SOME {original = SOME {Thy,Name}, fake = _} =>
+              "SOME " ^ Thy ^ "$" ^ Name
+in
+(* control: \x. fone x really is fone eta-expanded, so fone is its origin *)
+val _ = tprint "Overload: eta pattern keeps its original"
+val _ =
+    let val r = original_of (Term.mk_abs(xv, mk_comb(fone_t, xv)))
+    in
+      if r = "SOME parseSelftest$fone" then OK()
+      else die ("\nExpected SOME parseSelftest$fone, got " ^ r)
+    end
+
+(* \x. ftwo x y applies ftwo to a free y as well as to its bound x, so
+   it does not stand for ftwo.  bvs is [x] and the arguments are [x,y];
+   ListPair.all stops after x and calls them equal. *)
+val _ = tprint "Overload: over-applied pattern claims no original"
+val _ =
+    let val r = original_of
+                  (Term.mk_abs(xv, mk_comb(mk_comb(ftwo_t, xv), yv)))
+    in
+      if r = "NONE" then OK() else die ("\nExpected NONE, got " ^ r)
+    end
+end
 
 val cINS_t = Term.prim_new_const{Thy = "parseSelftest", Name = "INS"}
                        (alpha --> (alpha --> bool) --> (alpha --> bool))
@@ -1100,7 +1185,7 @@ end
     A grammar carries the precedence matrix built from its rules and its
     specials, so the matrix has to be shared exactly as far as those two
     fields are --- and a matrix that is reused rather than built must
-    still be complained about as the "ambiguous grammar warning" trace
+    still be complained about as the "Parse.ambiguous_grammar" trace
     asks, and still count as an unambiguous use when it is one.
    ---------------------------------------------------------------------- *)
 
@@ -1122,7 +1207,7 @@ local
   fun ambiguous tok =
       g0 |> add_rule (infixrule (tok ^ "1") tok 500)
          |> add_rule (infixrule (tok ^ "2") tok 400)
-  fun at_level n = Feedback.set_trace "ambiguous grammar warning" n
+  fun at_level n = HOLFlags.set_trace "Parse.ambiguous_grammar" n
   fun raises g = (ignore (mx g); false) handle Feedback.HOL_ERR _ => true
   (* run f with Globals.interactive set to i, warnings silenced, and the
      trace put back to its default of 1 afterwards *)
@@ -1173,5 +1258,47 @@ val _ =
       if raised then OK() else die "\nno exception raised"
     end
 end (* local *)
+
+(* --------------------------------------------------------------------
+   `typedTerm_in' keeps the quotation's file positions
+   -------------------------------------------------------------------- *)
+
+(* It wraps its argument as `( <q> ):ty', and that `(' is HOL's own.
+   When it went in ahead of the fragment's `(*#loc*)' pragma the lexer
+   had nothing to rebase it against, so an unclosed paren in the body
+   -- which is what leaves this one on the parser's stack at end of
+   input -- was reported "at frag 0 row 0 col 1": a position in a
+   string no reader ever sees, and one an editor cannot turn into a
+   squiggle.  The pragma is now repeated in front of the paren, which
+   puts it at the quotation's first character.
+
+   `(*#loc 12 5*)' is 1-origin, as the quote filter writes it, and
+   comes back as the 0-origin `LocA (11, 4)' every other consumer
+   works in. *)
+local
+  fun innermost e =
+      List.foldl (fn (org, best) =>
+                     case #source_location org of
+                         l as locn.Loc (locn.LocA _, locn.LocA _) => SOME l
+                       | _ => best)
+                 NONE (Feedback.origins_of e)
+  (* The grammar echoes its complaint through `HOL_INFO' as well as
+     raising it; what it raises is what this is about, and a selftest
+     log reads better without the copy. *)
+  fun locOf q =
+      Feedback.quiet_info
+        (fn () =>
+            (ignore (Parse.typedTerm_in (Context.snapshot()) q Type.bool);
+             NONE)
+              handle Feedback.HOL_ERR e => innermost e) ()
+in
+val _ = tprint "typedTerm_in: an unclosed paren gets a file position"
+val _ =
+    case locOf [QUOTE " (*#loc 12 5*)\n  (x\n"] of
+        SOME (locn.Loc (locn.LocA (11, 4), _)) => OK()
+      | SOME l => die ("\nwanted line 12 character 4, got " ^
+                       locn.toString l)
+      | NONE => die "\nno located error raised"
+end
 
 val _ = exit_count0 failcount

@@ -39,14 +39,15 @@ in separate processes, not registered over each other.
   Theory listener function pointers/order are retained; ordinary additions
   must be the exact legacy list. Extension imports/use add no listeners and
   never initialize split persistence or import the tracked default provider.
-- Original `Cond_rewr.stack_limit`, `Trace.trace_level` and `Trace.trace_hook`
-  are captured before extension import. Saved ordinary and extension
-  conversions see live shared depth changes; explicit extension depths are
-  local. Proofs compare complete conclusions and hypotheses.
-- Feedback's `simplifier` trace knob and the original trace ref work in both
-  directions. One original Trace listener observes actual rewrites by both
-  engines. Nested tracking in both directions, exceptional restoration and
-  empty-scope cleanup use real kernel rewrite proofs.
+- Original `Cond_rewr.stack_limit`, `Trace.trace_hook` and the registered
+  `simplifier` traces are captured before extension import. Saved ordinary
+  and extension conversions see live shared depth changes; explicit
+  extension depths are local. Proofs compare complete conclusions and
+  hypotheses.
+- `HOLFlags`' `simplifier.trace` is the one simplifier trace level, and the
+  extension registers no other. One original Trace listener observes actual
+  rewrites by both engines. Nested tracking in both directions, exceptional
+  restoration and empty-scope cleanup use real kernel rewrite proofs.
 - Two **single-sided** names test independent fragment registries. Opposite
   lookup is absent and opposite SF tactic consumption must raise the specific
   missing-fragment error. Own-registry tactics work; failures do not populate

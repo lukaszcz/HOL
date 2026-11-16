@@ -166,7 +166,7 @@ fun mk_var_avds (nm, ty, avoids) =
 
 fun prove_recordtype_thms (tyinfo, fields) = let
   open TypeBasePure
-  val save_thm = Feedback.trace ("Theory.save_thm_reporting", 0) save_thm
+  val save_thm = HOLFlags.with_flags [(Theory.save_thm_reporting, 0)] save_thm
   fun store_thm (n, t, tac) = save_thm(n, prove(t,tac))
 
   val app2 = C (curry op^)
@@ -361,7 +361,7 @@ fun prove_recordtype_thms (tyinfo, fields) = let
                                mk_forall(var,(mk_comb (pred_r,lhs))))))
      in
         prove(new_body,
-             rpt STRIP_TAC THEN
+             X_GEN_TAC pred_r THEN DISCH_TAC THEN X_GEN_TAC var THEN
              STRUCT_CASES_TAC (SPEC var cases_thm) THEN
              ASM_REWRITE_TAC[])
      end

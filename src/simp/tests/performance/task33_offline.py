@@ -674,7 +674,7 @@ GRAMMAR_WRITES = (
 # refs, arrays of any kind, tables, weak pointers, threads and locks, hooks,
 # listeners, registrations and slot or flag writes. Names are those of the
 # tree's signatures (Context.Data in src/prekernel/Context.sig, ThmSetData
-# in src/1/ThmSetData.sig, AncestryData, Feedback, Theory).
+# in src/1/ThmSetData.sig, AncestryData, Feedback, HOLFlags, Theory).
 ROOT_PATTERNS = (
     ("ref", r"(?<![\w'.])ref\b|\b(?:Sref|Uref|Unsynchronized\.ref)\b"),
     ("assignment", r":="),
@@ -693,7 +693,8 @@ ROOT_PATTERNS = (
      r"\b(?:new_exporter|export_with_ancestry|export_simple_dictionary"
      r"|export_alist|export_list)\b"),
     ("ancestry-data", r"\bAncestryData\.(?:make|fullmake)\b"),
-    ("trace-registration", r"\bregister_(?:alias_|f|b)?trace\b"),
+    ("trace-registration",
+     r"\bregister_(?:alias_|f|b)?trace\b|\bcreate_b?trace\b"),
     # the simplifier's own strong-reference caches (src/simp/src/Cache.sig,
     # src/portableML/poly/Susp.sig, src/metis/mlibUseful.sig)
     ("cache", r"\b(?:Cache\.)?R?CACHE\b"),

@@ -1,7 +1,12 @@
 (* Runtime-only: retain the actual ordinary control/hook identities before
    importing anything from the extension layer. *)
 val original_stack_limit = Cond_rewr.stack_limit;
-val original_trace_level = Trace.trace_level;
+fun simplifier_traces () = List.mapPartial
+  (fn HOLFlags.TraceElt r =>
+     let val {group,name} = #name r
+     in if group = "simplifier" then SOME name else NONE end)
+  (HOLFlags.traces ());
+val original_simplifier_traces = simplifier_traces ();
 val original_trace_hook = Trace.trace_hook;
 val original_trace_listeners = Listener.listeners Trace.trace_hook;
 val ordinary_input = boolSyntax.mk_conj

@@ -33,6 +33,17 @@ structure TacticWalker :> sig
      rather than at `fragSpan', which is the branch. *)
   val combinatorSpan : TacticParse.tac_frag -> (int * int) option
 
+  (* What the last `walkTo' spent its wall clock on.  `lastCosts' is
+     the steps it finished, in the order it ran them; `inFlight' is the
+     span of the step it was running when it stopped, and is `SOME'
+     only when something cut the walk short -- the budget canary, in
+     practice, which otherwise leaves its caller able to report the
+     budget and not what exceeded it. *)
+  type step_cost = {span: (int * int) option, ms: int,
+                    goalsBefore: int, goalsAfter: int}
+  val lastCosts : unit -> step_cost list
+  val inFlight : unit -> (int * int) option
+
   val walkTo : {
     plugins: LSPExtension.plugin_data,
     theoremName: string,
@@ -41,9 +52,38 @@ structure TacticWalker :> sig
     tacText: string,
     startState: goalFrag.goalstate,
     frags: TacticParse.tac_frag list,
-    cursor: int
+    cursor: int,
+    (* Stop at the first failure rather than standing `cheat' in for
+       what a `>-' branch owed and walking on.
+
+       The two modes answer different questions.  A cursor asks "what
+       is the state here", and getting there means carrying on past a
+       branch that has not been finished yet -- which is the ordinary
+       condition of a proof being written.  A diagnostic asks "where
+       does this proof first go wrong", and for that the recovery is
+       exactly wrong: it reports the *last* branch walked past rather
+       than the first thing that failed, and on a proof with several
+       unfinished branches those are far apart.
+
+       A locating walk also ignores the snapshot cache, in both
+       directions.  Resuming would start it past the very failure it
+       is looking for -- which is why the same cursor position can
+       report a failure on one visit and nothing on the next -- and
+       its snapshots are not interchangeable with a cursor walk's,
+       having been taken from a walk that stops early. *)
+    stopAtFail: bool
   } -> { state: goalFrag.goalstate,
-         failedAt: (TacticParse.tac_frag * failkind) option }
+         failedAt: (TacticParse.tac_frag * failkind) option,
+         (* The first failure the walk stood `cheat' in for and ran
+            past, when there was one.  Separate from `failedAt', which
+            is where the walk came to rest: those differ when the walk
+            recovered from a real failure and later could not get
+            through some piece of structure, and then it is this one
+            that is about the proof.  Deciding between them needs to
+            know which messages describe the proof and which describe
+            the walk, which is the caller's knowledge, not this
+            module's. *)
+         recovered: (TacticParse.tac_frag * failkind) option }
 end = struct
 
 open TacticParse
@@ -149,74 +189,66 @@ fun cheatBranch state =
       NONE => Rejected ApplyFailed
     | SOME state' => Applied state'
 
-fun textAt tacText (s, e) = String.substring (tacText, s, e - s)
+(* Total, because a span that escapes the body must not take the walk
+   down with it.  `TacticSteps.fragsOfTacText' already clamps what it
+   hands out, so this is the second line of the same defence: several
+   of the call sites below sit outside the `Portable.total' that guards
+   their step, and a `Subscript' there escapes the whole walk. *)
+fun textAt tacText (s, e) = let
+  val n = String.size tacText
+  val s' = Int.max (0, Int.min (s, n))
+  val e' = Int.max (s', Int.min (e, n))
+  in String.substring (tacText, s', e' - s') end
 
-(* The source to compile for a leaf, or NONE for one that is a
-   no-op.  The four sugars name their entry point in full because
-   their spans cover a quotation rather than a tactic, and because
-   `TacticParse's rendering of them is surface syntax needing
-   particular opens: `sg' from bossLib, `SELECT_GOAL_LT' and
-   `RENAME_TAC' from Q.  Leaves carrying a whole-expression span use
-   that source verbatim.  Anything left goes back through
-   `TacticParse's inverse printer, which is what keeps `applyAtom'
-   total -- a leaf kind nobody anticipated still applies rather than
-   halting the walk at the previous step.  Every name reachable that
-   way (MAP_EVERY, NO_TAC, TACS_TO_LT, REVERSE_LT, ...) lives in
-   Tactical, so it needs no opens.
+(* Shared lowering keeps the LSP and ProofStepPlan consumers consistent. *)
+open TacticLeafSource
 
-   A list_tactic leaf is compiled and applied as one -- see
-   `compileAndApplyLT'. *)
-(* Source we made up, versus source the user wrote.  Only the
-   second may fail to compile innocently -- that is the file's own
-   compile reporting a typo, or its `open's not having run yet.  Ours
-   failing to compile is a bug in this file and has to be seen. *)
-datatype src = Synthesised of string | Verbatim of string
+(* Where the wall clock went.  The budget canary in `goal_state_init'
+   interrupts the walk, which tells its caller the walk was too slow
+   and nothing about what was slow -- so a timeout could only ever name
+   the budget.  `costs' is what finished, `inFlight' the span of what
+   was running when the interrupt arrived.
 
-fun atomSrc tacText te = let
-  val txt = textAt tacText
-  (* `tr pat' spans the whole right operand of `>~', brackets and
-     all -- as `Rename' also assumes -- so it is passed through, not
-     wrapped again: wrapping produced `>~ [[pat]]', which never
-     compiled.  And a selector is a list_tactic, wanted whole: run as
-     `ALL_TAC >~ pats' through `expand' it saw each goal on its own
-     and so could never pick one out.  Name the list_tactic itself
-     and let `expand_list' hand it the focus. *)
-  in case te of
-      Subgoal span      => SOME (Synthesised
-                                   ("BasicProvers.subgoal " ^ txt span))
-    | LSelectGoal span  => SOME (Synthesised
-                                   ("Q.SELECT_GOAL_LT " ^ txt span))
-    | LSelectGoals span => SOME (Synthesised
-                                   ("Q.SELECT_GOALS_LT " ^ txt span))
-    | Rename span       => SOME (Synthesised ("Q.RENAME_TAC " ^ txt span))
-    | _ => case topSpan te of
-        SOME span => SOME (Verbatim (txt span))
-      | NONE => Option.map Synthesised (printTacAsSML tacText te)
-  end
+   Deliberately not cleared when a step raises: the interrupt comes
+   through as an exception, and `inFlight' surviving it is the whole
+   point.  `walkTo' clears both before it starts.
 
-(* Which leaves denote list_tactics.  Enumerated rather than read off
-   `TacticParse.isTac', which also answers false for OOpaque -- a
-   tactic sitting in a tactic list -- and so would misroute it. *)
-fun isListTactic te = case te of
-    LReverse => true
-  | LSelectGoal _ => true
-  | LSelectGoals _ => true
-  | LFirst [] => true
-  | LTacsToLT _ => true
-  | LOpaque _ => true
-  | _ => false
+   Together they separate the two pathologies: a step that blew up
+   eventually reports an `ms', a step that loops only ever appears in
+   `inFlight'. *)
+type step_cost = LSPExtension.step_cost
+(* The published cell, not a copy of it: a copy is a thing that can
+   drift, and the client reads this immediately after the walk that
+   fills it. *)
+val costsRef : step_cost list ref = LSPExtension.lastStepCosts
+val inFlightRef : (int * int) option ref = ref NONE
+fun lastCosts () = List.rev (!costsRef)
+fun inFlight () = !inFlightRef
 
-fun applyAtom tacText te state = case atomSrc tacText te of
+fun applyAtom tacText te state = case leafSource tacText te of
     NONE => Applied state
   | SOME s => let
       val (src, ours) = case s of
           Synthesised x => (x, true)
         | Verbatim x => (x, false)
-      val r = if isListTactic te then compileAndApplyLT src state
-              else compileAndApply src state
+      val span = TacticSteps.atomSpan te
+      (* Not `before'/`after': both are infix in the basis, and
+         binding one as a plain name draws a warning at every use. *)
+      val nBefore = length (goalFrag.top_goals state)
+      val timer = Timer.startRealTimer ()
+      val () = inFlightRef := span
+      val r = case fragmentLeafKind te of
+                  ProofStepPlan.ListTacticLeaf => compileAndApplyLT src state
+                | ProofStepPlan.TacticLeaf => compileAndApply src state
+      val () = inFlightRef := NONE
+      val ms = Int.fromLarge (Time.toMilliseconds (Timer.checkRealTimer timer))
+      val nAfter = case r of
+                       Applied state' => length (goalFrag.top_goals state')
+                     | Rejected _ => nBefore
+      val () = costsRef := {span = span, ms = ms, goalsBefore = nBefore,
+                            goalsAfter = nAfter} :: !costsRef
       in case r of
-           (* Our own source not compiling is not the user's problem
-              to hide; report it like any other failure. *)
+           (* Failure in synthesised source is an internal lowering error. *)
            Rejected CompileFailed => if ours then Rejected ApplyFailed else r
          | _ => r
       end
@@ -498,7 +530,7 @@ datatype walkOut =
    express: it gave up at the first nested fragment, so any `rpt' or
    `>-' before the cursor cost a full re-walk of the proof. *)
 type walkenv = {tacText: string, cursor: int, resumeIdx: int,
-                cheatLT: bool}
+                cheatLT: bool, stopAtFail: bool}
 
 (* Set when a THENL branch was skipped.  Unlike `>-', a THENL branch
    need not discharge its goal, and closing the frame concatenates
@@ -521,11 +553,26 @@ val recoveredFail : (tac_frag * failkind) option ref = ref NONE
 fun noteRecovered f =
   if isSome (!recoveredFail) then () else recoveredFail := SOME f
 
-fun walkFrag (env as {tacText, cursor, resumeIdx, cheatLT}) state snaps
+fun walkFrag (env as {tacText, cursor, resumeIdx, cheatLT, stopAtFail})
+             state snaps
              stepIdx frag =
   let
     val replaying = stepIdx < resumeIdx
     fun keep idx = Done {state = state, snaps = snaps, stepIdx = idx}
+    (* Run the combinator's opening and hand the state on, or report
+       that it would not apply.  A replay has already been past here,
+       so it opens nothing and just continues.
+
+       Shared by the two bracket forms below, which differ only in
+       which `ok' they carry: they had a copy each, and a copy each is
+       how one of them quietly acquires a fix the other does not. *)
+    fun openedAt ok k =
+      if replaying then k state
+      else (case applyOpen tacText ok state of
+              NONE => Failed {state = state, snaps = snaps,
+                              stepIdx = stepIdx, at = FFOpen ok,
+                              why = ApplyFailed}
+            | SOME state' => k state')
   in case frag of
     FAtom te => (case atomEndByte te of
         SOME endB =>
@@ -619,13 +666,7 @@ fun walkFrag (env as {tacText, cursor, resumeIdx, cheatLT}) state snaps
                                    (fn () => firstFragStart inner)) then
             Halted {state = state, snaps = snaps, stepIdx = stepIdx}
           else let
-            fun opened k =
-              if replaying then k state
-              else (case applyOpen tacText ok state of
-                      NONE => Failed {state = state, snaps = snaps,
-                                      stepIdx = stepIdx, at = FFOpen ok,
-                                       why = ApplyFailed}
-                    | SOME state' => k state')
+            val opened = openedAt ok
             (* Only these three oblige what they bracket to prove a
                goal, so only under these three is `cheat' a faithful
                stand-in for what the branch owed.  A plain paren
@@ -665,7 +706,7 @@ fun walkFrag (env as {tacText, cursor, resumeIdx, cheatLT}) state snaps
                to a different step.  Same reason the THENL skip below
                advances by `countSteps'. *)
             fun recover st snps fail =
-              if not demandsDischarge then NONE
+              if not demandsDischarge orelse stopAtFail then NONE
               else (case cheatUntilClosed st of
                       NONE => NONE
                     | SOME st' =>
@@ -700,9 +741,18 @@ fun walkFrag (env as {tacText, cursor, resumeIdx, cheatLT}) state snaps
 
                Deferring is conditional on the close *succeeding*: a
                `>- tac' that proved nothing must still report where the
-               proof stops, which is what closing it says. *)
+               proof stops, which is what closing it says.
+
+               And only a plain `FClose' defers, because only it is a
+               regrouping: the goals it hands back are the ones the
+               branch set aside.  The others do work the reader expects
+               to have happened by the time the body has run --
+               `close_repeat' runs every iteration after the first,
+               `close_first_lt' puts back the goals the tactic was not
+               kept on -- so the state before them is one that never
+               exists.  Under `rpt strip_tac' it showed a single strip. *)
             val deferring =
-              borrowed andalso cursor >= be
+              cc = FClose andalso borrowed andalso cursor >= be
               andalso cursor < nextTokenFrom tacText be
             fun heldOrClosed r =
               if deferring andalso isSome (applyClose cc (#state r))
@@ -820,13 +870,7 @@ fun walkFrag (env as {tacText, cursor, resumeIdx, cheatLT}) state snaps
                                  (stepIdx + countSteps sec) rest)))
                     else walkIt ()
                   end
-            fun opened k =
-              if replaying then k state
-              else (case applyOpen tacText ok state of
-                      NONE => Failed {state = state, snaps = snaps,
-                                      stepIdx = stepIdx, at = FFOpen ok,
-                                       why = ApplyFailed}
-                    | SOME state' => k state')
+            val opened = openedAt ok
             fun closed r =
               if #stepIdx r < resumeIdx then Done r
               else (case applyClose cc (#state r) of
@@ -901,8 +945,16 @@ and walkFrags (env as {tacText, cursor, resumeIdx, ...}) state snaps
        | out => out)
 
 fun walkTo {plugins, theoremName, theoremStart, goalText, tacText,
-            startState, frags, cursor} = let
-  val cacheRefOpt = LSPExtension.getPluginData (plugins, cacheTag)
+            startState, frags, cursor, stopAtFail} = let
+  val () = costsRef := []
+  val () = inFlightRef := NONE
+  (* No cache either way when locating: see `stopAtFail' in the
+     signature.  `NONE' here turns off the resume below and the write
+     at the end together, which is what keeps the two walks' snapshots
+     from being mistaken for one another. *)
+  val cacheRefOpt =
+    if stopAtFail then NONE
+    else LSPExtension.getPluginData (plugins, cacheTag)
   val (resumeIdx, resumeState, priorSnaps) =
     resumeFrom cacheRefOpt
       {theoremName = theoremName, goalText = goalText, tacText = tacText,
@@ -912,7 +964,7 @@ fun walkTo {plugins, theoremName, theoremStart, goalText, tacText,
     (cheatedLT := false;
      recoveredFail := NONE;
      walkFrags {tacText = tacText, cursor = cursor, resumeIdx = idx,
-                cheatLT = cheatLT}
+                cheatLT = cheatLT, stopAtFail = stopAtFail}
                state priorSnaps 0 frags
      handle Portable.Interrupt =>
        Halted {state = state, snaps = priorSnaps, stepIdx = idx})
@@ -936,10 +988,12 @@ fun walkTo {plugins, theoremName, theoremStart, goalText, tacText,
     else outcome
   (* A walk that ran on past a branch still reports what that branch
      owed; a walk that stopped reports where it stopped, which is the
-     later news of the two. *)
+     later news of the two.  Both travel: see `recovered' in the
+     signature for why the caller may want the earlier one. *)
+  val recoveredAt = !recoveredFail
   val (finalState, allSnaps, failedAt) = case outcome of
-      Done r    => (#state r, #snaps r, !recoveredFail)
-    | Halted r  => (#state r, #snaps r, !recoveredFail)
+      Done r    => (#state r, #snaps r, recoveredAt)
+    | Halted r  => (#state r, #snaps r, recoveredAt)
     | Failed r  => (#state r, #snaps r, SOME (#at r, #why r))
   val _ = case (cacheRefOpt, allSnaps) of
       (SOME cacheRef, _ :: _) => let
@@ -953,6 +1007,6 @@ fun walkTo {plugins, theoremName, theoremStart, goalText, tacText,
                            snapshots = deduped})
         end
     | _ => ()
-  in {state = finalState, failedAt = failedAt} end
+  in {state = finalState, failedAt = failedAt, recovered = recoveredAt} end
 
 end;

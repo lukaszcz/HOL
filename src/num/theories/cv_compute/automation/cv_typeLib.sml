@@ -409,10 +409,23 @@ fun define_from_to_aux ignore_tyvars ty =
      so gave a conjunct for it; the BNF package proves one principle per
      type, and legacyInduction puts it back. *)
   val ind =
-      let val ind = TypeBase.induction_of ty
+      let val ind = TypeBase.set_induction_of ty
       in
-        legacyInduction.mutual_induction (legacyInduction.operators_of ind) ind
-        handle HOL_ERR _ => ind
+        (* a type that recurses under no operator has nothing to put
+           back, and is the principle it already has *)
+        (* the set form, not induction_of: operators_of reads the set
+           functions, and a development's datatype_simp theorems may
+           have rewritten them out of the principle a reader sees *)
+        case Lib.total legacyInduction.operators_of ind of
+            NONE => ind
+          | SOME ops =>
+            legacyInduction.mutual_induction ops ind
+            handle HOL_ERR _ =>
+                   (HOL_WARNING "cv_typeLib" "define_from_to"
+                      ("no operator-wise induction for " ^
+                       type_to_string ty ^
+                       "; what it collects gets no encoder of its own");
+                    ind)
       end
   val inputs = ind |> SPEC_ALL |> UNDISCH_ALL |> CONJUNCTS
                    |> map (fst o dest_forall o concl)
@@ -581,11 +594,12 @@ fun define_from_to_aux ignore_tyvars ty =
      manager and, in a batch session, takes the process down with it.
      So the definition is built first and asked whether it wants one. *)
   val from_defn =
-      Feedback.trace ("Theory.allow_rebinds", 1)
+      HOLFlags.with_bflags [(Theory.allow_rebinds, true)]
                      (Hol_defn from_def_name) [ANTIQUOTE tm]
   val from_def =
       if null (Defn.tcs_of from_defn) then
-        Feedback.trace ("Theory.allow_rebinds", 1) zDefine [ANTIQUOTE tm]
+        HOLFlags.with_bflags [(Theory.allow_rebinds, true)]
+          zDefine [ANTIQUOTE tm]
       else
         #1 (Defn.tprove
               (from_defn,
@@ -717,7 +731,8 @@ fun define_from_to_aux ignore_tyvars ty =
                    \\ simp_tac std_ss [cv_size_def, cv_snd_def, cv_fst_def]
                    \\ decide_tac)
     end
-  val (to_def, to_ind) = Feedback.trace ("Theory.allow_rebinds", 1) make_def ()
+  val (to_def, to_ind) =
+      HOLFlags.with_bflags [(Theory.allow_rebinds, true)] make_def ()
   (* from from_to theorems *)
   val assum = if null tyvar_assums then T else list_mk_conj tyvar_assums
   val to_cs = to_def |> CONJUNCTS
@@ -837,16 +852,16 @@ fun define_from_to_aux ignore_tyvars ty =
   val to_simps = map simp_one ts1
   val to_def = ts0 |> map SPEC_ALL |> LIST_CONJ |> REWRITE_RULE to_simps
   (* save all results *)
-  val th1 = Feedback.trace ("Theory.allow_rebinds", 1)
+  val th1 = HOLFlags.with_bflags [(Theory.allow_rebinds, true)]
             save_thm ("from_" ^ name_prefix ^ first_name ^ "_def[compute]",
                       from_def)
-  val th2 = Feedback.trace ("Theory.allow_rebinds", 1)
+  val th2 = HOLFlags.with_bflags [(Theory.allow_rebinds, true)]
             save_thm ("to_" ^ name_prefix ^ first_name ^ "_def[compute]",
                       to_def)
   fun save_from_to_thms th = let
     val to_name = th |> UNDISCH_ALL |> concl |> rand |> repeat rator
                      |> dest_const |> fst
-    val _ = Feedback.trace ("Theory.allow_rebinds", 1)
+    val _ = HOLFlags.with_bflags [(Theory.allow_rebinds, true)]
             save_thm("from_" ^ name_prefix ^ to_name ^ "_thm[cv_from_to]", th)
     in () end
   val _ = List.app save_from_to_thms from_to_thms
@@ -866,37 +881,55 @@ fun define_from_to ty = define_from_to_aux [] ty;
 
 fun get_type_name ty = dest_type ty |> fst
 
+(* A type whose definition is interrupted is defined again once what it
+   needed exists, so what has been defined on its behalf has to be
+   remembered.  Asking for one of those again says defining it did not
+   answer the ask — because the type is its own ancestor, or because
+   what was defined is not what the ask wanted — and asking a third time
+   would not answer it either. *)
 fun rec_define_from_to ty = let
-  fun loop acc ty =
+  fun loop seen acc ty =
     let
-      val (to_def,from_def,thms) = define_from_to ty
+      val (from_def,to_def,thms) = define_from_to ty
       val _ = cv_print Verbose
                      ("Finished to/from for " ^ get_type_name ty ^ "\n\n")
       val _ = cv_print_thm Verbose to_def
       val _ = cv_print Verbose "\n\n"
     in thms @ acc end
     handle Missing_from_to needs_ty =>
+    if List.exists (equal needs_ty) seen then
+      raise ERR "rec_define_from_to"
+            (type_to_string ty ^ " still needs " ^ type_to_string needs_ty ^
+             ", which has been defined for it already")
+    else
     let
+      val seen = needs_ty :: seen
       val _ = cv_print Verbose
                      ("Interrupting " ^ get_type_name ty ^
                       " since " ^ get_type_name needs_ty ^ " needed.\n")
-      val acc = loop acc needs_ty
+      val acc = loop seen acc needs_ty
       val _ = cv_print Verbose
                      ("Continuing " ^ get_type_name ty ^
                       " since " ^ get_type_name needs_ty ^ " exists.\n")
-    in loop acc ty end
-  in loop [] ty end
+    in loop seen acc ty end
+  in loop [] [] ty end
 
 (* --------------------------------------------------- *
     Smart functions for retrieving/creating from_to
  * --------------------------------------------------- *)
 
-fun from_to_thm_for ty =
-  from_to_for [] ty
-  handle Missing_from_to needs_ty =>
-  let
-    val th = rec_define_from_to needs_ty
-  in from_to_thm_for ty end
+(* Defining what the type needed is meant to make the next ask succeed,
+   so an ask that comes back is one that defining cannot answer. *)
+fun from_to_thm_for ty = let
+  fun go asked ty =
+    from_to_for [] ty
+    handle Missing_from_to needs_ty =>
+    if List.exists (equal needs_ty) asked then
+      raise ERR "from_to_thm_for"
+            ("defining " ^ type_to_string needs_ty ^
+             " did not give it a representation")
+    else (rec_define_from_to needs_ty; go (needs_ty :: asked) ty)
+  in go [] ty end
 
 fun from_term_for ty = from_to_thm_for ty |> concl |> rator |> rand;
 fun to_term_for ty = from_to_thm_for ty |> concl |> rand;

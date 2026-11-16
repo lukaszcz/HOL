@@ -721,7 +721,7 @@ val _ = let
   val _ = Portable.finally
     (fn () => ignore
       (Listener.remove_listener Trace.trace_hook "TraverseExt test"))
-    (Lib.with_flag (Trace.trace_level,4)
+    (HOLFlags.trace ("simplifier.trace",4)
       (fn () => ignore (total (T.XTRAVERSE
         (data no_rules [] [] NONE,T.default_config) []) a))) ()
   val _ = check "extension uses the original shared Trace listener"

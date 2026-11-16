@@ -1,7 +1,10 @@
 open HolKernel Parse boolTheory boolLib
 
 open testutils
-val _ = set_trace "Unicode" 0
+
+val set_trace = HOLFlags.set_trace
+val trace = HOLFlags.trace
+val _ = set_trace "PP.avoid_unicode" 1
 
 val _ = new_theory "scratch"
 
@@ -215,7 +218,7 @@ val _ = require (check_result (fn _ => true)) (quietly Parse.Term)
                 `case x of T => F`
 
 val _ = tprint "Testing functional-pretype 3 (ignored constraint)"
-val quiet_parse = quietly (trace ("show_typecheck_errors", 0) Parse.Term)
+val quiet_parse = quietly (trace ("Parse.show_typecheck_errors", 0) Parse.Term)
 val _ = shouldfail {testfn = quiet_parse, printresult = term_to_string,
                     printarg = (fn _ => ""),
                     checkexn = is_struct_HOL_ERR "Preterm"}
@@ -232,7 +235,7 @@ val _ = tprint "Testing parsing of case expressions with leading bar"
 val _ = require_msg
           (check_result (Lib.can (find_term (same_const boolSyntax.bool_case))))
           term_to_string
-          (trace ("syntax_error", 0) Parse.Term)
+          (trace ("Parse.syntax_error", 0) Parse.Term)
           ‘case T of | T => F | F => T’;
 
 val _ = tprint "Testing parsing of _ variables (1)"
@@ -323,12 +326,12 @@ val _ = app testutils.convtest [
 ];
 
 val _ = tprint "Testing type-specific Unicode overload 1"
-val _ = set_trace "Unicode" 1
+val _ = set_trace "PP.avoid_unicode" 0
 val _ = overload_on (UnicodeChars.delta, ``$! :(('a -> 'b)->bool)->bool``)
 fun checkparse () = let
-  val tm = Lib.with_flag (Globals.notify_on_tyvar_guess, false)
-                         Parse.Term
-                         `!x. P x`
+  val tm = trace ("Parse.notify_on_tyvar_guess", 0)
+                 Parse.Term
+                 `!x. P x`
   val randty = type_of (rand tm)
 in
   if Type.compare(randty, alpha --> bool) <> EQUAL then die ""
@@ -338,8 +341,8 @@ val _ = checkparse()
 
 (* bounce Unicode trace - and repeat *)
 val _ = tprint "Testing type-specific Unicode overload 2"
-val _ = set_trace "Unicode" 0
-val _ = set_trace "Unicode" 1
+val _ = set_trace "PP.avoid_unicode" 1
+val _ = set_trace "PP.avoid_unicode" 0
 val _ = checkparse ()
 
 (* test for type abbreviation bug caused by stale types in a TypeNet.*)
@@ -429,39 +432,23 @@ val _ = Lib.with_flag (testutils.linewidth, 30) tpp
                       \     longarg4) longarg5\n\
                       \  longarg6 longarg7";
 
-val _ = print "** Tests with Unicode on PP.avoid_unicode both on\n"
-val _ = let
-  open testutils
-  fun md f =
-      raw_backend (trace ("Unicode", 1) (trace ("PP.avoid_unicode", 1) f))
-  fun texp (i,out) = md tpp_expected
-                        {testf = standard_tpp_message, input = i, output = out}
-  val _ = temp_overload_on ("⊤", ``T``)
-in
-  app (md tpp) ["!x. p x /\\ q x", "\\x. x", "\\x::p. x /\\ y",
-                "!x::p. q x \\/ r x", "!x. x /\\ T <=> x"];
-  app texp [("∀x. p x", "!x. p x"), ("x ∧ y", "x /\\ y"),
-            ("λx. x", "\\x. x")];
-  temp_clear_overloads_on "⊤"
-end
-
 val _ = print "** Tests with Unicode on\n"
 val _ = let
   open testutils
-  fun md f = raw_backend $ trace ("Unicode", 1) f
+  fun md f = raw_backend $ trace ("PP.avoid_unicode", 0) f
 in
   app (md tpp) ["¬¬p", "¬p"]
 end
 
 
 val _ = print "** Tests with pp_dollar_escapes = 0.\n"
-val _ = set_trace "pp_dollar_escapes" 0
+val _ = set_trace "PP.dollar_escapes" 0
 val _ = app tpp ["(/\\)", "(if)"]
-val _ = set_trace "pp_dollar_escapes" 1
+val _ = set_trace "PP.dollar_escapes" 1
 
 val _ = quietly new_type ("foo", 2)
 val _ = new_constant ("con", ``:'a -> ('a,'b)foo``)
-val _ = set_trace "types" 1
+val _ = set_trace "PP.types" 1
 val _ = print "** Tests with 'types' trace on.\n"
 val _ = tpp "(con (x :'a) :('a, 'b) foo)"
 val _ = tpp "\\(x :'a) (y :'a). x = y"
@@ -469,8 +456,8 @@ val _ = tpp "(ARB (x :'a) :'b)"
 
 (* pretty-printing - tests of colouring *)
 val _ = Parse.current_backend := PPBackEnd.vt100_terminal
-val _ = set_trace "types" 0
-val _ = set_trace "Unicode" 0
+val _ = set_trace "PP.types" 0
+val _ = set_trace "PP.avoid_unicode" 1
 fun tpp (s,expected) = let
   val t = Parse.Term [QUOTE s]
   val _ = tprint ("Testing (colour-)printing of `"^s^"`")
@@ -1317,6 +1304,8 @@ val _ = List.app (ignore o substtest) tests
 val _ = print "Testing cond-printer after set_grammar_ancestry\n"
 val _ = set_trace "PP.avoid_unicode" 1
 val _ = set_grammar_ancestry ["bool"]
+val _ = tprint "set_grammar_ancestry naming the current theory"
+val _ = require is_result set_grammar_ancestry [current_theory(), "bool"]
 val _ = app condprinter_test condprinter_tests
 
 val _ = let
@@ -1358,7 +1347,7 @@ end handle _ => die "FAILED"
 
 val _ = shouldfail {checkexn = is_struct_HOL_ERR "Parse",
                     printarg = (fn s => "Type parser fails on bool'"),
-                    printresult = with_flag (show_types, true) term_to_string,
+                    printresult = trace ("PP.types", 1) term_to_string,
                     testfn = Parse.Term o single o QUOTE}
                    "!b:bool'. p /\\ b"
 
@@ -1464,7 +1453,7 @@ fun unify_test (t1,t2,b,st) =
 let
   open optmonad
   infix >>
-  fun tmp st = Feedback.trace ("types", if st then 1 else 0) term_to_string
+  fun tmp st = trace ("PP.types", if st then 1 else 0) term_to_string
   val _ = tprint ("Unify" ^ (if b then "✓: " else "×: ") ^
                   tmp st t1 ^ " and " ^ tmp st t2)
   fun sub (tyi,tmi) t = Term.subst tmi (Term.inst tyi t)
@@ -1648,3 +1637,167 @@ val _ =
   in
     Context.restore entry
   end
+
+(* ----------------------------------------------------------------------
+    Term.subst rejects a repeated redex, and nothing above the kernel
+    hands it one.
+
+    A higher-order pattern variable applied to pattern variables that are
+    not yet bound used to be bound once per occurrence: term_homatch's
+    fallback peels rators off both terms, and the peeled variable was
+    consed onto the instantiation instead of being safe_insert'ed.  The
+    repeated redex that resulted made INST raise, so the rewrite silently
+    stopped applying -- pairTheory.PAIR_EQUIV was the first casualty.
+   ---------------------------------------------------------------------- *)
+
+fun subst_redexes (tmS, _) = map (fn {redex, residue} => redex) tmS
+fun subst_redexes_string p =
+    String.concatWith ", " (map term_to_string (subst_redexes p))
+
+val _ = let
+  fun distinct l = length (op_mk_set aconv l) = length l
+in
+  tprint "ho_match_term: repeated h.o. pattern variable";
+  require_msg (check_result (distinct o subst_redexes)) subst_redexes_string
+              (ho_match_term [] empty_tmset ``(R:'a->'a->bool) x = R y``)
+              ``(Q:'a->'a->bool) a = Q b``
+end
+
+(* A pattern in which the same variable occurs both applied and unapplied
+   -- pred_set's IMAGE_IN, f x IN IMAGE f s, is the one that matters --
+   binds it twice: the peeled occurrence arrives eta-contracted while the
+   unpeeled one is the corresponding abstraction.  Those agree, and it is
+   the abstraction that makes the instantiated pattern match the target,
+   so that is the binding to keep.  groupScript's element_coset_property
+   is the proof that noticed. *)
+val _ = let
+  val pat = ``(f:bool->bool) x /\ $! f``
+  val obj = ``(a /\ b) /\ $! (\z. a /\ z)``
+  val fv = mk_var("f", Type.bool --> Type.bool)
+  val absn = ``\z. a /\ z``
+  fun ok (tmS, _) =
+      let
+        val reds = map (fn {redex, residue} => redex) tmS
+        val fres = List.find (fn {redex, residue} => aconv redex fv) tmS
+      in
+        length (op_mk_set aconv reds) = length reds andalso
+        (case Option.map (fn {redex, residue} => residue) fres of
+             SOME r => aconv r absn
+           | NONE => false)
+      end
+in
+  tprint "ho_match_term: eta-variant bindings are not a clash";
+  require_msg (check_result ok) subst_redexes_string
+              (ho_match_term [] empty_tmset pat) obj
+end
+
+(* The peeled occurrence can also disagree outright with the binding
+   already made, and then it is the peeled one that is wrong: it guesses
+   from a single application where the earlier occurrence saw the whole
+   pattern.  Keep the earlier binding, which is what subst settled on. *)
+val _ = let
+  val pat = ``(f:bool->bool) x /\ (f = (\y:bool. y))``
+  val obj = ``~T /\ ((\y:bool.y) = (\y:bool.y))``
+  val fv = mk_var("f", Type.bool --> Type.bool)
+  val idf = ``\y:bool. y``
+  fun ok (tmS, _) =
+      let
+        val reds = map (fn {redex, residue} => redex) tmS
+        val fres = List.find (fn {redex, residue} => aconv redex fv) tmS
+      in
+        length (op_mk_set aconv reds) = length reds andalso
+        (case Option.map (fn {redex, residue} => residue) fres of
+             SOME r => aconv r idf
+           | NONE => false)
+      end
+in
+  tprint "ho_match_term: a peeled binding never displaces an earlier one";
+  require_msg (check_result ok) subst_redexes_string
+              (ho_match_term [] empty_tmset pat) obj
+end
+
+(* Arguments of an applied pattern variable that instantiate to the same
+   term. *)
+val _ = let
+  fun matches pat obj (tmS, tyS) =
+      aconv (rhs (concl (QCONV (DEPTH_CONV BETA_CONV)
+                               (Term.subst tmS (Term.inst tyS pat)))))
+            obj
+  val pat = ``(r:bool->bool->bool) x y ==> (x = y)``
+  val obj = ``(p /\ q) ==> (F = F)``
+  val pat2 = ``(r:bool->bool->bool) x x /\ x``
+  val obj2 = ``T /\ F``
+in
+  tprint "ho_match_term: applied pattern variable with equal arguments";
+  require_msg (check_result (matches pat obj)) subst_redexes_string
+              (ho_match_term [] empty_tmset pat) obj;
+  tprint "ho_match_term: applied pattern variable with a repeated argument";
+  require_msg (check_result (matches pat2 obj2)) subst_redexes_string
+              (ho_match_term [] empty_tmset pat2) obj2
+end
+
+(* Arguments merged by the type instantiation; built by hand, as the
+   parser unifies same-named frees. *)
+val _ = let
+  val xa = mk_var("x", Type.alpha)
+  val xb = mk_var("x", Type.beta)
+  val r = mk_var("r", Type.alpha --> Type.beta --> Type.bool)
+  val pat = list_mk_conj [list_mk_comb(r, [xa, xb]), mk_eq(xa, xa),
+                          mk_eq(xb, xb)]
+  val obj = ``T /\ (F = F) /\ (F = F)``
+  fun matches (tmS, tyS) =
+      aconv (rhs (concl (QCONV (DEPTH_CONV BETA_CONV)
+                               (Term.subst tmS (Term.inst tyS pat)))))
+            obj
+in
+  tprint "ho_match_term: arguments merged by the type instantiation";
+  require_msg (check_result matches) subst_redexes_string
+              (ho_match_term [] empty_tmset pat) obj
+end
+
+(* Instantiating a match's redexes can merge two of them: x:'a and x:'b
+   are distinct variables that raw_match keeps apart, and both become
+   x:bool once the match fixes the type variables.  The parser unifies
+   same-named frees, so such a pattern only arises from a term built by
+   hand -- automationLib in examples/bootstrap builds them, and the
+   repeated redex made Term.subst raise inside a matcher that swallows
+   HOL_ERR, silently discarding the rule. *)
+val _ = let
+  val P = mk_var("P", Type.alpha --> Type.beta --> Type.bool)
+  val pat = list_mk_comb(P, [mk_var("x", Type.alpha), mk_var("x", Type.beta)])
+  val Pb = mk_var("P", Type.bool --> Type.bool --> Type.bool)
+  val obj = list_mk_comb(Pb, [mk_var("a", Type.bool), mk_var("b", Type.bool)])
+  fun redexes (tmS, _) = map (fn {redex, residue} => redex) tmS
+  fun ok p = let val r = redexes p
+             in length (op_mk_set aconv r) = length r end
+in
+  tprint "match_term: type instantiation cannot repeat a redex";
+  require_msg (check_result ok)
+              (String.concatWith ", " o map term_to_string o redexes)
+              (Term.match_term pat) obj
+end
+
+val _ = let
+  val a = mk_var("a", Type.alpha)
+  val b = mk_var("b", Type.alpha)
+in
+  tprint "Term.subst: distinct redexes unaffected";
+  require (check_result (aconv b)) (Term.subst [a |-> b]) a;
+  shouldfail {checkexn = is_struct_HOL_ERR "Term",
+              printarg = fn _ => "Term.subst: repeated redex rejected",
+              printresult = term_to_string,
+              (* eta-expanded: subst does its work at partial application,
+                 so the raise must happen inside shouldfail *)
+              testfn = fn tm => Term.subst [a |-> b, a |-> b] tm}
+             a
+end
+
+val _ = let
+  val a = mk_var("a", Type.alpha)
+  val b = mk_var("b", Type.alpha)
+  val c = mk_var("c", Type.alpha)
+in
+  tprint "Lib.subst_keep_last: later maplet wins";
+  require (check_result (Lib.subst_eq aconv aconv [a |-> c]))
+          (Lib.subst_keep_last aconv) [a |-> b, a |-> c]
+end

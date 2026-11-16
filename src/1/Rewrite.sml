@@ -66,9 +66,10 @@ val mk_rewrites = map fst o local_mk_rewrites;
 (* Support for examining some aspects of the work of the rewriter            *)
 (*---------------------------------------------------------------------------*)
 
-val monitoring = ref false;
-
-val _ = register_btrace ("Rewrite", monitoring) ;
+val {flag = monitoring, get = get_monitoring, ...} = HOLFlags.create_btrace(
+      {group = "Rewrite", name = "monitoring"},
+      false
+    );
 
 (*---------------------------------------------------------------------------*)
 (* Abstract datatype of rewrite rule sets.                                   *)
@@ -89,7 +90,8 @@ with
 fun add_rewrites (RW{thms,net}) thl =
  let val rewrites = itlist (append o local_mk_rewrites) thl []
      fun appconv (c,UNBOUNDED) tm     = c tm
-       | appconv (c,BOUNDED r) tm     = if !r = 0 then failwith "exceeded bound" else c tm before Portable.dec r
+       | appconv (c,BOUNDED r) tm     = if !r = 0 then failwith "exceeded bound"
+                                        else c tm before Portable.dec r
  in
    RW{thms = thms@thl,
        net = itlist Net.insert
@@ -107,7 +109,7 @@ end (* abstype *)
 
 fun REWRITES_CONV rws tm =
  let val net = net_of rws
- in if !monitoring
+ in if get_monitoring()
     then case mapfilter (fn f => f tm) (Net.match tm net)
           of []   => Conv.NO_CONV tm
            | [x]  => (HOL_MESG (String.concat
@@ -197,7 +199,8 @@ and ONCE_REWRITE_TAC thl g c =
     GEN_REWRITE_TAC Conv.ONCE_DEPTH_CONV (implicit_rewrites_of c) thl g c;
 
 val rewrite_tac = REWRITE_TAC and once_rewrite_tac = ONCE_REWRITE_TAC
-val pure_rewrite_tac = PURE_REWRITE_TAC and pure_once_rewrite_tac = PURE_ONCE_REWRITE_TAC
+val pure_rewrite_tac = PURE_REWRITE_TAC
+val pure_once_rewrite_tac = PURE_ONCE_REWRITE_TAC
 
 
 (* Rewrite a goal with the help of its assumptions *)
@@ -279,7 +282,8 @@ fun pp_rewrites rws =
                 )
              ) >>
              add_newline >>
-             add_string("Number of rewrite rules = "^Lib.int_to_string how_many) >>
+             add_string
+               ("Number of rewrite rules = "^Lib.int_to_string how_many) >>
              add_newline
            )
     in

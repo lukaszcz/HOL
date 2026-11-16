@@ -1,6 +1,6 @@
 open HolKernel Parse boolLib testutils markerLib simpMarkerLib
 val _ = new_theory "simpMarkerTest"
-val _ = set_trace "Unicode" 0
+val _ = HOLFlags.set_bflag (Parse.avoid_unicode, true)
 val goal_compare = pair_compare (list_compare Term.compare, Term.compare)
 fun goals_eq a b = list_compare goal_compare (a,b) = EQUAL
 fun thm_eq (hyps,t) th = HOLset.equal (hyps,hypset th) andalso t ~~ concl th
