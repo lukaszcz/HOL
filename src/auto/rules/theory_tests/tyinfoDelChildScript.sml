@@ -8,11 +8,10 @@ fun fail message = raise Fail ("claset TypeBase removal test: " ^ message)
 
 val stem = "__claset_tyinfo_tyinfoDelBase_tyinfo_del_"
 
-(* This loads the parent before forcing the claset; the other order isn't
-   run.  It needs no test: the parent records no removal, and a removal
-   recorded before the refusal existed was qualified to "thy$name", which
-   names no TypeBase-derived rule, so its replay changes nothing either
-   way. *)
+(* This loads the parent before forcing the claset.  The parent records no
+   removal; a removal recorded before the refusal existed was qualified to
+   "thy$name", which names no TypeBase-derived rule.  ../selftest.sml
+   replays such a removal before and after the first demand. *)
 val _ =
   case Theory.LoadableThyData.segment_data_string
          {thy = "tyinfoDelBase", thydataty = "claset.deltas"} of

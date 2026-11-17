@@ -61,6 +61,16 @@ fun warned_per_call results =
 
 val unforced_reserved_deletions = delete_reserved_names ()
 
+(* An ancestor theory's recorded removal replays as remove_rule of the
+   qualified name it was recorded under, through the same update queue
+   that augment_claset uses. *)
+fun replay_reserved_removals () =
+  List.app
+    (fn name => augment_claset (remove_rule (normalise_rule_name name)))
+    tyinfo_reserved_names
+
+val _ = replay_reserved_removals ()
+
 fun same_seed_spec
   ({kind = kind1, safe = safe1, prio = prio1} : rulespec)
   ({kind = kind2, safe = safe2, prio = prio2} : rulespec) =
@@ -2942,6 +2952,13 @@ val _ =
        in
          Portable.finally cleanup check ()
        end)
+
+val _ =
+  test
+    ("claset replays a recorded TypeBase rule removal alike in both orders",
+     fn () =>
+       has_reserved_rules seed_claset andalso
+       (replay_reserved_removals (); has_reserved_rules (the_claset ())))
 
 fun claset_deltas () =
   Theory.LoadableThyData.segment_data_string
