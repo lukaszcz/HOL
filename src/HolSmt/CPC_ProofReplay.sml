@@ -11243,7 +11243,11 @@ local
           | NONE =>
               let
                 val _ = report "cache miss; reconstructing bridge"
-                val proof = replay_fp_atom_bridge_uncached ()
+                (* Its Term.compare-keyed memos cost unfolded-tree time on
+                   a shared DAG; bound it like the cache match above. *)
+                val proof = SmtResource.with_resource_step_time "Skeleton"
+                  "cpc-fp-bridge-reconstruct"
+                  replay_fp_atom_bridge_uncached ()
                   handle error =>
                     (report ("reconstruction failed: " ^
                        Feedback.exn_to_string error); raise error)
@@ -11607,7 +11611,8 @@ local
         else
           next_fp
             (fn () => profile "CPC(rung:trust/fp-word-bridge)"
-              replay_fp_word_bridge ())
+              (SmtResource.with_resource_step_time "Skeleton"
+                "cpc-fp-word-bridge" replay_fp_word_bridge) ())
             (fn () => next_fp
               (fn () => profile "CPC(rung:trust/fp_contextual)"
                 replay_fp_contextual ())
