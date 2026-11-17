@@ -943,12 +943,6 @@ struct
                     val prepared=P.prepare_unit_resolution work block
                       {factory=factory,premises=completed ids,target=wanted}
                   in P.execute_unit_resolution work prepared end
-    fun unfinished expected (saved as Invocation
-          {work,block,context,remaining,entries,sources,originals,
-           original_ports,specializations,clause_factory,clause_sources,
-           clause_targets,raw_batches,binder_laws,...})
-        ({id,target,plan}:command) ()=
-      raise ERR "registry" "unfinished programme in named queue"
   end
   structure Step=Z3_NamedReplayStepFn(StepInput)
 

@@ -1114,6 +1114,12 @@ local
     if List.length args = arity then args
     else cpc_skolem_error where_
       ("expected " ^ Int.toString arity ^ " explicit argument(s)")
+  fun cpc_two_args _ [a,b] = (a,b)
+    | cpc_two_args where_ _ =
+        cpc_skolem_error where_ "expected 2 explicit argument(s)"
+  fun cpc_three_args _ [a,b,c] = (a,b,c)
+    | cpc_three_args where_ _ =
+        cpc_skolem_error where_ "expected 3 explicit argument(s)"
 
   (* Parameterized CPC skolems are authoritative typed symbols, not an
      invitation to synthesize a fresh UF at whatever types happen to parse.
@@ -4494,7 +4500,8 @@ in
             ignore (B.index_callback backend (fn () =>
               cpc_private_const_parsefn token
                 (List.map (fn _ => boolSyntax.T) indices) variables))
-          val [number,marker] = arguments
+          val (number,marker) =
+            cpc_two_args "cpc_private_const_parsefn" arguments
           val _ = cpc_expect_type "cpc_private_const_parsefn"
             intSyntax.int_ty (hd variables)
             handle Feedback.HOL_ERR _ =>
@@ -4677,11 +4684,10 @@ in
       fun quantifiers frame token indices arguments =
         let
           val where_ = "cpc_quantifiers_skolemize_parsefn"
-          val _ = cpc_exact_args where_ 2 arguments
+          val (quantified,index_value) = cpc_two_args where_ arguments
           val _ = if token="@quantifiers_skolemize" andalso null indices
             then () else raise ERR where_
               "malformed @quantifiers_skolemize application"
-          val [quantified,index_value] = arguments
           val _ = cpc_expect_int token
             (Term.genvar (B.type_of backend index_value))
           val originals = sources frame arguments
@@ -4774,9 +4780,10 @@ in
           val _ = if null indices then () else
             raise ERR "cpc_string_skolem_parsefn"
               (token ^ " does not accept indices")
-          val _ = cpc_exact_args "cpc_string_skolem_parsefn" 3 arguments
-          val [string,regex,index_value] = arguments
-          val [string_hole,regex_hole,index_hole] = holes arguments
+          val (string,regex,index_value) =
+            cpc_three_args "cpc_string_skolem_parsefn" arguments
+          val (string_hole,regex_hole,index_hole) =
+            cpc_three_args "cpc_string_skolem_parsefn" (holes arguments)
           val _ = cpc_expect_smtstr token string_hole
           val _ = cpc_expect_reglan token regex_hole
           val _ = cpc_expect_int token index_hole

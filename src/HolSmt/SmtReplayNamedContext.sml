@@ -53,6 +53,15 @@ struct
     | Symmetry | Transitivity | Congruence | EqualityMP
     | ApplyNamedArgument of 'node | ImplicationMP
     | SubstituteLiteral of literal_substitution
+  fun map_primitive f (ReflexiveName node) = ReflexiveName (f node)
+    | map_primitive _ Symmetry = Symmetry
+    | map_primitive _ Transitivity = Transitivity
+    | map_primitive _ Congruence = Congruence
+    | map_primitive _ EqualityMP = EqualityMP
+    | map_primitive f (ApplyNamedArgument node) = ApplyNamedArgument (f node)
+    | map_primitive _ ImplicationMP = ImplicationMP
+    | map_primitive _ (SubstituteLiteral substitution) =
+        SubstituteLiteral substitution
   fun primitive_using invalid names recipe proofs =
     case (recipe,proofs) of
         (ReflexiveName node,[]) => O.REFL (names node)

@@ -22,6 +22,7 @@ sig
     | Symmetry | Transitivity | Congruence | EqualityMP
     | ApplyNamedArgument of 'node | ImplicationMP
     | SubstituteLiteral of literal_substitution
+  val map_primitive : ('a -> 'b) -> 'a primitive -> 'b primitive
   (* Exact closed recipe inventory. Arity is checked before any rule call.
      The caller admits all compact operands and the prospective result.
      This worker grants no ownership, hypotheses or native admission. *)

@@ -371,6 +371,8 @@ struct
                   val law_edge=P.closed block law
               in(target,R.boolean_graph_with_policy work block
                 {root=target,premises=[(law_node,law_edge)]})end)
+          | ScopedEquality _=>raise ERR "quant-intro"
+              "scoped equality has no policy graph programme"
         val result={node=target,edge=edge}:entry
         val _=action owner(fn()=>
           let val _=P.validate_block_for work block val _=tick owner

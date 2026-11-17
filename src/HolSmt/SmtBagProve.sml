@@ -471,6 +471,7 @@ struct
               (List.concat (List.map canonical facts))
           in Context (List.foldr (fn (rule,net) => Ho_Net.enter rule net)
                net rules,facts @ previous) end) ()
+          | add _ = raise Fail "bag rewrite context"
         fun apply compact
             {solver,context=context as Context (net,_),stack,...} tm =
               guarded (fn () =>

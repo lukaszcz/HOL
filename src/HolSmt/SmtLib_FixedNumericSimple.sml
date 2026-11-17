@@ -354,11 +354,11 @@ struct
           | Term.COMB _ => raise ERR "ac_order" "unstripped application head")
         fun name_order (a,b) = (observe ();text a;text b;String.compare (a,b))
         fun heads (e1,e2) (a,b) =
-          let val (((an,at),ak),ay) = dest_head e1 a
-              val (((bn,bt),bk),by) = dest_head e2 b
+          let val (((an,at),ak),aty) = dest_head e1 a
+              val (((bn,bt),bk),bty) = dest_head e2 b
           in case name_order (an,bn) of EQUAL =>
                (case name_order (at,bt) of EQUAL =>
-                  (case Int.compare (ak,bk) of EQUAL => type_order (ay,by)
+                  (case Int.compare (ak,bk) of EQUAL => type_order (aty,bty)
                     | other => other) | other => other)
              | other => other end
         fun compare n (e1,e2) (a,b) =
@@ -1581,11 +1581,11 @@ struct
           | Term.COMB _ => raise ERR "ac_order" "unstripped application head")
         fun name_order (a,b) = (observe ();text a;text b;String.compare (a,b))
         fun heads (e1,e2) (a,b) =
-          let val (((an,at),ak),ay) = dest_head e1 a
-              val (((bn,bt),bk),by) = dest_head e2 b
+          let val (((an,at),ak),aty) = dest_head e1 a
+              val (((bn,bt),bk),bty) = dest_head e2 b
           in case name_order (an,bn) of EQUAL =>
                (case name_order (at,bt) of EQUAL =>
-                  (case Int.compare (ak,bk) of EQUAL => type_order (ay,by)
+                  (case Int.compare (ak,bk) of EQUAL => type_order (aty,bty)
                     | other => other) | other => other)
              | other => other end
         fun compare n (e1,e2) (a,b) =

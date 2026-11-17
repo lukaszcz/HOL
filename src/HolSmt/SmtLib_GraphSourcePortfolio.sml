@@ -554,12 +554,16 @@ struct
     (validate_policy_portfolio work input
      handle primary => (W.close work;raise primary))
 
-  fun validate_policy_for expected
-      (value as PolicyValidation {work,...}) =
-    ((if Portable.pointer_eq (expected,work) then () else
-        raise ERR "validate_with_policy" "different original Work";
-      let val PolicyValidation {graph,scope,sources,limits,assumptions,
-            goal,denied,...} = value
+  (* The policy record held for the expected Work, or a named failure. *)
+  fun policy_fields rule expected (PolicyValidation fields) =
+        if Portable.pointer_eq (expected,#work fields) then fields
+        else raise ERR rule "different original Work"
+    | policy_fields rule _ (Validation _) =
+        raise ERR rule "policy portfolio required"
+
+  fun validate_policy_for expected value =
+    ((let val {graph,scope,sources,limits,assumptions,goal,denied,...} =
+            policy_fields "validate_with_policy" expected value
           val _ = W.validate_policy expected graph scope sources limits
           val _ = validate_policy_portfolio expected
             {assumptions=assumptions,goal=goal,denied=denied}
@@ -719,101 +723,6 @@ struct
           val _=guard_policy_facts work graph scope sources [result]
       in result end)
      handle primary=>(W.close work;raise primary))
-  (* Native proof effects use the original block's contract. Metadata
-     limits never admit an expanded Source operand to a native rule. *)
-  fun assembler_with_policy expected value block =
-    ((W.with_step expected (fn () =>
-      let
-        val _ = case value of PolicyValidation {work,...} =>
-            if Portable.pointer_eq (expected,work) then () else
-              raise ERR "policy_assembler" "different original Work"
-          | _ => raise ERR "policy_assembler" "policy portfolio required"
-        val owner = P.policy_native_block_owner_for expected block
-        fun valid () =
-          (validate_with_policy expected value;
-           ignore (P.policy_native_block_owner_for expected block))
-        val _ = valid ()
-        val PolicyValidation {graph,scope,sources,assumptions,denied,...} =
-          value
-        val _ = if Portable.pointer_eq (graph,#graph owner) andalso
-            G.scope_visible graph (#scope owner) scope then () else
-          raise ERR "policy_assembler" "different graph or invisible scope"
-        val originals = nodes sources
-        val actual = P.sources block
-        (* Compare the actual ordered Source prefix, including duplicates.
-           The returned int is an index into the admitted native vector;
-           no policy ceiling or caller ordinal is narrowed to an int. *)
-        fun prefix [] _ = ()
-          | prefix (_::_) [] =
-              raise ERR "policy_assembler" "original Source prefix absent"
-          | prefix (wanted::rest) (held::tail) =
-              (W.spend_policy expected 2;
-               if wanted=held then prefix rest tail else
-                 raise ERR "policy_assembler" "original Source prefix changed")
-        val _ = prefix originals actual
-        fun original index node =
-          let fun seek [] _ _ =
-                    raise ERR "policy_assembler" "original occurrence absent"
-                | seek (held::rest) ordinal native =
-                    (W.spend_policy expected 2;
-                     if ordinal=(0:IntInf.int) then
-                       if held=node then P.source block native else
-                         raise ERR "policy_assembler" "Source endpoint changed"
-                     else seek rest (ordinal-1) (native+1))
-          in if index<0 then
-               raise ERR "policy_assembler" "negative original occurrence"
-             else seek originals index 0 end
-        val built = ref ([]:(fact * P.edge) list)
-        fun saved _ [] = NONE
-          | saved fact ((held,edge)::rest) =
-              (W.spend_policy expected 1;
-               if Portable.pointer_eq (fact,held) then SOME edge else
-                 saved fact rest)
-        fun rule opcode premises =
-          P.execute_primitive_with_policy expected
-            (P.prepare_primitive_with_policy expected block opcode premises)
-        fun build (fact as Fact {node,row,...}) =
-          (valid ();W.spend_policy expected 2;
-           ignore (P.name block node);
-           case saved fact (!built) of SOME edge => edge
-           | NONE =>
-             let val edge = case row of
-                   Original (_,index) => original (IntInf.fromInt index) node
-                 | PolicyOriginal (_,index,held) =>
-                     if held=node then original index node else
-                       raise ERR "policy_assembler" "Source endpoint changed"
-                 | RecordedClosed plan => P.closed block plan
-                 | BinderTransport (conversion,source) =>
-                     let val proof = build source
-                         val _ = P.validate_conversion_for expected conversion
-                         val equality = P.conversion block conversion
-                     in rule P.EqualityMP [equality,proof] end
-                 | Closed _ => raise ERR "policy_assembler"
-                     "graph conversion needs its policy assembler"
-                 | Transport _ => raise ERR "policy_assembler"
-                     "graph conversion needs its policy assembler"
-                 | Apply _ => raise ERR "policy_assembler"
-                     "conditional law needs its owned implication rule"
-                 val _ = valid ()
-                 val _ = W.spend_policy expected 1
-                 val _ = built := (fact,edge):: !built
-             in edge end)
-        fun query _ [] = NONE
-          | query node (fact::rest) =
-              (W.spend_policy expected 2;
-               if endpoint fact=node then SOME fact else query node rest)
-        val queries = assumptions @ [denied]
-        fun assemble node =
-          W.with_step expected (fn () =>
-            (valid ();W.spend_policy expected 1;
-             ignore (P.name block node);
-             let val result = Option.map build (query node queries)
-                 val _ = valid ()
-             in result end))
-        val _ = valid ()
-      in assemble end))
-     handle primary => (W.close expected;raise primary))
-
   structure OrdinaryPolicyAssembly=SmtReplaySourcePortfolioAssemblyFn
     (struct
        type block=P.block
@@ -889,26 +798,17 @@ struct
   (* The positive Goal and ordered processed assumptions, including duplicate
      occurrences. Expected Work is compared before held backing activation. *)
   fun processed_nodes_with_policy_for expected value=
-    ((case value of PolicyValidation{work,...}=>
-        if Portable.pointer_eq(expected,work)then ()else
-          raise ERR "processed_nodes_with_policy_for" "different original Work"
-      | _=>raise ERR "processed_nodes_with_policy_for"
-          "policy portfolio required";
-      validate_with_policy expected value;
-      let val PolicyValidation{assumptions,goal,...}=value
-      in {assumptions=List.map endpoint assumptions,goal=goal}end)
+    ((let val {assumptions,goal,...}=
+            policy_fields "processed_nodes_with_policy_for" expected value
+      in validate_with_policy expected value;
+        {assumptions=List.map endpoint assumptions,goal=goal}end)
      handle primary=>(W.close expected;raise primary))
 
   fun processed_nodes_in_action_with_policy_for expected value =
-    ((case value of PolicyValidation {work,...} =>
-        if Portable.pointer_eq (expected,work) then () else
-          raise ERR "processed_nodes_in_action_with_policy_for"
-            "different original Work"
-      | _ => raise ERR "processed_nodes_in_action_with_policy_for"
-          "policy portfolio required";
-      validate_with_policy expected value;
-      let
-        val PolicyValidation {assumptions,goal,...} = value
+    ((let
+        val {assumptions,goal,...} = policy_fields
+          "processed_nodes_in_action_with_policy_for" expected value
+        val _ = validate_with_policy expected value
         val _ = W.spend_policy expected 16
         fun copy [] = (W.spend_policy expected 1; [])
           | copy (fact :: rest) =
@@ -921,14 +821,9 @@ struct
   (* Actual completion keeps the legacy reverse-prepend order. Expected
      Work is fenced before held portfolio or closed-fact backing. *)
   fun prepend_recorded_with_policy expected value plans=
-    ((case value of PolicyValidation{work,...}=>
-        if Portable.pointer_eq(expected,work)then ()else
-          raise ERR "prepend_recorded_with_policy" "different original Work"
-      | _=>raise ERR "prepend_recorded_with_policy"
-          "policy portfolio required";
-      validate_with_policy expected value;
-      let val PolicyValidation{graph,scope,limits,assumptions,goal,
-            denied,...}=value
+    ((let val {graph,scope,limits,assumptions,goal,denied,...}=
+            policy_fields "prepend_recorded_with_policy" expected value
+          val _=validate_with_policy expected value
           val _=List.app (P.validate_closed_fact_with_policy graph scope
             (#template_limit limits)) plans
           val auxiliary=List.map(recorded_closed graph scope)plans
@@ -939,16 +834,12 @@ struct
 
   fun transport_query_with_policy expected value
       {assumptions=selection,goal=goal_conversion,denied=denied_conversion} =
-    ((case value of PolicyValidation {work,...} =>
-        if Portable.pointer_eq (expected,work) then () else
-          raise ERR "transport_query_with_policy" "different original Work"
-      | _ => raise ERR "transport_query_with_policy"
-          "policy portfolio required";
+    ((let val {graph,scope,limits,assumptions,goal,denied,...} =
+            policy_fields "transport_query_with_policy" expected value
+      in
       W.with_step expected (fn () =>
         let
           val _ = validate_with_policy expected value
-          val PolicyValidation
-            {graph,scope,limits,assumptions,goal,denied,...} = value
           val cap = #template_limit limits
           fun spend amount = W.spend_policy expected amount
           fun checked conversion source =
@@ -1000,7 +891,7 @@ struct
             {assumptions=selected,goal=positive,denied=negative}
           val _ = validate_with_policy expected value
           val _ = validate_with_policy expected result
-        in result end))
+        in result end) end)
      handle primary => (W.close expected;raise primary))
 
   fun current_facts_with_policy_for expected

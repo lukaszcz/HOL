@@ -7061,12 +7061,10 @@ struct
             val found=R.scope_lookup_int meter (table,id)
           in
             case found of
-                SOME _ =>
+                SOME frame =>
                   let
-                    (* Second immutable tag match1, payload1, holding1.
-                       Outer SOME_ extracts no payload before this charge. *)
+                    (* Second immutable tag match1, payload1, holding1. *)
                     val _=R.scope_meter_charge meter 3
-                    val SOME frame=found
                   in frame end
               | NONE =>
                   (R.scope_meter_charge meter 15;
@@ -7091,11 +7089,10 @@ struct
         (R.scope_meter_charge meter 1;
          case parent of
              NONE => (R.scope_meter_charge meter 1;())
-           | SOME _ =>
+           | SOME outer =>
                let
                  (* Immutable tag/payload/hold3 plus recursive apps3. *)
                  val _=R.scope_meter_charge meter 6
-                 val SOME outer=parent
                in check_scope_with_meter g outer meter end)
     end
 
@@ -7130,11 +7127,9 @@ struct
     in
       case observation of
           NONE => (R.scope_meter_charge meter 1;())
-        | SOME _ =>
+        | SOME (NodeObservation fields) =>
             let
               val _ = R.scope_meter_charge meter 6
-              val SOME tagged = observation
-              val NodeObservation fields = tagged
               val _ = R.scope_meter_charge meter 2
               val cell = #accesses fields
               val _ = R.scope_meter_charge meter 3
@@ -7157,10 +7152,9 @@ struct
                 NONE =>
                   (R.scope_meter_charge meter 15;
                    raise ERR "node" "unknown node")
-              | SOME _ =>
+              | SOME fields =>
                   let
                     val _ = R.scope_meter_charge meter 3
-                    val SOME fields = found
                   in
                     R.scope_meter_charge meter 2;
                     observe_node_accesses_with_meter g meter;
@@ -7189,10 +7183,9 @@ struct
                 NONE =>
                   (R.scope_meter_charge meter 15;
                    raise ERR "node" "unknown node")
-              | SOME _ =>
+              | SOME fields =>
                   let
                     val _ = R.scope_meter_charge meter 3
-                    val SOME fields = found
                   in
                     R.scope_meter_charge meter 2;
                     observe_node_accesses_with_meter g meter;

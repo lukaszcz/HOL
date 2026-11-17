@@ -28364,13 +28364,13 @@ in
   Profile.reset_all ();
   List.app (fn version =>
     let
-      val before = profile_call_count
+      val baseline = profile_call_count
         "arith-linear(5)(ground-subterm-eval)_OK"
       val () = check version contains_capture
       val after = profile_call_count
         "arith-linear(5)(ground-subterm-eval)_OK"
     in
-      assert (after = before + 1,
+      assert (after = baseline + 1,
         "captured Seq contains rewrite did not consume exactly one changed " ^
         "ground-subterm conversion for Z3 " ^ version)
     end) versions;
@@ -33415,10 +33415,10 @@ in
         val sequence=W.with_step hw (fn()=>
           C.graph_cut_sequence_with_policy hw
             {first=leaf,second=leaf,observe=fn()=>W.spend_policy hw 1})
-        val before=charged hw val native=Count.thm_count ()
+        val baseline=charged hw val native=Count.thm_count ()
         val _=List.app (C.validate_conversion_header_for hw) [leaf,sequence]
         val _=require "same-owner header activated or paid Work"
-          (charged hw=before andalso Count.thm_count ()=native andalso
+          (charged hw=baseline andalso Count.thm_count ()=native andalso
            not (#retired (W.audit_policy hw)))
         fun check conversion priced entry =
           let
@@ -33867,7 +33867,7 @@ let
       val graph = G.new () val scope = G.root_scope graph
       val plan = G.plan_import graph scope cap raw
       val exposed = length (G.import_types plan)
-      val before = Count.thm_count ()
+      val baseline = Count.thm_count ()
       val (denied,stats) = G.with_node_statistics graph scope (fn () =>
         ((ignore (G.import graph scope (exposed-1) raw);false)
          handle Feedback.HOL_ERR error =>
@@ -33875,7 +33875,7 @@ let
              "application import DAG budget exhausted"))
       val _ = require "lazy exposure exceeded import budget before admission"
         (denied andalso #node_creations stats=0 andalso
-         Count.thm_count ()=before)
+         Count.thm_count ()=baseline)
       val exact = G.import graph scope exposed raw
       val (left,right) = Term.dest_eq (Thm.concl (#bridge exact))
       val _ = require "lazy import lost exact endpoints or guessed FV"

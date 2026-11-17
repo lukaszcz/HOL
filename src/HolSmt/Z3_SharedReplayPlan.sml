@@ -75,8 +75,6 @@ struct
                           andalso n=0 then ()else raise (#error operations)
                             "packet"
                             "indexed native argument programme pending"
-                      | _=>raise (#error operations) "packet"
-                          "native argument programme pending"
                     val _=if (name="quant-inst" orelse null arguments)
                         andalso not(Option.isSome metadata)
                       then ()else raise (#error operations) "packet"

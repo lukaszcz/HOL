@@ -34,6 +34,12 @@ end
 (* SAME native CPC route and immediate indexed operand programme. *)
 structure CPC_SharedReplayPlan :> CPC_SharedReplayPlan =
 struct
+  val ERR = Feedback.mk_HOL_ERR "CPC_SharedReplayPlan"
+  (* Recorded operand and provenance lists have the requested arity. *)
+  fun pair_of _ [a,b] = (a,b)
+    | pair_of rule _ = raise ERR rule "unexpected operand arity"
+  fun triple_of _ [a,b,c] = (a,b,c)
+    | triple_of rule _ = raise ERR rule "unexpected operand arity"
   structure Q=CPC_ProofParser
   datatype route = Scoped | Resolved | Converted | Aligned | Simple | Bounded
   val boolean_handlers =
@@ -257,11 +263,12 @@ struct
       val (body,provenance) = case negated (one ()) of
           SOME body => (body,negation_provenance (one_provenance ()))
         | NONE =>
-            let val [body,result] = operands boolSyntax.implication 2 (one ())
+            let val (body,result) = pair_of "not_and"
+                  (operands boolSyntax.implication 2 (one ()))
                 val _ = if is_false result then () else
                   raise error "implication consequent differs from F"
-                val [body_prov,_] = child_provenance "=>" 2
-                  (one_provenance ())
+                val (body_prov,_) = pair_of "not_and"
+                  (child_provenance "=>" 2 (one_provenance ()))
             in (body,body_prov) end
       fun recorded () = recorded_entries body provenance
       val entries = case provenance of
@@ -492,10 +499,10 @@ struct
     let val implication = case negated (one ()) of
             SOME body => body
           | NONE => raise error handler "expected negation"
-        val [left,_] = operands boolSyntax.implication
-          2 implication
-        val [left_prov,_] = child_provenance "=>" 2
-          (negation_provenance (one_provenance ()))
+        val (left,_) = pair_of handler
+          (operands boolSyntax.implication 2 implication)
+        val (left_prov,_) = pair_of handler (child_provenance "=>" 2
+          (negation_provenance (one_provenance ())))
     in current left left_prov end
   fun not_implies_elim2
       {negated,one,operands,child_provenance,negation_provenance,
@@ -503,19 +510,19 @@ struct
     let val implication = case negated (one ()) of
             SOME body => body
           | NONE => raise error handler "expected negation"
-        val [_,right] = operands boolSyntax.implication
-          2 implication
-        val [_,right_prov] = child_provenance "=>" 2
-          (negation_provenance (one_provenance ()))
+        val (_,right) = pair_of handler
+          (operands boolSyntax.implication 2 implication)
+        val (_,right_prov) = pair_of handler (child_provenance "=>" 2
+          (negation_provenance (one_provenance ())))
         val (node,provenance) = negative right right_prov
     in finish (node,provenance) end
   fun implies_elim
       {operands,one,child_provenance,one_provenance,negative,positive,
        disjoin} =
-    let val [left,right] = operands
-          boolSyntax.implication 2 (one ())
-        val [left_prov,right_prov] =
-          child_provenance "=>" 2 (one_provenance ())
+    let val (left,right) = pair_of "implies_elim"
+          (operands boolSyntax.implication 2 (one ()))
+        val (left_prov,right_prov) = pair_of "implies_elim"
+          (child_provenance "=>" 2 (one_provenance ()))
     in disjoin [negative left left_prov,
                 positive right right_prov] end
   fun equiv_elim1
@@ -559,10 +566,10 @@ struct
        negative,positive,disjoin} =
     if same_constant (one ()) boolSyntax.T then
       atom (one ()) else
-    let val [condition,yes,_] = operands
-          boolSyntax.conditional 3 (one ())
-        val [condition_prov,yes_prov,_] =
-          child_provenance "ite" 3 (one_provenance ())
+    let val (condition,yes,_) = triple_of "ite_elim1"
+          (operands boolSyntax.conditional 3 (one ()))
+        val (condition_prov,yes_prov,_) = triple_of "ite_elim1"
+          (child_provenance "ite" 3 (one_provenance ()))
     in disjoin [negative condition condition_prov,
                 positive yes yes_prov] end
   fun ite_elim2
@@ -570,10 +577,10 @@ struct
        negative,positive,disjoin} =
     if same_constant (one ()) boolSyntax.T then
       atom (one ()) else
-    let val [condition,_,no] = operands
-          boolSyntax.conditional 3 (one ())
-        val [condition_prov,_,no_prov] =
-          child_provenance "ite" 3 (one_provenance ())
+    let val (condition,_,no) = triple_of "ite_elim2"
+          (operands boolSyntax.conditional 3 (one ()))
+        val (condition_prov,_,no_prov) = triple_of "ite_elim2"
+          (child_provenance "ite" 3 (one_provenance ()))
     in disjoin [positive condition condition_prov,
                 positive no no_prov] end
   fun and_elim {require_one,node,provenance,selected,current,error}

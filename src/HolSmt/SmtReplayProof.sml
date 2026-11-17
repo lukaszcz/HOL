@@ -406,11 +406,15 @@ struct
      noncommon:SmtReplayNamedContext.profile,
      maximum:SmtReplayNamedContext.profile,
      admitted:IntInf.int option ref}
-  type primitive_edge_data =
+  type primitive_edge_fields =
     {conclusion:primitive_term_data option ref,
      equation:(primitive_term_data * primitive_term_data) option ref,
      implication:primitive_term_data option ref,
      hypotheses:primitive_hyp_data option ref}
+  (* A datatype, not an abbreviation: Poly/ML would otherwise expand the
+     nested records into the printers generated for every datatype that
+     holds them, which costs seconds of compilation per load. *)
+  datatype primitive_edge_data = PrimitiveEdgeData of primitive_edge_fields
   datatype primitive_metadata = PrimitiveMetadata of
     {revision:IntInf.int,epoch:int,symbols:int,
      profiles:(Term.term * SmtReplayNamedContext.profile) list Array.array,
@@ -493,20 +497,17 @@ struct
   fun pg_metric_guard graph scope captures =
     List.app (fn capture=>ignore
       (G.profiled_metric_data graph scope capture)) captures
-  fun pcf_for expected
-      (saved as PolicyRealizedClosedFact {work,...}) =
+  fun pcf_for expected (PolicyRealizedClosedFact {work,guard,...}) =
     ((if Portable.pointer_eq(expected,work) then () else
         raise ERR "policy_closed_fact" "different original Work";
-      let val PolicyRealizedClosedFact {guard,...}=saved
-      in guard () end)
+      guard ())
      handle primary=>(W.close expected;raise primary))
     | pcf_for _ _=()
   fun pcf_validate graph scope maximum
-      (saved as PolicyRealizedClosedFact {graph=owner,...}) =
+      (PolicyRealizedClosedFact {graph=owner,scope=frame,template_limit,
+         guard,...}) =
     if Portable.pointer_eq(graph,owner) then
-      let val PolicyRealizedClosedFact {scope=frame,template_limit,
-                guard,...}=saved
-          val _=if maximum=template_limit then () else
+      let val _=if maximum=template_limit then () else
             raise ERR "freeze" "different original policy"
           val _=G.validate_scope graph scope
           val _=if G.scope_visible graph scope frame then () else
@@ -522,11 +523,11 @@ struct
          pg_metric_guard graph scope metric_captures;node)
     | pc_closed_node _=raise ERR "closed_node" "not a policy closed fact"
   fun pc_validate_closed graph scope maximum
-      (fact as PolicyClosedFact {graph=owner,...}) =
+      (fact as PolicyClosedFact {graph=owner,scope=frame,node,canonical,
+         template_limit,...}) =
     let
       val _=if Portable.pointer_eq (graph,owner) then () else
         raise ERR "freeze" "closed auxiliary owner or cap differs"
-      val PolicyClosedFact {scope=frame,node,canonical,template_limit,...}=fact
       val _=if maximum=template_limit then () else
         raise ERR "freeze" "closed auxiliary owner or cap differs"
       val _=ignore (pc_closed_node fact)
@@ -539,12 +540,12 @@ struct
     | pc_validate_closed _ _ _ _ =
         raise ERR "freeze" "not a policy closed fact"
   fun pc_validate_conversion graph scope maximum
-      (saved as PolicyClosedConversion {graph=owner,...}) =
+      (PolicyClosedConversion {graph=owner,scope=frame,source,target,
+         source_view,target_view,theorem,template_limit,metric_captures,
+         ...}) =
     let
       val _=if Portable.pointer_eq (graph,owner) then () else
         raise ERR "conversion" "owner or original cap differs"
-      val PolicyClosedConversion {scope=frame,source,target,source_view,
-        target_view,theorem,template_limit,metric_captures,...}=saved
       val _=if maximum=template_limit then () else
         raise ERR "conversion" "owner or original cap differs"
       val _=G.validate_scope graph scope
@@ -562,20 +563,18 @@ struct
         raise ERR "conversion" "not a policy closed conversion"
   (* Guarded typed conversions retain a genuine late realization or a
      canonical closed fact; neither factory accepts a raw proof pair. *)
-  fun pcr_for expected (saved as PolicyRealizedConversion {work,...}) =
+  fun pcr_for expected (PolicyRealizedConversion {work,guard,...}) =
     ((if Portable.pointer_eq(expected,work) then () else
         raise ERR "validate_conversion_for" "different original Work";
-      let val PolicyRealizedConversion {guard,...}=saved
-      in guard () end)
+      guard ())
      handle primary=>(W.close expected;raise primary))
     | pcr_for expected _=(W.close expected;
         raise ERR "validate_conversion_for" "not a policy realization")
   fun pcr_validate graph scope maximum
-      (saved as PolicyRealizedConversion {graph=owner,...}) =
+      (PolicyRealizedConversion {graph=owner,scope=frame,template_limit,
+         guard,...}) =
     if Portable.pointer_eq(graph,owner) then
-      let val PolicyRealizedConversion {scope=frame,template_limit,
-                guard,...}=saved
-          val _=if maximum=template_limit then () else
+      let val _=if maximum=template_limit then () else
             raise ERR "conversion" "different original policy"
           val _=G.validate_scope graph scope
           val _=if G.scope_visible graph scope frame then () else
@@ -585,17 +584,16 @@ struct
     | pcr_validate _ _ _ _=
         raise ERR "conversion" "not a policy realization"
 
-  fun pc_conversion_for expected (saved as PolicyClosedConversion _) =
+  fun pc_conversion_for expected
+      (saved as PolicyClosedConversion {graph=owner,scope,...}) =
     ((let
         val sources=W.original_sources expected
         val graph=SmtReplaySource.owning_graph sources
         val root=SmtReplaySource.owning_scope sources
         val limits=W.semantic_policy expected
         val _=W.validate_policy expected graph root sources limits
-        val PolicyClosedConversion {graph=owner,...}=saved
         val _=if Portable.pointer_eq (graph,owner) then () else
           raise ERR "validate_conversion_for" "different original graph"
-        val PolicyClosedConversion {scope,...}=saved
         val _=if G.scope_visible graph scope root then () else
           raise ERR "validate_conversion_for" "outside original Source root"
       in pc_validate_conversion graph scope (#template_limit limits) saved end)
@@ -626,6 +624,126 @@ struct
      decline BEFORE inspecting the original theorem's term structure.
      This function never opens an original abstraction or trusts an
      arbitrary semantic equality supplied alongside the theorem. *)
+  (* Closed auxiliary recording. The helpers below are top level so each
+     closure captures only what it uses. *)
+  datatype closed_recipe = ClosedIdentity of Term.term
+    | ClosedAnchor of Thm.thm
+    | ClosedWholeAnchor of Thm.thm * Thm.thm
+    | ClosedAtom of Term.term * Term.term
+    | ClosedApplication of
+        Term.term * Term.term * closed_recipe * closed_recipe
+
+  (* Debit one unit of `remaining` per type constructor occurrence. *)
+  fun closed_type_shape remaining [] = ()
+    | closed_type_shape remaining (ty :: rest) =
+        if !remaining = 0 then
+          raise ERR "record_closed" "type portfolio exceeds limit"
+        else (remaining := !remaining - 1;
+          if Type.is_vartype ty then closed_type_shape remaining rest
+          else closed_type_shape remaining (#2 (Type.dest_type ty) @ rest))
+
+  fun closed_recipe_plan graph remaining current original =
+    let val representative = G.representative graph current in
+      if Portable.pointer_eq (original,representative) then
+        ClosedIdentity original
+      else case G.source_anchor graph current of
+        SOME {original = held,bridge,...} =>
+          if Portable.pointer_eq (original,held) then
+            let val (left,right) = boolSyntax.dest_eq (Thm.concl bridge)
+                val _ = if List.null (Thm.hyp bridge) andalso
+                    clean bridge andalso
+                    Portable.pointer_eq (left,held) andalso
+                    Portable.pointer_eq (right,representative) then ()
+                  else raise ERR "record_closed" "source anchor differs"
+            in ClosedAnchor bridge end
+          else closed_recipe_composite graph remaining current original
+            representative
+      | NONE => closed_recipe_composite graph remaining current original
+          representative
+    end
+  and closed_recipe_composite graph remaining current original
+      representative =
+    case G.view graph current of
+      G.Application (operator,operand) =>
+        if Term.is_comb original then
+          let val (f,x) = Term.dest_comb original
+          in ClosedApplication (original,representative,
+            closed_recipe_plan graph remaining operator f,
+            closed_recipe_plan graph remaining operand x) end
+        else raise ERR "record_closed" "original auxiliary shape differs"
+    | G.Constant _ =>
+        if Term.is_const original then
+          let val ty = Term.type_of original
+              val _ = closed_type_shape remaining [ty]
+          in if Term.same_const original representative andalso
+              Type.compare (ty,G.type_of graph current) = EQUAL then
+                ClosedAtom (original,representative)
+            else raise ERR "record_closed" "constant declaration differs"
+          end
+        else raise ERR "record_closed" "original constant shape differs"
+    | G.Variable (G.RigidSource,_) =>
+        if Term.is_var original then
+          let val (text,ty) = Term.dest_var original
+              val _ = closed_type_shape remaining [ty]
+          in if text = #1 (Term.dest_var representative) andalso
+              Type.compare (ty,G.type_of graph current) = EQUAL then
+                ClosedAtom (original,representative)
+            else raise ERR "record_closed" "rigid source variable differs"
+          end
+        else raise ERR "record_closed" "original variable shape differs"
+    | _ => raise ERR "record_closed" "original auxiliary anchor differs"
+
+  fun execute_closed_recipe (ClosedIdentity term) =
+        SmtReplayRuleObservation.REFL term
+    | execute_closed_recipe (ClosedAnchor proof) = proof
+    | execute_closed_recipe (ClosedWholeAnchor (first,second)) =
+        SmtReplayRuleObservation.TRANS first second
+    | execute_closed_recipe (ClosedAtom (original,representative)) =
+        SmtReplayRuleObservation.ALPHA original representative
+    | execute_closed_recipe
+        (ClosedApplication (original,representative,f,x)) =
+        let val joined = SmtReplayRuleObservation.MK_COMB
+              (execute_closed_recipe f,execute_closed_recipe x)
+            val (left,right) = boolSyntax.dest_eq (Thm.concl joined)
+        in SmtReplayRuleObservation.TRANS
+             (SmtReplayRuleObservation.ALPHA original left)
+             (SmtReplayRuleObservation.TRANS joined
+               (SmtReplayRuleObservation.ALPHA right representative)) end
+
+  fun closed_retained_import graph scope original node =
+    let val (imported,opened) =
+          G.imported_opened_source graph scope original node
+        val first = #bridge imported val second = #bridge opened
+        val (a,b) = boolSyntax.dest_eq (Thm.concl first)
+        val (c,d) = boolSyntax.dest_eq (Thm.concl second)
+    in if Portable.pointer_eq (a,original) andalso
+        Portable.pointer_eq
+          (b,G.representative graph (#node imported)) andalso
+        Portable.pointer_eq (#original opened,b) andalso
+        Portable.pointer_eq (b,c) andalso
+        Portable.pointer_eq (d,G.representative graph node) andalso
+        null (Thm.hyp first) andalso null (Thm.hyp second) andalso
+        clean first andalso clean second then (first,second)
+      else raise ERR "record_closed" "registered whole bridge differs"
+    end
+
+  (* An imported auxiliary also retains its epoch, its reachable scopes and
+     the identity of its registered whole bridge. *)
+  fun closed_import_active graph scope NONE = G.validate_scope graph scope
+    | closed_import_active graph scope
+        (SOME {epoch,reachable,original,node,bridges = (a,b)}) =
+        (G.validate_scope graph scope;
+         if Type.type_epoch () = epoch then () else
+           raise ERR "record_closed" "Type retirement epoch changed";
+         List.app (fn current => G.validate_scope graph
+           (G.node_scope graph current)) reachable;
+         let val (first,second) =
+               closed_retained_import graph scope original node
+         in if Portable.pointer_eq (a,first) andalso
+               Portable.pointer_eq (b,second) then () else
+             raise ERR "record_closed" "retained import bridge changed"
+         end)
+
   fun record_closed_program exact from_import graph scope
       {node,theorem,template_limit,check_type} =
     let
@@ -648,126 +766,29 @@ struct
       val reachable = G.reachable graph [node]
       val types = List.map (G.type_of graph) reachable
       val remaining = ref template_limit
-      fun type_shape [] = ()
-        | type_shape (ty :: rest) =
-            if !remaining = 0 then
-              raise ERR "record_closed" "type portfolio exceeds limit"
-            else (remaining := !remaining - 1;
-              if Type.is_vartype ty then type_shape rest
-              else type_shape (#2 (Type.dest_type ty) @ rest))
-      val _ = type_shape types
-      datatype recipe = Identity of Term.term
-        | Anchor of Thm.thm
-        | WholeAnchor of Thm.thm * Thm.thm
-        | Atom of Term.term * Term.term
-        | Application of Term.term * Term.term * recipe * recipe
-      fun plan current original =
-        let val representative = G.representative graph current in
-          if Portable.pointer_eq (original,representative) then
-            Identity original
-          else case G.source_anchor graph current of
-            SOME {original = held,bridge,...} =>
-              if Portable.pointer_eq (original,held) then
-                let val (left,right) = boolSyntax.dest_eq (Thm.concl bridge)
-                    val _ = if List.null (Thm.hyp bridge) andalso
-                        clean bridge andalso
-                        Portable.pointer_eq (left,held) andalso
-                        Portable.pointer_eq (right,representative) then ()
-                      else raise ERR "record_closed" "source anchor differs"
-                in Anchor bridge end
-              else composite current original representative
-          | NONE => composite current original representative
-        end
-      and composite current original representative =
-        case G.view graph current of
-          G.Application (operator,operand) =>
-            if Term.is_comb original then
-              let val (f,x) = Term.dest_comb original
-              in Application (original,representative,
-                plan operator f,plan operand x) end
-            else raise ERR "record_closed" "original auxiliary shape differs"
-        | G.Constant _ =>
-            if Term.is_const original then
-              let val ty = Term.type_of original
-                  val _ = type_shape [ty]
-              in if Term.same_const original representative andalso
-                  Type.compare (ty,G.type_of graph current) = EQUAL then
-                    Atom (original,representative)
-                else raise ERR "record_closed" "constant declaration differs"
-              end
-            else raise ERR "record_closed" "original constant shape differs"
-        | G.Variable (G.RigidSource,_) =>
-            if Term.is_var original then
-              let val (text,ty) = Term.dest_var original
-                  val _ = type_shape [ty]
-              in if text = #1 (Term.dest_var representative) andalso
-                  Type.compare (ty,G.type_of graph current) = EQUAL then
-                    Atom (original,representative)
-                else raise ERR "record_closed" "rigid source variable differs"
-              end
-            else raise ERR "record_closed" "original variable shape differs"
-        | _ => raise ERR "record_closed" "original auxiliary anchor differs"
+      val _ = closed_type_shape remaining types
       val original = Thm.concl theorem
       val _ = if exact andalso not (Portable.pointer_eq
           (original,G.representative graph node)) then
         raise ERR "record_closed_exact" "different exact native conclusion"
         else ()
       val epoch = Type.type_epoch ()
-      fun retained_import () =
-        let val (imported,opened) =
-              G.imported_opened_source graph scope original node
-            val first = #bridge imported val second = #bridge opened
-            val (a,b) = boolSyntax.dest_eq (Thm.concl first)
-            val (c,d) = boolSyntax.dest_eq (Thm.concl second)
-        in if Portable.pointer_eq (a,original) andalso
-            Portable.pointer_eq
-              (b,G.representative graph (#node imported)) andalso
-            Portable.pointer_eq (#original opened,b) andalso
-            Portable.pointer_eq (b,c) andalso
-            Portable.pointer_eq (d,G.representative graph node) andalso
-            null (Thm.hyp first) andalso null (Thm.hyp second) andalso
-            clean first andalso clean second then (first,second)
-          else raise ERR "record_closed" "registered whole bridge differs"
-        end
-      val held = if from_import then SOME (retained_import ()) else NONE
-      fun active () =
-        (G.validate_scope graph scope;
-         if from_import then
-           (if Type.type_epoch () = epoch then () else
-              raise ERR "record_closed" "Type retirement epoch changed";
-            List.app (fn current => G.validate_scope graph
-              (G.node_scope graph current)) reachable;
-            let val (first,second) = retained_import ()
-            in case held of SOME (a,b) =>
-                 if Portable.pointer_eq (a,first) andalso
-                     Portable.pointer_eq (b,second) then () else
-                   raise ERR "record_closed" "retained import bridge changed"
-               | NONE => raise ERR "record_closed" "missing retained bridge"
-            end)
-         else ())
-      val recipe = case held of SOME pair => WholeAnchor pair
-        | NONE => plan node original
+      val held = if from_import then
+          SOME {epoch = epoch,reachable = reachable,original = original,
+                node = node,
+                bridges = closed_retained_import graph scope original node}
+        else NONE
+      fun active () = closed_import_active graph scope held
+      val recipe = case held of
+          SOME {bridges,...} => ClosedWholeAnchor bridges
+        | NONE => closed_recipe_plan graph remaining node original
       (* All syntax/metric/type portfolios precede proof bridge operations. *)
       val _ = List.app (fn ty => (active ();check_type ty;active ())) types
       val _ = if Type.compare (G.type_of graph node,Type.bool) = EQUAL
         then () else raise ERR "record_closed" "auxiliary is not Boolean"
-      fun execute (Identity term) = SmtReplayRuleObservation.REFL term
-        | execute (Anchor proof) = proof
-        | execute (WholeAnchor (first,second)) =
-            SmtReplayRuleObservation.TRANS first second
-        | execute (Atom (original,representative)) =
-            SmtReplayRuleObservation.ALPHA original representative
-        | execute (Application (original,representative,f,x)) =
-            let val joined = SmtReplayRuleObservation.MK_COMB
-                  (execute f,execute x)
-                val (left,right) = boolSyntax.dest_eq (Thm.concl joined)
-            in SmtReplayRuleObservation.TRANS
-                 (SmtReplayRuleObservation.ALPHA original left)
-                 (SmtReplayRuleObservation.TRANS joined
-                   (SmtReplayRuleObservation.ALPHA right representative)) end
       val _ = active ()
       val canonical = if exact then theorem else
-        SmtReplayRuleObservation.EQ_MP (execute recipe) theorem
+        SmtReplayRuleObservation.EQ_MP (execute_closed_recipe recipe) theorem
       val _ = if Portable.pointer_eq (Thm.concl canonical,
             G.representative graph node) andalso
           List.null (Thm.hyp canonical) andalso clean canonical then ()
@@ -821,6 +842,8 @@ struct
                    Portable.pointer_eq (Thm.concl canonical,
                      G.representative graph node) then () else
                  raise ERR "realization_guard" "retained fact changed"
+               | PolicyClosedFact _=>raise ERR "realization_guard"
+                   "policy fact in finite realization"
                | PolicyRealizedClosedFact _=>raise ERR "realization_guard"
                    "policy fact in finite realization") facts
              fun child (RealizedConversion inherited) = visit inherited
@@ -841,6 +864,8 @@ struct
                      andalso Portable.pointer_eq
                        (right,G.representative graph target) then () else
                    raise ERR "realization_guard" "retained equality changed" end
+               | child (PolicyClosedConversion _)=
+                   raise ERR "realization_guard" "policy leaf in finite path"
                | child (PolicyRealizedConversion _)=
                    raise ERR "realization_guard" "policy leaf in finite path"
              val _ = List.app child conversions
@@ -1318,6 +1343,26 @@ struct
           Int.toString (#charged audit) ^ " retired=" ^
           Bool.toString (#retired audit) ^ describe () ^ "\n");
           TextIO.flushOut TextIO.stdErr end) handle _ => ())
+  (* Finite frontiers cut at realized conversions and keep closed
+     conversion endpoints as legacy roots; policy leaves are rejected. *)
+  fun finite_frontier_leaves work conversions =
+    let
+      fun leaves [] cuts legacy = (cuts,legacy)
+        | leaves (conversion::rest) cuts legacy =
+          (W.spend work 1;
+           case conversion of
+             RealizedConversion (receipt as Realization {source,target,...}) =>
+               (validate_realization_for work receipt;
+                leaves rest (source::target::cuts) legacy)
+           | ClosedConversion _ => leaves rest cuts
+               (conversion_source conversion::conversion_target conversion::
+                legacy)
+           | PolicyClosedConversion _ =>
+               raise ERR "prepare_frontier" "use policy frontier"
+           | PolicyRealizedConversion _ =>
+               raise ERR "prepare_frontier" "use policy frontier")
+    in leaves conversions [] [] end
+
   fun prepare_frontier original extra_sources work
       {frame,roots,closed_facts,conversions} =
     ((W.spend work 0;
@@ -1368,18 +1413,7 @@ struct
           else []
         fun add [] values = values
           | add (node::rest) values = (pay 2;add rest (node::values))
-        fun leaves [] cuts legacy = (cuts,legacy)
-          | leaves (conversion::rest) cuts legacy =
-            (pay 1;case conversion of RealizedConversion (receipt as Realization
-                {source,target,...}) =>
-                  (validate_realization_for work receipt;
-                   leaves rest (source::target::cuts) legacy)
-              | ClosedConversion _ => leaves rest cuts
-                  (conversion_source conversion::conversion_target conversion::
-                   legacy)
-              | PolicyRealizedConversion _=>
-                  raise ERR "prepare_frontier" "use policy frontier")
-        val (cuts,legacy) = leaves conversions [] []
+        val (cuts,legacy) = finite_frontier_leaves work conversions
         val facts = List.map (fn fact => (pay 1;closed_node fact)) closed_facts
         (* Explicit ordinary roots dominate cuts. A receipt can NEVER hide
            a constructor demanded elsewhere at the same semantic node. *)
@@ -1518,18 +1552,7 @@ struct
               "original Sources outside descendant frame"
         fun add [] values = values
           | add (node::rest) values = (pay 2;add rest (node::values))
-        fun leaves [] cuts legacy = (cuts,legacy)
-          | leaves (conversion::rest) cuts legacy =
-            (pay 1;case conversion of RealizedConversion (receipt as Realization
-                {source,target,...}) =>
-                  (validate_realization_for work receipt;
-                   leaves rest (source::target::cuts) legacy)
-              | ClosedConversion _ => leaves rest cuts
-                  (conversion_source conversion::conversion_target conversion::
-                   legacy)
-              | PolicyRealizedConversion _=>
-                  raise ERR "prepare_frontier" "use policy frontier")
-        val (cuts,legacy) = leaves conversions [] []
+        val (cuts,legacy) = finite_frontier_leaves work conversions
         val facts = List.map (fn fact => (pay 1;closed_node fact)) closed_facts
         (* Explicit ordinary roots dominate cuts. A receipt can NEVER hide
            a constructor demanded elsewhere at the same semantic node. *)
@@ -1593,18 +1616,7 @@ struct
         val sources = retained
         fun add [] values = values
           | add (node::rest) values = (pay 2;add rest (node::values))
-        fun leaves [] cuts legacy = (cuts,legacy)
-          | leaves (conversion::rest) cuts legacy =
-            (pay 1;case conversion of RealizedConversion (receipt as Realization
-                {source,target,...}) =>
-                  (validate_realization_for work receipt;
-                   leaves rest (source::target::cuts) legacy)
-              | ClosedConversion _ => leaves rest cuts
-                  (conversion_source conversion::conversion_target conversion::
-                   legacy)
-              | PolicyRealizedConversion _=>
-                  raise ERR "prepare_frontier" "use policy frontier")
-        val (cuts,legacy) = leaves conversions [] []
+        val (cuts,legacy) = finite_frontier_leaves work conversions
         val facts = List.map (fn fact => (pay 1;closed_node fact)) closed_facts
         (* Explicit ordinary roots dominate cuts. A receipt can NEVER hide
            a constructor demanded elsewhere at the same semantic node. *)
@@ -4041,7 +4053,9 @@ struct
         val edge_store as PrimitiveMetadata {edges,epoch,symbols,...} =
           metadata ()
         fun edge_data
-            (edge as Edge {primitive=SOME(types,terms,data),...}) proof =
+            (edge as Edge
+               {primitive=SOME(types,terms,PrimitiveEdgeData data),...})
+            proof =
               (spend 12;if types=epoch andalso terms=symbols then data
                else edge_ordinal edge proof)
           | edge_data edge proof = (spend 2;edge_ordinal edge proof)
@@ -4070,20 +4084,20 @@ struct
                   val _=edges:=next
               in next end
           in case Array.sub(rows,id) of
-              SOME(held,data) =>
+              SOME(held,PrimitiveEdgeData data) =>
                 if Portable.pointer_eq(held,proof) then data else
                   fresh_edge rows id proof
             | NONE => fresh_edge rows id proof
           end
-        and fresh_edge rows id proof : primitive_edge_data =
+        and fresh_edge rows id proof : primitive_edge_fields =
           let val _=spend 32
               val data={conclusion=ref NONE,equation=ref NONE,
                 implication=ref NONE,hypotheses=ref NONE}
-              val _=Array.update(rows,id,SOME(proof,data))
+              val _=Array.update(rows,id,SOME(proof,PrimitiveEdgeData data))
           in data end
         fun input_data [] [] = (spend 1;[])
           | input_data (edge::tail) (proof::rest) =
-              let val data:primitive_edge_data=edge_data edge proof
+              let val data:primitive_edge_fields=edge_data edge proof
                   val _=spend 8
                   val root=case !(#conclusion data) of SOME value=>value
                     | NONE=>
@@ -4121,7 +4135,7 @@ struct
              raise ERR "prepare_primitive" "native operand epochs changed")
         fun equation proof =
           let val _=equation_guard ()
-              val data:primitive_edge_data=input proof
+              val data:primitive_edge_fields=input proof
               val _=spend 8
               val (a,b)=case !(#equation data) of SOME parts=>parts
                 | NONE=>
@@ -4142,7 +4156,7 @@ struct
           in (#term a,#term b) end
         fun implication proof =
           let val _=equation_guard ()
-              val data:primitive_edge_data=input proof
+              val data:primitive_edge_fields=input proof
               val _=spend 8
               val right=case !(#implication data) of SOME value=>value
                 | NONE=>
@@ -4231,7 +4245,7 @@ struct
                       full' (sum noncommon value) high'
                   end
           in walk entries [] [] [] [] [] [] 0 0 false 0 zero zero zero end
-        fun summarize proof (data:primitive_edge_data) =
+        fun summarize proof (data:primitive_edge_fields) =
           (spend 8;case !(#hypotheses data) of SOME value=>value
            | NONE=>
              let
@@ -4555,7 +4569,7 @@ struct
               let val (left,right)=boolSyntax.dest_eq(Thm.concl proof)
               in SOME({term=left,value=a,bytes=ref NONE},
                       {term=right,value=b,bytes=ref NONE}) end
-        val result_data : primitive_edge_data =
+        val result_data = PrimitiveEdgeData
           {conclusion=ref(SOME{term=Thm.concl proof,value=result,
              bytes=ref NONE}),equation=ref actual_equation,
            implication=ref NONE,hypotheses=ref(SOME actual_hypotheses)}
@@ -16149,9 +16163,10 @@ struct
     let val _=guard_conj_cache_inside_using expected value debit
         val _=debit ncc_fact_group
         val NCConjCache{graph,limits,law,origin,...}=value
-        val _=case fact of PolicyRealizedClosedFact _=>
-              ncc_fail "policy fact requires policy law programme" | _=>()
-        val ClosedFact{graph=owner,original,template_limit,...}=fact
+        val (owner,original,template_limit)=case fact of
+            ClosedFact{graph,original,template_limit,...}=>
+              (graph,original,template_limit)
+          | _=>ncc_fail "policy fact requires policy law programme"
         val _=Scope.validate_lifetime_for expected frame
         val actual=Scope.description_for expected frame
         val _=if Portable.pointer_eq(graph,#graph actual)andalso
@@ -17426,11 +17441,10 @@ struct
           val _=case conj of NONE=>()
             | SOME(cache,frame,fact)=>
                 let val NCConjCache{law=ports,origin,...}=cache
-                    val _=case fact of PolicyRealizedClosedFact _=>
-                          raise ERR "native_constructor_effects"
-                            "policy fact requires policy law programme"
-                        | _=>()
-                    val ClosedFact{original,...}=fact
+                    val original=case fact of
+                        ClosedFact{original,...}=>original
+                      | _=>raise ERR "native_constructor_effects"
+                          "policy fact requires policy law programme"
                     val same=Portable.pointer_eq(law,#proof ports)andalso
                       Portable.pointer_eq(original,#proof ports)andalso
                       Portable.pointer_eq(first,#first ports)andalso
@@ -19001,7 +19015,7 @@ struct
              template_limit law)
        in retained end)))
     | execute_source_false_law expected
-        {ready=SourceFalseLawReady value,law=PolicyRealizedClosedFact _}=
+        {ready=SourceFalseLawReady value,law=_}=
         source_false_law_operation expected value (fn()=>
           raise ERR "source_false_execute" "policy law programme required")
 
@@ -22702,13 +22716,11 @@ struct
         (fact as PolicyRealizedClosedFact _)=
         pcf_validate graph scope maximum fact
     | validate_closed_fact_with_policy graph scope maximum
-        (fact as ClosedFact {graph=owner,...}) =
+        (fact as ClosedFact {graph=owner,template_limit,...}) =
         if Portable.pointer_eq (graph,owner) then
-          let val ClosedFact {template_limit,...}=fact
-          in if maximum=RP.from_int template_limit then
-              validate_closed_fact graph scope template_limit fact
-            else raise ERR "freeze" "closed auxiliary owner or cap differs"
-          end
+          if maximum=RP.from_int template_limit then
+            validate_closed_fact graph scope template_limit fact
+          else raise ERR "freeze" "closed auxiliary owner or cap differs"
         else raise ERR "freeze" "closed auxiliary owner or cap differs"
   fun validate_conversion_with_policy graph scope maximum
       (conversion as PolicyClosedConversion _) =
@@ -22717,12 +22729,11 @@ struct
         (conversion as PolicyRealizedConversion _)=
         pcr_validate graph scope maximum conversion
     | validate_conversion_with_policy graph scope maximum
-        (conversion as ClosedConversion {graph=owner,...}) =
+        (conversion as ClosedConversion {graph=owner,template_limit,...}) =
         if Portable.pointer_eq (graph,owner) then
-          let val ClosedConversion {template_limit,...}=conversion
-          in if maximum=RP.from_int template_limit then
-              validate_conversion graph scope template_limit conversion
-            else raise ERR "conversion" "owner or original cap differs" end
+          if maximum=RP.from_int template_limit then
+            validate_conversion graph scope template_limit conversion
+          else raise ERR "conversion" "owner or original cap differs"
         else raise ERR "conversion" "owner or original cap differs"
     | validate_conversion_with_policy graph scope maximum
         (conversion as RealizedConversion
@@ -23568,9 +23579,8 @@ struct
       let
         val Block {nodes,graph,scope,...}=block
         val contract=case nodes of
-            saved as PolicyFixedTable {work,...}=>
-              if Portable.pointer_eq (expected,work) then
-                let val PolicyFixedTable {contract,...}=saved in contract end
+            PolicyFixedTable {work,contract,...}=>
+              if Portable.pointer_eq (expected,work) then contract
               else raise ERR "policy_native_block" "different table Work"
           | _=>raise ERR "policy_native_block" "not a policy native block"
         val _=active block
@@ -24284,12 +24294,12 @@ struct
        if not (Portable.pointer_eq(expected,held)) then
          raise ERR "policy_realize" "different original Work"
        else let val Block {nodes,graph,scope,...}=block
-                val saved=case nodes of
-                    value as PolicyFixedTable {work,...}=>
-                      if Portable.pointer_eq(expected,work) then value else
-                        raise ERR "policy_realize" "different table Work"
+                val (original,guard)=case nodes of
+                    PolicyFixedTable {work,contract=original,guard,...}=>
+                      if Portable.pointer_eq(expected,work) then
+                        (original,guard)
+                      else raise ERR "policy_realize" "different table Work"
                   | _=>raise ERR "policy_realize" "not a policy table"
-                val PolicyFixedTable {contract=original,guard,...}=saved
                 val _=if Portable.pointer_eq(contract,original) then () else
                   raise ERR "policy_realize" "different native contract"
                 val _=SmtReplayNativeContract.validate_for expected contract
@@ -25871,6 +25881,9 @@ struct
            afresh, BEFORE the original first cap check, on EVERY use.
            Only the realized constructor has immutable sealed payload. *)
         fun realized_payload()=
+          case fact of
+            PolicyRealizedClosedFact{graph=owner,scope=held,template_limit,
+              node,theorem,...}=>
           let
             val current=context()
             val _=if #root current= #root data andalso
@@ -25884,8 +25897,6 @@ struct
                Work/Scope/graph validators retain their own accounting.
                Quote before projection; no payer or observer follows it. *)
             val _=W.spend_guard_policy expected 32
-            val PolicyRealizedClosedFact
-              {graph=owner,scope=held,template_limit,...}=fact
             val _=if Portable.pointer_eq(graph,owner)then ()else
               raise ERR "freeze" "different graph owner"
             val _=if maximum=template_limit then ()else
@@ -25901,8 +25912,8 @@ struct
                 #scope fresh=scope andalso Type.type_epoch()=types andalso
                 Term.term_epoch()=symbols then ()else
               raise ERR "closed_fact_conversion" "frame or epoch changed"
-            val PolicyRealizedClosedFact{node,theorem,...}=fact
           in (node,theorem)end
+          | _=>raise ERR "closed_fact_conversion" "not a realized fact"
         val equality=case fact of PolicyRealizedClosedFact _=>
               #1(realized_payload())
           | _=>(validate();closed_node fact)

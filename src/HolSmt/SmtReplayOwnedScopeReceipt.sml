@@ -29,15 +29,14 @@ struct
   fun scope_guard_payment work = W.spend_guard_policy work 1
   (* These helpers accept only the private policy case. Callbacks below
      are the module's own recursive description/lifetime functions. *)
-  fun describe_policy expected (saved as PolicyReceipt {work,...})
+  fun describe_policy expected (PolicyReceipt
+      {work,graph,root,scope,sources,limits,epoch,symbols,mode,...})
       describe_parent =
     protected expected (fn () =>
       (if Portable.pointer_eq (expected,work) then () else
          raise ERR "description_for" "different original Work";
        let
          val _=scope_guard_payment work
-         val PolicyReceipt
-           {graph,root,scope,sources,limits,epoch,symbols,mode,...}=saved
          val _=case mode of PolicyUnpriced {guard,...} =>
              (W.validate_policy work graph root sources limits;
               G.validate_scope graph scope;
@@ -62,15 +61,14 @@ struct
            limits=limits} end))
     | describe_policy expected _ _ = protected expected (fn () =>
         raise ERR "description_for" "not a policy receipt")
-  fun lifetime_policy expected (saved as PolicyReceipt {work,...})
+  fun lifetime_policy expected (PolicyReceipt
+      {work,graph,root,scope,sources,limits,epoch,symbols,mode,...})
       validate_parent =
     protected expected (fn () =>
       (if Portable.pointer_eq (expected,work) then () else
          raise ERR "validate_lifetime_for" "different original Work";
        let
          val _=scope_guard_payment work
-         val PolicyReceipt
-           {graph,root,scope,sources,limits,epoch,symbols,mode,...}=saved
          fun ordinary () =
            (W.validate_policy work graph root sources limits;
             G.validate_scope graph scope;

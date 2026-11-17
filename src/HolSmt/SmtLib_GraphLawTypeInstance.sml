@@ -355,6 +355,8 @@ struct
       val _ = active p
     in Instance {producer = p,typed = typed,theta = theta,
                  identity_epoch = NONE} end
+    | execute_internal (IdentityPlan _) =
+        raise ERR "execute" "identity plan has no instance programme"
 
   fun execute (plan as Plan {producer,...}) =
     run producer (fn () => execute_internal plan)
@@ -815,6 +817,9 @@ struct
       val _ = active p
     in PolicyInstance {policy_producer = p,typed = typed,theta = theta,
                  identity_epoch = NONE} end
+    | execute_internal (PolicyIdentityPlan _) =
+        raise ERR "execute_with_policy"
+          "identity plan has no instance programme"
 
   fun execute_with_policy (policy_plan as PolicyPlan {policy_producer,...}) =
     run policy_producer (fn () => execute_internal policy_plan)

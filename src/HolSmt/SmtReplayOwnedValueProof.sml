@@ -145,15 +145,7 @@ struct
       let val _=validate expected block val Block {context,...}=block
       in wrap expected block
         (N.constructor named (PV.proof_term context node)) end)
-  fun primitive context (N.ReflexiveName node)=
-        N.ReflexiveName (PV.proof_term context node)
-    | primitive _ N.Symmetry=N.Symmetry
-    | primitive _ N.Transitivity=N.Transitivity
-    | primitive _ N.Congruence=N.Congruence
-    | primitive _ N.EqualityMP=N.EqualityMP
-    | primitive context (N.ApplyNamedArgument node)=
-        N.ApplyNamedArgument (PV.proof_term context node)
-    | primitive _ N.ImplicationMP=N.ImplicationMP
+  fun primitive context=N.map_primitive (PV.proof_term context)
   fun derive expected (block as Block {named,...}) recipe edges =
     protected expected (fn () =>
       let val _=validate expected block

@@ -611,10 +611,15 @@ struct
       (fn node => Option.map (fn plan => (plan,template_limit))
         (propose node)) observe (fn _ => NONE) source
 
-  fun legacy_graph_conversions (GraphConversion {steps,...}) =
+  (* The ordinary step-map conversion behind every legacy operation. *)
+  fun legacy_fields _ (GraphConversion fields) = fields
+    | legacy_fields rule _ = raise ERR rule "legacy graph conversion required"
+
+  fun legacy_graph_conversions conversion =
     Redblackmap.foldl
       (fn (_,GraphStep {conversion,...},rest) => case conversion of
-          NONE => rest | SOME plan => plan :: rest) [] steps
+          NONE => rest | SOME plan => plan :: rest) []
+      (#steps (legacy_fields "legacy_graph_conversions" conversion))
 
   type application_step =
     {source : G.node,current : G.node,result : G.node,
@@ -644,10 +649,11 @@ struct
     | graph_application_steps _ _ _ = raise ERR "graph_application_steps"
         "composed recipe requires graph_recipe_steps"
 
-  fun legacy_graph_closed_facts (GraphConversion {steps,...}) =
+  fun legacy_graph_closed_facts conversion =
     Redblackmap.foldl
       (fn (_,GraphStep {closed,...},rest) => case closed of NONE => rest
-        | SOME fact => fact :: rest) [] steps
+        | SOME fact => fact :: rest) []
+      (#steps (legacy_fields "legacy_graph_closed_facts" conversion))
 
   (* Private immutable ports; callers authenticate before consuming them. *)
   fun policy_graph_ports
@@ -695,7 +701,7 @@ struct
         val maximum= #template_limit(W.semantic_policy expected)
         val _=P.validate_conversion_with_policy (#graph data) (#scope data)
           maximum slot
-        val GraphConversion {source,result,equality,...}=legacy
+        val {source,result,equality,...}=legacy_fields "policy_graph" legacy
         val _=if source=P.conversion_source slot andalso
             result=P.conversion_target slot then () else
           raise ERR "policy_graph" "different retained conversion endpoints"
@@ -789,17 +795,20 @@ struct
     | graph_equality (saved as PolicySequenceGraphConversion
         {equality,...}) =
         (policy_graph_active saved;equality)
-  fun legacy_graph_roots (GraphConversion {source,result,equality,steps,...}) =
-    equality :: source :: result :: Redblackmap.foldl
-      (fn (_,GraphStep {current,schema,closed,conversion,...},roots) =>
-        current :: (case closed of NONE => []
-          | SOME fact => [P.closed_node fact]) @
-        (case conversion of NONE => [] | SOME plan =>
-          [P.conversion_source plan,P.conversion_target plan]) @
-        (case schema of NONE => roots
-          | SOME schema => graph_schema_source schema ::
-              graph_schema_result schema :: roots)) [] steps
-
+  fun legacy_graph_roots conversion =
+    let val {source,result,equality,steps,...} =
+          legacy_fields "legacy_graph_roots" conversion
+    in
+      equality :: source :: result :: Redblackmap.foldl
+        (fn (_,GraphStep {current,schema,closed,conversion,...},roots) =>
+          current :: (case closed of NONE => []
+            | SOME fact => [P.closed_node fact]) @
+          (case conversion of NONE => [] | SOME plan =>
+            [P.conversion_source plan,P.conversion_target plan]) @
+          (case schema of NONE => roots
+            | SOME schema => graph_schema_source schema ::
+                graph_schema_result schema :: roots)) [] steps
+    end
 
   (* Inventory traversal also copies lists and probes physical memos.
      Pay before every link/terminal dispatch, not merely emitted witnesses.
@@ -807,9 +816,10 @@ struct
      tree walk, empty branches and bounded per-row projection/list copies. *)
   fun inventory_step_map pay steps =
     pay (4+16*IntInf.fromInt (Redblackmap.numItems steps))
-  fun inventory_legacy pay project
-      (current as GraphConversion {steps,...}) =
-    (inventory_step_map pay steps;project current)
+  fun inventory_legacy pay project current =
+    (inventory_step_map pay
+       (#steps (legacy_fields "inventory_legacy" current));
+     project current)
   fun inventory_append (pay : IntInf.int -> unit) [] right =
         (pay 1;right)
     | inventory_append pay (item::rest) right =
@@ -908,10 +918,9 @@ struct
      Only the callback-free first two payments exchange order (1,8 -> 8,1).
      Composite visits below keep their original memo/de-dup itinerary. *)
   fun legacy_validate_conversion_using pay expected
-      (saved as GraphConversion _) =
+      (GraphConversion {steps,guard_slots,...}) =
     let
       val _ = pay 8
-      val GraphConversion {steps,guard_slots,...} = saved
     in case !guard_slots of SOME [] => ()
       | _ => (pay 1;validate_step_map pay expected steps guard_slots;pay 1)
     end
@@ -1184,6 +1193,8 @@ struct
       (fn [expansion,proof] => SmtReplayRuleObservation.EQ_MP
         (SmtReplayRuleObservation.SYM expansion) proof
         | _ => raise Fail "graph equality naming") [actual,proof] end
+    | legacy_assemble _ _ _ =
+        raise ERR "legacy_assemble" "legacy graph conversion required"
 
   fun assemble_finite_named graph block
       (converted as GraphConversion {source,equality,steps,...}) =

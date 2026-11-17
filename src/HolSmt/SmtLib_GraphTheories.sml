@@ -419,8 +419,12 @@ struct
               (fn (predicate,value) =>
                 let
                   val originals = sources ()
-                  val [(left,pbody),(right,vbody)] = List.map
-                    (C.strip_abs (B.syntax_spend backend)) originals
+                  val ((left,pbody),(right,vbody)) =
+                    case List.map (C.strip_abs (B.syntax_spend backend))
+                        originals of
+                      [p,v] => (p,v)
+                    | _ => T.decline "<set.comprehension>"
+                        "expected predicate and value sources"
                   val _ = if List.length left = List.length right andalso
                       ListPair.allEq (Lib.uncurry Term.aconv) (left,right)
                     then () else T.decline "<set.comprehension>"

@@ -177,15 +177,6 @@ struct
     | policy_consume p _ _ =
         (policy_inside p;fail p "consume" "foreign future entitlement")
 
-  fun active_legacy (portfolio as Portfolio
-      {graph,scope,sources,epoch,phase,...}) =
-    ((case !phase of Retired => raise ERR "active" "work portfolio retired"
-       | _ => ());
-     G.validate_scope graph scope;
-     if Portable.pointer_eq (graph,S.owning_graph sources) andalso
-         scope = S.owning_scope sources andalso Type.type_epoch () = epoch
-       then () else raise ERR "active" "original owner or epoch changed")
-    handle primary => (close portfolio;raise primary)
   (* No active/spend recursion: debit the SAME private counter before
      authentic root-path execution. Six budget read/arithmetic/write events
      are included by each caller before this private payer is entered. *)
@@ -195,7 +186,14 @@ struct
         else fail p "admit" "original cumulative work allowance exhausted"
     | scope_debit p _ = fail p "admit" "not a priced root portfolio"
   fun active (p as PolicyPortfolio _) = policy_active p
-    | active (p as Portfolio _) = active_legacy p
+    | active (p as Portfolio {graph,scope,sources,epoch,phase,...}) =
+      (((case !phase of Retired =>
+          raise ERR "active" "work portfolio retired" | _ => ());
+       G.validate_scope graph scope;
+       if Portable.pointer_eq (graph,S.owning_graph sources) andalso
+           scope = S.owning_scope sources andalso Type.type_epoch () = epoch
+         then () else raise ERR "active" "original owner or epoch changed")
+      handle primary => (close p;raise primary))
     | active (p as GuardedPortfolio {graph,scope,epoch,phase,path,...}) =
       (((case !phase of Retired =>
           raise ERR "active" "work portfolio retired" | _ => ());

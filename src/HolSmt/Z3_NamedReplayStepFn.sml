@@ -25,7 +25,6 @@ sig
   val resolution : expected -> context -> command ->
     node * Z3_GraphProofParser.proof_id list *
       syntax SmtLib_GraphFrontend.constructed_term -> edge
-  val unfinished : expected -> context -> command -> unit -> edge
 end
 
 functor Z3_NamedReplayStepFn(Input:Z3_NamedReplayStepInput) =
@@ -45,5 +44,4 @@ struct
       | Plan.RawResolution value=>
           Input.raw_resolution expected context command value
       | Plan.Resolution value=>Input.resolution expected context command value
-      | _=>Input.unfinished expected context command ()
 end

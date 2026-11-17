@@ -75,17 +75,17 @@ struct
   fun assembler_with_policy expected value block =
     ((W.with_step expected (fn () =>
       let
-        val _ = case value of PolicyValidation {work,...} =>
-            if Portable.pointer_eq (expected,work) then () else
-              raise ERR "policy_assembler" "different original Work"
-          | _ => raise ERR "policy_assembler" "policy portfolio required"
+        val {graph,scope,sources,assumptions,denied,...} = case value of
+            PolicyValidation (fields as {work,...}) =>
+              if Portable.pointer_eq (expected,work) then fields else
+                raise ERR "policy_assembler" "different original Work"
+          | Validation _ =>
+              raise ERR "policy_assembler" "policy portfolio required"
         val owner = Input.owner_for expected block
         fun valid () =
           (validate_with_policy expected value;
            ignore (Input.owner_for expected block))
         val _ = valid ()
-        val PolicyValidation {graph,scope,sources,assumptions,denied,...} =
-          value
         val _ = if Portable.pointer_eq (graph,#graph owner) andalso
             G.scope_visible graph (#scope owner) scope then () else
           raise ERR "policy_assembler" "different graph or invisible scope"

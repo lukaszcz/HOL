@@ -243,8 +243,9 @@ struct
             | application (term as RecipeAbs _) =
                 (guard term;raise NotSyntax)
             | application current =
-            let val term as Term {caller,child,...} = resolve current in
-              case Redblackmap.peek (!applications,key term) of
+            (case resolve current of
+              term as Term {caller,child,...} =>
+              (case Redblackmap.peek (!applications,key term) of
                 SOME (left,right) => (guard left;guard right;(left,right))
               | NONE =>
                   (case G.view graph (node term) of
@@ -257,8 +258,8 @@ struct
                          val _ = applications := Redblackmap.insert
                            (!applications,key term,pair)
                        in pair end
-                   | _ => raise ERR "dest_comb" "not an application")
-            end
+                   | _ => raise ERR "dest_comb" "not an application"))
+            | other => application other)
           fun abstraction (LetPattern {value,...}) = abstraction value
             | abstraction (Pattern _) = raise NotSyntax
             | abstraction (term as RecipeAbs {binder,body,...}) =
@@ -266,8 +267,9 @@ struct
             | abstraction (term as RecipeApp _) =
                 (guard term;raise NotSyntax)
             | abstraction current =
-            let val term as Term {caller,child,...} = resolve current in
-              case Redblackmap.peek (!abstractions,key term) of
+            (case resolve current of
+              term as Term {caller,child,...} =>
+              (case Redblackmap.peek (!abstractions,key term) of
                 SOME (binder,body) =>
                   (guard binder;guard body;(binder,body))
               | NONE =>
@@ -285,8 +287,8 @@ struct
                          val _ = abstractions := Redblackmap.insert
                            (!abstractions,key term,(binder,body))
                        in (binder,body) end
-                   | _ => raise ERR "dest_abs" "not an admitted binder")
-            end
+                   | _ => raise ERR "dest_abs" "not an admitted binder"))
+            | other => abstraction other)
           fun view current = case resolve current of
               LetPattern {value,...} => view value
             | Pattern _ => Application

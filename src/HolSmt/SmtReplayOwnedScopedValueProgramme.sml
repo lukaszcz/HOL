@@ -80,15 +80,7 @@ struct
     in case Redblackmap.peek(#definitions state,key expected state node)of
         SOME slot=>Vector.sub(#seeds state,slot)
       | NONE=>raise ERR "definition" "missing actual constructor slot"end
-  fun recipe expected state(N.ReflexiveName node)=
-        N.ReflexiveName(name expected state node)
-    | recipe _ _ N.Symmetry=N.Symmetry
-    | recipe _ _ N.Transitivity=N.Transitivity
-    | recipe _ _ N.Congruence=N.Congruence
-    | recipe _ _ N.EqualityMP=N.EqualityMP
-    | recipe expected state(N.ApplyNamedArgument node)=
-        N.ApplyNamedArgument(name expected state node)
-    | recipe _ _ N.ImplicationMP=N.ImplicationMP
+  fun recipe expected state=N.map_primitive(name expected state)
   fun derive expected state opcode proofs=
     (guard expected state;
      Q.fixed(#queue state)(recipe expected state opcode)proofs)
@@ -204,7 +196,6 @@ struct
        val quantified=no_nested
        val raw_resolution=no_nested
        val resolution=recorded
-       val unfinished=no_nested
      end)
   (* The native closing programme is the SAME simultaneous realization
      worker used by the root consumer. This private admission is tied to
