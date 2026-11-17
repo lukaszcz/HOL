@@ -7683,6 +7683,45 @@ local
 
     handle Feedback.HOL_ERR _ =>
 
+    (* Z3 can reduce datatype redexes (case of a constructor) and reorient or
+       reorder the rest in one rewrite.  The datatype rung's simp reduces the
+       redexes but not the rest, and the congruence rungs below do the rest
+       but not the redexes.  Normalize each side with the datatype rung's
+       rewrites and replay the normalized equality through the ladder. *)
+    rewrite_profile "datatypes" "rewrite(21a)(datatype-normalize)" (fn () =>
+      let
+        val thms = SmtDatatypeProve.datatype_rewrite_thms_with_admission
+          (#datatype_admit state) t
+        val _ = not (List.null thms) orelse
+          raise ERR "z3_rewrite" "no datatype rewrites"
+        (* Only a target with a datatype redex is this rung's: on any other,
+           simp's general normalization would send a target the datatype
+           rewrites cannot touch back through the whole ladder. *)
+        fun reducible side =
+          not (Term.aconv side (boolSyntax.rhs (Thm.concl
+            (Conv.QCONV (Rewrite.PURE_ONCE_REWRITE_CONV thms) side))))
+        val _ = reducible l orelse reducible r orelse
+          raise ERR "z3_rewrite" "no datatype redex"
+        fun normalize side =
+          simpLib.SIMP_CONV (bossLib.srw_ss()) thms side
+          handle Conv.UNCHANGED => Thm.REFL side
+        val l_thm = normalize l
+        val r_thm = normalize r
+        val (l', r') = (boolSyntax.rhs (Thm.concl l_thm),
+                        boolSyntax.rhs (Thm.concl r_thm))
+        val _ = not (Term.aconv l l' andalso Term.aconv r r') orelse
+          raise ERR "z3_rewrite" "datatype rewrites leave the target unchanged"
+        val (state', normalized) =
+          if Term.aconv l' r' then (state, Thm.REFL l')
+          else recursive_rewrite_boundary RecursiveEquality z3_rewrite
+            (state, boolSyntax.mk_eq (l', r'))
+        val thm = Thm.TRANS l_thm (Thm.TRANS normalized (Thm.SYM r_thm))
+        val thm = Thm.EQ_MP (Thm.ALPHA (Thm.concl thm) t) thm
+      in
+        (state_cache_thm state' thm, thm)
+      end) ()
+    handle Feedback.HOL_ERR _ =>
+
     (* Congruence one level below a Boolean equality.  Lambda definitions
        often appear as [(f = lhs) = (f = rhs)]; prove [lhs = rhs] through
        the ordinary rewrite ladder, then lift that checked theorem through

@@ -1805,6 +1805,8 @@ struct
     mk_rule ProofRule ("ite_eq", "ite_eq"),
     mk_rule ProofRule ("ite_elim1", "ite_elim1"),
     mk_rule ProofRule ("ite_elim2", "ite_elim2"),
+    mk_rule ProofRule ("not_ite_elim1", "not_ite_elim1"),
+    mk_rule ProofRule ("not_ite_elim2", "not_ite_elim2"),
     mk_rule ProofRule ("quant-unused-vars", "quant_unused_vars"),
     mk_rule ProofRule ("quant_var_reordering", "quant_rewrite"),
     mk_rule RareRewrite ("quant-merge-prenex", "quant_rewrite"),
