@@ -242,7 +242,10 @@ datatype budget_outcome =
 fun CS_FIRST_BEST_SESSION budget cs goal ctxt : budget_session =
   {frontier =
      clasetSearch.new_best_session budget solved
-       (expand_first (clasetStep.step_in ctxt) cs)
+       (expand_first
+          (clasetStep.step_in_with
+             (fn () => searchBudget.charge budget searchBudget.Candidate)
+             ctxt) cs)
        (clasetGoal.from_goal goal),
    budget = budget, goal = goal, ctxt = ctxt, pending = ref NONE,
    terminal = ref NONE, aborted = ref false}
@@ -332,8 +335,9 @@ fun bounded_depth_in_with charge ctxt {dup} cs bound initial =
              (fn child =>
                (charge searchBudget.Candidate; child))
              (project_steps
-                (clasetStep.depth_step_in ctxt cs part bound
-                   (node, 1)))))
+                (clasetStep.depth_step_in_with
+                   (fn () => charge searchBudget.Candidate)
+                   ctxt cs part bound (node, 1)))))
   in
     search saturated
   end

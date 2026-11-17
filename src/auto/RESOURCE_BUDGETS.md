@@ -129,7 +129,12 @@ The implemented checkpoints are:
   pulls, and forward-rule premise scans; application charges on node
   expansion; normalization charges before kernel replay. A budgeted depth
   stage charges each safe fixed-point attempt and accepted transition,
-  then each depth expansion and pulled child.
+  then each depth expansion and pulled child. Both charge a candidate
+  before deriving each constructor-distinctness pair a lookup needs and
+  the claset has not yet derived. Derived pairs stay cached in the claset,
+  so later lookups, in this search or another, reuse them free. A lookup
+  at a type variable of the goal derives no pair; one at a type
+  metavariable covers every datatype.
 - Aesop: candidate charges on forward-rule premise scans, ordinary
   introduction/elimination-major attempts, and rendered-tactic or
   multi-step alternative pulls; application charges on committed safe
@@ -153,8 +158,11 @@ The implemented checkpoints are:
 
 Classical and Aesop candidate yields retain their search sessions. Classical
 also retains a candidate awaiting kernel replay when the normalization limit
-is reached. A nested expansion cutoff retains the selected frontier state;
-retrying a partially forced lazy alternative can repeat charged work.
+is reached. A cutoff inside a constructor-pair lookup keeps the pairs
+derived so far; the resumed lookup charges only those still underived, so
+each further candidate derives one more pair. A nested expansion cutoff
+retains the selected frontier state; retrying a partially forced lazy
+alternative can repeat charged work.
 BLAST's one-shot fixed-depth adapter restores its trail on a limit. Its
 resumable fixed-depth path retains the owned trail, branch/script state,
 rule cache and backtracking handlers across turns. A cutoff within one

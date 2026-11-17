@@ -820,7 +820,10 @@ fun query_skeleton_measured checkpoint formula =
         if goal then static
         else build true bool depth (blastTerm.normMeasured checkpoint body)
     in
-      (static, {q = query, qvars = !qvars})
+      (* Rigid goal types decode to named type variables; only the
+         generated ones stand for type metas. *)
+      (static,
+       {q = query, qvars = !qvars, flexible_type = Type.is_gen_tyvar})
     end
   end
 
@@ -867,8 +870,9 @@ fun candidatesMeasured ({checkpoint, ...} : monitor) claset safe formula =
       fun intros part =
         clasetLib.unify_intro_candidates_measured checkpoint part query
       fun elims part =
-        clasetLib.unify_elim_candidates_with checkpoint part query
-          distinct_query
+        clasetLib.unify_elim_candidates_with
+          {checkpoint = checkpoint, derive = listUtil.no_checkpoint}
+          part query distinct_query
       val tagged =
         if safe then
           if isGoal formula then

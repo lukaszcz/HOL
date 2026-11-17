@@ -412,7 +412,8 @@ fun candidate_declarations budget claset conclusion assumptions qvars =
         {q = conclusion, qvars = qvars}
     fun hypothesis assumption =
       clasetLib.aesop_hyp_rules_measured checkpoint claset
-        {q = assumption, qvars = qvars}
+        {q = assumption, qvars = qvars,
+         flexible_type = clasetMeta.is_tymeta}
   in
     unique_declarations
       (target @ List.concat (map hypothesis assumptions))
