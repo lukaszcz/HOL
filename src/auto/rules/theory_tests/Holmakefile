@@ -31,5 +31,6 @@ batchAddChildTheory.uo: batchAddBaseTheory.uo
 diamondAddTheory.uo: diamondRootTheory.uo
 diamondRemoveTheory.uo: diamondRootTheory.uo
 diamondChildTheory.uo: diamondAddTheory.uo diamondRemoveTheory.uo
+tyinfoDelChildTheory.uo: tyinfoDelBaseTheory.uo
 
 EXTRA_CLEANS = reloadCheck.exe stateReplayCheck.exe
