@@ -18402,6 +18402,43 @@ in
   check_oracle_tags "CPC schematic FP Boolean case" theorem
 end
 
+(* Two separately built copies of a shared conjunction are equal but not
+   pointer-equal, so Term.compare-keyed sets and memos cost unfolded-tree
+   time (2^40 nodes here) on them.  The word bridge must stop at its 30 s
+   step-time gate; the outer limit only keeps a regression from hanging. *)
+fun cpc_fp_word_bridge_shared_dag_step_time_gate () =
+let
+  fun shared 0 term = term
+    | shared depth term =
+        shared (depth - 1) (boolSyntax.mk_conj (term, term))
+  val atom = ``smtfp_is_nan (x : (3,5) smtfp)``
+  val wide = List.foldl
+    (fn (index, result) => boolSyntax.mk_conj
+      (Term.mk_var ("fp_shared_ctx_" ^ Int.toString index, Type.bool),
+       result))
+    boolSyntax.T (List.tabulate (10, Lib.I))
+  fun context () = boolSyntax.mk_conj
+    (wide, shared 40 (Term.mk_var ("fp_shared_leaf", Type.bool)))
+  val encoding = boolSyntax.mk_eq
+    (``1w : word1``, SmtLib_Theories.mk_bbterm [atom])
+  val target = boolSyntax.mk_eq
+    (boolSyntax.mk_conj (atom, context ()),
+     boolSyntax.mk_conj (encoding, context ()))
+  val expected =
+    "resource-gated: skeleton-replay; limit=step-time; maximum=30 s; " ^
+    "feature=resource-gate:Skeleton:cpc-fp-word-bridge"
+  val observed =
+    (ignore (Timeout.apply (Time.fromSeconds 120)
+       CPC_ProofReplay.replay_trust_for_test target);
+     "a theorem")
+    handle Timeout.TIMEOUT _ => "no answer within 120 s"
+         | Feedback.HOL_ERR holerr => Feedback.message_of holerr
+in
+  assert (observed = expected,
+    "shared-DAG FP word bridge was not stopped by its step-time gate\n" ^
+    "expected: " ^ expected ^ "\nobserved: " ^ observed)
+end
+
 fun cpc_fp_forced_check_rejects_unproved_clause () =
 let
   val atom = ``smtfp_is_nan (x : (3,5) smtfp)``
@@ -38048,6 +38085,8 @@ let
       cpc_fp_boolean_conditional_schema_success),
     ("cpc_fp_forced_check_rejects_unproved_clause",
       cpc_fp_forced_check_rejects_unproved_clause),
+    ("cpc_fp_word_bridge_shared_dag_step_time_gate",
+      cpc_fp_word_bridge_shared_dag_step_time_gate),
     ("cpc_boolean_circuit_xor_success", cpc_boolean_circuit_xor_success),
     ("cpc_boolean_circuit_shared_projection_success",
       cpc_boolean_circuit_shared_projection_success),
