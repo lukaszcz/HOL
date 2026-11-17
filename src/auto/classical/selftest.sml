@@ -8035,7 +8035,7 @@ fun first_best_session budget goal =
 fun proves (goal : term list * term) (remaining, validate) =
   null remaining andalso Term.aconv (Thm.concl (validate [])) (#2 goal)
 
-(* Candidate usage of a proof, or NONE without one. *)
+(* Usage of a proof, or NONE without one. *)
 fun first_best_usage goal =
   let
     val budget = candidate_budget NONE
@@ -8043,8 +8043,7 @@ fun first_best_usage goal =
     case classicalLib.RESUME_FIRST_BEST_SESSION
            (first_best_session budget goal) of
         classicalLib.BudgetProved {result, ...} =>
-          if proves goal result then
-            SOME (#candidates (searchBudget.usage budget))
+          if proves goal result then SOME (searchBudget.usage budget)
           else NONE
       | _ => NONE
   end
@@ -8059,7 +8058,7 @@ fun depth_usage goal =
         goal
   in
     if proves goal (remaining, validate) then
-      SOME (#candidates (searchBudget.usage budget))
+      SOME (searchBudget.usage budget)
     else NONE
   end
 
@@ -8082,7 +8081,8 @@ val _ =
     ("first-best charges a candidate per constructor pair it derives",
      fn () =>
        case first_best_pair_usage of
-           (SOME cold, SOME warm) => cold - warm = clash_pairs
+           (SOME cold, SOME warm) =>
+             #candidates cold - #candidates warm = clash_pairs
          | _ => false)
 
 val _ =
@@ -8090,7 +8090,8 @@ val _ =
     ("budgeted depth charges a candidate per constructor pair it derives",
      fn () =>
        case depth_pair_usage of
-           (SOME cold, SOME warm) => cold - warm = clash_pairs
+           (SOME cold, SOME warm) =>
+             #candidates cold - #candidates warm = clash_pairs
          | _ => false)
 
 val _ =
@@ -8128,13 +8129,15 @@ val _ =
     ("first-best resumes a cut pair lookup one candidate at a time",
      fn () =>
        case first_best_pair_usage of
-           (SOME cold, SOME warm) =>
+           (SOME cold, SOME _) =>
              let
+               (* Every candidate is a cut, so some land inside the
+                  lookup. *)
                val goal = clash_goal pair_resume_ty
-               val budget = candidate_budget (SOME (warm + clash_pairs div 2))
+               val budget = candidate_budget (SOME 0)
                val session = first_best_session budget goal
                fun finish yields =
-                 if yields > clash_pairs then false
+                 if yields > #candidates cold then false
                  else
                    case classicalLib.RESUME_FIRST_BEST_SESSION session of
                        classicalLib.BudgetYielded
@@ -8143,7 +8146,7 @@ val _ =
                           finish (yields + 1))
                      | classicalLib.BudgetProved {result, ...} =>
                          yields > 1 andalso proves goal result andalso
-                         #candidates (searchBudget.usage budget) = cold
+                         searchBudget.usage budget = cold
                      | _ => false
              in
                finish 0
@@ -8158,7 +8161,9 @@ val _ =
            (SOME _, SOME warm) =>
              let
                val ty = pair_cut_ty
-               val budget = candidate_budget (SOME (warm + clash_pairs div 2))
+               val budget =
+                 candidate_budget
+                   (SOME (#candidates warm + clash_pairs div 2))
                val cut =
                  (ignore
                     (classicalLib.CS_DEPTH_SOLVE_TAC_BUDGETED budget
@@ -8180,8 +8185,10 @@ val _ =
        case depth_pair_usage of
            (SOME cold, SOME warm) =>
              let
+               (* Every candidate from [warm] on is a cut; the test
+                  above shows one inside the lookup. *)
                val goal = clash_goal pair_turns_ty
-               val budget = candidate_budget (SOME warm)
+               val budget = candidate_budget (SOME (#candidates warm))
                val session =
                  classicalLib.CS_DEPTH_SESSION budget {dup = false} 2
                    (clasetLib.the_claset ()) goal (Context.snapshot ())
@@ -8194,8 +8201,14 @@ val _ =
                          (searchBudget.extend budget searchBudget.Candidate 1;
                           finish (yields + 1))
                      | classicalLib.DepthProved {result, ...} =>
-                         yields > 1 andalso proves goal result andalso
-                         #candidates (searchBudget.usage budget) = cold
+                         let
+                           val used = searchBudget.usage budget
+                         in
+                           (* The session also charges its replay. *)
+                           yields > 1 andalso proves goal result andalso
+                           #candidates used = #candidates cold andalso
+                           #applications used = #applications cold
+                         end
                      | _ => false
              in
                finish 0

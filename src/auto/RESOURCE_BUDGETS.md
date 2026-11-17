@@ -161,8 +161,9 @@ also retains a candidate awaiting kernel replay when the normalization limit
 is reached. A cutoff inside a constructor-pair lookup keeps the pairs
 derived so far; the resumed lookup charges only those still underived, so
 each further candidate derives one more pair. A nested expansion cutoff
-retains the selected frontier state; retrying a partially forced lazy
-alternative can repeat charged work.
+retains the selected frontier state, and the retry does not charge again
+for the alternative it was forcing; other work charged inside a partially
+forced lazy alternative can repeat.
 BLAST's one-shot fixed-depth adapter restores its trail on a limit. Its
 resumable fixed-depth path retains the owned trail, branch/script state,
 rule cache and backtracking handlers across turns. A cutoff within one
