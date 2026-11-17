@@ -251,9 +251,11 @@ val forward_spec = {kind = Forward, safe = false, prio = NONE}
 val sforward_spec = {kind = Forward, safe = true, prio = NONE}
 val norm_spec = {kind = Norm, safe = false, prio = NONE}
 
+val tyinfo_prefix = "__claset_tyinfo_"
+
 fun tyinfo_stem tyi =
   let val (thy, tyop) = TypeBasePure.ty_name_of tyi
-  in "__claset_tyinfo_" ^ thy ^ "_" ^ tyop end
+  in tyinfo_prefix ^ thy ^ "_" ^ tyop end
 
 fun distinctness_contribution tyi =
   case Lib.total TypeBasePure.constructors_of tyi of
@@ -961,8 +963,28 @@ fun the_claset () =
 
 fun temp_add_rule spec named_th = update_claset (add_rule spec named_th)
 
+(* The global claset always carries the rules derived from TypeBase, so a
+   global removal of one, under any spelling of its name, is refused rather
+   than lasting only until the next TypeBase catch-up. *)
+fun is_tyinfo_rule_name name =
+  let
+    val local_name =
+      case String.fields (fn c => c = #"$" orelse c = #".") name of
+          [_, local_name] => local_name
+        | _ => name
+  in
+    String.isPrefix tyinfo_prefix local_name
+  end
+
+fun refuse_tyinfo_removal fname name =
+  HOL_WARNING "clasetLib" fname
+    ("Ignoring " ^ name ^ ": rules derived from TypeBase stay in the \
+     \global claset; drop one with Del, or with remove_rule and with_claset")
+
 fun temp_delrule name =
-  update_claset (remove_rule name o remove_rule (normalise_rule_name name))
+  if is_tyinfo_rule_name name then refuse_tyinfo_removal "temp_delrule" name
+  else
+    update_claset (remove_rule name o remove_rule (normalise_rule_name name))
 
 val augment_claset = update_claset
 
@@ -1108,11 +1130,13 @@ fun export_rule spec name =
   end
 
 fun delrule name =
-  let val delta = RM (normalise_rule_name name)
-  in
-    #record_delta adresult delta;
-    #update_global_value adresult (apply_to_global delta)
-  end
+  if is_tyinfo_rule_name name then refuse_tyinfo_removal "delrule" name
+  else
+    let val delta = RM (normalise_rule_name name)
+    in
+      #record_delta adresult delta;
+      #update_global_value adresult (apply_to_global delta)
+    end
 
 (* The DB reconstruction is the raw ancestry-persistent view.  TypeBase facts
    are derived from the caller's ambient state and are never deltas. *)

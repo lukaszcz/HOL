@@ -46,6 +46,15 @@ sig
   val the_claset : unit -> claset
   val export_rule : rulespec -> string -> unit
   val temp_add_rule : rulespec -> string * thm -> unit
+  (* The global claset always carries the rules derived from TypeBase:
+     constructor injectivity and the distinctness handles, named with the
+     reserved "__claset_tyinfo_" prefix.  [delrule] and [temp_delrule] on
+     such a name warn and change nothing, and [delrule] records no delta,
+     so the result does not depend on when the claset is first forced.
+     Drop one per call with [Del], or locally with [remove_rule] and
+     [with_claset].  [augment_claset] takes an arbitrary function and is
+     not checked: a removal of these rules through it is undone by the
+     next TypeBase catch-up, and does nothing before the first demand. *)
   val delrule : string -> unit
   val temp_delrule : string -> unit
   val augment_claset : (claset -> claset) -> unit
