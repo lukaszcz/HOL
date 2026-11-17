@@ -360,7 +360,7 @@ fun dedup_tagged [] = []
         entry :: dedup_tagged (drop_same rest)
       end
 
-fun candidates store mode part
+fun candidates derive store mode part
       ({conclusion, assumptions} : clasetGoal.spellings) =
   let
     val (intro_lookup, elim_lookup) =
@@ -371,9 +371,11 @@ fun candidates store mode part
         | clasetUnify.Unify =>
             (clasetLib.unify_intro_candidates,
              fn part => fn q =>
-               clasetLib.unify_elim_candidates_with listUtil.no_checkpoint
+               clasetLib.unify_elim_candidates_with
+                 {checkpoint = listUtil.no_checkpoint, derive = derive}
                  part q {q = q, qvars = HOLset.fromList Term.compare
-                   (clasetMeta.metas_of store q)})
+                   (clasetMeta.metas_of store q),
+                   flexible_type = clasetMeta.is_tymeta})
     (* The index is keyed on the rules as stated, and [x IN P] and [P x] are
        one proposition indexed two ways: a rule stated about [IN] sits under
        that constant, where an applied goal atom never reaches it, and a rule
@@ -1030,13 +1032,16 @@ fun forward_rule_results charge mode rule immediate (node, pos) =
     seq.fresult distinct
   end
 
-fun rule_results mode cs duplicated part weight_filter (node, pos) =
+(* [derive] runs before each lazy constructor pair a Unify lookup derives
+   afresh; see [clasetLib.unify_elim_candidates_with]. *)
+fun rule_results_with derive mode cs duplicated part weight_filter
+      (node, pos) =
   seq.delay
     (fn () =>
       let
         val (asl, _) = clasetGoal.render node pos
         val tagged = List.filter (weight_filter o #1)
-          (candidates (clasetGoal.store node) mode part
+          (candidates derive (clasetGoal.store node) mode part
             (clasetGoal.lookup_spellings node pos))
 
         fun intro_application entry =
@@ -1080,6 +1085,8 @@ fun rule_results mode cs duplicated part weight_filter (node, pos) =
       in
         entries tagged
       end)
+
+fun rule_results mode = rule_results_with listUtil.no_checkpoint mode
 
 datatype exact_major_selector = AllMajors | ExactMajor of int option
 
@@ -1825,11 +1832,13 @@ fun unifying_contradiction_results (node, pos) =
         List.concat (map major_alternatives positioned)
       end)
 
-fun inst0_cascade cs input =
+(* Only safe0 carries the lazy constructor pairs, so only its lookup
+   takes [derive]. *)
+fun inst0_cascade derive cs input =
   append_many
     [unifying_assumption_results,
      unifying_contradiction_results,
-     rule_results clasetUnify.Unify cs false
+     rule_results_with derive clasetUnify.Unify cs false
        (clasetLib.safe0_part cs) all_weights]
     input
 
@@ -1837,8 +1846,8 @@ fun instp_cascade cs =
   rule_results clasetUnify.Unify cs false
     (clasetLib.safep_part cs) all_weights
 
-fun inst_cascade cs input =
-  append_results (inst0_cascade cs) (instp_cascade cs) input
+fun inst_cascade derive cs input =
+  append_results (inst0_cascade derive cs) (instp_cascade cs) input
 
 fun unsafe_cascade cs =
   rule_results clasetUnify.Unify cs false
@@ -2080,9 +2089,13 @@ fun clarify_step_in ctxt cs =
    to safe and clarify cascades. *)
 fun no_wrappers _ tactic = tactic
 
-fun inst0_step cs = wrapped_step no_wrappers inst0_cascade cs
+fun inst0_step_with derive cs =
+  wrapped_step no_wrappers (inst0_cascade derive) cs
 
-fun inst_step cs = wrapped_step no_wrappers inst_cascade cs
+fun inst0_step cs = inst0_step_with listUtil.no_checkpoint cs
+
+fun inst_step cs =
+  wrapped_step no_wrappers (inst_cascade listUtil.no_checkpoint) cs
 
 fun unsafe_step cs = wrapped_step no_wrappers unsafe_cascade cs
 
@@ -2265,20 +2278,21 @@ fun lazy_append left right =
    exception, the unsafe steps that guess nothing are offered first and the
    guesses are kept behind them: strictly the alternatives the cut offered
    before, reordered, with the guess-free unsafe steps added in front. *)
-fun unsafe_rung fast cs (input as (node, _)) =
+fun unsafe_rung derive fast cs (input as (node, _)) =
   if not fast then
     guesses_last (undetermined_metas node)
-      (append_results (inst_cascade cs) (unsafe_cascade cs) input)
+      (append_results (inst_cascade derive cs) (unsafe_cascade cs) input)
   else
     let
       val metas = undetermined_metas node
     in
       if List.null metas then
-        first_nonempty [inst_cascade cs, unsafe_cascade cs] input
+        first_nonempty [inst_cascade derive cs, unsafe_cascade cs] input
       else
         seq.delay
           (fn () =>
-            case seq.cases (guesses_last metas (inst_cascade cs input)) of
+            case seq.cases
+                   (guesses_last metas (inst_cascade derive cs input)) of
                 NONE => guesses_last metas (unsafe_cascade cs input)
               | SOME (first, rest) =>
                   if guessed_meta metas first then
@@ -2290,15 +2304,17 @@ fun unsafe_rung fast cs (input as (node, _)) =
                   else seq.cons first rest)
     end
 
-fun general_step_in ctxt fast cs (input as (node, _)) =
+fun general_step_in derive ctxt fast cs (input as (node, _)) =
   case safe_saturate_all_in ctxt cs node of
       SOME result => seq.result result
     | NONE =>
         wrapped_step_in ctxt clasetLib.app_unsafe_wrappers
-          (unsafe_rung fast) cs input
+          (unsafe_rung derive fast) cs input
 
-fun step_in ctxt cs = general_step_in ctxt true cs
-fun slow_step_in ctxt cs = general_step_in ctxt false cs
+fun step_in_with derive ctxt cs = general_step_in derive ctxt true cs
+fun step_in ctxt cs = step_in_with listUtil.no_checkpoint ctxt cs
+fun slow_step_in ctxt cs =
+  general_step_in listUtil.no_checkpoint ctxt false cs
 
 (* The children an inference leaves are solved one at a time, and the
    one taken first is the first whose conclusion does not stand on an
@@ -2314,7 +2330,7 @@ fun slow_step_in ctxt cs = general_step_in ctxt false cs
    premise until one happens to fit a sibling.  Every child is solved
    either way and each is offered all of its solutions, so this is an
    order and not a choice. *)
-fun depth_step_in ctxt cs part bound (node, pos) =
+fun depth_step_in_with derive ctxt cs part bound (node, pos) =
   let
     fun solve_many _ _ 0 result = seq.result result
       | solve_many m target count (record, current) =
@@ -2339,7 +2355,7 @@ fun depth_step_in ctxt cs part bound (node, pos) =
               (clasetGoal.child_count current safe_node) result
         | NONE =>
             let
-              val closers = inst0_step cs (current, target)
+              val closers = inst0_step_with derive cs (current, target)
               val branching =
                 if m <= 0 then seq.empty
                 else
@@ -2357,5 +2373,8 @@ fun depth_step_in ctxt cs part bound (node, pos) =
   in
     if bound < 0 then seq.empty else solve_one bound (node, pos)
   end
+
+fun depth_step_in ctxt =
+  depth_step_in_with listUtil.no_checkpoint ctxt
 
 end

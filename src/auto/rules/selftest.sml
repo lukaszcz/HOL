@@ -2525,6 +2525,12 @@ fun clash_candidates cs tyop query =
 fun clash_query q vars =
   {q = q, qvars = HOLset.fromList Term.compare vars}
 
+fun schematic_query q vars =
+  {q = q, qvars = HOLset.fromList Term.compare vars, flexible_type = K true}
+
+val unmetered =
+  {checkpoint = listUtil.no_checkpoint, derive = listUtil.no_checkpoint}
+
 fun clash_valid cs tyop equality =
   case clash_candidates cs tyop (clash_query equality []) of
       [rule] =>
@@ -2597,8 +2603,8 @@ val _ =
          val candidates = clash_candidates seed_claset tyop
            (clash_query both [x, y])
          val names = map #name candidates
-         val tagged = unify_elim_candidates_with listUtil.no_checkpoint
-           (safe0_part seed_claset) both (clash_query both [x, y])
+         val tagged = unify_elim_candidates_with unmetered
+           (safe0_part seed_claset) both (schematic_query both [x, y])
          val indices = map (#index o #1) tagged
        in
          count (clash_query one []) = 0 andalso
@@ -2641,9 +2647,10 @@ val _ =
            (polls := !polls + 1;
             if !polls = 50 then raise ClashLimit else ())
        in
-         ((ignore (unify_elim_candidates_with checkpoint
+         ((ignore (unify_elim_candidates_with
+              {checkpoint = checkpoint, derive = listUtil.no_checkpoint}
               (safe0_part only_distinct) equality
-              (clash_query equality [x, y])); false)
+              (schematic_query equality [x, y])); false)
           handle ClashLimit => !polls = 50)
        end)
 

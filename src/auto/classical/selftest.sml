@@ -7965,6 +7965,311 @@ val _ =
          finish 2000 0
        end)
 
+(* Lazy constructor pairs under a budget.  Each test has an enumeration
+   of its own, so its pairs start underived; [clash_goal] reaches the
+   lookup of an assumption ?x = ?y through two universal eliminations. *)
+val clash_size = 10
+val clash_pairs = clash_size * (clash_size - 1)
+
+fun clash_enum tyop prefix =
+  let
+    val constructors =
+      List.tabulate (clash_size, fn i => prefix ^ Int.toString i)
+    val _ = Datatype.Datatype
+      [QUOTE (tyop ^ " = " ^ String.concatWith " | " constructors)]
+  in
+    mk_thy_type {Thy = current_theory (), Tyop = tyop, Args = []}
+  end
+
+val pair_first_ty = clash_enum "classical_pair_first" "ClassicalPairFirst"
+val pair_depth_ty = clash_enum "classical_pair_depth" "ClassicalPairDepth"
+val pair_zero_ty = clash_enum "classical_pair_zero" "ClassicalPairZero"
+val pair_resume_ty = clash_enum "classical_pair_resume" "ClassicalPairResume"
+val pair_cut_ty = clash_enum "classical_pair_cut" "ClassicalPairCut"
+val pair_turns_ty = clash_enum "classical_pair_turns" "ClassicalPairTurns"
+val pair_rigid_ty = clash_enum "classical_pair_rigid" "ClassicalPairRigid"
+val pair_meta_ty = clash_enum "classical_pair_meta" "ClassicalPairMeta"
+
+fun clash_goal ty =
+  let
+    val x = mk_var ("x", ty)
+    val y = mk_var ("y", ty)
+  in
+    ([] : term list,
+     boolSyntax.mk_imp
+       (boolSyntax.list_mk_forall ([x, y], boolSyntax.mk_eq (x, y)),
+        mk_var ("clash_p", bool)))
+  end
+
+(* A lookup polls once per branch of each pair it derives, beyond the
+   polls it makes for every pair.  Counting derives the remaining pairs. *)
+fun underived_pairs ty =
+  let
+    val equality = boolSyntax.mk_eq (mk_var ("x", ty), mk_var ("y", ty))
+    fun polls () =
+      let
+        val count = ref 0
+      in
+        ignore
+          (clasetLib.unify_elim_candidates_measured
+             (fn () => count := !count + 1)
+             (clasetLib.safe0_part (clasetLib.the_claset ())) equality);
+        !count
+      end
+    val cold = polls ()
+  in
+    (cold - polls ()) div clash_size
+  end
+
+fun candidate_budget limit =
+  searchBudget.create
+    {candidates = limit, applications = NONE, normalization = NONE}
+
+fun charge_candidate budget () =
+  searchBudget.charge budget searchBudget.Candidate
+
+fun first_best_session budget goal =
+  classicalLib.CS_FIRST_BEST_SESSION budget (clasetLib.the_claset ())
+    goal (Context.snapshot ())
+
+fun proves (goal : term list * term) (remaining, validate) =
+  null remaining andalso Term.aconv (Thm.concl (validate [])) (#2 goal)
+
+(* Usage of a proof, or NONE without one. *)
+fun first_best_usage goal =
+  let
+    val budget = candidate_budget NONE
+  in
+    case classicalLib.RESUME_FIRST_BEST_SESSION
+           (first_best_session budget goal) of
+        classicalLib.BudgetProved {result, ...} =>
+          if proves goal result then SOME (searchBudget.usage budget)
+          else NONE
+      | _ => NONE
+  end
+
+fun depth_usage goal =
+  let
+    val budget = candidate_budget NONE
+    val (remaining, validate) =
+      Tactical.VALID
+        (classicalLib.CS_DEPTH_SOLVE_TAC_BUDGETED budget {dup = false} 2
+           (clasetLib.the_claset ()))
+        goal
+  in
+    if proves goal (remaining, validate) then
+      SOME (searchBudget.usage budget)
+    else NONE
+  end
+
+val first_best_pair_usage =
+  let
+    val goal = clash_goal pair_first_ty
+  in
+    (first_best_usage goal, first_best_usage goal)
+  end
+
+val depth_pair_usage =
+  let
+    val goal = clash_goal pair_depth_ty
+  in
+    (depth_usage goal, depth_usage goal)
+  end
+
+val _ =
+  test
+    ("first-best charges a candidate per constructor pair it derives",
+     fn () =>
+       case first_best_pair_usage of
+           (SOME cold, SOME warm) =>
+             #candidates cold - #candidates warm = clash_pairs
+         | _ => false)
+
+val _ =
+  test
+    ("budgeted depth charges a candidate per constructor pair it derives",
+     fn () =>
+       case depth_pair_usage of
+           (SOME cold, SOME warm) =>
+             #candidates cold - #candidates warm = clash_pairs
+         | _ => false)
+
+val _ =
+  test
+    ("a pair lookup against no candidates derives no pair",
+     fn () =>
+       let
+         val ty = pair_zero_ty
+         val ctxt = Context.snapshot ()
+         val cs = clasetLib.the_claset ()
+         fun first_child node =
+           case seq.cases (clasetStep.step_in ctxt cs (node, 1)) of
+               SOME ((_, child), _) => child
+             | NONE => raise Fail "expected a classical step"
+         val node =
+           first_child (first_child (first_child
+             (clasetGoal.from_goal (clash_goal ty))))
+         val zero = candidate_budget (SOME 0)
+         val cut =
+           (ignore
+              (seq.cases
+                 (clasetStep.step_in_with (charge_candidate zero) ctxt cs
+                    (node, 1)));
+            false)
+           handle searchBudget.LimitReached
+                    (searchBudget.Candidate, used) =>
+                    #candidates used = 0
+       in
+         List.exists boolSyntax.is_eq (#1 (clasetGoal.render node 1))
+         andalso cut andalso underived_pairs ty = clash_pairs
+       end)
+
+val _ =
+  test
+    ("first-best resumes a cut pair lookup one candidate at a time",
+     fn () =>
+       case first_best_pair_usage of
+           (SOME cold, SOME _) =>
+             let
+               (* Every candidate is a cut, so some land inside the
+                  lookup. *)
+               val goal = clash_goal pair_resume_ty
+               val budget = candidate_budget (SOME 0)
+               val session = first_best_session budget goal
+               fun finish yields =
+                 if yields > #candidates cold then false
+                 else
+                   case classicalLib.RESUME_FIRST_BEST_SESSION session of
+                       classicalLib.BudgetYielded
+                         {kind = searchBudget.Candidate, ...} =>
+                         (searchBudget.extend budget searchBudget.Candidate 1;
+                          finish (yields + 1))
+                     | classicalLib.BudgetProved {result, ...} =>
+                         yields > 1 andalso proves goal result andalso
+                         searchBudget.usage budget = cold
+                     | _ => false
+             in
+               finish 0
+             end
+         | _ => false)
+
+val _ =
+  test
+    ("budgeted depth cuts a pair lookup and keeps the pairs it derived",
+     fn () =>
+       case depth_pair_usage of
+           (SOME _, SOME warm) =>
+             let
+               val ty = pair_cut_ty
+               val budget =
+                 candidate_budget
+                   (SOME (#candidates warm + clash_pairs div 2))
+               val cut =
+                 (ignore
+                    (classicalLib.CS_DEPTH_SOLVE_TAC_BUDGETED budget
+                       {dup = false} 2 (clasetLib.the_claset ())
+                       (clash_goal ty) (Context.snapshot ()));
+                  false)
+                 handle searchBudget.LimitReached
+                          (searchBudget.Candidate, _) => true
+               val underived = underived_pairs ty
+             in
+               cut andalso 0 < underived andalso underived < clash_pairs
+             end
+         | _ => false)
+
+val _ =
+  test
+    ("a depth session resumes a cut pair lookup one candidate at a time",
+     fn () =>
+       case depth_pair_usage of
+           (SOME cold, SOME warm) =>
+             let
+               (* Every candidate from [warm] on is a cut; the test
+                  above shows one inside the lookup. *)
+               val goal = clash_goal pair_turns_ty
+               val budget = candidate_budget (SOME (#candidates warm))
+               val session =
+                 classicalLib.CS_DEPTH_SESSION budget {dup = false} 2
+                   (clasetLib.the_claset ()) goal (Context.snapshot ())
+               fun finish yields =
+                 if yields > clash_pairs then false
+                 else
+                   case classicalLib.RESUME_DEPTH_SESSION session of
+                       classicalLib.DepthYielded
+                         {kind = searchBudget.Candidate, ...} =>
+                         (searchBudget.extend budget searchBudget.Candidate 1;
+                          finish (yields + 1))
+                     | classicalLib.DepthProved {result, ...} =>
+                         let
+                           val used = searchBudget.usage budget
+                         in
+                           (* The session also charges its replay. *)
+                           yields > 1 andalso proves goal result andalso
+                           #candidates used = #candidates cold andalso
+                           #applications used = #applications cold
+                         end
+                     | _ => false
+             in
+               finish 0
+             end
+         | _ => false)
+
+val _ =
+  test
+    ("a rigid type variable enumerates no constructor pairs",
+     fn () =>
+       let
+         val ty = pair_rigid_ty
+         val _ =
+           ignore
+             (classicalLib.CS_DEPTH_SOLVE_TAC_BUDGETED (candidate_budget NONE)
+                {dup = false} 2 (clasetLib.the_claset ())
+                (clash_goal (mk_vartype "'a")) (Context.snapshot ()))
+           handle HOL_ERR _ => ()
+       in
+         underived_pairs ty = clash_pairs
+       end)
+
+val _ =
+  test
+    ("a type metavariable still enumerates constructor pairs",
+     fn () =>
+       let
+         val ty = pair_meta_ty
+         val {Thy, Tyop, ...} = dest_thy_type ty
+         val own = "__claset_tyinfo_" ^ Thy ^ "_" ^ Tyop ^ "_distinct"
+         val all = clasetLib.the_claset ()
+         val only_own =
+           List.foldl
+             (fn (name, cs) =>
+                if name = own then cs else clasetLib.remove_rule name cs)
+             (List.foldl
+                (fn ((_, (name, _)), cs) => clasetLib.remove_rule name cs)
+                all (clasetLib.rules_of all))
+             (clasetLib.distinct_rule_names all)
+         val (tymeta, _) = clasetMeta.new_tymeta clasetMeta.empty
+         fun lookup alpha =
+           let
+             val x = mk_var ("x", alpha)
+             val y = mk_var ("y", alpha)
+             val equality = boolSyntax.mk_eq (x, y)
+           in
+             length
+               (clasetLib.unify_elim_candidates_with
+                  {checkpoint = listUtil.no_checkpoint,
+                   derive = listUtil.no_checkpoint}
+                  (clasetLib.safe0_part only_own) equality
+                  {q = equality, qvars = HOLset.fromList Term.compare [x, y],
+                   flexible_type = clasetMeta.is_tymeta})
+           end
+       in
+         List.exists (fn name => name = own)
+           (clasetLib.distinct_rule_names all) andalso
+         lookup tymeta = clash_pairs andalso
+         lookup (mk_vartype "'a") = 0
+       end)
+
 val safe_context_slot =
   Context.Data.new
     {name = "classical-safe-explicit-context", empty = 0,

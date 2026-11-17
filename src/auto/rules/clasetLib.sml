@@ -315,8 +315,9 @@ fun distinct_rule_names (CS {distinct, ...}) =
   map (#name o #source o #2) (Redblackmap.listItems distinct)
 
 (* A Boolean case discriminator proves a clash from the two case clauses.
-   Unlike distinct_of, case_def_of is linear and exists for wide enums. *)
-fun distinct_pair checkpoint
+   Unlike distinct_of, case_def_of is linear and exists for wide enums.
+   [derive] runs once before each pair not yet in the cache. *)
+fun distinct_pair {checkpoint, derive}
       ({source = {name, constructors, cases, case_const, cache, ...},
         first} : distinct_entry) (i, j) =
   let
@@ -327,6 +328,7 @@ fun distinct_pair checkpoint
           SOME rule => rule
         | NONE =>
             let
+              val _ = derive ()
               fun arguments c =
                 map genvar (#1 (boolSyntax.strip_fun (type_of c)))
               fun applied k =
@@ -374,7 +376,10 @@ fun distinct_pair checkpoint
     ({tag = {weight = 0, index = first - i * n - j}, rule = rule} : aentry)
   end
 
-fun distinct_candidates checkpoint distinct {q, qvars} =
+(* A query at a type variable enumerates every datatype only when that
+   variable is schematic ([flexible_type]); a rigid one matches none. *)
+fun distinct_candidates (meter as {checkpoint, ...}) distinct
+      {q, qvars, flexible_type} =
   case Lib.total boolSyntax.dest_eq q of
       NONE => []
     | SOME (left, right) =>
@@ -404,11 +409,13 @@ fun distinct_candidates checkpoint distinct {q, qvars} =
               List.concat (map (fn i => List.mapPartial
                 (fn j => (checkpoint ();
                   if i = j then NONE
-                  else SOME (distinct_pair checkpoint entry (i, j)))) rs) ls)
+                  else SOME (distinct_pair meter entry (i, j)))) rs) ls)
             end
           val ty = type_of left
           val entries =
-            if Type.is_vartype ty then Redblackmap.listItems distinct
+            if Type.is_vartype ty then
+              if flexible_type ty then Redblackmap.listItems distinct
+              else []
             else
               let val {Thy, Tyop, ...} = Type.dest_thy_type ty
                   val key = (Thy, Tyop)
@@ -584,8 +591,10 @@ fun match_intro_candidates (((inet, _), _) : claset_part) =
   match_candidates inet
 fun match_elim_candidates (((_, enet), distinct) : claset_part) tm =
   candidate_order (clasetNet.match tm enet @
-    map distinct_brl (distinct_candidates listUtil.no_checkpoint distinct
-      {q = tm, qvars = Term.empty_tmset}))
+    map distinct_brl (distinct_candidates
+      {checkpoint = listUtil.no_checkpoint,
+       derive = listUtil.no_checkpoint} distinct
+      {q = tm, qvars = Term.empty_tmset, flexible_type = K true}))
 
 fun unify_candidates checkpoint net tm =
   candidate_order_measured checkpoint
@@ -598,15 +607,17 @@ fun unify_intro_candidates_measured checkpoint
 
 (* Static nets retain their historical broad skeleton query; only lazy
    pair generation must distinguish true search metas from rigid frees. *)
-fun unify_elim_candidates_with checkpoint
+fun unify_elim_candidates_with (meter as {checkpoint, ...})
       (((_, enet), distinct) : claset_part) tm query =
   candidate_order_measured checkpoint
     (unify_candidates checkpoint enet tm @
-     map distinct_brl (distinct_candidates checkpoint distinct query))
+     map distinct_brl (distinct_candidates meter distinct query))
 
 fun unify_elim_candidates_measured checkpoint part tm =
-  unify_elim_candidates_with checkpoint part tm
-    {q = tm, qvars = Term.FVL [tm] Term.empty_tmset}
+  unify_elim_candidates_with
+    {checkpoint = checkpoint, derive = listUtil.no_checkpoint} part tm
+    {q = tm, qvars = Term.FVL [tm] Term.empty_tmset,
+     flexible_type = K true}
 
 fun unify_intro_candidates part =
   unify_intro_candidates_measured listUtil.no_checkpoint part
@@ -644,12 +655,17 @@ fun aesop_rules select (CS {index = {aesop_index, ...}, ...}) query =
 
 val aesop_target_rules = aesop_rules #target
 fun aesop_hyp_rules_measured checkpoint
-      (CS {distinct, index = {aesop_index, ...}, ...}) query =
+      (CS {distinct, index = {aesop_index, ...}, ...})
+      (query as {q, qvars, ...}) =
     map #rule (Listsort.sort compare_aentry
-      (clasetNet.unify query (#hyp aesop_index) @
-       distinct_candidates checkpoint distinct query))
+      (clasetNet.unify {q = q, qvars = qvars} (#hyp aesop_index) @
+       distinct_candidates
+         {checkpoint = checkpoint, derive = listUtil.no_checkpoint}
+         distinct query))
 
-val aesop_hyp_rules = aesop_hyp_rules_measured listUtil.no_checkpoint
+fun aesop_hyp_rules cs {q, qvars} =
+  aesop_hyp_rules_measured listUtil.no_checkpoint cs
+    {q = q, qvars = qvars, flexible_type = K true}
 
 type tyinfo_contribution =
   string * (TypeBasePure.tyinfo -> (rulespec * (string * thm)) list)

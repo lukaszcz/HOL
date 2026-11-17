@@ -105,11 +105,16 @@ sig
   val unify_intro_candidates : claset_part -> term -> (tag * brl) list
   val unify_elim_candidates : claset_part -> term -> (tag * brl) list
   (* The first term retains the static net's query approximation; the record
-     supplies the actual query and genuine metas for lazy constructor pairs.
-     The term-only APIs treat every free variable as schematic. *)
+     supplies the actual query, its genuine metas, and which type variables
+     are schematic, for lazy constructor pairs.  [checkpoint] runs before
+     each unit of retrieval work; [derive] runs once before each constructor
+     pair not yet derived and cached in the claset.  The term-only APIs
+     treat every free variable and type variable as schematic. *)
   val unify_elim_candidates_with :
-    (unit -> unit) -> claset_part -> term ->
-    {q : term, qvars : term HOLset.set} -> (tag * brl) list
+    {checkpoint : unit -> unit, derive : unit -> unit} ->
+    claset_part -> term ->
+    {q : term, qvars : term HOLset.set, flexible_type : hol_type -> bool} ->
+    (tag * brl) list
   val unify_intro_candidates_measured :
     (unit -> unit) -> claset_part -> term -> (tag * brl) list
   val unify_elim_candidates_measured :
@@ -128,7 +133,8 @@ sig
   (* Charge lazy constructor-pair enumeration and derivation before work. *)
   val aesop_hyp_rules_measured :
     (unit -> unit) -> claset ->
-    {q : term, qvars : term HOLset.set} -> aesop_rule list
+    {q : term, qvars : term HOLset.set, flexible_type : hol_type -> bool} ->
+    aesop_rule list
 
   val SIntro : thm -> thm
   val Intro : thm -> thm

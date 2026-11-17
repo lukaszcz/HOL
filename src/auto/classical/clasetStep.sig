@@ -37,6 +37,10 @@ sig
   val inst_step : clasetLib.claset -> step
   val unsafe_step : clasetLib.claset -> step
   val step_in : Context.t -> clasetLib.claset -> step
+  (* [step_in_with derive] runs [derive] before each lazy constructor pair
+     its safe0 lookup derives afresh, so a budget can meter it. *)
+  val step_in_with :
+    (unit -> unit) -> Context.t -> clasetLib.claset -> step
   val slow_step_in : Context.t -> clasetLib.claset -> step
 
   (* Every transition in a complete safe fixed point, in replay order. *)
@@ -125,4 +129,8 @@ sig
   val depth_step_in :
     Context.t -> clasetLib.claset -> clasetLib.claset_part ->
     int -> step
+  (* As [depth_step_in], running [derive] as [step_in_with] does. *)
+  val depth_step_in_with :
+    (unit -> unit) -> Context.t -> clasetLib.claset ->
+    clasetLib.claset_part -> int -> step
 end
