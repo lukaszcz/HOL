@@ -147,14 +147,16 @@ fun require_check {req0, reqD, plain} =
         | SOME p => Ho_Rewrite.REQUIRE_DECREASE_TAC p o check
     end
 
-(* Only the last theorem's checks apply *)
-fun mk_require_tac tac thl =
-    let
-      val reqs = map requirement thl
-      val check = case List.rev reqs of [] => I | r::_ => require_check r
-    in
-      check (tac (map #plain reqs))
-    end
+(* Only the last theorem's checks apply.  mk_require_tac is itself
+   recursive so that Poly/ML does not inline it: inlined, it lets RW_TAC
+   and the like expand the whole simplifier tactic chain at every call
+   site, and scripts become much slower to compile. *)
+fun mk_require_tac tac [] = tac []
+  | mk_require_tac tac [th] =
+      let val r = requirement th in require_check r (tac [#plain r]) end
+  | mk_require_tac tac (th :: rest) =
+      mk_require_tac (fn plains => tac (#plain (requirement th) :: plains))
+                     rest
 
 (* Every theorem's checks *)
 fun require_all thl =
