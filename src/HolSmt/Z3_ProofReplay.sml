@@ -10759,32 +10759,28 @@ local
       let
         val hyp_result = canonical_normalization hyp
         val hyp_normalization = #theorem hyp_result
-        val normalized_hyp = boolSyntax.rhs (Thm.concl hyp_normalization)
         fun lookup [] =
               raise ERR "remove_hyps"
                 (unsupported_hyp_removal_diagnostic ^
                  ": stage=hyp_removal; policy=beta-eta-canonical-lookup; " ^
                  "extra hypothesis=" ^ Library.term_to_string hyp)
-          | lookup ((assumption, result) :: rest) =
+          | lookup ((result, normalized_assumption) :: rest) =
               let
-                val normalization = #theorem result
-                val matches = Term.aconv
-                  (boolSyntax.rhs (Thm.concl normalization)) normalized_hyp
-                fun matched () =
-                  Thm.EQ_MP (Thm.SYM hyp_normalization)
-                    (Thm.EQ_MP normalization (Thm.ASSUME assumption))
                 val used_beta = #used_beta hyp_result orelse
                   #used_beta result
                 val used_eta = #used_eta hyp_result orelse #used_eta result
+                fun record label th = profile label (fn () => th) ()
               in
-                if not matches then lookup rest
-                else if used_eta andalso not used_beta then
-                  profile "check_proof(hyp_removal:eta-only-lookup)"
-                    matched ()
-                else if used_beta then
-                  profile "check_proof(hyp_removal:beta-lookup)" matched ()
-                else
-                  profile "check_proof(hyp_removal:exact-lookup)" matched ()
+                case SmtReplayCanon.transport_hypothesis
+                       hyp_normalization normalized_assumption of
+                  NONE => lookup rest
+                | SOME th =>
+                    if used_eta andalso not used_beta then
+                      record "check_proof(hyp_removal:eta-only-lookup)" th
+                    else if used_beta then
+                      record "check_proof(hyp_removal:beta-lookup)" th
+                    else
+                      record "check_proof(hyp_removal:exact-lookup)" th
               end
         val hyp_theorem = profile
           "check_proof(hyp_removal:beta-eta-lookup)" lookup
@@ -10797,7 +10793,12 @@ local
     else
       let
         val normalized_expected = List.map (fn assumption =>
-          (assumption, canonical_normalization assumption)) expected
+          let
+            val result = canonical_normalization assumption
+          in
+            (result,
+             Thm.EQ_MP (#theorem result) (Thm.ASSUME assumption))
+          end) expected
       in
         HOLset.foldl (remove_hyp normalized_expected) thm bad_hyps
       end
