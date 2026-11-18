@@ -53,7 +53,8 @@ struct
            originals)
       val _ = active ()
       fun candidate () =
-        if #replay_handler (#rule step) <> "trust" orelse
+        if CPC_Proof.handler_name
+            (#replay_handler (#rule step)) <> "trust" orelse
             not (null (#premises step)) then NONE else
         case (#args step,#conclusion step) of
           ([CPC_ProofParser.GraphTerm argument],SOME declared) =>

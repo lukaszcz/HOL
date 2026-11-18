@@ -2685,7 +2685,8 @@ val _ = fixture (fn {proof,prepare,type_calls,...} =>
   let
     fun future _ : CPC_Proof.proof_rule =
       {name = "future",namespace = CPC_Proof.ProofRule,
-       version_support = CPC_Proof.AllCVCVersions,replay_handler = "future"}
+       version_support = CPC_Proof.AllCVCVersions,
+       replay_handler = CPC_Proof.HEvaluate}
     val broken = replace_last proof
       (step_change future #premises false)
     val popped = replace_last proof
@@ -3254,7 +3255,8 @@ local
   fun modify_symmetry proof change =
     List.map (fn command => case command of
         Parser.GraphStep {step,pop} =>
-          if #replay_handler (#rule step) = "symm" then
+          if CPC_Proof.handler_name
+              (#replay_handler (#rule step)) = "symm" then
             change (step,pop) else command
       | _ => command) (#commands (proof : Parser.graph_proof))
   fun altered (step : Parser.graph_rule_step)
@@ -3378,7 +3380,8 @@ in
   val _ = testutils.tprint "Transitivity still explicitly declines admission"
   val _ = refusal (fn (step,pop) => altered step pop
     {name = "trans",namespace = CPC_Proof.ProofRule,
-     version_support = CPC_Proof.AllCVCVersions,replay_handler = "trans"}
+     version_support = CPC_Proof.AllCVCVersions,
+     replay_handler = CPC_Proof.HTrans}
     (#premises step) (#args step) (#conclusion step))
   val _ = testutils.OK ()
 
@@ -76349,7 +76352,8 @@ in
               require "unsupported CPC rule ran a speculative prefix"
                 (case prepared of Receiver.Needs
                     [Receiver.RuleProgramme{id,rule,pop}]=>
-                      id="@c"andalso #replay_handler rule="trust"andalso
+                      id="@c"andalso CPC_Proof.handler_name
+                          (#replay_handler rule)="trust"andalso
                       not pop andalso not(#retired(W.audit_policy(#work e)))
                   | _=>false))))
       val _=test "Actual Scope command remains a requirement before names"
@@ -76362,7 +76366,8 @@ in
               (case prepared of Receiver.Needs
                   [Receiver.ScopeProgramme{assumption=true,...},
                    Receiver.RuleProgramme{rule,pop=true,...}]=>
-                    #replay_handler rule="scope"andalso
+                    CPC_Proof.handler_name
+                        (#replay_handler rule)="scope"andalso
                     not(#retired(W.audit_policy(#work e)))|_=>false))))
       val _=test "Completed empty receiver fences foreign owner then expiry"
         (fn()=>fixture[clause]boolSyntax.F(fn held=>
@@ -77584,7 +77589,8 @@ in
                  not(#retired(W.audit_policy(#work e)))andalso
                  (case prepared of Receiver.Needs
                     [Receiver.RuleProgramme{id,rule,pop}]=>
-                      id="@later"andalso #replay_handler rule="trust"andalso
+                      id="@later"andalso CPC_Proof.handler_name
+                          (#replay_handler rule)="trust"andalso
                       not pop|_=>false)))end))
       val _=test "New completed queue fences foreign Work before dead packet"
         (fn()=>fixture[double]``cpc_simple_goal410:bool``(fn held=>
@@ -78555,7 +78561,8 @@ in
              not(#retired(W.audit_policy(#work e)))andalso
              (case result of Final.ReplayNeeds
                 [Receiver.RuleProgramme{id,rule,pop}]=>
-                  id="@later"andalso #replay_handler rule="trust"andalso
+                  id="@later"andalso CPC_Proof.handler_name
+                      (#replay_handler rule)="trust"andalso
                   not pop|_=>false))end))
       val _=test "The CPC public finalizer is consumed once only"
         (fn()=>fixture[double]goal(fn e=>using e ordinary(fn _=>())
@@ -78968,7 +78975,8 @@ local
        Count.thm_count()=prior andalso
        not(#retired(W.audit_policy(#work e)))andalso
        (case result of Final.ReplayNeeds
-           [Receiver.RuleProgramme{rule,...}]=> #replay_handler rule=handler
+           [Receiver.RuleProgramme{rule,...}]=> CPC_Proof.handler_name
+               (#replay_handler rule)=handler
          | _=>false))end
   fun pending e certificate handler=
     pending_checked(fn _=>fn _=>fn _=>true)e certificate handler
@@ -80064,7 +80072,7 @@ in
                 [Receiver.ScopeProgramme{id=local_id,assumption=true},
                  Receiver.RuleProgramme{id,rule,pop=true}]=>
                   local_id="@local"andalso id="@scoped"andalso
-                  #replay_handler rule="scope"
+                  CPC_Proof.handler_name (#replay_handler rule)="scope"
               | _=>false))end))
       val _=test "Clause Type callback keeps exact Primary before inference"
         (fn()=>fixture[not_or_source]goal(fn e=>
@@ -81590,7 +81598,7 @@ in
                  [Receiver.ScopeProgramme{id=local_id,assumption=true},
                   Receiver.RuleProgramme{id,rule,pop=true}]=>
                    local_id="@local"andalso id="@scoped"andalso
-                   #replay_handler rule="scope"
+                   CPC_Proof.handler_name (#replay_handler rule)="scope"
                 | _=>false))end))
       val _=test "NOT_AND Type callback keeps exact Primary before inference"
         (fn()=>fixture[neg(boolSyntax.mk_conj(p,q)),p,q]goal(fn e=>
@@ -84256,7 +84264,8 @@ in
                 [Receiver.ScopeProgramme{id=local_id,assumption=true},
                  Receiver.RuleProgramme{id,rule,pop=true}]=>
                  local_id="@local"andalso id="@scope"andalso
-                 #replay_handler rule="scope"|_=>false))end))
+                 CPC_Proof.handler_name
+                     (#replay_handler rule)="scope"|_=>false))end))
       val _=test "Wrong CNF endpoint retires before names or native effects"
         (fn()=>fixture[neg(disj(p,q))]goal(fn e=>
           let val held=packet e

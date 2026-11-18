@@ -459,7 +459,8 @@ struct
            provenance=CPC_Proof.EqualityProvenance
              (atom,CPC_Proof.UnavailableProvenance "opaque endpoint")}),
          CPC_Proof.STEP {id="result",conclusion=NONE,
-           rule=CPC_Proof.mk_rule CPC_Proof.ProofRule ("cong","cong"),
+           rule=CPC_Proof.mk_rule CPC_Proof.ProofRule
+             ("cong",CPC_Proof.HCong),
            premises=["large"],args=[{term=source,
              provenance=CPC_Proof.ApplicationProvenance
                ("opaque_function",[atom])}]}]}
@@ -489,7 +490,8 @@ struct
       val proof = {cvc_version="1.3.4",commands=
         List.map assumption (ListPair.zip (["a","b"],hypotheses)) @
         [CPC_Proof.STEP {id="result",conclusion=NONE,
-          rule=CPC_Proof.mk_rule CPC_Proof.ProofRule ("cong","cong"),
+          rule=CPC_Proof.mk_rule CPC_Proof.ProofRule
+            ("cong",CPC_Proof.HCong),
           premises=["a","b"],args=[{term=source,provenance=operands}]}]}
       val theorem = R.replay_root_for_test proof
       val (left,right) = boolSyntax.dest_eq (Thm.concl theorem)
@@ -522,7 +524,8 @@ struct
         [CPC_Proof.ASSUME ("a",{term=hypothesis,
            provenance=CPC_Proof.EqualityProvenance (atom,atom)}),
          CPC_Proof.STEP {id="result",conclusion=NONE,
-           rule=CPC_Proof.mk_rule CPC_Proof.ProofRule ("cong","cong"),
+           rule=CPC_Proof.mk_rule CPC_Proof.ProofRule
+             ("cong",CPC_Proof.HCong),
            premises=["a"],args=[{term=source,
              provenance=CPC_Proof.ApplicationProvenance
                ("opaque_function",[grow 70 atom])}]}]}
@@ -787,7 +790,8 @@ struct
             val proof = {cvc_version="1.3.4",commands=
               List.map assumption (ListPair.zip (["a","b"],hypotheses)) @
               [CPC_Proof.STEP {id="result",conclusion=NONE,
-                rule=CPC_Proof.mk_rule CPC_Proof.ProofRule ("cong","cong"),
+                rule=CPC_Proof.mk_rule CPC_Proof.ProofRule
+                  ("cong",CPC_Proof.HCong),
                 premises=["a","b"],args=[located source]}]}
             val theorem = R.replay_root_for_test proof
             val (left,right) = boolSyntax.dest_eq (Thm.concl theorem)

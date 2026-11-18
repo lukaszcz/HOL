@@ -20832,7 +20832,7 @@ local
          consumes it; NONE is retained only so an ablation can demonstrate
          that dispatch itself also fails closed. *)
       val rule_preflight =
-        ((case #replay_handler rule of
+        ((case CPC_Proof.handler_name (#replay_handler rule) of
             "skolemize" => SOME
               (skolemize_preflight conclusion located_args premise_steps)
           | _ => NONE)
@@ -20852,7 +20852,7 @@ local
              profile_event "CPC(cache:omitted_conclusion)";
              NONE)
       val cached =
-        if #replay_handler rule = "scope" then
+        if CPC_Proof.handler_name (#replay_handler rule) = "scope" then
           (case conclusion of
              NONE => omitted_conclusion ()
            | SOME _ =>
@@ -20862,7 +20862,7 @@ local
             handle Feedback.HOL_ERR _ => NONE)
         | NONE => omitted_conclusion ()
       val (state, result) =
-        if #replay_handler rule = "scope" then
+        if CPC_Proof.handler_name (#replay_handler rule) = "scope" then
           let
             val (state, theorem) =
               profile ("CPC(handler:" ^ namespace_name (#namespace rule) ^
@@ -20883,7 +20883,7 @@ local
             | NONE =>
               (profile ("CPC(handler:" ^ namespace_name (#namespace rule) ^
                  "/" ^ #name rule ^ ")") (fn () =>
-               (case #replay_handler rule of
+               (case CPC_Proof.handler_name (#replay_handler rule) of
            "refl" =>
                let
                  val theorem = replay_refl conclusion args
@@ -23799,7 +23799,8 @@ in
   fun graph_bounded_force_worker definitions
       (step : CPC_Proof.step,premises : CPC_Proof.located_term list) =
     let
-      val _ = if #replay_handler (#rule step) = "trust" then () else
+      val _ = if CPC_Proof.handler_name
+          (#replay_handler (#rule step)) = "trust" then () else
         raise ERR "graph_bounded_force_worker" "expected registered TRUST"
       val state = initial_state definitions (List.map #term premises)
       val theorem = replay_trust true state
@@ -24061,7 +24062,8 @@ in
                            val(visible,tail)=if pop then
                                case stack of []=>fail "unmatched scope pop"
                                | saved::tail=>
-                                   if #replay_handler(#rule step)="scope"
+                                   if CPC_Proof.handler_name
+                                       (#replay_handler (#rule step))="scope"
                                      then(saved,tail)else
                                      fail "scope pop handler differs"
                              else(known,stack)
@@ -24071,7 +24073,8 @@ in
             val _=if List.exists(fn old=>(tick();old=command))(!issued)
               then fail "command occurrence already prepared"else ()
             val(step,known)=seek 0[][](#commands(Packet.proof packet))
-            val _=if #replay_handler(#rule step)="instantiate"then ()else
+            val _=if CPC_Proof.handler_name
+                (#replay_handler (#rule step))="instantiate"then ()else
               fail "fixed specialization handler required"
             val premise=case(#premises step,premises)of
                 ([wanted],[(id,node,edge)])=>

@@ -76,7 +76,7 @@ struct
         | command (Parser.GraphStep {step,pop}) =
             if pop then raise Defer ScopedCommandAdapter else
             let
-              val name = #replay_handler (#rule step)
+              val name = CPC_Proof.handler_name (#replay_handler (#rule step))
               val _ = if (name = "trust" orelse name = "refl") andalso
                   not (null (#premises step)) then
                 raise Defer UnsupportedCommand else ()

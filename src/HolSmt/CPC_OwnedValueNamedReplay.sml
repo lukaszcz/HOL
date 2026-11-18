@@ -147,7 +147,9 @@ struct
               val actual=R.lookup_rule(#cvc_version proof)(#name rule)
               fun metadata(row:R.proof_rule)=
                 (pay 4;string_work(#name row,#name rule);
-                 string_work(#replay_handler row,#replay_handler rule);
+                 string_work(CPC_Proof.handler_name
+                     (#replay_handler row),
+                   CPC_Proof.handler_name (#replay_handler rule));
                  version(#version_support row))
               val _=metadata rule
               val _=case actual of SOME row=>metadata row | NONE=>()
@@ -163,7 +165,8 @@ struct
                 need(ScopeProgramme{id=id,assumption=true})
             | supported(Q.GraphStep{step,pop})=
                 let val _=tick()val _=canonical(#rule step)
-                    val handler= #replay_handler(#rule step)
+                    val handler= CPC_Proof.handler_name
+                        (#replay_handler (#rule step))
                     val route=Shared.route{equal=equal,visit=tick,copies=fn n=>
                       pay(IntInf.fromInt n)}
                       {pop=pop,handler=handler}
@@ -482,12 +485,13 @@ struct
                     val target=case #conclusion step of SOME row=>row
                       | NONE=>raise ERR "prepare" "missing planned conclusion"
                     val family=Shared.simple_boolean equal
-                      (#replay_handler(#rule step))
+                      (CPC_Proof.handler_name (#replay_handler (#rule step)))
                     fun current node provenance =
                       (pay 2;{node=node,provenance=provenance})
                     val equality=case family of NONE=>
                         Shared.simple_equality equal
-                          (#replay_handler(#rule step))
+                          (CPC_Proof.handler_name
+                              (#replay_handler (#rule step)))
                       | SOME _=>NONE
                     fun infer_equality()=
                       let
@@ -667,7 +671,8 @@ struct
                             [Q.GraphIndex index]=>index
                           | _=>raise ERR "discover"
                               "expected one recorded index")
-                        val handler= #replay_handler(#rule step)
+                        val handler= CPC_Proof.handler_name
+                            (#replay_handler (#rule step))
                       in case family of
                           Shared.SimpleNotOrElim=>
                             (pay 11;
@@ -977,9 +982,13 @@ struct
                             premises)
                     | NONE=>(case equality of SOME _=>infer_equality()
                       | NONE=>if equal
-                          (#replay_handler(#rule step),"resolution")orelse
-                          equal(#replay_handler(#rule step),"factoring")orelse
-                          equal(#replay_handler(#rule step),"reordering")then
+                          (CPC_Proof.handler_name
+                            (#replay_handler (#rule step)),
+                          "resolution")orelse
+                          equal(CPC_Proof.handler_name
+                              (#replay_handler (#rule step)),"factoring")orelse
+                          equal(CPC_Proof.handler_name
+                              (#replay_handler (#rule step)),"reordering")then
                           let
                             val _=pay 1
                             fun infer_structural()=case aliases of
@@ -991,7 +1000,8 @@ struct
                                   val _=pay 36
                                   val destination=fact target
                                   val destination_node= #node destination
-                                  val handler= #replay_handler(#rule step)
+                                  val handler= CPC_Proof.handler_name
+                                      (#replay_handler (#rule step))
                                   fun constant () value atom=
                                     let val _=tick()
                                         val node=PV.proof_term context value
@@ -1220,7 +1230,8 @@ struct
                                 in destination end
                           in infer_structural()end
                         else if equal
-                          (#replay_handler(#rule step),"cnf")then
+                          (CPC_Proof.handler_name
+                              (#replay_handler (#rule step)),"cnf")then
                           let
                             (* One selected helper closure. No old Boolean
                                path allocates this new-family adapter. *)
@@ -1386,7 +1397,8 @@ struct
                                 literals end
                           in infer_cnf()end
                         else(case truth_family equal
-                          (#replay_handler(#rule step))of
+                          (CPC_Proof.handler_name
+                              (#replay_handler (#rule step)))of
                           NONE=>infer_equality()
                         | SOME family=>
                           let val _=pay 1

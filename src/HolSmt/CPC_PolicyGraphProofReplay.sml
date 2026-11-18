@@ -489,7 +489,8 @@ struct
               in save id node recipe end
             | Q.GraphStep{step,pop=true}=>
               let
-                val _=if #replay_handler(#rule step)="scope"then ()else
+                val _=if CPC_Proof.handler_name
+                    (#replay_handler (#rule step))="scope"then ()else
                   raise ERR "scope" "pop needs actual registered scope rule"
                 val _=if List.null(#args step)then ()else
                   raise ERR "scope" "scope argument programme pending"
@@ -559,7 +560,8 @@ struct
                 val _=ignore(evaluate owner recipe)
               in save(#id step)target recipe end
             | Q.GraphStep{step,pop=false}=>
-              if #replay_handler(#rule step)="not_not_elim"then
+              if CPC_Proof.handler_name
+                  (#replay_handler (#rule step))="not_not_elim"then
               let
                 (* The legacy rule ignores its argument list. Only the
                    actual single premise and optional result are semantic. *)
@@ -640,7 +642,8 @@ struct
                 val _=ignore(evaluate owner recipe)
               in save(#id step)target recipe end
               else
-              if #replay_handler(#rule step)="and_elim"then
+              if CPC_Proof.handler_name
+                  (#replay_handler (#rule step))="and_elim"then
               let
                 val target=case #conclusion step of SOME value=>located value
                   | NONE=>raise ERR "and_elim"
@@ -749,7 +752,8 @@ struct
                 val _=ignore(evaluate owner recipe)
               in save(#id step)target recipe end
               else
-              if #replay_handler(#rule step)="and_intro"then
+              if CPC_Proof.handler_name
+                  (#replay_handler (#rule step))="and_intro"then
               let
                 val target=case #conclusion step of SOME value=>located value
                   | NONE=>raise ERR "and_intro"
@@ -802,7 +806,8 @@ struct
                 val _=ignore(evaluate owner recipe)
               in save(#id step)target recipe end
               else
-              if #replay_handler(#rule step)="eq_resolve"then
+              if CPC_Proof.handler_name
+                  (#replay_handler (#rule step))="eq_resolve"then
               let
                 val target=case #conclusion step of SOME value=>located value
                   | NONE=>raise ERR "eq_resolve"
@@ -864,7 +869,8 @@ struct
               in save(#id step)target recipe end
               else
               let
-                val _=if #replay_handler(#rule step)="instantiate"then ()else
+                val _=if CPC_Proof.handler_name
+                    (#replay_handler (#rule step))="instantiate"then ()else
                   raise ERR "next"
                     "native handler programme has not been migrated"
                 val premise=case #premises step of [id]=>

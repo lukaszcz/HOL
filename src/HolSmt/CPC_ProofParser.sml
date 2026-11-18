@@ -3830,16 +3830,20 @@ local
                 attrs seen_premises true premises (resolution_args ())
               else if rule_name = "chain_resolution" then
                 attrs seen_premises true premises (chain_resolution_args ())
-              else if #replay_handler rule = "resolution" then
+              else if CPC_Proof.handler_name
+                  (#replay_handler rule) = "resolution" then
                 (* Macro/chain resolution gives its result clause first;
                    the remaining arguments only describe its pivots. *)
                 attrs seen_premises true premises
                   (macro_resolution_args ())
-              else if #replay_handler rule = "and_elim" then
+              else if CPC_Proof.handler_name
+                  (#replay_handler rule) = "and_elim" then
                 attrs seen_premises true premises (and_elim_index ())
-              else if #replay_handler rule = "not_or_elim" then
+              else if CPC_Proof.handler_name
+                  (#replay_handler rule) = "not_or_elim" then
                 attrs seen_premises true premises (not_or_elim_index ())
-              else if #replay_handler rule = "exists_elim" then
+              else if CPC_Proof.handler_name
+                  (#replay_handler rule) = "exists_elim" then
                 attrs seen_premises true premises (exists_elim_args ())
               else if rule_name = "cnf_and_pos" then
                 attrs seen_premises true premises (cnf_and_pos_args ())
@@ -3848,7 +3852,8 @@ local
               else if rule_name = "arith-mod-over-mod" orelse
                       rule_name = "arith-mod-over-mod-mult" then
                 attrs seen_premises true premises (structured_terms [])
-              else if #replay_handler rule = "rare_inventory" then
+              else if CPC_Proof.handler_name
+                  (#replay_handler rule) = "rare_inventory" then
                 (* Declarative RARE recipes distinguish one term from a
                    variadic list formal.  Preserve each CPC @list (and each
                    recorded alias for one) as exactly one HOL list wrapper;
@@ -5377,12 +5382,13 @@ in
     in arguments 1 [] [] end
 
   fun graph_structured_rule_arguments (rule : proof_rule) =
-    #replay_handler rule = "rare_inventory" orelse
+    CPC_Proof.handler_name (#replay_handler rule) = "rare_inventory" orelse
     #name rule = "arith-mod-over-mod" orelse
     #name rule = "arith-mod-over-mod-mult"
 
   fun graph_ordinary_rule_arguments (rule : proof_rule) =
-    not (List.exists (Lib.equal (#replay_handler rule))
+    not (List.exists (Lib.equal (CPC_Proof.handler_name
+        (#replay_handler rule)))
       ["and_elim", "not_or_elim", "resolution", "exists_elim",
        "quant_rewrite", "rare_inventory"] orelse
       List.exists (Lib.equal (#name rule))
@@ -5654,8 +5660,8 @@ in
               error "negative CPC index"
           | NONE => error "non-numeral CPC index" end
       fun rule_arguments name rule_name (rule : proof_rule) raws =
-        if #replay_handler rule = "and_elim" orelse
-           #replay_handler rule = "not_or_elim" then
+        if CPC_Proof.handler_name (#replay_handler rule) = "and_elim" orelse
+           CPC_Proof.handler_name (#replay_handler rule) = "not_or_elim" then
           (case raws of [raw] => [index raw]
            | _ => error "elimination rule expects one index")
         else if #name rule = "cnf_and_pos" orelse
@@ -5669,14 +5675,18 @@ in
                 List.map GraphHint hints
            | [] => []
            | _ => error "resolution requires polarity and pivot")
-        else if #replay_handler rule = "resolution" then
+        else if CPC_Proof.handler_name
+            (#replay_handler rule) = "resolution" then
           (case raws of [] => []
            | target :: rest => GraphTerm (parse target) ::
                List.map argument rest)
-        else if #replay_handler rule = "exists_elim" orelse
-                #replay_handler rule = "quant_rewrite" then
+        else if CPC_Proof.handler_name
+            (#replay_handler rule) = "exists_elim" orelse
+                CPC_Proof.handler_name
+                    (#replay_handler rule) = "quant_rewrite" then
           List.map argument raws
-        else if #replay_handler rule = "rare_inventory" orelse
+        else if CPC_Proof.handler_name
+            (#replay_handler rule) = "rare_inventory" orelse
                 #name rule = "arith-mod-over-mod" orelse
                 #name rule = "arith-mod-over-mod-mult" then
           List.map (graph_structured_argument (#backend (#reader terms))
