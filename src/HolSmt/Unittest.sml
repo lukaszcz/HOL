@@ -28802,6 +28802,11 @@ fun datatype_exhaustiveness_split_cap_scales_success () =
       Term.mk_comb (Term.mk_var ("Q", Type.alpha --> Type.bool),
         opaque_padding 2000))
     val cap = SmtDatatypeProve.exhaustiveness_split_cap goal
+    fun expected_cap t = 65536 div SmtResource.term_nodes_up_to 65536 t
+    val larger = boolSyntax.mk_conj (splits,
+      Term.mk_comb (Term.mk_var ("Q", Type.alpha --> Type.bool),
+        opaque_padding 8000))
+    val larger_cap = SmtDatatypeProve.exhaustiveness_split_cap larger
     val _ = Profile.reset_all ()
     val rejected =
       ((ignore (SmtDatatypeProve.exhaustiveness_prove goal); false)
@@ -28810,9 +28815,12 @@ fun datatype_exhaustiveness_split_cap_scales_success () =
            ("more than " ^ Int.toString cap ^ " datatype case splits")
            (Feedback.message_of holerr))
   in
-    assert (cap < 256,
-      "exhaustiveness split cap did not scale with the goal size: " ^
+    assert (cap = expected_cap goal andalso cap < 256,
+      "exhaustiveness split cap is not 65536 div the goal's nodes: " ^
       Int.toString cap);
+    assert (larger_cap = expected_cap larger andalso larger_cap < cap,
+      "exhaustiveness split cap did not shrink on a larger goal: " ^
+      Int.toString larger_cap);
     assert (rejected,
       "large unprovable datatype split search was not stopped by its cap");
     assert (profile_call_count "datatype(split)" = cap,
@@ -28831,12 +28839,30 @@ fun datatype_metis_declines_large_target_success () =
     val declined =
       ((ignore (SmtDatatypeProve.metis_datatype_prove large); false)
        handle Feedback.HOL_ERR _ => true)
+    (* Acyclicity proves the cycle's negation by size, then needs METIS for
+       the disjunction around it. *)
+    fun acyclic_or value =
+      boolSyntax.mk_disj (``SmtLeft (SmtRight (l:smt_left)) <> l``,
+        Term.mk_comb (Term.mk_var ("Q", Type.alpha --> Type.bool), value))
+    val small_acyclic = acyclic_or (Term.mk_var ("pad_x", Type.alpha))
+    val acyclic_theorem = SmtDatatypeProve.acyclicity_prove small_acyclic
+    val acyclic_declined =
+      ((ignore (SmtDatatypeProve.acyclicity_prove (acyclic_or
+          (opaque_padding SmtDatatypeProve.metis_max_target_nodes))); false)
+       handle Feedback.HOL_ERR _ => true)
   in
     assert (Thm.concl theorem ~~ small andalso List.null (Thm.hyp theorem),
       "datatype METIS did not prove a small excluded middle");
     check_oracle_tags "datatype_metis_declines_large_target_success" theorem;
     assert (declined,
-      "datatype METIS ran on a target over its node bound")
+      "datatype METIS ran on a target over its node bound");
+    assert (Thm.concl acyclic_theorem ~~ small_acyclic andalso
+            List.null (Thm.hyp acyclic_theorem),
+      "acyclicity did not prove a small disjunction by METIS");
+    check_oracle_tags "datatype_metis_declines_large_target_success"
+      acyclic_theorem;
+    assert (acyclic_declined,
+      "acyclicity ran METIS on a target over its node bound")
   end
 
 fun datatype_constructor_reconstruction_success () =
