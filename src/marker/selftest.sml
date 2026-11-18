@@ -659,19 +659,3 @@ val _ = shouldfail {
   printresult = goals_print,
   testfn = (fn g => testtac (UNABBREV_TAC "MISSING_ABBR") g)
 } ([“(P:'a -> bool) x”], “(Q:'a -> bool) x”)
-
-val _ = let
-  val _ = tprint "genUnCongAt false reports nothing, whatever monitoring"
-  val said = ref ""
-  val monitoring = HOLFlags.flag_of_bflag Rewrite.monitoring
-  val cong_t = rator (concl (Cong TRUTH))
-  val un = genUnCongAt false cong_t markerTheory.Cong_def
-  val th = Lib.with_flag (Feedback.MESG_outstream, fn s => said := !said ^ s)
-             (HOLFlags.with_flags [(monitoring, 1)] (un o Cong)) TRUTH
-in
-  if !said <> "" then die ("said: " ^ String.toString (!said))
-  else case th of
-           SOME th => if concl th ~~ concl TRUTH then OK()
-                      else die "did not undo Cong"
-         | NONE => die "did not recognise Cong"
-end

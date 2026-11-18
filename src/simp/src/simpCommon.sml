@@ -45,8 +45,7 @@ type relsimpdata = {refl: thm, trans:thm, weakenings:thm list,
 (*---------------------------------------------------------------------------*)
 
 fun split_name {Thy,Name} = (SOME Thy, Name)
-fun mk_rewr_convdata verbosity build (nmopt,(thm,tag)) = let
-  val trace = trace_at verbosity
+fun mk_rewr_convdata build (nmopt,(thm,tag)) = let
   val th = SPEC_ALL thm
   val (thypart,nm) =
       case Option.map split_name nmopt of
@@ -105,14 +104,9 @@ fun merge_names list =
                 | SOME y => SOME y))
          list NONE;
 
-(* A fragment's filter is given the simplifier.trace level of the
-   simpset it is added to, to report what it makes of a theorem at *)
 fun merge_filters filters =
-    case List.mapPartial I filters of
-        [] => NONE
-      | fs => SOME (fn level => end_foldr (op oo) (map (fn f => f level) fs))
-
-fun plain_filter filter = Option.map (fn f => fn (_ : int) => f) filter
+    SOME (end_foldr (op oo) (mapfilter the filters))
+    handle HOL_ERR _ => NONE
 
 fun std_conv_ss {conv_ss, merge_ss} {name,conv,pats} =
   let
@@ -200,16 +194,14 @@ fun user_conv_tracing {name,trace=trace_level} =
       val trace_string3 = name^" left term unchanged"
       val trace_string4 = name^" raised an unusual exception (ignored)"
   in
-    {enter = fn v => fn tm =>
-                trace_at v (trace_level+2,REDUCE(trace_string1,tm)),
-     leave = fn v => fn (tm, thm) =>
-                (trace_at v (trace_level,PRODUCE(tm,name,thm)); thm),
-     failed = fn v =>
+    {enter = fn tm => trace(trace_level+2,REDUCE(trace_string1,tm)),
+     leave = fn (tm, thm) => (trace(trace_level,PRODUCE(tm,name,thm)); thm),
+     failed =
        fn e as HOL_ERR _ =>
-            (trace_at v (trace_level+2,TEXT trace_string2); raise e)
+            (trace (trace_level+2,TEXT trace_string2); raise e)
         | e as Conv.UNCHANGED =>
-            (trace_at v (trace_level+2,TEXT trace_string3); raise e)
-        | e => (trace_at v (trace_level, TEXT trace_string4); raise e)}
+            (trace (trace_level+2,TEXT trace_string3); raise e)
+        | e => (trace (trace_level, TEXT trace_string4); raise e)}
   end
 
  val any = mk_var("x",Type.alpha);
@@ -317,19 +309,6 @@ fun user_conv_tracing {name,trace=trace_level} =
    | (POP :: ths) :: rest => munge (tl asms) (ths::rest, n)
  end
 
- (* A reducer's name is what deletes it by name, so it is built from the
-    relation's structure rather than printed: printing would consult the
-    ambient grammar and printing flags -- which a simpset derived inside
-    a proof must not read -- and would make the name depend on them. *)
- fun relation_name tm =
-   case dest_term tm of
-       VAR (name, _) => name
-     | CONST {Thy, Name, ...} => Thy ^ "$" ^ Name
-     | COMB (f, x) =>
-         "(" ^ relation_name f ^ " " ^ relation_name x ^ ")"
-     | LAMB (v, body) =>
-         "(\\" ^ relation_name v ^ ". " ^ relation_name body ^ ")"
-
  fun mk_reducer rel_t subsets initial_rewrites = let
    exception redExn of (control * thm) Net.net
    fun munge_subset_th th = let
@@ -349,8 +328,7 @@ fun user_conv_tracing {name,trace=trace_level} =
      redExn n'
    end
    val initial_ctxt = addcontext (redExn Net.empty, initial_rewrites)
-   fun applythm verbosity solver t (bound, th) = let
-     val trace = trace_at verbosity
+   fun applythm solver t (bound, th) = let
      val _ =
          trace(7, LZ_TEXT (fn () => "Attempting rewrite: "^thm_to_string th))
      fun dec() = case bound of
@@ -362,6 +340,7 @@ fun user_conv_tracing {name,trace=trace_level} =
                      end
                  | UNBOUNDED => ()
      val matched = PART_MATCH (rator o #2 o strip_imp) th t
+     open Trace
      fun do_sideconds th =
          if is_imp (concl th) then let
            val (h,c) = dest_imp (concl th)
@@ -384,9 +363,7 @@ fun user_conv_tracing {name,trace=trace_level} =
      mk_comb(Term.inst theta f, x)
    end
 
-   fun apply {solver,conv,context,stack,relation = (relation,_),
-              trace = verbosity} t = let
-     val trace = trace_at verbosity
+   fun apply {solver,conv,context,stack,relation = (relation,_)} t = let
      val _ = can (match_term rel_t) relation orelse
              raise ERR ("mk_reducer.apply", "Wrong relation")
      val n = case context of redExn n => n
@@ -397,10 +374,10 @@ fun user_conv_tracing {name,trace=trace_level} =
      val _ = trace(7, LZ_TEXT(fn () => "Found "^Int.toString (length matches)^
                                        " matches"))
    in
-     tryfind (applythm verbosity (solver stack) lookup_t) matches
+     tryfind (applythm (solver stack) lookup_t) matches
    end
  in
-   Traverse.REDUCER {name = SOME ("reducer for " ^ relation_name rel_t),
+   Traverse.REDUCER {name = SOME ("reducer for "^term_to_string rel_t),
                      addcontext = addcontext,
                      apply = apply,
                      initial = initial_ctxt}
@@ -520,11 +497,6 @@ fun caa_tac0 backp (c : simptac_config) th =
       if #droptrues c andalso concl th ~~ boolSyntax.T then ALL_TAC
       else base
     end
-
-(* A simplification tactic reports at the simplifier.trace level of the
-   context it is run in, given to the simpset by in_trace_context *)
-fun in_context in_trace_context tac ss thl g c =
-    tac (in_trace_context c ss) thl g c
 
 fun full_simp_tacs {simp_rule, asm_simp_tac} =
 let

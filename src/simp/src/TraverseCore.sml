@@ -33,8 +33,7 @@ type apply_args =
    conv : term list -> term -> thm,
    context : context,
    stack : term list,
-   relation : term * (term -> thm),
-   trace : int}
+   relation : term * (term -> thm)}
 
 type simp_prover_ctxt =
   {stack : term list, context_thms : thm list, recurse : term -> thm}
@@ -49,7 +48,6 @@ type 'r traversal =
   {rewriters : 'r list,
    dprocs : 'r list,
    limit : int option,
-   trace : int option,
    travrules : Travrules.travrules,
    relation : term,
    initial : 'r -> context,
@@ -90,7 +88,7 @@ fun initial_context ({rewriters,dprocs,travrules=TRAVRULES tsdata,relation,
  *
  * ---------------------------------------------------------------------*)
 
-fun add_context verbosity collect_thms
+fun add_context collect_thms
       ({rewriters,dprocs,addcontext,...} : 'r traversal) = let
   val rewrite_collectors' = map addcontext rewriters
   val dproc_collectors' = map addcontext dprocs
@@ -101,7 +99,7 @@ fun add_context verbosity collect_thms
     if null thms then context
     else let
         val more_freevars = free_varsl (flatten (map hyp thms))
-        val _ = app (fn thm => trace_at verbosity (2,MORE_CONTEXT thm)) thms
+        val _ = map (fn thm => trace(2,MORE_CONTEXT thm)) thms
         fun mk_privcontext maker privcontext = maker (privcontext,thms)
         val newcontexts1 =
           if null thms then contexts1
@@ -128,7 +126,7 @@ end
 (* Add facts to the generic prover and binder-capture contexts without also
    reinstalling them in every reducer.  Hypothesis free variables force
    capture-avoiding renaming when traversal descends under a binder. *)
-fun add_solver_context verbosity collect_thms (context, thms) =
+fun add_solver_context collect_thms (context, thms) =
   if null thms then context
   else
     let
@@ -139,7 +137,7 @@ fun add_solver_context verbosity collect_thms (context, thms) =
          reads the list as a set. *)
       val more_freevars =
         HOLset.listItems (FVL (flatten (map hyp thms)) empty_tmset)
-      val _ = app (fn thm => trace_at verbosity (2,MORE_CONTEXT thm)) thms
+      val _ = map (fn thm => trace(2,MORE_CONTEXT thm)) thms
     in
       TSTATE
         {contexts1=contexts1, contexts2=contexts2,
@@ -264,12 +262,11 @@ fun TRAVERSE_IN_CONTEXT {check_abort=check_external_abort, eager, observer,
                          policy, root_only}
       (t as {limit,rewriters,dprocs,travrules,relation=rel,apply,
              subgoaler,solvers,...} : 'r traversal)
-      verbosity stack ctxt tm = let
+      stack ctxt tm = let
   open Uref
   val TRAVRULES {relations,congprocs,weakenprocs,...} = travrules
   val configured = needs_prover_context t
-  val trace = trace_at verbosity
-  val add_context' = add_context verbosity configured t
+  val add_context' = add_context configured t
   val get_relation' = get_relation travrules
   val lim_r = Uref.new limit
   val plain =
@@ -391,8 +388,7 @@ fun TRAVERSE_IN_CONTEXT {check_abort=check_external_abort, eager, observer,
       fun apply_reducer reducer context tm =
         ((if plain then () else charge tm);
          apply reducer {solver=ctxt_solver, conv=ctxt_conv, context=context,
-                        stack=stack, relation=reducer_relation,
-                        trace=verbosity} tm
+                        stack=stack, relation=reducer_relation} tm
          before dec lim_r)
       fun high_priority tm =
           (check lim_r;
@@ -406,8 +402,7 @@ fun TRAVERSE_IN_CONTEXT {check_abort=check_external_abort, eager, observer,
       val congproc_args =
           {solver=(fn tm => ctxt_solver stack tm), (* do not eta-convert! *)
            depther=depther,
-           freevars=freevars,
-           trace=verbosity}
+           freevars=freevars}
       fun apply_congproc congproc =
         if plain then congproc congproc_args
         else let
@@ -486,41 +481,29 @@ end
  *
  * ---------------------------------------------------------------------*)
 
-(* The trace level is settled once per application: NONE, the ambient
-   setting, is read when the term arrives rather than when the conversion
-   is built, so that a conversion built ahead of time still honours a
-   later change of the flag. *)
-fun TRAVERSE_WITH_CONTEXT {check_abort,observer,policy,root_only}
-      (t : 'r traversal) {reducer_context,solver_context} tm =
+fun TRAVERSE_WITH_CONTEXT {check_abort,observer,policy,root_only} t
+      {reducer_context,solver_context} tm =
    let
      val _ = case check_abort of NONE => () | SOME check => check ()
-     val verbosity = resolve_level (#trace t)
      val collect_thms = needs_prover_context t
      val context' =
-       add_solver_context verbosity collect_thms
-         (add_context verbosity collect_thms t
-                      (initial_context t,reducer_context),
+       add_solver_context collect_thms
+         (add_context collect_thms t (initial_context t,reducer_context),
           solver_context)
    in
      TRAVERSE_IN_CONTEXT
        {check_abort=check_abort, eager=false, observer=observer,
         policy=policy, root_only=root_only}
-       t verbosity [] context' tm
+       t [] context' tm
    end;
 
-(* The context is collected once, here, so its MORE_CONTEXT events are
-   judged against the level in force when the conversion is built. *)
-fun TRAVERSE (t : 'r traversal) thms =
-   let val context' =
-           if null thms then initial_context t
-           else add_context (resolve_level (#trace t)) false t
-                            (initial_context t,thms)
+fun TRAVERSE t thms =
+   let val context' = add_context false t (initial_context t,thms)
    in
-     fn tm =>
-       TRAVERSE_IN_CONTEXT
-         {check_abort=NONE, eager=true, observer=NONE, policy=ParentFirst,
-          root_only=false}
-         t (resolve_level (#trace t)) [] context' tm
+     TRAVERSE_IN_CONTEXT
+       {check_abort=NONE, eager=true, observer=NONE, policy=ParentFirst,
+        root_only=false}
+       t [] context'
    end;
 
 end (* struct *)

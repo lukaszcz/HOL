@@ -1043,11 +1043,8 @@ fun mkCSET_of ctxt =
 val leave_lets_var = mk_var("__leave_lets_alone__", bool)
 val LEAVE_LETS = ASSUME leave_lets_var
 
-(* The simpset is set to the context's simplifier.trace level before
-   anything is built from it: the conversions run below take no context. *)
-fun PRIM_STP_TAC ss0 finisher g ctxt =
+fun PRIM_STP_TAC ss finisher g ctxt =
  (let val has_constr_eqn = mkCSET_of ctxt
-     val ss = simpLib.in_trace_context ctxt ss0
      val ASM_SIMP = simpLib.ASM_SIMP_TAC ss []
      (* we don't have access to any theorem list that might have been passed
         to RW_TAC or SRW_TAC at this point, but we can look for the effect of
@@ -1110,9 +1107,8 @@ fun LIFT_SPLIT_SIMP ss simp th =
 
 fun SPLIT_SIMP simp = TRY (IF_CASES_TAC ORELSE CASE_TAC) THEN simp ;
 
-fun PRIM_NORM_TAC ss0 g ctxt =
+fun PRIM_NORM_TAC ss g ctxt =
  (let val has_constr_eqn = mkCSET_of ctxt
-     val ss = simpLib.in_trace_context ctxt ss0
      val ASM_SIMP = simpLib.ASM_SIMP_TAC ss []
   in
     REPEAT (GEN_TAC ORELSE CONJ_TAC)
@@ -1138,32 +1134,23 @@ fun PRIM_NORM_TAC ss0 g ctxt =
     PRIM_STP tac instead.
  ---------------------------------------------------------------------------*)
 
-(* These build on the simpset before PRIM_STP_TAC and PRIM_NORM_TAC see
-   it, and so set it to the context's simplifier.trace level first. *)
-fun STP_TAC ss0 finisher g ctxt =
-    let val ss = simpLib.in_trace_context ctxt ss0
-    in
-      PRIM_STP_TAC (rev_itlist add_simpls (tyinfol_of ctxt) ss) finisher g ctxt
-    end
+fun STP_TAC ss finisher g ctxt =
+    PRIM_STP_TAC (rev_itlist add_simpls (tyinfol_of ctxt) ss) finisher g ctxt
 
-fun RW_TAC ss0 thl g ctxt =
-    let val ss = simpLib.in_trace_context ctxt ss0
-    in
-      markerLib.ABBRS_THEN
-        (markerLib.mk_require_tac (fn thl => STP_TAC (ss && thl) NO_TAC))
-        thl g ctxt
-    end
+fun RW_TAC ss thl g = markerLib.ABBRS_THEN
+                          (markerLib.mk_require_tac
+                             (fn thl => STP_TAC (ss && thl) NO_TAC))
+                          thl
+                          g
 val rw_tac = RW_TAC
 
-fun NORM_TAC ss0 thl g ctxt =
-    let val ss = simpLib.in_trace_context ctxt ss0 in
+fun NORM_TAC ss thl g ctxt =
     markerLib.ABBRS_THEN
       (fn thl =>
           PRIM_NORM_TAC (rev_itlist add_simpls (tyinfol_of ctxt) (ss && thl)))
       thl
       g
       ctxt
-    end
 
 val bool_ss = boolSimps.bool_ss;
 
@@ -1512,15 +1499,14 @@ fun do_logged_updates thys =
 fun option_fold f NONE x = x
   | option_fold f (SOME a) x = f a x
 
-fun PRIM_SRW_TAC ss0 ssdl thl g ctxt =
+fun PRIM_SRW_TAC ss0 ssdl thl g =
     let
-      val ss1 = simpLib.in_trace_context ctxt ss0
-      val ss = foldl (fn (ssd,ss) => ss ++ ssd) ss1 ssdl
+      val ss = foldl (fn (ssd,ss) => ss ++ ssd) ss0 ssdl
     in
       markerLib.ABBRS_THEN
         (markerLib.mk_require_tac (fn thl => PRIM_STP_TAC (ss && thl) NO_TAC))
-        thl g ctxt
-    end
+        thl
+    end g;
 fun SRW_TAC ssdl thms g ctxt =
     PRIM_SRW_TAC (srw_ss_of ctxt) ssdl thms g ctxt
 val srw_tac = SRW_TAC

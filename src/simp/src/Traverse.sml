@@ -41,7 +41,6 @@ fun addctxt ths (REDUCER {name,initial,addcontext,apply}) =
  *
  * ---------------------------------------------------------------------*)
 type traverse_data = {limit : int option,
-                      trace : int option,
                       rewriters: reducer list,
                       dprocs: reducer list,
                       travrules: Travrules.travrules,
@@ -51,11 +50,9 @@ fun initial (REDUCER {initial,...}) = initial
 fun addcontext (REDUCER {addcontext,...}) = addcontext
 fun apply (REDUCER {apply,...}) = apply
 
-fun TRAVERSE ({limit,trace,dprocs,rewriters,travrules,relation}
-              : traverse_data) =
+fun TRAVERSE ({limit,dprocs,rewriters,travrules,relation} : traverse_data) =
     TraverseCore.TRAVERSE
-      {rewriters=rewriters, dprocs=dprocs, limit=limit, trace=trace,
-       travrules=travrules,
+      {rewriters=rewriters, dprocs=dprocs, limit=limit, travrules=travrules,
        relation=relation, initial=initial, addcontext=addcontext,
        apply=apply, subgoaler=NONE, solvers=[]}
 

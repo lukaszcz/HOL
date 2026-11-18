@@ -47,8 +47,6 @@ signature Satisfy = sig
    val satisfy : term list -> term list -> term list -> (term,term) Abbrev.subst
    val SATISFY : factdb -> term -> thm
    val SATISFY_CONV : factdb -> conv
-   (* SATISFY_CONV tracing at the given simplifier.trace level *)
-   val SATISFY_CONV_AT : int -> factdb -> conv
    val SATISFY_TAC : tactic
    val add_facts : factdb -> thm list -> factdb
 end (* sig *)

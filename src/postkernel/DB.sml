@@ -204,7 +204,6 @@ fun revlookup th = Termtab.lookup_list (revmap (lemmas())) (concl th)
     entries in the current theory segment.
  ---------------------------------------------------------------------------*)
 fun CT() = lemmas()
-val CT_of = lemmas_of
 
 fun store_local private s th =
     upd_db (fn db =>
@@ -518,8 +517,8 @@ fun selectDB sels =
       Some other lookup functions
  ---------------------------------------------------------------------------*)
 
-fun thm_class_of ctxt origf thy name = let
-  val db = namemap (CT_of ctxt)
+fun thm_class origf thy name = let
+  val db = namemap (CT())
   val thy = norm_thyname thy
   val nosuchthm = ("theorem "^thy^"$"^name^" not found")
   val thymap = case Symtab.lookup db thy of
@@ -536,12 +535,8 @@ in
                        ("multiple things in theory "^thy^" with name "^name)
 end
 
-fun thm_class origf thy name =
-    thm_class_of (Context.snapshot()) origf thy name
-
 fun fetch s1 s2 = #1 (thm_class "fetch" s1 s2);
 fun fetch_knm{Thy,Name} = fetch Thy Name
-fun fetch_knm_of ctxt {Thy,Name} = #1 (thm_class_of ctxt "fetch" Thy Name)
 fun lookup {Thy,Name} = Lib.total (thm_class "lookup" Thy) Name
 
 (* Register bool constants in the kernel on theory load.

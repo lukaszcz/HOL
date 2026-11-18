@@ -26,7 +26,7 @@ fun unchanged UNCHANGED = true | unchanged _ = false
 fun eqrefl {Rinst,arg} = REFL arg
 fun reject tm = NO_CONV tm
 fun run (proc : Opening.congproc) solver depther tm =
-  proc equality {solver=solver,depther=depther,freevars=[],trace=0} tm
+  proc equality {solver=solver,depther=depther,freevars=[]} tm
 val a = ``ce_a:bool``
 val b = ``ce_b:bool``
 val c = ``ce_c:bool``
@@ -201,11 +201,11 @@ val _ = let
       {relations=[Travrules.EQ_preorder],congprocs=[],
        weakenprocs=[weakener]}
     val d : E.traverse_data =
-      {limit=NONE, trace=NONE,rewriters=[E.lift reducer],dprocs=[],
+      {limit=NONE,rewriters=[E.lift reducer],dprocs=[],
        relation=equality,travrules=tr}
     val cv = if configured then E.XTRAVERSE (d,E.default_config) [ASSUME p]
       else Traverse.TRAVERSE
-        {limit=NONE, trace=NONE,rewriters=[reducer],dprocs=[],
+        {limit=NONE,rewriters=[reducer],dprocs=[],
          relation=equality,travrules=tr} [ASSUME p]
     val _ = check "weakener collection construction stage"
       (!events = (if configured then [] else ["collect"]))
@@ -255,7 +255,7 @@ val _ = let
   val saved = congExtLib.CONGRUENCE_SIMP_QCONV equality cs ss []
   val base_data = S.traversedata_for_ss ss
   val contextual = E.XTRAVERSE
-    ({limit=NONE, trace=NONE,rewriters= #rewriters base_data,dprocs=[],
+    ({limit=NONE,rewriters= #rewriters base_data,dprocs=[],
       relation=equality,travrules=Travrules.mk_threaded_travrules
         [Travrules.EQ_preorder] [cong]},E.default_config) []
   val _ = check "threaded builder supplies later-premise local context"
@@ -278,8 +278,7 @@ val _ = let
     (same (old tm) old_proof)
   val direct_ss = S.++ (S.empty_ss,S.rewrites [ab,gbc])
   val cv = E.XTRAVERSE
-    ({limit=NONE, trace=NONE,
-      rewriters= #rewriters (S.traversedata_for_ss direct_ss),
+    ({limit=NONE,rewriters= #rewriters (S.traversedata_for_ss direct_ss),
       dprocs=[],relation=equality,travrules=rules},E.default_config) []
 in check "threaded travrules work in configured traversal"
      (same (cv input) expected) end

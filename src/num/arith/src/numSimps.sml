@@ -349,9 +349,7 @@ type ctxt = thm list;
 
 fun contains_minus t = List.exists numSyntax.is_minus (numSyntax.strip_plus t)
 
-(* Reporting at the given simplifier.trace level *)
-fun CTXT_ARITH_AT verbosity thms tm =
-  let val trace = trace_at verbosity in
+fun CTXT_ARITH thms tm =
   if
     (type_of tm = Type.bool) andalso
     (is_arith tm orelse (aconv tm F andalso not (null thms)))
@@ -394,10 +392,7 @@ fun CTXT_ARITH_AT verbosity thms tm =
           end
         else ADDR_CANON_CONV tm
       end
-    else failwith "CTXT_ARITH: not applicable"
-  end
-
-fun CTXT_ARITH thms tm = CTXT_ARITH_AT (resolve_level NONE) thms tm
+    else failwith "CTXT_ARITH: not applicable";
 
 val boring_ts = [numSyntax.bit1_tm, numSyntax.bit2_tm, numSyntax.numeral_tm]
 fun is_boring t = let
@@ -464,7 +459,7 @@ in
   HOLset.listItems (recurse empty_tmset empty_tmset t)
 end
 
-val (CACHED_ARITH_AT,arith_cache) = let
+val (CACHED_ARITH,arith_cache) = let
   fun check tm = let
     val ty = type_of tm
   in
@@ -473,13 +468,11 @@ val (CACHED_ARITH_AT,arith_cache) = let
     (ty=Type.bool andalso (is_arith tm orelse aconv tm F))
   end
 in
-  RCACHE_AT {capacity=2000, per_key_cap=50} (dp_vars, check, CTXT_ARITH_AT)
+  RCACHE {capacity=2000, per_key_cap=50} (dp_vars, check, CTXT_ARITH)
   (* the check function determines whether or not a term might be handled
      by the decision procedure -- we want to handle F, because it's possible
      that we have accumulated a contradictory context. *)
 end;
-
-fun CACHED_ARITH thms tm = CACHED_ARITH_AT (resolve_level NONE) thms tm
 
 fun ARITH_REDUCER fil = let
   exception CTXT of thm list;
@@ -493,8 +486,7 @@ fun ARITH_REDUCER fil = let
 in
   REDUCER {name=SOME"NUM_ARITH_DP",
            addcontext = add_ctxt,
-           apply = fn args =>
-                      CACHED_ARITH_AT (#trace args) (get_ctxt (#context args)),
+           apply = fn args => CACHED_ARITH (get_ctxt (#context args)),
            initial = CTXT []}
 end;
 

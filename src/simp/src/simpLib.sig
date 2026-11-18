@@ -79,15 +79,14 @@ sig
   val frag_name : ssfrag -> string option
 
   (* A fragment's contents, so that other engines (simpExtLib.lift_ssfrag)
-     can take ordinary fragments.  Its filter is given the simplifier.trace
-     level of the simpset it makes rewrites for. *)
+     can take ordinary fragments *)
   val dest_ssfrag :
       ssfrag ->
       {name : string option,
        convs : {thypart : string option, cd : convdata} list,
        rewrs : (thname option * thm) list,
        ac : (thm * thm) list,
-       filter : (int -> controlled_thm -> controlled_thm list) option,
+       filter : (controlled_thm -> controlled_thm list) option,
        dprocs : Traverse.reducer list,
        congs : thm list,
        relsimps : relsimpdata list}
@@ -114,11 +113,6 @@ sig
   val ac_ss          : (thm * thm) list -> ssfrag
   val conv_ss        : convdata -> ssfrag
   val relsimp_ss     : relsimpdata -> ssfrag
-  (* A fragment whose filter, unlike one SSFRAG takes, is given the
-     simplifier.trace level of the simpset it makes rewrites for, to
-     report what it makes of a theorem at that level *)
-  val leveled_filter_ss :
-      (int -> controlled_thm -> controlled_thm list) -> ssfrag
   val std_conv_ss    : stdconvdata -> ssfrag
   val merge_ss       : ssfrag list -> ssfrag
   val name_ss        : string -> ssfrag -> ssfrag
@@ -165,20 +159,6 @@ sig
   val &&              : simpset * thm list -> simpset  (* infix *)
   val limit           : int -> simpset -> simpset
   val unlimit         : simpset -> simpset
-  (* The simplifier.trace level a simpset reports at.  Unset, it is the
-     ambient setting at the time; the tactics set it from the context
-     they are run in. *)
-  val set_trace_level : int -> simpset -> simpset
-  (* Back to unset.  A value derived from an unset simpset, which is
-     built where nobody's level applies, is built at level 0 and unset
-     afterwards, so that building it reads no setting and it reports at
-     the ambient one, as the simpset it came from did. *)
-  val unset_trace_level : simpset -> simpset
-  val trace_level     : simpset -> int
-  (* The simpset set to the context's level: what a tactic does first
-     when it builds a simpset before handing it on, so that building it
-     does not read the ambient setting either. *)
-  val in_trace_context : Context.t -> simpset -> simpset
   val add_named_rwt   : (thname * thm) -> ssfrag -> ssfrag
 
   val add_weakener : weakener_data -> simpset -> simpset
@@ -191,7 +171,7 @@ sig
   val dest_simpset :
       simpset ->
       {history : history_item list, limit : int option,
-       trace : int option, excluded : string list}
+       excluded : string list}
 
   val add_relsimp  : relsimpdata -> simpset -> simpset
 

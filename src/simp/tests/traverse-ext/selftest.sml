@@ -24,7 +24,7 @@ val quiet = T.charge_only (fn () => ())
 val no_rules = Travrules.TRAVRULES
   {relations=[Travrules.EQ_preorder],congprocs=[],weakenprocs=[]}
 fun data rules rewriters dprocs limit : T.traverse_data =
-  {rewriters=rewriters,dprocs=dprocs,limit=limit, trace=NONE,
+  {rewriters=rewriters,dprocs=dprocs,limit=limit,
    travrules=rules,relation=equality}
 fun config subgoaler solvers depth ord : T.traverse_config =
   {subgoaler=subgoaler,solvers=solvers,cond_depth=depth,term_ord=ord}
@@ -57,8 +57,7 @@ val _ = let
   val ordinary = Traverse.REDUCER
     {name=SOME "opaque ordinary",initial=Private (token,[]),
      addcontext=collector,
-     apply=fn {solver,conv,context,stack,relation=(rel,refl),
-               trace=_} => fn tm =>
+     apply=fn {solver,conv,context,stack,relation=(rel,refl)} => fn tm =>
        let
          val _ = applications := !applications + 1
          val _ = case context of Private (r,ths) =>
@@ -100,14 +99,12 @@ val _ = let
   val _ = check "integer record view forwards ordinary apply"
     (same (#apply rd
       {solver=solver,conv=conv,context= #initial rd,stack=[a,b],
-       relation=(equality,REFL),cond_depth=19,term_ord=fn _ => LESS,
-       trace=0} a)
+       relation=(equality,REFL),cond_depth=19,term_ord=fn _ => LESS} a)
       (REFL a))
   val _ = check "option record view forwards ordinary apply"
     (same (#apply rc
       {solver=solver,conv=conv,context= #initial rc,stack=[a,b],
-       relation=(equality,REFL),cond_depth=NONE,term_ord=fn _ => GREATER,
-       trace=0} a)
+       relation=(equality,REFL),cond_depth=NONE,term_ord=fn _ => GREATER} a)
       (REFL a))
   val _ = check "adapter callback counts"
     (!collections = 1 andalso !applications = 2 andalso
@@ -125,8 +122,7 @@ val _ = let
   val ordinary = Traverse.REDUCER
     {name=NONE,initial=Private (token,[]),
      addcontext=fn (ctxt,_) => ctxt,
-     apply=fn {solver,conv,context,stack,relation=(rel,refl),
-               trace=_} => fn tm =>
+     apply=fn {solver,conv,context,stack,relation=(rel,refl)} => fn tm =>
        (case context of Private (r,[]) =>
           if Portable.pointer_eq (r,token) then ()
           else raise Fail "engine changed lifted payload"
@@ -180,7 +176,7 @@ val _ = let
   in
     #apply rd {solver=fn _ => ASSUME,conv=fn _ => REFL,
       context= #initial rd,stack=[],cond_depth=depth,
-      term_ord=fn _ => LESS,relation=(equality,REFL),trace=0} a
+      term_ord=fn _ => LESS,relation=(equality,REFL)} a
   end
   val _ = check "CONFIG addctxt preserves payload and NONE"
     (same (invoke native NONE) (REFL a) andalso !depths = [NONE])
@@ -290,7 +286,7 @@ val _ = let
   val mutates = ref 0
   fun reducer mutate = T.CONFIG_REDUCER
     {name=NONE,initial=Fail "depth",addcontext=fn (ctxt,_) => ctxt,
-     apply=fn {solver,stack,cond_depth,term_ord,trace,...} =>
+     apply=fn {solver,stack,cond_depth,term_ord,...} =>
        FIRST_CONV
          [fn tm => (if aconv tm a then
                       (seen := !seen @ [cond_depth];
@@ -300,7 +296,7 @@ val _ = let
                        else ())
                     else (); NO_CONV tm),
           run {solver=solver,stack=stack,cond_depth=cond_depth,
-               term_ord=term_ord, trace=trace}]}
+               term_ord=term_ord}]}
   val cfg = config (SOME (fn _ => REFL))
     [{name="depth fact",solve=fn _ => fn tm =>
         if aconv tm p then ASSUME p else NO_CONV tm}]
@@ -345,9 +341,9 @@ val _ = let
   val comparisons = ref 0
   val perm = T.CONFIG_REDUCER
     {name=NONE,initial=Fail "perm",addcontext=fn (ctxt,_) => ctxt,
-     apply=fn {solver,stack,cond_depth,term_ord,trace,...} =>
+     apply=fn {solver,stack,cond_depth,term_ord,...} =>
        native {solver=solver,stack=stack,cond_depth=cond_depth,
-               term_ord=term_ord, trace=trace}}
+               term_ord=term_ord}}
   val input = ``(ext_order_a:'a) = ext_order_b``
   val output = ``(ext_order_b:'a) = ext_order_a``
   fun ordered ord = T.XTRAVERSE
@@ -458,9 +454,9 @@ val _ = let
     ("root side condition",conditional) false
   val conditional_reducer = T.CONFIG_REDUCER
     {name=NONE,initial=Fail "root",addcontext=fn (ctxt,_) => ctxt,
-     apply=fn {solver,stack,cond_depth,term_ord,trace,...} =>
+     apply=fn {solver,stack,cond_depth,term_ord,...} =>
        run {solver=solver,stack=stack,cond_depth=cond_depth,
-            term_ord=term_ord, trace=trace}}
+            term_ord=term_ord}}
   val xd = (data Travrules.EQ_tr
     [conditional_reducer,ordinary ab,ordinary fbT] [] NONE,
     config NONE [] (SOME 4) NONE)
@@ -630,7 +626,7 @@ val _ = let
                   (if low then [T.lift ordinary] else []) NONE) [TRUTH]
       else Traverse.TRAVERSE
         {rewriters=if low then [] else [ordinary],
-         dprocs=if low then [ordinary] else [],limit=NONE, trace=NONE,
+         dprocs=if low then [ordinary] else [],limit=NONE,
          travrules=rules,relation=equality} [TRUTH]
     val _ = check "default collects once before any factory"
       (!events = ["collect"])
@@ -745,10 +741,10 @@ val _ = let
   val solves = ref 0
   val reducer = T.CONFIG_REDUCER
     {name=NONE,initial=Fail "observer",addcontext=fn (ctxt,_) => ctxt,
-     apply=fn {solver,stack,cond_depth,term_ord,trace,...} => fn tm =>
+     apply=fn {solver,stack,cond_depth,term_ord,...} => fn tm =>
        (applications := !applications + 1;
         runner {solver=solver,stack=stack,cond_depth=cond_depth,
-                term_ord=term_ord, trace=trace} tm)}
+                term_ord=term_ord} tm)}
   val cfg = config (SOME (fn _ => REFL))
     [{name="fails",solve=fn _ => fn tm =>
       (solves := !solves + 1; NO_CONV tm)}] (SOME 4) NONE

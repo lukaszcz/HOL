@@ -12,7 +12,7 @@ open HolKernel Drule Conv Abbrev;
               conv : term list -> term -> thm, context : context,
               stack : term list, cond_depth : int option,
               term_ord : term * term -> order,
-              relation : term * (term -> thm), trace : int} -> conv}
+              relation : term * (term -> thm)} -> conv}
   type reducer_context_data =
     {name : string option, initial : context,
      addcontext : context * thm list -> context,
@@ -20,7 +20,7 @@ open HolKernel Drule Conv Abbrev;
               conv : term list -> term -> thm, context : context,
               stack : term list, cond_depth : int,
               term_ord : term * term -> order,
-              relation : term * (term -> thm), trace : int} -> conv}
+              relation : term * (term -> thm)} -> conv}
   datatype reducer = LIFTED of Traverse.reducer
                    | CONTEXT_REDUCER of reducer_context_data
                    | CONFIG_REDUCER of reducer_config_data
@@ -34,27 +34,25 @@ open HolKernel Drule Conv Abbrev;
       let val {name,initial,addcontext,apply} = Traverse.dest_reducer r
       in
         {name=name, initial=initial, addcontext=addcontext,
-         apply=fn {solver,conv,context,stack,relation,trace,...} =>
+         apply=fn {solver,conv,context,stack,relation,...} =>
            apply {solver=solver,conv=conv,context=context,stack=stack,
-                  relation=relation,trace=trace}}
+                  relation=relation}}
       end
     | reducer_config_data
         (CONTEXT_REDUCER {name,initial,addcontext,apply}) =
       {name=name, initial=initial, addcontext=addcontext,
-       apply=fn {solver,conv,context,stack,relation,cond_depth,term_ord,
-                 trace} =>
+       apply=fn {solver,conv,context,stack,relation,cond_depth,term_ord} =>
          apply {solver=solver,conv=conv,context=context,stack=stack,
-                relation=relation,term_ord=term_ord,trace=trace,
+                relation=relation,term_ord=term_ord,
                 cond_depth=case cond_depth of NONE => !Cond_rewr.stack_limit
                                            | SOME n => n}}
   fun reducer_data r =
     let val {name,initial,addcontext,apply} = reducer_config_data r
     in
       {name=name, initial=initial, addcontext=addcontext,
-       apply=fn {solver,conv,context,stack,relation,cond_depth,term_ord,
-                 trace} =>
+       apply=fn {solver,conv,context,stack,relation,cond_depth,term_ord} =>
          apply {solver=solver,conv=conv,context=context,stack=stack,
-                relation=relation,term_ord=term_ord,trace=trace,
+                relation=relation,term_ord=term_ord,
                 cond_depth=SOME cond_depth}}
     end
   fun addctxt ths (LIFTED r) = LIFTED (Traverse.addctxt ths r)
@@ -70,7 +68,6 @@ type ssolver = TraverseCore.ssolver
 type subgoaler = TraverseCore.subgoaler
 
 type traverse_data = {limit : int option,
-                      trace : int option,
                       rewriters: reducer list,
                       dprocs: reducer list,
                       travrules: Travrules.travrules,
@@ -153,26 +150,25 @@ fun reducer_addcontext (LIFTED r) =
    CONFIG_REDUCER transports NONE unchanged: native candidates read the
    live default themselves.  Older CONTEXT_REDUCER clients need an int. *)
 fun core_traversal
-      ({limit,trace,rewriters,dprocs,travrules,relation} : traverse_data,
+      ({limit,rewriters,dprocs,travrules,relation} : traverse_data,
        {subgoaler,solvers,cond_depth,term_ord} : traverse_config) =
   let
     val term_ord = Option.getOpt (term_ord, Cond_rewr.ac_term_ord)
     fun apply (LIFTED r) args = #apply (Traverse.dest_reducer r) args
       | apply (CONTEXT_REDUCER {apply,...})
-              {solver,conv,context,stack,relation,trace} =
+              {solver,conv,context,stack,relation} =
           apply {solver=solver, conv=conv, context=context, stack=stack,
                  cond_depth=(case cond_depth of
                                  NONE => !Cond_rewr.stack_limit
                                | SOME n => n),
-                 term_ord=term_ord, relation=relation, trace=trace}
+                 term_ord=term_ord, relation=relation}
       | apply (CONFIG_REDUCER {apply,...})
-              {solver,conv,context,stack,relation,trace} =
+              {solver,conv,context,stack,relation} =
           apply {solver=solver, conv=conv, context=context, stack=stack,
                  cond_depth=cond_depth, term_ord=term_ord,
-                 relation=relation, trace=trace}
+                 relation=relation}
   in
-    {rewriters=rewriters, dprocs=dprocs, limit=limit, trace=trace,
-     travrules=travrules,
+    {rewriters=rewriters, dprocs=dprocs, limit=limit, travrules=travrules,
      relation=relation, initial=reducer_initial,
      addcontext=reducer_addcontext, apply=apply, subgoaler=subgoaler,
      solvers=solvers}

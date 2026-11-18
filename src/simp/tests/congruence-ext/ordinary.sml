@@ -11,7 +11,7 @@ val f = mk_var ("f",bool --> bool)
 val cong = DISCH (mk_eq (a,b)) (AP_TERM f (ASSUME (mk_eq (a,b))))
 val tm = mk_comb (f,a)
 val cv = Opening.CONGPROC eqrefl cong equality
-  {solver=ASSUME,freevars=[],depther=fn _ => REFL,trace=0}
+  {solver=ASSUME,freevars=[],depther=fn _ => REFL}
 val th = cv tm
 val _ = check "ordinary CONGPROC preserves conclusion and hypotheses"
   (aconv (concl th) (mk_eq (tm,tm)) andalso null (hyp th))

@@ -14,12 +14,11 @@ congLibFn
        val initial = #initial data
        val addcontext = #addcontext data
 
-       fun apply {solver,conv,context,stack,relation as (_, refl),trace} tm =
-       let
+       fun apply {solver,conv,context,stack,relation as (_, refl)} tm = let
          val eqthm = #apply data
                             {solver=solver,conv=conv,
                              context=context,stack=stack,
-                             relation=relation,trace=trace}
+                             relation=relation}
                             tm
          val congThm = refl tm
          val congThm = CONV_RULE (RAND_CONV (REWR_CONV eqthm)) congThm
@@ -32,12 +31,9 @@ congLibFn
      end
      val CONGPROC = Opening.CONGPROC
      fun traversal ss =
-       let val {rewriters,dprocs,travrules,trace,...} =
-               simpLib.traversedata_for_ss ss
+       let val {rewriters,dprocs,travrules,...} = simpLib.traversedata_for_ss ss
        in
-         ({rewriters=rewriters, dprocs=dprocs, travrules=travrules,
-           trace=trace},
+         ({rewriters=rewriters, dprocs=dprocs, travrules=travrules},
           Traverse.TRAVERSE)
        end
-     val in_trace_context = simpLib.in_trace_context
    end)

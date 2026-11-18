@@ -146,9 +146,7 @@ fun is_arith_thm thm =
 val is_arith_asm = is_arith_thm o ASSUME
 
 open Trace Cache Traverse
-(* Reporting at the given simplifier.trace level *)
-fun CTXT_ARITH DP DPname verbosity thms tm = let
-  val trace = trace_at verbosity
+fun CTXT_ARITH DP DPname thms tm = let
   val context = map concl thms
   fun try gl = let
     val gl' = list_mk_imp(context,gl)
@@ -250,8 +248,7 @@ fun mkSS DPname DP = let
     fun check tm =
         type_of tm = Type.bool andalso is_arith tm andalso not (Teq tm)
   in
-    RCACHE_AT {capacity=2000, per_key_cap=50}
-              (dpvars, check, CTXT_ARITH DP DPname)
+    RCACHE {capacity=2000, per_key_cap=50} (dpvars, check, CTXT_ARITH DP DPname)
   (* the check function determines whether or not a term might be handled
      by the decision procedure -- we want to handle F, because it's possible
      that we have accumulated a contradictory context. *)
@@ -269,7 +266,7 @@ fun mkSS DPname DP = let
   in
     REDUCER {name = SOME DPname,
              addcontext = add_ctxt,
-             apply = fn args => CDP (#trace args) (get_ctxt (#context args)),
+             apply = fn args => CDP (get_ctxt (#context args)),
              initial = CTXT []}
   end
 in

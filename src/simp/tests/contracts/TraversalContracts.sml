@@ -150,7 +150,7 @@ fun collectors record = let
     else NO_CONV tm
   val data : Traverse.traverse_data =
     {rewriters=map reducer ["R1","R2"],dprocs=map reducer ["D1","D2"],
-     limit=NONE, trace=NONE,relation=boolSyntax.equality,
+     limit=NONE,relation=boolSyntax.equality,
      travrules=Travrules.TRAVRULES
        {relations=[Travrules.EQ_preorder],congprocs=[descend],
         weakenprocs=[]}}
@@ -227,7 +227,7 @@ fun factories record = let
          fn tm => (event (tag ^ ":" ^ label tm); NO_CONV tm)))
     val data : Traverse.traverse_data =
       {rewriters=if low then [] else [reducer],
-       dprocs=if low then [reducer] else [],limit=NONE, trace=NONE,
+       dprocs=if low then [reducer] else [],limit=NONE,
        relation=boolSyntax.equality,
        travrules=Travrules.TRAVRULES
          {relations=[Travrules.EQ_preorder],congprocs=[factory "C"],
@@ -270,7 +270,7 @@ fun factories record = let
      apply=fn _ => fn tm =>
        if aconv tm a then (ready := true; ab) else NO_CONV tm}
   val cv = Traverse.TRAVERSE
-    {rewriters=[reducer],dprocs=[],limit=NONE, trace=NONE,
+    {rewriters=[reducer],dprocs=[],limit=NONE,
      relation=boolSyntax.equality,
      travrules=Travrules.TRAVRULES
        {relations=[Travrules.EQ_preorder],congprocs=[gated],
@@ -282,7 +282,7 @@ fun factories record = let
   fun throwing error : Opening.congproc = fn _ => fn _ =>
     (record "throwing-factory"; raise error)
   fun stop error = Traverse.TRAVERSE
-    {rewriters=[reducer],dprocs=[],limit=NONE, trace=NONE,
+    {rewriters=[reducer],dprocs=[],limit=NONE,
      relation=boolSyntax.equality,
      travrules=Travrules.TRAVRULES
        {relations=[Travrules.EQ_preorder],congprocs=[throwing error],

@@ -342,7 +342,7 @@ val _ = let
   val zero = ref 0
   val rebound = Cond_rewrExt.rebind p (BOUNDED zero)
   val config = {solver=fn _ => ASSUME,stack=[],cond_depth=NONE,
-                term_ord=Cond_rewr.ac_term_ord,trace=0}
+                term_ord=Cond_rewr.ac_term_ord}
   val cv = #configured (Cond_rewrExt.runners rebound) config
   val _ = result "rebind to actual zero cannot refresh it"
     cv input (REFL input)

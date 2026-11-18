@@ -9,8 +9,7 @@ sig
   (* A reducer's apply function also receives the side-condition depth
      limit (NONE when none is set; see Cond_rewr.stack_limit) and the order
      used for permutative rewrites.  In reducer_context_data, an unset
-     limit is given as the value of Cond_rewr.stack_limit.  Both receive
-     the simplifier.trace level the traversal reports at. *)
+     limit is given as the value of Cond_rewr.stack_limit. *)
   type reducer_config_data =
     {name : string option, initial : context,
      addcontext : context * thm list -> context,
@@ -18,7 +17,7 @@ sig
               conv : term list -> term -> thm, context : context,
               stack : term list, cond_depth : int option,
               term_ord : term * term -> order,
-              relation : term * (term -> thm), trace : int} -> conv}
+              relation : term * (term -> thm)} -> conv}
   type reducer_context_data =
     {name : string option, initial : context,
      addcontext : context * thm list -> context,
@@ -26,7 +25,7 @@ sig
               conv : term list -> term -> thm, context : context,
               stack : term list, cond_depth : int,
               term_ord : term * term -> order,
-              relation : term * (term -> thm), trace : int} -> conv}
+              relation : term * (term -> thm)} -> conv}
 
   type reducer
   val lift : Traverse.reducer -> reducer
@@ -46,11 +45,9 @@ sig
   type simp_prover_ctxt = TraverseCore.simp_prover_ctxt
   type ssolver = TraverseCore.ssolver
   type subgoaler = TraverseCore.subgoaler
-  (* trace: the simplifier.trace level, NONE for the ambient setting *)
   type traverse_data =
-    {rewriters : reducer list, limit : int option, trace : int option,
-     dprocs : reducer list, travrules : Travrules.travrules,
-     relation : term}
+    {rewriters : reducer list, limit : int option, dprocs : reducer list,
+     travrules : Travrules.travrules, relation : term}
   (* The settings of simpExtLib's set_subgoaler, add_unsafe_solver,
      set_cond_depth and set_term_ord; NONE gives the default. *)
   type traverse_config =

@@ -76,19 +76,11 @@ fun unAC th = let val th1 = PURE_REWRITE_RULE [AC_DEF] th
 
 fun genCong def th = EQ_MP (SYM (SPEC (concl th) def)) th
 
-fun un_cong_with rule marker th =
-  (if same_const marker (rator (concl th)) then SOME (rule th) else NONE)
+fun genUnCong marker def th =
+  (if same_const marker (rator (concl th)) then
+     SOME (PURE_REWRITE_RULE [def] th)
+   else NONE)
   handle HOL_ERR _ => NONE
-
-fun genUnCong marker def = un_cong_with (PURE_REWRITE_RULE [def]) marker
-
-fun genUnCongAt monitor marker def =
-  un_cong_with
-    (CONV_RULE
-       (TOP_DEPTH_CONV
-          (Rewrite.REWRITES_CONV_AT monitor
-             (Rewrite.add_rewrites Rewrite.empty_rewrites [def]))))
-    marker
 
 fun Cong th = genCong markerTheory.Cong_def th;
 

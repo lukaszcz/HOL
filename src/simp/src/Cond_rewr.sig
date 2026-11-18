@@ -39,23 +39,16 @@ sig
   val ac_term_ord    : term * term -> order
   val mk_cond_rewrs  : controlled_thm -> controlled_thm list
   val IMP_EQ_CANON   : controlled_thm -> controlled_thm list
-  (* The same, reporting what they discard or weaken at the given
-     simplifier.trace level rather than the ambient one *)
-  val mk_cond_rewrs_at : int -> controlled_thm -> controlled_thm list
-  val IMP_EQ_CANON_AT  : int -> controlled_thm -> controlled_thm list
   val COND_REWR_CONV : string * thm -> bool ->
                        (term list -> term -> thm) -> term list -> conv
 
   (* COND_REWR_CONV's matcher, prepared once, behind two runners.  legacy
-     is COND_REWR_CONV, reporting at the ambient simplifier.trace level.
-     configured takes the side-condition depth (NONE: read stack_limit at
-     each application), the order deciding whether a permutative rewrite
-     applies, and the simplifier.trace level to report at.  legacy is
-     configured with NONE, ac_term_ord and the ambient level. *)
+     is COND_REWR_CONV.  configured takes the side-condition depth (NONE:
+     read stack_limit at each application) and the order deciding whether
+     a permutative rewrite applies. *)
   type config =
     {solver : term list -> term -> thm, stack : term list,
-     cond_depth : int option, term_ord : term * term -> order,
-     trace : int}
+     cond_depth : int option, term_ord : term * term -> order}
   type runners =
     {legacy : (term list -> term -> thm) -> term list -> conv,
      configured : config -> conv}

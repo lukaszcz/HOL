@@ -51,7 +51,7 @@ val expected = MP rule (ASSUME p)
 val two_expected = MP (MP two (ASSUME p)) (ASSUME q)
 fun solver _ tm = ASSUME tm
 fun cfg solve stack depth ord : Cond_rewrExt.config =
-  {solver=solve,stack=stack,cond_depth=depth,term_ord=ord,trace=0}
+  {solver=solve,stack=stack,cond_depth=depth,term_ord=ord}
 fun default solve stack depth =
   cfg solve stack depth Cond_rewr.ac_term_ord
 val paired : Cond_rewrExt.runners =
@@ -89,7 +89,7 @@ val _ = Lib.with_flag (Cond_rewr.stack_limit,0) (fn () =>
      (same (Cond_rewrExt.COND_REWR_CONV_WITH_CONTEXT
         ("conditional",rule) false
         {solver=solver,stack=[],cond_depth=1,
-         term_ord=Cond_rewr.ac_term_ord,trace=0} input) expected))) ()
+         term_ord=Cond_rewr.ac_term_ord} input) expected))) ()
 
 (* Conditions prepend, in theorem order, to the caller's exact stack.
    Calls with a nonempty stack must not count as top-level rewrites. *)
@@ -149,7 +149,7 @@ val _ = List.app (fn (name,make) =>
   [("paired",Cond_rewrExt.COND_REWR_CONVS),
    ("ordinary",fn nmth => fn bounded =>
       {legacy=Cond_rewr.COND_REWR_CONV nmth bounded,
-       configured=fn {solver,stack,cond_depth,term_ord,trace} =>
+       configured=fn {solver,stack,cond_depth,term_ord} =>
          Cond_rewr.COND_REWR_CONV nmth bounded solver stack})]
 val _ = fails "WITH_CONFIG malformed theorem fails before configuration"
   construction (fn () =>

@@ -110,19 +110,7 @@ fun enable_split_attribute () =
   SplitData.initialize {validate=ignore o is_asm_split}
 val exclude_split = SplitData.exclude
 val named_split_thms = SplitData.named_rules
-val named_split_thms_of = SplitData.named_rules_of
 fun split_thms () = map #2 (named_split_thms ())
-
-(* The tidy-up of a derived assumption rule's right side.  A rule is
-   derived wherever it is first wanted, inside a proof as often as not, so
-   the pass is a fixed one -- the boolean rewrites, not the implicit set a
-   theory loaded later may change -- and reports no rewrites: a derivation
-   is a function of its rule and nobody's business to monitor. *)
-val asm_split_tidy =
-    TOP_DEPTH_CONV
-      (Rewrite.REWRITES_CONV_AT false
-         (Rewrite.add_rewrites Rewrite.bool_rewrites
-                               [boolTheory.EQ_CLAUSES]))
 
 (* Turn a conclusion split rule [!P. P (c ...) = ...] into the rule for a
    negated predicate, which is the form that splits an assumption.  The
@@ -146,7 +134,7 @@ fun mk_asm_split_of pred split =
       |> SPECL specs
       |> AP_TERM boolSyntax.negation
       |> CONV_RULE cleanup
-      |> CONV_RULE (RAND_CONV asm_split_tidy)
+      |> CONV_RULE (RAND_CONV (REWRITE_CONV [boolTheory.EQ_CLAUSES]))
       |> GENL qvars
   end
 

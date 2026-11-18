@@ -820,8 +820,7 @@ in
   in
     convtest ("dest_reducer reads simpLib's context rewriter",
               OrdinaryTraverse.TRAVERSE
-                {limit= #limit d, trace= #trace d, rewriters=[r],
-                 dprocs= #dprocs d,
+                {limit= #limit d, rewriters=[r], dprocs= #dprocs d,
                  travrules= #travrules d, relation= #relation d} [],
               ``p /\ T``, ``p:bool``)
   end
@@ -872,17 +871,17 @@ in
       {name=SOME "solver test reducer",
        initial=EMPTY_CONTEXT,
        addcontext=fn (ctxt,_) => ctxt,
-       apply=fn {solver,stack,cond_depth,term_ord,trace,...} =>
+       apply=fn {solver,stack,cond_depth,term_ord,...} =>
          solver_rewr
            {solver=solver, stack=stack, cond_depth=cond_depth,
-            term_ord=term_ord, trace=trace}}
+            term_ord=term_ord}}
   val pure_data = #1 (xtraversedata_for_ss pureSimps.pure_ss)
 
   (* The entry points that take traversal-strategy settings take them
      alongside the traverse_data, so the tests below pair the two. *)
   fun with_reducers (data : Traverse.traverse_data) rewriters dprocs limit
       : Traverse.traverse_data =
-    {rewriters=rewriters, dprocs=dprocs, limit=limit, trace=NONE,
+    {rewriters=rewriters, dprocs=dprocs, limit=limit,
      relation= #relation data, travrules= #travrules data}
   fun configure_data (data : Traverse.traverse_data)
                      subgoaler solvers cond_depth term_ord
@@ -1056,10 +1055,10 @@ in
       {name=SOME "context test reducer",
        initial=EMPTY_CONTEXT,
        addcontext=fn (ctxt,_) => ctxt,
-       apply=fn {solver,stack,cond_depth,term_ord,trace,...} =>
+       apply=fn {solver,stack,cond_depth,term_ord,...} =>
          context_rewr
            {solver=solver, stack=stack, cond_depth=cond_depth,
-            term_ord=term_ord, trace=trace}}
+            term_ord=term_ord}}
   val bool_data = #1 (xtraversedata_for_ss bool_ss)
   fun context_solver {context_thms,...} tm =
     case List.find (fn th => aconv tm (concl th)) context_thms of
@@ -1816,10 +1815,10 @@ fun pp ss = PP.pp_to_string 200 simpLib.pp_simpset ss
     Traverse.CONTEXT_REDUCER
       {name=SOME "surface tactic reducer", initial=SURFACE_SOLVER_CONTEXT,
        addcontext=fn (ctxt,_) => ctxt,
-       apply=fn {solver,stack,cond_depth,term_ord,trace,...} =>
+       apply=fn {solver,stack,cond_depth,term_ord,...} =>
          tactic_rewr
            {solver=solver, stack=stack, cond_depth=cond_depth,
-            term_ord=term_ord, trace=trace}}
+            term_ord=term_ord}}
   val tactic_solver_ss =
     pureSimps.pure_ss ++ dproc_ss tactic_reducer
     |> add_unsafe_solver tactic_solver
@@ -5253,16 +5252,16 @@ val _ = let
     OrdinaryTraverse.REDUCER
       {name=NONE, initial=R6Context,
        addcontext=fn (ctxt,_) => ctxt,
-       apply=fn {solver,conv,context,stack,relation,trace} => action}
+       apply=fn {solver,conv,context,stack,relation} => action}
   fun failing_factory log tag : Opening.congproc =
     fn _ =>
       (record log ("relation-" ^ tag);
-       fn {solver,freevars,depther,trace} =>
+       fn {solver,freevars,depther} =>
          (record log ("factory-" ^ tag);
           fn tm => (record log (tag ^ ":" ^ label tm); NO_CONV tm)))
   fun make rewriters dprocs congprocs weakenprocs =
     OrdinaryTraverse.TRAVERSE
-      {rewriters=rewriters, dprocs=dprocs, limit=NONE, trace=NONE,
+      {rewriters=rewriters, dprocs=dprocs, limit=NONE,
        relation=boolSyntax.equality,
        travrules=Travrules.TRAVRULES
          {relations=[Travrules.EQ_preorder],
@@ -5324,7 +5323,7 @@ val _ = let
   val ready = ref false
   val gated_builds = ref 0
   val gated : Opening.congproc = fn _ =>
-    fn {solver,freevars,depther,trace} =>
+    fn {solver,freevars,depther} =>
       (gated_builds := !gated_builds + 1;
        if !ready then
          (fn tm => if aconv tm b then bc else NO_CONV tm)
@@ -5342,7 +5341,7 @@ val _ = let
     {rewriters=[T.lift (reducer (fn tm =>
        (record extended_log ("R:" ^ label tm);
         if aconv tm a then ab else NO_CONV tm)))],
-     dprocs=[], limit=NONE, trace=NONE, relation=boolSyntax.equality,
+     dprocs=[], limit=NONE, relation=boolSyntax.equality,
      travrules=Travrules.TRAVRULES
        {relations=[Travrules.EQ_preorder],
         congprocs=[failing_factory extended_log "C"],
@@ -5727,7 +5726,7 @@ val _ = let
          raise UNCHANGED)
       else NO_CONV tm
     val data : Traverse.traverse_data =
-      {rewriters=[reducer],dprocs=[],limit=NONE, trace=NONE,
+      {rewriters=[reducer],dprocs=[],limit=NONE,
        relation=boolSyntax.equality,
        travrules=Travrules.TRAVRULES
          {relations=[Travrules.EQ_preorder],congprocs=[congproc],
@@ -5795,7 +5794,7 @@ val _ = let
               Cond_rewr.stack_limit := 13;
               reject))
   val data : Traverse.traverse_data =
-    {limit=NONE, trace=NONE,rewriters=[mutator,native],dprocs=[],
+    {limit=NONE,rewriters=[mutator,native],dprocs=[],
      relation=boolSyntax.equality,
      travrules=Travrules.TRAVRULES
        {relations=[Travrules.EQ_preorder],congprocs=[],
@@ -5893,7 +5892,7 @@ local
   val runners = Cond_rewrExt.COND_REWR_CONVS ("paired condition",rule) false
   fun configured depth solver stack = #configured runners
     {solver=solver,stack=stack,cond_depth=depth,
-     term_ord=Cond_rewr.ac_term_ord,trace=0}
+     term_ord=Cond_rewr.ac_term_ord}
   val solver_calls = ref ([] : term list list)
   fun solve stack tm =
     (solver_calls := stack :: !solver_calls; ASSUME tm)

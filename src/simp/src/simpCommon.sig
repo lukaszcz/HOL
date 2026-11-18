@@ -21,10 +21,8 @@ sig
   val opttheory : string option -> string -> string
 
   (* Name a rewrite, compute its key and let [build] make its conversion
-     data; NONE (traced, at the given simplifier.trace level) where that
-     fails *)
+     data; NONE (traced) where that fails *)
   val mk_rewr_convdata :
-      int ->
       ({thypart : string option, name : string,
         key : (term list * term) option, nmopt : thname option, th : thm,
         tag : control} -> 'a) ->
@@ -41,12 +39,7 @@ sig
   val all_named_frags : 'a Symtab.table Context.Data.slot -> string list
 
   val merge_names : string option list -> string option
-  (* Filters are given the simplifier.trace level of the simpset whose
-     rewrites they make; plain_filter is one that reports nothing *)
-  val merge_filters :
-      (int -> 'a -> 'a list) option list -> (int -> 'a -> 'a list) option
-  val plain_filter :
-      ('a -> 'a list) option -> (int -> 'a -> 'a list) option
+  val merge_filters : ('a -> 'a list) option list -> ('a -> 'a list) option
   val std_conv_ss :
       {conv_ss : convdata -> 'f, merge_ss : 'f list -> 'f} ->
       stdconvdata -> 'f
@@ -67,11 +60,9 @@ sig
       string option * string -> (string option * string) list -> bool
   val munge_simpset_name : string -> string option * string
 
-  (* Each takes the simplifier.trace level to report at *)
   val user_conv_tracing :
       {name : string, trace : int} ->
-      {enter : int -> term -> unit, leave : int -> term * thm -> thm,
-       failed : int -> exn -> thm}
+      {enter : term -> unit, leave : term * thm -> thm, failed : exn -> thm}
   val any : term
   val mk_ac : thm * thm -> (thname option * controlled_thm) list ->
               (thname option * controlled_thm) list
@@ -108,11 +99,6 @@ sig
   val BF_ASSUME_TAC : bool -> thm -> tactic
   val caa_tac0 : bool -> simptac_config -> thm -> tactic
   val stdcon : simptac_config -> thm -> tactic
-  (* in_context in_trace_context tac: tac, given the simpset set by
-     in_trace_context to the simplifier.trace level of the context the
-     tactic is run in *)
-  val in_context : (Context.t -> 's -> 's) -> ('s -> 'a -> tactic) ->
-                   's -> 'a -> tactic
   val full_simp_tacs :
       {simp_rule : 's -> thm list -> thm -> thm,
        asm_simp_tac : 's -> thm list -> tactic} ->

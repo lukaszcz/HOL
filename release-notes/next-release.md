@@ -161,26 +161,6 @@ New features
     The default artifact layout is unchanged.
     See *Artifact layout* in the Description manual.
 
--   The simplifier's tactics now trace at the `simplifier.trace` level of the context they are run in, as `METIS_TAC` already did with `metis.trace`.
-    `Tactical.trace_tac ("simplifier.trace", n)` therefore controls what `simp`, `fs`, `rw`, `SIMP_TAC`, `ASM_SIMP_TAC`, `FULL_SIMP_TAC` and the tactics built on them (`AESOP_TAC`, `AUTO_TAC`, …) print inside a proof, and running them reads no ambient flag.
-    Conversions and rules (`SIMP_CONV`, `SIMP_RULE`, …) take no context and still use the ambient setting.
-    A simpset now carries the level it traces at: `simpLib.set_trace_level n ss` fixes it, `simpLib.in_trace_context ctxt ss` takes it from a context, and a simpset with none set uses the ambient level when it is run.
-    For extension writers, `Trace.trace_at n` emits an event judged against level `n`, and `Cache.CACHE_AT` and `RCACHE_AT` build caching decision procedures that are given the level to trace at.
-    `SATISFY_ss` likewise reports at the level of the simplification it is part of, and `Satisfy.SATISFY_CONV_AT n` is `SATISFY_CONV` reporting at level `n`.
-    What a simpset makes of the theorems it is given (a looping rewrite, a rewrite with variables only on its right, …) is reported at the simpset's level too: `Cond_rewr.mk_cond_rewrs_at n` and `IMP_EQ_CANON_AT n` report at level `n`, and a fragment made by `simpLib.leveled_filter_ss f` has a filter `f` that is given the level of the simpset it makes rewrites for, as `pure_ss`'s is.
-
--   `REWRITE_TAC` and the other rewriting tactics built on `GEN_REWRITE_TAC` take `Rewrite.monitoring` from the context they are run in, so `trace_tac ("Rewrite.monitoring", 1)` shows the rewrites one tactic makes; `REWRITES_CONV` and the conversions built on it still use the ambient setting.
-    `FIRST_ASSUM` and `LAST_ASSUM` turn the parser's complaints off in the context they give their theorem-tactic rather than in the ambient one.
-    The new `HOLFlags.with_flags_of ctxt f x` evaluates `f x` with the ambient flags and traces taken from `ctxt`, for a tactic that calls code which still reads them ambiently.
-    `Rewrite.REWRITES_CONV_AT b` is `REWRITES_CONV` reporting its rewrites when `b` is true, and `markerLib.genUnCongAt b` is `genUnCong` likewise, whatever `Rewrite.monitoring` is.
-
--   More of what tactics consult can be read from the context they are run in rather than from the ambient one:
-    `DB.fetch_knm_of ctxt` fetches a theorem from the context's database; `splitLib.named_split_thms_of ctxt` (and `SplitData.named_rules_of`) lists its registered split rules, `normalForms.MIN_CNF_IN ctxt` is `MIN_CNF` tracing at the context's `metis.normalForms_trace` and `simplifier.trace`, and `normalForms.NNF_CONV_IN ctxt` is `NNF_CONV` tracing at its `simplifier.trace`.
-    The decision procedure a relation-simp fragment (`simpLib.relsimp_ss`, as in `numSimps.MOD_ss`) installs is named after the relation's structure, as in `reducer for (arithmetic$MODEQ n)`, rather than its printed form, so building a simpset that contains one reads no printing flag.
-    `simpLib.unset_trace_level` returns a simpset to tracing at the ambient level; the simpsets `bossLib` derives from `srw_ss` are built at level 0 and then unset, so building one, which the first proof to need it does, prints nothing and reads no setting.
-    `simpExtLib.has_solver name ss` tells whether `ss` has a solver of that name installed.
-    `Req0` and `ReqD` print their theorem only when the check fails, so a successful one reads no printing flag.
-
 Bugs fixed
 ----------
 
@@ -439,13 +419,6 @@ Incompatibilities
     They are values of type `HOLFlags.bflag`, set with `HOLFlags.set_bflag` and bracketed with `HOLFlags.with_bflags`.
     `Parse` exports the common ones; `show_tags` and `show_axioms` come from `HOLFlags` itself.
     `type_pp.pp_num_types` and `type_pp.pp_array_types` have gone the same way, as `type_pp.num_types` and `type_pp.array_types`.
-
--   The records the simplifier hands to its extensions carry the trace level the work is being done at.
-    The argument of a `Traverse.reducer`'s `apply`, of a congruence procedure (`Opening.congproc`), of `TraverseExt`'s configured reducers, and `Cond_rewr`'s and `Cond_rewrExt`'s `config` all have a field `trace : int`; `Traverse.traverse_data` and `TraverseExt.traverse_data` have `trace : int option`, where `NONE` means the ambient setting.
-    Code that builds one of these records must supply the field, and code that matches one exhaustively must add it or use `...`.
-    `simpLib.dest_simpset` also returns the simpset's `trace`.
-    The `filter` that `simpLib.dest_ssfrag` returns is given that level as its first argument; the filter `SSFRAG` takes is unchanged.
-    The simplifier no longer prints its trace from a listener named `"default"` on `Trace.trace_hook`; listeners on the hook still see every event, whatever the level.
 
 Deprecations
 ------------

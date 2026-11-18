@@ -294,13 +294,6 @@ fun with_traces flags f x =
      Context.Data.with_slot_value tmap_slot tempv f x
   end
 
-(* The flags of ctxt answer the ambient reads f x makes: for a tactic that
-   has put the flags it wants in its own context and calls code that still
-   reads them ambiently.  Nothing is read from the ambient context. *)
-fun with_flags_of ctxt f x =
-    Context.Data.with_slot_value tmap_slot (Context.Data.get tmap_slot ctxt)
-                                 f x
-
 fun with_bflags bfls f x =
     let
       val base = global_tmap (temporarily_set (map #1 bfls))

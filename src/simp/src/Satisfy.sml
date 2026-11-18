@@ -53,7 +53,7 @@ fun satisfy consts tms1 tms2 =
 
 type factdb = (term list * thm list)  (* this may change *)
 
-fun satisfy1 trace (consts,facts) gl =
+fun satisfy1 (consts,facts) gl =
   let val (vars,g) = strip_exists gl
       val _ = if null vars then failwith "satisfy1" else ()
       val _ = trace(3,REDUCE("trying SATISFY on",g))
@@ -67,29 +67,21 @@ fun satisfy1 trace (consts,facts) gl =
   in map (choose choices) gvars
   end;
 
-fun prove trace (consts,facts) gl =
-    let val choices = satisfy1 trace (consts,map concl facts) gl
+fun SATISFY (consts,facts) gl =
+    let val choices = satisfy1 (consts,map concl facts) gl
     in TAC_PROOF ((op_U aconv (map hyp facts),gl),
                   EVERY (map EXISTS_TAC choices) THEN
                   REPEAT CONJ_TAC THEN FIRST (map MATCH_ACCEPT_TAC facts))
     end;
 
-fun SATISFY factdb gl = prove trace factdb gl
 
-(* SATISFY_ss's reducer is given the level the simplifier traces at, and
-   the tactic takes it from its context; neither reads the ambient one. *)
-fun SATISFY_CONV_AT verbosity factdb tm =
-    let val trace = trace_at verbosity
-        val thm = EQT_INTRO (prove trace factdb tm)
+fun SATISFY_CONV factdb tm =
+    let val thm = EQT_INTRO (SATISFY factdb tm)
     in trace(1,PRODUCE(tm,"SATISFY",thm)); thm
     end;
 
-fun SATISFY_CONV factdb tm = SATISFY_CONV_AT (resolve_level NONE) factdb tm
-
-fun SATISFY_TAC (asms,gl) c =
-  CONV_TAC (SATISFY_CONV_AT (trace_level_of c)
-                            (free_varsl asms,map ASSUME asms))
-           (asms,gl) c;
+fun SATISFY_TAC (asms,gl) =
+  CONV_TAC (SATISFY_CONV (free_varsl asms,map ASSUME asms)) (asms,gl);
 
 fun GSPEC thm = SPEC(genvar(type_of(bvar(rand(concl thm))))) thm;
 fun FACT_CANON thm =

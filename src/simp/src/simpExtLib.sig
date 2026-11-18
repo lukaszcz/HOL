@@ -239,11 +239,6 @@ sig
   val &&              : simpset * thm list -> simpset  (* infix *)
   val limit           : int -> simpset -> simpset
   val unlimit         : simpset -> simpset
-  (* See simpLib.set_trace_level and simpLib.unset_trace_level *)
-  val set_trace_level : int -> simpset -> simpset
-  val unset_trace_level : simpset -> simpset
-  val trace_level     : simpset -> int
-  val in_trace_context : Context.t -> simpset -> simpset
   val add_named_rwt   : (thname * thm) -> ssfrag -> ssfrag
 
   val add_looper : string * (simpset -> tactic) -> simpset -> simpset
@@ -256,8 +251,6 @@ sig
   val add_safe_solver : TraverseExt.ssolver -> simpset -> simpset
   val set_unsafe_solvers : TraverseExt.ssolver list -> simpset -> simpset
   val set_safe_solvers : TraverseExt.ssolver list -> simpset -> simpset
-  (* Whether a solver of that name is installed, safe or unsafe *)
-  val has_solver : string -> simpset -> bool
   val remove_solver : string -> simpset -> simpset
   val set_subgoaler : TraverseExt.subgoaler -> simpset -> simpset
   val set_cond_depth : int -> simpset -> simpset

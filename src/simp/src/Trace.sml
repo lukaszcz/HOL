@@ -25,15 +25,12 @@ val say = Lib.say
            | MORE_CONTEXT of Thm.thm;
 
    val trace_hook : (int * action) Listener.t = Listener.new_listener()
+   fun trace x = ignore (Listener.call_listener trace_hook x)
 
-val {flag = trace_flag, get = ambient_level, ...} = HOLFlags.create_trace(
+val _ = HOLFlags.create_trace(
       {group = "simplifier", name = "trace"},
       {max = 7, initial = 0}
     );
-
-fun trace_level_of ctxt = HOLFlags.get_flagC ctxt trace_flag
-fun resolve_level (SOME n) = n
-  | resolve_level NONE = ambient_level ()
 
 fun tty_trace (LZ_TEXT fs) = (say "  "; say (fs ()); say "\n")
   | tty_trace (TEXT s) = (say "  "; say s; say "\n")
@@ -62,21 +59,15 @@ fun tty_trace (LZ_TEXT fs) = (say "  "; say (fs ()); say "\n")
 *)
 fun fudge t = Time.+(t, Time.fromSeconds 10)
 
-fun print_event a =
-    (say "[";
-     say ((Arbnum.toString o #usec o Portable.dest_time o fudge)
-            (#usr (Timer.checkCPUTimer Globals.hol_clock)));
-     say "]: ";
-     tty_trace a)
-
-(* Printing is done here rather than by a listener on the hook, because a
-   listener sees the event and not the level it is to be judged against.
-   What escapes the printer is dropped, as call_listener drops what
-   escapes a listener. *)
-fun trace_at verbosity (x as (n, a)) =
-    ((if n <= verbosity then ignore (Exn.capture print_event a) else ());
-     ignore (Listener.call_listener trace_hook x))
-
-fun trace x = trace_at (ambient_level ()) x
+val _ = Listener.add_listener trace_hook
+        ("default",
+         (fn (n,a) => if n <= HOLFlags.current_trace "simplifier.trace" then
+                        (say "[";
+                         say ((Arbnum.toString o #usec o Portable.dest_time o
+                               fudge)
+                                (#usr (Timer.checkCPUTimer Globals.hol_clock)));
+                         say "]: ";
+                         tty_trace a)
+                      else ()))
 
 end (* struct *)

@@ -81,10 +81,6 @@ val PURE_NNF_CONV  : conv
 val NNF_CONV'      : conv -> conv       (* takes a 'leaf conversion' *)
 val NNF_CONV       : conv
 
-(* NNF_CONV with its simplification pass tracing at the simplifier.trace
-   of the given context; NNF_CONV uses the ambient level. *)
-val NNF_CONV_IN    : Context.t -> conv
-
 (* ------------------------------------------------------------------------- *)
 (* General NNF conversion. The user supplies some conversion to be applied   *)
 (* to atomic formulas.                                                       *)
@@ -280,11 +276,6 @@ val condify_ss : simpset      (* pure + condify *)
 (* ------------------------------------------------------------------------- *)
 
 val MIN_CNF : thm list -> term list * thm list
-
-(* MIN_CNF at the levels of the given context: what it says is governed
-   by its metis.normalForms_trace, how its simplification passes trace
-   by its simplifier.trace.  MIN_CNF itself uses the ambient levels. *)
-val MIN_CNF_IN : Context.t -> thm list -> term list * thm list
 
 (* ------------------------------------------------------------------------- *)
 (* Some conversions ported from HOL-Light's canon.ml                         *)

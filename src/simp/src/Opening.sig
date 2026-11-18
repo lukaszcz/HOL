@@ -73,9 +73,7 @@ signature Opening = sig
    type congproc = term -> (* relation *)
                    {solver : term -> thm,
                     freevars: term list,
-                    depther : (thm list * term) -> conv,
-                    (* the simplifier.trace level to report at *)
-                    trace : int} -> conv
+                    depther : (thm list * term) -> conv} -> conv
    val samerel            : term -> term -> bool
    val CONGPROC           : ({Rinst:term,arg:term} -> thm) -> thm -> congproc
    (* As CONGPROC, but an antecedent may state an intermediate result that a
