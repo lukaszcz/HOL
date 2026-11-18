@@ -27,6 +27,9 @@ sig
   val gendest_tagged : term -> thm -> string option
   val genCong : thm -> thm -> thm
   val genUnCong : term -> thm -> thm -> thm option
+  (* genUnCong reporting the rewrite that takes the marker off when the
+     flag is true, rather than when Rewrite.monitoring is *)
+  val genUnCongAt : bool -> term -> thm -> thm -> thm option
 
   val Split     : thm -> thm
   val destSplit : thm -> thm
