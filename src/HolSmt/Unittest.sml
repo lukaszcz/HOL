@@ -28834,6 +28834,7 @@ fun datatype_metis_declines_large_target_success () =
   in
     assert (Thm.concl theorem ~~ small andalso List.null (Thm.hyp theorem),
       "datatype METIS did not prove a small excluded middle");
+    check_oracle_tags "datatype_metis_declines_large_target_success" theorem;
     assert (declined,
       "datatype METIS ran on a target over its node bound")
   end
