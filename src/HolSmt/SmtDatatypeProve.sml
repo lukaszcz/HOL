@@ -271,7 +271,23 @@ struct
   let
   (* Admission/Work/observer failures must not become proof-search misses. *)
   exception AdmissionFailure of exn
-  fun admit term = check term handle primary => raise AdmissionFailure primary
+  (* Simplification visits the same term objects many times; each one is
+     checked once per invocation. Failures are not cached. A bucket keeps
+     only its eight latest terms: equal but distinct objects share a
+     bucket, and an unbounded list makes each lookup linear. *)
+  val admitted_buckets = 4093
+  val admitted = Array.array (admitted_buckets,[] : Term.term list)
+  fun admit term =
+    let
+      val index = SmtResource.pointer_bucket admitted_buckets term
+      val bucket = Array.sub (admitted,index)
+    in
+      if List.exists (fn old => Portable.pointer_eq (old,term)) bucket then ()
+      else
+        (check term handle primary => raise AdmissionFailure primary;
+         Array.update (admitted,index,
+           term :: List.take (bucket,Int.min (7,length bucket))))
+    end
   fun protect f x = f x handle AdmissionFailure primary => raise primary
   fun admit_thm th = (admit (Thm.concl th);List.app admit (Thm.hyp th))
   (* Traverse consumes conversion sides with kernel congruence/TRANS, not
