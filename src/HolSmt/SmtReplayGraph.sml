@@ -5018,11 +5018,11 @@ struct
       val running = ref true
       val _ = #partial_running g := SOME running
       val epoch = Type.type_epoch () val symbols = Term.term_epoch ()
-      val scans=ref(0:IntInf.int)
-      val profiles=ref([]:policy_opaque_profile list)
-      fun consume_scan message=
-        if SmtReplayResourcePolicy.allows scan_limit (!scans+1)then
-          scans:= !scans+1 else raise ERR "discover_partial" message
+      val scans = ref (0:IntInf.int)
+      val profiles = ref ([]:policy_opaque_profile list)
+      fun consume_scan message =
+        if SmtReplayResourcePolicy.allows scan_limit (!scans+1) then
+          scans := !scans+1 else raise ERR "discover_partial" message
       val guards = ref ([] : (unit -> unit) list)
       val closures = ref ([] : binder_closure list)
       fun valid frame =
