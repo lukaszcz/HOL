@@ -669,9 +669,32 @@ struct
                in result end)
           val (_,work) = visit 1 root
         in check work end
+      (* A Type tree of at most this many nodes passes every check here,
+         without metering. *)
+      fun small_type ty =
+        let
+          exception Big
+          fun walk budget ty =
+            if budget <= 0 then raise Big
+            else if Type.is_vartype ty then budget - 1
+            else List.foldl (fn (ty,budget) => walk budget ty) (budget - 1)
+              (#Args (Type.dest_thy_typeid ty))
+        in (ignore (walk (Int.min (4096,maximum)) ty);true)
+           handle Big => false
+        end
       (* Opening/alpha comparison can inspect all annotation Types. Unlike
          REFL's classification, this is intentionally a full traversal. *)
-      fun full_type ty =
+      (* Binder admission checks the Type of every nested abstraction, a
+         fresh object from type_of each time, and the same atom Types
+         again and again. The check depends only on the Type's structure:
+         keep the recently admitted ones. Failures are not remembered. *)
+      val full_admitted = ref ([] : hol_type list)
+      fun admit_full_type ty =
+        if List.exists (fn old => Portable.pointer_eq (old,ty) orelse
+            Type.compare (old,ty) = EQUAL) (!full_admitted) orelse
+           small_type ty
+        then ()
+        else
         let
           fun native_admission () =
             let
@@ -694,17 +717,24 @@ struct
                  metered metadata_walk ty
              in check tree_nodes end
              handle MetadataLimit => native_admission ())
-        in compact_type ty end
+        in
+          full_admitted := ty :: List.take
+            (!full_admitted,Int.min (31,length (!full_admitted)))
+        end
+      fun full_type ty = (admit_full_type ty;compact_type ty)
       (* A cheap polymorphic prefix does not admit native comparison of the
          suffix. Required IDs nevertheless cover it, using only compact keys
          and exact pointer hits, with no optional-work refusal. *)
       fun type_id ty =
         let val AdmissionTypeNode {id, ...} = compact_type ty in id end
       fun raw_size limit term =
-        (ignore (full_type (Term.type_of term));
+        (* Admission only: the synthesized Type needs no ID. *)
+        (admit_full_type (Term.type_of term);
          SmtReplayImport.bounded_raw_size_with_type_check
-           (fn ty => if Thm.kernelid = "expknl" then ()
-             else intern (#2 (Type.dom_rng ty))) limit term)
+           (fn ty => if Thm.kernelid = "expknl" then () else
+              let val range = #2 (Type.dom_rng ty)
+              in if small_type range then () else intern range end)
+           limit term)
       fun admit_abstraction operation term =
         let
           val _ = case raw_size maximum term of
