@@ -18476,6 +18476,52 @@ in
     "expected: " ^ expected ^ "\nobserved: " ^ observed)
 end
 
+(* The same bridge target built from independently built equal subterms
+   (a tree of 2^depth physically distinct nodes) and from physically shared
+   subterms (a DAG of depth nodes).  Both must give the same checked
+   theorem; the elapsed times are printed for the memo trial. *)
+fun cpc_fp_word_bridge_memo_shapes () =
+let
+  val depth = 11
+  fun independent 0 = Term.mk_var ("fp_memo_leaf", Type.bool)
+    | independent n =
+        boolSyntax.mk_conj (independent (n - 1), independent (n - 1))
+  fun shared 0 term = term
+    | shared n term = shared (n - 1) (boolSyntax.mk_conj (term, term))
+  val atom = ``smtfp_is_nan (x : (3,5) smtfp)``
+  val wide = List.foldl
+    (fn (index, result) => boolSyntax.mk_conj
+      (Term.mk_var ("fp_memo_ctx_" ^ Int.toString index, Type.bool),
+       result))
+    boolSyntax.T (List.tabulate (10, Lib.I))
+  val encoding = boolSyntax.mk_eq
+    (``1w : word1``, SmtLib_Theories.mk_bbterm [atom])
+  fun bridge context =
+    boolSyntax.mk_eq
+      (boolSyntax.mk_conj (atom, context ()),
+       boolSyntax.mk_conj (encoding, context ()))
+  fun check (label, context) =
+    let
+      val target = bridge context
+      val timer = Timer.startRealTimer ()
+      val theorem = CPC_ProofReplay.replay_trust_for_test target
+      val elapsed = Timer.checkRealTimer timer
+      val name = "CPC word-bridge memo shape " ^ label
+    in
+      print (name ^ ": " ^ Time.toString elapsed ^ " s\n");
+      assert_no_hyps (name, theorem);
+      assert_concl_alpha (name, theorem, target);
+      check_oracle_tags name theorem
+    end
+in
+  check ("independent",
+    fn () => boolSyntax.mk_conj
+      (wide, independent depth));
+  check ("shared",
+    fn () => boolSyntax.mk_conj
+      (wide, shared depth (Term.mk_var ("fp_memo_leaf", Type.bool))))
+end
+
 fun cpc_fp_forced_check_rejects_unproved_clause () =
 let
   val atom = ``smtfp_is_nan (x : (3,5) smtfp)``
@@ -38546,6 +38592,8 @@ let
       cpc_fp_boolean_clause_bridge_success),
     ("cpc_fp_boolean_conditional_schema_success",
       cpc_fp_boolean_conditional_schema_success),
+    ("cpc_fp_word_bridge_memo_shapes",
+      cpc_fp_word_bridge_memo_shapes),
     ("cpc_fp_forced_check_rejects_unproved_clause",
       cpc_fp_forced_check_rejects_unproved_clause),
     ("cpc_fp_word_bridge_shared_dag_step_time_gate",
