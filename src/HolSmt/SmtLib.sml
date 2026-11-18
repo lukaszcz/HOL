@@ -6894,18 +6894,7 @@ local
   val INT_EXP_2 = SmtLib_GraphNumericStock.INT_EXP_2
   val INT_EXP_3 = SmtLib_GraphNumericStock.INT_EXP_3
 
-  val REAL_POW_3 =
-  let
-    val x = Term.mk_var ("x", realSyntax.real_ty)
-    val two = numSyntax.mk_numeral (Arbnum.fromInt 2)
-    val th =
-      numLib.REDUCE_RULE
-        (Thm.SPEC two (Thm.SPEC x (Thm.CONJUNCT2 realTheory.pow)))
-  in
-    Drule.GEN_ALL
-      (simpLib.SIMP_RULE pureSimps.pure_ss
-        [realTheory.POW_2, realTheory.REAL_MUL_ASSOC] th)
-  end
+  val REAL_POW_3 = HolSmtTheory.REAL_POW_3
 
   (* Unfold a real power with an arbitrary numeral exponent.  The recursive
      equations only syntactically match zero/SUC, whereas HOL numerals are

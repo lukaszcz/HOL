@@ -1324,31 +1324,15 @@ struct
       theorem
     end
 
+  (* All of these laws are stated over the Boolean variable p. *)
   val idempotent_variable = Term.mk_var ("p", Type.bool)
-  val disj_idempotent = tautLib.TAUT_PROVE
-    (boolSyntax.mk_eq
-      (boolSyntax.mk_disj (idempotent_variable, idempotent_variable),
-       idempotent_variable))
-  val conj_idempotent = tautLib.TAUT_PROVE
-    (boolSyntax.mk_eq
-      (boolSyntax.mk_conj (idempotent_variable, idempotent_variable),
-       idempotent_variable))
+  val disj_idempotent = HolSmtTheory.disj_idempotent
+  val conj_idempotent = HolSmtTheory.conj_idempotent
 
-  val polarity_variable = idempotent_variable
-  val polarity_negative = boolSyntax.mk_neg polarity_variable
-  val polarity_rules = List.map tautLib.TAUT_PROVE
-    [boolSyntax.mk_eq
-       (boolSyntax.mk_conj (polarity_variable,polarity_negative),boolSyntax.F),
-     boolSyntax.mk_eq
-       (boolSyntax.mk_conj (polarity_negative,polarity_variable),boolSyntax.F),
-     boolSyntax.mk_eq
-       (boolSyntax.mk_disj (polarity_variable,polarity_negative),boolSyntax.T),
-     boolSyntax.mk_eq
-       (boolSyntax.mk_disj (polarity_negative,polarity_variable),boolSyntax.T),
-     boolSyntax.mk_eq
-       (boolSyntax.mk_eq (polarity_variable,polarity_negative),boolSyntax.F),
-     boolSyntax.mk_eq
-       (boolSyntax.mk_eq (polarity_negative,polarity_variable),boolSyntax.F)];
+  val polarity_rules =
+    [HolSmtTheory.polarity_conj_neg, HolSmtTheory.polarity_neg_conj,
+     HolSmtTheory.r049, HolSmtTheory.r050,
+     HolSmtTheory.polarity_eq_neg, HolSmtTheory.polarity_neg_eq]
 
   val gate_reduction_conv = Conv.FIRST_CONV
     (List.map Conv.REWR_CONV

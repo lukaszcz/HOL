@@ -3434,3 +3434,359 @@ QED
             dimindex(:'b) < dimindex(:'a) ==>
             (sw2sw w : 'b word = (dimindex(:'b) - 1 >< 0) w))”),
         BasicProvers.SRW_TAC [wordsLib.WORD_BIT_EQ_ss] []))
+
+(* ------------------------------------------------------------------------
+   Fixed laws used by the replay libraries.  They are stated and proved
+   here once, rather than when HolSmtLib is loaded.
+   ------------------------------------------------------------------------ *)
+
+(* Clause rearrangement and resolution (SmtClause) *)
+Theorem clause_move:
+  !(a:bool) p b. (a \/ (p \/ b)) = (p \/ (a \/ b))
+Proof
+  rpt gen_tac >> tautLib.TAUT_TAC
+QED
+
+Theorem clause_associate:
+  !(a:bool) b c. ((a \/ b) \/ c) = (a \/ (b \/ c))
+Proof
+  rpt gen_tac >> tautLib.TAUT_TAC
+QED
+
+Theorem clause_positive_resolution:
+  !(p:bool) a b. (p \/ a) ==> (~p \/ b) ==> (a \/ b)
+Proof
+  rpt gen_tac >> tautLib.TAUT_TAC
+QED
+
+Theorem clause_negative_resolution:
+  !(p:bool) a b. (~p \/ a) ==> (p \/ b) ==> (a \/ b)
+Proof
+  rpt gen_tac >> tautLib.TAUT_TAC
+QED
+
+(* Idempotence and polarity laws (SmtSkeletonProve) *)
+Theorem disj_idempotent:
+  (p \/ p) <=> p
+Proof
+  tautLib.TAUT_TAC
+QED
+
+Theorem conj_idempotent:
+  (p /\ p) <=> p
+Proof
+  tautLib.TAUT_TAC
+QED
+
+Theorem polarity_conj_neg:
+  (p /\ ~p) <=> F
+Proof
+  tautLib.TAUT_TAC
+QED
+
+Theorem polarity_neg_conj:
+  (~p /\ p) <=> F
+Proof
+  tautLib.TAUT_TAC
+QED
+
+Theorem polarity_eq_neg:
+  (p <=> ~p) <=> F
+Proof
+  tautLib.TAUT_TAC
+QED
+
+Theorem polarity_neg_eq:
+  (~p <=> p) <=> F
+Proof
+  tautLib.TAUT_TAC
+QED
+
+(* Compaction of Z3's shared bitwise-comparison recurrence
+   (SmtStringProve) *)
+Theorem compact_char_compare:
+  ((~d /\ c) \/ (~d /\ r) \/ (c /\ r)) <=> ((c /\ ~d) \/ ((c <=> d) /\ r))
+Proof
+  tautLib.TAUT_TAC
+QED
+
+(* cvc5 CNF equivalence clauses (CPC_ProofReplay) *)
+Theorem cnf_equiv_neg1:
+  p \/ q \/ (p <=> q)
+Proof
+  tautLib.TAUT_TAC
+QED
+
+Theorem cnf_equiv_neg2:
+  ~p \/ ~q \/ (p <=> q)
+Proof
+  tautLib.TAUT_TAC
+QED
+
+Theorem cnf_equiv_pos1:
+  ~p \/ q \/ ~(p <=> q)
+Proof
+  tautLib.TAUT_TAC
+QED
+
+Theorem cnf_equiv_pos2:
+  p \/ ~q \/ ~(p <=> q)
+Proof
+  tautLib.TAUT_TAC
+QED
+
+Theorem NEGATED_IMPLICATION_ANTECEDENT:
+  !p q. ~(p ==> q) ==> p
+Proof
+  tautLib.TAUT_TAC
+QED
+
+(* Integer and real arithmetic (Z3_ProofReplay) *)
+Theorem INT_LE_RMUL_EXP:
+  !a b n:int. 0 <= n ==> a <= b ==> a * n <= b * n
+Proof
+  rpt strip_tac >> Cases_on `n = 0` >- asm_simp_tac intLib.int_ss [] >>
+  `0 < n` by intLib.ARITH_TAC >>
+  metis_tac [integerTheory.INT_LE_MONO, integerTheory.INT_MUL_COMM]
+QED
+
+Theorem INT_LE_LMUL_EXP:
+  !a b n:int. 0 <= n ==> a <= b ==> n * a <= n * b
+Proof
+  metis_tac [INT_LE_RMUL_EXP, integerTheory.INT_MUL_COMM]
+QED
+
+Theorem INT_LE_MUL2:
+  !x1 x2 y1 y2:int.
+    0 <= x1 /\ 0 <= y1 /\ x1 <= x2 /\ y1 <= y2 ==> x1 * y1 <= x2 * y2
+Proof
+  rpt strip_tac >>
+  `x1 * y1 <= x2 * y1` by metis_tac [INT_LE_RMUL_EXP] >>
+  `x2 * y1 <= x2 * y2`
+    by metis_tac [INT_LE_LMUL_EXP, integerTheory.INT_LE_TRANS] >>
+  metis_tac [integerTheory.INT_LE_TRANS]
+QED
+
+Theorem REAL_ZERO_FACTOR_NONNEG:
+  !x:real. !y:real. x <= 0 ==> x >= 0 ==> 0 <= x * y
+Proof
+  rpt strip_tac >>
+  `x = 0` by metis_tac [realTheory.REAL_LE_ANTISYM, realTheory.real_ge] >>
+  asm_rewrite_tac [realTheory.REAL_MUL_LZERO, realTheory.REAL_LE_REFL]
+QED
+
+Theorem REAL_ZERO_FACTOR_NONNEG_CLAUSE:
+  !x:real. !y:real. 0 <= x * y \/ ~(x <= 0) \/ ~(x >= 0)
+Proof
+  metis_tac [REAL_ZERO_FACTOR_NONNEG]
+QED
+
+Theorem SMT_RDIV_CANCEL_CLAUSE:
+  ((y:real) = 0) \/ (x = y * smt_rdiv x y)
+Proof
+  Cases_on `y = 0` >- asm_rewrite_tac [] >>
+  asm_simp_tac (srw_ss()) [smt_rdiv_eq_div, realTheory.REAL_DIV_LMUL]
+QED
+
+Theorem SMT_RDIV_INTRO_CANCEL_CLAUSE:
+  (smt_rdiv x y = (k:real)) ==> ((y = 0) \/ (y * k = x))
+Proof
+  metis_tac [SMT_RDIV_CANCEL_CLAUSE]
+QED
+
+(* Sequence laws (SmtSeqProve) *)
+Theorem smt_seq_head_tail:
+  (&LENGTH (s:'a list) = (0:int)) \/ (s = [EL 0 s] ++ DROP 1 s)
+Proof
+  Cases_on `s` >> rw []
+QED
+
+Theorem smt_seq_unit_el0:
+  ([x:'a] = s) ==> (EL 0 s = x)
+Proof
+  metis_tac [listTheory.EL, listTheory.HD]
+QED
+
+Theorem smt_seq_nth_unit:
+  smt_seq_nth [x:'a] 0 = x
+Proof
+  rw [smt_seq_nth_def]
+QED
+
+(* SMT sequence nth is deliberately unspecified out of range; Z3 rewrites
+   it to an if whose out-of-range branch preserves that application. *)
+Theorem smt_seq_nth_boundary:
+  smt_seq_nth (s:'a list) i =
+  if i < 0 \/ &LENGTH s <= i then smt_seq_nth s i else EL (Num i) s
+Proof
+  Cases_on `i < 0 \/ &LENGTH s <= i` >> asm_simp_tac (srw_ss()) [] >>
+  irule smt_seq_nth_def >> intLib.ARITH_TAC
+QED
+
+Theorem smt_seq_replace_all_aux_unit[local]:
+  !s:'a list.
+    smt_seq_replace_all_aux (LENGTH s) s [x] [y] =
+    MAP (\e. if x = e then y else e) s
+Proof
+  Induct >>
+  RW_TAC std_ss [smt_seq_replace_all_aux_def, listTheory.isPREFIX_THM,
+    listTheory.LENGTH, listTheory.DROP_compute, listTheory.MAP,
+    listTheory.APPEND] >>
+  asm_rewrite_tac []
+QED
+
+Theorem smt_seq_replace_all_unit:
+  smt_seq_replace_all (s:'a list) [x] [y] =
+  MAP (\e. if x = e then y else e) s
+Proof
+  SIMP_TAC std_ss [smt_seq_replace_all_def, smt_seq_replace_all_aux_unit,
+    listTheory.NOT_CONS_NIL]
+QED
+
+Theorem IS_SUBLIST_refl:
+  !(x:'a list). IS_SUBLIST x x
+Proof
+  rw [rich_listTheory.IS_SUBLIST_APPEND] >>
+  qexists_tac `[]` >> qexists_tac `[]` >> rw []
+QED
+
+(* Z3 array laws over functions a, b : 'a -> 'b (Z3_ProformaThms) *)
+Theorem z3_array_store_select_same:
+  ((i:'a) =+ (e:'b)) a i = e
+Proof
+  rw [combinTheory.APPLY_UPDATE_THM]
+QED
+
+Theorem z3_array_store_select_other:
+  (i:'a) <> j ==> ((i =+ (e:'b)) a j = a j)
+Proof
+  rw [combinTheory.APPLY_UPDATE_THM]
+QED
+
+Theorem z3_array_store_store_same:
+  ((i:'a) =+ (f:'b)) ((i =+ e) a) = (i =+ f) a
+Proof
+  rw [FUN_EQ_THM, combinTheory.APPLY_UPDATE_THM]
+QED
+
+Theorem z3_array_store_store_swap:
+  (i:'a) <> j ==> ((j =+ (f:'b)) ((i =+ e) a) = (i =+ e) ((j =+ f) a))
+Proof
+  rw [FUN_EQ_THM, combinTheory.APPLY_UPDATE_THM] >> metis_tac []
+QED
+
+Theorem z3_array_store2_select_inner:
+  (i:'a) <> j ==> ((j =+ (f:'b)) ((i =+ e) a) i = e)
+Proof
+  rw [combinTheory.APPLY_UPDATE_THM]
+QED
+
+Theorem z3_array_store2_select_outer:
+  (i:'a) <> j ==> ((j =+ (f:'b)) ((i =+ e) a) j = f)
+Proof
+  rw [combinTheory.APPLY_UPDATE_THM]
+QED
+
+Theorem z3_array_ext_imp:
+  (!i:'a. (a:'a -> 'b) i = b i) ==> (a = b)
+Proof
+  rw [FUN_EQ_THM]
+QED
+
+Theorem z3_array_ext_eq:
+  ((a:'a -> 'b) = b) <=> !i. a i = b i
+Proof
+  rw [FUN_EQ_THM]
+QED
+
+(* Z3 sets as Bool-valued arrays (Z3_ProformaThms) *)
+Theorem z3_set_subset_map:
+  ((s:'a set) SUBSET t) <=> ((\x. x IN s /\ x NOTIN t) = EMPTY)
+Proof
+  rw [pred_setTheory.SUBSET_DEF, pred_setTheory.EXTENSION] >> metis_tac []
+QED
+
+Theorem z3_set_store_map_not:
+  (\x. ~(((i:'a) =+ (v:bool)) s x)) = (i =+ ~v) (\x. ~s x)
+Proof
+  rw [FUN_EQ_THM, combinTheory.APPLY_UPDATE_THM] >>
+  rpt COND_CASES_TAC >> rw []
+QED
+
+Theorem z3_set_ext_imp:
+  (!x:'a. x IN s <=> x IN t) ==> (s = t)
+Proof
+  rw [pred_setTheory.EXTENSION]
+QED
+
+Theorem z3_set_in_empty:
+  F <=> (x:'a) IN EMPTY
+Proof
+  rw [pred_setTheory.NOT_IN_EMPTY]
+QED
+
+Theorem z3_set_in_univ:
+  ((x:'a) IN UNIV) <=> T
+Proof
+  rw [pred_setTheory.IN_UNIV]
+QED
+
+(* Word rewrites (Library) *)
+Theorem WORD_BIT_EXTRACT =
+  simpLib.SIMP_PROVE (bossLib.std_ss ++ wordsLib.WORD_BIT_EQ_ss)
+    [wordsLib.WORD_DECIDE “1w :word1 ' 0”]
+    “!w:'a word i. i < dimindex (:'a) ==> (w ' i = ((i >< i) w = 1w:word1))”
+
+Theorem WORD_SHIFT_BV =
+  simpLib.SIMP_PROVE bossLib.bool_ss [wordsTheory.word_shift_bv]
+    “(!w:'a word n. n < dimword (:'a) ==> (w << n = w <<~ n2w n)) /\
+     (!w:'a word n. n < dimword (:'a) ==> (w >> n = w >>~ n2w n)) /\
+     (!w:'a word n. n < dimword (:'a) ==> (w >>> n = w >>>~ n2w n))”
+
+Theorem bit_field_insert_rwt =
+  simpLib.SIMP_RULE (bossLib.bool_ss ++ boolSimps.LET_ss) []
+    wordsTheory.bit_field_insert
+
+(* Numeral exponent unfoldings (SmtLib, SmtLib_GraphNumericStock) *)
+Theorem INT_EXP_1 =
+  Drule.GEN_ALL
+    (simpLib.SIMP_RULE pureSimps.pure_ss
+      [Thm.CONJUNCT1 integerTheory.int_exp, integerTheory.INT_MUL_RID,
+       Conv.GSYM arithmeticTheory.ONE]
+      (Thm.SPEC numSyntax.zero_tm
+        (Thm.SPEC (Term.mk_var ("i", intSyntax.int_ty))
+          (Thm.CONJUNCT2 integerTheory.int_exp))))
+
+Theorem INT_EXP_BASE_1 =
+  Drule.GEN_ALL
+    (simpLib.SIMP_RULE pureSimps.pure_ss
+      [Drule.GEN_ALL (Thm.CONJUNCT1 (Drule.SPEC_ALL arithmeticTheory.EXP_1)),
+       integerTheory.INT]
+      (Thm.SPEC (Term.mk_var ("n", numSyntax.num))
+        (Thm.SPEC (numSyntax.mk_numeral Arbnum.one) integerTheory.INT_EXP)))
+
+Theorem INT_EXP_2 =
+  Drule.GEN_ALL
+    (simpLib.SIMP_RULE pureSimps.pure_ss
+      [INT_EXP_1, Conv.GSYM arithmeticTheory.TWO]
+      (Thm.SPEC (numSyntax.mk_numeral Arbnum.one)
+        (Thm.SPEC (Term.mk_var ("i", intSyntax.int_ty))
+          (Thm.CONJUNCT2 integerTheory.int_exp))))
+
+Theorem INT_EXP_3 =
+  Drule.GEN_ALL
+    (simpLib.SIMP_RULE pureSimps.pure_ss
+      [INT_EXP_2, integerTheory.INT_MUL_ASSOC]
+      (numLib.REDUCE_RULE
+        (Thm.SPEC (numSyntax.mk_numeral (Arbnum.fromInt 2))
+          (Thm.SPEC (Term.mk_var ("i", intSyntax.int_ty))
+            (Thm.CONJUNCT2 integerTheory.int_exp)))))
+
+Theorem REAL_POW_3 =
+  Drule.GEN_ALL
+    (simpLib.SIMP_RULE pureSimps.pure_ss
+      [realTheory.POW_2, realTheory.REAL_MUL_ASSOC]
+      (numLib.REDUCE_RULE
+        (Thm.SPEC (numSyntax.mk_numeral (Arbnum.fromInt 2))
+          (Thm.SPEC (Term.mk_var ("x", realSyntax.real_ty))
+            (Thm.CONJUNCT2 realTheory.pow)))))

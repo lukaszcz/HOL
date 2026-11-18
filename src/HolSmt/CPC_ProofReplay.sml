@@ -62,16 +62,7 @@ local
            premise_edges = !(#premises fields),cache_hits = !(#hits fields),
            cache_misses = !(#misses fields)} : operation_statistics) end
 
-  val rare_seq_contains_refl = Library.prove
-    (``!(x:'a list). IS_SUBLIST x x``,
-     Tactical.THEN
-       (bossLib.RW_TAC (bossLib.srw_ss())
-          [rich_listTheory.IS_SUBLIST_APPEND],
-        Tactical.THEN
-          (Tactic.EXISTS_TAC ``[]:'a list``,
-           Tactical.THEN
-             (Tactic.EXISTS_TAC ``[]:'a list``,
-              bossLib.RW_TAC (bossLib.srw_ss()) []))))
+  val rare_seq_contains_refl = HolSmtTheory.IS_SUBLIST_refl
 
   fun profile name f x =
     Profile.profile_with_exn_name name f x
@@ -6192,24 +6183,13 @@ local
     | mk_disj_terms (tm :: rest) = boolSyntax.mk_disj (tm, mk_disj_terms rest)
     | mk_disj_terms [] = boolSyntax.F
 
+  (* The laws are stated over p and q; replay instantiates both at once. *)
   val equivalence_clause_laws =
-    let
-      val left = Term.genvar Type.bool
-      val right = Term.genvar Type.bool
-      val equality = boolSyntax.mk_eq (left, right)
-      val neg = boolSyntax.mk_neg
-      val clauses =
-        [("cnf_equiv_neg1", [left, right, equality]),
-         ("cnf_equiv_neg2", [neg left, neg right, equality]),
-         ("cnf_equiv_pos1", [neg left, right, neg equality]),
-         ("cnf_equiv_pos2", [left, neg right, neg equality])]
-      fun prove (name, literals) =
-        (name, Library.prove (mk_disj_terms literals,
-          Tactical.THEN
-            (Tactical.EVERY
-              [Tactic.BOOL_CASES_TAC left, Tactic.BOOL_CASES_TAC right],
-             boolLib.REWRITE_TAC [])))
-    in (left, right, List.map prove clauses) end
+    (Term.mk_var ("p", Type.bool), Term.mk_var ("q", Type.bool),
+     [("cnf_equiv_neg1", HolSmtTheory.cnf_equiv_neg1),
+      ("cnf_equiv_neg2", HolSmtTheory.cnf_equiv_neg2),
+      ("cnf_equiv_pos1", HolSmtTheory.cnf_equiv_pos1),
+      ("cnf_equiv_pos2", HolSmtTheory.cnf_equiv_pos2)])
 
   (* The kernel comparison preserves physical DAG sharing and uses an
      operation-local identity memo.  Reuse it rather than retain a second
@@ -8326,19 +8306,7 @@ local
      valid for smt_rdiv, so never assert it.  Return only a reflexive theorem
      for this exact shape; irrelevant congruence branches discard reflexive
      premises, while any proof that actually needs the rewrite still fails. *)
-  val smtfp_eq_components_law =
-    Library.prove
-      (``!x y : ('t,'w) smtfp.
-          smtfp_eq x y <=>
-          (~smtfp_is_nan x /\ ~smtfp_is_nan y) /\
-          (x = y \/ smtfp_is_zero x /\ smtfp_is_zero y)``,
-       Tactical.THEN
-         (bossLib.SIMP_TAC (bossLib.srw_ss())
-            [smtfloatTheory.smtfp_eq_def,
-             smtfloatTheory.float_equal_components,
-             smtfloatTheory.smtfp_is_nan_def,
-             smtfloatTheory.smtfp_is_zero_def],
-          metisLib.METIS_TAC []))
+  val smtfp_eq_components_law = smtfloatTheory.smtfp_eq_components
 
   val fp_canonical_fact_laws = ref
     (Redblackmap.mkDict Type.compare :
@@ -8352,54 +8320,14 @@ local
   val fp_atom_bridge_laws = ref ([] : Thm.thm list)
   val private_fp_bridge_observer = ref (NONE : (Term.term -> unit) option)
 
-  val rounding_partition_law = Library.prove
-    (``!mode : smt_rounding.
-       (mode = RNE \/ mode = RNA \/ mode = RTP \/
-        mode = RTN \/ mode = RTZ) /\
-       ~(mode = RNE /\ mode = RNA) /\
-       ~(mode = RNE /\ mode = RTP) /\
-       ~(mode = RNE /\ mode = RTN) /\
-       ~(mode = RNE /\ mode = RTZ) /\
-       ~(mode = RNA /\ mode = RTP) /\
-       ~(mode = RNA /\ mode = RTN) /\
-       ~(mode = RNA /\ mode = RTZ) /\
-       ~(mode = RTP /\ mode = RTN) /\
-       ~(mode = RTP /\ mode = RTZ) /\
-       ~(mode = RTN /\ mode = RTZ)``,
-     metisLib.METIS_TAC
-       [smtfloatTheory.smt_rounding_cases,
-        smtfloatTheory.smt_rounding_distinctness])
+  val rounding_partition_law =
+    smtfloatReplayRoundingTheory.smtfp_rounding_onehot
 
   (* Eliminate Boolean enum cases without opening the actual mode source.
      Unlike the pack-based law, this shares exactly the one-hot atoms used
      by rounding_partition_law. *)
-  (* (case mode of RNE => rne | RNA => rna | RTP => rtp | RTN => rtn
-                  | RTZ => rtz) =
-     (if mode = RNE then rne else if mode = RNA then rna
-      else if mode = RTP then rtp else if mode = RTN then rtn else rtz),
-     built rather than parsed: a constant a client theory exports must not
-     capture mode or the five Boolean outcomes. *)
   val rounding_boolean_case_law =
-    let
-      val mode = Term.mk_var ("mode",
-        Type.mk_thy_type {Thy = "smtfloat", Tyop = "smt_rounding", Args = []})
-      val names = ["RNE", "RNA", "RTP", "RTN", "RTZ"]
-      val modes =
-        List.map (fn name => Term.prim_mk_const {Thy = "smtfloat", Name = name})
-          names
-      val outcomes =
-        List.map (fn name => Term.mk_var (String.map Char.toLower name, Type.bool))
-          names
-      val rows = ListPair.zip (modes, outcomes)
-      fun chain ((rounding, outcome), rest) =
-        boolSyntax.mk_cond (boolSyntax.mk_eq (mode, rounding), outcome, rest)
-      val if_chain = List.foldr chain (List.last outcomes) (List.take (rows, 4))
-    in
-      Library.prove
-        (boolSyntax.mk_eq (TypeBase.mk_case (mode, rows), if_chain),
-         Tactical.THEN (bossLib.tmCases_on mode [],
-           simpLib.SIMP_TAC (bossLib.srw_ss()) []))
-    end
+    smtfloatReplayRoundingTheory.smtfp_rounding_bool_case
 
   fun word_circuit_leaf_rewrites () =
     List.map Conv.REWR_CONV

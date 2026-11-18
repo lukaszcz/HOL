@@ -21,6 +21,17 @@ Proof
   Cases_on `mode` >> simp [smt_rounding_distinctness]
 QED
 
+(* Boolean case elimination over the same one-hot atoms as
+   smtfp_rounding_onehot. *)
+Theorem smtfp_rounding_bool_case:
+  (case mode of
+     RNE => rne | RNA => rna | RTP => rtp | RTN => rtn | RTZ => rtz) <=>
+  if mode = RNE then rne else if mode = RNA then rna
+  else if mode = RTP then rtp else if mode = RTN then rtn else rtz
+Proof
+  Cases_on `mode` >> simp []
+QED
+
 Theorem smtfp_bit_add:
   !i left right.
     BIT i (left + right) =

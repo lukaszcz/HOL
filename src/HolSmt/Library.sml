@@ -1306,20 +1306,9 @@ struct
 
   val TO_WORD_EXTRACT = HolSmtTheory.TO_WORD_EXTRACT
 
-  val WORD_BIT_EXTRACT = simpLib.SIMP_PROVE
-        (simpLib.++(bossLib.std_ss, wordsLib.WORD_BIT_EQ_ss))
-        [wordsLib.WORD_DECIDE “1w :word1 ' 0”]
-        “!w:'a word i. i < dimindex (:'a) ==> (w ' i = ((i >< i) w = 1w:word1))”
-
-  val WORD_SHIFT_BV = simpLib.SIMP_PROVE bossLib.bool_ss
-        [wordsTheory.word_shift_bv]
-       “(!w:'a word n. n < dimword (:'a) ==> (w << n = w <<~ n2w n)) /\
-        (!w:'a word n. n < dimword (:'a) ==> (w >> n = w >>~ n2w n)) /\
-        (!w:'a word n. n < dimword (:'a) ==> (w >>> n = w >>>~ n2w n))”
-
-  val bit_field_insert_rwt = simpLib.SIMP_RULE
-        (simpLib.++(bossLib.bool_ss, boolSimps.LET_ss)) []
-        wordsTheory.bit_field_insert;
+  val WORD_BIT_EXTRACT = HolSmtTheory.WORD_BIT_EXTRACT
+  val WORD_SHIFT_BV = HolSmtTheory.WORD_SHIFT_BV
+  val bit_field_insert_rwt = HolSmtTheory.bit_field_insert_rwt
 
   (* Rewrites word_div, word_quot and word_smod to the smt_bv* constants the
      translation emits as bvudiv, bvsdiv and bvsmod, which differ from HOL's

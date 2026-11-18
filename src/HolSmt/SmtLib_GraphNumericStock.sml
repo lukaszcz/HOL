@@ -8,55 +8,10 @@ struct
     List.map Drule.GEN_ALL [Thm.CONJUNCT1 th, Thm.CONJUNCT2 th]
   end
 
-  val INT_EXP_1 =
-  let
-    val i = Term.mk_var ("i", intSyntax.int_ty)
-    val th =
-      Thm.SPEC numSyntax.zero_tm
-        (Thm.SPEC i (Thm.CONJUNCT2 integerTheory.int_exp))
-  in
-    Drule.GEN_ALL
-      (simpLib.SIMP_RULE pureSimps.pure_ss
-        [Thm.CONJUNCT1 integerTheory.int_exp, integerTheory.INT_MUL_RID,
-         Conv.GSYM arithmeticTheory.ONE]
-        th)
-  end
-
-  val INT_EXP_BASE_1 =
-  let
-    val n = Term.mk_var ("n", numSyntax.num)
-    val one = numSyntax.mk_numeral Arbnum.one
-    val th = Thm.SPEC n (Thm.SPEC one integerTheory.INT_EXP)
-  in
-    Drule.GEN_ALL
-      (simpLib.SIMP_RULE pureSimps.pure_ss
-        [List.hd exp_one_rewrites, integerTheory.INT] th)
-  end
-
-  val INT_EXP_2 =
-  let
-    val i = Term.mk_var ("i", intSyntax.int_ty)
-    val one = numSyntax.mk_numeral Arbnum.one
-    val th =
-      Thm.SPEC one (Thm.SPEC i (Thm.CONJUNCT2 integerTheory.int_exp))
-  in
-    Drule.GEN_ALL
-      (simpLib.SIMP_RULE pureSimps.pure_ss
-         [INT_EXP_1, Conv.GSYM arithmeticTheory.TWO] th)
-  end
-
-  val INT_EXP_3 =
-  let
-    val i = Term.mk_var ("i", intSyntax.int_ty)
-    val two = numSyntax.mk_numeral (Arbnum.fromInt 2)
-    val th =
-      numLib.REDUCE_RULE
-        (Thm.SPEC two (Thm.SPEC i (Thm.CONJUNCT2 integerTheory.int_exp)))
-  in
-    Drule.GEN_ALL
-      (simpLib.SIMP_RULE pureSimps.pure_ss
-        [INT_EXP_2, integerTheory.INT_MUL_ASSOC] th)
-  end
+  val INT_EXP_1 = HolSmtTheory.INT_EXP_1
+  val INT_EXP_BASE_1 = HolSmtTheory.INT_EXP_BASE_1
+  val INT_EXP_2 = HolSmtTheory.INT_EXP_2
+  val INT_EXP_3 = HolSmtTheory.INT_EXP_3
 
   val num_transfer_rewrites = [
     HolSmtTheory.int_num_floor_total,
