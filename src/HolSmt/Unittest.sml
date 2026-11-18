@@ -16673,6 +16673,49 @@ in
         ``!x. ((s:int -> bool) DIFF t) x <=> s x``)))
 end
 
+(* An extra hypothesis that only a proof from the whole context discharges. *)
+fun cpc_context_proof_hypothesis_success () =
+let
+  val x = Term.mk_var ("x", intSyntax.int_ty)
+  val nonneg = intSyntax.mk_leq (intSyntax.zero_tm, x)
+  val hyp = boolSyntax.mk_eq
+    (boolSyntax.mk_cond (intSyntax.mk_less (x, intSyntax.zero_tm),
+       intSyntax.mk_negated x, x), x)
+  val theorem = CPC_ProofReplay.remove_hyps_for_test
+    ([nonneg], boolSyntax.F, Thm.ASSUME hyp)
+in
+  check_oracle_tags "CPC context-proof hypothesis" theorem;
+  assert (Term.aconv (Thm.concl theorem) hyp andalso
+      HOLset.equal (Thm.hypset theorem,
+        HOLset.addList (Term.empty_tmset,
+          [boolSyntax.mk_neg boolSyntax.F, nonneg])),
+    "CPC context proof left hypotheses other than its context: " ^
+      String.concatWith ", " (List.map Hol_pp.term_to_string
+        (Thm.hyp theorem)))
+end
+
+fun smt_replay_canon_transport_hypothesis () =
+let
+  val hyp = ``(\x:int. x) y = y``
+  val normalized = ``(y:int) = y``
+  val hyp_conv = Conv.TOP_DEPTH_CONV Thm.BETA_CONV hyp
+  val hit = SmtReplayCanon.transport_hypothesis hyp_conv
+    (Thm.ASSUME normalized)
+  val miss = SmtReplayCanon.transport_hypothesis hyp_conv
+    (Thm.ASSUME ``(y:int) = z``)
+in
+  assert (Term.aconv (boolSyntax.rhs (Thm.concl hyp_conv)) normalized,
+    "transport test conversion changed");
+  (case hit of
+     SOME th =>
+       assert (Term.aconv (Thm.concl th) hyp andalso
+           List.length (Thm.hyp th) = 1 andalso
+           Term.aconv (List.hd (Thm.hyp th)) normalized,
+         "transport hit did not prove the original hypothesis")
+   | NONE => die "FAIL: transport missed an alpha-equal assumption");
+  assert (not (Option.isSome miss), "transport accepted a different term")
+end
+
 (* A const array of Booleans is the empty set or the universe. *)
 fun cpc_arrays_select_const_set_success () =
 let
@@ -38367,6 +38410,10 @@ let
       cpc_array_set_assumption_bridge_success),
     ("cpc_array_set_definition_identity_success",
       cpc_array_set_definition_identity_success),
+    ("cpc_context_proof_hypothesis_success",
+      cpc_context_proof_hypothesis_success),
+    ("smt_replay_canon_transport_hypothesis",
+      smt_replay_canon_transport_hypothesis),
     ("cpc_arrays_select_const_set_success",
       cpc_arrays_select_const_set_success),
     ("cpc_eq_resolve_reflexive_left_success",
