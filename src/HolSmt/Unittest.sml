@@ -19,6 +19,13 @@ fun die s =
 
 fun assert (x, msg) = if x then () else die ("FAIL: " ^ msg)
 
+(* The number of calls Profile has recorded under [name]. *)
+fun profile_count name =
+  case List.find (fn (candidate, _) => candidate = name)
+      (Profile.results ()) of
+    SOME (_, info) => #n info
+  | NONE => 0
+
 fun check_oracle_tags name thm =
   Library.check_oracle_tags "HolSmtLib" name thm
 
@@ -1687,11 +1694,6 @@ end
 
 fun remove_definitions_dependency_first_word_success () =
 let
-  fun calls name =
-    case List.find (fn (result_name, _) => result_name = name)
-        (Profile.results ()) of
-      SOME (_, info) => #n info
-    | NONE => 0
   fun variable_set variables =
     HOLset.addList (Term.empty_tmset, variables)
   fun theorem_with definitions = List.foldl
@@ -1711,7 +1713,7 @@ let
   val acyclic_theorem = remove [word, word2] acyclic
   val () = assert
     (List.null (Thm.hyp acyclic_theorem) andalso
-     calls
+     profile_count
        "check_proof(remove_definitions:self-word-identity)" = 0,
      "acyclic word definitions entered speculative identity proving")
 
@@ -1922,7 +1924,7 @@ let
        (Option.valOf
          (Z3_ProofReplay.prove_self_word_identity_for_test
            (self_identity, word, word, true))) ~~ self_identity andalso
-     calls
+     profile_count
        "check_proof(remove_definitions:self-word-identity)_OK" = 2,
      "reflexive self-dependent word identity was not discharged directly")
 
@@ -1938,7 +1940,7 @@ let
   val packed_theorem = remove [packed_word] [packed_identity]
   val () = assert
     (List.null (Thm.hyp packed_theorem) andalso
-     calls
+     profile_count
        "check_proof(remove_definitions:self-word-identity)_OK" = 1,
      "nontrivial packed/per-bit word identity was not checked")
 
@@ -13193,11 +13195,6 @@ fun cpc_skolem_cache_preflight_rejections () =
 if Library.no_fastpath () orelse
    not CPC_ProofReplay.theorem_cache_enabled_for_test then ()
 else let
-  fun profile_count name =
-    case List.find (fn (result_name, _) => result_name = name)
-        (Profile.results ()) of
-      SOME (_, info) => #n info
-    | NONE => 0
   val prefix =
     "((define @q () \
     \  (forall ((x Bool) (y Bool)) (or x y))) \
@@ -13550,11 +13547,6 @@ let
           (boolSyntax.mk_select (pieces, predicate)),
         "star expansion did not retain the exact parser selector")
     end
-  fun profile_count name =
-    case List.find (fn (candidate, _) => candidate = name)
-        (Profile.results ()) of
-      SOME (_, info) => #n info
-    | NONE => 0
   fun registered name =
     case CPC_Proof.lookup_rule "1.3.4" name of
       SOME rule => #namespace rule = CPC_Proof.ProofRule andalso
@@ -16866,11 +16858,6 @@ end
 
 fun cpc_proof_replay_canonical_trans_terminal_success () =
 let
-  fun profile_count name =
-    case List.find (fn (candidate, _) => candidate = name)
-        (Profile.results ()) of
-      SOME (_, info) => #n info
-    | NONE => 0
   fun replay proof = CPC_ProofReplay.replay_root_for_test
     (parse_cpc_proof_string proof)
   val proofs =
@@ -17894,11 +17881,6 @@ let
       }
     ]
   }
-  fun profile_count name =
-    case List.find (fn (candidate, _) => candidate = name)
-        (Profile.results ()) of
-      SOME (_, info) => #n info
-    | NONE => 0
   val _ = Profile.reset_all ()
   val real_div_reordering =
     CPC_ProofReplay.replay_root_for_test real_div_proof
@@ -18482,8 +18464,9 @@ end
    copy of them.  Each must enter the word bridge exactly once, so its
    outer visited set and abstraction memo run on both shapes, and must give
    the same checked theorem.  The bridge itself declines the target (its
-   left side is a conjunction, not an FP value equality) and the contextual
-   rung proves it; the elapsed times are printed, not asserted. *)
+   left side is a conjunction, not an FP value equality), the contextual
+   rung fails, and the native rung (CPC(rung:trust/fp)) proves it; the
+   elapsed times are printed, not asserted. *)
 fun cpc_fp_word_bridge_memo_shapes () =
 let
   val depth = 5
@@ -18500,19 +18483,15 @@ let
     boolSyntax.T (List.tabulate (4, Lib.I))
   val encoding = boolSyntax.mk_eq
     (``1w : word1``, SmtLib_Theories.mk_bbterm [atom])
-  fun profile_count name =
-    case List.find (fn (candidate, _) => candidate = name)
-        (Profile.results ()) of
-      SOME (_, info) => #n info
-    | NONE => 0
   fun check (label, left_context, right_context) =
     let
       val target = boolSyntax.mk_eq
         (boolSyntax.mk_conj (atom, left_context),
          boolSyntax.mk_conj (encoding, right_context))
       val name = "CPC word-bridge memo shape " ^ label
+      val nodes = SmtResource.dag_nodes_up_to 257 target
       val _ = assert
-        (SmtResource.dag_nodes_up_to 257 target <= 192,
+        (nodes <= 192,
          name ^ " is not comfortably below the 256-node routing bound")
       val _ = Profile.reset_all ()
       val timer = Timer.startRealTimer ()
@@ -18524,15 +18503,19 @@ let
         name ^ " did not enter the FP word bridge exactly once");
       assert_no_hyps (name, theorem);
       assert_concl_alpha (name, theorem, target);
-      check_oracle_tags name theorem
+      check_oracle_tags name theorem;
+      nodes
     end
   val leaf = Term.mk_var ("fp_memo_leaf", Type.bool)
   val one_copy = boolSyntax.mk_conj (wide, shared depth leaf)
-in
-  check ("independent",
+  val independent_nodes = check ("independent",
     boolSyntax.mk_conj (wide, independent depth),
-    boolSyntax.mk_conj (wide, independent depth));
-  check ("shared", one_copy, one_copy)
+    boolSyntax.mk_conj (wide, independent depth))
+  val shared_nodes = check ("shared", one_copy, one_copy)
+in
+  assert (independent_nodes > shared_nodes,
+    "the independent shape no longer has more pointer-distinct nodes " ^
+    "than the shared shape")
 end
 
 fun cpc_fp_forced_check_rejects_unproved_clause () =
