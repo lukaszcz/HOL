@@ -20229,10 +20229,12 @@ let
       f (p \/ 0 = z \/ ((&c):int) = &a)``
   val refused = [``(a:num) = c``, ``(c:num) = a``]
   val base = SmtDatatypeProve.default_admission ()
+  val refusals = ref 0
   fun admit tm =
     if Lib.can (HolKernel.find_term
          (fn t => List.exists (Term.aconv t) refused)) tm
-    then raise Feedback.mk_HOL_ERR "Unittest" "admit" "refused"
+    then (refusals := !refusals + 1;
+          raise Feedback.mk_HOL_ERR "Unittest" "admit" "refused")
     else base tm
   val initial = Z3_Proof.empty_proof "4.15.3"
   val steps = Redblackmap.insert
@@ -20243,6 +20245,9 @@ let
       admit [] (Z3_Proof.update_proof_steps initial steps))
     handle Feedback.HOL_ERR _ => ()
 in
+  assert (profile_call_count "rewrite(21a)(datatype-normalize)_HOL_ERR" > 0,
+    "Z3 datatype-normalize was not reached");
+  assert (!refusals > 0, "the admission never saw the INT_INJ result");
   assert (profile_call_count "rewrite(21a)(datatype-normalize)_OK" = 0,
     "Z3 datatype-normalize ran an exported rewrite its admission refuses")
 end
