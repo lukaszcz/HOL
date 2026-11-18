@@ -1754,7 +1754,6 @@ struct
     let
       val original=ordinary solver text
       val budget=index_budget solver text
-      val _=print ("SOURCED_BUDGET "^text^" "^Int.toString budget^"\n")
       fun both limit =
         let val int_entry=IntEntry limit
             val policy_entry=PolicyEntry (RP.AtMost (IntInf.fromInt limit))
@@ -1762,9 +1761,7 @@ struct
             val graph_policy=graph_receipt policy_entry solver text
             val value_int=value_receipt int_entry solver text
             val value_policy=value_receipt policy_entry solver text
-        in print ("SOURCED_RECEIPT "^text^" limit="^Int.toString limit^
-             "\n  graph "^graph_int^"\n  value "^value_int^"\n");
-           ensure ("ordinary graph entries differ: "^text^"\n"^graph_int^
+        in ensure ("ordinary graph entries differ: "^text^"\n"^graph_int^
                    "\n"^graph_policy) (graph_int=graph_policy);
            ensure ("typed Value entries differ: "^text^"\n"^value_int^
                    "\n"^value_policy) (value_int=value_policy);
@@ -1779,9 +1776,7 @@ struct
           (Session_value (small_value context (#node ((#parse_from
              (value_session_at recipe graph context backend solver))
              (tokens text)))) handle Feedback.HOL_ERR e =>
-               (print ("SOURCED_SESSION "^text^" limit="^Int.toString limit^
-                  " "^Feedback.message_of e^"\n");
-                Session_refused (Feedback.message_of e)))) end
+               Session_refused (Feedback.message_of e))) end
       val (admitted_graph,admitted_value)=both budget
       val (refused_graph,refused_value)=both (budget-1)
       val _=ensure ("budget admission: "^text)
