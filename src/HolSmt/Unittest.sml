@@ -37808,6 +37808,7 @@ let
     ("cpc_deferred_graph_closure", CPC_DeferredGraphTests.run),
     ("cpc_deferred_marker_closure", CPC_DeferredMarkerTests.run),
     ("z3_compact_selected_dispatch", Z3_CompactReplayTests.run),
+    ("cpc_clausal_elimination_rows", CPC_ClausalEliminationTests.run),
     ("cpc_graph_typed_parser", fn () =>
       (CPC_GraphParserTests.run ();CPC_ConstructorAliasReviewTests.run ())),
     ("z3_bv1_concat_replay_success", z3_bv1_concat_replay_success),
