@@ -1629,8 +1629,18 @@ struct
             else ())) variables
       val term = Term.mk_abs (#term binder_fields,#term body_fields)
       val ty = Type.mk_type ("fun",[#ty binder_fields,#ty body_fields])
+      (* [ty] is a new object, which the recent-Type cache cannot hit; its
+         argument IDs are known. *)
+      val type_id = case #indices g of
+          LegacyIndices state =>
+            (case Redblackmap.peek (!(#types state),
+                TypeOperator (#Tyop (Type.dest_thy_typeid ty),
+                  [#type_id binder_fields,#type_id body_fields])) of
+               SOME id => id
+             | NONE => intern_type g ty)
+        | PaidIndices _ => intern_type g ty
     in fresh g
-      {scope = scope, ty = ty, type_id = intern_type g ty, term = term,
+      {scope = scope, ty = ty, type_id = type_id, term = term,
        view = AdmittedBinder {binder = binder,body = body,
                              frame = #scope binder_fields},
        raw = raw, inclusive = inclusive, source = ref NONE,
@@ -1738,13 +1748,16 @@ struct
         raise ERR "binder_origin" "inconsistent admission node index"
     in admission end
 
-  fun admit_binder_record (g : graph) scope maximum original =
+  (* A nested abstraction lies inside one whose size was bounded, so it is
+     not walked again: its raw size is its built node's. *)
+  fun admit_binder_within (g : graph) scope maximum nested original =
     let
       val _ = check_scope g scope
       val _ = if Term.is_abs original then () else
         raise ERR "admit_binder" "not an abstraction"
-      val raw = case SmtReplayImport.bounded_raw_size maximum original of
-          SOME count => IntInf.fromInt count
+      val walked = if nested then NONE else
+        case SmtReplayImport.bounded_raw_size maximum original of
+          SOME count => SOME (IntInf.fromInt count)
         | NONE => raise ERR "admit_binder" "bounded binder budget exhausted"
       val epoch = Type.type_epoch () val symbols = Term.term_epoch ()
       val table = Option.getOpt
@@ -1772,7 +1785,7 @@ struct
           and compute term =
             let val source =
               if Term.is_abs term then
-                #1 (admit_binder_record g body_frame maximum term)
+                #1 (admit_binder_within g body_frame maximum true term)
               else if Term.is_comb term then
               let
                 val (left,right) = Term.dest_comb term
@@ -1795,6 +1808,11 @@ struct
                 (Term.mk_abs (binder_term,representative g (#node body)))
                 (representative g node)))
           val source = source_for g original node theorem
+          val raw = case walked of
+              SOME raw => raw
+            | NONE => (case #raw (entry g node) of
+                SOME count => IntInf.fromInt count
+              | NONE => raise ERR "admit_binder" "unknown nested binder size")
           (* All these are the actual held values used above. Publish only
              AFTER the whole source bridge passes its endpoint checks. *)
           val admission : admitted_binder_origin =
@@ -1821,6 +1839,9 @@ struct
     end
 
   (* Existing public proof/admission behavior is retained. *)
+  fun admit_binder_record g scope maximum original =
+    admit_binder_within g scope maximum false original
+
   fun admit_binder g scope maximum original =
     #1 (admit_binder_record g scope maximum original)
 
