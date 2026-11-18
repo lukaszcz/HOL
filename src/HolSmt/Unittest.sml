@@ -27645,6 +27645,41 @@ in
     "symbolic power was routed to nla_prove")
 end
 
+(* f (f (... (f x))) with n applications of f : 'a -> 'a: n * 2 + 1 nodes
+   that are no split candidates. *)
+fun opaque_padding n =
+  let
+    val f = Term.mk_var ("pad_f", Type.alpha --> Type.alpha)
+    fun pad 0 t = t
+      | pad k t = pad (k - 1) (Term.mk_comb (f, t))
+  in pad n (Term.mk_var ("pad_x", Type.alpha)) end
+
+fun arith_linear_splits_small_targets_only_success () =
+let
+  (* Three independent conditionals around an unprovable inequality.
+     Polynomial normalization case-splits them in a small target: 2^3 goals
+     reach the final ARITH pass.  In a target over the split bound it
+     normalizes unsplit: one goal does. *)
+  fun final_arith_passes bound =
+    let
+      val padding = Term.inst [{redex = Type.alpha, residue = intSyntax.int_ty}]
+        (opaque_padding bound)
+      val goal =
+        ``(if b1 then y1 else z1) + (if b2 then y2 else z2) +
+          (if b3 then y3 else z3) < (x:int) + ^padding``
+      val () = Profile.reset_all ()
+      val () =
+        (ignore (Z3_ProofReplay.arith_prove_for_test goal);
+         die "FAIL: an unprovable inequality was proved by arithmetic replay")
+        handle Feedback.HOL_ERR _ => ()
+    in profile_call_count "arith-linear(6)(int)" end
+in
+  assert (final_arith_passes 0 = 8,
+    "arithmetic replay did not case-split a small target");
+  assert (final_arith_passes Z3_ProofReplay.arith_split_max_target_nodes = 1,
+    "arithmetic replay case-split a target over its split bound")
+end
+
 fun cpc_arith_mult_sign_replay_success () =
 let
   val sign = CPC_ProofReplay.replay_arith_mult_sign_for_test
@@ -28753,6 +28788,81 @@ fun datatype_exhaustiveness_split_cap_success () =
       "unprovable datatype split search was not stopped by the split cap");
     assert (profile_call_count "datatype(split)" = 256,
       "datatype split search did not stop exactly at its total split cap")
+  end
+
+fun datatype_exhaustiveness_split_cap_scales_success () =
+  let
+    (* The nine never-closing option splits of the fixed-cap test, in a goal
+       of about 4000 nodes: the cap shrinks with the goal it re-simplifies. *)
+    val splits =
+      ``(P:bool option -> bool option -> bool option -> bool option ->
+           bool option -> bool option -> bool option -> bool option ->
+           bool option -> bool) o1 o2 o3 o4 o5 o6 o7 o8 o9``
+    val goal = boolSyntax.mk_conj (splits,
+      Term.mk_comb (Term.mk_var ("Q", Type.alpha --> Type.bool),
+        opaque_padding 2000))
+    val cap = SmtDatatypeProve.exhaustiveness_split_cap goal
+    fun expected_cap t = 65536 div SmtResource.term_nodes_up_to 65536 t
+    val larger = boolSyntax.mk_conj (splits,
+      Term.mk_comb (Term.mk_var ("Q", Type.alpha --> Type.bool),
+        opaque_padding 8000))
+    val larger_cap = SmtDatatypeProve.exhaustiveness_split_cap larger
+    val _ = Profile.reset_all ()
+    val rejected =
+      ((ignore (SmtDatatypeProve.exhaustiveness_prove goal); false)
+       handle Feedback.HOL_ERR holerr =>
+         String.isSubstring
+           ("more than " ^ Int.toString cap ^ " datatype case splits")
+           (Feedback.message_of holerr))
+  in
+    assert (cap = expected_cap goal andalso cap < 256,
+      "exhaustiveness split cap is not 65536 div the goal's nodes: " ^
+      Int.toString cap);
+    assert (larger_cap = expected_cap larger andalso larger_cap < cap,
+      "exhaustiveness split cap did not shrink on a larger goal: " ^
+      Int.toString larger_cap);
+    assert (rejected,
+      "large unprovable datatype split search was not stopped by its cap");
+    assert (profile_call_count "datatype(split)" = cap,
+      "datatype split search did not stop exactly at its scaled cap")
+  end
+
+fun datatype_metis_declines_large_target_success () =
+  let
+    fun excluded_middle value =
+      let val atom = ``(o1:'a option) = SOME ^value``
+      in boolSyntax.mk_disj (atom, boolSyntax.mk_neg atom) end
+    val small = excluded_middle (Term.mk_var ("pad_x", Type.alpha))
+    val large = excluded_middle
+      (opaque_padding SmtDatatypeProve.metis_max_target_nodes)
+    val theorem = SmtDatatypeProve.metis_datatype_prove small
+    val declined =
+      ((ignore (SmtDatatypeProve.metis_datatype_prove large); false)
+       handle Feedback.HOL_ERR _ => true)
+    (* Acyclicity proves the cycle's negation by size, then needs METIS for
+       the disjunction around it. *)
+    fun acyclic_or value =
+      boolSyntax.mk_disj (``SmtLeft (SmtRight (l:smt_left)) <> l``,
+        Term.mk_comb (Term.mk_var ("Q", Type.alpha --> Type.bool), value))
+    val small_acyclic = acyclic_or (Term.mk_var ("pad_x", Type.alpha))
+    val acyclic_theorem = SmtDatatypeProve.acyclicity_prove small_acyclic
+    val acyclic_declined =
+      ((ignore (SmtDatatypeProve.acyclicity_prove (acyclic_or
+          (opaque_padding SmtDatatypeProve.metis_max_target_nodes))); false)
+       handle Feedback.HOL_ERR _ => true)
+  in
+    assert (Thm.concl theorem ~~ small andalso List.null (Thm.hyp theorem),
+      "datatype METIS did not prove a small excluded middle");
+    check_oracle_tags "datatype_metis_declines_large_target_success" theorem;
+    assert (declined,
+      "datatype METIS ran on a target over its node bound");
+    assert (Thm.concl acyclic_theorem ~~ small_acyclic andalso
+            List.null (Thm.hyp acyclic_theorem),
+      "acyclicity did not prove a small disjunction by METIS");
+    check_oracle_tags "datatype_metis_declines_large_target_success"
+      acyclic_theorem;
+    assert (acyclic_declined,
+      "acyclicity ran METIS on a target over its node bound")
   end
 
 fun datatype_constructor_reconstruction_success () =
@@ -38565,6 +38675,8 @@ let
       cpc_arith_geq_tighten_conditional_success),
     ("symbolic_power_avoids_nla_route_success",
       symbolic_power_avoids_nla_route_success),
+    ("arith_linear_splits_small_targets_only_success",
+      arith_linear_splits_small_targets_only_success),
     ("cpc_arith_mult_relation_replay_success",
       cpc_arith_mult_relation_replay_success),
     ("cpc_arith_mult_sign_replay_success",
@@ -38614,6 +38726,10 @@ let
       datatype_recursive_split_budget_success),
     ("datatype_exhaustiveness_split_cap_success",
       datatype_exhaustiveness_split_cap_success),
+    ("datatype_exhaustiveness_split_cap_scales_success",
+      datatype_exhaustiveness_split_cap_scales_success),
+    ("datatype_metis_declines_large_target_success",
+      datatype_metis_declines_large_target_success),
     ("datatype_constructor_reconstruction_success",
       datatype_constructor_reconstruction_success),
     ("datatype_fragment_precondition_rejects_earlier_rungs",
