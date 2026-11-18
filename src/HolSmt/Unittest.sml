@@ -37612,6 +37612,86 @@ in
   List.app check (unpreprocessed_solvers ())
 end
 
+fun smt_pointer_table () =
+let
+  fun check name b = if b then () else die ("FAIL: pointer table " ^ name)
+  val moduli = ref ([] : int list)
+  fun spy modulus _ = (moduli := modulus :: !moduli; 0)
+  fun constant modulus term = (ignore term; ignore modulus; 0)
+  fun fresh index = Term.mk_var ("pt" ^ Int.toString index, Type.bool)
+  fun buckets_seen () = List.foldl Int.max 0 (!moduli)
+  (* mark: first visit true, repeat false; equal but distinct terms differ *)
+  val set = SmtPointerTable.new
+    {hint = SmtReplayImport.pointer_bucket 3, initial = 17, ceiling = 8191}
+  val x = fresh 0
+  val x' = fresh 0
+  val _ = check "distinct equal terms" (Term.aconv x x' andalso
+    not (Portable.pointer_eq (x, x')))
+  val _ = check "mark first" (SmtPointerTable.mark set x)
+  val _ = check "mark repeat" (not (SmtPointerTable.mark set x))
+  val _ = check "equal term is a new key" (SmtPointerTable.mark set x')
+  val _ = check "equal term repeat" (not (SmtPointerTable.mark set x'))
+  val _ = check "size" (SmtPointerTable.size set = 2)
+  (* collisions: every key in one bucket still resolves by pointer *)
+  val tbl : int SmtPointerTable.table = SmtPointerTable.new
+    {hint = constant, initial = 4, ceiling = 4}
+  val keys = List.tabulate (20, fresh)
+  val _ = List.app (fn k => SmtPointerTable.insert tbl k
+    (valOf (Int.fromString (String.extract (#1 (Term.dest_var k), 2, NONE)))))
+    keys
+  val _ = check "collisions" (List.all (fn k =>
+    SmtPointerTable.lookup tbl k = Int.fromString
+      (String.extract (#1 (Term.dest_var k), 2, NONE))) keys)
+  val _ = check "collision miss" (SmtPointerTable.lookup tbl (fresh 0) = NONE)
+  (* growth past 2 * size keeps every key and honours the ceiling *)
+  val grow : int SmtPointerTable.table = SmtPointerTable.new
+    {hint = spy, initial = 5, ceiling = 100}
+  val many = List.tabulate (300, fresh)
+  val _ = List.app (fn (i, k) => SmtPointerTable.insert grow k i)
+    (ListPair.zip (List.tabulate (300, fn i => i), many))
+  val _ = check "grown" (buckets_seen () > 5)
+  val _ = check "grown within ceiling" (buckets_seen () <= 100)
+  val _ = check "growth keeps keys" (List.all (fn (i, k) =>
+    SmtPointerTable.lookup grow k = SOME i)
+    (ListPair.zip (List.tabulate (300, fn i => i), many)))
+  val _ = check "ceiling reached" (buckets_seen () = 100)
+  val _ = moduli := []
+  val capped : int SmtPointerTable.table = SmtPointerTable.new
+    {hint = spy, initial = 5, ceiling = 5}
+  val _ = List.app (fn (i, k) => SmtPointerTable.insert capped k i)
+    (ListPair.zip (List.tabulate (300, fn i => i), many))
+  val _ = check "ceiling stops growth" (List.all (fn m => m = 5) (!moduli))
+  (* newest first for a repeated key, across growth *)
+  val newest : int SmtPointerTable.table = SmtPointerTable.new
+    {hint = fn _ => fn _ => 0, initial = 3, ceiling = 1000}
+  val key = fresh 1000
+  val _ = SmtPointerTable.insert newest key 1
+  val _ = List.app (fn k => SmtPointerTable.insert newest k 0) many
+  val _ = SmtPointerTable.insert newest key 2
+  val _ = check "newest before growth" (SmtPointerTable.lookup newest key
+    = SOME 2)
+  val _ = List.app (fn k => SmtPointerTable.insert newest k 0) many
+  val _ = check "newest across growth" (SmtPointerTable.lookup newest key
+    = SOME 2)
+  val repeated : int SmtPointerTable.table = SmtPointerTable.new
+    {hint = SmtReplayImport.pointer_bucket 2, initial = 3, ceiling = 8191}
+  val _ = List.app (fn n => SmtPointerTable.insert repeated key n)
+    (List.tabulate (50, fn n => n))
+  val _ = check "repeated key newest" (SmtPointerTable.lookup repeated key
+    = SOME 49)
+  (* clear empties but does not shrink *)
+  val _ = moduli := []
+  val _ = SmtPointerTable.clear grow
+  val _ = check "cleared size" (SmtPointerTable.size grow = 0)
+  val _ = check "cleared miss" (List.all (fn k =>
+    SmtPointerTable.lookup grow k = NONE) many)
+  val grown_buckets = List.hd (!moduli)
+  val _ = check "clear keeps size" (grown_buckets = buckets_seen ()
+    andalso grown_buckets > 5)
+  val _ = SmtPointerTable.insert grow x 7
+  val _ = check "usable after clear" (SmtPointerTable.lookup grow x = SOME 7)
+in () end
+
 fun run_unittests () =
 let
   val () = print "Running unit tests...\n\n"
@@ -37631,6 +37711,7 @@ let
     ("sequence_named_obligations", SmtReplaySequenceTests.run),
     ("string_named_obligations", SmtReplayStringTests.run),
     ("bag_named_obligations", bag_named_obligations),
+    ("smt_pointer_table", smt_pointer_table),
     ("public_wrapper_finalization", SmtPublicWrapperTests.run),
     ("cpc_compact_selected_dispatch", CPC_CompactReplayTests.run),
     ("cpc_producer_endpoints", CPC_ProducerEndpointTests.run),
