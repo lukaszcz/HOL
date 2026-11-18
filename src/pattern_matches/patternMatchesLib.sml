@@ -47,7 +47,7 @@ val list_ss  =
 fun make_gen_conv_ss c name basef ssl = let
    exception genconv_reducer_exn
    fun addcontext (context,thms) = context
-   fun apply {solver,conv,context,stack,relation} tm = (
+   fun apply {solver,conv,context,stack,relation,trace} tm = (
      QCHANGED_CONV (c (basef, ssl, SOME (conv stack))) tm
    )
    in simpLib.dproc_ss (REDUCER {name=SOME name,

@@ -52,6 +52,17 @@ sig
   val RCACHE : capacity_info ->
                (term -> term list) * (term -> bool) * (thm list -> conv) ->
                (thm list -> conv) * cache
+  (* As CACHE and RCACHE, which report at the ambient simplifier.trace
+     level, but taking the level to report at, as does the procedure.  A
+     decision procedure gets it from its reducer arguments
+     (Traverse.reducer). *)
+  val CACHE_AT  : capacity_info ->
+                  (term -> bool) * (int -> thm list -> conv) ->
+                  (int -> thm list -> conv) * cache
+  val RCACHE_AT : capacity_info ->
+                  (term -> term list) * (term -> bool) *
+                  (int -> thm list -> conv) ->
+                  (int -> thm list -> conv) * cache
   val clear_cache       : cache -> unit
   val cache_values      : cache -> (term * (term list * thm option) list) list
   val cache_capacity    : cache -> int

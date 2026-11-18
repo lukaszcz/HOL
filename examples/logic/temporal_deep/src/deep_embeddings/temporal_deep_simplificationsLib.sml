@@ -96,7 +96,7 @@ exception reducer_empty_context;
 fun simple_conv_reducer conv' =
   let
       fun addcontext (context,thms) = reducer_empty_context
-      fun apply {solver,conv, context,stack,relation} tm = conv' tm;
+      fun apply {solver,conv,context,stack,relation,trace} tm = conv' tm;
   in REDUCER {addcontext=addcontext, apply=apply,
               initial=reducer_empty_context}
   end;

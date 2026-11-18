@@ -24,7 +24,7 @@ fun facts xs ys = ListPair.allEq (fn (x,y) => same x y) (xs,ys)
 fun rules congs = Travrules.TRAVRULES
   {relations=[Travrules.EQ_preorder],congprocs=congs,weakenprocs=[]}
 fun data rewriters dprocs congs : E.traverse_data =
-  {limit=NONE,rewriters=rewriters,dprocs=dprocs,
+  {limit=NONE, trace=NONE,rewriters=rewriters,dprocs=dprocs,
    relation=equality,travrules=rules congs}
 
 (* A root entry performs exactly one successful candidate, never a descent
@@ -146,7 +146,8 @@ val _ = let
         record ("collect:" ^ Int.toString (!generations));
         Payload (r,!generations,more))
        | _ => raise Fail "lost opaque solver payload",
-     apply=fn {context,stack,conv,solver,relation=(rel,refl)} => fn tm =>
+     apply=fn {context,stack,conv,solver,relation=(rel,refl),
+               trace=_} => fn tm =>
        let
          val (n,ths) = case context of Payload (r,n,ths) =>
            (contract (Portable.pointer_eq (r,token)); (n,ths))

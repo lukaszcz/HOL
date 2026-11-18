@@ -170,23 +170,26 @@ fun ac_term_ord(tm1,tm2) =
 
    type config =
      {solver : term list -> term -> thm, stack : term list,
-      cond_depth : int option, term_ord : term * term -> order}
+      cond_depth : int option, term_ord : term * term -> order,
+      trace : int}
    type runners =
      {legacy : (term list -> term -> thm) -> term list -> conv,
       configured : config -> conv}
 
    (* One construction (theorem analysis and matcher) serves two runners.
       The legacy runner reads stack_limit at each application and orders
-      permutative rewrites by ac_term_ord; the configured runner takes
-      both from its argument, NONE depth again meaning stack_limit. *)
+      permutative rewrites by ac_term_ord, and reports at the ambient
+      trace level; the configured runner takes all three from its
+      argument, NONE depth again meaning stack_limit. *)
    fun COND_REWR_CONVS (nm,th) bounded =
       let val eqn = snd (strip_imp (concl th))
           val isperm = is_var_perm (dest_eq eqn)
           val instth = HO_PART_MATCH (lhs o snd o strip_imp) th
                        handle HOL_ERR _ => ERR("COND_REWR_CONV",
                          "bad theorem argument (not a conditional equation)")
-          fun apply solver stack depth term_ord tm =
-       (let val conditional_eqn = instth tm
+          fun apply solver stack depth term_ord verbosity tm =
+       (let val trace = trace_at verbosity
+            val conditional_eqn = instth tm
             val (conditions,eqn) = strip_imp (concl conditional_eqn)
             val _ = if exists (C (op_mem aconv) stack) conditions
                         then (trace(1, TEXT "looping - cut");
@@ -233,13 +236,15 @@ fun ac_term_ord(tm1,tm2) =
         handle e => WRAP_ERR("COND_REWR_CONV (application)",e))
       in
         {legacy = fn solver => fn stack => fn tm =>
-                     apply solver stack (!stack_limit) ac_term_ord tm,
-         configured = fn {solver,stack,cond_depth,term_ord} => fn tm =>
+                     apply solver stack (!stack_limit) ac_term_ord
+                           (resolve_level NONE) tm,
+         configured = fn {solver,stack,cond_depth,term_ord,trace} =>
+                      fn tm =>
                          apply solver stack
                                (case cond_depth of
                                     NONE => !stack_limit
                                   | SOME n => n)
-                               term_ord tm}
+                               term_ord trace tm}
       end
       handle e  => WRAP_ERR("COND_REWR_CONV (construction) ",e);
 
@@ -330,12 +335,15 @@ val TF_EQ_F = PROVE_HYP (UNDISCH_ALL (NOT_ELIM (CONJUNCT1 BOOL_EQ_DISTINCT)))
 val FT_EQ_F = PROVE_HYP (UNDISCH_ALL (NOT_ELIM (CONJUNCT2 BOOL_EQ_DISTINCT)))
                         (UNDISCH_ALL x_eq_false)
 
-fun IMP_EQ_CANON (thm,bnd) = let
+(* What a theorem is made into is reported through trace, which
+   IMP_EQ_CANON_AT judges against the level of the simpset the rewrites
+   are for, and IMP_EQ_CANON against the ambient level. *)
+fun imp_eq_canon trace (thm,bnd) = let
   val conditions = #1 (strip_imp (concl thm))
   val hypfvs = hyp_frees thm
   val undisch_thm = UNDISCH_ALL thm
   val conc = concl undisch_thm
-  fun IMP_EQ_CANONb th = IMP_EQ_CANON (th, bnd)
+  fun IMP_EQ_CANONb th = imp_eq_canon trace (th, bnd)
   val undisch_rewrites =
       if (is_eq conc) then
         if loops undisch_thm andalso bnd = BoundedRewrites.UNBOUNDED then
@@ -428,6 +436,9 @@ in
   map (fn (th,bnd) => (CONJ_DISCH conditions th, bnd)) undisch_rewrites
 end handle e => WRAP_ERR("IMP_EQ_CANON",e);
 
+fun IMP_EQ_CANON_AT verbosity = imp_eq_canon (trace_at verbosity)
+fun IMP_EQ_CANON th = imp_eq_canon trace th
+
 
 fun QUANTIFY_CONDITIONS (thm, bnd) =
     if is_imp (concl thm) then
@@ -519,9 +530,13 @@ val IMP_CANON = (fn (th,bnd) => IMP_CANON [] [([], th, bnd)])
 infix oo;
 fun f oo g = fn x => flatten (map f (g x));
 
-fun mk_cond_rewrs l =
-    (QUANTIFY_CONDITIONS oo IMP_EQ_CANON oo IMP_CANON) l
-    handle e as HOL_ERR _ => WRAP_ERR("mk_cond_rewrs",e);
+fun cond_rewrs_with eq_canon name l =
+    (QUANTIFY_CONDITIONS oo eq_canon oo IMP_CANON) l
+    handle e as HOL_ERR _ => WRAP_ERR(name,e);
+
+fun mk_cond_rewrs_at verbosity =
+    cond_rewrs_with (IMP_EQ_CANON_AT verbosity) "mk_cond_rewrs_at"
+fun mk_cond_rewrs l = cond_rewrs_with IMP_EQ_CANON "mk_cond_rewrs" l
 
 end;
 

@@ -192,13 +192,11 @@ fun exclude name =
           end
   end
 
-fun named_rules () =
-  let val ctxt = Context.snapshot ()
-  in
-    case active ctxt of
-        NONE => []
-      | SOME r => Symtab.dest (#get r ctxt)
-  end
+fun named_rules_of ctxt =
+  case active ctxt of
+      NONE => []
+    | SOME r => Symtab.dest (#get r ctxt)
+fun named_rules () = named_rules_of (Context.snapshot ())
 fun theory_data thy =
   case active (Context.snapshot ()) of NONE => [] | SOME r => #segment r thy
 fun current_data () = theory_data (Theory.current_theory ())

@@ -60,10 +60,12 @@ functor congLibFn
          val traversal :
              simpset ->
              {rewriters : reducer list, dprocs : reducer list,
-              travrules : Travrules.travrules} *
+              travrules : Travrules.travrules, trace : int option} *
              ({rewriters : reducer list, dprocs : reducer list,
-               limit : int option, travrules : Travrules.travrules,
+               limit : int option, trace : int option,
+               travrules : Travrules.travrules,
                relation : Abbrev.term} -> Abbrev.thm list -> Abbrev.conv)
+         val in_trace_context : Context.t -> simpset -> simpset
        end) : congLibFn =
 struct
 open HolKernel boolLib
@@ -221,7 +223,7 @@ val cong_reducer =
         in
           CONVNET (insertThms net thms)
         end
-      fun apply {solver,conv,context,stack,relation} tm =
+      fun apply {solver,conv,context,stack,relation,trace} tm =
         let
             val net = ((raise context) handle CONVNET net => net)
             val thm = cong_rewrite net relation tm
@@ -318,6 +320,7 @@ fun CONGRUENCE_SIMP_QCONV relation (cs as (CS csdata)) ss =
           dprocs= #dprocs csdata @
                   map E.eq_reducer_wrapper (#dprocs traversedata),
           relation=relation, limit= #limit csdata,
+          trace= #trace traversedata,
           travrules=merge_travrules
             ([eq_congsTravrule,#travrules traversedata] @
              #travrules csdata)}
@@ -346,23 +349,26 @@ fun CONGRUENCE_SIMP_RULE cs ss =
   (fn thms =>
     CONV_RULE (CONGRUENCE_EQ_SIMP_CONV cs ss thms));
 
-fun CONGRUENCE_SIMP_TAC cs ss =
-  (fn thms =>
-    CONV_TAC (CONGRUENCE_EQ_SIMP_CONV cs ss thms));
+
+(* The tactics report at the simplifier.trace level of their context *)
+fun CONGRUENCE_SIMP_TAC cs ss thms g c =
+    CONV_TAC (CONGRUENCE_EQ_SIMP_CONV cs (E.in_trace_context c ss) thms) g c
 
 
-fun ASM_CONGRUENCE_SIMP_TAC cs ss l = let
+fun ASM_CONGRUENCE_SIMP_TAC cs ss0 l g c = let
+  val ss = E.in_trace_context c ss0
   fun base thl (asms, gl) = let
     val working = markerLib.LLABEL_RESOLVE thl asms
   in
     CONGRUENCE_SIMP_TAC cs ss working (asms, gl)
   end
 in
-  markerLib.ABBRS_THEN base l
+  markerLib.ABBRS_THEN base l g c
 end
 
-fun FULL_CONGRUENCE_SIMP_TAC cs ss l =
-       let fun drop n (asms,g) =
+fun FULL_CONGRUENCE_SIMP_TAC cs ss0 l gl c =
+       let val ss = E.in_trace_context c ss0
+           fun drop n (asms,g) =
          let val l = length asms
              fun f asms =
            MAP_EVERY ASSUME_TAC
@@ -383,7 +389,7 @@ fun FULL_CONGRUENCE_SIMP_TAC cs ss l =
          THEN drop (length asms)
        in
          markerLib.ABBRS_THEN
-          (fn l => ASSUM_LIST f THEN ASM_CONGRUENCE_SIMP_TAC cs ss l) l
+          (fn l => ASSUM_LIST f THEN ASM_CONGRUENCE_SIMP_TAC cs ss l) l gl c
        end
 
 end

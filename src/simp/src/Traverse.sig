@@ -58,6 +58,10 @@ sig
     *   wants to continue traversing. The continuation invokes traversal
     *   under equality. Similar to solver, but does not call EQT_ELIM.
     *
+    * trace:
+    *   The simplifier.trace level the traversal reports at; a reducer
+    *   that reports events (Trace.trace_at) should report at this one.
+    *
     * addcontext: routine is invoked every time more context is added
     *   to the current environment by virtue of congruence routines.
     *
@@ -72,7 +76,8 @@ sig
                  conv: term list -> term -> thm,
                  context: context,
                  stack:term list,
-                 relation : (term * (term -> thm))} -> conv
+                 relation : (term * (term -> thm)),
+                 trace : int} -> conv
        }
 
   val dest_reducer : reducer ->
@@ -83,7 +88,8 @@ sig
                  conv: term list -> term -> thm,
                  context: context,
                  stack:term list,
-                 relation : (term * (term -> thm))} -> conv}
+                 relation : (term * (term -> thm)),
+                 trace : int} -> conv}
 
   val addctxt : thm list -> reducer -> reducer
 
@@ -123,8 +129,10 @@ sig
      Bad congruence rules may cause very strange behaviour.
     ---------------------------------------------------------------------- *)
 
+   (* trace: the simplifier.trace level, NONE for the ambient setting *)
    type traverse_data = {rewriters: reducer list,
                          limit : int option,
+                         trace : int option,
                          dprocs: reducer list,
                          travrules: Travrules.travrules,
                          relation: term};

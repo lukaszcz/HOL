@@ -42,29 +42,52 @@ type stdconvdata = simpCommon.stdconvdata
 (* Make a rewrite rule into a conversion.                                    *)
 (*---------------------------------------------------------------------------*)
 
+(* The conversions in a simpset's net take the simplifier.trace level they
+   report at.  A user's conversion (convdata) is given none, and does its
+   own reporting if any. *)
+type net_convdata =
+     {thypart : string option, name : string,
+      key : (term list * term) option, trace : int,
+      conv : int -> (term list -> term -> thm) -> term list -> conv}
+
+fun lift_convdata ({thypart, cd = {name,key,trace,conv}} : tagged_convdata)
+    : net_convdata =
+    {thypart = thypart, name = name, key = key, trace = trace,
+     conv = fn _ => conv}
+
+(* COND_REWR_CONV, reporting at the level it is given *)
+fun rewrite_conv nmth bounded =
+    let
+      val run = #configured (COND_REWR_CONVS nmth bounded)
+    in
+      fn verbosity => fn solver => fn stack =>
+         run {solver = solver, stack = stack, cond_depth = NONE,
+              term_ord = ac_term_ord, trace = verbosity}
+    end
+
 (* boolean argument to c is whether or not the rewrite is bounded *)
 fun appconv (c,UNBOUNDED) = c false (* do not eta expand! *)
   | appconv (c,BOUNDED r) =
     let
       val c = c true (* do not inline! *)
     in
-      (fn solver => fn stk => fn tm =>
+      (fn verbosity => fn solver => fn stk => fn tm =>
       if !r = 0 then failwith "exceeded rewrite bound"
-      else c solver stk tm before
+      else c verbosity solver stk tm before
       Portable.dec r)
     end
 
-val mk_rewr_convdata : thname option * controlled_thm ->
-                       tagged_convdata option =
-  simpCommon.mk_rewr_convdata
+fun mk_rewr_convdata verbosity : thname option * controlled_thm ->
+                                 net_convdata option =
+  simpCommon.mk_rewr_convdata verbosity
     (fn {thypart,name,key,th,tag,...} =>
         {thypart = thypart,
-         cd = {name  = name,
-               key   = key,
-               trace = 100, (* no need to provide extra tracing here;
-                               COND_REWR_CONV provides enough tracing
-                               itself *)
-               conv  = appconv (COND_REWR_CONV (name,th), tag)}})
+         name  = name,
+         key   = key,
+         trace = 100, (* no need to provide extra tracing here;
+                         COND_REWR_CONV provides enough tracing
+                         itself *)
+         conv  = appconv (rewrite_conv (name,th), tag)})
 
 (*---------------------------------------------------------------------------*)
 (* Composable simpset fragments                                              *)
@@ -77,7 +100,7 @@ datatype ssfrag = SSFRAG_CON of {
     convs    : tagged_convdata list,
     rewrs    : (thname option * thm) list,
     ac       : (thm * thm) list,
-    filter   : (controlled_thm -> controlled_thm list) option,
+    filter   : (int -> controlled_thm -> controlled_thm list) option,
     dprocs   : Traverse.reducer list,
     congs    : thm list,
     relsimps : relsimpdata list
@@ -90,8 +113,8 @@ val normCong = simpCommon.normCong
 fun SSFRAG {name,convs,rewrs,ac,filter,dprocs,congs} =
   SSFRAG_CON {name = name, rewrs = rewrs, ac = ac,
               convs = map (fn c => {thypart=NONE, cd = c}) convs,
-              filter = filter, dprocs = dprocs, congs = map normCong congs,
-              relsimps = []}
+              filter = simpCommon.plain_filter filter, dprocs = dprocs,
+              congs = map normCong congs, relsimps = []}
 
 val empty_ssfrag = SSFRAG{name = NONE, rewrs = [], convs = [], ac = [],
                           filter = NONE, dprocs = [], congs = []}
@@ -148,6 +171,10 @@ fun relsimp_ss rsdata =
     SSFRAG_CON {name = NONE, relsimps = [rsdata],
                 convs=[],rewrs=[],filter=NONE,ac=[],dprocs=[],congs=[]};
 
+fun leveled_filter_ss filter =
+    SSFRAG_CON {name = NONE, relsimps = [], convs = [], rewrs = [],
+                filter = SOME filter, ac = [], dprocs = [], congs = []}
+
 fun D (SSFRAG_CON s) = s;
 val dest_ssfrag = D
 fun frag_rewrites ssf = map #2 (#rewrs (D ssf))
@@ -191,8 +218,9 @@ fun partition_ssfrags names ssdata =
 (* wasn't), but in practice it has to be.                                    *)
 (* --------------------------------------------------------------------------*)
 
-type conv_info = {name : string,
-                  conval : (term list -> term -> thm) -> term list -> conv}
+type conv_info =
+     {name : string,
+      conval : int -> (term list -> term -> thm) -> term list -> conv}
 type net_conv_info = {thypart : string option, ci : conv_info}
 type net = net_conv_info Ho_Net.net
 
@@ -204,12 +232,15 @@ datatype history_item = ADDFRAG of ssfrag
                       | ADDWEAKENER of weakener_data
 
 datatype simpset =
-     SS of {mk_rewrs    : (controlled_thm -> controlled_thm list),
+     SS of {mk_rewrs    : (int -> controlled_thm -> controlled_thm list),
             history     : history_item list,
             initial_net : net,
             dprocs      : reducer list,
             travrules   : travrules,
             limit       : int option,
+            (* The simplifier.trace level, NONE for the ambient setting;
+               see set_trace_level *)
+            trace       : int option,
             (* Names of fragments that are forbidden from being added by ++.
                Set by `exclude_ssfrags`; cleared per-name by `force_add`. *)
             excluded    : string Binaryset.set}
@@ -217,13 +248,13 @@ datatype simpset =
 val empty_excluded : string Binaryset.set = Binaryset.empty String.compare
 
 fun ssupd_net f (SS{mk_rewrs,history,initial_net,dprocs,travrules,limit,
-                    excluded}) =
+                    trace,excluded}) =
     SS{mk_rewrs = mk_rewrs, history = history, initial_net = f initial_net,
-       dprocs = dprocs, travrules = travrules, limit = limit,
+       dprocs = dprocs, travrules = travrules, limit = limit, trace = trace,
        excluded = excluded}
 
- val empty_ss = SS {mk_rewrs=fn x => [x],
-                    history = [], limit = NONE,
+ val empty_ss = SS {mk_rewrs=fn _ => fn x => [x],
+                    history = [], limit = NONE, trace = NONE,
                     initial_net=empty,
                     dprocs=[],travrules=EQ_tr,
                     excluded = empty_excluded};
@@ -248,7 +279,7 @@ fun dphas_name_from nms (REDUCER {name = SOME n,...}) = Lib.mem n nms
 fun filter_dprocs_by_names nms = List.filter (not o dphas_name_from nms)
 
 fun (ss as SS{mk_rewrs,history,initial_net,dprocs,travrules,limit,
-              excluded}) -* nms =
+              trace,excluded}) -* nms =
     if null nms then ss
     else
       SS{initial_net = filter_net_by_names nms initial_net,
@@ -257,6 +288,7 @@ fun (ss as SS{mk_rewrs,history,initial_net,dprocs,travrules,limit,
          dprocs = filter_dprocs_by_names nms dprocs,
          travrules = travrules,
          limit = limit,
+         trace = trace,
          excluded = excluded}
 fun remove_simps nms ss = ss -* nms
 
@@ -268,17 +300,18 @@ fun remove_simps nms ss = ss -* nms
    * initial context net.
    * ---------------------------------------------------------------------*)
 
- fun USER_CONV {name,key,trace,conv} =
+ fun USER_CONV ({name,trace,conv,...} : net_convdata) =
   let val {enter,leave,failed} =
           simpCommon.user_conv_tracing {name=name,trace=trace}
-  in fn solver => fn stack => fn tm =>
-      (enter tm; leave (tm, conv solver stack tm))
-      handle e => failed e
+  in fn verbosity => fn solver => fn stack => fn tm =>
+      (enter verbosity tm;
+       leave verbosity (tm, conv verbosity solver stack tm))
+      handle e => failed verbosity e
   end;
 
  val any = simpCommon.any
 
- fun net_add_conv {thypart,cd = data as {name,key,trace,conv}:convdata} =
+ fun net_add_conv (data as {thypart,name,key,...} : net_convdata) =
      enter (option_cases #1 [] key,
             option_cases #2 any key,
             {thypart = thypart, ci = {name = name, conval = USER_CONV data}})
@@ -298,10 +331,23 @@ fun remove_simps nms ss = ss -* nms
           |> Lib.mk_set
 
  fun fupdlimit f (SS{mk_rewrs,history,travrules,initial_net,dprocs,limit,
-                     excluded}) =
+                     trace,excluded}) =
      SS{mk_rewrs = mk_rewrs, history = history, travrules = travrules,
         initial_net = initial_net, dprocs = dprocs, limit = f limit,
-        excluded = excluded}
+        trace = trace, excluded = excluded}
+
+ fun fupdtrace f (SS{mk_rewrs,history,travrules,initial_net,dprocs,limit,
+                     trace,excluded}) =
+     SS{mk_rewrs = mk_rewrs, history = history, travrules = travrules,
+        initial_net = initial_net, dprocs = dprocs, limit = limit,
+        trace = f trace, excluded = excluded}
+
+ fun set_trace_level n = fupdtrace (fn _ => SOME n)
+ val unset_trace_level = fupdtrace (fn _ => NONE)
+
+ (* The level a simpset reports at when the context is not to hand *)
+ fun trace_level (SS{trace,...}) = resolve_level trace
+ fun in_trace_context c ss = set_trace_level (trace_level_of c) ss
 
  fun limit n = fupdlimit (fn _ => SOME n)
 
@@ -312,13 +358,13 @@ fun getlimit (SS ss) = #limit ss
  val wk_mk_travrules = simpCommon.wk_mk_travrules
 
  fun add_weakener (wd as (rels,congs,dp)) simpset = let
-   val SS {mk_rewrs,history,travrules,initial_net,dprocs,limit,excluded} =
-       simpset
+   val SS {mk_rewrs,history,travrules,initial_net,dprocs,limit,trace,
+           excluded} = simpset
  in
    SS {mk_rewrs = mk_rewrs, history = ADDWEAKENER wd :: history,
        travrules = merge_travrules [travrules, wk_mk_travrules(rels,congs)],
        initial_net = initial_net, dprocs = dprocs @ [dp], limit = limit,
-       excluded = excluded}
+       trace = trace, excluded = excluded}
  end
 
 (* ----------------------------------------------------------------------
@@ -340,15 +386,19 @@ fun getlimit (SS ss) = #limit ss
  fun op++(ss as SS sset, f as SSFRAG_CON ssf) = if is_excluded ss f then ss else
    let
    val {mk_rewrs=mk_rewrs',history,travrules,initial_net,dprocs=dprocs',limit,
-        excluded}= sset
+        trace,excluded}= sset
    val {convs,rewrs,filter,ac,dprocs,congs,relsimps,...} = ssf
    val mk_rewrs = case filter of
-                    SOME f => f oo mk_rewrs'
+                    SOME f => (fn level => f level oo mk_rewrs' level)
                   | _ => mk_rewrs'
+   val level = resolve_level trace
    val crewrs = map (fn (nmopt,th) => (nmopt, dest_tagged_rewrite th)) rewrs
    val rewrs' : (thname option * controlled_thm) list =
-       flatten (map (mk_named_rewrs mk_rewrs') (ac_rewrites ac @ crewrs))
-   val newconvdata = convs @ List.mapPartial mk_rewr_convdata rewrs'
+       flatten
+         (map (mk_named_rewrs (mk_rewrs' level)) (ac_rewrites ac @ crewrs))
+   val newconvdata =
+       map lift_convdata convs @
+       List.mapPartial (mk_rewr_convdata level) rewrs'
    val net = net_add_convs initial_net newconvdata
    fun travrel (TRAVRULES{relations,...}) = relations
    val sset_rels = travrel travrules
@@ -368,6 +418,7 @@ fun getlimit (SS ss) = #limit ss
        history     = ADDFRAG f :: history,
        initial_net = net,
        limit       = limit,
+       trace       = trace,
        dprocs      = new_dprocs,
        excluded    = excluded,
        travrules   = merge_travrules
@@ -377,7 +428,8 @@ fun getlimit (SS ss) = #limit ss
 
 val mk_simpset = foldl (fn (f,ss) => ss ++ f) empty_ss
 
-fun build_from_history h0 =
+(* Replays h0 onto the empty simpset reporting at trace *)
+fun build_from_history trace h0 =
     let
       fun foldthis (hi, ss) =
           case hi of
@@ -385,19 +437,20 @@ fun build_from_history h0 =
             | DELETE_EVENT sl => ss -* sl
             | ADDWEAKENER wd => add_weakener wd ss
     in
-      List.foldl foldthis empty_ss (List.rev h0)
+      List.foldl foldthis (fupdtrace (fn _ => trace) empty_ss) (List.rev h0)
     end
 
-fun dest_simpset (SS{history,limit,excluded,...}) =
-    {history = List.rev history, limit = limit,
+fun dest_simpset (SS{history,limit,trace,excluded,...}) =
+    {history = List.rev history, limit = limit, trace = trace,
      excluded = Binaryset.listItems excluded}
 
 fun setexcluded e (SS{mk_rewrs,history,initial_net,dprocs,travrules,limit,
-                       excluded=_}) =
+                       trace,excluded=_}) =
     SS{mk_rewrs=mk_rewrs, history=history, initial_net=initial_net,
-       dprocs=dprocs, travrules=travrules, limit=limit, excluded=e}
+       dprocs=dprocs, travrules=travrules, limit=limit, trace=trace,
+       excluded=e}
 
-fun remove_ssfrags names (ss as SS{history,limit,excluded,...}) =
+fun remove_ssfrags names (ss as SS{history,limit,trace,excluded,...}) =
     let
       val member = simpCommon.names_member names o frag_name
       fun filterthis (hi as ADDFRAG f) = not(member f)
@@ -406,8 +459,8 @@ fun remove_ssfrags names (ss as SS{history,limit,excluded,...}) =
       val _ = length history' < length history orelse
               raise Conv.UNCHANGED
     in
-      build_from_history history' |> fupdlimit (fn _ => limit)
-                                  |> setexcluded excluded
+      build_from_history trace history' |> fupdlimit (fn _ => limit)
+                                        |> setexcluded excluded
     end
 
 (* Like `remove_ssfrags`, but additionally records the names so that any
@@ -423,7 +476,7 @@ fun remove_ssfrags names (ss as SS{history,limit,excluded,...}) =
    filter against `excluded ∪ names` instead so that this function stays
    correct in isolation even if some future operation accidentally
    introduces an ADDFRAG of an already-excluded name. *)
-fun exclude_ssfrags names (ss as SS{history,limit,excluded,...}) =
+fun exclude_ssfrags names (ss as SS{history,limit,trace,excluded,...}) =
     let
       val excluded' = Binaryset.addList (excluded, names)
       val isexcl = simpCommon.name_set_member excluded' o frag_name
@@ -431,8 +484,8 @@ fun exclude_ssfrags names (ss as SS{history,limit,excluded,...}) =
         | filterthis hi = true
       val history' = List.filter filterthis history
     in
-      build_from_history history' |> fupdlimit (fn _ => limit)
-                                  |> setexcluded excluded'
+      build_from_history trace history' |> fupdlimit (fn _ => limit)
+                                        |> setexcluded excluded'
     end
 
 (* Force-include a fragment, even if its name is in the simpset's
@@ -451,24 +504,30 @@ fun force_add (ss as SS sset) f =
  exception CONVNET of net;
 
  (* the rewrites a context theorem adds, in the order they are added *)
- fun context_rewrites_convdata rwts =
-     List.mapPartial mk_rewr_convdata
+ fun context_rewrites_convdata verbosity rwts =
+     List.mapPartial (mk_rewr_convdata verbosity)
        (map (fn th => (SOME {Thy = "", Name = "rewrite: from context"}, th))
             rwts)
- fun context_convdata mk_rewrs th =
-     context_rewrites_convdata (mk_rewrs (dest_tagged_rewrite th))
+ fun context_convdata verbosity mk_rewrs th =
+     context_rewrites_convdata verbosity
+       (mk_rewrs verbosity (dest_tagged_rewrite th))
 
- fun rewriter_with convdata (SS{mk_rewrs,travrules,initial_net,...}) = let
+ (* A reducer's addcontext is given no trace level, so the rewriter takes
+    the simpset's: the level the traversal is given (traversedata_with) *)
+ fun rewriter_with convdata (SS{mk_rewrs,travrules,initial_net,trace,...}) =
+ let
    fun addcontext (context,thms) = let
      val net = (raise context) handle CONVNET net => net
+     val verbosity = resolve_level trace
    in
      CONVNET
-       (net_add_convs net (List.concat (map (convdata mk_rewrs) thms)))
+       (net_add_convs net
+          (List.concat (map (convdata verbosity mk_rewrs) thms)))
    end
-   fun apply {solver,conv,context,stack,relation} tm = let
+   fun apply {solver,conv,context,stack,relation,trace=verbosity} tm = let
      val net = (raise context) handle CONVNET net => net
    in
-     tryfind (fn {ci = {conval,...},...} => conval solver stack tm)
+     tryfind (fn {ci = {conval,...},...} => conval verbosity solver stack tm)
              (lookup tm net)
    end
    in REDUCER {name=SOME"rewriter_for_ss",
@@ -481,7 +540,8 @@ fun force_add (ss as SS sset) f =
        dprocs= #dprocs ssdata,
        relation= boolSyntax.equality,
        travrules= #travrules ssdata,
-       limit = #limit ssdata};
+       limit = #limit ssdata,
+       trace = #trace ssdata};
 
  val traversedata_for_ss = traversedata_with context_convdata
 
@@ -595,18 +655,28 @@ fun SIMP_RULE ss l = CONV_RULE (SIMP_CONV ss l)
 
 fun ASM_SIMP_RULE ss = simpCommon.ASM_SIMP_RULE SIMP_RULE ss
 
-fun ASM_SIMP_TAC ss ths =
-    markerLib.process_taclist_then{arg=ths} (CONV_TAC o SIMP_CONV ss)
+val in_context = simpCommon.in_context in_trace_context
+
+val ASM_SIMP_TAC = in_context (fn ss => fn ths =>
+    markerLib.process_taclist_then{arg=ths} (CONV_TAC o SIMP_CONV ss))
 val asm_simp_tac = ASM_SIMP_TAC
 fun SIMP_TAC ss ths = ASM_SIMP_TAC ss (markerLib.NoAsms::ths)
 val simp_tac = SIMP_TAC
 
 type simptac_config = simpCommon.simptac_config
 
-val {FULL_SIMP_TAC, REV_FULL_SIMP_TAC, NO_STRIP_FULL_SIMP_TAC,
-     NO_STRIP_REV_FULL_SIMP_TAC} =
-    simpCommon.full_simp_tacs {simp_rule = SIMP_RULE,
-                               asm_simp_tac = ASM_SIMP_TAC}
+local
+  val {FULL_SIMP_TAC = full, REV_FULL_SIMP_TAC = rev_full,
+       NO_STRIP_FULL_SIMP_TAC = ns_full,
+       NO_STRIP_REV_FULL_SIMP_TAC = ns_rev_full} =
+      simpCommon.full_simp_tacs {simp_rule = SIMP_RULE,
+                                 asm_simp_tac = ASM_SIMP_TAC}
+in
+val FULL_SIMP_TAC = in_context full
+val REV_FULL_SIMP_TAC = in_context rev_full
+val NO_STRIP_FULL_SIMP_TAC = in_context ns_full
+val NO_STRIP_REV_FULL_SIMP_TAC = in_context ns_rev_full
+end
 val full_simp_tac = FULL_SIMP_TAC
 val rev_full_simp_tac = REV_FULL_SIMP_TAC
 
@@ -621,15 +691,15 @@ val stdcon = simpCommon.stdcon
    only when none of them is bounded. *)
 fun simp_rule_reusing rws ss l =
     let
-      fun convdata mk_rewrs th =
+      fun convdata verbosity mk_rewrs th =
           let
             val t = concl th
             fun unbounded (_, UNBOUNDED) = true
               | unbounded _ = false
             fun derive () =
                 let
-                  val rwts = mk_rewrs (dest_tagged_rewrite th)
-                  val cds = context_rewrites_convdata rwts
+                  val rwts = mk_rewrs verbosity (dest_tagged_rewrite th)
+                  val cds = context_rewrites_convdata verbosity rwts
                 in
                   if List.all unbounded rwts then
                     rws := Redblackmap.insert (!rws, t, (t, cds))
@@ -640,13 +710,13 @@ fun simp_rule_reusing rws ss l =
             case (hyp th, Tag.isEmpty (Thm.tag th)) of
                 ([h], true) =>
                 if not (Portable.pointer_eq (h, t)) then
-                  context_convdata mk_rewrs th
+                  context_convdata verbosity mk_rewrs th
                 else
                   (case Redblackmap.peek (!rws, t) of
                        SOME (t', cds) =>
                        if Portable.pointer_eq (t', t) then cds else derive ()
                      | NONE => derive ())
-              | _ => context_convdata mk_rewrs th
+              | _ => context_convdata verbosity mk_rewrs th
           end
       fun conv tm =
           let
@@ -696,21 +766,24 @@ fun new_memo () =
     (ref (Redblackmap.mkDict Term.compare),
      ref (Redblackmap.mkDict Term.compare))
 
-fun psr cfg ss g = psr0 (new_memo ()) cfg ss g
+fun psr cfg ss g c =
+    psr0 (new_memo ()) cfg (in_trace_context c ss) g c
 
 fun allasms0 memo cfg ss (g as (asl,_)) =
     ntac (length asl) (psr0 memo cfg ss) g
 
-fun allasms cfg ss g = allasms0 (new_memo ()) cfg ss g
+fun allasms cfg ss g c =
+    allasms0 (new_memo ()) cfg (in_trace_context c ss) g c
 
 fun global_simp_tac cfg =
-    simpCommon.global_simp_tac
-      {prepare = fn ss0 => fn thl =>
-                    let val (ss1,thl') = process_tags ss0 thl
-                    in ss1 ++ rewrites thl' end,
-       allasms = fn () => allasms0 (new_memo ()),
-       asm_simp_tac = ASM_SIMP_TAC}
-      cfg
+    in_context
+      (simpCommon.global_simp_tac
+         {prepare = fn ss0 => fn thl =>
+                       let val (ss1,thl') = process_tags ss0 thl
+                       in ss1 ++ rewrites thl' end,
+          allasms = fn () => allasms0 (new_memo ()),
+          asm_simp_tac = ASM_SIMP_TAC}
+         cfg)
 
 
 

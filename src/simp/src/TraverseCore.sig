@@ -18,7 +18,9 @@ sig
      conv : term list -> term -> thm,
      context : context,
      stack : term list,
-     relation : term * (term -> thm)}
+     relation : term * (term -> thm),
+     (* the simplifier.trace level the traversal reports at *)
+     trace : int}
 
   (* Side-condition provers (TraverseExt's configured traversals) *)
   type simp_prover_ctxt =
@@ -38,6 +40,8 @@ sig
     {rewriters : 'r list,
      dprocs : 'r list,
      limit : int option,
+     (* SOME level, or NONE for the ambient simplifier.trace *)
+     trace : int option,
      travrules : Travrules.travrules,
      relation : term,
      initial : 'r -> context,

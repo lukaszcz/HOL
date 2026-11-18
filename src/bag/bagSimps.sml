@@ -97,7 +97,8 @@ fun transform t =
     else NO_CONV) THENC
    PURE_REWRITE_CONV [BAG_UNION] THENC DEPTH_CONV BETA_CONV) t
 
-fun SBAG_SOLVE thms tm = let
+(* Reporting at the given simplifier.trace level *)
+fun SBAG_SOLVE_AT verbosity thms tm = let
   val newgoal_thm = transform tm
   val newgoal_tm = rhs (concl newgoal_thm)
   val (gvar, gbody) = dest_forall newgoal_tm
@@ -107,17 +108,20 @@ fun SBAG_SOLVE thms tm = let
   val goal_thm1 = MP goal_thm0 (LIST_CONJ newasms)
   val goal_thm2 = EQT_INTRO (GEN gvar goal_thm1)
   val thm = TRANS newgoal_thm goal_thm2
-  val _ = Trace.trace(1,Trace.PRODUCE(tm,"SBAG_SOLVE",thm))
+  val _ = Trace.trace_at verbosity (1,Trace.PRODUCE(tm,"SBAG_SOLVE",thm))
 in
   thm
 end
+
+fun SBAG_SOLVE thms tm = SBAG_SOLVE_AT (Trace.resolve_level NONE) thms tm
 
 val diff_free = not o can (find_term is_diff)
 fun is_ok t =
   (is_sub_bag t orelse (is_eq t andalso is_bag_ty (type_of (rand t)))) andalso
   diff_free t
 val (CACHED_SBAG_SOLVE, sbag_cache) =
-    Cache.RCACHE {capacity=2000, per_key_cap=50} (free_vars, is_ok, SBAG_SOLVE)
+    Cache.RCACHE_AT {capacity=2000, per_key_cap=50}
+                    (free_vars, is_ok, SBAG_SOLVE_AT)
 
 
 val SBAG_SOLVER = let
@@ -132,7 +136,8 @@ in
   Traverse.REDUCER
   {name=SOME"SBAG_SOLVER",
    addcontext = add_ctxt,
-   apply = fn args => CACHED_SBAG_SOLVE (get_ctxt (#context args)),
+   apply = fn args =>
+              CACHED_SBAG_SOLVE (#trace args) (get_ctxt (#context args)),
    initial = CTXT []}
 end;
 

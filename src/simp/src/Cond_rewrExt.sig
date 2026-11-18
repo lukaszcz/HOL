@@ -11,7 +11,8 @@ sig
   val COND_REWR_CONV_WITH_CONFIG : string * thm -> bool -> config -> conv
   val COND_REWR_CONV_WITH_CONTEXT : string * thm -> bool ->
     {solver : term list -> term -> thm, stack : term list,
-     cond_depth : int, term_ord : term * term -> order} -> conv
+     cond_depth : int, term_ord : term * term -> order,
+     trace : int} -> conv
 
   (* A rewrite prepared with a use count, which it uses as given rather
      than resetting it.  Each successful application decrements the

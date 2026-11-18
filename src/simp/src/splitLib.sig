@@ -49,6 +49,7 @@ sig
   (* The [split] rules; none if the attribute is not enabled *)
   val split_thms : unit -> thm list
   val named_split_thms : unit -> (string * thm) list
+  val named_split_thms_of : Context.t -> (string * thm) list
 
   (* Whether a split rule splits assumptions, and the name a split rule
      is known by (in del_split and ExclX "split:...") *)

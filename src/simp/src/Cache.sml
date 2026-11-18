@@ -90,8 +90,9 @@ fun link_fresh_at_head (st : state, n as N {prev, next, ...} : node) : state =
       with_state {store = #store st, head = SOME n, tail = tail'} st
     end
 
-(* Drop the LRU tail node, returning the new state. *)
-fun evict_tail (st : state) : state =
+(* Drop the LRU tail node, returning the new state.  `trace` reports the
+   eviction (Trace.trace_at the caller's level). *)
+fun evict_tail trace (st : state) : state =
     case #tail st of
       NONE => st
     | SOME (N {key = k, prev = tprev, ...}) =>
@@ -108,9 +109,9 @@ fun evict_tail (st : state) : state =
         end
 
 (* Loop evict_tail until at or under capacity. *)
-fun evict_to_fit (st : state) : state =
+fun evict_to_fit trace (st : state) : state =
     if Termtab.size (#store st) <= #capacity st then st
-    else evict_to_fit (evict_tail st)
+    else evict_to_fit trace (evict_tail trace st)
 
 (* Read without bumping: callers that immediately follow with c_insert
    on the same key let the c_insert do the bump.  Lock-free
@@ -156,7 +157,7 @@ fun take_at_most n xs =
     end
 
 (* Insert/update k -> v, promote it, then evict if over capacity. *)
-fun c_insert (c : cache) (k, v) : unit =
+fun c_insert trace (c : cache) (k, v) : unit =
     Sref.update c (fn st =>
       let
         val v' = take_at_most (#per_key_cap st) v
@@ -177,7 +178,7 @@ fun c_insert (c : cache) (k, v) : unit =
                                        tail = #tail st} st,
                            n)
             in
-              evict_to_fit st1
+              evict_to_fit trace st1
             end
       end)
 
@@ -192,7 +193,7 @@ fun cache_per_key_cap (c : cache) : int = #per_key_cap (Sref.value c)
    cache_capacity reflect the new bound straight away. *)
 fun set_capacity (c : cache) n =
     Sref.update c (fn st =>
-      evict_to_fit
+      evict_to_fit trace
         {store = #store st, head = #head st, tail = #tail st,
          capacity = n, per_key_cap = #per_key_cap st})
 
@@ -244,9 +245,10 @@ exception FIRST
 fun first p [] = raise FIRST
   | first p (h::t) = if p h then h else first p t
 
-fun CACHE (spec : {capacity:int, per_key_cap:int}) (filt,conv) = let
+fun CACHE_AT (spec : {capacity:int, per_key_cap:int}) (filt,conv) = let
   val cache = new_cache spec
-  fun cache_proc thms tm = let
+  fun cache_proc verbosity thms tm = let
+    val trace = trace_at verbosity
     val _ = if (filt tm) then ()
             else failwith "CACHE_CCONV: not applicable"
     val prevs = Option.getOpt (peek cache tm, [])
@@ -262,7 +264,7 @@ fun CACHE (spec : {capacity:int, per_key_cap:int}) (filt,conv) = let
       | NONE => failwith "cache hit was failure"
     end
     handle FIRST => let
-             val thm = conv thms tm
+             val thm = conv verbosity thms tm
                  handle e as (HOL_ERR _) =>
                         (trace(2,
                                REDUCE("Inserting failed ctxt",
@@ -270,17 +272,23 @@ fun CACHE (spec : {capacity:int, per_key_cap:int}) (filt,conv) = let
                                       else
                                         mk_imp(list_mk_conj (hypinfo_list curr),
                                                tm))) ;
-                         c_insert cache (tm, (curr,NONE)::prevs);
+                         c_insert trace cache (tm, (curr,NONE)::prevs);
                          raise e)
            in
              (trace(2,PRODUCE(tm, "Inserting into cache:", thm));
-              c_insert cache (tm,(curr,SOME thm)::prevs);
+              c_insert trace cache (tm,(curr,SOME thm)::prevs);
               thm)
            end
   end
 in
   (cache_proc, cache)
 end
+
+(* The context-free entry points report at the ambient level *)
+fun ambient (proc, cache) =
+    (fn thms => fn tm => proc (resolve_level NONE) thms tm, cache)
+
+fun CACHE spec (filt,conv) = ambient (CACHE_AT spec (filt, K conv))
 
 fun cache_values (cache : cache) = let
   val items = Termtab.dest (#store (Sref.value cache))
@@ -424,7 +432,7 @@ end
 
 (* Note: takes the cache ref (not a snapshot) so that a contradiction hit
    can bump the F key. *)
-fun consider_false_context_cache (cache:cache) original_goal
+fun consider_false_context_cache trace (cache:cache) original_goal
                                  (ctxtlist:context list) =
     let
       val cache_F = Option.getOpt (peek cache boolSyntax.F, [])
@@ -448,7 +456,8 @@ fun consider_false_context_cache (cache:cache) original_goal
       recurse [] ctxtlist
     end
 
-fun prove_false_context (conv:thm list -> conv) (cache:cache) (ctxtlist:context list) original_goal = let
+fun prove_false_context trace (conv:thm list -> conv) (cache:cache)
+                        (ctxtlist:context list) original_goal = let
   fun recurse clist =
       case clist of
         [] => raise mk_HOL_ERR "Cache" "RCACHE"
@@ -462,12 +471,12 @@ fun prove_false_context (conv:thm list -> conv) (cache:cache) (ctxtlist:context 
               val newth = CCONTR (mk_goal original_goal) (EQT_ELIM th)
             in
               trace(2,PRODUCE(conjs, "Inserting into cache:", th));
-              c_insert cache (F, (hyps, SOME th) :: oldval);
+              c_insert trace cache (F, (hyps, SOME th) :: oldval);
               newth
             end
           | NONE => (
               trace(2, REDUCE("Inserting failed contradictory context", conjs));
-              c_insert cache (F, (hyps, NONE)::oldval);
+              c_insert trace cache (F, (hyps, NONE)::oldval);
               recurse cs
             )
         end
@@ -475,7 +484,8 @@ in
   recurse ctxtlist
 end
 
-fun RCACHE (spec : {capacity:int, per_key_cap:int}) (dpfvs, check, conv) = let
+fun RCACHE_AT (spec : {capacity:int, per_key_cap:int}) (dpfvs, check, conv0) =
+let
   open Uref
   val cache = new_cache spec
   (* The simplifier calls the decider on every candidate subterm under a
@@ -512,7 +522,9 @@ fun RCACHE (spec : {capacity:int, per_key_cap:int}) (dpfvs, check, conv) = let
         r := (hypinfo_addth(th, oldhyps), th::oldthms)
       end
   end
-  fun decider ctxt t = let
+  fun decider verbosity ctxt t = let
+    val trace = trace_at verbosity
+    val conv = conv0 verbosity
     val _ = if check t then ()
             else raise mk_HOL_ERR "Cache" "RCACHE" "not applicable"
     val prevs = Option.getOpt (peek cache t, [])
@@ -571,21 +583,21 @@ fun RCACHE (spec : {capacity:int, per_key_cap:int}) (dpfvs, check, conv) = let
            a cached failure (drop it).  If every component is dropped,
            prove_false_context raises and the d.p. is skipped entirely. *)
         fun by_contradiction () =
-            case consider_false_context_cache cache t divided_clist of
+            case consider_false_context_cache trace cache t divided_clist of
               proved_it th => th
-            | possible_ctxts cs => prove_false_context conv cache cs t
+            | possible_ctxts cs => prove_false_context trace conv cache cs t
 
         (* Same as by_contradiction, but with a direct d.p. attempt
            on the goal-relevant context inserted between the cache
            check and the per-component fall-through. *)
         fun direct_then_contradiction () =
-            case consider_false_context_cache cache t divided_clist of
+            case consider_false_context_cache trace cache t divided_clist of
               proved_it th => th
             | possible_ctxts cs =>
                 (case Lib.total (conv thmlist) t of
                    SOME th =>
                      (trace(2, PRODUCE(t, "Inserting into cache:", th));
-                      c_insert cache (t, (glhyps, SOME th)::prevs);
+                      c_insert trace cache (t, (glhyps, SOME th)::prevs);
                       th)
                  | NONE =>
                      (trace(2,
@@ -593,8 +605,8 @@ fun RCACHE (spec : {capacity:int, per_key_cap:int}) (dpfvs, check, conv) = let
                                    if hypinfo_isEmpty glhyps then t
                                    else mk_imp(list_mk_conj
                                                  (map concl thmlist), t)));
-                      c_insert cache (t, (glhyps, NONE)::prevs);
-                      prove_false_context conv cache cs t))
+                      c_insert trace cache (t, (glhyps, NONE)::prevs);
+                      prove_false_context trace conv cache cs t))
 
         (* Has `conv thmlist t` already been tried (and failed) on a
            superset of glhyps?  For goals with no DP-vars, glhyps is
@@ -614,5 +626,8 @@ fun RCACHE (spec : {capacity:int, per_key_cap:int}) (dpfvs, check, conv) = let
 in
   (decider,cache)
 end
+
+fun RCACHE spec (dpfvs, check, conv) =
+    ambient (RCACHE_AT spec (dpfvs, check, K conv))
 
 end (* struct *)

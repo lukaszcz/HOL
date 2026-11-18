@@ -19,9 +19,9 @@ val COND_REWR_CONVS = Cond_rewr.COND_REWR_CONVS
    fun COND_REWR_CONV_WITH_CONTEXT nmth bounded =
       let val conv = COND_REWR_CONV_WITH_CONFIG nmth bounded
       in
-        fn {solver,stack,cond_depth,term_ord} =>
+        fn {solver,stack,cond_depth,term_ord,trace} =>
            conv {solver=solver, stack=stack, cond_depth=SOME cond_depth,
-                 term_ord=term_ord}
+                 term_ord=term_ord, trace=trace}
       end;
 
 (* Binding happens at tracked construction, not at projection. No shadow

@@ -70,7 +70,8 @@ type reducer_ctxt =
   {solver : term list -> term -> thm,
    stack : term list,
    cond_depth : int option,
-   term_ord : term * term -> order}
+   term_ord : term * term -> order,
+   trace : int}
 type contextual_convdata =
   {name : string,
    key : (term list * term) option,
@@ -78,7 +79,8 @@ type contextual_convdata =
    conv : reducer_ctxt -> conv}
 type tagged_convdata =
   {thypart : string option, cd : contextual_convdata,
-   legacy : (term list -> term -> thm) -> term list -> conv,
+   (* given the simplifier.trace level it reports at *)
+   legacy : int -> (term list -> term -> thm) -> term list -> conv,
    source : (thname option * thm) option,
    prepared : Cond_rewrExt.prepared option,
    bound : (int ref * int) option}
@@ -86,6 +88,14 @@ type tagged_convdata =
 fun lift_convdata {name,key,trace,conv} : contextual_convdata =
   {name=name, key=key, trace=trace,
    conv=fn {solver,stack,...} => conv solver stack}
+(* A user's conversion is given no trace level; it does its own reporting,
+   if any *)
+fun unleveled conv (_ : int) = conv
+(* The legacy runner, reporting at the level it is given *)
+fun leveled_legacy (configured : reducer_ctxt -> conv) verbosity solver
+                   stack =
+  configured {solver=solver, stack=stack, cond_depth=NONE,
+              term_ord=Cond_rewr.ac_term_ord, trace=verbosity}
 val opttheory = simpCommon.opttheory
 
 type stdconvdata = simpCommon.stdconvdata
@@ -94,17 +104,18 @@ type stdconvdata = simpCommon.stdconvdata
 (* Make a rewrite rule into a conversion.                                    *)
 (*---------------------------------------------------------------------------*)
 
-val mk_rewr_convdata : thname option * controlled_thm ->
-                       tagged_convdata option =
-  simpCommon.mk_rewr_convdata
+fun mk_rewr_convdata verbosity : thname option * controlled_thm ->
+                                 tagged_convdata option =
+  simpCommon.mk_rewr_convdata verbosity
     (fn {thypart,name=nm,key,nmopt,th,tag} =>
        let
          val bound = case tag of
                          UNBOUNDED => NONE | BOUNDED r => SOME (r, !r)
          val prepared = Cond_rewrExt.prepare (nm,th) tag
-         val {legacy,configured} = Cond_rewrExt.runners prepared
+         val {configured,...} = Cond_rewrExt.runners prepared
        in
-         {thypart = thypart, source = SOME (nmopt, th), legacy = legacy,
+         {thypart = thypart, source = SOME (nmopt, th),
+          legacy = leveled_legacy configured,
           prepared = SOME prepared, bound = bound,
           cd = {name = nm, key = key,
                 trace = 100, (* COND_REWR_CONV provides the tracing. *)
@@ -118,9 +129,10 @@ fun rebind_convdata
       (counter,declared) : tagged_convdata =
   let
     val prepared = Cond_rewrExt.rebind (valOf prepared) (BOUNDED counter)
-    val {legacy,configured} = Cond_rewrExt.runners prepared
+    val {configured,...} = Cond_rewrExt.runners prepared
   in
-    {thypart=thypart,source=source,prepared=SOME prepared,legacy=legacy,
+    {thypart=thypart,source=source,prepared=SOME prepared,
+     legacy=leveled_legacy configured,
      cd={name=name,key=key,trace=trace,conv=configured},
      bound=SOME (counter,declared)}
   end
@@ -133,7 +145,7 @@ type relsimpdata = simpCommon.relsimpdata
 
 type conv_info =
   {name : string,
-   conval : (term list -> term -> thm) -> term list -> conv}
+   conval : int -> (term list -> term -> thm) -> term list -> conv}
 (* Every entry owns its cold companion, including rules compiled from
    supplied facts and addcontext, which source inventories do not cover.
    A single insertion attaches runner and actual quota together; filtering
@@ -169,7 +181,7 @@ and ssfrag = SSFRAG_CON of {
        Replay checks the source statement and rebinds its actual control. *)
     views          : (rewrite_source * thm *
                       tagged_convdata option option) list,
-    filter         : (controlled_thm -> controlled_thm list) option,
+    filter         : (int -> controlled_thm -> controlled_thm list) option,
     dprocs         : TraverseExt.reducer list,
     congs          : thm list,
     threaded_congs : thm list,
@@ -185,7 +197,7 @@ and history_item =
                  | ADDWEAKENER of weakener_data
                  | STRATEGY_EVENT of strategy_event
                  | SET_MK_REWRS of
-                     (controlled_thm -> controlled_thm list)
+                     (int -> controlled_thm -> controlled_thm list)
 and strategy_event =
     ADD_LOOPER_EVENT of looper_entry
   | DEL_LOOPER_EVENT of looper_kind * string
@@ -206,7 +218,7 @@ and strategy_event =
   | SET_EXCL_LOOPERS_EVENT of string Binaryset.set
   | SET_STRATEGY_EVENT of strategy_data
 and simpset = SS of {
-    mk_rewrs       : controlled_thm -> controlled_thm list,
+    mk_rewrs       : int -> controlled_thm -> controlled_thm list,
     history        : history_item list,
     initial_net    : net,
     rewrite_sources : (thname option * thm) list,
@@ -214,6 +226,9 @@ and simpset = SS of {
     dprocs         : reducer list,
     travrules      : travrules,
     limit          : int option,
+    (* The simplifier.trace level, NONE for the ambient setting; see
+       set_trace_level.  Not a setting: the history does not record it. *)
+    trace          : int option,
     excluded       : string Binaryset.set,
     strategy       : strategy_data
 }
@@ -273,14 +288,15 @@ val empty_ssfrag = SSFRAG_CON empty_frag_data
 fun SSFRAG {name,convs,rewrs,ac,filter,dprocs,congs} =
   let
     val convs = map (fn c => {thypart=NONE,cd=lift_convdata c,
-                             legacy= #conv c,source=NONE,
+                             legacy=unleveled (#conv c),source=NONE,
                              prepared=NONE,bound=NONE}) convs
     val rewrs = map source_slot rewrs
     val ac = map source_slot ac
     val congs = map normCong congs
   in
     SSFRAG_CON
-      {name=name, convs=convs, rewrs=rewrs, ac=ac, views=[], filter=filter,
+      {name=name, convs=convs, rewrs=rewrs, ac=ac, views=[],
+       filter=simpCommon.plain_filter filter,
        dprocs=dprocs, congs=congs, threaded_congs=[], relsimps=[],
        loopers=[], unsafe_solvers=[], safe_solvers=[]}
   end
@@ -294,7 +310,7 @@ local
       val {name,convs,rewrs,ac,filter,dprocs,congs,relsimps} =
           simpLib.dest_ssfrag ordinary
       fun lift_conv {thypart,cd} =
-          {thypart=thypart, cd=lift_convdata cd, legacy= #conv cd,
+          {thypart=thypart, cd=lift_convdata cd, legacy=unleveled (#conv cd),
            source=NONE, prepared=NONE, bound=NONE}
     in
       SSFRAG_CON
@@ -376,7 +392,7 @@ fun ac_ss aclist =
 fun conv_ss conv =
   SSFRAG_CON
     {name=NONE, convs=[{thypart=NONE,cd=lift_convdata conv,
-                       legacy= #conv conv,source=NONE,
+                       legacy=unleveled (#conv conv),source=NONE,
                        prepared=NONE,bound=NONE}],
      rewrs=[], ac=[], views=[], filter=NONE, dprocs=[], congs=[],
      threaded_congs=[], relsimps=[], loopers=[],
@@ -466,7 +482,7 @@ fun ssupd_net f (SS s) =
     SS {mk_rewrs = #mk_rewrs s, history = #history s,
         initial_net = initial_net, rewrite_sources = #rewrite_sources s,
         native_sources = #native_sources s, dprocs = #dprocs s,
-        travrules = #travrules s, limit = #limit s,
+        travrules = #travrules s, limit = #limit s, trace = #trace s,
         excluded = #excluded s, strategy = #strategy s}
   end
 
@@ -475,7 +491,8 @@ val empty_strategy : strategy_data =
    cond_depth=NONE, term_ord=NONE, excl_loopers=empty_excluded}
 
 val empty_ss =
-  SS{mk_rewrs=fn x => [x], history=[], limit=NONE, initial_net=empty,
+  SS{mk_rewrs=fn _ => fn x => [x], history=[], limit=NONE, trace=NONE,
+     initial_net=empty,
      rewrite_sources=[], native_sources=[],
      dprocs=[], travrules=EQ_tr, excluded=empty_excluded,
      strategy=empty_strategy}
@@ -618,7 +635,7 @@ fun delete_exclusions (excls : rule_exclusion list) (ss as SS s) =
           SS {mk_rewrs = #mk_rewrs s, history = history,
               initial_net = initial_net, rewrite_sources = rewrite_sources,
               native_sources = native_sources, dprocs = dprocs,
-              travrules = #travrules s, limit = #limit s,
+              travrules = #travrules s, limit = #limit s, trace = #trace s,
               excluded = #excluded s, strategy = #strategy s}
         end
       end
@@ -644,12 +661,15 @@ fun remove_simps nms ss = ss -* nms
   let val {enter,leave,failed} =
           simpCommon.user_conv_tracing {name=name,trace=trace}
   in
-    {legacy = fn solver => fn stack => fn tm =>
-                 (enter tm; leave (tm, legacy solver stack tm))
-                 handle e => failed e,
-     configured = fn ctxt => fn tm =>
-                 (enter tm; leave (tm, conv ctxt tm))
-                 handle e => failed e}
+    {legacy = fn v => fn solver => fn stack => fn tm =>
+                 (enter v tm; leave v (tm, legacy v solver stack tm))
+                 handle e => failed v e,
+     configured = fn (ctxt : reducer_ctxt) => fn tm =>
+                 let val v = #trace ctxt
+                 in
+                   (enter v tm; leave v (tm, conv ctxt tm))
+                   handle e => failed v e
+                 end}
   end;
 
  val any = simpCommon.any
@@ -687,9 +707,24 @@ fun remove_simps nms ss = ss -* nms
      SS {mk_rewrs = #mk_rewrs s, history = #history s,
          initial_net = #initial_net s, rewrite_sources = #rewrite_sources s,
          native_sources = #native_sources s, dprocs = #dprocs s,
-         travrules = #travrules s, limit = limit,
+         travrules = #travrules s, limit = limit, trace = #trace s,
          excluded = #excluded s, strategy = #strategy s}
    end
+
+ fun fupdtrace f (SS s) =
+   let val trace = f (#trace s)
+   in
+     SS {mk_rewrs = #mk_rewrs s, history = #history s,
+         initial_net = #initial_net s, rewrite_sources = #rewrite_sources s,
+         native_sources = #native_sources s, dprocs = #dprocs s,
+         travrules = #travrules s, limit = #limit s, trace = trace,
+         excluded = #excluded s, strategy = #strategy s}
+   end
+
+ fun set_trace_level n = fupdtrace (fn _ => SOME n)
+ val unset_trace_level = fupdtrace (fn _ => NONE)
+ fun trace_level (SS s) = resolve_level (#trace s)
+ fun in_trace_context c ss = set_trace_level (trace_level_of c) ss
 
  fun limit n = fupdlimit (fn _ => SOME n)
 
@@ -703,7 +738,7 @@ fun map_strategy f (SS s) =
     SS {mk_rewrs = #mk_rewrs s, history = #history s,
         initial_net = #initial_net s, rewrite_sources = #rewrite_sources s,
         native_sources = #native_sources s, dprocs = #dprocs s,
-        travrules = #travrules s, limit = #limit s,
+        travrules = #travrules s, limit = #limit s, trace = #trace s,
         excluded = #excluded s, strategy = strategy}
   end
 
@@ -771,7 +806,7 @@ fun fupdhistory f (SS s) =
     SS {mk_rewrs = #mk_rewrs s, history = history,
         initial_net = #initial_net s, rewrite_sources = #rewrite_sources s,
         native_sources = #native_sources s, dprocs = #dprocs s,
-        travrules = #travrules s, limit = #limit s,
+        travrules = #travrules s, limit = #limit s, trace = #trace s,
         excluded = #excluded s, strategy = #strategy s}
   end
 
@@ -1178,7 +1213,7 @@ fun mk_tactic_solver (name,tac) =
      SS {mk_rewrs = #mk_rewrs s, history = history,
          initial_net = #initial_net s, rewrite_sources = #rewrite_sources s,
          native_sources = #native_sources s, dprocs = dprocs,
-         travrules = travrules, limit = #limit s,
+         travrules = travrules, limit = #limit s, trace = #trace s,
          excluded = #excluded s, strategy = #strategy s}
    end
 
@@ -1204,10 +1239,10 @@ fun mk_tactic_solver (name,tac) =
    #2 (List.foldl (fn (x,(i,acc)) => (i+1, f (i,x)::acc))
                   (1,[]) xs) |> List.rev
 
- fun compile_native_named event slot component named =
+ fun compile_native_named verbosity event slot component named =
    let
      fun convert (conjunct,rw) =
-       case mk_rewr_convdata rw of
+       case mk_rewr_convdata verbosity rw of
            NONE => NONE
          | SOME (cd as {source=SOME rewrite,bound,...}) =>
              SOME (cd,RewriteSource
@@ -1218,16 +1253,18 @@ fun mk_tactic_solver (name,tac) =
      List.mapPartial I (numbered convert named)
    end
 
- fun compile_native event mk_rewrs slot component item =
-   compile_native_named event slot component (mk_named_rewrs mk_rewrs item)
+ fun compile_native verbosity event mk_rewrs slot component item =
+   compile_native_named verbosity event slot component
+                        (mk_named_rewrs mk_rewrs item)
 
- fun compile_native_rewrite event mk_rewrs {item=(nm,th),token} =
-   compile_native event mk_rewrs token 0 (nm,dest_tagged_rewrite th)
+ fun compile_native_rewrite verbosity event mk_rewrs {item=(nm,th),token} =
+   compile_native verbosity event mk_rewrs token 0
+                  (nm,dest_tagged_rewrite th)
 
  (* Preserve simpLib's ++ schedule: decode every ordinary tag, derive all
     AC rules, run every rewrite maker, and only then make conversions.
     Carry origins through these stages without allocating new tokens. *)
- fun compile_frag_native event mk_rewrs ac rewrs =
+ fun compile_frag_native verbosity event mk_rewrs ac rewrs =
    let
      val crewrs = map
        (fn {item=(nm,th),token} => (token,0,(nm,dest_tagged_rewrite th)))
@@ -1242,7 +1279,7 @@ fun mk_tactic_solver (name,tac) =
    in
      flatten (map
        (fn (slot,component,rws) =>
-         compile_native_named event slot component rws) named)
+         compile_native_named verbosity event slot component rws) named)
    end
 
  datatype rewrite_bundle = RewriteBundle of
@@ -1258,7 +1295,10 @@ fun mk_tactic_solver (name,tac) =
      val fragment = name_ss "PREPARED_REWRITES" (rewrites theorems)
      val event = source_token ()
      fun rule (slot as {item=(_,th),...}) =
-       (th,compile_native_rewrite event (#mk_rewrs data) slot)
+       let val level = resolve_level (#trace data)
+       in
+         (th,compile_native_rewrite level event (#mk_rewrs data level) slot)
+       end
      val compiled = map rule (#rewrs (D fragment))
    in
      RewriteBundle
@@ -1292,6 +1332,7 @@ fun mk_tactic_solver (name,tac) =
    val SS sset = ss
    val SSFRAG_CON ssf = f
    val mk_rewrs' = #mk_rewrs sset
+   val verbosity = resolve_level (#trace sset)
    val history = #history sset
    val travrules = #travrules sset
    val initial_net = #initial_net sset
@@ -1299,11 +1340,12 @@ fun mk_tactic_solver (name,tac) =
    val {convs,rewrs,filter,ac,views,dprocs,congs,threaded_congs,
         relsimps,...} = ssf
    val mk_rewrs = case filter of
-                    SOME f => f oo mk_rewrs'
+                    SOME f => (fn level => f level oo mk_rewrs' level)
                   | _ => mk_rewrs'
    val all_native = case native_override of
        SOME compiled => compiled
-     | NONE => compile_frag_native event mk_rewrs' ac rewrs
+     | NONE =>
+         compile_frag_native verbosity event (mk_rewrs' verbosity) ac rewrs
    val retained = if null suspended then all_native else List.filter
      (fn (_,source) => not (List.exists
        (fn removed => same_rewrite_source (removed,source)) suspended))
@@ -1319,7 +1361,7 @@ fun mk_tactic_solver (name,tac) =
              val control =
                case bound of NONE => UNBOUNDED | SOME (r,_) => BOUNDED r
              val compiled = case cached of
-                 NONE => mk_rewr_convdata (nm,(view,control))
+                 NONE => mk_rewr_convdata verbosity (nm,(view,control))
                | SOME data => Option.map
                    (fn data => case bound of
                        NONE => data
@@ -1408,7 +1450,7 @@ fun mk_tactic_solver (name,tac) =
      SS {mk_rewrs = mk_rewrs, history = history, initial_net = net,
          rewrite_sources = rewrite_sources, native_sources = native_sources,
          dprocs = new_dprocs, travrules = travrules, limit = #limit sset,
-         excluded = #excluded sset, strategy = strategy}
+         trace = #trace sset, excluded = #excluded sset, strategy = strategy}
    end
  end
 
@@ -1444,8 +1486,8 @@ fun mk_tactic_solver (name,tac) =
                  rewrite_sources = #rewrite_sources data,
                  native_sources = #native_sources data,
                  dprocs = #dprocs data, travrules = #travrules data,
-                 limit = #limit data, excluded = excluded,
-                 strategy = #strategy data},fragment) end
+                 limit = #limit data, trace = #trace data,
+                 excluded = excluded, strategy = #strategy data},fragment) end
    in List.foldl install ss parts end
 
 val mk_simpset = foldl (fn (f,ss) => ss ++ f) empty_ss
@@ -1454,7 +1496,7 @@ fun set_mk_rewrs mk_rewrs (SS s) =
   SS {mk_rewrs = mk_rewrs, history = #history s,
       initial_net = #initial_net s, rewrite_sources = #rewrite_sources s,
       native_sources = #native_sources s, dprocs = #dprocs s,
-      travrules = #travrules s, limit = #limit s,
+      travrules = #travrules s, limit = #limit s, trace = #trace s,
       excluded = #excluded s, strategy = #strategy s}
 
 (* Ordinary replay resets declared quotas, including a quota shared by
@@ -1481,7 +1523,8 @@ fun freshen_prepared_native native =
             end
   in map reset native end
 
-fun build_from_history_with rebind h0 =
+(* Replays h0 onto the empty simpset reporting at trace *)
+fun build_from_history_with trace rebind h0 =
     let
       fun foldthis (hi, ss) =
           case hi of
@@ -1500,16 +1543,16 @@ fun build_from_history_with rebind h0 =
                 set_mk_rewrs mk_rewrs ss
                 |> fupdhistory (fn h => SET_MK_REWRS mk_rewrs::h)
     in
-      List.foldl foldthis empty_ss (List.rev h0)
+      List.foldl foldthis (fupdtrace (fn _ => trace) empty_ss) (List.rev h0)
     end
 
-fun build_from_history h0 = build_from_history_with NONE h0
+fun build_from_history trace h0 = build_from_history_with trace NONE h0
 
 fun setexcluded e (SS s) =
   SS {mk_rewrs = #mk_rewrs s, history = #history s,
       initial_net = #initial_net s, rewrite_sources = #rewrite_sources s,
       native_sources = #native_sources s, dprocs = #dprocs s,
-      travrules = #travrules s, limit = #limit s,
+      travrules = #travrules s, limit = #limit s, trace = #trace s,
       excluded = e, strategy = #strategy s}
 
 fun rebind_source_controls current (pair as (data,source)) =
@@ -1557,13 +1600,14 @@ fun suspend_rewrite_sources [] ss = ss
       val rebind = rebind_source_controls current
     in
       if null removed then ss
-      else build_from_history_with (SOME rebind) (map suspend (#history data))
+      else build_from_history_with (#trace data) (SOME rebind)
+                                   (map suspend (#history data))
              |> fupdlimit (fn _ => #limit data)
              |> setexcluded (#excluded data)
     end
 
 fun remove_ssfrags_with_controls preserve names
-      (SS{history,limit,excluded,native_sources,...}) =
+      (SS{history,limit,trace,excluded,native_sources,...}) =
     let
       val member = simpCommon.names_member names o frag_name
       fun filterthis (ADDFRAG (f,_,_,_)) = not(member f)
@@ -1579,7 +1623,7 @@ fun remove_ssfrags_with_controls preserve names
               | SOME _ => Binarymap.insert (found,source,source))
           (Binarymap.mkDict rewrite_source_compare) native_sources))
     in
-      build_from_history_with rebind history'
+      build_from_history_with trace rebind history'
         |> fupdlimit (fn _ => limit) |> setexcluded excluded
     end
 
@@ -1600,7 +1644,7 @@ fun remove_ssfrags_preserving_controls names ss =
    Returns the simpset itself where the predicate rejects nothing, so
    the common case costs no replay, and never raises Conv.UNCHANGED. *)
 fun filter_rewrites_with_controls preserve keep
-      (ss as SS{history,limit,excluded,native_sources,...}) =
+      (ss as SS{history,limit,trace,excluded,native_sources,...}) =
     let
       fun filtered (ADDFRAG (f,event,cached,suspended)) =
             let
@@ -1629,7 +1673,7 @@ fun filter_rewrites_with_controls preserve keep
                 case bound of NONE => found
                   | SOME _ => Binarymap.insert (found,source,source))
               (Binarymap.mkDict rewrite_source_compare) native_sources))
-        in build_from_history_with rebind history'
+        in build_from_history_with trace rebind history'
              |> fupdlimit (fn _ => limit) |> setexcluded excluded end
     end
 
@@ -1637,7 +1681,7 @@ val filter_rewrites = filter_rewrites_with_controls false
 val filter_rewrites_preserving_controls = filter_rewrites_with_controls true
 
 (* See simpLib.exclude_ssfrags. *)
-fun exclude_ssfrags names (ss as SS{history,limit,excluded,...}) =
+fun exclude_ssfrags names (ss as SS{history,limit,trace,excluded,...}) =
     let
       val excluded' = Binaryset.addList (excluded, names)
       val isexcl = simpCommon.name_set_member excluded' o frag_name
@@ -1645,8 +1689,8 @@ fun exclude_ssfrags names (ss as SS{history,limit,excluded,...}) =
         | filterthis hi = true
       val history' = List.filter filterthis history
     in
-      build_from_history history' |> fupdlimit (fn _ => limit)
-                                  |> setexcluded excluded'
+      build_from_history trace history' |> fupdlimit (fn _ => limit)
+                                        |> setexcluded excluded'
     end
 
 (* See simpLib.force_add. *)
@@ -1658,13 +1702,14 @@ fun force_add (ss as SS sset) f =
 
 fun lift_simpset ordinary =
     let
-      val {history, limit = lim, excluded} = simpLib.dest_simpset ordinary
+      val {history, limit = lim, trace, excluded} =
+          simpLib.dest_simpset ordinary
       fun replay (simpLib.ADDFRAG f, ss) = ss ++ lift_ssfrag f
         | replay (simpLib.DELETE_EVENT names, ss) = ss -* names
         | replay (simpLib.ADDWEAKENER (rels,thms,r), ss) =
             add_weakener (rels, thms, TraverseExt.lift r) ss
     in
-      List.foldl replay empty_ss history
+      List.foldl replay (fupdtrace (fn _ => trace) empty_ss) history
         |> fupdlimit (fn _ => lim)
         |> setexcluded (Binaryset.addList (empty_excluded, excluded))
     end
@@ -1680,8 +1725,8 @@ fun clear_rules (SS s) =
   in
     SS {mk_rewrs = #mk_rewrs s, history = history, initial_net = empty,
         rewrite_sources = [], native_sources = [], dprocs = [],
-        travrules = EQ_tr, limit = #limit s, excluded = #excluded s,
-        strategy = strategy}
+        travrules = EQ_tr, limit = #limit s, trace = #trace s,
+        excluded = #excluded s, strategy = strategy}
   end
 
 (* Conversion identities survive replay; deletions affect their keys too. *)
@@ -1814,42 +1859,47 @@ fun rewrite_context_changes (SS old,SS current) =
 
  fun source_thms (prepared : prepared_rewrites) = map #1 prepared
 
- fun prepared_convdata mk_rewrs (prepared : prepared_rewrites) =
+ fun prepared_convdata verbosity mk_rewrs (prepared : prepared_rewrites) =
    let
-     val rwts0 = flatten (map mk_rewrs prepared)
+     val rwts0 = flatten (map (mk_rewrs verbosity) prepared)
      val rwts =
        map (fn th =>
                (SOME {Thy = "", Name = "rewrite: prepared context"}, th))
            rwts0
    in
-     List.mapPartial mk_rewr_convdata rwts
+     List.mapPartial (mk_rewr_convdata verbosity) rwts
    end
 
  (* Both extension projections use this setup once. Collectors
     continue compiling facts at their original consumption stage. *)
+ (* A reducer's addcontext is given no trace level, so the rewriter takes
+    the simpset's: the level the traversal is given *)
  fun rewriter_context_for_ss_prepared
-       (SS{mk_rewrs,initial_net,...}) prepared = let
+       (SS{mk_rewrs,initial_net,trace,...}) prepared = let
    val prepared_net =
-     net_add_convs initial_net (prepared_convdata mk_rewrs prepared)
+     net_add_convs initial_net
+       (prepared_convdata (resolve_level trace) mk_rewrs prepared)
    fun addcontext (context,thms) = let
      val net = (raise context) handle CONVNET net => net
+     val verbosity = resolve_level trace
      val cthms = map dest_tagged_rewrite thms
-     val new_rwts0 = flatten (map mk_rewrs cthms)
+     val new_rwts0 = flatten (map (mk_rewrs verbosity) cthms)
      val new_rwts =
          map (fn th => (SOME {Thy = "", Name = "rewrite: from context"}, th))
              new_rwts0
    in
      CONVNET
-       (net_add_convs net (List.mapPartial mk_rewr_convdata new_rwts))
+       (net_add_convs net
+          (List.mapPartial (mk_rewr_convdata verbosity) new_rwts))
    end
    in {initial=CONVNET prepared_net,addcontext=addcontext} end;
 
  fun legacy_rewriter_for_ss_prepared ss prepared = let
    val {initial,addcontext} = rewriter_context_for_ss_prepared ss prepared
-   fun apply {solver,conv,context,stack,relation} tm = let
+   fun apply {solver,conv,context,stack,relation,trace=verbosity} tm = let
      val net = (raise context) handle CONVNET net => net
    in
-     tryfind (fn {ci = {conval,...},...} => conval solver stack tm)
+     tryfind (fn {ci = {conval,...},...} => conval verbosity solver stack tm)
              (lookup tm net)
    end
    in lift (Traverse.REDUCER
@@ -1859,10 +1909,11 @@ fun rewrite_context_changes (SS old,SS current) =
  fun configured_rewriter_for_ss_prepared check_abort traversal ss prepared = let
    val {initial,addcontext} = rewriter_context_for_ss_prepared ss prepared
    exception PolicyAbort of exn
-   fun apply {solver,conv,context,stack,cond_depth,term_ord,relation} tm = let
+   fun apply {solver,conv,context,stack,cond_depth,term_ord,relation,trace}
+             tm = let
      val net = (raise context) handle CONVNET net => net
      val ctxt = {solver=solver, stack=stack, cond_depth=cond_depth,
-                 term_ord=term_ord}
+                 term_ord=term_ord, trace=trace}
      (* Only the policy check is an abort; conversion exceptions remain
         candidate rejection. Transport an abort as a successful search
         result, then rethrow OUTSIDE tryfind so no later callback runs. *)
@@ -1908,7 +1959,7 @@ fun rewrite_context_changes (SS old,SS current) =
        dprocs=dprocs,
        relation= boolSyntax.equality,
        travrules= #travrules ssdata,
-       limit = #limit ssdata}
+       limit = #limit ssdata, trace = #trace ssdata}
    end;
 
  (* The tracked default projection omits traversal-strategy settings and
@@ -1917,7 +1968,7 @@ fun rewrite_context_changes (SS old,SS current) =
  fun default_traversedata_for_ss (ss as SS data) : TraverseExt.traverse_data =
    {rewriters=[legacy_rewriter_for_ss_prepared ss []],
     dprocs= #dprocs data, relation=boolSyntax.equality,
-    travrules= #travrules data, limit= #limit data};
+    travrules= #travrules data, limit= #limit data, trace= #trace data};
 
  (* Settings used only by the explicit configured projection. *)
  fun traverseconfig_for_ss (SS ssdata) : TraverseExt.traverse_config =
@@ -2381,12 +2432,17 @@ fun gen_simp_tac_with_xdata traversal xdata solver_context mode ss ths g =
   gen_simp_tac_with_rounds (ref (getlimit ss)) traversal
     xdata solver_context mode ss ths g
 
+val in_context = simpCommon.in_context in_trace_context
+
 fun GEN_SIMP_TAC mode =
-  gen_simp_tac_with_xdata ParentFirst xtraversedata_for_ss [] mode
+  in_context
+    (gen_simp_tac_with_xdata ParentFirst xtraversedata_for_ss [] mode)
 
 fun GEN_SIMP_TAC_CHILD_FIRST policy mode =
-  gen_simp_tac_with_xdata (ChildFirst policy)
-    (fn ss => xtraversedata_for_ss_prepared (ChildFirst policy) ss []) [] mode
+  in_context
+    (gen_simp_tac_with_xdata (ChildFirst policy)
+       (fn ss => xtraversedata_for_ss_prepared (ChildFirst policy) ss [])
+       [] mode)
 
 (* Plain tactic entry points retain simpLib's marker processing and pass
    schedule unless the invocation opts into a traversal strategy. *)
@@ -2416,10 +2472,10 @@ fun strategy_free ss ths =
     not (Option.isSome (#term_ord s)) andalso List.all arg_free ths
   end
 
-fun ASM_SIMP_TAC ss ths gl =
+val ASM_SIMP_TAC = in_context (fn ss => fn ths => fn gl =>
     if strategy_free ss ths then
       markerLib.process_taclist_then{arg=ths} (CONV_TAC o SIMP_CONV ss) gl
-    else GEN_SIMP_TAC {safe=false} ss ths gl
+    else GEN_SIMP_TAC {safe=false} ss ths gl)
 val asm_simp_tac = ASM_SIMP_TAC
 fun SIMP_TAC ss ths = ASM_SIMP_TAC ss (markerLib.NoAsms::ths)
 val simp_tac = SIMP_TAC
@@ -2430,7 +2486,8 @@ val BF_ASSUME_TAC = simpCommon.BF_ASSUME_TAC
 local
   val tacs = simpCommon.full_simp_tacs {simp_rule = SIMP_RULE,
                                         asm_simp_tac = ASM_SIMP_TAC}
-  fun wrap tac ss ths = with_tactic_context (tac ss ths)
+  fun wrap tac = in_context (fn ss => fn ths =>
+                                with_tactic_context (tac ss ths))
 in
   val FULL_SIMP_TAC = wrap (#FULL_SIMP_TAC tacs)
   val REV_FULL_SIMP_TAC = wrap (#REV_FULL_SIMP_TAC tacs)
@@ -2445,12 +2502,14 @@ val stdcon = simpCommon.stdcon
 fun popper_of (cfg : simptac_config) =
     if #oldestfirst cfg then pop_last_assum else pop_assum
 
-fun psr (cfg : simptac_config) ss =
+fun psr (cfg : simptac_config) ss0 g c =
     let val popper = if #oldestfirst cfg then pop_last_assum else pop_assum
+        val ss = in_trace_context c ss0
     in
       with_tactic_context
         (popper (fn th =>
                     ASSUM_LIST (fn asms => stdcon cfg (SIMP_RULE ss asms th))))
+        g c
     end
 
 fun allasms cfg ss (g as (asl,_)) = ntac (length asl) (psr cfg ss) g
@@ -2796,17 +2855,17 @@ fun gen_global_simp_tac_with_bound traversal bound mode
 fun gen_global_simp_tac_with traversal =
   gen_global_simp_tac_with_bound traversal NONE
 
-fun GEN_GLOBAL_SIMP_TAC mode =
-  gen_global_simp_tac_with ParentFirst mode
+fun GEN_GLOBAL_SIMP_TAC mode cfg =
+  in_context (gen_global_simp_tac_with ParentFirst mode cfg)
 
-fun GEN_GLOBAL_SIMP_TAC_CHILD_FIRST policy mode =
-  gen_global_simp_tac_with (ChildFirst policy) mode
+fun GEN_GLOBAL_SIMP_TAC_CHILD_FIRST policy mode cfg =
+  in_context (gen_global_simp_tac_with (ChildFirst policy) mode cfg)
 
-fun GEN_GLOBAL_SIMP_TAC_CHILD_FIRST_BOUND policy mode cfg ss bundle =
+fun GEN_GLOBAL_SIMP_TAC_CHILD_FIRST_BOUND policy mode cfg ss bundle thl g c =
   gen_global_simp_tac_with_bound (ChildFirst policy) (SOME bundle)
-    mode cfg ss
+    mode cfg (in_trace_context c ss) thl g c
 
-fun global_simp_tac cfg ss0 thl gl =
+fun global_simp_tac cfg = in_context (fn ss0 => fn thl => fn gl =>
     if strategy_free ss0 thl then
       simpCommon.global_simp_tac
         {prepare = fn ss0 => fn thl =>
@@ -2818,7 +2877,7 @@ fun global_simp_tac cfg ss0 thl gl =
     else
       GEN_GLOBAL_SIMP_TAC {safe=false}
         {base=cfg,concl_in_fixpoint=false,imp_rebuild=false,
-         imp_premises=false} ss0 thl gl
+         imp_premises=false} ss0 thl gl)
 
 
 
@@ -2837,7 +2896,7 @@ fun tyi_to_ssdata tyinfo =
     let
       val {name, thy, convs, rewrs} = simpCommon.tyi_frag_parts tyinfo
       val convs = map (fn c => {thypart=SOME thy,cd=lift_convdata c,
-                               legacy= #conv c,source=NONE,
+                               legacy=unleveled (#conv c),source=NONE,
                                prepared=NONE,bound=NONE}) convs
       val rewrs = map source_slot rewrs
     in

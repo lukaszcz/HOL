@@ -9,7 +9,8 @@ fun samerel t1 t2 = can (match_term t1) t2
 type congproc  = term -> (* relation *)
                  {solver : term -> thm,
                   freevars: term list,
-                  depther : thm list * term -> conv} -> conv
+                  depther : thm list * term -> conv,
+                  trace : int} -> conv
 
 
 fun WRAP_ERR x = STRUCT_WRAP "Opening" x;
@@ -225,8 +226,9 @@ in fn relation =>
   if not (samerel rel relation) andalso not (same_const rel relation) then
     failwith "not applicable"
   else
-    fn {solver,depther,freevars} => fn tm =>
+    fn {solver,depther,freevars,trace=verbosity} => fn tm =>
   let
+    val trace = trace_at verbosity
     val theta = match_type (#1 (dom_rng (type_of relation))) (type_of tm)
     val relation' = Term.inst theta relation
     val match_thm = matcher (mk_comb(relation',tm))
@@ -370,7 +372,8 @@ val THREADED_CONGPROC = GEN_CONGPROC true
 fun EQ_CONGPROC relation =
  if not (same_const relation boolSyntax.equality) then failwith "not applicable"
  else
- fn {depther,solver,freevars} => fn tm =>
+ fn {depther,solver,freevars,trace=verbosity} => fn tm =>
+ let val trace = trace_at verbosity in
  case dest_term tm
   of COMB(Rator,Rand) =>
       (let val th = depther ([],equality) Rator
@@ -397,6 +400,7 @@ fun EQ_CONGPROC relation =
           in ABS Bvar Bth
           end
    | _ => raise UNCHANGED
+ end
 
 
 end (* struct *)
