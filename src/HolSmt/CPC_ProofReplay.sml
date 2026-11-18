@@ -21087,38 +21087,56 @@ local
                       Thm.MK_COMB (theorem, canon operand))
                     (Thm.REFL operator) operands
                 end
-              fun normalized_term term =
-                boolSyntax.rhs (Thm.concl (source_canon term))
-              val normalized_args = List.map normalized_term args
               val normalized_prems =
                 List.map (Conv.CONV_RULE canon) prems
+              fun normalized_step
+                  ((premise_step : replayed_step), normalized_theorem) =
+                let
+                  val original_theorem = step_theorem premise_step
+                  val normalized_provenance =
+                    align_canonical_provenance
+                      canon (Thm.concl original_theorem)
+                      (Thm.concl normalized_theorem)
+                      (step_provenance premise_step)
+                in
+                  {rule_name = #rule_name premise_step,
+                   result = exact_result normalized_provenance
+                     normalized_theorem}
+                end
+              val normalized_steps = ListPair.mapEq normalized_step
+                (premise_steps, normalized_prems)
+              (* Every exact route rewrites a nontrivial equality premise
+                 through its equality endpoints, and alignment never
+                 recovers endpoints a premise lacks.  Fail before the
+                 source canonicalization and alignment, which can cost
+                 seconds on binder-heavy sources. *)
+              fun require_endpoints (step : replayed_step) =
+                case (step_provenance step,
+                      Lib.total boolSyntax.dest_eq
+                        (Thm.concl (step_theorem step))) of
+                  (EqualityProvenance _, _) => ()
+                | (_, SOME (left, right)) =>
+                    if Term.aconv left right orelse
+                       Term.aconv left boolSyntax.T orelse
+                       Term.aconv right boolSyntax.T then ()
+                    else raise ERR "cong_provenance"
+                      (description ^
+                       " congruence premise lacks equality endpoints")
+                | _ => ()
+              val _ = List.app require_endpoints normalized_steps
+              val source_normalizations = List.map source_canon args
             in
-              case (located_args, normalized_args) of
-                ([source], [normalized_source]) =>
+              case (located_args, source_normalizations) of
+                ([source], [source_normalization]) =>
                   let
-                    val source_normalization = source_canon (#term source)
+                    val normalized_source =
+                      boolSyntax.rhs (Thm.concl source_normalization)
                     val normalized_located = {
                       term = normalized_source,
                       provenance = align_canonical_provenance
                         canon (#term source) normalized_source
                         (#provenance source)
                     }
-                    fun normalized_step
-                        ((premise_step : replayed_step), normalized_theorem) =
-                      let
-                        val original_theorem = step_theorem premise_step
-                        val normalized_provenance =
-                          align_canonical_provenance
-                            canon (Thm.concl original_theorem)
-                            (Thm.concl normalized_theorem)
-                            (step_provenance premise_step)
-                      in
-                        {rule_name = #rule_name premise_step,
-                         result = exact_result normalized_provenance
-                           normalized_theorem}
-                      end
-                    val normalized_steps = ListPair.mapEq normalized_step
-                      (premise_steps, normalized_prems)
                     val exact = replay_exact_cong_result NONE
                       normalized_located normalized_steps
                     val theorem = Thm.TRANS source_normalization
@@ -21138,10 +21156,11 @@ local
                    " congruence lacks one exact source occurrence")
             end
       (* A congruence under a binder block with one body equation is the
-         kernel's binder lift of that equation.  A canonicalizing fallback
-         may instead return the body's normal form, which later steps do
-         not mention; keep the lift, with the source's occurrence structure
-         around the premise's right-hand side, in that case. *)
+         kernel's binder lift of that equation, with the source's
+         occurrence structure around the premise's right-hand side.  A
+         canonicalizing fallback may instead return the body's normal
+         form, which later steps do not mention.  A negation over the
+         block lifts the same way. *)
       fun binder_cong_result () =
         case (conclusion, located_args, premise_steps) of
           (NONE, [source], [premise_step]) =>
@@ -21172,7 +21191,15 @@ local
                 if Term.aconv term body then (premise, right_provenance)
                 else
                   case provenance of
-                    BinderProvenance (head, inner) =>
+                    ApplicationProvenance ("not", [inner]) =>
+                      let
+                        val (theorem, inner') =
+                          lift (boolSyntax.dest_neg term) inner
+                      in
+                        (Thm.AP_TERM boolSyntax.negation theorem,
+                         ApplicationProvenance ("not", [inner']))
+                      end
+                  | BinderProvenance (head, inner) =>
                       Lib.apsnd (fn inner' => BinderProvenance (head, inner'))
                         (under 1 term (fn rest => lift rest inner))
                   | BinderBlockProvenance (head, size, inner) =>
@@ -21183,8 +21210,11 @@ local
                       Lib.apsnd (fn _ => UnavailableProvenance
                           "binder congruence source lacks binder provenance")
                         (under 1 term (fn rest => lift rest provenance))
-              val _ = boolSyntax.is_forall (#term source) orelse
-                boolSyntax.is_exists (#term source) orelse
+              fun is_block term =
+                boolSyntax.is_forall term orelse boolSyntax.is_exists term
+              val _ = is_block (#term source) orelse
+                (boolSyntax.is_neg (#term source) andalso
+                 is_block (boolSyntax.dest_neg (#term source))) orelse
                 raise ERR "cong" "source is not a binder block"
               val (theorem, right) = lift (#term source) (#provenance source)
             in
@@ -21192,16 +21222,13 @@ local
                 theorem
             end
         | _ => raise ERR "cong" "not a unary binder congruence"
+      (* The lift is a few kernel steps; the canonicalizing fallbacks
+         can take seconds on a large quantified source, so they run only
+         when there is no lift. *)
       fun binder_checked_cong_result fallback =
-        let val result = fallback () in
-          case Lib.total binder_cong_result () of
-            NONE => result
-          | SOME lifted =>
-              if Term.aconv (Thm.concl (result_theorem result))
-                   (Thm.concl (result_theorem lifted))
-              then result
-              else lifted
-        end
+        case Lib.total binder_cong_result () of
+          SOME lifted => lifted
+        | NONE => fallback ()
       fun canonical_cong_result () =
         canonical_cong_result_with SmtReplayCanon.cpc_canon_conv
           "canonical"
