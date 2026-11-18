@@ -84,6 +84,39 @@ struct
      checked equality for this invocation.  Tree-depth conversions revisit
      exponentially many paths through solver-generated shared circuits.
      [orient source] rewrites a node whose input occurrence was [source]. *)
+  (* Whether [trigger] holds at some subterm of [root], binder bodies
+     included: one walk, memoized on physical identity. Past the term
+     budget it answers true, so no pass is skipped that was not scanned. *)
+  fun may_trigger trigger root =
+    let
+      exception Found
+      val bucket_count = 4093
+      val seen = Array.array (bucket_count, [] : Term.term list)
+      val visited = ref 0
+      fun visit term =
+        let
+          val index = SmtResource.pointer_bucket bucket_count term
+          val bucket = Array.sub (seen, index)
+        in
+          if List.exists (fn old => Portable.pointer_eq (old, term)) bucket
+          then ()
+          else
+            (Array.update (seen, index, term :: bucket);
+             visited := !visited + 1;
+             if !visited > SmtResource.max_bv_replay_term_nodes orelse
+                trigger term then raise Found
+             else if Term.is_comb term then
+               (visit (Term.rator term); visit (Term.rand term))
+             else if Term.is_abs term then visit (#2 (Term.dest_abs term))
+             else ())
+        end
+    in (visit root; false) handle Found => true end
+
+  (* A conversion that can only rewrite where [trigger] holds. *)
+  fun when_triggered trigger conversion root =
+    if may_trigger trigger root then conversion root
+    else raise Conv.UNCHANGED
+
   fun dag_conversion revisit orient root =
     let
       val bucket_count = 4093
@@ -371,6 +404,10 @@ struct
      Bounded binder bodies use the same compact pass; only their opening
      and final ABS/alpha bridge are native island operations. *)
   fun compact_conversion_status patterns descend revisit propose root =
+    (* A pass whose rules match nowhere in [root] needs no graph. *)
+    if descend andalso not (may_trigger (Option.isSome o propose) root)
+    then (Thm.REFL root,false)
+    else
     let
       val graph = G.new ()
       val scope = G.root_scope graph
@@ -387,12 +424,8 @@ struct
             val _ = admit_count_up_to "canon-binder-opening" maximum term
             val (variable,body) =
               SmtReplayImport.dest_abs_preserving_names term
-            (* A body where [propose] offers no rewrite comes back
-               unchanged; skip its nested pass and graph. *)
-            val (body_thm,changed) =
-              if SmtResource.contains (Option.isSome o propose) body then
-                compact_conversion_status patterns true revisit propose body
-              else (Thm.REFL body,false)
+            val (body_thm,changed) = compact_conversion_status patterns
+              true revisit propose body
             val result = boolSyntax.rhs (Thm.concl body_thm)
           in
             if not changed then
@@ -815,9 +848,10 @@ struct
   val cpc_term_canon_conv =
     compose
       [cpc_alias_conv,
-       dag_rewrite_conv ground_total_conv,
+       when_triggered is_ground_total (dag_rewrite_conv ground_total_conv),
        cpc_alias_conv,
-       dag_orientation_conv Drule.ETA_CONV]
+       when_triggered (Lib.can Drule.ETA_CONV)
+         (dag_orientation_conv Drule.ETA_CONV)]
 
   val cpc_operand_canon_conv =
     compose
