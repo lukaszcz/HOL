@@ -7686,11 +7686,12 @@ local
     (* Z3 can reduce datatype redexes (case of a constructor) and reorient or
        reorder the rest in one rewrite.  The datatype rung's simp reduces the
        redexes but not the rest, and the congruence rungs below do the rest
-       but not the redexes.  Normalize each side with srw_ss and the datatype
-       rung's rewrites, after the datatype admission check, and replay the
-       normalized equality through the ladder. *)
+       but not the redexes.  After the datatype admission check on the target,
+       normalize each side with srw_ss and the datatype rung's rewrites, and
+       replay the normalized equality through the ladder. *)
     rewrite_profile "datatypes" "rewrite(21a)(datatype-normalize)" (fn () =>
       let
+        val _ = #datatype_admit state t
         val thms = SmtDatatypeProve.datatype_rewrite_thms_with_admission
           (#datatype_admit state) t
         val _ = not (List.null thms) orelse
@@ -7703,7 +7704,6 @@ local
             (Conv.QCONV (Rewrite.PURE_ONCE_REWRITE_CONV thms) side))))
         val _ = reducible l orelse reducible r orelse
           raise ERR "z3_rewrite" "no datatype redex"
-        val _ = (#datatype_admit state l; #datatype_admit state r)
         fun normalize side =
           simpLib.SIMP_CONV (bossLib.srw_ss()) thms side
           handle Conv.UNCHANGED => Thm.REFL side
