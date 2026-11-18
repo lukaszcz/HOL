@@ -313,22 +313,15 @@ struct
             empty = empty, pp = pp}
         end
 
-    (* `what`, when there is one, names the part of the slot the read
-       was after: for a slot as widely shared as HOLFlags' the slot name
-       alone does not say where to look. *)
-    fun gen_get (slot : 'a slot) what (c : t) =
+    fun get (slot : 'a slot) (c : t) =
         (if claim_pending () then
            Feedback.HOL_WARNING "Context" "snapshot"
              ("  ... the ambient read above was of slot \"" ^
-              #name slot ^ "\"" ^
-              (case what of NONE => "" | SOME f => " (" ^ f () ^ ")"))
+              #name slot ^ "\"")
          else ();
          case Symtab.lookup (session_data c) (#name slot) of
              NONE   => #empty slot
            | SOME u => valOf (#unwrap slot u))
-
-    fun get slot c = gen_get slot NONE c
-    fun get_ambient slot what = gen_get slot (SOME what) (snapshot ())
 
     fun put (slot : 'a slot) v c =
         map_session_data (Symtab.update (#name slot, #wrap slot v)) c
