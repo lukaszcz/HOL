@@ -484,14 +484,13 @@ struct
                     val _=pay 6
                     val target=case #conclusion step of SOME row=>row
                       | NONE=>raise ERR "prepare" "missing planned conclusion"
-                    val family=Shared.simple_boolean equal
-                      (CPC_Proof.handler_name (#replay_handler (#rule step)))
+                    val handler=
+                      CPC_Proof.handler_name (#replay_handler (#rule step))
+                    val family=Shared.simple_boolean equal handler
                     fun current node provenance =
                       (pay 2;{node=node,provenance=provenance})
                     val equality=case family of NONE=>
-                        Shared.simple_equality equal
-                          (CPC_Proof.handler_name
-                              (#replay_handler (#rule step)))
+                        Shared.simple_equality equal handler
                       | SOME _=>NONE
                     fun infer_equality()=
                       let
@@ -671,8 +670,6 @@ struct
                             [Q.GraphIndex index]=>index
                           | _=>raise ERR "discover"
                               "expected one recorded index")
-                        val handler= CPC_Proof.handler_name
-                            (#replay_handler (#rule step))
                       in case family of
                           Shared.SimpleNotOrElim=>
                             (pay 11;
@@ -953,8 +950,6 @@ struct
                         | _=>raise ERR "prepare"
                             "private new Boolean family"
                       end
-                    val rule_handler=
-                      CPC_Proof.handler_name (#replay_handler (#rule step))
                     val inferred=case family of SOME Shared.SimpleAndElim=>
                       Shared.and_elim
                         {require_one=require_one,node= #node,
@@ -983,11 +978,9 @@ struct
                           (map(fn premise=>(tick();Held(#node premise)))
                             premises)
                     | NONE=>(case equality of SOME _=>infer_equality()
-                      | NONE=>if equal
-                          (rule_handler,
-                          "resolution")orelse
-                          equal(rule_handler,"factoring")orelse
-                          equal(rule_handler,"reordering")then
+                      | NONE=>if equal(handler,"resolution")orelse
+                          equal(handler,"factoring")orelse
+                          equal(handler,"reordering")then
                           let
                             val _=pay 1
                             fun infer_structural()=case aliases of
@@ -999,7 +992,6 @@ struct
                                   val _=pay 36
                                   val destination=fact target
                                   val destination_node= #node destination
-                                  val handler= rule_handler
                                   fun constant () value atom=
                                     let val _=tick()
                                         val node=PV.proof_term context value
@@ -1228,7 +1220,7 @@ struct
                                 in destination end
                           in infer_structural()end
                         else if equal
-                          (rule_handler,"cnf")then
+                          (handler,"cnf")then
                           let
                             (* One selected helper closure. No old Boolean
                                path allocates this new-family adapter. *)
@@ -1394,7 +1386,7 @@ struct
                                 literals end
                           in infer_cnf()end
                         else(case truth_family equal
-                          (rule_handler)of
+                          handler of
                           NONE=>infer_equality()
                         | SOME family=>
                           let val _=pay 1
