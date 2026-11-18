@@ -5313,13 +5313,6 @@ local
       val blasted = conjunction 0 (Thm.REFL boolSyntax.T)
     in Thm.TRANS expanded blasted end
 
-  (* An adder equation (x + y = w) goes to the circuit path with
-     adder_equation_conversion, which shares the carry chain. *)
-  fun is_adder_equation term =
-    let val (left, _) = boolSyntax.dest_eq term
-    in wordsSyntax.is_word_add left end
-    handle Feedback.HOL_ERR _ => false
-
   fun replay_bv_poly_norm args =
     let
       val target = expect_one_arg "bv_poly_norm" args
@@ -5740,8 +5733,7 @@ local
              checks wide words about twice as fast as the compact path (a
              256-bit mask-and-add goal via cvc5: 18-22 s against 30-32 s).
              The compact path takes what the circuit path rejects. *)
-          if compact_word_target target andalso
-             not (is_adder_equation target) then
+          if compact_word_target target then
             circuit_path () handle Feedback.HOL_ERR _ =>
             (profile_event "CPC(bvite_words:compact)";
              SmtWordGraph.prove_with_node_conversion
@@ -22635,7 +22627,8 @@ local
   fun reset_replay_memos limit =
     (resolution_literal_normalizations := Redblackmap.mkDict Term.compare;
      reset_fp_memos ();
-     word_graph_tautology_cache := new_word_graph_tautology_cache limit)
+     word_graph_tautology_cache := new_word_graph_tautology_cache limit;
+     SmtWordGraph.clear_shared_schemas ())
 
 
 in
@@ -24135,15 +24128,15 @@ in
          fp_atom_bridge_laws := bridges;
          word_graph_tautology_cache := words)
       (* Word schemas are shared within this replay only. *)
-      fun run () =
-        (reset_replay_memos limit;
-         SmtWordGraph.with_shared_schemas action input)
+      fun run () = SmtWordGraph.with_shared_schemas
+        (fn input => (reset_replay_memos limit; action input)) input
     in
       (run () before restore ())
       handle error => (restore (); raise error)
     end
 
   val with_replay_memos_for_test = with_replay_memos_for
+  val reset_replay_memos_for_test = reset_replay_memos
   val word_graph_tautology_using_for_test = prove_word_graph_tautology_using
   val max_word_graph_tautology_entries_for_test =
     max_word_graph_tautology_entries

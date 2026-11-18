@@ -29,6 +29,8 @@ sig
      operator schemas; a nested call starts empty and restores the outer
      scope's on exit.  A certificate replay runs in one such scope. *)
   val with_shared_schemas : ('a -> 'b) -> 'a -> 'b
+  (* Empties the current scope's schemas; outside a scope, does nothing. *)
+  val clear_shared_schemas : unit -> unit
   (* Discovery/checked assembly, including the Boolean proof, precedes the
      only realization. Callbacks receive bounded typed operator frontiers. *)
   val prove_with_node_conversion : Conv.conv -> Term.term -> Thm.thm

@@ -7049,23 +7049,31 @@ local
       val _ = not (List.null equalities) orelse
         raise ERR "asserted_equality_substitution_prove"
           "no structurally derived asserted equality"
-      (* Rewriting to a fixpoint, one pass at a time.  A rewrite can create
-         a redex in the term around it (x = y with f y = f x), which no
-         check of the equations alone sees; such a direction fails after
-         max_passes and the other direction is tried. *)
-      val max_passes = 256
+      (* Rewriting to a fixpoint, counting rewrites.  A rewrite can create
+         a redex in the term around it (x = y with f y = f x) or copy one
+         (a = b with f b = g (f a) (f a)), which no check of the equations
+         alone sees.  Such a direction fails after max_rewrites rewrites,
+         about one per target node plus a margin for chains, and the other
+         direction is tried. *)
+      val max_rewrites =
+        4096 + SmtResource.term_nodes_up_to 65536 target
+      exception Diverged
       fun substitute rewrite_theorems =
         let
-          val pass = Rewrite.PURE_ONCE_REWRITE_CONV rewrite_theorems
-          fun continue passes theorem =
-            let
-              val next = pass (boolSyntax.rhs (Thm.concl theorem))
-              val _ = passes < max_passes orelse
-                raise ERR "asserted_equality_substitution_prove"
-                  "substitution did not terminate"
-            in continue (passes + 1) (Thm.TRANS theorem next) end
-            handle Conv.UNCHANGED => theorem
-        in continue 1 (pass target) end
+          val rewrites = ref 0
+          fun counted conversion term =
+            let val theorem = conversion term
+            in
+              rewrites := !rewrites + 1;
+              if !rewrites <= max_rewrites then theorem else raise Diverged
+            end
+        in
+          Rewrite.GEN_REWRITE_CONV (Conv.TOP_DEPTH_CONV o counted)
+            Rewrite.empty_rewrites rewrite_theorems target
+          handle Diverged =>
+            raise ERR "asserted_equality_substitution_prove"
+              "substitution did not terminate"
+        end
       fun prove_with rewrite_theorems =
         let
           val substitution = substitute rewrite_theorems
@@ -7122,15 +7130,26 @@ local
       fun acyclic theorems =
         let
           val sides = List.map (boolSyntax.dest_eq o Thm.concl) theorems
-          fun successors (_, right) =
-            List.filter (fn (left, _) => Term.free_in left right) sides
-          fun reaches seen target side =
-            List.exists (fn next =>
-                Term.aconv (#1 next) target orelse
-                (not (List.exists (Term.aconv (#1 next)) seen) andalso
-                 reaches (#1 next :: seen) target next))
-              (successors side)
-          fun on_cycle (side as (left, _)) = reaches [] left side
+          (* The left sides reached from one through right sides. *)
+          fun successors left =
+            let
+              val rights = List.mapPartial (fn (other, right) =>
+                if Term.aconv other left then SOME right else NONE) sides
+            in
+              List.filter (fn other => List.exists (Term.free_in other) rights)
+                (List.map #1 sides)
+            end
+          (* A search visits each left side once. *)
+          fun reaches target seen [] = false
+            | reaches target seen (left :: pending) =
+              Term.aconv left target orelse
+              (if List.exists (Term.aconv left) seen then
+                 reaches target seen pending
+               else reaches target (left :: seen) (successors left @ pending))
+          fun on_cycle (left, right) =
+            reaches left []
+              (List.filter (fn other => Term.free_in other right)
+                 (List.map #1 sides))
         in
           List.filter
             (not o on_cycle o boolSyntax.dest_eq o Thm.concl) theorems

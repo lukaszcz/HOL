@@ -21909,11 +21909,13 @@ let
   fun replay action = CPC_ProofReplay.with_replay_memos_for_test 0 action
   val before_first = hits ()
   val before_second = hits ()
-  val (first, nested, after_nested) = replay (fn () =>
+  val (first, nested, after_nested, after_reset) = replay (fn () =>
     let
       val first = hits ()
       val nested = replay hits ()
-    in (first, nested, hits ()) end) ()
+      val after_nested = hits ()
+      val () = CPC_ProofReplay.reset_replay_memos_for_test 0
+    in (first, nested, after_nested, hits ()) end) ()
   val after = hits ()
 in
   assert (before_second = before_first andalso after = before_first,
@@ -21922,7 +21924,9 @@ in
     "a nested replay saw its caller's word schemas");
   assert (after_nested > first,
     "word schemas were not shared within a replay or a nested replay " ^
-    "erased them")
+    "erased them");
+  assert (after_reset = first,
+    "resetting the replay memos kept the replay's word schemas")
 end
 
 fun cpc_word_aci_literal_identity_success () =
@@ -27191,6 +27195,31 @@ let
   val swap_theorem =
     Z3_ProofReplay.asserted_equality_substitution_prove_for_test
       [swap_source] swap_target
+  (* Left to right, a = b and f b = g (f a) (f a) double the redexes every
+     two rewrites; the bound stops that direction before it exhausts the
+     replay. *)
+  val copy_source =
+    ``((asserted_a:int) = asserted_b) /\
+      (asserted_f asserted_b =
+       asserted_g (asserted_f asserted_a) (asserted_f asserted_a):int)``
+  val copy_target =
+    ``asserted_g (asserted_f (asserted_a:int)) (asserted_f asserted_a) =
+      asserted_f asserted_b:int``
+  val copy_theorem =
+    Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+      [copy_source] copy_target
+  (* A deep nest of one redex takes one rewrite per level; f x = x has no
+     usable reverse. *)
+  val nest_source = ``asserted_f (asserted_x:int) = asserted_x``
+  val nest_function = ``asserted_f:int -> int``
+  fun nest 0 term = term
+    | nest n term = nest (n - 1) (Term.mk_comb (nest_function, term))
+  val nest_target = boolSyntax.mk_eq
+    (intSyntax.mk_plus (nest 300 ``asserted_x:int``, ``-3:int``),
+     ``(asserted_x:int) + -3``)
+  val nest_theorem =
+    Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+      [nest_source] nest_target
 in
   assert (List.all (fn (source, theorem) =>
       Thm.concl theorem ~~ target andalso exact_source source theorem)
@@ -27224,7 +27253,14 @@ in
       exact_source swap_source swap_theorem,
     "a rewrite that recreates its redex was not bounded");
   check_oracle_tags "context-cyclic asserted equalities" context_theorem;
-  check_oracle_tags "swapping asserted equalities" swap_theorem
+  check_oracle_tags "swapping asserted equalities" swap_theorem;
+  assert (Thm.concl copy_theorem ~~ copy_target andalso
+      exact_source copy_source copy_theorem andalso
+      Thm.concl nest_theorem ~~ nest_target andalso
+      exact_source nest_source nest_theorem,
+    "asserted equality substitution was not bounded by its rewrites");
+  check_oracle_tags "copying asserted equalities" copy_theorem;
+  check_oracle_tags "nested asserted equality" nest_theorem
 end
 
 fun z3_hyp_removal_beta_lookup_success () =

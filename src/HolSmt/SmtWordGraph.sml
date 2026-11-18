@@ -1994,6 +1994,11 @@ struct
       handle error => (restore (); raise error)
     end
 
+  fun clear_shared_schemas () =
+    case !shared_schemas of
+      NONE => ()
+    | SOME _ => shared_schemas := SOME (new_context_with_local_laws true)
+
   fun schema_sharing_context (fresh : context) : context =
     case !shared_schemas of
       NONE => fresh
@@ -2089,7 +2094,8 @@ struct
         in table := Redblackmap.insert
           (!table,G.node_id node,(result,proof)) end
       val (plan,_) = discover_using_in false
-        (new_context_with_local_laws true) false (new_type_admission ())
+        (schema_sharing_context (new_context_with_local_laws true)) false
+        (new_type_admission ())
         (guarded_conversions
           {word_conversion=builtin_word_conversion,
            bit_conversion=builtin_bit_conversion,
@@ -2413,6 +2419,7 @@ struct
         node_conversion target
     end
 
-  fun prove target = prove_in (new_context ()) target
+  fun prove target =
+    prove_in (schema_sharing_context (new_context ())) target
 
 end
