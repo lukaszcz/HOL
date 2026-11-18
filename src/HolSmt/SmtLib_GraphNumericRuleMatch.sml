@@ -651,7 +651,10 @@ struct
       W.spend_policy work (IntInf.fromInt n)
     val err = ERR
   end)
+  (* Opening Walk rebinds `owner`; keep the numeric owner exported. *)
+  type numeric_owner = owner
   open Walk
+  type owner = numeric_owner
   datatype operation = Specialize of G.node | Select of bool | Undisch
   datatype policy_schema = PolicySchema of
     {policy_owner : policy_owner,index : int,rule : Thm.thm,whole : tree,
@@ -983,8 +986,7 @@ struct
                 "prospective policy_instance exceeds quota"
         in forecasts := full :: !forecasts;p end
       val initial = profile [] whole
-      (* Genuine whole original/canonical bridge: TRANS equality
-        then EQ_MP.
+      (* Genuine whole original/canonical bridge: TRANS equality then EQ_MP.
          Alpha-only metadata does not authorize an arbitrary semantic pair. *)
       val _ = record [] (equality initial)
       val _ = record [] initial
@@ -1097,8 +1099,7 @@ struct
       val checked_types = List.map (fn ty =>
         guard (fn () => Type.type_subst substitution ty)) (!annotations) @
           !actual_annotations
-      (* Domains are ONLY original free-variable nodes; ranges
-        come ONLY
+      (* Domains are ONLY original free-variable nodes; ranges come ONLY
          from this completed match. No caller substitution is admitted.
          Detect collapsed free domains before policy/INST_TYPE/INST. *)
       val free_terms = List.mapPartial (fn binder =>

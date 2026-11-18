@@ -1,8 +1,9 @@
-(* Shared closure-tree walk of the rule matchers.  Each matcher supplies its
-   own abstract owner together with the owner's validation (`active`), its
-   metered `tick` and its Work spending; the functor applies them at exactly
-   the points the matchers used before, so charges and diagnostics keep
-   their order and origin. *)
+(* Closure-tree walk shared by the rule matchers.  The functor applies the
+   owner's `active`, `tick` and `spend` at fixed points of the walk, so each
+   matcher keeps its own charges, allowances and diagnostic origin.  `active`
+   is whatever validation the owner requires; for the policy owner it
+   includes native-contract validation, and its `tick` also enforces the
+   native matching allowance. *)
 signature SmtLib_RuleMatchOwner =
 sig
   type owner
@@ -18,10 +19,42 @@ sig
   val err : string -> string -> exn
 end
 
-functor SmtLib_RuleMatchTreeFn (A : SmtLib_RuleMatchOwner) =
+signature SmtLib_RuleMatchTree =
+sig
+  type owner
+  type profile = {raw : IntInf.int,inc : IntInf.int,ann : IntInf.int}
+  datatype shape = Atom | App of tree * tree
+    | Lam of {binder : SmtReplayGraph.node,binder_type : Type.hol_type,
+              body : tree}
+  and tree = Tree of
+    {node : SmtReplayGraph.node,child : SmtReplayGraph.closure_child,
+     frame : SmtReplayGraph.scope,ty : Type.hol_type,shape : shape,
+     profile : profile}
+  val data : tree -> {node : SmtReplayGraph.node,
+    child : SmtReplayGraph.closure_child,frame : SmtReplayGraph.scope,
+    ty : Type.hol_type,shape : shape,profile : profile}
+  val node : tree -> SmtReplayGraph.node
+  val guarded : owner -> (unit -> 'a) -> 'a
+  val add : profile -> profile -> profile
+  val unit : IntInf.int -> profile
+  val type_weight : owner -> Type.hol_type -> IntInf.int
+  val compare_type : owner -> Type.hol_type * Type.hol_type -> order
+  val closure_guard : owner -> SmtReplayGraph.scope -> SmtReplayGraph.scope ->
+    SmtReplayGraph.closure_child -> SmtReplayGraph.node
+  val tree : owner -> SmtReplayGraph.scope -> SmtReplayGraph.scope ->
+    SmtReplayGraph.closure_child -> tree
+  val const_name : owner -> tree -> {Thy : string,Name : string} option
+  val head_is : owner -> string -> string -> tree -> bool
+  val unary : owner -> string -> string -> tree -> tree option
+  val binary : owner -> string -> string -> tree -> (tree * tree) option
+  val free_nodes : owner -> tree -> SmtReplayGraph.node list
+end
+
+functor SmtLib_RuleMatchTreeFn (A : SmtLib_RuleMatchOwner) :
+    SmtLib_RuleMatchTree where type owner = A.owner =
 struct
   structure G = SmtReplayGraph
-  val _ = SmtReplayGraph.closure_root
+  type owner = A.owner
   type profile = {raw : IntInf.int,inc : IntInf.int,ann : IntInf.int}
   datatype shape = Atom | App of tree * tree
     | Lam of {binder : G.node,binder_type : Type.hol_type,body : tree}

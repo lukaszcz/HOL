@@ -54,8 +54,7 @@ sig
     PolicyMatched of policy_matched
   val begin_with_policy : SmtReplayInvocationWork.portfolio ->
     SmtLib_GraphNumericRewriteCatalogue.policy_catalogue -> policy_owner
-  (* Additive ordered closed canonical clauses on the SAME
-     original Work.
+  (* Additive ordered closed canonical clauses on the SAME original Work.
      The old raw fixed policy catalogue path retains its existing behavior. *)
   val begin_canonical_with_policy : SmtReplayInvocationWork.portfolio ->
     SmtLib_GraphNumericCanonical.policy_catalogue -> policy_owner
