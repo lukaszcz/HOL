@@ -19,6 +19,10 @@ sig
   val monitoring            : HOLFlags.bflag
 
   val REWRITES_CONV         : rewrites -> conv
+  (* REWRITES_CONV reporting each rewrite when the flag is true, whatever
+     Rewrite.monitoring is: for a tactic, which passes the monitoring of
+     its context, or for rewriting that is no business of the user's *)
+  val REWRITES_CONV_AT      : bool -> rewrites -> conv
   val GEN_REWRITE_CONV : (conv -> conv) -> rewrites -> thm list -> conv
   val GEN_REWRITE_RULE : (conv -> conv) -> rewrites -> thm list -> thm -> thm
   val GEN_REWRITE_TAC  : (conv -> conv) -> rewrites -> thm list -> tactic

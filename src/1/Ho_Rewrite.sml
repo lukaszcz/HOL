@@ -281,14 +281,25 @@ fun num_matches th t =
 
 val thm_to_string =
     HOLFlags.with_bflags [(Parse.avoid_unicode, true)] Parse.thm_to_string
+
+(* The theorem is printed only when the requirement fails: building the
+   message with the tactic would print it every time the tactic is made,
+   reading the printer's flags ambiently each time. *)
+fun require name describe P th (tac : tactic) g ctxt =
+    let
+      val result as (gl, _) = tac g ctxt
+    in
+      if P (g, gl) then result
+      else raise ERR name (describe (thm_to_string th))
+    end
+
 fun REQUIRE0_TAC th =
-    check_delta (ERR "REQUIRE0_TAC"
-                     ("LHS of " ^ thm_to_string th ^ " remains in goal"))
-                (count0 (num_matches th))
+    require "REQUIRE0_TAC" (fn s => "LHS of " ^ s ^ " remains in goal")
+            (count0 (num_matches th)) th
 
 fun REQUIRE_DECREASE_TAC th =
-    check_delta (ERR "REQUIRE_DECREASE_TAC"
-                     ("LHSes from " ^ thm_to_string th ^ " didn't decrease"))
-                (count_decreases (num_matches th))
+    require "REQUIRE_DECREASE_TAC"
+            (fn s => "LHSes from " ^ s ^ " didn't decrease")
+            (count_decreases (num_matches th)) th
 
 end (* Ho_Rewrite *)

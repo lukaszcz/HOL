@@ -1569,25 +1569,106 @@ in
   }  "%0%1%0%0@@%2@|"
 end
 
-(* At level 2 the census follows each ambient read with the slot it was
-   after; for HOLFlags, whose one slot holds every flag, also the flag. *)
+(* The ambient-read census of proving goal with tac, at level 2.  At that
+   level the census follows each ambient read with the slot it was after;
+   for HOLFlags, whose one slot holds every flag, also the flag. *)
+fun census_of goal tac =
+  let
+    val warnings = ref ([] : string list)
+    fun run () =
+        (Context.set_ambient_report_level 2;
+         Lib.with_flag
+           (Feedback.WARNING_outstream, fn s => warnings := s :: !warnings)
+           TAC_PROOF (goal, tac))
+    val _ = Portable.finally (fn () => Context.set_ambient_report_level 1)
+                             run ()
+  in
+    rev (!warnings)
+  end
+
 val _ = let
   val _ = tprint "Ambient-read census names the flag a proof read"
-  val warnings = ref ([] : string list)
   val reader : tactic = fn g => fn c =>
       (ignore (HOLFlags.current_trace "PP.avoid_unicode"); ALL_TAC g c)
-  fun run () =
-      (Context.set_ambient_report_level 2;
-       Lib.with_flag
-         (Feedback.WARNING_outstream, fn s => warnings := s :: !warnings)
-         TAC_PROOF (([], T), reader THEN ACCEPT_TAC TRUTH))
-  val _ = Portable.finally (fn () => Context.set_ambient_report_level 1)
-                           run ()
+  val warnings = census_of ([], T) (reader THEN ACCEPT_TAC TRUTH)
   val named = "slot \"HOLFlags\" (PP.avoid_unicode)"
 in
-  if List.exists (String.isSubstring named) (!warnings) then OK()
+  if List.exists (String.isSubstring named) warnings then OK()
   else die ("no warning named the flag:\n" ^
-            String.concatWith "\n" (rev (!warnings)))
+            String.concatWith "\n" warnings)
+end
+
+(* Rewrite.monitoring and FIRST_ASSUM's parser flags are read from the
+   context the tactic is run in *)
+val _ = let
+  val _ = tprint "REWRITE_TAC and FIRST_ASSUM read no flag ambiently"
+  val p = mk_var ("p", bool)
+  val warnings =
+      census_of ([p], mk_conj (p, T))
+                (REWRITE_TAC [] THEN FIRST_ASSUM ACCEPT_TAC)
+  val flags = List.filter (String.isSubstring "slot \"HOLFlags\"") warnings
+in
+  if null flags then OK() else die (String.concatWith "\n" flags)
+end
+
+val _ = let
+  val _ = tprint "REQUIRE0_TAC prints its theorem only when it fails"
+  val p = mk_var ("p", bool)
+  val th = CONJUNCT1 (SPEC p AND_CLAUSES)
+  fun required tac : tactic =
+      fn g => fn c => Ho_Rewrite.REQUIRE0_TAC th tac g c
+  val warnings = census_of ([], T) (required (ACCEPT_TAC TRUTH))
+  val printed = List.filter (String.isSubstring "(PP.") warnings
+  val failure =
+      (ignore (runtac (required ALL_TAC) ([], mk_conj (T, p))); NONE)
+      handle HOL_ERR e => SOME (message_of e)
+in
+  if not (null printed) then die (String.concatWith "\n" printed)
+  else case failure of
+           SOME m => if String.isSubstring "remains in goal" m then OK()
+                     else die ("message: " ^ m)
+         | NONE => die "REQUIRE0_TAC did not fail"
+end
+
+val _ = let
+  val _ = tprint "trace_tac turns on Rewrite.monitoring for REWRITE_TAC"
+  val said = ref ""
+  val p = mk_var ("p", bool)
+  val tac = trace_tac ("Rewrite.monitoring", 1) (REWRITE_TAC [])
+  val _ = Lib.with_flag (Feedback.MESG_outstream, fn s => said := !said ^ s)
+                        (runtac tac) ([], mk_conj (p, T))
+in
+  if String.isSubstring "Rewrite:" (!said) then OK()
+  else die ("said: " ^ String.toString (!said))
+end
+
+val _ = let
+  val _ = tprint "REWRITES_CONV_AT false reports nothing, whatever monitoring"
+  val said = ref ""
+  val p = mk_var ("p", bool)
+  val rws = Rewrite.add_rewrites Rewrite.empty_rewrites [AND_CLAUSES]
+  val _ = Lib.with_flag (Feedback.MESG_outstream, fn s => said := !said ^ s)
+            (HOLFlags.with_flags [(HOLFlags.flag_of_bflag Rewrite.monitoring,
+                                   1)]
+               (TOP_DEPTH_CONV (Rewrite.REWRITES_CONV_AT false rws)))
+            (mk_conj (p, T))
+in
+  if !said = "" then OK() else die ("said: " ^ String.toString (!said))
+end
+
+val _ = let
+  val _ = tprint "FIRST_ASSUM quietens the parser for ttac, also ambiently"
+  val p = mk_var ("p", bool)
+  val nm = "Parse.syntax_error"
+  val seen = ref ([] : (int * int) list)
+  fun ttac th g c =
+      (seen := (HOLFlags.gen_get_trace_C c (HOLFlags.str2name nm),
+                HOLFlags.current_trace nm) :: !seen;
+       ACCEPT_TAC th g c)
+  val _ = runtac (FIRST_ASSUM ttac) ([p], p)
+in
+  if !seen = [(0, 0)] andalso HOLFlags.current_trace nm <> 0 then OK()
+  else die "parser flag not off for ttac, or left off afterwards"
 end
 
 

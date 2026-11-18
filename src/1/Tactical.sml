@@ -860,21 +860,29 @@ val every_assum = EVERY_ASSUM
  * Call a thm-tactic for the first assumption at which it succeeds.
  *---------------------------------------------------------------------------*)
 
-val shut_parser_up =
-    HOLFlags.with_traces [("Parse.notify_on_tyvar_guess", 0),
-                          ("Parse.syntax_error", 0),
-                          ("Parse.show_typecheck_errors", 0)]
+(* Most assumptions tried are ones a quotation in ttac does not fit, and
+   the parser's complaints about them are noise.  The flags are turned off
+   in the context ttac is given, and the parser, which reads them
+   ambiently, is answered from that context. *)
+fun shut_parser_up ctxt =
+    List.foldl
+      (fn (nm, c) => HOLFlags.gen_set_trace_C (HOLFlags.str2name nm, 0) c)
+      ctxt
+      ["Parse.notify_on_tyvar_guess", "Parse.syntax_error",
+       "Parse.show_typecheck_errors"]
 
 local
   fun find ttac name goal ctxt [] = raise ERR name  ""
     | find ttac name goal ctxt (a :: L) =
       ttac (ASSUME a) goal ctxt
       handle HOL_ERR _ => find ttac name goal ctxt L
+  fun quietly name order ttac (A, g) ctxt =
+      let val quiet = shut_parser_up ctxt
+      in HOLFlags.with_flags_of quiet (find ttac name (A, g) quiet) (order A)
+      end
 in
-  fun FIRST_ASSUM ttac (A, g) ctxt =
-        shut_parser_up (find ttac "FIRST_ASSUM" (A, g) ctxt) A
-  fun LAST_ASSUM ttac (A, g) ctxt =
-        shut_parser_up (find ttac "LAST_ASSUM" (A, g) ctxt) (List.rev A)
+  fun FIRST_ASSUM ttac = quietly "FIRST_ASSUM" I ttac
+  fun LAST_ASSUM ttac = quietly "LAST_ASSUM" List.rev ttac
   val first_assum = FIRST_ASSUM
   val last_assum = LAST_ASSUM
 end

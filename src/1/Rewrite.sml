@@ -107,9 +107,11 @@ end (* abstype *)
      Create a conversion from some rewrites
  ---------------------------------------------------------------------------*)
 
-fun REWRITES_CONV rws tm =
+(* Whether to report each rewrite is given: the tactics take it from the
+   context they are run in, the conversion from the ambient setting. *)
+fun REWRITES_CONV_AT monitor rws tm =
  let val net = net_of rws
- in if get_monitoring()
+ in if monitor
     then case mapfilter (fn f => f tm) (Net.match tm net)
           of []   => Conv.NO_CONV tm
            | [x]  => (HOL_MESG (String.concat
@@ -119,6 +121,8 @@ fun REWRITES_CONV rws tm =
                   String.concatWith ",\n" (map Parse.thm_to_string (h::t))]); h)
     else Conv.FIRST_CONV (Net.match tm net) tm
  end;
+
+fun REWRITES_CONV rws tm = REWRITES_CONV_AT (get_monitoring()) rws tm
 
 
 (* Derived manipulations *)
@@ -183,7 +187,15 @@ ONCE_ASM_REWRITE_RULE thl th =
 
 (* Main rewriting tactic *)
 
-fun GEN_REWRITE_TAC f rws = Tactic.CONV_TAC o GEN_REWRITE_CONV f rws;
+fun GEN_REWRITE_TAC f rws thl =
+    let val rws' = add_rewrites rws thl
+    in
+      fn g => fn c =>
+         Tactic.CONV_TAC
+           (f (REWRITES_CONV_AT
+                 (HOLFlags.get_bflagC c monitoring) rws'))
+           g c
+    end
 
 val PURE_REWRITE_TAC = GEN_REWRITE_TAC Conv.TOP_DEPTH_CONV empty_rewrites
 and
