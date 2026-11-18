@@ -2050,17 +2050,15 @@ struct
                 recorded_chain_resolution step premises
               else resolution step premises
             | CPC_SharedReplayPlan.Converted =>
-              (cnf step premises handle Feedback.HOL_ERR error =>
-                if SmtResource.is_resource_gate error then
-                  raise Feedback.HOL_ERR error else bounded step premises)
+              SmtResource.or_else (fn () => cnf step premises)
+                (fn () => bounded step premises)
             | CPC_SharedReplayPlan.Aligned => align step premises
             | CPC_SharedReplayPlan.Simple =>
               let
                 fun ordinary () =
-                  (simple step premises handle Feedback.HOL_ERR error =>
-                    if SmtResource.is_resource_gate error then
-                      raise Feedback.HOL_ERR error else
-                      (case (owned_work,handler) of (SOME work,"eq_resolve") =>
+                  SmtResource.or_else (fn () => simple step premises)
+                    (fn () =>
+                      case (owned_work,handler) of (SOME work,"eq_resolve") =>
                          (case alias_eq_resolve work step premises of
                             SOME selected => selected
                           | NONE => bounded step premises)
@@ -2068,11 +2066,10 @@ struct
                            (case alias_transitivity work step premises of
                               SOME selected => selected
                             | NONE => bounded step premises)
-                       | _ => bounded step premises))
+                       | _ => bounded step premises)
               in if binder_congruence step premises then
-                  (bounded step premises handle Feedback.HOL_ERR error =>
-                    if SmtResource.is_resource_gate error then
-                      raise Feedback.HOL_ERR error else ordinary ())
+                  SmtResource.or_else (fn () => bounded step premises)
+                    ordinary
                 else ordinary () end
             | _ => bounded step premises)
         in make (#id step) current premises route end
