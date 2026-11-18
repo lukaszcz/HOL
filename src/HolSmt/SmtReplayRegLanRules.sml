@@ -443,17 +443,15 @@ struct
           fun schema fallback = if semantic then
               congruent fallback (left,right)
             else constructor_congruence fallback false (left,right)
-          fun retry action next = action () handle Feedback.HOL_ERR primary =>
-            if SmtResource.is_resource_gate primary then
-              raise Feedback.HOL_ERR primary else next ()
           fun chain () = if semantic then symmetric_chain () else
             raise ERR "congruence" "not a semantic chain"
           val saved_dependencies = !dependencies
           fun legacy () =
             (dependencies := saved_dependencies;
-             retry (fn () => schema false)
-               (fn () => retry chain (fn () => schema true)))
-        in retry bounded_congruence legacy end
+             SmtResource.or_else (fn () => schema false)
+               (fn () => SmtResource.or_else chain
+                  (fn () => schema true)))
+        in SmtResource.or_else bounded_congruence legacy end
       val theorem = case rule of
           "refl" => if semantic andalso left = right andalso
               List.null premises then refl left else
