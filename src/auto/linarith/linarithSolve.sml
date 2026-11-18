@@ -21,13 +21,11 @@ datatype lineq =
 
 type linarith_config = linarithData.linarith_config
 
-(* The meter the search charges, and the linarith.trace level it
-   reports at. *)
-type work = {meter : searchBudget.charger, verbosity : int}
+type work = searchBudget.charger
 
-fun candidate (work : work) = #candidate (#meter work) ()
-fun application (work : work) = #application (#meter work) ()
-fun normalization (work : work) = #normalization (#meter work) ()
+fun candidate (work : work) = #candidate work ()
+fun application (work : work) = #application work ()
+fun normalization (work : work) = #normalization work ()
 
 (* Relations and negation are structured rather than upstream strings
    (fast_lin_arith.ML:510-541). *)
@@ -249,10 +247,8 @@ fun distinct_rows_with work rows =
 
 (* Elimination traces one line per pivot, so the message is built only
    once the level has asked for it. *)
-fun trace (work : work) message =
-  if linarithData.tracing (#verbosity work) 2 then
-    linarithData.trace (#verbosity work) 2 (message ())
-  else ()
+fun trace message =
+  if linarithData.tracing 2 then linarithData.trace 2 (message ()) else ()
 
 (* SOME just is a refutation of the rows; NONE is elimination run to a
    system with no eliminable column left, which is the rows failing to
@@ -290,7 +286,7 @@ fun elim_with work ineqs =
                       (application work; elim_var_with work v eq row))
                     dependent @ independent
               in
-                trace work (fn () => "equation pivot " ^ Int.toString v);
+                trace (fn () => "equation pivot " ^ Int.toString v);
                 elim_with work others
               end
           | NONE =>
@@ -322,7 +318,7 @@ fun elim_with work ineqs =
                                    elim_var_with work v p row))
                                 neg @ products ps
                       in
-                        trace work
+                        trace
                           (fn () => "inequality pivot " ^ Int.toString v);
                         elim_with work
                           (distinct_rows_with work
@@ -536,10 +532,8 @@ fun atoms_of_decomps_with work decomps =
       (List.concat (List.map sides decomps))
   end
 
-(* Collecting atoms reports nothing, so no level is asked for. *)
 fun atoms_of_decomps decomps =
-  atoms_of_decomps_with
-    {meter = searchBudget.free_charger, verbosity = 0} decomps
+  atoms_of_decomps_with searchBudget.free_charger decomps
 
 fun refutes_with work is_nonnegative systems =
   let
@@ -592,7 +586,7 @@ fun prove_decomposed_with work
           val systems = split_items_with work split_neq items
           val _ =
             if split_neq then ()
-            else trace work
+            else trace
                    (fn () =>
                       "neq_limit exceeded (current value is " ^
                       Int.toString neq_limit ^
@@ -601,11 +595,9 @@ fun prove_decomposed_with work
           (split_neq, refutes_with work is_nonnegative systems)
         end
 
-fun prove_decomposed verbosity config decompose is_nonnegative hypotheses
-      conclusion =
-  prove_decomposed_with
-    {meter = searchBudget.free_charger, verbosity = verbosity}
-    config decompose is_nonnegative hypotheses conclusion
+fun prove_decomposed config decompose is_nonnegative hypotheses conclusion =
+  prove_decomposed_with searchBudget.free_charger config decompose
+    is_nonnegative hypotheses conclusion
 
 fun prove_with work config decompose is_nonnegative hypotheses conclusion =
   prove_decomposed_with work config decompose is_nonnegative
@@ -613,9 +605,9 @@ fun prove_with work config decompose is_nonnegative hypotheses conclusion =
       (fn tm => (normalization work; (tm, decompose tm)))
       hypotheses) conclusion
 
-fun prove verbosity config decompose is_nonnegative hypotheses conclusion =
-  prove_with {meter = searchBudget.free_charger, verbosity = verbosity}
-    config decompose is_nonnegative hypotheses conclusion
+fun prove config decompose is_nonnegative hypotheses conclusion =
+  prove_with searchBudget.free_charger config decompose
+    is_nonnegative hypotheses conclusion
 
 datatype budget_outcome =
     CertificateFound of {split_neq : bool, justifications : injust list}
@@ -623,13 +615,11 @@ datatype budget_outcome =
   | CertificateLimitReached of
       {kind : searchBudget.kind, usage : searchBudget.usage}
 
-fun prove_budgeted verbosity budget config decompose is_nonnegative
+fun prove_budgeted budget config decompose is_nonnegative
       hypotheses conclusion =
   let
     val (split_neq, result) =
-      prove_with
-        {meter = searchBudget.charger budget, verbosity = verbosity}
-        config decompose
+      prove_with (searchBudget.charger budget) config decompose
         is_nonnegative hypotheses conclusion
   in
     case result of
@@ -641,13 +631,11 @@ fun prove_budgeted verbosity budget config decompose is_nonnegative
   handle searchBudget.LimitReached (kind, usage) =>
     CertificateLimitReached {kind = kind, usage = usage}
 
-fun prove_decomposed_budgeted verbosity budget config decompose
-      is_nonnegative hypotheses conclusion =
+fun prove_decomposed_budgeted budget config decompose is_nonnegative
+      hypotheses conclusion =
   let
     val (split_neq, result) =
-      prove_decomposed_with
-        {meter = searchBudget.charger budget, verbosity = verbosity}
-        config decompose
+      prove_decomposed_with (searchBudget.charger budget) config decompose
         is_nonnegative hypotheses conclusion
   in
     case result of

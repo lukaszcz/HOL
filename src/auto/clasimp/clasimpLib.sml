@@ -716,13 +716,10 @@ fun abstraction_policy charge ss arguments =
       (positions_of_sources sources) supplied
   in position_policy charge positions end
 
-(* A simpset with its static ORDER and LINARITH decision procedures and
-   its context-free arithmetic solver removed, and which of the three it
-   carried.  The solver is looked for on its own: a simpset can carry it
-   without the fragment, as aesop's does. *)
+(* A simpset with its static ORDER and LINARITH decision procedures
+   removed, and which of the two it carried. *)
 type decision_base =
-  {stripped : simpLib.simpset, order : bool, linarith : bool,
-   solver : bool}
+  {stripped : simpLib.simpset, order : bool, linarith : bool}
 
 (* Prepare once for the whole source inventory. No rule is selected by
    goal relevance or size. Opaque reducers conservatively defeat the
@@ -754,27 +751,6 @@ fun rename_view_variables theorem =
       (fn {redex,residue} => {redex=residue,residue=redex}) replacements
   in (Thm.INST replacements theorem,Term.subst inverse) end
 
-fun frag_present ss =
-  let val names = List.mapPartial simpLib.frag_name (simpLib.ssfrags_of ss)
-  in fn name => List.exists (fn other => other = name) names end
-
-fun remove_present_frags names ss =
-  simpLib.remove_ssfrags_preserving_controls
-    (List.filter (frag_present ss) names) ss
-  handle Conv.UNCHANGED => ss
-
-(* LHS views are derived once for a simpset and kept with it, so what
-   derives them is a function of the simpset alone.  The linear-arithmetic
-   procedures are not: they consult the [arith] facts of the context they
-   run in, which here would be the context of whichever proof first wanted
-   the table.  Views are therefore derived without them -- an invocation
-   runs them on its goal with its own context -- and, being derived for
-   no proof in particular, without tracing. *)
-fun view_derivation_simpset ss =
-  remove_present_frags ["LINARITH"] ss
-  |> simpLib.remove_solver "lin_arith"
-  |> simpLib.set_trace_level 0
-
 fun prepare_lhs_view_derivation_with_positions caller_charge ss positions =
   let
     exception DerivationLimit
@@ -797,9 +773,7 @@ fun prepare_lhs_view_derivation_with_positions caller_charge ss positions =
          caller_charge ()
            handle e => (callback_failure := SOME e; raise e))
     val policy = position_policy charge positions
-    val prepared =
-      simpLib.prepare_child_first_observed remember policy
-        (view_derivation_simpset ss)
+    val prepared = simpLib.prepare_child_first_observed remember policy ss
     fun candidate theorem =
       let
         val specialised = Drule.SPEC_ALL theorem
@@ -898,12 +872,21 @@ fun derive_lhs_views charge ss =
 (* Decision-fragment replay must retain consumed native rewrite controls. *)
 fun strip_decisions ss =
   let
-    val present = frag_present ss
-    val removed = remove_present_frags ["ORDER", "LINARITH"] ss
+    val names = List.mapPartial simpLib.frag_name (simpLib.ssfrags_of ss)
+    fun present name = List.exists (fn other => other = name) names
+    val order = present "ORDER"
+    val linarith = present "LINARITH"
+    val removed =
+      simpLib.remove_ssfrags_preserving_controls
+        (List.filter present ["ORDER", "LINARITH"]) ss
+      handle Conv.UNCHANGED => ss
+    val stripped =
+      if linarith then
+        (simpLib.remove_solver "lin_arith" removed
+         handle Conv.UNCHANGED => removed)
+      else removed
   in
-    {stripped = simpLib.remove_solver "lin_arith" removed,
-     order = present "ORDER", linarith = present "LINARITH",
-     solver = simpLib.has_solver "lin_arith" removed}
+    {stripped = stripped, order = order, linarith = linarith}
   end
 
 fun supplied_view_associations entries = List.mapPartial
@@ -1707,18 +1690,10 @@ fun working_simpset_for (SuppliedViewBinding {table,...}) =
    lifted into the extension engine.  The bounded identity/source memo
    above retains completed tables across changes; the derived value owns
    its lazy working state. *)
-val {get = _, get_of = clasimp_derived_of} =
+val {get = clasimp_derived, get_of = _} =
   BasicProvers.make_simpset_derived_value "clasimpLib.clasimp_ss"
     (fn ss => fn _ =>
-       let
-         (* Derived for no caller in particular, so built at level 0,
-            then unset to report at the level of whoever runs it, as
-            srw_ss does *)
-         val full =
-           simpLib.unset_trace_level
-             (derive_clasimp_ss
-                (simpExtLib.lift_simpset
-                   (OrdinarySimp.set_trace_level 0 ss)) ())
+       let val full = derive_clasimp_ss (simpExtLib.lift_simpset ss) ()
        in {full = full,
            positions = positions_of_sources
              (#1 (simpLib.rewrite_sources full [])),
@@ -1729,14 +1704,11 @@ val {get = _, get_of = clasimp_derived_of} =
 
 val selected_default = ref (NONE : working_simpset option)
 
-fun clasimp_value_of ctxt =
-  let val value = clasimp_derived_of ctxt
+fun clasimp_value () =
+  let val value = clasimp_derived ()
   in selected_default := SOME (#working value); value end
 
-fun clasimp_value () = clasimp_value_of (Context.snapshot ())
-
-fun clasimp_ss_of ctxt = #full (clasimp_value_of ctxt)
-fun clasimp_ss () = clasimp_ss_of (Context.snapshot ())
+fun clasimp_ss () = #full (clasimp_value ())
 
 fun clasimp_working_simpset () = #working (clasimp_value ())
 
@@ -1793,14 +1765,10 @@ fun charge_normalization budget () =
 
 (* Replace the static decision procedures only for this tactic invocation.
    Their legacy fragments remain available to standalone simpsets, while
-   this copy shares the caller's budget and explicit proof context.  The
-   copy also reports at that context's simplifier.trace level, so neither
-   building it nor the conversions later run on it read the ambient
-   setting. *)
+   this copy shares the caller's budget and explicit proof context. *)
 fun budgeted_decisions_of ctxt budget
-      ({stripped, order, linarith, solver} : decision_base) =
+      ({stripped, order, linarith} : decision_base) =
   let
-    val stripped = simpLib.in_trace_context ctxt stripped
     val with_order =
       if order then
         simpLib.++ (stripped, orderLib.ORDER_ext_ss_budgeted budget)
@@ -1811,7 +1779,7 @@ fun budgeted_decisions_of ctxt budget
           (with_order, linarithLib.LINARITH_ext_ss_budgeted ctxt budget)
       else with_order
   in
-    if linarith orelse solver then
+    if linarith then
       simpLib.add_unsafe_solver
         (linarithLib.linarith_solver_budgeted ctxt budget)
         with_linarith
@@ -2840,10 +2808,8 @@ fun rewrites_every_equation rule =
        | NONE => false)
   end
 
-(* Classifying an argument is not making rewrites for anyone, so what
-   is made of it is reported at no level *)
 fun simp_argument_can_fire theorem =
-  case Lib.total (Cond_rewr.mk_cond_rewrs_at 0)
+  case Lib.total Cond_rewr.mk_cond_rewrs
          (BoundedRewrites.dest_tagged_rewrite theorem) of
       NONE => true
     | SOME prepared =>
@@ -4028,9 +3994,7 @@ fun public_bound_using_budgeted budget consumer body theorems
     val (goals,validation) =
       process_clasimp_bound_fact_views true consumer budget runtime
         (fn state => fn cs => fn _ => body state cs)
-        (clasetLib.the_claset_of ctxt)
-        (simpLib.in_trace_context ctxt (clasimp_ss_of ctxt))
-        theorems goal ctxt
+        (clasetLib.the_claset ()) (clasimp_ss ()) theorems goal ctxt
   in (goals,restore_normalized_target budget target validation) end
 
 fun public_bound_using_with allocate consumer make_body arguments goal ctxt =

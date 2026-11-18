@@ -377,8 +377,6 @@ val arith_split_data =
      apply_delta = apply_arith_split_delta,
      apply_to_global = apply_arith_split_delta}
 
-val arith_facts_of = thmTable.thms_of arith_data
-val arith_split_thms_of = thmTable.thms_of arith_split_data
 fun arith_facts () = thmTable.thms arith_data
 fun arith_split_thms () = thmTable.thms arith_split_data
 
@@ -409,44 +407,41 @@ fun same_splits (left_generation, left_thms) (right_generation, right_thms) =
 
 fun memo_with_splits compute =
   let
-    val cached = keyed_memo same_splits (fn (_, splits) => compute splits)
+    val cached = keyed_memo same_splits (fn _ => compute ())
   in
-    fn ctxt => cached (generation (), arith_split_thms_of ctxt)
+    fn () => cached (generation (), arith_split_thms ())
   end
 
 type linarith_config = {neq_limit : int, split_limit : int}
 
 val default_config : linarith_config = {neq_limit = 9, split_limit = 9}
 
-val {flag = trace_flag, ...} =
+val {get = trace_level, ...} =
     HOLFlags.create_trace ({group = "linarith", name = "trace"},
                            {initial = 0, max = 3})
 
-fun trace_level_of ctxt = HOLFlags.get_flagC ctxt trace_flag
-
-fun tracing verbosity level = verbosity >= level
+fun tracing level = trace_level () >= level
 
 (* Rendering a theorem or a term list costs more than the test that
    decides whether anyone will read it, so every helper asks first.  A
    caller that has to build its message itself asks with tracing. *)
-fun trace verbosity level message =
-  if tracing verbosity level then print ("linarith: " ^ message ^ "\n")
+fun trace level message =
+  if tracing level then print ("linarith: " ^ message ^ "\n") else ()
+
+fun trace_thm level label theorem =
+  if tracing level then
+    trace level (label ^ "\n" ^ Parse.thm_to_string theorem)
   else ()
 
-fun trace_thm verbosity level label theorem =
-  if tracing verbosity level then
-    trace verbosity level (label ^ "\n" ^ Parse.thm_to_string theorem)
-  else ()
-
-fun trace_items verbosity level label render items =
-  if tracing verbosity level then
-    trace verbosity level
+fun trace_items level label render items =
+  if tracing level then
+    trace level
       (label ^
        (if null items then " <none>"
         else "\n" ^ String.concatWith "\n" (map render items)))
   else ()
 
-fun trace_terms verbosity level label terms =
-  trace_items verbosity level label Parse.term_to_string terms
+fun trace_terms level label terms =
+  trace_items level label Parse.term_to_string terms
 
 end

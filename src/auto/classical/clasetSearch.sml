@@ -24,8 +24,7 @@
   actual binding dependency is both stronger and more selective: rigid
   subtrees commit, while shared metavariables retain the needed choices.
 
-  The "classical.trace" trace is registered by clasetReplay, and each
-  driver takes the level to report at as its first argument.  Level 1
+  The "classical.trace" trace is registered by clasetReplay.  Level 1
   reports exhausted/bounded searches, level 2 reports expansions, bounds,
   and pruning, and level 3 prints complete candidate nodes.
 *)
@@ -51,18 +50,18 @@ fun show_node node =
 
 (* Every driver reports an admitted expansion here, so this is also where
    the shared work meter is charged. *)
-fun expansion_trace verbosity driver count node =
+fun expansion_trace driver count node =
   (searchWork.note_expansion ();
-   trace verbosity 2
+   trace 2
      (fn () =>
        driver ^ " expansion " ^ Int.toString count ^
        ", goals=" ^ Int.toString (length (clasetGoal.goals node)) ^
        ", size=" ^ Int.toString (clasetGoal.size node));
-   trace verbosity 3 (fn () => driver ^ " candidate: " ^ show_node node))
+   trace 3 (fn () => driver ^ " candidate: " ^ show_node node))
 
 fun member_node node = List.exists (fn old => clasetGoal.equal (node, old))
 
-fun DEPTH_FIRST verbosity satisfied expand initial =
+fun DEPTH_FIRST satisfied expand initial =
   let
     fun depth _ [] = seq.empty
       | depth used (states :: rest) =
@@ -77,7 +76,7 @@ fun DEPTH_FIRST verbosity satisfied expand initial =
                       seq.cons current
                         (depth (current :: used) (siblings :: rest))
                     else
-                      (expansion_trace verbosity "depth-first"
+                      (expansion_trace "depth-first"
                          (length used + 1) current;
                        depth used
                          (expand current :: siblings :: rest)))
@@ -255,7 +254,7 @@ fun repeats_ancestor node frames =
         | SOME source => clasetGoal.equal (node, source))
     frames
 
-fun DEPTH_SOLVE verbosity expand initial =
+fun DEPTH_SOLVE expand initial =
   let
     fun frame_for source =
       {source = SOME source,
@@ -286,7 +285,7 @@ fun DEPTH_SOLVE verbosity expand initial =
                             val _ =
                               if discarded = 0 then ()
                               else
-                                trace verbosity 2
+                                trace 2
                                   (fn () =>
                                     "dynamic pruning discarded " ^
                                     Int.toString discarded ^
@@ -302,13 +301,13 @@ fun DEPTH_SOLVE verbosity expand initial =
                         seq.cons current
                           (depth (current :: used) rest1)
                       else if repeats_ancestor current rest0 then
-                        (trace verbosity 2
+                        (trace 2
                            (fn () =>
                              "depth-solve dropped a state repeating an \
                              \ancestor");
                          depth used rest1)
                       else
-                        (expansion_trace verbosity "depth-solve"
+                        (expansion_trace "depth-solve"
                            (length used + 1) current;
                          depth used (frame_for current :: rest1))
                     end)
@@ -328,16 +327,16 @@ fun limit_reached limit count =
   limit > 0 andalso count >= limit andalso
   (count = limit orelse count mod check_period = 0)
 
-fun allow_expansion verbosity driver limit count node =
+fun allow_expansion driver limit count node =
   if limit_reached (limit ()) count then
     (last_node_count := count;
-     trace verbosity 1
+     trace 1
        (fn () =>
          driver ^ " stopped at node limit " ^ Int.toString (limit ()));
      false)
   else
     (last_node_count := count + 1;
-     expansion_trace verbosity driver (count + 1) node;
+     expansion_trace driver (count + 1) node;
      true)
 
 fun add_nodes values heap =
@@ -361,7 +360,7 @@ fun add_nodes values heap =
    closed set.  This is deliberately past it: the suppressed expansion is
    one the driver has already made. *)
 fun frontier_search {driver, compare, remove_minimum, limit}
-      verbosity satisfied expand initial =
+      satisfied expand initial =
   let
     fun classify (news, heap, count, seen) =
       let val (solutions, pending) = split_satisfied satisfied news
@@ -374,7 +373,7 @@ fun frontier_search {driver, compare, remove_minimum, limit}
     and next (heap, count, seen) =
       if searchHeap.is_empty heap then
         (last_node_count := count;
-         trace verbosity 1 (fn () => driver ^ " search exhausted");
+         trace 1 (fn () => driver ^ " search exhausted");
          seq.empty)
       else
         let
@@ -382,12 +381,11 @@ fun frontier_search {driver, compare, remove_minimum, limit}
         in
           if Binaryset.member (seen, current) then
             (last_pruning_count := !last_pruning_count + 1;
-             trace verbosity 2
+             trace 2
                (fn () =>
                  driver ^ " dropped a state it has already expanded");
              next (remaining, count, seen))
-          else if not (allow_expansion verbosity driver limit count current)
-          then
+          else if not (allow_expansion driver limit count current) then
             seq.empty
           else
             classify
@@ -411,14 +409,15 @@ fun best_minimum heap =
   let val (minima, remaining) = searchHeap.delete_all_min heap
   in (hd minima, remaining) end
 
-fun best_first limit =
+fun best_first limit satisfied expand initial =
   frontier_search
     {driver = "best-first", compare = clasetGoal.compare,
      remove_minimum = best_minimum, limit = limit}
+    satisfied expand initial
 
-fun BEST_FIRST verbosity = best_first (fn () => !node_limit) verbosity
+fun BEST_FIRST satisfied = best_first (fn () => !node_limit) satisfied
 
-fun BOUNDED_BEST_FIRST verbosity bound = best_first (fn () => bound) verbosity
+fun BOUNDED_BEST_FIRST bound satisfied = best_first (fn () => bound) satisfied
 
 fun astar_cost node =
   clasetGoal.size node + 5 * clasetGoal.level node
@@ -426,12 +425,12 @@ fun astar_cost node =
 fun astar_compare (left, right) =
   Int.compare (astar_cost left, astar_cost right)
 
-fun ASTAR verbosity =
+fun ASTAR satisfied expand initial =
   frontier_search
     {driver = "A*", compare = astar_compare,
      remove_minimum = searchHeap.delete_min,
      limit = fn () => !node_limit}
-    verbosity
+    satisfied expand initial
 
 datatype frontier_state =
     Ready of
@@ -467,7 +466,7 @@ datatype frontier_outcome =
 
 fun new_frontier_session
       {driver, compare, remove_minimum}
-      verbosity budget satisfied expand initial =
+      budget satisfied expand initial =
   let
     exception Yield of searchBudget.kind * searchBudget.usage
     val root = clasetGoal.set_level 0 initial
@@ -500,7 +499,7 @@ fun new_frontier_session
                 if searchHeap.is_empty heap then
                   (state := Done;
                    last_node_count := count;
-                   trace verbosity 1 (fn () => driver ^ " search exhausted");
+                   trace 1 (fn () => driver ^ " search exhausted");
                    StepExhausted)
                 else
                   let
@@ -509,7 +508,7 @@ fun new_frontier_session
                   in
                     if Binaryset.member (seen, current) then
                       (last_pruning_count := !last_pruning_count + 1;
-                       trace verbosity 2
+                       trace 2
                          (fn () =>
                            driver ^
                            " dropped a state it has already expanded");
@@ -531,7 +530,7 @@ fun new_frontier_session
                 let
                   val _ = admit searchBudget.Application
                   val _ = last_node_count := count + 1
-                  val _ = expansion_trace verbosity driver (count + 1) current
+                  val _ = expansion_trace driver (count + 1) current
                   val cursor =
                     seq.map (note_transition current) (expand current)
                 in
@@ -590,15 +589,15 @@ fun new_frontier_session
     FrontierSession advance
   end
 
-val new_best_session =
+fun new_best_session budget =
   new_frontier_session
     {driver = "best-first", compare = clasetGoal.compare,
-     remove_minimum = best_minimum}
+     remove_minimum = best_minimum} budget
 
-val new_astar_session =
+fun new_astar_session budget =
   new_frontier_session
     {driver = "A*", compare = astar_compare,
-     remove_minimum = searchHeap.delete_min}
+     remove_minimum = searchHeap.delete_min} budget
 
 fun resume_frontier
       (session as FrontierSession advance) =
@@ -611,7 +610,7 @@ fun resume_frontier
     | StepLimitReached (kind, usage) =>
         FrontierLimitReached {kind = kind, usage = usage}
 
-fun DEEPEN verbosity (increment, limit) bounded start initial =
+fun DEEPEN (increment, limit) bounded start initial =
   let
     val _ =
       if increment > 0 then ()
@@ -624,14 +623,14 @@ fun DEEPEN verbosity (increment, limit) bounded start initial =
         (fn () =>
           if List.null (clasetGoal.goals initial) then seq.empty
           else if bound > limit then
-            (trace verbosity 1
+            (trace 1
                (fn () =>
                  "deepening exhausted at bound " ^ Int.toString limit);
              seq.empty)
           else
             let
               val _ =
-                trace verbosity 2
+                trace 2
                   (fn () => "trying depth bound " ^ Int.toString bound)
             in
               case seq.cases (bounded bound initial) of

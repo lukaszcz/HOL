@@ -8,15 +8,13 @@ sig
   val node_count : unit -> int
   val pruning_count : unit -> int
 
-  (* Each driver's first argument is the classical.trace level it reports
-     at; a tactic reads it from its context (clasetReplay.trace_level_of). *)
-  val DEPTH_FIRST : int -> (node -> bool) -> expansion -> expansion
-  val DEPTH_SOLVE : int -> expansion -> expansion
-  val BEST_FIRST : int -> (node -> bool) -> expansion -> expansion
+  val DEPTH_FIRST : (node -> bool) -> expansion -> expansion
+  val DEPTH_SOLVE : expansion -> expansion
+  val BEST_FIRST : (node -> bool) -> expansion -> expansion
   (* [BEST_FIRST] with its own bound in place of [node_limit]. *)
   val BOUNDED_BEST_FIRST :
-    int -> int -> (node -> bool) -> expansion -> expansion
-  val ASTAR : int -> (node -> bool) -> expansion -> expansion
+    int -> (node -> bool) -> expansion -> expansion
+  val ASTAR : (node -> bool) -> expansion -> expansion
 
   type frontier_session
   datatype frontier_outcome =
@@ -34,15 +32,15 @@ sig
      expansion is explicit but terminal until that expansion itself offers
      a resumable cursor.  Extend the same budget before resuming a yield. *)
   val new_best_session :
-    int -> searchBudget.budget -> (node -> bool) -> expansion -> node ->
+    searchBudget.budget -> (node -> bool) -> expansion -> node ->
     frontier_session
   val new_astar_session :
-    int -> searchBudget.budget -> (node -> bool) -> expansion -> node ->
+    searchBudget.budget -> (node -> bool) -> expansion -> node ->
     frontier_session
   val resume_frontier : frontier_session -> frontier_outcome
 
   (* Restart [bounded] at start, start + inc, ... .  Once one bound has
      a result, all of that bound's results are retained and no later bound
      is attempted. *)
-  val DEEPEN : int -> int * int -> (int -> expansion) -> int -> expansion
+  val DEEPEN : int * int -> (int -> expansion) -> int -> expansion
 end

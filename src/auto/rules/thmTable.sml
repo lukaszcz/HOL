@@ -47,10 +47,8 @@ fun apply_delta delta table =
         Symtab.update (KernelSig.name_toString name, theorem) table
     | ThmSetData.REMOVE key => Symtab.delete_safe key table
 
-fun thms_of (data : table data) ctxt =
-  map #2 (Symtab.dest (#get_global_value_of data ctxt))
-
-fun thms data = thms_of data (Context.snapshot ())
+fun thms (data : table data) =
+  map #2 (Symtab.dest (#get_global_value data ()))
 
 (* The key is computed where the theory it was written in is current and
    the user can be told it denotes nothing: a name without the kernel

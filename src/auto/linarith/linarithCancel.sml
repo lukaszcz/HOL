@@ -159,11 +159,6 @@ fun mk_expression_conv ty convs =
       else raise UNCHANGED
   end
 
-(* The tidying pass after cancellation is internal to the normaliser, run
-   for no caller's simplification, so it traces nothing and reads no
-   simplifier.trace setting. *)
-val quiet_bool_ss = simpLib.set_trace_level 0 boolSimps.bool_ss
-
 fun mk_norm_conv (spec : norm_spec) =
   let
     val ops = #ac spec
@@ -178,7 +173,7 @@ fun mk_norm_conv (spec : norm_spec) =
       else NONE
     val finish =
       TRY_CONV (#reduce_conv spec) THENC
-      TRY_CONV (simpLib.SIMP_CONV quiet_bool_ss (#refl_thms spec))
+      TRY_CONV (simpLib.SIMP_CONV boolSimps.bool_ss (#refl_thms spec))
   in
     fn tm =>
       case cancel_rule tm of

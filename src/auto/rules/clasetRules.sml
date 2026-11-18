@@ -823,16 +823,14 @@ fun dec_rm sexp =
 fun decode_delta sexp =
   ThyDataSexp.first [dec_add, dec_rm] sexp
 
-fun load_delta_of ctxt (ADD {name, spec}) =
-      (SOME (name, spec, DB.fetch_knm_of ctxt name)
+fun load_delta (ADD {name, spec}) =
+      (SOME (name, spec, DB.fetch_knm name)
        handle HOL_ERR _ =>
          (HOL_WARNING "clasetRules" "load_delta"
             ("Bad claset add command, dropping theorem " ^
              KernelSig.name_toString name);
           NONE))
-  | load_delta_of _ (RM _) = NONE
-
-fun load_delta delta = load_delta_of (Context.snapshot ()) delta
+  | load_delta (RM _) = NONE
 
 fun uptodate_delta (ADD {name, ...}) =
       (Theory.uptodate_thm (DB.fetch_knm name)

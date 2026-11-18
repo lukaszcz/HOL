@@ -607,7 +607,7 @@ val _ =
        let
          val bad = ileq n_int im1
          val theorem =
-           linarithReplay.mkthm 0
+           linarithReplay.mkthm
              [Thm.ASSUME bad]
              (linarithSolve.Added
                (linarithSolve.Nonneg n_int, linarithSolve.Asm 0))
@@ -628,7 +628,7 @@ val _ =
      fn () =>
        let
          val theorem =
-           linarithReplay.mkthm 0
+           linarithReplay.mkthm
              [Thm.ASSUME (numSyntax.mk_less (m, n)),
               Thm.ASSUME (ileq n_int m_int)]
              (linarithSolve.Added
@@ -654,7 +654,7 @@ val _ =
        in
          Term.aconv
            (Thm.concl
-             (linarithReplay.mkthm 0 [Thm.ASSUME contradiction]
+             (linarithReplay.mkthm [Thm.ASSUME contradiction]
                (linarithSolve.Multiplied
                  (Arbint.fromInt 3, linarithSolve.Asm 0))))
            boolSyntax.F

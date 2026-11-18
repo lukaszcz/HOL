@@ -90,15 +90,10 @@ sig
   val working_original : working_simpset -> simpExtLib.simpset
   val working_view_table : working_simpset -> lhs_view_table
   val working_full_simpset : working_simpset -> simpExtLib.simpset
-  (* The simpset stripped of its order and linear-arithmetic procedures,
-     and which of them it had: the fragments, and the lin_arith solver,
-     which a simpset may carry without the fragment *)
   val working_decision_base : working_simpset ->
-    {stripped : simpExtLib.simpset, order : bool, linarith : bool,
-     solver : bool}
+    {stripped : simpExtLib.simpset, order : bool, linarith : bool}
   val working_plain_decision_base : working_simpset ->
-    {stripped : simpExtLib.simpset, order : bool, linarith : bool,
-     solver : bool}
+    {stripped : simpExtLib.simpset, order : bool, linarith : bool}
   (* The default state is owned by the stateful derivation hook. Explicit
      simpsets test the last requested default's identity first, then use
      the same bounded cache without forcing an unused default derivation.

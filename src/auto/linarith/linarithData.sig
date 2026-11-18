@@ -174,10 +174,6 @@ sig
   val derived_injections : unit -> derived_injection list
   val all_injection_rewrite_conv : unit -> conv
 
-  (* The [arith] and [arith_split] tables of the context given, and of
-     the ambient one. *)
-  val arith_facts_of : Context.t -> thm list
-  val arith_split_thms_of : Context.t -> thm list
   val arith_facts : unit -> thm list
   val arith_split_thms : unit -> thm list
   (* The name may be a bare theorem name, a "Thy.Name" qualification or
@@ -204,9 +200,8 @@ sig
      that value; it is for data derived from the instance and injection
      registries alone.
 
-     memo_with_splits is for data that also derives from the
-     [arith_split] table of the context it is asked in, which it hands
-     compute: its key carries, besides the generation, that table's theorems,
+     memo_with_splits is for data that also reads arith_split_thms: its
+     key carries, besides the generation, that table's theorems,
      compared by pointer.  The theorems rather than their names,
      because a re-declaration under a name the table already holds
      replaces the theorem in place and leaves the key set untouched;
@@ -217,7 +212,7 @@ sig
      the fact list itself rather than on a generation -- keyed_memo
      below is what that path memoizes with. *)
   val memo : (unit -> 'a) -> unit -> 'a
-  val memo_with_splits : (thm list -> 'a) -> Context.t -> 'a
+  val memo_with_splits : (unit -> 'a) -> unit -> 'a
 
   (* keyed_memo same compute caches the value compute returned for the
      key it last saw, and reuses it for as long as same reports the key
@@ -237,17 +232,12 @@ sig
   type linarith_config = {neq_limit : int, split_limit : int}
   val default_config : linarith_config
 
-  (* The "linarith.trace" trace.  The tactics read its level from their
-     context, and the helpers take it first: [trace verbosity level
-     message] reports when level <= verbosity.  They render nothing
-     unless the level asks for it; tracing is that same test, for a
-     caller that has to build its message itself. *)
-  val trace_flag : HOLFlags.flag
-  val trace_level_of : Context.t -> int
-  val tracing : int -> int -> bool
-  val trace : int -> int -> string -> unit
-  val trace_thm : int -> int -> string -> thm -> unit
-  val trace_terms : int -> int -> string -> term list -> unit
-  val trace_items :
-    int -> int -> string -> ('a -> string) -> 'a list -> unit
+  (* The "linarith.trace" trace, set with HOLFlags.set_trace.  The helpers
+     render nothing unless the level asks for it; tracing is that same
+     test, for a caller that has to build its message itself. *)
+  val tracing : int -> bool
+  val trace : int -> string -> unit
+  val trace_thm : int -> string -> thm -> unit
+  val trace_terms : int -> string -> term list -> unit
+  val trace_items : int -> string -> ('a -> string) -> 'a list -> unit
 end

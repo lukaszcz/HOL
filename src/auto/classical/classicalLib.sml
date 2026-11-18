@@ -91,10 +91,6 @@ fun CS_CLARIFY_TAC cs =
   NTactical.NCHANGED
     (NTactical.NREPEAT (CS_CLARIFY_STEP_TAC cs))
 
-(* The searches report at the classical.trace level of the tactic's
-   context, read once when the tactic is run. *)
-val trace_level_of = clasetReplay.trace_level_of
-
 fun replay_node original node ctxt =
   let
     val grounded =
@@ -105,7 +101,7 @@ fun replay_node original node ctxt =
   end
   handle HOL_ERR error =>
     let
-      val _ = clasetReplay.trace (trace_level_of ctxt) 1
+      val _ = clasetReplay.trace 1
         (fn () =>
           "kernel replay failed for an engine solution; backtracking: " ^
           Feedback.message_of error)
@@ -186,31 +182,26 @@ fun solve search goal ctxt =
         if solved node then replay_node goal node ctxt else seq.empty)
   end
 
-fun depth_driver step ctxt cs =
-  clasetSearch.DEPTH_SOLVE (trace_level_of ctxt)
-    (expand_settled_first (step ctxt) cs)
+fun depth_driver step cs =
+  clasetSearch.DEPTH_SOLVE (expand_settled_first step cs)
 
-fun best_driver step ctxt cs =
-  clasetSearch.BEST_FIRST (trace_level_of ctxt) solved
-    (expand_at (step ctxt) cs 1)
+fun best_driver step cs =
+  clasetSearch.BEST_FIRST solved (expand_at step cs 1)
 
-fun astar_driver step ctxt cs =
-  clasetSearch.ASTAR (trace_level_of ctxt) solved
-    (expand_at (step ctxt) cs 1)
+fun astar_driver step cs =
+  clasetSearch.ASTAR solved (expand_at step cs 1)
 
 fun CS_FAST_TAC cs goal ctxt =
-  solve (depth_driver clasetStep.step_in ctxt cs) goal ctxt
+  solve (depth_driver (clasetStep.step_in ctxt) cs) goal ctxt
 fun CS_SLOW_TAC cs goal ctxt =
-  solve (depth_driver clasetStep.slow_step_in ctxt cs) goal ctxt
+  solve (depth_driver (clasetStep.slow_step_in ctxt) cs) goal ctxt
 fun CS_BEST_TAC cs goal ctxt =
-  solve (best_driver clasetStep.step_in ctxt cs) goal ctxt
+  solve (best_driver (clasetStep.step_in ctxt) cs) goal ctxt
 fun CS_SLOW_BEST_TAC cs goal ctxt =
-  solve (best_driver clasetStep.slow_step_in ctxt cs) goal ctxt
+  solve (best_driver (clasetStep.slow_step_in ctxt) cs) goal ctxt
 
 fun first_best search cs goal ctxt =
-  solve
-    (search (trace_level_of ctxt) solved
-       (expand_first (clasetStep.step_in ctxt) cs))
+  solve (search solved (expand_first (clasetStep.step_in ctxt) cs))
     goal ctxt
 
 fun CS_FIRST_BEST_TAC cs = first_best clasetSearch.BEST_FIRST cs
@@ -221,9 +212,7 @@ fun CS_FIRST_BEST_TAC cs = first_best clasetSearch.BEST_FIRST cs
 fun CS_BOUNDED_FIRST_BEST_TAC cs expansions goal ctxt =
   if expansions >= 1 then
     NTactical.DETERM
-      (first_best
-         (fn verbosity => clasetSearch.BOUNDED_BEST_FIRST verbosity expansions)
-         cs)
+      (first_best (clasetSearch.BOUNDED_BEST_FIRST expansions) cs)
       goal ctxt
   else
     (* The search reads a limit of zero as no limit, so a turn of none
@@ -252,7 +241,7 @@ datatype budget_outcome =
 
 fun CS_FIRST_BEST_SESSION budget cs goal ctxt : budget_session =
   {frontier =
-     clasetSearch.new_best_session (trace_level_of ctxt) budget solved
+     clasetSearch.new_best_session budget solved
        (expand_first
           (clasetStep.step_in_with
              (fn () => searchBudget.charge budget searchBudget.Candidate)
@@ -328,9 +317,9 @@ fun RESUME_FIRST_BEST_SESSION
   end
 
 fun CS_ASTAR_TAC cs goal ctxt =
-  solve (astar_driver clasetStep.step_in ctxt cs) goal ctxt
+  solve (astar_driver (clasetStep.step_in ctxt) cs) goal ctxt
 fun CS_SLOW_ASTAR_TAC cs goal ctxt =
-  solve (astar_driver clasetStep.slow_step_in ctxt cs) goal ctxt
+  solve (astar_driver (clasetStep.slow_step_in ctxt) cs) goal ctxt
 
 fun bounded_depth_in_with charge ctxt {dup} cs bound initial =
   let
@@ -339,7 +328,7 @@ fun bounded_depth_in_with charge ctxt {dup} cs bound initial =
     val saturated =
       safe_saturate_node_in_with charge ctxt cs initial
     val search =
-      clasetSearch.DEPTH_SOLVE (trace_level_of ctxt)
+      clasetSearch.DEPTH_SOLVE
         (fn node =>
           (charge searchBudget.Application;
            seq.map
@@ -446,19 +435,18 @@ fun RESUME_DEPTH_SESSION
 
 fun CS_DEEPEN_TAC cs {start} goal ctxt =
   solve
-    (clasetSearch.DEEPEN (trace_level_of ctxt) (2, 10)
+    (clasetSearch.DEEPEN (2, 10)
       (bounded_depth_in ctxt {dup = true} cs) start) goal ctxt
 
 fun no_extra_markers theorems cs = (cs, theorems)
 
-(* The claset is the one of the context the tactic is run in. *)
-fun invocation_with consumer body theorems goal ctxt =
+fun invocation_with consumer body theorems =
   clasetLib.with_invocation_fact_env
     {iff_prefix="", extra_markers=no_extra_markers,
      consumer=consumer}
     (fn cs => fn _ => fn _ => fn _ => body cs)
-    (clasetLib.the_claset_of ctxt)
-    (NONE : unit clasetLib.invocation_simpset option) theorems goal ctxt
+    (clasetLib.the_claset ())
+    (NONE : unit clasetLib.invocation_simpset option) theorems
 
 fun invocation body = invocation_with clasetLib.SearchFacts body
 fun safe_invocation body = invocation_with clasetLib.SafeFacts body

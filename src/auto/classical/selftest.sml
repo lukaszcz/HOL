@@ -5375,7 +5375,7 @@ val _ =
              else seq.empty
            end
          val results =
-           clasetSearch.DEPTH_FIRST 0 satisfied expand
+           clasetSearch.DEPTH_FIRST satisfied expand
              (search_singleton dfs_root_tm)
          val first = seq.hd results
        in
@@ -5437,7 +5437,7 @@ val _ =
            end
          val result =
            seq.hd
-             (clasetSearch.BEST_FIRST 0 satisfied expand
+             (clasetSearch.BEST_FIRST satisfied expand
                (search_singleton best_root_tm))
        in
          !generated = 2 andalso
@@ -5466,7 +5466,7 @@ val _ =
            end
          val results =
            search_results
-             (clasetSearch.BEST_FIRST 0 satisfied expand
+             (clasetSearch.BEST_FIRST satisfied expand
                (search_singleton best_root_tm))
        in
          length results = 1 andalso !small_expansions = 1
@@ -5490,7 +5490,7 @@ val _ =
          val _ = clasetSearch.node_limit := 1000
          val results =
            search_results
-             (clasetSearch.BEST_FIRST 0 (fn _ => false) expand
+             (clasetSearch.BEST_FIRST (fn _ => false) expand
                (search_singleton best_root_tm))
          val count = clasetSearch.node_count ()
          val _ = clasetSearch.node_limit := saved_limit
@@ -5536,7 +5536,7 @@ val _ =
            end
          val result =
            seq.hd
-             (clasetSearch.ASTAR 0 satisfied expand
+             (clasetSearch.ASTAR satisfied expand
                (search_singleton astar_root_tm))
        in
          clasetGoal.term_size astar_old_tm = 6 andalso
@@ -5565,7 +5565,7 @@ val _ =
            end
          val _ =
            search_results
-             (clasetSearch.ASTAR 0 satisfied expand
+             (clasetSearch.ASTAR satisfied expand
                (search_singleton astar_root_tm))
        in
          !parent_expansions = 1
@@ -5605,7 +5605,7 @@ val _ =
              {candidates = SOME 1, applications = SOME 0,
               normalization = SOME 0}
          val session =
-           clasetSearch.new_best_session 0 budget satisfied expand
+           clasetSearch.new_best_session budget satisfied expand
              (search_singleton best_root_tm)
          fun resume 0 = NONE
            | resume turns =
@@ -5622,7 +5622,7 @@ val _ =
          val reference_budget = searchBudget.unbounded ()
          val reference =
            clasetSearch.resume_frontier
-             (clasetSearch.new_best_session 0 reference_budget
+             (clasetSearch.new_best_session reference_budget
                satisfied expand (search_singleton best_root_tm))
          val same_work =
            #candidates (searchBudget.usage budget) =
@@ -5686,7 +5686,7 @@ val _ =
              {candidates = SOME 0, applications = NONE,
               normalization = NONE}
          val session =
-           clasetSearch.new_astar_session 0 budget satisfied expand
+           clasetSearch.new_astar_session budget satisfied expand
              (search_singleton astar_root_tm)
          val first = clasetSearch.resume_frontier session
          val _ = searchBudget.extend budget searchBudget.Candidate 100
@@ -5723,7 +5723,7 @@ val _ =
            Term.aconv (search_target node) best_small_solution_tm orelse
            Term.aconv (search_target node) best_large_solution_tm
          val session =
-           clasetSearch.new_best_session 0 budget satisfied expand
+           clasetSearch.new_best_session budget satisfied expand
              (search_singleton best_root_tm)
          val first = clasetSearch.resume_frontier session
          val _ = searchBudget.extend budget searchBudget.Candidate 3
@@ -5764,7 +5764,7 @@ val _ =
              {candidates = SOME 2, applications = SOME 2,
               normalization = NONE}
          val session =
-           clasetSearch.new_best_session 0 budget (fn _ => false) expand
+           clasetSearch.new_best_session budget (fn _ => false) expand
              (search_singleton best_root_tm)
          val yields = ref 0
          fun finish 0 = false
@@ -5782,7 +5782,7 @@ val _ =
          val reference_budget = searchBudget.unbounded ()
          val reference =
            clasetSearch.resume_frontier
-             (clasetSearch.new_best_session 0 reference_budget
+             (clasetSearch.new_best_session reference_budget
                (fn _ => false) expand
                (search_singleton best_root_tm))
        in
@@ -5810,14 +5810,14 @@ val _ =
            (searchBudget.charge inner searchBudget.Candidate;
             seq.empty)
          val session =
-           clasetSearch.new_best_session 0
+           clasetSearch.new_best_session
              (searchBudget.unbounded ()) (fn _ => false) limited
              (search_singleton best_root_tm)
          val cutoff = clasetSearch.resume_frontier session
          val _ = searchBudget.extend inner searchBudget.Candidate 1
          val resumed = clasetSearch.resume_frontier session
          val interrupted_session =
-           clasetSearch.new_best_session 0
+           clasetSearch.new_best_session
              (searchBudget.unbounded ()) (fn _ => false)
              (fn _ => raise Portable.Interrupt)
              (search_singleton best_root_tm)
@@ -5858,11 +5858,11 @@ val _ =
               (later_forced := true; seq.result node))
          val results =
            search_results
-             (clasetSearch.DEEPEN 0 (2, 7) bounded 1
+             (clasetSearch.DEEPEN (2, 7) bounded 1
                (search_singleton dfs_root_tm))
          val solved_results =
            search_results
-             (clasetSearch.DEEPEN 0 (2, 7)
+             (clasetSearch.DEEPEN (2, 7)
                (fn _ => fn node =>
                  (solved_invoked := true; seq.result node))
                1 (search_solved clasetMeta.empty))
@@ -5890,7 +5890,7 @@ val _ =
          val _ = clasetSearch.node_limit := 2
          val results =
            search_results
-             (clasetSearch.BEST_FIRST 0 (fn _ => false) expand
+             (clasetSearch.BEST_FIRST (fn _ => false) expand
                (search_singleton best_root_tm))
          val count = clasetSearch.node_count ()
          val _ = clasetSearch.node_limit := saved_limit
@@ -6048,7 +6048,7 @@ val _ =
               | [_] => seq.result (search_solved (clasetGoal.store node))
               | _ => seq.empty)
          val results =
-           search_results (clasetSearch.DEPTH_SOLVE 0 expand root)
+           search_results (clasetSearch.DEPTH_SOLVE expand root)
        in
          length results = 1 andalso !expansions = 2 andalso
          clasetSearch.pruning_count () > 0
@@ -6092,7 +6092,7 @@ val _ =
                   else seq.empty
               | _ => seq.empty)
          val results =
-           search_results (clasetSearch.DEPTH_SOLVE 0 expand root)
+           search_results (clasetSearch.DEPTH_SOLVE expand root)
        in
          length results = 1 andalso !expansions = 3
        end)
@@ -6123,7 +6123,7 @@ val _ =
              | _ => seq.empty
        in
          length
-           (search_results (clasetSearch.DEPTH_SOLVE 0 expand root)) = 1
+           (search_results (clasetSearch.DEPTH_SOLVE expand root)) = 1
        end)
 
 val _ =
@@ -6131,57 +6131,26 @@ val _ =
     ("classical trace levels report summaries and full candidates",
      fn () =>
        let
+         val old_trace = HOLFlags.current_trace "classical.trace"
          val notices = ref ([] : string list)
          fun remember message = notices := message :: !notices
+         val _ = HOLFlags.set_trace "classical.trace" 3
          val _ =
            Lib.with_flag
              (Feedback.MESG_outstream, remember)
              (fn () =>
                ignore
                  (search_results
-                   (clasetSearch.BEST_FIRST 3 (fn _ => false)
+                   (clasetSearch.BEST_FIRST (fn _ => false)
                      (fn _ => seq.empty)
                      (search_singleton best_root_tm)))) ()
+         val _ = HOLFlags.set_trace "classical.trace" old_trace
        in
          List.exists (String.isSubstring "best-first expansion") (!notices)
          andalso
          List.exists (String.isSubstring "candidate:") (!notices)
          andalso
          List.exists (String.isSubstring "search exhausted") (!notices)
-       end)
-
-(* A search tactic reports at the classical.trace level of the context it
-   is run in; the ambient level, which runtac's context starts from and
-   trace_tac then overrides, is not consulted. *)
-val _ =
-  test
-    ("classical search tactics trace at their context's level",
-     fn () =>
-       let
-         fun notices_of ambient tactic =
-           let
-             val notices = ref ([] : string list)
-             fun remember message = notices := message :: !notices
-             val old_trace = HOLFlags.current_trace "classical.trace"
-             fun attempt () =
-               (HOLFlags.set_trace "classical.trace" ambient;
-                ignore (Lib.total (runtac tactic) ([], boolSyntax.F)))
-             val _ =
-               Portable.finally
-                 (fn () => HOLFlags.set_trace "classical.trace" old_trace)
-                 (Lib.with_flag (Feedback.MESG_outstream, remember) attempt)
-                 ()
-           in
-             !notices
-           end
-         val best = NTactical.DETERM (classicalLib.CS_BEST_TAC
-                                        clasetLib.empty_cs)
-         val exhausted = List.exists (String.isSubstring "search exhausted")
-       in
-         exhausted
-           (notices_of 0 (Tactical.trace_tac ("classical.trace", 1) best))
-         andalso
-         null (notices_of 3 (Tactical.trace_tac ("classical.trace", 0) best))
        end)
 
 (* TASK_14: public and claset-explicit driver surfaces. *)
@@ -6820,7 +6789,7 @@ val _ =
                   else seq.empty
               | _ => seq.empty)
          val results =
-           search_results (clasetSearch.DEPTH_SOLVE 0 expand root)
+           search_results (clasetSearch.DEPTH_SOLVE expand root)
        in
          length results = 1 andalso !steps = 3
        end)

@@ -3,14 +3,8 @@ struct
 
 open Abbrev HolKernel boolSyntax
 
-val {flag = trace_flag, ...} =
-    HOLFlags.create_trace ({group = "classical", name = "trace"},
-                           {initial = 0, max = 7})
-
-fun trace_level_of ctxt = HOLFlags.get_flagC ctxt trace_flag
-
-fun trace verbosity level message =
-  if level <= verbosity then
+fun trace level message =
+  if level <= HOLFlags.current_trace "classical.trace" then
     Feedback.HOL_MESG ("Classical reasoner: " ^ message ())
   else ()
 
@@ -71,6 +65,9 @@ datatype replay_failure =
 datatype replay_outcome =
     Replayed of goal list * validation
   | ReplayFailed of replay_failure
+
+val _ = HOLFlags.create_trace ({group = "classical", name = "trace"},
+                               {initial = 0, max = 7})
 
 fun make_record fields = StepRecord fields
 
@@ -1341,7 +1338,7 @@ fun REPLAY_TAC grounded goal ctxt =
           val diagnostic =
             "Replay failed at " ^ step_text ^ " on " ^
             goal_string bad_goal ^ ": " ^ message
-          val _ = trace (trace_level_of ctxt) 1
+          val _ = trace 1
             (fn () => diagnostic ^ "\nReplay script:\n" ^ script)
         in
           raise mk_HOL_ERR "clasetReplay" "REPLAY_TAC" diagnostic

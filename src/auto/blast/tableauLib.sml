@@ -22,14 +22,13 @@ val add_blast_selims =
 
 fun no_extra_markers theorems cs = (cs, theorems)
 
-(* The claset is the one of the context the tactic is run in. *)
-fun invoke tactic theorems goal ctxt =
+fun invoke tactic =
   clasetLib.with_invocation_fact_env
     {iff_prefix="", extra_markers=no_extra_markers,
      consumer=clasetLib.TableauFacts}
     (fn cs => fn _ => fn _ => fn _ => tactic cs)
-    (clasetLib.the_claset_of ctxt)
-    (NONE : unit clasetLib.invocation_simpset option) theorems goal ctxt
+    (clasetLib.the_claset ())
+    (NONE : unit clasetLib.invocation_simpset option)
 
 fun add_time elapsed accumulated =
   accumulated := Time.+ (!accumulated, elapsed)
