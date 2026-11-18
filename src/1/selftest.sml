@@ -1569,6 +1569,27 @@ in
   }  "%0%1%0%0@@%2@|"
 end
 
+(* At level 2 the census follows each ambient read with the slot it was
+   after; for HOLFlags, whose one slot holds every flag, also the flag. *)
+val _ = let
+  val _ = tprint "Ambient-read census names the flag a proof read"
+  val warnings = ref ([] : string list)
+  val reader : tactic = fn g => fn c =>
+      (ignore (HOLFlags.current_trace "PP.avoid_unicode"); ALL_TAC g c)
+  fun run () =
+      (Context.set_ambient_report_level 2;
+       Lib.with_flag
+         (Feedback.WARNING_outstream, fn s => warnings := s :: !warnings)
+         TAC_PROOF (([], T), reader THEN ACCEPT_TAC TRUTH))
+  val _ = Portable.finally (fn () => Context.set_ambient_report_level 1)
+                           run ()
+  val named = "slot \"HOLFlags\" (PP.avoid_unicode)"
+in
+  if List.exists (String.isSubstring named) (!warnings) then OK()
+  else die ("no warning named the flag:\n" ^
+            String.concatWith "\n" (rev (!warnings)))
+end
+
 
 (* Restarting a segment fires Parse.clear_consts_from_grammar, which must
    drop the zapped segment's constants from the overload map even when the

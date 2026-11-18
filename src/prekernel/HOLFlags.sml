@@ -63,9 +63,13 @@ fun gen_get_trace_C ctxt tnm =
                       ("No such trace: "^trace_name_toString tnm)
       | SOME (_, tr) => #current tr
 
-fun global_tmap() = Context.Data.get tmap_slot (Context.snapshot())
+(* `what` names the flags read, for the ambient-read census *)
+fun global_tmap what = Context.Data.get_ambient tmap_slot what
+fun temporarily_set names () =
+    "with " ^ String.concatWith ", " (map trace_name_toString names)
 
-fun find_record arg = gen_find_record (global_tmap()) arg
+fun find_record arg =
+    gen_find_record (global_tmap (fn () => trace_name_toString arg)) arg
 
 
 fun quote t = String.concat ["\"", trace_name_toString t, "\""]
@@ -229,7 +233,7 @@ fun traces () =
                       default = default,
                       max = maximum} :: acc
    in
-     KNametab.fold_rev foldthis (global_tmap()) []
+     KNametab.fold_rev foldthis (global_tmap (fn () => "all traces")) []
    end
 
 fun set_btrace nm b =
@@ -274,7 +278,7 @@ val current_trace = get_ttrace o str2name
 
 fun with_flags flags f x =
     let
-      val base = global_tmap()
+      val base = global_tmap (temporarily_set (map #1 flags))
       fun foldthis ((nm,v), m) = gen_set_value nm v m
       val tempv = List.foldl foldthis base flags
     in
@@ -283,7 +287,7 @@ fun with_flags flags f x =
 
 fun with_traces flags f x =
     let
-      val base = global_tmap()
+      val base = global_tmap (temporarily_set (map (str2name o #1) flags))
       fun foldthis ((nm,v), m) = gen_set_value (str2name nm) v m
       val tempv = List.foldl foldthis base flags
   in
@@ -292,7 +296,7 @@ fun with_traces flags f x =
 
 fun with_bflags bfls f x =
     let
-      val base = global_tmap()
+      val base = global_tmap (temporarily_set (map #1 bfls))
       fun foldthis ((tnm,b), m) = gen_set_value tnm (if b then 1 else 0) m
       val tempv = List.foldl foldthis base bfls
     in

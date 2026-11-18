@@ -155,6 +155,11 @@ sig
 
     (* Pure combinators against a supplied context value. *)
     val get    : 'a slot -> t -> 'a
+    (* `get slot (snapshot ())`, for a caller that can say which part of
+       the slot it wants: `what` is only called when the ambient-read
+       census reports this read, and its answer is added to the slot
+       name there. *)
+    val get_ambient : 'a slot -> (unit -> string) -> 'a
     val put    : 'a slot -> 'a -> t -> t
     val update : 'a slot -> ('a -> 'a) -> t -> t
 
