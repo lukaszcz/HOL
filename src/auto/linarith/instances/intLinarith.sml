@@ -51,7 +51,12 @@ val dest_divmod =
     {dest_div=intSyntax.dest_div,dest_mod=intSyntax.dest_mod}
 
 (* INT_DIVISION exposes directly the quotient/remainder facts represented
-   existentially by INT_DIV_P and INT_MOD_P, without adding split cases. *)
+   existentially by INT_DIV_P and INT_MOD_P, without adding split cases.
+   Specialising it is internal to the search, done for no caller's
+   simplification, so it traces nothing and reads no simplifier.trace
+   setting. *)
+val division_ss = simpLib.set_trace_level 0 boolSimps.bool_ss
+
 fun division_facts dividend divisor nonzero =
   let
     val division =
@@ -64,7 +69,7 @@ fun division_facts dividend divisor nonzero =
         (intSyntax.mk_less (divisor, intSyntax.zero_tm))
   in
     CONJUNCTS
-      (simpLib.SIMP_RULE boolSimps.bool_ss [sign] division)
+      (simpLib.SIMP_RULE division_ss [sign] division)
   end
 
 val nonneg =

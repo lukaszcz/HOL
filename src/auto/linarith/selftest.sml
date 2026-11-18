@@ -608,7 +608,7 @@ fun fm_refute decomps =
           SOME (_, decomp) => decomp
         | NONE => NONE
   in
-    case prove fm_config decompose (fn _ => false) hypotheses
+    case prove 0 fm_config decompose (fn _ => false) hypotheses
                 fm_conclusion of
         (_, SOME [just]) => SOME just
       | _ => NONE
@@ -649,7 +649,7 @@ val fm_budget_items =
             (fm_scaled_x ~1, fm_rat 0)))]
 
 fun fm_budgeted budget items =
-  prove_decomposed_budgeted budget fm_config
+  prove_decomposed_budgeted 0 budget fm_config
     (fn _ => NONE) (fn _ => false) items fm_conclusion
 
 val _ =
@@ -737,7 +737,7 @@ val _ =
     ("budgeted certificate search propagates an interrupt",
      fn () =>
        ((ignore
-           (prove_budgeted (searchBudget.unbounded ()) fm_config
+           (prove_budgeted 0 (searchBudget.unbounded ()) fm_config
              (fn _ => raise Portable.Interrupt) (fn _ => false)
              [] fm_conclusion);
          false)
@@ -915,7 +915,7 @@ val _ =
          val result =
            Lib.total
              (fn () =>
-                prove fm_config linarithDecomp.decomp (fn _ => false)
+                prove 0 fm_config linarithDecomp.decomp (fn _ => false)
                   [synth_halved_negative, synth_negated_x_bounded]
                   fm_conclusion) ()
          val _ = linarithData.register_instance decomp_instance
@@ -1038,7 +1038,7 @@ val _ =
   check
     ("split premises are renumbered for the case they end up in",
      fn () =>
-       case prove {neq_limit = 2, split_limit = 9} unit_decomp
+       case prove 0 {neq_limit = 2, split_limit = 9} unit_decomp
                   (fn _ => false)
                   [dense_neq_tm, contradiction_tm, discrete_neq_tm]
                   conclusion_tm of
@@ -1052,7 +1052,7 @@ val _ =
   check
     ("prove splits at the neq_limit boundary",
      fn () =>
-       case prove {neq_limit = 1, split_limit = 9} unit_decomp
+       case prove 0 {neq_limit = 1, split_limit = 9} unit_decomp
                   (fn _ => false)
                   [dense_neq_tm, contradiction_tm] conclusion_tm of
            (true, SOME justs) => List.length justs = 2
@@ -1062,7 +1062,7 @@ val _ =
   check
     ("prove ignores all disequalities when neq_limit is exceeded",
      fn () =>
-       case prove {neq_limit = 0, split_limit = 9} unit_decomp
+       case prove 0 {neq_limit = 0, split_limit = 9} unit_decomp
                   (fn _ => false)
                   [dense_neq_tm, contradiction_tm] conclusion_tm of
            (false, SOME [_]) => true
@@ -1081,7 +1081,7 @@ val _ =
   check
     ("prove appends the negated conclusion with its assumption index",
      fn () =>
-       case prove {neq_limit = 9, split_limit = 9}
+       case prove 0 {neq_limit = 9, split_limit = 9}
                   from_negated_conclusion (fn _ => false) []
                   conclusion_tm of
            (true, SOME [Asm 0]) => true
@@ -1091,7 +1091,7 @@ val _ =
   check
     ("prove avoids double negation of an already-negated conclusion",
      fn () =>
-       case prove {neq_limit = 9, split_limit = 9}
+       case prove 0 {neq_limit = 9, split_limit = 9}
                   from_unwrapped_conclusion (fn _ => false) []
                   negated_conclusion_tm of
            (true, SOME [Asm 0]) => true
@@ -1109,7 +1109,7 @@ val num_zero = numSyntax.zero_tm
 val num_one = numSyntax.mk_numeral Arbnum.one
 
 fun replay terms justification =
-  linarithReplay.mkthm (List.map Thm.ASSUME terms) justification
+  linarithReplay.mkthm 0 (List.map Thm.ASSUME terms) justification
 
 fun replay_is_false terms justification =
   Term.aconv (Thm.concl (replay terms justification)) boolSyntax.F
@@ -1328,7 +1328,7 @@ fun forward_with disequalities =
     split_conclusion
 
 fun tactic_replay_succeeds config assumptions conclusion =
-  (case linarithReplay.refute config assumptions conclusion of
+  (case linarithReplay.refute 0 config assumptions conclusion of
        NONE => false
      | SOME tactic =>
          null
@@ -1360,7 +1360,7 @@ val _ =
          val fact = Thm.ASSUME split_x_upper
          val search_only = searchBudget.unbounded ()
          val certificate =
-           prove_budgeted search_only one_split_config
+           prove_budgeted 0 search_only one_split_config
              linarithDecomp.decomp linarithDecomp.is_nonnegative
              [split_x_upper] split_conclusion
          val search_normalization =
@@ -2499,7 +2499,8 @@ fun reducer_conversion theorems tm =
        conv = fn _ => Conv.NO_CONV,
        context = context,
        stack = [],
-       relation = (boolSyntax.equality, Thm.REFL)} tm
+       relation = (boolSyntax.equality, Thm.REFL),
+       trace = 0} tm
   end
 
 fun reducer_succeeds theorems tm =
@@ -2627,7 +2628,8 @@ fun private_budget_test body =
                conv = fn _ => Conv.NO_CONV,
                context = addcontext (initial, assumptions),
                stack = [],
-               relation = (boolSyntax.equality, Thm.REFL)} tm
+               relation = (boolSyntax.equality, Thm.REFL),
+               trace = 0} tm
           end
       in
         body (atom, assumptions, conversion)
@@ -2739,7 +2741,8 @@ val _ =
                           {solver = fn _ => Conv.NO_CONV,
                            conv = fn _ => Conv.NO_CONV,
                            context = context, stack = [],
-                           relation = (boolSyntax.equality, Thm.REFL)}
+                           relation = (boolSyntax.equality, Thm.REFL),
+                           trace = 0}
                           atom);
                      false)
                     handle Feedback.HOL_ERR _ => true
@@ -4095,7 +4098,7 @@ val _ =
          val left = mk_binary synth_leq synth_x synth_y
        in
          (ignore
-            (linarithReplay.mkthm
+            (linarithReplay.mkthm 0
                [Thm.ASSUME left, Thm.ASSUME public_x_le_y]
                (Added (Asm 0, Asm 1)));
           false)
@@ -4103,4 +4106,36 @@ val _ =
            Feedback.message_of error =
              "Linear arithmetic should have refuted the assumptions " ^
              "but failed to."
+       end)
+
+(* The tactic reads linarith.trace from the context it is applied in.
+   The elimination asks for the level at every pivot, so an ambient read
+   would show in the census of a proof the search closes. *)
+val _ =
+  check
+    ("SIMPLE_LINARITH_TAC reads its traces from its context",
+     fn () =>
+       let
+         val warnings = ref ([] : string list)
+         val goal =
+           ([num_less public_x public_y],
+            num_leq (num_plus public_x num_one) public_y)
+         val ctxt = Context.snapshot ()
+         fun run () =
+           (Context.set_ambient_report_level 2;
+            Lib.with_flag
+              (Feedback.WARNING_outstream,
+               fn s => warnings := s :: !warnings)
+              (Context.in_proof
+                 (fn () => linarithLib.SIMPLE_LINARITH_TAC [] goal ctxt))
+              ())
+         val (residues, _) =
+           Portable.finally (fn () => Context.set_ambient_report_level 1)
+                            run ()
+       in
+         null residues andalso
+         not (List.exists
+                (fn w => String.isSubstring "(linarith.trace)" w orelse
+                         String.isSubstring "(Rewrite.monitoring)" w)
+                (!warnings))
        end)
