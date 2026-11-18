@@ -155,15 +155,10 @@ struct
       end)
 
   (* Portable HOL does not expose a numeric physical-identity key.  Small
-     operation-local caches use pointer lists; the potentially large generated
-     graph uses shallow-hash buckets below.  Neither lookup unfolds equal
+     operation-local caches use pointer lists (SmtPointerTable.peek); the
+     potentially large generated graph uses SmtPointerTable's shallow-hash
+     buckets.  Neither lookup unfolds equal
      shared terms through Term.compare. *)
-  fun pointer_peek entries term =
-    case List.find
-        (fn (saved, _) => Portable.pointer_eq (term, saved)) entries of
-      NONE => NONE
-    | SOME (_, value) => SOME value
-
   fun eager_bits value = String.size (Arbnum.toBinString value)
 
   fun bounded_eager_product digit_limit left right =
@@ -1116,7 +1111,7 @@ struct
           val allowed = Term.free_vars schematic
           val seen = ref ([] : (term * unit) list)
           fun visit term =
-            case pointer_peek (!seen) term of
+            case SmtPointerTable.peek (!seen) term of
               SOME () => true
             | NONE =>
                 let

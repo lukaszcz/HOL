@@ -1,3 +1,5 @@
+(* Copyright (c) 2026 The HOL4 contributors. *)
+
 signature SmtPointerTable =
 sig
   type 'a table
@@ -9,6 +11,9 @@ sig
      beyond [ceiling] buckets. *)
   val new : {hint : int -> Term.term -> int, initial : int, ceiling : int}
             -> 'a table
+  (* The most recent binding of [term] in an association list, by physical
+     identity.  Shared with callers that keep small pointer-keyed lists. *)
+  val peek : (Term.term * 'a) list -> Term.term -> 'a option
   (* The most recent binding of a physically identical key. *)
   val lookup : 'a table -> Term.term -> 'a option
   val insert : 'a table -> Term.term -> 'a -> unit

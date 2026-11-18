@@ -37620,6 +37620,11 @@ let
   fun constant modulus term = (ignore term; ignore modulus; 0)
   fun fresh index = Term.mk_var ("pt" ^ Int.toString index, Type.bool)
   fun buckets_seen () = List.foldl Int.max 0 (!moduli)
+  (* Moduli in call order with consecutive repeats removed. *)
+  fun distinct_moduli () =
+    List.rev (List.foldl (fn (m, acc) => case acc of
+      m' :: _ => if m = m' then acc else m :: acc
+    | [] => [m]) [] (List.rev (!moduli)))
   (* mark: first visit true, repeat false; equal but distinct terms differ *)
   val set = SmtPointerTable.new
     {hint = SmtReplayImport.pointer_bucket 3, initial = 17, ceiling = 8191}
@@ -37636,12 +37641,11 @@ let
   val tbl : int SmtPointerTable.table = SmtPointerTable.new
     {hint = constant, initial = 4, ceiling = 4}
   val keys = List.tabulate (20, fresh)
-  val _ = List.app (fn k => SmtPointerTable.insert tbl k
-    (valOf (Int.fromString (String.extract (#1 (Term.dest_var k), 2, NONE)))))
-    keys
-  val _ = check "collisions" (List.all (fn k =>
-    SmtPointerTable.lookup tbl k = Int.fromString
-      (String.extract (#1 (Term.dest_var k), 2, NONE))) keys)
+  val _ = List.app (fn (i, k) => SmtPointerTable.insert tbl k i)
+    (ListPair.zip (List.tabulate (20, fn i => i), keys))
+  val _ = check "collisions" (List.all (fn (i, k) =>
+    SmtPointerTable.lookup tbl k = SOME i)
+    (ListPair.zip (List.tabulate (20, fn i => i), keys)))
   val _ = check "collision miss" (SmtPointerTable.lookup tbl (fresh 0) = NONE)
   (* growth past 2 * size keeps every key and honours the ceiling *)
   val grow : int SmtPointerTable.table = SmtPointerTable.new
@@ -37649,12 +37653,20 @@ let
   val many = List.tabulate (300, fresh)
   val _ = List.app (fn (i, k) => SmtPointerTable.insert grow k i)
     (ListPair.zip (List.tabulate (300, fn i => i), many))
-  val _ = check "grown" (buckets_seen () > 5)
+  val _ = check "growth rule" (distinct_moduli () = [5, 11, 23, 47, 95, 100])
   val _ = check "grown within ceiling" (buckets_seen () <= 100)
   val _ = check "growth keeps keys" (List.all (fn (i, k) =>
     SmtPointerTable.lookup grow k = SOME i)
     (ListPair.zip (List.tabulate (300, fn i => i), many)))
   val _ = check "ceiling reached" (buckets_seen () = 100)
+  val _ = moduli := []
+  val first : int SmtPointerTable.table = SmtPointerTable.new
+    {hint = spy, initial = 5, ceiling = 100}
+  val _ = List.app (fn k => SmtPointerTable.insert first k 0)
+    (List.take (many, 10))
+  val _ = check "no growth at 2 * size entries" (distinct_moduli () = [5])
+  val _ = SmtPointerTable.insert first (List.nth (many, 10)) 0
+  val _ = check "growth on the 11th insert" (distinct_moduli () = [5, 11])
   val _ = moduli := []
   val capped : int SmtPointerTable.table = SmtPointerTable.new
     {hint = spy, initial = 5, ceiling = 5}
@@ -37663,7 +37675,7 @@ let
   val _ = check "ceiling stops growth" (List.all (fn m => m = 5) (!moduli))
   (* newest first for a repeated key, across growth *)
   val newest : int SmtPointerTable.table = SmtPointerTable.new
-    {hint = fn _ => fn _ => 0, initial = 3, ceiling = 1000}
+    {hint = constant, initial = 3, ceiling = 1000}
   val key = fresh 1000
   val _ = SmtPointerTable.insert newest key 1
   val _ = List.app (fn k => SmtPointerTable.insert newest k 0) many
