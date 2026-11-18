@@ -43,6 +43,9 @@ sig
   val remove_rule : string -> claset -> claset
   val merge_cs : claset * claset -> claset
 
+  (* The claset of the context a tactic is run in; the_claset is that of
+     the ambient context *)
+  val the_claset_of : Context.t -> claset
   val the_claset : unit -> claset
   val export_rule : rulespec -> string -> unit
   val temp_add_rule : rulespec -> string * thm -> unit

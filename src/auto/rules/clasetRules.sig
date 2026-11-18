@@ -96,6 +96,9 @@ sig
   datatype cdelta = ADD of {name : thname, spec : rulespec} | RM of string
   val encode_delta : cdelta -> ThyDataSexp.t
   val decode_delta : ThyDataSexp.t -> cdelta option
+  (* The theorem an addition names, fetched from the database of the
+     context given, or ambiently *)
+  val load_delta_of : Context.t -> cdelta -> (thname * rulespec * thm) option
   val load_delta : cdelta -> (thname * rulespec * thm) option
   val uptodate_delta : cdelta -> bool
 end
