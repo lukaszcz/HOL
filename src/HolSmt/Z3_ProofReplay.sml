@@ -5,6 +5,12 @@
 structure Z3_ProofReplay =
 struct
 
+(* RW_TAC case-splits every conditional and case expression of its goal:
+   exponentially many subgoals on a large Boolean/datatype rewrite whose
+   arithmetic sits in a few atoms.  Polynomial normalization splits only
+   targets up to this many nodes and normalizes larger ones unsplit. *)
+val arith_split_max_target_nodes = 1000
+
 local
 
   open boolLib
@@ -1747,8 +1753,11 @@ local
   fun int_product_prove t =
     Tactical.TAC_PROOF (([], t),
       PURE_REWRITE_TAC [integerTheory.INT_GE] THEN
-      (metisLib.METIS_TAC
-         [integerTheory.INT_LE_MUL, integerTheory.INT_LE_SQUARE, INT_LE_MUL2]
+      ((if SmtDatatypeProve.metis_admits t then
+          metisLib.METIS_TAC
+            [integerTheory.INT_LE_MUL, integerTheory.INT_LE_SQUARE,
+             INT_LE_MUL2]
+        else Tactical.NO_TAC)
        ORELSE
        REPEAT STRIP_TAC THEN int_product_bound_tac))
 
@@ -2120,6 +2129,10 @@ local
         else
           profile ("arith-linear(" ^ rung ^ ")(int)") intLib.ARITH_TAC goal
       val TRY = Tactical.TRY
+      val normalize_tac =
+        if SmtResource.term_nodes_up_to arith_split_max_target_nodes t <=
+             arith_split_max_target_nodes
+        then bossLib.RW_TAC else simpLib.SIMP_TAC
     in
       Tactical.TAC_PROOF (([], t),
         (* E1(a): proved unfolding normalizes the integer div/mod syntax. *)
@@ -2135,9 +2148,10 @@ local
             [integerTheory.INT_ABS, integerTheory.NUM_OF_INT])
         (* E1(a): ARITH decides the normalized linear int/real fragment. *)
         >> TRY (arith_tactic "3")
-        (* E1(a): the arithmetic simpsets decide polynomial normalization. *)
+        (* E1(a): the arithmetic simpsets decide polynomial normalization,
+           case-splitting small targets only. *)
         >> profile "arith-linear(4)(polynomial-normalize)"
-          (bossLib.RW_TAC
+          (normalize_tac
             (bossLib.arith_ss ++ intSimps.INT_RWTS_ss ++
              intSimps.INT_ARITH_ss ++ realSimps.REAL_ARITH_ss)
             [Conv.GSYM integerTheory.INT_NEG_MINUS1])
