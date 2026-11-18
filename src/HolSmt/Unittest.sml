@@ -37781,6 +37781,54 @@ let
   val _ = check "usable after clear" (SmtPointerTable.lookup grow x = SOME 7)
 in () end
 
+fun smt_resource_or_else () =
+let
+  val gate = Feedback.mk_HOL_ERR "SmtResource" "or_else"
+    "resource-gated: injected"
+  val ordinary = Feedback.mk_HOL_ERR "Unittest" "or_else" "ordinary"
+  val calls = ref 0
+  fun counted x = (calls := !calls + 1; x)
+  fun same_err (Feedback.HOL_ERR a, Feedback.HOL_ERR b) =
+        Feedback.message_of a = Feedback.message_of b andalso
+        Feedback.top_structure_of a = Feedback.top_structure_of b
+    | same_err _ = false
+  val () = calls := 0
+  val v = SmtResource.or_else (fn () => 1) (fn () => counted 2)
+  val () = assert (v = 1 andalso !calls = 0,
+    "or_else success must return first's value without running second")
+  val () = calls := 0
+  val v = SmtResource.or_else (fn () => raise ordinary)
+    (fn () => counted 2)
+  val () = assert (v = 2 andalso !calls = 1,
+    "or_else must run second once after an ordinary HOL_ERR")
+  val () = calls := 0
+  val () =
+    (ignore (SmtResource.or_else (fn () => raise gate)
+       (fn () => counted 2));
+     die "FAIL: or_else swallowed a resource gate")
+    handle exn as Feedback.HOL_ERR e =>
+      (assert (same_err (exn, gate),
+         "or_else must re-raise the identical gate");
+       assert (SmtResource.is_resource_gate e,
+         "re-raised gate must still be a resource gate");
+       assert (!calls = 0, "or_else ran second after a resource gate"))
+  val () =
+    (ignore (SmtResource.or_else (fn () => raise ordinary)
+       (fn () => raise gate));
+     die "FAIL: or_else hid an error of second")
+    handle exn as Feedback.HOL_ERR _ =>
+      assert (same_err (exn, gate), "or_else altered second's error")
+  val () = calls := 0
+  val () =
+    (ignore (SmtResource.or_else (fn () => raise Fail "boom")
+       (fn () => counted 2));
+     die "FAIL: or_else swallowed a non-HOL_ERR exception")
+    handle Fail "boom" => assert (!calls = 0,
+      "or_else ran second after a non-HOL_ERR exception")
+in
+  ()
+end
+
 fun run_unittests () =
 let
   val () = print "Running unit tests...\n\n"
@@ -37819,6 +37867,7 @@ let
       word_division_untranslated_operators),
     ("cvc_native_bag_goal_nested_application_success",
       cvc_native_bag_goal_nested_application_success),
+    ("smt_resource_or_else", smt_resource_or_else),
     ("smt_resource_diagnostic_contract",
       smt_resource_diagnostic_contract),
     ("smt_resource_proof_pre_gate_precedes_parser",
