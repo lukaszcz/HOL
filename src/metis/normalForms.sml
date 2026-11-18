@@ -17,12 +17,15 @@ open Parse
 (* Tracing.                                                                  *)
 (* ------------------------------------------------------------------------- *)
 
-val _ = HOLFlags.create_trace(
+val {flag = trace_flag, ...} = HOLFlags.create_trace(
       {group = "metis", name = "normalForms_trace"},
       {max = 10, initial = 0}
     )
 
-fun chatting l = l <= HOLFlags.current_trace "metis.normalForms_trace"
+(* MIN_CNF_IN says as much as the metis.normalForms_trace of the context
+   it is given asks for, and its simplification passes trace at that
+   context's simplifier.trace. *)
+fun chatting_in ctxt l = l <= HOLFlags.get_flagC ctxt trace_flag
 fun chat s = (Lib.say s; true);
 
 (* ------------------------------------------------------------------------- *)
@@ -227,9 +230,13 @@ val SKICo_SS =
 
 val SKICo_ss = simpLib.++ (SKI_ss, SKICo_SS);
 
-val SKICo_CONV =
-  COMBIN_CONV [MK_K, MK_I, MK_C, MK_o, MK_S] THENC
-  SIMP_CONV SKICo_ss [];
+val SKICo_combinators_conv = COMBIN_CONV [MK_K, MK_I, MK_C, MK_o, MK_S];
+
+val SKICo_CONV = SKICo_combinators_conv THENC SIMP_CONV SKICo_ss [];
+
+fun SKICo_conv_in ctxt =
+  SKICo_combinators_conv THENC
+  SIMP_CONV (in_trace_context ctxt SKICo_ss) [];
 
 (* ------------------------------------------------------------------------- *)
 (* Beta reduction and simplifying boolean rewrites.                          *)
@@ -254,6 +261,7 @@ val simplify_ss =
   simpLib.++ (simpLib.++ (pureSimps.pure_ss, boolSimps.BOOL_ss), SIMPLIFY_SS);
 
 val SIMPLIFY_CONV = SIMP_CONV simplify_ss [];
+fun simplify_conv_in ctxt = SIMP_CONV (in_trace_context ctxt simplify_ss) [];
 
 (* ------------------------------------------------------------------------- *)
 (* Negation normal form.                                                     *)
@@ -302,6 +310,7 @@ val PURE_NNF_CONV = PURE_NNF_CONV' NO_CONV;
 
 fun NNF_CONV' c = SIMPLIFY_CONV THENC PURE_NNF_CONV' c;
 val NNF_CONV = NNF_CONV' NO_CONV;
+fun NNF_CONV_IN ctxt = simplify_conv_in ctxt THENC PURE_NNF_CONV;
 
 (* ------------------------------------------------------------------------- *)
 (* Eliminate conditionals; CONDS_ELIM_CONV aims for disjunctive splitting,   *)
@@ -832,11 +841,14 @@ val PURE_CNF_CONV =
   STRIP_EXISTS_CONV (STRIP_FORALL_CONV (DEPTH_CONV PUSH_ORS_CONV)) THENC
   CLEAN_CNF_CONV;
 
-fun CNF_CONV' c =
-  NNF_CONV' c THENC
+fun cnf_conv_with simplify c =
+  simplify THENC
+  PURE_NNF_CONV' c THENC
   SKOLEMIZE_CONV THENC
   PRENEX_CONV THENC
   PURE_CNF_CONV;
+
+fun CNF_CONV' c = cnf_conv_with SIMPLIFY_CONV c;
 
 val CNF_CONV = CNF_CONV' NO_CONV;
 
@@ -1277,7 +1289,10 @@ end;
 
 (* LAMB_EQ_ELIM, EQ_LAMB_ELIM from normalFormsContextTheory *)
 
-val DELAMB_CONV = SIMP_CONV simplify_ss [EQ_LAMB_ELIM, LAMB_EQ_ELIM];
+val delamb_rewrites = [EQ_LAMB_ELIM, LAMB_EQ_ELIM];
+val DELAMB_CONV = SIMP_CONV simplify_ss delamb_rewrites;
+fun delamb_conv_in ctxt =
+  SIMP_CONV (in_trace_context ctxt simplify_ss) delamb_rewrites;
 
 (* ------------------------------------------------------------------------- *)
 (* Eliminating Hilbert's epsilon operator.                                   *)
@@ -1363,9 +1378,23 @@ val SELECT_TAC = CONV_TAC SELECT_NORM_CONV THEN REPEAT SPEC_ONE_SELECT_TAC;
 (* Remove all Abbrev terms from a goal by rewriting them away (Abbrev = I)   *)
 (* ------------------------------------------------------------------------- *)
 
-val REMOVE_ABBR_TAC =
-    PURE_REWRITE_TAC [markerTheory.Abbrev_def] THEN
-    RULE_ASSUM_TAC (PURE_REWRITE_RULE [markerTheory.Abbrev_def]);
+(* Both halves report their rewrites as the Rewrite.monitoring of the
+   context the tactic is run in asks. *)
+local
+  val abbrev_rewrites =
+    Rewrite.add_rewrites Rewrite.empty_rewrites [markerTheory.Abbrev_def]
+in
+  fun REMOVE_ABBR_TAC goal ctxt =
+    let
+      val monitor = HOLFlags.get_bflagC ctxt Rewrite.monitoring
+      val rule =
+        CONV_RULE
+          (TOP_DEPTH_CONV (Rewrite.REWRITES_CONV_AT monitor abbrev_rewrites))
+    in
+      (PURE_REWRITE_TAC [markerTheory.Abbrev_def] THEN
+       RULE_ASSUM_TAC rule) goal ctxt
+    end
+end;
 
 (* ------------------------------------------------------------------------- *)
 (* Lifting conditionals through function applications.                       *)
@@ -1447,14 +1476,15 @@ local
   fun comb_beta (x,eq_th) =
     CONV_RULE (RAND_CONV BETA_CONV) (MK_COMB (eq_th, REFL x));
 
-  fun mk_def defs vs tm =
+  fun mk_def ctxt defs vs tm =
     let
       val def_tm = list_mk_abs (vs,tm)
     in
       case List.find (aconv def_tm o fst) defs of
         SOME (_,(vs,tm,def)) =>
         let
-          val _ = chatting 2 andalso chat "min_cnf: reusing definition.\n"
+          val _ =
+            chatting_in ctxt 2 andalso chat "min_cnf: reusing definition.\n"
         in
           (defs, vs, tm, def, NONE)
         end
@@ -1482,10 +1512,10 @@ local
       INST tmS def
     end;
 in
-  fun rename defs vs tm =
+  fun rename ctxt defs vs tm =
     let
       val vs = filter (fn v => op_mem aconv v vs) (free_vars tm)
-      val (defs,vs,tm,def,def_th) = mk_def defs vs tm
+      val (defs,vs,tm,def,def_th) = mk_def ctxt defs vs tm
       val convish = match_convish vs tm def
     in
       (defs, CONV_RULE (TOP_DEPTH_CONV convish), def_th)
@@ -1530,35 +1560,39 @@ local
   fun is_a_bool tm =
     type_of tm = bool andalso not (aconv tm T) andalso not (aconv tm F);
 
-  fun lift_cond tm =
+  fun lift_cond ctxt tm =
     TRY_CONV
     (REPEATC let_conv
-     THENC COMB_CONV lift_bool
+     THENC COMB_CONV (lift_bool ctxt)
      THENC (REWR_CONV COND_RATOR
             ORELSEC REWR_CONV COND_RAND
             ORELSEC ALL_CONV)) tm
-  and lift_bool tm =
-    (chatting 3 andalso chat ("lift_bool: tm = " ^ term_to_string tm ^ "\n");
+  and lift_bool ctxt tm =
+    (chatting_in ctxt 3 andalso
+     chat ("lift_bool: tm = " ^ term_to_string tm ^ "\n");
      (if is_cond tm then ALL_CONV
 (* Can't do this without more proof support for booleans
       else if is_a_bool tm then condify_bool
 *)
-      else lift_cond) tm);
+      else lift_cond ctxt) tm);
 in
-  val boolify_conv = ATOM_CONV (CHANGED_CONV lift_cond);
+  fun boolify_conv_in ctxt = ATOM_CONV (CHANGED_CONV (lift_cond ctxt));
 end;
 
-fun min_cnf_prep defs acc [] = (defs, rev acc)
-  | min_cnf_prep defs acc (th :: ths) =
+fun min_cnf_prep ctxt defs acc [] = (defs, rev acc)
+  | min_cnf_prep ctxt defs acc (th :: ths) =
   let
-    val th = CONV_RULE DELAMB_CONV th
-    val th = CONV_RULE (DEF_NNF_CONV' boolify_conv) th
+    val th = CONV_RULE (delamb_conv_in ctxt) th
+    val th =
+      CONV_RULE
+        (simplify_conv_in ctxt THENC
+         PURE_DEF_NNF_CONV' (boolify_conv_in ctxt)) th
 (*
     val (defs,th,bs) = repeat extract_bools (defs,th,[])
     val (defs,th,ls) = repeat extract_lambdas (defs,th,[])
 *)
   in
-    min_cnf_prep defs (th :: acc) ths
+    min_cnf_prep ctxt defs (th :: acc) ths
   end;
 
 local
@@ -1664,10 +1698,13 @@ in
   val min_cnf_search = check;
 end;
 
-val simple_cnf_rule = CONV_RULE (CNF_CONV' (CHANGED_CONV SKICo_CONV));
+fun simple_cnf_rule_in ctxt =
+  CONV_RULE
+    (cnf_conv_with (simplify_conv_in ctxt)
+       (CHANGED_CONV (SKICo_conv_in ctxt)));
 
-fun min_cnf_norm defs acc [] = (defs, rev acc)
-  | min_cnf_norm defs acc (th :: ths) =
+fun min_cnf_norm ctxt defs acc [] = (defs, rev acc)
+  | min_cnf_norm ctxt defs acc (th :: ths) =
   let
     val concl_th = concl th
     val form as Formula ((m,_),_,_,_) = count_cnf [] concl_th
@@ -1676,32 +1713,34 @@ fun min_cnf_norm defs acc [] = (defs, rev acc)
     if n < m then
       let
         val _ =
-          chatting 1 andalso
+          chatting_in ctxt 1 andalso
           chat ("min_cnf: "^Arbint.toString m^" -> "^
                 Arbint.toString n^" clauses\n")
         val _ =
-          chatting 2 andalso
+          chatting_in ctxt 2 andalso
           chat ("min_cnf: renaming\n" ^ term_to_string tm ^ "\n")
-        val (defs,rule,dth) = rename defs vs tm
+        val (defs,rule,dth) = rename ctxt defs vs tm
         val ths = case dth of SOME dt => dt :: ths | NONE => ths
       in
-        min_cnf_norm defs acc (rule th :: ths)
+        min_cnf_norm ctxt defs acc (rule th :: ths)
       end
     else
-      min_cnf_norm defs (simple_cnf_rule th :: acc) ths
+      min_cnf_norm ctxt defs (simple_cnf_rule_in ctxt th :: acc) ths
   end;
 end (* of local enclosing open Arbint *)
 
-fun MIN_CNF ths =
+fun MIN_CNF_IN ctxt ths =
   let
     val ths = map GEN_ALL ths
     val defs = []
-    val (defs,ths) = min_cnf_prep defs [] ths
-    val (defs,ths) = min_cnf_norm defs [] ths
+    val (defs,ths) = min_cnf_prep ctxt defs [] ths
+    val (defs,ths) = min_cnf_norm ctxt defs [] ths
     val cs = map (lhs o hd o hyp o #3 o snd) defs
   in
     (cs,ths)
   end;
+
+fun MIN_CNF ths = MIN_CNF_IN (Context.snapshot ()) ths;
 
 (* Quick testing
 val Term = Parse.Term;

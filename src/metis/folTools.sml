@@ -521,7 +521,9 @@ val FOL_TACTIC = fn slv => fn lmap => fn lim => fn goal =>
 (* HOL normalization to first-order form.                                    *)
 (* ------------------------------------------------------------------------- *)
 
-val FOL_NORM = (map (fst o dest_var) ## I) o MIN_CNF;
+fun constant_names (cs, ths) = (map (fst o dest_var) cs, ths);
+
+val FOL_NORM = constant_names o MIN_CNF;
 
 (* Normalization tactic = Stripping + Elimination of @ *)
 
@@ -551,12 +553,15 @@ val FOL_NORM_TAC =
 
 (* A flexible tactic that performs normalization of theorems and goal. *)
 
-fun FOL_NORM_TTAC ch tac ths =
+(* The theorems are normalized at the levels of the context the tactic
+   is run in. *)
+fun FOL_NORM_TTAC ch tac ths goal ctxt =
   let
-    fun f asms = FOL_NORM (asms @ ths)
+    fun f asms = constant_names (MIN_CNF_IN ctxt (asms @ ths))
   in
-    timed_fn ch "tactic normalization" FOL_NORM_TAC
-    THEN POP_ASSUM_LIST (tac o timed_fn ch "theorem normalization" f)
+    (timed_fn ch "tactic normalization" FOL_NORM_TAC
+     THEN POP_ASSUM_LIST (tac o timed_fn ch "theorem normalization" f))
+      goal ctxt
   end;
 
 (* ------------------------------------------------------------------------- *)

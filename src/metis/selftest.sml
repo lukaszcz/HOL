@@ -161,4 +161,63 @@ val _ = check "with_flags quietens METIS_PROVE" true
 val _ = at 0
 end
 
+(* ----------------------------------------------------------------------
+    The clause normalization METIS_TAC runs takes its levels from the
+    context the tactic is run in: metis.normalForms_trace for what it
+    says, simplifier.trace for its simplification passes.
+   ---------------------------------------------------------------------- *)
+
+local
+  val clauses =
+    “(p1 /\ p2 /\ p3) \/ (q1 /\ q2 /\ q3) \/ (r1 /\ r2 /\ r3)”
+  val goal = ([clauses], “p1 \/ q1 \/ r1”)
+  val tac = METIS_TAC [ASSUME clauses]
+  val nf_trace = "metis.normalForms_trace"
+  fun said f =
+    let
+      val buf = ref ([] : string list)
+      val _ = Lib.with_flag (Feedback.MESG_outstream,
+                             fn s => buf := s :: !buf) f ()
+    in
+      String.concat (List.rev (!buf))
+    end
+  fun at_ambient n f () =
+    Portable.finally (fn () => HOLFlags.set_trace nf_trace 0)
+                     (fn () => (HOLFlags.set_trace nf_trace n; f ())) ()
+  fun reports_renaming f = String.isSubstring "min_cnf:" (said f)
+  fun census () =
+    let
+      val warnings = ref ([] : string list)
+      val ctxt = Context.snapshot ()
+      fun run () =
+        (Context.set_ambient_report_level 2;
+         Lib.with_flag
+           (Feedback.WARNING_outstream, fn s => warnings := s :: !warnings)
+           (Context.in_proof (fn () => tac goal ctxt)) ())
+      val _ = Portable.finally (fn () => Context.set_ambient_report_level 1)
+                               run ()
+    in
+      !warnings
+    end
+  fun reads flag ws =
+    List.exists (String.isSubstring ("(" ^ flag ^ ")")) ws
+in
+val _ = tprint "trace_tac makes METIS_TAC's normalization chat"
+val _ = if reports_renaming
+             (at_ambient 0
+                (fn () => runtac (Tactical.trace_tac (nf_trace, 1) tac) goal))
+        then OK() else die "no min_cnf report"
+val _ = tprint "trace_tac quietens METIS_TAC's normalization"
+val _ = if reports_renaming
+             (at_ambient 1
+                (fn () => runtac (Tactical.trace_tac (nf_trace, 0) tac) goal))
+        then die "reported min_cnf" else OK()
+val _ = tprint "METIS_TAC's normalization reads its levels from the context"
+val _ = let val ws = census ()
+        in
+          if reads nf_trace ws orelse reads "simplifier.trace" ws
+          then die (String.concat ws) else OK()
+        end
+end
+
 val _ = Process.exit Process.success;
