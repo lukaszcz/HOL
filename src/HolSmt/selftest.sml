@@ -2286,7 +2286,11 @@ val graph_expect_thm = expect_thm
     (``(if c then (f:int->int) else g) a = 1 ==> c ==> f a = 1``,
       [thm_CVCp_ho]),
     (``(r:smt_fun_rec).smt_fun a b = 1 ==> r = q ==>
-       (q:smt_fun_rec).smt_fun a b = 1``, [thm_CVCp_ho])
+       (q:smt_fun_rec).smt_fun a b = 1``, [thm_CVCp_ho]),
+
+    (* CPC congruence under a binder block: the kernel's binder lift. *)
+    (``!(a:'a) b s. a <> b /\ b IN s ==>
+       (s DELETE a) DIFF (s DELETE b) = {b}``, [thm_CVCp])
 
 
   ]  (* tests *)
