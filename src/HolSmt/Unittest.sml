@@ -16673,49 +16673,6 @@ in
         ``!x. ((s:int -> bool) DIFF t) x <=> s x``)))
 end
 
-(* An extra hypothesis that only a proof from the whole context discharges. *)
-fun cpc_context_proof_hypothesis_success () =
-let
-  val x = Term.mk_var ("x", intSyntax.int_ty)
-  val nonneg = intSyntax.mk_leq (intSyntax.zero_tm, x)
-  val hyp = boolSyntax.mk_eq
-    (boolSyntax.mk_cond (intSyntax.mk_less (x, intSyntax.zero_tm),
-       intSyntax.mk_negated x, x), x)
-  val theorem = CPC_ProofReplay.remove_hyps_for_test
-    ([nonneg], boolSyntax.F, Thm.ASSUME hyp)
-in
-  check_oracle_tags "CPC context-proof hypothesis" theorem;
-  assert (Term.aconv (Thm.concl theorem) hyp andalso
-      HOLset.equal (Thm.hypset theorem,
-        HOLset.addList (Term.empty_tmset,
-          [boolSyntax.mk_neg boolSyntax.F, nonneg])),
-    "CPC context proof left hypotheses other than its context: " ^
-      String.concatWith ", " (List.map Hol_pp.term_to_string
-        (Thm.hyp theorem)))
-end
-
-fun smt_replay_canon_transport_hypothesis () =
-let
-  val hyp = ``(\x:int. x) y = y``
-  val normalized = ``(y:int) = y``
-  val hyp_conv = Conv.TOP_DEPTH_CONV Thm.BETA_CONV hyp
-  val hit = SmtReplayCanon.transport_hypothesis hyp_conv
-    (Thm.ASSUME normalized)
-  val miss = SmtReplayCanon.transport_hypothesis hyp_conv
-    (Thm.ASSUME ``(y:int) = z``)
-in
-  assert (Term.aconv (boolSyntax.rhs (Thm.concl hyp_conv)) normalized,
-    "transport test conversion changed");
-  (case hit of
-     SOME th =>
-       assert (Term.aconv (Thm.concl th) hyp andalso
-           List.length (Thm.hyp th) = 1 andalso
-           Term.aconv (List.hd (Thm.hyp th)) normalized,
-         "transport hit did not prove the original hypothesis")
-   | NONE => die "FAIL: transport missed an alpha-equal assumption");
-  assert (not (Option.isSome miss), "transport accepted a different term")
-end
-
 (* A const array of Booleans is the empty set or the universe. *)
 fun cpc_arrays_select_const_set_success () =
 let
@@ -20241,6 +20198,83 @@ fun profile_call_count name =
       (Profile.results ()) of
     SOME (_, info) => #n info
   | NONE => 0
+
+(* The helper compares up to alpha: the assumption below differs from the
+   conversion's right side only in a bound variable name. *)
+fun smt_replay_canon_transport_hypothesis () =
+let
+  val f = Term.mk_var ("f", Type.--> (intSyntax.int_ty, intSyntax.int_ty))
+  val hyp = ``(\x:int. x) = (f:int->int)``
+  val assumption = ``(\w:int. w) = (f:int->int)``
+  val hyp_conv = Thm.REFL hyp
+  val hit = SmtReplayCanon.transport_hypothesis hyp_conv
+    (Thm.ASSUME assumption)
+  val miss = SmtReplayCanon.transport_hypothesis hyp_conv
+    (Thm.ASSUME ``(\w:int. w) = (g:int->int)``)
+in
+  assert (Hol_pp.term_to_string hyp <> Hol_pp.term_to_string assumption andalso
+      Term.aconv hyp assumption,
+    "transport test terms are not alpha-variants");
+  (case hit of
+     SOME th =>
+       assert (Term.aconv (Thm.concl th) hyp andalso
+           List.length (Thm.hyp th) = 1 andalso
+           Term.aconv (List.hd (Thm.hyp th)) assumption,
+         "transport hit did not prove the original hypothesis")
+   | NONE => die "FAIL: transport missed an alpha-equal assumption");
+  assert (not (Option.isSome miss), "transport accepted a different term")
+end
+
+(* The canonical rung itself discharges an equality that differs from the
+   context assumption only in orientation. *)
+fun cpc_canonical_rung_hypothesis_success () =
+let
+  val x = Term.mk_var ("x", intSyntax.int_ty)
+  val y = Term.mk_var ("y", intSyntax.int_ty)
+  val assumption = boolSyntax.mk_eq (x, y)
+  val hyp = boolSyntax.mk_eq (y, x)
+  val () = Profile.reset_all ()
+  val theorem = CPC_ProofReplay.remove_hyps_for_test
+    ([assumption], boolSyntax.F, Thm.ASSUME hyp)
+in
+  check_oracle_tags "CPC canonical rung hypothesis" theorem;
+  assert (Term.aconv (Thm.concl theorem) hyp andalso
+      HOLset.equal (Thm.hypset theorem,
+        HOLset.addList (Term.empty_tmset, [assumption])),
+    "CPC canonical rung: remaining hypotheses differ from expected");
+  assert (profile_call_count "CPC(canon:assumption-interface)" = 1 andalso
+      profile_call_count
+        "CPC(remove_extra_hyps:canonical_assumption)_OK" = 1,
+    "CPC canonical rung did not discharge the hypothesis")
+end
+
+(* An extra hypothesis that only a proof from the whole context discharges. *)
+fun cpc_context_proof_hypothesis_success () =
+let
+  val x = Term.mk_var ("x", intSyntax.int_ty)
+  val nonneg = intSyntax.mk_leq (intSyntax.zero_tm, x)
+  val hyp = boolSyntax.mk_eq
+    (boolSyntax.mk_cond (intSyntax.mk_less (x, intSyntax.zero_tm),
+       intSyntax.mk_negated x, x), x)
+  val () = Profile.reset_all ()
+  val theorem = CPC_ProofReplay.remove_hyps_for_test
+    ([nonneg], boolSyntax.F, Thm.ASSUME hyp)
+in
+  check_oracle_tags "CPC context-proof hypothesis" theorem;
+  assert (Term.aconv (Thm.concl theorem) hyp andalso
+      HOLset.equal (Thm.hypset theorem,
+        HOLset.addList (Term.empty_tmset,
+          [boolSyntax.mk_neg boolSyntax.F, nonneg])),
+    "CPC context proof: remaining hypotheses differ from expected: " ^
+      String.concatWith ", " (List.map Hol_pp.term_to_string
+        (Thm.hyp theorem)));
+  assert (profile_call_count "CPC(canon:assumption-interface)" = 0 andalso
+      profile_call_count
+        "CPC(remove_extra_hyps:canonical_assumption)_HOL_ERR" = 1 andalso
+      profile_call_count
+        "CPC(remove_extra_hyps:conditional_arith)_OK" = 1,
+    "CPC context proof was not discharged by the conditional_arith rung")
+end
 
 (* Z3 reduces a case of a constructor and reorders the rest in one rewrite:
    the datatype simp alone and the congruence rungs alone each miss it. *)
@@ -38412,6 +38446,8 @@ let
       cpc_array_set_definition_identity_success),
     ("cpc_context_proof_hypothesis_success",
       cpc_context_proof_hypothesis_success),
+    ("cpc_canonical_rung_hypothesis_success",
+      cpc_canonical_rung_hypothesis_success),
     ("smt_replay_canon_transport_hypothesis",
       smt_replay_canon_transport_hypothesis),
     ("cpc_arrays_select_const_set_success",

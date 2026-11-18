@@ -21989,7 +21989,6 @@ local
             raise ERR "remove_extra_hyps" "no array-set echo form"
           val conv = Susp.force array_set_echo_conv
           val hyp_eq = conv hyp
-          val normalized_hyp = boolSyntax.rhs (Thm.concl hyp_eq)
           (* The translation's definition of a fresh set constant, mapped
              back to the set it names, is an identity once both sides are
              in array form. *)
@@ -21998,15 +21997,12 @@ local
               [Conv.DEPTH_CONV Thm.BETA_CONV, conv,
                Rewrite.REWRITE_CONV []]) hyp)
           fun match assumption =
-            let
-              val normalized_assumption = Susp.force assumption
-              val _ = Term.aconv (Thm.concl normalized_assumption)
-                normalized_hyp orelse
+            case SmtReplayCanon.transport_hypothesis hyp_eq
+                   (Susp.force assumption) of
+              NONE =>
                 raise ERR "remove_extra_hyps"
                   "array-set assumption did not match extra hypothesis"
-            in
-              Thm.EQ_MP (Thm.SYM hyp_eq) normalized_assumption
-            end
+            | SOME theorem => theorem
         in
           identity () handle Feedback.HOL_ERR _ =>
             Lib.tryfind match array_set_context
