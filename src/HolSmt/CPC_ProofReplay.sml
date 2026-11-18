@@ -3039,6 +3039,36 @@ local
              oriented premise theorems around it.  Whole-equality conversion
              can collapse a non-reflexive CPC bridge to T and lose which
              outer endpoint this TRANS route selected. *)
+          val conversions = Vector.fromList
+            [SmtReplayCanon.cpc_canon_conv,
+             cpc_integer_spelling_conv,
+             strong_canon,
+             SmtReplayCanon.reorient_equality_conv]
+          (* Each orientation pairs two of the four premise endpoints, so
+             the same endpoint is normalized for several orientations.
+             Keep each endpoint's chain of normal forms, one theorem per
+             conversion applied, and extend it only when first needed. *)
+          val chains = Array.array (4, [] : Thm.thm list)
+          fun normalized index term rung =
+            let val chain = Array.sub (chains, index) in
+              if rung < List.length chain then
+                List.nth (chain, List.length chain - 1 - rung)
+              else
+                let
+                  val previous = if rung = 0 then NONE
+                    else SOME (normalized index term (rung - 1))
+                  val theorem = case previous of
+                      NONE => Thm.REFL term
+                    | SOME theorem =>
+                        Thm.TRANS theorem (Conv.QCONV
+                          (Vector.sub (conversions, rung - 1))
+                          (boolSyntax.rhs (Thm.concl theorem)))
+                in
+                  Array.update (chains, index,
+                    theorem :: Array.sub (chains, index));
+                  theorem
+                end
+            end
           fun canonical_bridge accumulated_side next_side =
             let
               val accumulated' = if accumulated_side = 1 then accumulated
@@ -3047,13 +3077,6 @@ local
               val (_, middle_left) = boolSyntax.dest_eq
                 (Thm.concl accumulated')
               val (middle_right, _) = boolSyntax.dest_eq (Thm.concl next')
-              fun extend conv theorem =
-                let
-                  val current = boolSyntax.rhs (Thm.concl theorem)
-                  val refinement = Conv.QCONV conv current
-                in
-                  Thm.TRANS theorem refinement
-                end
               fun finish left_norm right_norm =
                 let
                   val bridge = Thm.TRANS left_norm (Thm.SYM right_norm)
@@ -3066,32 +3089,33 @@ local
                 in
                   (theorem, provenance)
                 end
-              fun refine [] _ = raise ERR "trans"
-                    "canonical middle endpoints have distinct normal forms"
-                | refine (conv :: rest) (left_norm, right_norm) =
-                    let
-                      val left_norm' = extend conv left_norm
-                      val right_norm' = extend conv right_norm
-                      val normalized_left = boolSyntax.rhs
-                        (Thm.concl left_norm')
-                      val normalized_right = boolSyntax.rhs
-                        (Thm.concl right_norm')
-                    in
-                      if Term.aconv normalized_left normalized_right then
-                        finish left_norm' right_norm'
-                      else case Lib.total quantified_boolean_equality
-                          (normalized_left, normalized_right) of
-                        SOME bridge =>
-                          finish (Thm.TRANS left_norm' bridge) right_norm'
-                      | NONE => refine rest (left_norm', right_norm')
-                    end
+              (* Rung 0 is the endpoints themselves: a bridge between equal
+                 middles needs no conversion. *)
+              fun refine rung =
+                if rung > Vector.length conversions then raise ERR "trans"
+                  "canonical middle endpoints have distinct normal forms"
+                else
+                  let
+                    val left_norm' =
+                      normalized accumulated_side middle_left rung
+                    val right_norm' =
+                      normalized (2 + next_side) middle_right rung
+                    val normalized_left = boolSyntax.rhs
+                      (Thm.concl left_norm')
+                    val normalized_right = boolSyntax.rhs
+                      (Thm.concl right_norm')
+                  in
+                    if Term.aconv normalized_left normalized_right then
+                      finish left_norm' right_norm'
+                    else if rung = 0 then refine 1
+                    else case Lib.total quantified_boolean_equality
+                        (normalized_left, normalized_right) of
+                      SOME bridge =>
+                        finish (Thm.TRANS left_norm' bridge) right_norm'
+                    | NONE => refine (rung + 1)
+                  end
             in
-              refine
-                [SmtReplayCanon.cpc_canon_conv,
-                 cpc_integer_spelling_conv,
-                 strong_canon,
-                 SmtReplayCanon.reorient_equality_conv]
-                (Thm.REFL middle_left, Thm.REFL middle_right)
+              refine 0
             end
           fun canonical_orientations () =
             try (fn () => canonical_bridge 1 0) (fn () =>
