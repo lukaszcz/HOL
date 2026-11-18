@@ -55,8 +55,8 @@ sig
   val begin_with_policy : SmtReplayInvocationWork.portfolio ->
     SmtLib_GraphNumericRewriteCatalogue.policy_catalogue -> policy_owner
   (* Additive ordered closed canonical clauses on the SAME
-    original_with_policy Work.
-     The old raw fixed-policy_catalogue path retains its existing behavior. *)
+     original Work.
+     The old raw fixed policy catalogue path retains its existing behavior. *)
   val begin_canonical_with_policy : SmtReplayInvocationWork.portfolio ->
     SmtLib_GraphNumericCanonical.policy_catalogue -> policy_owner
   (* ALL fixed laws: retain forall/conjunction/implication routes. *)
@@ -73,8 +73,7 @@ sig
     {policy_schema : policy_schema,caller : SmtReplayGraph.scope,
      traversal : SmtReplayGraph.scope,target : SmtReplayGraph.closure_child}
     -> policy_result
-  (* Closed conditional policy_instance only. No condition solver or rewrite.
-    *)
+  (* Closed conditional instance only. No condition solver or rewrite. *)
   val instantiate_with_policy : policy_matched ->
     {check_type : Type.hol_type -> unit} -> policy_instance
   val instance_condition_with_policy_for : SmtReplayInvocationWork.portfolio ->

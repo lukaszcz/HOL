@@ -564,7 +564,8 @@ struct
     ((validate_for expected value;
       P.validate_closed_fact graph traversal
         (#template_limit (W.semantic_limits expected)) proof;proof)
-     handle primary => (W.close expected;raise primary))  fun pattern_for expected (Schema
+     handle primary => (W.close expected;raise primary))
+  fun pattern_for expected (Schema
       {owner=owner as Owner {work,graph,scope,...},whole,left,right,...}) =
     ((if Portable.pointer_eq (expected,work) then () else
         raise ERR "pattern_for" "foreign expected Work";
@@ -646,7 +647,8 @@ struct
     fun scope (PolicyOwner {scope,...}) = scope
     val active = active
     val tick = tick
-    fun spend (PolicyOwner {work,...}) n = W.spend_policy work (IntInf.fromInt n)
+    fun spend (PolicyOwner {work,...}) n =
+      W.spend_policy work (IntInf.fromInt n)
     val err = ERR
   end)
   open Walk
@@ -900,7 +902,7 @@ struct
       missing_arguments = List.filter (fn b =>
         not (List.exists (fn (k,_) => b = k) arguments)) (binders @ free),
       target = node target,output = output} end
-  (* This derives a closed CONDITIONAL policy_instance. The literal first-order
+  (* This derives a closed CONDITIONAL instance. The literal first-order
      route does not claim Cond_rewr's orientation/condition solver policy. *)
   fun instantiate_with_policy (value as PolicyMatch {policy_owner =
     policy_owner as PolicyOwner
@@ -981,12 +983,12 @@ struct
                 "prospective policy_instance exceeds quota"
         in forecasts := full :: !forecasts;p end
       val initial = profile [] whole
-      (* Genuine whole original_with_policy/canonical bridge: TRANS equality
+      (* Genuine whole original/canonical bridge: TRANS equality
         then EQ_MP.
          Alpha-only metadata does not authorize an arbitrary semantic pair. *)
       val _ = record [] (equality initial)
       val _ = record [] initial
-      val _ = record [] initial (* INST_TYPE policy_result *)
+      val _ = record [] initial (* INST_TYPE result *)
       val free_substitutions = List.mapPartial (fn binder =>
         case find (op =) binder arguments of
           NONE => NONE
@@ -1076,7 +1078,7 @@ struct
       val _ = record [] (equality final) (* genuine G import bridge *)
       val _ = record [] (equality final) (* genuine G opened bridge *)
       val _ = record [] (equality final) (* P retained bridge TRANS *)
-      val _ = record [] final (* original_with_policy closed recording EQ_MP *)
+      val _ = record [] final (* original closed recording EQ_MP *)
       val quote = List.foldl (fn (p,n) =>
           n + #raw p + #inc p + #ann p) (0 : IntInf.int) (!forecasts)
       val _ = if quote <= limit andalso
@@ -1088,14 +1090,14 @@ struct
         (validate_with_policy_for work value;
          let val policy_result = action ()
          in validate_with_policy_for work value;policy_result end)
-      (* No future type constructor, policy or proof before all policy_result
+      (* No future type constructor, policy or proof before all result
          grammars and repeated annotations have been prepared/debited. *)
       val substitution = List.map
         (fn (redex,residue) => {redex = redex,residue = residue}) types
       val checked_types = List.map (fn ty =>
         guard (fn () => Type.type_subst substitution ty)) (!annotations) @
           !actual_annotations
-      (* Domains are ONLY original_with_policy free-variable nodes; ranges
+      (* Domains are ONLY original free-variable nodes; ranges
         come ONLY
          from this completed match. No caller substitution is admitted.
          Detect collapsed free domains before policy/INST_TYPE/INST. *)
@@ -1219,8 +1221,8 @@ struct
     ((validate_with_policy_for expected value;
       P.validate_closed_fact_with_policy graph traversal
         (#template_limit (W.semantic_policy expected)) proof;proof)
-     handle primary => (W.close expected;raise primary))  fun
-       pattern_with_policy_for expected (PolicySchema
+     handle primary => (W.close expected;raise primary))
+  fun pattern_with_policy_for expected (PolicySchema
       {policy_owner=policy_owner as PolicyOwner
         {work,graph,scope,...},whole,left,right,...}) =
     ((if Portable.pointer_eq (expected,work) then () else

@@ -1,6 +1,6 @@
 (* Separate context matcher: actual Hyp variables/types are rigid.
    Scalar and explicit quantified routes only; HO need is never no-match. *)
-(* Pure graph/type preparation for the exact fixed numeric law catalogue.
+(* Pure graph/type preparation for the local-context rule catalogue.
    Matching is not Cond_rewr orientation, a condition proof or an INST plan. *)
 structure SmtLib_LocalContextRuleMatch :> SmtLib_LocalContextRuleMatch =
 struct
