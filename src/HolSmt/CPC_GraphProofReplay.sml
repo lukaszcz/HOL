@@ -1468,6 +1468,23 @@ struct
                    operands=operands graph,child_provenance=child_provenance,
                    one_provenance=one_provenance,negative=negative,
                    positive=positive,disjoin=disjoin}
+            | SOME CPC_SharedReplayPlan.SimpleNotIteElim1 =>
+                CPC_SharedReplayPlan.not_ite_elim1
+                  {same_constant=same_constant graph,one=one,atom=atom,
+                   negated=negated graph,operands=operands graph,
+                   child_provenance=child_provenance,
+                   one_provenance=one_provenance,
+                   negation_provenance=negation_provenance,
+                   negative=negative,disjoin=disjoin,error=ERR} handler
+            | SOME CPC_SharedReplayPlan.SimpleNotIteElim2 =>
+                CPC_SharedReplayPlan.not_ite_elim2
+                  {same_constant=same_constant graph,one=one,atom=atom,
+                   negated=negated graph,operands=operands graph,
+                   child_provenance=child_provenance,
+                   one_provenance=one_provenance,
+                   negation_provenance=negation_provenance,
+                   negative=negative,positive=positive,disjoin=disjoin,
+                   error=ERR} handler
             | SOME CPC_SharedReplayPlan.SimpleNotAnd =>
                 let
                   fun produced_entries work body =

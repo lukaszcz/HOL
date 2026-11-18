@@ -36,6 +36,8 @@ sig
     | SimpleNotEquivElim2
     | SimpleIteElim1
     | SimpleIteElim2
+    | SimpleNotIteElim1
+    | SimpleNotIteElim2
     | SimpleNotAnd
   val simple_boolean : (string * string -> bool) -> string ->
     simple_boolean option
@@ -312,6 +314,31 @@ sig
      negative:'node -> CPC_Proof.term_provenance -> 'literal,
      positive:'node -> CPC_Proof.term_provenance -> 'literal,
      disjoin:'literal list -> 'fact} -> 'fact
+  val not_ite_elim1 :
+    {same_constant:'node -> Term.term -> bool,one:unit -> 'node,
+     atom:'node -> 'fact,negated:'node -> 'node option,
+     operands:Term.term -> int -> 'node -> 'node list,
+     child_provenance:string -> int -> CPC_Proof.term_provenance ->
+       CPC_Proof.term_provenance list,
+     one_provenance:unit -> CPC_Proof.term_provenance,
+     negation_provenance:CPC_Proof.term_provenance ->
+       CPC_Proof.term_provenance,
+     negative:'node -> CPC_Proof.term_provenance -> 'literal,
+     disjoin:'literal list -> 'fact,error:string -> string -> exn} ->
+    string -> 'fact
+  val not_ite_elim2 :
+    {same_constant:'node -> Term.term -> bool,one:unit -> 'node,
+     atom:'node -> 'fact,negated:'node -> 'node option,
+     operands:Term.term -> int -> 'node -> 'node list,
+     child_provenance:string -> int -> CPC_Proof.term_provenance ->
+       CPC_Proof.term_provenance list,
+     one_provenance:unit -> CPC_Proof.term_provenance,
+     negation_provenance:CPC_Proof.term_provenance ->
+       CPC_Proof.term_provenance,
+     negative:'node -> CPC_Proof.term_provenance -> 'literal,
+     positive:'node -> CPC_Proof.term_provenance -> 'literal,
+     disjoin:'literal list -> 'fact,error:string -> string -> exn} ->
+    string -> 'fact
   val and_elim :
     {require_one:string -> 'premise list -> 'premise,
      node:'premise -> 'node,provenance:'premise -> 'provenance,

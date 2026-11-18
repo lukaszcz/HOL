@@ -77,6 +77,8 @@ struct
     | SimpleNotEquivElim2
     | SimpleIteElim1
     | SimpleIteElim2
+    | SimpleNotIteElim1
+    | SimpleNotIteElim2
     | SimpleNotAnd
   fun simple_boolean equal handler =
     if equal(handler,"and_intro") then SOME SimpleAndIntro
@@ -92,6 +94,8 @@ struct
     else if equal(handler,"not_equiv_elim2")then SOME SimpleNotEquivElim2
     else if equal(handler,"ite_elim1")then SOME SimpleIteElim1
     else if equal(handler,"ite_elim2")then SOME SimpleIteElim2
+    else if equal(handler,"not_ite_elim1")then SOME SimpleNotIteElim1
+    else if equal(handler,"not_ite_elim2")then SOME SimpleNotIteElim2
     else if equal(handler,"not_and")then SOME SimpleNotAnd
     else NONE
   datatype simple_equality = SimpleRefl | SimpleSymm | SimpleTrans
@@ -583,6 +587,37 @@ struct
           (child_provenance "ite" 3 (one_provenance ()))
     in disjoin [positive condition condition_prov,
                 positive no no_prov] end
+  fun not_ite_elim1
+      {same_constant,one,atom,negated,operands,child_provenance,
+       one_provenance,negation_provenance,negative,disjoin,error} handler =
+    if same_constant (one ()) boolSyntax.T then
+      atom (one ()) else
+    let val conditional = case negated (one ()) of
+            SOME body => body
+          | NONE => raise error handler "expected negation"
+        val (condition,yes,_) = triple_of handler
+          (operands boolSyntax.conditional 3 conditional)
+        val (condition_prov,yes_prov,_) = triple_of handler
+          (child_provenance "ite" 3
+             (negation_provenance (one_provenance ())))
+    in disjoin [negative condition condition_prov,
+                negative yes yes_prov] end
+  fun not_ite_elim2
+      {same_constant,one,atom,negated,operands,child_provenance,
+       one_provenance,negation_provenance,negative,positive,disjoin,error}
+      handler =
+    if same_constant (one ()) boolSyntax.T then
+      atom (one ()) else
+    let val conditional = case negated (one ()) of
+            SOME body => body
+          | NONE => raise error handler "expected negation"
+        val (condition,_,no) = triple_of handler
+          (operands boolSyntax.conditional 3 conditional)
+        val (condition_prov,_,no_prov) = triple_of handler
+          (child_provenance "ite" 3
+             (negation_provenance (one_provenance ())))
+    in disjoin [positive condition condition_prov,
+                negative no no_prov] end
   fun and_elim {require_one,node,provenance,selected,current,error}
       premises arguments =
     let val premise=require_one "and_elim" premises
