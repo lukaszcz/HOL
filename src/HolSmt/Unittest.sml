@@ -18782,6 +18782,10 @@ in
     "CPC not_ite_elim1 did not produce the not-condition-or-not-then clause");
   assert (Thm.concl thm2 ~~ ``(p:bool) \/ ~(r:bool)``,
     "CPC not_ite_elim2 did not produce the condition-or-not-else clause");
+  assert (List.all (fn th => case Thm.hyp th of
+                [h] => h ~~ ``~(if (p:bool) then (q:bool) else r)``
+              | _ => false) [thm1, thm2],
+    "CPC not_ite_elim replay changed its hypotheses");
   check_oracle_tags "CPC not_ite_elim1 replay" thm1;
   check_oracle_tags "CPC not_ite_elim2 replay" thm2;
   expect_hol_error_contains "CPC not_ite_elim1 non-negated fail closed"

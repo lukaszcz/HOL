@@ -247,8 +247,8 @@ Bugs fixed
     uninterpreted function of `a`, so goals that depend on its value are
     refused.
 
--   HolSmt's proof replay no longer fails or runs without bound on some
-    large goals.  `CVC_TAC` replays cvc5 1.3's `not_ite_elim1` and
+-   HolSmt's proof replay no longer fails on some correct steps of large
+    goals.  `CVC_TAC` replays cvc5 1.3's `not_ite_elim1` and
     `not_ite_elim2` steps, and replays `quant-miniscope-or` structurally, so
     correct steps no longer fail to normalize.  Datatype exhaustiveness in
     replay stops after 256 case splits per attempt instead of searching
