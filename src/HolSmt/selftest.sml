@@ -79946,7 +79946,7 @@ local
         assumed
       val outcome=fixture assumptions goal
         (fn e=>Exn.capture(fn()=>(op using) e
-           (CE.proof_text row lits(SOME(#declared row)))(fn _=>())
+           (CE.proof_text row lits CE.Declared)(fn _=>())
            (fn _=>fn _=>fn prepared=>
               let val result=proved(Final.finish_with_policy(#work e)
                     (ready prepared))

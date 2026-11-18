@@ -10,7 +10,9 @@
      that the string_named_obligations group uses; its CommandEnd events
      report the literal and provenance that discovery inferred;
    - the owned Value consumer, in selftest postlude 417, which reads the
-     rows and bindings from here and also checks its charged Work. *)
+     rows and bindings from here and checks verdicts, dependencies, the
+     recorded OR boundary and refusals (its charged Work is harvested out
+     of tree, not checked). *)
 structure CPC_ClausalEliminationTests =
 struct
   open HolKernel boolLib
@@ -35,9 +37,14 @@ struct
      assumed refuted, and [result] is what remains. Resolution reads the
      clause's recorded OR boundary, so it is accepted only when the owned
      consumer recorded the clause as an OR of its literals. *)
+  datatype family = Implication | Equivalence | Conditional
+  (* What a row exercises; checks select rows by it, never by label. *)
+  datatype case_kind = ValidPremise | AtomicLeafPremise | WrongOperand
+    | NoNegation | PremiseIsT | BadArity | ReversedClause | OrBoundary
   type follow = {unit : literal,result : literal}
   type row =
-    {label : string,rule : string,premise : string,term : term,
+    {label : string,rule : string,family : family,kind : case_kind,
+     premise : string,term : term,
      (* The clause the rule derives from a valid premise, as text: the
         owned consumer needs a declared conclusion. *)
      declared : string,
@@ -84,8 +91,6 @@ struct
   (* ---------------------------------------------------------------- *)
   (* Table                                                            *)
   (* ---------------------------------------------------------------- *)
-
-  datatype family = Implication | Equivalence | Conditional
 
   (* Operands, as (text,term,provenance); the letters follow the plan
      table: a, b for implication and equivalence; c, a, b for ITE. *)
@@ -163,8 +168,9 @@ struct
       | (Equivalence,_,_) => "expected relation premise"
       | _ => "incorrect rule operand constructor"
 
-  fun row label rule premise term declared outcome owned : row =
-    {label=rule ^ ": " ^ label,rule=rule,premise=premise,term=term,
+  fun row label kind family rule premise term declared outcome owned : row =
+    {label=rule ^ ": " ^ label,rule=rule,family=family,kind=kind,
+     premise=premise,term=term,
      declared=declared,follow=NONE,term_replay=SOME outcome,
      graph=SOME outcome,owned=SOME owned}
 
@@ -197,30 +203,33 @@ struct
           val declared = clause_text lits
           fun refuse kind = (Refuse (refusal family negated kind),
             Refuse (owned_refusal family negated kind))
-          fun row' label premise term declared (outcome,owned) =
-            row label rule premise term declared outcome owned
-          val valid = row' "valid premise" premise premise_term declared
+          fun row' label kind premise term declared (outcome,owned) =
+            row label kind family rule premise term declared outcome owned
+          val valid = row' "valid premise" ValidPremise premise
+            premise_term declared
             (Accept lits,Accept lits)
           (* The owned consumer cannot read the left literal of a negated
              implication from an atomic leaf. *)
           val flat = List.map flatten lits
           val leaf = {label=rule ^ ": atomic premise provenance",rule=rule,
-            premise=atomic_name,term=premise_term,declared=declared,
+            family=family,kind=AtomicLeafPremise,premise=atomic_name,
+            term=premise_term,declared=declared,
             follow=NONE,term_replay=NONE,graph=SOME (Accept flat),
             owned=SOME (if rule = "not_implies_elim1" then
               Refuse "declared rule endpoint differs" else Accept flat)}
-          val wrong = row' "wrong constructor" wrong_text wrong_term
-            declared (refuse Wrong)
-          val missing = row' "missing negation" text term declared
+          val wrong = row' "wrong constructor" WrongOperand wrong_text
+            wrong_term declared (refuse Wrong)
+          val missing = row' "missing negation" NoNegation text term declared
             (refuse Missing)
-          val to_t = row' "premise reduced to T" "true" T "true"
+          val to_t = row' "premise reduced to T" PremiseIsT "true" T "true"
             (if family = Conditional then (reduced,reduced)
              else if family = Equivalence andalso not negated then
                (reduced,Refuse (owned_refusal family negated ReducedToT))
              else refuse ReducedToT)
           val reversed = if List.length lits < 2 then [] else
             [{label=rule ^ ": reversed declared clause",rule=rule,
-              premise=premise,term=premise_term,
+              family=family,kind=ReversedClause,premise=premise,
+              term=premise_term,
               declared=clause_text (List.rev lits),follow=NONE,
               term_replay=NONE,
               graph=NONE,
@@ -234,7 +243,8 @@ struct
           val observed = case lits of
               [first,second] =>
                 [{label=rule ^ ": recorded OR boundary resolves",rule=rule,
-                  premise=premise,term=premise_term,declared=declared,
+                  family=family,kind=OrBoundary,premise=premise,
+                  term=premise_term,declared=declared,
                   follow=SOME {unit=first,result=second},term_replay=NONE,
                   graph=NONE,owned=SOME (Accept lits)}]
             | _ => []
@@ -246,14 +256,15 @@ struct
                       boolSyntax.mk_imp (q,q)))
                   val lits = List.map flatten (rule_literals
                     {a=a,b=nested,c=a,y=a,n=a} rule)
-                in [row "malformed arity (three operands)" rule text term
+                in [row "malformed arity (three operands)" BadArity family rule
+                     text term
                      (clause_text lits) (Accept lits) (Accept lits)] end
             | Equivalence =>
                 let
                   val (text,term) = wrap ("(= p r q)",
                     boolSyntax.mk_conj (boolSyntax.mk_eq (p,r),
                       boolSyntax.mk_eq (r,q)))
-                in [row' "malformed arity (chained equality)" text
+                in [row' "malformed arity (chained equality)" BadArity text
                      term declared (refuse Chained)] end
             (* The parser cannot build a conditional with another operand
                count: (ite ..) is checked for exactly three arguments, so
@@ -312,12 +323,13 @@ struct
   (* The proof assumes the premise, assumes the refutation of each literal
      the proof is expected to end with, infers the clause, applies the
      row's follow-up step if any, and closes with CONTRA. Without
-     [declared] the steps carry no conclusion, so the graph consumer
+     Inferred the steps carry no conclusion, so the graph consumer
      reports the provenance it inferred (a declared conclusion would
-     replace it). With [declared] = SOME clause the conclusions are
-     declared, as the owned consumer requires, and checked against the
+     replace it). With Declared the conclusions are declared, as the owned
+     consumer requires (the row's clause), and checked against the
      literals in their exact order. *)
-  fun proof_text (row:row) lits (declared : string option) =
+  datatype conclusions = Inferred | Declared
+  fun proof_text (row:row) lits mode =
     let
       val final = final_literals row lits
       val refuted = List.map refutation final
@@ -326,10 +338,9 @@ struct
       val assumes = ListPair.map (fn (name,lit) =>
         "(assume " ^ name ^ " " ^ literal_text lit ^ ") ")
         (names,refuted)
-      fun conclusion text = case declared of SOME _ => text ^ " "
-        | NONE => ""
-      val step = "(step @clause " ^
-        conclusion (case declared of SOME text => text | NONE => "") ^
+      fun conclusion text = case mode of Declared => text ^ " "
+        | Inferred => ""
+      val step = "(step @clause " ^ conclusion (#declared row) ^
         ":rule " ^ #rule row ^ " :premises (@input))"
       val follow = case #follow row of NONE => ""
         | SOME {result,...} =>
@@ -365,7 +376,7 @@ struct
               inferred := SOME (G.representative graph node,provenance)
             else ()
         | observer _ = ()
-      val input = TextIO.openString (proof_text row lits NONE)
+      val input = TextIO.openString (proof_text row lits Inferred)
       fun run () =
         let
           val packet = Q.parse_graph_packet_with_version
@@ -486,25 +497,27 @@ struct
   (* Literals, their order and provenance as discovery infers them, and
      the proof still closing to a contradiction over the original
      assumptions and the denied goal. *)
+  fun graph_accepted (row:row) provenance_of lits
+      {clause,hyps,provenance,closed} =
+    (require (#label row ^ ": graph literal " ^ term_to_string clause
+       ^ " not " ^ term_to_string (clause_term lits))
+       (aconv clause (clause_term lits));
+     require (#label row ^ ": graph provenance " ^
+       (case provenance of NONE => "none"
+         | SOME p => show_provenance p) ^ " not " ^
+       show_provenance (provenance_of lits))
+       (provenance = SOME (provenance_of lits));
+     require (#label row ^ ": graph proof did not close") closed;
+     require (#label row ^ ": graph proof used a foreign hypothesis")
+       (subset hyps (boolSyntax.mk_neg boolSyntax.F :: #term row ::
+          List.map (literal_term o refutation) (final_literals row lits))))
+
   fun check_graph vars (row:row) = case #graph row of
       NONE => ()
     | SOME expected =>
         check_outcome (#label row) expected
           (graph_consumer vars row (literals (#graph row)))
-          (fn lits => fn {clause,hyps,provenance,closed} =>
-            (require (#label row ^ ": graph literal " ^ term_to_string clause
-               ^ " not " ^ term_to_string (clause_term lits))
-               (aconv clause (clause_term lits));
-             require (#label row ^ ": graph provenance " ^
-               (case provenance of NONE => "none"
-                 | SOME p => show_provenance p) ^ " not " ^
-               show_provenance (clause_provenance lits))
-               (provenance = SOME (clause_provenance lits));
-             require (#label row ^ ": graph proof did not close") closed;
-             require (#label row ^ ": graph proof used a foreign hypothesis")
-               (subset hyps (boolSyntax.mk_neg boolSyntax.F :: #term row ::
-                  List.map (literal_term o refutation)
-                    (final_literals row lits)))))
+          (fn lits => graph_accepted row clause_provenance lits)
 
   (* equiv_elim's term rule derives its clause when the premise is an
      equality and otherwise defers to the declared conclusion: a
@@ -580,22 +593,12 @@ struct
   (* The conditional rules over a constructed occurrence. *)
   fun constructed_ite_occurrence vars table =
     List.app (fn (row:row) =>
-      if #rule row <> "ite_elim1" andalso #rule row <> "ite_elim2" andalso
-         #rule row <> "not_ite_elim1" andalso #rule row <> "not_ite_elim2"
-         orelse #label row <> #rule row ^ ": valid premise" then ()
+      if #family row <> Conditional orelse #kind row <> ValidPremise then ()
       else
         let val lits = literals (#graph row)
-        in case graph_consumer_with truncate_premise_occurrence vars row
-                  lits of
-               Derived {clause,provenance,...} =>
-                 require (#label row ^ ": constructed occurrence gave " ^
-                   term_to_string clause ^ " | " ^ (case provenance of
-                     NONE => "none" | SOME p => show_provenance p))
-                   (aconv clause (clause_term lits) andalso
-                    provenance = SOME (clause_provenance
-                      (List.map flatten lits)))
-             | Declined text => raise Fail (#label row ^
-                 ": constructed occurrence refused: " ^ text)
+        in check_outcome (#label row) (Accept lits)
+             (graph_consumer_with truncate_premise_occurrence vars row lits)
+             (graph_accepted row (clause_provenance o List.map flatten))
         end) table
 
   fun run () =
