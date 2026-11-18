@@ -616,7 +616,13 @@ struct
         val _ = List.app (List.app call) generated
     in call end
 
-  fun compose {first,second,ordinal,check_type} =
+  (* The shared composition worker. Each caller passes the focus and
+     conversion operations of its own owner type; the order of every
+     validation, reservation and callback is fixed here. *)
+  fun compose_with {peek_initial,work_of,require_owner,validate,
+                    target_focus,node,scope,inventory,reserve,equation,
+                    policies,graph_of,theorem_of,invoke,checked}
+      {first,second,ordinal,check_type} =
     let val initial = peek_initial first
         val work = work_of initial
     in protected work (fn () =>
@@ -637,13 +643,22 @@ struct
             | _ => raise ERR "compose" "internal size portfolio"
           val _ = reserve initial ordinal b [equation a b]
           fun all () = (guard ();held ())
-          val graph = #graph (owner_of initial)
+          val graph = graph_of initial
           val _ = policies initial all types
             [G.type_of graph (node initial)] ordinal 0 check_type
           val theorem = invoke initial (fn () => Thm.TRANS
-            (#theorem (endpoints first)) (#theorem (endpoints second)))
+            (theorem_of first) (theorem_of second))
           val _ = all ()
       in checked (initial,target,theorem,all) end) end) end
+  val compose = compose_with
+    {peek_initial = peek_initial,work_of = work_of,
+     require_owner = require_owner,validate = validate,
+     target_focus = target_focus,node = node,scope = scope,
+     inventory = inventory,reserve = reserve,equation = equation,
+     policies = policies,
+     graph_of = fn focus => #graph (owner_of focus),
+     theorem_of = fn conversion => #theorem (endpoints conversion),
+     invoke = invoke,checked = checked}
 
   fun prepare_application {parent,left,right,ordinal,check_type} =
     W.with_step (work_of parent) (fn () =>
@@ -1821,34 +1836,15 @@ struct
         val _=guard ()
     in (total,guard) end
 
-  fun compose {first,second,ordinal,check_type} =
-    let val initial = peek_initial first
-        val work = work_of initial
-    in protected work (fn () =>
-      let val next = peek_initial second
-          val _ = require_owner initial next
-          val _ = validate first
-          val _ = validate second
-          val middle = target_focus first val target = target_focus second
-          fun guard () = (validate first;validate second)
-      in W.with_step work (fn () =>
-      let val _ = guard ()
-          val _ = if node middle = node next andalso
-              scope initial = scope next then () else
-            raise ERR "compose" "different exact middle node/frame"
-          val (sizes,types,held) = inventory initial
-            [node initial,node target]
-          val (a,b) = case sizes of [a,b] => (a,b)
-            | _ => raise ERR "compose" "internal size portfolio"
-          val _ = reserve initial ordinal b [equation a b]
-          fun all () = (guard ();held ())
-          val graph = #graph (owner_of initial)
-          val _ = policies initial all types
-            [G.type_of graph (node initial)] ordinal 0 check_type
-          val theorem = invoke initial (fn () => Thm.TRANS
-            (#theorem (endpoints first)) (#theorem (endpoints second)))
-          val _ = all ()
-      in checked (initial,target,theorem,all) end) end) end
+  val compose = compose_with
+    {peek_initial = peek_initial,work_of = work_of,
+     require_owner = require_owner,validate = validate,
+     target_focus = target_focus,node = node,scope = scope,
+     inventory = inventory,reserve = reserve,equation = equation,
+     policies = policies,
+     graph_of = fn focus => #graph (owner_of focus),
+     theorem_of = fn conversion => #theorem (endpoints conversion),
+     invoke = invoke,checked = checked}
 
   fun prepare_application {parent,left,right,ordinal,check_type} =
     W.with_step (work_of parent) (fn () =>
