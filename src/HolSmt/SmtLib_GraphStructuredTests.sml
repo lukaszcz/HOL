@@ -95,10 +95,10 @@ struct
         val result=Exn.capture (fn () => action graph backend) ()
         val _=G.close_scope graph scope
     in Exn.release result end
-  fun with_values action =
+  fun with_values_spending spend action =
     let val graph=G.new () val scope=G.root_scope graph
         val context=PV.create {graph=graph,scope=scope,
-          validate=fn () => (),spend=fn _ => (),retire=fn () => ()}
+          validate=fn () => (),spend=spend,retire=fn () => ()}
         val held=B.values_with_policy {context=context,graph=graph,
           scope=scope,import_limit=policy_maximum,
           literal_limit=policy_maximum,binder_limit=policy_maximum}
@@ -106,6 +106,7 @@ struct
           action graph context (#backend held)) ()
         val _=(#close held) () val _=G.close_scope graph scope
     in Exn.release result end
+  fun with_values action = with_values_spending (fn _ => ()) action
 
   (* Test-only interpretation, AFTER an unfolded binder-inclusive bound.
      Never use this helper on the shared-DAG resource controls. *)
@@ -1701,7 +1702,7 @@ struct
     | C.Apply (f,x) => "("^source_text f^" "^source_text x^")"
     | C.Abstract (term,body) =>
         "(\\"^Hol_pp.term_to_string term^". "^source_text body^")"
-  fun receipt interpret entry backend solver text =
+  fun receipt trace interpret entry backend solver text =
     let
       val consumed=ref 0
       val next=tokens text
@@ -1720,15 +1721,20 @@ struct
         handle Feedback.HOL_ERR e => "REFUSE "^Feedback.top_structure_of e^
           "."^Feedback.top_function_of e^": "^Feedback.message_of e
         | exn => "EXN "^General.exnName exn^": "^General.exnMessage exn
-    in outcome^" TOKENS "^Int.toString (!consumed) end
+    in outcome^" TOKENS "^Int.toString (!consumed)^trace () end
   fun accepted receipt = String.isPrefix "ACCEPT" receipt
   fun graph_receipt entry solver text =
     with_graph (case entry of IntEntry _ => false | PolicyEntry _ => true)
       (fn graph => fn backend =>
-        receipt (small_graph graph) entry backend solver text)
+        receipt (fn () => "") (small_graph graph) entry backend solver text)
+  (* The Value context records every syntax charge, in order. *)
   fun value_receipt entry solver text =
-    with_values (fn _ => fn context => fn backend =>
-      receipt (small_value context) entry backend solver text)
+    let val spent=ref []
+    in with_values_spending (fn amount => spent := amount :: !spent)
+         (fn _ => fn context => fn backend =>
+           receipt (fn () => " SPENDS "^String.concatWith ","
+               (List.map IntInf.toString (List.rev (!spent))))
+             (small_value context) entry backend solver text) end
   (* Least int index limit that admits every index literal of text. *)
   fun index_budget solver text =
     let fun search low high = if high-low <= 1 then high else
@@ -1742,10 +1748,13 @@ struct
   fun refused_by_index_limit receipt =
     String.isSubstring "index literal exceeds its bounded import contract"
       receipt
+  datatype session_outcome =
+      Session_value of Term.term | Session_refused of string
   fun index_limit_parity solver text =
     let
       val original=ordinary solver text
       val budget=index_budget solver text
+      val _=print ("SOURCED_BUDGET "^text^" "^Int.toString budget^"\n")
       fun both limit =
         let val int_entry=IntEntry limit
             val policy_entry=PolicyEntry (RP.AtMost (IntInf.fromInt limit))
@@ -1753,20 +1762,26 @@ struct
             val graph_policy=graph_receipt policy_entry solver text
             val value_int=value_receipt int_entry solver text
             val value_policy=value_receipt policy_entry solver text
-        in ensure ("ordinary graph entries differ: "^text^"\n"^graph_int^
+        in print ("SOURCED_RECEIPT "^text^" limit="^Int.toString limit^
+             "\n  graph "^graph_int^"\n  value "^value_int^"\n");
+           ensure ("ordinary graph entries differ: "^text^"\n"^graph_int^
                    "\n"^graph_policy) (graph_int=graph_policy);
            ensure ("typed Value entries differ: "^text^"\n"^value_int^
                    "\n"^value_policy) (value_int=value_policy);
            (graph_int,value_int) end
       fun session limit =
         let
-          val recipe={template_limit=RP.AtMost 4096,
+          val recipe={template_limit=(#template_limit policy),
             index_limit=RP.AtMost (IntInf.fromInt limit),
-            operand_limit=RP.AtMost 256,token_limit=RP.AtMost 256}
+            operand_limit=(#operand_limit policy),
+            token_limit=(#token_limit policy)}
         in with_values (fn graph => fn context => fn backend =>
-          (SOME (small_value context (#node ((#parse_from
+          (Session_value (small_value context (#node ((#parse_from
              (value_session_at recipe graph context backend solver))
-             (tokens text)))) handle Feedback.HOL_ERR e => NONE)) end
+             (tokens text)))) handle Feedback.HOL_ERR e =>
+               (print ("SOURCED_SESSION "^text^" limit="^Int.toString limit^
+                  " "^Feedback.message_of e^"\n");
+                Session_refused (Feedback.message_of e)))) end
       val (admitted_graph,admitted_value)=both budget
       val (refused_graph,refused_value)=both (budget-1)
       val _=ensure ("budget admission: "^text)
@@ -1776,10 +1791,15 @@ struct
          refused_by_index_limit refused_value andalso
          not (accepted refused_graph) andalso not (accepted refused_value))
       val _=case session budget of
-          SOME term => bridge original term
-        | NONE => raise Fail ("value session refused exact budget: "^text)
-      val _=ensure ("value session accepted an over-budget index: "^text)
-        (not (Option.isSome (session (budget-1))))
+          Session_value term => bridge original term
+        | Session_refused message => raise Fail
+            ("value session refused exact budget: "^text^": "^message)
+      val _=case session (budget-1) of
+          Session_value _ => raise Fail
+            ("value session accepted an over-budget index: "^text)
+        | Session_refused message => ensure
+            ("value session refusal is not the index limit: "^message)
+            (refused_by_index_limit message)
     in budget end
   (* Policy entry only: an Uncapped limit and a finite cap wider than int
      both admit the literal, with the receipt of an ample int limit. *)
@@ -1787,12 +1807,14 @@ struct
     let
       val reference=graph_receipt (IntEntry 256) solver text
       val wide=IntInf.fromInt (valOf Int.maxInt)+1
-      val _=ensure ("policy-only reference admits: "^text) (accepted reference)
+      val value_reference=value_receipt (IntEntry 256) solver text
+      val _=ensure ("policy-only reference admits: "^text)
+        (accepted reference andalso accepted value_reference)
       fun check limit =
         (ensure ("policy graph limit differs: "^text)
            (graph_receipt (PolicyEntry limit) solver text = reference);
          ensure ("policy Value limit differs: "^text)
-           (accepted (value_receipt (PolicyEntry limit) solver text)))
+           (value_receipt (PolicyEntry limit) solver text = value_reference))
     in List.app check [RP.Uncapped,RP.AtMost wide,RP.AtMost (wide*wide)] end
   fun sourced_index_limits () =
     let val texts=["((_ divisible 300) 6)","((_ extract 7 0) #x0F)",
