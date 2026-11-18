@@ -29769,11 +29769,11 @@ let
     handle Feedback.HOL_ERR holerr => holerr
   val fallback_called = ref false
   val propagated =
-    ((ignore (Z3_ProofReplay.hypothesis_char_next_route_for_test
-        (fn () => raise Feedback.HOL_ERR gate)
-        (fn () =>
-          (fallback_called := true;
-           Thm.ASSUME boolSyntax.T)));
+    ((ignore (Z3_ProofReplay.hypothesis_theorem_with_for_test
+        (fn _ => false) (fn _ => true)
+        (fn _ => raise Feedback.HOL_ERR gate)
+        (fn term => (fallback_called := true; Thm.ASSUME term))
+        boolSyntax.T);
       NONE)
      handle Feedback.HOL_ERR holerr => SOME holerr)
 in
@@ -30047,7 +30047,6 @@ let
        "String" "task21-route-probe" maximum (maximum + 1);
      die "FAIL: TASK21 route probe did not gate")
     handle Feedback.HOL_ERR holerr => holerr
-  val ordinary_ERR = Feedback.mk_HOL_ERR "Task21RouteProbe"
   fun check_gate label expected run fallback_called =
     let
       val propagated =
@@ -30064,18 +30063,6 @@ let
            assert (not (!fallback_called),
              label ^ " entered a later route after the resource gate"))
     end
-  val primary_fallback = ref false
-  val () = check_gate "String primary route" expected
-    (fn () => ignore (Z3_ProofReplay.string_th_lemma_next_route_for_test
-      (fn () => raise Feedback.HOL_ERR gate)
-      (fn () => primary_fallback := true))) primary_fallback
-  val final_fallback = ref false
-  val () = check_gate "String contextual route" expected
-    (fn () => ignore (Z3_ProofReplay.string_th_lemma_next_route_for_test
-      (fn () => raise ordinary_ERR "primary" "ordinary route decline")
-      (fn () => Z3_ProofReplay.string_th_lemma_next_route_for_test
-        (fn () => raise Feedback.HOL_ERR gate)
-        (fn () => final_fallback := true)))) final_fallback
   fun char_bit index character =
     ``char_bit ^(numSyntax.mk_numeral (Arbnum.fromInt index))
         (w2n ^character)``
@@ -30130,7 +30117,7 @@ let
   val char_admission_fallback = ref false
   val () = check_gate "Character family admission"
     char_admission_expected
-    (fn () => ignore (Z3_ProofReplay.string_th_lemma_next_route_for_test
+    (fn () => ignore (SmtResource.or_else
       (fn () => ignore
         (SmtStringProve.char_word_expansion_domain oversized_shared))
       (fn () => char_admission_fallback := true)))
@@ -30138,7 +30125,7 @@ let
   val no_match_fallback = ref false
   val () = check_gate "Character no-match admission"
     char_admission_expected
-    (fn () => ignore (Z3_ProofReplay.string_th_lemma_next_route_for_test
+    (fn () => ignore (SmtResource.or_else
       (fn () => ignore
         (SmtStringProve.char_word_expansion_domain oversized_no_match))
       (fn () => no_match_fallback := true)))
@@ -37790,7 +37777,8 @@ let
   fun counted x = (calls := !calls + 1; x)
   fun same_err (Feedback.HOL_ERR a, Feedback.HOL_ERR b) =
         Feedback.message_of a = Feedback.message_of b andalso
-        Feedback.top_structure_of a = Feedback.top_structure_of b
+        Feedback.top_structure_of a = Feedback.top_structure_of b andalso
+        Feedback.top_function_of a = Feedback.top_function_of b
     | same_err _ = false
   val () = calls := 0
   val v = SmtResource.or_else (fn () => 1) (fn () => counted 2)
@@ -37812,12 +37800,17 @@ let
        assert (SmtResource.is_resource_gate e,
          "re-raised gate must still be a resource gate");
        assert (!calls = 0, "or_else ran second after a resource gate"))
+  val second_error = Feedback.mk_HOL_ERR "Unittest" "or_else_second"
+    "second failed"
+  val () = calls := 0
   val () =
     (ignore (SmtResource.or_else (fn () => raise ordinary)
-       (fn () => raise gate));
+       (fn () => (calls := !calls + 1; raise second_error)));
      die "FAIL: or_else hid an error of second")
     handle exn as Feedback.HOL_ERR _ =>
-      assert (same_err (exn, gate), "or_else altered second's error")
+      (assert (same_err (exn, second_error),
+         "or_else altered second's error");
+       assert (!calls = 1, "or_else must run second exactly once"))
   val () = calls := 0
   val () =
     (ignore (SmtResource.or_else (fn () => raise Fail "boom")
