@@ -18,6 +18,8 @@ sig
   val thy         : string -> data list
   val fetch       : string -> string -> thm
   val fetch_knm   : KernelSig.kernelname -> thm
+  (* fetch_knm in the database of the context given *)
+  val fetch_knm_of : Context.t -> KernelSig.kernelname -> thm
   val lookup      : KernelSig.kernelname -> DB_dtype.data_value option
   val thms        : string -> (string * thm) list
 
