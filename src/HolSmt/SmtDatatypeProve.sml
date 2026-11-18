@@ -36,9 +36,25 @@ struct
 
   fun subterms t = HolKernel.find_terms (fn _ => true) t
 
+  (* The types of [subterms t], in the order a fold over that list adds
+     them.  That list holds every occurrence of a shared subterm, so each
+     distinct subterm is visited once here instead, children before their
+     parent and operands before operators, the list's order. *)
   fun term_types t =
-    List.foldl (fn (tm, acc) => type_closure (Term.type_of tm) acc)
-      [] (subterms t)
+    let
+      fun visit (tm, (seen, tys)) =
+        if HOLset.member (seen, tm) then (seen, tys)
+        else
+          let
+            val seen = HOLset.add (seen, tm)
+            val (seen, tys) =
+              if Term.is_abs tm then visit (Term.body tm, (seen, tys))
+              else if Term.is_comb tm then
+                let val (operator, operand) = Term.dest_comb tm
+                in visit (operator, visit (operand, (seen, tys))) end
+              else (seen, tys)
+          in (seen, type_closure (Term.type_of tm) tys) end
+    in #2 (visit (t, (HOLset.empty Term.compare, []))) end
 
   fun has_constructors ty =
     case TypeBase.fetch ty of
