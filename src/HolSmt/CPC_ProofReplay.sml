@@ -5173,6 +5173,153 @@ local
     SmtResource.contains (fn term =>
       wordsSyntax.is_word_type (Term.type_of term)) target
 
+  (* Whether a word-typed subterm occurs in term, visiting each physical
+     node once. *)
+  fun mentions_word term =
+    let
+      val buckets = 8191
+      val seen = Array.array (buckets, [] : Term.term list)
+      fun visit term =
+        let val index = SmtResource.pointer_bucket buckets term
+            val bucket = Array.sub (seen, index)
+        in
+          if List.exists (fn saved => Portable.pointer_eq (saved, term))
+               bucket then false
+          else
+            (Array.update (seen, index, term :: bucket);
+             wordsSyntax.is_word_type (Term.type_of term) orelse
+             List.exists visit (SmtResource.term_children term))
+        end
+    in visit term end
+
+  (* |- (x + y) ' k = bsum (x ' k) (y ' k) carry_k for each k < width.
+     Each carry_k is built on carry_(k - 1), so the bit theorems share one
+     linear carry chain instead of each unfolding its own. *)
+  fun adder_bits x y width =
+    let
+      val X = Term.rator (fcpSyntax.mk_fcp_index (x, numSyntax.zero_tm))
+      val Y = Term.rator (fcpSyntax.mk_fcp_index (y, numSyntax.zero_tm))
+      val dimension = fcpLib.DIMINDEX (Arbnum.fromInt width)
+      fun next_carry (n, previous) =
+        let
+          val unfolded = Conv.CONV_RULE (Conv.LAND_CONV
+            (Conv.RATOR_CONV (Conv.RATOR_CONV (Conv.RATOR_CONV
+              (Conv.RAND_CONV numLib.REDUCE_CONV)))))
+            (Drule.SPECL [numSyntax.term_of_int n, X, Y, boolSyntax.F]
+              (Thm.CONJUNCT2 blastTheory.BCARRY_def))
+          val chained = Thm.TRANS unfolded (Thm.AP_TERM
+            (Term.rator (boolSyntax.rhs (Thm.concl unfolded))) previous)
+        in Conv.CONV_RULE (Conv.RAND_CONV
+            (Conv.REWR_CONV blastTheory.bcarry_def)) chained end
+      fun carries n previous acc =
+        if n = width then List.rev acc
+        else carries (n + 1) (next_carry (n, previous)) (previous :: acc)
+      val sum = wordsSyntax.mk_word_add (x, y)
+      val adder = Drule.ISPECL [x, y] blastTheory.BITWISE_ADD
+      fun bit (k, carry) =
+        let
+          val projected = Conv.RATOR_CONV (Conv.RAND_CONV
+            (Conv.REWR_CONV adder))
+            (fcpSyntax.mk_fcp_index (sum, numSyntax.term_of_int k))
+          val beta = Drule.PART_MATCH
+            (boolSyntax.lhs o Lib.snd o boolSyntax.dest_imp)
+            fcpTheory.FCP_BETA (boolSyntax.rhs (Thm.concl projected))
+          val bound = Drule.EQT_ELIM (Conv.THENC
+            (Conv.RAND_CONV (Conv.REWR_CONV dimension), numLib.REDUCE_CONV)
+            (Lib.fst (boolSyntax.dest_imp (Thm.concl beta))))
+          val bsum = Conv.CONV_RULE (Conv.RAND_CONV (Conv.THENC
+            (Thm.BETA_CONV, Conv.THENC (Conv.REWR_CONV blastTheory.BSUM_def,
+              Conv.THENC (Conv.RAND_CONV (Conv.REWR_CONV carry),
+                Conv.REWR_CONV blastTheory.bsum_def)))))
+            (Thm.MP beta bound)
+        in Thm.TRANS projected bsum end
+      val base = Drule.SPECL [X, Y, boolSyntax.F]
+        (Thm.CONJUNCT1 blastTheory.BCARRY_def)
+    in
+      Vector.fromList (List.map bit
+        (Lib.zip (List.tabulate (width, Lib.I)) (carries 0 base [])))
+    end
+
+  (* |- (!i. i < c ==> P i) <=> P (c - 1) /\ ... /\ P 0 /\ T, for a numeral
+     c.  Only the bound and index numerals are reduced. *)
+  fun bounded_forall_conv term =
+    let
+      val (_, body) = boolSyntax.dest_forall term
+      val bound = boolSyntax.rand (Lib.fst (boolSyntax.dest_imp body))
+      val reduce_index = Conv.THENC
+        (Conv.LAND_CONV (Conv.RAND_CONV numLib.REDUCE_CONV),
+         Conv.RAND_CONV (Conv.RAND_CONV numLib.REDUCE_CONV))
+    in
+      if Term.aconv bound numSyntax.zero_tm then
+        simpLib.SIMP_CONV boolSimps.bool_ss [prim_recTheory.NOT_LESS_0] term
+      else
+        Conv.THENC (Conv.HO_REWR_CONV (Thm.MP
+            (Thm.SPEC bound arithmeticTheory.BOUNDED_FORALL_THM)
+            (Drule.EQT_ELIM (numLib.REDUCE_CONV
+               (numSyntax.mk_less (numSyntax.zero_tm, bound))))),
+          Conv.THENC (Conv.LAND_CONV reduce_index,
+            Conv.RAND_CONV (Conv.THENC (Conv.QUANT_CONV (Conv.LAND_CONV
+              (Conv.RAND_CONV numLib.REDUCE_CONV)), bounded_forall_conv))))
+          term
+    end
+
+  (* |- (x + y = w) <=> (bsum_(n-1) <=> w ' (n - 1)) /\ ... /\
+        (bsum_0 <=> w ' 0) /\ T for an n-bit addition, with the sums'
+     carries shared (adder_bits).  Projecting x + y bit by bit instead
+     blasts the whole adder again for every bit. *)
+  fun adder_equation_conversion term =
+    let
+      val (left, right) = boolSyntax.dest_eq term
+        handle Feedback.HOL_ERR _ => raise Conv.UNCHANGED
+      val (x, y) = wordsSyntax.dest_word_add left
+        handle Feedback.HOL_ERR _ => raise Conv.UNCHANGED
+      (* The kernel steps below walk the operands as trees at every bit, so
+         they must be small; the bit-blasted adders cvc5 emits add literals
+         and variables. *)
+      fun small operand =
+        Option.isSome (SmtReplayImport.bounded_raw_size 64 operand)
+      val _ = small x andalso small y orelse raise Conv.UNCHANGED
+      val size = wordsSyntax.size_of left
+        handle Feedback.HOL_ERR _ => raise Conv.UNCHANGED
+      (* The result has a conjunct per bit, so a wider adder could not pass
+         the word graph's DAG bound anyway. *)
+      val _ = Arbnum.<= (size,
+          Arbnum.fromInt SmtResource.max_skeleton_replay_dag_nodes)
+        orelse raise Conv.UNCHANGED
+      val width = Arbnum.toInt size
+      (* DIMINDEX below proves the width only for a plain numeral type. *)
+      val _ = Type.compare (wordsSyntax.dim_of left,
+          fcpSyntax.mk_int_numeric_type width) = EQUAL
+        orelse raise Conv.UNCHANGED
+      val bits = adder_bits x y width
+      (* A variable for w keeps the forall expansion from copying it. *)
+      val w = Term.genvar (Term.type_of right)
+      val extensional = Conv.CONV_RULE (Conv.RAND_CONV (Conv.QUANT_CONV
+        (Conv.LAND_CONV (Conv.RAND_CONV (Conv.REWR_CONV
+          (fcpLib.DIMINDEX (Arbnum.fromInt width)))))))
+        (Drule.ISPECL [left, w] fcpTheory.CART_EQ)
+      (* Only the small extensional side is instantiated: INST rebuilds
+         every subterm, which would unshare the carry chain below. *)
+      val expanded = Thm.INST [{redex = w, residue = right}]
+        (Conv.CONV_RULE (Conv.RAND_CONV bounded_forall_conv) extensional)
+      val equality = Term.inst [{redex = Type.alpha, residue = Type.bool}]
+        boolSyntax.equality
+      fun bit_equation k = Thm.AP_THM (Thm.AP_TERM equality
+        (Vector.sub (bits, k)))
+        (fcpSyntax.mk_fcp_index (right, numSyntax.term_of_int k))
+      fun conjunction k tail = if k = width then tail
+        else conjunction (k + 1) (Thm.MK_COMB (Thm.AP_TERM
+          boolSyntax.conjunction (bit_equation k), tail))
+      val blasted = conjunction 0 (Thm.REFL boolSyntax.T)
+    in Thm.TRANS expanded blasted end
+
+  (* An adder equation (x + y = w) goes to the circuit path with
+     adder_equation_conversion, which shares the carry chain. *)
+  fun is_adder_equation term =
+    let val (left, _) = boolSyntax.dest_eq term
+    in wordsSyntax.is_word_add left end
+    handle Feedback.HOL_ERR _ => false
+
   fun replay_bv_poly_norm args =
     let
       val target = expect_one_arg "bv_poly_norm" args
@@ -5471,18 +5618,25 @@ local
                         raise Feedback.HOL_ERR holerr
                       else raise Conv.UNCHANGED)
           fun legacy () = let
+          fun node_conversion term =
+            adder_equation_conversion term
+            handle Conv.UNCHANGED => fp_projection_conversion term
           val first_blast =
             SmtWordGraph.normalize_with_node_conversion
-              fp_projection_conversion boolean_template
+              node_conversion boolean_template
           val first_residue = boolSyntax.rhs (Thm.concl first_blast)
+          (* Words left after the first pass get a second one.  A residue
+             without them is already Boolean, and the circuit below treats
+             its atoms as leaves. *)
           val second_blast =
-            (SmtWordGraph.normalize_with_node_conversion
-               fp_projection_conversion first_residue
-             handle Conv.UNCHANGED => Thm.REFL first_residue)
+            if mentions_word first_residue then
+              (SmtWordGraph.normalize_with_node_conversion
+                 node_conversion first_residue
+               handle Conv.UNCHANGED => Thm.REFL first_residue)
+            else Thm.REFL first_residue
           val blasted = Thm.TRANS first_blast second_blast
           val blast_residue = boolSyntax.rhs (Thm.concl blasted)
-          val circuit_memo =
-            ref ([] : (Term.term * Term.term) list)
+          val circuit_memo = ref (Redblackmap.mkDict Term.compare)
           val circuit_substitutions =
             ref ([] : {redex : Term.term, residue : Term.term} list)
           val circuit_definitions =
@@ -5496,11 +5650,8 @@ local
             in variable end
           fun circuit_leaf term = circuit_variable term
           fun circuit term =
-            case List.find
-                (fn (saved, _) => Portable.pointer_eq (term, saved) orelse
-                  Term.aconv term saved)
-                (!circuit_memo) of
-              SOME (_, result) => result
+            case Redblackmap.peek (!circuit_memo, term) of
+              SOME result => result
             | NONE =>
                 let
                   fun internal skeleton =
@@ -5556,7 +5707,8 @@ local
                       in internal (boolSyntax.mk_neg (boolSyntax.mk_eq
                         (circuit left, circuit right))) end
                     else circuit_leaf term
-                  val _ = circuit_memo := (term, result) :: !circuit_memo
+                  val _ = circuit_memo :=
+                    Redblackmap.insert (!circuit_memo, term, result)
                 in result end
           val circuit_root = circuit blast_residue
           val definitions = List.rev (!circuit_definitions)
@@ -5582,8 +5734,14 @@ local
             residue_theorem
           in generalized_theorem end
         in
-          if compact_word_target target then
-            SmtWordGraph.prove_with_node_conversion
+          (* The circuit path goes first: with the shared word schemas it
+             checks wide words about twice as fast as the compact path (a
+             256-bit mask-and-add goal via cvc5: 18-22 s against 30-32 s).
+             The compact path takes what the circuit path rejects. *)
+          if compact_word_target target andalso
+             not (is_adder_equation target) then
+            legacy () handle Feedback.HOL_ERR _ =>
+            (SmtWordGraph.prove_with_node_conversion
               (fn term => fp_projection_conversion term
                 handle Conv.UNCHANGED =>
                   if is_holsmt_xor term then
@@ -5592,7 +5750,7 @@ local
             handle HolSatLib.SAT_cex _ =>
               raise ERR "bv_poly_norm" "Boolean circuit is not valid"
                  | HolSatLib.SAT_satisfiable _ =>
-              raise ERR "bv_poly_norm" "Boolean circuit is not valid"
+              raise ERR "bv_poly_norm" "Boolean circuit is not valid")
           else legacy ()
         end
       fun schematic_bvite () =
@@ -22474,6 +22632,8 @@ local
   fun reset_replay_memos limit =
     (resolution_literal_normalizations := Redblackmap.mkDict Term.compare;
      reset_fp_memos ();
+     (* Word schemas are shared within one certificate. *)
+     SmtWordGraph.reset_schemas ();
      word_graph_tautology_cache := new_word_graph_tautology_cache limit)
 
 

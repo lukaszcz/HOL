@@ -21834,6 +21834,42 @@ in
   check_oracle_tags "shared bitblast equality" theorem
 end
 
+(* cvc5's bv_bitblast_step for a 256-bit bvadd of a literal: a ripple-carry
+   adder over @bit projections.  Blasting x + 31w bit by bit re-derives the
+   carry chain from bit 0 for every bit, which took about 30 s of CPU. *)
+fun cpc_wide_adder_bitblast_success () =
+let
+  val x = wordsSyntax.mk_n2w (Term.mk_var ("n", numSyntax.num),
+    fcpSyntax.mk_int_numeric_type 256)
+  val y = wordsSyntax.mk_wordii (31, 256)
+  fun xor (a, b) = Term.list_mk_comb (``HolSmt$xor``, [a, b])
+  fun bit word i =
+    if Term.aconv word y then
+      (if i < 5 then boolSyntax.T else boolSyntax.F)
+    else wordsSyntax.mk_word_bit (numSyntax.term_of_int i, word)
+  fun adder (i, (carry, sums)) =
+    let
+      val (a, b) = (bit x i, bit y i)
+      val half = xor (a, b)
+      val next = boolSyntax.mk_disj
+        (boolSyntax.mk_conj (a, b), boolSyntax.mk_conj (half, carry))
+    in (next, xor (half, carry) :: sums) end
+  val (_, sums) =
+    List.foldl adder (boolSyntax.F, []) (List.tabulate (256, Lib.I))
+  val target = boolSyntax.mk_eq (wordsSyntax.mk_word_add (x, y),
+    SmtLib_Theories.mk_bbterm (List.rev sums))
+  val timer = Timer.startCPUTimer ()
+  val theorem = CPC_ProofReplay.replay_bv_poly_norm_for_test [target]
+  val {usr, ...} = Timer.checkCPUTimer timer
+in
+  assert (Thm.concl theorem ~~ target andalso null (Thm.hyp theorem),
+    "wide adder bitblast replay changed the adder equation");
+  check_oracle_tags "wide adder bitblast" theorem;
+  assert (Time.< (usr, Time.fromSeconds 10),
+    "wide adder bitblast replay took " ^ Time.toString usr ^
+    " s of CPU; the carry chain is no longer shared")
+end
+
 fun cpc_word_aci_literal_identity_success () =
 let
   val bits = String.implode (List.tabulate (128, fn _ => #"1"))
@@ -38287,6 +38323,8 @@ let
       replay_polynomial_normal_form_success),
     ("cpc_shared_bitblast_equality_success",
       cpc_shared_bitblast_equality_success),
+    ("cpc_wide_adder_bitblast_success",
+      cpc_wide_adder_bitblast_success),
     ("cpc_word_aci_literal_identity_success",
       cpc_word_aci_literal_identity_success),
     ("cpc_quantified_imp_disj_trans_success",

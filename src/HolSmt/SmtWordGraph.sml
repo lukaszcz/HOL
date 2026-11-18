@@ -1975,10 +1975,45 @@ struct
       else blastLib.BIT_BLAST_CONV term
     end
 
+  (* Checked operator schemas proved by the builtin word and bit
+     conversions are shared by every normalization and proof below until
+     reset_schemas: the same wide operator schemas recur at every bit of a
+     wide operator and in each bit-blast step of one certificate, and
+     re-proving them doubled such replays.  Node results stay per call:
+     they depend on the node conversion. *)
+  val shared_schemas = new_context_with_local_laws true
+
+  fun reset_schemas () =
+    (#word_schemas shared_schemas := Redblackmap.mkDict Term.compare;
+     #bit_schemas shared_schemas := Redblackmap.mkDict Term.compare;
+     #schema_entries shared_schemas := 0)
+
+  fun schema_sharing_context () : context =
+    let
+      val fresh = new_context_with_local_laws true
+      fun refresh_caches () =
+        (#refresh_caches shared_schemas (); #refresh_caches fresh ())
+    in
+      {normalized = #normalized fresh, expanded = #expanded fresh,
+       proof_normalized = #proof_normalized fresh,
+       proof_expanded = #proof_expanded fresh,
+       index = #index fresh, entries = #entries fresh,
+       word_schemas = #word_schemas shared_schemas,
+       bit_schemas = #bit_schemas shared_schemas,
+       proof_schemas = #proof_schemas fresh,
+       frontier_programs = #frontier_programs fresh,
+       proof_frontier_programs = #proof_frontier_programs fresh,
+       schema_entries = #schema_entries shared_schemas,
+       local_law_reuse = true, sat_context = #sat_context fresh,
+       cache_generation = #cache_generation fresh,
+       cache_live_check = #cache_live_check fresh,
+       refresh_caches = refresh_caches}
+    end
+
   (* Built-in operator laws are pure and reusable within this producer.
      Custom conversion probes above retain their uncached contract. *)
   fun normalize_with_metrics root =
-    normalize_using_in (new_context_with_local_laws true) false
+    normalize_using_in (schema_sharing_context ()) false
       (new_type_admission ())
       (guarded_conversions
         {word_conversion = builtin_word_conversion,
@@ -1989,8 +2024,8 @@ struct
      Preserve its existing local-binder and projection-first contract;
      graph word consumers retain the discovery recipe instead. *)
   fun normalize_with_node_conversion_and_metrics node_conversion root =
-    normalize_template_using_in (new_context ()) false (new_type_admission ())
-      false {callback_failed = ref false,
+    normalize_template_using_in (schema_sharing_context ()) false
+      (new_type_admission ()) false {callback_failed = ref false,
        word_conversion = builtin_word_conversion,
        bit_conversion = builtin_bit_conversion,
        node_conversion = fn _ => node_conversion} root
@@ -2003,7 +2038,7 @@ struct
     normalize_template_stopping_using_in
       (SOME (fn term => List.exists
         (fn source => Portable.pointer_eq (source, term)) sources))
-      (new_context ()) false (new_type_admission ())
+      (schema_sharing_context ()) false (new_type_admission ())
       false {callback_failed = ref false,
        word_conversion = builtin_word_conversion,
        bit_conversion = builtin_bit_conversion,
@@ -2364,7 +2399,7 @@ struct
       val input = SmtResource.dag_nodes_up_to maximum target
       val _ = SmtResource.check_dag_size_for
         "Skeleton" "word-graph-input" input
-    in prove_using_in (new_context ()) node_conversion target end
+    in prove_using_in (schema_sharing_context ()) node_conversion target end
 
   fun prove target = prove_in (new_context ()) target
 
