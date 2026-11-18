@@ -387,16 +387,23 @@ fun addfrags frags ss = List.foldl (fn (frag,ss) => ss ++ frag) ss frags
 fun fraglistify f base_ss fragl thms : tactic = f (addfrags fragl base_ss) thms
 
 val let_arith_frags = [boolSimps.LET_ss, ARITH_ss]
-fun boss_augment ss old = addfrags let_arith_frags ss
+(* Derived for nobody in particular -- the first proof to want it, as
+   often as not -- so built reading no simplifier.trace setting, and
+   reporting at the setting of whoever runs it, as srw_ss does *)
+fun boss_augment ss old =
+    unset_trace_level (addfrags let_arith_frags (set_trace_level 0 ss))
 val {get = boss_ss, get_of = boss_ss_of} =
     Feedback.quiet_messages
       (BasicProvers.make_simpset_derived_value "bossLib.boss_ss" boss_augment)
       bool_ss
 
 (* the single funnel for simp, rw, fs and the rest: they resolve their
-   simpset from the context the tactic is run in *)
+   simpset from the context the tactic is run in, at its simplifier.trace
+   level, so that adding the fragments does not read the ambient one *)
 fun stateful f ssfl thms : tactic =
-    fn g => fn ctxt => fraglistify f (boss_ss_of ctxt) ssfl thms g ctxt
+    fn g => fn ctxt =>
+       fraglistify f (in_trace_context ctxt (boss_ss_of ctxt)) ssfl thms
+                   g ctxt
 
 val simp = stateful asm_simp_tac []
 val dsimp = stateful asm_simp_tac [boolSimps.DNF_ss]
@@ -404,7 +411,8 @@ val csimp = stateful asm_simp_tac [boolSimps.CONJ_ss]
 
 val rw = stateful (fn ss => BasicProvers.PRIM_SRW_TAC ss []) []
 fun fsrw_tac frags thms g ctxt =
-    fraglistify full_simp_tac (srw_ss_of ctxt) frags thms g ctxt
+    fraglistify full_simp_tac (in_trace_context ctxt (srw_ss_of ctxt))
+                frags thms g ctxt
 val fs = stateful full_simp_tac []
 val rfs = stateful rev_full_simp_tac []
 
