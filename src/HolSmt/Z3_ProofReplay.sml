@@ -7097,8 +7097,14 @@ local
         handle Conv.UNCHANGED =>
           raise ERR "asserted_equality_substitution_prove"
             "explicit equalities do not occur in target"
-      val oriented = equalities
-      val reversed = List.map Thm.SYM equalities
+      (* Rewriting to a fixpoint with an equation whose left side occurs in
+         its right side, such as x = (x && m) || (x && ~m), never terminates.
+         Such an equation is used only in the direction that terminates. *)
+      fun terminates theorem =
+        let val (left, right) = boolSyntax.dest_eq (Thm.concl theorem)
+        in not (Term.free_in left right) end
+      val oriented = List.filter terminates equalities
+      val reversed = List.filter terminates (List.map Thm.SYM equalities)
     in
       attempt oriented
       handle Feedback.HOL_ERR holerr =>

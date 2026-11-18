@@ -27066,6 +27066,13 @@ let
     (ignore (Z3_ProofReplay.asserted_equality_substitution_prove_for_test
        [sum_source] (sum_target ``\b:bool. ~b``)); false)
     handle Feedback.HOL_ERR _ => true
+  (* An equation whose left side occurs in its right side is used only
+     right to left: left to right, rewriting to a fixpoint never ends. *)
+  val self_source = ``(asserted_x:int) = asserted_x * 1``
+  val self_target = ``(asserted_x:int) * 1 + -3 = asserted_x + -3``
+  val self_theorem =
+    Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+      [self_source] self_target
 in
   assert (List.all (fn (source, theorem) =>
       Thm.concl theorem ~~ target andalso exact_source source theorem)
@@ -27085,7 +27092,10 @@ in
   assert (rejects ``(asserted_x:int) = asserted_y ==> asserted_guard`` andalso
       rejects ``~(asserted_guard ==> (asserted_x:int) = asserted_y)`` andalso
       rejects ``asserted_guard \/ asserted_other_guard``,
-    "asserted equality substitution crossed its structural admission boundary")
+    "asserted equality substitution crossed its structural admission boundary");
+  assert (Thm.concl self_theorem ~~ self_target andalso
+      exact_source self_source self_theorem,
+    "self-referential asserted equality was not substituted right to left")
 end
 
 fun z3_hyp_removal_beta_lookup_success () =
