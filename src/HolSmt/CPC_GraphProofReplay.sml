@@ -420,13 +420,14 @@ struct
           val object_arguments =
             List.concat (List.map argument_terms (#args step))
           val structured = Q.graph_structured_rule_arguments (#rule step)
+          val rule_handler =
+            CPC_Proof.handler_name (#replay_handler (#rule step))
           val arithmetic_rule = String.isPrefix "arith"
-              (CPC_Proof.handler_name (#replay_handler (#rule step))) orelse
+              rule_handler orelse
             String.isPrefix "arith-" (#name (#rule step)) orelse
-            String.isPrefix "int_tight_" (CPC_Proof.handler_name
-                (#replay_handler (#rule step))) orelse
+            String.isPrefix "int_tight_" rule_handler orelse
             (List.exists (fn handler =>
-               handler = CPC_Proof.handler_name (#replay_handler (#rule step)))
+               handler = rule_handler)
                ["eq_resolve","modus_ponens","evaluate","trans"] andalso
              SmtReplayArithmetic.has_numeric_operand graph scope
                {inputs=List.map node premises @
@@ -440,13 +441,11 @@ struct
              graph variables either. Non-Seq TRUST retains its deferred
              fallback; native Seq TRUST needs the whole-operand boundary. *)
           val structured_rule =
-            List.exists (fn handler => handler = CPC_Proof.handler_name
-                (#replay_handler (#rule step)))
+            List.exists (fn handler => handler = rule_handler)
               ["array","arrays_select_const","arrays_read_over_write",
                "datatype","datatype_eq","dt_split"] orelse
             String.isPrefix "array-" (#name (#rule step)) orelse
-            (List.exists (fn handler => handler = CPC_Proof.handler_name
-                (#replay_handler (#rule step)))
+            (List.exists (fn handler => handler = rule_handler)
                ["eq_resolve","modus_ponens","evaluate","trans","eq_refl"]
              andalso SmtReplayStructured.has_operand graph scope
                {inputs=List.map node premises @
@@ -459,21 +458,18 @@ struct
              unknown binder or an incidental Seq premise of a non-Seq
              (e.g. FP) obligation. Other handlers retain unknown dispatch. *)
           fun sequence_inputs () =
-            if CPC_Proof.handler_name
-                (#replay_handler (#rule step)) = "trust" then
+            if rule_handler = "trust" then
               List.map (#node : F.term -> G.node) object_arguments
             else List.map node premises @
               List.map (#node : F.term -> G.node) object_arguments @
               (case #conclusion step of NONE => []
                | SOME value => [#node value])
           val sequence_rule =
-            List.exists (fn handler => handler = CPC_Proof.handler_name
-                (#replay_handler (#rule step)))
+            List.exists (fn handler => handler = rule_handler)
               ["seq_rewrite","seq_rev_rev","seq_at_elim",
                "str_contains_refl","str_substr_full_eq","string",
                "rare_inventory","aci_norm","rewrite","trust"] andalso
-            (if CPC_Proof.handler_name
-                (#replay_handler (#rule step)) = "trust" then
+            (if rule_handler = "trust" then
                SmtReplayStructured.has_known_sequence_operand
              else SmtReplayStructured.has_sequence_operand) graph scope
               {inputs=sequence_inputs (),
@@ -485,35 +481,30 @@ struct
              needs positive family evidence in its target, not an incidental
              premise or an unknown binder of another family. *)
           val string_rule =
-            List.exists (fn handler => handler = CPC_Proof.handler_name
-                (#replay_handler (#rule step)))
+            List.exists (fn handler => handler = rule_handler)
               ["seq_rewrite","str_contains_refl","str_substr_full_eq",
                "string","rare_inventory","aci_norm","rewrite","trust"]
             andalso
-            (if CPC_Proof.handler_name
-                (#replay_handler (#rule step)) = "trust" then
+            (if rule_handler = "trust" then
                SmtReplayStructured.has_known_string_operand
              else SmtReplayStructured.has_string_operand) graph scope
               {inputs=sequence_inputs (),
                observe=fn () => Option.app
                  (fn work => W.spend_guard_policy work 1) owned_work}
           val string_rule = string_rule andalso
-            not (CPC_Proof.handler_name
-                (#replay_handler (#rule step)) = "trust" andalso
+            not (rule_handler = "trust" andalso
               SmtReplayStructured.has_fp_trust_operand graph scope
                 {inputs=sequence_inputs (),
                  observe=fn () => Option.app
                    (fn work => W.spend_guard_policy work 1) owned_work})
           val bag_rule = List.exists
-            (fn handler => handler = CPC_Proof.handler_name
-                (#replay_handler (#rule step)))
+            (fn handler => handler = rule_handler)
               ["trust","rewrite","rare_inventory","aci_norm"] andalso
             SmtReplayStructured.has_known_bag_operand graph scope
               {inputs=List.map node premises @ sequence_inputs (),
                observe=fn () => Option.app
                  (fn work => W.spend_guard_policy work 1) owned_work}
-            andalso not (CPC_Proof.handler_name
-                (#replay_handler (#rule step)) = "trust" andalso
+            andalso not (rule_handler = "trust" andalso
               SmtReplayStructured.has_fp_trust_operand graph scope
                 {inputs=sequence_inputs (),
                  observe=fn () => Option.app
@@ -657,8 +648,7 @@ struct
                   (* A one-node scrutinee can generate an arbitrarily wide
                      declaration-dependent endpoint. Pay/admit it with this
                      invocation's cap BEFORE entering the ordinary worker. *)
-                  val _ = if CPC_Proof.handler_name
-                      (#replay_handler (#rule step)) = "dt_split" then
+                  val _ = if rule_handler = "dt_split" then
                     (case args of [value] => ignore
                        (SmtDatatypeProve.datatype_split_target admit
                          (#term value))
@@ -744,8 +734,7 @@ struct
                 in (theorem,graph_fact graph scope (#node imported)
                     (#provenance located)) end
           val retained = case #conclusion step of SOME value => SOME value
-            | NONE => if CPC_Proof.handler_name
-                (#replay_handler (#rule step)) = "trust" then
+            | NONE => if rule_handler = "trust" then
                 (case #args step of [Q.GraphTerm value] => SOME value
                   | _ => NONE) else NONE
           val (theorem,current) = case retained of NONE => ordinary_import ()
@@ -779,8 +768,7 @@ struct
           fun deferred hypothesis =
             let
               val target = G.representative graph (#node current)
-              val _ = if CPC_Proof.handler_name
-                  (#replay_handler (#rule step)) = "trust" then () else
+              val _ = if rule_handler = "trust" then () else
                 raise ERR "bounded_rule"
                   "local reconstruction retained hypotheses"
               val argument = case #args step of [Q.GraphTerm term] => term

@@ -953,6 +953,8 @@ struct
                         | _=>raise ERR "prepare"
                             "private new Boolean family"
                       end
+                    val rule_handler=
+                      CPC_Proof.handler_name (#replay_handler (#rule step))
                     val inferred=case family of SOME Shared.SimpleAndElim=>
                       Shared.and_elim
                         {require_one=require_one,node= #node,
@@ -982,13 +984,10 @@ struct
                             premises)
                     | NONE=>(case equality of SOME _=>infer_equality()
                       | NONE=>if equal
-                          (CPC_Proof.handler_name
-                            (#replay_handler (#rule step)),
+                          (rule_handler,
                           "resolution")orelse
-                          equal(CPC_Proof.handler_name
-                              (#replay_handler (#rule step)),"factoring")orelse
-                          equal(CPC_Proof.handler_name
-                              (#replay_handler (#rule step)),"reordering")then
+                          equal(rule_handler,"factoring")orelse
+                          equal(rule_handler,"reordering")then
                           let
                             val _=pay 1
                             fun infer_structural()=case aliases of
@@ -1000,8 +999,7 @@ struct
                                   val _=pay 36
                                   val destination=fact target
                                   val destination_node= #node destination
-                                  val handler= CPC_Proof.handler_name
-                                      (#replay_handler (#rule step))
+                                  val handler= rule_handler
                                   fun constant () value atom=
                                     let val _=tick()
                                         val node=PV.proof_term context value
@@ -1230,8 +1228,7 @@ struct
                                 in destination end
                           in infer_structural()end
                         else if equal
-                          (CPC_Proof.handler_name
-                              (#replay_handler (#rule step)),"cnf")then
+                          (rule_handler,"cnf")then
                           let
                             (* One selected helper closure. No old Boolean
                                path allocates this new-family adapter. *)
@@ -1397,8 +1394,7 @@ struct
                                 literals end
                           in infer_cnf()end
                         else(case truth_family equal
-                          (CPC_Proof.handler_name
-                              (#replay_handler (#rule step)))of
+                          (rule_handler)of
                           NONE=>infer_equality()
                         | SOME family=>
                           let val _=pay 1

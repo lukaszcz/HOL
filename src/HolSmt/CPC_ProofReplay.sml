@@ -20831,8 +20831,9 @@ local
          with the same conclusion can be reused.  On a cache miss dispatch
          consumes it; NONE is retained only so an ablation can demonstrate
          that dispatch itself also fails closed. *)
+      val handler = CPC_Proof.handler_name (#replay_handler rule)
       val rule_preflight =
-        ((case CPC_Proof.handler_name (#replay_handler rule) of
+        ((case handler of
             "skolemize" => SOME
               (skolemize_preflight conclusion located_args premise_steps)
           | _ => NONE)
@@ -20852,7 +20853,7 @@ local
              profile_event "CPC(cache:omitted_conclusion)";
              NONE)
       val cached =
-        if CPC_Proof.handler_name (#replay_handler rule) = "scope" then
+        if handler = "scope" then
           (case conclusion of
              NONE => omitted_conclusion ()
            | SOME _ =>
@@ -20862,7 +20863,7 @@ local
             handle Feedback.HOL_ERR _ => NONE)
         | NONE => omitted_conclusion ()
       val (state, result) =
-        if CPC_Proof.handler_name (#replay_handler rule) = "scope" then
+        if handler = "scope" then
           let
             val (state, theorem) =
               profile ("CPC(handler:" ^ namespace_name (#namespace rule) ^
@@ -20883,7 +20884,7 @@ local
             | NONE =>
               (profile ("CPC(handler:" ^ namespace_name (#namespace rule) ^
                  "/" ^ #name rule ^ ")") (fn () =>
-               (case CPC_Proof.handler_name (#replay_handler rule) of
+               (case handler of
            "refl" =>
                let
                  val theorem = replay_refl conclusion args
