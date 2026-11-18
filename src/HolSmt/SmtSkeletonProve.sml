@@ -864,44 +864,8 @@ struct
         SmtResource.integer_pair_hash
       val pair_lookup = #peek pairs
       val pair_save = #insert pairs
-      val type_pairs = Array.array
-        (count, [] : (hol_type * hol_type * order) list)
-      fun type_bucket ty =
-        if Type.is_vartype ty then 0 else
-          KernelSig.epoch_of (#Tyop (Type.dest_thy_typeid ty)) mod count
-      (* Do not intern an entire annotation just to discover a different
-         outer Tyop. No native Type comparison occurs in this programme. *)
-      fun types (left, right) =
-        if Portable.pointer_eq (left, right) then EQUAL
-        else
-          let
-            val bucket = (type_bucket left + type_bucket right) mod count
-          in
-            case List.find (fn (l, r, _) =>
-                Portable.pointer_eq (left, l) andalso
-                Portable.pointer_eq (right, r))
-                (Array.sub (type_pairs, bucket)) of
-              SOME (_, _, result) => result
-            | NONE =>
-                let
-                  val result =
-                    if Type.is_vartype left then
-                      if Type.is_vartype right then String.compare
-                        (Type.dest_vartype left, Type.dest_vartype right)
-                      else LESS
-                    else if Type.is_vartype right then GREATER
-                    else
-                      (case KernelSig.id_compare
-                          (#Tyop (Type.dest_thy_typeid left),
-                           #Tyop (Type.dest_thy_typeid right)) of
-                         EQUAL => list_compare types
-                           (#2 (Type.dest_type left),
-                            #2 (Type.dest_type right))
-                       | result => result)
-                  val _ = Array.update (type_pairs, bucket,
-                    (left, right, result) :: Array.sub (type_pairs, bucket))
-                in result end
-          end
+      (* Types are compared nodewise by the canonicalizer's order. *)
+      val types = SmtReplayTermBridge.new_type_order ()
       fun bound _ [] _ = NONE
         | bound term (variable :: rest) index =
             if #1 (Term.dest_var term) = #1 (Term.dest_var variable) andalso
