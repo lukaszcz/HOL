@@ -1039,11 +1039,11 @@ struct
   fun recipe_type (Recipe {result, ...}) = result
   fun recipe_size (Recipe {size, ...}) = size
 
-  fun compile_recipe {template, holes, template_limit} =
+  (* The size-independent part of recipe compilation, shared by the int
+     and exact policy recipes, which differ only in how the template size
+     is measured.  Raises before any construction on invalid holes. *)
+  fun compile_template {template, holes} =
     let
-      val size = case SmtReplayImport.bounded_raw_size template_limit
-          template of SOME size => size
-        | NONE => raise ERR "compile_recipe" "expanded operator template"
       val _ = List.app (fn hole => if Term.is_var hole then () else
         raise ERR "compile_recipe" "operand hole is not a typed variable")
         holes
@@ -1073,12 +1073,23 @@ struct
           let val (binder, body) = Term.dest_abs term in
             Abstraction (binder, compile (binder :: binders) body)
           end
-    in Recipe {syntax = compile [] template,
+    in {syntax = compile [] template,
       holes = Vector.fromList (List.map Term.type_of holes),
-      result = Term.type_of template, size = size} end
+      result = Term.type_of template} end
 
-  fun construct_with_branches backend frame
-      (Recipe {syntax, holes, result, ...}) arguments =
+  fun compile_recipe {template, holes, template_limit} =
+    let
+      val size = case SmtReplayImport.bounded_raw_size template_limit
+          template of SOME size => size
+        | NONE => raise ERR "compile_recipe" "expanded operator template"
+      val {syntax, holes, result} =
+        compile_template {template = template, holes = holes}
+    in Recipe {syntax = syntax, holes = holes, result = result,
+      size = size} end
+
+  (* Construct a compiled recipe over its operands, shared by the int and
+     exact policy recipes. *)
+  fun construct_syntax backend frame {syntax, holes, result} arguments =
     let
       val _ = ignore (checked_frame backend frame)
       val values = Vector.fromList arguments
@@ -1110,6 +1121,10 @@ struct
       val _ = if Type.compare (type_of backend value, result) = EQUAL then ()
         else raise ERR "construct" "operator recipe result type mismatch"
     in {value = value, branches = List.rev (!branches)} end
+  fun construct_with_branches backend frame
+      (Recipe {syntax, holes, result, ...}) arguments =
+    construct_syntax backend frame
+      {syntax = syntax, holes = holes, result = result} arguments
 
   fun construct backend frame recipe arguments =
     #value (construct_with_branches backend frame recipe arguments)
@@ -1135,38 +1150,10 @@ struct
       val size = case SmtReplayImport.raw_size_with_policy template_limit
           template of SOME size => size
         | NONE => raise ERR "compile_recipe" "expanded operator template"
-      val _ = List.app (fn hole => if Term.is_var hole then () else
-        raise ERR "compile_recipe" "operand hole is not a typed variable")
-        holes
-      val _ = List.foldl (fn (hole, previous) =>
-        if List.exists (Term.aconv hole) previous then
-          raise ERR "compile_recipe" "duplicate typed operand hole"
-        else hole :: previous) [] holes
-      fun index variable terms =
-        let fun seek [] _ = NONE
-              | seek (term :: rest) i =
-                  if Term.aconv variable term then SOME i else seek rest (i+1)
-        in seek terms 0 end
-      fun compile binders term =
-        if Term.is_var term then
-          (case index term binders of
-             SOME i => BoundVariable i
-           | NONE => case index term holes of
-               SOME i => if List.null binders then Hole i else
-                 raise ERR "compile_recipe" "operand insertion below binder"
-             | NONE => raise ERR "compile_recipe" "unowned schema variable")
-        else if Term.is_const term then Constant term
-        else if Term.is_comb term then
-          let val (operator, operand) = Term.dest_comb term in
-            Application (compile binders operator, compile binders operand)
-          end
-        else
-          let val (binder, body) = Term.dest_abs term in
-            Abstraction (binder, compile (binder :: binders) body)
-          end
-    in ExactPolicyRecipe {syntax = compile [] template,
-      holes = Vector.fromList (List.map Term.type_of holes),
-      result = Term.type_of template, size = size} end
+      val {syntax, holes, result} =
+        compile_template {template = template, holes = holes}
+    in ExactPolicyRecipe {syntax = syntax, holes = holes, result = result,
+      size = size} end
 
   fun compile_recipe_with_policy
       (request as {template,holes,template_limit}) =
@@ -1179,37 +1166,8 @@ struct
         construct_with_branches backend frame recipe arguments
     | construct_with_branches_with_policy backend frame
         (ExactPolicyRecipe {syntax, holes, result, ...}) arguments =
-    let
-      val _ = ignore (checked_frame backend frame)
-      val values = Vector.fromList arguments
-      val _ = if Vector.length holes = Vector.length values then () else
-        raise ERR "construct" "operator recipe arity mismatch"
-      val _ = Vector.appi (fn (index, expected) =>
-        if Type.compare (expected, type_of backend
-            (Vector.sub (values, index))) = EQUAL then ()
-        else raise ERR "construct" "operator recipe operand type mismatch")
-        holes
-      val branches = ref []
-      fun build frame bound (Hole index) = Vector.sub (values, index)
-        | build frame bound (Constant term) = literal backend frame term
-        | build frame bound (BoundVariable index) = List.nth (bound, index)
-        | build frame bound (Application (operator, operand)) =
-            application backend frame
-              (build frame bound operator, build frame bound operand)
-        | build frame bound (Abstraction (binder, body)) =
-            let
-              val (name, ty) = Term.dest_var binder
-              val branch = abstraction backend frame
-                (name, name, ty) (fn child =>
-                  let val value = valOf (lookup backend child name) in
-                    build child (value :: bound) body
-                  end)
-              val _ = branches := branch :: !branches
-            in branch end
-      val value = build frame [] syntax
-      val _ = if Type.compare (type_of backend value, result) = EQUAL then ()
-        else raise ERR "construct" "operator recipe result type mismatch"
-    in {value = value, branches = List.rev (!branches)} end
+        construct_syntax backend frame
+          {syntax = syntax, holes = holes, result = result} arguments
 
   fun construct_with_policy backend frame recipe arguments =
     #value (construct_with_branches_with_policy backend frame recipe arguments)
