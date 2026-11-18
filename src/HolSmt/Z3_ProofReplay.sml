@@ -7097,14 +7097,29 @@ local
         handle Conv.UNCHANGED =>
           raise ERR "asserted_equality_substitution_prove"
             "explicit equalities do not occur in target"
-      (* Rewriting to a fixpoint with an equation whose left side occurs in
-         its right side, such as x = (x && m) || (x && ~m), never terminates.
-         Such an equation is used only in the direction that terminates. *)
-      fun terminates theorem =
-        let val (left, right) = boolSyntax.dest_eq (Thm.concl theorem)
-        in not (Term.free_in left right) end
-      val oriented = List.filter terminates equalities
-      val reversed = List.filter terminates (List.map Thm.SYM equalities)
+      (* Rewriting to a fixpoint never terminates with an equation whose
+         left side occurs in its own right side, directly
+         (x = (x && m) || (x && ~m)) or through other equations
+         (x = f y, y = g x).  Such an equation is used only in a direction
+         without that cycle. *)
+      fun acyclic theorems =
+        let
+          val sides = List.map (boolSyntax.dest_eq o Thm.concl) theorems
+          fun successors (_, right) =
+            List.filter (fn (left, _) => Term.free_in left right) sides
+          fun reaches seen target side =
+            List.exists (fn next =>
+                Term.aconv (#1 next) target orelse
+                (not (List.exists (Term.aconv (#1 next)) seen) andalso
+                 reaches (#1 next :: seen) target next))
+              (successors side)
+          fun on_cycle (side as (left, _)) = reaches [] left side
+        in
+          List.filter
+            (not o on_cycle o boolSyntax.dest_eq o Thm.concl) theorems
+        end
+      val oriented = acyclic equalities
+      val reversed = acyclic (List.map Thm.SYM equalities)
     in
       attempt oriented
       handle Feedback.HOL_ERR holerr =>
