@@ -255,7 +255,8 @@ Bugs fixed
     goals, instead of searching without limit.  `Z3_TAC` replays rewrites
     that reduce a datatype redex and reorder the rest in one step, no
     longer case-splits large rewrite steps while normalizing their
-    arithmetic, and skips METIS on steps too large for it.
+    arithmetic, and skips its datatype and integer-product METIS steps
+    on targets over 1000 nodes.
 
 -   `HolSmt` now gives Z3 4.14.1 full tested support.  Z3 4.14.* queries in
     the seven affected array-bearing inferred logics are widened to `ALL` at
