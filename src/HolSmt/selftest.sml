@@ -79978,6 +79978,14 @@ in
         (fn()=>positive[conditional(p,q,r),neg p,neg r]
           (contradiction "ite_elim2" "(ite p q r)" "(or p r)"
             "(not p)" "(not r)")all3)
+      val _=test "Negated ITE clause negates its condition and yes branch"
+        (fn()=>positive[neg(conditional(p,q,r)),p,q]
+          (contradiction "not_ite_elim1" "(not (ite p q r))"
+            "(or (not p) (not q))" "p" "q")all3)
+      val _=test "Negated ITE clause keeps its condition, negates no branch"
+        (fn()=>positive[neg(conditional(p,q,r)),neg p,r]
+          (contradiction "not_ite_elim2" "(not (ite p q r))"
+            "(or p (not r))" "(not p)" "r")all3)
       val _=test "Nested SMT LET OR remains one immediate negative literal"
         (fn()=>fixture[neg(disj(disj(p,q),r))]goal(fn e=>before_names e
           ("((assume @input (not (or (let ((alias (or p q))) alias) r))) "^

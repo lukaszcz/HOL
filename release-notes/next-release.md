@@ -247,6 +247,14 @@ Bugs fixed
     uninterpreted function of `a`, so goals that depend on its value are
     refused.
 
+-   HolSmt's proof replay no longer fails on some correct steps of large
+    goals.  `CVC_TAC` replays cvc5 1.3's `not_ite_elim1` and
+    `not_ite_elim2` steps, and replays `quant-miniscope-or` structurally, so
+    correct steps no longer fail to normalize.  Datatype exhaustiveness in
+    replay stops after 256 case splits per attempt instead of searching
+    without limit.  `Z3_TAC` replays rewrites that reduce a datatype redex
+    and reorder the rest in one step.
+
 -   `HolSmt` now gives Z3 4.14.1 full tested support.  Z3 4.14.* queries in
     the seven affected array-bearing inferred logics are widened to `ALL` at
     the Z3 boundary, and Z3 `(error ...)` output can no longer be skipped

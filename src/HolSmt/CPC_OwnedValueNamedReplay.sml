@@ -921,6 +921,30 @@ struct
                              operands=actual_operands,child_provenance=child,
                              one_provenance=one_provenance,negative=negative,
                              positive=positive,disjoin=disjoin})
+
+                        | Shared.SimpleNotIteElim1=>
+                            (pay 12;
+                             Shared.not_ite_elim1
+                            {same_constant=same_constant,one=one,
+                             atom=fn node=>current node R.AtomicProvenance,
+                             negated=negated,operands=actual_operands,
+                             child_provenance=child,
+                             one_provenance=one_provenance,
+                             negation_provenance=negation_provenance,
+                             negative=negative,disjoin=disjoin,
+                             error=ERR}handler)
+
+                        | Shared.SimpleNotIteElim2=>
+                            (pay 12;
+                             Shared.not_ite_elim2
+                            {same_constant=same_constant,one=one,
+                             atom=fn node=>current node R.AtomicProvenance,
+                             negated=negated,operands=actual_operands,
+                             child_provenance=child,
+                             one_provenance=one_provenance,
+                             negation_provenance=negation_provenance,
+                             negative=negative,positive=positive,
+                             disjoin=disjoin,error=ERR}handler)
                         | _=>raise ERR "prepare"
                             "private new Boolean family"
                       end

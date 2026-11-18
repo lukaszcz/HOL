@@ -6183,6 +6183,39 @@ local
       Drule.IMP_ANTISYM_RULE forward backward
     end
 
+  (* cvc5's quant-miniscope-or: (!X. F1 \/ ... \/ Fn) = G1 \/ ... \/ Gn,
+     where Gi is !Xi. Fi (Fi when Xi is empty), the Xi disjoint and in X's
+     order.  Peel the disjuncts off in order with LIST_FORALL_OR_CONV, so
+     each step only splits the binders and never rewrites inside a Fi. *)
+  fun replay_quant_miniscope_or target =
+    let
+      val name = "quant-miniscope-or"
+      val (source, result) = boolSyntax.dest_eq target
+      fun peel term goal =
+        if Term.aconv term goal then Thm.REFL term
+        else
+          let
+            val (goal_head, goal_rest) = boolSyntax.dest_disj goal
+              handle Feedback.HOL_ERR _ =>
+                raise ERR name "result has fewer disjuncts than the source"
+            val split = Conv.QCONV Conv.LIST_FORALL_OR_CONV term
+            val (head, rest) =
+              boolSyntax.dest_disj (boolSyntax.rhs (Thm.concl split))
+              handle Feedback.HOL_ERR _ =>
+                raise ERR name "source binders are shared between disjuncts"
+            val _ = Term.aconv head goal_head orelse
+              raise ERR name ("disjunct does not match: " ^
+                Library.term_to_string goal_head)
+          in
+            Thm.TRANS split
+              (Thm.AP_TERM (Term.mk_comb (boolSyntax.disjunction, head))
+                 (peel rest goal_rest))
+          end
+      val proved = peel source result
+    in
+      Thm.EQ_MP (Thm.ALPHA (Thm.concl proved) target) proved
+    end
+
   fun replay_quant_rewrite name (located_args : located_term list) =
     let
       val target = expect_one_arg name (List.map #term located_args)
@@ -6222,9 +6255,7 @@ local
         Tactical.TAC_PROOF (([], target),
           bossLib.SIMP_TAC bossLib.bool_ss [boolTheory.FORALL_AND_THM])
       else if name = "quant-miniscope-or" then
-        Tactical.TAC_PROOF (([], target),
-          bossLib.SIMP_TAC bossLib.bool_ss
-            [boolTheory.LEFT_FORALL_OR_THM, boolTheory.RIGHT_FORALL_OR_THM])
+        replay_quant_miniscope_or target
       else if name = "quant-var-elim-eq" then
         Tactical.TAC_PROOF (([], target),
           bossLib.SIMP_TAC bossLib.bool_ss
@@ -11862,6 +11893,31 @@ local
         in tautological_consequence premise
           (mk_disj_terms [condition, else_tm]) end
     end
+
+  (* cvc5's NOT_ITE_ELIM1/2: from ~(ite C F1 F2), ~C \/ ~F1 and C \/ ~F2.
+     A premise canonical replay reduced to T is kept, as for ite_elim. *)
+  fun replay_not_ite_elim name pick prems =
+    let
+      val premise = expect_one_premise name prems
+    in
+      if Term.aconv (Thm.concl premise) boolSyntax.T then premise
+      else
+        let
+          val (condition, then_tm, else_tm) =
+            boolSyntax.dest_cond (boolSyntax.dest_neg (Thm.concl premise))
+            handle Feedback.HOL_ERR _ => raise ERR name
+              ("premise is not a negated conditional: " ^
+               Library.term_to_string (Thm.concl premise))
+        in tautological_consequence premise
+          (mk_disj_terms (pick (condition, then_tm, else_tm))) end
+    end
+
+  val replay_not_ite_elim1 = replay_not_ite_elim "not_ite_elim1"
+    (fn (condition, then_tm, _) =>
+       [boolSyntax.mk_neg condition, boolSyntax.mk_neg then_tm])
+
+  val replay_not_ite_elim2 = replay_not_ite_elim "not_ite_elim2"
+    (fn (condition, _, else_tm) => [condition, boolSyntax.mk_neg else_tm])
 
   fun replay_scope state prems =
     let
@@ -21847,6 +21903,8 @@ local
            | "ite_eq" => opaque ( replay_ite_eq args)
            | "ite_elim1" => opaque ( replay_ite_elim1 prems)
            | "ite_elim2" => opaque ( replay_ite_elim2 prems)
+           | "not_ite_elim1" => opaque ( replay_not_ite_elim1 prems)
+           | "not_ite_elim2" => opaque ( replay_not_ite_elim2 prems)
            | "quant_unused_vars" => opaque ( replay_quant_unused_vars args)
            | "quant_dt_split" =>
                let
