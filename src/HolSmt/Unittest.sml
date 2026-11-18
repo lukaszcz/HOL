@@ -18476,13 +18476,17 @@ in
     "expected: " ^ expected ^ "\nobserved: " ^ observed)
 end
 
-(* The same bridge target built from independently built equal subterms
-   (a tree of 2^depth physically distinct nodes) and from physically shared
-   subterms (a DAG of depth nodes).  Both must give the same checked
-   theorem; the elapsed times are printed for the memo trial. *)
+(* A word-bridge target (at most 256 pointer-distinct nodes, so the
+   routing reaches the FP word bridge rather than the atom bridge) built
+   from independently built equal subterms, and from one physically shared
+   copy of them.  Each must enter the word bridge exactly once, so its
+   outer visited set and abstraction memo run on both shapes, and must give
+   the same checked theorem.  The bridge itself declines the target (its
+   left side is a conjunction, not an FP value equality) and the contextual
+   rung proves it; the elapsed times are printed, not asserted. *)
 fun cpc_fp_word_bridge_memo_shapes () =
 let
-  val depth = 11
+  val depth = 5
   fun independent 0 = Term.mk_var ("fp_memo_leaf", Type.bool)
     | independent n =
         boolSyntax.mk_conj (independent (n - 1), independent (n - 1))
@@ -18493,33 +18497,42 @@ let
     (fn (index, result) => boolSyntax.mk_conj
       (Term.mk_var ("fp_memo_ctx_" ^ Int.toString index, Type.bool),
        result))
-    boolSyntax.T (List.tabulate (10, Lib.I))
+    boolSyntax.T (List.tabulate (4, Lib.I))
   val encoding = boolSyntax.mk_eq
     (``1w : word1``, SmtLib_Theories.mk_bbterm [atom])
-  fun bridge context =
-    boolSyntax.mk_eq
-      (boolSyntax.mk_conj (atom, context ()),
-       boolSyntax.mk_conj (encoding, context ()))
-  fun check (label, context) =
+  fun profile_count name =
+    case List.find (fn (candidate, _) => candidate = name)
+        (Profile.results ()) of
+      SOME (_, info) => #n info
+    | NONE => 0
+  fun check (label, left_context, right_context) =
     let
-      val target = bridge context
+      val target = boolSyntax.mk_eq
+        (boolSyntax.mk_conj (atom, left_context),
+         boolSyntax.mk_conj (encoding, right_context))
+      val name = "CPC word-bridge memo shape " ^ label
+      val _ = assert
+        (SmtResource.dag_nodes_up_to 257 target <= 192,
+         name ^ " is not comfortably below the 256-node routing bound")
+      val _ = Profile.reset_all ()
       val timer = Timer.startRealTimer ()
       val theorem = CPC_ProofReplay.replay_trust_for_test target
       val elapsed = Timer.checkRealTimer timer
-      val name = "CPC word-bridge memo shape " ^ label
     in
       print (name ^ ": " ^ Time.toString elapsed ^ " s\n");
+      assert (profile_count "CPC(rung:trust/fp-word-bridge)" = 1,
+        name ^ " did not enter the FP word bridge exactly once");
       assert_no_hyps (name, theorem);
       assert_concl_alpha (name, theorem, target);
       check_oracle_tags name theorem
     end
+  val leaf = Term.mk_var ("fp_memo_leaf", Type.bool)
+  val one_copy = boolSyntax.mk_conj (wide, shared depth leaf)
 in
   check ("independent",
-    fn () => boolSyntax.mk_conj
-      (wide, independent depth));
-  check ("shared",
-    fn () => boolSyntax.mk_conj
-      (wide, shared depth (Term.mk_var ("fp_memo_leaf", Type.bool))))
+    boolSyntax.mk_conj (wide, independent depth),
+    boolSyntax.mk_conj (wide, independent depth));
+  check ("shared", one_copy, one_copy)
 end
 
 fun cpc_fp_forced_check_rejects_unproved_clause () =
