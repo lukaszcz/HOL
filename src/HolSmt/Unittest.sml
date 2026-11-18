@@ -20218,6 +20218,35 @@ in
     "Z3 datatype-normalize rewrite was proved by another rung")
 end
 
+(* Rung 21a normalizes in the checked rewrite traversal: here the exported
+   INT_INJ would turn &a = &c into a = c, which this admission refuses. *)
+fun z3_rewrite_datatype_normalize_admission () =
+let
+  val target =
+    ``(f:bool -> bool)
+        (case SmtTriC (((&a):int) = &c \/ (z:int) = 0 \/ p) of
+           SmtTriA => F | SmtTriB _ => F | SmtTriC v => v) <=>
+      f (p \/ 0 = z \/ ((&c):int) = &a)``
+  val refused = [``(a:num) = c``, ``(c:num) = a``]
+  val base = SmtDatatypeProve.default_admission ()
+  fun admit tm =
+    if Lib.can (HolKernel.find_term
+         (fn t => List.exists (Term.aconv t) refused)) tm
+    then raise Feedback.mk_HOL_ERR "Unittest" "admit" "refused"
+    else base tm
+  val initial = Z3_Proof.empty_proof "4.15.3"
+  val steps = Redblackmap.insert
+    (Z3_Proof.proof_steps initial, 0, Z3_Proof.REWRITE target)
+  val _ = Profile.reset_all ()
+  val _ =
+    ignore (Z3_ProofReplay.replay_root_with_definition_occurrences_admitted
+      admit [] (Z3_Proof.update_proof_steps initial steps))
+    handle Feedback.HOL_ERR _ => ()
+in
+  assert (profile_call_count "rewrite(21a)(datatype-normalize)_OK" = 0,
+    "Z3 datatype-normalize ran an exported rewrite its admission refuses")
+end
+
 fun shared_fastpath_budget_contract () =
 let
   fun nest 0 acc = acc
@@ -37954,6 +37983,8 @@ let
       cpc_quant_miniscope_or_replay_success),
     ("z3_rewrite_datatype_normalize_success",
       z3_rewrite_datatype_normalize_success),
+    ("z3_rewrite_datatype_normalize_admission",
+      z3_rewrite_datatype_normalize_admission),
     ("cpc_quant_var_elim_repeated_guard_replay_success",
       cpc_quant_var_elim_repeated_guard_replay_success),
     ("cpc_quant_var_elim_symmetric_guard_replay_success",

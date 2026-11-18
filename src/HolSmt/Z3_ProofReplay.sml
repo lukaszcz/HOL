@@ -7687,8 +7687,9 @@ local
        reorder the rest in one rewrite.  The datatype rung's simp reduces the
        redexes but not the rest, and the congruence rungs below do the rest
        but not the redexes.  After the datatype admission check on the target,
-       normalize each side with srw_ss and the datatype rung's rewrites, and
-       replay the normalized equality through the ladder. *)
+       normalize each side with srw_ss and the datatype rung's rewrites in
+       the checked rewrite traversal, which admits every redex, condition
+       and result, and replay the normalized equality through the ladder. *)
     rewrite_profile "datatypes" "rewrite(21a)(datatype-normalize)" (fn () =>
       let
         val _ = #datatype_admit state t
@@ -7705,7 +7706,10 @@ local
         val _ = reducible l orelse reducible r orelse
           raise ERR "z3_rewrite" "no datatype redex"
         fun normalize side =
-          simpLib.SIMP_CONV (bossLib.srw_ss()) thms side
+          SmtDatatypeProve.with_checked_rewrites_using (#datatype_admit state)
+            (fn () => simpLib.++ (bossLib.srw_ss (), simpLib.rewrites thms))
+            (fn _ => raise Conv.UNCHANGED)
+            (fn ss => simpLib.SIMP_CONV ss [] side)
           handle Conv.UNCHANGED => Thm.REFL side
         val l_thm = normalize l
         val r_thm = normalize r
