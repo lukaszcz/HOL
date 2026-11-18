@@ -387,8 +387,12 @@ struct
             val _ = admit_count_up_to "canon-binder-opening" maximum term
             val (variable,body) =
               SmtReplayImport.dest_abs_preserving_names term
-            val (body_thm,changed) = compact_conversion_status patterns
-              true revisit propose body
+            (* A body where [propose] offers no rewrite comes back
+               unchanged; skip its nested pass and graph. *)
+            val (body_thm,changed) =
+              if SmtResource.contains (Option.isSome o propose) body then
+                compact_conversion_status patterns true revisit propose body
+              else (Thm.REFL body,false)
             val result = boolSyntax.rhs (Thm.concl body_thm)
           in
             if not changed then
@@ -482,13 +486,38 @@ struct
   (* Build rewrite nets once, but run them only on compact prefixes (or
      already admitted native binder islands), never on an expanded DAG. *)
   val alias_schema_conv = Rewrite.PURE_REWRITE_CONV cpc_alias_rewrites
-  val not_schema_conv = Rewrite.PURE_REWRITE_CONV
+  val not_clauses =
     [Thm.CONJUNCT1 boolTheory.NOT_CLAUSES,
      Thm.CONJUNCT2 boolTheory.NOT_CLAUSES]
+  val not_schema_conv = Rewrite.PURE_REWRITE_CONV not_clauses
+  (* Proposes [conversion] only at a term headed by a constant that heads
+     the left-hand side of one of [laws], so that binder bodies without
+     one are not opened. *)
+  fun at_law_heads laws conversion =
+    let
+      fun head term = #1 (boolSyntax.strip_comb term)
+      val heads = List.map (head o boolSyntax.lhs o Thm.concl)
+        (List.concat (List.map Rewrite.mk_rewrites laws))
+      fun constant_id term = #Name (Term.dest_thy_constid term)
+    in
+      if List.all Term.is_const heads then
+        let val ids = List.map constant_id heads in
+          fn term =>
+            let val operator = head term in
+              if Term.is_const operator andalso
+                 List.exists (fn id =>
+                   KernelSig.id_compare (id, constant_id operator) = EQUAL)
+                   ids
+              then SOME conversion else NONE
+            end
+        end
+      else fn _ => SOME conversion
+    end
+
   val cpc_alias_conv = compact_conversion true true
-    (fn _ => SOME alias_schema_conv)
+    (at_law_heads cpc_alias_rewrites alias_schema_conv)
   val not_clauses_conv = compact_conversion true true
-    (fn _ => SOME not_schema_conv)
+    (at_law_heads not_clauses not_schema_conv)
 
   (* Kept for the arithmetic adapter below, not the selected graph pass. *)
   val real_div_conv = Rewrite.PURE_REWRITE_CONV [realTheory.real_div]
@@ -522,8 +551,21 @@ struct
        realTheory.real_ge,
        realTheory.REAL_NOT_LT,
        realTheory.REAL_NOT_LE])
+  fun is_order term =
+    intSyntax.is_less term orelse intSyntax.is_leq term orelse
+    realSyntax.is_less term orelse realSyntax.is_leq term
+
+  fun is_dual_order term =
+    intSyntax.is_greater term orelse intSyntax.is_geq term orelse
+    realSyntax.is_greater term orelse realSyntax.is_geq term
+
+  (* Proposed only at the laws' left-hand shapes, so that binder bodies
+     without one are not opened. *)
   val z3_relation_dual_conv = compact_conversion true false
-    (fn _ => SOME relation_dual_schema_conv)
+    (fn term =>
+      if is_dual_order term orelse
+         (boolSyntax.is_neg term andalso is_order (boolSyntax.dest_neg term))
+      then SOME relation_dual_schema_conv else NONE)
 
   (* After relation aliases are normalized, a non-strict order in an ite
      guard is the complement of the reversed strict order.  Expose that
@@ -684,7 +726,11 @@ struct
   val z3_difference_rewrite_canon_conv = compose
     [z3_relation_dual_conv,
      compact_conversion true false
-       (fn _ => SOME z3_order_cond_polarity_conv),
+       (fn term =>
+         if boolSyntax.is_cond term andalso
+            (intSyntax.is_leq (#1 (boolSyntax.dest_cond term)) orelse
+             realSyntax.is_leq (#1 (boolSyntax.dest_cond term)))
+         then SOME z3_order_cond_polarity_conv else NONE),
      z3_cond_polarity_conv,
      z3_strict_difference_conv,
      polynomial_components_conv,
