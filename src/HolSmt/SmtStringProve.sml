@@ -974,19 +974,15 @@ struct
     | FamilyFound of int
     | TraversalLimit of int
 
-  (* A pointer-identity visited set; the hash only selects a bucket. *)
-  fun new_pointer_seen bucket_count =
+  (* A pointer-identity visited set; the hash only selects a bucket.  Its
+     fixed 4093 buckets never grow.  [seen] is true on a repeat visit. *)
+  fun new_pointer_seen () =
     let
-      val buckets = Array.array (bucket_count, [] : Term.term list)
+      val table : unit SmtPointerTable.table = SmtPointerTable.new
+        {hint = SmtReplayImport.pointer_bucket 3, initial = 4093,
+         ceiling = 4093}
     in
-      fn term =>
-        let
-          val index = SmtReplayImport.pointer_bucket 3 bucket_count term
-          val bucket = Array.sub (buckets, index)
-        in
-          List.exists (fn saved => Portable.pointer_eq (term, saved)) bucket
-          orelse (Array.update (buckets, index, term :: bucket); false)
-        end
+      fn term => not (SmtPointerTable.mark table term)
     end
 
   fun scan_string_family policy maximum t =
@@ -997,7 +993,7 @@ struct
          generic String classifier's established whole-traversal cap. *)
       fun scan target =
       let
-          val seen = new_pointer_seen 4093
+          val seen = new_pointer_seen ()
           fun children term rest =
             if Term.is_comb term then
               let val (operator, operand) = Term.dest_comb term
@@ -1509,7 +1505,7 @@ struct
              shared spine and can consume the step-time budget before the
              DAG cap is reached.  The resource metric is a physical-DAG
              bound, so pointer identity is the appropriate key here. *)
-          val seen = new_pointer_seen 4093
+          val seen = new_pointer_seen ()
           fun loop _ [] = false
             | loop observed (term :: pending) =
                 if seen term then
