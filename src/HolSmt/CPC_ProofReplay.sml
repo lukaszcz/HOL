@@ -21968,19 +21968,14 @@ local
       fun prove_canonical_hyp hyp =
         let
           val hyp_canon = SmtReplayCanon.cpc_canon_conv hyp
-          val normalized_hyp = boolSyntax.rhs (Thm.concl hyp_canon)
           fun match assumption =
-            let
-              val normalized_assumption =
-                SmtReplayCanon.cpc_canon_rule (Thm.ASSUME assumption)
-              val _ = Term.aconv (Thm.concl normalized_assumption)
-                normalized_hyp orelse
+            case SmtReplayCanon.transport_hypothesis hyp_canon
+                   (SmtReplayCanon.cpc_canon_rule (Thm.ASSUME assumption)) of
+              NONE =>
                 raise ERR "remove_extra_hyps"
                   "canonical assumption did not match extra hypothesis"
-              val theorem = Thm.EQ_MP (Thm.SYM hyp_canon)
-                normalized_assumption
-              val () = profile_event "CPC(canon:assumption-interface)"
-            in theorem end
+            | SOME theorem =>
+                (profile_event "CPC(canon:assumption-interface)"; theorem)
         in
           Lib.tryfind match context
         end
