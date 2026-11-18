@@ -8578,8 +8578,21 @@ local
             (SmtReplayCompactWord.prove_schema (#bitblast context)
                (#atomic_law context) (#word_law context))
             (#hole context) target (!substitutions) schema end end
+        (* This rung bit-blasts words over 32 bits whole, where the
+           skeleton route is cheaper, so there that route goes first. *)
+        val wide_word = SmtResource.contains (fn t =>
+            wordsSyntax.is_word_type (Term.type_of t) andalso
+            (Arbnum.> (wordsSyntax.size_of t, Arbnum.fromInt 32)
+             handle Feedback.HOL_ERR _ => false))
         fun old_word_schema target =
-          profile "th_lemma[bv](word-schema)" (schematic false) target
+          let fun schema () =
+                profile "th_lemma[bv](word-schema)" (schematic false) target
+          in if not (wide_word target) then schema () else
+            case profile "th_lemma[bv](wide-skeleton)"
+                   (skeleton_general_attempt state) target of
+              SmtSkeletonDispatch.Proved result =>
+                skeleton_general_success result
+            | SmtSkeletonDispatch.Declined => schema () end
         fun word_schema target =
           (profile "th_lemma[bv](compact-program-law)"
              conditional_schematic target

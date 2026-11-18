@@ -26253,6 +26253,18 @@ let
      profile_call_count "th_lemma[bv](shared-word)_OK" = 1,
      "cross-metadata replay lost nine general proofs or its word schema")
   val () = Profile.reset_all ()
+  val wide_bit =
+    ``0w = ~(task19_wide:256 word) ==> (7 >< 7) task19_wide = 1w:1 word``
+  val () = timed "wide-word-bit" (fn () =>
+    replay "general reduction wide word bit"
+      (Z3_Proof.TH_LEMMA_BV
+        (metadata "bv" "task19-wide-bit", [], wide_bit)) wide_bit)
+  val () = assert
+    (profile_call_count "th_lemma[bv](wide-skeleton)_OK" = 1 andalso
+     profile_call_count "th_lemma[general](success)_OK" = 1 andalso
+     profile_call_count "th_lemma[bv](owned-width)_OK" = 0,
+     "wide word bit did not take the skeleton route first")
+  val () = Profile.reset_all ()
   val () = timed "legacy-arithmetic" (fn () =>
     replay "legacy arithmetic transitivity full replay"
       (Z3_Proof.TH_LEMMA_ARITH
