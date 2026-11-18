@@ -860,7 +860,9 @@ struct
     R.same_scope_meter (expected,meter)
   fun binding_guard_work (BindingGuard {work,...}) = work
   fun binding_guard_data (BindingGuard {data,...}) = data
-  fun prepare_binding_guard graph caller
+  (* Shared by the int and policy guards, which differ only in the
+     scope-path preparation operations they pass. *)
+  fun prepare_guard {shared_path, binding_path} graph caller
       (BindingOrigin {backend=Backend {owner,graph=original,...},
         parent,child,graph=held,parent_scope,scope,variables,descriptors,
         binders,epoch,symbols}) meter =
@@ -885,7 +887,7 @@ struct
           val _ = if construction = expected then () else
             raise ERR "binding_guard" "actual lexical frame differs"
           fun path scope =
-            let val (program,_) = G.prepare_shared_scope_path graph scope meter
+            let val (program,_) = shared_path graph scope meter
                 val _ = R.scope_meter_charge meter 2
             in (scope,program) end
           val lexical_path = path lexical
@@ -894,14 +896,13 @@ struct
         in (active,[lexical_path,construction_path]) end
       val (parent_active,parent_paths) = frame parent parent_scope
       val (child_active,child_paths) = frame child scope
-      val visible = G.prepare_binding_scope_path graph scope parent_scope meter
+      val visible = binding_path graph scope parent_scope meter
       fun node_paths [] = (R.scope_meter_charge meter 1;[])
         | node_paths (node::rest) =
           let
             val _ = R.scope_meter_charge meter 2
             val required = G.binding_node_scope graph node meter
-            val program = G.prepare_binding_scope_path graph scope required
-              meter
+            val program = binding_path graph scope required meter
             val tail = node_paths rest
             val _ = R.scope_meter_charge meter 2
           in (required,program)::tail end
@@ -926,6 +927,10 @@ struct
       variables=paths,epoch=epoch,symbols=symbols,work=work,
       data={scope=scope,variables=variables,descriptors=descriptors,
         binders=binders}} end
+  fun prepare_binding_guard graph caller origin meter =
+    prepare_guard {shared_path = G.prepare_shared_scope_path,
+                   binding_path = G.prepare_binding_scope_path}
+      graph caller origin meter
   fun validate_binding_guard graph caller
       (BindingGuard {graph=held,parent_scope,scope,parent_active,child_active,
         parent_paths,child_paths,visible,variables,epoch,symbols,...}) =
@@ -1108,74 +1113,10 @@ struct
 
   fun construct backend frame recipe arguments =
     #value (construct_with_branches backend frame recipe arguments)
-  fun prepare_binding_guard_policy graph caller
-      (BindingOrigin {backend=Backend {owner,graph=original,...},
-        parent,child,graph=held,parent_scope,scope,variables,descriptors,
-        binders,epoch,symbols}) meter =
-    let
-      val _ = R.scope_meter_charge meter 8
-      val _ = if Portable.pointer_eq (graph,held) andalso
-          caller = parent_scope then () else
-        raise ERR "binding_guard" "different graph or genuine parent"
-      val _ = case original of SOME actual =>
-          if Portable.pointer_eq (actual,graph) then () else
-            raise ERR "binding_guard" "different private backend graph"
-        | NONE => raise ERR "binding_guard" "ordinary backend has no origin"
-      fun frame (Frame {owner=actual,active,environment,...}) expected =
-        let
-          val _ = R.scope_meter_charge meter 7
-          val _ = if actual = owner then () else
-            raise ERR "binding_guard" "different private lexical owner"
-          val (lexical,construction) = case environment of
-              SOME {lexical,construction} => (lexical,construction)
-            | NONE => raise ERR "binding_guard" "no graph environment"
-          val _ = R.scope_meter_charge meter 3
-          val _ = if construction = expected then () else
-            raise ERR "binding_guard" "actual lexical frame differs"
-          fun path scope =
-            let val (program,_) =
-                  G.prepare_shared_scope_path_policy graph scope meter
-                val _ = R.scope_meter_charge meter 2
-            in (scope,program) end
-          val lexical_path = path lexical
-          val construction_path = path construction
-          val _ = R.scope_meter_charge meter 3
-        in (active,[lexical_path,construction_path]) end
-      val (parent_active,parent_paths) = frame parent parent_scope
-      val (child_active,child_paths) = frame child scope
-      val visible = G.prepare_binding_scope_path_policy graph scope
-        parent_scope meter
-      fun node_paths [] = (R.scope_meter_charge meter 1;[])
-        | node_paths (node::rest) =
-          let
-            val _ = R.scope_meter_charge meter 2
-            val required = G.binding_node_scope graph node meter
-            val program = G.prepare_binding_scope_path_policy graph scope required
-              meter
-            val tail = node_paths rest
-            val _ = R.scope_meter_charge meter 2
-          in (required,program)::tail end
-      val paths = node_paths variables
-      fun sum [] = (R.scope_meter_charge meter 1;1:IntInf.int)
-        | sum ((_,path)::rest) =
-            (R.scope_meter_charge meter 3;
-             G.scope_path_validation_work path+sum rest+2)
-      fun variable_sum [] = (R.scope_meter_charge meter 1;1:IntInf.int)
-        | variable_sum ((_,path)::rest) =
-            (R.scope_meter_charge meter 3;
-             G.binding_scope_path_work path+variable_sum rest+2)
-      val frame_work = sum parent_paths + sum child_paths + 4
-      (* Both original guard calls retain epoch checks and frame checks;
-         between them every actual variable visibility path is validated. *)
-      val work = 2*(frame_work+6) +
-        G.binding_scope_path_work visible + variable_sum paths + 8
-      val _ = R.scope_meter_charge meter 16
-    in BindingGuard {meter=meter,graph=graph,parent_scope=parent_scope,
-      scope=scope,parent_active=parent_active,child_active=child_active,
-      parent_paths=parent_paths,child_paths=child_paths,visible=visible,
-      variables=paths,epoch=epoch,symbols=symbols,work=work,
-      data={scope=scope,variables=variables,descriptors=descriptors,
-        binders=binders}} end
+  fun prepare_binding_guard_policy graph caller origin meter =
+    prepare_guard {shared_path = G.prepare_shared_scope_path_policy,
+                   binding_path = G.prepare_binding_scope_path_policy}
+      graph caller origin meter
 
   (* Additive exact recipe; original recipe representation stays literal. *)
   datatype policy_recipe = FinitePolicyRecipe of recipe
