@@ -22,9 +22,10 @@ struct
       metis_max_target_nodes
 
   (* The total cap on one exhaustiveness proof attempt's datatype case
-     splits (see datatype_split_fixpoint_tac).  Every split simplifies the
-     whole goal again, so the cap bounds the goal nodes simplified per
-     attempt: 256 splits up to 256-node targets, fewer beyond. *)
+     splits (see datatype_split_fixpoint_tac).  Every split simplifies its
+     branches of the goal again, so the cap shrinks with the initial
+     target's size: 256 splits up to 256-node targets, 65536 div the
+     target's nodes beyond. *)
   val max_exhaustiveness_splits = 256
   val max_exhaustiveness_split_nodes = 65536
   fun exhaustiveness_split_cap t =
