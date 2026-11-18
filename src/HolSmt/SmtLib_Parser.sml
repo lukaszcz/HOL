@@ -3255,8 +3255,6 @@ local
     construction_value
       (parse_term_recorded_with_backend cfg get_token dictionaries)
 
-  val apply_construction_symbol_with_policy = apply_construction_symbol
-
   fun parse_term_sourced_with_policy_and_indices
       (cfg : 'a policy_construction_cfg) symbolic_index get_token
       dictionaries =
@@ -7735,8 +7733,7 @@ in
   val parse_term_recorded_with_backend_and_indices =
     parse_term_recorded_with_backend_and_indices
   val apply_construction_symbol = apply_construction_symbol
-  val apply_construction_symbol_with_policy =
-    apply_construction_symbol_with_policy
+  val apply_construction_symbol_with_policy = apply_construction_symbol
   val parse_term_recorded_with_policy_and_indices =
     parse_term_recorded_with_policy_and_indices
   val parse_term_recorded_with_policy = parse_term_recorded_with_policy
