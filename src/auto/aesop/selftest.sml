@@ -145,7 +145,8 @@ val _ =
                  conclusion = ``p:bool``,
                  assumptions = [boolSyntax.mk_eq (x, y)],
                  qvars = HOLset.fromList Term.compare [x, y],
-                 simpset = simpLib.empty_ss, simp_controls = []}); false)
+                 simpset = simpLib.empty_ss, simp_controls = [],
+                 context = Context.snapshot ()}); false)
              handle searchBudget.LimitReached
                (searchBudget.Candidate, usage) => #candidates usage = limit
            end
@@ -3677,6 +3678,50 @@ val _ =
          (closes_goal aesop_linarith_tactic
             aesop_arith_fact_goal))
 
+(* The tactic reads everything from the context it is applied in: the
+   claset, the simpsets derived from srw_ss and the aesop_simp table, and
+   linarith's [arith] facts.  In this context srw_ss and aesop_simp have
+   just changed, so the proof derives its simpsets itself, and the goal
+   closes only with the [arith] fact the ambient context lacks.  An
+   ambient read anywhere on the way would show in the census. *)
+val _ =
+  check
+    ("AESOP_TAC reads its context, and no other, in a proof",
+     fn () =>
+       let
+         val saved = Context.snapshot ()
+         val census_rule =
+           ASSUME ``aesop_census_c = (aesop_census_d:'a)``
+         val changed = ref saved
+         fun change () =
+           (BasicProvers.augment_srw_ss
+              [OrdinarySimp.rewrites [census_rule]];
+            ThmAttribute.local_attribute
+              {attrname = "aesop_simp", name = "aesop_census_rule",
+               args = [], thm = census_rule};
+            with_arith_fact
+              (fn () => (changed := Context.snapshot (); true)))
+         val _ =
+           Portable.finally (fn () => Context.restore saved) change ()
+         val warnings = ref ([] : string list)
+         fun run () =
+           (Context.set_ambient_report_level 2;
+            Lib.with_flag
+              (Feedback.WARNING_outstream,
+               fn s => warnings := s :: !warnings)
+              (Context.in_proof
+                 (fn () =>
+                    aesop_linarith_tactic aesop_arith_fact_goal
+                      (!changed)))
+              ())
+         val (residues, _) =
+           Portable.finally (fn () => Context.set_ambient_report_level 1)
+             run ()
+       in
+         null residues andalso null (!warnings) andalso
+         not (closes_goal aesop_linarith_tactic aesop_arith_fact_goal)
+       end)
+
 (* A tactic value is routinely bound before the declarations its goals
    need -- [val TAC = AESOP_TAC []] at the head of a script, then the
    theorems and simp rules the script proves.  Both entry points are
@@ -4423,7 +4468,8 @@ val _ =
              {claset = elim_dest_cs, mode = clasetUnify.Match,
               conclusion = elim_q, assumptions = [elim_p],
               qvars = HOLset.empty Term.compare,
-              simpset = simpLib.empty_ss, simp_controls = []}
+              simpset = simpLib.empty_ss, simp_controls = [],
+              context = Context.snapshot ()}
          val selected =
            List.filter
              (fn ({name, ...} : aesopRule.rule) =>

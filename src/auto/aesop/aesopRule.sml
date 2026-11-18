@@ -299,9 +299,9 @@ fun same_split_source left right =
    every rule-set assembly would repeat that derivation for every declared
    split theorem at every goal.  The registered theorems change rarely, so
    cache the built rules against them. *)
-fun split_rules () : split_ruleset =
+fun split_rules_of ctxt : split_ruleset =
   let
-    val source = splitLib.named_split_thms ()
+    val source = splitLib.named_split_thms_of ctxt
     fun build () =
       let
         val pairs =
@@ -486,7 +486,8 @@ fun order_unsafe rules =
   end
 
 fun claset_rules_core
-      {claset, mode, conclusion, assumptions, qvars, simp, budget} =
+      {claset, mode, conclusion, assumptions, qvars, simp, budget,
+       context} =
   let
     val candidates =
       candidate_declarations budget claset conclusion assumptions qvars
@@ -505,7 +506,7 @@ fun claset_rules_core
     val norm_declarations =
       map (declaration_rule budget clasetUnify.Match)
         (clasetLib.norm_rules claset)
-    val splits = split_rules ()
+    val splits = split_rules_of context
     val tactics =
       applicable_tactic_rules conclusion assumptions
     val norm_tactics =
@@ -532,11 +533,12 @@ fun claset_rules
   claset_rules_core
     {claset = claset, mode = mode, conclusion = conclusion,
      assumptions = assumptions, qvars = qvars,
-     simp = simp_rule simp_args, budget = NONE}
+     simp = simp_rule simp_args, budget = NONE,
+     context = Context.snapshot ()}
 
 fun claset_rules_with budget
       {claset, mode, conclusion, assumptions, qvars,
-       simpset, simp_controls} =
+       simpset, simp_controls, context} =
   claset_rules_core
     {claset = claset, mode = mode, conclusion = conclusion,
      assumptions = assumptions, qvars = qvars,
@@ -544,6 +546,6 @@ fun claset_rules_with budget
        simp_rule_with
          {name = "simp", simpset = simpset,
           controls = simp_controls},
-     budget = budget}
+     budget = budget, context = context}
 
 end

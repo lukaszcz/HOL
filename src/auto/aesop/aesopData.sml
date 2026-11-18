@@ -18,76 +18,64 @@ val aesop_simp_data =
      apply_delta = apply_aesop_simp_delta,
      apply_to_global = apply_aesop_simp_delta}
 
-fun aesop_simp_rewrites () =
-  #get_global_value aesop_simp_data ()
+fun aesop_simp_rewrites_of ctxt =
+  #get_global_value_of aesop_simp_data ctxt
+
+(* A simpset built here is built for nobody in particular -- the first
+   proof to want it, as often as not -- so building it reads no
+   simplifier.trace setting, and what is built reports at the setting of
+   whoever runs it, as the srw_ss it comes from does. *)
+fun quietly build ss =
+  simpExtLib.unset_trace_level (build (simpExtLib.set_trace_level 0 ss))
 
 (* Start from the lifted srw_ss, NOT clasimp_ss: aesop leaves splitting
    to search.  Replacing rather than appending unsafe solvers is
    essential: a solver installed in the base must not precede aesop's
    choice during safe normalisation's side-condition traversal. *)
-fun aesop_simpset ss rewrites =
-  ss
+fun aesop_base ss =
+  simpExtLib.lift_simpset ss
   |> clasimpLib.weaken_cond_congruence
   |> simpExtLib.set_cond_depth clasimpLib.cond_depth
   |> (fn ss' => simpExtLib.++ (ss', simpExtLib.lift_ssfrag boolSimps.ETA_ss))
   |> simpExtLib.set_safe_solvers [clasimpLib.safe_solver]
   |> simpExtLib.set_unsafe_solvers [linarithLib.linarith_solver]
-  |> (fn ss' => simpExtLib.++ (ss', simpExtLib.rewrites rewrites))
 
-type cached_simpset =
-  {base : simpExtLib.simpset, rewrites : Thm.thm list,
-   simpset : simpExtLib.simpset}
-
-fun derive_aesop_ss ss _ : cached_simpset =
-  let
-    val base = simpExtLib.lift_simpset ss
-    val rewrites = aesop_simp_rewrites ()
-  in {base = base, rewrites = rewrites,
-      simpset = aesop_simpset base rewrites} end
-
-(* Derived from srw_ss independently of clasimp's derivation. *)
-val {get = get_cached_aesop_ss, get_of = _} =
+(* The part of the simpset that moves only with srw_ss, derived from it
+   independently of clasimp's derivation, and so held, like srw_ss, by
+   the context: restoring a context restores this exact simpset. *)
+val {get = _, get_of = aesop_base_of} =
   BasicProvers.make_simpset_derived_value
-    "aesopData.aesop_ss" derive_aesop_ss
-    {base = simpExtLib.empty_ss, rewrites = [],
-     simpset = simpExtLib.empty_ss}
+    "aesopData.aesop_ss"
+    (fn ss => fn _ =>
+       simpExtLib.unset_trace_level
+         (aesop_base (simpLib.set_trace_level 0 ss)))
+    simpExtLib.empty_ss
 
-(* The derived value above moves only with srw_ss, so an aesop_simp
-   addition alone is derived once here.  Both inputs are context-owned
-   immutable values, compared by identity, which also handles
-   Context.restore. *)
-val latest_aesop_ss : cached_simpset option Context.Data.slot =
-  Context.Data.new
-    {name = "aesopData.tracked_cache", empty = NONE,
-     pp = fn _ => "<aesop tracked cache>"}
+(* The aesop_simp rewrites move without srw_ss, so they are added here,
+   once for each state of the pair.  Both are immutable values a context
+   owns, compared by identity. *)
+val with_rewrites =
+  linarithData.keyed_memo
+    (fn (base, rewrites) => fn (base', rewrites') =>
+       Portable.pointer_eq (base, base') andalso
+       Portable.pointer_eq (rewrites, rewrites'))
+    (fn (base, rewrites) =>
+       quietly
+         (fn ss => simpExtLib.++ (ss, simpExtLib.rewrites rewrites))
+         base)
 
-fun derive_latest base rewrites =
-  let val simpset = aesop_simpset base rewrites
+fun aesop_ss_of ctxt =
+  let val base = aesop_base_of ctxt
   in
-    Context.update
-      (Context.Data.put latest_aesop_ss
-        (SOME {base = base, rewrites = rewrites, simpset = simpset}));
-    simpset
+    case aesop_simp_rewrites_of ctxt of
+        [] => base
+      | rewrites => with_rewrites (base, rewrites)
   end
 
-fun aesop_ss () =
-  let
-    val cached = get_cached_aesop_ss ()
-    val base = #base cached
-    val rewrites = aesop_simp_rewrites ()
-  in
-    if Portable.pointer_eq (#rewrites cached, rewrites) then #simpset cached
-    else
-      case Context.Data.get latest_aesop_ss (Context.snapshot ()) of
-          SOME {base = base', rewrites = rewrites', simpset} =>
-            if Portable.pointer_eq (base, base') andalso
-               Portable.pointer_eq (rewrites, rewrites')
-            then simpset
-            else derive_latest base rewrites
-        | NONE => derive_latest base rewrites
-  end
+fun aesop_ss () = aesop_ss_of (Context.snapshot ())
 
-val _ = HOLFlags.create_trace ({group = "aesop", name = "trace"},
-                               {initial = 0, max = 3})
+val {flag = trace, ...} =
+    HOLFlags.create_trace ({group = "aesop", name = "trace"},
+                           {initial = 0, max = 3})
 
 end

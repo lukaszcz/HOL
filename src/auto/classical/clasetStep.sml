@@ -630,7 +630,21 @@ fun minor_prefixes policy is_elim premises =
         let val minors = if is_elim then tl premises else premises
         in SOME (map clasetReplay.exact_prefix_descriptor minors) end
 
-fun try_rule policy mode cs duplicated node pos
+(* A Match step that would leave premise variables unfixed is refused.
+   The safe cascades, which run in a context, note the refusal at its
+   classical.trace level.  Unify steps never refuse; rules supplied without
+   a context, as aesop's are, note nothing, as the forward path does. *)
+fun skip_note ctxt =
+  let val verbosity = clasetReplay.trace_level_of ctxt
+  in
+    fn () =>
+      trace verbosity 1
+        (fn () => "skipping safe rule with unfixed premise variables")
+  end
+
+fun no_note () = ()
+
+fun try_rule note_skip policy mode cs duplicated node pos
     (tag, (is_elim, theorem)) assumption =
   let
     val (asl, w) = clasetGoal.render node pos
@@ -658,8 +672,6 @@ fun try_rule policy mode cs duplicated node pos
         end
       else (NONE, [], #premises fresh, store1)
     val residual_terms = remaining @ hyp (#core fresh)
-    fun note_skip () =
-      trace 1 (fn () => "skipping safe rule with unfixed premise variables")
     val (final_store, normalized_rule) =
       settle_rule mode (#core fresh) (#metas fresh) asl note_skip
         residual_terms store2
@@ -1034,7 +1046,7 @@ fun forward_rule_results charge mode rule immediate (node, pos) =
 
 (* [derive] runs before each lazy constructor pair a Unify lookup derives
    afresh; see [clasetLib.unify_elim_candidates_with]. *)
-fun rule_results_with derive mode cs duplicated part weight_filter
+fun rule_results_with derive note_skip mode cs duplicated part weight_filter
       (node, pos) =
   seq.delay
     (fn () =>
@@ -1049,7 +1061,7 @@ fun rule_results_with derive mode cs duplicated part weight_filter
             (fn () =>
               case total
                 (fn () =>
-                  try_rule FullPrefixes mode cs duplicated node pos
+                  try_rule note_skip FullPrefixes mode cs duplicated node pos
                     entry NONE) ()
               of
                   SOME result => seq.result result
@@ -1061,8 +1073,8 @@ fun rule_results_with derive mode cs duplicated part weight_filter
                 (fn () =>
                   case total
                     (fn () =>
-                      try_rule FullPrefixes mode cs duplicated node pos
-                        entry
+                      try_rule note_skip FullPrefixes mode cs duplicated
+                        node pos entry
                         (SOME (assumption_pos, major))) ()
                   of
                       SOME result =>
@@ -1086,7 +1098,8 @@ fun rule_results_with derive mode cs duplicated part weight_filter
         entries tagged
       end)
 
-fun rule_results mode = rule_results_with listUtil.no_checkpoint mode
+fun rule_results note_skip =
+  rule_results_with listUtil.no_checkpoint note_skip
 
 datatype exact_major_selector = AllMajors | ExactMajor of int option
 
@@ -1119,7 +1132,7 @@ fun exact_rule_attempts attempt selector elim node pos =
         end
     | _ => seq.empty
 
-fun supplied_rule_results_with charge selector policy mode cs
+fun supplied_rule_results_with charge note_skip selector policy mode cs
     {theorem, elim} (node, pos) =
   let
     val tag : clasetLib.tag = {weight = 0, index = 0}
@@ -1131,7 +1144,8 @@ fun supplied_rule_results_with charge selector policy mode cs
           (charge ();
            case total
             (fn () =>
-              try_rule policy mode cs false node pos entry assumption) ()
+              try_rule note_skip policy mode cs false node pos entry
+                assumption) ()
           of
               SOME direct => seq.result direct
             | NONE => seq.empty))
@@ -1141,7 +1155,7 @@ fun supplied_rule_results_with charge selector policy mode cs
   end
 
 fun exact_rule_results_with selector cs specification =
-  supplied_rule_results_with (fn () => ())
+  supplied_rule_results_with (fn () => ()) no_note
     selector ExactBlastPrefixes
     clasetUnify.Unify cs specification
 
@@ -1507,12 +1521,12 @@ fun safe_cascade_in ctxt cs input =
   first_nonempty
     [assumption_results,
      eq_mp_results,
-     rule_results clasetUnify.Match cs false
+     rule_results (skip_note ctxt) clasetUnify.Match cs false
        (clasetLib.safe0_part cs) all_weights,
      builtin_results_in ctxt,
      swapped_builtin_results_in ctxt,
      hyp_subst_results_in ctxt,
-     rule_results clasetUnify.Match cs false
+     rule_results (skip_note ctxt) clasetUnify.Match cs false
        (clasetLib.safep_part cs) all_weights]
     input
 
@@ -1575,22 +1589,26 @@ fun close_one_child direct =
       | _ => NONE
   end
 
-fun bimatch2_results cs part input =
+fun bimatch2_results note_skip cs part input =
   seq.mapPartial close_one_child
-    (rule_results clasetUnify.Match cs false part (weight_is 2) input)
+    (rule_results note_skip clasetUnify.Match cs false part (weight_is 2)
+       input)
 
 fun clarify_cascade_in ctxt cs input =
-  first_nonempty
-    [assume_or_contradiction,
-     rule_results clasetUnify.Match cs false
-       (clasetLib.safe0_part cs) all_weights,
-     builtin_results_in ctxt,
-     swapped_builtin_results_in ctxt,
-     hyp_subst_results_in ctxt,
-     rule_results clasetUnify.Match cs false
-       (clasetLib.safep_part cs) (weight_is 1),
-     bimatch2_results cs (clasetLib.safep_part cs)]
-    input
+  let val note_skip = skip_note ctxt
+  in
+    first_nonempty
+      [assume_or_contradiction,
+       rule_results note_skip clasetUnify.Match cs false
+         (clasetLib.safe0_part cs) all_weights,
+       builtin_results_in ctxt,
+       swapped_builtin_results_in ctxt,
+       hyp_subst_results_in ctxt,
+       rule_results note_skip clasetUnify.Match cs false
+         (clasetLib.safep_part cs) (weight_is 1),
+       bimatch2_results note_skip cs (clasetLib.safep_part cs)]
+      input
+  end
 
 fun append_results left right input =
   seq.append (left input) (seq.delay (fn () => right input))
@@ -1838,24 +1856,24 @@ fun inst0_cascade derive cs input =
   append_many
     [unifying_assumption_results,
      unifying_contradiction_results,
-     rule_results_with derive clasetUnify.Unify cs false
+     rule_results_with derive no_note clasetUnify.Unify cs false
        (clasetLib.safe0_part cs) all_weights]
     input
 
 fun instp_cascade cs =
-  rule_results clasetUnify.Unify cs false
+  rule_results no_note clasetUnify.Unify cs false
     (clasetLib.safep_part cs) all_weights
 
 fun inst_cascade derive cs input =
   append_results (inst0_cascade derive cs) (instp_cascade cs) input
 
 fun unsafe_cascade cs =
-  rule_results clasetUnify.Unify cs false
+  rule_results no_note clasetUnify.Unify cs false
     (clasetLib.unsafe_part cs) all_weights
 
 fun depth_cascade part cs input =
   append_results (instp_cascade cs)
-    (rule_results clasetUnify.Unify cs false part all_weights) input
+    (rule_results no_note clasetUnify.Unify cs false part all_weights) input
 
 fun selected_direct goals validation available =
   case List.find
@@ -1916,13 +1934,13 @@ val blast_contradiction_step =
   direct_step unifying_contradiction_results
 fun rule_step {theorem, elim, mode} =
   direct_step
-    (supplied_rule_results_with (fn () => ())
+    (supplied_rule_results_with (fn () => ()) no_note
       AllMajors FullPrefixes mode
       clasetLib.empty_cs {theorem = theorem, elim = elim})
 fun rule_step_budgeted budget {theorem, elim, mode} =
   direct_step
     (supplied_rule_results_with
-      (fn () => searchBudget.charge budget searchBudget.Candidate)
+      (fn () => searchBudget.charge budget searchBudget.Candidate) no_note
       AllMajors FullPrefixes mode
       clasetLib.empty_cs {theorem = theorem, elim = elim})
 fun forward_rule_step_with charge {theorem, immediate, mode} =

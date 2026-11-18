@@ -121,7 +121,9 @@ sig
   (* Explicit-context callers have already assembled their invocation
      simpset.  This form preserves that simpset and forwards only the
      generic simplifier controls to the built-in normalisation rule.  The
-     claset rules charge [budget] when one is given. *)
+     claset rules charge [budget] when one is given, and the registered
+     split rules are those of [context]; claset_rules takes them from the
+     ambient context. *)
   val claset_rules_with :
     searchBudget.budget option ->
     {claset : clasetLib.claset,
@@ -130,5 +132,6 @@ sig
      assumptions : term list,
      qvars : term HOLset.set,
      simpset : simpExtLib.simpset,
-     simp_controls : thm list} -> ruleset
+     simp_controls : thm list,
+     context : Context.t} -> ruleset
 end

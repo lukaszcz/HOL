@@ -24,31 +24,35 @@ fun qvars_of store ({asl, w, ...} : clasetGoal.cgoal) =
     (List.concat
       (map (clasetMeta.metas_of store) (w :: asl)))
 
-fun rule_source budget claset simpset simp_controls
+fun rule_source budget claset simpset simp_controls context
       ({mode, cgoal = cgoal as {asl, w, ...}, store} :
        {mode : clasetUnify.mode, cgoal : clasetGoal.cgoal,
         store : clasetMeta.store}) =
   aesopRule.claset_rules_with budget
     {claset = claset, mode = mode, conclusion = w,
      assumptions = asl, qvars = qvars_of store cgoal,
-     simpset = simpset, simp_controls = simp_controls}
+     simpset = simpset, simp_controls = simp_controls, context = context}
 
 fun initial_tree goal =
   aesopTree.create
     {node = clasetGoal.from_goal goal, unsafe_cursor = []}
 
+(* A session is not run as a tactic, so its rules come from the context
+   ambient when it is opened. *)
 fun CS_AESOP_SESSION budget config claset simpset goal =
-  let val _ = check_config "CS_AESOP_SESSION" config
+  let
+    val _ = check_config "CS_AESOP_SESSION" config
+    val context = Context.snapshot ()
   in
     aesopSearch.new_budget_session budget config
-      (fn owned => rule_source (SOME owned) claset simpset [])
+      (fn owned => rule_source (SOME owned) claset simpset [] context)
       (initial_tree goal)
   end
 
 fun close_raw function_name config claset simpset simp_controls goal ctxt =
   let
     val _ = check_config function_name config
-    val source = rule_source NONE claset simpset simp_controls
+    val source = rule_source NONE claset simpset simp_controls ctxt
   in
     case aesopSearch.search_in ctxt config source
            (initial_tree goal) of
@@ -112,7 +116,7 @@ fun safe_replay tree =
 fun safe_raw function_name config claset simpset simp_controls goal ctxt =
   let
     val _ = check_config function_name config
-    val source = rule_source NONE claset simpset simp_controls
+    val source = rule_source NONE claset simpset simp_controls ctxt
     val tree = initial_tree goal
   in
     case
@@ -204,7 +208,8 @@ fun CS_AESOP_SAFE_TAC config claset simpset =
 fun AESOP_TAC theorems goal ctxt =
   process_args
       (close_raw "AESOP_TAC" default_config)
-      (clasetLib.the_claset ()) (aesopData.aesop_ss ())
+      (clasetLib.the_claset_of ctxt)
+      (simpExtLib.in_trace_context ctxt (aesopData.aesop_ss_of ctxt))
       theorems
     goal ctxt
 
@@ -212,7 +217,8 @@ fun AESOP_SAFE_TAC theorems goal ctxt =
   changed
       (process_safe_args
         (safe_raw "AESOP_SAFE_TAC" default_config)
-        (clasetLib.the_claset ()) (aesopData.aesop_ss ())
+        (clasetLib.the_claset_of ctxt)
+        (simpExtLib.in_trace_context ctxt (aesopData.aesop_ss_of ctxt))
         theorems) goal ctxt
 
 fun augment_aesop {name, phase, tactic} =
