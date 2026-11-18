@@ -540,18 +540,29 @@ struct
           0 => (budget,other,other)
         | 1 => (other,budget,other)
         | _ => (other,other,budget)
+      (* Each action returns the constructed node; alias capture is reached
+         by a let-bound alias used under a binder. *)
       val fixtures =
-        [("import",0,fn backend => ignore (B.source backend
-            (B.root backend) big)),
-         ("literal",1,fn backend => ignore (B.literal backend
-            (B.root backend) big)),
-         ("binder",2,fn backend => ignore (parsed backend false "ALL"
-            "(forall ((x Int)) (> x 0))"))]
+        [("import",0,fn _ => fn backend => B.source backend
+            (B.root backend) big),
+         ("literal",1,fn _ => fn backend => B.literal backend
+            (B.root backend) big),
+         ("binder",2,fn _ => fn backend => parsed backend false "ALL"
+            "(forall ((x Int)) (> x 0))"),
+         ("alias binder",2,fn _ => fn backend => parsed backend false "ALL"
+            "(let ((y (+ 1 2))) (forall ((x Int)) (> x y)))")]
+      (* A cheap receipt: the representative term and the solver variables *)
       fun outcome construct action =
         let val graph = G.new () val scope = G.root_scope graph
-            val result = failure (fn () => action (construct graph scope))
+            val receipt = ref NONE
+            val result = failure (fn () =>
+              let val backend = construct graph scope
+                  val value = action graph backend
+              in receipt := SOME (G.representative graph value,
+                                  length (B.solver_variables backend)) end)
             val _ = (G.close_scope graph scope) handle _ => ()
-        in result end
+        in (result,!receipt) end
+      fun refused (result,_) = Option.isSome result
       fun int_entry (i,l,b) graph scope =
         B.graphs {graph=graph,scope=scope,import_limit=i,literal_limit=l,
                   binder_limit=b}
@@ -563,21 +574,31 @@ struct
       fun budget_of action position =
         let fun find n =
               if n > 4096 then raise Fail "no budget for backend fixture"
-              else if not (Option.isSome (outcome
+              else if not (refused (outcome
                 (int_entry (place position wide n)) action)) then n
               else find (n+1)
         in find 1 end
       fun show NONE = "accepted"
         | show (SOME (s,f,m)) = s^"."^f^": "^m
-      fun same text expected actual =
-        if expected = actual then () else
-          raise Fail (text^": "^show expected^" versus "^show actual)
+      fun same text (expected,receipt) (actual,receipt') =
+        (if expected = actual then () else
+          raise Fail (text^": "^show expected^" versus "^show actual);
+         case (receipt,receipt') of
+           (NONE,NONE) => ()
+         | (SOME (term,count),SOME (term',count')) =>
+             if Term.aconv term term' andalso count = count' then ()
+             else raise Fail (text^": receipts differ")
+         | _ => raise Fail (text^": receipt presence differs"))
       val maxint = IntInf.fromInt (valOf Int.maxInt)
       val toowide = RP.AtMost (maxint+1)
       val _ = ensure "an AtMost wider than Int.maxInt must not project"
         (not (Option.isSome (RP.to_int_limit toowide)) andalso
          not (Option.isSome (RP.to_int_limit RP.Uncapped)) andalso
-         Option.isSome (RP.to_int_limit (finite 4096)))
+         Option.isSome (RP.to_int_limit (finite 4096)) andalso
+         Option.isSome (RP.to_int_limit (finite 0)))
+      (* Every AtMost n with n an int projects, so this group checks the
+         graphs_with_policy dispatch to graphs. The mixed and wide groups
+         compare graphs against exact_graphs_with_policy. *)
       val _ = tprint "Graph backends: invalid, exact and over-budget limits"
       val _ = List.app (fn (name,position,action) =>
         let val n = budget_of action position
@@ -593,39 +614,43 @@ struct
             val over = both (n-1)
             val exact = both n
             val above = both (n+1)
-        in ensure (name^": limit 0 must be refused") (Option.isSome invalid);
-           ensure (name^": budget-1 must be refused") (Option.isSome over);
+        in ensure (name^": limit 0 must be refused") (refused invalid);
+           ensure (name^": budget-1 must be refused") (refused over);
            ensure (name^": exact budget must be accepted")
-             (not (Option.isSome exact));
+             (not (refused exact));
            ensure (name^": budget+1 must be accepted")
-             (not (Option.isSome above))
+             (not (refused above))
         end) fixtures
       val _ = OK ()
+      fun triple_of limits = case limits of
+          [i,l,b] => (i,l,b) | _ => raise Fail "triple"
+      fun exact_only (i,l,b) = not (List.all (Option.isSome o RP.to_int_limit)
+        [i,l,b])
       val _ = tprint "Graph backend exact path enforces finite caps (mixed)"
       val _ = List.app (fn (name,position,action) =>
         let val n = budget_of action position
         in List.app (fn other =>
              let fun mixed budget =
-                   let val triple = place position wide budget
-                       val limits = List.tabulate (3, fn index =>
+                   let val request = triple_of (List.tabulate (3, fn index =>
                          if index = position then finite budget
                          else if index = other then RP.Uncapped
-                         else finite wide)
-                       val request = case limits of
-                           [i,l,b] => (i,l,b) | _ => raise Fail "triple"
-                       val expected = outcome (int_entry triple) action
-                       val (i,l,b) = request
+                         else finite wide))
+                       val expected = outcome (int_entry
+                         (place position wide budget)) action
                    in ensure "mixed triple must not project to int"
-                        (not (List.all (Option.isSome o RP.to_int_limit)
-                           [i,l,b]));
+                        (exact_only request);
                       same (name^" mixed policy at "^Int.toString budget)
                         expected (outcome (policy_entry request) action);
                       expected
                    end
-                 val _ = ensure (name^": mixed exact budget accepted")
-                   (not (Option.isSome (mixed n)))
+                 val _ = ensure (name^": mixed limit 0 refused")
+                   (refused (mixed 0))
                  val _ = ensure (name^": mixed budget-1 refused")
-                   (Option.isSome (mixed (n-1)))
+                   (refused (mixed (n-1)))
+                 val _ = ensure (name^": mixed exact budget accepted")
+                   (not (refused (mixed n)))
+                 val _ = ensure (name^": mixed budget+1 accepted")
+                   (not (refused (mixed (n+1))))
              in () end)
            (List.filter (fn q => q <> position) [0,1,2])
         end) fixtures
@@ -633,27 +658,29 @@ struct
       val _ = tprint "Graph backend exact path with caps wider than Int.maxInt"
       val _ = List.app (fn (name,position,action) =>
         let val n = budget_of action position
-            fun request position budget =
-              let val limits = List.tabulate (3, fn index =>
-                    if index = position then budget else toowide)
-              in case limits of [i,l,b] => (i,l,b) | _ => raise Fail "triple"
+            fun request budget = triple_of (List.tabulate (3, fn index =>
+              if index = position then budget else toowide))
+            fun wider budget =
+              let val expected = outcome (int_entry
+                    (place position wide budget)) action
+              in same (name^" wide others at "^Int.toString budget) expected
+                   (outcome (policy_entry (request (finite budget))) action);
+                 expected
               end
+            val _ = ensure "wide triple must not project"
+              (exact_only (request (finite n)))
             val everything = (toowide,toowide,toowide)
             val _ = ensure (name^": all-wide triple accepted")
-              (not (Option.isSome (outcome (policy_entry everything) action)))
+              (not (refused (outcome (policy_entry everything) action)))
             val _ = ensure (name^": wide fixture position accepted")
-              (not (Option.isSome (outcome (policy_entry
-                (request position toowide)) action)))
-            val _ = ensure (name^": wide others, exact budget accepted")
-              (not (Option.isSome (outcome (policy_entry
-                (request position (finite n))) action)))
-            val expected = outcome (int_entry (place position wide (n-1)))
-              action
-        in same (name^" wide others, budget-1") expected
-             (outcome (policy_entry (request position (finite (n-1))))
-               action);
+              (not (refused (outcome (policy_entry (request toowide))
+                action)))
+        in ensure (name^": wide others, AtMost 0 refused")
+             (refused (wider 0));
            ensure (name^": wide others, budget-1 refused")
-             (Option.isSome expected)
+             (refused (wider (n-1)));
+           ensure (name^": wide others, exact budget accepted")
+             (not (refused (wider n)))
         end) fixtures
       val _ = OK ()
     in () end

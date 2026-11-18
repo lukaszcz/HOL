@@ -538,7 +538,7 @@ struct
      policy limit handed to alias capture.  The int and policy entries pass
      the operations they use.  This worker never calls
      graphs_with_policy, so there is no limit-dispatch cycle. *)
-  fun graph_backend {positive, import_node, literal_admitted, abstraction,
+  fun graph_backend {positive, import_node, literal_size, abstraction,
                      capture_limit}
       {graph, scope, import_limit, literal_limit, binder_limit} =
     let
@@ -598,7 +598,7 @@ struct
         in if Term.is_var term then retain_variable term node else node end
       fun literal environment term =
         let
-          val _ = if literal_admitted literal_limit term then ()
+          val _ = if Option.isSome (literal_size literal_limit term) then ()
             else raise ERR "literal" "literal exceeds bounded contract"
           val _ = if List.null (Term.free_vars term) then () else
             raise ERR "literal" "literal contains an unowned free variable"
@@ -673,18 +673,15 @@ struct
        let_binding = #2, finish_let = #2}
     end
 
-
   val int_graph_operations =
     {positive = fn limit => limit > 0, import_node = G.import,
-     literal_admitted = fn limit => fn term =>
-       Option.isSome (SmtReplayImport.bounded_raw_size limit term),
+     literal_size = SmtReplayImport.bounded_raw_size,
      abstraction = G.recorded_abstraction,
      capture_limit = SmtReplayResourcePolicy.from_int}
   val policy_graph_operations =
     {positive = SmtReplayResourcePolicy.positive,
      import_node = G.import_with_policy,
-     literal_admitted = fn limit => fn term =>
-       Option.isSome (SmtReplayImport.raw_size_with_policy limit term),
+     literal_size = SmtReplayImport.raw_size_with_policy,
      abstraction = G.recorded_abstraction_with_policy,
      capture_limit = fn limit => limit}
   fun graphs request = graph_backend int_graph_operations request
@@ -1074,17 +1071,24 @@ struct
             Abstraction (binder, compile (binder :: binders) body)
           end
     in {syntax = compile [] template,
-      holes = Vector.fromList (List.map Term.type_of holes),
+      hole_types = Vector.fromList (List.map Term.type_of holes),
       result = Term.type_of template} end
+
+  (* The template size under [measure], or the expanded-template error.
+     Shared by the int and exact policy recipes, which differ only in the
+     limit type and measure. *)
+  fun measured_template measure limit template =
+    case measure limit template of
+        SOME size => size
+      | NONE => raise ERR "compile_recipe" "expanded operator template"
 
   fun compile_recipe {template, holes, template_limit} =
     let
-      val size = case SmtReplayImport.bounded_raw_size template_limit
-          template of SOME size => size
-        | NONE => raise ERR "compile_recipe" "expanded operator template"
-      val {syntax, holes, result} =
+      val size = measured_template SmtReplayImport.bounded_raw_size
+        template_limit template
+      val {syntax, hole_types, result} =
         compile_template {template = template, holes = holes}
-    in Recipe {syntax = syntax, holes = holes, result = result,
+    in Recipe {syntax = syntax, holes = hole_types, result = result,
       size = size} end
 
   (* Construct a compiled recipe over its operands, shared by the int and
@@ -1147,13 +1151,12 @@ struct
     | recipe_size_with_policy (ExactPolicyRecipe {size,...}) = size
   fun compile_exact_policy_recipe {template, holes, template_limit} =
     let
-      val size = case SmtReplayImport.raw_size_with_policy template_limit
-          template of SOME size => size
-        | NONE => raise ERR "compile_recipe" "expanded operator template"
-      val {syntax, holes, result} =
+      val size = measured_template SmtReplayImport.raw_size_with_policy
+        template_limit template
+      val {syntax, hole_types, result} =
         compile_template {template = template, holes = holes}
-    in ExactPolicyRecipe {syntax = syntax, holes = holes, result = result,
-      size = size} end
+    in ExactPolicyRecipe {syntax = syntax, holes = hole_types,
+      result = result, size = size} end
 
   fun compile_recipe_with_policy
       (request as {template,holes,template_limit}) =
