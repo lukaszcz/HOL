@@ -775,8 +775,9 @@ struct
     in new_term_order () (left,right) = EQUAL end
 
   (* Only these arithmetic heads and negated conditional guards can change
-     the difference normal form. The primary pass has already admitted the
-     source. An incomplete scan or any binder retains all original passes. *)
+     the difference normal form, also under a binder, so the scan descends
+     into binder bodies. The primary pass has already admitted the source.
+     An incomplete scan retains all original passes. *)
   fun secondary_rewrite_needed root =
     let
       exception Relevant
@@ -785,15 +786,16 @@ struct
         realSyntax.less_tm,realSyntax.leq_tm,realSyntax.greater_tm,
         realSyntax.geq_tm]
       fun inspect term =
-        if Term.is_abs term orelse
-            (Term.is_const term andalso
+        if (Term.is_const term andalso
              List.exists (Term.same_const term) heads) orelse
             (boolSyntax.is_cond term andalso
              boolSyntax.is_neg (#1 (boolSyntax.dest_cond term))) then
           raise Relevant
         else ()
-      fun children term = if Term.is_comb term then
-          [Term.rator term,Term.rand term] else []
+      fun children term =
+        if Term.is_comb term then [Term.rator term,Term.rand term]
+        else if Term.is_abs term then [Term.body term]
+        else []
       fun scan () =
         let val {complete,...} = SmtResource.bounded_structure_with_children
           children inspect SmtResource.max_skeleton_replay_dag_nodes root
