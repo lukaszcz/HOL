@@ -4997,9 +4997,16 @@ struct
            in record end)
     in #source (visit original) end
 
-  fun discover_partial_with_policy (g : graph) scope
+  (* One policy discovery body. An unselected scan (NONE) recognises no
+     declaration head: a constant answers false without a selection scan
+     and the unchanged root keeps no retained opaque profile. A selected
+     scan validates its heads at every frame, memoises recognition by
+     frame and raw term, and retains the unchanged opaque root. *)
+  fun discover_partial_with_policy_selection (g : graph) scope selection
       {original,maximum,scan_limit,step} =
     let
+      val _ = case selection of NONE => ()
+        | SOME heads => validate_discovery_heads g scope heads
       val _ = check_scope g scope val _ = usable g scope original
       val _ = if SmtReplayResourcePolicy.positive maximum andalso
           SmtReplayResourcePolicy.positive scan_limit then () else
@@ -5011,11 +5018,11 @@ struct
       val running = ref true
       val _ = #partial_running g := SOME running
       val epoch = Type.type_epoch () val symbols = Term.term_epoch ()
-      val scans = ref (0:IntInf.int)
-      val profiles = ref ([]:policy_opaque_profile list)
-      fun consume_scan message =
-        if SmtReplayResourcePolicy.allows scan_limit (!scans+1) then
-          scans := !scans+1 else raise ERR "discover_partial" message
+      val scans=ref(0:IntInf.int)
+      val profiles=ref([]:policy_opaque_profile list)
+      fun consume_scan message=
+        if SmtReplayResourcePolicy.allows scan_limit (!scans+1)then
+          scans:= !scans+1 else raise ERR "discover_partial" message
       val guards = ref ([] : (unit -> unit) list)
       val closures = ref ([] : binder_closure list)
       fun valid frame =
@@ -5023,6 +5030,8 @@ struct
          if !running andalso Type.type_epoch () = epoch andalso
              Term.term_epoch () = symbols then () else
            raise ERR "discover_partial" "scope/epoch/action retired";
+         (case selection of NONE => () | SOME heads =>
+           validate_discovery_heads g frame heads);
          List.app (fn guard => guard ()) (!guards))
       fun debit frame =
         (valid frame;
@@ -5031,6 +5040,22 @@ struct
       fun invoke frame action =
         (debit frame;
          let val value = action () val _ = valid frame in value end)
+      (* Declaration-only potential recognition: no variable spelling,
+         schematic matching or semantic equality influences absence. *)
+      fun selected_id frame id = case selection of NONE => false
+        | SOME (DiscoveryHeads {rows,...}) =>
+            let fun walk [] = false
+                  | walk ((_,held,_)::rest) =
+                      invoke frame (fn () =>
+                        KernelSig.id_compare (id,held) = EQUAL) orelse
+                      walk rest
+            in walk rows end
+      fun selected_term frame term = case selection of NONE => false
+        | SOME _ =>
+            if invoke frame (fn () => Term.is_const term) then
+              selected_id frame (invoke frame
+                (fn () => #Name (Term.dest_thy_constid term)))
+            else false
       fun domain_needed frame ty =
         if invoke frame (fn () => Type.compare (ty,numSyntax.num) = EQUAL)
           then true
@@ -5053,7 +5078,25 @@ struct
       (* Count-body substitutes only an ATOMIC marker. Recognition uses
          constructors, fixed declaration IDs and types, never variable names,
          equality of free variables, matching or semantic proof search. *)
-      fun term_needed frame term =
+      val recognized_terms = ref ([] : (scope * Term.term * bool) list)
+      fun term_needed frame term = case selection of NONE =>
+          term_needed_fresh frame term
+        | SOME _ =>
+          let fun find [] = NONE
+                | find ((held_scope,held,answer)::rest) =
+                    if invoke frame (fn () => held_scope=frame andalso
+                        Portable.pointer_eq (term,held)) then SOME answer
+                    else find rest
+          in case find (!recognized_terms) of SOME answer =>
+               (valid frame;answer)
+            | NONE =>
+              let val answer=term_needed_fresh frame term
+                  val _ = debit frame
+                  val _ = recognized_terms :=
+                    (frame,term,answer):: !recognized_terms
+              in valid frame;answer end
+          end
+      and term_needed_fresh frame term =
         if invoke frame (fn () => Term.is_comb term) then
           let val (operator,operand) = invoke frame
                 (fn () => Term.dest_comb term)
@@ -5066,7 +5109,7 @@ struct
         else if invoke frame (fn () => Term.is_abs term) then
           term_needed frame (invoke frame
             (fn () => SmtReplayImport.count_body term))
-        else false
+        else selected_term frame term
       val seen = ref
         (Redblackmap.mkDict (pair_compare Int.compare Int.compare))
       val captured = ref
@@ -5129,6 +5172,7 @@ struct
                           (binder_closure_data g frame closure)
                         val _ = guard ()
                     in graph_needed (#body_frame data) (#body data) end
+                | Constant id => selected_id frame id
                 | _ => false
                 val _ = valid frame
                 val _ = seen := Redblackmap.insert (!seen,key,answer)
@@ -5326,6 +5370,9 @@ struct
       fun build () =
         let val _ = capture_paths scope original
             val changed = graph_needed scope original
+            val _ = if changed then () else case selection of NONE => ()
+              | SOME _ => (case view g original of
+                  OpaqueRetained => retain_opaque original | _ => ())
             val recipe = if changed then SOME (visit false original) else NONE
             val result = PartialDiscovery
               {owner = #owner g,scope = scope,original = original,
@@ -5356,6 +5403,8 @@ struct
       maximum=maximum,scan_limit=scan_limit,scans= !scans,
       profiles=List.rev (!profiles)} end
 
+  fun discover_partial_with_policy g scope args =
+    discover_partial_with_policy_selection g scope NONE args
   fun validate_partial_with_policy (g:graph) scope
       (result as PolicyPartialDiscovery {owner,scope=held,...}) =
     if owner= #owner g andalso scope=held then
@@ -6438,407 +6487,12 @@ struct
      admit the actual native programme before a positive call. *)
   datatype policy_selected_partial_discovery = PolicySelectedPartialDiscovery
     of {heads:discovery_heads,plan:policy_partial_discovery}
-  fun discover_selected_partial_with_policy (g : graph) scope
+  fun discover_selected_partial_with_policy g scope
       {original,heads,maximum,scan_limit,step} =
-    let
-      val selection=SOME heads
-      val _ = validate_discovery_heads g scope heads
-      val _ = check_scope g scope val _ = usable g scope original
-      val _ = if SmtReplayResourcePolicy.positive maximum andalso
-          SmtReplayResourcePolicy.positive scan_limit then () else
-        raise ERR "discover_partial" "nonpositive discovery bound"
-      val _ = case !(#partial_running g) of NONE => ()
-        | SOME active =>
-            (active := false;
-             raise ERR "discover_partial" "partial discovery reentry")
-      val running = ref true
-      val _ = #partial_running g := SOME running
-      val epoch = Type.type_epoch () val symbols = Term.term_epoch ()
-      val scans=ref(0:IntInf.int)
-      val profiles=ref([]:policy_opaque_profile list)
-      fun consume_scan message=
-        if SmtReplayResourcePolicy.allows scan_limit (!scans+1)then
-          scans:= !scans+1 else raise ERR "discover_partial" message
-      val guards = ref ([] : (unit -> unit) list)
-      val closures = ref ([] : binder_closure list)
-      fun valid frame =
-        (check_scope g scope;check_scope g frame;
-         if !running andalso Type.type_epoch () = epoch andalso
-             Term.term_epoch () = symbols then () else
-           raise ERR "discover_partial" "scope/epoch/action retired";
-         (case selection of NONE => () | SOME heads =>
-           validate_discovery_heads g frame heads);
-         List.app (fn guard => guard ()) (!guards))
-      fun debit frame =
-        (valid frame;
-         consume_scan "discovery scan budget exhausted";
-         step ();valid frame)
-      fun invoke frame action =
-        (debit frame;
-         let val value = action () val _ = valid frame in value end)
-      (* Declaration-only potential recognition: no variable spelling,
-         schematic matching or semantic equality influences absence. *)
-      fun selected_id frame id = case selection of NONE => false
-        | SOME (DiscoveryHeads {rows,...}) =>
-            let fun walk [] = false
-                  | walk ((_,held,_)::rest) =
-                      invoke frame (fn () =>
-                        KernelSig.id_compare (id,held) = EQUAL) orelse
-                      walk rest
-            in walk rows end
-      fun selected_term frame term = case selection of NONE => false
-        | SOME _ =>
-            if invoke frame (fn () => Term.is_const term) then
-              selected_id frame (invoke frame
-                (fn () => #Name (Term.dest_thy_constid term)))
-            else false
-      fun domain_needed frame ty =
-        if invoke frame (fn () => Type.compare (ty,numSyntax.num) = EQUAL)
-          then true
-        else case invoke frame (fn () => Lib.total Type.dom_rng ty) of
-            NONE => false
-          | SOME (_,range) => invoke frame
-              (fn () => Type.compare (range,numSyntax.num) = EQUAL)
-      fun quantified frame operator abstraction get_type =
-        if abstraction andalso
-            invoke frame (fn () => Term.is_const operator) andalso
-            invoke frame (fn () =>
-              Term.same_const operator boolSyntax.universal orelse
-              Term.same_const operator boolSyntax.existential) then
-          let val ty = invoke frame get_type
-          in case invoke frame (fn () => Lib.total Type.dom_rng ty) of
-                SOME (domain,_) => domain_needed frame domain
-              | NONE => false
-          end
-        else false
-      (* Count-body substitutes only an ATOMIC marker. Recognition uses
-         constructors, fixed declaration IDs and types, never variable names,
-         equality of free variables, matching or semantic proof search. *)
-      val recognized_terms = ref ([] : (scope * Term.term * bool) list)
-      fun term_needed frame term = case selection of NONE =>
-          term_needed_fresh frame term
-        | SOME _ =>
-          let fun find [] = NONE
-                | find ((held_scope,held,answer)::rest) =
-                    if invoke frame (fn () => held_scope=frame andalso
-                        Portable.pointer_eq (term,held)) then SOME answer
-                    else find rest
-          in case find (!recognized_terms) of SOME answer =>
-               (valid frame;answer)
-            | NONE =>
-              let val answer=term_needed_fresh frame term
-                  val _ = debit frame
-                  val _ = recognized_terms :=
-                    (frame,term,answer):: !recognized_terms
-              in valid frame;answer end
-          end
-      and term_needed_fresh frame term =
-        if invoke frame (fn () => Term.is_comb term) then
-          let val (operator,operand) = invoke frame
-                (fn () => Term.dest_comb term)
-          in if invoke frame (fn () => Term.is_abs operator) orelse
-              quantified frame operator
-                (invoke frame (fn () => Term.is_abs operand))
-                (fn () => Term.type_of operand) then true
-            else term_needed frame operator orelse term_needed frame operand
-          end
-        else if invoke frame (fn () => Term.is_abs term) then
-          term_needed frame (invoke frame
-            (fn () => SmtReplayImport.count_body term))
-        else selected_term frame term
-      val seen = ref
-        (Redblackmap.mkDict (pair_compare Int.compare Int.compare))
-      val captured = ref
-        (Redblackmap.mkDict (pair_compare Int.compare Int.compare))
-      (* Private callback-free setup holds all genuinely recorded frames
-         BEFORE a step can retire one. No node_scope(body) inference.
-         Setup map/frame work remains a separate unquoted prerequisite. *)
-      fun capture_paths frame node =
-        let val _ = valid frame val _ = usable g frame node
-            val key = (scope_id frame,node_id node)
-        in case Redblackmap.peek (!captured,key) of SOME _ => ()
-          | NONE =>
-            let val _ = consume_scan "frame scan budget exhausted"
-                val _ = captured := Redblackmap.insert (!captured,key,())
-            in case view g node of
-                Application (left,right) =>
-                  (capture_paths frame left;capture_paths frame right)
-              | AdmittedBinder _ =>
-                  let val closure = binder_closure g frame node
-                      val data = binder_closure_data g frame closure
-                      fun guard () = ignore
-                        (binder_closure_data g frame closure)
-                      val _ = guards := guard :: !guards
-                      val _ = closures := closure :: !closures
-                  in capture_paths (#body_frame data) (#body data) end
-              | _ => ()
-            end
-        end
-      fun graph_needed frame node =
-        let val _ = valid frame val _ = usable g frame node
-            val _ = debit frame val key = (scope_id frame,node_id node)
-        in case Redblackmap.peek (!seen,key) of SOME value => value
-          | NONE =>
-            let val answer = case invoke frame (fn () => view g node) of
-                  Application (operator,operand) =>
-                    let val operator_view = invoke frame
-                          (fn () => view g operator)
-                        val beta = case operator_view of
-                            AdmittedBinder _ => true | OpaqueRetained => true
-                          | _ => false
-                        val operand_view = invoke frame
-                          (fn () => view g operand)
-                        val abstraction = case operand_view of
-                            AdmittedBinder _ => true | OpaqueRetained => true
-                          | _ => false
-                        val carrier = quantified frame
-                          (invoke frame (fn () => representative g operator))
-                          abstraction (fn () => type_of g operand)
-                    in beta orelse carrier orelse
-                      graph_needed frame operator orelse
-                      graph_needed frame operand end
-                | OpaqueRetained => term_needed frame
-                    (invoke frame (fn () => representative g node))
-                | AdmittedBinder _ =>
-                    let val closure = invoke frame
-                          (fn () => binder_closure g frame node)
-                        val data = invoke frame
-                          (fn () => binder_closure_data g frame closure)
-                        fun guard () = ignore
-                          (binder_closure_data g frame closure)
-                        val _ = guard ()
-                    in graph_needed (#body_frame data) (#body data) end
-                | Constant id => selected_id frame id
-                | _ => false
-                val _ = valid frame
-                val _ = seen := Redblackmap.insert (!seen,key,answer)
-            in answer end
-        end
-      fun retained_guard () =
-        (check_scope g scope;usable g scope original;
-         if Type.type_epoch () = epoch andalso Term.term_epoch () = symbols
-           then () else raise ERR "partial_view" "discovery epoch changed";
-         List.app (fn guard => guard ()) (!guards))
-      (* Only a child whose complete rule scan was false reaches this
-         collector. It quotes full repeated annotations for mixed proof
-         assembly; a whole unchanged NONE root needs no new type envelope. *)
-      fun retained_ready () =
-        partial_scope_live g scope andalso
-        Type.type_epoch () = epoch andalso Term.term_epoch () = symbols
-        andalso List.all (fn BinderClosure {record,...} =>
-          partial_record_live g record) (!closures)
-      fun retain_opaque node =
-        let val _ = if graph_needed scope node then
-              raise ERR "retain_opaque" "relevant binder is not a no-op"
-            else ()
-            val memo = Array.array (4093,[])
-            val types = ref ([] : Type.hol_type list)
-            val heads = ref ([] : Term.term list)
-            fun add (a : IntInf.int) (b : IntInf.int) = a+b
-            fun text_bytes text : IntInf.int =
-              let val size = String.size text
-                  fun walk index = if index = size then () else
-                    (debit scope;ignore (String.sub (text,index));
-                     walk (index+1))
-                  val _ = walk 0
-              in IntInf.fromInt size end
-            fun weight ty : IntInf.int * IntInf.int =
-              let val _ = debit scope
-              in if invoke scope (fn () => Type.is_vartype ty) then
-                  (1,text_bytes (invoke scope
-                    (fn () => Type.dest_vartype ty)))
-                else
-                  let val {Thy,Tyop,Args} = invoke scope
-                        (fn () => Type.dest_thy_typeid ty)
-                      val name = invoke scope (fn () => KernelSig.name_of Tyop)
-                      val own = add (text_bytes Thy) (text_bytes name)
-                  in List.foldl (fn (child,(nodes,bytes)) =>
-                       let val (n,b) = weight child
-                       in (add nodes n,add bytes b) end) (1,own) Args end
-              end
-            fun annotation ty =
-              let val counts = weight ty val _ = debit scope
-                  val _ = types := ty :: !types
-              in counts end
-            fun lookup term [] = NONE
-              | lookup term ((held,value)::rest) =
-                  (debit scope;if Portable.pointer_eq (term,held) then
-                    SOME value else lookup term rest)
-            fun visit term =
-              let val bucket = invoke scope (fn () => physical_hint term)
-                  val _ = debit scope
-              in case lookup term (Array.sub (memo,bucket)) of
-                  SOME value => value
-                | NONE =>
-                  let val ty = invoke scope (fn () => Term.type_of term)
-                      val (own,own_bytes) = annotation ty
-                      val value = if invoke scope (fn () => Term.is_comb term)
-                        then
-                          let val (f,x) = invoke scope
-                                (fn () => Term.dest_comb term)
-                              val a = visit f val b = visit x
-                          in {raw = policy_discovery_plus 1
-                                (policy_discovery_plus (#raw a) (#raw b)),
-                              inc = policy_discovery_plus 1
-                                (policy_discovery_plus (#inc a) (#inc b)),
-                              ann = add own (add (#ann a) (#ann b)),
-                              type_bytes = add own_bytes
-                                (add (#type_bytes a) (#type_bytes b)),
-                              ty = own,projection = Option.map
-                                (fn path => ProjectionApplication (term,path))
-                                (#projection a)} end
-                        else if invoke scope
-                            (fn () => Term.is_abs term) then
-                          let val domain = invoke scope
-                                (fn () => #1 (Type.dom_rng ty))
-                              val (binder,binder_bytes) = annotation domain
-                              val body = visit (invoke scope
-                                (fn () => SmtReplayImport.count_body term))
-                          in {raw = policy_discovery_plus 1 (#raw body),
-                              inc = policy_discovery_plus 2 (#inc body),
-                              ann = add own (add binder (#ann body)),
-                              type_bytes = add own_bytes
-                                (add binder_bytes (#type_bytes body)),ty = own,
-                              projection = Option.map
-                                (fn path =>
-                                  ProjectionBinder (term,domain,path))
-                                (#projection body)}
-                          end
-                        else
-                          let val _ = if invoke scope
-                                  (fn () => Term.is_const term) then
-                                heads := term :: !heads else ()
-                          in {raw = 1,inc = 1,ann = own,
-                              type_bytes = own_bytes,ty = own,
-                              projection = if false then
-                                SOME (ProjectionAtom {term = term,
-                                  variable = invoke scope
-                                    (fn () => Term.is_var term)}) else NONE}
-                          end
-                      val _ = debit scope
-                      val _ = Array.update (memo,bucket,
-                        (term,value) :: Array.sub (memo,bucket))
-                  in value end
-              end
-            (* Same entry read as representative; capture its raw pointer
-               here, not through a later semantic-index lookup. *)
-            val fields = invoke scope (fn () => entry g node)
-            val original = #term fields
-            val value = visit original
-            val profile = PolicyOpaqueProfile
-              {owner = #owner g,scope = scope,node = node,
-               original = original,raw = #raw value,inc = #inc value,
-               ann = #ann value,ty = #ty value,
-               type_bytes = #type_bytes value,types = !types,
-               heads = !heads,raw_cell = #exact_raw fields,
-               ready = retained_ready,guard = retained_guard}
-            val _ = valid scope
-            val _ = validation_change g
-            val _ = profiles := profile :: !profiles
-        in () end
-      fun atom node retained =
-        let val _ = if retained then (case view g node of
-                  OpaqueRetained => retain_opaque node | _ => ()) else ()
-            val term = invoke scope (fn () => representative g node)
-            val proof = invoke scope (fn () => Thm.REFL term)
-            val source = source_for g term node proof
-        in if retained then PartialRetained (node,source)
-           else PartialAtom (node,source) end
-      fun opened node =
-        let val source = invoke scope
-              (fn () => record_opened_view_with_policy g scope maximum node)
-            val _ = capture_paths scope (#node source)
-        in PartialFull (node,source) end
-      val recipe_memo = ref ([] : (node * bool * partial_recipe) list)
-      fun cached_recipe force node [] = NONE
-        | cached_recipe force node ((saved,mode,recipe)::rest) =
-            (debit scope;
-             if saved = node andalso mode = force then SOME recipe
-             else cached_recipe force node rest)
-      (* Whole original and opened backing paths were captured before this
-         point. All incoming owners/epochs/scopes are rechecked before a
-         hit, including after the caller's charged discovery hook. The key
-         is actual original node AND force mode in this one fixed scope. *)
-      fun visit force node =
-        (valid scope;usable g scope node;
-         case cached_recipe force node (!recipe_memo) of SOME recipe =>
-           (valid scope;usable g scope node;recipe)
-         | NONE =>
-           let val recipe = visit_fresh force node
-               val _ = debit scope
-               val _ = recipe_memo := (node,force,recipe) :: !recipe_memo
-               val _ = valid scope
-           in recipe end)
-      and visit_fresh force node =
-        (valid scope;usable g scope node;
-         case invoke scope (fn () => view g node) of
-           OpaqueRetained =>
-             if force orelse graph_needed scope node then
-               opened node
-             else atom node true
-         | AdmittedBinder _ =>
-             if force orelse graph_needed scope node then
-               opened node
-             else atom node true
-         | Application (operator,operand) =>
-             let val ov = invoke scope (fn () => view g operator)
-                 val beta = case ov of AdmittedBinder _ => true
-                   | OpaqueRetained => true | _ => false
-                 val operand_view = invoke scope (fn () => view g operand)
-                 val abstraction = case operand_view of
-                     AdmittedBinder _ => true | OpaqueRetained => true
-                   | _ => false
-                 val carrier = quantified scope
-                   (invoke scope (fn () => representative g operator))
-                   abstraction (fn () => type_of g operand)
-                 val left = visit beta operator
-                 val right = visit carrier operand
-                 val l = partial_source left val r = partial_source right
-                 val term = invoke scope (fn () => representative g node)
-                 val target = invoke scope
-                   (fn () => application g scope (#node l,#node r))
-                 val bridge = invoke scope (fn () =>
-                   align_application term (#bridge l) (#bridge r)
-                     (representative g target))
-                 val source = source_for g term target bridge
-             in PartialApplication (node,source,left,right) end
-         | _ => atom node false)
-      fun build () =
-        let val _ = capture_paths scope original
-            val changed = graph_needed scope original
-            val _ = if changed then () else case selection of NONE => ()
-              | SOME _ => (case view g original of
-                  OpaqueRetained => retain_opaque original | _ => ())
-            val recipe = if changed then SOME (visit false original) else NONE
-            val result = PartialDiscovery
-              {owner = #owner g,scope = scope,original = original,
-               recipe = recipe,guard = retained_guard}
-            val _ = valid scope
-            val _ = case recipe of NONE => () | SOME value =>
-              let val source = partial_source value
-                  val row = {source = source,roots =
-                    [closure_root g scope original],guard = fn () =>
-                      (retained_guard ();
-                       validate_partial_recipe g scope value)}
-                  val key = (scope_id scope,node_id original)
-                  val rows = Option.getOpt
-                    (Redblackmap.peek (!(#identity_views g),key),[])
-                  val old = Option.getOpt
-                    (Redblackmap.peek (!(#partial_sources g),key),[])
-                  val _ = validation_change g
-                  val _ = #partial_sources g := Redblackmap.insert
-                    (!(#partial_sources g),key,result :: old)
-              in validation_change g;
-                 #identity_views g := Redblackmap.insert
-                (!(#identity_views g),key,row :: rows) end
-        in result end
-      val result = build () handle primary =>
-        (running := false;#partial_running g := NONE;raise primary)
-      val _ = running := false val _ = #partial_running g := NONE
-    in PolicySelectedPartialDiscovery {heads=heads,
-      plan=PolicyPartialDiscovery {owner= #owner g,scope=scope,plan=result,
-        maximum=maximum,scan_limit=scan_limit,scans= !scans,
-        profiles=List.rev(!profiles)}}end
+    PolicySelectedPartialDiscovery {heads=heads,
+      plan=discover_partial_with_policy_selection g scope (SOME heads)
+        {original=original,maximum=maximum,scan_limit=scan_limit,
+         step=step}}
 
   fun selected_partial_data_with_policy (g:graph) scope
       (expected as DiscoveryHeads {owner,identity,...})
