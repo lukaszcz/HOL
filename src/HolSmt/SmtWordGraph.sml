@@ -651,48 +651,15 @@ struct
          syntax needs it.  Keep the old maximum bucket count and exact
          pointer keys; storage layout supplies no equality or proof fact. *)
       val initial_buckets = Int.max (17, Int.min (bucket_count, input_nodes))
-      type 'a pointer_table =
-        {buckets : (term * 'a) list Array.array ref, entries : int ref}
-      fun new_pointer_table () : 'a pointer_table =
-        {buckets = ref (Array.array (initial_buckets, [])), entries = ref 0}
-      fun pointer_lookup ({buckets, ...} : 'a pointer_table) term =
-        let val table = !buckets in
-          pointer_peek (Array.sub
-            (table, SmtResource.pointer_bucket (Array.length table) term)) term
-        end
-      fun pointer_insert ({buckets, entries} : 'a pointer_table) term value =
-        let
-          val table = !buckets
-          val size = Array.length table
-          val index = SmtResource.pointer_bucket size term
-          val _ = Array.update
-            (table, index, (term, value) :: Array.sub (table, index))
-          val _ = entries := !entries + 1
-        in
-          if size < bucket_count andalso !entries > 2 * size then
-            let
-              val size = Int.min (bucket_count, 2 * size + 1)
-              val grown = Array.array (size, [])
-              fun insert (entry as (term, _)) =
-                let val index = SmtResource.pointer_bucket size term in
-                  Array.update
-                    (grown, index, entry :: Array.sub (grown, index))
-                end
-              (* Preserve newest-first lookup even for repeated keys. *)
-              val _ = Array.app (List.app insert o List.rev) table
-            in buckets := grown end
-          else ()
-        end
-      fun clear_pointer_table ({buckets, entries} : 'a pointer_table) =
-        (Array.modify (fn _ => []) (!buckets); entries := 0)
-      fun new_pointer_set () =
-        new_pointer_table () : unit pointer_table
-      fun mark_pointer table term =
-        case pointer_lookup table term of SOME () => false
-          | NONE => (pointer_insert table term (); true)
+      fun new_pointer_table () : 'a SmtPointerTable.table =
+        SmtPointerTable.new
+          {hint = SmtResource.pointer_bucket, initial = initial_buckets,
+           ceiling = bucket_count}
+      fun new_pointer_set () : unit SmtPointerTable.table =
+        new_pointer_table ()
       val generated_seen = new_pointer_set ()
       val reserved = ref (HOLset.empty String.compare)
-      fun mark_generated term = mark_pointer generated_seen term
+      fun mark_generated term = SmtPointerTable.mark generated_seen term
       fun seed_source term =
         if mark_generated term then
           (if Term.is_var term then
@@ -705,7 +672,7 @@ struct
           val seen = new_pointer_set ()
           val count = ref 0
           fun visit term =
-            if mark_pointer seen term then
+            if SmtPointerTable.mark seen term then
               (count := !count + 1;
                List.app visit (SmtResource.term_children term))
             else ()
@@ -761,7 +728,8 @@ struct
         in int_list_compare (fields left, fields right) end
 
       val next_node_id = ref 0
-      val node_pointer_cache : int pointer_table = new_pointer_table ()
+      val node_pointer_cache : int SmtPointerTable.table =
+        new_pointer_table ()
       val node_keys = ref (Redblackmap.mkDict node_key_compare)
       val node_representatives = ref (Redblackmap.mkDict Int.compare)
       val constant_identities = ref ([] : (term * int) list)
@@ -797,7 +765,7 @@ struct
             end
 
       fun node_id term =
-        case pointer_lookup node_pointer_cache term of
+        case SmtPointerTable.lookup node_pointer_cache term of
           SOME identity => identity
         | NONE =>
             let
@@ -807,7 +775,7 @@ struct
                 else if Term.is_const term then
                   intern_node (ConstantKey (constant_id term, tyid)) term
                 else new_node_id term
-              val _ = pointer_insert node_pointer_cache term identity
+              val _ = SmtPointerTable.insert node_pointer_cache term identity
             in identity end
 
       fun canonicalize_key key theorem =
@@ -994,13 +962,14 @@ struct
       (* NONE records exact reflexivity without allocating a kernel theorem.
          Realize it only at a changed congruence boundary, and share that
          theorem if another boundary needs the same physical source. *)
-      val reflexive : thm pointer_table = new_pointer_table ()
+      val reflexive : thm SmtPointerTable.table = new_pointer_table ()
       fun proof term (SOME theorem) = theorem
         | proof term NONE =
-            (case pointer_lookup reflexive term of
+            (case SmtPointerTable.lookup reflexive term of
                SOME theorem => theorem
              | NONE => let val theorem = Thm.REFL term
-                       in pointer_insert reflexive term theorem; theorem end)
+                       in SmtPointerTable.insert reflexive term theorem;
+                          theorem end)
       fun right term NONE = term
         | right _ (SOME theorem) = boolSyntax.rhs (Thm.concl theorem)
       fun changed (theorem, true) = SOME theorem
@@ -1020,7 +989,7 @@ struct
       val normalize_cache = ref
         (Redblackmap.mkDict Int.compare :
           (int, thm option) Redblackmap.dict)
-      val normalize_physical : thm option pointer_table =
+      val normalize_physical : thm option SmtPointerTable.table =
         new_pointer_table ()
 
       fun stopped term = case stop of
@@ -1034,7 +1003,7 @@ struct
 
       fun cached_normalization term =
         let val _ = reusable () in
-        case pointer_lookup normalize_physical term of
+        case SmtPointerTable.lookup normalize_physical term of
           SOME result => SOME result
         | NONE =>
             (case Option.mapPartial
@@ -1135,7 +1104,7 @@ struct
               val _ = case normalization_id term of NONE => ()
                 | SOME id => normalize_cache :=
                     Redblackmap.insert (!normalize_cache, id, result)
-              val _ = pointer_insert normalize_physical term result
+              val _ = SmtPointerTable.insert normalize_physical term result
               val _ = save_result (#normalized context) term result
             in result end
 
@@ -1231,7 +1200,7 @@ struct
         end
         handle Conv.UNCHANGED => (Thm.REFL term, false)
 
-      val expand_cache : (thm option * int) pointer_table =
+      val expand_cache : (thm option * int) SmtPointerTable.table =
         new_pointer_table ()
       val bit_cache = ref
         (Redblackmap.mkDict (pair_compare (Int.compare, Arbnum.compare)))
@@ -1240,7 +1209,7 @@ struct
         let
           val _ = reusable ()
           fun ordinary () =
-            case pointer_lookup expand_cache term of
+            case SmtPointerTable.lookup expand_cache term of
               SOME result => (memo_hits := !memo_hits + 1; result)
             | NONE =>
                 let
@@ -1303,7 +1272,8 @@ struct
                           in (SOME canonical, identity) end
                       end
                     else (NONE, node_id term)
-                  val _ = pointer_insert expand_cache term (result, identity)
+                  val _ = SmtPointerTable.insert expand_cache term
+                    (result, identity)
                 in (result, identity) end
         in
           if is_word_projection term andalso
@@ -1331,7 +1301,7 @@ struct
       and expand term =
         if stopped term then (NONE, node_id term)
         else let val _ = reusable () in
-        case pointer_lookup expand_cache term of
+        case SmtPointerTable.lookup expand_cache term of
           SOME result => (memo_hits := !memo_hits + 1; result)
         | NONE =>
             (case (if reuse andalso reusable () then
@@ -1341,7 +1311,7 @@ struct
                  let val result = (SOME theorem,
                    node_id (boolSyntax.rhs (Thm.concl theorem)))
                  in memo_hits := !memo_hits + 1;
-                    pointer_insert expand_cache term result; result end
+                    SmtPointerTable.insert expand_cache term result; result end
              | NONE =>
                  let
                    val result as (equality, _) = expand_uncached term
@@ -1352,9 +1322,9 @@ struct
       val _ = reset_local := (fn () =>
         (normalize_index := SmtResource.new_bounded_term_index maximum;
          normalize_cache := Redblackmap.mkDict Int.compare;
-         clear_pointer_table reflexive;
-         clear_pointer_table normalize_physical;
-         clear_pointer_table expand_cache;
+         SmtPointerTable.clear reflexive;
+         SmtPointerTable.clear normalize_physical;
+         SmtPointerTable.clear expand_cache;
          bit_cache := Redblackmap.mkDict
            (pair_compare (Int.compare, Arbnum.compare))))
 
