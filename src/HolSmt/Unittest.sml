@@ -30040,13 +30040,6 @@ end
 fun z3_string_th_lemma_gate_hoist_success () =
 let
   val maximum = SmtResource.max_skeleton_replay_dag_nodes
-  val expected = SmtResource.dag_size_diagnostic_with_limit
-    "String" "task21-route-probe" maximum (maximum + 1)
-  val gate =
-    (SmtResource.check_dag_size_with_limit
-       "String" "task21-route-probe" maximum (maximum + 1);
-     die "FAIL: TASK21 route probe did not gate")
-    handle Feedback.HOL_ERR holerr => holerr
   fun check_gate label expected run fallback_called =
     let
       val propagated =
@@ -30063,6 +30056,12 @@ let
            assert (not (!fallback_called),
              label ^ " entered a later route after the resource gate"))
     end
+  val () = check_gate "DAG size check"
+    (SmtResource.dag_size_diagnostic_with_limit
+       "String" "task21-route-probe" maximum (maximum + 1))
+    (fn () => SmtResource.check_dag_size_with_limit
+       "String" "task21-route-probe" maximum (maximum + 1))
+    (ref false)
   fun char_bit index character =
     ``char_bit ^(numSyntax.mk_numeral (Arbnum.fromInt index))
         (w2n ^character)``
