@@ -25,6 +25,8 @@ sig
      recipe_limits :
        {template_limit : int, index_limit : int,
         operand_limit : int, token_limit : int}} -> graph_policy
+  (* The finite int form of a limit; NONE when Uncapped or beyond int. *)
+  val to_int_limit : limit -> int option
 
   (* Entry validation is separate from remaining-budget arithmetic:
      AtMost 0 is valid remaining DATA, but not a positive entry allowance.

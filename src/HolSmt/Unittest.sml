@@ -34168,29 +34168,14 @@ let
   val _ = check (fn g => fn s => S.new_with_policy g s
     (SmtReplayResourcePolicy.AtMost 4096))
 
-  val _ = tprint "A checked semantic bridge never grants Source membership"
+  val _ = tprint "A semantically equivalent Hyp never grants Source membership"
   val graph = G.new ()
   val scope = G.root_scope graph
   val sources = S.new graph scope 4096
     {goal = boolSyntax.T,assumptions = [boolSyntax.T]}
-  val source = hd (S.assumption_nodes sources)
   val admitted = #node (G.import graph scope 4096
     (boolSyntax.mk_conj (boolSyntax.T,boolSyntax.T)))
   val retained = G.representative graph admitted
-  val law = Thm.SYM (Drule.EQT_INTRO
-    (Thm.CONJ boolTheory.TRUTH boolTheory.TRUTH))
-  val (_,right) = Term.dest_eq (Thm.concl law)
-  val bridge = Thm.TRANS law (Thm.ALPHA right retained)
-  val admission : SmtReplayBinder.admission =
-    {metric = G.RawNodes,input_limit = 100,output_limit = 100,
-     check_type = fn _ => (),refuse = fn why => die why}
-  (* This certificate permits bounded explicit normalization, NOT alpha
-     correspondence or membership in the original Source portfolio. *)
-  val certificate = SmtReplaySourceHypAdmission.new graph scope
-    {source = source,admitted = admitted,bridge = bridge,
-     source_variables = [],allow_bound = false,admission = admission}
-  val _ = SmtReplaySourceHypAdmission.check certificate
-    {source = source,scope = scope,variables = [],admission = admission}
   val theorem = Thm.CONJUNCT1 (Thm.ASSUME retained)
   val _ = ensure "semantic-equivalence fixture was alpha or not exact"
     (not (Term.aconv boolSyntax.T retained) andalso

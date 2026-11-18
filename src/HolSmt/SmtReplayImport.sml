@@ -325,9 +325,7 @@ struct
                in visit (left::right::rest) end
              else visit rest))
     in visit [original] end
-  fun recipe_policy_int_limit SmtReplayResourcePolicy.Uncapped = NONE
-    | recipe_policy_int_limit (SmtReplayResourcePolicy.AtMost limit) =
-        (SOME (IntInf.toInt limit) handle Overflow => NONE)
+  val recipe_policy_int_limit = SmtReplayResourcePolicy.to_int_limit
   (* Same unfolded public-constructor metric, with exact IntInf result.
      Keep opening lazy so a finite ceiling rejects before expanding an
      unadmitted body. Neither marker identity nor this count grants FV or

@@ -191,12 +191,6 @@ struct
     TextIO.closeOut outstream
   end
 
-  (* true if 'name' can be found on the current PATH *)
-  fun command_available name =
-    OS.Process.isSuccess
-      (OS.Process.system ("command -v " ^ name ^ " > /dev/null 2>&1"))
-    handle _ => false
-
   (***************************************************************************)
   (* solver versions                                                         *)
   (***************************************************************************)

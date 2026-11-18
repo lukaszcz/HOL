@@ -21,11 +21,4 @@ sig
      change ancestor Bound IDs to source variables. *)
   val close_equality_with_sources : SmtReplayGraph.graph -> arguments ->
     {theorem : Thm.thm, hypotheses : SmtReplayGraph.node list}
-  (* Separate draft API: certificates apply only to exact recorded Source
-     hypotheses. Existing APIs never request or accept this extra evidence. *)
-  val close_equality_with_source_admissions : SmtReplayGraph.graph ->
-    {arguments : arguments,
-     source_admissions : SmtReplayGraph.node ->
-       SmtReplaySourceHypAdmission.certificate option} ->
-    {theorem : Thm.thm, hypotheses : SmtReplayGraph.node list}
 end

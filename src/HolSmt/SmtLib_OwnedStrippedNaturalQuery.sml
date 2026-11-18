@@ -9,7 +9,6 @@ struct
   structure T = SmtLib_CompactCarrierScheduler
   structure Scope = SmtReplayOwnedScopeReceipt
   structure P = SmtReplayProof
-  structure Core = SmtReplayOwnedLargeProofCore
   val _ = SmtLib_OwnedNaturalSequentTransfer.claim_query
   val _ = SmtReplayProof.prepare_needed_sources_with_work
   val _ = SmtReplayProof.validate_block_for
@@ -25,13 +24,13 @@ struct
     {work:W.portfolio,graph:G.graph,root:G.scope,sources:S.sources,
      limits:W.limits,transfer:N.receipt,claim:N.query_claim,
      traversal:T.owner,epoch:int,symbols:int,phase:phase ref,
-     frames:Scope.receipt list ref,normalizations:Core.result list ref,
+     frames:Scope.receipt list ref,
      paths:(G.scope * G.closure_child) list ref,
      check_type:Type.hol_type -> unit,scope_opened:G.scope -> unit}
   datatype plan = Plan of
     {owner:owner,frame:Scope.receipt,assumptions:G.node list,goal:G.node,
      steps:step list,types:Type.hol_type list,
-     normalization:Core.result option,solved:(G.node * bool) option}
+     solved:(G.node * bool) option}
   exception Terminal of Scope.receipt * G.node list * step list *
     G.node * bool
   datatype query = Query of
@@ -40,15 +39,13 @@ struct
   fun protected owner action = action () handle primary =>
     (close owner;raise primary)
   fun active (Owner {work,graph,root,sources,limits,transfer,epoch,symbols,
-                    phase,frames,paths,normalizations,...}) =
+                    phase,frames,paths,...}) =
     (if !phase=Retired then raise ERR "active" "query owner retired" else ();
      W.validate work graph root sources limits;
      if Type.type_epoch ()=epoch andalso Term.term_epoch ()=symbols then ()
        else raise ERR "active" "declaration retirement changed";
      ignore (N.description_for work transfer);
      ignore (N.target_import_for work transfer);
-     List.app (fn result => ignore
-       (Core.conversion_description_for work result)) (!normalizations);
      List.app (fn frame => ignore (Scope.description_for work frame)) (!frames);
      List.app (fn (caller,child) =>
        ignore (G.closure_child_node graph caller child)) (!paths))
@@ -71,7 +68,6 @@ struct
           limits=W.semantic_limits work,transfer=transfer,claim=claim,
           traversal=traversal,epoch=Type.type_epoch (),
           symbols=Term.term_epoch (),phase=ref New,frames=ref [frame],
-          normalizations=ref [],
           paths=ref [],check_type=check_type,scope_opened=scope_opened}
     in active owner;owner end handle primary => (W.close work;raise primary)
   (* Independent type/name work is charged to original remaining W. Every
@@ -126,25 +122,14 @@ struct
     let val child=inspect owner (fn () => G.closure_root graph caller node)
         val _=paths := (caller,child):: !paths
     in child end
-  fun prepare_internal split_assumptions normalization (owner as Owner
-      {work,graph,root,transfer,limits,phase,frames,normalizations,
-       traversal,...}) =
+  fun prepare_internal split_assumptions (owner as Owner
+      {work,graph,root,transfer,limits,phase,frames,traversal,...}) =
     protected owner (fn () =>
     let val _=active owner
         val _=if !phase=New then phase := Prepared else
           raise ERR "prepare" "query preparation consumed"
         val data=N.description_for work transfer
-        val start=case normalization of NONE => #node (#target data)
-          | SOME result =>
-              let val actual=Core.conversion_description_for work result
-              in if Portable.pointer_eq (#graph actual,graph) andalso
-                  #root actual=root andalso #scope actual=root andalso
-                  Portable.pointer_eq (#sources actual,#original_sources data)
-                  andalso #source actual= #node (#target data) then
-                    #target actual else raise ERR "prepare"
-                      "different owned whole-target normalization" end
-        val _=case normalization of NONE => ()
-          | SOME result => normalizations := result:: !normalizations
+        val start= #node (#target data)
         val initial=hd (!frames)
         val types=ref ([]:Type.hol_type list)
         fun admit terms =
@@ -295,14 +280,9 @@ struct
         val _=admit [goal_term,denied]
         val _=List.app (fn node => admit [G.representative graph node]) assumptions
     in Plan {owner=owner,frame=frame,goal=goal,assumptions=assumptions,
-      steps=steps,types=List.rev (!types),normalization=normalization,
-      solved=solved} end)
-  fun prepare owner = prepare_internal false NONE owner
-  fun prepare_normalized owner result =
-    prepare_internal false (SOME result) owner
-  fun prepare_no_split owner = prepare_internal true NONE owner
-  fun prepare_normalized_no_split owner result =
-    prepare_internal true (SOME result) owner
+      steps=steps,types=List.rev (!types),solved=solved} end)
+  fun prepare owner = prepare_internal false owner
+  fun prepare_no_split owner = prepare_internal true owner
   fun execute (plan as Plan {owner=owner as Owner
       {work,graph,root,limits,phase,check_type,scope_opened,frames,...},
        frame,goal,types,...}) = protected owner (fn () =>
@@ -355,7 +335,7 @@ struct
       inspect owner (fn () => P.compose block operation premises)) end
   fun finish (Plan {owner=owner as Owner
       {work,graph,root,sources,limits,transfer,claim,check_type,...},
-       assumptions,steps,normalization,...}) proved =
+       assumptions,steps,...}) proved =
     let
           val allowed=List.map (G.representative graph) assumptions
           val _=if List.all (fn h => List.exists
@@ -406,17 +386,6 @@ struct
                   in Thm.CHOOSE (variable,Thm.ASSUME original) transferred end))
                 end
           val rebuilt=List.foldl replay proved steps
-          val rebuilt=case normalization of NONE => rebuilt
-            | SOME result =>
-              let val equality=Core.theorem_for work result
-                  val (old,new)=boolSyntax.dest_eq (Thm.concl equality)
-                  val _=if Term.aconv (Thm.concl rebuilt) new then () else
-                    raise ERR "close" "normalized whole Goal changed"
-                  val _=admit_effect owner (#output_limit limits)
-                    [Thm.concl equality,boolSyntax.mk_eq (new,old),
-                     Thm.concl rebuilt,old]
-              in W.with_step work (fn () => inspect owner (fn () =>
-                Thm.EQ_MP (Thm.SYM equality) rebuilt)) end
           val target= #target (N.description_for work transfer)
           val _=if null (Thm.hyp rebuilt) andalso
               Term.aconv (Thm.concl rebuilt) (G.representative graph (#node target))
@@ -465,7 +434,7 @@ struct
   fun close_for expected query supplied edge =
     let val Query {plan=Plan {owner=owner as Owner
           {work,graph,root,sources,limits,transfer,claim,phase,check_type,...},
-          frame,goal,assumptions,steps,normalization,...},denied,block}=
+          frame,goal,assumptions,steps,...},denied,block}=
           held expected query
         val _=case !block of SOME actual =>
           if Portable.pointer_eq (actual,supplied) then () else
@@ -524,5 +493,5 @@ struct
             inspect owner (fn () => P.realize supplied goal named))
       in finish (Plan {owner=owner,frame=frame,goal=goal,
           assumptions=assumptions,steps=steps,types=[],
-          normalization=normalization,solved=NONE}) proved end) end
+          solved=NONE}) proved end) end
 end

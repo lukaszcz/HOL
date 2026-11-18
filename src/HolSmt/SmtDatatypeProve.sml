@@ -932,11 +932,6 @@ struct
 
   fun datatype_simp_prove t = datatype_simp_with_fallback true t
 
-  fun datatype_nchotomy_thms t =
-    List.filter fitting (List.mapPartial
-      (fn ty => Lib.total TypeBase.nchotomy_of ty)
-      (List.filter (fn ty => ty <> Type.bool) (datatype_types t)))
-
   fun constructor_headed tm =
     let
       val (head, _) = boolSyntax.strip_comb tm
@@ -968,18 +963,6 @@ struct
     in
       Listsort.sort compare_term_size
         (List.foldl add_tm [] (List.filter datatype_term (subterms t)))
-    end
-
-  fun datatype_free_terms t =
-    let
-      fun datatype_term tm =
-        let val ty = Term.type_of tm
-        in ty <> Type.bool andalso has_constructors ty end
-      fun add_tm (tm, acc) =
-        if List.exists (fn tm' => Term.aconv tm' tm) acc then acc
-        else tm :: acc
-    in
-      List.foldl add_tm [] (List.filter datatype_term (Term.free_vars t))
     end
 
   fun nchotomy_for_term tm =

@@ -974,6 +974,21 @@ struct
     | FamilyFound of int
     | TraversalLimit of int
 
+  (* A pointer-identity visited set; the hash only selects a bucket. *)
+  fun new_pointer_seen bucket_count =
+    let
+      val buckets = Array.array (bucket_count, [] : Term.term list)
+    in
+      fn term =>
+        let
+          val index = SmtReplayImport.pointer_bucket 3 bucket_count term
+          val bucket = Array.sub (buckets, index)
+        in
+          List.exists (fn saved => Portable.pointer_eq (term, saved)) bucket
+          orelse (Array.update (buckets, index, term :: bucket); false)
+        end
+    end
+
   fun scan_string_family policy maximum t =
     let
       (* Admission and its cost measurement are deliberately one traversal.
@@ -982,49 +997,7 @@ struct
          generic String classifier's established whole-traversal cap. *)
       fun scan target =
       let
-          val bucket_count = 4093
-          val seen_buckets = Array.array
-            (bucket_count, [] : Term.term list)
-          fun name_hash name =
-            let
-              fun loop index hash =
-                if index = String.size name then hash
-                else loop (index + 1)
-                  ((hash * 33 + Char.ord (String.sub (name, index))) mod
-                   bucket_count)
-            in
-              loop 0 5381
-            end
-          fun pointer_hash depth term =
-            if Term.is_var term then
-              name_hash (Lib.fst (Term.dest_var term))
-            else if Term.is_const term then
-              name_hash (#Name (Term.dest_thy_const term))
-            else if depth = 0 then
-              if Term.is_abs term then 17 else 19
-            else if Term.is_abs term then
-              let val (_, body) = Term.dest_abs term in
-                (23 + 37 * pointer_hash (depth - 1) body) mod bucket_count
-              end
-            else
-              let
-                val (operator, operand) = Term.dest_comb term
-              in
-                (29 + 37 * pointer_hash (depth - 1) operator +
-                 pointer_hash (depth - 1) operand) mod bucket_count
-              end
-            handle Feedback.HOL_ERR _ => 31
-          fun seen term =
-            let
-              val index = pointer_hash 3 term
-              val bucket = Array.sub (seen_buckets, index)
-            in
-              if List.exists
-                   (fn saved => Portable.pointer_eq (term, saved)) bucket
-              then true
-              else
-                (Array.update (seen_buckets, index, term :: bucket); false)
-            end
+          val seen = new_pointer_seen 4093
           fun children term rest =
             if Term.is_comb term then
               let val (operator, operand) = Term.dest_comb term
@@ -1204,10 +1177,6 @@ struct
     in
       unique Term.empty_tmset (List.map candidate anchors)
     end
-
-  fun contextual_index_fact context numeral rule =
-    Lib.tryfind (fn (_, prove) => prove ())
-      (contextual_index_candidates context numeral rule)
 
   fun cached_contextual_index_facts
       (cache : contextual_index_cache) context numeral rule =
@@ -1514,14 +1483,6 @@ struct
      smtstringz3Theory.seq_nth_i_mod_2exp18,
      smtstringz3Theory.unicode_mod_2exp18_eq]
 
-  (* Preserve the production character prover's historical syntactic
-     admission boundary.  The prototype owner below is intentionally more
-     precise and theorem-driven; it must not widen this public prover. *)
-  val char_decomposition_names =
-    const_name_set
-      (smtstring_consts "smtstringz3" ["char_bit", "char_is_digit"] @
-       smtstring_consts "words" ["word_or"])
-
   val char_word_domain_ss =
     simpLib.++ (simpLib.empty_ss, numSimps.REDUCE_ss)
 
@@ -1562,49 +1523,7 @@ struct
              shared spine and can consume the step-time budget before the
              DAG cap is reached.  The resource metric is a physical-DAG
              bound, so pointer identity is the appropriate key here. *)
-          val bucket_count = 4093
-          val seen_buckets = Array.array
-            (bucket_count, [] : Term.term list)
-          fun name_hash name =
-            let
-              fun loop index hash =
-                if index = String.size name then hash
-                else loop (index + 1)
-                  ((hash * 33 + Char.ord (String.sub (name, index))) mod
-                   bucket_count)
-            in
-              loop 0 5381
-            end
-          fun pointer_hash depth term =
-            if Term.is_var term then
-              name_hash (Lib.fst (Term.dest_var term))
-            else if Term.is_const term then
-              name_hash (#Name (Term.dest_thy_const term))
-            else if depth = 0 then
-              if Term.is_abs term then 17 else 19
-            else if Term.is_abs term then
-              let val (_, body) = Term.dest_abs term in
-                (23 + 37 * pointer_hash (depth - 1) body) mod bucket_count
-              end
-            else
-              let
-                val (operator, operand) = Term.dest_comb term
-              in
-                (29 + 37 * pointer_hash (depth - 1) operator +
-                 pointer_hash (depth - 1) operand) mod bucket_count
-              end
-            handle Feedback.HOL_ERR _ => 31
-          fun seen term =
-            let
-              val index = pointer_hash 3 term
-              val bucket = Array.sub (seen_buckets, index)
-            in
-              if List.exists
-                   (fn saved => Portable.pointer_eq (term, saved)) bucket
-              then true
-              else
-                (Array.update (seen_buckets, index, term :: bucket); false)
-            end
+          val seen = new_pointer_seen 4093
           fun loop _ [] = false
             | loop observed (term :: pending) =
                 if seen term then
@@ -1706,18 +1625,6 @@ struct
           "term is outside the checked character expansion domain"
     in
       char_word_normalization_core t
-    end
-
-  fun char_bitblast_prove t =
-    let
-      val _ =
-        if mentions_any char_decomposition_names t then ()
-        else raise ERR "char_prove" "no char decomposition atom"
-      val normalized = char_word_normalization_core t
-      val t' = boolSyntax.rhs (Thm.concl normalized)
-      val thm = Tactical.prove (t', Library.replay_BBLAST_TAC)
-    in
-      Thm.EQ_MP (Thm.SYM normalized) thm
     end
 
   fun char_prove t =

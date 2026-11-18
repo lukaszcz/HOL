@@ -116,6 +116,24 @@ in
     handle Foreign _ => raise FastUnavailable
 end
 
+fun retry f = f () handle e as OS.SysErr (_,SOME code) =>
+  if code = Posix.Error.intr then retry f else raise e
+fun write_all fd bytes =
+  let
+    fun loop slice = if Word8VectorSlice.length slice = 0 then ()
+      else let val n = retry (fn () => Posix.IO.writeVec (fd,slice))
+           in if n = 0 then raise Fail "SatProcess: short write"
+              else loop (Word8VectorSlice.subslice (slice,n,NONE)) end
+  in loop (Word8VectorSlice.full bytes) end
+fun fdpath fd = "/dev/fd/" ^
+  Int.toString (SysWord.toInt (Posix.FileSys.fdToWord fd))
+fun quote s = "'" ^ String.translate
+  (fn #"'" => "'\\''" | c => str c) s ^ "'"
+fun signal target = retry (fn () =>
+  Posix.Process.kill (target,Posix.Signal.kill))
+  handle e as OS.SysErr (_,SOME code) =>
+    if code = Posix.Error.srch then () else raise e
+
 (* How spawn_system creates the owned supervisor: as the session leader
    via setsid -w, or (no setsid program) as a process group leader. *)
 datatype launcher = Session of string | Group
@@ -152,22 +170,9 @@ fun fork_system command =
       end
     val ({infd,outfd},{infd = script,outfd = writer}) =
       ((pipe (),pipe ()) handle e => (close_all (); reraise e))
-    fun retry f = f () handle e as OS.SysErr (_,SOME code) =>
-      if code = Posix.Error.intr then retry f else raise e
     (* Like spawn_system: native blocking reap of the killed supervisor,
        not the Basis 10ms WNOHANG polling loop. *)
     fun wait pid = retry (fn () => native_reap pid)
-    fun write_all fd bytes =
-      let
-        fun loop slice = if Word8VectorSlice.length slice = 0 then ()
-          else let val n = retry (fn () => Posix.IO.writeVec (fd,slice))
-               in if n = 0 then raise Fail "SatProcess: short write"
-                  else loop (Word8VectorSlice.subslice (slice,n,NONE)) end
-      in loop (Word8VectorSlice.full bytes) end
-    fun fdpath fd = "/dev/fd/" ^
-      Int.toString (SysWord.toInt (Posix.FileSys.fdToWord fd))
-    fun quote s = "'" ^ String.translate
-      (fn #"'" => "'\\''" | c => str c) s ^ "'"
     (* Use a shell, not another ML fork, to supervise the command: a second
        fork in a forked, formerly multithreaded Poly/ML process can deadlock.
        After reporting status the shell stays alive (stopped), pinning the
@@ -207,10 +212,6 @@ fun fork_system command =
         let
           val _ = unlock ()
           val owned = ref true
-          fun signal target = retry (fn () =>
-            Posix.Process.kill (target,Posix.Signal.kill))
-            handle e as OS.SysErr (_,SOME code) =>
-              if code = Posix.Error.srch then () else raise e
           (* Run every cleanup step even if an earlier one fails, remembering
              its first exception.  This runs with interrupts deferred.  The
              direct PID is also killed if group acquisition failed. *)
@@ -278,25 +279,8 @@ fun spawn_system launcher command =
           val _ = Posix.IO.setfd (infd,Posix.IO.FD.cloexec)
           val _ = Posix.IO.setfd (outfd,Posix.IO.FD.cloexec)
       in {infd=infd,outfd=outfd} end
-    fun retry f = f () handle e as OS.SysErr (_,SOME code) =>
-      if code = Posix.Error.intr then retry f else raise e
-    fun write_all fd text =
-      let
-        fun loop slice = if Word8VectorSlice.length slice = 0 then ()
-          else let val n = retry (fn () => Posix.IO.writeVec (fd,slice))
-               in if n = 0 then raise Fail "SatProcess: short write"
-                  else loop (Word8VectorSlice.subslice (slice,n,NONE)) end
-      in loop (Word8VectorSlice.full (Byte.stringToBytes text)) end
-    fun fdpath fd = "/dev/fd/" ^
-      Int.toString (SysWord.toInt (Posix.FileSys.fdToWord fd))
-    fun quote s = "'" ^ String.translate
-      (fn #"'" => "'\\''" | c => str c) s ^ "'"
     val process = ref NONE
     val group = ref NONE
-    fun signal target = retry (fn () =>
-      Posix.Process.kill (target,Posix.Signal.kill))
-      handle e as OS.SysErr (_,SOME code) =>
-        if code = Posix.Error.srch then () else raise e
     (* The session/group leader remains alive (STOPped after completion),
        so its group number cannot be recycled before killpg.  setsid -w
        retains ownership even on implementations that fork a session leader;
@@ -377,7 +361,7 @@ fun spawn_system launcher command =
        val _ = defer ()
        val _ = group := SOME pid
        val _ = restore ()
-       val _ = write_all start "go\n"
+       val _ = write_all start (Byte.stringToBytes "go\n")
        val _ = close start
        val message = read_byte ()
        val status = if message = "0" then OS.Process.success

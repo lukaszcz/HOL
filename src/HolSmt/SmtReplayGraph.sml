@@ -4208,9 +4208,7 @@ struct
         {graph : graph,scope : scope,
          maximum : SmtReplayResourcePolicy.limit,original : Term.term,
          types : Type.hol_type list}
-  fun policy_import_int_limit SmtReplayResourcePolicy.Uncapped = NONE
-    | policy_import_int_limit (SmtReplayResourcePolicy.AtMost maximum) =
-        (SOME (IntInf.toInt maximum) handle Overflow => NONE)
+  val policy_import_int_limit = SmtReplayResourcePolicy.to_int_limit
   fun plan_exact_policy_imports_root skip_root g scope maximum originals =
     let
       val _ = if skip_root then () else check_scope g scope

@@ -96,8 +96,6 @@ val operator_availabilities = ref ([] : operator_availability list)
 fun register_operator_availability availability =
   operator_availabilities := availability :: !operator_availabilities
 
-fun clear_operator_availabilities () = operator_availabilities := []
-
 fun term_heads tm =
   let
     fun walk tm acc =
@@ -2444,7 +2442,6 @@ local
      is_bag_card_head = fn rator =>
        same_const rator bagSyntax.BAG_CARD_tm,
      number_type = numSyntax.num}
-  val num_of_int_tm = Term.prim_mk_const {Thy="integer", Name="Num"}
   val int_ediv_tm = Term.prim_mk_const {Thy="integer", Name="ediv"}
   val int_emod_tm = Term.prim_mk_const {Thy="integer", Name="emod"}
 
@@ -3162,10 +3159,6 @@ local
   fun datatype_declaration_text sort_of family names =
     let
       val name_of = ListPair.zipEq (family, names)
-      fun lookup_name ty =
-        case List.find (fn (ty', _) => same_type (ty, ty')) name_of of
-          SOME (_, name) => name
-        | NONE => raise ERR "datatype_declaration_text" "missing family name"
       fun constructor_decs (ty, type_name) =
         let
           val tyinfo =
@@ -8537,11 +8530,6 @@ in
                          with_target target]) goal
       end
 
-    fun goal_to_SmtLib_translation_with_policy_and_dialect policy dialect =
-      goal_to_SmtLib_translation_gen
-        (emit_options [with_request (AutomaticRegime dialect),
-                       with_policy policy])
-
     fun goal_to_SmtLib_translation_with_regime_and_apply_operator
         regime apply_operator logic =
       goal_to_SmtLib_translation_gen
@@ -8562,12 +8550,6 @@ in
     fun goal_to_SmtLib_translation logic =
       goal_to_SmtLib_translation_gen
         (emit_options [with_policy (option_logic_policy logic)])
-
-    fun goal_to_SmtLib_with_get_proof_translation_with_policy_and_dialect
-        policy dialect =
-      goal_to_SmtLib_translation_gen
-        (emit_options [with_request (AutomaticRegime dialect),
-                       with_policy policy, with_get_proof true])
 
     fun goal_to_SmtLib_with_get_proof_translation logic =
       goal_to_SmtLib_translation_gen

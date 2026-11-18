@@ -17,6 +17,13 @@ fun profile_stage name action input =
     if sat_profile () then
       Profile.profile_with_exn_name ("HolSat(" ^ name ^ ")") action input
     else action input
+(* One environment check per call; when disabled, messages are never
+   constructed (no per-message RTS call or formatting). *)
+fun sat_tracer () =
+    if OS.Process.getEnv "HOL4_SAT_TRACE" = SOME "1" then
+      (fn message => (Feedback.HOL_MESG ("HOL SAT: " ^ message ());
+                      TextIO.flushOut TextIO.stdOut))
+    else (fn _ => ())
 val replay_counts = ref ([] : (string * int) list)
 fun count name amount =
     if not (sat_profile ()) then () else
@@ -76,10 +83,6 @@ local
 val A = mk_var("A",bool)
 val B = mk_var("B",bool)
 val AND_INV_IMP2 = SPEC_ALL AND_INV_IMP
-fun INSTANTIATE_UNDERLYING lfn th =
-    let val fvs = HOLset.listItems (hyp_frees th)
-        val tms = map (fn v => tryrbapplyd lfn v v) fvs
-    in INST (map2 (fn t => fn fv => fv |-> t) tms fvs) th end
 in
 
 (* let
@@ -125,21 +128,15 @@ fun dualise lfn ({projections, ...} : root_context) orc clauseth ci =
                   (* All compact clauses are projections of one balanced CNF
                      assumption.  Resolution therefore carries one shared
                      hypothesis instead of accumulating one per root. *)
-                  val dth = dualise' th2
-              in dth end
+              in dualise' th2 end
      in res end
 
 fun finish_resolution ({conjunction, ...} : root_context) lfn clauseth th =
     if RBM.numItems lfn = 0 then th
     else
       let
-        (* One environment check per finish, not per message. *)
-        val tracing = OS.Process.getEnv "HOL4_SAT_TRACE" = SOME "1"
-        fun trace message =
-          if tracing then
-            (Feedback.HOL_MESG ("HOL SAT: finish " ^ message);
-             TextIO.flushOut TextIO.stdOut)
-          else ()
+        val sat_trace = sat_tracer ()
+        fun trace message = sat_trace (fn () => "finish " ^ message)
         val _ = trace "discharge start"
         val discharged = profile_stage "replay-finish/discharge"
           (DISCH conjunction) th
@@ -147,8 +144,8 @@ fun finish_resolution ({conjunction, ...} : root_context) lfn clauseth th =
         val insts = RBM.foldl
           (fn (variable, term, result) =>
             (variable |-> term) :: result) [] lfn
-        val _ = if tracing then trace ("instantiate start count=" ^
-          Int.toString (List.length insts)) else ()
+        val _ = sat_trace (fn () => "finish instantiate start count=" ^
+          Int.toString (List.length insts))
         val instantiated = profile_stage "replay-finish/instantiate"
           (INST insts) discharged
         val _ = trace "instantiate done"
@@ -206,11 +203,9 @@ fun resolveClause lfn sva cl piv rth0 c1i =
       val rth  = resolve v n0 rth0 rth1
       val _ = (counter:=(!counter)+1)
       val _ =
-        if !counter mod 50000 = 0 andalso
-           OS.Process.getEnv "HOL4_SAT_TRACE" = SOME "1" then
-          (Feedback.HOL_MESG
-            ("HOL SAT: resolution steps=" ^ Int.toString (!counter));
-           TextIO.flushOut TextIO.stdOut)
+        if !counter mod 50000 = 0 then
+          sat_tracer () (fn () =>
+            "resolution steps=" ^ Int.toString (!counter))
         else ()
     in rth end
 

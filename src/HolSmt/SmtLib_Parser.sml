@@ -5244,9 +5244,6 @@ local
      queries = queries,
      surface_flags = ref (empty_surface_flags ())}
 
-  fun new_typecheck_state logic tydict tmdict =
-    new_typecheck_state_with_queries logic tydict tmdict []
-
   fun dest_typecheck_state cmd (SOME (x as {logic, ...})) =
         if is_reset_logic logic then
           raise ERR "typecheck_script"
@@ -5341,11 +5338,6 @@ local
     SOME (Redblackmap.find (sigdict, name))
     handle Redblackmap.NotFound => NONE
 
-  fun same_signature domain range
-      ({domain = existing_domain, range = existing_range, ...}
-         : function_signature) =
-    existing_domain = domain andalso existing_range = range
-
   fun reject_duplicate_signature context loc name domain range sigdict =
     case peek_signatures (sigdict, name) of
       NONE => ()
@@ -5380,10 +5372,6 @@ local
       (tm, tmdict, sigdict)
     end
 
-  fun add_value_signature name domain range env =
-    add_value_signature_with_surface name domain (List.map RigidSort domain)
-      range (RigidSort range) env
-
   fun add_value_term_signature_with_surface name tm domain domain_surface range
       range_surface (tmdict, sigdict) =
     let
@@ -5411,9 +5399,6 @@ local
         checked_term
           (typecheck_term_with_options elaborate_datatypes context
             (tydict, tmdict, sigdict) term_ast)
-
-  and index_term_from_ast context env term_ast =
-    index_term_from_ast_with_options false context env term_ast
 
   and typecheck_sort context tydict sort_ast =
     let
@@ -8204,12 +8189,6 @@ in
 
   fun parse_file_state (path : string) : command_state_snapshot =
     parse_file_state_with_options default_typecheck_options path
-
-  fun parse_file_state_with_dict_logic dict_logic (path : string)
-      : command_state_snapshot =
-    parse_file_state_with_options
-      {dict_logic = SOME dict_logic, solver = NONE,
-       elaborate_datatypes = false} path
 
   fun parse_file (path : string)
       : string * Type.hol_type dict * Term.term dict * Term.term list =

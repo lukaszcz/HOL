@@ -78,15 +78,6 @@ struct
       NONE => ()
     | SOME observer => observer event
 
-  fun with_sat_target_observer observer action input =
-    let
-      val previous = !sat_target_observer
-      fun restore () = sat_target_observer := previous
-      fun run () = (sat_target_observer := observer; action input)
-    in
-      Portable.finally restore run ()
-    end
-
   fun observe_sat_target target =
     case !sat_target_observer of
       NONE => ()

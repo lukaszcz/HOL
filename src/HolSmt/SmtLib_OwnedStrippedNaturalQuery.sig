@@ -9,14 +9,9 @@ sig
      check_type:Type.hol_type -> unit,
      scope_opened:SmtReplayGraph.scope -> unit} -> owner
   val prepare : owner -> plan
-  (* Semantic SAME-W whole-target equality, not a policy/past-work grant.
-     Source must be EXACT this transfer target; no theorem/node pairing. *)
-  val prepare_normalized : owner -> SmtReplayOwnedLargeProofCore.result -> plan
   (* Explicit following NO_SPLIT phase. Does not certify the prior
      contextful REV_FULL_SIMP policy from a semantic equality alone. *)
   val prepare_no_split : owner -> plan
-  val prepare_normalized_no_split : owner ->
-    SmtReplayOwnedLargeProofCore.result -> plan
   val execute : plan -> query
   val description_for : SmtReplayInvocationWork.portfolio -> query ->
     {frame:SmtReplayOwnedScopeReceipt.receipt,

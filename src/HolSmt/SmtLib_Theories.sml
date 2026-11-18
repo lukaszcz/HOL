@@ -265,7 +265,6 @@ in
 
   fun zero_zero f x = zero_args (zero_args (f x))
   fun zero_one f x = zero_args (one_arg (f x))
-  fun zero_two f x = zero_args (two_args (f x))
 
   fun one_zero f x = zero_args o (one_arg (f x))
   fun one_one f x = one_arg o (one_arg (f x))
@@ -572,40 +571,6 @@ in
   fun sanitize_name name =
     String.translate
       (fn c => if Char.isAlphaNum c then String.str c else "_") name
-
-  fun abstract_type name =
-    Type.mk_vartype ("'smtlib_" ^ sanitize_name name)
-
-  fun abstract_const name ret_ty args =
-    Term.list_mk_comb
-      (Term.mk_var ("smtlib_" ^ sanitize_name name,
-         boolSyntax.list_mk_fun (List.map Term.type_of args, ret_ty)),
-       args)
-
-  fun abstract_const_arity name n ret_ty args =
-    if List.length args = n then
-      abstract_const name ret_ty args
-    else
-      decline ("<" ^ name ^ ">")
-        (Int.toString n ^ " argument(s) expected")
-
-  fun abstract_bool name args = abstract_const name Type.bool args
-
-  fun abstract_same name args =
-    case args of
-      [] => decline ("<" ^ name ^ ">") "at least one argument expected"
-    | x :: _ => abstract_const name (Term.type_of x) args
-
-  fun abstract_indexed_const name indices ret_ty args =
-    abstract_const
-      (name ^ "_" ^
-       String.concatWith "_" (List.map (sanitize_name o Hol_pp.term_to_string)
-         indices))
-      ret_ty args
-
-  fun abstract_sort_entry sort_name =
-    official_entry sort_name no_attributes ["(" ^ sort_name ^ " 0)"]
-      (K_zero_zero (abstract_type sort_name))
 
   fun smtfp_type (eb, sb) =
     let

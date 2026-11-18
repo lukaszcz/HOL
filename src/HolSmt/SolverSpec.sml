@@ -47,13 +47,15 @@ structure SolverSpec = struct
 
   (* Ordinary capture observers remain best-effort, but terminal exceptions
      must also survive cold command discovery before any solver is run. *)
-  fun terminal_capture_exception exn =
-    case exn of Interrupt => true
-      | Timeout.TIMEOUT _ => true
-      | IO.Io {cause,...} => terminal_capture_exception cause
-      | _ => false
+  val terminal_capture_exception = dimacsTools.is_terminal
 
-  fun timeout_command_available name =
+  fun get_nonempty_env name =
+    case OS.Process.getEnv name of
+      SOME file => if file = "" then NONE else SOME file
+    | NONE => NONE
+
+  (* true if 'name' can be found on the current PATH *)
+  fun command_available name =
     OS.Process.isSuccess
       (SatProcess.system ("command -v " ^ name ^ " >/dev/null 2>&1"))
     handle exn =>
@@ -64,7 +66,7 @@ structure SolverSpec = struct
       SOME cached => cached
     | NONE =>
       let
-        val found = List.find timeout_command_available ["timeout", "gtimeout"]
+        val found = List.find command_available ["timeout", "gtimeout"]
         val () =
           if Option.isSome found orelse Library.trace () < 1 then
             ()
@@ -88,13 +90,7 @@ structure SolverSpec = struct
 
   (* Cleanup may fail, but never replaces the protected action's exception. *)
   fun complete_owned complete work input =
-    let
-      val outcome = Exn.capture work input
-      val cleanup = Exn.capture complete ()
-    in case outcome of
-        Exn.Exn primary => raise primary
-      | Exn.Res result => (Exn.release cleanup;result)
-    end
+    dimacsTools.with_cleanup complete work input
 
   fun with_input_file path action =
     let val stream = TextIO.openIn path

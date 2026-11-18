@@ -1010,25 +1010,6 @@ local
     Thm.MP (Thm.DISCH clause clause_imp_t) (List.hd thms)
   end
 
-  (* e.g.,   "(A --> B) --> C --> D" acc   ==>   [A, B, C, D] @ acc *)
-  fun strip_fun_tys ty acc =
-    let
-      val (dom, rng) = Type.dom_rng ty
-    in
-      strip_fun_tys dom (strip_fun_tys rng acc)
-    end
-    handle Feedback.HOL_ERR _ => ty :: acc
-
-  (* approximate: only descends into combination terms and function types *)
-  fun term_contains_real_ty tm =
-    let val (rator, rand) = Term.dest_comb tm
-    in
-      term_contains_real_ty rator orelse term_contains_real_ty rand
-    end
-    handle Feedback.HOL_ERR _ =>
-      List.exists (Lib.equal realSyntax.real_ty)
-        (strip_fun_tys (Term.type_of tm) [])
-
   val type_contains = Library.type_contains  (* shared, see Library.sml *)
 
   fun term_contains_measure pred tm =
@@ -2114,7 +2095,7 @@ local
   and arith_prove_linear t =
     let
       fun arith_tactic rung (goal as (_, term)) =
-        if term_contains_real_ty term then
+        if Library.term_contains_real_ty term then
           profile ("arith-linear(" ^ rung ^ ")(real)")
             RealField.REAL_ARITH_TAC goal
         else
@@ -2186,7 +2167,7 @@ local
 
   fun z3_asserted (state : state, t) =
   let
-    val allowed = HOLset.listItems (#allowed_asserted_hyps state)
+    val allowed = #allowed_asserted_hyps state
     fun reject () =
       raise ERR "z3_asserted"
         (asserted_membership_diagnostic ^
@@ -2198,7 +2179,8 @@ local
           Drule.CONJUNCTS
             (Thm.EQ_MP (assertion_encoding_conv (Thm.concl theorem))
               theorem)
-        val sources = List.concat (List.map (source o Thm.ASSUME) allowed)
+        val sources = List.concat
+          (List.map (source o Thm.ASSUME) (HOLset.listItems allowed))
         val conversion = assertion_encoding_conv t
         fun derive target =
           case List.find (Term.aconv target o Thm.concl) sources of
@@ -2217,7 +2199,7 @@ local
        assertions, reassociate them, or project an input conjunction; all
        such nodes retain the original hypotheses through kernel CONJ rules. *)
     val theorem =
-      if List.exists (Term.aconv t) allowed then Thm.ASSUME t
+      if HOLset.member (allowed, t) then Thm.ASSUME t
       else regroup ()
     val state = List.foldl
       (fn (hypothesis, state) => state_assert state hypothesis)
@@ -9281,12 +9263,6 @@ local
         (state_cache_thm state thm, thm)
       end)
 
-  fun th_lemma_metadata_has_subkind subkinds
-      ({subkind, ...} : th_lemma_metadata) =
-    case subkind of
-      SOME s => List.exists (Lib.equal s) subkinds
-    | NONE => false
-
   fun advanced_th_lemma_obligation_theory ({theory, ...}
       : th_lemma_metadata) =
     case theory of
@@ -10863,9 +10839,7 @@ local
          used_beta = used_beta,
          used_eta = used_eta}
       end
-    val normalized_expected = List.map (fn assumption =>
-      (assumption, canonical_normalization assumption)) expected
-    fun remove_hyp (hyp, theorem) =
+    fun remove_hyp normalized_expected (hyp, theorem) =
       let
         val hyp_result = canonical_normalization hyp
         val hyp_normalization = #theorem hyp_result
@@ -10903,7 +10877,14 @@ local
         Drule.PROVE_HYP hyp_theorem theorem
       end
   in
-    HOLset.foldl remove_hyp thm bad_hyps
+    if HOLset.isEmpty bad_hyps then thm
+    else
+      let
+        val normalized_expected = List.map (fn assumption =>
+          (assumption, canonical_normalization assumption)) expected
+      in
+        HOLset.foldl (remove_hyp normalized_expected) thm bad_hyps
+      end
   end
 
   (* A reflexive equality is independently derivable by the kernel, whatever
@@ -10956,8 +10937,6 @@ in
         {self_dependent = self_dependent,
          free_variables = HOLset.numItems dependencies})
     end
-  val gen_instantiation_with_expected_fallback_for_test =
-    gen_instantiation_with_expected_fallback
   val with_expected_instantiation_fallback_for_test =
     with_expected_instantiation_fallback
   fun definition_unification_boundary_for_test action =
@@ -11013,7 +10992,6 @@ in
           "def_axiom_conjunction_clause" "injected ordinary decline"
         else 17) [true, false]
   val with_e0_replay_boundary = with_e0_replay_boundary
-  val max_def_axiom_cache_entries_for_test = max_def_axiom_cache_entries
   val with_def_axiom_cache_boundary_for_test =
     with_def_axiom_cache_boundary_for
   fun def_axiom_cache_statistics_for_test () =
@@ -11022,7 +11000,6 @@ in
     case !current_def_axiom_cache of
       NONE => 0
     | SOME cache => !(#cardinality cache)
-  fun replay_snapshot_state_for_test () = replay_snapshot_step ()
   fun replay_local_structure_count_for_test () =
     replay_local_structure_count ()
   fun replay_measurement_state_size_for_test () =
@@ -11039,36 +11016,6 @@ in
         Redblackmap.numItems (!(#shapes (#sat_shapes statistics))) +
         Redblackmap.numItems
           (!(#cache_entries (#sat_shapes statistics)))
-  fun last_replay_measurement_for_test () =
-    !last_replay_measurement_summary
-  fun e0_replay_timeout_for_test duration =
-    let
-      fun spin n =
-        spin (if n = 1000000 then 0 else n + 1)
-      fun nested () = track_proof_step 271828 "fixture-inner"
-        (SmtResource.profile_phase "fixture/nested-timeout" spin) 0
-      fun outer () = track_proof_step 314159 "fixture-outer" nested ()
-    in
-      SmtResource.with_e0_invocation
-        (with_fresh_e0_replay_boundary_for duration outer) ()
-    end
-  fun e0_replay_continuation_timeout_for_test duration =
-    let
-      fun spin n = spin (if n = 1000000 then 0 else n + 1)
-      fun derive () =
-        (set_latest_proof_step 161803 "fixture-local" "end" NONE; ())
-      fun continue () = SmtResource.profile_phase
-        "fixture/continuation-timeout" spin 0
-      fun replay () =
-        let val result =
-          track_proof_step 161803 "fixture-local" derive ()
-        in
-          continue result
-        end
-    in
-      SmtResource.with_e0_invocation
-        (with_fresh_e0_replay_boundary_for duration replay) ()
-    end
   fun e0_replay_quota_timeout_for_test duration =
     let
       val p = Term.mk_var ("p", Type.bool)
@@ -11095,36 +11042,6 @@ in
            (SmtResource.profile_phase "fixture/quota-timeout" spin) 0)
     in
       SmtResource.with_e0_invocation_for_test
-        (with_fresh_e0_replay_boundary_for duration replay) ()
-    end
-  fun e0_replay_nested_local_timeout_for_test duration =
-    let
-      val p = Term.mk_var ("parent_atom", Type.bool)
-      val q = Term.mk_var ("child_atom", Type.bool)
-      val parent_proofterm = REWRITE (boolSyntax.mk_eq (p, p))
-      val child_proofterm = REWRITE (boolSyntax.mk_eq (q, q))
-      val parent_rule = proofterm_rule_name parent_proofterm
-      val child_rule = proofterm_rule_name child_proofterm
-      val parent_local =
-        SOME (fn () => proofterm_local_structure parent_proofterm)
-      val child_local =
-        SOME (fn () => proofterm_local_structure child_proofterm)
-      fun spin n = spin (if n = 1000000 then 0 else n + 1)
-      fun child () =
-        (set_latest_proof_step 8222 child_rule "end" child_local; ())
-      fun parent () =
-        (track_proof_step_with_local 8222 child_rule child_local child ();
-         set_latest_proof_step 8111 parent_rule "end" parent_local)
-      fun replay () =
-        let
-          val _ = track_proof_step_with_local 8111 parent_rule
-            parent_local parent ()
-        in
-          SmtResource.profile_phase
-            "fixture/nested-local-continuation-timeout" spin 0
-        end
-    in
-      SmtResource.with_e0_invocation
         (with_fresh_e0_replay_boundary_for duration replay) ()
     end
   fun bv_family_measure_for_test target =
@@ -11333,13 +11250,6 @@ in
   fun proof_asserted_hyps_with_work proof =
   let
     val work = ref 0
-    (* Stable parser IDs avoid expanding a shared annotation body.  The
-       visit count is linear; balanced-map bookkeeping is O(V log V). *)
-    val visited_local_nodes = ref (Redblackmap.mkDict Int.compare)
-    fun first_local id =
-      if Option.isSome (Redblackmap.peek (!visited_local_nodes, id)) then false
-      else (visited_local_nodes := Redblackmap.insert
-              (!visited_local_nodes, id, ()); true)
     fun add_list pts set = List.foldl (fn (pt, set) => add pt set) set pts
     and add pt set =
       (work := !work + 1;

@@ -29,12 +29,8 @@ struct
   fun install_datatypes_with_branches (options : F.options) translation
       (session : F.session) record =
     let
-      val {template_limit,index_limit,operand_limit,token_limit} =
-        #recipe_limits options
-      fun finite n = SmtReplayResourcePolicy.AtMost (IntInf.fromInt n)
-      val limits = {template_limit=finite template_limit,
-        index_limit=finite index_limit,operand_limit=finite operand_limit,
-        token_limit=finite token_limit}
+      val limits =
+        SmtReplayResourcePolicy.recipe_from_ints (#recipe_limits options)
       val backend = #backend (#reader session)
       fun guard () = ignore (B.frame_scope backend (B.root backend))
     in SmtLib_GraphDatatypeParser.install_with_policy
