@@ -1016,7 +1016,10 @@ struct
      changes each enclosing datatype application, so a precomputed list is
      stale immediately.  The initial candidate count is a per-branch depth
      budget; recursive datatypes can introduce fresh constructor fields, but
-     no branch can case-split more often than that original finite count. *)
+     no branch can case-split more often than that original finite count.
+     The depth budget still allows exponentially many branches, so the
+     splits of one proof attempt are also capped in total: past the cap the
+     attempt fails and the caller's next replay route runs. *)
   fun admit_goal (assumptions,conclusion) =
     (List.app admit assumptions;admit conclusion)
 
@@ -1034,7 +1037,9 @@ struct
              (conclusion :: assumptions) end
     in List.app branch (constructors_of (Term.type_of term)) end
 
-  fun datatype_split_fixpoint_tac ss thms budget goal =
+  val max_exhaustiveness_splits = 256
+
+  fun datatype_split_fixpoint_tac ss thms splits budget goal =
     (admit_goal goal;
      Tactical.THEN
       (bossLib.FULL_SIMP_TAC ss thms,
@@ -1045,12 +1050,18 @@ struct
            case split_terms_of_goal simplified of
              [] => Tactical.ALL_TAC simplified
            | split_term :: _ =>
-               (admit_split_substitutions split_term simplified;
+               if !splits >= max_exhaustiveness_splits then
+                 raise ERR "exhaustiveness_prove"
+                   ("more than " ^ Int.toString max_exhaustiveness_splits ^
+                    " datatype case splits")
+               else
+               (splits := !splits + 1;
+                admit_split_substitutions split_term simplified;
                 Tactical.THEN
                  (profile "datatype(split)"
                     Tactic.FULL_STRUCT_CASES_TAC
                     (nchotomy_for_term split_term),
-                  datatype_split_fixpoint_tac ss thms (budget - 1))
+                  datatype_split_fixpoint_tac ss thms splits (budget - 1))
                  simplified))) goal)
 
   fun exhaustiveness_with_fallback fallback t =
@@ -1063,9 +1074,9 @@ struct
       (* Retry simplification, never an entire split search: each branch
          must retain its original initial-subterm split budget. *)
       else if fallback then with_exported_rewrites (fn ss =>
-        Tactical.prove (t,datatype_split_fixpoint_tac ss thms budget))
+        Tactical.prove (t,datatype_split_fixpoint_tac ss thms (ref 0) budget))
       else Tactical.prove (t,
-        datatype_split_fixpoint_tac numLib.std_ss thms budget)
+        datatype_split_fixpoint_tac numLib.std_ss thms (ref 0) budget)
     end
 
   fun exhaustiveness_prove t = exhaustiveness_with_fallback true t
@@ -1186,6 +1197,7 @@ struct
      acyclicity=protect acyclicity_prove,
      consequence=protect datatype_consequence_prove,
      split_terms=protect datatype_split_terms,
+     rewrites=protect datatype_rewrite_thms,
      fragment=protect datatype_fragment_admits,
      metis=protect metis_datatype_prove,
      with_simpset=fn prove => protect (fn () =>
@@ -1233,6 +1245,8 @@ struct
   fun datatype_consequence_prove (assumptions,conclusion) =
     #consequence (checked_procedures (default_admission ()))
       (assumptions,conclusion)
+  fun datatype_rewrite_thms_with_admission admit t =
+    #rewrites (checked_procedures admit) t
   fun datatype_split_terms t =
     #split_terms (checked_procedures (default_admission ())) t
   fun datatype_fragment_admits t =

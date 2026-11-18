@@ -12401,6 +12401,43 @@ in
   check_oracle_tags "CPC prenex merge" theorem
 end
 
+fun cpc_quant_miniscope_or_replay_success () =
+let
+  fun replay target =
+    CPC_ProofReplay.replay_root_for_test (parse_cpc_proof_string
+      ("((declare-const a Bool) (declare-const b Bool) \
+       \(declare-const P (-> Int Int Bool)) (declare-const Q (-> Int Bool)) \
+       \(declare-const R (-> Int Bool)) \
+       \(define @x () (@var \"x\" Int)) \
+       \(define @y () (@var \"y\" Int)) \
+       \(define @z () (@var \"z\" Int)) \
+       \(step @p :rule quant-miniscope-or :args (" ^ target ^ ")))"))
+  val theorem = replay
+    "(= (forall (@list @x @y @z) (or (and a b) (or (P @x @y) (R @x)) \
+    \(or a b) (Q @z))) \
+    \(or (and a b) (forall (@list @x @y) (or (P @x @y) (R @x))) \
+    \(or a b) (forall (@list @z) (Q @z))))"
+in
+  assert (Thm.concl theorem ~~
+    ``(!(x:int) (y:int) (z:int).
+         a /\ b \/ (P x y \/ R x) \/ (a \/ b) \/ Q z) <=>
+      a /\ b \/ (!(x:int) (y:int). P x y \/ R x) \/ (a \/ b) \/ !z:int. Q z``,
+    "CPC quant-miniscope-or changed its disjuncts or binders");
+  assert (List.null (Thm.hyp theorem),
+    "CPC quant-miniscope-or retained hypotheses");
+  check_oracle_tags "CPC quant-miniscope-or" theorem;
+  expect_hol_error_contains "CPC quant-miniscope-or reordered fail closed"
+    "disjunct does not match"
+    (fn () => ignore (replay
+      "(= (forall (@list @x @z) (or (Q @x) (R @z))) \
+      \(or (forall (@list @z) (R @z)) (forall (@list @x) (Q @x))))"));
+  expect_hol_error_contains "CPC quant-miniscope-or shared binder fail closed"
+    "source binders are shared between disjuncts"
+    (fn () => ignore (replay
+      "(= (forall (@list @x) (or (Q @x) (R @x))) \
+      \(or (forall (@list @x) (Q @x)) (forall (@list @x) (R @x))))"))
+end
+
 fun cpc_bool_or_taut2_replay_success () =
 let
   val proof = parse_cpc_proof_string
@@ -18731,6 +18768,35 @@ in
     "CPC ite_elim2 did not produce the condition-or-else clause")
 end
 
+fun cpc_proof_replay_not_ite_elim_success () =
+let
+  fun replay rule =
+    CPC_ProofReplay.replay_root_for_test (parse_cpc_proof_string
+      ("((declare-const p Bool) (declare-const q Bool) \
+       \(declare-const r Bool) (assume @p1 (not (ite p q r))) \
+       \(step @p2 :rule " ^ rule ^ " :premises (@p1)))"))
+  val thm1 = replay "not_ite_elim1"
+  val thm2 = replay "not_ite_elim2"
+in
+  assert (Thm.concl thm1 ~~ ``~(p:bool) \/ ~(q:bool)``,
+    "CPC not_ite_elim1 did not produce the not-condition-or-not-then clause");
+  assert (Thm.concl thm2 ~~ ``(p:bool) \/ ~(r:bool)``,
+    "CPC not_ite_elim2 did not produce the condition-or-not-else clause");
+  assert (List.all (fn th => case Thm.hyp th of
+                [h] => h ~~ ``~(if (p:bool) then (q:bool) else r)``
+              | _ => false) [thm1, thm2],
+    "CPC not_ite_elim replay changed its hypotheses");
+  check_oracle_tags "CPC not_ite_elim1 replay" thm1;
+  check_oracle_tags "CPC not_ite_elim2 replay" thm2;
+  expect_hol_error_contains "CPC not_ite_elim1 non-negated fail closed"
+    "premise is not a negated conditional"
+    (fn () => ignore (CPC_ProofReplay.replay_root_for_test
+      (parse_cpc_proof_string
+        "((declare-const p Bool) (declare-const q Bool) \
+        \(declare-const r Bool) (assume @p1 (ite p q r)) \
+        \(step @out :rule not_ite_elim1 :premises (@p1)))")))
+end
+
 fun cpc_proof_replay_factoring_success () =
 let
   val proof = parse_cpc_proof_string
@@ -20132,6 +20198,63 @@ fun profile_call_count name =
       (Profile.results ()) of
     SOME (_, info) => #n info
   | NONE => 0
+
+(* Z3 reduces a case of a constructor and reorders the rest in one rewrite:
+   the datatype simp alone and the congruence rungs alone each miss it. *)
+fun z3_rewrite_datatype_normalize_success () =
+let
+  val target =
+    ``(f:bool -> bool)
+        (case SmtTriC ((x:int) = y \/ (z:int) = 0 \/ p) of
+           SmtTriA => F | SmtTriB _ => F | SmtTriC v => v) <=>
+      f (p \/ 0 = z \/ y = x)``
+  val initial = Z3_Proof.empty_proof "4.15.3"
+  val steps = Redblackmap.insert
+    (Z3_Proof.proof_steps initial, 0, Z3_Proof.REWRITE target)
+  val _ = Profile.reset_all ()
+  val theorem = Z3_ProofReplay.replay_root_for_test
+    (Z3_Proof.update_proof_steps initial steps)
+in
+  assert (Thm.concl theorem ~~ target andalso List.null (Thm.hyp theorem),
+    "Z3 datatype-normalize rewrite did not prove its target");
+  check_oracle_tags "Z3 datatype-normalize rewrite" theorem;
+  assert (profile_call_count "rewrite(21a)(datatype-normalize)_OK" = 1,
+    "Z3 datatype-normalize rewrite was proved by another rung")
+end
+
+(* Rung 21a normalizes in the checked rewrite traversal: here the exported
+   INT_INJ would turn &a = &c into a = c, which this admission refuses. *)
+fun z3_rewrite_datatype_normalize_admission () =
+let
+  val target =
+    ``(f:bool -> bool)
+        (case SmtTriC (((&a):int) = &c \/ (z:int) = 0 \/ p) of
+           SmtTriA => F | SmtTriB _ => F | SmtTriC v => v) <=>
+      f (p \/ 0 = z \/ ((&c):int) = &a)``
+  val refused = [``(a:num) = c``, ``(c:num) = a``]
+  val base = SmtDatatypeProve.default_admission ()
+  val refusals = ref 0
+  fun admit tm =
+    if Lib.can (HolKernel.find_term
+         (fn t => List.exists (Term.aconv t) refused)) tm
+    then (refusals := !refusals + 1;
+          raise Feedback.mk_HOL_ERR "Unittest" "admit" "refused")
+    else base tm
+  val initial = Z3_Proof.empty_proof "4.15.3"
+  val steps = Redblackmap.insert
+    (Z3_Proof.proof_steps initial, 0, Z3_Proof.REWRITE target)
+  val _ = Profile.reset_all ()
+  val _ =
+    ignore (Z3_ProofReplay.replay_root_with_definition_occurrences_admitted
+      admit [] (Z3_Proof.update_proof_steps initial steps))
+    handle Feedback.HOL_ERR _ => ()
+in
+  assert (profile_call_count "rewrite(21a)(datatype-normalize)_HOL_ERR" > 0,
+    "Z3 datatype-normalize was not reached");
+  assert (!refusals > 0, "the admission never saw the INT_INJ result");
+  assert (profile_call_count "rewrite(21a)(datatype-normalize)_OK" = 0,
+    "Z3 datatype-normalize ran an exported rewrite its admission refuses")
+end
 
 fun shared_fastpath_budget_contract () =
 let
@@ -28609,6 +28732,27 @@ fun datatype_recursive_split_budget_success () =
       "false recursive datatype split probe unexpectedly proved");
     assert (profile_call_count "datatype(split)" = initial_budget,
       "recursive datatype split exceeded its initial-subterm budget")
+  end
+
+fun datatype_exhaustiveness_split_cap_success () =
+  let
+    (* Nine independent option splits that never close: 2^9 - 1 splits
+       within the depth budget, so only the total cap stops the search. *)
+    val goal =
+      ``(P:bool option -> bool option -> bool option -> bool option ->
+           bool option -> bool option -> bool option -> bool option ->
+           bool option -> bool) o1 o2 o3 o4 o5 o6 o7 o8 o9``
+    val _ = Profile.reset_all ()
+    val rejected =
+      ((ignore (SmtDatatypeProve.exhaustiveness_prove goal); false)
+       handle Feedback.HOL_ERR holerr =>
+         String.isSubstring "datatype case splits"
+           (Feedback.message_of holerr))
+  in
+    assert (rejected,
+      "unprovable datatype split search was not stopped by the split cap");
+    assert (profile_call_count "datatype(split)" = 256,
+      "datatype split search did not stop exactly at its total split cap")
   end
 
 fun datatype_constructor_reconstruction_success () =
@@ -37844,6 +37988,12 @@ let
       cpc_quant_var_reordering_replay_success),
     ("cpc_quant_merge_prenex_replay_success",
       cpc_quant_merge_prenex_replay_success),
+    ("cpc_quant_miniscope_or_replay_success",
+      cpc_quant_miniscope_or_replay_success),
+    ("z3_rewrite_datatype_normalize_success",
+      z3_rewrite_datatype_normalize_success),
+    ("z3_rewrite_datatype_normalize_admission",
+      z3_rewrite_datatype_normalize_admission),
     ("cpc_quant_var_elim_repeated_guard_replay_success",
       cpc_quant_var_elim_repeated_guard_replay_success),
     ("cpc_quant_var_elim_symmetric_guard_replay_success",
@@ -38114,6 +38264,8 @@ let
       cpc_proof_replay_integer_tightening_success),
     ("cpc_proof_replay_ite_elim2_success",
       cpc_proof_replay_ite_elim2_success),
+    ("cpc_proof_replay_not_ite_elim_success",
+      cpc_proof_replay_not_ite_elim_success),
     ("cpc_proof_replay_factoring_success",
       cpc_proof_replay_factoring_success),
     ("cpc_cache_repeated_conclusion_bypasses_handler_success",
@@ -38460,6 +38612,8 @@ let
       datatype_tester_application_fixpoint_success),
     ("datatype_recursive_split_budget_success",
       datatype_recursive_split_budget_success),
+    ("datatype_exhaustiveness_split_cap_success",
+      datatype_exhaustiveness_split_cap_success),
     ("datatype_constructor_reconstruction_success",
       datatype_constructor_reconstruction_success),
     ("datatype_fragment_precondition_rejects_earlier_rungs",
