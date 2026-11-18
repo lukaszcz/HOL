@@ -25,9 +25,10 @@ sig
   type context
   val new_context : unit -> context
   val prove_in : context -> Term.term -> Thm.thm
-  (* The builtin normalizations share checked operator schemas until this
-     is called; a certificate replay calls it before its first step. *)
-  val reset_schemas : unit -> unit
+  (* Inside with_shared_schemas the builtin normalizations share checked
+     operator schemas; a nested call starts empty and restores the outer
+     scope's on exit.  A certificate replay runs in one such scope. *)
+  val with_shared_schemas : ('a -> 'b) -> 'a -> 'b
   (* Discovery/checked assembly, including the Boolean proof, precedes the
      only realization. Callbacks receive bounded typed operator frontiers. *)
   val prove_with_node_conversion : Conv.conv -> Term.term -> Thm.thm

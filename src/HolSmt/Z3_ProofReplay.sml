@@ -7049,9 +7049,26 @@ local
       val _ = not (List.null equalities) orelse
         raise ERR "asserted_equality_substitution_prove"
           "no structurally derived asserted equality"
+      (* Rewriting to a fixpoint, one pass at a time.  A rewrite can create
+         a redex in the term around it (x = y with f y = f x), which no
+         check of the equations alone sees; such a direction fails after
+         max_passes and the other direction is tried. *)
+      val max_passes = 256
+      fun substitute rewrite_theorems =
+        let
+          val pass = Rewrite.PURE_ONCE_REWRITE_CONV rewrite_theorems
+          fun continue passes theorem =
+            let
+              val next = pass (boolSyntax.rhs (Thm.concl theorem))
+              val _ = passes < max_passes orelse
+                raise ERR "asserted_equality_substitution_prove"
+                  "substitution did not terminate"
+            in continue (passes + 1) (Thm.TRANS theorem next) end
+            handle Conv.UNCHANGED => theorem
+        in continue 1 (pass target) end
       fun prove_with rewrite_theorems =
         let
-          val substitution = Rewrite.PURE_REWRITE_CONV rewrite_theorems target
+          val substitution = substitute rewrite_theorems
           val substituted = boolSyntax.rhs (Thm.concl substitution)
           fun reflexive () =
             let val (left, right) = boolSyntax.dest_eq substituted

@@ -21870,6 +21870,61 @@ in
     " s of CPU; the carry chain is no longer shared")
 end
 
+(* A masked wide word reaches schematic_bvite_words; the circuit path goes
+   first there, and the compact path takes only what it rejects. *)
+fun cpc_bvite_words_circuit_first_success () =
+let
+  val width = 16
+  val x = wordsSyntax.mk_n2w (Term.mk_var ("n", numSyntax.num),
+    fcpSyntax.mk_int_numeric_type width)
+  val mask = wordsSyntax.mk_wordii (65280, width)
+  val bits = List.tabulate (width, fn i =>
+    if i < 8 then boolSyntax.F
+    else wordsSyntax.mk_word_bit (numSyntax.term_of_int i, x))
+  val target = boolSyntax.mk_eq (wordsSyntax.mk_word_and (x, mask),
+    SmtLib_Theories.mk_bbterm bits)
+  val _ = assert (CPC_ProofReplay.compact_word_target target,
+    "masked word regression is no longer a compact word target")
+  val _ = Profile.reset_all ()
+  val theorem = CPC_ProofReplay.replay_bv_poly_norm_for_test [target]
+in
+  assert (Thm.concl theorem ~~ target andalso null (Thm.hyp theorem),
+    "masked word bitblast replay changed the equation");
+  check_oracle_tags "masked word bitblast" theorem;
+  assert (profile_call_count "CPC(bvite_words:circuit)" = 1 andalso
+      profile_call_count "CPC(bvite_words:compact)" = 0,
+    "a compact word target did not take the circuit path first")
+end
+
+(* Word operator schemas are shared by the normalizations of one replay
+   and nowhere else: not before or after it, not with a nested replay. *)
+fun cpc_word_schemas_shared_per_replay_success () =
+let
+  val x = Term.mk_var ("schema_x", ``:word8``)
+  val y = Term.mk_var ("schema_y", ``:word8``)
+  val target = wordsSyntax.mk_index
+    (wordsSyntax.mk_word_add (x, y), numSyntax.term_of_int 7)
+  fun hits () =
+    #memo_hits (#2 (SmtWordGraph.normalize_with_metrics target))
+  fun replay action = CPC_ProofReplay.with_replay_memos_for_test 0 action
+  val before_first = hits ()
+  val before_second = hits ()
+  val (first, nested, after_nested) = replay (fn () =>
+    let
+      val first = hits ()
+      val nested = replay hits ()
+    in (first, nested, hits ()) end) ()
+  val after = hits ()
+in
+  assert (before_second = before_first andalso after = before_first,
+    "word schemas were shared outside a replay");
+  assert (nested = first,
+    "a nested replay saw its caller's word schemas");
+  assert (after_nested > first,
+    "word schemas were not shared within a replay or a nested replay " ^
+    "erased them")
+end
+
 fun cpc_word_aci_literal_identity_success () =
 let
   val bits = String.implode (List.tabulate (128, fn _ => #"1"))
@@ -27116,6 +27171,26 @@ let
   val cycle_theorem =
     Z3_ProofReplay.asserted_equality_substitution_prove_for_test
       [cycle_source] cycle_target
+  (* A rewrite can also create a redex in the term around it, which no
+     check of the equations alone sees.  Left to right, a = b and
+     f b = f (f a) grow f b without end; right to left they terminate.
+     x = y and f y = f x make f x and f y swap places. *)
+  val context_source =
+    ``((asserted_a:int) = asserted_b) /\
+      (asserted_f asserted_b = asserted_f (asserted_f asserted_a):int)``
+  val context_target =
+    ``asserted_f (asserted_f (asserted_a:int)) = asserted_f asserted_b:int``
+  val context_theorem =
+    Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+      [context_source] context_target
+  val swap_source =
+    ``((asserted_x:int) = asserted_y) /\
+      (asserted_f asserted_y = asserted_f asserted_x:int)``
+  val swap_target =
+    ``asserted_f (asserted_x:int) + -3 = asserted_f asserted_y + -3``
+  val swap_theorem =
+    Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+      [swap_source] swap_target
 in
   assert (List.all (fn (source, theorem) =>
       Thm.concl theorem ~~ target andalso exact_source source theorem)
@@ -27140,7 +27215,16 @@ in
       exact_source self_source self_theorem andalso
       Thm.concl cycle_theorem ~~ cycle_target andalso
       exact_source cycle_source cycle_theorem,
-    "cyclic asserted equalities were not substituted right to left")
+    "cyclic asserted equalities were not substituted right to left");
+  check_oracle_tags "self-referential asserted equality" self_theorem;
+  check_oracle_tags "cyclic asserted equalities" cycle_theorem;
+  assert (Thm.concl context_theorem ~~ context_target andalso
+      exact_source context_source context_theorem andalso
+      Thm.concl swap_theorem ~~ swap_target andalso
+      exact_source swap_source swap_theorem,
+    "a rewrite that recreates its redex was not bounded");
+  check_oracle_tags "context-cyclic asserted equalities" context_theorem;
+  check_oracle_tags "swapping asserted equalities" swap_theorem
 end
 
 fun z3_hyp_removal_beta_lookup_success () =
@@ -38325,6 +38409,10 @@ let
       cpc_shared_bitblast_equality_success),
     ("cpc_wide_adder_bitblast_success",
       cpc_wide_adder_bitblast_success),
+    ("cpc_bvite_words_circuit_first_success",
+      cpc_bvite_words_circuit_first_success),
+    ("cpc_word_schemas_shared_per_replay_success",
+      cpc_word_schemas_shared_per_replay_success),
     ("cpc_word_aci_literal_identity_success",
       cpc_word_aci_literal_identity_success),
     ("cpc_quantified_imp_disj_trans_success",

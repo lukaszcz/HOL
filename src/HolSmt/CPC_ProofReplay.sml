@@ -5733,6 +5733,8 @@ local
           val generalized_theorem = Thm.EQ_MP (Thm.SYM blasted)
             residue_theorem
           in generalized_theorem end
+          fun circuit_path () =
+            (profile_event "CPC(bvite_words:circuit)"; legacy ())
         in
           (* The circuit path goes first: with the shared word schemas it
              checks wide words about twice as fast as the compact path (a
@@ -5740,8 +5742,9 @@ local
              The compact path takes what the circuit path rejects. *)
           if compact_word_target target andalso
              not (is_adder_equation target) then
-            legacy () handle Feedback.HOL_ERR _ =>
-            (SmtWordGraph.prove_with_node_conversion
+            circuit_path () handle Feedback.HOL_ERR _ =>
+            (profile_event "CPC(bvite_words:compact)";
+             SmtWordGraph.prove_with_node_conversion
               (fn term => fp_projection_conversion term
                 handle Conv.UNCHANGED =>
                   if is_holsmt_xor term then
@@ -5751,7 +5754,7 @@ local
               raise ERR "bv_poly_norm" "Boolean circuit is not valid"
                  | HolSatLib.SAT_satisfiable _ =>
               raise ERR "bv_poly_norm" "Boolean circuit is not valid")
-          else legacy ()
+          else circuit_path ()
         end
       fun schematic_bvite () =
         let
@@ -22632,8 +22635,6 @@ local
   fun reset_replay_memos limit =
     (resolution_literal_normalizations := Redblackmap.mkDict Term.compare;
      reset_fp_memos ();
-     (* Word schemas are shared within one certificate. *)
-     SmtWordGraph.reset_schemas ();
      word_graph_tautology_cache := new_word_graph_tautology_cache limit)
 
 
@@ -24133,7 +24134,10 @@ in
          fp_boolean_atom_normalizations := booleans;
          fp_atom_bridge_laws := bridges;
          word_graph_tautology_cache := words)
-      fun run () = (reset_replay_memos limit; action input)
+      (* Word schemas are shared within this replay only. *)
+      fun run () =
+        (reset_replay_memos limit;
+         SmtWordGraph.with_shared_schemas action input)
     in
       (run () before restore ())
       handle error => (restore (); raise error)
