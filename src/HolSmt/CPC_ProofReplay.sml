@@ -21387,12 +21387,18 @@ local
                             val raw = raw_unavailable_result
                               "congruence checked at exact operand cuts"
                               theorem
+                            (* Keep a source binder block too: SKOLEMIZE
+                               consumes it after eq_resolve and
+                               not_implies_elim2 even when no conjunction
+                               occurs. *)
                             val keep = exact_small andalso
                               List.all (exact_small_term o Thm.concl) prems
-                              andalso not (definitely_no_conjunction_dag
+                              andalso (contains_binder_block_dag
+                                (#provenance source) orelse
+                              not (definitely_no_conjunction_dag
                                 (#provenance source) andalso List.all
                                   (definitely_no_conjunction_dag o
-                                    step_provenance) premise_steps)
+                                    step_provenance) premise_steps))
                             fun retained () =
                               let
                                 val exact = replay_exact_cong_result NONE

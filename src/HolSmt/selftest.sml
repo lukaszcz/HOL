@@ -1534,10 +1534,13 @@ val graph_expect_thm = expect_thm
 
     (``i <> j ==> ((i =+ e) (a :int -> int)) j = a j``,
       [thm_Z3p, thm_Z3p_v4, thm_CVCp]),
+    (* Checked cvc5 replay runs here despite the integer domain: its
+       SKOLEMIZE step needs the binder block congruence keeps in
+       provenance. *)
     (``i <> j ==>
         (j =+ f) ((i =+ e) (a :int -> int)) =
         (i =+ e) ((j =+ f) a)``,
-      [thm_Z3p, thm_Z3p_v4, thm_CVCp]),
+      [thm_Z3p, thm_Z3p_v4, thm_CVCp_arith]),
     (``(!i. (a :int -> int) i = b i) ==> (a = b)``,
       [thm_Z3p, thm_Z3p_v4, thm_CVCp]),
 
