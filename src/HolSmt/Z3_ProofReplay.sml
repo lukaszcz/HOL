@@ -5582,13 +5582,6 @@ local
 
   (* introduces a local hypothesis (which must be discharged by
      'z3_lemma' at some later point in the proof) *)
-  fun hypothesis_char_next_route prove fallback =
-    prove ()
-    handle Feedback.HOL_ERR holerr =>
-      if SmtResource.is_resource_gate holerr then
-        raise Feedback.HOL_ERR holerr
-      else fallback ()
-
   fun z3_hypothesis_theorem_with
       free_variable_present char_domain char_prove assume t =
     let
@@ -5604,7 +5597,7 @@ local
             "hypothesis/char-domain-admission" char_domain t
         in
           if character_domain then
-            hypothesis_char_next_route
+            SmtResource.or_else
               (fn () => SmtResource.profile_phase
                 "hypothesis/char-proof" char_prove t)
               fallback
@@ -6300,12 +6293,7 @@ local
      bv_resource_prove_after_admission case_id prove target)
 
   fun bv_next_rung first second target =
-    first target
-    handle Feedback.HOL_ERR holerr =>
-      if SmtResource.is_resource_gate holerr then
-        raise Feedback.HOL_ERR holerr
-      else
-        second target
+    SmtResource.or_else (fn () => first target) (fn () => second target)
 
   fun word_decide_raw target =
     (* E1(a): BBLAST decides the finite bit-vector fragment. *)
@@ -9412,17 +9400,6 @@ local
     "this clause shape; conclusion=" ^ Library.term_to_string t
   end
 
-  (* All String th-lemma routes use this single transition.  A resource gate
-     is a terminal structured rejection, whereas an ordinary HOL_ERR means
-     only that the next checked route may be attempted. *)
-  fun string_th_lemma_next_route attempt fallback =
-    attempt ()
-    handle Feedback.HOL_ERR holerr =>
-      if SmtResource.is_resource_gate holerr then
-        raise Feedback.HOL_ERR holerr
-      else
-        fallback ()
-
   (* `gate` runs the theory preconditions that must surface their own
      enumerated diagnostic.  Deciding this before the prover keeps the gate
      distinguishable from an ordinary prover failure — the contextual rung
@@ -9456,11 +9433,11 @@ local
       if not (List.null context) andalso
          SmtStringProve.has_contextual_index_target t'
       then
-        string_th_lemma_next_route contextual (fn () =>
-          string_th_lemma_next_route theory unsupported)
+        SmtResource.or_else contextual (fn () =>
+          SmtResource.or_else theory unsupported)
       else
-        string_th_lemma_next_route theory (fn () =>
-          string_th_lemma_next_route contextual unsupported)
+        SmtResource.or_else theory (fn () =>
+          SmtResource.or_else contextual unsupported)
     val (general, thm) =
       case skeleton_general_attempt state t' of
         SmtSkeletonDispatch.Proved result =>
@@ -10831,7 +10808,7 @@ in
   val hypothesis_has_free_variables_for_test = replay_has_free_variables
   val hypothesis_has_free_variables_legacy_for_test =
     replay_has_free_variables_legacy
-  val hypothesis_char_next_route_for_test = hypothesis_char_next_route
+  val hypothesis_char_next_route_for_test = SmtResource.or_else
   val asserted_membership_diagnostic = asserted_membership_diagnostic
   val unsupported_rewrite_diagnostic = unsupported_rewrite_diagnostic
   val unsupported_hyp_removal_diagnostic =
@@ -10989,7 +10966,7 @@ in
   val bv_th_lemma_prove_for_test = bv_th_lemma_prove
   val bv_th_lemma_basic_branch_for_test = bv_th_lemma_basic_branch
   val arith_bv_fallback_for_test = arith_bv_fallback
-  val string_th_lemma_next_route_for_test = string_th_lemma_next_route
+  val string_th_lemma_next_route_for_test = SmtResource.or_else
 
   fun skeleton_general_sequence_for_test targets =
     let

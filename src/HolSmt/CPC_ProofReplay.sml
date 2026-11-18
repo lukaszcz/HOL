@@ -11147,12 +11147,6 @@ local
               boolSyntax.list_mk_forall (variables, target)
             in Drule.SPECL variables (Thm.ASSUME closed) end
         end
-      fun next prover continuation =
-        prover ()
-        handle Feedback.HOL_ERR holerr =>
-          if SmtResource.is_resource_gate holerr then
-            raise Feedback.HOL_ERR holerr
-          else continuation ()
       fun next_fp prover continuation =
         prover () handle SmtFpGraph.Declined _ => continuation ()
           | Feedback.HOL_ERR holerr =>
@@ -11469,17 +11463,20 @@ local
       else if string_context () then
         profile "CPC(rung:trust/string)" replay_string ()
       else if bag_context () then
-        next (fn () => profile "CPC(rung:trust/bag)" replay_bag ())
+        SmtResource.or_else
+          (fn () => profile "CPC(rung:trust/bag)" replay_bag ())
           (fn () => profile "CPC(rung:trust/bag_context)"
             prove_scoped_bag ())
       else if set_context () then
-        next (fn () => profile "CPC(rung:trust/set)" replay_set ())
+        SmtResource.or_else
+          (fn () => profile "CPC(rung:trust/set)" replay_set ())
           unsupported_set
       else if fp_context () then
         profile "CPC(rung:trust/fp_deferred)" deferred_fp_trust ()
       else
-        next (fn () => profile "CPC(rung:trust/scoped_arithmetic)"
-          prove_scoped_arithmetic ())
+        SmtResource.or_else
+          (fn () => profile "CPC(rung:trust/scoped_arithmetic)"
+            prove_scoped_arithmetic ())
           (fn () => profile "CPC(rung:trust/rdiv)" replay_rdiv ())
     end)
 
