@@ -29,6 +29,48 @@ val _ = Datatype.Datatype
 val _ = Datatype.Datatype
   `claset_hook_poly = PolyLeft 'a | PolyRight 'a`
 
+(* Global removal of a TypeBase-derived rule is refused, so it cannot depend
+   on whether the claset has been forced.  These calls precede the first
+   demand; the tests after it repeat them on the forced claset. *)
+val tyinfo_reserved_stem =
+  "__claset_tyinfo_clasetHookSelftest_claset_hook_before_demand_"
+val tyinfo_reserved_names =
+  [tyinfo_reserved_stem ^ "inject_0_intro", tyinfo_reserved_stem ^ "distinct"]
+
+fun capture_warnings f =
+  let
+    val output = ref ([] : string list)
+    fun collect text = output := text :: !output
+  in
+    Lib.with_flag (Feedback.WARNING_outstream, collect) f ();
+    List.rev (!output)
+  end
+
+(* Each name yields one warning per call, naming it. *)
+fun delete_reserved_names () =
+  map (fn name =>
+         (name, capture_warnings (fn () => (temp_delrule name; delrule name))))
+    tyinfo_reserved_names
+
+fun warned_per_call results =
+  List.all
+    (fn (name, warnings) =>
+       length warnings = 2 andalso
+       List.all (String.isSubstring name) warnings)
+    results
+
+val unforced_reserved_deletions = delete_reserved_names ()
+
+(* An ancestor theory's recorded removal replays as remove_rule of the
+   qualified name it was recorded under, through the same update queue
+   that augment_claset uses. *)
+fun replay_reserved_removals () =
+  List.app
+    (fn name => augment_claset (remove_rule (normalise_rule_name name)))
+    tyinfo_reserved_names
+
+val _ = replay_reserved_removals ()
+
 fun same_seed_spec
   ({kind = kind1, safe = safe1, prio = prio1} : rulespec)
   ({kind = kind2, safe = safe2, prio = prio2} : rulespec) =
@@ -2483,6 +2525,12 @@ fun clash_candidates cs tyop query =
 fun clash_query q vars =
   {q = q, qvars = HOLset.fromList Term.compare vars}
 
+fun schematic_query q vars =
+  {q = q, qvars = HOLset.fromList Term.compare vars, flexible_type = K true}
+
+val unmetered =
+  {checkpoint = listUtil.no_checkpoint, derive = listUtil.no_checkpoint}
+
 fun clash_valid cs tyop equality =
   case clash_candidates cs tyop (clash_query equality []) of
       [rule] =>
@@ -2555,8 +2603,8 @@ val _ =
          val candidates = clash_candidates seed_claset tyop
            (clash_query both [x, y])
          val names = map #name candidates
-         val tagged = unify_elim_candidates_with listUtil.no_checkpoint
-           (safe0_part seed_claset) both (clash_query both [x, y])
+         val tagged = unify_elim_candidates_with unmetered
+           (safe0_part seed_claset) both (schematic_query both [x, y])
          val indices = map (#index o #1) tagged
        in
          count (clash_query one []) = 0 andalso
@@ -2599,9 +2647,10 @@ val _ =
            (polls := !polls + 1;
             if !polls = 50 then raise ClashLimit else ())
        in
-         ((ignore (unify_elim_candidates_with checkpoint
+         ((ignore (unify_elim_candidates_with
+              {checkpoint = checkpoint, derive = listUtil.no_checkpoint}
               (safe0_part only_distinct) equality
-              (clash_query equality [x, y])); false)
+              (schematic_query equality [x, y])); false)
           handle ClashLimit => !polls = 50)
        end)
 
@@ -2868,6 +2917,83 @@ val _ =
            end
        in
          Portable.finally restore check ()
+       end)
+
+
+(* Global removal of TypeBase-derived rules: refused with a warning in both
+   states, never recorded, and per-call or local removal still works. *)
+fun has_reserved_rules cs =
+  has_named_rule (tyinfo_reserved_stem ^ "inject_0_intro") cs andalso
+  List.exists (fn name => name = tyinfo_reserved_stem ^ "distinct")
+    (distinct_rule_names cs)
+
+fun lacks_reserved_rules cs =
+  not (has_named_rule (tyinfo_reserved_stem ^ "inject_0_intro") cs) andalso
+  not (List.exists (fn name => name = tyinfo_reserved_stem ^ "distinct")
+         (distinct_rule_names cs))
+
+val _ =
+  test
+    ("claset refuses global removal of TypeBase rules before the first demand",
+     fn () =>
+       warned_per_call unforced_reserved_deletions andalso
+       has_reserved_rules (the_claset ()))
+
+val _ =
+  test
+    ("claset refuses global removal of TypeBase rules after the first demand",
+     fn () =>
+       let
+         val key = "claset-selftest-reserved-catch-up"
+         fun cleanup () = register_tyinfo_contribution (key, fn _ => [])
+         fun check () =
+           let
+             val deletions = delete_reserved_names ()
+             val kept = has_reserved_rules (the_claset ())
+             (* A catch-up must find nothing to restore. *)
+             val _ = cleanup ()
+           in
+             warned_per_call deletions andalso kept andalso
+             has_reserved_rules (the_claset ())
+           end
+       in
+         Portable.finally cleanup check ()
+       end)
+
+val _ =
+  test
+    ("claset replays a recorded TypeBase rule removal alike in both orders",
+     fn () =>
+       has_reserved_rules seed_claset andalso
+       (replay_reserved_removals (); has_reserved_rules (the_claset ())))
+
+fun claset_deltas () =
+  Theory.LoadableThyData.segment_data_string
+    {thy = Theory.current_theory (), thydataty = "claset.deltas"}
+
+val _ =
+  test
+    ("claset records no delta for a refused TypeBase rule removal",
+     fn () =>
+       let val before = claset_deltas ()
+       in ignore (delete_reserved_names ()); claset_deltas () = before end)
+
+val _ =
+  test
+    ("Del and with_claset still remove TypeBase rules locally",
+     fn () =>
+       let
+         val (by_del, _) =
+           invocation_claset (the_claset ()) (map Del tyinfo_reserved_names)
+         val local_cs =
+           List.foldl (fn (name, cs) => remove_rule name cs) (the_claset ())
+             tyinfo_reserved_names
+         val scoped =
+           with_claset local_cs
+             (fn () => lacks_reserved_rules (the_claset ())) ()
+       in
+         lacks_reserved_rules by_del andalso scoped andalso
+         has_reserved_rules (the_claset ())
        end)
 
 

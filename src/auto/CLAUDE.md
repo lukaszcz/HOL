@@ -113,6 +113,11 @@ belongs to the parallel build band.
   from `rules_of`; `distinct_rule_names` lists their `Del` handles. Engine
   queries must supply genuine metavariables so rigid datatype variables do
   not trigger pair enumeration. Injectivity remains ordinary declarations.
+- The global claset always carries the TypeBase-derived rules (injectivity
+  and distinctness, `__claset_tyinfo_` names): `delrule`/`temp_delrule` on
+  such a name warn and do nothing, and record no delta.  Drop one with
+  `Del` or `remove_rule` + `with_claset`; never through `augment_claset`,
+  whose removal the next TypeBase catch-up undoes.
 - Preserve observable claset behaviour when refactoring: `rules_of`
   contents and order (except the constructor-distinctness entries above),
   wrapper lists, exact candidate-query sequences,

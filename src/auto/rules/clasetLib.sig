@@ -46,6 +46,15 @@ sig
   val the_claset : unit -> claset
   val export_rule : rulespec -> string -> unit
   val temp_add_rule : rulespec -> string * thm -> unit
+  (* The global claset always carries the rules derived from TypeBase:
+     constructor injectivity and the distinctness handles, named with the
+     reserved "__claset_tyinfo_" prefix.  [delrule] and [temp_delrule] on
+     such a name warn and change nothing, and [delrule] records no delta,
+     so the result does not depend on when the claset is first forced.
+     Drop one per call with [Del], or locally with [remove_rule] and
+     [with_claset].  [augment_claset] takes an arbitrary function and is
+     not checked: a removal of these rules through it is undone by the
+     next TypeBase catch-up, and does nothing before the first demand. *)
   val delrule : string -> unit
   val temp_delrule : string -> unit
   val augment_claset : (claset -> claset) -> unit
@@ -96,11 +105,16 @@ sig
   val unify_intro_candidates : claset_part -> term -> (tag * brl) list
   val unify_elim_candidates : claset_part -> term -> (tag * brl) list
   (* The first term retains the static net's query approximation; the record
-     supplies the actual query and genuine metas for lazy constructor pairs.
-     The term-only APIs treat every free variable as schematic. *)
+     supplies the actual query, its genuine metas, and which type variables
+     are schematic, for lazy constructor pairs.  [checkpoint] runs before
+     each unit of retrieval work; [derive] runs once before each constructor
+     pair not yet derived and cached in the claset.  The term-only APIs
+     treat every free variable and type variable as schematic. *)
   val unify_elim_candidates_with :
-    (unit -> unit) -> claset_part -> term ->
-    {q : term, qvars : term HOLset.set} -> (tag * brl) list
+    {checkpoint : unit -> unit, derive : unit -> unit} ->
+    claset_part -> term ->
+    {q : term, qvars : term HOLset.set, flexible_type : hol_type -> bool} ->
+    (tag * brl) list
   val unify_intro_candidates_measured :
     (unit -> unit) -> claset_part -> term -> (tag * brl) list
   val unify_elim_candidates_measured :
@@ -119,7 +133,8 @@ sig
   (* Charge lazy constructor-pair enumeration and derivation before work. *)
   val aesop_hyp_rules_measured :
     (unit -> unit) -> claset ->
-    {q : term, qvars : term HOLset.set} -> aesop_rule list
+    {q : term, qvars : term HOLset.set, flexible_type : hol_type -> bool} ->
+    aesop_rule list
 
   val SIntro : thm -> thm
   val Intro : thm -> thm

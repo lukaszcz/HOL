@@ -251,9 +251,11 @@ val forward_spec = {kind = Forward, safe = false, prio = NONE}
 val sforward_spec = {kind = Forward, safe = true, prio = NONE}
 val norm_spec = {kind = Norm, safe = false, prio = NONE}
 
+val tyinfo_prefix = "__claset_tyinfo_"
+
 fun tyinfo_stem tyi =
   let val (thy, tyop) = TypeBasePure.ty_name_of tyi
-  in "__claset_tyinfo_" ^ thy ^ "_" ^ tyop end
+  in tyinfo_prefix ^ thy ^ "_" ^ tyop end
 
 fun distinctness_contribution tyi =
   case Lib.total TypeBasePure.constructors_of tyi of
@@ -313,8 +315,9 @@ fun distinct_rule_names (CS {distinct, ...}) =
   map (#name o #source o #2) (Redblackmap.listItems distinct)
 
 (* A Boolean case discriminator proves a clash from the two case clauses.
-   Unlike distinct_of, case_def_of is linear and exists for wide enums. *)
-fun distinct_pair checkpoint
+   Unlike distinct_of, case_def_of is linear and exists for wide enums.
+   [derive] runs once before each pair not yet in the cache. *)
+fun distinct_pair {checkpoint, derive}
       ({source = {name, constructors, cases, case_const, cache, ...},
         first} : distinct_entry) (i, j) =
   let
@@ -325,6 +328,7 @@ fun distinct_pair checkpoint
           SOME rule => rule
         | NONE =>
             let
+              val _ = derive ()
               fun arguments c =
                 map genvar (#1 (boolSyntax.strip_fun (type_of c)))
               fun applied k =
@@ -372,7 +376,10 @@ fun distinct_pair checkpoint
     ({tag = {weight = 0, index = first - i * n - j}, rule = rule} : aentry)
   end
 
-fun distinct_candidates checkpoint distinct {q, qvars} =
+(* A query at a type variable enumerates every datatype only when that
+   variable is schematic ([flexible_type]); a rigid one matches none. *)
+fun distinct_candidates (meter as {checkpoint, ...}) distinct
+      {q, qvars, flexible_type} =
   case Lib.total boolSyntax.dest_eq q of
       NONE => []
     | SOME (left, right) =>
@@ -402,11 +409,13 @@ fun distinct_candidates checkpoint distinct {q, qvars} =
               List.concat (map (fn i => List.mapPartial
                 (fn j => (checkpoint ();
                   if i = j then NONE
-                  else SOME (distinct_pair checkpoint entry (i, j)))) rs) ls)
+                  else SOME (distinct_pair meter entry (i, j)))) rs) ls)
             end
           val ty = type_of left
           val entries =
-            if Type.is_vartype ty then Redblackmap.listItems distinct
+            if Type.is_vartype ty then
+              if flexible_type ty then Redblackmap.listItems distinct
+              else []
             else
               let val {Thy, Tyop, ...} = Type.dest_thy_type ty
                   val key = (Thy, Tyop)
@@ -582,8 +591,10 @@ fun match_intro_candidates (((inet, _), _) : claset_part) =
   match_candidates inet
 fun match_elim_candidates (((_, enet), distinct) : claset_part) tm =
   candidate_order (clasetNet.match tm enet @
-    map distinct_brl (distinct_candidates listUtil.no_checkpoint distinct
-      {q = tm, qvars = Term.empty_tmset}))
+    map distinct_brl (distinct_candidates
+      {checkpoint = listUtil.no_checkpoint,
+       derive = listUtil.no_checkpoint} distinct
+      {q = tm, qvars = Term.empty_tmset, flexible_type = K true}))
 
 fun unify_candidates checkpoint net tm =
   candidate_order_measured checkpoint
@@ -596,15 +607,17 @@ fun unify_intro_candidates_measured checkpoint
 
 (* Static nets retain their historical broad skeleton query; only lazy
    pair generation must distinguish true search metas from rigid frees. *)
-fun unify_elim_candidates_with checkpoint
+fun unify_elim_candidates_with (meter as {checkpoint, ...})
       (((_, enet), distinct) : claset_part) tm query =
   candidate_order_measured checkpoint
     (unify_candidates checkpoint enet tm @
-     map distinct_brl (distinct_candidates checkpoint distinct query))
+     map distinct_brl (distinct_candidates meter distinct query))
 
 fun unify_elim_candidates_measured checkpoint part tm =
-  unify_elim_candidates_with checkpoint part tm
-    {q = tm, qvars = Term.FVL [tm] Term.empty_tmset}
+  unify_elim_candidates_with
+    {checkpoint = checkpoint, derive = listUtil.no_checkpoint} part tm
+    {q = tm, qvars = Term.FVL [tm] Term.empty_tmset,
+     flexible_type = K true}
 
 fun unify_intro_candidates part =
   unify_intro_candidates_measured listUtil.no_checkpoint part
@@ -642,12 +655,17 @@ fun aesop_rules select (CS {index = {aesop_index, ...}, ...}) query =
 
 val aesop_target_rules = aesop_rules #target
 fun aesop_hyp_rules_measured checkpoint
-      (CS {distinct, index = {aesop_index, ...}, ...}) query =
+      (CS {distinct, index = {aesop_index, ...}, ...})
+      (query as {q, qvars, ...}) =
     map #rule (Listsort.sort compare_aentry
-      (clasetNet.unify query (#hyp aesop_index) @
-       distinct_candidates checkpoint distinct query))
+      (clasetNet.unify {q = q, qvars = qvars} (#hyp aesop_index) @
+       distinct_candidates
+         {checkpoint = checkpoint, derive = listUtil.no_checkpoint}
+         distinct query))
 
-val aesop_hyp_rules = aesop_hyp_rules_measured listUtil.no_checkpoint
+fun aesop_hyp_rules cs {q, qvars} =
+  aesop_hyp_rules_measured listUtil.no_checkpoint cs
+    {q = q, qvars = qvars, flexible_type = K true}
 
 type tyinfo_contribution =
   string * (TypeBasePure.tyinfo -> (rulespec * (string * thm)) list)
@@ -961,8 +979,28 @@ fun the_claset () =
 
 fun temp_add_rule spec named_th = update_claset (add_rule spec named_th)
 
+(* The global claset always carries the rules derived from TypeBase, so a
+   global removal of one, under any spelling of its name, is refused rather
+   than lasting only until the next TypeBase catch-up. *)
+fun is_tyinfo_rule_name name =
+  let
+    val local_name =
+      case String.fields (fn c => c = #"$" orelse c = #".") name of
+          [_, local_name] => local_name
+        | _ => name
+  in
+    String.isPrefix tyinfo_prefix local_name
+  end
+
+fun refuse_tyinfo_removal fname name =
+  HOL_WARNING "clasetLib" fname
+    ("Ignoring " ^ name ^ ": rules derived from TypeBase stay in the \
+     \global claset; drop one with Del, or with remove_rule and with_claset")
+
 fun temp_delrule name =
-  update_claset (remove_rule name o remove_rule (normalise_rule_name name))
+  if is_tyinfo_rule_name name then refuse_tyinfo_removal "temp_delrule" name
+  else
+    update_claset (remove_rule name o remove_rule (normalise_rule_name name))
 
 val augment_claset = update_claset
 
@@ -1108,11 +1146,13 @@ fun export_rule spec name =
   end
 
 fun delrule name =
-  let val delta = RM (normalise_rule_name name)
-  in
-    #record_delta adresult delta;
-    #update_global_value adresult (apply_to_global delta)
-  end
+  if is_tyinfo_rule_name name then refuse_tyinfo_removal "delrule" name
+  else
+    let val delta = RM (normalise_rule_name name)
+    in
+      #record_delta adresult delta;
+      #update_global_value adresult (apply_to_global delta)
+    end
 
 (* The DB reconstruction is the raw ancestry-persistent view.  TypeBase facts
    are derived from the caller's ambient state and are never deltas. *)

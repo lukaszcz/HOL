@@ -442,7 +442,7 @@ datatype frontier_state =
   | Scanning of
       {cursor : node seq.seq, reversed : node list,
        remaining : node searchHeap.heap,
-       seen : node Binaryset.set, count : int}
+       seen : node Binaryset.set, count : int, paid : bool}
   | Answers of
       {results : node list, heap : node searchHeap.heap,
        seen : node Binaryset.set, count : int}
@@ -538,19 +538,28 @@ fun new_frontier_session
                     {cursor = cursor, reversed = [],
                      remaining = remaining,
                      seen = Binaryset.add (seen, current),
-                     count = count + 1};
+                     count = count + 1, paid = false};
                   loop ()
                 end
-            | Scanning {cursor, reversed, remaining, seen, count} =>
+            | Scanning {cursor, reversed, remaining, seen, count, paid} =>
                 let
-                  val _ = admit searchBudget.Candidate
+                  (* A pull cut off inside [cursor] has been paid for:
+                     its retry must not charge again. *)
+                  val _ =
+                    if paid then ()
+                    else
+                      (admit searchBudget.Candidate;
+                       state := Scanning
+                         {cursor = cursor, reversed = reversed,
+                          remaining = remaining, seen = seen,
+                          count = count, paid = true})
                 in
                   case seq.cases cursor of
                       SOME (child, rest) =>
                         (state := Scanning
                            {cursor = rest, reversed = child :: reversed,
                             remaining = remaining, seen = seen,
-                            count = count};
+                            count = count, paid = false};
                          loop ())
                     | NONE =>
                         let
