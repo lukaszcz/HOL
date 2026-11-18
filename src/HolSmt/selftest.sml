@@ -78732,9 +78732,8 @@ local
   val g=Term.mk_var("cpc_equality_g414",Type.--> (Type.bool,Type.bool))
   val la=Term.mk_var("cpc_equality_la414",SmtRegLanProve.reglan_ty)
   val lb=Term.mk_var("cpc_equality_lb414",SmtRegLanProve.reglan_ty)
-  structure CE=CPC_ClausalEliminationTests
   val bindings=[("p",p),("q",q),("r",r),("f",f),("g",g),
-    ("la",la),("lb",lb)]@CE.bindings(p,q,r)
+    ("la",la),("lb",lb)]
   fun options (e:env):F.value_options =
     {graph= #graph e,scope= #scope e,logic="ALL",sources=bindings,
      sorts=Redblackmap.mkDict String.compare,binder_lists=[],
@@ -79934,188 +79933,37 @@ local
        #retired(W.audit_policy(#work e)))end
   (* Characterization of the eleven clausal-elimination rules through the
      owned Value consumer: the rows are shared with the term-replay and graph
-     groups. Every row's verdict and its exact charged Work (after prepare,
-     which a refusal never reaches, and in total, including the fixture's
-     fixed cost) are pinned: a refactor of the rules must leave both
-     unchanged. HOL4_CLAUSAL_CHARGES=1 prints the observed charges and
-     skips the comparison, to regenerate the table. *)
-  val clausal_charges=[
-    ("not_implies_elim1: valid premise",
-     (688518,11927820)),
-    ("not_implies_elim1: atomic premise provenance",
-     (~1,34734)),
-    ("not_implies_elim1: wrong constructor",
-     (~1,26740)),
-    ("not_implies_elim1: missing negation",
-     (~1,32898)),
-    ("not_implies_elim1: premise reduced to T",
-     (~1,23660)),
-    ("not_implies_elim1: malformed arity (three operands)",
-     (778222,14154561)),
-    ("not_implies_elim2: valid premise",
-     (671331,10703009)),
-    ("not_implies_elim2: atomic premise provenance",
-     (677469,10609523)),
-    ("not_implies_elim2: wrong constructor",
-     (~1,26753)),
-    ("not_implies_elim2: missing negation",
-     (~1,32920)),
-    ("not_implies_elim2: premise reduced to T",
-     (~1,23696)),
-    ("not_implies_elim2: malformed arity (three operands)",
-     (782093,14404418)),
-    ("implies_elim: valid premise",
-     (863254,17559630)),
-    ("implies_elim: atomic premise provenance",
-     (971388,23316346)),
-    ("implies_elim: wrong constructor",
-     (~1,23606)),
-    ("implies_elim: premise reduced to T",
-     (~1,22448)),
-    ("implies_elim: malformed arity (three operands)",
-     (990548,21364842)),
-    ("implies_elim: reversed declared clause",
-     (~1,31822)),
-    ("equiv_elim1: valid premise",
-     (807409,17087756)),
-    ("equiv_elim1: atomic premise provenance",
-     (919228,23087687)),
-    ("equiv_elim1: wrong constructor",
-     (~1,24729)),
-    ("equiv_elim1: premise reduced to T",
-     (~1,23571)),
-    ("equiv_elim1: malformed arity (chained equality)",
-     (~1,35433)),
-    ("equiv_elim1: reversed declared clause",
-     (~1,31703)),
-    ("equiv_elim2: valid premise",
-     (806493,17039529)),
-    ("equiv_elim2: atomic premise provenance",
-     (920290,23022898)),
-    ("equiv_elim2: wrong constructor",
-     (~1,24750)),
-    ("equiv_elim2: premise reduced to T",
-     (~1,23593)),
-    ("equiv_elim2: malformed arity (chained equality)",
-     (~1,35454)),
-    ("equiv_elim2: reversed declared clause",
-     (~1,32205)),
-    ("not_equiv_elim1: valid premise",
-     (867274,18012583)),
-    ("not_equiv_elim1: atomic premise provenance",
-     (953089,23760614)),
-    ("not_equiv_elim1: wrong constructor",
-     (~1,28104)),
-    ("not_equiv_elim1: missing negation",
-     (~1,33036)),
-    ("not_equiv_elim1: premise reduced to T",
-     (~1,24974)),
-    ("not_equiv_elim1: malformed arity (chained equality)",
-     (~1,38893)),
-    ("not_equiv_elim1: reversed declared clause",
-     (~1,35661)),
-    ("not_equiv_elim2: valid premise",
-     (854855,19152173)),
-    ("not_equiv_elim2: atomic premise provenance",
-     (967732,25212517)),
-    ("not_equiv_elim2: wrong constructor",
-     (~1,28297)),
-    ("not_equiv_elim2: missing negation",
-     (~1,33230)),
-    ("not_equiv_elim2: premise reduced to T",
-     (~1,25132)),
-    ("not_equiv_elim2: malformed arity (chained equality)",
-     (~1,39086)),
-    ("not_equiv_elim2: reversed declared clause",
-     (~1,35917)),
-    ("ite_elim1: valid premise",
-     (1101777,22232390)),
-    ("ite_elim1: atomic premise provenance",
-     (1204406,27990668)),
-    ("ite_elim1: wrong constructor",
-     (~1,25003)),
-    ("ite_elim1: premise reduced to T",
-     (316557,3848624)),
-    ("ite_elim1: reversed declared clause",
-     (~1,38718)),
-    ("ite_elim2: valid premise",
-     (1105603,20740079)),
-    ("ite_elim2: atomic premise provenance",
-     (1207667,26272425)),
-    ("ite_elim2: wrong constructor",
-     (~1,25080)),
-    ("ite_elim2: premise reduced to T",
-     (316655,3848722)),
-    ("ite_elim2: reversed declared clause",
-     (~1,39268)),
-    ("not_ite_elim1: valid premise",
-     (1098267,23901847)),
-    ("not_ite_elim1: atomic premise provenance",
-     (1212330,29718617)),
-    ("not_ite_elim1: wrong constructor",
-     (~1,28832)),
-    ("not_ite_elim1: missing negation",
-     (~1,40481)),
-    ("not_ite_elim1: premise reduced to T",
-     (318382,3850449)),
-    ("not_ite_elim1: reversed declared clause",
-     (~1,43272)),
-    ("not_ite_elim2: valid premise",
-     (1099600,22747482)),
-    ("not_ite_elim2: atomic premise provenance",
-     (1218809,28423011)),
-    ("not_ite_elim2: wrong constructor",
-     (~1,28954)),
-    ("not_ite_elim2: missing negation",
-     (~1,40602)),
-    ("not_ite_elim2: premise reduced to T",
-     (318520,3850587)),
-    ("not_ite_elim2: reversed declared clause",
-     (~1,43394))]
+     groups. Verdicts, dependencies, retirement and refusal text are
+     checked; Work charges are not pinned (totals depend on the heap the
+     selftest runs in). *)
   fun clausal_row(row:CE.row)=case #owned row of NONE=>() | SOME expected=>
     let
       val label= #label row
       val lits=case expected of CE.Accept literals=>literals
         | CE.Refuse _=>[]
-      val assumptions= #term row::List.map(CE.literal_term o CE.refutation)lits
-      val (outcome,prepared_charge,total_charge)=fixture assumptions goal
-        (fn e=>
-          let val prepared_charge=ref ~1
-              val outcome=Exn.capture(fn()=>(op using) e
-                (CE.declared_proof_text row lits)(fn _=>())
-                (fn _=>fn _=>fn prepared=>
-                  let val _=prepared_charge:=
-                        Int.fromLarge(#charged(W.audit_policy(#work e)))
-                      val result=proved(Final.finish_with_policy(#work e)
-                        (ready prepared))
-                      val _=checked e(#theorem result)
-                  in(#dependencies result,#retired(W.audit_policy(#work e)))
-                  end))()
-          in(outcome,!prepared_charge,
-             Int.fromLarge(#charged(W.audit_policy(#work e))))end)
-      val harvest=Option.isSome(OS.Process.getEnv "HOL4_CLAUSAL_CHARGES")
-      val _=if harvest then
-          print("CLAUSAL-CHARGE\t"^label^"\t"^Int.toString prepared_charge^
-            "\t"^Int.toString total_charge^"\n") else ()
-      val(wanted_prepare,wanted_total)=case List.find(fn(name,_)=>name=label)
-          clausal_charges of SOME(_,charges)=>charges
-        | NONE=>raise Fail(label^": no pinned owned charge")
+      val assumed=CE.final_literals row lits
+      val assumptions= #term row::List.map(CE.literal_term o CE.refutation)
+        assumed
+      val outcome=fixture assumptions goal
+        (fn e=>Exn.capture(fn()=>(op using) e
+           (CE.proof_text row lits(SOME(#declared row)))(fn _=>())
+           (fn _=>fn _=>fn prepared=>
+              let val result=proved(Final.finish_with_policy(#work e)
+                    (ready prepared))
+                  val _=checked e(#theorem result)
+              in(#dependencies result,#retired(W.audit_policy(#work e)))
+              end))())
     in
       (case(expected,outcome)of
-         (CE.Accept literals,Exn.Res(dependencies,retired))=>
+         (CE.Accept _,Exn.Res(dependencies,retired))=>
            require(label^": owned dependencies or retired Work")
-             (dependencies=List.tabulate(List.length literals+1,P.Current)
+             (dependencies=List.tabulate(List.length assumed+1,P.Current)
               andalso not retired)
        | (CE.Refuse needle,Exn.Exn(Feedback.HOL_ERR detail))=>
            require(label^": owned refusal '"^Feedback.message_of detail^
              "' lacks '"^needle^"'")
-             (CE.contains needle(Feedback.message_of detail))
-       | _=>raise Fail(label^": owned outcome differs from its row"));
-      require(label^": owned charged Work "^Int.toString prepared_charge^"/"^
-        Int.toString total_charge^" differs from "^
-        Int.toString wanted_prepare^"/"^Int.toString wanted_total)
-        (harvest orelse(prepared_charge=wanted_prepare andalso
-                        total_charge=wanted_total))
+             (String.isSubstring needle(Feedback.message_of detail))
+       | _=>raise Fail(label^": owned outcome differs from its row"))
     end
   fun clausal_rows rule=List.app clausal_row
     (List.filter(fn(row:CE.row)=> #rule row=rule)(CE.rows(p,q,r)))

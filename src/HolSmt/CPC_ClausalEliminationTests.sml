@@ -22,11 +22,6 @@ struct
   structure Prov = CPC_Proof
 
   fun require message yes = if yes then () else raise Fail message
-  fun contains needle haystack =
-    let val n = String.size needle and h = String.size haystack
-        fun at i = i + n <= h andalso
-          (String.substring (haystack,i,n) = needle orelse at (i+1))
-    in at 0 end
 
   (* ---------------------------------------------------------------- *)
   (* Literals and rows                                                *)
@@ -36,11 +31,18 @@ struct
   type literal = {positive : bool,atom : atom}
   (* Refuse carries a substring of the diagnostic. *)
   datatype outcome = Accept of literal list | Refuse of string
+  (* A resolution step that consumes the derived clause: [unit] is
+     assumed refuted, and [result] is what remains. Resolution reads the
+     clause's recorded OR boundary, so it is accepted only when the owned
+     consumer recorded the clause as an OR of its literals. *)
+  type follow = {unit : literal,result : literal}
   type row =
     {label : string,rule : string,premise : string,term : term,
      (* The clause the rule derives from a valid premise, as text: the
         owned consumer needs a declared conclusion. *)
      declared : string,
+     (* When present, the outcomes describe this step's result. *)
+     follow : follow option,
      (* NONE: the engine has no such case. Term replay has no bound
         names. *)
      term_replay : outcome option,graph : outcome option,
@@ -54,6 +56,11 @@ struct
     if positive then prov else Prov.ApplicationProvenance ("not",[prov])
   fun refutation ({positive,atom}:literal):literal =
     {positive=not positive,atom=atom}
+  (* The literals whose refutation the proof assumes: the clause's own,
+     or the follow-up step's result and then its resolved unit. *)
+  fun final_literals (row:row) lits = case #follow row of
+      SOME {unit,result} => [result,unit]
+    | NONE => lits
 
   (* The clause a rule derives and the provenance the graph consumer
      reports for it: a single literal keeps its own, several are joined
@@ -158,8 +165,14 @@ struct
 
   fun row label rule premise term declared outcome owned : row =
     {label=rule ^ ": " ^ label,rule=rule,premise=premise,term=term,
-     declared=declared,term_replay=SOME outcome,graph=SOME outcome,
-     owned=SOME owned}
+     declared=declared,follow=NONE,term_replay=SOME outcome,
+     graph=SOME outcome,owned=SOME owned}
+
+  (* The expected literals of a rule over the given operands. *)
+  fun rule_literals operands rule =
+    case List.find (fn (name,_,_,_) => name = rule) (rule_table operands) of
+        SOME (_,_,_,lits) => lits
+      | NONE => raise Fail ("unknown clausal rule " ^ rule)
 
   (* Every rule against: a valid premise; the same premise as one atomic
      leaf; a premise of the wrong constructor; a missing negation (negated
@@ -190,14 +203,12 @@ struct
             (Accept lits,Accept lits)
           (* The owned consumer cannot read the left literal of a negated
              implication from an atomic leaf. *)
-          val leaf = row' "atomic premise provenance" atomic_name
-            premise_term declared (Accept (List.map flatten lits),
-              if rule = "not_implies_elim1" then
-                Refuse "declared rule endpoint differs"
-              else Accept (List.map flatten lits))
-          val leaf = {label= #label leaf,rule=rule,premise=atomic_name,
-            term=premise_term,declared=declared,term_replay=NONE,
-            graph= #graph leaf,owned= #owned leaf}
+          val flat = List.map flatten lits
+          val leaf = {label=rule ^ ": atomic premise provenance",rule=rule,
+            premise=atomic_name,term=premise_term,declared=declared,
+            follow=NONE,term_replay=NONE,graph=SOME (Accept flat),
+            owned=SOME (if rule = "not_implies_elim1" then
+              Refuse "declared rule endpoint differs" else Accept flat)}
           val wrong = row' "wrong constructor" wrong_text wrong_term
             declared (refuse Wrong)
           val missing = row' "missing negation" text term declared
@@ -210,18 +221,31 @@ struct
           val reversed = if List.length lits < 2 then [] else
             [{label=rule ^ ": reversed declared clause",rule=rule,
               premise=premise,term=premise_term,
-              declared=clause_text (List.rev lits),term_replay=NONE,
+              declared=clause_text (List.rev lits),follow=NONE,
+              term_replay=NONE,
               graph=NONE,
               owned=SOME (Refuse "declared rule endpoint differs")}]
+          (* The recorded OR boundary: observed by resolving the derived
+             clause against the refutation of its first literal. The rules
+             with a single literal record no boundary to observe (the
+             clause is a literal, whose provenance no accept/refuse
+             decision reads), and neither do the children of the OR (a
+             literal's own provenance is only copied to the result). *)
+          val observed = case lits of
+              [first,second] =>
+                [{label=rule ^ ": recorded OR boundary resolves",rule=rule,
+                  premise=premise,term=premise_term,declared=declared,
+                  follow=SOME {unit=first,result=second},term_replay=NONE,
+                  graph=NONE,owned=SOME (Accept lits)}]
+            | _ => []
           val arity = case family of
               Implication =>
                 let
                   val (text,term) = wrap ("(=> " ^ #text a ^ " " ^ #text b ^
                     " " ^ #text b ^ ")",boolSyntax.mk_imp (#term a,
                       boolSyntax.mk_imp (q,q)))
-                  val lits = List.map flatten (#4 (valOf (List.find
-                    (fn (name,_,_,_) => name = rule)
-                    (rule_table {a=a,b=nested,c=a,y=a,n=a}))))
+                  val lits = List.map flatten (rule_literals
+                    {a=a,b=nested,c=a,y=a,n=a} rule)
                 in [row "malformed arity (three operands)" rule text term
                      (clause_text lits) (Accept lits) (Accept lits)] end
             | Equivalence =>
@@ -231,10 +255,15 @@ struct
                       boolSyntax.mk_eq (r,q)))
                 in [row' "malformed arity (chained equality)" text
                      term declared (refuse Chained)] end
+            (* The parser cannot build a conditional with another operand
+               count: (ite ..) is checked for exactly three arguments, so
+               a malformed ITE arity exists only as a constructed occurrence
+               (constructed_ite_occurrence below). *)
             | Conditional => []
         in
           valid :: leaf :: wrong ::
-          (if negated then [missing] else []) @ [to_t] @ arity @ reversed
+          (if negated then [missing] else []) @ [to_t] @ arity @ reversed @
+          observed
         end
     in
       List.concat (List.map rows_of (rule_table ops))
@@ -281,57 +310,62 @@ struct
      special=fn _ => fn _ => NONE,ascribed=fn _ => fn _ => fn _ => NONE}
 
   (* The proof assumes the premise, assumes the refutation of each literal
-     the rule is expected to derive, infers the clause WITHOUT declaring
-     its conclusion (a declared conclusion would replace the inferred
-     provenance) and closes with CONTRA. *)
-  fun proof_text (row:row) lits =
+     the proof is expected to end with, infers the clause, applies the
+     row's follow-up step if any, and closes with CONTRA. Without
+     [declared] the steps carry no conclusion, so the graph consumer
+     reports the provenance it inferred (a declared conclusion would
+     replace it). With [declared] = SOME clause the conclusions are
+     declared, as the owned consumer requires, and checked against the
+     literals in their exact order. *)
+  fun proof_text (row:row) lits (declared : string option) =
     let
-      val refuted = List.map refutation lits
+      val final = final_literals row lits
+      val refuted = List.map refutation final
       val names = List.tabulate (List.length refuted,
         fn i => "@a" ^ Int.toString i)
       val assumes = ListPair.map (fn (name,lit) =>
         "(assume " ^ name ^ " " ^ literal_text lit ^ ") ")
         (names,refuted)
-      val finish = if List.null lits then "" else
-        " (step @done false :rule contra :premises (@clause " ^
-        String.concatWith " " names ^ "))"
+      fun conclusion text = case declared of SOME _ => text ^ " "
+        | NONE => ""
+      val step = "(step @clause " ^
+        conclusion (case declared of SOME text => text | NONE => "") ^
+        ":rule " ^ #rule row ^ " :premises (@input))"
+      val follow = case #follow row of NONE => ""
+        | SOME {result,...} =>
+            " (step @next " ^ conclusion (literal_text result) ^
+            ":rule resolution :premises (@clause @a1))"
+      val last = case #follow row of NONE => "@clause" | SOME _ => "@next"
+      val finish = if List.null final then "" else
+        " (step @done false :rule contra :premises (" ^ last ^ " " ^
+        String.concatWith " " (case #follow row of NONE => names
+          | SOME _ => [List.hd names]) ^ "))"
     in
       "((assume @input " ^ #premise row ^ ") " ^ String.concat assumes ^
-      "(step @clause :rule " ^ #rule row ^ " :premises (@input))" ^
-      finish ^ ")"
+      step ^ follow ^ finish ^ ")"
     end
 
-  (* The same proof with the conclusion declared, as the owned consumer
-     requires; the clause is then checked against the rule's literals in
-     their exact order. *)
-  fun declared_proof_text (row:row) lits =
-    let
-      val text = proof_text row lits
-      val marker = "(step @clause "
-      val split = "(step @clause :rule"
-      val i = let fun find i = if String.substring (text,i,String.size split)
-            = split then i else find (i+1) in find 0 end
-    in
-      String.substring (text,0,i) ^ marker ^ #declared row ^ " :rule" ^
-      String.extract (text,i + String.size split,NONE)
-    end
+  (* The command whose inferred result the graph consumer reports (rows
+     with a follow-up step are not run through it). *)
+  fun observed_serial (row:row) lits =
+    1 + List.length (final_literals row lits)
 
-  fun graph_consumer (p,q,r) (row:row) lits =
+  fun graph_consumer_with modify (p,q,r) (row:row) lits =
     let
       val bound = [("p",p),("q",q),("r",r)] @ bindings (p,q,r)
-      val refuted = List.map refutation lits
+      val refuted = List.map refutation (final_literals row lits)
       val graph = G.new () val scope = G.root_scope graph
       val sources = S.new graph scope 4096
         {assumptions= #term row :: List.map literal_term refuted,
          goal=boolSyntax.F}
-      val serial = 1 + List.length lits
+      val serial = observed_serial row lits
       val inferred = ref NONE
       fun observer (R.CommandEnd {serial=seen,node,provenance}) =
             if seen = serial then
               inferred := SOME (G.representative graph node,provenance)
             else ()
         | observer _ = ()
-      val input = TextIO.openString (proof_text row lits)
+      val input = TextIO.openString (proof_text row lits NONE)
       fun run () =
         let
           val packet = Q.parse_graph_packet_with_version
@@ -340,7 +374,7 @@ struct
           val outcome = Exn.capture (fn () =>
             R.check_contradiction_observing
               {graph=graph,scope=scope,sources=sources,
-               proof=SmtLib_GraphProof.proof packet,
+               proof=modify (SmtLib_GraphProof.proof packet),
                ordinary_limit=4096,template_limit=4096,
                worker=CPC_ProofReplay.graph_bounded_worker [],
                force_worker=NONE,observer=observer}) ()
@@ -364,6 +398,30 @@ struct
         | (NONE,Exn.Res (Exn.Res _)) =>
             raise Fail "graph proof closed without inferring the clause"
     end
+
+  val graph_consumer = graph_consumer_with (fn proof => proof)
+
+  (* The parser keeps (ite c a b) at exactly three children, so a
+     conditional occurrence with another count exists only when
+     constructed: here the premise's occurrence loses its last child. The
+     shared worker then reads three atomic child provenances instead of
+     refusing, and the clause still carries the literals. *)
+  fun truncate_premise_occurrence (proof:Q.graph_proof) : Q.graph_proof =
+    let
+      fun cut (SmtLib_Parser.ConstructionOccurrence
+                 {value,role,token,children}) =
+        SmtLib_Parser.ConstructionOccurrence {value=value,role=role,
+          token=token,children=if token = "ite" then
+            List.take (children,List.length children - 1)
+          else List.map cut children}
+      fun command (Q.GraphAssume ("@input",term:F.term)) =
+            Q.GraphAssume ("@input",{node= #node term,scope= #scope term,
+              binder_blocks= #binder_blocks term,
+              source_syntax= #source_syntax term,
+              occurrence=cut (#occurrence term)})
+        | command other = other
+    in {cvc_version= #cvc_version proof,
+        commands=List.map command (#commands proof)} end
 
   (* ---------------------------------------------------------------- *)
   (* Comparison and description                                       *)
@@ -393,26 +451,6 @@ struct
   (* Checks                                                           *)
   (* ---------------------------------------------------------------- *)
 
-  fun show_provenance provenance = case provenance of
-      Prov.AtomicProvenance => "A"
-    | Prov.ApplicationProvenance (token,children) =>
-        token ^ "(" ^ String.concatWith "," (List.map show_provenance children)
-        ^ ")"
-    | Prov.EqualityProvenance (left,right) =>
-        "Eq(" ^ show_provenance left ^ "," ^ show_provenance right ^ ")"
-    | Prov.ConjunctionProvenance (_,children) =>
-        "Conj(" ^ String.concatWith "," (List.map show_provenance children)
-        ^ ")"
-    | Prov.UnavailableProvenance _ => "Unavailable"
-    | _ => "Other"
-
-  fun describe observed = case observed of
-      Declined text => "refused: " ^ text
-    | Derived {clause,provenance,...} =>
-        "derived " ^ term_to_string clause ^
-        (case provenance of NONE => ""
-          | SOME p => " | " ^ show_provenance p)
-
   fun same_terms terms expected =
     HOLset.equal (HOLset.addList (Term.empty_tmset,terms),
                   HOLset.addList (Term.empty_tmset,expected))
@@ -425,7 +463,7 @@ struct
     case (expected,observed) of
         (Refuse needle,Declined text) =>
           require (label ^ ": refusal '" ^ text ^ "' lacks '" ^ needle ^ "'")
-            (contains needle text)
+            (String.isSubstring needle text)
       | (Accept lits,Derived derived) => accepted lits derived
       | (Refuse _,Derived _) =>
           raise Fail (label ^ ": expected a refusal, got " ^ describe observed)
@@ -465,7 +503,8 @@ struct
              require (#label row ^ ": graph proof did not close") closed;
              require (#label row ^ ": graph proof used a foreign hypothesis")
                (subset hyps (boolSyntax.mk_neg boolSyntax.F :: #term row ::
-                  List.map (literal_term o refutation) lits))))
+                  List.map (literal_term o refutation)
+                    (final_literals row lits)))))
 
   (* equiv_elim's term rule derives its clause when the premise is an
      equality and otherwise defers to the declared conclusion: a
@@ -494,7 +533,7 @@ struct
         case replay premise rule declared of
             Exn.Res theorem => raise Fail (label ^ ": expected a refusal")
           | Exn.Exn exn => require (label ^ ": diagnostic " ^ message exn)
-              (contains needle (message exn))
+              (String.isSubstring needle (message exn))
       val conj = boolSyntax.mk_conj (p,q)
       val not_p = boolSyntax.mk_neg p
     in
@@ -516,7 +555,11 @@ struct
         "produced a conclusion different from its certificate"
     end
 
-  (* The three forms of equality provenance the rows depend on. *)
+  (* The forms of equality provenance the rows depend on. The parsers
+     never produce ApplicationProvenance ("=",[l,r]) for an equality (a
+     binary one is EqualityProvenance, an n-ary one has n children), so
+     that form is unreachable through any row and is checked here, on
+     equality_provenance directly. *)
   fun equality_provenance_forms () =
     let
       val left = Prov.ApplicationProvenance ("not",[atomic])
@@ -534,6 +577,27 @@ struct
         ("=",[left,right,atomic])) (atomic,atomic)
     end
 
+  (* The conditional rules over a constructed occurrence. *)
+  fun constructed_ite_occurrence vars table =
+    List.app (fn (row:row) =>
+      if #rule row <> "ite_elim1" andalso #rule row <> "ite_elim2" andalso
+         #rule row <> "not_ite_elim1" andalso #rule row <> "not_ite_elim2"
+         orelse #label row <> #rule row ^ ": valid premise" then ()
+      else
+        let val lits = literals (#graph row)
+        in case graph_consumer_with truncate_premise_occurrence vars row
+                  lits of
+               Derived {clause,provenance,...} =>
+                 require (#label row ^ ": constructed occurrence gave " ^
+                   term_to_string clause ^ " | " ^ (case provenance of
+                     NONE => "none" | SOME p => show_provenance p))
+                   (aconv clause (clause_term lits) andalso
+                    provenance = SOME (clause_provenance
+                      (List.map flatten lits)))
+             | Declined text => raise Fail (#label row ^
+                 ": constructed occurrence refused: " ^ text)
+        end) table
+
   fun run () =
     let
       val vars as (p,q,r) = (mk_var ("p",bool),mk_var ("q",bool),
@@ -550,6 +614,8 @@ struct
       group "term replay" check_term_replay;
       testutils.tprint "CPC clausal rows: declared conclusion fallbacks";
       declared_fallbacks ();testutils.OK ();
-      group "graph consumer" (check_graph vars)
+      group "graph consumer" (check_graph vars);
+      testutils.tprint "CPC clausal rows: constructed conditional occurrence";
+      constructed_ite_occurrence vars table;testutils.OK ()
     end
 end
