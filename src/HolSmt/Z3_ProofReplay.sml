@@ -10808,7 +10808,6 @@ in
   val hypothesis_has_free_variables_for_test = replay_has_free_variables
   val hypothesis_has_free_variables_legacy_for_test =
     replay_has_free_variables_legacy
-  val hypothesis_char_next_route_for_test = SmtResource.or_else
   val asserted_membership_diagnostic = asserted_membership_diagnostic
   val unsupported_rewrite_diagnostic = unsupported_rewrite_diagnostic
   val unsupported_hyp_removal_diagnostic =
@@ -10966,7 +10965,6 @@ in
   val bv_th_lemma_prove_for_test = bv_th_lemma_prove
   val bv_th_lemma_basic_branch_for_test = bv_th_lemma_basic_branch
   val arith_bv_fallback_for_test = arith_bv_fallback
-  val string_th_lemma_next_route_for_test = SmtResource.or_else
 
   fun skeleton_general_sequence_for_test targets =
     let
