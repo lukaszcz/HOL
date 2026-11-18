@@ -1245,8 +1245,8 @@ struct
       (checked_procedures_using_preflight source_ss
         (fn _ => raise Conv.UNCHANGED) true (SOME preflight) check) prove
 
-  fun default_admission () = SmtReplayArithmetic.new_term_check
-    {limit=SmtResource.max_bv_replay_term_nodes,observe=fn () => ()}
+  fun default_admission () = SmtReplayArithmetic.new_shared_term_check
+    SmtResource.max_bv_replay_term_nodes
   fun datatype_prove_with_admission admit t =
     #prove (checked_procedures admit) t
   fun datatype_prove t = datatype_prove_with_admission (default_admission ()) t
