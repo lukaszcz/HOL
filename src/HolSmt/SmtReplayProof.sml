@@ -10564,40 +10564,32 @@ struct
        G.validate_scope graph caller;
        List.app(fn child=>ignore(G.closure_child_node graph caller child))
          children))
-  fun prepare_source_condition_rule expected
-      {evidence,frame,caller,steps,terminal,check_type}=
-    sr_fail expected (fn()=>W.with_step expected (fn()=>
+  fun sce_append tick [] tail=tail
+    | sce_append tick (v::rest) tail=(tick 1;v::sce_append tick rest tail)
+  fun sce_step_children steps=List.mapPartial
+    (fn EvidenceStep(SourceSpec child)=>SOME child
+    | EvidenceAntecedentExists child=>SOME child
+    | EvidenceConditionForall child=>SOME child | _=>NONE) steps
+  (* The guard every preparation payment runs first. *)
+  fun sce_prepare_guard expected evidence frame graph caller children ()=
+    (sce_guard expected evidence;
+     Scope.validate_lifetime_for expected frame;
+     List.app(fn child=>ignore(G.closure_child_node graph caller child))
+       children)
+  (* The captured-term builder shared by the plain rule, the exists-argument
+     clause and the canonical clause preparers. Every preparation gets its
+     own budget, identifier, binder, policy and binder-id refs. tick is the
+     caller's payment: it validates the evidence, the frame lifetime and the
+     closure children before it spends, so each builder step is paid in the
+     order the preparer runs it. The builder keeps the lexical origin
+     geometry and numbers and names the binders in capture order. *)
+  fun source_condition_builder tick=
     let
-      val d=sce_data expected evidence
-      val source=Scope.description_for expected (#frame d)
-      val actual=Scope.description_for expected frame
-      val graph= #graph actual val scope= #scope actual
-      val _=if Portable.pointer_eq(graph,#graph source) andalso
-          Portable.pointer_eq(#sources actual,#sources source) andalso
-          #root actual= #root source andalso
-          G.scope_visible graph scope (#scope source) then () else
-        raise ERR "prepare_source_condition_rule" "foreign Source frame"
-      val _=G.validate_scope graph caller
-      val children=List.mapPartial
-        (fn EvidenceStep(SourceSpec child)=>SOME child
-        | EvidenceAntecedentExists child=>SOME child
-        | EvidenceConditionForall child=>SOME child | _=>NONE) steps
-      fun guard()=
-        (sce_guard expected evidence;
-         Scope.validate_lifetime_for expected frame;
-         List.app(fn child=>ignore(G.closure_child_node graph caller child))
-           children)
-      fun tick n=(guard();W.spend expected n)
-      val limits=W.semantic_limits expected
-      val output=IntInf.fromInt(#output_limit limits)
-      val template=IntInf.fromInt(#template_limit limits)
-      val quota=IntInf.fromInt(W.work_limit expected)
       val budget=ref(0:IntInf.int)
       val policies=ref([]:sr_type list)
       val next=ref 0 val identifiers=ref([]:string list)
       val binders=ref([]:(int*string*Type.hol_type) list)
-      fun append [] tail=tail
-        | append(v::rest) tail=(tick 1;v::append rest tail)
+      fun append v w=sce_append tick v w
       fun types (captured as SRCaptured ty)=
             (tick 1;captured::(if Type.is_vartype ty then
               (tick(String.size(Type.dest_vartype ty));[])
@@ -10653,18 +10645,6 @@ struct
            SOME n=>tick n | NONE=>raise ERR "prepare_source_condition_rule"
              "bounded local binder operand";
          capture [] origin term)
-      val initial=bounded(#output_limit limits)
-        (SOME(sce_lexical_origin_inside expected evidence))(#target d)
-      val hyp=List.map(bounded(#template_limit limits)NONE)(Thm.hyp(#proof d))
-      val rows=List.map(fn(value,_)=>
-        bounded(#template_limit limits)NONE value)(#rows d)
-      val args=List.map(fn child=>
-        let val node=G.closure_child_node graph caller child
-            val _=if G.scope_visible graph scope (G.node_scope graph node)
-              then () else raise ERR "prepare_source_condition_rule"
-                "argument escapes actual frame"
-        in bounded(#output_limit limits)NONE(G.representative graph node) end)
-        children
       fun fresh id ty=
         let fun choose n=
               let val name="__smt_sce_binder_"^Int.toString id^"_"^
@@ -10680,7 +10660,6 @@ struct
               | _=>raise ERR "prepare_source_condition_rule" "binder type");
             name_binders b)
         | _=>()
-      val _=List.app name_binders(initial::args)
       fun head thy name(SRTree {shape=SRAtom term,...})=
             Term.is_const term andalso
               let val c=Term.dest_thy_const term
@@ -10742,6 +10721,62 @@ struct
             val constant=atom(SRAtom boolSyntax.universal)
               (SRArrow(SRArrow(domain,bool),bool))
         in app bool constant predicate end
+      val bool=SRCaptured Type.bool
+      fun boolean term=atom(SRAtom term)bool
+      fun combine constant a b=
+        let val arrow=SRArrow(bool,bool)
+            val h=atom(SRAtom constant)(SRArrow(bool,arrow))
+        in app bool (app arrow h a)b end
+      fun equality a b=combine boolSyntax.equality a b
+      fun implication a b=combine boolSyntax.implication a b
+    in {budget=budget, policies=policies, next=next,
+       identifiers=identifiers, binders=binders, atom=atom, app=app,
+       lam=lam, capture=capture, bounded=bounded, name_binders=name_binders,
+       head=head, binary=binary, forall=forall, exists=exists, subst=subst,
+       tcombine=tcombine, timp=timp, tneg=tneg,
+       typed_equality=typed_equality, abstract=abstract, quantify=quantify,
+       bool=bool, boolean=boolean, combine=combine, equality=equality,
+       implication=implication} end
+  fun prepare_source_condition_rule expected
+      {evidence,frame,caller,steps,terminal,check_type}=
+    sr_fail expected (fn()=>W.with_step expected (fn()=>
+    let
+      val d=sce_data expected evidence
+      val source=Scope.description_for expected (#frame d)
+      val actual=Scope.description_for expected frame
+      val graph= #graph actual val scope= #scope actual
+      val _=if Portable.pointer_eq(graph,#graph source) andalso
+          Portable.pointer_eq(#sources actual,#sources source) andalso
+          #root actual= #root source andalso
+          G.scope_visible graph scope (#scope source) then () else
+        raise ERR "prepare_source_condition_rule" "foreign Source frame"
+      val _=G.validate_scope graph caller
+      val children=sce_step_children steps
+      val guard=sce_prepare_guard expected evidence frame graph
+        caller children
+      fun tick n=(guard();W.spend expected n)
+      val limits=W.semantic_limits expected
+      val output=IntInf.fromInt(#output_limit limits)
+      val template=IntInf.fromInt(#template_limit limits)
+      val quota=IntInf.fromInt(W.work_limit expected)
+      fun append v w=sce_append tick v w
+      val {budget,policies,next,binders,app,bounded,name_binders,head,
+        binary,forall,exists,subst,timp,tneg,typed_equality,quantify,bool,
+        boolean,combine,equality,implication,...}=
+        source_condition_builder tick
+      val initial=bounded(#output_limit limits)
+        (SOME(sce_lexical_origin_inside expected evidence))(#target d)
+      val hyp=List.map(bounded(#template_limit limits)NONE)(Thm.hyp(#proof d))
+      val rows=List.map(fn(value,_)=>
+        bounded(#template_limit limits)NONE value)(#rows d)
+      val args=List.map(fn child=>
+        let val node=G.closure_child_node graph caller child
+            val _=if G.scope_visible graph scope (G.node_scope graph node)
+              then () else raise ERR "prepare_source_condition_rule"
+                "argument escapes actual frame"
+        in bounded(#output_limit limits)NONE(G.representative graph node) end)
+        children
+      val _=List.app name_binders(initial::args)
       (* Strip SPEC routes WITHOUT substituting the owned arguments.
          Permutation is a property of this template, before matching. *)
       fun original_template [] [] current=current
@@ -10870,14 +10905,6 @@ struct
               raise ERR "prepare_source_condition_rule" "original Work"
         in policies:=List.foldr(fn(tree,all)=>append(sr_types tree)all)
           (!policies)all end
-      val bool=SRCaptured Type.bool
-      fun boolean term=atom(SRAtom term)bool
-      fun combine constant a b=
-        let val arrow=SRArrow(bool,bool)
-            val h=atom(SRAtom constant)(SRArrow(bool,arrow))
-        in app bool (app arrow h a)b end
-      fun equality a b=combine boolSyntax.equality a b
-      fun implication a b=combine boolSyntax.implication a b
       fun align conditions result=
         (record output conditions (equality result result);
          record output conditions result)
@@ -15097,81 +15124,20 @@ struct
       val _=if caller=scope then ()else raise ERR
         "prepare_source_argument" "caller must be the actual frame"
       val _=G.validate_scope graph caller
-      val children=List.mapPartial
-        (fn EvidenceStep(SourceSpec child)=>SOME child
-        | EvidenceAntecedentExists child=>SOME child
-        | EvidenceConditionForall child=>SOME child | _=>NONE) steps
-      fun guard()=
-        (sce_guard expected evidence;
-         Scope.validate_lifetime_for expected frame;
-         List.app(fn child=>ignore(G.closure_child_node graph caller child))
-           children)
+      val children=sce_step_children steps
+      val guard=sce_prepare_guard expected evidence frame graph
+        caller children
       fun tick n=(guard();W.spend expected n)
       val limits=W.semantic_limits expected
       val output=IntInf.fromInt(#output_limit limits)
       val template=IntInf.fromInt(#template_limit limits)
       val quota=IntInf.fromInt(W.work_limit expected)
-      val budget=ref(0:IntInf.int)
-      val policies=ref([]:sr_type list)
-      val next=ref 0 val identifiers=ref([]:string list)
-      val binders=ref([]:(int*string*Type.hol_type) list)
-      fun append [] tail=tail
-        | append(v::rest) tail=(tick 1;v::append rest tail)
-      fun types (captured as SRCaptured ty)=
-            (tick 1;captured::(if Type.is_vartype ty then
-              (tick(String.size(Type.dest_vartype ty));[])
-            else let val {Thy,Tyop,Args}=Type.dest_thy_type ty
-                 in tick(String.size Thy+String.size Tyop);
-                   List.foldr(fn(arg,all)=>append(types(SRCaptured arg)) all)
-                     [] Args end))
-        | types (arrow as SRArrow(a,b))=
-            (tick 1;arrow::append(types a)(types b))
-      fun atom shape ty=SRTree {ty=ty,shape=shape,raw=1,inc=1,
-        annotations=types ty}
-      fun app ty a b=SRTree {ty=ty,shape=SRApp(a,b),
-        raw=1+sr_raw a+sr_raw b,inc=1+sr_inc a+sr_inc b,
-        annotations=append(types ty)(append(sr_types a)(sr_types b))}
-      fun lam ty id v b=SRTree {ty=ty,shape=SRLam(id,v,b),
-        raw=1+sr_raw b,inc=2+sr_inc b,
-        annotations=append(types ty)(append(sr_types v)(sr_types b))}
-      fun remember term=if Term.is_var term then
-        let val(name,_)=Term.dest_var term
-        in tick(String.size name+1);identifiers:=name:: !identifiers end
-        else ()
-      fun find v []=NONE
-        | find v ((old,id)::rest)=
-            (tick 1;if sr_same v old then SOME id else find v rest)
-      fun capture lexical origin term=
-        (tick 1;remember term;
-         let val ty=SRCaptured(Term.type_of term)
-         in if Term.is_comb term then
-              let val(a,b)=Term.dest_comb term
-                  val(left,right)=case origin of NONE=>(NONE,NONE)
-                    | SOME(SCOApp(x,y))=>(SOME x,SOME y)
-                    | _=>raise ERR "prepare_source_condition_rule"
-                        "authentic application origin geometry changed"
-              in app ty (capture lexical left a)(capture lexical right b)end
-            else if Term.is_abs term then
-              let val(v,b)=Term.dest_abs term
-                  val id= !next val _=next:=id+1 val _=remember v
-                  val vt=SRCaptured(Term.type_of v)
-                  val(original,body)=case origin of NONE=>(v,NONE)
-                    | SOME(SCOLam(old,next))=>(old,SOME next)
-                    | _=>raise ERR "prepare_source_condition_rule"
-                        "authentic binder origin geometry changed"
-              in lam ty id (atom(SRBound(id,original))vt)
-                (capture((v,id)::lexical)body b)end
-            else case find term lexical of
-              SOME id=>atom(SRBound(id,term))ty
-            | NONE=>atom(SRAtom term)ty end)
-      fun bounded cap origin term=
-        (case SmtReplayImport.bounded_raw_size cap term of
-           SOME n=>tick n | NONE=>raise ERR "prepare_source_condition_rule"
-             "bounded local raw operand";
-         case SmtReplayImport.bounded_binder_size cap term of
-           SOME n=>tick n | NONE=>raise ERR "prepare_source_condition_rule"
-             "bounded local binder operand";
-         capture [] origin term)
+      fun append v w=sce_append tick v w
+      val {budget,policies,next,identifiers,binders,atom,app,bounded,
+        name_binders,head,binary,forall,exists,subst,timp,tneg,
+        typed_equality,quantify,bool,boolean,combine,equality,
+        implication,...}=
+        source_condition_builder tick
       val initial=bounded(#output_limit limits)
         (SOME(sce_lexical_origin_inside expected evidence))(#target d)
       val hyp=List.map(bounded(#template_limit limits)NONE)(Thm.hyp(#proof d))
@@ -15189,83 +15155,7 @@ struct
             (tick(String.size name+1);
              identifiers:=name:: !identifiers;
              SOME(atom(SRFresh(name,ty))(SRCaptured ty)))
-      fun fresh id ty=
-        let fun choose n=
-              let val name="__smt_sce_binder_"^Int.toString id^"_"^
-                    Int.toString n
-                  val _=tick(String.size name+1)
-              in if List.exists(fn old=>(tick 1;old=name))(!identifiers)
-                   then choose(n+1) else
-                 (identifiers:=name:: !identifiers;name) end
-        in binders:=(id,choose 0,ty):: !binders end
-      fun name_binders(SRTree {shape,...})=case shape of
-          SRApp(a,b)=>(name_binders a;name_binders b)
-        | SRLam(id,v,b)=>(fresh id (case sr_type v of SRCaptured t=>t
-              | _=>raise ERR "prepare_source_condition_rule" "binder type");
-            name_binders b)
-        | _=>()
       val _=List.app name_binders(initial::args)
-      fun head thy name(SRTree {shape=SRAtom term,...})=
-            Term.is_const term andalso
-              let val c=Term.dest_thy_const term
-              in #Thy c=thy andalso #Name c=name end
-        | head _ _ _=false
-      fun binary thy name(SRTree {shape=SRApp
-          (SRTree {shape=SRApp(h,a),...},b),...})=
-            if head thy name h then SOME(a,b) else NONE
-        | binary _ _ _=NONE
-      fun forall(SRTree {shape=SRApp(h,SRTree {shape=SRLam(id,v,b),...}),
-                            ...})=
-            if head "bool" "!" h then SOME(id,v,b) else NONE
-        | forall _=NONE
-      fun exists(SRTree {shape=SRApp(h,SRTree {shape=SRLam(id,v,b),...}),
-                            ...})=
-            if head "bool" "?" h then SOME(id,v,b) else NONE
-        | exists _=NONE
-      fun subst id arg (value as SRTree {ty,shape,...})=
-        (tick 1;case shape of SRBound(old,_)=>if old=id then arg else value
-        | SRApp(a,b)=>app ty (subst id arg a)(subst id arg b)
-        | SRLam(old,v,b)=>if old=id then value else
-            lam ty old v (subst id arg b)
-        | _=>value)
-      fun tcombine constant a b=
-        let val bool=SRCaptured Type.bool
-            val ty=SRCaptured(Term.type_of constant)
-            val arrow=SRCaptured(#2(Type.dom_rng(Term.type_of constant)))
-        in app bool (app arrow (atom(SRAtom constant)ty)a)b end
-      fun timp a b=tcombine boolSyntax.implication a b
-      fun tneg a=
-        app (SRCaptured Type.bool)
-          (atom(SRAtom boolSyntax.negation)
-            (SRCaptured(Term.type_of boolSyntax.negation)))a
-      fun typed_equality a b=
-        let val domain=sr_type a val bool=SRCaptured Type.bool
-            val arrow=SRArrow(domain,bool)
-            val h=atom(SRAtom boolSyntax.equality)(SRArrow(domain,arrow))
-        in app bool (app arrow h a)b end
-      fun abstract id variable (value as SRTree {ty,shape,...})=
-        (tick 1;case shape of SRAtom term=>
-            if sr_same term variable then atom(SRBound(id,term))ty
-            else value
-          | SRApp(a,b)=>app ty (abstract id variable a)
-              (abstract id variable b)
-          | SRLam(old,v,b)=>lam ty old v (abstract id variable b)
-          | _=>value)
-      fun quantify issue argument condition=
-        let val variable=case #shape(sr_data argument)of
-              SRAtom term=>if Term.is_var term then term else
-                raise ERR "source_rule_quantify" "actual variable required"
-            | _=>raise ERR "source_rule_quantify" "actual variable required"
-            val domain=sr_type argument
-            val id= !next val _=next:=id+1
-            val _=if issue then fresh id (Term.type_of variable) else ()
-            val bool=SRCaptured Type.bool
-            val predicate=lam (SRArrow(domain,bool))id
-              (atom(SRBound(id,variable))domain)
-              (abstract id variable condition)
-            val constant=atom(SRAtom boolSyntax.universal)
-              (SRArrow(SRArrow(domain,bool),bool))
-        in app bool constant predicate end
       (* Strip SPEC routes WITHOUT substituting the owned arguments.
          Permutation is a property of this template, before matching. *)
       fun original_template [] [] current=current
@@ -15394,14 +15284,6 @@ struct
               raise ERR "prepare_source_condition_rule" "original Work"
         in policies:=List.foldr(fn(tree,all)=>append(sr_types tree)all)
           (!policies)all end
-      val bool=SRCaptured Type.bool
-      fun boolean term=atom(SRAtom term)bool
-      fun combine constant a b=
-        let val arrow=SRArrow(bool,bool)
-            val h=atom(SRAtom constant)(SRArrow(bool,arrow))
-        in app bool (app arrow h a)b end
-      fun equality a b=combine boolSyntax.equality a b
-      fun implication a b=combine boolSyntax.implication a b
       fun align conditions result=
         (record output conditions (equality result result);
          record output conditions result)
@@ -16275,81 +16157,20 @@ struct
       val _=if caller=scope then ()else raise ERR
         "prepare_source_argument" "caller must be the actual frame"
       val _=G.validate_scope graph caller
-      val children=List.mapPartial
-        (fn EvidenceStep(SourceSpec child)=>SOME child
-        | EvidenceAntecedentExists child=>SOME child
-        | EvidenceConditionForall child=>SOME child | _=>NONE) steps
-      fun guard()=
-        (sce_guard expected evidence;
-         Scope.validate_lifetime_for expected frame;
-         List.app(fn child=>ignore(G.closure_child_node graph caller child))
-           children)
+      val children=sce_step_children steps
+      val guard=sce_prepare_guard expected evidence frame graph
+        caller children
       fun tick n=(guard();W.spend expected n)
       val limits=W.semantic_limits expected
       val output=IntInf.fromInt(#output_limit limits)
       val template=IntInf.fromInt(#template_limit limits)
       val quota=IntInf.fromInt(W.work_limit expected)
-      val budget=ref(0:IntInf.int)
-      val policies=ref([]:sr_type list)
-      val next=ref 0 val identifiers=ref([]:string list)
-      val binders=ref([]:(int*string*Type.hol_type) list)
-      fun append [] tail=tail
-        | append(v::rest) tail=(tick 1;v::append rest tail)
-      fun types (captured as SRCaptured ty)=
-            (tick 1;captured::(if Type.is_vartype ty then
-              (tick(String.size(Type.dest_vartype ty));[])
-            else let val {Thy,Tyop,Args}=Type.dest_thy_type ty
-                 in tick(String.size Thy+String.size Tyop);
-                   List.foldr(fn(arg,all)=>append(types(SRCaptured arg)) all)
-                     [] Args end))
-        | types (arrow as SRArrow(a,b))=
-            (tick 1;arrow::append(types a)(types b))
-      fun atom shape ty=SRTree {ty=ty,shape=shape,raw=1,inc=1,
-        annotations=types ty}
-      fun app ty a b=SRTree {ty=ty,shape=SRApp(a,b),
-        raw=1+sr_raw a+sr_raw b,inc=1+sr_inc a+sr_inc b,
-        annotations=append(types ty)(append(sr_types a)(sr_types b))}
-      fun lam ty id v b=SRTree {ty=ty,shape=SRLam(id,v,b),
-        raw=1+sr_raw b,inc=2+sr_inc b,
-        annotations=append(types ty)(append(sr_types v)(sr_types b))}
-      fun remember term=if Term.is_var term then
-        let val(name,_)=Term.dest_var term
-        in tick(String.size name+1);identifiers:=name:: !identifiers end
-        else ()
-      fun find v []=NONE
-        | find v ((old,id)::rest)=
-            (tick 1;if sr_same v old then SOME id else find v rest)
-      fun capture lexical origin term=
-        (tick 1;remember term;
-         let val ty=SRCaptured(Term.type_of term)
-         in if Term.is_comb term then
-              let val(a,b)=Term.dest_comb term
-                  val(left,right)=case origin of NONE=>(NONE,NONE)
-                    | SOME(SCOApp(x,y))=>(SOME x,SOME y)
-                    | _=>raise ERR "prepare_source_condition_rule"
-                        "authentic application origin geometry changed"
-              in app ty (capture lexical left a)(capture lexical right b)end
-            else if Term.is_abs term then
-              let val(v,b)=Term.dest_abs term
-                  val id= !next val _=next:=id+1 val _=remember v
-                  val vt=SRCaptured(Term.type_of v)
-                  val(original,body)=case origin of NONE=>(v,NONE)
-                    | SOME(SCOLam(old,next))=>(old,SOME next)
-                    | _=>raise ERR "prepare_source_condition_rule"
-                        "authentic binder origin geometry changed"
-              in lam ty id (atom(SRBound(id,original))vt)
-                (capture((v,id)::lexical)body b)end
-            else case find term lexical of
-              SOME id=>atom(SRBound(id,term))ty
-            | NONE=>atom(SRAtom term)ty end)
-      fun bounded cap origin term=
-        (case SmtReplayImport.bounded_raw_size cap term of
-           SOME n=>tick n | NONE=>raise ERR "prepare_source_condition_rule"
-             "bounded local raw operand";
-         case SmtReplayImport.bounded_binder_size cap term of
-           SOME n=>tick n | NONE=>raise ERR "prepare_source_condition_rule"
-             "bounded local binder operand";
-         capture [] origin term)
+      fun append v w=sce_append tick v w
+      val {budget,policies,next,identifiers,binders,atom,app,capture,
+        bounded,name_binders,head,binary,forall,exists,subst,timp,tneg,
+        typed_equality,quantify,bool,boolean,combine,equality,
+        implication,...}=
+        source_condition_builder tick
       fun no_abs cap term=
         let fun walk [] count=()
               | walk(current::rest)count=
@@ -16404,31 +16225,7 @@ struct
            atom(SRFresh(name,ty))(SRCaptured ty)))future
       val saved=List.map(fn(term,origin)=>
         bounded(#output_limit limits)(SOME origin)term)pending
-      fun fresh id ty=
-        let fun choose n=
-              let val name="__smt_sce_binder_"^Int.toString id^"_"^
-                    Int.toString n
-                  val _=tick(String.size name+1)
-              in if List.exists(fn old=>(tick 1;old=name))(!identifiers)
-                   then choose(n+1) else
-                 (identifiers:=name:: !identifiers;name) end
-        in binders:=(id,choose 0,ty):: !binders end
-      fun name_binders(SRTree {shape,...})=case shape of
-          SRApp(a,b)=>(name_binders a;name_binders b)
-        | SRLam(id,v,b)=>(fresh id (case sr_type v of SRCaptured t=>t
-              | _=>raise ERR "prepare_source_condition_rule" "binder type");
-            name_binders b)
-        | _=>()
       val _=List.app name_binders(initial::args@saved)
-      fun head thy name(SRTree {shape=SRAtom term,...})=
-            Term.is_const term andalso
-              let val c=Term.dest_thy_const term
-              in #Thy c=thy andalso #Name c=name end
-        | head _ _ _=false
-      fun binary thy name(SRTree {shape=SRApp
-          (SRTree {shape=SRApp(h,a),...},b),...})=
-            if head thy name h then SOME(a,b) else NONE
-        | binary _ _ _=NONE
       fun type_same(SRCaptured a,SRCaptured b)=Type.compare(a,b)=EQUAL
         | type_same(SRArrow(a,b),SRArrow(c,d))=
             type_same(a,c)andalso type_same(b,d)
@@ -16532,58 +16329,6 @@ struct
           then raise ERR "predicate_conditional"
             "Original Source ant alias needs semantic receiver"
           else ())ordered_ants)
-      fun forall(SRTree {shape=SRApp(h,SRTree {shape=SRLam(id,v,b),...}),
-                            ...})=
-            if head "bool" "!" h then SOME(id,v,b) else NONE
-        | forall _=NONE
-      fun exists(SRTree {shape=SRApp(h,SRTree {shape=SRLam(id,v,b),...}),
-                            ...})=
-            if head "bool" "?" h then SOME(id,v,b) else NONE
-        | exists _=NONE
-      fun subst id arg (value as SRTree {ty,shape,...})=
-        (tick 1;case shape of SRBound(old,_)=>if old=id then arg else value
-        | SRApp(a,b)=>app ty (subst id arg a)(subst id arg b)
-        | SRLam(old,v,b)=>if old=id then value else
-            lam ty old v (subst id arg b)
-        | _=>value)
-      fun tcombine constant a b=
-        let val bool=SRCaptured Type.bool
-            val ty=SRCaptured(Term.type_of constant)
-            val arrow=SRCaptured(#2(Type.dom_rng(Term.type_of constant)))
-        in app bool (app arrow (atom(SRAtom constant)ty)a)b end
-      fun timp a b=tcombine boolSyntax.implication a b
-      fun tneg a=
-        app (SRCaptured Type.bool)
-          (atom(SRAtom boolSyntax.negation)
-            (SRCaptured(Term.type_of boolSyntax.negation)))a
-      fun typed_equality a b=
-        let val domain=sr_type a val bool=SRCaptured Type.bool
-            val arrow=SRArrow(domain,bool)
-            val h=atom(SRAtom boolSyntax.equality)(SRArrow(domain,arrow))
-        in app bool (app arrow h a)b end
-      fun abstract id variable (value as SRTree {ty,shape,...})=
-        (tick 1;case shape of SRAtom term=>
-            if sr_same term variable then atom(SRBound(id,term))ty
-            else value
-          | SRApp(a,b)=>app ty (abstract id variable a)
-              (abstract id variable b)
-          | SRLam(old,v,b)=>lam ty old v (abstract id variable b)
-          | _=>value)
-      fun quantify issue argument condition=
-        let val variable=case #shape(sr_data argument)of
-              SRAtom term=>if Term.is_var term then term else
-                raise ERR "source_rule_quantify" "actual variable required"
-            | _=>raise ERR "source_rule_quantify" "actual variable required"
-            val domain=sr_type argument
-            val id= !next val _=next:=id+1
-            val _=if issue then fresh id (Term.type_of variable) else ()
-            val bool=SRCaptured Type.bool
-            val predicate=lam (SRArrow(domain,bool))id
-              (atom(SRBound(id,variable))domain)
-              (abstract id variable condition)
-            val constant=atom(SRAtom boolSyntax.universal)
-              (SRArrow(SRArrow(domain,bool),bool))
-        in app bool constant predicate end
       (* Strip SPEC routes WITHOUT substituting the owned arguments.
          Permutation is a property of this template, before matching. *)
       fun original_template [] [] current=current
@@ -16718,14 +16463,6 @@ struct
               raise ERR "prepare_source_condition_rule" "original Work"
         in policies:=List.foldr(fn(tree,all)=>append(sr_types tree)all)
           (!policies)all end
-      val bool=SRCaptured Type.bool
-      fun boolean term=atom(SRAtom term)bool
-      fun combine constant a b=
-        let val arrow=SRArrow(bool,bool)
-            val h=atom(SRAtom constant)(SRArrow(bool,arrow))
-        in app bool (app arrow h a)b end
-      fun equality a b=combine boolSyntax.equality a b
-      fun implication a b=combine boolSyntax.implication a b
       fun align conditions result=case closing of NONE=>
         (record template conditions (equality result result);
          record output conditions result)
