@@ -109,7 +109,7 @@ struct
     else if equal(handler,"eq_resolve")then SOME SimpleEqResolve
     else if equal(handler,"contra")then SOME SimpleContra
     else NONE
-  (* Typed view of the shared native route: every registered handler is
+  (* Typed view of [route]: every registered handler is
      classified exactly once, so a new constructor must pick its family. *)
   datatype simple_class = SimpleBoolean of simple_boolean
     | SimpleEquality of simple_equality | SimpleOther | NotSimple
@@ -145,7 +145,7 @@ struct
     | P.HTrueElim => SimpleOther
     | P.HProcessScope => SimpleOther
     | P.HResolution => NotSimple
-    | P.HCnf => NotSimple
+    | P.HCnf => NotSimple (* matched before this by [route_of] *)
     | P.HFactoring => NotSimple
     | P.HReordering => NotSimple
     | P.HAciNorm => NotSimple
@@ -230,7 +230,11 @@ struct
   (* The handlers whose name starts with "arith" or "int_tight_". *)
   fun arithmetic_handler handler =
     case handler of
-      P.HArith => true
+      P.HAciNorm => false
+    | P.HAlphaEquiv => false
+    | P.HAndElim => false
+    | P.HAndIntro => false
+    | P.HArith => true
     | P.HArithAbsEq => true
     | P.HArithAbsIntGt => true
     | P.HArithMaxGeq1 => true
@@ -245,9 +249,84 @@ struct
     | P.HArithRule => true
     | P.HArithSumUb => true
     | P.HArithTrichotomy => true
+    | P.HArray => false
+    | P.HArraysExt => false
+    | P.HArraysReadOverWrite => false
+    | P.HArraysSelectConst => false
+    | P.HBetaReduce => false
+    | P.HBool => false
+    | P.HBvAshrByConst0 => false
+    | P.HBvBitwiseSlicing => false
+    | P.HBvLshrByConst0 => false
+    | P.HBvNotIdemp => false
+    | P.HBvPolyNorm => false
+    | P.HBvPolyNormEq => false
+    | P.HBvShlByConst0 => false
+    | P.HBvShlByConst2 => false
+    | P.HBvWordRewrite => false
+    | P.HBvXorDuplicate => false
+    | P.HBvZeroExtendEliminate0 => false
+    | P.HCnf => false
+    | P.HCong => false
+    | P.HContra => false
+    | P.HDatatype => false
+    | P.HDatatypeEq => false
+    | P.HDtSplit => false
+    | P.HEqRefl => false
+    | P.HEqResolve => false
+    | P.HEquivElim1 => false
+    | P.HEquivElim2 => false
+    | P.HEvaluate => false
+    | P.HExistsElim => false
+    | P.HFactoring => false
+    | P.HFalseElim => false
+    | P.HFalseIntro => false
+    | P.HHoCong => false
+    | P.HImpliesElim => false
+    | P.HInstantiate => false
     | P.HIntTightLb => true
     | P.HIntTightUb => true
-    | _ => false
+    | P.HIteElim1 => false
+    | P.HIteElim2 => false
+    | P.HIteEq => false
+    | P.HIteFalseCond => false
+    | P.HIteNegBranch => false
+    | P.HIteNotCond => false
+    | P.HIteThenFalse => false
+    | P.HIteThenTrue => false
+    | P.HIteTrueCond => false
+    | P.HLambdaElim => false
+    | P.HModusPonens => false
+    | P.HNotAnd => false
+    | P.HNotEquivElim1 => false
+    | P.HNotEquivElim2 => false
+    | P.HNotImpliesElim1 => false
+    | P.HNotImpliesElim2 => false
+    | P.HNotIteElim1 => false
+    | P.HNotIteElim2 => false
+    | P.HNotNotElim => false
+    | P.HNotOrElim => false
+    | P.HProcessScope => false
+    | P.HQuantDtSplit => false
+    | P.HQuantRewrite => false
+    | P.HQuantUnusedVars => false
+    | P.HRareInventory => false
+    | P.HRefl => false
+    | P.HReordering => false
+    | P.HResolution => false
+    | P.HRewrite => false
+    | P.HScope => false
+    | P.HSeqRewrite => false
+    | P.HSets => false
+    | P.HSetsExt => false
+    | P.HSetsRewrite => false
+    | P.HSkolemize => false
+    | P.HString => false
+    | P.HSymm => false
+    | P.HTrans => false
+    | P.HTrueElim => false
+    | P.HTrueIntro => false
+    | P.HTrust => false
   fun equality_provenance (CPC_Proof.EqualityProvenance pair) = pair
     | equality_provenance
         (CPC_Proof.ApplicationProvenance("=",[left,right])) = (left,right)

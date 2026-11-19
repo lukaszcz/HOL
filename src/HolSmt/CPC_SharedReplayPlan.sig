@@ -8,6 +8,8 @@ sig
   (* Typed counterparts: the same classification of registered handlers
      (the string forms stay for the metered owned receiver). *)
   val route_of : {pop:bool,handler:CPC_Proof.replay_handler} -> route
+  (* The handlers the arithmetic graph route admits (names starting "arith"
+     or "int_tight_"); no string counterpart. *)
   val arithmetic_handler : CPC_Proof.replay_handler -> bool
   val occurrence_provenance : 'a SmtLib_Parser.construction_occurrence ->
     CPC_Proof.term_provenance

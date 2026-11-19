@@ -421,9 +421,8 @@ struct
             List.concat (List.map argument_terms (#args step))
           val structured = Q.graph_structured_rule_arguments (#rule step)
           val rule_handler = #replay_handler (#rule step)
-          fun handled handlers =
-            List.exists (fn handler => handler = rule_handler) handlers
-          val sequence_handlers =
+          fun handled handlers = Lib.mem rule_handler handlers
+          val sequence_string_handlers =
             [CPC_Proof.HSeqRewrite,CPC_Proof.HString,
              CPC_Proof.HRareInventory,CPC_Proof.HAciNorm,
              CPC_Proof.HRewrite,CPC_Proof.HTrust]
@@ -469,7 +468,7 @@ struct
               (case #conclusion step of NONE => []
                | SOME value => [#node value])
           val sequence_rule =
-            handled sequence_handlers andalso
+            handled sequence_string_handlers andalso
             (if rule_handler = CPC_Proof.HTrust then
                SmtReplayStructured.has_known_sequence_operand
              else SmtReplayStructured.has_sequence_operand) graph scope
@@ -482,7 +481,7 @@ struct
              needs positive family evidence in its target, not an incidental
              premise or an unknown binder of another family. *)
           val string_rule =
-            handled sequence_handlers andalso
+            handled sequence_string_handlers andalso
             (if rule_handler = CPC_Proof.HTrust then
                SmtReplayStructured.has_known_string_operand
              else SmtReplayStructured.has_string_operand) graph scope
@@ -2061,15 +2060,15 @@ struct
                   SmtResource.or_else (fn () => simple step premises)
                     (fn () =>
                       case (owned_work,handler) of
-                         (SOME work,CPC_Proof.HEqResolve) =>
-                         (case alias_eq_resolve work step premises of
-                            SOME selected => selected
-                          | NONE => bounded step premises)
-                       | (SOME work,CPC_Proof.HTrans) =>
-                           (case alias_transitivity work step premises of
-                              SOME selected => selected
-                            | NONE => bounded step premises)
-                       | _ => bounded step premises)
+                        (SOME work,CPC_Proof.HEqResolve) =>
+                          (case alias_eq_resolve work step premises of
+                             SOME selected => selected
+                           | NONE => bounded step premises)
+                      | (SOME work,CPC_Proof.HTrans) =>
+                          (case alias_transitivity work step premises of
+                             SOME selected => selected
+                           | NONE => bounded step premises)
+                      | _ => bounded step premises)
               in if binder_congruence step premises then
                   SmtResource.or_else (fn () => bounded step premises)
                     ordinary
