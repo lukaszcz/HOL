@@ -24,42 +24,44 @@ fun aesop_simp_rewrites_of ctxt =
 (* Start from the lifted srw_ss, NOT clasimp_ss: aesop leaves splitting
    to search.  Replacing rather than appending unsafe solvers is
    essential: a solver installed in the base must not precede aesop's
-   choice during safe normalisation's side-condition traversal. *)
+   choice during safe normalisation's side-condition traversal.  The
+   unsafe solver is set per context, in aesop_derived_of below. *)
 fun aesop_base ss =
   simpExtLib.lift_simpset ss
   |> clasimpLib.weaken_cond_congruence
   |> simpExtLib.set_cond_depth clasimpLib.cond_depth
   |> (fn ss' => simpExtLib.++ (ss', simpExtLib.lift_ssfrag boolSimps.ETA_ss))
   |> simpExtLib.set_safe_solvers [clasimpLib.safe_solver]
-  |> simpExtLib.set_unsafe_solvers [linarithLib.linarith_solver]
 
-(* The part of the simpset that moves only with srw_ss, derived from it
-   independently of clasimp's derivation, and so held, like srw_ss, by
-   the context: restoring a context restores this exact simpset. *)
-val {get = _, get_of = aesop_base_of} =
+(* The simpset is a function of srw_ss, the aesop_simp rewrites and the
+   [arith] facts.  The srw_ss state keys the stored value through the
+   derived-value mechanism, independently of clasimp's derivation, so
+   restoring a context restores the exact simpset.  The rewrites, compared
+   by identity (an immutable value a context owns), and the facts,
+   compared element-wise by identity, key a single-entry memo inside it.
+   Linarith is aesop's only unsafe solver. *)
+val {get = _, get_of = aesop_derived_of} =
   BasicProvers.make_simpset_derived_value
     "aesopData.aesop_ss"
-    (fn ss => fn _ => aesop_base ss)
-    simpExtLib.empty_ss
-
-(* The aesop_simp rewrites move without srw_ss, so they are added here,
-   once for each state of the pair.  Both are immutable values a context
-   owns, compared by identity. *)
-val with_rewrites =
-  memoUtil.keyed_memo
-    (fn (base, rewrites) => fn (base', rewrites') =>
-       Portable.pointer_eq (base, base') andalso
-       Portable.pointer_eq (rewrites, rewrites'))
-    (fn (base, rewrites) =>
-       simpExtLib.++ (base, simpExtLib.rewrites rewrites))
+    (fn ss => fn _ =>
+       let val base = aesop_base ss
+       in
+         memoUtil.keyed_memo
+           (fn (rewrites, facts) => fn (rewrites', facts') =>
+              Portable.pointer_eq (rewrites, rewrites') andalso
+              Lib.list_eq (Lib.curry Portable.pointer_eq) facts facts')
+           (fn (rewrites, facts) =>
+              (case rewrites of
+                   [] => base
+                 | _ => simpExtLib.++ (base, simpExtLib.rewrites rewrites))
+              |> simpExtLib.set_unsafe_solvers
+                   [linarithLib.linarith_solver_with_facts facts])
+       end)
+    (fn _ => simpExtLib.empty_ss)
 
 fun aesop_ss_of ctxt =
-  let val base = aesop_base_of ctxt
-  in
-    case aesop_simp_rewrites_of ctxt of
-        [] => base
-      | rewrites => with_rewrites (base, rewrites)
-  end
+  aesop_derived_of ctxt
+    (aesop_simp_rewrites_of ctxt, linarithData.arith_facts_of ctxt)
 
 fun aesop_ss () = aesop_ss_of (Context.snapshot ())
 

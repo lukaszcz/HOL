@@ -3677,6 +3677,48 @@ val _ =
          (closes_goal aesop_linarith_tactic
             aesop_arith_fact_goal))
 
+(* The [arith] set a tactic reads is that of the context it is applied in,
+   not the ambient one.  [ctxt_with_fact] is a snapshot that has the
+   probe fact and [ctxt_without_fact] one that lacks it; each tactic is run
+   with its context given explicitly, while the ambient set has the fact
+   (second group) or lacks it (first group). *)
+val ctxt_without_fact = Context.snapshot ()
+val ctxt_with_fact =
+  let val captured = ref ctxt_without_fact
+  in ignore (with_arith_fact
+               (fn () => (captured := Context.snapshot (); true)));
+     !captured
+  end
+
+fun closes_in ctxt tactic goal =
+  null (#1 (SelfTestTactical.VALID tactic goal ctxt))
+  handle Feedback.HOL_ERR _ => false
+
+fun unbudgeted_in ctxt =
+  simpLib.ASM_SIMP_TAC (aesopData.aesop_ss_of ctxt)
+    [aesop_linarith_rewrite]
+
+fun follows_context tactic_in =
+  let
+    fun closes ctxt = closes_in ctxt (tactic_in ctxt) aesop_arith_fact_goal
+    val ambient_without =
+      closes ctxt_with_fact andalso not (closes ctxt_without_fact)
+    val ambient_with =
+      with_arith_fact
+        (fn () => closes ctxt_with_fact andalso
+                  not (closes ctxt_without_fact))
+  in ambient_without andalso ambient_with end
+
+val _ =
+  check
+    ("the aesop simpset reads the [arith] set of its context",
+     fn () => follows_context unbudgeted_in)
+
+val _ =
+  check
+    ("AESOP_TAC reads the [arith] set of its context",
+     fn () => follows_context (fn _ => aesop_linarith_tactic))
+
 (* The tactic takes everything it owns from the context it is applied
    in: the claset, the simpsets derived from srw_ss and the aesop_simp
    table, and linarith's [arith] facts.  In this context srw_ss and
