@@ -20492,6 +20492,13 @@ in
     "the side with the redex was not normalized")
 end
 
+(* The rung ran (it raised its decline) and proved nothing. *)
+fun assert_21a_declined what =
+  (assert (profile_call_count "rewrite(21a)(datatype-normalize)_HOL_ERR" > 0,
+     "Z3 datatype-normalize was not reached");
+   assert (profile_call_count "rewrite(21a)(datatype-normalize)_OK" = 0,
+     "Z3 datatype-normalize accepted " ^ what))
+
 (* A target without a datatype redex is declined by the helper as
    [NoRedex], and the rung then falls through to the later rungs. *)
 fun z3_rewrite_datatype_normalize_declines () =
@@ -20508,22 +20515,23 @@ let
      | _ => die "FAIL: a target without a datatype redex was not declined";
      ignore (datatype_normalize_test_replay target)
        handle Feedback.HOL_ERR _ => ();
-     assert (profile_call_count "rewrite(21a)(datatype-normalize)_HOL_ERR" > 0,
-       "Z3 datatype-normalize was not reached");
-     assert (profile_call_count "rewrite(21a)(datatype-normalize)_OK" = 0,
-       "Z3 datatype-normalize accepted a target without a datatype redex"))
+     assert_21a_declined "a target without a datatype redex")
 in
   List.app decline targets
 end
 
 (* The helper's [NoRewrites] decline: a small term-size limit admits the
    target but leaves no admitted datatype fact for its types, so the helper
-   declines it and the rung falls through to the later rungs. *)
+   declines it and the rung falls through to the later rungs.  The target is
+   admitted at this limit, so the rung's decline is the helper's and not a
+   refusal at its first step; the target is no theorem, so the rung never
+   proves it and the last check only shows the fall-through. *)
 fun z3_rewrite_datatype_normalize_no_rewrites () =
 let
   val target = ``(b:bool) = c``
   fun admission () = SmtReplayArithmetic.new_term_check
     {limit = 5, observe = fn () => ()}
+  val _ = admission () target
   val _ =
     case SmtDatatypeProve.normalize_equation_with_admission
            (admission ()) target of
@@ -20536,10 +20544,7 @@ let
         (admission ()) []) target)
     handle Feedback.HOL_ERR _ => ()
 in
-  assert (profile_call_count "rewrite(21a)(datatype-normalize)_HOL_ERR" > 0,
-    "Z3 datatype-normalize was not reached");
-  assert (profile_call_count "rewrite(21a)(datatype-normalize)_OK" = 0,
-    "Z3 datatype-normalize accepted a target without datatype facts")
+  assert_21a_declined "a target without datatype facts"
 end
 
 (* Rung 21a normalizes in the checked rewrite traversal: here the exported
