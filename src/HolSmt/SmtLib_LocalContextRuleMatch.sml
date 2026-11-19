@@ -151,8 +151,9 @@ struct
                caller = caller,traversal = traversal,target = actual,
                types = types,arguments = arguments,output = output,
                used = ref false}))))
-  fun validate_for expected (Match {owner = owner as Owner {work,rulescope,...},
-      schema = Schema {whole,...},caller,traversal,target,...}) =
+  fun validate_for expected (Match {owner = owner as Owner
+      {work,rulescope,...},schema = Schema {whole,...},caller,traversal,
+       target,...}) =
     (Shared.validate_match owner "validate_for"
        {known = Portable.pointer_eq (expected,work),rulescope = rulescope,
         whole = whole,caller = caller,traversal = traversal,target = target}
@@ -167,251 +168,25 @@ struct
   (* This derives a closed CONDITIONAL instance. The literal first-order
      route does not claim Cond_rewr's orientation/condition solver policy. *)
   fun instantiate (value as Match {owner = owner as Owner
-      {work,graph,scope,rulescope,catalogue,...},schema = schema as Schema
-        {whole,rule,free,operations,terminal,left,...},types,arguments,
-      caller,traversal,target,used,...}) {check_type} =
+      {work,graph,rulescope,catalogue,...},schema = Schema
+        {index,whole,rule,free,operations,terminal,left,right,...},
+      types,arguments,traversal,target,used,...}) {check_type} =
     protected owner (fn () => W.with_step work (fn () =>
-    let
-      val _ = active owner
-      val _ = if !used then raise ERR "instantiate" "match already consumed"
-        else ()
-      val _ = validate_for work value
-      val _ = used := true
-      val limit = IntInf.fromInt (W.work_limit work)
-      val output_cap = IntInf.fromInt
-        (#output_limit (W.semantic_limits work))
-      val template_cap = IntInf.fromInt
-        (#template_limit (W.semantic_limits work))
-      fun find equal key pending = case pending of [] => NONE
-        | (k,v)::rest => (tick owner;
-            if equal (key,k) then SOME v else find equal key rest)
-      fun mapped_weight ty =
-        (tick owner;
-         if Type.is_vartype ty then
-           (case find (fn (a,b) => compare_type owner (a,b) = EQUAL)
-                ty types of
-              NONE => type_weight owner ty | SOME t => type_weight owner t)
-         else let val {Args,...} = Type.dest_thy_typeid ty
-              in List.foldl (fn (a,n) => n+mapped_weight a) 1 Args end)
-      val annotations = ref ([] : Type.hol_type list)
-      val actual_annotations = ref ([] : Type.hol_type list)
-      fun actual_types current =
-        let val d = data current val _ = tick owner
-            val _ = actual_annotations := #ty d :: !actual_annotations
-        in case #shape d of Atom => ()
-          | App (f,x) => (actual_types f;actual_types x)
-          | Lam {binder_type,body,...} =>
-              (actual_annotations := binder_type :: !actual_annotations;
-               actual_types body) end
-      fun profile substitutions current =
-        let val d = data current val _ = tick owner
-            val _ = annotations := #ty d :: !annotations
-        in case find (op =) (#node d) substitutions of
-          SOME p =>
-            (case find (op =) (#node d) arguments of
-               SOME target => actual_types target | NONE => ();p)
-        | NONE =>
-            let val ann = mapped_weight (#ty d)
-            in case #shape d of
-              Atom => unit ann
-            | App (f,x) => add (unit ann)
-                (add (profile substitutions f) (profile substitutions x))
-            | Lam {binder_type,body,...} =>
-                (annotations := binder_type :: !annotations;
-                 add {raw = 1,inc = 2,
-                   ann = ann+mapped_weight binder_type}
-                   (profile substitutions body)) end end
-      fun equality (p : profile) : profile =
-        {raw = 2 * #raw p+3,inc = 2 * #inc p+3,ann = 2 * #ann p+9}
-      fun implication (p : profile) (q : profile) =
-        add {raw = 3,inc = 3,ann = 9} (add p q)
-      val forecasts = ref ([] : profile list)
-      fun record hypotheses (p : profile) =
-        let val h = List.foldl (fn (x,a) => add x a)
-              {raw = 0,inc = 0,ann = 0} hypotheses
-            val full = add p h
-            val _ = if #raw p <= output_cap andalso #inc p <= output_cap
-                andalso #ann full <= limit then () else
-              raise ERR "instantiate" "prospective instance exceeds quota"
-        in forecasts := full :: !forecasts;p end
-      val initial = profile [] whole
-      (* Genuine whole original/canonical bridge: TRANS equality then EQ_MP.
-         Alpha-only metadata does not authorize an arbitrary semantic pair. *)
-      val _ = record [] (equality initial)
-      val _ = record [] initial
-      val _ = record [] initial (* INST_TYPE result *)
-      val free_substitutions = List.mapPartial (fn binder =>
-        case find (op =) binder arguments of
-          NONE => NONE
-        | SOME value => SOME (binder,#profile (data value))) free
-      val _ = if null free_substitutions then () else
-        ignore (record [] (profile free_substitutions whole))
-      val _ = List.app (fn (binder,actual) =>
-        let val ty = G.type_of graph binder
-            val _ = annotations := ty :: !annotations
-        in ignore (record [] (unit (mapped_weight ty)));
-           ignore (record [] actual) end) free_substitutions
-      fun play [] current substitutions hypotheses =
-            (current,substitutions,hypotheses)
-        | play (operation::rest) current substitutions hypotheses =
-          (tick owner;
-           case operation of
-             Specialize binder =>
-               let val predicate = case unary owner "bool" "!" current of
-                     SOME p => p | NONE =>
-                       raise ERR "instantiate" "prepared forall route changed"
-                   val body = case #shape (data predicate) of
-                     Lam {body,...} => body | _ =>
-                       raise ERR "instantiate" "missing prepared binder"
-                   val actual = case find (op =) binder arguments of
-                     SOME t => #profile (data t)
-                   | NONE =>
-                       let val ty = G.type_of graph binder
-                           val _ = annotations := ty :: !annotations
-                       in unit (mapped_weight ty) end
-                   val substitutions = (binder,actual)::substitutions
-                   val _ = record hypotheses (profile substitutions body)
-               in play rest body substitutions hypotheses end
-           | Select choose_left =>
-               let val (l,r) = case binary owner "bool" "/\\" current of
-                     SOME p => p | NONE =>
-                       raise ERR "instantiate" "prepared conjunction changed"
-                   val next = if choose_left then l else r
-                   val _ = record hypotheses (profile substitutions next)
-               in play rest next substitutions hypotheses end
-           | Undisch =>
-               let val (condition,body) =
-                     case binary owner "min" "==>" current of
-                       SOME p => p | NONE =>
-                         raise ERR "instantiate" "prepared implication changed"
-                   val h = profile substitutions condition
-                   val _ = record [h] h (* ASSUME local condition *)
-                   val hypotheses = h::hypotheses
-                   val _ = record hypotheses (profile substitutions body)
-               in play rest body substitutions hypotheses end)
-      val (_,substitutions,hypotheses) =
-        play operations whole free_substitutions []
-      val p = profile substitutions left
-      val terminal_profile = case terminal of
-          Equality => (case schema of Schema {right = SOME r,...} =>
-            let val rhs = profile substitutions r
-                val t = mapped_weight (#ty (data left))
-            in add {raw = 3,inc = 3,ann = 6+3*t} (add p rhs) end
-          | _ => raise ERR "instantiate" "equality route missing right side")
-        | Positive =>
-            (ignore (record []
-              {raw = 2 * #raw p+7,inc = 2 * #inc p+7,ann = 2 * #ann p+19});
-             add p {raw = 4,inc = 4,ann = 10})
-        | Negative =>
-            (ignore (record []
-              {raw = 2 * #raw p+9,inc = 2 * #inc p+9,ann = 2 * #ann p+23});
-             add p {raw = 4,inc = 4,ann = 10})
-      val _ = record hypotheses terminal_profile
-      fun discharge [] p = p
-        | discharge (h::rest) p =
-            let val q = implication h p val _ = record rest q
-            in discharge rest q end
-      val final = discharge hypotheses terminal_profile
-      val _ = if #raw final <= template_cap andalso
-          #inc final <= template_cap then () else
-        raise ERR "instantiate" "instance exceeds closed-recording template"
-      val _ = record [] p (* prospective operand comparison *)
-      val _ = record [] (equality final) (* genuine G import bridge *)
-      val _ = record [] (equality final) (* genuine G opened bridge *)
-      val _ = record [] (equality final) (* P retained bridge TRANS *)
-      val _ = record [] final (* original closed recording EQ_MP *)
-      val quote = List.foldl (fn (p,n) =>
-          n + #raw p + #inc p + #ann p) (0 : IntInf.int) (!forecasts)
-      val _ = if quote <= limit then W.spend work (IntInf.toInt quote) else
-        raise ERR "instantiate" "instance portfolio exceeds original Work"
-      fun guard action =
-        (validate_for work value;
-         let val result = action ()
-         in validate_for work value;result end)
-      (* No future type constructor, policy or proof before all result
-         grammars and repeated annotations have been prepared/debited. *)
-      val substitution = List.map
-        (fn (redex,residue) => {redex = redex,residue = residue}) types
-      val checked_types = List.map (fn ty =>
-        guard (fn () => Type.type_subst substitution ty)) (!annotations) @
-          !actual_annotations
-      (* Domains are ONLY original free-variable nodes; ranges come ONLY
-         from this completed match. No caller substitution is admitted.
-         Detect collapsed free domains before policy/INST_TYPE/INST. *)
-      val free_terms = List.mapPartial (fn binder =>
-        case find (op =) binder arguments of NONE => NONE
-        | SOME value =>
-          let val original = guard (fn () => G.representative graph binder)
-              val typed = guard (fn () => Term.inst substitution original)
-              val target = guard (fn () => G.representative graph (node value))
-          in SOME {redex = typed,residue = target} end) free
-      fun unique [] = ()
-        | unique ({redex,residue}::rest) =
-          (List.app (fn {redex = other,residue = target} =>
-             if guard (fn () => Term.term_eq redex other) then
-               if guard (fn () => Term.aconv residue target) then () else
-                 raise ERR "instantiate" "type instance collapses free domains"
-             else ()) rest;unique rest)
-      val _ = unique free_terms
-      val _ = List.app (fn ty => guard (fn () => check_type ty)) checked_types
-      val canonical = guard (fn () =>
-        let val facts = catalogue_facts work catalogue
-            val Schema {index,...} = schema
-            val fact = List.nth (facts,index)
-            val _ = P.validate_closed_fact graph rulescope
-              (#template_limit (W.semantic_limits work)) fact
-            val _ = if Portable.pointer_eq (rule,P.closed_original fact)
-                andalso P.closed_node fact=node whole then () else
-              raise ERR "instantiate" "context rule provenance changed"
-        in rule end)
-      val typed = guard (fn () => Thm.INST_TYPE substitution canonical)
-      val typed = if null free_terms then typed else
-        guard (fn () => Thm.INST free_terms typed)
-      fun execute [] theorem conditions = (theorem,conditions)
-        | execute (operation::rest) theorem conditions =
-          (case operation of
-             Specialize binder =>
-               let val argument = case find (op =) binder arguments of
-                     SOME t => guard (fn () => G.representative graph (node t))
-                   | NONE => guard (fn () =>
-                       #1 (boolSyntax.dest_forall (Thm.concl theorem)))
-                   val next = guard (fn () => Thm.SPEC argument theorem)
-               in execute rest next conditions end
-           | Select choose_left =>
-               let val next = guard (fn () => if choose_left
-                     then Thm.CONJUNCT1 theorem else Thm.CONJUNCT2 theorem)
-               in execute rest next conditions end
-           | Undisch =>
-               let val condition = guard (fn () =>
-                     #1 (boolSyntax.dest_imp (Thm.concl theorem)))
-                   val assumed = guard (fn () => Thm.ASSUME condition)
-                   val next = guard (fn () => Thm.MP theorem assumed)
-               in execute rest next (condition::conditions) end)
-      val (body,conditions) = execute operations typed []
-      val body = case terminal of Equality => body
-        | Positive => guard (fn () => Drule.EQT_INTRO body)
-        | Negative => guard (fn () => Drule.EQF_INTRO body)
-      val theorem = List.foldl (fn (condition,th) =>
-        guard (fn () => Thm.DISCH condition th)) body conditions
-      val _ = if null (Thm.hyp theorem) then () else
-        raise ERR "instantiate" "temporary condition hypotheses escaped"
-      fun consequent current =
-        if boolSyntax.is_imp current then
-          consequent (#2 (boolSyntax.dest_imp current)) else current
-      val actual_left = guard (fn () =>
-        boolSyntax.lhs (consequent (Thm.concl theorem)))
-      val wanted = guard (fn () => G.representative graph (node target))
-      val _ = if guard (fn () => Term.aconv actual_left wanted) then () else
-        raise ERR "instantiate" "proved instance differs from matched operand"
-      val imported = guard (fn () => G.import graph traversal
-        (#template_limit (W.semantic_limits work)) (Thm.concl theorem))
-      val opened = guard (fn () => G.record_opened_view graph traversal
-        (#template_limit (W.semantic_limits work)) (#node imported))
-      val proof = guard (fn () => P.record_closed_from_import graph traversal
-        {node = #node opened,theorem = theorem,
-         template_limit = #template_limit (W.semantic_limits work),
-         check_type = fn ty => guard (fn () => check_type ty)})
-    in Instance {matched = value,theorem = theorem,proof = proof} end))
+      let val provenance = Shared.Provenance (fn () =>
+            let val fact = List.nth (catalogue_facts work catalogue,index)
+                val _ = P.validate_closed_fact graph rulescope
+                  (#template_limit (W.semantic_limits work)) fact
+            in if Portable.pointer_eq (rule,P.closed_original fact)
+                  andalso P.closed_node fact=node whole then () else
+                raise ERR "instantiate" "context rule provenance changed"
+            end)
+          val {theorem,proof} = Shared.instantiate owner (Shared.Plain work)
+            {validate = fn () => validate_for work value,used = used,
+             check_type = check_type,whole = whole,rule = rule,free = free,
+             operations = operations,terminal = terminal,left = left,
+             right = right,target = target,traversal = traversal,
+             types = types,arguments = arguments,canonical = provenance}
+      in Instance {matched = value,theorem = theorem,proof = proof} end))
   fun instance_context_for expected
       (Instance {matched=Match {schema,...},...}) =
     context_for expected schema
