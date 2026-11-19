@@ -16,12 +16,11 @@ conditional depth at 40, and replaces both solver lists with Aesop's
 selected safe and unsafe solvers. The additive `[aesop_simp]` rewrites are
 then installed. Splitting remains the search engine's responsibility.
 
-The result is derived from `srw_ss ()` when that changes; a change to the
-`[aesop_simp]` rewrites alone is derived once more, keyed on the identity
-of both inputs. Both follow `Context.restore`. Scope temporary changes to
-the base with `BasicProvers.with_simpset_updates`.
+The result follows `Context.restore`. Scope temporary changes to the base
+with `BasicProvers.with_simpset_updates`.
 
 ### See also
 
+[`aesopData.aesop_ss_of`](#aesopData.aesop_ss_of),
 [`aesopLib.AESOP_TAC`](#aesopLib.AESOP_TAC),
 [`aesopLib.CS_AESOP_TAC`](#aesopLib.CS_AESOP_TAC)
