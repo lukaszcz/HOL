@@ -3719,20 +3719,6 @@ local
         [{redex = variable, residue = sequence}] theorem
     | _ => raise ERR "instantiate_smtstr" "expected one String variable"
 
-  fun replay_seq_rev_rev admit args =
-    case args of
-      [sequence] =>
-        if is_smtstr_type (Term.type_of sequence) then
-          instantiate_smtstr smtstringTheory.smtstr_rev_rev sequence
-        else
-          let val target = boolSyntax.mk_eq
-                (listSyntax.mk_reverse (listSyntax.mk_reverse sequence),
-                 sequence)
-              val _ = List.app admit
-                [sequence,target,Thm.concl listTheory.REVERSE_REVERSE]
-          in Drule.ISPEC sequence listTheory.REVERSE_REVERSE end
-    | _ => raise ERR "seq-rev-rev" "expected one sequence argument"
-
   fun replay_str_contains_refl admit args =
     case args of
       [sequence] =>
@@ -3752,75 +3738,6 @@ local
             Drule.EQT_INTRO proof
           end
     | _ => raise ERR "str-contains-refl" "expected one sequence argument"
-
-  fun replay_str_substr_full_eq admit args =
-    case args of
-      [sequence, length] =>
-        if is_smtstr_type (Term.type_of sequence) then
-          let
-            val theorem = instantiate_smtstr
-              smtstringTheory.smtstr_substr_full sequence
-            val expected_length = Term.list_mk_comb
-              (Term.mk_thy_const {Thy = "smtstring", Name = "smtstr_len",
-                 Ty = Type.--> (Term.type_of sequence, intSyntax.int_ty)},
-               [sequence])
-          in
-            if Term.aconv length expected_length then theorem
-            else raise ERR "str-substr-full-eq" "length argument does not match"
-          end
-        else
-          let
-            val sequence_ty = Term.type_of sequence
-            val extract = Term.mk_thy_const {Thy = "HolSmt",
-              Name = "smt_seq_extract", Ty = Type.--> (sequence_ty,
-                Type.--> (intSyntax.int_ty,
-                  Type.--> (intSyntax.int_ty, sequence_ty)))}
-            val expected_length = Term.mk_comb (intSyntax.int_injection,
-              listSyntax.mk_length sequence)
-            val target = boolSyntax.mk_eq
-              (Term.list_mk_comb (extract,
-                 [sequence, intSyntax.zero_tm, expected_length]), sequence)
-          in
-            if Term.aconv length expected_length then
-              SmtSeqProve.seq_prove_with_admission admit target
-            else raise ERR "str-substr-full-eq" "length argument does not match"
-          end
-    | _ => raise ERR "str-substr-full-eq"
-        "expected a sequence and its length"
-
-  fun replay_string_at_elim sequence index =
-    Drule.SPECL [sequence, index] smtstringTheory.smtstr_at_def
-
-  fun replay_seq_at_elim admit conclusion args =
-    case (conclusion, args) of
-      (SOME target, [sequence, index]) =>
-        if is_smtstr_type (Term.type_of sequence) then
-          let val thm = replay_string_at_elim sequence index in
-            if Term.aconv target (Thm.concl thm) then thm
-            else raise ERR "str-at-elim" "String conclusion does not match"
-          end
-        else SmtSeqProve.seq_prove_with_admission admit target
-    | (NONE, [sequence, index]) =>
-        if is_smtstr_type (Term.type_of sequence) then
-          replay_string_at_elim sequence index
-        else
-          let
-            val sequence_ty = Term.type_of sequence
-            val at = Term.mk_thy_const {Thy = "HolSmt", Name = "smt_seq_at",
-              Ty = Type.--> (sequence_ty,
-                Type.--> (intSyntax.int_ty, sequence_ty))}
-            val extract = Term.mk_thy_const {
-              Thy = "HolSmt", Name = "smt_seq_extract",
-              Ty = Type.--> (sequence_ty, Type.--> (intSyntax.int_ty,
-                Type.--> (intSyntax.int_ty, sequence_ty)))}
-            val target = boolSyntax.mk_eq
-              (Term.list_mk_comb (at, [sequence, index]),
-               Term.list_mk_comb (extract,
-                 [sequence, index, intSyntax.one_tm]))
-          in
-            SmtSeqProve.seq_prove_with_admission admit target
-          end
-    | _ => raise ERR "str-at-elim" "expected sequence and index arguments"
 
   fun replay_ext name prems =
     case prems of
@@ -21500,16 +21417,9 @@ local
            | "seq_rewrite" => opaque (
                replay_seq_rewrite datatype_admit (#name rule)
                  prems conclusion args)
-           | "seq_rev_rev" => opaque (replay_seq_rev_rev datatype_admit args)
-           | "str_contains_refl" => opaque
-               (replay_str_contains_refl datatype_admit args)
            | "rare_inventory" => opaque (
                replay_rare_inventory datatype_admit state (#name rule)
                  prems conclusion located_args)
-           | "str_substr_full_eq" => opaque
-               (replay_str_substr_full_eq datatype_admit args)
-           | "seq_at_elim" => opaque
-               (replay_seq_at_elim datatype_admit conclusion args)
            | "sets" => opaque ( replay_sets state (#name rule) prems conclusion args)
            | "arrays_ext" =>
                if List.null args then
