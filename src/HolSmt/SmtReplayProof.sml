@@ -10574,8 +10574,12 @@ struct
   (* The guard both clause paths share.  It checks, in this order: the
      plan's Work, its evidence, its frame, the caller scope, the closure
      children and the quoted future arguments; then it runs the caller's own
-     remaining checks.  The whole guard sits inside one failure wrapper. *)
-  fun sce_guard_clause expected work evidence frame graph caller scope
+     remaining checks.  The whole guard sits inside one failure wrapper.
+     Kept as one function on purpose: Poly/ML (which has no NOINLINE)
+     inlines small functions at every call site, so splitting off a small
+     part would make that part small enough to be copied into each of the
+     many scr_clause_guard call sites. *)
+  fun sce_shared_clause_guard expected work evidence frame graph caller scope
       children futures tail=
     sr_fail expected (fn()=>
       (if Portable.pointer_eq(expected,work) then () else
@@ -10592,7 +10596,7 @@ struct
        tail()))
   fun sce_core_guard expected kind
       ({work,evidence,frame,graph,caller,scope,children,...}:sce_clause_core)=
-    sce_guard_clause expected work evidence frame graph caller scope
+    sce_shared_clause_guard expected work evidence frame graph caller scope
       children (case kind of SCERuleClause=>[]
         | SCEArgumentClause future=>[future]) (fn()=>())
   fun sce_clause_guard expected (SCEClausePlan core)=
@@ -15352,7 +15356,8 @@ struct
        in SourceConditionArgumentReady value end)))
   fun source_condition_argument_ready_for expected
       (SourceConditionArgumentReady(value as SourceConditionArgumentPlan
-        {plan=SCEArgumentClausePlan {clause=SCEClausePlan {frame,...},future},phase,...}))=
+        {plan=SCEArgumentClausePlan
+           {clause=SCEClausePlan {frame,...},future},phase,...}))=
     source_argument_operation expected value(fn()=>
       (source_argument_guard expected value;
        if !phase=ArgumentAdmitted then ()else raise ERR
@@ -15694,7 +15699,7 @@ struct
      condition_origins:sce_origin_tree list}
   fun scr_clause_guard expected (SCRClausePlan
       {work,evidence,frame,graph,caller,scope,children,future,closing,...})=
-    sce_guard_clause expected work evidence frame graph caller scope
+    sce_shared_clause_guard expected work evidence frame graph caller scope
       children future (fn()=>
         case closing of NONE=>() | SOME data=>
           scr_conj_guard expected frame data)
