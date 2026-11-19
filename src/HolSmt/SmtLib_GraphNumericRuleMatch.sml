@@ -651,10 +651,7 @@ struct
       W.spend_policy work (IntInf.fromInt n)
     val err = ERR
   end)
-  (* Opening Walk rebinds `owner`; keep the numeric owner exported. *)
-  type numeric_owner = owner
   open Walk
-  type owner = numeric_owner
   datatype operation = Specialize of G.node | Select of bool | Undisch
   datatype policy_schema = PolicySchema of
     {policy_owner : policy_owner,index : int,rule : Thm.thm,whole : tree,

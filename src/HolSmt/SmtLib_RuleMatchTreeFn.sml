@@ -21,7 +21,7 @@ end
 
 signature SmtLib_RuleMatchTree =
 sig
-  type owner
+  type walk_owner
   type profile = {raw : IntInf.int,inc : IntInf.int,ann : IntInf.int}
   datatype shape = Atom | App of tree * tree
     | Lam of {binder : SmtReplayGraph.node,binder_type : Type.hol_type,
@@ -34,27 +34,23 @@ sig
     child : SmtReplayGraph.closure_child,frame : SmtReplayGraph.scope,
     ty : Type.hol_type,shape : shape,profile : profile}
   val node : tree -> SmtReplayGraph.node
-  val guarded : owner -> (unit -> 'a) -> 'a
+  val guarded : walk_owner -> (unit -> 'a) -> 'a
   val add : profile -> profile -> profile
   val unit : IntInf.int -> profile
-  val type_weight : owner -> Type.hol_type -> IntInf.int
-  val compare_type : owner -> Type.hol_type * Type.hol_type -> order
-  val closure_guard : owner -> SmtReplayGraph.scope -> SmtReplayGraph.scope ->
-    SmtReplayGraph.closure_child -> SmtReplayGraph.node
-  val tree : owner -> SmtReplayGraph.scope -> SmtReplayGraph.scope ->
+  val type_weight : walk_owner -> Type.hol_type -> IntInf.int
+  val compare_type : walk_owner -> Type.hol_type * Type.hol_type -> order
+  val tree : walk_owner -> SmtReplayGraph.scope -> SmtReplayGraph.scope ->
     SmtReplayGraph.closure_child -> tree
-  val const_name : owner -> tree -> {Thy : string,Name : string} option
-  val head_is : owner -> string -> string -> tree -> bool
-  val unary : owner -> string -> string -> tree -> tree option
-  val binary : owner -> string -> string -> tree -> (tree * tree) option
-  val free_nodes : owner -> tree -> SmtReplayGraph.node list
+  val unary : walk_owner -> string -> string -> tree -> tree option
+  val binary : walk_owner -> string -> string -> tree -> (tree * tree) option
+  val free_nodes : walk_owner -> tree -> SmtReplayGraph.node list
 end
 
 functor SmtLib_RuleMatchTreeFn (A : SmtLib_RuleMatchOwner) :
-    SmtLib_RuleMatchTree where type owner = A.owner =
+    SmtLib_RuleMatchTree where type walk_owner = A.owner =
 struct
   structure G = SmtReplayGraph
-  type owner = A.owner
+  type walk_owner = A.owner
   type profile = {raw : IntInf.int,inc : IntInf.int,ann : IntInf.int}
   datatype shape = Atom | App of tree * tree
     | Lam of {binder : G.node,binder_type : Type.hol_type,body : tree}
