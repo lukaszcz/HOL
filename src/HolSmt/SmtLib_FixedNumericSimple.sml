@@ -640,6 +640,65 @@ struct
       in SOME (seal_focus recipe) end
       handle Inapplicable => (redescribe ();retry ())
     end
+  (* The opened-view half of both owners' discover, run inside the
+     owner's action after its own prelude (the policy owner's native
+     preflight and envelope). The owner supplies [discover] (the
+     selected-partial discovery receipt, paying through its own
+     observer), [data_of] (the receipt's data), [count_for] (the
+     opened target's raw / binder-inclusive size under its output cap;
+     the policy owner prepares its profiled metric first), [spend],
+     [plan_identity], [check_type] and [record] (the typed conversion
+     recorder). Returns the recorded conversion, or NONE when the scan
+     selected nothing. *)
+  fun opened_conversion_with graph scope {node,discover,data_of,backing,
+      redescribe,count_for,cap,output,ceiling,spend,plan_identity,
+      check_type,record} =
+    let val receipt = discover ()
+        fun data () =
+          let val value : {original:G.node,view:G.source option} =
+                data_of receipt
+          in if #original value= node then value else
+            raise ERR "discover" "selected original changed" end
+        val _ = backing := (fn () => ignore (data ())) :: !backing
+    in case #view (data ()) of NONE => NONE
+      | SOME view =>
+        let val target = #node view
+            val _ = G.validate_opened_view graph scope node view
+            (* The genuine private alpha recipe preserves every raw,
+               binder-variable and type incidence. Its cached rich
+               profile bounds the old raw term before inspection. *)
+            val count = count_for target
+            val raw = count G.RawNodes
+            val inc = count G.BinderInclusiveNodes
+            fun live () =
+              (redescribe ();ignore (data ());
+               G.validate_opened_view graph scope node view)
+            fun inspect operation = observed live operation
+            val {types,proof,target_child} = opened_projection graph
+              scope {node=node,view=view,target=target,raw=raw,
+                inc=inc,output=output,cap=cap,ceiling=ceiling,
+                spend=spend,live=live,
+                add_backing=fn guard => backing := guard :: !backing}
+            val identity=inspect (fn () =>
+              (* Original/partial guards remain in data/live,
+                 owner.backing and P.source_view validation. The
+                 raw opaque original is not an identity recipe. *)
+              plan_identity target_child)
+            val _ = List.app (fn ty => inspect
+              (fn () => check_type ty)) (List.rev (!types))
+            val target_view=inspect
+              (fn () => G.execute_identity_closure_view identity)
+            val conversion=inspect (fn () => record
+              {source=node,source_view=view,target=target,
+               target_view=target_view,theorem=proof,
+               check_type=fn ty => inspect (fn () => check_type ty)})
+        in SOME conversion end
+    end
+  (* The tail of both owners' discover: the leaf recipe for the recorded
+     conversion, then sealed into the outcome. *)
+  fun discovered_with converted leaf seal =
+    case converted of NONE => NONE | SOME conversion =>
+      let val recipe = leaf conversion in SOME (seal recipe) end
   datatype owner = Owner of
     {work:W.portfolio,graph:G.graph,root:G.scope,sources:S.sources,
      catalogue:K.catalogue,traversal:T.owner,matcher:M.owner,
@@ -937,70 +996,44 @@ struct
   (* Selection is derived from ALL authenticated fixed canonical rows in
      begin, not supplied by a caller. A complete negative scan needs no
      opening. A positive scan retains the exact private alpha recipe. *)
-  fun discover (owner as Owner {work,graph,discovery_heads,...}) focus =
+  fun discover (owner as Owner {work,graph,discovery_heads,backing,...})
+      focus =
     let val d = describe owner focus val scope = #scope d
         val cap = #template_limit (W.semantic_limits work)
         val output = #output_limit (W.semantic_limits work)
         val ceiling = IntInf.fromInt (W.work_limit work)
         val converted = action owner focus (fn observe =>
-          let val receipt = G.discover_compact_selected_partial graph scope
-                {original= #node d,heads=discovery_heads,
-                 maximum= #source_limit d,scan_limit=W.work_limit work,
-                 step=observe}
-              fun data () =
-                let val value = G.selected_partial_data graph scope
-                      discovery_heads receipt
-                in if #original value= #node d then value else
-                  raise ERR "discover" "selected original changed" end
-              val _ = (case owner of Owner {backing,...} =>
-                backing := (fn () => ignore (data ())) :: !backing)
-          in case #view (data ()) of NONE => NONE
-            | SOME view =>
-              let val target = #node view
-                  val _ = G.validate_opened_view graph scope (#node d) view
-                  (* The genuine private alpha recipe preserves every raw,
-                     binder-variable and type incidence. Its cached rich
-                     profile bounds the old raw term before inspection. *)
-                  fun count metric =
-                    case G.unfolded_nodes graph metric output target of
-                      SOME n => if n<=output then IntInf.fromInt n else
-                        raise ERR "discover" "opened target exceeds output"
-                    | NONE => raise ERR "discover" "missing opened profile"
-                  val raw = count G.RawNodes
-                  val inc = count G.BinderInclusiveNodes
-                  fun live () =
-                    (ignore (describe owner focus);ignore (data ());
-                     G.validate_opened_view graph scope (#node d) view)
-                  fun inspect operation = observed live operation
-                  val {types,proof,target_child} = opened_projection graph
-                    scope {node= #node d,view=view,target=target,raw=raw,
-                      inc=inc,output=output,cap=cap,ceiling=ceiling,
-                      spend=fn n => W.spend work (IntInf.toInt n),live=live,
-                      add_backing=fn guard => (case owner of
-                        Owner {backing,...} => backing := guard :: !backing)}
-                  val identity=inspect (fn () =>
-                    G.plan_identity_closure_view graph scope cap
-                      (* Original/partial guards remain in data/live,
-                         owner.backing and P.source_view validation. The
-                         raw opaque original is not an identity recipe. *)
-                      {target=target_child,retain=[]})
-                  val _ = List.app (fn ty => inspect
-                    (fn () => policy owner focus ty)) (List.rev (!types))
-                  val target_view=inspect
-                    (fn () => G.execute_identity_closure_view identity)
-                  val conversion=inspect (fn () => P.record_typed_conversion
-                    graph scope {source= #node d,source_view=view,
-                      target=target,target_view=target_view,theorem=proof,
-                      template_limit=cap,check_type=fn ty => inspect
-                        (fn () => policy owner focus ty)})
-              in SOME conversion end
-          end)
-    in case converted of NONE => NONE | SOME conversion =>
-      let val leaf=action owner focus (fn observe =>
-            C.graph_leaf graph scope {conversion=conversion,
-              template_limit=cap,observe=observe})
-      in SOME (seal owner focus leaf) end
-    end
+          opened_conversion_with graph scope
+            {node= #node d,
+             discover=fn () => G.discover_compact_selected_partial graph scope
+               {original= #node d,heads=discovery_heads,
+                maximum= #source_limit d,scan_limit=W.work_limit work,
+                step=observe},
+             data_of=fn receipt => G.selected_partial_data graph scope
+               discovery_heads receipt,
+             backing=backing,redescribe=fn () => ignore (describe owner focus),
+             count_for=fn target => fn metric =>
+               case G.unfolded_nodes graph metric output target of
+                 SOME n => if n<=output then IntInf.fromInt n else
+                   raise ERR "discover" "opened target exceeds output"
+               | NONE => raise ERR "discover" "missing opened profile",
+             cap=cap,output=output,ceiling=ceiling,
+             spend=fn n => W.spend work (IntInf.toInt n),
+             plan_identity=fn target_child =>
+               G.plan_identity_closure_view graph scope cap
+                 {target=target_child,retain=[]},
+             check_type=policy owner focus,
+             record=fn {source,source_view,target,target_view,theorem,
+                 check_type} =>
+               P.record_typed_conversion graph scope
+                 {source=source,source_view=source_view,target=target,
+                  target_view=target_view,theorem=theorem,
+                  template_limit=cap,check_type=check_type}})
+    in discovered_with converted
+      (fn conversion => action owner focus (fn observe =>
+        C.graph_leaf graph scope {conversion=conversion,
+          template_limit=cap,observe=observe}))
+      (seal owner focus) end
   (* Concrete proof adapters below retain their SAME-owned receipts. *)
   fun lift owner focus (result:outcome) =
     let val Owner {work,conditional,graph,...} = owner
@@ -1652,8 +1685,8 @@ struct
                 val _=guard()
             in answer end
       in List.exists member(#heads data)end
-    fun discover(owner as Owner
-        {work,graph,discovery_heads,native_contract,profiles,...})focus=
+    fun discover(owner as Owner{work,graph,discovery_heads,native_contract,
+        profiles,backing,...})focus=
     let val d = describe owner focus val scope = #scope d
         val native=NC.for_work work native_contract
         val cap= #template_limit(#semantic_limits native)
@@ -1675,71 +1708,48 @@ struct
                 raise ERR "policy_discover" "native alpha equality envelope"
               val actual_cap=Int.min(#import_limit native,
                 Int.min(cap,Int.min(output,native_source_cap owner focus)))
-              val receipt=G.discover_selected_partial_with_policy graph scope
-                {original= #node d,heads=discovery_heads,
-                 maximum=RP.AtMost(IntInf.fromInt actual_cap),
-                 scan_limit=RP.AtMost ceiling,step=observe}
-              fun data () =
-                let val value = G.selected_partial_data_with_policy graph scope
-                      discovery_heads receipt
-                in if #original value= #node d then value else
-                  raise ERR "discover" "selected original changed" end
-              val _ = (case owner of Owner {backing,...} =>
-                backing := (fn () => ignore (data ())) :: !backing)
-          in case #view (data ()) of NONE => NONE
-            | SOME view =>
-              let val target = #node view
-                  val _ = G.validate_opened_view graph scope (#node d) view
-                  (* The genuine private alpha recipe preserves every raw,
-                     binder-variable and type incidence. Its cached rich
-                     profile bounds the old raw term before inspection. *)
-                  val opened_metric=G.prepare_scoped_profiled_metric
-                    graph scope {node=target,profiles=profiles}
-                  fun count metric=
-                    let val data=G.profiled_metric_data
-                          graph scope opened_metric
-                        val n=case metric of G.RawNodes=> #raw data
-                          | G.BinderInclusiveNodes=> #inc data
-                    in if n<=IntInf.fromInt output then n else
-                      raise ERR "policy_discover" "native opened output cap"
-                    end
-                  val raw = count G.RawNodes
-                  val inc = count G.BinderInclusiveNodes
-                  fun live () =
-                    (ignore (describe owner focus);ignore (data ());
-                     G.validate_opened_view graph scope (#node d) view)
-                  fun inspect operation = observed live operation
-                  val {types,proof,target_child} = opened_projection graph
-                    scope {node= #node d,view=view,target=target,raw=raw,
-                      inc=inc,output=output,cap=cap,ceiling=ceiling,
-                      spend=fn n => W.spend_policy work n,live=live,
-                      add_backing=fn guard => (case owner of
-                        Owner {backing,...} => backing := guard :: !backing)}
-                  val identity=inspect (fn () =>
-                    G.plan_scoped_identity_closure_view_with_policy graph scope
-                      (#template_limit(W.semantic_policy work))
-                      (* Original/partial guards remain in data/live,
-                         owner.backing and P.source_view validation. The
-                         raw opaque original is not an identity recipe. *)
-                      {target=target_child,retain=[],profiles=profiles})
-                  val _ = List.app (fn ty => inspect
-                    (fn () => policy owner focus ty)) (List.rev (!types))
-                  val target_view=inspect
-                    (fn () => G.execute_identity_closure_view identity)
-                  val conversion=inspect(fn()=>
-                    P.record_typed_conversion_with_policy_scoped_profiles
-                    graph scope {source= #node d,source_view=view,
-                      target=target,target_view=target_view,theorem=proof,
-                      template_limit= #template_limit(W.semantic_policy work),
-                      profiles=profiles,check_type=fn ty=>inspect
-                        (fn()=>policy owner focus ty)})
-              in SOME conversion end
+          in opened_conversion_with graph scope
+            {node= #node d,
+             discover=fn()=>G.discover_selected_partial_with_policy graph scope
+               {original= #node d,heads=discovery_heads,
+                maximum=RP.AtMost(IntInf.fromInt actual_cap),
+                scan_limit=RP.AtMost ceiling,step=observe},
+             data_of=fn receipt=>
+               let val value=G.selected_partial_data_with_policy graph scope
+                     discovery_heads receipt
+               in {original= #original value,view= #view value}end,
+             backing=backing,redescribe=fn()=>ignore(describe owner focus),
+             count_for=fn target=>
+               let val opened_metric=G.prepare_scoped_profiled_metric
+                     graph scope {node=target,profiles=profiles}
+               in fn metric=>
+                 let val data=G.profiled_metric_data
+                       graph scope opened_metric
+                     val n=case metric of G.RawNodes=> #raw data
+                       | G.BinderInclusiveNodes=> #inc data
+                 in if n<=IntInf.fromInt output then n else
+                   raise ERR "policy_discover" "native opened output cap"
+                 end end,
+             cap=cap,output=output,ceiling=ceiling,
+             spend=fn n=>W.spend_policy work n,
+             plan_identity=fn target_child=>
+               G.plan_scoped_identity_closure_view_with_policy graph scope
+                 (#template_limit(W.semantic_policy work))
+                 {target=target_child,retain=[],profiles=profiles},
+             check_type=policy owner focus,
+             record=fn{source,source_view,target,target_view,theorem,
+                 check_type}=>
+               P.record_typed_conversion_with_policy_scoped_profiles
+                 graph scope {source=source,source_view=source_view,
+                   target=target,target_view=target_view,theorem=theorem,
+                   template_limit= #template_limit(W.semantic_policy work),
+                   profiles=profiles,check_type=check_type}}
           end)
-    in case converted of NONE=>NONE | SOME conversion=>
-      let val leaf=action owner focus(fn observe=>
-            C.graph_leaf_with_policy work
-              {frame= #frame d,conversion=conversion,observe=observe})
-      in SOME(seal owner focus leaf)end
+    in discovered_with converted
+      (fn conversion=>action owner focus(fn observe=>
+        C.graph_leaf_with_policy work
+          {frame= #frame d,conversion=conversion,observe=observe}))
+      (seal owner focus)
     end
   end
 
