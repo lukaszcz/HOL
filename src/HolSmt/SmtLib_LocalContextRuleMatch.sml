@@ -28,8 +28,6 @@ struct
     {work : W.portfolio,graph : G.graph,scope : G.scope,sources : S.sources,
      catalogue : Ctx.catalogue,rulescope:G.scope,
      phase : phase ref,symbol_epoch : int}
-  exception Mismatch
-  exception HigherOrder
   fun retire (Owner {work,phase,...}) = (phase := Retired;W.close work)
   fun protected owner action = action () handle primary =>
     (retire owner;raise primary)
@@ -135,120 +133,24 @@ struct
       Ctx.describe_for work (List.nth (catalogue_rows work catalogue,index)))
      handle primary => (W.close expected;raise primary))
 
-  fun prepare (owner as Owner {work,graph,...})
+  fun prepare (owner as Owner {work,...})
       {schema = schema as Schema
         {owner = held,binders,free,rigid_types,left,right,...},
        caller,traversal,target} =
     protected owner (fn () =>
       (Shared.same_owner "foreign matching owner" owner held;
        W.with_step work (fn () =>
-       let val _ = active owner
-           val variables = binders @ free
-           val actual = tree owner caller traversal target
-           val types = ref ([] : (Type.hol_type * Type.hol_type) list)
-           val arguments = ref ([] : (G.node * tree) list)
-           fun lookup equal key pending = case pending of
-             [] => NONE
-           | (k,v)::rest => (tick owner;
-               if equal (key,k) then SOME v else lookup equal key rest)
-           fun type_match pattern actual =
-             (tick owner;
-              if Type.is_vartype pattern then
-                (if List.exists (fn rigid =>
-                    compare_type owner (rigid,pattern)=EQUAL) rigid_types then
-                   if compare_type owner (pattern,actual)=EQUAL then ()
-                     else raise Mismatch
-                 else case lookup
-                   (fn (a,b) => compare_type owner (a,b) = EQUAL)
-                    pattern (!types) of
-                   NONE => types := (pattern,actual) :: !types
-                 | SOME old => if compare_type owner (old,actual) = EQUAL
-                     then () else raise Mismatch)
-              else if Type.is_vartype actual then raise Mismatch
-              else let val p = Type.dest_thy_typeid pattern
-                       val a = Type.dest_thy_typeid actual
-                   in if #Tyop p = #Tyop a andalso
-                         length (#Args p) = length (#Args a) then
-                        ListPair.appEq (fn (x,y) => type_match x y)
-                          (#Args p,#Args a)
-                      else raise Mismatch end)
-           fun captures bound value =
-             (tick owner;
-              List.exists (fn (_,target) => node value = target) bound orelse
-              (case #shape (data value) of
-                 App (f,x) => captures bound f orelse captures bound x
-               | Lam {body,...} => captures bound body | Atom => false))
-           fun same bound p a =
-             (tick owner;
-              if compare_type owner (#ty (data p),#ty (data a)) <> EQUAL
-                then false else
-              case (#shape (data p),#shape (data a)) of
-                (App (f,x),App (g,y)) => same bound f g andalso same bound x y
-              | (Lam {binder = b,body = x,...},
-                 Lam {binder = c,body = y,...}) => same ((b,c)::bound) x y
-              | (Atom,Atom) => (case lookup (op =) (node p) bound of
-                  SOME mapped => mapped = node a
-                | NONE => (case
-                    (G.view graph (node p),G.view graph (node a)) of
-                    (G.Constant x,G.Constant y) => x = y
-                  | (G.Variable _,G.Variable _) => node p = node a
-                  | _ => false))
-              | _ => false)
-           fun match bound p a =
-             (type_match (#ty (data p)) (#ty (data a));tick owner;
-              if List.exists (fn b => b = node p) variables then
-                (if captures bound a then raise HigherOrder else ();
-                 case lookup (op =) (node p) (!arguments) of
-                   NONE => arguments := (node p,a) :: !arguments
-                 | SOME old => if same [] old a then () else raise Mismatch)
-              else case (#shape (data p),#shape (data a)) of
-                (App (f,x),App (g,y)) => (match bound f g;match bound x y)
-              | (Lam {binder = b,body = x,...},
-                 Lam {binder = c,body = y,...}) => match ((b,c)::bound) x y
-              | (Atom,Atom) => (case lookup (op =) (node p) bound of
-                  SOME mapped => if mapped = node a then () else raise Mismatch
-                | NONE => (case
-                    (G.view graph (node p),G.view graph (node a)) of
-                    (G.Constant x,G.Constant y) =>
-                      if x = y then () else raise Mismatch
-                  | (G.Variable _,G.Variable _) =>
-                      if node p = node a then () else raise Mismatch
-                  | _ => raise Mismatch))
-              | _ => raise Mismatch)
-           fun output_type ty =
-             (tick owner;
-              case lookup (fn (a,b) => compare_type owner (a,b) = EQUAL)
-                  ty (!types) of
-                SOME target => type_weight owner target
-              | NONE => if Type.is_vartype ty then type_weight owner ty
-                else let val {Args,...} = Type.dest_thy_typeid ty
-                     in List.foldl (fn (a,n) => n+output_type a) 1 Args end)
-           fun forecast value =
-             (tick owner;
-              if List.exists (fn b => b = node value) variables then
-                (case lookup (op =) (node value) (!arguments) of
-                  SOME actual => SOME (#profile (data actual)) | NONE => NONE)
-              else let val ann = output_type (#ty (data value))
-                in case #shape (data value) of
-                  Atom => SOME (unit ann)
-                | App (f,x) => (case (forecast f,forecast x) of
-                    (SOME p,SOME q) => SOME (add (unit ann) (add p q))
-                  | _ => NONE)
-                | Lam {binder_type,body,...} => (case forecast body of
-                    SOME p => SOME (add
-                      {raw = 1,inc = 2,ann = ann+output_type binder_type} p)
-                  | NONE => NONE) end)
-           val result =
-             ((match [] left actual;
-               let val output = case right of NONE => NONE
-                     | SOME rhs => forecast rhs
-               in Matched (Match {owner = owner,schema = schema,
-                 caller = caller,traversal = traversal,target = actual,
-                 types = List.rev (!types),arguments = List.rev (!arguments),
-                 output = output,used = ref false}) end)
-              handle Mismatch => NoMatch | HigherOrder => NeedsHigherOrder)
-           val _ = active owner
-       in result end)))
+         case Shared.search owner {binders = binders,free = free,
+             rigid_types = rigid_types,left = left,right = right,
+             caller = caller,traversal = traversal,target = target,
+             admit_target = fn _ => ()} of
+           Shared.Missed => NoMatch
+         | Shared.HigherOrder => NeedsHigherOrder
+         | Shared.Found {target = actual,types,arguments,output} =>
+             Matched (Match {owner = owner,schema = schema,
+               caller = caller,traversal = traversal,target = actual,
+               types = types,arguments = arguments,output = output,
+               used = ref false}))))
   (* Every retained descendant is checked, not just the root node. No
      callback can turn a completed subtree into a cross-callback cache. *)
   fun retained owner caller value =
