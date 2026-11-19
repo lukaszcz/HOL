@@ -20745,10 +20745,10 @@ local
          with the same conclusion can be reused.  On a cache miss dispatch
          consumes it; NONE is retained only so an ablation can demonstrate
          that dispatch itself also fails closed. *)
-      val handler = CPC_Proof.handler_name (#replay_handler rule)
+      val handler = #replay_handler rule
       val rule_preflight =
         ((case handler of
-            "skolemize" => SOME
+            HSkolemize => SOME
               (skolemize_preflight conclusion located_args premise_steps)
           | _ => NONE)
          handle Feedback.HOL_ERR holerr =>
@@ -20767,7 +20767,7 @@ local
              profile_event "CPC(cache:omitted_conclusion)";
              NONE)
       val cached =
-        if handler = "scope" then
+        if handler = HScope then
           (case conclusion of
              NONE => omitted_conclusion ()
            | SOME _ =>
@@ -20777,7 +20777,7 @@ local
             handle Feedback.HOL_ERR _ => NONE)
         | NONE => omitted_conclusion ()
       val (state, result) =
-        if handler = "scope" then
+        if handler = HScope then
           let
             val (state, theorem) =
               profile ("CPC(handler:" ^ namespace_name (#namespace rule) ^
@@ -20799,7 +20799,7 @@ local
               (profile ("CPC(handler:" ^ namespace_name (#namespace rule) ^
                  "/" ^ #name rule ^ ")") (fn () =>
                (case handler of
-           "refl" =>
+           HRefl =>
                let
                  val theorem = replay_refl conclusion args
                  val provenance =
@@ -20809,7 +20809,7 @@ local
                    | _ => UnavailableProvenance
                        "refl lacks one exact operand occurrence"
                in exact_result provenance theorem end
-           | "eq_refl" =>
+           | HEqRefl =>
                let
                  val theorem = replay_eq_refl args
                  val provenance =
@@ -20821,8 +20821,8 @@ local
                    | _ => UnavailableProvenance
                        "eq_refl lacks one exact operand occurrence"
                in exact_result provenance theorem end
-           | "symm" => replay_symm_result premise_steps
-           | "trans" =>
+           | HSymm => replay_symm_result premise_steps
+           | HTrans =>
                (if List.exists (is_reglan_equiv o Thm.concl) prems then
                   unavailable_result
                     "RegLan transitivity uses semantic language equivalence"
@@ -20905,7 +20905,7 @@ local
                     in trans_phase "result" (fn () =>
                       exact_result provenance theorem) end)
                     )
-           | "cong" =>
+           | HCong =>
                (if Option.getOpt
                      (Option.map is_reglan_equiv conclusion, false) orelse
                    List.exists (is_reglan_equiv o Thm.concl) prems then
@@ -21072,10 +21072,10 @@ local
                                  "; strong: " ^
                                  Feedback.message_of strong_error)
                                 (reducing_cong ())))))))
-           | "ho_cong" => opaque ( replay_ho_cong prems)
-           | "beta_reduce" => opaque ( replay_beta_reduce args)
-           | "lambda_elim" => opaque ( replay_lambda_elim args)
-           | "eq_resolve" =>
+           | HHoCong => opaque ( replay_ho_cong prems)
+           | HBetaReduce => opaque ( replay_beta_reduce args)
+           | HLambdaElim => opaque ( replay_lambda_elim args)
+           | HEqResolve =>
                (case conclusion of
                   SOME _ => opaque (canonical_eq_resolve ())
                 | NONE =>
@@ -21105,16 +21105,16 @@ local
                                            "eq_resolve used reconstruction without an exact equality-side occurrence")
                                        end)))))
                     in exact_result provenance theorem end)
-           | "contra" => opaque ( canonical_handler "contra" replay_contra)
-           | "false_intro" => opaque ( replay_false_intro prems)
-           | "false_elim" => opaque ( replay_false_elim prems)
-           | "true_elim" => replay_true_elim_result premise_steps
-           | "true_intro" => opaque ( replay_true_intro prems)
-           | "evaluate" =>
+           | HContra => opaque ( canonical_handler "contra" replay_contra)
+           | HFalseIntro => opaque ( replay_false_intro prems)
+           | HFalseElim => opaque ( replay_false_elim prems)
+           | HTrueElim => replay_true_elim_result premise_steps
+           | HTrueIntro => opaque ( replay_true_intro prems)
+           | HEvaluate =>
                conjunction_free_equality_result
                  "evaluation result contains an exact conjunction"
                  (replay_evaluate conclusion args)
-           | "and_elim" =>
+           | HAndElim =>
                (case premise_steps of
                   [premise_step] =>
                     let
@@ -21123,8 +21123,8 @@ local
                     in exact_result provenance theorem end
                 | _ => raise ERR "and_elim"
                     "expected exactly one CPC premise")
-           | "instantiate" => opaque ( replay_instantiate args prems)
-           | "not_implies_elim2" =>
+           | HInstantiate => opaque ( replay_instantiate args prems)
+           | HNotImpliesElim2 =>
                let
                  val theorem = replay_not_implies_elim2 prems
                  val provenance =
@@ -21142,7 +21142,7 @@ local
                    | _ => UnavailableProvenance
                        "not_implies_elim2 has wrong premise count"
                in exact_result provenance theorem end
-           | "not_implies_elim1" =>
+           | HNotImpliesElim1 =>
                let
                  val theorem = replay_not_implies_elim1 prems
                  val provenance =
@@ -21165,8 +21165,8 @@ local
                          (Thm.concl theorem)
                    | exact => exact
                in exact_result provenance theorem end
-           | "implies_elim" => opaque ( replay_implies_elim prems)
-           | "factoring" =>
+           | HImpliesElim => opaque ( replay_implies_elim prems)
+           | HFactoring =>
                let
                  fun pointer_unique [] = []
                    | pointer_unique (literal :: rest) = literal ::
@@ -21188,7 +21188,7 @@ local
                      "factoring has explicit occurrences" clause
                  | NONE => opaque (replay_factoring prems)
                end
-           | "reordering" =>
+           | HReordering =>
                let
                  val direct = case (premise_steps, located_args) of
                      ([premise], [target]) =>
@@ -21220,45 +21220,45 @@ local
                        | _ => raw_unavailable_result
                            "reordering lacks one recorded target" theorem end
                end
-           | "exists_elim" => opaque ( replay_rare_rewrite "exists-elim" args)
-           | "cnf" =>
+           | HExistsElim => opaque ( replay_rare_rewrite "exists-elim" args)
+           | HCnf =>
                let val (theorem, literals) =
                  replay_cnf_with_literals (#name rule) args
                in clause_result "CPC CNF clause has explicit occurrences"
                  (SmtClause.from_literals literals theorem) end
-           | "not_equiv_elim1" => opaque ( replay_not_equiv_elim "not_equiv_elim1" prems)
-           | "not_equiv_elim2" => opaque ( replay_not_equiv_elim "not_equiv_elim2" prems)
-           | "equiv_elim2" => opaque ( replay_equiv_elim2 conclusion prems)
-           | "equiv_elim1" => opaque ( replay_equiv_elim1 conclusion prems)
-           | "arith_rule" =>
+           | HNotEquivElim1 => opaque ( replay_not_equiv_elim "not_equiv_elim1" prems)
+           | HNotEquivElim2 => opaque ( replay_not_equiv_elim "not_equiv_elim2" prems)
+           | HEquivElim2 => opaque ( replay_equiv_elim2 conclusion prems)
+           | HEquivElim1 => opaque ( replay_equiv_elim1 conclusion prems)
+           | HArithRule =>
                replay_arith_rule_result (#name rule) located_args
-           | "arith_rel" =>
+           | HArithRel =>
                let
                  val () = profile_event
                    (case conclusion of
                       SOME _ => "CPC(arith_rel:dispatch/declared)"
                     | NONE => "CPC(arith_rel:dispatch/omitted)")
                in opaque (replay_arith_rel prems args) end
-           | "arith_abs_eq" => opaque ( replay_arith_abs_eq args)
-           | "arith_abs_int_gt" => opaque ( replay_arith_abs_int_gt args)
-           | "arrays_select_const" => opaque ( replay_arrays_select_const args)
-           | "arrays_read_over_write" => opaque (
+           | HArithAbsEq => opaque ( replay_arith_abs_eq args)
+           | HArithAbsIntGt => opaque ( replay_arith_abs_int_gt args)
+           | HArraysSelectConst => opaque ( replay_arrays_select_const args)
+           | HArraysReadOverWrite => opaque (
                replay_arrays_read_over_write (#name rule) prems conclusion args)
-           | "ite_not_cond" => opaque ( replay_ite_not_cond args)
-           | "ite_true_cond" => opaque ( replay_ite_true_cond args)
-           | "ite_then_true" => opaque ( replay_ite_then_true args)
-           | "ite_then_false" => opaque ( replay_ite_then_false args)
-           | "ite_false_cond" => opaque ( replay_ite_false_cond args)
-           | "ite_neg_branch" => opaque ( replay_ite_neg_branch args prems)
-           | "trust" => opaque
+           | HIteNotCond => opaque ( replay_ite_not_cond args)
+           | HIteTrueCond => opaque ( replay_ite_true_cond args)
+           | HIteThenTrue => opaque ( replay_ite_then_true args)
+           | HIteThenFalse => opaque ( replay_ite_then_false args)
+           | HIteFalseCond => opaque ( replay_ite_false_cond args)
+           | HIteNegBranch => opaque ( replay_ite_neg_branch args prems)
+           | HTrust => opaque
                (replay_trust_admitted datatype_admit false state prems args)
-           | "ite_eq" => opaque ( replay_ite_eq args)
-           | "ite_elim1" => opaque ( replay_ite_elim1 prems)
-           | "ite_elim2" => opaque ( replay_ite_elim2 prems)
-           | "not_ite_elim1" => opaque ( replay_not_ite_elim1 prems)
-           | "not_ite_elim2" => opaque ( replay_not_ite_elim2 prems)
-           | "quant_unused_vars" => opaque ( replay_quant_unused_vars args)
-           | "quant_dt_split" =>
+           | HIteEq => opaque ( replay_ite_eq args)
+           | HIteElim1 => opaque ( replay_ite_elim1 prems)
+           | HIteElim2 => opaque ( replay_ite_elim2 prems)
+           | HNotIteElim1 => opaque ( replay_not_ite_elim1 prems)
+           | HNotIteElim2 => opaque ( replay_not_ite_elim2 prems)
+           | HQuantUnusedVars => opaque ( replay_quant_unused_vars args)
+           | HQuantDtSplit =>
                let
                  val theorem = replay_quant_dt_split args
                in
@@ -21269,7 +21269,7 @@ local
                      "quantified datatype split lacks one equality argument"
                      theorem
                end
-           | "quant_rewrite" =>
+           | HQuantRewrite =>
                let
                  val theorem = replay_quant_rewrite (#name rule) located_args
                in
@@ -21280,8 +21280,8 @@ local
                      "quantifier rewrite lacks one exact equality argument"
                      theorem
                end
-           | "alpha_equiv" => opaque ( replay_alpha_equiv args)
-           | "process_scope" =>
+           | HAlphaEquiv => opaque ( replay_alpha_equiv args)
+           | HProcessScope =>
                (case record_scope of NONE =>
                   opaque (replay_process_scope strong_canon args prems)
                 | SOME held =>
@@ -21294,9 +21294,9 @@ local
                          relaxed; actual clause/theorem identity is retained. *)
                       val _ = held := SOME result
                   in result end)
-           | "not_and" => opaque ( replay_not_and prems)
-           | "not_or_elim" => opaque ( replay_not_or_elim args prems)
-           | "not_not_elim" =>
+           | HNotAnd => opaque ( replay_not_and prems)
+           | HNotOrElim => opaque ( replay_not_or_elim args prems)
+           | HNotNotElim =>
                let
                  val theorem = replay_not_not_elim prems
                  val provenance =
@@ -21317,30 +21317,30 @@ local
                    | _ => UnavailableProvenance
                        "not_not_elim has wrong premise count"
                in exact_result provenance theorem end
-           | "and_intro" =>
+           | HAndIntro =>
                let
                  val (theorem, provenance) =
                    replay_and_intro premise_steps
                in exact_result provenance theorem end
-           | "skolemize" =>
+           | HSkolemize =>
                (case rule_preflight of
                   SOME result => result
                 | NONE =>
                     skolemize_preflight conclusion located_args premise_steps)
-           | "arith_mult_neg" => opaque ( replay_arith_mult_neg args)
-           | "arith_mult_pos" => opaque ( replay_arith_mult_pos args)
-           | "arith_mult_sign" => opaque ( replay_arith_mult_sign args)
-           | "arith_trichotomy" => opaque ( replay_arith_trichotomy conclusion prems)
-           | "arith_reduction" =>
+           | HArithMultNeg => opaque ( replay_arith_mult_neg args)
+           | HArithMultPos => opaque ( replay_arith_mult_pos args)
+           | HArithMultSign => opaque ( replay_arith_mult_sign args)
+           | HArithTrichotomy => opaque ( replay_arith_trichotomy conclusion prems)
+           | HArithReduction =>
                let
                  val (theorem, provenance) = replay_arith_reduction args
                in exact_result provenance theorem end
-           | "arith_max_geq1" => opaque ( replay_arith_max_geq1 args)
-           | "arith_max_geq2" => opaque ( replay_arith_max_geq2 args)
-           | "arith_min_lt2" => opaque ( replay_arith_min_lt2 args)
-           | "int_tight_lb" => opaque ( replay_int_tight_lb prems)
-           | "int_tight_ub" => opaque ( replay_int_tight_ub prems)
-           | "modus_ponens" => opaque (
+           | HArithMaxGeq1 => opaque ( replay_arith_max_geq1 args)
+           | HArithMaxGeq2 => opaque ( replay_arith_max_geq2 args)
+           | HArithMinLt2 => opaque ( replay_arith_min_lt2 args)
+           | HIntTightLb => opaque ( replay_int_tight_lb prems)
+           | HIntTightUb => opaque ( replay_int_tight_ub prems)
+           | HModusPonens => opaque (
                (require_declared "modus_ponens" (replay_modus_ponens prems)
                  handle Feedback.HOL_ERR _ =>
                    require_declared "modus_ponens"
@@ -21348,10 +21348,10 @@ local
                  handle Feedback.HOL_ERR _ =>
                    require_declared "modus_ponens"
                      (replay_arithmetic_modus_ponens prems)))
-           | "arith_sum_ub" => opaque ( replay_arith_sum_ub prems)
-           | "arith_mult_abs_comparison" => opaque (
+           | HArithSumUb => opaque ( replay_arith_sum_ub prems)
+           | HArithMultAbsComparison => opaque (
                replay_arith_mult_abs_comparison prems conclusion)
-           | "aci_norm" =>
+           | HAciNorm =>
                (case located_args of
                   [target] =>
                     let
@@ -21383,53 +21383,53 @@ local
                 | _ => unavailable_result
                     "aci_norm lacks one exact target occurrence"
                     (replay_aci_norm_admitted datatype_admit args))
-           | "bv_word_rewrite" => opaque
+           | HBvWordRewrite => opaque
                (replay_bv_word_rewrite (#name rule) args)
-           | "bv_xor_duplicate" => opaque ( replay_bv_xor_duplicate args)
-           | "bv_not_idemp" => opaque ( replay_bv_not_idemp args)
-           | "bv_zero_extend_eliminate_0" =>
+           | HBvXorDuplicate => opaque ( replay_bv_xor_duplicate args)
+           | HBvNotIdemp => opaque ( replay_bv_not_idemp args)
+           | HBvZeroExtendEliminate0 =>
                opaque (replay_bv_zero_extend_eliminate_0 args)
-           | "bv_shl_by_const_0" => opaque ( replay_bv_shl_by_const_0 args)
-           | "bv_shl_by_const_2" => opaque ( replay_bv_shl_by_const_2 args)
-           | "bv_lshr_by_const_0" => opaque ( replay_bv_lshr_by_const_0 args)
-           | "bv_ashr_by_const_0" => opaque ( replay_bv_ashr_by_const_0 args)
-           | "bv_bitwise_slicing" =>
+           | HBvShlByConst0 => opaque ( replay_bv_shl_by_const_0 args)
+           | HBvShlByConst2 => opaque ( replay_bv_shl_by_const_2 args)
+           | HBvLshrByConst0 => opaque ( replay_bv_lshr_by_const_0 args)
+           | HBvAshrByConst0 => opaque ( replay_bv_ashr_by_const_0 args)
+           | HBvBitwiseSlicing =>
                let val theorem = replay_bv_bitwise_slicing args in
                  case located_args of
                    [target] => located_result
                      "bitwise slicing exact target" theorem target
                  | _ => opaque theorem
                end
-           | "bv_poly_norm" =>
+           | HBvPolyNorm =>
                let val theorem = replay_bv_poly_norm args in
                  case located_args of
                    [target] => located_result
                      "bv_poly_norm exact target" theorem target
                  | _ => opaque theorem
                end
-           | "bv_poly_norm_eq" =>
+           | HBvPolyNormEq =>
                let val theorem = replay_bv_poly_norm_eq args in
                  case located_args of
                    [target] => located_result
                      "bv_poly_norm_eq exact target" theorem target
                  | _ => opaque theorem
                end
-           | "seq_rewrite" => opaque (
+           | HSeqRewrite => opaque (
                replay_seq_rewrite datatype_admit (#name rule)
                  prems conclusion args)
-           | "rare_inventory" => opaque (
+           | HRareInventory => opaque (
                replay_rare_inventory datatype_admit state (#name rule)
                  prems conclusion located_args)
-           | "sets" => opaque ( replay_sets state (#name rule) prems conclusion args)
-           | "arrays_ext" =>
+           | HSets => opaque ( replay_sets state (#name rule) prems conclusion args)
+           | HArraysExt =>
                if List.null args then
                  opaque (require_declared "arrays_ext"
                    (replay_ext "arrays_ext" prems))
                else raise ERR "arrays_ext" "expected no arguments"
-           | "sets_ext" => opaque ( replay_ext "sets_ext" prems)
-           | "sets_rewrite" => opaque (
+           | HSetsExt => opaque ( replay_ext "sets_ext" prems)
+           | HSetsRewrite => opaque (
                replay_sets state (#name rule) prems conclusion args)
-           | "rewrite" =>
+           | HRewrite =>
                let
                  val theorem = replay_rare_rewrite (#name rule) args
                in
@@ -21444,10 +21444,10 @@ local
                      "rewrite provenance exceeds the compact metadata budget"
                      theorem
                end
-           | "datatype" => opaque ( replay_datatype datatype_admit args)
-           | "dt_split" => opaque
+           | HDatatype => opaque ( replay_datatype datatype_admit args)
+           | HDtSplit => opaque
                (replay_dt_split_with_admission datatype_admit args)
-           | "datatype_eq" =>
+           | HDatatypeEq =>
                let
                  val theorem = replay_datatype_eq datatype_admit args
                  val provenance =
@@ -21456,16 +21456,17 @@ local
                    | _ => UnavailableProvenance
                        "datatype equality lacks its exact result argument"
                in exact_result provenance theorem end
-           | "resolution" => SmtReplayObserve.run
+           | HResolution => SmtReplayObserve.run
                resolution_observation_inputs
                (fn (result : replay_result) => #thm result)
                occurrence_resolution_or_fallback
-           | "bool" => opaque ( replay_bool prems conclusion)
-           | "arith" => opaque ( replay_arith prems conclusion)
-           | "string" => opaque (
+           | HBool => opaque ( replay_bool prems conclusion)
+           | HArith => opaque ( replay_arith prems conclusion)
+           | HString => opaque (
                replay_string datatype_admit state (#name rule)
                  prems conclusion args)
-           | _ => unsupported_step step)) ()
+           | HArray => unsupported_step step
+           | HScope => unsupported_step step)) ()
            handle Conv.UNCHANGED =>
              raise ERR "replay_step"
                ("CPC step " ^ id ^ " (rule " ^ #name rule ^
@@ -23707,8 +23708,7 @@ in
   fun graph_bounded_force_worker definitions
       (step : CPC_Proof.step,premises : CPC_Proof.located_term list) =
     let
-      val _ = if CPC_Proof.handler_name
-          (#replay_handler (#rule step)) = "trust" then () else
+      val _ = if #replay_handler (#rule step) = HTrust then () else
         raise ERR "graph_bounded_force_worker" "expected registered TRUST"
       val state = initial_state definitions (List.map #term premises)
       val theorem = replay_trust true state
@@ -23970,8 +23970,7 @@ in
                            val(visible,tail)=if pop then
                                case stack of []=>fail "unmatched scope pop"
                                | saved::tail=>
-                                   if CPC_Proof.handler_name
-                                       (#replay_handler (#rule step))="scope"
+                                   if #replay_handler (#rule step)=HScope
                                      then(saved,tail)else
                                      fail "scope pop handler differs"
                              else(known,stack)
@@ -23981,8 +23980,8 @@ in
             val _=if List.exists(fn old=>(tick();old=command))(!issued)
               then fail "command occurrence already prepared"else ()
             val(step,known)=seek 0[][](#commands(Packet.proof packet))
-            val _=if CPC_Proof.handler_name
-                (#replay_handler (#rule step))="instantiate"then ()else
+            val _=if #replay_handler (#rule step)=HInstantiate
+              then ()else
               fail "fixed specialization handler required"
             val premise=case(#premises step,premises)of
                 ([wanted],[(id,node,edge)])=>
