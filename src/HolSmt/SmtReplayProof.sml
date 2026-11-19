@@ -11241,10 +11241,9 @@ struct
   fun prepare_source_condition_rule expected args=
     SCEClausePlan(sce_prepare_clause expected SCERuleClause args)
 
-  (* Execution of the shared clause instructions.  guard is the plan guard
-     of the path (it brackets every kernel step); emit rebuilds a captured
-     tree; before_assume is called with the theorem and the condition just
-     before the ASSUME of a condition (the canonical path logs it). *)
+  (* Execution primitives of the shared clause instructions.  guard is the
+     plan guard of the path; it brackets every kernel step. *)
+  (* Align a theorem with the captured conclusion term. *)
   fun sce_align guard term theorem=
     let fun guarded operation=
           (guard();let val value=operation()in guard();value end)
@@ -11253,6 +11252,7 @@ struct
                   SmtReplayRuleObservation.ALPHA(Thm.concl theorem)term)
          in guarded(fn()=>SmtReplayRuleObservation.EQ_MP bridge theorem)
          end end
+  (* Materialize the retained policy types and check each, guarded. *)
   fun sce_check_policies guard check_type types=
     let fun guarded operation=
           (guard();let val value=operation()in guard();value end)
@@ -11263,6 +11263,9 @@ struct
                 {Thy="min",Tyop="fun",Args=[left,right]})end
         val policy_types=List.map materialize types
     in List.app(fn ty=>guarded(fn()=>check_type ty))policy_types end
+  (* One native instruction.  emit rebuilds a captured tree; before_assume
+     is called with the theorem and the condition just before the ASSUME of
+     a condition (the canonical path logs it). *)
   fun sce_execute_action {guard,emit,before_assume} action theorem=
     let fun guarded operation=
           (guard();let val value=operation()in guard();value end)
@@ -16602,7 +16605,7 @@ struct
   fun execute_source_canonical_clause expected
       (plan as SCRClausePlan
         {evidence,frame,graph,caller,children,initial,
-        instructions,terminal,result,conditions,types,binders,check_type,
+        instructions,terminal,result,conditions,binders,
         used,permutative,origin,future,condition_origins,closing,...})=
     sr_fail expected (fn()=>
       (scr_clause_guard expected plan;
@@ -16615,11 +16618,6 @@ struct
            (scr_clause_guard expected plan;
             let val value=operation()
             in scr_clause_guard expected plan;value end)
-         fun materialize(SRCaptured ty)=guarded(fn()=>ty)
-           | materialize(SRArrow(a,b))=
-               let val left=materialize a val right=materialize b
-               in guarded(fn()=>Type.mk_thy_type
-                 {Thy="min",Tyop="fun",Args=[left,right]})end
          (* The opaque ready phase completed every retained policy. *)
          val variables=List.map(fn(id,name,ty)=>
            (id,guarded(fn()=>Term.mk_var(name,ty))))binders
