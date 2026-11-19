@@ -12700,33 +12700,55 @@ in
     (fn () => ignore (SmtLib_Parser.apply_term adapted "char" [] []))
 end
 
-(* The typed shared classifiers agree with the retained string ones on every
-   registered handler, with and without a scope pop. *)
+(* Classification of every registered handler, with and without a scope pop:
+   pop gives Scoped; resolution, CNF and factoring/reordering have their
+   own routes; the simple Boolean, equality and truth handlers give Simple;
+   every other handler is Bounded.  The arithmetic set is checked against
+   the handler names. *)
 structure CpcPlan = CPC_SharedReplayPlan
-fun cpc_typed_classification_matches_strings () =
+structure CpcP = CPC_Proof
+fun cpc_typed_classification () =
 let
-  val native = CpcPlan.route {equal = op =, visit = fn () => (),
-                           copies = fn _ => ()}
+  val simple_handlers =
+    [CpcP.HAndIntro, CpcP.HAndElim, CpcP.HNotNotElim, CpcP.HNotOrElim,
+     CpcP.HNotImpliesElim1, CpcP.HNotImpliesElim2, CpcP.HImpliesElim,
+     CpcP.HEquivElim1, CpcP.HEquivElim2, CpcP.HNotEquivElim1,
+     CpcP.HNotEquivElim2, CpcP.HIteElim1, CpcP.HIteElim2,
+     CpcP.HNotIteElim1, CpcP.HNotIteElim2, CpcP.HNotAnd, CpcP.HRefl,
+     CpcP.HSymm, CpcP.HTrans, CpcP.HCong, CpcP.HHoCong, CpcP.HEqResolve,
+     CpcP.HContra, CpcP.HBool, CpcP.HFalseIntro, CpcP.HFalseElim,
+     CpcP.HTrueIntro, CpcP.HTrueElim, CpcP.HProcessScope]
   fun prefixed name = String.isPrefix "arith" name orelse
     String.isPrefix "int_tight_" name
+  fun expected handler =
+    case handler of
+      CpcP.HResolution => CpcPlan.Resolved
+    | CpcP.HCnf => CpcPlan.Converted
+    | CpcP.HFactoring => CpcPlan.Aligned
+    | CpcP.HReordering => CpcPlan.Aligned
+    | _ => if List.exists (fn simple => simple = handler) simple_handlers
+           then CpcPlan.Simple else CpcPlan.Bounded
+  fun families handler =
+    List.length (List.filter (fn present => present)
+      [Option.isSome (CpcPlan.simple_boolean_of handler),
+       Option.isSome (CpcPlan.simple_equality_of handler),
+       Option.isSome (CpcPlan.truth_family_of handler)])
   fun check (rule : CPC_Proof.proof_rule) =
     let
       val handler = #replay_handler rule
       val name = CPC_Proof.handler_name handler
-      fun route pop =
-        assert (CpcPlan.route_of {pop = pop, handler = handler} =
-            native {pop = pop, handler = name},
-          "typed route differs for " ^ #name rule ^ " (" ^ name ^ ")")
     in
-      route false; route true;
-      assert (CpcPlan.simple_boolean_of handler =
-          CpcPlan.simple_boolean (op =) name,
-        "typed simple_boolean differs for " ^ name);
-      assert (CpcPlan.simple_equality_of handler =
-          CpcPlan.simple_equality (op =) name,
-        "typed simple_equality differs for " ^ name);
+      assert (CpcPlan.route_of {pop = true, handler = handler}
+          = CpcPlan.Scoped,
+        "a pop did not give Scoped for " ^ #name rule ^ " (" ^ name ^ ")");
+      assert (CpcPlan.route_of {pop = false, handler = handler}
+          = expected handler,
+        "route differs for " ^ #name rule ^ " (" ^ name ^ ")");
+      assert (families handler =
+          (if expected handler = CpcPlan.Simple then 1 else 0),
+        "simple families differ for " ^ name);
       assert (CpcPlan.arithmetic_handler handler = prefixed name,
-        "typed arithmetic classification differs for " ^ name)
+        "arithmetic classification differs for " ^ name)
     end
   val rows = CPC_Proof.proof_rule_registry
   fun count route = List.length (List.filter
@@ -38011,8 +38033,7 @@ let
     ("z3_compact_selected_dispatch", Z3_CompactReplayTests.run),
     ("cpc_clausal_elimination_rows", CPC_ClausalEliminationTests.run),
     ("cpc_owned_classification_charges", CPC_OwnedClassificationTests.run),
-    ("cpc_typed_classification_matches_strings",
-      cpc_typed_classification_matches_strings),
+    ("cpc_typed_classification", cpc_typed_classification),
     ("cpc_graph_typed_parser", fn () =>
       (CPC_GraphParserTests.run ();CPC_ConstructorAliasReviewTests.run ())),
     ("z3_bv1_concat_replay_success", z3_bv1_concat_replay_success),

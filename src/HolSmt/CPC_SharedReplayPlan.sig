@@ -2,14 +2,12 @@
 signature CPC_SharedReplayPlan =
 sig
   datatype route = Scoped | Resolved | Converted | Aligned | Simple | Bounded
-  val route : {equal:string * string -> bool,visit:unit -> unit,
-    copies:int -> unit} ->
-    {pop:bool,handler:string} -> route
-  (* Typed counterparts: the same classification of registered handlers
-     (the string forms stay for the metered owned receiver). *)
+  (* Scoped when [pop]; else by the handler: resolution, CNF, factoring
+     and reordering have their own routes, the simple Boolean, equality
+     and truth handlers are Simple, every other handler is Bounded. *)
   val route_of : {pop:bool,handler:CPC_Proof.replay_handler} -> route
   (* The handlers the arithmetic graph route admits (names starting "arith"
-     or "int_tight_"); no string counterpart. *)
+     or "int_tight_"). *)
   val arithmetic_handler : CPC_Proof.replay_handler -> bool
   val occurrence_provenance : 'a SmtLib_Parser.construction_occurrence ->
     CPC_Proof.term_provenance
@@ -44,8 +42,6 @@ sig
     | SimpleNotIteElim1
     | SimpleNotIteElim2
     | SimpleNotAnd
-  val simple_boolean : (string * string -> bool) -> string ->
-    simple_boolean option
   val simple_boolean_of : CPC_Proof.replay_handler -> simple_boolean option
   val conjunction : {visit:unit -> unit,truth:unit -> 'node,
     binary:'node * 'node -> 'node} -> 'node list -> 'node
@@ -169,8 +165,6 @@ sig
      error:string -> exn} -> 'fact
   datatype simple_equality = SimpleRefl | SimpleSymm | SimpleTrans
     | SimpleCong | SimpleHoCong | SimpleEqResolve | SimpleContra
-  val simple_equality : (string * string -> bool) -> string ->
-    simple_equality option
   val simple_equality_of : CPC_Proof.replay_handler -> simple_equality option
   (* The simple handlers that are neither Boolean nor equality rules. *)
   datatype truth_family = DeclaredBoolean | FalseIntro | FalseElim

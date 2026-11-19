@@ -43,28 +43,6 @@ struct
   structure Q=CPC_ProofParser
   structure P=CPC_Proof
   datatype route = Scoped | Resolved | Converted | Aligned | Simple | Bounded
-  val boolean_handlers =
-        ["bool","cnf","eq_resolve","contra","false_intro","false_elim",
-         "true_intro","true_elim","and_intro","and_elim","not_or_elim",
-         "not_not_elim","not_implies_elim1","not_implies_elim2",
-         "implies_elim","not_and","equiv_elim1","equiv_elim2",
-         "not_equiv_elim1","not_equiv_elim2","xor_elim1","xor_elim2",
-         "not_xor_elim1","not_xor_elim2","ite_elim1","ite_elim2",
-         "not_ite_elim1","not_ite_elim2","process_scope"]
-  fun route {equal,visit,copies} {pop,handler} =
-    let fun any []=false
-          | any (allowed::rest)=
-              (visit();equal(allowed,handler) orelse any rest)
-    in if pop then Scoped
-      else if equal(handler,"resolution") then Resolved
-      else if equal(handler,"cnf") then Converted
-      else if equal(handler,"factoring") orelse equal(handler,"reordering")
-        then Aligned
-      else if (copies 5;
-          any (["refl","symm","trans","cong","ho_cong"] @
-            boolean_handlers)) then Simple
-      else Bounded
-    end
   datatype simple_boolean = SimpleAndIntro | SimpleAndElim
     | SimpleNotNotElim
     | SimpleNotOrElim
@@ -80,37 +58,10 @@ struct
     | SimpleNotIteElim1
     | SimpleNotIteElim2
     | SimpleNotAnd
-  fun simple_boolean equal handler =
-    if equal(handler,"and_intro") then SOME SimpleAndIntro
-    else if equal(handler,"and_elim") then SOME SimpleAndElim
-    else if equal(handler,"not_not_elim") then SOME SimpleNotNotElim
-    else if equal(handler,"not_or_elim")then SOME SimpleNotOrElim
-    else if equal(handler,"not_implies_elim1")then SOME SimpleNotImpliesElim1
-    else if equal(handler,"not_implies_elim2")then SOME SimpleNotImpliesElim2
-    else if equal(handler,"implies_elim")then SOME SimpleImpliesElim
-    else if equal(handler,"equiv_elim1")then SOME SimpleEquivElim1
-    else if equal(handler,"equiv_elim2")then SOME SimpleEquivElim2
-    else if equal(handler,"not_equiv_elim1")then SOME SimpleNotEquivElim1
-    else if equal(handler,"not_equiv_elim2")then SOME SimpleNotEquivElim2
-    else if equal(handler,"ite_elim1")then SOME SimpleIteElim1
-    else if equal(handler,"ite_elim2")then SOME SimpleIteElim2
-    else if equal(handler,"not_ite_elim1")then SOME SimpleNotIteElim1
-    else if equal(handler,"not_ite_elim2")then SOME SimpleNotIteElim2
-    else if equal(handler,"not_and")then SOME SimpleNotAnd
-    else NONE
   datatype simple_equality = SimpleRefl | SimpleSymm | SimpleTrans
     | SimpleCong | SimpleHoCong | SimpleEqResolve | SimpleContra
-  fun simple_equality equal handler =
-    if equal(handler,"refl")then SOME SimpleRefl
-    else if equal(handler,"symm")then SOME SimpleSymm
-    else if equal(handler,"trans")then SOME SimpleTrans
-    else if equal(handler,"cong")then SOME SimpleCong
-    else if equal(handler,"ho_cong")then SOME SimpleHoCong
-    else if equal(handler,"eq_resolve")then SOME SimpleEqResolve
-    else if equal(handler,"contra")then SOME SimpleContra
-    else NONE
-  (* Typed view of [route]: every registered handler is
-     classified exactly once, so a new constructor must pick its family. *)
+  (* Every registered handler is classified exactly once below, so a
+     new constructor must pick its family. *)
   datatype truth_family = DeclaredBoolean | FalseIntro | FalseElim
     | TrueIntro | TrueElim | ProcessScope
   datatype simple_class = SimpleBoolean of simple_boolean
