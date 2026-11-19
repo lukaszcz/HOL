@@ -64,8 +64,9 @@ struct
   (* Some inferences, but no more than a complete preparation [prepared]. *)
   fun after_producer prepared made = 0 < made andalso made <= prepared
   (* A refusal after the producer of the law made its inferences: [complete]
-     runs a complete preparation, after the setup of the refused one, and
-     [refused] is then given the admissible numbers of inferences. *)
+     runs a complete preparation on a fixture set up like the refused one;
+     only its inferences are counted. [refused] then sets up and runs the
+     refused preparation, given the admissible numbers of inferences. *)
   fun refused_after_producer complete refused =
     let val start = inferences () val _ = complete ()
     in refused (after_producer (inferences () - start)) end
@@ -74,7 +75,7 @@ struct
   (* [action] is refused and stops the pipeline: it raises, leaves the owner
      [retired], makes no inference and keeps the charged prefix, that is,
      [charged ()] has not fallen below [prefix]. *)
-  fun stopped {action,retired,charged,prefix} : bool =
+  fun stopped {action,retired,charged,prefix} =
     let val count = inferences ()
         val refused = refuses action
     in refused andalso retired () andalso inferences () = count andalso

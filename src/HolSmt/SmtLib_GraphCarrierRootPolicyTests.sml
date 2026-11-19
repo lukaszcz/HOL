@@ -264,12 +264,13 @@ struct
     List.app (fn p =>
       let val e = X.setup ``!n:num. T`` HolSmtTheory.NUM_FORALL_TO_INT native
           val calls = ref 0
-          val refused = X.setup_policy {input_limit=RP.Uncapped,
-            output_limit=RP.AtMost 1,template_limit=RP.Uncapped} RP.Uncapped
-            ``!n:num. T`` HolSmtTheory.NUM_FORALL_TO_INT native
       in X.refused_after_producer
            (fn () => ignore (prepare_with p e [] calls))
-           (fn fits => refusal_in_prepare fits p refused
+           (fn fits => refusal_in_prepare fits p
+              (X.setup_policy {input_limit=RP.Uncapped,
+                 output_limit=RP.AtMost 1,template_limit=RP.Uncapped}
+                 RP.Uncapped ``!n:num. T`` HolSmtTheory.NUM_FORALL_TO_INT
+                 native)
               "prospective output exceeds metadata policy") end) provers
 
   fun repeated_execution () =

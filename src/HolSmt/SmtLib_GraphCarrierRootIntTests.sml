@@ -141,12 +141,12 @@ struct
     List.app (fn (p : entry) =>
       let val e = setup plenty cap num_forall
           val execute = #prepare p e 0 silent silent
-          val prepared = charged e
+          val prepared = wide e
           val _ = G.close_scope (#graph e) (#scope e)
       in require (#name p ^ " executed in a retired scope")
         (X.stopped {action=execute,retired=fn () => retired e,
                     charged=fn () => wide e,
-                    prefix=IntInf.fromInt prepared}) end)
+                    prefix=prepared}) end)
       entries
 
   (* The Work allowance, at exact and one below. *)
