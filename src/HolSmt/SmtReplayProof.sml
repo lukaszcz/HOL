@@ -10583,6 +10583,20 @@ struct
      closure children before it spends, so each builder step is paid in the
      order the preparer runs it. The builder keeps the lexical origin
      geometry and numbers and names the binders in capture order. *)
+  local
+  datatype template_variable=TemplateBound of int
+    | TemplateFree of Term.term
+  fun key_equal(TemplateBound a,TemplateBound b)=a=b
+    | key_equal(TemplateFree a,TemplateFree b)=sr_same a b
+    | key_equal _=false
+  fun variable(SRTree {shape=SRBound(id,_),...})=SOME(TemplateBound id)
+    | variable(SRTree {shape=SRAtom term,...})=
+        if Term.is_var term then SOME(TemplateFree term) else NONE
+    | variable _=NONE
+  fun same_ty(SRCaptured a,SRCaptured b)=Type.compare(a,b)=EQUAL
+    | same_ty(SRArrow(a,b),SRArrow(c,d))=same_ty(a,c)andalso same_ty(b,d)
+    | same_ty _=false
+  in
   fun source_condition_builder tick=
     let
       val budget=ref(0:IntInf.int)
@@ -10729,54 +10743,6 @@ struct
         in app bool (app arrow h a)b end
       fun equality a b=combine boolSyntax.equality a b
       fun implication a b=combine boolSyntax.implication a b
-    in {budget=budget, policies=policies, next=next,
-       identifiers=identifiers, binders=binders, atom=atom, app=app,
-       lam=lam, capture=capture, bounded=bounded, name_binders=name_binders,
-       head=head, binary=binary, forall=forall, exists=exists, subst=subst,
-       tcombine=tcombine, timp=timp, tneg=tneg,
-       typed_equality=typed_equality, abstract=abstract, quantify=quantify,
-       bool=bool, boolean=boolean, combine=combine, equality=equality,
-       implication=implication} end
-  fun prepare_source_condition_rule expected
-      {evidence,frame,caller,steps,terminal,check_type}=
-    sr_fail expected (fn()=>W.with_step expected (fn()=>
-    let
-      val d=sce_data expected evidence
-      val source=Scope.description_for expected (#frame d)
-      val actual=Scope.description_for expected frame
-      val graph= #graph actual val scope= #scope actual
-      val _=if Portable.pointer_eq(graph,#graph source) andalso
-          Portable.pointer_eq(#sources actual,#sources source) andalso
-          #root actual= #root source andalso
-          G.scope_visible graph scope (#scope source) then () else
-        raise ERR "prepare_source_condition_rule" "foreign Source frame"
-      val _=G.validate_scope graph caller
-      val children=sce_step_children steps
-      val guard=sce_prepare_guard expected evidence frame graph
-        caller children
-      fun tick n=(guard();W.spend expected n)
-      val limits=W.semantic_limits expected
-      val output=IntInf.fromInt(#output_limit limits)
-      val template=IntInf.fromInt(#template_limit limits)
-      val quota=IntInf.fromInt(W.work_limit expected)
-      fun append v w=sce_append tick v w
-      val {budget,policies,next,binders,app,bounded,name_binders,head,
-        binary,forall,exists,subst,timp,tneg,typed_equality,quantify,bool,
-        boolean,combine,equality,implication,...}=
-        source_condition_builder tick
-      val initial=bounded(#output_limit limits)
-        (SOME(sce_lexical_origin_inside expected evidence))(#target d)
-      val hyp=List.map(bounded(#template_limit limits)NONE)(Thm.hyp(#proof d))
-      val rows=List.map(fn(value,_)=>
-        bounded(#template_limit limits)NONE value)(#rows d)
-      val args=List.map(fn child=>
-        let val node=G.closure_child_node graph caller child
-            val _=if G.scope_visible graph scope (G.node_scope graph node)
-              then () else raise ERR "prepare_source_condition_rule"
-                "argument escapes actual frame"
-        in bounded(#output_limit limits)NONE(G.representative graph node) end)
-        children
-      val _=List.app name_binders(initial::args)
       (* Strip SPEC routes WITHOUT substituting the owned arguments.
          Permutation is a property of this template, before matching. *)
       fun original_template [] [] current=current
@@ -10849,18 +10815,6 @@ struct
             in tick 1;original_template rest pending next end
         | original_template _ _ _=
             raise ERR "source_rule_template" "argument route mismatch"
-      datatype template_variable=TemplateBound of int
-        | TemplateFree of Term.term
-      fun key_equal(TemplateBound a,TemplateBound b)=a=b
-        | key_equal(TemplateFree a,TemplateFree b)=sr_same a b
-        | key_equal _=false
-      fun variable(SRTree {shape=SRBound(id,_),...})=SOME(TemplateBound id)
-        | variable(SRTree {shape=SRAtom term,...})=
-            if Term.is_var term then SOME(TemplateFree term) else NONE
-        | variable _=NONE
-      fun same_ty(SRCaptured a,SRCaptured b)=Type.compare(a,b)=EQUAL
-        | same_ty(SRArrow(a,b),SRArrow(c,d))=same_ty(a,c)andalso same_ty(b,d)
-        | same_ty _=false
       fun vperm a b=(tick 1;
         case(variable a,variable b)of(SOME _,SOME _)=>
             same_ty(sr_type a,sr_type b)
@@ -10886,12 +10840,76 @@ struct
         List.all(fn x=>List.exists(fn y=>(tick 1;key_equal(x,y)))b)a
         andalso List.all(fn y=>List.exists
           (fn x=>(tick 1;key_equal(x,y)))a)b
-      val original=original_template steps args initial
+      (* Same balanced shape as the retained realization helper. *)
+      fun balanced values=
+        let fun size []=0 | size(_::rest)=(tick 1;1+size rest)
+            fun split 0 pending left=(List.rev left,pending)
+              | split n(v::rest)left=(tick 2;split(n-1)rest(v::left))
+              | split _ _ _=raise ERR "prepare_source_condition_rule" "split"
+            fun walk []=boolean boolSyntax.T | walk [v]=v
+              | walk values=
+                  let val(a,b)=split(size values div 2)values []
+                  in combine boolSyntax.conjunction(walk a)(walk b)end
+        in walk values end
+      fun original_shape steps args initial terminal=
+        let val original=original_template steps args initial
       val permutative=case terminal of SourceEquality=>
-            (case binary "min" "=" original of SOME(a,b)=>
-                vperm a b andalso same_fv(fv a)(fv b)
-              | _=>raise ERR "source_rule_template" "original equality")
-        | _=>false
+                  (case binary "min" "=" original of SOME(a,b)=>
+                      vperm a b andalso same_fv(fv a)(fv b)
+                    | _=>raise ERR "source_rule_template" "original equality")
+              | _=>false
+        in (original,permutative) end
+    in {budget=budget, policies=policies, identifiers=identifiers,
+       binders=binders, atom=atom, app=app, capture=capture, bounded=bounded,
+       name_binders=name_binders, head=head, binary=binary, forall=forall,
+       exists=exists, subst=subst, timp=timp, tneg=tneg,
+       typed_equality=typed_equality, quantify=quantify, bool=bool,
+       boolean=boolean, combine=combine, equality=equality,
+       implication=implication, balanced=balanced,
+       same_ty=same_ty, original_shape=original_shape} end
+  end
+  fun prepare_source_condition_rule expected
+      {evidence,frame,caller,steps,terminal,check_type}=
+    sr_fail expected (fn()=>W.with_step expected (fn()=>
+    let
+      val d=sce_data expected evidence
+      val source=Scope.description_for expected (#frame d)
+      val actual=Scope.description_for expected frame
+      val graph= #graph actual val scope= #scope actual
+      val _=if Portable.pointer_eq(graph,#graph source) andalso
+          Portable.pointer_eq(#sources actual,#sources source) andalso
+          #root actual= #root source andalso
+          G.scope_visible graph scope (#scope source) then () else
+        raise ERR "prepare_source_condition_rule" "foreign Source frame"
+      val _=G.validate_scope graph caller
+      val children=sce_step_children steps
+      val guard=sce_prepare_guard expected evidence frame graph
+        caller children
+      fun tick n=(guard();W.spend expected n)
+      val limits=W.semantic_limits expected
+      val output=IntInf.fromInt(#output_limit limits)
+      val template=IntInf.fromInt(#template_limit limits)
+      val quota=IntInf.fromInt(W.work_limit expected)
+      fun append v w=sce_append tick v w
+      val {budget,policies,binders,app,bounded,name_binders,head,binary,
+        forall,exists,subst,tneg,typed_equality,quantify,bool,boolean,
+        equality,implication,balanced,same_ty,original_shape,...}=
+        source_condition_builder tick
+      val initial=bounded(#output_limit limits)
+        (SOME(sce_lexical_origin_inside expected evidence))(#target d)
+      val hyp=List.map(bounded(#template_limit limits)NONE)(Thm.hyp(#proof d))
+      val rows=List.map(fn(value,_)=>
+        bounded(#template_limit limits)NONE value)(#rows d)
+      val args=List.map(fn child=>
+        let val node=G.closure_child_node graph caller child
+            val _=if G.scope_visible graph scope (G.node_scope graph node)
+              then () else raise ERR "prepare_source_condition_rule"
+                "argument escapes actual frame"
+        in bounded(#output_limit limits)NONE(G.representative graph node) end)
+        children
+      val _=List.app name_binders(initial::args)
+      val (original,permutative)=
+        original_shape steps args initial terminal
       fun record cap hypotheses result=
         let val _=if sr_raw result<=cap andalso sr_inc result<=cap then ()
               else raise ERR "prepare_source_condition_rule"
@@ -11075,17 +11093,6 @@ struct
         in record output hyp next;next end)result conditions
       val _=record template hyp final
       val _=align hyp final
-      (* Same balanced shape as the retained realization helper. *)
-      fun balanced values=
-        let fun size []=0 | size(_::rest)=(tick 1;1+size rest)
-            fun split 0 pending left=(List.rev left,pending)
-              | split n(v::rest)left=(tick 2;split(n-1)rest(v::left))
-              | split _ _ _=raise ERR "prepare_source_condition_rule" "split"
-            fun walk []=boolean boolSyntax.T | walk [v]=v
-              | walk values=
-                  let val(a,b)=split(size values div 2)values []
-                  in combine boolSyntax.conjunction(walk a)(walk b)end
-        in walk values end
       val context=balanced rows
       val _=record template [] context
       val _=record template [] (implication context final)
@@ -15133,10 +15140,10 @@ struct
       val template=IntInf.fromInt(#template_limit limits)
       val quota=IntInf.fromInt(W.work_limit expected)
       fun append v w=sce_append tick v w
-      val {budget,policies,next,identifiers,binders,atom,app,bounded,
-        name_binders,head,binary,forall,exists,subst,timp,tneg,
-        typed_equality,quantify,bool,boolean,combine,equality,
-        implication,...}=
+      val {budget,policies,identifiers,binders,atom,app,bounded,
+        name_binders,head,binary,forall,exists,subst,tneg,typed_equality,
+        quantify,bool,boolean,equality,implication,balanced,same_ty,
+        original_shape,...}=
         source_condition_builder tick
       val initial=bounded(#output_limit limits)
         (SOME(sce_lexical_origin_inside expected evidence))(#target d)
@@ -15156,121 +15163,8 @@ struct
              identifiers:=name:: !identifiers;
              SOME(atom(SRFresh(name,ty))(SRCaptured ty)))
       val _=List.app name_binders(initial::args)
-      (* Strip SPEC routes WITHOUT substituting the owned arguments.
-         Permutation is a property of this template, before matching. *)
-      fun original_template [] [] current=current
-        | original_template(step::rest)pending current=
-            let val(next,pending)=case step of EvidenceStep(SourceSpec _)=>
-                  (case forall current of
-                    SOME(_,_,body)=>(body,tl pending) | _=>
-                    raise ERR "source_rule_template" "forall route")
-                | EvidenceStep(SourceConjunct left)=>
-                    ((case binary "bool" "/\\" current of SOME(a,b)=>
-                      if left then a else b | _=>
-                        raise ERR "source_rule_template" "conjunct route"),
-                      pending)
-
-                | EvidenceStep SourceCondition=>
-                    ((case binary "min" "==>" current of SOME(_,body)=>body
-                      | _=>raise ERR "source_rule_template" "condition route"),
-                      pending)
-
-                | EvidenceAssertion=>
-                    ((case binary "min" "=" current of SOME(a,b)=>
-                      if head "bool" "T" b then a else
-                        raise ERR "source_rule_template" "truth operand"
-                     | _=>raise ERR "source_rule_template" "truth equality"),
-                      pending)
-
-                | EvidenceAntecedentConj=>
-                    ((case binary "min" "==>" current of SOME(ant,body)=>
-                      (case binary "bool" "/\\" ant of SOME(a,b)=>
-                         timp a (timp b body) | _=>
-                           raise ERR "source_rule_template" "conjunct ant")
-                     | _=>raise ERR "source_rule_template" "implication"),
-                      pending)
-
-                | EvidenceAntecedentDisj left=>
-                    ((case binary "min" "==>" current of SOME(ant,body)=>
-                      (case binary "bool" "\\/" ant of SOME(a,b)=>
-                         timp (if left then a else b)body | _=>
-                           raise ERR "source_rule_template" "disjunct ant")
-                     | _=>raise ERR "source_rule_template" "implication"),
-                      pending)
-
-                | EvidenceImpFalse=>
-                    ((case binary "min" "==>" current of SOME(a,b)=>
-                       if head "bool" "F" b then tneg a else
-                         raise ERR "source_rule_template" "false consequence"
-                     | _=>raise ERR "source_rule_template" "implication"),
-                      pending)
-                | EvidenceSymmetry=>
-                    ((case binary "min" "=" current of SOME(a,b)=>
-                        typed_equality b a
-                      | _=>raise ERR "source_rule_template" "equality"),
-                      pending)
-                | EvidenceConditionForall _=>
-                    let val(ant,result)=case binary "min" "==>" current of
-                          SOME pair=>pair | _=>
-                            raise ERR "source_rule_template" "implication"
-                        val argument=case pending of v::_=>v | _=>
-                          raise ERR "source_rule_template" "variable"
-                    in(timp(quantify false argument ant)result,tl pending)end
-                | EvidenceAntecedentExists _=>
-                    let val(ant,result)=case binary "min" "==>" current of
-                          SOME pair=>pair | _=>
-                            raise ERR "source_rule_template" "implication"
-                        val(id,_,body)=case exists ant of SOME triple=>triple
-                          | _=>raise ERR "source_rule_template" "exists"
-                        val argument=case pending of v::_=>v | _=>
-                          raise ERR "source_rule_template" "witness"
-                    in(timp(subst id argument body)result,tl pending)end
-            in tick 1;original_template rest pending next end
-        | original_template _ _ _=
-            raise ERR "source_rule_template" "argument route mismatch"
-      datatype template_variable=TemplateBound of int
-        | TemplateFree of Term.term
-      fun key_equal(TemplateBound a,TemplateBound b)=a=b
-        | key_equal(TemplateFree a,TemplateFree b)=sr_same a b
-        | key_equal _=false
-      fun variable(SRTree {shape=SRBound(id,_),...})=SOME(TemplateBound id)
-        | variable(SRTree {shape=SRAtom term,...})=
-            if Term.is_var term then SOME(TemplateFree term) else NONE
-        | variable _=NONE
-      fun same_ty(SRCaptured a,SRCaptured b)=Type.compare(a,b)=EQUAL
-        | same_ty(SRArrow(a,b),SRArrow(c,d))=same_ty(a,c)andalso same_ty(b,d)
-        | same_ty _=false
-      fun vperm a b=(tick 1;
-        case(variable a,variable b)of(SOME _,SOME _)=>
-            same_ty(sr_type a,sr_type b)
-        | _=>case(#shape(sr_data a),#shape(sr_data b))of
-            (SRApp(f,x),SRApp(g,y))=>vperm f g andalso vperm x y
-          | (SRLam(_,_,x),SRLam(_,_,y))=>vperm x y
-          | (SRAtom x,SRAtom y)=>Term.aconv x y
-          | _=>false)
-      fun fv tree=
-        let fun member key all=List.exists
-              (fn old=>(tick 1;key_equal(key,old)))all
-            fun walk bound current all=(tick 1;
-              case variable current of SOME(TemplateBound id)=>
-                  if List.exists(fn old=>old=id)bound then all else
-                    let val key=TemplateBound id
-                    in if member key all then all else key::all end
-              | SOME key=>if member key all then all else key::all
-              | NONE=>case #shape(sr_data current)of
-                  SRApp(a,b)=>walk bound b (walk bound a all)
-                | SRLam(id,_,b)=>walk(id::bound)b all | _=>all)
-        in walk [] tree [] end
-      fun same_fv a b=
-        List.all(fn x=>List.exists(fn y=>(tick 1;key_equal(x,y)))b)a
-        andalso List.all(fn y=>List.exists
-          (fn x=>(tick 1;key_equal(x,y)))a)b
-      val original=original_template steps args initial
-      val permutative=case terminal of SourceEquality=>
-            (case binary "min" "=" original of SOME(a,b)=>
-                vperm a b andalso same_fv(fv a)(fv b)
-              | _=>raise ERR "source_rule_template" "original equality")
-        | _=>false
+      val (original,permutative)=
+        original_shape steps args initial terminal
       fun record cap hypotheses result=
         let val _=if sr_raw result<=cap andalso sr_inc result<=cap then ()
               else raise ERR "prepare_source_condition_rule"
@@ -15486,17 +15380,6 @@ struct
       val final=discharge conditions result
       val _=record template hyp final
       val _=align hyp final
-      (* Same balanced shape as the retained realization helper. *)
-      fun balanced values=
-        let fun size []=0 | size(_::rest)=(tick 1;1+size rest)
-            fun split 0 pending left=(List.rev left,pending)
-              | split n(v::rest)left=(tick 2;split(n-1)rest(v::left))
-              | split _ _ _=raise ERR "prepare_source_condition_rule" "split"
-            fun walk []=boolean boolSyntax.T | walk [v]=v
-              | walk values=
-                  let val(a,b)=split(size values div 2)values []
-                  in combine boolSyntax.conjunction(walk a)(walk b)end
-        in walk values end
       val context=balanced rows
       val _=record template [] context
       val _=record template [] (implication context final)
@@ -16166,10 +16049,10 @@ struct
       val template=IntInf.fromInt(#template_limit limits)
       val quota=IntInf.fromInt(W.work_limit expected)
       fun append v w=sce_append tick v w
-      val {budget,policies,next,identifiers,binders,atom,app,capture,
-        bounded,name_binders,head,binary,forall,exists,subst,timp,tneg,
-        typed_equality,quantify,bool,boolean,combine,equality,
-        implication,...}=
+      val {budget,policies,identifiers,binders,atom,app,capture,bounded,
+        name_binders,head,binary,forall,exists,subst,tneg,typed_equality,
+        quantify,bool,boolean,combine,equality,implication,balanced,same_ty,
+        original_shape,...}=
         source_condition_builder tick
       fun no_abs cap term=
         let fun walk [] count=()
@@ -16329,121 +16212,8 @@ struct
           then raise ERR "predicate_conditional"
             "Original Source ant alias needs semantic receiver"
           else ())ordered_ants)
-      (* Strip SPEC routes WITHOUT substituting the owned arguments.
-         Permutation is a property of this template, before matching. *)
-      fun original_template [] [] current=current
-        | original_template(step::rest)pending current=
-            let val(next,pending)=case step of EvidenceStep(SourceSpec _)=>
-                  (case forall current of
-                    SOME(_,_,body)=>(body,tl pending) | _=>
-                    raise ERR "source_rule_template" "forall route")
-                | EvidenceStep(SourceConjunct left)=>
-                    ((case binary "bool" "/\\" current of SOME(a,b)=>
-                      if left then a else b | _=>
-                        raise ERR "source_rule_template" "conjunct route"),
-                      pending)
-
-                | EvidenceStep SourceCondition=>
-                    ((case binary "min" "==>" current of SOME(_,body)=>body
-                      | _=>raise ERR "source_rule_template" "condition route"),
-                      pending)
-
-                | EvidenceAssertion=>
-                    ((case binary "min" "=" current of SOME(a,b)=>
-                      if head "bool" "T" b then a else
-                        raise ERR "source_rule_template" "truth operand"
-                     | _=>raise ERR "source_rule_template" "truth equality"),
-                      pending)
-
-                | EvidenceAntecedentConj=>
-                    ((case binary "min" "==>" current of SOME(ant,body)=>
-                      (case binary "bool" "/\\" ant of SOME(a,b)=>
-                         timp a (timp b body) | _=>
-                           raise ERR "source_rule_template" "conjunct ant")
-                     | _=>raise ERR "source_rule_template" "implication"),
-                      pending)
-
-                | EvidenceAntecedentDisj left=>
-                    ((case binary "min" "==>" current of SOME(ant,body)=>
-                      (case binary "bool" "\\/" ant of SOME(a,b)=>
-                         timp (if left then a else b)body | _=>
-                           raise ERR "source_rule_template" "disjunct ant")
-                     | _=>raise ERR "source_rule_template" "implication"),
-                      pending)
-
-                | EvidenceImpFalse=>
-                    ((case binary "min" "==>" current of SOME(a,b)=>
-                       if head "bool" "F" b then tneg a else
-                         raise ERR "source_rule_template" "false consequence"
-                     | _=>raise ERR "source_rule_template" "implication"),
-                      pending)
-                | EvidenceSymmetry=>
-                    ((case binary "min" "=" current of SOME(a,b)=>
-                        typed_equality b a
-                      | _=>raise ERR "source_rule_template" "equality"),
-                      pending)
-                | EvidenceConditionForall _=>
-                    let val(ant,result)=case binary "min" "==>" current of
-                          SOME pair=>pair | _=>
-                            raise ERR "source_rule_template" "implication"
-                        val argument=case pending of v::_=>v | _=>
-                          raise ERR "source_rule_template" "variable"
-                    in(timp(quantify false argument ant)result,tl pending)end
-                | EvidenceAntecedentExists _=>
-                    let val(ant,result)=case binary "min" "==>" current of
-                          SOME pair=>pair | _=>
-                            raise ERR "source_rule_template" "implication"
-                        val(id,_,body)=case exists ant of SOME triple=>triple
-                          | _=>raise ERR "source_rule_template" "exists"
-                        val argument=case pending of v::_=>v | _=>
-                          raise ERR "source_rule_template" "witness"
-                    in(timp(subst id argument body)result,tl pending)end
-            in tick 1;original_template rest pending next end
-        | original_template _ _ _=
-            raise ERR "source_rule_template" "argument route mismatch"
-      datatype template_variable=TemplateBound of int
-        | TemplateFree of Term.term
-      fun key_equal(TemplateBound a,TemplateBound b)=a=b
-        | key_equal(TemplateFree a,TemplateFree b)=sr_same a b
-        | key_equal _=false
-      fun variable(SRTree {shape=SRBound(id,_),...})=SOME(TemplateBound id)
-        | variable(SRTree {shape=SRAtom term,...})=
-            if Term.is_var term then SOME(TemplateFree term) else NONE
-        | variable _=NONE
-      fun same_ty(SRCaptured a,SRCaptured b)=Type.compare(a,b)=EQUAL
-        | same_ty(SRArrow(a,b),SRArrow(c,d))=same_ty(a,c)andalso same_ty(b,d)
-        | same_ty _=false
-      fun vperm a b=(tick 1;
-        case(variable a,variable b)of(SOME _,SOME _)=>
-            same_ty(sr_type a,sr_type b)
-        | _=>case(#shape(sr_data a),#shape(sr_data b))of
-            (SRApp(f,x),SRApp(g,y))=>vperm f g andalso vperm x y
-          | (SRLam(_,_,x),SRLam(_,_,y))=>vperm x y
-          | (SRAtom x,SRAtom y)=>Term.aconv x y
-          | _=>false)
-      fun fv tree=
-        let fun member key all=List.exists
-              (fn old=>(tick 1;key_equal(key,old)))all
-            fun walk bound current all=(tick 1;
-              case variable current of SOME(TemplateBound id)=>
-                  if List.exists(fn old=>old=id)bound then all else
-                    let val key=TemplateBound id
-                    in if member key all then all else key::all end
-              | SOME key=>if member key all then all else key::all
-              | NONE=>case #shape(sr_data current)of
-                  SRApp(a,b)=>walk bound b (walk bound a all)
-                | SRLam(id,_,b)=>walk(id::bound)b all | _=>all)
-        in walk [] tree [] end
-      fun same_fv a b=
-        List.all(fn x=>List.exists(fn y=>(tick 1;key_equal(x,y)))b)a
-        andalso List.all(fn y=>List.exists
-          (fn x=>(tick 1;key_equal(x,y)))a)b
-      val original=original_template steps args initial
-      val permutative=case terminal of SourceEquality=>
-            (case binary "min" "=" original of SOME(a,b)=>
-                vperm a b andalso same_fv(fv a)(fv b)
-              | _=>raise ERR "source_rule_template" "original equality")
-        | _=>false
+      val (original,permutative)=
+        original_shape steps args initial terminal
       fun record cap hypotheses result=
         let val _=if sr_raw result<=cap andalso sr_inc result<=cap then ()
               else raise ERR "prepare_source_condition_rule"
@@ -16745,17 +16515,6 @@ struct
         List.foldl(fn(ant,held)=>remove_hyp ant held)hyp ordered_ants
       val _=record template final_hyp final
       val _=align final_hyp final
-      (* Same balanced shape as the retained realization helper. *)
-      fun balanced values=
-        let fun size []=0 | size(_::rest)=(tick 1;1+size rest)
-            fun split 0 pending left=(List.rev left,pending)
-              | split n(v::rest)left=(tick 2;split(n-1)rest(v::left))
-              | split _ _ _=raise ERR "prepare_source_condition_rule" "split"
-            fun walk []=boolean boolSyntax.T | walk [v]=v
-              | walk values=
-                  let val(a,b)=split(size values div 2)values []
-                  in combine boolSyntax.conjunction(walk a)(walk b)end
-        in walk values end
       val _=case closing of SOME _=>() | NONE=>
         let val context=balanced rows
         in record template [] context;
