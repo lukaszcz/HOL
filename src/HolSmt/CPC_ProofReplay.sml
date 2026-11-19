@@ -4856,18 +4856,18 @@ local
             profile "CPC(rung:word/aci_norm)"
               wordsLib.WORD_ARITH_PROVE target))
         (fn () =>
-          (SmtResource.or_else
+          SmtResource.or_else
              (fn () =>
                profile "CPC(rung:seq/aci_norm)"
                  (SmtSeqProve.seq_prove_with_admission admit) target)
              (fn () =>
-               (SmtResource.or_else
+               SmtResource.or_else
                   (fn () =>
                     profile "CPC(rung:string/aci_norm)"
                       SmtStringProve.string_rewrite_prove target)
                   (fn () =>
                     profile "CPC(rung:word/aci_norm_tautology)"
-                      (tautology "aci_norm") target))))))
+                      (tautology "aci_norm") target))))
     end
 
   fun replay_aci_norm args = replay_aci_norm_admitted
@@ -6572,9 +6572,9 @@ local
     SmtResource.or_else
       (fn () => replay_flat_nary_cong source prems)
       (fn () =>
-        (SmtResource.or_else
+        SmtResource.or_else
            (fn () => replay_boolean_nary_cong source prems)
-           (fn () => replay_direct_nary_cong source prems)))
+           (fn () => replay_direct_nary_cong source prems))
 
   and replay_direct_nary_cong source prems =
     let
@@ -6862,13 +6862,13 @@ local
                            profile "CPC(rung:trans/XOR_GRAPH)"
                              xor_graph_tautology bridge_target)
                          (fn () =>
-                           (SmtResource.or_else
+                           SmtResource.or_else
                               (fn () =>
                                 profile "CPC(rung:trans/XOR_TAUT)"
                                   xor_tautology bridge_target)
                               (fn () =>
                                 shared_phase "bridge_aci" (fn () =>
-                                replay_aci_norm [bridge_target])))))
+                                replay_aci_norm [bridge_target]))))
                     val bridge =
                       (SmtResource.or_else
                          (fn () =>
@@ -9782,9 +9782,7 @@ local
             profile "CPC(rung:trust/rdiv_zero_irrelevant)"
               irrelevant_zero_rewrite ()
         end
-      fun replay_set () =
-        SmtResource.or_else
-          (fn () =>
+      fun replay_set_direct () =
         let
           val context =
             HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
@@ -9847,7 +9845,7 @@ local
               (fn () =>
                 Tactical.TAC_PROOF ((context, target),
                   bossLib.ASM_SIMP_TAC (bossLib.srw_ss ()) []))
-              (fn () => card_lower_bound ())
+              card_lower_bound
           val thm = SmtResource.with_resource_step_time "Set" "contextual"
             (fn () =>
               (List.app (SmtResource.check_resource_goal "Set" "contextual")
@@ -9856,7 +9854,10 @@ local
         in
           List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
             thm prems
-        end)
+        end
+      fun replay_set () =
+        SmtResource.or_else
+          replay_set_direct
           (fn () => SmtArrayProve.array_prove target)
       fun unsupported_set () =
         raise ERR "trust"
@@ -10650,9 +10651,7 @@ local
                   val word_equality_laws = ref
                     ([] : (Type.hol_type * Term.term * Term.term *
                             Thm.thm) list)
-                  fun word_equality_schema current =
-                    SmtResource.or_else
-                      (fn () =>
+                  fun word_equality_schema_direct current =
                     let
                       val (left, right) = boolSyntax.dest_eq current
                       val ty = equality_operand_type current
@@ -10704,7 +10703,10 @@ local
                       SOME (observed_inst
                         [{redex = left_var, residue = left},
                          {redex = right_var, residue = right}] law)
-                    end)
+                    end
+                  fun word_equality_schema current =
+                    SmtResource.or_else
+                      (fn () => word_equality_schema_direct current)
                       (fn () => NONE)
                   exception UncacheableBinder
                   fun native_cache_key current =
@@ -15320,7 +15322,7 @@ local
                (fn () =>
                  profile "CPC(chain:annotated)"
                    annotated_chain ())
-               (fn () => dynamic_then_annotated ()))
+               dynamic_then_annotated)
           fun structural_then fallback () =
             (trace_chain "structural schema";
              profile "CPC(chain:structural-schema)"
@@ -15526,9 +15528,7 @@ local
                 (List.length (!unused_prems))
               val _ = trace_chain ("deep remaining " ^
                 Int.toString (List.length deep_remaining))
-              fun fp_literal_conversion term =
-                SmtResource.or_else
-                  (fn () =>
+              fun fp_literal_conversion_direct term =
                 let
                   val negated = Lib.total boolSyntax.dest_neg term
                   val atom = case negated of SOME body => body | NONE => term
@@ -15541,7 +15541,10 @@ local
                   case negated of
                     SOME _ => Conv.RAND_CONV SmtFpGraph.convert_atom term
                   | NONE => SmtFpGraph.convert_atom term
-                end)
+                end
+              fun fp_literal_conversion term =
+                SmtResource.or_else
+                  (fn () => fp_literal_conversion_direct term)
                   (fn () => raise Conv.UNCHANGED)
               fun boolean_negation_conversion term =
                 let
@@ -15809,19 +15812,19 @@ local
                        ("premises", alignment_source)]
                   else semantic_taut_reorder supported_result))
                (fn () =>
-             schematic_reorder cleaned_result
-             handle HolSatLib.SAT_cex _ =>
-                      reorder_to_target cleaned_result
-                  | Feedback.HOL_ERR _ =>
-                      (resolution_profile "circuit-reorder"
-                         semantic_circuit_reorder alignment_source
-                       handle HolSatLib.SAT_cex _ =>
-                              reorder_to_target cleaned_result
-                            | Feedback.HOL_ERR _ =>
-                              reorder_to_target cleaned_result)
-             handle Feedback.HOL_ERR _ => contextual_target cleaned_result
-             handle Feedback.HOL_ERR _ =>
-               tautological_consequences prems target))
+                 schematic_reorder cleaned_result
+                 handle HolSatLib.SAT_cex _ =>
+                          reorder_to_target cleaned_result
+                      | Feedback.HOL_ERR _ =>
+                          (resolution_profile "circuit-reorder"
+                             semantic_circuit_reorder alignment_source
+                           handle HolSatLib.SAT_cex _ =>
+                                  reorder_to_target cleaned_result
+                                | Feedback.HOL_ERR _ =>
+                                  reorder_to_target cleaned_result)
+                 handle Feedback.HOL_ERR _ => contextual_target cleaned_result
+                 handle Feedback.HOL_ERR _ =>
+                   tautological_consequences prems target))
           fun boolean_dag_later_alignment () =
             let
               fun original_then_combined () =
@@ -17477,7 +17480,7 @@ local
              (fn () => SmtSeqProve.seq_prove_with_admission admit target)
              (fn () =>
                SmtSeqProve.seq_contextual_prove_with_admission
-               admit context target))
+                 admit context target))
         else
           (SmtResource.or_else
              (fn () => SmtStringProve.string_rewrite_prove target)
@@ -20339,7 +20342,7 @@ local
       fun occurrence_resolution_or_fallback () =
         case profile "CPC(rung:resolution/occurrences)"
             (fn () => SmtResource.or_else
-               (fn () => occurrence_resolution_result ())
+               occurrence_resolution_result
                (fn () =>
                  (profile_event "CPC(occurrence-decline:conversion)";
                  NONE))) () of
@@ -21170,7 +21173,7 @@ local
                      let
                        val theorem = SmtResource.or_else
                          (fn () => replay_reordering prems args)
-                         (fn () => canonical_reordering ())
+                         canonical_reordering
                      in case located_args of
                          [target] =>
                            if Term.aconv (Thm.concl theorem) (#term target) then
@@ -23412,9 +23415,9 @@ in
               (SmtResource.or_else
                  (fn () => cached_thm state hypothesis)
                  (fn () =>
-                   (SmtResource.or_else
+                   SmtResource.or_else
                       (fn () => dependency_proof [] hypothesis)
-                      (fn () => replay_checked ()))))
+                      replay_checked))
             end
           fun checked_generalization () =
             let
@@ -23429,13 +23432,13 @@ in
             end
           fun checked_then_generalized () =
             SmtResource.or_else
-              (fn () => checked_proof ())
-              (fn () => checked_generalization ())
+              checked_proof
+              checked_generalization
           val proof =
             if boolSyntax.is_forall hypothesis then
               (SmtResource.or_else
-                 (fn () => checked_generalization ())
-                 (fn () => checked_then_generalized ()))
+                 checked_generalization
+                 checked_then_generalized)
             else checked_then_generalized ()
           val discharged = prove_exact_hyp proof result
           val _ = trace_checked ("done=" ^ ordinal)
