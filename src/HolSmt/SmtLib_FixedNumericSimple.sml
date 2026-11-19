@@ -169,8 +169,9 @@ struct
     in (net,List.map (fn (_,_,_,head,_) => head) rows,selected) end
   (* The candidate gate of both owners: the constant head of the target
      spine (one observation per visited node) must be a fixed-net head,
-     else no net lookup runs. [lookup] is the owner's charged net walk. *)
-  fun candidates_with graph action (d:('a,'l) described) heads lookup =
+     else the owner's [charge] (its size admission and Work debit)
+     precedes the net walk, which observes once. *)
+  fun candidates_with graph action (d:('a,'l) described) heads net charge =
     let fun head observe child =
           let val _ = observe ()
               val n = G.closure_child_node graph (#scope d) child
@@ -184,7 +185,12 @@ struct
     in action (fn observe =>
       case head observe (#child d) of NONE => []
       | SOME name => if not (List.exists (fn key => key=name) heads)
-          then [] else lookup observe) end
+          then [] else
+          let val _ = charge ()
+              val answer = Ho_Net.lookup (G.representative graph (#node d))
+                net
+              val _ = observe ()
+          in answer end) end
   (* The memoised pairwise walk of both owners' same: [leaf] decides two
      non-application children. Every visited child is recorded in
      [paths] and revalidated, in order, once the walk is over. *)
@@ -617,6 +623,13 @@ struct
         val target = publish d proof
         val recipe = closed proof
     in {target=target,recipe=recipe,proof=proof} end
+  (* The reuse of both owners: the old closed proof's Core description is
+     checked, then it is published under THIS occurrence by the owner's
+     [publish]; the recipe and proof are the old ones. *)
+  fun reuse_with description publish (old:('f,'p) outcome_of) =
+    let val _ = ignore (description ())
+        val target = publish (#proof old)
+    in {target=target,recipe= #recipe old,proof= #proof old} end
   exception Inapplicable
   fun outcome_target (result:('f,'p) outcome_of) = #target result
   fun outcome_proof (result:('f,'p) outcome_of) = #proof result
@@ -798,6 +811,16 @@ struct
                if Portable.pointer_eq (guard,backing_guard) then retain rest
                else guard :: retain rest)
     in backing := retain (!backing) end
+  (* Publish a closed Core proof as the generated target of [focus].
+     capture retains the generated admission, whose guard owns this
+     EXACT Core receipt and its parent. Do not retain a second guard
+     for the same proof beside that authentic dependency chain. *)
+  fun publish owner (focus:focus) (d:description) proof =
+    let val target = capture owner (#frame d)
+          (A.generated_compact (expected owner (#scope d))
+            (#admission d) proof)
+        val _ = covered_parent owner focus
+    in target end
   fun action (owner as Owner {work,...}) focus operation =
     action_with work (fn () => ignore (describe owner focus))
       (fn () => W.spend work 1) operation
@@ -819,15 +842,7 @@ struct
         {frame= #frame d,conversion=recipe,ordinal=ordinal owner,
          check_type=policy owner focus})
       (fn plan => Core.execute work plan)
-      (fn d => fn proof =>
-        (* capture retains the generated admission, whose guard owns this
-           EXACT Core receipt and its parent. Do not retain a second guard
-           for the same proof beside that authentic dependency chain. *)
-        let val target = capture owner (#frame d)
-              (A.generated_compact (expected owner (#scope d))
-                (#admission d) proof)
-            val _ = covered_parent owner focus
-        in target end)
+      (fn d => fn proof => publish owner focus d proof)
       (fn proof => action owner focus (fn observe =>
         C.graph_realized_leaf work
           {realization=Core.realization_for work proof,observe=observe}))
@@ -843,24 +858,21 @@ struct
      lookup order, never a reordered head bucket or a caller rule table. *)
   fun candidates (owner as Owner {graph,net,heads,...}) focus =
     let val d = describe owner focus
-    in candidates_with graph (action owner focus) d heads (fn observe =>
+    in candidates_with graph (action owner focus) d heads net (fn () =>
         let val _ = List.app (fn metric =>
               case G.unfolded_nodes graph metric (#source_limit d)
                   (#node d) of SOME n => if n<= #source_limit d then () else
                     raise ERR "candidates" "relevant source exceeds its role"
               | NONE => raise ERR "candidates" "missing numeric source syntax")
               [G.RawNodes,G.BinderInclusiveNodes]
-            (* Actual lookup is constructor-only, with no callbacks. Debit
-               the full admitted source visits before that public net walk.
-               Internal balanced-map/kernel costs remain a separate gate. *)
-            val _ = case G.unfolded_nodes graph G.RawNodes
-                (#source_limit d) (#node d) of SOME n =>
-                  (case owner of Owner {work,...} => W.spend work n)
-              | NONE => raise ERR "candidates" "missing admitted source"
-            val term = G.representative graph (#node d)
-            val answer = Ho_Net.lookup term net
-            val _ = observe ()
-        in answer end)
+        in
+          (* Actual lookup is constructor-only, with no callbacks. Debit
+             the full admitted source visits before that public net walk.
+             Internal balanced-map/kernel costs remain a separate gate. *)
+          case G.unfolded_nodes graph G.RawNodes
+              (#source_limit d) (#node d) of SOME n =>
+            (case owner of Owner {work,...} => W.spend work n)
+          | NONE => raise ERR "candidates" "missing admitted source" end)
     end
   fun same owner first second =
     let val Owner {graph,work,...} = owner
@@ -943,14 +955,10 @@ struct
      Source. *)
   fun reuse owner (d:description) focus (old:outcome) =
     let val Owner {work,...} = owner
-        val _ = ignore (Core.conversion_description_for work (#proof old))
-        (* Preserve THIS occurrence/path even when the semantic node
-           and already-paid closed proof have a genuine DAG alias. *)
-        val target = capture owner (#frame d)
-          (A.generated_compact (expected owner (#scope d))
-            (#admission d) (#proof old))
-        val _ = covered_parent owner focus
-    in {target=target,recipe= #recipe old,proof= #proof old}:outcome end
+    in (* Preserve THIS occurrence/path even when the semantic node
+          and already-paid closed proof have a genuine DAG alias. *)
+      reuse_with (fn () => Core.conversion_description_for work (#proof old))
+        (publish owner focus d) old : outcome end
   fun is_true owner focus =
     let val Owner {graph,...} = owner
     in is_true_with graph (fn () => describe owner focus)
@@ -1294,6 +1302,18 @@ struct
   structure PolicySimpleProof =
   struct
     open PolicySimpleBase
+    (* Publish a closed Core proof as the generated target of [focus]:
+       the generated wrapper producer derives its own fact/frame/RHS
+       metric under a charged action. *)
+    fun publish(owner as Owner{work,profiles,...})focus(d:description)proof=
+      let val wrapper=action owner focus(fn observe=>
+            let val _=observe()
+                val receipt=Core.realization_with_policy_for work proof
+            in P.policy_source_realization_generated_equality_for work
+              receipt{profiles=profiles}end)
+      in capture owner(#frame d)
+        (A.generated_scoped_with_policy(expected owner(#scope d))
+          (#admission d)wrapper)end
     fun seal(owner as Owner{work,graph,native_contract,profiles,backing,...})
         focus recipe=
       seal_with(fn()=>describe owner focus)
@@ -1306,14 +1326,7 @@ struct
           let val _=backing:=(fn()=>ignore
                 (Core.conversion_description_with_policy_for work proof))::
                   !backing
-              val wrapper=action owner focus(fn observe=>
-                let val _=observe()
-                    val receipt=Core.realization_with_policy_for work proof
-                in P.policy_source_realization_generated_equality_for work
-                  receipt{profiles=profiles}end)
-          in capture owner(#frame d)
-            (A.generated_scoped_with_policy(expected owner(#scope d))
-              (#admission d)wrapper)end)
+          in publish owner focus d proof end)
         (fn proof=>action owner focus(fn observe=>
           C.graph_realized_leaf_with_policy work
             {realization=Core.realization_with_policy_for work proof,
@@ -1618,13 +1631,9 @@ struct
        charged IntInf work; it is not projected onto a finite sentinel. *)
     fun candidates(owner as Owner{graph,work,net,heads,...})focus=
       let val d=describe owner focus
-      in candidates_with graph(action owner focus)d heads(fn observe=>
+      in candidates_with graph(action owner focus)d heads net(fn()=>
           let val data=metric owner focus
-              val _=W.spend_policy work(#raw data)
-              val answer=Ho_Net.lookup
-                (G.representative graph(#node d))net
-              val _=observe()
-          in answer end)
+          in W.spend_policy work(#raw data)end)
       end
     (* Native equality is reached only after both actual role envelopes
        and repeated annotation incidences have passed the finite contract. *)
@@ -1782,18 +1791,10 @@ struct
       let val Owner{graph,...}=owner
       in is_true_with graph(fn()=>describe owner focus)(action owner focus)end
     fun reuse owner(d:description)focus(old:outcome)=
-      let val Owner{work,profiles,...}=owner
-          val _=ignore(Core.conversion_description_with_policy_for
-            work(#proof old))
-          val wrapper=action owner focus(fn observe=>
-            (observe();
-             P.policy_source_realization_generated_equality_for
-               work(Core.realization_with_policy_for
-                 work(#proof old)){profiles=profiles}))
-          val target=capture owner(#frame d)
-            (A.generated_scoped_with_policy
-              (expected owner(#scope d))(#admission d)wrapper)
-      in {target=target,recipe= #recipe old,proof= #proof old}:outcome end
+      let val Owner{work,...}=owner
+      in reuse_with(fn()=>Core.conversion_description_with_policy_for
+          work(#proof old))
+        (publish owner focus d)old:outcome end
     fun rewrite owner simplify memo stack focus=
       let val Owner{work,matcher,conditional,stack_limit,...}=owner
           val d=describe owner focus
