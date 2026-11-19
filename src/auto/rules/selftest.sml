@@ -866,13 +866,16 @@ val _ =
             {kind = clasetRules.Norm, safe = true, prio = SOME 23}]
          fun round_trip spec =
            case decode_delta
-                  (encode_delta (ADD {name = name, spec = spec})) of
-               SOME (ADD {name = name', spec = spec'}) =>
+                  (encode_delta
+                     (ADD (look_up {name = name, spec = spec}))) of
+               SOME (ADD (Found (name', spec', _))) =>
                  name = name' andalso same_spec spec spec'
              | _ => false
        in
          List.all round_trip specs andalso
-         decode_delta (encode_delta (RM "gone")) = SOME (RM "gone")
+         (case decode_delta (encode_delta (RM "gone")) of
+             SOME (RM "gone") => true
+           | _ => false)
        end)
 
 val _ =
@@ -888,7 +891,40 @@ val _ =
                name = name' andalso same_spec spec spec' andalso
                aconv_thm th boolTheory.AND_IMP_INTRO
            | NONE => false)
-         andalso uptodate_delta (ADD {name = name, spec = spec})
+         andalso
+         uptodate_delta (ADD (look_up {name = name, spec = spec}))
+       end)
+
+(* The missing-theorem warning fires when the addition is applied, never
+   when the delta is decoded. *)
+val _ =
+  test
+    ("a claset ADD naming no theorem warns when applied, not at decode",
+     fn () =>
+       let
+         val name = {Thy = "bool", Name = "no_such_theorem_c2"}
+         val spec = {kind = clasetRules.Intro, safe = false, prio = NONE}
+         val sexp =
+           encode_delta (ADD (look_up {name = name, spec = spec}))
+         val decoded = ref NONE
+         val decode_warnings =
+           capture_warnings (fn () => decoded := decode_delta sexp)
+         val taken = ref (SOME ())
+         val apply_warnings =
+           capture_warnings
+             (fn () =>
+                taken :=
+                  (case !decoded of
+                       SOME (ADD addition) =>
+                         Option.map (fn _ => ()) (take_looked_up addition)
+                     | _ => SOME ()))
+       in
+         null decode_warnings andalso not (Option.isSome (!taken)) andalso
+         length apply_warnings = 1 andalso
+         String.isSubstring "load_delta" (hd apply_warnings) andalso
+         String.isSubstring "Bad claset add command, dropping theorem"
+           (hd apply_warnings) andalso
+         String.isSubstring "no_such_theorem_c2" (hd apply_warnings)
        end)
 
 

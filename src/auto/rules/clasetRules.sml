@@ -776,7 +776,11 @@ fun merge_decls (left, right) =
     add incoming left []
   end
 
-datatype cdelta = ADD of {name : thname, spec : rulespec} | RM of string
+datatype looked_up =
+    Found of thname * rulespec * thm
+  | Missing of thname * rulespec
+
+datatype cdelta = ADD of looked_up | RM of string
 
 fun kind_encode Intro = ThyDataSexp.String "intro"
   | kind_encode Elim = ThyDataSexp.String "elim"
@@ -803,15 +807,22 @@ fun spec_decode sexp =
        (kind_decode, ThyDataSexp.bool_decode,
         ThyDataSexp.option_decode ThyDataSexp.int_decode) sexp)
 
-fun encode_delta (ADD {name, spec}) =
-      ThyDataSexp.tag_encode "clasetADD1"
-        (ThyDataSexp.pair_encode (ThyDataSexp.KName, spec_encode))
-        (name, spec)
+fun look_up {name, spec} =
+  Found (name, spec, DB.fetch_knm name)
+  handle HOL_ERR _ => Missing (name, spec)
+
+fun encode_add (name, spec) =
+  ThyDataSexp.tag_encode "clasetADD1"
+    (ThyDataSexp.pair_encode (ThyDataSexp.KName, spec_encode))
+    (name, spec)
+
+fun encode_delta (ADD (Found (name, spec, _))) = encode_add (name, spec)
+  | encode_delta (ADD (Missing (name, spec))) = encode_add (name, spec)
   | encode_delta (RM name) =
       ThyDataSexp.tag_encode "clasetRM1" ThyDataSexp.String name
 
 fun dec_add sexp =
-  Option.map (fn (name, spec) => ADD {name = name, spec = spec})
+  Option.map (fn (name, spec) => ADD (look_up {name = name, spec = spec}))
     (ThyDataSexp.tag_decode "clasetADD1"
        (ThyDataSexp.pair_decode (ThyDataSexp.kname_decode, spec_decode))
        sexp)
@@ -823,25 +834,19 @@ fun dec_rm sexp =
 fun decode_delta sexp =
   ThyDataSexp.first [dec_add, dec_rm] sexp
 
-datatype looked_up = Found of thname * rulespec * thm | Missing of thname
-
-fun look_up {name, spec} =
-  Found (name, spec, DB.fetch_knm name) handle HOL_ERR _ => Missing name
-
 fun take_looked_up (Found found) = SOME found
-  | take_looked_up (Missing name) =
+  | take_looked_up (Missing (name, _)) =
       (HOL_WARNING "clasetRules" "load_delta"
          ("Bad claset add command, dropping theorem " ^
           KernelSig.name_toString name);
        NONE)
 
-fun uptodate_delta (ADD {name, ...}) =
-      (Theory.uptodate_thm (DB.fetch_knm name)
-       handle HOL_ERR _ =>
-         (HOL_WARNING "clasetRules" "uptodate_delta"
-            ("Bad claset add command, dropping theorem " ^
-             KernelSig.name_toString name);
-          false))
+fun uptodate_delta (ADD (Found (_, _, th))) = Theory.uptodate_thm th
+  | uptodate_delta (ADD (Missing (name, _))) =
+      (HOL_WARNING "clasetRules" "uptodate_delta"
+         ("Bad claset add command, dropping theorem " ^
+          KernelSig.name_toString name);
+       false)
   | uptodate_delta (RM _) = true
 
 end

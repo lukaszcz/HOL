@@ -93,17 +93,20 @@ sig
   val candidate_order_measured :
     (unit -> unit) -> (tag * brl) list -> (tag * brl) list
 
-  datatype cdelta = ADD of {name : thname, spec : rulespec} | RM of string
-  val encode_delta : cdelta -> ThyDataSexp.t
-  val decode_delta : ThyDataSexp.t -> cdelta option
   (* An addition with the theorem it names looked up in the database, or
-     the name nothing was found under.  The lookup is the only part of
-     loading that reads the database, so it is done where the addition is
-     recorded or its theory loads, never in a proof; take_looked_up then
-     gives the theorem, or warns about a missing one when the addition is
-     applied rather than when it is looked up. *)
-  datatype looked_up = Found of thname * rulespec * thm | Missing of thname
+     the name and spec nothing was found under.  The lookup is the only
+     part of loading that reads the database, so it is done where the
+     addition is decoded or recorded, never in a proof; take_looked_up
+     then gives the theorem, or warns about a missing one when the
+     addition is applied rather than when it is looked up. *)
+  datatype looked_up =
+      Found of thname * rulespec * thm
+    | Missing of thname * rulespec
   val look_up : {name : thname, spec : rulespec} -> looked_up
   val take_looked_up : looked_up -> (thname * rulespec * thm) option
+  (* Only the name and spec of an addition are persisted. *)
+  datatype cdelta = ADD of looked_up | RM of string
+  val encode_delta : cdelta -> ThyDataSexp.t
+  val decode_delta : ThyDataSexp.t -> cdelta option
   val uptodate_delta : cdelta -> bool
 end

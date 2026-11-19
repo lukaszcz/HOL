@@ -720,15 +720,6 @@ fun drop_illformed fname name cs =
   (HOL_WARNING "clasetLib" fname
      ("Dropping ill-formed persistent rule " ^ name); cs)
 
-(* A delta with the theorem an addition names already looked up.  A
-   delta is looked up where it is recorded or its theory loads, and
-   applied, possibly much later, when the claset is wanted -- often in a
-   proof, which must read nothing but the context it is given. *)
-datatype rdelta = RADD of looked_up | RRM of string
-
-fun look_up_delta (ADD addition) = RADD (look_up addition)
-  | look_up_delta (RM name) = RRM name
-
 fun apply_add_delta fname addition cs =
   case take_looked_up addition of
       NONE => cs
@@ -738,19 +729,19 @@ fun apply_add_delta fname addition cs =
           handle HOL_ERR _ => drop_illformed fname pname cs
         end
 
-fun apply_rdelta (RADD addition) cs =
+fun apply_cdelta (ADD addition) cs =
       apply_add_delta "apply_cdelta" addition cs
-  | apply_rdelta (RRM name) cs = remove_rule name cs
+  | apply_cdelta (RM name) cs = remove_rule name cs
 
 (* Values reconstructed for an ancestry always contain their complete set of
    persistent declarations, so they need no delayed replay. *)
 fun apply_delta delta (cs, owned, _) =
-  let val cs' = apply_rdelta (look_up_delta delta) cs
+  let val cs' = apply_cdelta delta cs
   in (cs', live_owned cs' owned, Ready) end
 
 (* Add all declarations before rebuilding the nets.  Theory loading uses this
    once for a delta batch, rather than extending a net for each declaration. *)
-fun update_decls (RADD addition) decls =
+fun update_decls (ADD addition) decls =
       (case take_looked_up addition of
            NONE => decls
          | SOME (name', spec', th) =>
@@ -758,7 +749,7 @@ fun update_decls (RADD addition) decls =
                #2 (extend_decl (make_rule_decl spec' (pname, th)) decls)
                handle HOL_ERR _ => drop_illformed "update_decls" pname decls
              end)
-  | update_decls (RRM name) decls = #2 (remove_decl name decls)
+  | update_decls (RM name) decls = #2 (remove_decl name decls)
 
 fun rebuild_claset decls (CS {wrappers, distinct, ...}) =
   CS {decls = decls, wrappers = wrappers, distinct = distinct,
@@ -766,12 +757,12 @@ fun rebuild_claset decls (CS {wrappers, distinct, ...}) =
         List.foldl (fn (decl, index) => add_decl decl index)
           empty_index (dest_decls decls)}
 
-fun is_removal (RRM _) = true
-  | is_removal (RADD _) = false
+fun is_removal (RM _) = true
+  | is_removal (ADD _) = false
 
-fun apply_add_batch (RADD addition, cs) =
+fun apply_add_batch (ADD addition, cs) =
       apply_add_delta "update_decls" addition cs
-  | apply_add_batch (RRM _, _) =
+  | apply_add_batch (RM _, _) =
       raise Fail "batch_apply: unexpected removal in ADD-only batch"
 
 fun batch_apply deltas (cs as CS {decls, ...}) =
@@ -779,7 +770,7 @@ fun batch_apply deltas (cs as CS {decls, ...}) =
     rebuild_claset
       (List.foldl (fn (delta, acc) => update_decls delta acc) decls deltas)
       (List.foldl
-        (fn (RRM name, acc) => remove_rule name acc | (_, acc) => acc)
+        (fn (RM name, acc) => remove_rule name acc | (_, acc) => acc)
         cs deltas)
   else
     List.foldl apply_add_batch cs deltas
@@ -963,15 +954,11 @@ fun modify f (cs, owned, Ready) =
   | modify f (cs, owned, Pending pending) =
       (cs, owned, Pending (Modify f :: pending))
 
-fun apply_to_global delta =
-  let val looked_up = look_up_delta delta
-  in modify (apply_rdelta looked_up) end
+fun apply_to_global delta = modify (apply_cdelta delta)
 
 (* Loading invokes this once for all a theory's deltas.  In particular, an
    unforced global state retains the complete batch for one lazy replay. *)
-fun batch_finaliser _ deltas =
-  let val looked_up = map look_up_delta deltas
-  in modify (batch_apply looked_up) end
+fun batch_finaliser _ deltas = modify (batch_apply deltas)
 
 val adresult : (cdelta, cstate) AncestryData.fullresult =
   AncestryData.fullmake {
@@ -1189,7 +1176,7 @@ val _ = register_tyinfo_contribution
 fun export_rule spec name =
   let
     val thname = ThmSetData.toKName name
-    val delta = ADD {name = thname, spec = spec}
+    val delta = ADD (look_up {name = thname, spec = spec})
   in
     #record_delta adresult delta;
     #update_global_value adresult (apply_to_global delta)
