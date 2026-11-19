@@ -24,6 +24,25 @@ struct
     | fixed BagForall = HolSmtTheory.BAG_FORALL_TO_INT
     | fixed BagExists = HolSmtTheory.BAG_EXISTS_TO_INT
 
+  (* Type-tree walker shared by the int, policy and native preparers.
+     Each caller supplies its own tick, plus and bounded, and the two
+     kernel inspections already wrapped in its own guarded call, so
+     every charge, guard and refusal stays that caller's. *)
+  fun type_weight_with {tick,plus,bounded,is_vartype,type_args} ty =
+      let fun walk pending n =
+            (tick ();case pending of [] => n | spine::more =>
+              (tick ();case spine of [] => walk more n
+               | current::rest =>
+                 let val n = plus n 1 val _ = bounded "law Type tree" n
+                     val _ = tick ()
+                 in if is_vartype current then
+                      (tick ();walk (rest::more) n)
+                    else let val args = type_args current
+                      val _ = tick () val _ = tick ()
+                    in walk (args::rest::more) n end end))
+          val _ = tick () val _ = tick ()
+      in walk [[ty]] 0 end
+
   fun prepare_inside work {needed,check_type} =
     let
       val _ = W.spend work 0
@@ -82,21 +101,10 @@ struct
         | size (Abstraction (_,_,b)) =
             let val (r,i) = size b val _ = tick ()
             in (plus 1 r,plus 2 i) end
-      fun type_weight ty =
-        let fun walk pending n =
-              (tick ();case pending of [] => n | spine::more =>
-                (tick ();case spine of [] => walk more n
-                 | current::rest =>
-                   let val n = plus n 1 val _ = bounded "law Type tree" n
-                       val _ = tick ()
-                   in if call (fn () => Type.is_vartype current) then
-                        (tick ();walk (rest::more) n)
-                      else let val args = call
-                          (fn () => #2 (Type.dest_type current))
-                        val _ = tick () val _ = tick ()
-                      in walk (args::rest::more) n end end))
-            val _ = tick () val _ = tick ()
-        in walk [[ty]] 0 end
+      val type_weight = type_weight_with
+        {tick = tick,plus = plus,bounded = bounded,
+         is_vartype = fn ty => call (fn () => Type.is_vartype ty),
+         type_args = fn ty => call (fn () => #2 (Type.dest_type ty))}
       fun annotate term =
         let val _ = tick () val ty = call (fn () => Term.type_of term)
             val weight = type_weight ty
@@ -353,21 +361,10 @@ struct
         | size (Abstraction (_,_,b)) =
             let val (r,i) = size b val _ = tick ()
             in (plus 1 r,plus 2 i) end
-      fun type_weight ty =
-        let fun walk pending n =
-              (tick ();case pending of [] => n | spine::more =>
-                (tick ();case spine of [] => walk more n
-                 | current::rest =>
-                   let val n = plus n 1 val _ = bounded "law Type tree" n
-                       val _ = tick ()
-                   in if call (fn () => Type.is_vartype current) then
-                        (tick ();walk (rest::more) n)
-                      else let val args = call
-                          (fn () => #2 (Type.dest_type current))
-                        val _ = tick () val _ = tick ()
-                      in walk (args::rest::more) n end end))
-            val _ = tick () val _ = tick ()
-        in walk [[ty]] 0 end
+      val type_weight = type_weight_with
+        {tick = tick,plus = plus,bounded = bounded,
+         is_vartype = fn ty => call (fn () => Type.is_vartype ty),
+         type_args = fn ty => call (fn () => #2 (Type.dest_type ty))}
       fun annotate term =
         let val _ = tick () val ty = call (fn () => Term.type_of term)
             val weight = type_weight ty
@@ -649,21 +646,10 @@ struct
         | size (Abstraction (_,_,b)) =
             let val (r,i) = size b val _ = tick ()
             in (plus 1 r,plus 2 i) end
-      fun type_weight ty =
-        let fun walk pending n =
-              (tick ();case pending of [] => n | spine::more =>
-                (tick ();case spine of [] => walk more n
-                 | current::rest =>
-                   let val n = plus n 1 val _ = bounded "law Type tree" n
-                       val _ = tick ()
-                   in if call (fn () => Type.is_vartype current) then
-                        (tick ();walk (rest::more) n)
-                      else let val args = call
-                          (fn () => #2 (Type.dest_type current))
-                        val _ = tick () val _ = tick ()
-                      in walk (args::rest::more) n end end))
-            val _ = tick () val _ = tick ()
-        in walk [[ty]] 0 end
+      val type_weight = type_weight_with
+        {tick = tick,plus = plus,bounded = bounded,
+         is_vartype = fn ty => call (fn () => Type.is_vartype ty),
+         type_args = fn ty => call (fn () => #2 (Type.dest_type ty))}
       fun annotate term =
         let val _ = tick () val ty = call (fn () => Term.type_of term)
             val weight = type_weight ty
