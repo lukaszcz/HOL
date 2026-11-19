@@ -27336,6 +27336,7 @@ let
     | nest n = Term.mk_comb (``macro_d:int->int``, nest (n - 1))
   val deep = boolSyntax.mk_eq (nest 10, intSyntax.term_of_int
     (Arbint.fromInt 1024))
+  val equality = ``(asserted_x:int) = asserted_y``
 in
   proves_from "macro expansion" [macro, unused, reflexive] [macro] target;
   assert (rejects [macro]
@@ -27368,6 +27369,13 @@ in
   (* The expanded body is decided atom by atom under its connectives; the
      quantified conjunct is never sent to integer arithmetic. *)
   proves_from "conjoined macro" [conjoined] [conjoined] target;
+  (* the equality alone closes it; the macro calls stay unexpanded *)
+  proves_from "reflexive before macros" [double, equality] [equality]
+    (boolSyntax.mk_eq
+      (Term.list_mk_comb (``macro_h:int->int->int``,
+         [nest 9, ``asserted_x:int``]),
+       Term.list_mk_comb (``macro_h:int->int->int``,
+         [nest 9, ``asserted_y:int``])));
   assert ((ignore (prove [double] deep); false)
       handle Feedback.HOL_ERR holerr => String.isSubstring
         "exceeds 256 rewrites" (Feedback.message_of holerr),

@@ -240,12 +240,9 @@ Bugs fixed
 -   HolSmt's natural-number preprocessing no longer rewrites the goal with
     assumptions that mention no natural number (an integer literal such as
     `2 : int` doesn't count).  The solver now receives those assumptions,
-    and its proof can cite them.
-    `Z3_TAC` replays the steps this exposes: a one-term sum `(+ t)`,
-    rewrites in which Z3 expands an asserted definition, `seq.at` and
-    `seq.extract`, a `select` with several indices, and set membership,
-    insertion and deletion in their array encoding; `CVC_TAC` replays
-    `symm` on a disequality.
+    and its proof can cite them.  `Z3_TAC` and `CVC_TAC` replay the proofs
+    this leads to, including goals that use asserted function definitions
+    and goals over sequences, sets and higher-order functions.
 
 -   HolSmt's oracles no longer return false theorems about word division by
     zero.  `word_div` and `word_quot` were translated to `bvudiv` and

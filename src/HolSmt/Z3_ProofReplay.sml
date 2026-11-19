@@ -7074,8 +7074,15 @@ local
             if List.null rewrite_theorems then Thm.REFL target
             else Conv.QCONV (Rewrite.PURE_REWRITE_CONV rewrite_theorems)
               target
+          val equality_result = boolSyntax.rhs (Thm.concl equality_step)
+          (* a residue the equalities already make reflexive needs no
+             macros, and expanding it could only exhaust their budget *)
           val macro_step =
-            macro_conv (boolSyntax.rhs (Thm.concl equality_step))
+            if boolSyntax.is_eq equality_result andalso
+               Term.aconv (boolSyntax.lhs equality_result)
+                 (boolSyntax.rhs equality_result)
+            then Thm.REFL equality_result
+            else macro_conv equality_result
           val macro_fired =
             not (Term.aconv (boolSyntax.lhs (Thm.concl macro_step))
               (boolSyntax.rhs (Thm.concl macro_step)))
