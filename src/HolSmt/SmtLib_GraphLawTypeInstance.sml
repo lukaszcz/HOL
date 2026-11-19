@@ -66,11 +66,14 @@ struct
              in walk (Args :: pending :: rest) end)
     in walk [[root]] end
 
-  fun begin_internal work graph scope {original,template_limit,check_type} =
+  (* The original-law inspection shared by the int and policy producers.
+     The caller supplies what differs: the cap the charges run against,
+     the Work spend, the original-fact validation and the extra guard. *)
+  fun begin_walk {graph,scope,original,template_limit,charge_limit,
+                  validate_original,spend_work,extra_guard} =
     let
-      val _ = G.validate_scope graph scope
       val epoch = Type.type_epoch ()
-      val _ = P.validate_closed_fact graph scope template_limit original
+      val _ = validate_original ()
       val node = P.closed_node original
       val _ = List.app (fn kind =>
         case G.unfolded_nodes graph kind template_limit node of
@@ -91,12 +94,12 @@ struct
       val used = ref 0
       val bytes = ref 0
       fun charge n =
-        if n < 0 orelse n > template_limit - !used then
+        if n < 0 orelse n > charge_limit - !used then
           raise ERR "begin_original" "original annotation/name cap exhausted"
-        else ((case work of NONE => () | SOME budget => W.spend budget n);
-              used := !used + n)
+        else (spend_work n;used := !used + n)
       fun guard () =
-        (G.validate_scope graph scope;
+        (extra_guard ();
+         G.validate_scope graph scope;
          if Type.type_epoch () = epoch then () else
            raise ERR "begin_original" "type epoch changed")
       val annotations = ref ([] : Type.hol_type list)
@@ -152,10 +155,24 @@ struct
         end
       val _ = walk term
       val _ = guard ()
+    in {epoch = epoch,used = used,bytes = bytes,raw = raw,binder = binder,
+        annotations = List.rev (!annotations),
+        variables = Vector.fromList (List.rev (!variables))} end
+
+  fun begin_internal work graph scope {original,template_limit,check_type} =
+    let
+      val _ = G.validate_scope graph scope
+      val {epoch,used,bytes,raw,binder,annotations,variables} = begin_walk
+        {graph = graph,scope = scope,original = original,
+         template_limit = template_limit,charge_limit = template_limit,
+         validate_original = fn () =>
+           P.validate_closed_fact graph scope template_limit original,
+         spend_work = fn n => (case work of NONE => ()
+           | SOME budget => W.spend budget n),
+         extra_guard = fn () => ()}
     in Producer {graph = graph,scope = scope,original = original,
       limit = template_limit,used = used,bytes = bytes,epoch = epoch,
-      annotations = List.rev (!annotations),
-      variables = Vector.fromList (List.rev (!variables)),
+      annotations = annotations,variables = variables,
       raw = raw,binder = binder,check_type = check_type,work = work} end
 
   (* Existing APIs retain their old per-producer cap and no-op hook. *)
@@ -482,97 +499,20 @@ struct
           #template_limit (W.semantic_policy budget)
         | NONE=>raise ERR "begin_policy" "unhooked policy producer"
       val model_limit=Int.min (template_limit,#type_work_limit native)
-      val epoch = Type.type_epoch ()
-      val _ = P.validate_closed_fact_with_policy graph scope policy_limit
-        original
-      val node = P.closed_node original
-      val _ = List.app (fn kind =>
-        case G.unfolded_nodes graph kind template_limit node of
-          SOME n => if n <= template_limit then () else
-            raise ERR "begin_original" "original graph metric exceeds cap"
-        | NONE => raise ERR "begin_original" "unknown original graph metric")
-        [G.RawNodes,G.BinderInclusiveNodes]
-      val theorem = P.closed_original original
-      val term = Thm.concl theorem
-      (* Measure ACTUAL original input, not the canonical graph spelling.
-         The existing counter has its own small binder/count-body envelope;
-         it is not a theorem-free whole early-admission claim. *)
-      val raw = case I.bounded_raw_size template_limit term of SOME n => n
-        | NONE => raise ERR "begin_original" "actual original raw size"
-      val binder = case I.bounded_binder_size template_limit term of
-          SOME n => n
-        | NONE => raise ERR "begin_original" "actual original binder size"
-      val used = ref 0
-      val bytes = ref 0
-      fun charge n =
-        if n < 0 orelse n > model_limit - !used then
-          raise ERR "begin_original" "original annotation/name cap exhausted"
-        else ((case work of NONE => () | SOME budget => W.spend_policy budget
-          (IntInf.fromInt n));
-              used := !used + n)
-      fun guard () =
-        ((case work of SOME budget=>NC.validate_for budget native_contract
-          | NONE=>raise ERR "guard" "unhooked policy producer");
-         G.validate_scope graph scope;
-         if Type.type_epoch () = epoch then () else
-           raise ERR "begin_original" "type epoch changed")
-      val annotations = ref ([] : Type.hol_type list)
-      val variables = ref ([] : Type.hol_type list)
-      fun variable ty =
-        let fun exists [] = false
-              | exists (v :: rest) =
-                  (charge 1; (* Each admitted atomic variable comparison. *)
-                   Type.compare (v,ty) = EQUAL orelse exists rest)
-        in if exists (!variables) then () else variables := ty :: !variables
-        end
-      fun annotation ty =
-        (type_walk charge bytes variable ty;
-         annotations := ty :: !annotations)
-      (* Experimental inst1 can rename only when a matching new variable
-         key has a DIFFERENT original type. ONE actual original type per
-         spelling excludes that branch, including repeated same-type
-         binder names in fixed BAG laws. Different-type collisions remain
-         an explicitly unsupported pre-kernel refusal. *)
-      val spellings = ref ([] : (string * Type.hol_type) list)
-      fun spelling (name,ty) =
-        let fun find [] = NONE
-              | find ((held,old) :: rest) =
-                  (charge 1; (* Text work has no symbol-byte grant. *)
-                   if held = name then SOME old else find rest)
-        in case find (!spellings) of
-          NONE => spellings := (name,ty) :: !spellings
-        | SOME held =>
-            (type_walk charge bytes (fn _ => ()) held;
-             type_walk charge bytes (fn _ => ()) ty;
-             if Type.compare (held,ty) = EQUAL then () else
-               raise ERR "begin_original" "ambiguous actual variable spelling")
-        end
-      fun walk current =
-        let val _ = guard () val _ = charge 1
-            val _ = annotation (Term.type_of current)
-        in
-          if Term.is_comb current then
-            let val (f,x) = Term.dest_comb current in
-              walk f;walk x end
-          else if Term.is_abs current then
-            let val (v,body) = Term.dest_abs current
-                val (name,ty) = Term.dest_var v
-                val _ = annotation ty
-                val _ = bytes := !bytes + String.size name
-                val _ = spelling (name,ty)
-            in walk body end
-          else if Term.is_var current then
-            let val value as (name,_) = Term.dest_var current
-                val _ = bytes := !bytes + String.size name
-            in spelling value end
-          else ()
-        end
-      val _ = walk term
-      val _ = guard ()
+      val {epoch,used,bytes,raw,binder,annotations,variables} = begin_walk
+        {graph = graph,scope = scope,original = original,
+         template_limit = template_limit,charge_limit = model_limit,
+         validate_original = fn () =>
+           P.validate_closed_fact_with_policy graph scope policy_limit
+             original,
+         spend_work = fn n => (case work of NONE => ()
+           | SOME budget => W.spend_policy budget (IntInf.fromInt n)),
+         extra_guard = fn () =>
+           (case work of SOME budget=>NC.validate_for budget native_contract
+            | NONE=>raise ERR "guard" "unhooked policy producer")}
     in PolicyProducer {graph = graph,scope = scope,original = original,
       limit = template_limit,used = used,bytes = bytes,epoch = epoch,
-      annotations = List.rev (!annotations),
-      variables = Vector.fromList (List.rev (!variables)),
+      annotations = annotations,variables = variables,
       raw = raw,binder = binder,check_type = check_type,work = work,
       native_contract=native_contract,model_limit=model_limit,
       policy_limit=policy_limit} end
