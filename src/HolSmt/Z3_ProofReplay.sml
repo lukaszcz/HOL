@@ -107,9 +107,9 @@ local
   (* A failure wrapped in [REWRITE_BOUNDARY] must cross the generic
      rewrite handlers without inviting arithmetic or unification fallbacks;
      [z3_rewrite] unwraps the original payload once, at its end.  Each raise
-     site decides which failures it wraps: dedicated-theory provers and the
-     definition-unification boundary wrap every [HOL_ERR], the others only
-     resource gates. *)
+     site decides which failures it wraps: the selected FP prover
+     (rewrite(4)) and the definition-unification boundary wrap every
+     [HOL_ERR]; the other sites wrap only resource gates. *)
   exception REWRITE_BOUNDARY of exn
   exception ORDINARY_DEFINITION_UNIFICATION_DECLINE
 
@@ -7216,8 +7216,9 @@ local
     (* Once an FP-shaped rewrite enters its dedicated ladder, failure at its
        unsupported rung is terminal.  In particular, generic unification
        must not turn an unsupported FP rewrite into a proof-local definition.
-       The wrapped failure crosses the handlers below and is converted back to
-       a structured HOL_ERR at the function boundary. *)
+       Rung 4 is terminal: no later rung encloses this branch, and its
+       wrapper keeps it so if the ladder is reordered.  The failure is
+       converted back to a structured HOL_ERR at the function boundary. *)
     if SmtFpProve.has_fp_theory_term t then
       let
         fun bounded_propositional target =
