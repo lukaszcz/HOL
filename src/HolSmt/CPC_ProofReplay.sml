@@ -9719,6 +9719,20 @@ local
   val prove_boolean_circuit_tautology =
     prove_boolean_circuit_tautology_stopping []
 
+  (* Try PROVER; if it declines or fails, run CONTINUATION.  After a
+     resource gate in PROVER, a different checked bridge may admit the
+     same source without the failed circuit expansion.  It supplies its
+     own proof, not a reusable result from this gate.  Preserve the
+     FIRST gate if no alternative succeeds.  Interrupt and timeouts
+     propagate. *)
+  fun next_fp prover continuation =
+    prover () handle SmtFpGraph.Declined _ => continuation ()
+      | Feedback.HOL_ERR holerr =>
+      if SmtResource.is_resource_gate holerr then
+        (continuation ()
+         handle Feedback.HOL_ERR _ => raise Feedback.HOL_ERR holerr)
+      else continuation ()
+
   exception FpBindingCounterexample
   fun replay_trust_admitted_mode candidate_validation
       admit allow_defer force_fp state prems args =
@@ -11051,17 +11065,6 @@ local
               boolSyntax.list_mk_forall (variables, target)
             in Drule.SPECL variables (Thm.ASSUME closed) end
         end
-      fun next_fp prover continuation =
-        prover () handle SmtFpGraph.Declined _ => continuation ()
-          | Feedback.HOL_ERR holerr =>
-          if SmtResource.is_resource_gate holerr then
-            (* A different checked bridge may admit the same source without
-               the failed circuit expansion. It supplies its own proof, not
-               a reusable result from this gate. Preserve the FIRST gate if
-               no alternative succeeds. Interrupt/timeouts still propagate. *)
-            (continuation ()
-             handle Feedback.HOL_ERR _ => raise Feedback.HOL_ERR holerr)
-          else continuation ()
       fun replay_seq () =
         let
           val context =
@@ -22003,6 +22006,7 @@ in
   val with_operation_statistics = with_operation_statistics_internal
 
   val remove_hyps_for_test = remove_extra_hyps
+  val next_fp_for_test = next_fp
 
   val prove_boolean_circuit =
     prove_boolean_circuit_tautology

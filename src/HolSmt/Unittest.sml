@@ -20961,6 +20961,92 @@ in
        Z3_ProofReplay.abstraction_recursive_rewrite_for_test)]
 end
 
+fun cpc_next_fp_contract () =
+let
+  datatype outcome = Value of int | Raised of exn
+  fun run f = Value (f ()) handle e => Raised e
+  fun gate_error label =
+    (SmtResource.check_term_size_for "BitVector" label
+       (SmtResource.max_bv_replay_term_nodes + 1);
+     die "FAIL: next_fp test gate did not fire")
+    handle Feedback.HOL_ERR holerr => holerr
+  val first_gate = gate_error "next-fp-first"
+  val second_gate = gate_error "next-fp-second"
+  val ordinary =
+    (raise Feedback.mk_HOL_ERR "Unittest" "next_fp" "ordinary")
+    handle Feedback.HOL_ERR holerr => holerr
+  val declined = SmtFpGraph.Declined "next_fp test"
+  (* Run next_fp with the given prover and continuation behaviours and
+     report the outcome with the continuation's call count. *)
+  fun trial first second =
+    let
+      val calls = ref 0
+      val outcome =
+        run (fn () =>
+          CPC_ProofReplay.next_fp_for_test first
+            (fn () => (calls := !calls + 1; second ())))
+    in (outcome, !calls) end
+  fun value v () = v
+  fun fail e () = raise e
+  fun expect_value label (outcome, calls) expected expected_calls =
+    (case outcome of
+       Value v =>
+         assert (v = expected, label ^ " returned the wrong value")
+     | Raised _ => die ("FAIL: " ^ label ^ " raised");
+     assert (calls = expected_calls,
+       label ^ " called the continuation the wrong number of times"))
+  fun expect_holerr label (outcome, calls) expected expected_calls =
+    (case outcome of
+       Raised (Feedback.HOL_ERR holerr) =>
+         assert (Feedback.message_of holerr = Feedback.message_of expected
+                 andalso SmtResource.is_resource_gate holerr =
+                         SmtResource.is_resource_gate expected,
+           label ^ " raised a different HOL_ERR")
+     | _ => die ("FAIL: " ^ label ^ " did not raise the expected HOL_ERR");
+     assert (calls = expected_calls,
+       label ^ " called the continuation the wrong number of times"))
+  fun expect_exn label (outcome, calls) matches expected_calls =
+    (case outcome of
+       Raised e =>
+         assert (matches e, label ^ " raised the wrong exception")
+     | Value _ => die ("FAIL: " ^ label ^ " returned a value");
+     assert (calls = expected_calls,
+       label ^ " called the continuation the wrong number of times"))
+in
+  assert (SmtResource.is_resource_gate first_gate andalso
+          SmtResource.is_resource_gate second_gate andalso
+          not (SmtResource.is_resource_gate ordinary) andalso
+          Feedback.message_of first_gate <> Feedback.message_of second_gate,
+    "next_fp test fixtures are not distinct gates and an ordinary error");
+  expect_value "success" (trial (value 1) (value 2)) 1 0;
+  expect_value "ordinary error"
+    (trial (fail (Feedback.HOL_ERR ordinary)) (value 2)) 2 1;
+  expect_value "declined" (trial (fail declined) (value 2)) 2 1;
+  expect_value "gate then success"
+    (trial (fail (Feedback.HOL_ERR first_gate)) (value 2)) 2 1;
+  expect_holerr "gate then ordinary error"
+    (trial (fail (Feedback.HOL_ERR first_gate))
+       (fail (Feedback.HOL_ERR ordinary)))
+    first_gate 1;
+  expect_holerr "gate then another gate"
+    (trial (fail (Feedback.HOL_ERR first_gate))
+       (fail (Feedback.HOL_ERR second_gate)))
+    first_gate 1;
+  expect_exn "gate then Interrupt"
+    (trial (fail (Feedback.HOL_ERR first_gate)) (fail Interrupt))
+    (fn Interrupt => true | _ => false) 1;
+  expect_exn "gate then timeout"
+    (trial (fail (Feedback.HOL_ERR first_gate))
+       (fail (Timeout.TIMEOUT Time.zeroTime)))
+    (fn Timeout.TIMEOUT _ => true | _ => false) 1;
+  expect_exn "gate then Declined"
+    (trial (fail (Feedback.HOL_ERR first_gate)) (fail declined))
+    (fn SmtFpGraph.Declined _ => true | _ => false) 1;
+  expect_exn "Interrupt in prover"
+    (trial (fail Interrupt) (value 2))
+    (fn Interrupt => true | _ => false) 0
+end
+
 fun z3_bv_width12_dense_literal_exact_lhs_normalization () =
 let
   val goal =
@@ -38903,6 +38989,7 @@ let
       z3_bv_resource_gate_contract),
     ("z3_bv_resource_gate_outer_handlers_contract",
       z3_bv_resource_gate_outer_handlers_contract),
+    ("cpc_next_fp_contract", cpc_next_fp_contract),
     ("z3_bv_width12_dense_literal_exact_lhs_normalization",
       z3_bv_width12_dense_literal_exact_lhs_normalization),
     ("z3_commuted_rewrite_orientation_replay_success",
