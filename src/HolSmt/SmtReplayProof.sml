@@ -10571,8 +10571,6 @@ struct
      the exists-argument clause with its quoted future argument. *)
   datatype sce_clause_kind=SCERuleClause
     | SCEArgumentClause of sce_future_argument
-  fun sce_kind_future SCERuleClause=NONE
-    | sce_kind_future(SCEArgumentClause future)=SOME future
   (* The checks every clause guard runs first, in this order: the plan's
      Work, its evidence, its frame, the caller scope and the closure
      children.  Each guard adds its own checks after these, inside its own
@@ -11156,9 +11154,8 @@ struct
       val hyp= #hyp ctx ()
       val rows= #rows ctx ()
       val args= #args ctx ()
-      val future=sce_kind_future kind
-      val future_tree=case future of NONE=>NONE
-        | SOME(SCEFutureArgument {name,ty,...})=>
+      val future_tree=case kind of SCERuleClause=>NONE
+        | SCEArgumentClause(SCEFutureArgument {name,ty,...})=>
             (tick(String.size name+1);
              identifiers:=name:: !identifiers;
              SOME(atom(SRFresh(name,ty))(SRCaptured ty)))
