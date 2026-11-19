@@ -10532,9 +10532,8 @@ struct
 
   datatype sce_future_argument=SCEFutureArgument of
     {name:string,ty:Type.hol_type,child:G.closure_child option ref}
-  fun sce_future_guard graph scope NONE=()
-    | sce_future_guard graph scope
-        (SOME(SCEFutureArgument {name,ty,child}))=
+  fun sce_future_guard graph scope
+      (SCEFutureArgument {name,ty,child})=
       case !child of NONE=>() | SOME held=>
         let val node=G.closure_child_node graph scope held
             val term=G.representative graph node
@@ -10587,7 +10586,8 @@ struct
        G.validate_scope graph caller;
        List.app(fn child=>ignore(G.closure_child_node graph caller child))
          children;
-       sce_future_guard graph scope(sce_kind_future kind)))
+       case kind of SCERuleClause=>()
+         | SCEArgumentClause future=>sce_future_guard graph scope future))
   fun sce_clause_guard expected (SCEClausePlan core)=
     sce_core_guard expected SCERuleClause core
   fun sce_append tick [] tail=tail
@@ -15369,7 +15369,7 @@ struct
              val _=if Option.isSome(!child)then raise ERR
                "execute_source_argument" "argument already bound"else ()
              val _=child:=SOME argument
-             val _=sce_future_guard graph scope(SOME future)
+             val _=sce_future_guard graph scope future
              val _=source_argument_guard expected value
          in ()end);
        let val result=execute_source_condition_argument_clause expected
@@ -15698,7 +15698,7 @@ struct
        G.validate_scope graph caller;
        List.app(fn child=>ignore(G.closure_child_node graph caller child))
          children;
-       List.app(fn held=>sce_future_guard graph scope(SOME held))future;
+       List.app(sce_future_guard graph scope)future;
        case closing of NONE=>() | SOME data=>
          scr_conj_guard expected frame data))
 
@@ -17124,8 +17124,7 @@ struct
                   "argument already bound"else ();
                 child:=SOME argument)
              val _=ListPair.app bind(future,arguments)
-             val _=List.app(fn held=>
-               sce_future_guard graph scope(SOME held))future
+             val _=List.app(sce_future_guard graph scope)future
              val _=sc_plan_guard expected value
          in ()end);
        let val(evidence,added)=execute_source_canonical_clause expected raw
