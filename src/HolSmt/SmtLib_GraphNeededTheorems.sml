@@ -581,7 +581,7 @@ struct
      retained : (unit -> unit) list ref,
      validated : (IntInf.int * (unit -> unit) list) option ref}
   datatype pending = Pending of
-    {owner : owner,originals : Thm.thm list,heads : Term.term list,
+    {owner : owner,originals : Thm.thm list,
      requests : request list,
      selections : {selection : SmtLib_GraphNumericStock.selection,
                    ordinal : int} list,
@@ -860,7 +860,7 @@ struct
                     in PolicyNeedsNormalization (Pending {owner = owner,
                       originals = originals,
                       requests = requests,selections = selections,
-                      heads = HOLset.listItems heads,resumed = ref false,
+                      resumed = ref false,
                       continuation = continuation}) end
               | normalize(th::rest)next records blocked=
                   (spend 1;normalize rest next records(th::blocked))
