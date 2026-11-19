@@ -6035,19 +6035,6 @@ local
      when the descriptor says so). *)
   local
     structure Plan = CPC_SharedReplayPlan
-    fun clausal_name rule =
-      case rule of
-        Plan.NotImpliesElim1 => "not_implies_elim1"
-      | Plan.NotImpliesElim2 => "not_implies_elim2"
-      | Plan.ImpliesElim => "implies_elim"
-      | Plan.EquivElim1 => "equiv_elim1"
-      | Plan.EquivElim2 => "equiv_elim2"
-      | Plan.NotEquivElim1 => "not_equiv_elim1"
-      | Plan.NotEquivElim2 => "not_equiv_elim2"
-      | Plan.IteElim1 => "ite_elim1"
-      | Plan.IteElim2 => "ite_elim2"
-      | Plan.NotIteElim1 => "not_ite_elim1"
-      | Plan.NotIteElim2 => "not_ite_elim2"
   in
     fun clausal_clause rule premise_term =
       let
@@ -6060,7 +6047,7 @@ local
         fun conditional negated =
           boolSyntax.dest_cond (body negated)
           handle Feedback.HOL_ERR _ =>
-            raise ERR (clausal_name rule)
+            raise ERR (CPC_Proof.handler_name (Plan.clausal_handler rule))
               ("premise is not a " ^
                (if negated then "negated " else "") ^
                "conditional: " ^ Library.term_to_string premise_term)
@@ -6076,14 +6063,13 @@ local
        rules, whose descriptors say so. *)
     fun replay_clausal_elimination rule prems =
       let
-        val name = clausal_name rule
+        val name = CPC_Proof.handler_name (Plan.clausal_handler rule)
         val premise = expect_one_premise name prems
         val premise_term = Thm.concl premise
-        val conditional = case Plan.clausal_descriptor rule of
-            Plan.ClausalConditional _ => true
-          | _ => false
+        val keeps_true =
+          Plan.clausal_keeps_reduced_true (Plan.clausal_descriptor rule)
       in
-        if conditional andalso Term.aconv premise_term boolSyntax.T
+        if keeps_true andalso Term.aconv premise_term boolSyntax.T
         then premise
         else tautological_consequence premise
           (clausal_clause rule premise_term)
@@ -6091,7 +6077,7 @@ local
 
     fun replay_equiv_elim rule contradiction conclusion prems =
       let
-        val name = clausal_name rule
+        val name = CPC_Proof.handler_name (Plan.clausal_handler rule)
         val premise = expect_one_premise name prems
         fun derived () =
           let

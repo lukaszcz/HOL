@@ -241,15 +241,15 @@ sig
      conditional with exactly three operands.  Each carries [negated] (the
      premise, and its provenance, are read below a negation) and a result
      whose operands are named for that reader, so a literal cannot name an
-     operand its reader lacks.  Only a conditional reader returns a premise
-     that has reduced to T as an atom, before any operand is inspected. *)
+     operand its reader lacks.  The conditional rules keep a premise that has
+     reduced to T (see [clausal_keeps_reduced_true]). *)
   datatype clausal_polarity = ClausalPositive | ClausalNegative
   datatype binary_operand = ClausalLeft | ClausalRight
   datatype ternary_operand = ClausalCondition | ClausalThen | ClausalElse
   type 'operand clausal_literal = 'operand * clausal_polarity
   datatype implication_result = ClausalCurrent of binary_operand
     | ClausalFinished of binary_operand
-    | ClausalImplied of binary_operand clausal_literal *
+    | ClausalClause of binary_operand clausal_literal *
         binary_operand clausal_literal
   datatype clausal_descriptor =
       ClausalImplication of {negated:bool,result:implication_result}
@@ -260,7 +260,14 @@ sig
         literals:ternary_operand clausal_literal *
                  ternary_operand clausal_literal}
   val clausal_descriptor : clausal_rule -> clausal_descriptor
-  val clausal_negated : clausal_descriptor -> bool
+  (* The handler of each clausal rule: the inverse of the clausal rows
+     of [simple_class]. *)
+  val clausal_handler : clausal_rule -> CPC_Proof.replay_handler
+  (* Whether a premise that has reduced to T is kept as it is, before any
+     operand is read (the conditional rules).  [clausal_elim] decides this
+     before any reader runs; term replay calls the predicate itself;
+     [clausal_literals] never does. *)
+  val clausal_keeps_reduced_true : clausal_descriptor -> bool
   (* The literals the descriptor derives, in order.  The reader of the
      descriptor's kind is called once with the descriptor's [negated]; it
      returns the operands in source order. *)

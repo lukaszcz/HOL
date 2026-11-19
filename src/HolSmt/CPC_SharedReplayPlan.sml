@@ -60,6 +60,19 @@ struct
   datatype simple_class = SimpleBoolean of simple_boolean
     | SimpleEquality of simple_equality | SimpleTruth of truth_family
     | NotSimple
+  fun clausal_handler rule =
+    case rule of
+      NotImpliesElim1 => P.HNotImpliesElim1
+    | NotImpliesElim2 => P.HNotImpliesElim2
+    | ImpliesElim => P.HImpliesElim
+    | EquivElim1 => P.HEquivElim1
+    | EquivElim2 => P.HEquivElim2
+    | NotEquivElim1 => P.HNotEquivElim1
+    | NotEquivElim2 => P.HNotEquivElim2
+    | IteElim1 => P.HIteElim1
+    | IteElim2 => P.HIteElim2
+    | NotIteElim1 => P.HNotIteElim1
+    | NotIteElim2 => P.HNotIteElim2
   fun simple_class handler =
     case handler of
       P.HAndIntro => SimpleBoolean SimpleAndIntro
@@ -671,7 +684,7 @@ struct
   type 'operand clausal_literal = 'operand * clausal_polarity
   datatype implication_result = ClausalCurrent of binary_operand
     | ClausalFinished of binary_operand
-    | ClausalImplied of binary_operand clausal_literal *
+    | ClausalClause of binary_operand clausal_literal *
         binary_operand clausal_literal
   datatype clausal_descriptor =
       ClausalImplication of {negated:bool,result:implication_result}
@@ -683,7 +696,7 @@ struct
                  ternary_operand clausal_literal}
   datatype 'item clausal_selection = SelectedCurrent of 'item
     | SelectedFinished of 'item
-    | SelectedClause of ('item * clausal_polarity) * ('item * clausal_polarity)
+    | SelectedClause of 'item clausal_literal * 'item clausal_literal
   local
     val left_negative = (ClausalLeft,ClausalNegative)
     val left_positive = (ClausalLeft,ClausalPositive)
@@ -707,7 +720,7 @@ struct
         NotImpliesElim1 => implication true (ClausalCurrent ClausalLeft)
       | NotImpliesElim2 => implication true (ClausalFinished ClausalRight)
       | ImpliesElim => implication false
-          (ClausalImplied (left_negative,right_positive))
+          (ClausalClause (left_negative,right_positive))
       | EquivElim1 => equivalence false (left_negative,right_positive)
       | EquivElim2 => equivalence false (left_positive,right_negative)
       | NotEquivElim1 => equivalence true (left_positive,right_positive)
@@ -717,9 +730,13 @@ struct
       | NotIteElim1 => conditional true (condition_negative,then_negative)
       | NotIteElim2 => conditional true (condition_positive,else_negative)
   end
-  fun clausal_negated (ClausalImplication {negated,...}) = negated
-    | clausal_negated (ClausalEquivalence {negated,...}) = negated
-    | clausal_negated (ClausalConditional {negated,...}) = negated
+  (* Whether a premise that has reduced to T is kept as it is (the
+     conditional rules) rather than read for operands. *)
+  fun clausal_keeps_reduced_true descriptor =
+    case descriptor of
+      ClausalImplication _ => false
+    | ClausalEquivalence _ => false
+    | ClausalConditional _ => true
   (* The one selection of a descriptor's literals.  Each reader reads its
      operands, below a negation when its argument says so; the descriptor
      picks the literals out of what its own reader returned. *)
@@ -738,7 +755,7 @@ struct
           in case result of
               ClausalCurrent operand => SelectedCurrent (lookup operand)
             | ClausalFinished operand => SelectedFinished (lookup operand)
-            | ClausalImplied (first,second) =>
+            | ClausalClause (first,second) =>
                 SelectedClause (pick lookup first,pick lookup second)
           end
       | ClausalEquivalence {negated,literals=(first,second)} =>
@@ -767,9 +784,7 @@ struct
        finish,disjoin,error}
       descriptor handler =
     let
-      val conditional_rule = case descriptor of
-          ClausalConditional _ => true
-        | _ => false
+      val keeps_true = clausal_keeps_reduced_true descriptor
       (* Premise node (below a negation when [strip]), then its
          provenance, each read by the reader's own operand functions and
          zipped into (node,provenance) pairs. *)
@@ -804,7 +819,7 @@ struct
         | literal ((node,provenance),ClausalNegative) =
             negative node provenance
     in
-      if conditional_rule andalso same_constant (one ()) boolSyntax.T then
+      if keeps_true andalso same_constant (one ()) boolSyntax.T then
         atom (one ())
       else
         case clausal_select descriptor readers of
