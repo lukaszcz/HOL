@@ -1218,12 +1218,6 @@ local
      structural/targeted strategies still handle non-exact occurrences. *)
   fun find_first old root = replace_first_with_mode true old old root
 
-  fun contains_abs tm =
-    Term.is_abs tm orelse
-    (let val (rator, rand) = Term.dest_comb tm in
-       contains_abs rator orelse contains_abs rand
-     end handle _ => false)
-
   fun is_reflexive_equality theorem =
     case Lib.total dest_reglan_equiv (Thm.concl theorem) of
       SOME (left, right) => Term.aconv left right
