@@ -209,6 +209,62 @@ struct
           (observe ();ignore (G.closure_child_node graph scope child)))
           (!paths)
     in result end
+  (* Cond_rewr's exact AC order, with nominal visits/name/type work
+     debited at the actual comparison sites. No policy or proof callback.
+     [text] pays for a string; [one],[add],[compare] are the size
+     arithmetic of the caller's Work (int or IntInf). *)
+  fun ac_order_with observe text {one,add,compare=num_compare} pair =
+    let fun weight ty =
+          (observe ();if Type.is_vartype ty then
+             (text (Type.dest_vartype ty);()) else
+           let val {Thy,Tyop,Args} = Type.dest_thy_type ty
+           in text Thy;text Tyop;List.app weight Args end)
+        fun type_order (a,b) = (weight a;weight b;Type.compare (a,b))
+        fun size term = (observe ();case Term.dest_term term of
+            Term.LAMB (_,body) => add (one,size body)
+          | Term.COMB (f,x) => add (size f,size x) | _ => one)
+        fun env_find env term = case env of [] => NONE
+          | (key,value)::rest =>
+              (observe ();if Term.aconv key term then SOME value
+                else env_find rest term)
+        fun dest_head env term = (observe ();case Term.dest_term term of
+            Term.VAR (name,ty) =>
+              (case env_find env term of NONE => (((name,""),0),ty)
+              | SOME n => ((("",""),~n),Type.alpha))
+          | Term.CONST {Name,Thy,Ty} => (((Name,Thy),1),Ty)
+          | Term.LAMB (v,_) => ((("",""),2),Term.type_of v)
+          | Term.COMB _ => raise ERR "ac_order" "unstripped application head")
+        fun name_order (a,b) = (observe ();text a;text b;String.compare (a,b))
+        fun heads (e1,e2) (a,b) =
+          let val (((an,at),ak),aty) = dest_head e1 a
+              val (((bn,bt),bk),bty) = dest_head e2 b
+          in case name_order (an,bn) of EQUAL =>
+               (case name_order (at,bt) of EQUAL =>
+                  (case Int.compare (ak,bk) of EQUAL => type_order (aty,bty)
+                    | other => other) | other => other)
+             | other => other end
+        fun compare n (e1,e2) (a,b) =
+          (observe ();case num_compare (size a,size b) of EQUAL =>
+             if Term.is_abs a then
+               if Term.is_abs b then
+                 let val (av,ab) = Term.dest_abs a
+                     val (bv,bb) = Term.dest_abs b
+                 in case type_order (Term.type_of av,Term.type_of bv) of
+                     EQUAL => compare (n+1) ((av,n)::e1,(bv,n)::e2) (ab,bb)
+                   | other => other end else GREATER
+             else if Term.is_abs b then LESS else
+               let val (ah,aa) = HolKernel.strip_comb a
+                   val (bh,ba) = HolKernel.strip_comb b
+                   fun args ([],[]) = EQUAL
+                     | args ([],_) = LESS | args (_,[]) = GREATER
+                     | args (x::xs,y::ys) =
+                         (case compare n (e1,e2) (x,y) of EQUAL =>
+                           args (xs,ys) | other => other)
+               in case heads (e1,e2) (ah,bh) of EQUAL =>
+                    (case Int.compare (length aa,length ba) of EQUAL =>
+                      args (aa,ba) | other => other) | other => other end
+           | other => other)
+    in compare 0 ([],[]) pair end
   datatype owner = Owner of
     {work:W.portfolio,graph:G.graph,root:G.scope,sources:S.sources,
      catalogue:K.catalogue,traversal:T.owner,matcher:M.owner,
@@ -425,62 +481,10 @@ struct
                val _ = ignore (describe owner second)
            in result end)
     end
-  (* Cond_rewr's exact AC order, with nominal visits/name/type work
-     debited at the actual comparison sites. No policy or proof callback. *)
   fun ac_order owner focus pair = action owner focus (fn observe =>
     let val Owner {work,...} = owner
-        fun text value = W.spend work (String.size value)
-        fun weight ty =
-          (observe ();if Type.is_vartype ty then
-             (text (Type.dest_vartype ty);()) else
-           let val {Thy,Tyop,Args} = Type.dest_thy_type ty
-           in text Thy;text Tyop;List.app weight Args end)
-        fun type_order (a,b) = (weight a;weight b;Type.compare (a,b))
-        fun size term = (observe ();case Term.dest_term term of
-            Term.LAMB (_,body) => 1+size body
-          | Term.COMB (f,x) => size f+size x | _ => 1)
-        fun env_find env term = case env of [] => NONE
-          | (key,value)::rest =>
-              (observe ();if Term.aconv key term then SOME value
-                else env_find rest term)
-        fun dest_head env term = (observe ();case Term.dest_term term of
-            Term.VAR (name,ty) =>
-              (case env_find env term of NONE => (((name,""),0),ty)
-              | SOME n => ((("",""),~n),Type.alpha))
-          | Term.CONST {Name,Thy,Ty} => (((Name,Thy),1),Ty)
-          | Term.LAMB (v,_) => ((("",""),2),Term.type_of v)
-          | Term.COMB _ => raise ERR "ac_order" "unstripped application head")
-        fun name_order (a,b) = (observe ();text a;text b;String.compare (a,b))
-        fun heads (e1,e2) (a,b) =
-          let val (((an,at),ak),aty) = dest_head e1 a
-              val (((bn,bt),bk),bty) = dest_head e2 b
-          in case name_order (an,bn) of EQUAL =>
-               (case name_order (at,bt) of EQUAL =>
-                  (case Int.compare (ak,bk) of EQUAL => type_order (aty,bty)
-                    | other => other) | other => other)
-             | other => other end
-        fun compare n (e1,e2) (a,b) =
-          (observe ();case Int.compare (size a,size b) of EQUAL =>
-             if Term.is_abs a then
-               if Term.is_abs b then
-                 let val (av,ab) = Term.dest_abs a
-                     val (bv,bb) = Term.dest_abs b
-                 in case type_order (Term.type_of av,Term.type_of bv) of
-                     EQUAL => compare (n+1) ((av,n)::e1,(bv,n)::e2) (ab,bb)
-                   | other => other end else GREATER
-             else if Term.is_abs b then LESS else
-               let val (ah,aa) = HolKernel.strip_comb a
-                   val (bh,ba) = HolKernel.strip_comb b
-                   fun args ([],[]) = EQUAL
-                     | args ([],_) = LESS | args (_,[]) = GREATER
-                     | args (x::xs,y::ys) =
-                         (case compare n (e1,e2) (x,y) of EQUAL =>
-                           args (xs,ys) | other => other)
-               in case heads (e1,e2) (ah,bh) of EQUAL =>
-                    (case Int.compare (length aa,length ba) of EQUAL =>
-                      args (aa,ba) | other => other) | other => other end
-           | other => other)
-    in compare 0 ([],[]) pair end)
+    in ac_order_with observe (fn value => W.spend work (String.size value))
+      {one=1,add=fn (a:int,b) => a+b,compare=Int.compare} pair end)
   (* root, condition and descendant routines are mutually recursive so the
      fixed PURE context never receives an enclosing antecedent or Source. *)
   fun simplify owner memo stack focus =
@@ -1491,59 +1495,9 @@ struct
     let val Owner {work,...} = owner
         val proof=native_instance owner focus instance
         val pair=boolSyntax.dest_eq(#2(boolSyntax.strip_imp(Thm.concl proof)))
-        fun text value =
-          W.spend_policy work (IntInf.fromInt(String.size value))
-        fun weight ty =
-          (observe ();if Type.is_vartype ty then
-             (text (Type.dest_vartype ty);()) else
-           let val {Thy,Tyop,Args} = Type.dest_thy_type ty
-           in text Thy;text Tyop;List.app weight Args end)
-        fun type_order (a,b) = (weight a;weight b;Type.compare (a,b))
-        fun size term : IntInf.int = (observe ();case Term.dest_term term of
-            Term.LAMB (_,body) => 1+size body
-          | Term.COMB (f,x) => size f+size x | _ => 1)
-        fun env_find env term = case env of [] => NONE
-          | (key,value)::rest =>
-              (observe ();if Term.aconv key term then SOME value
-                else env_find rest term)
-        fun dest_head env term = (observe ();case Term.dest_term term of
-            Term.VAR (name,ty) =>
-              (case env_find env term of NONE => (((name,""),0),ty)
-              | SOME n => ((("",""),~n),Type.alpha))
-          | Term.CONST {Name,Thy,Ty} => (((Name,Thy),1),Ty)
-          | Term.LAMB (v,_) => ((("",""),2),Term.type_of v)
-          | Term.COMB _ => raise ERR "ac_order" "unstripped application head")
-        fun name_order (a,b) = (observe ();text a;text b;String.compare (a,b))
-        fun heads (e1,e2) (a,b) =
-          let val (((an,at),ak),aty) = dest_head e1 a
-              val (((bn,bt),bk),bty) = dest_head e2 b
-          in case name_order (an,bn) of EQUAL =>
-               (case name_order (at,bt) of EQUAL =>
-                  (case Int.compare (ak,bk) of EQUAL => type_order (aty,bty)
-                    | other => other) | other => other)
-             | other => other end
-        fun compare n (e1,e2) (a,b) =
-          (observe ();case IntInf.compare (size a,size b) of EQUAL =>
-             if Term.is_abs a then
-               if Term.is_abs b then
-                 let val (av,ab) = Term.dest_abs a
-                     val (bv,bb) = Term.dest_abs b
-                 in case type_order (Term.type_of av,Term.type_of bv) of
-                     EQUAL => compare (n+1) ((av,n)::e1,(bv,n)::e2) (ab,bb)
-                   | other => other end else GREATER
-             else if Term.is_abs b then LESS else
-               let val (ah,aa) = HolKernel.strip_comb a
-                   val (bh,ba) = HolKernel.strip_comb b
-                   fun args ([],[]) = EQUAL
-                     | args ([],_) = LESS | args (_,[]) = GREATER
-                     | args (x::xs,y::ys) =
-                         (case compare n (e1,e2) (x,y) of EQUAL =>
-                           args (xs,ys) | other => other)
-               in case heads (e1,e2) (ah,bh) of EQUAL =>
-                    (case Int.compare (length aa,length ba) of EQUAL =>
-                      args (aa,ba) | other => other) | other => other end
-           | other => other)
-    in compare 0 ([],[]) pair end)
+    in ac_order_with observe
+      (fn value => W.spend_policy work (IntInf.fromInt(String.size value)))
+      {one=1:IntInf.int,add=IntInf.+,compare=IntInf.compare} pair end)
   end
 
   (* The complete fixed net rejects nonconstant/wildcard heads before
