@@ -32990,10 +32990,12 @@ let
       let val (binder, body) = Term.dest_abs term
       in 1 + reference_size binder + reference_size body end
     else 1
+  val z = Term.mk_var ("binder_resource_z", Type.bool)
   val small_graphs = List.concat (List.tabulate (7, fn depth =>
     let val body = shared depth in
       [body, Term.mk_abs (x, body),
-       Term.mk_comb (Term.mk_abs (x, body), y)]
+       Term.mk_comb (Term.mk_abs (x, body), y),
+       Term.mk_abs (z, Term.mk_abs (y, Term.mk_abs (x, body)))]
     end))
   val index = SmtResource.new_bounded_term_index 8192
   val indexed_terms = [x, y, identity, nested, shadowed,
@@ -33063,6 +33065,12 @@ in
   check_exact ("shadowed abstraction", 5, shadowed);
   check_exact ("abstraction after application", 5, after_application);
   List.app check_graph small_graphs;
+  assert (List.all (fn term =>
+      SmtResource.contains (fn node => Term.is_var node andalso node ~~ x)
+        term andalso
+      #complete (SmtResource.bounded_structure 1000 term))
+      (List.drop (small_graphs, 3)),
+    "a scan missed a node under nested binders");
   List.app compare_index indexed;
   assert (Option.isSome admitted_id andalso limited_index x = admitted_id
       andalso limited_index y = NONE,

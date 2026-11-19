@@ -14,15 +14,18 @@ struct
 
   (* Classification keeps the ordinary non-family bypass. Before either
      the predicate or the shared DAG walker opens a binder, admit its full
-     annotation under the existing primitive-Type allowance. This is local
-     syntax policy, not a process-wide admission hook. *)
+     annotation under the existing primitive-Type allowance; that admits
+     every binder inside it too. This is local syntax policy, not a
+     process-wide admission hook. *)
   fun mentions predicate root =
     let
       exception Found
       val maximum = SmtResource.max_bv_replay_term_nodes
       val check_type = SmtReplayArithmetic.new_type_check (fn () => ())
-      fun children tm = if not (Term.is_abs tm) then
+      fun children depth tm = if not (Term.is_abs tm) then
           SmtResource.term_children tm
+        else if depth > 0 then
+          [#2 (SmtReplayImport.dest_abs_preserving_names tm)]
         else
           (case SmtReplayImport.bounded_raw_size_with_type_check
               check_type maximum tm of
@@ -35,7 +38,7 @@ struct
         (if Term.is_abs tm then check_type (Term.type_of tm) else ();
          if predicate tm then raise Found else ())
       fun search () =
-        (let val summary = SmtResource.bounded_structure_with_children
+        (let val summary = SmtResource.bounded_structure_with_children_at
                children inspect maximum root
              val _ = if #complete summary then () else
                SmtResource.check_dag_size_with_limit "Skeleton"

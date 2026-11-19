@@ -127,8 +127,9 @@ struct
   val new_term_check = new_term_check_using false
 
   (* For a check kept over a whole replay.  Every subterm of an admitted
-     term is admitted, with its own raw size, so admitted applications are
-     recorded by pointer with their sizes, and a later term built from
+     term is admitted, with its own raw size, so admitted applications and
+     abstractions are recorded by pointer with their sizes, and a later
+     term built from
      recorded parts is walked only through its new nodes.  Sizes and Type
      checks are new_term_check's; a term that fails here is decided by
      new_term_check, so failures keep its diagnostics.  A bucket keeps its
@@ -181,17 +182,17 @@ struct
                      check_type (Term.type_of variable);
                      1 + size true (budget - 1) body
                    end
-               in
                  (* Opening walks the whole body: bound the outermost binder
                     first, once, so nested binders aren't walked again. *)
-                 if bounded then open_body ()
-                 else case
-                     SmtReplayImport.bounded_raw_size_with_type_check_observed
-                       {check_type=check_type,observe=fn () => (),
-                        limit=budget} term of
-                   NONE => raise Exceeds
-                 | SOME _ => open_body ()
-               end
+                 val n =
+                   if bounded then open_body ()
+                   else case
+                       SmtReplayImport.bounded_raw_size_with_type_check_observed
+                         {check_type=check_type,observe=fn () => (),
+                          limit=budget} term of
+                     NONE => raise Exceeds
+                   | SOME _ => open_body ()
+               in record term n;n end
              else 1)
     in
       fn term => ignore (size false limit term)
