@@ -550,6 +550,43 @@ struct
           | _ => NONE
         end
     in simplify (ref []) [] source end
+  (* The one-shot plan protocol of both owners; [label] names the
+     owner family in each refusal and [body] is its normalization. *)
+  fun prepare_with label protect active running make =
+    protect (fn () =>
+      (active ();
+       if !running then raise ERR label "reentrant SIMPLE preparation"
+         else ();
+       make ()))
+  fun execute_with label protect active running used body =
+    protect (fn () =>
+      let val _ = active ()
+          val _ = if !running orelse !used then
+            raise ERR label "consumed or reentrant SIMPLE plan"
+            else (used := true;running := true)
+          fun restore () = running := false
+          val answer = body () handle primary => (restore ();raise primary)
+          val _ = restore () val _ = active ()
+      in answer end)
+  (* Auxiliary normalization: the held lease is re-read around every
+     external type policy; an unchanged result keeps the original
+     conversion, a changed one is adopted and composed behind it. *)
+  fun aux_normalization {aux_target,conversion,changed,core,adopt,compose,
+      active,check_type} =
+    let val held = aux_target ()
+        val result = changed held
+    in case result of NONE =>
+         (ignore (aux_target ());conversion held)
+       | SOME result =>
+         let val proof = core result
+             val local_result = adopt held proof
+         in compose held local_result (fn ty =>
+             (active ();
+              ignore (aux_target ());
+              check_type ty;
+              active ();
+              ignore (aux_target ()))) end
+    end
   datatype owner = Owner of
     {work:W.portfolio,graph:G.graph,root:G.scope,sources:S.sources,
      catalogue:K.catalogue,traversal:T.owner,matcher:M.owner,
@@ -981,29 +1018,20 @@ struct
       validated=ref NONE,fence=ref 0} end
     handle primary => (W.close work;raise primary)
   fun prepare (owner as Owner {running,...}) {frame,admission} =
-    protect owner (fn () =>
-    (active owner;
-     if !running then raise ERR "prepare" "reentrant SIMPLE preparation"
-       else ();
-     Plan {owner=owner,source=capture owner frame admission,used=ref false}))
+    prepare_with "prepare" (protect owner) (fn () => active owner) running
+      (fn () => Plan {owner=owner,source=capture owner frame admission,
+        used=ref false})
   fun execute_internal require_proof
       (Plan {owner=owner as Owner {running,...},source,used}) =
-    protect owner (fn () =>
-    let val _ = active owner
-        val _ = if !running orelse !used then
-          raise ERR "execute" "consumed or reentrant SIMPLE plan"
-          else (used := true;running := true)
-        fun restore () = running := false
-        val answer = (let val converted = normalize owner source
-          in case converted of SOME result =>
-               SOME (Result {owner=owner,source=source,proof= #proof result})
-             | NONE => if require_proof then
-                 SOME (Result {owner=owner,source=source,
-                   proof= #proof (seal owner source (identity owner source))})
-               else NONE end)
-          handle primary => (restore ();raise primary)
-        val _ = restore () val _ = active owner
-    in answer end)
+    execute_with "execute" (protect owner) (fn () => active owner)
+      running used (fn () =>
+      let val converted = normalize owner source
+      in case converted of SOME result =>
+           SOME (Result {owner=owner,source=source,proof= #proof result})
+         | NONE => if require_proof then
+             SOME (Result {owner=owner,source=source,
+               proof= #proof (seal owner source (identity owner source))})
+           else NONE end)
   fun execute plan = valOf (execute_internal true plan)
   fun execute_changed plan = execute_internal false plan
   fun core_for expected
@@ -1015,25 +1043,18 @@ struct
     expect_work "validate_for" expected work (fn () => revalidate owner)
   fun validate_cached_for expected (owner as Owner {work,...}) =
     expect_work "validate_cached_for" expected work (fn () => active owner)
-  fun normalize_aux (owner as Owner {work,traversal,...}) target =
-    protect owner (fn () =>
-      let val held = T.aux_target_for work traversal target
-          val plan = prepare owner
-            {frame= #frame held,admission= #admission held}
-          val result = execute_changed plan
-      in case result of NONE =>
-           (ignore (T.aux_target_for work traversal target);#conversion held)
-       | SOME result =>
-         let val proof = core_for work result
-             val local_result = D.adopt_compact (#dynamic held) proof
-         in D.compose {first= #conversion held,second=local_result,
-           ordinal=ordinal owner,check_type=fn ty =>
-             (active owner;
-              ignore (T.aux_target_for work traversal target);
-              let val Owner {check_type,...} = owner in check_type ty end;
-              active owner;
-              ignore (T.aux_target_for work traversal target))}
-         end end)
+  fun normalize_aux (owner as Owner {work,traversal,check_type,...}) target =
+    protect owner (fn () => aux_normalization
+      {aux_target=fn () => T.aux_target_for work traversal target,
+       conversion=fn held => #conversion held,
+       changed=fn held => execute_changed (prepare owner
+         {frame= #frame held,admission= #admission held}),
+       core=core_for work,
+       adopt=fn held => fn proof => D.adopt_compact (#dynamic held) proof,
+       compose=fn held => fn local_result => fn policy_check =>
+         D.compose {first= #conversion held,second=local_result,
+           ordinal=ordinal owner,check_type=policy_check},
+       active=fn () => active owner,check_type=check_type})
 
   (* Actual implementation dependency anchors. Structure aliases alone do
      not force Holmake to load these implementation objects. No call runs. *)
@@ -1834,33 +1855,23 @@ struct
         in owner end)
        handle primary=>(W.close work;raise primary))
     fun prepare_policy(owner as Owner{running,...}){frame,admission}=
-      protect owner(fn()=>
-        (active owner;if !running then raise ERR "policy_simple"
-           "reentrant SIMPLE preparation"else();
-         Plan{owner=owner,source=capture owner frame admission,
-           used=ref false}))
+      prepare_with "policy_simple" (protect owner)(fn()=>active owner)running
+        (fn()=>Plan{owner=owner,source=capture owner frame admission,
+          used=ref false})
     (* These internal adapter arguments are fixed in the eventual module
        exports, never supplied by a user of the policy API. *)
     fun execute_internal require_proof discover lift
         (Plan{owner=owner as Owner{running,...},source,used})=
-      protect owner(fn()=>
-        let val _=active owner
-            val _=if !running orelse !used then raise ERR "policy_simple"
-                "consumed or reentrant SIMPLE plan"
-              else(used:=true;running:=true)
-            fun restore()=running:=false
-            val answer=(let
-                val converted=PolicySimpleNormalize.normalize
-                  discover lift owner source
-              in case converted of SOME result=>
-                   SOME(Result{owner=owner,source=source,proof= #proof result})
-                | NONE=>if require_proof then
-                    SOME(Result{owner=owner,source=source,
-                      proof= #proof(PolicySimpleProof.seal owner source
-                        (identity owner source))})else NONE end)
-              handle primary=>(restore();raise primary)
-            val _=restore()val _=active owner
-        in answer end)
+      execute_with "policy_simple" (protect owner)(fn()=>active owner)
+        running used(fn()=>
+        let val converted=PolicySimpleNormalize.normalize
+              discover lift owner source
+        in case converted of SOME result=>
+             SOME(Result{owner=owner,source=source,proof= #proof result})
+          | NONE=>if require_proof then
+              SOME(Result{owner=owner,source=source,
+                proof= #proof(PolicySimpleProof.seal owner source
+                  (identity owner source))})else NONE end)
   end
 
   structure PolicySimpleLambda =
@@ -1899,29 +1910,22 @@ struct
       PolicySimpleSelected.discover PolicySimpleLambda.lift plan)
   fun normalize_aux_with_policy
       (owner as PolicySimpleBase.Owner{work,traversal,check_type,...})target=
-    PolicySimpleBase.protect owner(fn()=>
-      let val held=T.carrier_aux_target_with_policy_for work traversal target
-          val plan=prepare_with_policy owner
-            {frame= #frame held,admission= #admission held}
-          val result=execute_changed_with_policy plan
-      in case result of NONE=>
-          (ignore(T.carrier_aux_target_with_policy_for work traversal target);
-           #conversion held)
-        | SOME result=>
-          let val proof=core_with_policy_for work result
-              val scope= #scope(F.description_with_policy_for
-                work(#frame held))
-              val local_result=D.adopt_core_with_policy_for
-                (PolicySimpleBase.expected owner scope)(#dynamic held)proof
-          in D.compose_with_policy
-            {first= #conversion held,second=local_result,
-             ordinal=PolicySimpleBase.ordinal owner,check_type=fn ty=>
-               (PolicySimpleBase.active owner;
-                ignore(T.carrier_aux_target_with_policy_for
-                  work traversal target);
-                check_type ty;PolicySimpleBase.active owner;
-                ignore(T.carrier_aux_target_with_policy_for
-                  work traversal target))}end
-      end)
+    PolicySimpleBase.protect owner(fn()=>aux_normalization
+      {aux_target=fn()=>T.carrier_aux_target_with_policy_for
+         work traversal target,
+       conversion=fn held=> #conversion held,
+       changed=fn held=>execute_changed_with_policy(prepare_with_policy owner
+         {frame= #frame held,admission= #admission held}),
+       core=core_with_policy_for work,
+       adopt=fn held=>fn proof=>
+         let val scope= #scope(F.description_with_policy_for
+               work(#frame held))
+         in D.adopt_core_with_policy_for
+           (PolicySimpleBase.expected owner scope)(#dynamic held)proof end,
+       compose=fn held=>fn local_result=>fn policy_check=>
+         D.compose_with_policy
+           {first= #conversion held,second=local_result,
+            ordinal=PolicySimpleBase.ordinal owner,check_type=policy_check},
+       active=fn()=>PolicySimpleBase.active owner,check_type=check_type})
 
 end
