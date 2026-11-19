@@ -169,8 +169,9 @@ struct
     in (net,List.map (fn (_,_,_,head,_) => head) rows,selected) end
   (* The candidate gate of both owners: the constant head of the target
      spine (one observation per visited node) must be a fixed-net head,
-     else the owner's [charge] (its size admission and Work debit)
-     precedes the net walk, which observes once. *)
+     else no net lookup runs and the result is []. On a head the owner's
+     [charge] (its size admission and Work debit) runs first, then the
+     net walk, which observes once. *)
   fun candidates_with graph action (d:('a,'l) described) heads net charge =
     let fun head observe child =
           let val _ = observe ()
