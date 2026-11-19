@@ -6925,11 +6925,8 @@ local
             ([(_, w)], _) => w
           | _ => ``F``
       val unfolded = ``bu_view x ==> ~bu_wrap x``
-      fun closes tactic goal ctxt =
-        null (#1 (SelfTestTactical.VALID tactic goal ctxt))
-        handle Feedback.HOL_ERR _ => false
       fun auto_closes args goal ctxt =
-        closes (clasimpLib.AUTO_TAC args) ([], goal) ctxt
+        closes_in ctxt (clasimpLib.AUTO_TAC args) ([], goal)
       val _ = boolLib.save_thm ("bu_rule1[iff_bottom_up]", rule)
       val with_rule = Context.snapshot ()
       val _ = clasimpLib.remove_iff_bottom_up "bu_rule1"

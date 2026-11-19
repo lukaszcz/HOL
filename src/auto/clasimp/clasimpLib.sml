@@ -807,12 +807,12 @@ fun same_bottom_up_key ((a, b), (a', b')) =
 
 (* LHS views are derived once for a simpset and the bottom-up declarations
    of a context, and kept with them: they are a function of those two.  The
-   linear-arithmetic procedures are stripped because their facts are per
-   goal: they consult the [arith] facts of the context they run in, which
-   here would be the context of whichever proof first wanted the table.  An
-   invocation runs them on its goal with its own context.  Stripping them
-   rebuilds the simpset, so it is done once for each simpset derived
-   from. *)
+   linear-arithmetic procedures are stripped because views must not depend
+   on arithmetic: they carry the [arith] facts of the context the simpset
+   was derived for, and a view table is reused as the predecessor of
+   another simpset's, which may carry other facts.  An invocation runs
+   them on its goal with its own context.  Stripping them rebuilds the
+   simpset, so it is done once for each simpset derived from. *)
 val view_derivation_simpset =
   memoUtil.keyed_memo (Lib.curry Portable.pointer_eq)
     (fn ss =>
@@ -1813,14 +1813,11 @@ fun owned_working_simpset ss =
       (fn (_, ctxt) => cached_working_simpset ctxt ss)
   in fn ctxt => state (bottom_up_key_of ctxt, ctxt) end
 
-(* The derived value is a function of the context's [arith] facts: one
-   derivation per distinct (srw_ss, facts) pair.  The srw_ss state keys the
-   stored memo through the derived-value mechanism; the facts, compared by
-   pointer, key the memo inside it. *)
-fun same_facts facts facts' =
-  length facts = length facts' andalso
-  ListPair.all Portable.pointer_eq (facts, facts')
-
+(* The derived value is a function of the context's [arith] facts.  The
+   srw_ss state keys the stored memo through the derived-value mechanism;
+   the facts, compared by pointer, key a single-entry memo inside it: one
+   derivation per (srw_ss, facts) pair while the pair stays the same, and
+   a different fact list replaces it. *)
 fun derive_clasimp_value ss facts =
   let val full = derive_clasimp_ss ss facts
   in {full = full,
@@ -1832,7 +1829,7 @@ fun derive_clasimp_value ss facts =
 val {get = _, get_of = clasimp_derived_of} =
   BasicProvers.make_simpset_derived_value "clasimpLib.clasimp_ss"
     (fn ss => fn _ =>
-       memoUtil.keyed_memo same_facts
+       memoUtil.keyed_memo (Lib.list_eq (Lib.curry Portable.pointer_eq))
          (derive_clasimp_value (simpExtLib.lift_simpset ss)))
     (fn _ => {full = simpLib.empty_ss, positions = no_positions,
               working = owned_working_simpset simpLib.empty_ss})

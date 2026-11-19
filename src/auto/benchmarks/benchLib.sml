@@ -730,7 +730,7 @@ val benchmark_safe_solver =
         Tactic.ACCEPT_TAC boolTheory.TRUTH,
         Tactical.FIRST_ASSUM Tactic.CONTR_TAC])
 
-(* Rule A1 on the ambient simpset: a rewrite that states the goal is not
+(* Rule A1 on the context's simpset: a rewrite that states the goal is not
    what closes it.  The filter goes through simpLib, which replays the
    simpset's own history, rather than rebuilding it from its fragments:
    the fragments are not the simpset.  Rebuilt from them, what the layer
@@ -1685,17 +1685,17 @@ fun run_goal budget recipe (entry : corpus_goal) =
             " |- ") ^
       Parse.term_to_string conclusion
     fun run () =
-        case Tactical.VALID
-               (Tactical.THEN
-                  (fix_parameters,
-                   preserve_target (compile_recipe ctxt simpset entry recipe)))
-               ([], #goal entry) ctxt of
-            ([], validation) => (ignore (validation []); true)
-          | (goals, _) =>
-              (residual :=
-                 "residual goals: [" ^
-                 String.concatWith "; " (map goal_text goals) ^ "]";
-               false)
+      case Tactical.VALID
+             (Tactical.THEN
+                (fix_parameters,
+                 preserve_target (compile_recipe ctxt simpset entry recipe)))
+             ([], #goal entry) ctxt of
+          ([], validation) => (ignore (validation []); true)
+        | (goals, _) =>
+            (residual :=
+               "residual goals: [" ^
+               String.concatWith "; " (map goal_text goals) ^ "]";
+             false)
     val timed_out = ref false
     val solved =
       (case within_budget budget run of
