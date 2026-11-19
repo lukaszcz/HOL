@@ -3825,22 +3825,22 @@ local
                              (Library.undo_look_ahead [token] get_token)
                          in structured_terms (tm :: acc) end)
                 end
-              val handler = CPC_Proof.handler_name (#replay_handler rule)
+              val handler = #replay_handler rule
             in
               if rule_name = "resolution" then
                 attrs seen_premises true premises (resolution_args ())
               else if rule_name = "chain_resolution" then
                 attrs seen_premises true premises (chain_resolution_args ())
-              else if handler = "resolution" then
+              else if handler = CPC_Proof.HResolution then
                 (* Macro/chain resolution gives its result clause first;
                    the remaining arguments only describe its pivots. *)
                 attrs seen_premises true premises
                   (macro_resolution_args ())
-              else if handler = "and_elim" then
+              else if handler = CPC_Proof.HAndElim then
                 attrs seen_premises true premises (and_elim_index ())
-              else if handler = "not_or_elim" then
+              else if handler = CPC_Proof.HNotOrElim then
                 attrs seen_premises true premises (not_or_elim_index ())
-              else if handler = "exists_elim" then
+              else if handler = CPC_Proof.HExistsElim then
                 attrs seen_premises true premises (exists_elim_args ())
               else if rule_name = "cnf_and_pos" then
                 attrs seen_premises true premises (cnf_and_pos_args ())
@@ -3849,7 +3849,7 @@ local
               else if rule_name = "arith-mod-over-mod" orelse
                       rule_name = "arith-mod-over-mod-mult" then
                 attrs seen_premises true premises (structured_terms [])
-              else if handler = "rare_inventory" then
+              else if handler = CPC_Proof.HRareInventory then
                 (* Declarative RARE recipes distinguish one term from a
                    variadic list formal.  Preserve each CPC @list (and each
                    recorded alias for one) as exactly one HOL list wrapper;
@@ -5378,15 +5378,15 @@ in
     in arguments 1 [] [] end
 
   fun graph_structured_rule_arguments (rule : proof_rule) =
-    CPC_Proof.handler_name (#replay_handler rule) = "rare_inventory" orelse
+    #replay_handler rule = CPC_Proof.HRareInventory orelse
     #name rule = "arith-mod-over-mod" orelse
     #name rule = "arith-mod-over-mod-mult"
 
   fun graph_ordinary_rule_arguments (rule : proof_rule) =
-    not (List.exists (Lib.equal (CPC_Proof.handler_name
-        (#replay_handler rule)))
-      ["and_elim", "not_or_elim", "resolution", "exists_elim",
-       "quant_rewrite", "rare_inventory"] orelse
+    not (List.exists (Lib.equal (#replay_handler rule))
+      [CPC_Proof.HAndElim, CPC_Proof.HNotOrElim, CPC_Proof.HResolution,
+       CPC_Proof.HExistsElim, CPC_Proof.HQuantRewrite,
+       CPC_Proof.HRareInventory] orelse
       List.exists (Lib.equal (#name rule))
         ["cnf_and_pos", "cnf_or_neg", "arith-mod-over-mod",
          "arith-mod-over-mod-mult"])
@@ -5656,8 +5656,9 @@ in
               error "negative CPC index"
           | NONE => error "non-numeral CPC index" end
       fun rule_arguments name rule_name (rule : proof_rule) raws =
-        let val handler = CPC_Proof.handler_name (#replay_handler rule) in
-        if handler = "and_elim" orelse handler = "not_or_elim" then
+        let val handler = #replay_handler rule in
+        if handler = CPC_Proof.HAndElim orelse
+           handler = CPC_Proof.HNotOrElim then
           (case raws of [raw] => [index raw]
            | _ => error "elimination rule expects one index")
         else if #name rule = "cnf_and_pos" orelse
@@ -5671,14 +5672,14 @@ in
                 List.map GraphHint hints
            | [] => []
            | _ => error "resolution requires polarity and pivot")
-        else if handler = "resolution" then
+        else if handler = CPC_Proof.HResolution then
           (case raws of [] => []
            | target :: rest => GraphTerm (parse target) ::
                List.map argument rest)
-        else if handler = "exists_elim" orelse
-                handler = "quant_rewrite" then
+        else if handler = CPC_Proof.HExistsElim orelse
+                handler = CPC_Proof.HQuantRewrite then
           List.map argument raws
-        else if handler = "rare_inventory" orelse
+        else if handler = CPC_Proof.HRareInventory orelse
                 #name rule = "arith-mod-over-mod" orelse
                 #name rule = "arith-mod-over-mod-mult" then
           List.map (graph_structured_argument (#backend (#reader terms))
