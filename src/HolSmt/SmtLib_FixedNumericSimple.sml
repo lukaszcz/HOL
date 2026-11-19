@@ -434,6 +434,122 @@ struct
       val target_child=inspect
         (fn () => G.closure_root graph scope target)
     in {types=types,proof=proof,target_child=target_child} end
+  type ('f,'p) outcome_of =
+    {target:'f,recipe:C.graph_conversion,proof:'p}
+  type ('l,'o) memo_row = {node:G.node,scope:G.scope,category:A.category,
+    limit:'l,stack:(G.node * G.scope) list,result:'o option}
+  type ('f,'a,'l,'p) normalize_ops =
+    {work:W.portfolio,graph:G.graph,spend:unit -> unit,
+     describe:'f -> ('a,'l) described,capture:F.receipt -> 'a -> 'f,
+     identity:'f -> C.graph_conversion,same:'f -> 'f -> bool,
+     seal:'f -> C.graph_conversion -> ('f,'p) outcome_of,
+     joined:'f -> ('f,'p) outcome_of -> ('f,'p) outcome_of ->
+       ('f,'p) outcome_of,
+     reuse:('a,'l) described -> 'f -> ('f,'p) outcome_of ->
+       ('f,'p) outcome_of,
+     application_children:G.scope -> 'a -> 'a * 'a,
+     body_frame:F.receipt -> G.closure_child -> F.receipt,
+     binder_body:G.scope -> 'a -> 'a,
+     discover:'f -> ('f,'p) outcome_of option,
+     lift:'f -> ('f,'p) outcome_of -> ('f,'p) outcome_of}
+  fun is_true_with graph (describe:unit -> ('x,'y) described) action =
+    let val d = describe ()
+    in action (fn observe =>
+      (observe ();case G.view graph (#node d) of G.Constant id =>
+        KernelSig.id_compare
+          (id,#Name (Term.dest_thy_constid boolSyntax.T))=EQUAL
+       | _ => false)) end
+  (* The memoised fixed-point recursion of both owners. [rewrite] is the
+     owner's one-focus rewrite step; it receives this recursion's simplify
+     for the conditions it must prove. Everything else is reached through
+     [ops], so each owner keeps its own receipts, Work payer and order. *)
+  fun normalize_with (ops:('f,'a,''l,'p) normalize_ops) rewrite source =
+    let
+      val {work,graph,spend,describe,capture,identity,same,seal,joined,
+           reuse,application_children,body_frame,binder_body,discover,
+           lift} = ops
+      val join = join_with joined
+      fun action focus operation = action_with work
+        (fn () => ignore (describe focus)) spend operation
+      fun simplify memo stack focus =
+        let val d = describe focus
+            val stack_key = action focus (fn observe =>
+              List.map (fn held =>
+                let val _ = observe () val data = describe held
+                in (#node data,#scope data) end) stack)
+            fun stack_equal observe ([],[]) = true
+              | stack_equal observe ((a,s)::xs,(b,t)::ys) =
+                  (observe ();a=b andalso s=t andalso
+                    stack_equal observe (xs,ys))
+              | stack_equal _ _ = false
+            val cached = action focus (fn observe =>
+              let fun find [] = NONE
+                    | find ({node,scope,category,limit,stack=held,
+                             result}::rest) =
+                        (observe ();if node= #node d andalso
+                           scope= #scope d andalso category= #category d
+                           andalso limit= #source_limit d andalso
+                           stack_equal observe (held,stack_key)
+                         then SOME result else find rest)
+              in find (!memo) end)
+        in case cached of SOME NONE => NONE
+          | SOME (SOME old) => SOME (reuse d focus old)
+          | NONE =>
+            let val result = fresh memo stack focus
+                val _ = action focus (fn observe =>
+                  (observe ();memo := {node= #node d,scope= #scope d,
+                    category= #category d,limit= #source_limit d,
+                    stack=stack_key,result=result}:: !memo))
+            in result end
+        end
+      and fresh memo stack focus =
+        let val (middle,roots) = repeat memo stack focus
+            val children = descend memo stack middle
+        in case children of NONE => roots | SOME child_result =>
+          let val prefix = join focus roots (SOME child_result)
+              val retry = if same middle (#target child_result) then NONE
+                else rewrite simplify memo stack (#target child_result)
+          in case retry of NONE => prefix | SOME changed =>
+            join focus (join focus prefix (SOME changed))
+              (simplify memo stack (#target changed)) end
+        end
+      and repeat memo stack first =
+        let fun loop current accumulated =
+              case rewrite simplify memo stack current of
+                NONE => (current,accumulated)
+              | SOME result => loop (#target result)
+                  (join first accumulated (SOME result))
+        in loop first NONE end
+      and descend memo stack focus =
+        let val d = describe focus val scope = #scope d
+        in case G.view graph (#node d) of
+            G.Application _ =>
+              let val (a,b) = application_children scope (#admission d)
+                  val left = capture (#frame d) a
+                  val right = capture (#frame d) b
+                  val l = simplify memo stack left
+                  val r = simplify memo stack right
+              in case (l,r) of (NONE,NONE) => NONE | _ =>
+                 let val lp = case l of NONE => identity left
+                       | SOME x => #recipe x
+                     val rp = case r of NONE => identity right
+                       | SOME x => #recipe x
+                     val composed = action focus (fn observe =>
+                       C.graph_application_fused graph scope
+                         {source= #node d,left=lp,right=rp,observe=observe})
+                 in SOME (seal focus composed) end
+              end
+          | G.AdmittedBinder _ =>
+              let val frame = body_frame (#frame d) (#child d)
+                  val body = capture frame (binder_body scope (#admission d))
+              in case simplify memo stack body of NONE => NONE
+                | SOME result => SOME (lift focus result) end
+          | G.OpaqueRetained =>
+              (case discover focus of NONE => NONE | SOME prefix =>
+                join focus (SOME prefix) (simplify memo stack (#target prefix)))
+          | _ => NONE
+        end
+    in simplify (ref []) [] source end
   datatype owner = Owner of
     {work:W.portfolio,graph:G.graph,root:G.scope,sources:S.sources,
      catalogue:K.catalogue,traversal:T.owner,matcher:M.owner,
@@ -453,9 +569,7 @@ struct
      backing_guard:unit -> unit}
   datatype plan = Plan of {owner:owner,source:focus,used:bool ref}
   datatype result = Result of {owner:owner,source:focus,proof:Core.result}
-  type outcome = {target:focus,recipe:C.graph_conversion,proof:Core.result}
-  type memo_entry = {node:G.node,scope:G.scope,category:A.category,limit:int,
-    stack:(G.node * G.scope) list,result:outcome option}
+  type outcome = (focus,Core.result) outcome_of
   exception Inapplicable
   fun close (Owner {work,dead,...}) = retire_owner work dead
   fun protect owner action = protect_with close owner action
@@ -553,8 +667,6 @@ struct
           C.graph_realized_sequence work
             {first= #recipe left,second= #recipe right,observe=observe})
     in seal owner source recipe end
-  fun join owner source left right =
-    join_with (joined owner) source left right
   (* Exact public PURE_ss discrimination net: foldr insertion and its
      lookup order, never a reordered head bucket or a caller rule table. *)
   fun candidates (owner as Owner {graph,net,heads,...}) focus =
@@ -654,66 +766,25 @@ struct
     let val Owner {work,...} = owner
     in ac_order_with observe (fn value => W.spend work (String.size value))
       {one=1,add=fn (a:int,b) => a+b,compare=Int.compare} pair end)
-  (* root, condition and descendant routines are mutually recursive so the
-     fixed PURE context never receives an enclosing antecedent or Source. *)
-  fun simplify owner memo stack focus =
-    let val d = describe owner focus
-        val stack_key = action owner focus (fn observe =>
-          List.map (fn held =>
-            let val _ = observe () val data = describe owner held
-            in (#node data,#scope data) end) stack)
-        fun stack_equal observe ([],[]) = true
-          | stack_equal observe ((a,s)::xs,(b,t)::ys) =
-              (observe ();a=b andalso s=t andalso
-                stack_equal observe (xs,ys))
-          | stack_equal _ _ = false
-        val cached = action owner focus (fn observe =>
-          let fun find [] = NONE
-                | find ((row:memo_entry)::rest) =
-                    (observe ();if #node row= #node d andalso
-                       #scope row= #scope d andalso #category row= #category d
-                       andalso #limit row= #source_limit d andalso
-                       stack_equal observe (#stack row,stack_key)
-                     then SOME (#result row) else find rest)
-          in find (!memo) end)
-        fun reuse (old:outcome) =
-          let val Owner {work,...} = owner
-              val _ = ignore (Core.conversion_description_for work (#proof old))
-              (* Preserve THIS occurrence/path even when the semantic node
-                 and already-paid closed proof have a genuine DAG alias. *)
-              val target = capture owner (#frame d)
-                (A.generated_compact (expected owner (#scope d))
-                  (#admission d) (#proof old))
-              val _ = covered_parent owner focus
-          in {target=target,recipe= #recipe old,proof= #proof old}:outcome end
-    in case cached of SOME NONE => NONE | SOME (SOME old) => SOME (reuse old)
-      | NONE =>
-        let val result = fresh owner memo stack focus
-            val _ = action owner focus (fn observe =>
-              (observe ();memo := {node= #node d,scope= #scope d,
-                category= #category d,limit= #source_limit d,stack=stack_key,
-                result=result}:: !memo))
-        in result end
-    end
-  and fresh owner memo stack focus =
-    let val (middle,roots) = repeat owner memo stack focus
-        val children = descend owner memo stack middle
-    in case children of NONE => roots | SOME child_result =>
-      let val prefix = join owner focus roots (SOME child_result)
-          val retry = if same owner middle (#target child_result) then NONE
-            else rewrite owner memo stack (#target child_result)
-      in case retry of NONE => prefix | SOME changed =>
-        join owner focus (join owner focus prefix (SOME changed))
-          (simplify owner memo stack (#target changed)) end
-    end
-  and repeat owner memo stack source =
-    let fun loop current accumulated =
-          case rewrite owner memo stack current of NONE => (current,accumulated)
-          | SOME result => loop (#target result)
-              (join owner source accumulated (SOME result))
-    in loop source NONE end
-  and rewrite (owner as Owner
-      {work,matcher,conditional,stack_limit,...}) memo stack focus =
+  (* The root, condition and descendant routines run in normalize_with, so
+     the fixed PURE context never receives an enclosing antecedent or
+     Source. *)
+  fun reuse owner (d:description) focus (old:outcome) =
+    let val Owner {work,...} = owner
+        val _ = ignore (Core.conversion_description_for work (#proof old))
+        (* Preserve THIS occurrence/path even when the semantic node
+           and already-paid closed proof have a genuine DAG alias. *)
+        val target = capture owner (#frame d)
+          (A.generated_compact (expected owner (#scope d))
+            (#admission d) (#proof old))
+        val _ = covered_parent owner focus
+    in {target=target,recipe= #recipe old,proof= #proof old}:outcome end
+  fun is_true owner focus =
+    let val Owner {graph,...} = owner
+    in is_true_with graph (fn () => describe owner focus)
+      (action owner focus) end
+  fun rewrite (owner as Owner
+      {work,matcher,conditional,stack_limit,...}) simplify memo stack focus =
     let val d = describe owner focus
         fun attempt [] = NONE
           | attempt ((schema,isperm)::rest) =
@@ -753,7 +824,7 @@ struct
                    in if looping then attempt rest else
                      let val stack' = conditions @ stack
                          fun prove condition =
-                           let val normalized = case simplify owner memo stack'
+                           let val normalized = case simplify memo stack'
                                  condition of NONE =>
                                    seal owner condition
                                      (identity owner condition)
@@ -780,40 +851,10 @@ struct
                  end
                end)
     in attempt (candidates owner focus) end
-  and descend (owner as Owner {graph,work,...}) memo stack focus =
-    let val d = describe owner focus val scope = #scope d
-    in case G.view graph (#node d) of
-        G.Application _ =>
-          let val (a,b) = A.application_children (expected owner scope)
-                (#admission d)
-              val left = capture owner (#frame d) a
-              val right = capture owner (#frame d) b
-              val l = simplify owner memo stack left
-              val r = simplify owner memo stack right
-          in case (l,r) of (NONE,NONE) => NONE | _ =>
-             let val lp = case l of NONE => identity owner left
-                   | SOME x => #recipe x
-                 val rp = case r of NONE => identity owner right
-                   | SOME x => #recipe x
-                 val composed = action owner focus (fn observe =>
-                   C.graph_application_fused graph scope
-                     {source= #node d,left=lp,right=rp,observe=observe})
-             in SOME (seal owner focus composed) end
-          end
-      | G.AdmittedBinder _ =>
-          let val frame = F.body work (#frame d) (#child d)
-              val body = capture owner frame
-                (A.binder_body (expected owner scope) (#admission d))
-          in case simplify owner memo stack body of NONE => NONE
-            | SOME result => SOME (lift owner focus result) end
-      | G.OpaqueRetained => discover owner memo stack focus
-      | _ => NONE
-    end
   (* Selection is derived from ALL authenticated fixed canonical rows in
      begin, not supplied by a caller. A complete negative scan needs no
      opening. A positive scan retains the exact private alpha recipe. *)
-  and discover (owner as Owner {work,graph,discovery_heads,...})
-      memo stack focus =
+  fun discover (owner as Owner {work,graph,discovery_heads,...}) focus =
     let val d = describe owner focus val scope = #scope d
         val cap = #template_limit (W.semantic_limits work)
         val output = #output_limit (W.semantic_limits work)
@@ -876,18 +917,10 @@ struct
             C.graph_leaf graph scope {conversion=conversion,
               template_limit=cap,observe=observe})
           val prefix=seal owner focus leaf
-          val rest=simplify owner memo stack (#target prefix)
-      in join owner focus (SOME prefix) rest end
+      in SOME prefix end
     end
   (* Concrete proof adapters below retain their SAME-owned receipts. *)
-  and is_true owner focus =
-    let val Owner {graph,...} = owner val d = describe owner focus
-    in action owner focus (fn observe =>
-      (observe ();case G.view graph (#node d) of G.Constant id =>
-        KernelSig.id_compare
-          (id,#Name (Term.dest_thy_constid boolSyntax.T))=EQUAL
-       | _ => false)) end
-  and lift owner focus (result:outcome) =
+  fun lift owner focus (result:outcome) =
     let val Owner {work,conditional,graph,...} = owner
         val d = describe owner focus
         val plan = Lambda.prepare_admitted work
@@ -901,6 +934,19 @@ struct
             {conversion=converted,template_limit= #template_limit
               (W.semantic_limits work),observe=observe})
     in seal owner focus leaf end
+  fun normalize owner source =
+    let val Owner {work,graph,...} = owner
+    in normalize_with {work=work,graph=graph,spend=fn () => W.spend work 1,
+        describe=describe owner,capture=capture owner,
+        identity=identity owner,same=same owner,seal=seal owner,
+        joined=joined owner,reuse=reuse owner,
+        application_children=fn scope => fn admission =>
+          A.application_children (expected owner scope) admission,
+        body_frame=F.body work,
+        binder_body=fn scope => fn admission =>
+          A.binder_body (expected owner scope) admission,
+        discover=discover owner,lift=lift owner}
+      (rewrite owner) source end
   fun begin work {catalogue,traversal,check_type} =
     let val _ = T.validate_for work traversal
         val _ = K.validate_for work catalogue
@@ -948,8 +994,7 @@ struct
           raise ERR "execute" "consumed or reentrant SIMPLE plan"
           else (used := true;running := true)
         fun restore () = running := false
-        val answer = (let val converted = simplify owner
-            (ref ([] : memo_entry list)) [] source
+        val answer = (let val converted = normalize owner source
           in case converted of SOME result =>
                SOME (Result {owner=owner,source=source,proof= #proof result})
              | NONE => if require_proof then
@@ -1037,10 +1082,7 @@ struct
     datatype plan=Plan of {owner:owner,source:focus,used:bool ref}
     datatype result=Result of
       {owner:owner,source:focus,proof:Core.policy_result}
-    type outcome={target:focus,recipe:C.graph_conversion,
-      proof:Core.policy_result}
-    type memo_entry={node:G.node,scope:G.scope,category:A.category,
-      limit:RP.limit,stack:(G.node * G.scope) list,result:outcome option}
+    type outcome=(focus,Core.policy_result)outcome_of
     exception Inapplicable
     fun close(Owner{work,dead,...})=retire_owner work dead
     fun protect owner action=protect_with close owner action
@@ -1169,7 +1211,6 @@ struct
             C.graph_realized_sequence_with_policy work
               {first= #recipe left,second= #recipe right,observe=observe})
       in seal owner source recipe end
-    fun join owner source left right=join_with(joined owner)source left right
     fun core_for expected
         (Result{owner=owner as Owner{work,...},source,proof})=
       expect_work "policy_simple" expected work(fn()=>
@@ -1648,185 +1689,109 @@ struct
   struct
     open PolicySimpleOrder
     open PolicySimpleProof
+    fun is_true owner focus=
+      let val Owner{graph,...}=owner
+      in is_true_with graph(fn()=>describe owner focus)(action owner focus)end
+    fun reuse owner(d:description)focus(old:outcome)=
+      let val Owner{work,profiles,...}=owner
+          val _=ignore(Core.conversion_description_with_policy_for
+            work(#proof old))
+          val wrapper=action owner focus(fn observe=>
+            (observe();
+             P.policy_source_realization_generated_equality_for
+               work(Core.realization_with_policy_for
+                 work(#proof old)){profiles=profiles}))
+          val target=capture owner(#frame d)
+            (A.generated_scoped_with_policy
+              (expected owner(#scope d))(#admission d)wrapper)
+      in {target=target,recipe= #recipe old,proof= #proof old}:outcome end
+    fun rewrite owner simplify memo stack focus=
+      let val Owner{work,matcher,conditional,stack_limit,...}=owner
+          val d=describe owner focus
+          fun attempt []=NONE
+            | attempt((schema,isperm)::rest)=
+              if not(head_types_compatible owner focus schema)then
+                attempt rest else
+              (case M.prepare_with_policy matcher
+                  {policy_schema=schema,caller= #scope d,
+                   traversal= #scope d,target= #child d}of
+                  M.PolicyNoMatch=>attempt rest
+                | M.PolicyNeedsHigherOrder=>raise ERR "policy_simple"
+                    "fixed scalar clause needs higher-order matching"
+                | M.PolicyMatched matched=>
+                  let val metadata=M.describe_with_policy_for work matched
+                      val count=length(#conditions metadata)
+                  in if length stack+count>stack_limit then attempt rest
+                    else
+                    let val instance=M.instantiate_with_policy matched
+                          {check_type=policy owner focus}
+                        val applicable=action owner focus(fn observe=>
+                          let val _=observe()
+                              val proof=native_instance
+                                owner focus instance
+                              val(_,body)=boolSyntax.strip_imp
+                                (Thm.concl proof)
+                              val(l,r)=boolSyntax.dest_eq body
+                              val answer=not(Term.aconv l r)
+                          in observe();answer end)
+                        val applicable=applicable andalso
+                          (not isperm orelse
+                           ac_order owner focus instance=GREATER)
+                    in if not applicable then attempt rest else
+                      let val conditions=List.tabulate(count,fn index=>
+                            capture owner(#frame d)
+                              (A.initial_condition_with_policy work
+                                {instance=instance,index=index}))
+                          val looping=List.exists(fn ant=>
+                            List.exists(same owner ant)stack)conditions
+                      in if looping then attempt rest else
+                        let val next_stack=conditions@stack
+                            fun prove condition=
+                              let val normalized=case
+                                    simplify memo next_stack condition of
+                                      NONE=>seal owner condition
+                                        (identity owner condition)
+                                    | SOME result=>result
+                              in if is_true owner(#target normalized)then
+                                  #proof normalized
+                                else raise Inapplicable end
+                            val evidence=List.map prove conditions
+                            val prepared=
+                              Conditional.prepare_owned_with_policy
+                                conditional {frame= #frame d,
+                                  instance=instance,conditions=evidence,
+                                  ordinal=ordinal owner}
+                            val result=Conditional.execute_with_policy
+                              prepared
+                            val converted=
+                              Conditional.conversion_with_policy_for
+                                work result
+                            val leaf=action owner focus(fn observe=>
+                              C.graph_leaf_with_policy work
+                                {frame= #frame d,conversion=converted,
+                                 observe=observe})
+                        in SOME(seal owner focus leaf)end
+                        handle Inapplicable=>
+                          (ignore(describe owner focus);attempt rest)
+                      end
+                    end
+                  end)
+      in attempt(candidates owner focus)end
     fun normalize (discover:owner->focus->outcome option)
-        (lift:owner->focus->outcome->outcome) owner source =
-      let
-        fun simplify memo stack focus=
-          let val d=describe owner focus
-              val stack_key=action owner focus(fn observe=>
-                List.map(fn held=>
-                  let val _=observe()val data=describe owner held
-                  in(#node data,#scope data)end)stack)
-              fun stack_equal observe([],[])=true
-                | stack_equal observe((a,s)::xs,(b,t)::ys)=
-                    (observe();a=b andalso s=t andalso
-                      stack_equal observe(xs,ys))
-                | stack_equal _ _=false
-              val cached=action owner focus(fn observe=>
-                let fun find []=NONE
-                      | find((row:memo_entry)::rest)=
-                          (observe();if #node row= #node d andalso
-                             #scope row= #scope d andalso
-                             #category row= #category d andalso
-                             #limit row= #source_limit d andalso
-                             stack_equal observe(#stack row,stack_key)
-                           then SOME(#result row)else find rest)
-                in find(!memo)end)
-              fun reuse(old:outcome)=
-                let val Owner{work,profiles,...}=owner
-                    val _=ignore(Core.conversion_description_with_policy_for
-                      work(#proof old))
-                    val wrapper=action owner focus(fn observe=>
-                      (observe();
-                       P.policy_source_realization_generated_equality_for
-                         work(Core.realization_with_policy_for
-                           work(#proof old)){profiles=profiles}))
-                    val target=capture owner(#frame d)
-                      (A.generated_scoped_with_policy
-                        (expected owner(#scope d))(#admission d)wrapper)
-                in {target=target,recipe= #recipe old,proof= #proof old}
-                  :outcome end
-          in case cached of SOME NONE=>NONE
-            | SOME(SOME old)=>SOME(reuse old)
-            | NONE=>
-                let val result=fresh memo stack focus
-                    val _=action owner focus(fn observe=>
-                      (observe();memo:={node= #node d,scope= #scope d,
-                        category= #category d,limit= #source_limit d,
-                        stack=stack_key,result=result}:: !memo))
-                in result end
-          end
-        and fresh memo stack focus=
-          let val(middle,roots)=repeat memo stack focus
-              val children=descend memo stack middle
-          in case children of NONE=>roots | SOME child_result=>
-            let val prefix=join owner focus roots(SOME child_result)
-                val retry=if same owner middle(#target child_result)
-                  then NONE else rewrite memo stack(#target child_result)
-            in case retry of NONE=>prefix | SOME changed=>
-              join owner focus(join owner focus prefix(SOME changed))
-                (simplify memo stack(#target changed))end
-          end
-        and repeat memo stack first=
-          let fun loop current accumulated=
-                case rewrite memo stack current of NONE=>(current,accumulated)
-                | SOME result=>loop(#target result)
-                    (join owner first accumulated(SOME result))
-          in loop first NONE end
-        and rewrite memo stack focus=
-          let val Owner{work,matcher,conditional,stack_limit,...}=owner
-              val d=describe owner focus
-              fun attempt []=NONE
-                | attempt((schema,isperm)::rest)=
-                  if not(head_types_compatible owner focus schema)then
-                    attempt rest else
-                  (case M.prepare_with_policy matcher
-                      {policy_schema=schema,caller= #scope d,
-                       traversal= #scope d,target= #child d}of
-                      M.PolicyNoMatch=>attempt rest
-                    | M.PolicyNeedsHigherOrder=>raise ERR "policy_simple"
-                        "fixed scalar clause needs higher-order matching"
-                    | M.PolicyMatched matched=>
-                      let val metadata=M.describe_with_policy_for work matched
-                          val count=length(#conditions metadata)
-                      in if length stack+count>stack_limit then attempt rest
-                        else
-                        let val instance=M.instantiate_with_policy matched
-                              {check_type=policy owner focus}
-                            val applicable=action owner focus(fn observe=>
-                              let val _=observe()
-                                  val proof=native_instance
-                                    owner focus instance
-                                  val(_,body)=boolSyntax.strip_imp
-                                    (Thm.concl proof)
-                                  val(l,r)=boolSyntax.dest_eq body
-                                  val answer=not(Term.aconv l r)
-                              in observe();answer end)
-                            val applicable=applicable andalso
-                              (not isperm orelse
-                               ac_order owner focus instance=GREATER)
-                        in if not applicable then attempt rest else
-                          let val conditions=List.tabulate(count,fn index=>
-                                capture owner(#frame d)
-                                  (A.initial_condition_with_policy work
-                                    {instance=instance,index=index}))
-                              val looping=List.exists(fn ant=>
-                                List.exists(same owner ant)stack)conditions
-                          in if looping then attempt rest else
-                            let val next_stack=conditions@stack
-                                fun prove condition=
-                                  let val normalized=case
-                                        simplify memo next_stack condition of
-                                          NONE=>seal owner condition
-                                            (identity owner condition)
-                                        | SOME result=>result
-                                  in if is_true(#target normalized)then
-                                      #proof normalized
-                                    else raise Inapplicable end
-                                val evidence=List.map prove conditions
-                                val prepared=
-                                  Conditional.prepare_owned_with_policy
-                                    conditional {frame= #frame d,
-                                      instance=instance,conditions=evidence,
-                                      ordinal=ordinal owner}
-                                val result=Conditional.execute_with_policy
-                                  prepared
-                                val converted=
-                                  Conditional.conversion_with_policy_for
-                                    work result
-                                val leaf=action owner focus(fn observe=>
-                                  C.graph_leaf_with_policy work
-                                    {frame= #frame d,conversion=converted,
-                                     observe=observe})
-                            in SOME(seal owner focus leaf)end
-                            handle Inapplicable=>
-                              (ignore(describe owner focus);attempt rest)
-                          end
-                        end
-                      end)
-          in attempt(candidates owner focus)end
-        and descend memo stack focus=
-          let val Owner{graph,work,...}=owner
-              val d=describe owner focus val scope= #scope d
-          in case G.view graph(#node d)of
-              G.Application _=>
-                let val(a,b)=A.application_children_with_policy
-                      (expected owner scope)(#admission d)
-                    val left=capture owner(#frame d)a
-                    val right=capture owner(#frame d)b
-                    val l=simplify memo stack left
-                    val r=simplify memo stack right
-                in case(l,r)of(NONE,NONE)=>NONE | _=>
-                  let val lp=case l of NONE=>identity owner left
-                        | SOME x=> #recipe x
-                      val rp=case r of NONE=>identity owner right
-                        | SOME x=> #recipe x
-                      val composed=action owner focus(fn observe=>
-                        C.graph_application_fused graph scope
-                          {source= #node d,left=lp,right=rp,observe=observe})
-                  in SOME(seal owner focus composed)end
-                end
-            | G.AdmittedBinder _=>
-                let val frame=F.body_with_policy work(#frame d)(#child d)
-                    val body=capture owner frame
-                      (A.binder_body_with_policy(expected owner scope)
-                        (#admission d))
-                in case simplify memo stack body of NONE=>NONE
-                  | SOME result=>SOME(lift owner focus result)end
-            | G.OpaqueRetained=>
-                (case discover owner focus of NONE=>NONE | SOME prefix=>
-                  join owner focus(SOME prefix)
-                    (simplify memo stack(#target prefix)))
-            | _=>NONE
-          end
-        and is_true focus=
-          let val Owner{graph,...}=owner val d=describe owner focus
-          in action owner focus(fn observe=>
-            (observe();case G.view graph(#node d)of G.Constant id=>
-               KernelSig.id_compare
-                 (id,#Name(Term.dest_thy_constid boolSyntax.T))=EQUAL
-             | _=>false))end
-      in simplify(ref([]:memo_entry list))[] source end
+        (lift:owner->focus->outcome->outcome) owner source=
+      let val Owner{work,graph,...}=owner
+      in normalize_with{work=work,graph=graph,
+          spend=fn()=>W.spend_policy work 1,
+          describe=describe owner,capture=capture owner,
+          identity=identity owner,same=same owner,seal=seal owner,
+          joined=joined owner,reuse=reuse owner,
+          application_children=fn scope=>fn admission=>
+            A.application_children_with_policy(expected owner scope)admission,
+          body_frame=F.body_with_policy work,
+          binder_body=fn scope=>fn admission=>
+            A.binder_body_with_policy(expected owner scope)admission,
+          discover=discover owner,lift=lift owner}
+        (rewrite owner)source end
   end
 
   structure PolicySimpleLifecycle =
