@@ -2077,11 +2077,20 @@ local
       wordsLib.WORD_EVAL_CONV target
     else raise ERR "assertion_word_literal_conv" "not a literal word cast"
 
+  (* The Z3 set encoding writes membership as select and INSERT and DELETE
+     as stores, which parse back as application and update.  Always toward
+     that form: the reverse direction would match any Boolean
+     application. *)
+  val assertion_set_rewrites =
+    [pred_setTheory.SPECIFICATION, HolSmtTheory.z3_set_insert_update,
+     HolSmtTheory.z3_set_delete_update]
+
   fun assertion_encoding_conv target =
     Conv.QCONV (Conv.DEPTH_CONV (Conv.FIRST_CONV
       (ALL_DISTINCT_CONV :: assertion_word_literal_conv ::
        List.map Conv.REWR_CONV
-         (wordsTheory.w2w_id :: assertion_unit_rewrites)))) target
+         (wordsTheory.w2w_id :: assertion_unit_rewrites @
+          assertion_set_rewrites)))) target
 
   fun z3_asserted (state : state, t) =
   let

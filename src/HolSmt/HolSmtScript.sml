@@ -3731,6 +3731,22 @@ Proof
   rw [pred_setTheory.IN_UNIV]
 QED
 
+(* How the Z3 set encoding writes INSERT and DELETE: as array stores *)
+Theorem z3_set_insert_update:
+  (x:'a) INSERT s = (x =+ T) s
+Proof
+  rw [FUN_EQ_THM, combinTheory.APPLY_UPDATE_THM, pred_setTheory.INSERT_DEF,
+      pred_setTheory.GSPECIFICATION] >>
+  rw [] >> metis_tac [pred_setTheory.SPECIFICATION]
+QED
+
+Theorem z3_set_delete_update:
+  (s:'a set) DELETE x = (x =+ F) s
+Proof
+  rw [FUN_EQ_THM, combinTheory.APPLY_UPDATE_THM] >>
+  rw [] >> metis_tac [pred_setTheory.SPECIFICATION, pred_setTheory.IN_DELETE]
+QED
+
 (* Word rewrites (Library) *)
 Theorem WORD_BIT_EXTRACT =
   simpLib.SIMP_PROVE (bossLib.std_ss ++ wordsLib.WORD_BIT_EQ_ss)

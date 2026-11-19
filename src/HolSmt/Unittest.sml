@@ -19378,7 +19378,14 @@ let
       ``~(smtfp_from_ieee_bv (w2w (w2w (48w:word8):word16)) =
         (smtfp_bits 0w 3w 0w : (4,3) smtfp))``),
      (``(0w:word8) = w``,
-      ``(w2w (w2w (48w:word8):word4):word8) = w``)]
+      ``(w2w (w2w (48w:word8):word4):word8) = w``),
+     (* the Z3 set encoding: membership as select, INSERT and DELETE as
+        stores *)
+     (``~((7:int) IN COMPL {})``, ``~(COMPL {} (7:int))``),
+     (``~~((((7:int) INSERT zs) DIFF ((7:int) INSERT zt)) (7:int))``,
+      ``~~(((((7:int) =+ T) zs) DIFF (((7:int) =+ T) zt)) (7:int))``),
+     (``((zs:int set) DELETE (7:int)) (8:int)``,
+      ``(((7:int) =+ F) zs) (8:int)``)]
   fun check_encoding (source, target) =
     let
       val initial = Z3_Proof.empty_proof "4.15.3"

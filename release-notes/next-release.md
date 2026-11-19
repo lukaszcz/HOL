@@ -241,8 +241,10 @@ Bugs fixed
     such as `2 : int` as natural numbers, and no longer rewrites the goal
     with assumptions that mention no natural number.  The solver now
     receives those assumptions, and its proof can cite them.
-    `Z3_TAC` replays the steps this exposes: a one-term sum `(+ t)`, and
-    rewrites in which Z3 expands an asserted definition; `CVC_TAC` replays
+    `Z3_TAC` replays the steps this exposes: a one-term sum `(+ t)`,
+    rewrites in which Z3 expands an asserted definition, `seq.at` and
+    `seq.extract`, a `select` with several indices, and set membership,
+    insertion and deletion in their array encoding; `CVC_TAC` replays
     `symm` on a disequality.
 
 -   HolSmt's oracles no longer return false theorems about word division by
