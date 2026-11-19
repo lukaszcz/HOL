@@ -239,8 +239,8 @@ Bugs fixed
 
 -   HolSmt's natural-number preprocessing no longer treats integer literals
     such as `2 : int` as natural numbers, and no longer rewrites the goal
-    with assumptions that mention no natural number.  The solver now sees
-    those assumptions, so a checked proof's hypotheses are the ones it used.
+    with assumptions that mention no natural number.  The solver now
+    receives those assumptions, and its proof can cite them.
     `Z3_TAC` replays the steps this exposes: a one-term sum `(+ t)`, and
     rewrites in which Z3 expands an asserted definition; `CVC_TAC` replays
     `symm` on a disequality.

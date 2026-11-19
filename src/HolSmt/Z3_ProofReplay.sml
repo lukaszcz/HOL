@@ -6946,10 +6946,11 @@ local
      the assertion.  A macro rule is such an assertion whose arguments are its
      distinct bound variables, whose t is free only in them, and whose head f
      is a symbol the translation leaves uninterpreted and does not occur in
-     t.  Rules are grouped by head and applied one head at a time, callers
-     before the macros their bodies use, so one pass expands nested macros;
-     macros that use each other in a cycle are left out, so rules cannot
-     loop.  Each comes from ASSUME, so only rules that fire become
+     t; datatype constructors are native solver symbols, not macros.  Rules
+     are grouped by head and applied one head at a time, callers before the
+     macros their bodies use, so one pass expands nested macros; macros on a
+     cycle of uses are left out, so rules cannot loop, and the rest are
+     kept.  Each comes from ASSUME, so only rules that fire become
      hypotheses. *)
   fun asserted_macro_theorems assertions =
     let
@@ -6973,6 +6974,7 @@ local
           not (Lib.op_mem Term.aconv head vars) andalso
           not (Lib.can (HolKernel.find_term is_head) rhs) andalso
           SmtLib.outbound_collection_symbol head andalso
+          not (TypeBase.is_constructor head) andalso
           not (Option.isSome (SmtLib.builtin_encoding lhs))
         end
         handle Feedback.HOL_ERR _ => false
@@ -6995,21 +6997,36 @@ local
             Term.aconv tm head orelse
             (Term.is_const tm andalso Term.is_const head andalso
              Term.same_const tm head))) (#2 (parts th))) group
-      (* next a group no other remaining group uses; none left: a cycle *)
+      fun callees groups g = List.filter (fn other =>
+          not (Portable.pointer_eq (other, g)) andalso
+          uses g (head_of (hd other))) groups
+      fun on_cycle groups g =
+        let
+          fun reaches _ [] = false
+            | reaches seen (h :: hs) =
+                Portable.pointer_eq (h, g) orelse
+                (if List.exists (fn s => Portable.pointer_eq (s, h)) seen
+                 then reaches seen hs
+                 else reaches (h :: seen) (callees groups h @ hs))
+        in
+          reaches [] (callees groups g)
+        end
+      (* without cycles, some remaining group is always uncalled *)
       fun order [] = []
         | order groups =
             let
               fun uncalled g = not (List.exists (fn other =>
                   not (Portable.pointer_eq (other, g)) andalso
                   uses other (head_of (hd g))) groups)
+              val g = valOf (List.find uncalled groups)
             in
-              case List.find uncalled groups of
-                SOME g => g :: order (List.filter
-                  (fn other => not (Portable.pointer_eq (other, g))) groups)
-              | NONE => []
+              g :: order (List.filter
+                (fn other => not (Portable.pointer_eq (other, g))) groups)
             end
+      val groups =
+        group (List.map Thm.ASSUME (List.filter is_macro assertions))
     in
-      order (group (List.map Thm.ASSUME (List.filter is_macro assertions)))
+      order (List.filter (not o on_cycle groups) groups)
     end
 
   (* Substitution is the only use made of the assertions.  Most solve-eqs

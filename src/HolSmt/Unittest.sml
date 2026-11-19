@@ -332,6 +332,8 @@ val _ = new_constant
 val _ = new_constant ("smtlib_uf_logic_foo", ``:int -> int``)
 val _ = new_constant ("smt_macro_dep_f", ``:int -> int``)
 val _ = new_constant ("smt_macro_dep_g", ``:int -> int``)
+val _ = new_constant ("smt_macro_cyc_f", ``:int -> int``)
+val _ = new_constant ("smt_macro_cyc_g", ``:int -> int``)
 val _ = new_constant ("smtlib_array_uf_fun", ``:'a -> 'a``)
 val _ = new_constant
   ("smtlib_fp_uf_pred", ``:('t,'w) smtfp -> ('t,'w) smtfp -> bool``)
@@ -27260,6 +27262,9 @@ let
   val reflexive = ``(macro_f:int->int) 3 = macro_f 3``
   val dep_g = ``!x:int. smt_macro_dep_g x = x + 1``
   val dep_f = ``!x:int. smt_macro_dep_f x = smt_macro_dep_g x``
+  val cyc_f =
+    ``!x:int. smt_macro_cyc_f x = smt_macro_cyc_g x + smt_macro_dep_g x``
+  val cyc_g = ``!x:int. smt_macro_cyc_g x = smt_macro_cyc_f x``
   val macro_q = ``!x:int. macro_q x = (0 <= x /\ !y:int. y <= x \/ x < y)``
 in
   proves_from "macro expansion" [macro, unused, reflexive] [macro] target;
@@ -27280,6 +27285,12 @@ in
                    ``!l:int list. FRONT l = TL l``]
       ``TL [1:int; 2] = FRONT [1; 2]``,
     "macros that use each other were applied");
+  (* Only the cycle is left out; the macro it calls is still applied. *)
+  proves_from "macro called by a cycle" [cyc_f, cyc_g, dep_g] [dep_g]
+    ``~(smt_macro_dep_g 2 = 7) <=> ~(2 + 1 = 7:int)``;
+  (* A datatype constructor is the solver's own symbol, not a macro. *)
+  assert (rejects [``!x:int. SOME x = NONE``] ``SOME (1:int) = NONE``,
+    "an equation for a datatype constructor was used as a macro");
   (* A macro is expanded before the ones its body uses, whatever the
      order of the assertions. *)
   proves_from "nested macros" [dep_g, dep_f] [dep_g, dep_f]
