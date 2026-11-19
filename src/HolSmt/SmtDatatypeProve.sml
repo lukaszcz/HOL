@@ -1261,9 +1261,11 @@ struct
     NoRewrites | NoRedex | Normalized of Thm.thm * Thm.thm
 
   (* [t] is an equation [l = r].  The caller admits [t]; this function does
-     not.  Admission and resource errors propagate unchanged; a side the
-     checked traversal leaves unchanged is [REFL].  [NoRedex] is returned
-     unless one of the sides is changed by one pass of the datatype facts. *)
+     not.  Admission and resource errors propagate unchanged, except that a
+     datatype fact over the size limit is dropped (so a tight limit can give
+     [NoRewrites]).  With facts, [NoRedex] is returned when neither side is
+     changed by one pass of them.  A side the checked traversal leaves
+     unchanged is [REFL]. *)
   fun normalize_equation_with_admission admit t =
     let
       val (l, r) = boolSyntax.dest_eq t
