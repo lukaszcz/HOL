@@ -12545,6 +12545,22 @@ in
   check_oracle_tags "CPC repeated guard elimination" theorem
 end
 
+(* cvc5's symm also flips a disequality, here one between a Skolem
+   (epsilon) term and 0, as it arises from an int goal without the num
+   transfer. *)
+fun cpc_symm_disequality_replay_success () =
+let
+  val skolem = ``@x:int. 0 < x``
+  val premise = Thm.ASSUME (boolSyntax.mk_neg
+    (boolSyntax.mk_eq (skolem, ``0:int``)))
+  val theorem = CPC_ProofReplay.replay_symm_for_test [premise]
+in
+  assert (Thm.concl theorem ~~
+      boolSyntax.mk_neg (boolSyntax.mk_eq (``0:int``, skolem)) andalso
+      HOLset.equal (Thm.hypset theorem, Thm.hypset premise),
+    "symm did not flip the disequality from its premise alone")
+end
+
 fun cpc_quant_var_elim_symmetric_guard_replay_success () =
 let
   val proof = parse_cpc_proof_string
@@ -38200,6 +38216,8 @@ let
       cpc_quant_var_elim_repeated_guard_replay_success),
     ("cpc_quant_var_elim_symmetric_guard_replay_success",
       cpc_quant_var_elim_symmetric_guard_replay_success),
+    ("cpc_symm_disequality_replay_success",
+      cpc_symm_disequality_replay_success),
     ("cpc_bool_and_de_morgan_tail_replay_success",
       cpc_bool_and_de_morgan_tail_replay_success),
     ("cpc_bool_or_de_morgan_tail_replay_success",
