@@ -39317,7 +39317,9 @@ let
     ("solver_spec_rejects_bad_proof_theorem",
       solver_spec_rejects_bad_proof_theorem),
     (* Retires private canaries to test both declaration epochs. *)
-    ("graph_native_import_geometry", SmtReplayNativeGeometryTests.run)
+    ("graph_native_import_geometry", SmtReplayNativeGeometryTests.run),
+    ("source_condition_builder_contract",
+      SmtReplaySourceConditionTests.run)
   ]
   val selected =
     case OS.Process.getEnv "HOL4_UNITTEST_FILTER" of
