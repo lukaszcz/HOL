@@ -10593,10 +10593,11 @@ struct
     | variable(SRTree {shape=SRAtom term,...})=
         if Term.is_var term then SOME(TemplateFree term) else NONE
     | variable _=NONE
-  fun same_ty(SRCaptured a,SRCaptured b)=Type.compare(a,b)=EQUAL
-    | same_ty(SRArrow(a,b),SRArrow(c,d))=same_ty(a,c)andalso same_ty(b,d)
-    | same_ty _=false
   in
+  fun sce_same_ty(SRCaptured a,SRCaptured b)=Type.compare(a,b)=EQUAL
+    | sce_same_ty(SRArrow(a,b),SRArrow(c,d))=
+        sce_same_ty(a,c)andalso sce_same_ty(b,d)
+    | sce_same_ty _=false
   fun source_condition_builder tick=
     let
       val budget=ref(0:IntInf.int)
@@ -10817,7 +10818,7 @@ struct
             raise ERR "source_rule_template" "argument route mismatch"
       fun vperm a b=(tick 1;
         case(variable a,variable b)of(SOME _,SOME _)=>
-            same_ty(sr_type a,sr_type b)
+            sce_same_ty(sr_type a,sr_type b)
         | _=>case(#shape(sr_data a),#shape(sr_data b))of
             (SRApp(f,x),SRApp(g,y))=>vperm f g andalso vperm x y
           | (SRLam(_,_,x),SRLam(_,_,y))=>vperm x y
@@ -10851,14 +10852,13 @@ struct
                   let val(a,b)=split(size values div 2)values []
                   in combine boolSyntax.conjunction(walk a)(walk b)end
         in walk values end
-      fun original_shape steps args initial terminal=
+      fun original_permutative steps args initial terminal=
         let val original=original_template steps args initial
-      val permutative=case terminal of SourceEquality=>
+        in case terminal of SourceEquality=>
                   (case binary "min" "=" original of SOME(a,b)=>
                       vperm a b andalso same_fv(fv a)(fv b)
                     | _=>raise ERR "source_rule_template" "original equality")
-              | _=>false
-        in (original,permutative) end
+              | _=>false end
     in {budget=budget, policies=policies, identifiers=identifiers,
        binders=binders, atom=atom, app=app, capture=capture, bounded=bounded,
        name_binders=name_binders, head=head, binary=binary, forall=forall,
@@ -10866,7 +10866,7 @@ struct
        typed_equality=typed_equality, quantify=quantify, bool=bool,
        boolean=boolean, combine=combine, equality=equality,
        implication=implication, balanced=balanced,
-       same_ty=same_ty, original_shape=original_shape} end
+       original_permutative=original_permutative} end
   end
   (* Where a clause preparer takes its frame and caller from: the plain rule
      gives both, the exists-argument clause gives both and additionally
@@ -10939,17 +10939,17 @@ struct
       val {d,graph,scope,children,guard,tick,output,template,quota,...}=
         ctx
       fun append v w=sce_append tick v w
-      val {budget,policies,binders,app,bounded,name_binders,head,binary,
-        forall,exists,subst,tneg,typed_equality,quantify,bool,boolean,
-        equality,implication,balanced,same_ty,original_shape,...}=
+      val {budget,policies,binders,app,name_binders,head,binary,
+        forall,exists,subst,tneg,typed_equality,quantify,boolean,
+        equality,implication,balanced,original_permutative,...}=
         #builder ctx
       val initial= #initial ctx ()
       val hyp= #hyp ctx ()
       val rows= #rows ctx ()
       val args= #args ctx ()
       val _=List.app name_binders(initial::args)
-      val (original,permutative)=
-        original_shape steps args initial terminal
+      val permutative=
+        original_permutative steps args initial terminal
       fun record cap hypotheses result=
         let val _=if sr_raw result<=cap andalso sr_inc result<=cap then ()
               else raise ERR "prepare_source_condition_rule"
@@ -11085,7 +11085,7 @@ struct
                                 "witness must be an actual variable"
                           | _=>raise ERR "prepare_source_condition_rule"
                               "witness must be an actual variable"
-                        val _=if same_ty(sr_type v,sr_type argument)then ()
+                        val _=if sce_same_ty(sr_type v,sr_type argument)then ()
                           else raise ERR "prepare_source_condition_rule"
                             "existential witness type differs"
                         val instance=subst id argument body
@@ -15164,10 +15164,10 @@ struct
       val {d,graph,scope,children,guard,tick,output,template,quota,...}=
         ctx
       fun append v w=sce_append tick v w
-      val {budget,policies,identifiers,binders,atom,app,bounded,
+      val {budget,policies,identifiers,binders,atom,app,
         name_binders,head,binary,forall,exists,subst,tneg,typed_equality,
-        quantify,bool,boolean,equality,implication,balanced,same_ty,
-        original_shape,...}=
+        quantify,boolean,equality,implication,balanced,
+        original_permutative,...}=
         #builder ctx
       val initial= #initial ctx ()
       val hyp= #hyp ctx ()
@@ -15179,8 +15179,8 @@ struct
              identifiers:=name:: !identifiers;
              SOME(atom(SRFresh(name,ty))(SRCaptured ty)))
       val _=List.app name_binders(initial::args)
-      val (original,permutative)=
-        original_shape steps args initial terminal
+      val permutative=
+        original_permutative steps args initial terminal
       fun record cap hypotheses result=
         let val _=if sr_raw result<=cap andalso sr_inc result<=cap then ()
               else raise ERR "prepare_source_condition_rule"
@@ -15316,7 +15316,7 @@ struct
                                 "witness must be an actual variable"
                           | _=>raise ERR "prepare_source_condition_rule"
                               "witness must be an actual variable"
-                        val _=if same_ty(sr_type v,sr_type argument)then ()
+                        val _=if sce_same_ty(sr_type v,sr_type argument)then ()
                           else raise ERR "prepare_source_condition_rule"
                             "existential witness type differs"
                         val instance=subst id argument body
@@ -15352,7 +15352,7 @@ struct
                 val(id,v,part)=case exists ant of SOME triple=>triple
                   | _=>raise ERR "prepare_source_argument"
                     "actual existential antecedent required"
-                val _=if same_ty(sr_type v,sr_type argument)then ()else
+                val _=if sce_same_ty(sr_type v,sr_type argument)then ()else
                   raise ERR "prepare_source_argument"
                     "prospective argument type differs"
                 val instance=subst id argument part
@@ -16050,8 +16050,8 @@ struct
       fun append v w=sce_append tick v w
       val {budget,policies,identifiers,binders,atom,app,capture,bounded,
         name_binders,head,binary,forall,exists,subst,tneg,typed_equality,
-        quantify,bool,boolean,combine,equality,implication,balanced,same_ty,
-        original_shape,...}=
+        quantify,boolean,combine,equality,implication,balanced,
+        original_permutative,...}=
         #builder ctx
       fun no_abs cap term=
         let fun walk [] count=()
@@ -16069,8 +16069,7 @@ struct
         (scr_conj_shape data;no_abs(#output_limit limits)(#target d))
       val _=mode_initial()
       val initial= #initial ctx ()
-      val hyp=case closing of NONE=>
-            List.map(bounded(#template_limit limits)NONE)(Thm.hyp(#proof d))
+      val hyp=case closing of NONE=>(#hyp ctx) ()
         | SOME _=>
             let val actual=Thm.hyp(#proof d)
                 val known=sce_admitted_hyp_rows_inside expected evidence
@@ -16085,9 +16084,7 @@ struct
                       (no_abs(#template_limit limits)term;
                        bounded(#template_limit limits)NONE term)
             in List.map forest known end
-      val rows=case closing of NONE=>List.map(fn(value,_)=>
-            bounded(#template_limit limits)NONE value)(#rows d)
-        | SOME _=>[]
+      val rows=case closing of NONE=>(#rows ctx) () | SOME _=>[]
       val args= #args ctx ()
       val future_names=ref([]:string list)
       val future_trees=List.map
@@ -16204,8 +16201,8 @@ struct
           then raise ERR "predicate_conditional"
             "Original Source ant alias needs semantic receiver"
           else ())ordered_ants)
-      val (original,permutative)=
-        original_shape steps args initial terminal
+      val permutative=
+        original_permutative steps args initial terminal
       fun record cap hypotheses result=
         let val _=if sr_raw result<=cap andalso sr_inc result<=cap then ()
               else raise ERR "prepare_source_condition_rule"
@@ -16348,7 +16345,7 @@ struct
                                 "witness must be an actual variable"
                           | _=>raise ERR "prepare_source_condition_rule"
                               "witness must be an actual variable"
-                        val _=if same_ty(sr_type v,sr_type argument)then ()
+                        val _=if sce_same_ty(sr_type v,sr_type argument)then ()
                           else raise ERR "prepare_source_condition_rule"
                             "existential witness type differs"
                         val instance=subst id argument body
@@ -16380,7 +16377,7 @@ struct
           let val(id,variable,body)=case forall current of SOME triple=>triple
                 | NONE=>raise ERR "canonical_future"
                     "actual universal block is shorter than quotation"
-              val _=if same_ty(sr_type variable,sr_type argument)then ()else
+              val _=if sce_same_ty(sr_type variable,sr_type argument)then ()else
                 raise ERR "canonical_future" "universal argument type"
               val result=subst id argument body
               val _=record output [] argument
@@ -16407,7 +16404,7 @@ struct
                 val(id,v,part)=case exists ant of SOME triple=>triple
                   | _=>raise ERR "canonical_future"
                     "actual existential antecedent required"
-                val _=if same_ty(sr_type v,sr_type argument)then ()else
+                val _=if sce_same_ty(sr_type v,sr_type argument)then ()else
                   raise ERR "canonical_future" "existential argument type"
                 val instance=subst id argument part
                 val held=native_hyp conditions
