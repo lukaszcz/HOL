@@ -22066,6 +22066,10 @@ in
   fun replay_process_scope_for_test args prems =
     replay_process_scope (strong_cpc_canon_conv []) args prems
 
+  fun replay_process_scope_with_boundary_for_test located_args steps =
+    replay_process_scope_with_boundary (strong_cpc_canon_conv [])
+      located_args steps
+
   fun replay_eq_resolve_routes_for_test prems =
     let
       val route = Option.map eq_resolve_preflight_name

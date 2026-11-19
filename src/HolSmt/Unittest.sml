@@ -13343,6 +13343,51 @@ in
       "result: " ^ Feedback.message_of holerr)
 end
 
+(* The plain and boundary process_scope entries share one scope
+   decomposition: same theorem, hypotheses and tags for one and for two
+   antecedents, the boundary entry also reporting its provenance. One
+   antecedent builds no conjunction constructor; two build one. *)
+fun cpc_process_scope_boundary_matches_plain () =
+let
+  val a = Term.mk_var ("scope_a", Type.bool)
+  val b = Term.mk_var ("scope_b", Type.bool)
+  val r = Term.mk_var ("scope_r", Type.bool)
+  fun leaf name = CPC_Proof.ApplicationProvenance (name, [])
+  val (pa, pb, pr, body) = (leaf "pa", leaf "pb", leaf "pr", leaf "body")
+  fun imp_prov (left, right) =
+    CPC_Proof.ApplicationProvenance ("=>", [left, right])
+  fun step theorem provenance =
+    {rule_name = "assume",
+     result = {thm = theorem,
+               located = {term = Thm.concl theorem, provenance = provenance},
+               clause = NONE}}
+  fun check label antecedents incoming expected =
+    let
+      val premise = Thm.ASSUME
+        (List.foldr boolSyntax.mk_imp r antecedents)
+      val plain = CPC_ProofReplay.replay_process_scope_for_test [r] [premise]
+      val {theorem, provenance} =
+        CPC_ProofReplay.replay_process_scope_with_boundary_for_test
+          [{term = r, provenance = body}] [step premise incoming]
+    in
+      assert (Term.aconv (Thm.concl plain) (Thm.concl theorem) andalso
+              HOLset.isEmpty (HOLset.difference
+                (Thm.hypset plain, Thm.hypset theorem)) andalso
+              HOLset.isEmpty (HOLset.difference
+                (Thm.hypset theorem, Thm.hypset plain)) andalso
+              Tag.dest_tag (Thm.tag plain) = Tag.dest_tag (Thm.tag theorem),
+        label ^ ": plain and boundary theorems differ");
+      assert (provenance = expected,
+        label ^ ": unexpected boundary provenance")
+    end
+in
+  check "one antecedent" [a] (imp_prov (pa, pr))
+    (imp_prov (pa, body));
+  check "two antecedents" [a, b] (imp_prov (pa, imp_prov (pb, pr)))
+    (imp_prov (CPC_Proof.ConjunctionProvenance
+                 (CPC_Proof.ProcessScopeConjunction, [pa, pb]), body))
+end
+
 fun cpc_concat_unify_and_re_unfold_pos_replay_success () =
 let
   val concat = parse_cpc_proof_string
@@ -38569,6 +38614,8 @@ let
       cpc_skolem_cache_preflight_rejections),
     ("cpc_process_scope_negated_leaf_diagnostic",
       cpc_process_scope_negated_leaf_diagnostic),
+    ("cpc_process_scope_boundary_matches_plain",
+      cpc_process_scope_boundary_matches_plain),
     ("cpc_concat_unify_and_re_unfold_pos_replay_success",
       cpc_concat_unify_and_re_unfold_pos_replay_success),
     ("cpc_proof_parser_private_fp_terms_success",
