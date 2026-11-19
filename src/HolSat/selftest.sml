@@ -646,19 +646,22 @@ end
    process group until HOL's cleanup kills the group.  If HOL dies while the
    command runs, no cleanup comes: the supervisor must exit by itself once
    the command ends.  A child HOL records its PID and the supervisor's ($PPID
-   of the command) and is killed mid-command. *)
+   of the command) and is killed mid-command; the command ends only once the
+   test has killed the child (or after 60 s). *)
 val _ = if not Systeml.isUnix then () else
 let
   val _ = tprint "SatProcess supervisor exits when HOL dies mid-command"
   val base = OS.FileSys.tmpName ()
-  val (script,pids,partial) = (base ^ ".sml",base ^ ".pids",base ^ ".tmp")
+  val (script,pids,partial,release) =
+    (base ^ ".sml",base ^ ".pids",base ^ ".tmp",base ^ ".go")
   val out = TextIO.openOut script
   val _ = TextIO.output (out,String.concat
     ["load \"SatProcess\";\n",
      "val pid = SysWord.fmt StringCvt.DEC\n",
      "  (Posix.Process.pidToWord (Posix.ProcEnv.getpid ()));\n",
      "val _ = SatProcess.system (\"echo \" ^ pid ^ \" $PPID > ",partial,
-     " && mv ",partial," ",pids," && sleep 2\");\n"])
+     " && mv ",partial," ",pids," && i=0 && while [ ! -e ",release,
+     " ] && [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done\");\n"])
   val _ = TextIO.closeOut out
   val hol = Systeml.protect (OS.Path.concat (Globals.HOLDIR,"bin/hol"))
   fun poll tenths ready = ready () orelse
@@ -685,7 +688,8 @@ let
         [child,supervisor] =>
           let
             val _ = signal (Posix.Process.K_PROC (pid child))
-              Posix.Signal.kill
+              Posix.Signal.kill handle OS.SysErr _ => ()
+            val _ = TextIO.closeOut (TextIO.openOut release)
             val gone = poll 300 (fn () => not (alive supervisor))
           in
             if gone then NONE
@@ -697,7 +701,7 @@ let
     end
   val result = failure ()
   val _ = List.app (fn path => OS.FileSys.remove path
-    handle OS.SysErr _ => ()) [base,script,pids,partial]
+    handle OS.SysErr _ => ()) [base,script,pids,partial,release]
 in
   case result of NONE => OK () | SOME message => die message
 end
