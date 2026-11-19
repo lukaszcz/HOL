@@ -22,8 +22,12 @@ local val EXPAND_COND_SS = pureSimps.pure_ss ++ boolSimps.COND_elim_ss
       fun EXPAND_COND_TAC g ctxt =
           CONV_TAC (simpLib.SIMP_CONV_IN ctxt EXPAND_COND_SS []) g ctxt
       val EXPAND_COND = CONV_RULE EXPAND_COND_CONV
-      fun NORM_RULE_WITH expand =
-          CONV_RULE (expand THENC REWRITE_CONV [markerTheory.Abbrev_def])
+      (* the rewrite set is fixed: the normaliser must not depend on the
+         implicit rewrites held by the ambient context *)
+      val ABBREV_ELIM_CONV =
+          Rewrite.GEN_REWRITE_CONV Conv.TOP_DEPTH_CONV Rewrite.bool_rewrites
+                                   [markerTheory.Abbrev_def]
+      fun NORM_RULE_WITH expand = CONV_RULE (expand THENC ABBREV_ELIM_CONV)
       val NORM_RULE = NORM_RULE_WITH EXPAND_COND_CONV
       fun NORM_RULE_IN ctxt =
           NORM_RULE_WITH (simpLib.SIMP_CONV_IN ctxt EXPAND_COND_SS [])

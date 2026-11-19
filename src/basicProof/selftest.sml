@@ -161,3 +161,23 @@ val _ =
     applied "NORM_TAC passes its context"
       (NORM_TAC (boolSimps.bool_ss ++ frag) [])
   end
+
+(* PROVE_TAC normalises its lemmas with a fixed rewrite set: a lemma that
+   an implicit rewrite of the context reduces to T is still passed to
+   MESON intact. *)
+local
+  val plain = Context.snapshot ()
+  val g = “(p:'a # 'b = (x,y)) ==> (FST p = x)”
+  fun attempt c tac =
+    (tac ([], g) c; true) handle Feedback.HOL_ERR _ => false
+in
+  val _ = tprint "PROVE_TAC [FST] while FST is an ambient implicit rewrite"
+  val _ = let
+    val _ = Rewrite.add_implicit_rewrites [pairTheory.FST]
+    val r = attempt (Context.snapshot ())
+                    (BasicProvers.PROVE_TAC [pairTheory.FST])
+    val _ = Context.restore plain
+  in
+    if r then OK () else die "PROVE_TAC lost the lemma"
+  end
+end
