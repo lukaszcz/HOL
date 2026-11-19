@@ -86,7 +86,9 @@ struct
      [orient source] rewrites a node whose input occurrence was [source]. *)
   (* Whether [trigger] holds at some subterm of [root], binder bodies
      included: one walk, memoized on physical identity. Past the term
-     budget it answers true, so no pass is skipped that was not scanned. *)
+     budget it answers true, so no pass is skipped that was not scanned.
+     A body is opened lazily (count_body), so each node it unfolds is
+     counted before it is built. *)
   fun may_trigger trigger root =
     let
       exception Found
@@ -107,7 +109,8 @@ struct
                 trigger term then raise Found
              else if Term.is_comb term then
                (visit (Term.rator term); visit (Term.rand term))
-             else if Term.is_abs term then visit (#2 (Term.dest_abs term))
+             else if Term.is_abs term then
+               visit (SmtReplayImport.count_body term)
              else ())
         end
     in (visit root; false) handle Found => true end
@@ -776,8 +779,9 @@ struct
 
   (* Only these arithmetic heads and negated conditional guards can change
      the difference normal form, also under a binder, so the scan descends
-     into binder bodies. The primary pass has already admitted the source.
-     An incomplete scan retains all original passes. *)
+     into binder bodies, opened lazily as in may_trigger. The primary pass
+     has already admitted the source. An incomplete scan retains all
+     original passes. *)
   fun secondary_rewrite_needed root =
     let
       exception Relevant
@@ -794,7 +798,7 @@ struct
         else ()
       fun children term =
         if Term.is_comb term then [Term.rator term,Term.rand term]
-        else if Term.is_abs term then [Term.body term]
+        else if Term.is_abs term then [SmtReplayImport.count_body term]
         else []
       fun scan () =
         let val {complete,...} = SmtResource.bounded_structure_with_children

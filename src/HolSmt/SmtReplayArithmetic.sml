@@ -172,12 +172,18 @@ struct
                  val n = 1 + m + size (budget - 1 - m) operand
                in record term n;n end
              else if Term.is_abs term then
-               let val (variable,body) =
-                     SmtReplayImport.dest_abs_preserving_names term
-               in
-                 check_type (Term.type_of variable);
-                 1 + size (budget - 1) body
-               end
+               (* Opening walks the whole body: bound it first. *)
+               (case SmtReplayImport.bounded_raw_size_with_type_check_observed
+                   {check_type=check_type,observe=fn () => (),limit=budget}
+                   term of
+                  NONE => raise Exceeds
+                | SOME _ =>
+                    let val (variable,body) =
+                          SmtReplayImport.dest_abs_preserving_names term
+                    in
+                      check_type (Term.type_of variable);
+                      1 + size (budget - 1) body
+                    end)
              else 1)
     in
       fn term => ignore (size limit term)
