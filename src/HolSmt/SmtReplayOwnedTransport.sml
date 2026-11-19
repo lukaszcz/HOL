@@ -209,7 +209,7 @@ struct
      retained Source), the one-unit [spend] and the focus constructor
      [make]. No owner state exists until [make] returns, so a failure
      anywhere before it leaves nothing live. *)
-  fun start_with {enter,admit,spend,make,active} work view ordinal
+  fun start_worker {enter,admit,spend,make,active} work view ordinal
       (unopened,opened_provenance) =
     W.with_step work (fn () =>
     let val pre = enter ()
@@ -247,7 +247,7 @@ struct
     in select (S.reconciliation_sources sources) occurrence end
   (* The same Source-root start for the ordinary (int) limits. *)
   fun start_source work view admit ordinal provenances =
-    start_with
+    start_worker
       {enter = fn () => (),admit = admit,spend = fn () => W.spend work 1,
        make = fn limits => fn {graph,root,sources,original,opened,current,
                                child,ordinal,provenance,goal_unopened,
@@ -463,7 +463,7 @@ struct
      ([body_requester]). It returns the footprints, the quoted types, the
      closure children held and the opaque profiles retained, from which the
      caller builds its own guard. *)
-  fun inventory_with {fence,work,graph,ceiling,spend,scope,begin_root,
+  fun inventory_worker {fence,work,graph,ceiling,spend,scope,begin_root,
                       profile_for,profile_data,body_requester,
                       requester0} roots =
     let fun invoke action = case fence of NONE => action ()
@@ -584,7 +584,7 @@ struct
           let val data = G.opaque_profile_data graph traversal held
           in {raw = IntInf.fromInt (#raw data),inc = IntInf.fromInt (#inc data),
               ann = #ann data,ty = #ty data,types = #types data} end
-        val (values,types,held,opaque) = inventory_with
+        val (values,types,held,opaque) = inventory_worker
           {fence = NONE,work = work,graph = graph,ceiling = ceiling,
            spend = fn amount => W.spend work amount,
            scope = fn () => traversal,begin_root = begin_root,
@@ -669,7 +669,7 @@ struct
   (* The shared composition worker. Each caller passes the focus and
      conversion operations of its own owner type; the order of every
      validation, reservation and callback is fixed here. *)
-  fun compose_with {peek_initial,work_of,require_owner,validate,
+  fun compose_worker {peek_initial,work_of,require_owner,validate,
                     target_focus,node,scope,inventory,reserve,equation,
                     policies,graph_of,theorem_of,invoke,checked}
       {first,second,ordinal,check_type} =
@@ -700,7 +700,7 @@ struct
             (theorem_of first) (theorem_of second))
           val _ = all ()
       in checked (initial,target,theorem,all) end) end) end
-  val compose = compose_with
+  val compose = compose_worker
     {peek_initial = peek_initial,work_of = work_of,
      require_owner = require_owner,validate = validate,
      target_focus = target_focus,node = node,scope = scope,
@@ -1476,7 +1476,7 @@ struct
   (* The same Source-root start for the native policy limits. *)
   fun start_source work view native_contract profiles admit ordinal
       provenances =
-    start_with
+    start_worker
       {enter = fn () => NC.for_work work native_contract,admit = admit,
        spend = fn () => W.spend_policy work 1,
        make = fn (limits,policy_limits,native) =>
@@ -1649,7 +1649,7 @@ struct
           let val data = G.opaque_profile_data_with_policy graph requester held
           in {raw = #raw data,inc = #inc data,ann = #ann data,ty = #ty data,
               types = #types data} end
-        val (values,types,held,opaque) = inventory_with
+        val (values,types,held,opaque) = inventory_worker
           {fence = SOME (fn () => active focus),work = work_of focus,
            graph = graph,ceiling = ceiling,spend = spend focus,
            scope = fn () => scope focus,begin_root = begin_root,
@@ -1786,7 +1786,7 @@ struct
         val _=guard ()
     in (total,guard) end
 
-  val compose = compose_with
+  val compose = compose_worker
     {peek_initial = peek_initial,work_of = work_of,
      require_owner = require_owner,validate = validate,
      target_focus = target_focus,node = node,scope = scope,
