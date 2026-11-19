@@ -10569,11 +10569,11 @@ struct
      check_type:Type.hol_type -> unit,permutative:bool,used:bool ref}
   datatype source_condition_rule_plan=SCEClausePlan of sce_clause_core
   (* The two clause paths that share one interpreter: the plain rule, and
-     the exists-argument clause with its optional quoted future argument. *)
+     the exists-argument clause with its quoted future argument. *)
   datatype sce_clause_kind=SCERuleClause
-    | SCEArgumentClause of sce_future_argument option
+    | SCEArgumentClause of sce_future_argument
   fun sce_kind_future SCERuleClause=NONE
-    | sce_kind_future(SCEArgumentClause future)=future
+    | sce_kind_future(SCEArgumentClause future)=SOME future
   fun sce_core_guard expected kind
       ({work,evidence,frame,graph,caller,scope,children,...}:sce_clause_core)=
     sr_fail expected (fn()=>
@@ -11380,21 +11380,18 @@ struct
          fun fresh name ty=case kind of
              SCERuleClause=>raise ERR "execute_source_condition_rule"
                "unexpected external vocabulary"
-           | SCEArgumentClause future=>guarded(fn()=>
-               case future of SOME(SCEFutureArgument
-                   {name=held,ty=actual,child,...})=>
-                 if name=held andalso Type.compare(ty,actual)=EQUAL then
-                   (case !child of SOME argument=>
-                      G.representative graph
-                        (G.closure_child_node graph
-                          (#scope(Scope.description_for expected frame))
-                          argument)
-                    | NONE=>raise ERR "execute_source_argument"
-                        "argument has not been bound")
-                 else raise ERR "execute_source_argument"
-                   "prospective argument identity changed"
-               | NONE=>raise ERR "execute_source_condition_rule"
-                   "unexpected external vocabulary")
+           | SCEArgumentClause(SCEFutureArgument
+                 {name=held,ty=actual,child,...})=>guarded(fn()=>
+               if name=held andalso Type.compare(ty,actual)=EQUAL then
+                 (case !child of SOME argument=>
+                    G.representative graph
+                      (G.closure_child_node graph
+                        (#scope(Scope.description_for expected frame))
+                        argument)
+                  | NONE=>raise ERR "execute_source_argument"
+                      "argument has not been bound")
+               else raise ERR "execute_source_argument"
+                 "prospective argument identity changed")
          fun emit(SRTree {shape,...})=case shape of SRAtom term=>term
            | SRBound(id,_)=>bound id
            | SRFresh(name,ty)=>fresh name ty
@@ -11448,13 +11445,10 @@ struct
              realized=ref NONE}
          val retained=SCEProjected {work=expected,graph=graph,caller=caller,
            children=(case kind of SCERuleClause=>children
-             | SCEArgumentClause future=>
-                 (case future of
-                    SOME(SCEFutureArgument {child,...})=>(case !child of
-                      SOME argument=>argument::children | NONE=>raise ERR
-                        "execute_source_argument" "missing retained argument")
-                  | NONE=>raise ERR "execute_source_argument"
-                      "missing prospective argument")),
+             | SCEArgumentClause(SCEFutureArgument {child,...})=>
+                 (case !child of
+                    SOME argument=>argument::children | NONE=>raise ERR
+                      "execute_source_argument" "missing retained argument")),
            value=value,permutative=SOME permutative}
          val _=sce_guard expected retained
        in retained end)))
@@ -15262,7 +15256,7 @@ struct
 
 
   datatype sce_argument_clause_plan=SCEArgumentClausePlan of
-    {clause:sce_clause_core,future:sce_future_argument option}
+    {clause:sce_clause_core,future:sce_future_argument}
   fun sce_argument_clause_guard expected
       (SCEArgumentClausePlan {clause,future})=
     sce_core_guard expected (SCEArgumentClause future) clause
@@ -15328,7 +15322,7 @@ struct
       val future=SCEFutureArgument {name=name,ty=ty,child=ref NONE}
       val plan=prepare_source_condition_argument_clause expected
         {evidence=evidence,frame=frame,caller=caller,steps=steps,
-         terminal=SourceTruth,check_type=check_type,future=SOME future}
+         terminal=SourceTruth,check_type=check_type,future=future}
       val result=SourceConditionArgumentPlan
         {work=expected,plan=plan,phase=ref ArgumentPrepared}
       val _=source_argument_guard expected result
@@ -15356,9 +15350,8 @@ struct
       (source_argument_guard expected value;
        if !phase=ArgumentAdmitted then ()else raise ERR
          "source_argument_ready" "ready is not available";
-       case future of SOME(SCEFutureArgument {name,ty,...})=>
-         {frame=frame,name=name,ty=ty}
-       | NONE=>raise ERR "source_argument_ready" "missing quoted argument"))
+       case future of SCEFutureArgument {name,ty,...}=>
+         {frame=frame,name=name,ty=ty}))
   fun execute_source_condition_exists_argument expected
       {ready=SourceConditionArgumentReady
          (value as SourceConditionArgumentPlan
@@ -15372,8 +15365,6 @@ struct
        W.with_step expected(fn()=>
          let val _=source_argument_guard expected value
              val scope= #scope(Scope.description_for expected frame)
-             val future=case future of SOME held=>held | NONE=>
-               raise ERR "execute_source_argument" "missing quoted argument"
              val SCEFutureArgument {child,...}=future
              val _=if Option.isSome(!child)then raise ERR
                "execute_source_argument" "argument already bound"else ()
