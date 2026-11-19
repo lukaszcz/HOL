@@ -825,6 +825,13 @@ struct
   fun action (owner as Owner {work,...}) focus operation =
     action_with work (fn () => ignore (describe owner focus))
       (fn () => W.spend work 1) operation
+  (* The graph leaf of [conversion] under a charged action; [limit] is
+     evaluated inside the action, as the template limit of the caller. *)
+  fun leaf (owner as Owner {graph,...}) focus (d:description) limit
+      conversion =
+    action owner focus (fn observe =>
+      C.graph_leaf graph (#scope d)
+        {conversion=conversion,template_limit=limit (),observe=observe})
   fun ordinal (owner as Owner {work,traversal,...}) =
     ordinal_with (fn () => active owner)
       (fn () => T.validate_for work traversal)
@@ -843,7 +850,7 @@ struct
         {frame= #frame d,conversion=recipe,ordinal=ordinal owner,
          check_type=policy owner focus})
       (fn plan => Core.execute work plan)
-      (fn d => fn proof => publish owner focus d proof)
+      (publish owner focus)
       (fn proof => action owner focus (fn observe =>
         C.graph_realized_leaf work
           {realization=Core.realization_for work proof,observe=observe}))
@@ -1009,12 +1016,8 @@ struct
                                instance=instance,conditions=evidence}
                            val result = Conditional.execute prepared
                        in Conditional.conversion_for work result end,
-                     leaf=fn conversion => action owner focus
-                       (fn observe => C.graph_leaf
-                         (case owner of Owner {graph,...} => graph)
-                         (#scope d) {conversion=conversion,
-                           template_limit= #template_limit
-                             (W.semantic_limits work),observe=observe}),
+                     leaf=leaf owner focus d (fn () =>
+                       #template_limit (W.semantic_limits work)),
                      seal_focus=seal owner focus,
                      redescribe=fn () => ignore (describe owner focus),
                      retry=fn () => attempt rest}
@@ -1057,10 +1060,7 @@ struct
                  {source=source,source_view=source_view,target=target,
                   target_view=target_view,theorem=theorem,
                   template_limit=cap,check_type=check_type}})
-    in discovered_with converted
-      (fn conversion => action owner focus (fn observe =>
-        C.graph_leaf graph scope {conversion=conversion,
-          template_limit=cap,observe=observe}))
+    in discovered_with converted (leaf owner focus d (fn () => cap))
       (seal owner focus) end
   (* Concrete proof adapters below retain their SAME-owned receipts. *)
   fun lift owner focus (result:outcome) =
@@ -1071,10 +1071,8 @@ struct
          ordinal=ordinal owner,check_type=policy owner focus}))
       (fn d => fn value => Conditional.lambda_conversion_for work conditional
         {frame= #frame d,result=value})
-      (fn d => fn converted => action owner focus (fn observe =>
-        C.graph_leaf graph (#scope d)
-          {conversion=converted,template_limit= #template_limit
-            (W.semantic_limits work),observe=observe}))
+      (fn d => leaf owner focus d (fn () =>
+        #template_limit (W.semantic_limits work)))
       (seal owner focus) end
   fun normalize owner source =
     let val Owner {work,graph,...} = owner
@@ -1333,6 +1331,10 @@ struct
             {realization=Core.realization_with_policy_for work proof,
              observe=observe}))
       :outcome
+    fun leaf(owner as Owner{work,...})focus(d:description)conversion=
+      action owner focus(fn observe=>
+        C.graph_leaf_with_policy work
+          {frame= #frame d,conversion=conversion,observe=observe})
     fun joined(owner as Owner{work,...})source(left:outcome)(right:outcome)=
       let val recipe=action owner source(fn observe=>
             C.graph_realized_sequence_with_policy work
@@ -1773,10 +1775,7 @@ struct
                    template_limit= #template_limit(W.semantic_policy work),
                    profiles=profiles,check_type=check_type}}
           end)
-    in discovered_with converted
-      (fn conversion=>action owner focus(fn observe=>
-        C.graph_leaf_with_policy work
-          {frame= #frame d,conversion=conversion,observe=observe}))
+    in discovered_with converted (leaf owner focus d)
       (seal owner focus)
     end
   end
@@ -1846,10 +1845,7 @@ struct
                                 prepared
                           in Conditional.conversion_with_policy_for
                             work result end,
-                        leaf=fn converted=>action owner focus(fn observe=>
-                          C.graph_leaf_with_policy work
-                            {frame= #frame d,conversion=converted,
-                             observe=observe}),
+                        leaf=leaf owner focus d,
                         seal_focus=seal owner focus,
                         redescribe=fn()=>ignore(describe owner focus),
                         retry=fn()=>attempt rest}
@@ -1943,9 +1939,7 @@ struct
              profiles=profiles,check_type=policy owner focus}))
         (fn d=>fn value=>Conditional.lambda_conversion_with_policy_for
           work conditional {frame= #frame d,result=value})
-        (fn d=>fn converted=>action owner focus(fn observe=>
-          C.graph_leaf_with_policy work
-            {frame= #frame d,conversion=converted,observe=observe}))
+        (leaf owner focus)
         (seal owner focus)
   end
 
