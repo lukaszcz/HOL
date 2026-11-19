@@ -11253,113 +11253,111 @@ struct
 
   (* Execution primitives of the shared clause instructions.  guard is the
      plan guard of the path; it brackets every kernel step. *)
+  (* Run one kernel step between two guard checks. *)
+  fun sce_guarded guard operation=
+    (guard();let val value=operation()in guard();value end)
   (* Align a theorem with the captured conclusion term. *)
   fun sce_align guard term theorem=
-    let fun guarded operation=
-          (guard();let val value=operation()in guard();value end)
-    in if Portable.pointer_eq(Thm.concl theorem,term) then theorem
-       else let val bridge=guarded(fn()=>
-                  SmtReplayRuleObservation.ALPHA(Thm.concl theorem)term)
-         in guarded(fn()=>SmtReplayRuleObservation.EQ_MP bridge theorem)
-         end end
+    if Portable.pointer_eq(Thm.concl theorem,term) then theorem
+    else let val bridge=sce_guarded guard(fn()=>
+               SmtReplayRuleObservation.ALPHA(Thm.concl theorem)term)
+         in sce_guarded guard(fn()=>
+              SmtReplayRuleObservation.EQ_MP bridge theorem)
+         end
   (* Materialize the retained policy types and check each, guarded. *)
   fun sce_check_policies guard check_type types=
-    let fun guarded operation=
-          (guard();let val value=operation()in guard();value end)
-        fun materialize(SRCaptured ty)=guarded(fn()=>ty)
+    let fun materialize(SRCaptured ty)=sce_guarded guard(fn()=>ty)
           | materialize(SRArrow(a,b))=
               let val left=materialize a val right=materialize b
-              in guarded(fn()=>Type.mk_thy_type
+              in sce_guarded guard(fn()=>Type.mk_thy_type
                 {Thy="min",Tyop="fun",Args=[left,right]})end
         val policy_types=List.map materialize types
-    in List.app(fn ty=>guarded(fn()=>check_type ty))policy_types end
+    in List.app(fn ty=>sce_guarded guard(fn()=>check_type ty))
+         policy_types end
   (* One native instruction.  emit rebuilds a captured tree; before_assume
      is called with the theorem and the condition just before the ASSUME of
      a condition (the canonical path logs it). *)
   fun sce_execute_action {guard,emit,before_assume} action theorem=
-    let fun guarded operation=
-          (guard();let val value=operation()in guard();value end)
-    in case action of SCEClauseNative(SRSpec arg)=>
+    case action of SCEClauseNative(SRSpec arg)=>
          let val term=emit arg
-         in guarded(fn()=>
+         in sce_guarded guard(fn()=>
            SmtReplayRuleObservation.SPEC term theorem)end
        | SCEClauseNative(SRConjunct left)=>
-         guarded(fn()=>if left then
+         sce_guarded guard(fn()=>if left then
            SmtReplayRuleObservation.CONJUNCT1 theorem else
            SmtReplayRuleObservation.CONJUNCT2 theorem)
        | SCEClauseNative SRCondition=>
            let val condition= #1
                  (boolSyntax.dest_imp(Thm.concl theorem))
                val _=before_assume theorem condition
-               val premise=guarded(fn()=>
+               val premise=sce_guarded guard(fn()=>
                  SmtReplayRuleObservation.ASSUME condition)
-           in guarded(fn()=>
+           in sce_guarded guard(fn()=>
              SmtReplayRuleObservation.MP theorem premise)end
-       | SCEClauseTruth=>guarded(fn()=>Drule.EQT_ELIM theorem)
+       | SCEClauseTruth=>sce_guarded guard(fn()=>Drule.EQT_ELIM theorem)
        | SCEClauseAnteConj=>
            let val(ant,_)=boolSyntax.dest_imp_only
                  (Thm.concl theorem)
                val(a,b)=boolSyntax.dest_conj ant
-               val pa=guarded(fn()=>
+               val pa=sce_guarded guard(fn()=>
                  SmtReplayRuleObservation.ASSUME a)
-               val pb=guarded(fn()=>
+               val pb=sce_guarded guard(fn()=>
                  SmtReplayRuleObservation.ASSUME b)
-               val both=guarded(fn()=>
+               val both=sce_guarded guard(fn()=>
                  SmtReplayRuleObservation.CONJ pa pb)
-               val body=guarded(fn()=>
+               val body=sce_guarded guard(fn()=>
                  SmtReplayRuleObservation.MP theorem both)
-               val right=guarded(fn()=>
+               val right=sce_guarded guard(fn()=>
                  SmtReplayRuleObservation.DISCH b body)
-           in guarded(fn()=>
+           in sce_guarded guard(fn()=>
              SmtReplayRuleObservation.DISCH a right)end
        | SCEClauseAnteDisj left=>
            let val(ant,_)=boolSyntax.dest_imp_only
                  (Thm.concl theorem)
                val(a,b)=boolSyntax.dest_disj ant
                val selected=if left then a else b
-               val assumption=guarded(fn()=>
+               val assumption=sce_guarded guard(fn()=>
                  SmtReplayRuleObservation.ASSUME selected)
-               val either=guarded(fn()=>if left then
+               val either=sce_guarded guard(fn()=>if left then
                  SmtReplayRuleObservation.DISJ1 assumption b
                  else SmtReplayRuleObservation.DISJ2 a assumption)
-               val body=guarded(fn()=>
+               val body=sce_guarded guard(fn()=>
                  SmtReplayRuleObservation.MP theorem either)
-           in guarded(fn()=>
+           in sce_guarded guard(fn()=>
              SmtReplayRuleObservation.DISCH selected body)end
-       | SCEClauseSymmetry=>guarded(fn()=>
+       | SCEClauseSymmetry=>sce_guarded guard(fn()=>
            SmtReplayRuleObservation.SYM theorem)
        | SCEClauseConditionForall argument=>
            let val(ant,_)=boolSyntax.dest_imp_only
                  (Thm.concl theorem)
                val variable=emit argument
-               val quantified=guarded(fn()=>
+               val quantified=sce_guarded guard(fn()=>
                  boolSyntax.mk_forall(variable,ant))
-               val assumption=guarded(fn()=>
+               val assumption=sce_guarded guard(fn()=>
                  SmtReplayRuleObservation.ASSUME quantified)
-               val condition=guarded(fn()=>
+               val condition=sce_guarded guard(fn()=>
                  SmtReplayRuleObservation.SPEC variable assumption)
-               val result=guarded(fn()=>
+               val result=sce_guarded guard(fn()=>
                  SmtReplayRuleObservation.MP theorem condition)
-           in guarded(fn()=>
+           in sce_guarded guard(fn()=>
              SmtReplayRuleObservation.DISCH quantified result)end
        | SCEClauseAnteExists argument=>
            let val(ant,_)=boolSyntax.dest_imp_only
                  (Thm.concl theorem)
                val(v,body)=boolSyntax.dest_exists ant
                val witness=emit argument
-               val instance=guarded(fn()=>Term.subst
+               val instance=sce_guarded guard(fn()=>Term.subst
                  [{redex=v,residue=witness}]body)
-               val assumption=guarded(fn()=>
+               val assumption=sce_guarded guard(fn()=>
                  SmtReplayRuleObservation.ASSUME instance)
-               val existential=guarded(fn()=>
+               val existential=sce_guarded guard(fn()=>
                  Thm.EXISTS(ant,witness)assumption)
-               val result=guarded(fn()=>
+               val result=sce_guarded guard(fn()=>
                  SmtReplayRuleObservation.MP theorem existential)
-           in guarded(fn()=>
+           in sce_guarded guard(fn()=>
              SmtReplayRuleObservation.DISCH instance result)end
-       | SCEClauseNotIntro=>guarded(fn()=>
+       | SCEClauseNotIntro=>sce_guarded guard(fn()=>
            Thm.NOT_INTRO theorem)
-    end
   (* The execution shared by the plain rule and the exists-argument clause.
      The plain rule completes its policies here and refuses any external
      vocabulary; the argument clause completed them in its ready phase,
@@ -11377,13 +11375,11 @@ struct
        let
          fun guard()=sce_core_guard expected kind core
          val _=guard() val _=used:=true
-         fun guarded operation=
-           (guard();let val value=operation()in guard();value end)
          val _=case kind of
              SCERuleClause=>sce_check_policies guard check_type types
            | SCEArgumentClause _=>()
          val variables=List.map(fn(id,name,ty)=>
-           (id,guarded(fn()=>Term.mk_var(name,ty))))binders
+           (id,sce_guarded guard(fn()=>Term.mk_var(name,ty))))binders
          fun bound id=case List.find(fn(old,_)=>old=id)variables of
              SOME(_,term)=>term | _=>raise ERR "execute_source_condition_rule"
                "missing lexical binder"
@@ -11391,7 +11387,7 @@ struct
              SCERuleClause=>raise ERR "execute_source_condition_rule"
                "unexpected external vocabulary"
            | SCEArgumentClause(SCEFutureArgument
-                 {name=held,ty=actual,child,...})=>guarded(fn()=>
+                 {name=held,ty=actual,child,...})=>sce_guarded guard(fn()=>
                if name=held andalso Type.compare(ty,actual)=EQUAL then
                  (case !child of SOME argument=>
                     G.representative graph
@@ -11407,27 +11403,30 @@ struct
            | SRFresh(name,ty)=>fresh name ty
            | SRLam(id,_,body)=>
                let val term=emit body
-               in guarded(fn()=>Term.mk_abs(bound id,term))end
+               in sce_guarded guard(fn()=>Term.mk_abs(bound id,term))end
            | SRApp(SRTree {shape=SRAtom h,...},
                (argument as SRTree {shape=SRLam(id,_,body),...}))=>
                if Term.is_const h andalso
                    Term.same_const h boolSyntax.universal then
                  let val term=emit body
-                 in guarded(fn()=>boolSyntax.mk_forall(bound id,term))end
+                 in sce_guarded guard(fn()=>
+                      boolSyntax.mk_forall(bound id,term))end
                else let val term=emit argument
-                    in guarded(fn()=>Term.mk_comb(h,term))end
+                    in sce_guarded guard(fn()=>Term.mk_comb(h,term))end
            | SRApp(SRTree {shape=SRApp
                (SRTree {shape=SRAtom h,...},a),...},b)=>
                if Term.is_const h andalso
                    Term.same_const h boolSyntax.equality then
                  let val left=emit a val right=emit b
-                 in guarded(fn()=>boolSyntax.mk_eq(left,right))end
+                 in sce_guarded guard(fn()=>boolSyntax.mk_eq(left,right))end
                else let val argument=emit a
-                        val operator=guarded(fn()=>Term.mk_comb(h,argument))
+                        val operator=sce_guarded guard(fn()=>
+                          Term.mk_comb(h,argument))
                         val operand=emit b
-                    in guarded(fn()=>Term.mk_comb(operator,operand))end
+                    in sce_guarded guard(fn()=>
+                         Term.mk_comb(operator,operand))end
            | SRApp(a,b)=>let val left=emit a val right=emit b
-               in guarded(fn()=>Term.mk_comb(left,right))end
+               in sce_guarded guard(fn()=>Term.mk_comb(left,right))end
          val align=sce_align guard
          val d=sce_data expected evidence
          val initial=align(emit initial)(#proof d)
@@ -11438,11 +11437,12 @@ struct
                in play rest (align(emit next)theorem)end
          val body=play instructions initial
          val body=case terminal of SourceEquality=>body
-           | SourceTruth=>guarded(fn()=>Drule.EQT_INTRO body)
-           | SourceFalse=>guarded(fn()=>Drule.EQF_INTRO body)
+           | SourceTruth=>sce_guarded guard(fn()=>Drule.EQT_INTRO body)
+           | SourceFalse=>sce_guarded guard(fn()=>Drule.EQF_INTRO body)
          val proof=List.foldl(fn(condition,theorem)=>
            let val value=emit condition
-           in guarded(fn()=>SmtReplayRuleObservation.DISCH value theorem)end)
+           in sce_guarded guard(fn()=>
+                SmtReplayRuleObservation.DISCH value theorem)end)
            body conditions
          val proof=align(emit result)proof
          val _=if clean proof then () else
