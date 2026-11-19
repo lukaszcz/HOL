@@ -75581,7 +75581,7 @@ in
     in ()end)
 end
 
-functor Z3OwnedFinalizationFixture406Fn(Arg : sig
+functor Z3OwnedFinalizationFixtureFn(Arg : sig
   structure Final : Z3_SparseOwnedValueProofReplay
   val variant : string
 end) =
@@ -75920,10 +75920,10 @@ struct
 end
 
 local
-  structure Ordinary = Z3OwnedFinalizationFixture406Fn
+  structure Ordinary = Z3OwnedFinalizationFixtureFn
     (struct structure Final = Z3_OwnedValueProofReplay
             val variant = "" end)
-  structure Sparse = Z3OwnedFinalizationFixture406Fn
+  structure Sparse = Z3OwnedFinalizationFixtureFn
     (struct structure Final = Z3_OwnedValueProofReplay.Sparse
             val variant = "sparse: " end)
   val _ = Z3_OwnedValueProofReplay.prepare_with_policy
@@ -79184,7 +79184,7 @@ in
 end
 
 
-functor Z3OwnedBinderFixture416Fn(Arg : sig
+functor Z3OwnedBinderFixtureFn(Arg : sig
   structure Final : Z3_SparseOwnedValueProofReplay
   val variant : string
 end) =
@@ -79577,10 +79577,10 @@ struct
 end
 
 local
-  structure Ordinary = Z3OwnedBinderFixture416Fn
+  structure Ordinary = Z3OwnedBinderFixtureFn
     (struct structure Final = Z3_OwnedValueProofReplay
             val variant = "" end)
-  structure Sparse = Z3OwnedBinderFixture416Fn
+  structure Sparse = Z3OwnedBinderFixtureFn
     (struct structure Final = Z3_OwnedValueProofReplay.Sparse
             val variant = "sparse: " end)
   val _ = Z3_OwnedValueProofReplay.prepare_with_binders_with_policy

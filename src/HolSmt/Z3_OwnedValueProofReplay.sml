@@ -1,7 +1,9 @@
-(* Private adapter: binds the seven documented mode selections once, over
-   any engine whose mode type is the Input.mode below.  Each wrapper only
-   forwards its mode; Engine.prepare stays internal. *)
-functor Z3OwnedPreparationWrappersFn(Arg:sig
+(* Binds the seven documented mode selections once, over any engine whose
+   mode type is the Input.mode below.  Each wrapper only forwards its mode;
+   Engine.prepare stays internal.  A top-level functor, applied only by
+   Z3_OwnedValueProofReplay and its Sparse instance; no signature mentions
+   it. *)
+functor Z3_OwnedPreparationWrappersFn(Arg:sig
   structure Input:sig
     datatype mode=Recorded | Specialized | Raw | Retained | Binders
       | QuantifiedBinders
@@ -9,14 +11,12 @@ functor Z3OwnedPreparationWrappersFn(Arg:sig
   end
   structure Engine:SmtReplayValueFinal
     where type mode=Input.mode
-    and type proof=Z3_GraphValueProofParser.proof
-    and type requirement=Z3_OwnedValueNamedReplay.requirement
 end)=
 struct
   type preparation_function =
     SmtReplayInvocationWork.portfolio ->
     SmtLib_GraphPreprocess.graph_query ->
-    Z3_GraphValueProofParser.proof SmtLib_GraphValueProof.packet ->
+    Arg.Engine.proof SmtLib_GraphValueProof.packet ->
     {assertions:SmtLib_GraphParserValue.value list,
      native_contract:SmtReplayNativeContract.contract,
      profiles:SmtReplayGraph.policy_opaque_profile list,
@@ -97,7 +97,7 @@ struct
   end
   structure Engine=SmtReplayValueFinalFn(Input)
   open Engine
-  structure Wrappers=Z3OwnedPreparationWrappersFn
+  structure Wrappers=Z3_OwnedPreparationWrappersFn
     (structure Input=Input structure Engine=Engine)
   open Wrappers
   (* Static opt-in instance; exactly the same private Input and
@@ -108,7 +108,7 @@ struct
       (structure Input=Input
        structure Realization=SmtReplaySparseValueRealization)
     open Engine
-    structure Wrappers=Z3OwnedPreparationWrappersFn
+    structure Wrappers=Z3_OwnedPreparationWrappersFn
       (structure Input=Input structure Engine=Engine)
     open Wrappers
   end
