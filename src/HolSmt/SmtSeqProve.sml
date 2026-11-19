@@ -77,7 +77,6 @@ struct
 
   val mentions = SmtResource.contains
 
-  fun is_append tm = named "list" ["APPEND"] tm
   fun is_length tm = named "list" ["LENGTH"] tm
   (* Either of the two, in one scan of a term. *)
   fun is_append_or_length tm = named "list" ["APPEND","LENGTH"] tm

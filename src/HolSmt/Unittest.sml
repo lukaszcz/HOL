@@ -27816,7 +27816,7 @@ let
          [source] target)
     end
   (* Competing rules for one left side: the rewriter fires only the
-     first, x = z, so x = y and y = x form no cycle that drops y = x. *)
+     first, x = z, so x = y and y = x form no cycle that rewriting meets. *)
   val shadow_case =
     let
       val (x, y, z) = (chain_link 0, chain_link 1, chain_link 2)
@@ -27829,7 +27829,43 @@ let
        Z3_ProofReplay.asserted_equality_substitution_prove_for_test
          [source] target)
     end
-  val chains = shadow_case :: shared_case :: chains
+  (* A compound left side is rewritten before the terms inside it, so
+     the apparent cycle through x inside f x (or y inside f y) is never
+     followed: x = f x with f x = c rewrites x to c. *)
+  val apply = fn term =>
+    Term.mk_comb (``asserted_f:int -> int``, term)
+  val outer = fn term =>
+    Term.mk_comb (``asserted_h:int -> int``, term)
+  fun substitution_case (source, target) =
+    (source, target,
+     Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+       [source] target)
+  val preempted_cases =
+    let
+      val (u, x, c) = (chain_link 0, chain_link 1, chain_link 2)
+      val first = boolSyntax.list_mk_conj
+        [boolSyntax.mk_eq (u, c), boolSyntax.mk_eq (x, apply x),
+         boolSyntax.mk_eq (apply x, c)]
+      val (w, z, y) = (chain_link 3, chain_link 4, chain_link 5)
+      val second = boolSyntax.list_mk_conj
+        [boolSyntax.mk_eq (w, z), boolSyntax.mk_eq (x, apply y),
+         boolSyntax.mk_eq (apply y, z), boolSyntax.mk_eq (y, x)]
+    in
+      List.map substitution_case
+        [(first, boolSyntax.mk_eq (outer x, outer c)),
+         (second, boolSyntax.mk_eq (x, z))]
+    end
+  (* The first rule for x is cyclic and is dropped; the later x = a is
+     still used. *)
+  val cyclic_first_case =
+    let val (b, a, x) = (chain_link 6, chain_link 7, chain_link 8)
+    in
+      substitution_case (boolSyntax.list_mk_conj
+        [boolSyntax.mk_eq (b, a), boolSyntax.mk_eq (x, apply x),
+         boolSyntax.mk_eq (x, a)], boolSyntax.mk_eq (outer x, outer a))
+    end
+  val chains = preempted_cases @
+    cyclic_first_case :: shadow_case :: shared_case :: chains
 in
   assert (List.all (fn (source, theorem) =>
       Thm.concl theorem ~~ target andalso exact_source source theorem)

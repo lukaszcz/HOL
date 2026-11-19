@@ -6948,15 +6948,17 @@ local
         raise ERR "asserted_equality_substitution_prove"
           "no structurally derived asserted equality"
       (* Rewriting to a fixpoint.  With a variable or constant on every
-         left side, the cycle check below is exact and rewriting ends, so
-         it is not bounded.  Otherwise a rewrite can create a redex in the
-         term around it (x = y with f y = f x) or copy one (a = b with
-         f b = g (f a) (f a)), which no check of the equations alone sees.
+         left side, the equations the cycle check below keeps rewrite to
+         an end, so they are not bounded.  Otherwise a rewrite can create
+         a redex in the term around it (x = y with f y = f x) or copy one
+         (a = b with f b = g (f a) (f a)), which no check of the equations
+         alone sees.
          Such a direction fails after (4096 + target nodes) rewrites per
          equation, counting the target's unfolded tree, and the other
          direction is tried.  Each occurrence on an acyclic chain of
          equations that copy nothing is rewritten at most once per
-         equation, so the bound never stops one. *)
+         equation, so the bound never stops one.  The last attempt, the
+         equations as given, is always bounded. *)
       val target_size = ref (NONE : int option)
       fun target_nodes () =
         case !target_size of
@@ -6965,11 +6967,11 @@ local
             let val nodes = SmtResource.tree_nodes target
             in target_size := SOME nodes; nodes end
       exception Diverged
-      fun substitute rewrite_theorems =
+      fun atomic theorem =
+        let val left = boolSyntax.lhs (Thm.concl theorem)
+        in Term.is_var left orelse Term.is_const left end
+      fun substitute bounded rewrite_theorems =
         let
-          fun atomic theorem =
-            let val left = boolSyntax.lhs (Thm.concl theorem)
-            in Term.is_var left orelse Term.is_const left end
           fun max_rewrites () =
             let
               val equations = List.length rewrite_theorems
@@ -6988,7 +6990,8 @@ local
               if !rewrites <= maximum then theorem else raise Diverged
             end
           val depth =
-            if List.all atomic rewrite_theorems then Conv.TOP_DEPTH_CONV
+            if not bounded andalso List.all atomic rewrite_theorems then
+              Conv.TOP_DEPTH_CONV
             else Conv.TOP_DEPTH_CONV o counted (max_rewrites ())
         in
           Rewrite.GEN_REWRITE_CONV depth
@@ -6997,9 +7000,9 @@ local
             raise ERR "asserted_equality_substitution_prove"
               "substitution did not terminate"
         end
-      fun prove_with rewrite_theorems =
+      fun prove_with bounded rewrite_theorems =
         let
-          val substitution = substitute rewrite_theorems
+          val substitution = substitute bounded rewrite_theorems
           val substituted = boolSyntax.rhs (Thm.concl substitution)
           fun reflexive () =
             let val (left, right) = boolSyntax.dest_eq substituted
@@ -7041,27 +7044,23 @@ local
         in
           Thm.EQ_MP (Thm.SYM substitution) decision
         end
-      fun attempt rewrite_theorems = prove_with rewrite_theorems
+      fun attempt_with bounded rewrite_theorems =
+        prove_with bounded rewrite_theorems
         handle Conv.UNCHANGED =>
           raise ERR "asserted_equality_substitution_prove"
             "explicit equalities do not occur in target"
+      val attempt = attempt_with false
       (* Rewriting to a fixpoint never terminates with an equation whose
          left side occurs in its own right side, directly
          (x = (x && m) || (x && ~m)) or through other equations
          (x = f y, y = g x).  Such an equation is used only in a direction
-         without that cycle.  The rewriter fires the first rule for a left
-         side, so a later rule for the same left side never fires: it is
-         left out, and is not part of a cycle. *)
-      fun unshadowed [] = []
-        | unshadowed (theorem :: rest) =
-          let val left = boolSyntax.lhs (Thm.concl theorem)
-          in
-            theorem :: unshadowed (List.filter (fn other =>
-              not (Term.aconv (boolSyntax.lhs (Thm.concl other)) left)) rest)
-          end
-      fun acyclic rules =
+         without that cycle.  The check over-approximates: the rewriter
+         fires only the first rule for a left side, and rewrites a compound
+         left side before the terms inside it (x = f x with f x = c).  So
+         when it drops an equation, the equations as given are the last
+         attempt. *)
+      fun acyclic theorems =
         let
-          val theorems = unshadowed rules
           val sides = List.map (boolSyntax.dest_eq o Thm.concl) theorems
           (* The left sides reached from one through right sides. *)
           fun successors left =
@@ -7092,14 +7091,18 @@ local
       (* The equations left to right, each cyclic one right to left. *)
       val cyclic = List.filter (fn theorem => not (List.exists
           (fn kept => Portable.pointer_eq (kept, theorem)) oriented))
-        (unshadowed equalities)
+        equalities
       (* The mixed attempt only adds a route: whatever it raises, the
          reversed direction is still tried. *)
       fun after_oriented () =
         if List.null cyclic then attempt reversed
         else
-          attempt (acyclic (oriented @ List.map Thm.SYM cyclic))
-          handle Feedback.HOL_ERR _ => attempt reversed
+          (attempt (acyclic (oriented @ List.map Thm.SYM cyclic))
+           handle Feedback.HOL_ERR _ => attempt reversed)
+          handle Feedback.HOL_ERR holerr =>
+            if SmtResource.is_resource_gate holerr then
+              raise Feedback.HOL_ERR holerr
+            else attempt_with true equalities
     in
       attempt oriented
       handle Feedback.HOL_ERR holerr =>
