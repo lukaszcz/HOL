@@ -881,6 +881,13 @@ local
       (SmtLib_Theories.typed_unary Type.bool Lib.I)),
     ("or", SmtLib_Theories.K_zero_one
       (SmtLib_Theories.typed_unary Type.bool Lib.I)),
+    (* Likewise, Z3 proofs can write a sum of one term as a unary [+],
+       e.g. [(+ 2)] when arithmetic rewriting leaves one summand; it means
+       its argument. *)
+    ("+", SmtLib_Theories.K_zero_one
+      (SmtLib_Theories.typed_unary intSyntax.int_ty Lib.I)),
+    ("+", SmtLib_Theories.K_zero_one
+      (SmtLib_Theories.typed_unary realSyntax.real_ty Lib.I)),
     (* Z3's ArraysEx [(_ map f) a b] denotes the pointwise lift of [f].
        It is not part of SMT-LIB's ArraysEx dictionary, but Z3 emits it for
        the Int-array representation of bags.  Reconstructing the lambda is
