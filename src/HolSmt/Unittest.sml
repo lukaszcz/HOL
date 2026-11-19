@@ -27815,7 +27815,21 @@ let
        Z3_ProofReplay.asserted_equality_substitution_prove_for_test
          [source] target)
     end
-  val chains = shared_case :: chains
+  (* Competing rules for one left side: the rewriter fires only the
+     first, x = z, so x = y and y = x form no cycle that drops y = x. *)
+  val shadow_case =
+    let
+      val (x, y, z) = (chain_link 0, chain_link 1, chain_link 2)
+      val source = boolSyntax.list_mk_conj
+        [boolSyntax.mk_eq (x, z), boolSyntax.mk_eq (x, y),
+         boolSyntax.mk_eq (y, x)]
+      val target = boolSyntax.mk_eq (x, y)
+    in
+      (source, target,
+       Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+         [source] target)
+    end
+  val chains = shadow_case :: shared_case :: chains
 in
   assert (List.all (fn (source, theorem) =>
       Thm.concl theorem ~~ target andalso exact_source source theorem)

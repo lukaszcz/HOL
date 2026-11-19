@@ -7049,9 +7049,19 @@ local
          left side occurs in its own right side, directly
          (x = (x && m) || (x && ~m)) or through other equations
          (x = f y, y = g x).  Such an equation is used only in a direction
-         without that cycle. *)
-      fun acyclic theorems =
+         without that cycle.  The rewriter fires the first rule for a left
+         side, so a later rule for the same left side never fires: it is
+         left out, and is not part of a cycle. *)
+      fun unshadowed [] = []
+        | unshadowed (theorem :: rest) =
+          let val left = boolSyntax.lhs (Thm.concl theorem)
+          in
+            theorem :: unshadowed (List.filter (fn other =>
+              not (Term.aconv (boolSyntax.lhs (Thm.concl other)) left)) rest)
+          end
+      fun acyclic rules =
         let
+          val theorems = unshadowed rules
           val sides = List.map (boolSyntax.dest_eq o Thm.concl) theorems
           (* The left sides reached from one through right sides. *)
           fun successors left =
@@ -7082,7 +7092,7 @@ local
       (* The equations left to right, each cyclic one right to left. *)
       val cyclic = List.filter (fn theorem => not (List.exists
           (fn kept => Portable.pointer_eq (kept, theorem)) oriented))
-        equalities
+        (unshadowed equalities)
       (* The mixed attempt only adds a route: whatever it raises, the
          reversed direction is still tried. *)
       fun after_oriented () =

@@ -391,6 +391,15 @@ struct
       val _=tprint "Symbolic bbterm is the legacy concatenation"
       val symbolic=List.map (fn name => Term.mk_var (name,Type.bool))
         ["p","q","r","s","t"]
+      (* The first bit is the least significant; the split is balanced. *)
+      fun bit name=boolSyntax.mk_cond (Term.mk_var (name,Type.bool),
+        wordsSyntax.mk_word (Arbnum.one,Arbnum.one),
+        wordsSyntax.mk_word (Arbnum.zero,Arbnum.one))
+      val concat=wordsSyntax.mk_word_concat
+      val expected=concat (concat (concat (bit "t",bit "s"),bit "r"),
+        concat (bit "q",bit "p"))
+      val _=ensure "legacy bbterm is not the balanced concatenation"
+        (Term.aconv (SmtLib_Theories.mk_bbterm symbolic) expected)
       fun shape backend interpret=
         let val (_,dict)= #dictionaries (R.select backend limits
               {logic="QF_BV",solver=SOME "cvc5"})
