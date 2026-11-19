@@ -276,13 +276,13 @@ struct
   fun attempt law stage limit =
     let val e = setup limit [law]
         val action = stage e
-        val before = charged e
+        val start = charged e
         val outcome = (action ();Done)
           handle Feedback.HOL_ERR _ => Refused
-    in (outcome,before,charged e,retired e) end
+    in (outcome,start,charged e,retired e) end
   fun prefix_test law stage () =
-    let val (_,before,total,_) = attempt law stage roomy
-        val _ = require "preparation charged nothing" (total > before)
+    let val (_,start,total,_) = attempt law stage roomy
+        val _ = require "preparation charged nothing" (total > start)
         val (exact_outcome,_,exact_charge,exact_retired) =
           attempt law stage total
         val (spare_outcome,_,spare_charge,_) = attempt law stage (total+7)
@@ -299,8 +299,8 @@ struct
           in require "refusal exceeded its allowance or kept Work live"
                (outcome = Refused andalso paid <= limit andalso gone);
              paid end
-        val span = total - before
-        val limits = [before,before+span div 3,before+2*span div 3,total-1]
+        val span = total - start
+        val limits = [start,start+span div 3,start+2*span div 3,total-1]
         val paid = List.map sample limits
         fun grows (a::(rest as b::_)) = a <= b andalso grows rest
           | grows _ = true
