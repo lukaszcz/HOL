@@ -47,6 +47,38 @@ sig
      traversal : SmtReplayGraph.scope,
      target : SmtReplayGraph.closure_child,
      admit_target : Walk.tree -> unit} -> found
+  val retained : owner -> SmtReplayGraph.scope -> Walk.tree -> unit
+  val validate_match : owner -> string ->
+    {known : bool,rulescope : SmtReplayGraph.scope,whole : Walk.tree,
+     caller : SmtReplayGraph.scope,traversal : SmtReplayGraph.scope,
+     target : Walk.tree} -> unit
+  val describe :
+    {rule : Thm.thm,index : int,binders : SmtReplayGraph.node list,
+     free : SmtReplayGraph.node list,conditions : Walk.tree list,
+     terminal : terminal,
+     types : (Type.hol_type * Type.hol_type) list,
+     arguments : (SmtReplayGraph.node * Walk.tree) list,
+     target : Walk.tree,output : Walk.profile option} ->
+    {rule : Thm.thm,rule_index : int,terminal : terminal,
+     type_bindings : (Type.hol_type * Type.hol_type) list,
+     arguments : (SmtReplayGraph.node * SmtReplayGraph.node) list,
+     conditions : SmtReplayGraph.node list,
+     missing_arguments : SmtReplayGraph.node list,
+     target : SmtReplayGraph.node,output : Walk.profile option}
+  val condition_of : owner -> string ->
+    {validate_match : unit -> unit,validate_fact : unit -> unit,
+     traversal : SmtReplayGraph.scope,proof : SmtReplayProof.closed_fact,
+     index : int} ->
+    {node : SmtReplayGraph.node,child : SmtReplayGraph.closure_child,
+     traversal : SmtReplayGraph.scope}
+  val target_of : Walk.tree -> SmtReplayGraph.scope ->
+    SmtReplayGraph.scope ->
+    {node : SmtReplayGraph.node,child : SmtReplayGraph.closure_child,
+     caller : SmtReplayGraph.scope,traversal : SmtReplayGraph.scope}
+  val pattern : owner -> string ->
+    {known : bool,rulescope : SmtReplayGraph.scope,whole : Walk.tree,
+     left : Walk.tree,right : Walk.tree option} ->
+    {left : Term.term,right : Term.term}
 end
 
 functor SmtLib_RuleMatchSharedFn (A : SmtLib_RuleMatchSharedOwner) :
@@ -234,4 +266,80 @@ struct
            handle Mismatch => Missed | CapturesBinder => HigherOrder)
         val _ = A.active owner
     in result end
+
+  (* Every retained descendant is checked, not just the root node. No
+     callback can turn a completed subtree into a cross-callback cache. *)
+  fun retained owner caller value =
+    let val graph = A.graph owner val d = data value
+        val _ = G.validate_scope graph caller
+        val _ = G.validate_scope graph (#frame d)
+        val _ = if G.closure_child_node graph caller (#child d) = #node d
+          then () else raise A.err "retained" "closure identity changed"
+    in case #shape d of
+        Atom => ()
+      | App (f,x) => (retained owner caller f;retained owner caller x)
+      | Lam {body,...} => retained owner caller body end
+
+  fun validate_match owner caller_name {known,rulescope,whole,caller,
+      traversal,target} =
+    let val graph = A.graph owner val scope = A.scope owner
+    in (if known then () else
+          raise A.err caller_name "foreign Work match";
+        A.active owner;
+        G.validate_scope graph caller;G.validate_scope graph traversal;
+        if G.scope_visible graph caller scope andalso
+            G.scope_visible graph traversal caller andalso
+            G.scope_visible graph traversal
+              (G.node_scope graph (node target))
+          then () else raise A.err caller_name "invisible retained match";
+        retained owner rulescope whole;retained owner caller target) end
+
+  fun describe {rule,index,binders,free,conditions,terminal,types,arguments,
+      target,output} =
+    {rule = rule,rule_index = index,terminal = terminal,
+     type_bindings = types,
+     arguments = List.map (fn (b,t) => (b,node t)) arguments,
+     conditions = List.map node conditions,
+     missing_arguments = List.filter (fn b =>
+       not (List.exists (fn (k,_) => b = k) arguments)) (binders @ free),
+     target = node target,output = output}
+
+  fun condition_of owner caller {validate_match,validate_fact,traversal,proof,
+      index} =
+    let val graph = A.graph owner
+    in validate_match ();
+       if index >= 0 then () else
+         raise A.err caller "negative antecedent index";
+       validate_fact ();
+       let val imp_id = #Name (Term.dest_thy_constid boolSyntax.implication)
+           fun absent () = raise A.err caller "absent condition"
+           fun select current left =
+             case G.view graph current of G.Application (partial,next) =>
+               (case G.view graph partial of G.Application (head,ant) =>
+                  (case G.view graph head of G.Constant id =>
+                     if KernelSig.id_compare (id,imp_id) = EQUAL then
+                       if left=0 then ant else select next (left-1)
+                     else absent ()
+                   | _ => absent ())
+                | _ => absent ())
+             | _ => absent ()
+           val node = select (P.closed_node proof) index
+           val child = G.closure_root graph traversal node
+           val _ = validate_match ()
+       in {node=node,child=child,traversal=traversal} end end
+
+  fun target_of target caller traversal =
+    {node = node target,child = #child (data target),
+     caller = caller,traversal = traversal}
+
+  fun pattern owner caller {known,rulescope,whole,left,right} =
+    let val graph = A.graph owner
+    in (if known then () else raise A.err caller "foreign expected Work";
+        A.active owner;retained owner rulescope whole;
+        let val target = case right of SOME value => value
+              | NONE => raise A.err caller "not a canonical equality clause"
+            val l = G.representative graph (node left)
+            val r = G.representative graph (node target)
+            val _ = A.active owner;val _ = retained owner rulescope whole
+        in {left=l,right=r} end) end
 end

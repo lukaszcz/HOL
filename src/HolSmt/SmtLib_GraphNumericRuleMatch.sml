@@ -125,42 +125,19 @@ struct
                caller = caller,traversal = traversal,target = actual,
                types = types,arguments = arguments,output = output,
                used = ref false}))))
-  (* Every retained descendant is checked, not just the root node. No
-     callback can turn a completed subtree into a cross-callback cache. *)
-  fun retained owner caller value =
-    let val Owner {graph,...} = owner val d = data value
-        val _ = G.validate_scope graph caller
-        val _ = G.validate_scope graph (#frame d)
-        val _ = if G.closure_child_node graph caller (#child d) = #node d
-          then () else raise ERR "retained" "closure identity changed"
-    in case #shape d of
-        Atom => ()
-      | App (f,x) => (retained owner caller f;retained owner caller x)
-      | Lam {body,...} => retained owner caller body end
-  fun validate_for expected (Match {owner = owner as Owner
-      {work,graph,scope,...},schema = Schema {whole,...},
-       caller,traversal,target,...}) =
-    ((if Portable.pointer_eq (expected,work) then () else
-        raise ERR "validate_for" "foreign Work match";
-      active owner;
-      G.validate_scope graph caller;G.validate_scope graph traversal;
-      if G.scope_visible graph caller scope andalso
-          G.scope_visible graph traversal caller andalso
-          G.scope_visible graph traversal (G.node_scope graph (node target))
-        then () else raise ERR "validate_for" "invisible retained match";
-      retained owner scope whole;retained owner caller target)
+  fun validate_for expected (Match {owner = owner as Owner {work,scope,...},
+      schema = Schema {whole,...},caller,traversal,target,...}) =
+    (Shared.validate_match owner "validate_for"
+       {known = Portable.pointer_eq (expected,work),rulescope = scope,
+        whole = whole,caller = caller,traversal = traversal,target = target}
      handle primary => (W.close expected;raise primary))
   fun describe_for expected (value as Match
       {schema = Schema {index,rule,binders,free,conditions,terminal,...},
        types,arguments,target,output,...}) =
     let val _ = validate_for expected value
-    in {rule = rule,rule_index = index,terminal = terminal,
-      type_bindings = types,
-      arguments = List.map (fn (b,t) => (b,node t)) arguments,
-      conditions = List.map node conditions,
-      missing_arguments = List.filter (fn b =>
-        not (List.exists (fn (k,_) => b = k) arguments)) (binders @ free),
-      target = node target,output = output} end
+    in Shared.describe {rule = rule,index = index,binders = binders,
+      free = free,conditions = conditions,terminal = terminal,types = types,
+      arguments = arguments,target = target,output = output} end
   (* This derives a closed CONDITIONAL instance. The literal first-order
      route does not claim Cond_rewr's orientation/condition solver policy. *)
   fun instantiate (value as Match {owner = owner as Owner
@@ -405,35 +382,18 @@ struct
          check_type = fn ty => guard (fn () => check_type ty)})
     in Instance {matched = value,theorem = theorem,proof = proof} end))
   fun instance_condition_for expected
-      (instance as Instance {matched = value as Match
-        {owner = Owner {graph,...},traversal,...},proof,...}) index =
-    ((validate_for expected value;
-      if index >= 0 then () else
-        raise ERR "instance_condition_for" "negative antecedent index";
-      P.validate_closed_fact graph traversal
-        (#template_limit (W.semantic_limits expected)) proof;
-      let val imp_id = #Name (Term.dest_thy_constid boolSyntax.implication)
-          fun select current left =
-            case G.view graph current of G.Application (partial,next) =>
-              (case G.view graph partial of G.Application (head,ant) =>
-                 (case G.view graph head of G.Constant id =>
-                    if KernelSig.id_compare (id,imp_id) = EQUAL then
-                      if left=0 then ant else select next (left-1)
-                    else raise ERR "instance_condition_for" "absent condition"
-                  | _ => raise ERR "instance_condition_for" "absent condition")
-               | _ => raise ERR "instance_condition_for" "absent condition")
-            | _ => raise ERR "instance_condition_for" "absent condition"
-          val node = select (P.closed_node proof) index
-          val child = G.closure_root graph traversal node
-          val _ = validate_for expected value
-      in {node=node,child=child,traversal=traversal} end)
+      (Instance {matched = value as Match
+        {owner = owner as Owner {graph,...},traversal,...},proof,...}) index =
+    (Shared.condition_of owner "instance_condition_for"
+       {validate_match = fn () => validate_for expected value,
+        validate_fact = fn () => P.validate_closed_fact graph traversal
+          (#template_limit (W.semantic_limits expected)) proof,
+        traversal = traversal,proof = proof,index = index}
      handle primary => (W.close expected;raise primary))
   fun instance_target_for expected
       (Instance {matched = value as Match
         {target,caller,traversal,...},...}) =
-    (validate_for expected value;
-     {node = node target,child = #child (data target),
-      caller = caller,traversal = traversal})
+    (validate_for expected value;Shared.target_of target caller traversal)
   fun instance_fact_for expected
       (Instance {matched = value as Match
         {owner = Owner {graph,...},traversal,...},proof,...}) =
@@ -442,16 +402,10 @@ struct
         (#template_limit (W.semantic_limits expected)) proof;proof)
      handle primary => (W.close expected;raise primary))
   fun pattern_for expected (Schema
-      {owner=owner as Owner {work,graph,scope,...},whole,left,right,...}) =
-    ((if Portable.pointer_eq (expected,work) then () else
-        raise ERR "pattern_for" "foreign expected Work";
-      active owner;retained owner scope whole;
-      let val target = case right of SOME value => value
-            | NONE => raise ERR "pattern_for" "not a canonical equality clause"
-          val l = G.representative graph (node left)
-          val r = G.representative graph (node target)
-          val _ = active owner;val _ = retained owner scope whole
-      in {left=l,right=r} end)
+      {owner=owner as Owner {work,scope,...},whole,left,right,...}) =
+    (Shared.pattern owner "pattern_for"
+       {known = Portable.pointer_eq (expected,work),rulescope = scope,
+        whole = whole,left = left,right = right}
      handle primary => (W.close expected;raise primary))
 
   structure RP=SmtReplayResourcePolicy
@@ -609,46 +563,22 @@ struct
                policy_schema = policy_schema,caller = caller,
                traversal = traversal,target = actual,types = types,
                arguments = arguments,output = output,used = ref false}))))
-  (* Every retained descendant is checked, not just the root node. No
-     callback can turn a completed subtree into a cross-callback cache. *)
-  fun retained policy_owner caller value =
-    let val PolicyOwner {graph,...} = policy_owner val d = data value
-        val _ = G.validate_scope graph caller
-        val _ = G.validate_scope graph (#frame d)
-        val _ = if G.closure_child_node graph caller (#child d) = #node d
-          then () else raise ERR "retained" "closure identity changed"
-    in case #shape d of
-        Atom => ()
-      | App (f,x) => (retained policy_owner caller f;retained policy_owner
-        caller x)
-      | Lam {body,...} => retained policy_owner caller body end
   fun validate_with_policy_for expected (PolicyMatch {policy_owner =
-    policy_owner as PolicyOwner
-      {work,graph,scope,...},policy_schema = PolicySchema {whole,...},
+    policy_owner as PolicyOwner {work,scope,...},
+      policy_schema = PolicySchema {whole,...},
        caller,traversal,target,...}) =
-    ((if Portable.pointer_eq (expected,work) then () else
-        raise ERR "validate_with_policy_for" "foreign Work match";
-      active policy_owner;
-      G.validate_scope graph caller;G.validate_scope graph traversal;
-      if G.scope_visible graph caller scope andalso
-          G.scope_visible graph traversal caller andalso
-          G.scope_visible graph traversal (G.node_scope graph (node target))
-        then () else raise ERR "validate_with_policy_for"
-          "invisible retained match";
-      retained policy_owner scope whole;retained policy_owner caller target)
+    (Shared.validate_match policy_owner "validate_with_policy_for"
+       {known = Portable.pointer_eq (expected,work),rulescope = scope,
+        whole = whole,caller = caller,traversal = traversal,target = target}
      handle primary => (W.close expected;raise primary))
   fun describe_with_policy_for expected (value as PolicyMatch
       {policy_schema = PolicySchema
         {index,rule,binders,free,conditions,terminal,...},
        types,arguments,target,output,...}) =
     let val _ = validate_with_policy_for expected value
-    in {rule = rule,rule_index = index,terminal = terminal,
-      type_bindings = types,
-      arguments = List.map (fn (b,t) => (b,node t)) arguments,
-      conditions = List.map node conditions,
-      missing_arguments = List.filter (fn b =>
-        not (List.exists (fn (k,_) => b = k) arguments)) (binders @ free),
-      target = node target,output = output} end
+    in Shared.describe {rule = rule,index = index,binders = binders,
+      free = free,conditions = conditions,terminal = terminal,types = types,
+      arguments = arguments,target = target,output = output} end
   (* This derives a closed CONDITIONAL instance. The literal first-order
      route does not claim Cond_rewr's orientation/condition solver policy. *)
   fun instantiate_with_policy (value as PolicyMatch {policy_owner =
@@ -925,41 +855,20 @@ struct
     in PolicyInstance {policy_matched = value,theorem = theorem,proof = proof}
       end))
   fun instance_condition_with_policy_for expected
-      (policy_instance as PolicyInstance {policy_matched = value as PolicyMatch
-        {policy_owner = PolicyOwner {graph,...},traversal,...},proof,...})
-          index =
-    ((validate_with_policy_for expected value;
-      if index >= 0 then () else
-        raise ERR "instance_condition_with_policy_for"
-          "negative antecedent index";
-      P.validate_closed_fact_with_policy graph traversal
-        (#template_limit (W.semantic_policy expected)) proof;
-      let val imp_id = #Name (Term.dest_thy_constid boolSyntax.implication)
-          fun select current left =
-            case G.view graph current of G.Application (partial,next) =>
-              (case G.view graph partial of G.Application (head,ant) =>
-                 (case G.view graph head of G.Constant id =>
-                    if KernelSig.id_compare (id,imp_id) = EQUAL then
-                      if left=0 then ant else select next (left-1)
-                    else raise ERR "instance_condition_with_policy_for"
-                      "absent condition"
-                  | _ => raise ERR "instance_condition_with_policy_for"
-                    "absent condition")
-               | _ => raise ERR "instance_condition_with_policy_for"
-                 "absent condition")
-            | _ => raise ERR "instance_condition_with_policy_for"
-              "absent condition"
-          val node = select (P.closed_node proof) index
-          val child = G.closure_root graph traversal node
-          val _ = validate_with_policy_for expected value
-      in {node=node,child=child,traversal=traversal} end)
+      (PolicyInstance {policy_matched = value as PolicyMatch
+        {policy_owner = policy_owner as PolicyOwner {graph,...},traversal,
+         ...},proof,...}) index =
+    (Shared.condition_of policy_owner "instance_condition_with_policy_for"
+       {validate_match = fn () => validate_with_policy_for expected value,
+        validate_fact = fn () => P.validate_closed_fact_with_policy graph
+          traversal (#template_limit (W.semantic_policy expected)) proof,
+        traversal = traversal,proof = proof,index = index}
      handle primary => (W.close expected;raise primary))
   fun instance_target_with_policy_for expected
       (PolicyInstance {policy_matched = value as PolicyMatch
         {target,caller,traversal,...},...}) =
     (validate_with_policy_for expected value;
-     {node = node target,child = #child (data target),
-      caller = caller,traversal = traversal})
+     Shared.target_of target caller traversal)
   fun instance_fact_with_policy_for expected
       (PolicyInstance {policy_matched = value as PolicyMatch
         {policy_owner = PolicyOwner {graph,...},traversal,...},proof,...}) =
@@ -968,18 +877,11 @@ struct
         (#template_limit (W.semantic_policy expected)) proof;proof)
      handle primary => (W.close expected;raise primary))
   fun pattern_with_policy_for expected (PolicySchema
-      {policy_owner=policy_owner as PolicyOwner
-        {work,graph,scope,...},whole,left,right,...}) =
-    ((if Portable.pointer_eq (expected,work) then () else
-        raise ERR "pattern_with_policy_for" "foreign expected Work";
-      active policy_owner;retained policy_owner scope whole;
-      let val target = case right of SOME value => value
-            | NONE => raise ERR "pattern_with_policy_for"
-              "not a canonical equality clause"
-          val l = G.representative graph (node left)
-          val r = G.representative graph (node target)
-          val _ = active policy_owner;val _ = retained policy_owner scope whole
-      in {left=l,right=r} end)
+      {policy_owner=policy_owner as PolicyOwner {work,scope,...},whole,left,
+       right,...}) =
+    (Shared.pattern policy_owner "pattern_with_policy_for"
+       {known = Portable.pointer_eq (expected,work),rulescope = scope,
+        whole = whole,left = left,right = right}
      handle primary => (W.close expected;raise primary))
 
   fun instance_native_contract_for expected
