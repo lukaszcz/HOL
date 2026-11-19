@@ -12700,6 +12700,56 @@ in
     (fn () => ignore (SmtLib_Parser.apply_term adapted "char" [] []))
 end
 
+(* The typed shared classifiers agree with the retained string ones on every
+   registered handler, with and without a scope pop. *)
+structure CpcPlan = CPC_SharedReplayPlan
+fun cpc_typed_classification_matches_strings () =
+let
+  val native = CpcPlan.route {equal = op =, visit = fn () => (),
+                           copies = fn _ => ()}
+  fun prefixed name = String.isPrefix "arith" name orelse
+    String.isPrefix "int_tight_" name
+  fun check (rule : CPC_Proof.proof_rule) =
+    let
+      val handler = #replay_handler rule
+      val name = CPC_Proof.handler_name handler
+      fun route pop =
+        assert (CpcPlan.route_of {pop = pop, handler = handler} =
+            native {pop = pop, handler = name},
+          "typed route differs for " ^ #name rule ^ " (" ^ name ^ ")")
+    in
+      route false; route true;
+      assert (CpcPlan.simple_boolean_of handler =
+          CpcPlan.simple_boolean (op =) name,
+        "typed simple_boolean differs for " ^ name);
+      assert (CpcPlan.simple_equality_of handler =
+          CpcPlan.simple_equality (op =) name,
+        "typed simple_equality differs for " ^ name);
+      assert (CpcPlan.arithmetic_handler handler = prefixed name,
+        "typed arithmetic classification differs for " ^ name)
+    end
+  val rows = CPC_Proof.proof_rule_registry
+  fun count route = List.length (List.filter
+    (fn (rule : CPC_Proof.proof_rule) =>
+      CpcPlan.route_of {pop = false, handler = #replay_handler rule} = route)
+    rows)
+  fun unregistered name =
+    (assert (not (Option.isSome (CPC_Proof.lookup_rule "1.3.4" name)),
+       "forged handler name was accepted by registry lookup: " ^ name);
+     assert (String.isSubstring "unknown rule "
+       (CPC_Proof.registry_lookup_failure "1.3.4" name),
+       "forged handler name lacks the unknown-rule diagnostic: " ^ name))
+in
+  List.app check rows;
+  List.app (fn route => assert (count route > 0,
+      "no registry row takes a route class; the comparison is vacuous"))
+    [CpcPlan.Resolved, CpcPlan.Converted, CpcPlan.Aligned, CpcPlan.Simple,
+     CpcPlan.Bounded];
+  List.app unregistered ["xor_elim1", "xor_elim2", "not_xor_elim1",
+    "not_xor_elim2", "seq_rev_rev", "seq_at_elim", "str_contains_refl",
+    "str_substr_full_eq", "forged_unregistered_handler"]
+end
+
 fun cpc_d13_deindexed_operator_repros_success () =
 let
   val proof = parse_cpc_proof_string
@@ -37879,6 +37929,8 @@ let
     ("cpc_deferred_marker_closure", CPC_DeferredMarkerTests.run),
     ("z3_compact_selected_dispatch", Z3_CompactReplayTests.run),
     ("cpc_clausal_elimination_rows", CPC_ClausalEliminationTests.run),
+    ("cpc_typed_classification_matches_strings",
+      cpc_typed_classification_matches_strings),
     ("cpc_graph_typed_parser", fn () =>
       (CPC_GraphParserTests.run ();CPC_ConstructorAliasReviewTests.run ())),
     ("z3_bv1_concat_replay_success", z3_bv1_concat_replay_success),

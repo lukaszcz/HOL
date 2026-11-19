@@ -41,6 +41,7 @@ struct
   fun triple_of _ [a,b,c] = (a,b,c)
     | triple_of rule _ = raise ERR rule "unexpected operand arity"
   structure Q=CPC_ProofParser
+  structure P=CPC_Proof
   datatype route = Scoped | Resolved | Converted | Aligned | Simple | Bounded
   val boolean_handlers =
         ["bool","cnf","eq_resolve","contra","false_intro","false_elim",
@@ -109,6 +110,145 @@ struct
     else if equal(handler,"eq_resolve")then SOME SimpleEqResolve
     else if equal(handler,"contra")then SOME SimpleContra
     else NONE
+  (* Typed view of the shared native route: every registered handler is
+     classified exactly once, so a new constructor must pick its family. *)
+  datatype simple_class = SimpleBoolean of simple_boolean
+    | SimpleEquality of simple_equality | SimpleOther | NotSimple
+  fun simple_class handler =
+    case handler of
+      P.HAndIntro => SimpleBoolean SimpleAndIntro
+    | P.HAndElim => SimpleBoolean SimpleAndElim
+    | P.HNotNotElim => SimpleBoolean SimpleNotNotElim
+    | P.HNotOrElim => SimpleBoolean SimpleNotOrElim
+    | P.HNotImpliesElim1 => SimpleBoolean SimpleNotImpliesElim1
+    | P.HNotImpliesElim2 => SimpleBoolean SimpleNotImpliesElim2
+    | P.HImpliesElim => SimpleBoolean SimpleImpliesElim
+    | P.HEquivElim1 => SimpleBoolean SimpleEquivElim1
+    | P.HEquivElim2 => SimpleBoolean SimpleEquivElim2
+    | P.HNotEquivElim1 => SimpleBoolean SimpleNotEquivElim1
+    | P.HNotEquivElim2 => SimpleBoolean SimpleNotEquivElim2
+    | P.HIteElim1 => SimpleBoolean SimpleIteElim1
+    | P.HIteElim2 => SimpleBoolean SimpleIteElim2
+    | P.HNotIteElim1 => SimpleBoolean SimpleNotIteElim1
+    | P.HNotIteElim2 => SimpleBoolean SimpleNotIteElim2
+    | P.HNotAnd => SimpleBoolean SimpleNotAnd
+    | P.HRefl => SimpleEquality SimpleRefl
+    | P.HSymm => SimpleEquality SimpleSymm
+    | P.HTrans => SimpleEquality SimpleTrans
+    | P.HCong => SimpleEquality SimpleCong
+    | P.HHoCong => SimpleEquality SimpleHoCong
+    | P.HEqResolve => SimpleEquality SimpleEqResolve
+    | P.HContra => SimpleEquality SimpleContra
+    | P.HBool => SimpleOther
+    | P.HFalseIntro => SimpleOther
+    | P.HFalseElim => SimpleOther
+    | P.HTrueIntro => SimpleOther
+    | P.HTrueElim => SimpleOther
+    | P.HProcessScope => SimpleOther
+    | P.HResolution => NotSimple
+    | P.HCnf => NotSimple
+    | P.HFactoring => NotSimple
+    | P.HReordering => NotSimple
+    | P.HAciNorm => NotSimple
+    | P.HAlphaEquiv => NotSimple
+    | P.HArith => NotSimple
+    | P.HArithAbsEq => NotSimple
+    | P.HArithAbsIntGt => NotSimple
+    | P.HArithMaxGeq1 => NotSimple
+    | P.HArithMaxGeq2 => NotSimple
+    | P.HArithMinLt2 => NotSimple
+    | P.HArithMultAbsComparison => NotSimple
+    | P.HArithMultNeg => NotSimple
+    | P.HArithMultPos => NotSimple
+    | P.HArithMultSign => NotSimple
+    | P.HArithReduction => NotSimple
+    | P.HArithRel => NotSimple
+    | P.HArithRule => NotSimple
+    | P.HArithSumUb => NotSimple
+    | P.HArithTrichotomy => NotSimple
+    | P.HArray => NotSimple
+    | P.HArraysExt => NotSimple
+    | P.HArraysReadOverWrite => NotSimple
+    | P.HArraysSelectConst => NotSimple
+    | P.HBetaReduce => NotSimple
+    | P.HBvAshrByConst0 => NotSimple
+    | P.HBvBitwiseSlicing => NotSimple
+    | P.HBvLshrByConst0 => NotSimple
+    | P.HBvNotIdemp => NotSimple
+    | P.HBvPolyNorm => NotSimple
+    | P.HBvPolyNormEq => NotSimple
+    | P.HBvShlByConst0 => NotSimple
+    | P.HBvShlByConst2 => NotSimple
+    | P.HBvWordRewrite => NotSimple
+    | P.HBvXorDuplicate => NotSimple
+    | P.HBvZeroExtendEliminate0 => NotSimple
+    | P.HDatatype => NotSimple
+    | P.HDatatypeEq => NotSimple
+    | P.HDtSplit => NotSimple
+    | P.HEqRefl => NotSimple
+    | P.HEvaluate => NotSimple
+    | P.HExistsElim => NotSimple
+    | P.HInstantiate => NotSimple
+    | P.HIntTightLb => NotSimple
+    | P.HIntTightUb => NotSimple
+    | P.HIteEq => NotSimple
+    | P.HIteFalseCond => NotSimple
+    | P.HIteNegBranch => NotSimple
+    | P.HIteNotCond => NotSimple
+    | P.HIteThenFalse => NotSimple
+    | P.HIteThenTrue => NotSimple
+    | P.HIteTrueCond => NotSimple
+    | P.HLambdaElim => NotSimple
+    | P.HModusPonens => NotSimple
+    | P.HQuantDtSplit => NotSimple
+    | P.HQuantRewrite => NotSimple
+    | P.HQuantUnusedVars => NotSimple
+    | P.HRareInventory => NotSimple
+    | P.HRewrite => NotSimple
+    | P.HScope => NotSimple
+    | P.HSeqRewrite => NotSimple
+    | P.HSets => NotSimple
+    | P.HSetsExt => NotSimple
+    | P.HSetsRewrite => NotSimple
+    | P.HSkolemize => NotSimple
+    | P.HString => NotSimple
+    | P.HTrust => NotSimple
+  fun route_of {pop,handler} =
+    if pop then Scoped else
+    case handler of
+      P.HResolution => Resolved
+    | P.HCnf => Converted
+    | P.HFactoring => Aligned
+    | P.HReordering => Aligned
+    | _ => (case simple_class handler of NotSimple => Bounded
+              | _ => Simple)
+  fun simple_boolean_of handler =
+    case simple_class handler of SimpleBoolean family => SOME family
+      | _ => NONE
+  fun simple_equality_of handler =
+    case simple_class handler of SimpleEquality family => SOME family
+      | _ => NONE
+  (* The handlers whose name starts with "arith" or "int_tight_". *)
+  fun arithmetic_handler handler =
+    case handler of
+      P.HArith => true
+    | P.HArithAbsEq => true
+    | P.HArithAbsIntGt => true
+    | P.HArithMaxGeq1 => true
+    | P.HArithMaxGeq2 => true
+    | P.HArithMinLt2 => true
+    | P.HArithMultAbsComparison => true
+    | P.HArithMultNeg => true
+    | P.HArithMultPos => true
+    | P.HArithMultSign => true
+    | P.HArithReduction => true
+    | P.HArithRel => true
+    | P.HArithRule => true
+    | P.HArithSumUb => true
+    | P.HArithTrichotomy => true
+    | P.HIntTightLb => true
+    | P.HIntTightUb => true
+    | _ => false
   fun equality_provenance (CPC_Proof.EqualityProvenance pair) = pair
     | equality_provenance
         (CPC_Proof.ApplicationProvenance("=",[left,right])) = (left,right)

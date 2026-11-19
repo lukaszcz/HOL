@@ -6,6 +6,10 @@ sig
     copies:int -> unit} ->
     {pop:bool,handler:string} -> route
   val native_route : {pop:bool,handler:string} -> route
+  (* Typed counterparts: the same classification of registered handlers
+     (the string forms stay for the metered owned receiver). *)
+  val route_of : {pop:bool,handler:CPC_Proof.replay_handler} -> route
+  val arithmetic_handler : CPC_Proof.replay_handler -> bool
   val occurrence_provenance : 'a SmtLib_Parser.construction_occurrence ->
     CPC_Proof.term_provenance
   val occurrence_provenance_observed :
@@ -41,6 +45,7 @@ sig
     | SimpleNotAnd
   val simple_boolean : (string * string -> bool) -> string ->
     simple_boolean option
+  val simple_boolean_of : CPC_Proof.replay_handler -> simple_boolean option
   val conjunction : {visit:unit -> unit,truth:unit -> 'node,
     binary:'node * 'node -> 'node} -> 'node list -> 'node
   val child_provenance :
@@ -165,6 +170,7 @@ sig
     | SimpleCong | SimpleHoCong | SimpleEqResolve | SimpleContra
   val simple_equality : (string * string -> bool) -> string ->
     simple_equality option
+  val simple_equality_of : CPC_Proof.replay_handler -> simple_equality option
   val equality_provenance : CPC_Proof.term_provenance ->
     CPC_Proof.term_provenance * CPC_Proof.term_provenance
   val reflexive : {require_one:string -> 'node list -> 'node,
