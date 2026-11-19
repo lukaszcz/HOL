@@ -472,29 +472,6 @@ struct
   fun policy (p as PolicyProducer {check_type,...}) ty =
     (active p;check_type ty;active p)
 
-  (* Types are visited BEFORE type_subst/compare/type_vars/matching. The
-     declaration ID is retained by the actual Type object, not its text.
-     Symbol byte totals are reported, not an invented admission allowance. *)
-  fun type_walk spend bytes collect root =
-    let
-      (* A stack of borrowed spines avoids copying an unadmitted Args
-         list. Each child is charged_with_policy BEFORE its own type
-           inspection. *)
-      fun walk [] = ()
-        | walk ([] :: rest) = walk rest
-        | walk ((ty :: pending) :: rest) =
-            (spend 1;
-             if Type.is_vartype ty then
-               (bytes := !bytes + String.size (Type.dest_vartype ty);
-                collect ty;walk (pending :: rest))
-             else let
-               val {Thy,Tyop,Args} = Type.dest_thy_typeid ty
-               val _ = bytes := !bytes + String.size Thy
-               (* Tyop is the original kernel declaration identity. *)
-               val _ = ignore Tyop
-             in walk (Args :: pending :: rest) end)
-    in walk [[root]] end
-
   fun begin_internal work native_contract graph scope
       {original,template_limit,check_type} =
     let
