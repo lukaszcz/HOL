@@ -1822,6 +1822,71 @@ struct
   (* Proof-parser construction, not source AST typechecking or prover
      migration. Large controls never use bounded native comparisons;
      declared datatypes have a separate focused fixture. *)
+  (* The ordinary and the exact-policy graph sessions run one script:
+     a declaration, a private symbol, and a constructor use that is just
+     inside and just outside the operand budget.  Both observe the same
+     declarations, private labels and refusal diagnostic. *)
+  fun session_script exact =
+    with_graph exact (fn graph => fn _ =>
+      let
+        val session=graph_session graph exact "Z3"
+        val reader = #reader session
+        val root = B.root (#backend reader)
+        val _=(#declare session) ("session_script_d",Type.bool)
+        val private_request={kind="session_script_k",
+          hol_type=Type.bool,source=NONE,stable=true}
+        val marker=(#private_symbol session) root private_request
+        val again=(#private_symbol session) root private_request
+        val _=(#add_constructor_parser session)
+          ("session_script_f",fn _ => fn _ => fn _ => fn arguments =>
+            hd arguments)
+        fun call count = #node ((#parse_from session) (tokens
+          ("(session_script_f"^String.concat
+            (List.tabulate (count,fn _ => " true"))^")")))
+        val limit = #operand_limit limits
+        fun variable_name node = case G.view graph node of
+            G.Variable (_,lexical) => #1 (Term.dest_var lexical)
+          | _ => raise Fail "session script: not a variable"
+      in
+        {declarations=List.map (fn {lexical,...} =>
+           Term.dest_var lexical) ((#solver_variables reader) ()),
+         namespace=HOLset.listItems (#proof_terms ((#namespace session) ())),
+         labels=List.map (fn {scope,marker,kind,...} =>
+           (G.scope_id scope,kind,variable_name marker))
+           ((#private_bindings reader) ()),
+         stable=(again=marker),
+         exact_budget=failure (fn () => call limit),
+         over_budget=failure (fn () => call (limit+1))}
+      end)
+  fun session_script_agrees () =
+    let val ordinary=session_script false val exact=session_script true
+    in
+      ensure "session script: declarations in order"
+        (#declarations ordinary = #declarations exact andalso
+         List.map #1 (#declarations ordinary) =
+           ["session_script_d","session_script_k#0"]);
+      ensure "session script: declared name is in the namespace"
+        (List.exists (fn name => String.isSuffix "session_script_d" name)
+           (#namespace ordinary));
+      ensure "session script: namespaces agree"
+        (#namespace ordinary= #namespace exact);
+      ensure "session script: private labels agree"
+        (#labels ordinary= #labels exact andalso
+         List.length (#labels ordinary)=1);
+      ensure "session script: private symbol is stable"
+        (#stable ordinary andalso #stable exact);
+      ensure "session script: exact budget accepted"
+        (not (Option.isSome (#exact_budget ordinary)) andalso
+         not (Option.isSome (#exact_budget exact)));
+      ensure "session script: over-budget refusal agrees"
+        (#over_budget ordinary= #over_budget exact);
+      ensure "session script: refusal is the operand contract"
+        (case #over_budget ordinary of
+           SOME (_,_,message) =>
+             String.isSubstring "exceeds contract" message
+         | NONE => false)
+    end
+
   fun run () =
     let
       fun group (label,solver,texts) =
@@ -1877,6 +1942,9 @@ struct
       val _=tprint "Structured public frontend ascriptions and lambdas"
       val _=List.app (fn (solver,texts) =>
         List.app (session_positive solver) texts) session_cases
+      val _=OK ()
+      val _=tprint "Structured int and policy graph sessions share a script"
+      val _=session_script_agrees ()
       val _=OK ()
       val _=print ("TASK33_STRUCTURED_COUNTS positives="^
         Int.toString (List.foldl (fn (xs,n) => List.length xs+n) 0
