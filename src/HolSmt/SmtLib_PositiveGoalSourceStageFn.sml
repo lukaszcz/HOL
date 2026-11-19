@@ -2,7 +2,7 @@
    Goal Source stages: owner record, retirement, metering and `begin`.  The
    traversal supplies the persistent carrier owner and the diagnostic origin
    is the client's own, so each stage keeps its lifecycle and messages. *)
-signature SmtLib_PositiveGoalTraversal =
+signature SmtLib_PositiveGoalSourceStageInput =
 sig
   type owner
   val begin : SmtReplayInvocationWork.portfolio ->
@@ -13,7 +13,8 @@ sig
   val origin : string
 end
 
-functor SmtLib_PositiveGoalSourceStageFn (T : SmtLib_PositiveGoalTraversal) =
+functor SmtLib_PositiveGoalSourceStageFn
+    (T : SmtLib_PositiveGoalSourceStageInput) =
 struct
   structure G = SmtReplayGraph
   structure S = SmtReplaySource

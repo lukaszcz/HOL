@@ -14,6 +14,7 @@ struct
   val _ = SmtLib_GraphPreprocess.from_portfolio
   structure Base = SmtLib_PositiveGoalSourceStageFn
     (struct open T val origin = "SmtLib_OwnedPositiveGoalSourceStage" end)
+  (* G, S, W and ERR come from `open Base`. *)
   open Base
   fun build (owner as Owner
       {graph,root,sources,work,limits,traversal,rows,phase,assumption_mode,

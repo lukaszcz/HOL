@@ -89,7 +89,6 @@ REPLAY_DEPS = SmtCheckedGraph Z3_ProofReplay CPC_ProofReplay \
               SmtLib_GraphLawTypeInstance SmtLib_GraphCarrierRoot \
               SmtLib_CarrierLaws SmtLib_CarrierTopDepthFn \
               SmtLib_OwnedCarrierTraversal SmtLib_OwnedCarrierSourceStage \
-              SmtLib_PositiveGoalSourceStageFn \
               SmtLib_OwnedPositiveGoalSourceStage SmtReplayOwnedTransport \
               SmtReplayOwnedCompactApplication \
               SmtReplayOwnedRawCompactApplication SmtReplayFocusAdmission \
