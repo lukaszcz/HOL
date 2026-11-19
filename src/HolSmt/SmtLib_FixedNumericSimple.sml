@@ -594,6 +594,37 @@ struct
         val value = run d
         val converted = convert d value
     in seal (leaf d converted) end
+  exception Inapplicable
+  fun outcome_target (result:('f,'p) outcome_of) = #target result
+  fun outcome_proof (result:('f,'p) outcome_of) = #proof result
+  (* The condition-discharge tail of both owners' one-focus rewrite, from
+     the capture of the instance's conditions to the sealed leaf. The
+     owner supplies the operations that differ: [condition] captures
+     condition [index] from its own initial-condition admission,
+     [conditional] runs its prepare/execute/convert pipeline over the
+     evidence proofs and [leaf] builds the leaf recipe from the resulting
+     conversion. [retry] continues with the next candidate clause, as
+     the owner's [attempt] does, both for a looping stack and after an
+     [Inapplicable] condition (which is first re-described). *)
+  fun discharge_with {count,condition,same,stack,simplify,seal,identity,
+      is_true,conditional,leaf,seal_focus,redescribe,retry} =
+    let val conditions = List.tabulate (count,condition)
+        val looping = List.exists (fn ant =>
+          List.exists (same ant) stack) conditions
+    in if looping then retry () else
+      let val stack' = conditions @ stack
+          fun prove condition =
+            let val normalized = case simplify stack' condition of
+                  NONE => seal condition (identity condition)
+                | SOME result => result
+            in if is_true (outcome_target normalized) then
+                 outcome_proof normalized else raise Inapplicable end
+          val evidence = List.map prove conditions
+          val conversion = conditional evidence
+          val recipe = leaf conversion
+      in SOME (seal_focus recipe) end
+      handle Inapplicable => (redescribe ();retry ())
+    end
   datatype owner = Owner of
     {work:W.portfolio,graph:G.graph,root:G.scope,sources:S.sources,
      catalogue:K.catalogue,traversal:T.owner,matcher:M.owner,
@@ -614,7 +645,6 @@ struct
   datatype plan = Plan of {owner:owner,source:focus,used:bool ref}
   datatype result = Result of {owner:owner,source:focus,proof:Core.result}
   type outcome = (focus,Core.result) outcome_of
-  exception Inapplicable
   fun close (Owner {work,dead,...}) = retire_owner work dead
   fun protect owner action = protect_with close owner action
   fun active (Owner {work,graph,root,sources,catalogue,traversal,
@@ -863,39 +893,28 @@ struct
                        in ac_order owner focus pair=GREATER end)
 
                  in if not applicable then attempt rest else
-                   let val conditions = List.tabulate (count,fn index =>
-                         capture owner (#frame d)
-                           (A.initial_condition work
-                             {instance=instance,index=index}))
-                       val looping = List.exists (fn ant =>
-                         List.exists (same owner ant) stack) conditions
-                   in if looping then attempt rest else
-                     let val stack' = conditions @ stack
-                         fun prove condition =
-                           let val normalized = case simplify memo stack'
-                                 condition of NONE =>
-                                   seal owner condition
-                                     (identity owner condition)
-                               | SOME result => result
-                           in if is_true owner (#target normalized) then
-                                #proof normalized else raise Inapplicable end
-                         val evidence = List.map prove conditions
-                         val prepared = Conditional.prepare_owned conditional
-                           {frame= #frame d,instance=instance,
-                            conditions=evidence}
-                         val result = Conditional.execute prepared
-                         val conversion =
-                           Conditional.conversion_for work result
-                         val leaf = action owner focus (fn observe =>
-                           C.graph_leaf
-                             (case owner of Owner {graph,...} => graph)
-                             (#scope d) {conversion=conversion,
-                               template_limit= #template_limit
-                                 (W.semantic_limits work),observe=observe})
-                     in SOME (seal owner focus leaf) end
-                     handle Inapplicable =>
-                       (ignore (describe owner focus);attempt rest)
-                   end
+                   discharge_with {count=count,
+                     condition=fn index => capture owner (#frame d)
+                       (A.initial_condition work
+                         {instance=instance,index=index}),
+                     same=same owner,stack=stack,simplify=simplify memo,
+                     seal=seal owner,identity=identity owner,
+                     is_true=is_true owner,
+                     conditional=fn evidence =>
+                       let val prepared = Conditional.prepare_owned
+                             conditional {frame= #frame d,
+                               instance=instance,conditions=evidence}
+                           val result = Conditional.execute prepared
+                       in Conditional.conversion_for work result end,
+                     leaf=fn conversion => action owner focus
+                       (fn observe => C.graph_leaf
+                         (case owner of Owner {graph,...} => graph)
+                         (#scope d) {conversion=conversion,
+                           template_limit= #template_limit
+                             (W.semantic_limits work),observe=observe}),
+                     seal_focus=seal owner focus,
+                     redescribe=fn () => ignore (describe owner focus),
+                     retry=fn () => attempt rest}
                  end
                end)
     in attempt (candidates owner focus) end
@@ -1113,7 +1132,6 @@ struct
     datatype result=Result of
       {owner:owner,source:focus,proof:Core.policy_result}
     type outcome=(focus,Core.policy_result)outcome_of
-    exception Inapplicable
     fun close(Owner{work,dead,...})=retire_owner work dead
     fun protect owner action=protect_with close owner action
     fun active(Owner{work,graph,root,sources,catalogue,traversal,
@@ -1768,42 +1786,30 @@ struct
                           (not isperm orelse
                            ac_order owner focus instance=GREATER)
                     in if not applicable then attempt rest else
-                      let val conditions=List.tabulate(count,fn index=>
-                            capture owner(#frame d)
-                              (A.initial_condition_with_policy work
-                                {instance=instance,index=index}))
-                          val looping=List.exists(fn ant=>
-                            List.exists(same owner ant)stack)conditions
-                      in if looping then attempt rest else
-                        let val next_stack=conditions@stack
-                            fun prove condition=
-                              let val normalized=case
-                                    simplify memo next_stack condition of
-                                      NONE=>seal owner condition
-                                        (identity owner condition)
-                                    | SOME result=>result
-                              in if is_true owner(#target normalized)then
-                                  #proof normalized
-                                else raise Inapplicable end
-                            val evidence=List.map prove conditions
-                            val prepared=
-                              Conditional.prepare_owned_with_policy
-                                conditional {frame= #frame d,
-                                  instance=instance,conditions=evidence,
-                                  ordinal=ordinal owner}
-                            val result=Conditional.execute_with_policy
-                              prepared
-                            val converted=
-                              Conditional.conversion_with_policy_for
-                                work result
-                            val leaf=action owner focus(fn observe=>
-                              C.graph_leaf_with_policy work
-                                {frame= #frame d,conversion=converted,
-                                 observe=observe})
-                        in SOME(seal owner focus leaf)end
-                        handle Inapplicable=>
-                          (ignore(describe owner focus);attempt rest)
-                      end
+                      discharge_with{count=count,
+                        condition=fn index=>capture owner(#frame d)
+                          (A.initial_condition_with_policy work
+                            {instance=instance,index=index}),
+                        same=same owner,stack=stack,simplify=simplify memo,
+                        seal=seal owner,identity=identity owner,
+                        is_true=is_true owner,
+                        conditional=fn evidence=>
+                          let val prepared=
+                                Conditional.prepare_owned_with_policy
+                                  conditional {frame= #frame d,
+                                    instance=instance,conditions=evidence,
+                                    ordinal=ordinal owner}
+                              val result=Conditional.execute_with_policy
+                                prepared
+                          in Conditional.conversion_with_policy_for
+                            work result end,
+                        leaf=fn converted=>action owner focus(fn observe=>
+                          C.graph_leaf_with_policy work
+                            {frame= #frame d,conversion=converted,
+                             observe=observe}),
+                        seal_focus=seal owner focus,
+                        redescribe=fn()=>ignore(describe owner focus),
+                        retry=fn()=>attempt rest}
                     end
                   end)
       in attempt(candidates owner focus)end
