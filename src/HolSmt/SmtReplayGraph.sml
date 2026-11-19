@@ -1456,8 +1456,6 @@ struct
               in value end
           end
     in visit root end
-  fun partial_metric g metric root =
-    partial_metric_program (fn () => ()) g metric root
 
   fun unfolded_nodes_program observe g metric limit node =
     let
