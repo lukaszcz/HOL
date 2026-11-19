@@ -10868,32 +10868,40 @@ struct
        implication=implication, balanced=balanced,
        same_ty=same_ty, original_shape=original_shape} end
   end
+  (* Where a clause preparer takes its frame and caller from: the plain rule
+     gives both, the exists-argument clause gives both and additionally
+     demands that the caller is the actual frame, and the canonical clause
+     takes the evidence frame and its scope. *)
+  datatype sce_frames=
+      SCERuleFrame of {frame:Scope.receipt,caller:G.scope}
+    | SCEArgumentFrame of {frame:Scope.receipt,caller:G.scope}
+    | SCEEvidenceFrame
   (* The preamble shared by the plain rule, the exists-argument clause and
      the canonical clause preparers. It runs the frame checks in the order
      the preparers always ran them, in the same single Work step, and builds
-     the per-preparation guard and tick for the builder. A caller that gives
-     no frame or caller takes the evidence frame and its scope; check_caller
-     demands that the caller is the actual frame, right after the foreign
+     the per-preparation guard and tick for the builder. The argument frames
+     demand that the caller is the actual frame, right after the foreign
      frame check. initial, hyp, rows and args are delayed because each
      preparer pays for them at its own point. *)
-  fun sce_prepare_context expected evidence frame_in caller_in check_caller
-      steps=
+  fun sce_prepare_context expected evidence frames steps=
     let
       val d=sce_data expected evidence
-      val frame=case frame_in of SOME given=>given | NONE=> #frame d
+      val frame=case frames of SCERuleFrame {frame,...}=>frame
+        | SCEArgumentFrame {frame,...}=>frame | SCEEvidenceFrame=> #frame d
       val source=Scope.description_for expected (#frame d)
       val actual=Scope.description_for expected frame
       val graph= #graph actual val scope= #scope actual
-      val caller=case caller_in of SOME given=>given | NONE=>scope
+      val caller=case frames of SCERuleFrame {caller,...}=>caller
+        | SCEArgumentFrame {caller,...}=>caller | SCEEvidenceFrame=>scope
       val _=if Portable.pointer_eq(graph,#graph source) andalso
           Portable.pointer_eq(#sources actual,#sources source) andalso
           #root actual= #root source andalso
           G.scope_visible graph scope (#scope source) then () else
         raise ERR "prepare_source_condition_rule" "foreign Source frame"
-      val _=if check_caller then
+      val _=case frames of SCEArgumentFrame _=>
           (if caller=scope then ()else raise ERR
             "prepare_source_argument" "caller must be the actual frame")
-        else ()
+        | _=>()
       val _=G.validate_scope graph caller
       val children=sce_step_children steps
       val guard=sce_prepare_guard expected evidence frame graph
@@ -10926,8 +10934,8 @@ struct
       {evidence,frame,caller,steps,terminal,check_type}=
     sr_fail expected (fn()=>W.with_step expected (fn()=>
     let
-      val ctx=sce_prepare_context expected evidence (SOME frame)
-        (SOME caller) false steps
+      val ctx=sce_prepare_context expected evidence
+        (SCERuleFrame {frame=frame,caller=caller}) steps
       val {d,graph,scope,children,guard,tick,output,template,quota,...}=
         ctx
       fun append v w=sce_append tick v w
@@ -15151,8 +15159,8 @@ struct
       {evidence,frame,caller,steps,terminal,check_type,future}=
     sr_fail expected (fn()=>W.with_step expected (fn()=>
     let
-      val ctx=sce_prepare_context expected evidence (SOME frame)
-        (SOME caller) true steps
+      val ctx=sce_prepare_context expected evidence
+        (SCEArgumentFrame {frame=frame,caller=caller}) steps
       val {d,graph,scope,children,guard,tick,output,template,quota,...}=
         ctx
       fun append v w=sce_append tick v w
@@ -16034,8 +16042,7 @@ struct
       {evidence,steps,pending,finish,check_type,future,kind}=
     sr_fail expected (fn()=>W.with_step expected (fn()=>
     let
-      val ctx=sce_prepare_context expected evidence NONE NONE
-        true steps
+      val ctx=sce_prepare_context expected evidence SCEEvidenceFrame steps
       val {d,frame,graph,scope,caller,children,guard,tick,limits,output,
         template,quota,...}=
         ctx
