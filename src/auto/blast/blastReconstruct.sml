@@ -87,7 +87,7 @@ fun execute ctxt cs step node =
    different assumption or rule position.  Only a completely grounded,
    kernel-valid replay is accepted; failure rejects this tableau through the
    search continuation's PROOF_FAILED hook. *)
-fun perform_with_in ctxt cs goal ({script, ...} : proof) =
+fun perform_with ctxt cs goal ({script, ...} : proof) =
   let
     fun finish final =
       let
@@ -128,22 +128,22 @@ fun perform_with_in ctxt cs goal ({script, ...} : proof) =
     case replay script (clasetGoal.from_goal goal) of
         SOME result => result
       | NONE =>
-          raise mk_HOL_ERR "blastReconstruct" "perform_with_in"
+          raise mk_HOL_ERR "blastReconstruct" "perform_with"
             "the recorded tableau has no kernel-valid replay"
   end
 
 fun reconstructWith ctxt cs goal proof =
-  total (perform_with_in ctxt cs goal) proof
+  total (perform_with ctxt cs goal) proof
 
 fun reconstruct ctxt goal proof =
   reconstructWith ctxt clasetLib.empty_cs goal proof
 
-fun accept_in ctxt cs goal proof =
+fun accept ctxt cs goal proof =
   case reconstructWith ctxt cs goal proof of
       SOME result => (proof, result)
     | NONE => raise blastSearch.PROOF_FAILED
 
 fun searchGoal ctxt cs depth goal =
-  blastSearch.searchGoal ctxt cs depth goal (accept_in ctxt cs goal)
+  blastSearch.searchGoal ctxt cs depth goal (accept ctxt cs goal)
 
 end
