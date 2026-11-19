@@ -827,7 +827,7 @@ struct
       (fn () => W.spend work 1) operation
   (* The graph leaf of [conversion] under a charged action; [limit] is
      evaluated inside the action, as the template limit of the caller. *)
-  fun leaf (owner as Owner {graph,...}) focus (d:description) limit
+  fun leaf (owner as Owner {graph,...}) focus limit (d:description)
       conversion =
     action owner focus (fn observe =>
       C.graph_leaf graph (#scope d)
@@ -1016,8 +1016,8 @@ struct
                                instance=instance,conditions=evidence}
                            val result = Conditional.execute prepared
                        in Conditional.conversion_for work result end,
-                     leaf=leaf owner focus d (fn () =>
-                       #template_limit (W.semantic_limits work)),
+                     leaf=leaf owner focus (fn () =>
+                       #template_limit (W.semantic_limits work)) d,
                      seal_focus=seal owner focus,
                      redescribe=fn () => ignore (describe owner focus),
                      retry=fn () => attempt rest}
@@ -1060,18 +1060,18 @@ struct
                  {source=source,source_view=source_view,target=target,
                   target_view=target_view,theorem=theorem,
                   template_limit=cap,check_type=check_type}})
-    in discovered_with converted (leaf owner focus d (fn () => cap))
+    in discovered_with converted (leaf owner focus (fn () => cap) d)
       (seal owner focus) end
   (* Concrete proof adapters below retain their SAME-owned receipts. *)
   fun lift owner focus (result:outcome) =
-    let val Owner {work,conditional,graph,...} = owner
+    let val Owner {work,conditional,...} = owner
     in lift_with (fn () => describe owner focus)
       (fn d => Lambda.execute work (Lambda.prepare_admitted work
         {frame= #frame d,admission= #admission d,body= #proof result,
          ordinal=ordinal owner,check_type=policy owner focus}))
       (fn d => fn value => Conditional.lambda_conversion_for work conditional
         {frame= #frame d,result=value})
-      (fn d => leaf owner focus d (fn () =>
+      (leaf owner focus (fn () =>
         #template_limit (W.semantic_limits work)))
       (seal owner focus) end
   fun normalize owner source =
