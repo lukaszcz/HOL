@@ -46,7 +46,7 @@ val {get = _, get_of = aesop_base_of} =
    once for each state of the pair.  Both are immutable values a context
    owns, compared by identity. *)
 val with_rewrites =
-  linarithData.keyed_memo
+  memoUtil.keyed_memo
     (fn (base, rewrites) => fn (base', rewrites') =>
        Portable.pointer_eq (base, base') andalso
        Portable.pointer_eq (rewrites, rewrites'))

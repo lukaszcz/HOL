@@ -220,9 +220,7 @@ fun CS_FIRST_BEST_TAC cs = first_best clasetSearch.BEST_FIRST cs
 fun CS_BOUNDED_FIRST_BEST_TAC cs expansions goal ctxt =
   if expansions >= 1 then
     NTactical.DETERM
-      (first_best
-         (fn verbosity => clasetSearch.BOUNDED_BEST_FIRST verbosity expansions)
-         cs)
+      (first_best (clasetSearch.BOUNDED_BEST_FIRST expansions) cs)
       goal ctxt
   else
     (* The search reads a limit of zero as no limit, so a turn of none
@@ -448,19 +446,9 @@ fun CS_DEEPEN_TAC cs {start} goal ctxt =
     (clasetSearch.DEEPEN (trace_level_of ctxt) (2, 10)
       (bounded_depth_in ctxt {dup = true} cs) start) goal ctxt
 
-fun no_extra_markers theorems cs = (cs, theorems)
-
-(* The claset is the one of the context the tactic is run in. *)
-fun invocation_with consumer body theorems goal ctxt =
-  clasetLib.with_invocation_fact_env
-    {iff_prefix="", extra_markers=no_extra_markers,
-     consumer=consumer}
-    (fn cs => fn _ => fn _ => fn _ => body cs)
-    (clasetLib.the_claset_of ctxt)
-    (NONE : unit clasetLib.invocation_simpset option) theorems goal ctxt
-
-fun invocation body = invocation_with clasetLib.SearchFacts body
-fun safe_invocation body = invocation_with clasetLib.SafeFacts body
+fun invocation body = clasetLib.with_context_claset clasetLib.SearchFacts body
+fun safe_invocation body =
+  clasetLib.with_context_claset clasetLib.SafeFacts body
 
 fun public tactic = invocation (NTactical.DETERM o tactic)
 fun public_safe tactic = safe_invocation (NTactical.DETERM o tactic)

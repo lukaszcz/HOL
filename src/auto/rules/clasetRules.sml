@@ -835,9 +835,6 @@ fun take_looked_up (Found found) = SOME found
           KernelSig.name_toString name);
        NONE)
 
-fun load_delta (ADD addition) = take_looked_up (look_up addition)
-  | load_delta (RM _) = NONE
-
 fun uptodate_delta (ADD {name, ...}) =
       (Theory.uptodate_thm (DB.fetch_knm name)
        handle HOL_ERR _ =>

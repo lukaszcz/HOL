@@ -100,11 +100,10 @@ sig
      the name nothing was found under.  The lookup is the only part of
      loading that reads the database, so it is done where the addition is
      recorded or its theory loads, never in a proof; take_looked_up then
-     gives what load_delta would have, warning about a missing theorem
-     when the addition is applied rather than when it is looked up. *)
+     gives the theorem, or warns about a missing one when the addition is
+     applied rather than when it is looked up. *)
   datatype looked_up = Found of thname * rulespec * thm | Missing of thname
   val look_up : {name : thname, spec : rulespec} -> looked_up
   val take_looked_up : looked_up -> (thname * rulespec * thm) option
-  val load_delta : cdelta -> (thname * rulespec * thm) option
   val uptodate_delta : cdelta -> bool
 end

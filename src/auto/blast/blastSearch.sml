@@ -2057,8 +2057,6 @@ fun debugGoal_in ctxt claset depth goal =
     {fullTrace = #fullTrace report, result = #result report}
   end
 
-fun debugGoal claset = debugGoal_in (Context.snapshot ()) claset
-
 (* This legacy iterative-deepening API has no cooperative timeout: each
    fixed-depth run is bounded only by its resource limit, while the
    sequence of runs is capped by depth_limit.  Callers that need

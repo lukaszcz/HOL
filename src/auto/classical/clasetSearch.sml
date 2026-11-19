@@ -418,7 +418,7 @@ fun best_first limit =
 
 fun BEST_FIRST verbosity = best_first (fn () => !node_limit) verbosity
 
-fun BOUNDED_BEST_FIRST verbosity bound = best_first (fn () => bound) verbosity
+fun BOUNDED_BEST_FIRST bound = best_first (fn () => bound)
 
 fun astar_cost node =
   clasetGoal.size node + 5 * clasetGoal.level node

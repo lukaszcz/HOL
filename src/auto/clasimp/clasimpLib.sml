@@ -761,8 +761,10 @@ fun rename_view_variables theorem =
   in (Thm.INST replacements theorem,Term.subst inverse) end
 
 fun frag_present ss =
-  let val names = List.mapPartial simpLib.frag_name (simpLib.ssfrags_of ss)
-  in fn name => List.exists (fn other => other = name) names end
+  let val names = simpLib.ssfrag_names_of ss
+  in fn name => Lib.mem name names end
+
+val linarith_solver_name = #name linarithLib.linarith_solver
 
 fun remove_present_frags names ss =
   simpLib.remove_ssfrags_preserving_controls
@@ -774,10 +776,13 @@ fun remove_present_frags names ss =
    procedures are not: they consult the [arith] facts of the context they
    run in, which here would be the context of whichever proof first wanted
    the table.  Views are therefore derived without them -- an invocation
-   runs them on its goal with its own context. *)
-fun view_derivation_simpset ss =
-  remove_present_frags ["LINARITH"] ss
-  |> simpLib.remove_solver "lin_arith"
+   runs them on its goal with its own context.  Stripping them rebuilds
+   the simpset, so it is done once for each simpset derived from. *)
+val view_derivation_simpset =
+  memoUtil.keyed_memo (Lib.curry Portable.pointer_eq)
+    (fn ss =>
+       remove_present_frags ["LINARITH"] ss
+       |> simpLib.remove_solver linarith_solver_name)
 
 fun prepare_lhs_view_derivation_with_positions caller_charge ss positions =
   let
@@ -906,7 +911,7 @@ fun strip_decisions ss =
     val removed = remove_present_frags ["ORDER", "LINARITH"] ss
     (* remove_solver gives back the simpset it was given when that has no
        solver of the name, so a change means the solver was there *)
-    val stripped = simpLib.remove_solver "lin_arith" removed
+    val stripped = simpLib.remove_solver linarith_solver_name removed
   in
     {stripped = stripped,
      order = present "ORDER", linarith = present "LINARITH",
@@ -2920,8 +2925,6 @@ fun extend_bound_invocation
       {ambient=ambient,supplied=iff_rewrites @ rewritable @ supplied})
   end
 
-fun no_extra_markers theorems cs = (cs, theorems)
-
 val curry_premises =
   Conv.REDEPTH_CONV (Conv.REWR_CONV (Conv.GSYM boolTheory.AND_IMP_INTRO))
 
@@ -3161,7 +3164,7 @@ fun with_claset_transport budget policy ss candidates cs build goal ctxt =
 
 fun process_clasimp_args body base_cs base_ss =
   clasetLib.with_invocation_fact_env
-    {iff_prefix="__clasimp_iff_arg_",extra_markers=no_extra_markers,
+    {iff_prefix="__clasimp_iff_arg_",extra_markers=clasetLib.no_extra_markers,
      consumer=clasetLib.SearchFacts}
     (fn cs => fn simpset => fn controls => fn environment =>
       case simpset of
@@ -3194,7 +3197,7 @@ fun process_clasimp_args_with_policy budget body =
 
 fun process_clasimp_bound_args consumer budget runtime body base_cs base_ss =
   clasetLib.with_invocation_fact_env_budgeted budget
-    {iff_prefix="__clasimp_iff_arg_",extra_markers=no_extra_markers,
+    {iff_prefix="__clasimp_iff_arg_",extra_markers=clasetLib.no_extra_markers,
      consumer=consumer}
     (fn cs => fn simpset => fn controls => fn environment =>
       case simpset of
@@ -3386,7 +3389,7 @@ fun process_clasimp_bound_fact_views viewed consumer budget runtime body
 fun process_clasimp_args_fact_views consumer budget
     body base_cs base_ss =
   clasetLib.with_invocation_fact_env_budgeted budget
-    {iff_prefix="__clasimp_iff_arg_", extra_markers=no_extra_markers,
+    {iff_prefix="__clasimp_iff_arg_", extra_markers=clasetLib.no_extra_markers,
      consumer=consumer}
     (fn cs => fn simpset => fn controls => fn environment =>
       case simpset of

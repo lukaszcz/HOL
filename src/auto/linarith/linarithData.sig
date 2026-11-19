@@ -214,21 +214,12 @@ sig
      because a wholesale ancestry replacement applies no delta.
      Neither is offered for the [arith] table: a tactic reads it once
      per call, and the reducer path, which does derive from it, keys on
-     the fact list itself rather than on a generation -- keyed_memo
-     below is what that path memoizes with. *)
+     the fact list itself rather than on a generation -- it memoizes
+     with memoUtil.keyed_memo, the cell memo and memo_with_splits are
+     built from. *)
   val memo : (unit -> 'a) -> unit -> 'a
   val memo_with_splits : (thm list -> 'a) -> Context.t -> 'a
 
-  (* keyed_memo same compute caches the value compute returned for the
-     key it last saw, and reuses it for as long as same reports the key
-     has not moved.  It is the cell memo and memo_with_splits are built
-     from, offered directly to a caller whose key is not a generation
-     and comes with the call: the equality is the caller's because not
-     every source of a key is an equality type -- a derivation keyed on
-     a table of theorems compares them by pointer.  A comparison that
-     answers "moved" when it has not costs a recomputation and nothing
-     else. *)
-  val keyed_memo : ('a -> 'a -> bool) -> ('a -> 'b) -> 'a -> 'b
 
   (* check_asm_split function what th: raise ERR function
      ("Malformed " ^ what) unless th is a split rule in P-form. *)

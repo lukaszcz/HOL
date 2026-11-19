@@ -1416,7 +1416,7 @@ fun admissible theorem =
    track the table exactly, which is what a key that is the facts
    themselves does. *)
 val arith_envelope =
-  linarithData.keyed_memo (Lib.list_eq (Lib.curry Portable.pointer_eq))
+  memoUtil.keyed_memo (Lib.list_eq (Lib.curry Portable.pointer_eq))
     (fn facts =>
       let
         val literals = List.concat (map CONJUNCTS facts)
@@ -1496,9 +1496,9 @@ fun memo_budgeted_with_arith ctxt budget =
   let
     val deferred = ref (NONE : exn option)
     val generation = ref (linarithData.generation ())
-    val facts = ref (linarithData.arith_facts_of ctxt)
-    fun same_thms left right =
-      Lib.list_eq (Lib.curry Portable.pointer_eq) left right
+    (* ctxt is fixed for the installation, so its [arith] table is too;
+       only the generation can move under the result cache. *)
+    val facts = linarithData.arith_facts_of ctxt
     fun conversion context tm =
       EQT_INTRO (budgeted_context_prove ctxt budget context tm)
       handle Declined _ => decline ""
@@ -1512,16 +1512,11 @@ fun memo_budgeted_with_arith ctxt budget =
       else
         let
           val current_generation = linarithData.generation ()
-          val current_facts = linarithData.arith_facts_of ctxt
           val _ =
-            if current_generation = !generation andalso
-               same_thms current_facts (!facts)
-            then ()
+            if current_generation = !generation then ()
             else (Cache.clear_cache table;
-                  generation := current_generation;
-                  facts := current_facts)
-          val (source_facts, assumed) =
-            arith_envelope current_facts
+                  generation := current_generation)
+          val (source_facts, assumed) = arith_envelope facts
           val _ = deferred := NONE
           val _ =
             searchBudget.charge budget searchBudget.Candidate
@@ -1639,7 +1634,7 @@ fun same_context_key (left_generation : int, left_thms)
   Lib.list_eq (Lib.curry Portable.pointer_eq) left_thms right_thms
 
 val refutable_for_key =
-  linarithData.keyed_memo same_context_key
+  memoUtil.keyed_memo same_context_key
     (fn (_, theorems) => List.exists (shell_relevant o Thm.concl) theorems)
 
 fun refutable_context theorems =

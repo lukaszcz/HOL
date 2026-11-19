@@ -241,6 +241,16 @@ sig
      clasetFacts.environment -> tactic) ->
     claset -> 'a invocation_simpset option -> thm list -> tactic
 
+  (* The extra_markers of an engine with no marker vocabulary of its own:
+     every fact is passed on unchanged. *)
+  val no_extra_markers : thm list -> claset -> claset * thm list
+
+  (* with_context_claset consumer body facts runs body on the claset of
+     the context the tactic is applied in, with the facts installed for
+     consumer and no simpset half. *)
+  val with_context_claset :
+    fact_consumer -> (claset -> tactic) -> thm list -> tactic
+
   (* Inserts the facts so that they appear in the assumption list in the
      order given.  They occupy the most-recent end, ahead of the goal's own
      assumptions, which is what the classical engines' recency tie-break and

@@ -190,9 +190,6 @@ sig
   val searchGoalMeasured :
     {debug : bool, stop : unit -> bool} ->
     claset -> int -> goal -> (proof -> 'a) -> 'a measured_result
-  val searchGoalMeasured_in :
-    Context.t -> {debug : bool, stop : unit -> bool} ->
-    claset -> int -> goal -> (proof -> 'a) -> 'a measured_result
   (* General scan checkpoints charge candidate work, while term
      normalization and equality substitution checkpoints charge
      normalization work.  Successful transitions charge applications.
@@ -216,7 +213,6 @@ sig
     Context.t -> searchBudget.budget -> claset -> int -> goal ->
     (proof -> 'a) -> 'a budget_outcome
   val tryGoal : claset -> int -> goal -> proof option
-  val debugGoal : claset -> int -> goal -> debug_result
   val debugGoal_in : Context.t -> claset -> int -> goal -> debug_result
 
   (* Bounds 0, 1, ... through !depth_limit, as DEEPEN (1, limit). *)

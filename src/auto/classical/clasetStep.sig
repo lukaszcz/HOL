@@ -34,7 +34,6 @@ sig
   val safe_step_in : Context.t -> clasetLib.claset -> step
   val clarify_step_in : Context.t -> clasetLib.claset -> step
   val inst0_step : clasetLib.claset -> step
-  val inst_step : clasetLib.claset -> step
   val inst_step_in : Context.t -> clasetLib.claset -> step
   val unsafe_step : clasetLib.claset -> step
   val step_in : Context.t -> clasetLib.claset -> step

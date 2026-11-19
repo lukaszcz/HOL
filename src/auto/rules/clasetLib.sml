@@ -307,9 +307,9 @@ fun reconcile_distinct tyi (cs as CS {decls, wrappers, index, distinct}) =
                 (fn (key', _) => key <> key') distinct}
   end
 
-fun catch_up_distinct ctxt cs =
-  List.foldl (fn (tyi, acc) => reconcile_distinct tyi acc)
-    cs (TypeBase.elts_of ctxt)
+(* elts: the TypeBase entries caught up against. *)
+fun catch_up_distinct elts cs =
+  List.foldl (fn (tyi, acc) => reconcile_distinct tyi acc) cs elts
 
 fun distinct_rule_names (CS {distinct, ...}) =
   map (#name o #source o #2) (Redblackmap.listItems distinct)
@@ -714,7 +714,7 @@ fun normalise_rule_name s =
 
 (* Reconstruction replays deltas recorded by ancestor theories.  A rule that
    is ill-formed for its declared kind makes add_rule/make_rule_decl raise, so
-   guard it: warn and drop, exactly as load_delta does for a stale theorem,
+   guard it: warn and drop, as take_looked_up does for a stale theorem,
    rather than letting one bad delta abort every descendant theory's load. *)
 fun drop_illformed fname name cs =
   (HOL_WARNING "clasetLib" fname
@@ -880,27 +880,27 @@ fun apply_tyinfo_rules rules cs =
     (fn (rule, acc) => add_tyinfo_rule rule acc)
     cs rules
 
-fun collect_typebase_rules ctxt contributions =
+fun collect_typebase_rules elts contributions =
   let
     fun collect (tyi, rev_rules) =
       List.revAppend (rules_for_tyinfo contributions tyi, rev_rules)
   in
-    List.rev (List.foldl collect [] (TypeBase.elts_of ctxt))
+    List.rev (List.foldl collect [] elts)
   end
 
-fun catch_up_typebase ctxt cs =
-  catch_up_distinct ctxt (#1
+fun catch_up_typebase elts cs =
+  catch_up_distinct elts (#1
     (apply_tyinfo_rules
-      (collect_typebase_rules ctxt (!tyinfo_contributions)) (cs, [])))
+      (collect_typebase_rules elts (!tyinfo_contributions)) (cs, [])))
 
-fun reconcile_typebase ctxt contributions state =
+fun reconcile_typebase elts contributions state =
   let
     val (state', remaining) =
       reconcile_owned (fn _ => true)
-        (collect_typebase_rules ctxt contributions) state
+        (collect_typebase_rules elts contributions) state
   in
     let val (cs, owned) = apply_tyinfo_rules remaining state'
-    in (catch_up_distinct ctxt cs, owned) end
+    in (catch_up_distinct elts cs, owned) end
   end
 
 fun reconcile_tyinfo contributions tyi state =
@@ -915,26 +915,26 @@ fun reconcile_tyinfo contributions tyi state =
     in (reconcile_distinct tyi cs, owned) end
   end
 
-fun replay_pending ctxt typebase_rules [] (cs, owned, caught_up) =
+fun replay_pending elts typebase_rules [] (cs, owned, caught_up) =
       if caught_up then (cs, owned)
       else
         let val (cs', owned') = apply_tyinfo_rules typebase_rules (cs, owned)
-        in (catch_up_distinct ctxt cs', owned') end
-  | replay_pending ctxt typebase_rules (update :: updates)
+        in (catch_up_distinct elts cs', owned') end
+  | replay_pending elts typebase_rules (update :: updates)
       (cs, owned, caught_up) =
       (case update of
            CatchUpTypeBase catchup =>
              let
                val (cs', owned') =
-                 reconcile_typebase ctxt catchup (cs, owned)
+                 reconcile_typebase elts catchup (cs, owned)
              in
-               replay_pending ctxt typebase_rules updates
+               replay_pending elts typebase_rules updates
                  (cs', owned', true)
              end
          | Modify f =>
              let val cs' = f cs
              in
-               replay_pending ctxt typebase_rules updates
+               replay_pending elts typebase_rules updates
                  (cs', live_owned cs' owned, false)
              end
          | UpdateTypeInfo {contributions, tyi} =>
@@ -942,17 +942,16 @@ fun replay_pending ctxt typebase_rules [] (cs, owned, caught_up) =
                val (cs', owned') =
                  reconcile_tyinfo contributions tyi (cs, owned)
              in
-               replay_pending ctxt typebase_rules updates
+               replay_pending elts typebase_rules updates
                  (cs', owned', true)
              end)
 
-fun init_state_of _ (state as (_, _, Ready)) = state
-  | init_state_of ctxt (cs, owned, Pending pending) =
+fun init_state_of _ _ (state as (_, _, Ready)) = state
+  | init_state_of elts contributions (cs, owned, Pending pending) =
     let
-      val typebase_rules =
-        collect_typebase_rules ctxt (!tyinfo_contributions)
+      val typebase_rules = collect_typebase_rules elts contributions
       val (cs', owned') =
-        replay_pending ctxt typebase_rules (List.rev pending)
+        replay_pending elts typebase_rules (List.rev pending)
           (cs, owned, false)
     in
       (cs', owned', Ready)
@@ -987,6 +986,21 @@ val adresult : (cdelta, cstate) AncestryData.fullresult =
 
 fun update_claset f = #update_global_value adresult (modify f)
 
+(* A pending state caught up against a TypeBase.  The replay reads
+   nothing but the state, the TypeBase's entries and the recorded
+   contributions, all compared by identity, so a context whose own
+   state stays pending -- a proof's snapshot -- replays it once rather
+   than at every read. *)
+val caught_up =
+  memoUtil.keyed_memo
+    (fn (state, elts, contributions) =>
+     fn (state', elts', contributions') =>
+       Portable.pointer_eq (state, state') andalso
+       Portable.pointer_eq (contributions, contributions') andalso
+       Lib.list_eq (Lib.curry Portable.pointer_eq) elts elts')
+    (fn (state, elts, contributions) =>
+       init_state_of elts contributions state)
+
 (* The claset of the context given.  A state still pending is caught up
    in that context, reading its TypeBase (the theorems its deltas name
    were looked up when they were recorded).  The result is recorded, so
@@ -998,7 +1012,8 @@ fun the_claset_of ctxt =
       (cs, _, Ready) => cs
     | state =>
         let
-          val state' = init_state_of ctxt state
+          val state' =
+            caught_up (state, TypeBase.elts_of ctxt, !tyinfo_contributions)
         in
           #update_global_value adresult
             (fn current =>
@@ -1040,7 +1055,8 @@ fun request_typebase_catchup contributions
       (cs, owned, Ready) =
       let
         val (cs', owned') =
-          reconcile_typebase (Context.snapshot ()) contributions (cs, owned)
+          reconcile_typebase (TypeBase.elts_of (Context.snapshot ()))
+            contributions (cs, owned)
       in (cs', owned', Ready) end
   | request_typebase_catchup contributions
       (cs, owned, Pending pending) =
@@ -1195,10 +1211,10 @@ fun persistent_claset_of_theory thy = Option.map #1 (#DB adresult thy)
 (* Preserve the historical effective view by catching the persistent state up
    with the caller's current TypeBase, just as [the_claset] does. *)
 fun claset_of_theory thy =
-  Option.map (catch_up_typebase (Context.snapshot ()))
+  Option.map (catch_up_typebase (TypeBase.elts_of (Context.snapshot ())))
     (persistent_claset_of_theory thy)
 fun merge_clasets thys =
-  Option.map (catch_up_typebase (Context.snapshot ()) o #1)
+  Option.map (catch_up_typebase (TypeBase.elts_of (Context.snapshot ())) o #1)
     (#merge adresult thys)
 fun with_claset cs =
   AncestryData.with_temp_value adresult (cs, [], Ready)
@@ -2006,6 +2022,15 @@ fun with_invocation_fact_env_budgeted budget options body base_cs simpset =
     (clasetFacts.create_with_charge (searchBudget.charge budget))
     (searchBudget.charge budget)
     options body base_cs simpset
+
+fun no_extra_markers theorems cs = (cs, theorems)
+
+fun with_context_claset consumer body theorems goal ctxt =
+  with_invocation_fact_env
+    {iff_prefix="", extra_markers=no_extra_markers, consumer=consumer}
+    (fn cs => fn _ => fn _ => fn _ => body cs)
+    (the_claset_of ctxt)
+    (NONE : unit invocation_simpset option) theorems goal ctxt
 
 fun with_invocation_args {iff_prefix,extra_markers} body =
   with_invocation_fact_env

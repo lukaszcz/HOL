@@ -883,7 +883,7 @@ val _ =
          val name = {Thy = "bool", Name = "AND_IMP_INTRO"}
          val spec = {kind = clasetRules.Intro, safe = true, prio = NONE}
        in
-         (case load_delta (ADD {name = name, spec = spec}) of
+         (case take_looked_up (look_up {name = name, spec = spec}) of
              SOME (name', spec', th) =>
                name = name' andalso same_spec spec spec' andalso
                aconv_thm th boolTheory.AND_IMP_INTRO

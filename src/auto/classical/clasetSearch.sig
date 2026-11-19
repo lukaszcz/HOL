@@ -13,7 +13,8 @@ sig
   val DEPTH_FIRST : int -> (node -> bool) -> expansion -> expansion
   val DEPTH_SOLVE : int -> expansion -> expansion
   val BEST_FIRST : int -> (node -> bool) -> expansion -> expansion
-  (* [BEST_FIRST] with its own bound in place of [node_limit]. *)
+  (* [BEST_FIRST] with its own bound, given first, in place of
+     [node_limit]. *)
   val BOUNDED_BEST_FIRST :
     int -> int -> (node -> bool) -> expansion -> expansion
   val ASTAR : int -> (node -> bool) -> expansion -> expansion

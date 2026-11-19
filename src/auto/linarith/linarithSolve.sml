@@ -25,6 +25,12 @@ type linarith_config = linarithData.linarith_config
    reports at. *)
 type work = {meter : searchBudget.charger, verbosity : int}
 
+fun free_work verbosity : work =
+  {meter = searchBudget.free_charger, verbosity = verbosity}
+
+fun budget_work budget verbosity : work =
+  {meter = searchBudget.charger budget, verbosity = verbosity}
+
 fun candidate (work : work) = #candidate (#meter work) ()
 fun application (work : work) = #application (#meter work) ()
 fun normalization (work : work) = #normalization (#meter work) ()
@@ -538,8 +544,7 @@ fun atoms_of_decomps_with work decomps =
 
 (* Collecting atoms reports nothing, so no level is asked for. *)
 fun atoms_of_decomps decomps =
-  atoms_of_decomps_with
-    {meter = searchBudget.free_charger, verbosity = 0} decomps
+  atoms_of_decomps_with (free_work 0) decomps
 
 fun refutes_with work is_nonnegative systems =
   let
@@ -603,8 +608,7 @@ fun prove_decomposed_with work
 
 fun prove_decomposed verbosity config decompose is_nonnegative hypotheses
       conclusion =
-  prove_decomposed_with
-    {meter = searchBudget.free_charger, verbosity = verbosity}
+  prove_decomposed_with (free_work verbosity)
     config decompose is_nonnegative hypotheses conclusion
 
 fun prove_with work config decompose is_nonnegative hypotheses conclusion =
@@ -614,7 +618,7 @@ fun prove_with work config decompose is_nonnegative hypotheses conclusion =
       hypotheses) conclusion
 
 fun prove verbosity config decompose is_nonnegative hypotheses conclusion =
-  prove_with {meter = searchBudget.free_charger, verbosity = verbosity}
+  prove_with (free_work verbosity)
     config decompose is_nonnegative hypotheses conclusion
 
 datatype budget_outcome =
@@ -627,9 +631,7 @@ fun prove_budgeted verbosity budget config decompose is_nonnegative
       hypotheses conclusion =
   let
     val (split_neq, result) =
-      prove_with
-        {meter = searchBudget.charger budget, verbosity = verbosity}
-        config decompose
+      prove_with (budget_work budget verbosity) config decompose
         is_nonnegative hypotheses conclusion
   in
     case result of
@@ -645,9 +647,7 @@ fun prove_decomposed_budgeted verbosity budget config decompose
       is_nonnegative hypotheses conclusion =
   let
     val (split_neq, result) =
-      prove_decomposed_with
-        {meter = searchBudget.charger budget, verbosity = verbosity}
-        config decompose
+      prove_decomposed_with (budget_work budget verbosity) config decompose
         is_nonnegative hypotheses conclusion
   in
     case result of

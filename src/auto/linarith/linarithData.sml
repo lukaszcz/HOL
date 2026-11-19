@@ -79,33 +79,11 @@ fun generation () = Sref.value registry_generation
 fun bump_generation () =
   Sref.update registry_generation (fn count => count + 1)
 
-(* The equality is the caller's because not every source of a key is an
-   equality type: a derivation keyed on a table of theorems compares
-   them by pointer.  A false key comparison costs a recomputation and
-   nothing else, so the cache cell needs no more synchronization than
-   the source it is read against. *)
-fun keyed_memo same compute =
-  let
-    val cache = ref NONE
-    fun recompute key =
-      let
-        val value = compute key
-      in
-        cache := SOME (key, value); value
-      end
-  in
-    fn key =>
-      case !cache of
-          SOME (recorded, value) =>
-            if same recorded key then value else recompute key
-        | NONE => recompute key
-  end
-
 (* A memo whose key is read from the session rather than passed in:
    compute takes no argument, and each call reads key for itself. *)
 fun memo_on key compute =
   let
-    val cached = keyed_memo Lib.equal (fn _ => compute ())
+    val cached = memoUtil.keyed_memo Lib.equal (fn _ => compute ())
   in
     fn () => cached (key ())
   end
@@ -409,7 +387,8 @@ fun same_splits (left_generation, left_thms) (right_generation, right_thms) =
 
 fun memo_with_splits compute =
   let
-    val cached = keyed_memo same_splits (fn (_, splits) => compute splits)
+    val cached =
+      memoUtil.keyed_memo same_splits (fn (_, splits) => compute splits)
   in
     fn ctxt => cached (generation (), arith_split_thms_of ctxt)
   end

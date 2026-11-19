@@ -633,14 +633,12 @@ fun minor_prefixes policy is_elim premises =
 (* A Match step that would leave premise variables unfixed is refused.
    The safe cascades, which run in a context, note the refusal at its
    classical.trace level.  Unify steps never refuse; rules supplied without
-   a context, as aesop's are, note nothing, as the forward path does. *)
-fun skip_note ctxt =
-  let val verbosity = clasetReplay.trace_level_of ctxt
-  in
-    fn () =>
-      trace verbosity 1
-        (fn () => "skipping safe rule with unfixed premise variables")
-  end
+   a context, as aesop's are, note nothing, as the forward path does.
+   The level is read only when a refusal is noted, off the cascade's
+   path. *)
+fun skip_note ctxt () =
+  trace (clasetReplay.trace_level_of ctxt) 1
+    (fn () => "skipping safe rule with unfixed premise variables")
 
 fun no_note () = ()
 
@@ -1518,17 +1516,20 @@ fun gen_results_in ctxt (input as (node, pos)) =
     | NONE => seq.empty
 
 fun safe_cascade_in ctxt cs input =
-  first_nonempty
-    [assumption_results,
-     eq_mp_results,
-     rule_results (skip_note ctxt) clasetUnify.Match cs false
-       (clasetLib.safe0_part cs) all_weights,
-     builtin_results_in ctxt,
-     swapped_builtin_results_in ctxt,
-     hyp_subst_results_in ctxt,
-     rule_results (skip_note ctxt) clasetUnify.Match cs false
-       (clasetLib.safep_part cs) all_weights]
-    input
+  let val note_skip = skip_note ctxt
+  in
+    first_nonempty
+      [assumption_results,
+       eq_mp_results,
+       rule_results note_skip clasetUnify.Match cs false
+         (clasetLib.safe0_part cs) all_weights,
+       builtin_results_in ctxt,
+       swapped_builtin_results_in ctxt,
+       hyp_subst_results_in ctxt,
+       rule_results note_skip clasetUnify.Match cs false
+         (clasetLib.safep_part cs) all_weights]
+      input
+  end
 
 fun close_plain goal =
   let
@@ -2114,8 +2115,6 @@ fun inst0_step cs = inst0_step_with listUtil.no_checkpoint cs
 
 fun inst_step_in ctxt cs =
   wrapped_step_in ctxt no_wrappers (inst_cascade listUtil.no_checkpoint) cs
-
-fun inst_step cs = inst_step_in (Context.snapshot ()) cs
 
 fun unsafe_step cs = wrapped_step no_wrappers unsafe_cascade cs
 
