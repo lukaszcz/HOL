@@ -259,12 +259,7 @@ struct
            (denied andalso retired other andalso not (retired e) andalso
             #source (C.endpoints conversion) = #source p e) end) entries
 
-  (* The kernel counts inferences only while asked to. *)
-  fun counting action =
-    (Count.counting_thms true;
-     (action () before Count.counting_thms false)
-     handle e => (Count.counting_thms false; raise e))
-  fun run_all () = counting (fn () =>
+  fun run_all () = X.counting (fn () =>
     (test "int carriers convert through the three entries" conversions;
      test "int repeated execution is refused" repeated_execution;
      test "int execution in a retired scope is refused" retired_scope;

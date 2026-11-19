@@ -247,30 +247,42 @@ struct
           charged e >= prepared) end) provers)
 
   (* Goals and metadata the shared policy section refuses, in both provers:
-     the refusal comes from preparation, with the owner retired, no
-     callback and no theorem made. *)
-  fun refusal_in_prepare p (e : X.fixture) message =
-    let val calls = ref 0 val count = Count.thm_count ()
+     the refusal comes from preparation, with the owner retired and no
+     callback. [fits] says whether the refusal made an admissible number of
+     inferences, counted from just before the preparation. *)
+  fun inferences () = #total (Count.thm_count ())
+  fun refusal_in_prepare fits p (e : X.fixture) message =
+    let val calls = ref 0 val count = inferences ()
         val reason = (ignore (prepare_with p e [] calls); NONE)
           handle Feedback.HOL_ERR err => SOME (Feedback.message_of err)
     in require (#name p ^ " did not refuse with: " ^ message)
-         (reason = SOME message andalso settled e calls count) end
+         (reason = SOME message andalso retired e andalso !calls = 0 andalso
+          fits (inferences () - count)) end
+  (* The goals are refused before any theorem is made. *)
+  val refusal_before_theorems = refusal_in_prepare (fn made => made = 0)
   fun refused_goals () =
     List.app (fn p =>
       List.app (fn (term,message) =>
-        refusal_in_prepare p
+        refusal_before_theorems p
           (X.setup term HolSmtTheory.NUM_FORALL_TO_INT native) message)
         [(``!b:bool->int. T``,"carrier is neither num nor arbitrary bag"),
          (``?!n:num. T``,"not forall or exists"),
          (``(P:(num->bool)->bool) (\n:num. T)``,"not a constant quantifier")])
       provers
+  (* The output limit is checked once the stock law is instantiated, so
+     the refusal makes some inferences, but fewer than a complete run. *)
   fun refused_output_metadata () =
     List.app (fn p =>
-      refusal_in_prepare p
+      let val start = inferences ()
+          val e = X.setup ``!n:num. T`` HolSmtTheory.NUM_FORALL_TO_INT native
+          val calls = ref 0
+          val _ = prepare_with p e [] calls ()
+          val whole = inferences () - start
+      in refusal_in_prepare (fn made => made < whole) p
         (X.setup_policy {input_limit=RP.Uncapped,output_limit=RP.AtMost 1,
            template_limit=RP.Uncapped} RP.Uncapped ``!n:num. T``
            HolSmtTheory.NUM_FORALL_TO_INT native)
-        "prospective output exceeds metadata policy") provers
+        "prospective output exceeds metadata policy" end) provers
 
   fun repeated_execution () =
     List.app (fn p =>
@@ -345,7 +357,7 @@ struct
             #retired (at for_prepare) andalso
             #final (at (for_all - 1)) < #final whole) end
 
-  fun run_all () =
+  fun run_all () = X.counting (fn () =>
     (test "policy closures convert in both policy provers" closures;
      test "opaque predicate: ordinary rejects, profiled accepts"
        opaque_predicate;
@@ -361,6 +373,6 @@ struct
          (fn () => work_allowance p)) provers;
      List.app (fn p =>
        test (#name p ^ " native allowance at exact and one below")
-         (fn () => native_allowance p)) provers)
+         (fn () => native_allowance p)) provers))
   val run = run_all
 end

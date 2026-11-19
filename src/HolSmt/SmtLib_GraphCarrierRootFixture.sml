@@ -26,6 +26,12 @@ struct
     work:W.portfolio,native:NC.contract,admission:Q.policy_focus,
     law:P.closed_fact,node:G.node}
   fun require text yes = if yes then () else raise Fail text
+  (* The kernel counts inferences (Count.thm_count) only while asked to;
+     a test that compares counts runs inside [counting]. *)
+  fun counting action =
+    (Count.counting_thms true;
+     (action () before Count.counting_thms false)
+     handle e => (Count.counting_thms false; raise e))
   (* [policy] is the Work portfolio's metadata policy and [work_limit]
      bounds the portfolio, setup included. *)
   fun setup_policy policy work_limit term fixed limits : fixture =
