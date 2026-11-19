@@ -54,6 +54,13 @@ struct
            Portable.pointer_eq (rows,!backing) then
          validated := SOME (revision,rows) else changed ())
     end
+  (* The actual-source record that admission and receipt calls take. *)
+  fun expected_with graph sources work scope =
+    {graph=graph,scope=scope,sources=sources,work=work}
+  (* The normalization ordinal of both owners: the owner is active and its
+     traversal valid before the traversal's ordinal is read. *)
+  fun ordinal_with active validate ordinal =
+    (active ();validate ();ordinal ())
   fun revalidate_with active fence validated =
     (fence := !fence+1;validated := NONE;active ())
   fun describe_with label {active,graph,root,scope,fence,described,frame,
@@ -597,6 +604,14 @@ struct
   exception Inapplicable
   fun outcome_target (result:('f,'p) outcome_of) = #target result
   fun outcome_proof (result:('f,'p) outcome_of) = #proof result
+  (* The result of one owner's execute: a normalization that changed
+     the source keeps its proof; an unchanged one yields the sealed
+     identity proof only when [require_proof]. *)
+  fun converted_with require_proof normalized identity_proof make =
+    case normalized () of
+      SOME result => SOME (make (outcome_proof result))
+    | NONE => if require_proof then SOME (make (identity_proof ()))
+      else NONE
   (* The condition-discharge tail of both owners' one-focus rewrite, from
      the capture of the instance's conditions to the sealed leaf. The
      owner supplies the operations that differ: [condition] captures
@@ -675,8 +690,8 @@ struct
         "validation state changed during backing pass"}
   fun revalidate (owner as Owner {validated,fence,...}) =
     revalidate_with (fn () => active owner) fence validated
-  fun expected (Owner {graph,sources,work,...}) scope =
-    {graph=graph,scope=scope,sources=sources,work=work}
+  fun expected (Owner {graph,sources,work,...}) =
+    expected_with graph sources work
   fun describe (owner as Owner {work,graph,root,fence,...})
       (Focus {admission,frame,scope,described,...}) : description =
     describe_with "describe" {active=fn () => active owner,graph=graph,
@@ -711,8 +726,9 @@ struct
     action_with work (fn () => ignore (describe owner focus))
       (fn () => W.spend work 1) operation
   fun ordinal (owner as Owner {work,traversal,...}) =
-    (active owner;T.validate_for work traversal;
-     T.normalization_ordinal traversal)
+    ordinal_with (fn () => active owner)
+      (fn () => T.validate_for work traversal)
+      (fn () => T.normalization_ordinal traversal)
   fun policy (owner as Owner {check_type,...}) focus ty =
     (* active checks original owner/epochs/stack/private Scope lifetimes on
        every call, and forces backing geometry on a genuine G revision or
@@ -1053,13 +1069,9 @@ struct
       (Plan {owner=owner as Owner {running,...},source,used}) =
     execute_with "execute" (protect owner) (fn () => active owner)
       running used (fn () =>
-      let val converted = normalize owner source
-      in case converted of SOME result =>
-           SOME (Result {owner=owner,source=source,proof= #proof result})
-         | NONE => if require_proof then
-             SOME (Result {owner=owner,source=source,
-               proof= #proof (seal owner source (identity owner source))})
-           else NONE end)
+      converted_with require_proof (fn () => normalize owner source)
+        (fn () => #proof (seal owner source (identity owner source)))
+        (fn proof => Result {owner=owner,source=source,proof=proof}))
   fun execute plan = valOf (execute_internal true plan)
   fun execute_changed plan = execute_internal false plan
   fun core_for expected
@@ -1171,8 +1183,8 @@ struct
           "validation state changed during backing"}
     fun revalidate(owner as Owner{validated,fence,...})=
       revalidate_with(fn()=>active owner)fence validated
-    fun expected(Owner{graph,sources,work,...})scope=
-      {graph=graph,scope=scope,sources=sources,work=work}
+    fun expected(Owner{graph,sources,work,...})=
+      expected_with graph sources work
     fun describe(owner as Owner{work,graph,root,fence,...})
         (Focus{admission,frame,scope,described}):description=
       describe_with "policy_simple" {active=fn()=>active owner,graph=graph,
@@ -1198,8 +1210,9 @@ struct
       action_with work(fn()=>ignore(describe owner focus))
         (fn()=>W.spend_policy work 1)operation
     fun ordinal(owner as Owner{work,traversal,...})=
-      (active owner;T.validate_carrier_with_policy_for work traversal;
-       T.carrier_normalization_ordinal_with_policy_for work traversal)
+      ordinal_with(fn()=>active owner)
+        (fn()=>T.validate_carrier_with_policy_for work traversal)
+        (fn()=>T.carrier_normalization_ordinal_with_policy_for work traversal)
     fun policy(owner as Owner{check_type,...})focus ty=
       checked_type(fn()=>active owner)
         (fn()=>ignore(describe owner focus))check_type ty
@@ -1879,14 +1892,11 @@ struct
         (Plan{owner=owner as Owner{running,...},source,used})=
       execute_with "policy_simple" (protect owner)(fn()=>active owner)
         running used(fn()=>
-        let val converted=PolicySimpleNormalize.normalize
-              discover lift owner source
-        in case converted of SOME result=>
-             SOME(Result{owner=owner,source=source,proof= #proof result})
-          | NONE=>if require_proof then
-              SOME(Result{owner=owner,source=source,
-                proof= #proof(PolicySimpleProof.seal owner source
-                  (identity owner source))})else NONE end)
+        converted_with require_proof
+          (fn()=>PolicySimpleNormalize.normalize discover lift owner source)
+          (fn()=> #proof(PolicySimpleProof.seal owner source
+            (identity owner source)))
+          (fn proof=>Result{owner=owner,source=source,proof=proof}))
   end
 
   structure PolicySimpleLambda =
