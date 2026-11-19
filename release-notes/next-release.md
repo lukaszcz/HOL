@@ -237,10 +237,10 @@ Bugs fixed
 -   HolSmt's natural-number preprocessing now tolerates duplicate assumptions,
     including assumptions made identical by numeral normalization.
 
--   HolSmt's natural-number preprocessing no longer treats integer literals
-    such as `2 : int` as natural numbers, and no longer rewrites the goal
-    with assumptions that mention no natural number.  The solver now
-    receives those assumptions, and its proof can cite them.
+-   HolSmt's natural-number preprocessing no longer rewrites the goal with
+    assumptions that mention no natural number (an integer literal such as
+    `2 : int` doesn't count).  The solver now receives those assumptions,
+    and its proof can cite them.
     `Z3_TAC` replays the steps this exposes: a one-term sum `(+ t)`,
     rewrites in which Z3 expands an asserted definition, `seq.at` and
     `seq.extract`, a `select` with several indices, and set membership,

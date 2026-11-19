@@ -19367,6 +19367,8 @@ let
         "regrouped assertion introduced a derived hypothesis");
       check_oracle_tags "regrouped asserted node" theorem
     end
+  fun sequence name args = boolSyntax.list_mk_icomb
+    (Term.prim_mk_const {Thy = "HolSmt", Name = name}, args)
   val aliases =
     [(``(x:int) <> y``, ``ALL_DISTINCT [x:int; y]``),
      (``(x:int) <> y``, ``ALL_DISTINCT [x:int; y] /\ T``),
@@ -19385,7 +19387,16 @@ let
      (``~~((((7:int) INSERT zs) DIFF ((7:int) INSERT zt)) (7:int))``,
       ``~~(((((7:int) =+ T) zs) DIFF (((7:int) =+ T) zt)) (7:int))``),
      (``((zs:int set) DELETE (7:int)) (8:int)``,
-      ``(((7:int) =+ F) zs) (8:int)``)]
+      ``(((7:int) =+ F) zs) (8:int)``),
+     (* seq.at and seq.extract written unfolded in the goal *)
+     (``(if (zi:int) < 0 \/ LENGTH (zl:int list) <= Num zi then []
+         else [EL (Num zi) zl]) = [7]``,
+      boolSyntax.mk_eq (sequence "smt_seq_at" [``zl:int list``, ``zi:int``],
+        ``[7:int]``)),
+     (``(if (zi:int) < 0 \/ (zn:int) <= 0 \/ LENGTH (zl:int list) <= Num zi
+         then [] else TAKE (Num zn) (DROP (Num zi) zl)) = [7]``,
+      boolSyntax.mk_eq (sequence "smt_seq_extract"
+        [``zl:int list``, ``zi:int``, ``zn:int``], ``[7:int]``))]
   fun check_encoding (source, target) =
     let
       val initial = Z3_Proof.empty_proof "4.15.3"

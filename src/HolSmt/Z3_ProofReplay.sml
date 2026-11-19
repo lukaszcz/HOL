@@ -2085,12 +2085,18 @@ local
     [pred_setTheory.SPECIFICATION, HolSmtTheory.z3_set_insert_update,
      HolSmtTheory.z3_set_delete_update]
 
+  (* A goal can write seq.at and seq.extract over a list as the HolSmt
+     constants or as their unfolded definitions, which translate alike;
+     Z3's echo parses back as the constants.  Unfold both. *)
+  val assertion_sequence_rewrites =
+    [HolSmtTheory.smt_seq_at_def, HolSmtTheory.smt_seq_extract_def]
+
   fun assertion_encoding_conv target =
     Conv.QCONV (Conv.DEPTH_CONV (Conv.FIRST_CONV
       (ALL_DISTINCT_CONV :: assertion_word_literal_conv ::
        List.map Conv.REWR_CONV
          (wordsTheory.w2w_id :: assertion_unit_rewrites @
-          assertion_set_rewrites)))) target
+          assertion_set_rewrites @ assertion_sequence_rewrites)))) target
 
   fun z3_asserted (state : state, t) =
   let
