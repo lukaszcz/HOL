@@ -289,12 +289,19 @@ sig
 
    val SIMP_PROVE : simpset -> thm list -> term -> thm
    val SIMP_CONV  : simpset -> thm list -> conv
+   (* As SIMP_PROVE and SIMP_CONV, with the traversal's context given. *)
+   val SIMP_PROVE_IN : Context.t -> simpset -> thm list -> term -> thm
+   val SIMP_CONV_IN  : Context.t -> simpset -> thm list -> conv
    (* As SIMP_CONV, but simplifies subterms before the terms containing
       them, following the policy (see TraverseExt.child_first_policy).
       The ETA_CONV rewrite also leaves the abstractions the policy keeps.
       Exceptions raised by the policy propagate. *)
    val SIMP_CONV_CHILD_FIRST :
      TraverseExt.child_first_policy -> simpset -> thm list -> conv
+   (* As SIMP_CONV_CHILD_FIRST, with the traversal's context given. *)
+   val SIMP_CONV_CHILD_FIRST_IN :
+     Context.t -> TraverseExt.child_first_policy -> simpset -> thm list ->
+     conv
 
    (* Child-first simplification with a simpset, prepared once for
       repeated use.  normalize ths simplifies with the theorems ths as
@@ -313,6 +320,19 @@ sig
       reducers and side-condition solvers, even where they fail. *)
    val prepare_child_first_observed :
      (term -> unit) -> TraverseExt.child_first_policy -> simpset ->
+     {normalize : thm list -> conv,
+      arguments : thm list -> conv,
+      may_reduce_arguments : term -> bool}
+   (* As prepare_child_first and prepare_child_first_observed, with the
+      context of the conversions' traversals given. *)
+   val prepare_child_first_in :
+     Context.t -> TraverseExt.child_first_policy -> simpset ->
+     {normalize : thm list -> conv,
+      arguments : thm list -> conv,
+      may_reduce_arguments : term -> bool}
+   val prepare_child_first_observed_in :
+     Context.t -> (term -> unit) -> TraverseExt.child_first_policy ->
+     simpset ->
      {normalize : thm list -> conv,
       arguments : thm list -> conv,
       may_reduce_arguments : term -> bool}
@@ -406,6 +426,9 @@ sig
 
    val SIMP_RULE     : simpset -> thm list -> thm -> thm
    val ASM_SIMP_RULE : simpset -> thm list -> thm -> thm
+   (* As SIMP_RULE and ASM_SIMP_RULE, with the traversal's context given. *)
+   val SIMP_RULE_IN     : Context.t -> simpset -> thm list -> thm -> thm
+   val ASM_SIMP_RULE_IN : Context.t -> simpset -> thm list -> thm -> thm
 
    (* ---------------------------------------------------------------------*)
    (* Reporting which rewrite rules actually fired.  This is an aid for a

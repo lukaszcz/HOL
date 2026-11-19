@@ -33,15 +33,19 @@ congLibFn
      fun traversal ss =
        let
          val config = simpExtLib.traverseconfig_for_ss ss
-         val ({rewriters,dprocs,travrules,...},traverse) =
+         val ({rewriters,dprocs,travrules,...},traverse,traverse_in) =
            case config of
                {subgoaler=NONE,solvers=[],cond_depth=NONE,term_ord=NONE} =>
-                 (simpExtLib.traversedata_for_ss ss, TraverseExt.TRAVERSE)
+                 (simpExtLib.traversedata_for_ss ss, TraverseExt.TRAVERSE,
+                  TraverseExt.TRAVERSE_IN)
              | _ =>
                  (#1 (simpExtLib.xtraversedata_for_ss ss),
-                  fn data => TraverseExt.XTRAVERSE (data,config))
+                  fn data => TraverseExt.XTRAVERSE (data,config),
+                  fn ctxt => fn data =>
+                     TraverseExt.XTRAVERSE_IN ctxt (data,config))
        in
-         ({rewriters=rewriters, dprocs=dprocs, travrules=travrules}, traverse)
+         ({rewriters=rewriters, dprocs=dprocs, travrules=travrules},
+          traverse, traverse_in)
        end
    end)
 open Generic

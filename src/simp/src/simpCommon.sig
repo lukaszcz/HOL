@@ -100,7 +100,7 @@ sig
   val caa_tac0 : bool -> simptac_config -> thm -> tactic
   val stdcon : simptac_config -> thm -> tactic
   val full_simp_tacs :
-      {simp_rule : 's -> thm list -> thm -> thm,
+      {simp_rule : Context.t -> 's -> thm list -> thm -> thm,
        asm_simp_tac : 's -> thm list -> tactic} ->
       {FULL_SIMP_TAC : 's -> thm list -> tactic,
        REV_FULL_SIMP_TAC : 's -> thm list -> tactic,

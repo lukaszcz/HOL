@@ -35,6 +35,6 @@ congLibFn
        let val {rewriters,dprocs,travrules,...} = simpLib.traversedata_for_ss ss
        in
          ({rewriters=rewriters, dprocs=dprocs, travrules=travrules},
-          Traverse.TRAVERSE)
+          Traverse.TRAVERSE, Traverse.TRAVERSE_IN)
        end
    end)

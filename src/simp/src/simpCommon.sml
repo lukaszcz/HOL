@@ -515,9 +515,14 @@ let
    fun GEN_FULL_SIMP_TAC (drop, r) tac =
       fn ss => fn thms =>
          let
-            fun simp_asm (t, l') = simp_rule ss (l' @ thms) t :: l'
-            fun f asms = MAP_EVERY tac (List.foldl simp_asm [] (r asms))
-                         THEN drop (List.length asms)
+            fun f asms g ctxt =
+               let
+                  fun simp_asm (t, l') =
+                     simp_rule ctxt ss (l' @ thms) t :: l'
+               in
+                  (MAP_EVERY tac (List.foldl simp_asm [] (r asms))
+                   THEN drop (List.length asms)) g ctxt
+               end
          in
             markerLib.ABBRS_THEN
                (fn l => ASSUM_LIST f THEN asm_simp_tac ss l) thms

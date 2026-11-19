@@ -127,3 +127,37 @@ val () =
           die ("current theory is " ^ Theory.current_theory () ^
                ", not the name returned to")
         else OK ()
+
+(* RW_TAC and SRW_TAC hand the context they are applied with to the
+   reducers they run, not the ambient one. *)
+val _ =
+  let
+    val slot = Context.Data.new {name = "BasicProvers selftest context probe",
+                                 empty = 0, pp = Int.toString}
+    fun in_slot n f = Context.Data.with_slot_value slot n f ()
+    val seen = ref ([] : int list)
+    val recording =
+      Traverse.REDUCER
+        {name = NONE, initial = Fail "probe", addcontext = #1,
+         apply = fn {ctxt,...} => fn tm =>
+                    (seen := Context.Data.get slot ctxt :: !seen;
+                     Conv.NO_CONV tm)}
+    val frag = simpLib.dproc_ss recording
+    val explicit = in_slot 7 Context.snapshot
+    val goal = ([] : Term.term list, “probe_f ∧ T”)
+    fun applied what tac =
+      (tprint what;
+       seen := [];
+       in_slot 3 (fn () =>
+         ignore (tac goal explicit)
+         handle Feedback.HOL_ERR _ => () | Conv.UNCHANGED => ());
+       if null (!seen) then die "nothing was applied"
+       else if List.all (fn n => n = 7) (!seen) then OK ()
+       else die "a reducer saw the wrong context")
+  in
+    applied "SRW_TAC passes its context" (SRW_TAC [frag] []);
+    applied "RW_TAC passes its context"
+      (RW_TAC (boolSimps.bool_ss ++ frag) []);
+    applied "NORM_TAC passes its context"
+      (NORM_TAC (boolSimps.bool_ss ++ frag) [])
+  end

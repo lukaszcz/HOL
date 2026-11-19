@@ -193,6 +193,9 @@ sig
 
    val SIMP_PROVE : simpset -> thm list -> term -> thm
    val SIMP_CONV  : simpset -> thm list -> conv
+   (* As SIMP_PROVE and SIMP_CONV, with the traversal's context given. *)
+   val SIMP_PROVE_IN : Context.t -> simpset -> thm list -> term -> thm
+   val SIMP_CONV_IN  : Context.t -> simpset -> thm list -> conv
 
    (* ---------------------------------------------------------------------
     * SIMP_TAC : simpset -> tactic
@@ -253,6 +256,9 @@ sig
 
    val SIMP_RULE     : simpset -> thm list -> thm -> thm
    val ASM_SIMP_RULE : simpset -> thm list -> thm -> thm
+   (* As SIMP_RULE and ASM_SIMP_RULE, with the traversal's context given. *)
+   val SIMP_RULE_IN     : Context.t -> simpset -> thm list -> thm -> thm
+   val ASM_SIMP_RULE_IN : Context.t -> simpset -> thm list -> thm -> thm
 
    (* ---------------------------------------------------------------------*)
    (* Reporting which rewrite rules actually fired.  This is an aid for a

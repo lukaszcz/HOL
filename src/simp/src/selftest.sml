@@ -716,6 +716,109 @@ val _ =
         (reset (); ignore (QCONV conv xtm);
          sees "XTRAVERSE again" 5 (!seen_by_solver)));
       OK ()
+    end;
+
+    (* The tactics and the conversions with an _IN form pass the context
+       they are applied with on to the reducers and solvers they run. *)
+    let
+      val seen_terms = ref ([] : (int * term) list)
+      val recording =
+        Traverse.REDUCER
+          {name = NONE, initial = Fail "probe", addcontext = #1,
+           apply = fn {ctxt,...} => fn tm =>
+                      (seen_terms := (value ctxt, tm) :: !seen_terms;
+                       NO_CONV tm)}
+      val rss = boolSimps.bool_ss ++ simpLib.dproc_ss recording
+      val xrss =
+        simpExtLib.mk_simpset
+          [simpExtLib.dproc_ss (TraverseExt.lift recording)]
+      val cong_ss = simpLib.mk_simpset [simpLib.dproc_ss recording]
+      val h = mk_var ("probe_h", bool)
+      val k = mk_var ("probe_k", bool)
+      val q = mk_var ("probe_q", bool)
+      val asm = mk_conj (h, k)
+      val goal = ([] : term list, mk_conj (f, boolSyntax.T))
+      val asm_goal = ([asm], mk_conj (f, boolSyntax.T))
+      fun saw tm = List.exists (fn (_, t) => aconv t tm) (!seen_terms)
+      fun forget () = (seen_terms := []; reset ())
+      fun all_see what expected =
+        if null (!seen_terms) then die (what ^ ": nothing was applied")
+        else if List.all (fn (n, _) => n = expected) (!seen_terms) then ()
+        else die (what ^ ": a reducer saw the wrong context")
+      fun swallow f x =
+        ignore (f x) handle HOL_ERR _ => () | Conv.UNCHANGED => ()
+      fun applied what tac g =
+        (tprint what;
+         forget ();
+         in_slot 3 (fn () => swallow (fn () => tac g explicit) ());
+         all_see what 7;
+         OK ())
+      fun applied_to_assumption what tac =
+        (applied what tac asm_goal;
+         if saw h then () else die (what ^ ": the assumption was not used"))
+      val cfg = {elimvars = false, strip = true, droptrues = true,
+                 oldestfirst = true}
+      val failing_solver : TraverseExt.ssolver =
+        {name = "failing probe solver",
+         solve = fn {ctxt,...} => fn c =>
+                    (seen_by_solver := value ctxt :: !seen_by_solver;
+                     raise mk_HOL_ERR "selftest" "probe" "declined")}
+      val tactic_solver =
+        simpExtLib.mk_tactic_solver
+          ("probe tactic solver",
+           fn g => fn ctxt =>
+              (seen_by_solver := value ctxt :: !seen_by_solver;
+               raise mk_HOL_ERR "selftest" "probe" "declined"))
+      fun solving what solver =
+        let
+          val sss = simpExtLib.mk_simpset [simpExtLib.solver_ss solver]
+        in
+          tprint what;
+          reset ();
+          in_slot 3 (fn () =>
+            swallow (fn () =>
+              simpExtLib.GEN_SIMP_TAC {safe = false} sss [] ([], q) explicit)
+              ());
+          sees what 7 (!seen_by_solver);
+          OK ()
+        end
+    in
+      applied "simpLib.SIMP_TAC passes its context"
+        (simpLib.SIMP_TAC rss []) goal;
+      applied "simpLib.ASM_SIMP_TAC passes its context"
+        (simpLib.ASM_SIMP_TAC rss []) asm_goal;
+      applied_to_assumption "simpLib.FULL_SIMP_TAC passes its context"
+        (simpLib.FULL_SIMP_TAC rss []);
+      applied_to_assumption "simpLib.REV_FULL_SIMP_TAC passes its context"
+        (simpLib.REV_FULL_SIMP_TAC rss []);
+      applied_to_assumption "simpLib.global_simp_tac passes its context"
+        (simpLib.global_simp_tac cfg rss []);
+      applied "simpExtLib.SIMP_TAC passes its context"
+        (simpExtLib.SIMP_TAC xrss []) goal;
+      applied_to_assumption "simpExtLib.FULL_SIMP_TAC passes its context"
+        (simpExtLib.FULL_SIMP_TAC xrss []);
+      applied_to_assumption "simpExtLib.global_simp_tac passes its context"
+        (simpExtLib.global_simp_tac cfg xrss []);
+      applied_to_assumption "congLib.FULL_CONGRUENCE_SIMP_TAC"
+        (congLib.FULL_CONGRUENCE_SIMP_TAC congLib.empty_congset cong_ss []);
+      applied "simpExtLib.GEN_SIMP_TAC passes its context"
+        (simpExtLib.GEN_SIMP_TAC {safe = false} xrss []) goal;
+      solving "GEN_SIMP_TAC final solver sees the tactic's context"
+        failing_solver;
+      solving "mk_tactic_solver's tactic runs in the tactic's context"
+        tactic_solver;
+      tprint "SIMP_CONV_IN: reducers see the context given";
+      forget ();
+      in_slot 3 (fn () =>
+        (swallow (fn () => simpLib.SIMP_CONV_IN explicit rss [] f) ();
+         all_see "simpLib.SIMP_CONV_IN" 7;
+         forget ();
+         swallow (fn () => simpExtLib.SIMP_CONV_IN explicit xrss [] f) ();
+         all_see "simpExtLib.SIMP_CONV_IN" 7;
+         forget ();
+         swallow (fn () => simpLib.SIMP_CONV rss [] f) ();
+         all_see "simpLib.SIMP_CONV, ambient" 3));
+      OK ()
     end
   end
 
