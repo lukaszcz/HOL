@@ -2608,6 +2608,47 @@ in
   assert_not_contains "num bridge axiom retirement" "int_of_num" text
 end
 
+(* Integer literals are int_of_num applied to numerals, but they mention no
+   num the transfer has to handle: a goal whose only num is inside them
+   keeps its assumptions out of the num-to-int rewriting. *)
+fun int_literal_mentions_no_num_success () =
+let
+  val f_def = ``!x:int. f x = x + 7``
+  fun mentions what expected goal =
+    assert (SmtLib.goal_mentions_num goal = expected,
+      what ^ (if expected then " was not" else " was") ^
+      " taken to mention num")
+in
+  mentions "f 2 = 9" false ([f_def], ``(f:int->int) 2 = 9``);
+  mentions "f (-2) = 5" false ([f_def], ``(f:int->int) (-2) = 5``);
+  mentions "&n = 2" true ([], ``&(n:num) = (2:int)``);
+  mentions "&FACT 3 = 6" true ([], ``&(FACT 3) = (6:int)``)
+end
+
+(* The num-to-int transfer leaves the assumptions that mention no num as
+   they are, so a solver proof still names the ones it uses; this also holds
+   when one of them has a free variable named like a binder the transfer
+   strips from the conclusion. *)
+fun num_transfer_keeps_num_free_assumptions_success () =
+let
+  val held = ``(x:int) = 5``
+  val f_def = ``!y:int. f y = y + 7``
+  val goal = ([``(n:num) <= 1``, held, f_def], ``!x:int. x + &n <= x + 2``)
+  val ((asl, _), _) = SolverSpec.simplify SmtLib.NUM_TO_INT_TAC goal
+  val proof_goal = ([``(n:num) <= 1``, held], #2 goal)
+  val thm = Tactical.TAC_PROOF (proof_goal,
+    Tactical.THEN (SmtLib.NUM_TO_INT_TAC, intLib.ARITH_TAC))
+in
+  assert (List.all (fn a => Lib.op_mem Term.aconv a asl) [held, f_def],
+    "num transfer changed an assumption that mentions no num");
+  assert_concl_alpha ("num transfer keeping assumptions", thm,
+    #2 proof_goal);
+  assert (List.all (fn h => Lib.op_mem Term.aconv h (#1 proof_goal))
+      (Thm.hyp thm),
+    "num transfer keeping assumptions introduced a hypothesis");
+  check_oracle_tags "num transfer keeping assumptions" thm
+end
+
 fun ceiling_builtin_encoding_success () =
 let
   val text = transferred_smtlib_text ``clgtoks (x:real) = (0:int)``
@@ -37797,6 +37838,10 @@ let
       num_transfer_duplicate_assumptions_success),
     ("num_bridge_axioms_retired_success",
       num_bridge_axioms_retired_success),
+    ("int_literal_mentions_no_num_success",
+      int_literal_mentions_no_num_success),
+    ("num_transfer_keeps_num_free_assumptions_success",
+      num_transfer_keeps_num_free_assumptions_success),
     ("ceiling_builtin_encoding_success", ceiling_builtin_encoding_success),
     ("literal_power_unfolding_success", literal_power_unfolding_success),
     ("symbolic_positive_power_transfer_success",

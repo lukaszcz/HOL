@@ -8719,12 +8719,22 @@ in
     List.exists num_meets_word
       (List.concat (List.map subterms (concl :: asms)))
 
+  (* A closed integer literal such as `2 : int` is `int_of_num` applied to a
+     numeral, which the solvers read as an integer constant: it needs no
+     transfer, so the walk skips it. *)
   fun goal_mentions_num (asms, concl) =
   let
-    val atoms = Term.all_atomsl (concl :: asms) Term.empty_tmset
+    fun mentions [] = false
+      | mentions (tm :: tms) =
+          if intSyntax.is_int_literal tm then mentions tms
+          else
+            case Term.dest_term tm of
+                Term.COMB (rator, rand) => mentions (rator :: rand :: tms)
+              | Term.LAMB (bvar, body) =>
+                  atom_needs_num_transfer bvar orelse mentions (body :: tms)
+              | _ => atom_needs_num_transfer tm orelse mentions tms
   in
-    HOLset.foldl (fn (atom, seen) => seen orelse atom_needs_num_transfer atom)
-      false atoms
+    mentions (concl :: asms)
   end
 
   (* STRIP_ALL_THEN minus DISJ_CASES_THEN: flattens conjunctions and
@@ -8741,23 +8751,50 @@ in
     Tactical.MAP_EVERY (fn _ => Tactical.POP_ASSUM NO_SPLIT_STRIP_ASSUME_TAC)
       (#1 g) g
 
-  (* Runs the proved num-to-int transfer on the whole goal.  Assumptions are
-     first moved into the conclusion so free num variables anywhere in the
-     sequent are made explicit and get a non-negativity guard. *)
+  (* [tac] on the goal without the assumptions in [held], which come back
+     unchanged at the end of every subgoal's assumptions.  [tac] must not
+     introduce variables (GEN_TAC, CHOOSE_THEN): one could be free in a
+     withheld assumption. *)
+  fun WITHHOLDING_TAC held (tac : Tactical.tactic) : Tactical.tactic =
+    fn (asl, w) =>
+      fn ctxt =>
+        let
+          val (withheld, kept) =
+            List.partition (fn a => Lib.op_mem Term.aconv a held) asl
+          val (goals, validation) = tac (kept, w) ctxt
+        in
+          (List.map (fn (asl', w') => (asl' @ withheld, w')) goals,
+           validation)
+        end
+
+  (* Runs the proved num-to-int transfer on the conclusion and the
+     assumptions that mention num.  These assumptions are first moved into
+     the conclusion so free num variables anywhere in them are made explicit
+     and get a non-negativity guard.  Assumptions that mention no num stay
+     as they are: the transfer's simplification doesn't rewrite with them,
+     so a solver proof still names those it uses. *)
   fun NUM_TO_INT_TAC_EXCEPT exclude g =
   let
     open Tactic Tactical
+    val (num_asms, held) =
+      List.partition (fn a => goal_mentions_num ([], a)) (#1 g)
+    (* NO_SPLIT_STRIP_ASSUMS_TAC on the assumptions the transfer made *)
+    fun STRIP_TRANSFERRED_TAC (asl, w) =
+      MAP_EVERY (fn _ => POP_ASSUM NO_SPLIT_STRIP_ASSUME_TAC)
+        (List.filter (fn a => not (Lib.op_mem Term.aconv a held)) asl)
+        (asl, w)
   in
     if goal_mentions_num g andalso not (goal_entangles_num_and_word g) then
-      (MAP_EVERY UNDISCH_TAC (Lib.op_mk_set Term.term_eq (#1 g)) THEN
+      (MAP_EVERY UNDISCH_TAC (Lib.op_mk_set Term.term_eq num_asms) THEN
        SPEC_NUM_FREE_VARS_TAC_EXCEPT exclude THEN
        CONV_TAC NUM_TO_INT_CONV THEN
        REPEAT (GEN_TAC ORELSE DISCH_TAC) THEN
        (* The STRIP_ASSUME_TAC re-introduction inside REV_FULL_SIMP_TAC
           would case-split disjunctive assumptions into several subgoals. *)
-       simpLib.NO_STRIP_REV_FULL_SIMP_TAC pureSimps.pure_ss
-         num_transfer_rewrites THEN
-       NO_SPLIT_STRIP_ASSUMS_TAC) g
+       WITHHOLDING_TAC held
+         (simpLib.NO_STRIP_REV_FULL_SIMP_TAC pureSimps.pure_ss
+            num_transfer_rewrites) THEN
+       STRIP_TRANSFERRED_TAC) g
     else
       ALL_TAC g
   end
