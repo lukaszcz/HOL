@@ -27337,6 +27337,10 @@ let
   val deep = boolSyntax.mk_eq (nest 10, intSyntax.term_of_int
     (Arbint.fromInt 1024))
   val equality = ``(asserted_x:int) = asserted_y``
+  (* more explicit equalities than equality extraction takes *)
+  val many_equalities = List.tabulate (65, fn i => boolSyntax.mk_eq
+    (Term.mk_var ("asserted_e" ^ Int.toString i, intSyntax.int_ty),
+     intSyntax.term_of_int (Arbint.fromInt i)))
 in
   proves_from "macro expansion" [macro, unused, reflexive] [macro] target;
   assert (rejects [macro]
@@ -27369,6 +27373,8 @@ in
   (* The expanded body is decided atom by atom under its connectives; the
      quantified conjunct is never sent to integer arithmetic. *)
   proves_from "conjoined macro" [conjoined] [conjoined] target;
+  proves_from "macros past the equality cap" (macro :: many_equalities)
+    [macro] target;
   (* the equality alone closes it; the macro calls stay unexpanded *)
   proves_from "reflexive before macros" [double, equality] [equality]
     (boolSyntax.mk_eq

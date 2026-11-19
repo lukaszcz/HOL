@@ -7042,7 +7042,11 @@ local
   fun asserted_equality_substitution_prove admit assertions target =
     let
       val macros = asserted_macro_theorems assertions
+      (* Past its caps the equality extraction gives up; with macros, the
+         rewrite is still tried with the macros alone. *)
       val equalities = asserted_equality_theorems assertions
+        handle Feedback.HOL_ERR holerr =>
+          if List.null macros then raise Feedback.HOL_ERR holerr else []
       val _ = not (List.null equalities andalso List.null macros) orelse
         raise ERR "asserted_equality_substitution_prove"
           "no structurally derived asserted equality"
