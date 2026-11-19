@@ -641,3 +641,61 @@ local
 in
   val _ = ()
 end
+
+(* After the command, SatProcess's supervisor shell stays alive to pin its
+   process group until HOL's cleanup kills the group.  If HOL dies while the
+   command runs, no cleanup comes: the supervisor must exit by itself once
+   the command ends.  A child HOL records its PID and the supervisor's ($PPID
+   of the command) and is killed mid-command. *)
+val _ = if not Systeml.isUnix then () else
+let
+  val _ = tprint "SatProcess supervisor exits when HOL dies mid-command"
+  val base = OS.FileSys.tmpName ()
+  val (script,pids,partial) = (base ^ ".sml",base ^ ".pids",base ^ ".tmp")
+  val out = TextIO.openOut script
+  val _ = TextIO.output (out,String.concat
+    ["load \"SatProcess\";\n",
+     "val pid = SysWord.fmt StringCvt.DEC\n",
+     "  (Posix.Process.pidToWord (Posix.ProcEnv.getpid ()));\n",
+     "val _ = SatProcess.system (\"echo \" ^ pid ^ \" $PPID > ",partial,
+     " && mv ",partial," ",pids," && sleep 2\");\n"])
+  val _ = TextIO.closeOut out
+  val hol = OS.Path.concat (Globals.HOLDIR,"bin/hol")
+  fun poll tenths ready = ready () orelse
+    (tenths > 0 andalso
+     (OS.Process.sleep (Time.fromMilliseconds 100); poll (tenths-1) ready))
+  fun pid s = Posix.Process.wordToPid (SysWord.fromInt (valOf
+    (Int.fromString s)))
+  fun signal target s = Posix.Process.kill (target,s)
+  fun alive process =
+    (signal (Posix.Process.K_PROC process) (Posix.Signal.fromWord 0w0);
+     true) handle OS.SysErr _ => false
+  fun failure () =
+    let
+      val _ = OS.Process.system
+        (hol ^ " run " ^ script ^ " </dev/null >/dev/null 2>&1 &")
+      val text = if not (poll 600 (fn () => OS.FileSys.access (pids,[])))
+        then "" else
+        let val input = TextIO.openIn pids
+        in TextIO.inputAll input before TextIO.closeIn input end
+    in
+      case String.tokens Char.isSpace text of
+        [child,supervisor] =>
+          let
+            val _ = signal (Posix.Process.K_PROC (pid child))
+              Posix.Signal.kill
+            val gone = poll 300 (fn () => not (alive (pid supervisor)))
+          in
+            if gone then NONE
+            else ((signal (Posix.Process.K_GROUP (pid supervisor))
+                     Posix.Signal.kill handle OS.SysErr _ => ());
+                  SOME "supervisor outlived the killed HOL process")
+          end
+      | _ => SOME ("child HOL recorded no PIDs: \"" ^ text ^ "\"")
+    end
+  val result = failure ()
+  val _ = List.app (fn path => OS.FileSys.remove path
+    handle OS.SysErr _ => ()) [base,script,pids,partial]
+in
+  case result of NONE => OK () | SOME message => die message
+end

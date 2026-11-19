@@ -175,9 +175,12 @@ fun fork_system command =
     fun wait pid = retry (fn () => native_reap pid)
     (* Use a shell, not another ML fork, to supervise the command: a second
        fork in a forked, formerly multithreaded Poly/ML process can deadlock.
-       After reporting status the shell stays alive (stopped), pinning the
-       group ID until cleanup.  Reaping an exited leader BEFORE killpg would
-       risk signalling an unrelated, newly reused group.
+       After reporting status the shell stays alive, blocked reading more
+       script until cleanup closes writer, pinning the group ID.  Reaping an
+       exited leader BEFORE killpg would risk signalling an unrelated, newly
+       reused group.  If HOL dies, the kernel closes writer and the shell
+       exits: a shell that stopped itself instead could stay stopped forever
+       in the orphaned group.
 
        Pass the script through a pipe: Systeml.exec's macOS fallback uses
        systeml, whose quoting does not protect every shell metacharacter.
@@ -188,8 +191,7 @@ fun fork_system command =
       (Byte.stringToBytes
         ("/bin/sh -c " ^ quote command ^ " sh\n" ^
          "case $? in 0) printf 0;; *) printf 1;; esac > " ^
-         fdpath outfd ^ "\n" ^
-         "while :; do kill -STOP $$; done\n")
+         fdpath outfd ^ "\n")
        handle e => (close_all (); reraise e))
     val child = Posix.Process.fork ()
       handle e => (close_all (); reraise e)
@@ -244,7 +246,6 @@ fun fork_system command =
              val _ = restore ()
              (* Both the script write and result wait must be interruptible. *)
              val _ = write_all writer wrapper
-             val _ = close writer
              val message = retry (fn () => Posix.IO.readVec (infd,1))
              val status = if Byte.bytesToString message = "0"
                           then OS.Process.success else OS.Process.failure
@@ -281,8 +282,10 @@ fun spawn_system launcher command =
       in {infd=infd,outfd=outfd} end
     val process = ref NONE
     val group = ref NONE
-    (* The session/group leader remains alive (STOPped after completion),
-       so its group number cannot be recycled before killpg.  setsid -w
+    (* The session/group leader remains alive after completion, blocked
+       reading gate until cleanup closes start, so its group number cannot
+       be recycled before killpg.  If HOL dies, the kernel closes start and
+       the leader exits instead of lingering in its session.  setsid -w
        retains ownership even on implementations that fork a session leader;
        a Group launch makes the direct process itself the leader. *)
     fun cleanup () =
@@ -323,7 +326,7 @@ fun spawn_system launcher command =
          "/bin/sh -c " ^ quote command ^ " sh\n" ^
          "case $? in 0) printf 0;; *) printf 1;; esac > " ^
          fdpath result ^ "\n" ^
-         "while :; do kill -STOP $$; done\n"
+         "IFS= read -r go < " ^ fdpath gate ^ "\n"
        val inherited = [result,gate]
        val _ = List.app (fn fd =>
          Posix.IO.setfd (fd,Posix.IO.FD.flags [])) inherited
@@ -362,7 +365,6 @@ fun spawn_system launcher command =
        val _ = group := SOME pid
        val _ = restore ()
        val _ = write_all start (Byte.stringToBytes "go\n")
-       val _ = close start
        val message = read_byte ()
        val status = if message = "0" then OS.Process.success
                     else OS.Process.failure
