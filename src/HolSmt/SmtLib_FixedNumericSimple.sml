@@ -114,6 +114,12 @@ struct
         raise ERR label "foreign expected Work";
       action ())
      handle primary => (W.close expected;raise primary))
+  (* The core receipt of both owners' result: the owner's source is
+     re-described and the Core description of the proof is checked
+     under the expected Work before the proof is handed out. *)
+  fun core_with label expected work describe description proof =
+    expect_work label expected work (fn () =>
+      (ignore (describe ());ignore (description ());proof))
   (* The exact public PURE_ss clause scan of the int begin and of the
      policy net build: scalar-only patterns, the permutation test, net
      insertion in foldr order, and the recorded discovery heads. *)
@@ -1109,9 +1115,8 @@ struct
   fun execute_changed plan = execute_internal false plan
   fun core_for expected
       (Result {owner=owner as Owner {work,...},source,proof}) =
-    expect_work "core_for" expected work (fn () =>
-      (ignore (describe owner source);
-       ignore (Core.conversion_description_for expected proof);proof))
+    core_with "core_for" expected work (fn () => describe owner source)
+      (fn () => Core.conversion_description_for expected proof) proof
   fun validate_for expected (owner as Owner {work,...}) =
     expect_work "validate_for" expected work (fn () => revalidate owner)
   fun validate_cached_for expected (owner as Owner {work,...}) =
@@ -1307,10 +1312,9 @@ struct
       in seal owner source recipe end
     fun core_for expected
         (Result{owner=owner as Owner{work,...},source,proof})=
-      expect_work "policy_simple" expected work(fn()=>
-        (ignore(describe owner source);
-         ignore(Core.conversion_description_with_policy_for expected proof);
-         proof))
+      core_with "policy_simple" expected work(fn()=>describe owner source)
+        (fn()=>Core.conversion_description_with_policy_for expected proof)
+        proof
     fun validate_for expected(owner as Owner{work,...})=
       expect_work "policy_simple" expected work(fn()=>revalidate owner)
     fun validate_cached_for expected(owner as Owner{work,...})=
