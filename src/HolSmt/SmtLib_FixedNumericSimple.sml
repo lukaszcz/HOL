@@ -636,7 +636,8 @@ struct
      evidence proofs and [leaf] builds the leaf recipe from the resulting
      conversion. [retry] continues with the next candidate clause, as
      the owner's [attempt] does, both for a looping stack and after an
-     [Inapplicable] condition (which is first re-described). *)
+     [Inapplicable] condition (after [redescribe] has re-described the
+     rewrite focus). *)
   fun discharge_with {count,condition,same,stack,simplify,seal,identity,
       is_true,conditional,leaf,seal_focus,redescribe,retry} =
     let val conditions = List.tabulate (count,condition)
