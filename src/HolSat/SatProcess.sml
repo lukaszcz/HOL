@@ -285,7 +285,7 @@ fun spawn_system launcher command =
     (* The session/group leader remains alive after completion, blocked
        reading gate until cleanup closes start, so its group number cannot
        be recycled before killpg.  If HOL dies, the kernel closes start and
-       the leader exits instead of lingering in its session.  setsid -w
+       the leader exits once the command it runs finishes.  setsid -w
        retains ownership even on implementations that fork a session leader;
        a Group launch makes the direct process itself the leader. *)
     fun cleanup () =

@@ -654,13 +654,14 @@ let
   val base = OS.FileSys.tmpName ()
   val (script,pids,partial,release) =
     (base ^ ".sml",base ^ ".pids",base ^ ".tmp",base ^ ".go")
+  fun sh path = String.toString (Systeml.protect path)
   val out = TextIO.openOut script
   val _ = TextIO.output (out,String.concat
     ["load \"SatProcess\";\n",
      "val pid = SysWord.fmt StringCvt.DEC\n",
      "  (Posix.Process.pidToWord (Posix.ProcEnv.getpid ()));\n",
-     "val _ = SatProcess.system (\"echo \" ^ pid ^ \" $PPID > ",partial,
-     " && mv ",partial," ",pids," && i=0 && while [ ! -e ",release,
+     "val _ = SatProcess.system (\"echo \" ^ pid ^ \" $PPID > ",sh partial,
+     " && mv ",sh partial," ",sh pids," && i=0 && while [ ! -e ",sh release,
      " ] && [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done\");\n"])
   val _ = TextIO.closeOut out
   val hol = Systeml.protect (OS.Path.concat (Globals.HOLDIR,"bin/hol"))
@@ -671,14 +672,25 @@ let
     (Int.fromString s)))
   fun signal target s = Posix.Process.kill (target,s)
   (* An exited supervisor may stay a zombie until its new parent reaps it:
-     only a listed, non-zombie process is alive. *)
-  fun alive process = OS.Process.isSuccess (OS.Process.system
-    ("ps -o stat= -p " ^ process ^ " | grep -qv Z"))
+     only an existing, non-zombie process is alive.  Where /proc exists, read
+     the state there: ps may be missing (e.g. in containers). *)
+  fun alive process =
+    if (OS.FileSys.isDir "/proc/self" handle OS.SysErr _ => false) then
+      (let val input = TextIO.openIn ("/proc/" ^ process ^ "/stat")
+          val text = TextIO.inputAll input before TextIO.closeIn input
+          (* The state follows the parenthesised command name. *)
+          val (_,state) = Substring.splitr (fn c => c <> #")")
+            (Substring.full text)
+      in not (String.isPrefix " Z" (Substring.string state)) end
+       handle IO.Io _ => false)
+    else OS.Process.isSuccess (OS.Process.system
+      ("ps -o stat= -p " ^ process ^ " | grep -qv Z"))
   fun failure () =
     let
       (* --bare (hol.state0): the default heap is built after HolSat. *)
       val _ = OS.Process.system
-        (hol ^ " run --bare " ^ script ^ " </dev/null >/dev/null 2>&1 &")
+        (hol ^ " run --bare " ^ Systeml.protect script ^
+         " </dev/null >/dev/null 2>&1 &")
       val text = if not (poll 600 (fn () => OS.FileSys.access (pids,[])))
         then "" else
         let val input = TextIO.openIn pids
