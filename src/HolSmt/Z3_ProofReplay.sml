@@ -6740,16 +6740,11 @@ local
        String.concatWith ", " attempts ^
        "]; parsed HOL conclusion=" ^ Library.term_to_string target)
 
-  datatype recursive_rewrite_site =
-      RecursiveSkeleton
-    | RecursiveEquality
-    | RecursiveAbstraction
-
   (* A recursive rewrite returns through a fresh [z3_rewrite] exception
      boundary.  Re-wrap only resource gates so that the enclosing rewrite
      handler's ordinary HOL_ERR fallback cannot consume them.  All other
      recursive failures retain the existing fall-through semantics. *)
-  fun recursive_rewrite_boundary _ recurse input =
+  fun recursive_rewrite_boundary recurse input =
     recurse input
     handle Feedback.HOL_ERR holerr =>
       if SmtResource.is_resource_gate holerr then
@@ -7012,7 +7007,7 @@ local
                  their unfolded trees would destroy circuit sharing. *)
               val target = boolSyntax.mk_eq (left, right)
               val (state', theorem) = recursive_rewrite_boundary
-                RecursiveSkeleton z3_rewrite (state, target)
+                z3_rewrite (state, target)
               (* Reject a circular use when this residue is itself one of the
                  original assertions.  Checked definition hypotheses stay. *)
               val _ = List.exists (fn hypothesis =>
@@ -7586,7 +7581,7 @@ local
           raise ERR "z3_rewrite" "datatype rewrites leave the target unchanged"
         val (state', normalized) =
           if Term.aconv l' r' then (state, Thm.REFL l')
-          else recursive_rewrite_boundary RecursiveEquality z3_rewrite
+          else recursive_rewrite_boundary z3_rewrite
             (state, boolSyntax.mk_eq (l', r'))
         val thm = Thm.TRANS l_thm (Thm.TRANS normalized (Thm.SYM r_thm))
         val thm = Thm.EQ_MP (Thm.ALPHA (Thm.concl thm) t) thm
@@ -7615,8 +7610,7 @@ local
             (ll, rl, fn sub_thm =>
               Thm.AP_THM (Thm.AP_TERM (Term.rator (Term.rator l)) sub_thm) lr)
           else raise ERR "z3_rewrite" "no shared equality argument"
-        val (state', sub_thm) = recursive_rewrite_boundary
-          RecursiveEquality z3_rewrite
+        val (state', sub_thm) = recursive_rewrite_boundary z3_rewrite
           (state, boolSyntax.mk_eq (sub_l, sub_r))
         val lifted = lift sub_thm
         val thm = Thm.EQ_MP (Thm.ALPHA (Thm.concl lifted) t) lifted
@@ -7635,8 +7629,7 @@ local
         val state_ref = ref state
         val thm = abs_congruence (fn (lbody, rbody) =>
           let
-            val (state', body_thm) = recursive_rewrite_boundary
-              RecursiveAbstraction z3_rewrite
+            val (state', body_thm) = recursive_rewrite_boundary z3_rewrite
               (!state_ref, boolSyntax.mk_eq (lbody, rbody))
           in
             state_ref := state'; body_thm
@@ -10984,22 +10977,10 @@ in
       SmtSkeletonDispatch.attempt context target
     end
 
-  fun recursive_rewrite_outer_for_test site recurse fallback input =
-    ((recursive_rewrite_boundary site recurse input
+  fun recursive_rewrite_outer_for_test recurse fallback input =
+    ((recursive_rewrite_boundary recurse input
       handle Feedback.HOL_ERR _ => fallback input)
      handle REWRITE_BOUNDARY error => raise error)
-
-  fun skeleton_recursive_rewrite_for_test recurse fallback input =
-    recursive_rewrite_outer_for_test
-      RecursiveSkeleton recurse fallback input
-
-  fun equality_recursive_rewrite_for_test recurse fallback input =
-    recursive_rewrite_outer_for_test
-      RecursiveEquality recurse fallback input
-
-  fun abstraction_recursive_rewrite_for_test recurse fallback input =
-    recursive_rewrite_outer_for_test
-      RecursiveAbstraction recurse fallback input
 
   (* bv1-blast uses a bit before replay visits the concat rewrite that
      names it.  Discover those definitions first; an unusable hint changes

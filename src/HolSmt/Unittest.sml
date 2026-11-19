@@ -20952,13 +20952,8 @@ in
     "basic BV branch lost the resource marker");
   assert (Feedback.message_of basic_propagated = diagnostic,
     "basic BV branch changed the resource diagnostic");
-  List.app check_handler
-    [("skeleton recursive handler",
-       Z3_ProofReplay.skeleton_recursive_rewrite_for_test),
-     ("equality recursive handler",
-       Z3_ProofReplay.equality_recursive_rewrite_for_test),
-     ("abstraction recursive handler",
-       Z3_ProofReplay.abstraction_recursive_rewrite_for_test)]
+  check_handler
+    ("recursive handler", Z3_ProofReplay.recursive_rewrite_outer_for_test)
 end
 
 fun cpc_next_fp_contract () =
