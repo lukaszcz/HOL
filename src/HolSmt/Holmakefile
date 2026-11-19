@@ -522,12 +522,12 @@ SmtReplayScopedNativeQueue.uo: SmtReplayNamedBooleanFn.uo \
 SmtReplayOwnedScopedValueProgramme.uo: Z3_NamedReplayStepFn.uo
 SmtReplayRules.uo: SmtReplayImplicationLawFn.uo
 
-# The rule matchers apply the shared rule-matcher functors unqualified.
-SmtLib_GraphNumericRuleMatch.uo: SmtLib_RuleMatchSharedFn.uo \
-  SmtLib_RuleMatchTreeFn.uo
-SmtLib_LocalContextRuleMatch.uo: SmtLib_RuleMatchSharedFn.uo \
-  SmtLib_RuleMatchTreeFn.uo
-SmtLib_RuleMatchSharedFn.uo: SmtLib_RuleMatchTreeFn.uo
+# The rule matchers apply SmtLib_RuleMatchSharedFn, which applies
+# SmtLib_RuleMatchTreeFn, unqualified.
+SmtLib_GraphNumericRuleMatch.uo: SmtLib_RuleMatchSharedFn.uo
+SmtLib_LocalContextRuleMatch.uo: SmtLib_RuleMatchSharedFn.uo
+SmtLib_RuleMatchSharedFn.uo: SmtLib_RuleMatchTreeFn.uo \
+  SmtReplayResourcePolicy.uo
 SmtLib_RuleMatchTreeFn.uo: SmtReplayGraph.uo
 
 # Static sparse clients use the same private ordinary programme workers.
