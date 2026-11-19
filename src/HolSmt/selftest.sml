@@ -3255,8 +3255,7 @@ local
   fun modify_symmetry proof change =
     List.map (fn command => case command of
         Parser.GraphStep {step,pop} =>
-          if CPC_Proof.handler_name
-              (#replay_handler (#rule step)) = "symm" then
+          if #replay_handler (#rule step) = CPC_Proof.HSymm then
             change (step,pop) else command
       | _ => command) (#commands (proof : Parser.graph_proof))
   fun altered (step : Parser.graph_rule_step)
@@ -76352,8 +76351,8 @@ in
               require "unsupported CPC rule ran a speculative prefix"
                 (case prepared of Receiver.Needs
                     [Receiver.RuleProgramme{id,rule,pop}]=>
-                      id="@c"andalso CPC_Proof.handler_name
-                          (#replay_handler rule)="trust"andalso
+                      id="@c"andalso
+                      #replay_handler rule = CPC_Proof.HTrust andalso
                       not pop andalso not(#retired(W.audit_policy(#work e)))
                   | _=>false))))
       val _=test "Actual Scope command remains a requirement before names"
@@ -76366,8 +76365,7 @@ in
               (case prepared of Receiver.Needs
                   [Receiver.ScopeProgramme{assumption=true,...},
                    Receiver.RuleProgramme{rule,pop=true,...}]=>
-                    CPC_Proof.handler_name
-                        (#replay_handler rule)="scope"andalso
+                    (#replay_handler rule) = CPC_Proof.HScope andalso
                     not(#retired(W.audit_policy(#work e)))|_=>false))))
       val _=test "Completed empty receiver fences foreign owner then expiry"
         (fn()=>fixture[clause]boolSyntax.F(fn held=>
@@ -77589,8 +77587,8 @@ in
                  not(#retired(W.audit_policy(#work e)))andalso
                  (case prepared of Receiver.Needs
                     [Receiver.RuleProgramme{id,rule,pop}]=>
-                      id="@later"andalso CPC_Proof.handler_name
-                          (#replay_handler rule)="trust"andalso
+                      id="@later"andalso
+                      #replay_handler rule = CPC_Proof.HTrust andalso
                       not pop|_=>false)))end))
       val _=test "New completed queue fences foreign Work before dead packet"
         (fn()=>fixture[double]``cpc_simple_goal410:bool``(fn held=>
@@ -78561,8 +78559,8 @@ in
              not(#retired(W.audit_policy(#work e)))andalso
              (case result of Final.ReplayNeeds
                 [Receiver.RuleProgramme{id,rule,pop}]=>
-                  id="@later"andalso CPC_Proof.handler_name
-                      (#replay_handler rule)="trust"andalso
+                  id="@later"andalso
+                  #replay_handler rule = CPC_Proof.HTrust andalso
                   not pop|_=>false))end))
       val _=test "The CPC public finalizer is consumed once only"
         (fn()=>fixture[double]goal(fn e=>using e ordinary(fn _=>())
@@ -78975,8 +78973,8 @@ local
        Count.thm_count()=prior andalso
        not(#retired(W.audit_policy(#work e)))andalso
        (case result of Final.ReplayNeeds
-           [Receiver.RuleProgramme{rule,...}]=> CPC_Proof.handler_name
-               (#replay_handler rule)=handler
+           [Receiver.RuleProgramme{rule,...}]=>
+               #replay_handler rule=handler
          | _=>false))end
   fun pending e certificate handler=
     pending_checked(fn _=>fn _=>fn _=>true)e certificate handler
@@ -79034,7 +79032,7 @@ in
         (fn()=>fixture[eq(p,q)]goal(fn e=>pending e
           ("((assume @equal (= p q)) "^
            "(step @missing (= p r) :rule trans :premises (@equal)))")
-          "trans"))
+          CPC_Proof.HTrans))
       val _=test "RegLan transitivity leaves the whole parsed prefix pending"
         (* CPC RegLan '=' denotes language equivalence. A HOL datatype
            equality Source would instead leave its earlier assume pending. *)
@@ -79043,12 +79041,12 @@ in
           ("((assume @languages (= la lb)) "^
            "(step @prefix (= p p) :rule refl :args (p)) "^
            "(step @missing (= la lb) :rule trans "^
-             ":premises (@languages)))")"trans"))
+             ":premises (@languages)))")CPC_Proof.HTrans))
       val _=test "Negative symmetry keeps its genuine missing conversion port"
         (fn()=>fixture[neg(eq(p,q))]goal(fn e=>pending e
           ("((assume @negative (not (= p q))) "^
            "(step @inverse (not (= q p)) :rule symm "^
-             ":premises (@negative)))")"symm"))
+             ":premises (@negative)))")CPC_Proof.HSymm))
       val _=test "Owned OR congruence matches native and closes original Goal"
         (fn()=>let
           val assumptions=[eq(p,q),boolSyntax.mk_disj(p,r),
@@ -79962,7 +79960,7 @@ in
                 [Receiver.ScopeProgramme{id=local_id,assumption=true},
                  Receiver.RuleProgramme{id,rule,pop=true}]=>
                   local_id="@local"andalso id="@scoped"andalso
-                  CPC_Proof.handler_name (#replay_handler rule)="scope"
+                  (#replay_handler rule) = CPC_Proof.HScope
               | _=>false))end))
       val _=test "Clause Type callback keeps exact Primary before inference"
         (fn()=>fixture[not_or_source]goal(fn e=>
@@ -81488,7 +81486,7 @@ in
                  [Receiver.ScopeProgramme{id=local_id,assumption=true},
                   Receiver.RuleProgramme{id,rule,pop=true}]=>
                    local_id="@local"andalso id="@scoped"andalso
-                   CPC_Proof.handler_name (#replay_handler rule)="scope"
+                   (#replay_handler rule) = CPC_Proof.HScope
                 | _=>false))end))
       val _=test "NOT_AND Type callback keeps exact Primary before inference"
         (fn()=>fixture[neg(boolSyntax.mk_conj(p,q)),p,q]goal(fn e=>
@@ -84154,8 +84152,7 @@ in
                 [Receiver.ScopeProgramme{id=local_id,assumption=true},
                  Receiver.RuleProgramme{id,rule,pop=true}]=>
                  local_id="@local"andalso id="@scope"andalso
-                 CPC_Proof.handler_name
-                     (#replay_handler rule)="scope"|_=>false))end))
+                 (#replay_handler rule) = CPC_Proof.HScope|_=>false))end))
       val _=test "Wrong CNF endpoint retires before names or native effects"
         (fn()=>fixture[neg(disj(p,q))]goal(fn e=>
           let val held=packet e

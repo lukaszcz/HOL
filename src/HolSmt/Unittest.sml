@@ -13624,7 +13624,7 @@ let
   fun registered name =
     case CPC_Proof.lookup_rule "1.3.4" name of
       SOME rule => #namespace rule = CPC_Proof.ProofRule andalso
-        CPC_Proof.handler_name (#replay_handler rule) = "string"
+        (#replay_handler rule) = CPC_Proof.HString
     | NONE => false
   fun distinct_terms terms = List.foldl
     (fn (term, result) =>
@@ -14219,7 +14219,7 @@ let
     case lookup_rule "1.3.4" (#name entry) of
       SOME rule => assert
         (#namespace rule = RareRewrite andalso
-         CPC_Proof.handler_name (#replay_handler rule) = "rare_inventory",
+         (#replay_handler rule) = CPC_Proof.HRareInventory,
          "TASK23 inventory registry metadata is wrong for " ^ #name entry)
     | NONE => die ("FAIL: TASK23 inventory omitted " ^ #name entry)
   fun replay label text =
@@ -14654,7 +14654,7 @@ let
       val _ = case lookup_rule "1.3.4" (#name entry) of
           SOME rule => assert
             (#namespace rule = RareRewrite andalso
-             CPC_Proof.handler_name (#replay_handler rule) = "rare_inventory",
+             (#replay_handler rule) = CPC_Proof.HRareInventory,
              "TASK24 generated registry metadata drifted for " ^ #name entry)
         | NONE => die ("FAIL: TASK24 registry omitted " ^ #name entry)
     in
