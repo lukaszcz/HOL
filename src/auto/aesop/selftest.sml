@@ -3677,6 +3677,41 @@ val _ =
          (closes_goal aesop_linarith_tactic
             aesop_arith_fact_goal))
 
+(* The tactic takes everything it owns from the context it is applied
+   in: the claset, the simpsets derived from srw_ss and the aesop_simp
+   table, and linarith's [arith] facts.  In this context srw_ss and
+   aesop_simp have just changed, so the proof derives its simpsets itself,
+   and the goal closes only with the [arith] fact the ambient context
+   lacks. *)
+val _ =
+  check
+    ("AESOP_TAC takes its rules and facts from the context it is given",
+     fn () =>
+       let
+         val saved = Context.snapshot ()
+         val context_rule =
+           ASSUME ``aesop_context_c = (aesop_context_d:'a)``
+         val changed = ref saved
+         fun change () =
+           (BasicProvers.augment_srw_ss
+              [OrdinarySimp.rewrites [context_rule]];
+            ThmAttribute.local_attribute
+              {attrname = "aesop_simp", name = "aesop_context_rule",
+               args = [], thm = context_rule};
+            with_arith_fact
+              (fn () => (changed := Context.snapshot (); true)))
+         val _ =
+           Portable.finally (fn () => Context.restore saved) change ()
+         val (residues, _) =
+           Context.in_proof
+             (fn () =>
+                aesop_linarith_tactic aesop_arith_fact_goal (!changed))
+             ()
+       in
+         null residues andalso
+         not (closes_goal aesop_linarith_tactic aesop_arith_fact_goal)
+       end)
+
 (* A tactic value is routinely bound before the declarations its goals
    need -- [val TAC = AESOP_TAC []] at the head of a script, then the
    theorems and simp rules the script proves.  Both entry points are

@@ -43,6 +43,9 @@ sig
   val remove_rule : string -> claset -> claset
   val merge_cs : claset * claset -> claset
 
+  (* The claset of the context a tactic is run in; the_claset is that of
+     the ambient context *)
+  val the_claset_of : Context.t -> claset
   val the_claset : unit -> claset
   val export_rule : rulespec -> string -> unit
   val temp_add_rule : rulespec -> string * thm -> unit
@@ -194,11 +197,14 @@ sig
      into their own tactic representation where necessary. *)
   val invocation_claset : claset -> thm list -> claset * thm list
 
+  (* [extend] is given the context the invocation's tactic is applied
+     in. *)
   type 'a invocation_simpset =
     {base : 'a,
      extend :
        {iff_prefix : string, simp_rules : thm list, iff_rules : thm list,
-        claset : claset, simpset : 'a} -> claset * 'a}
+        claset : claset, simpset : 'a, context : Context.t} ->
+       claset * 'a}
 
   (* Classify and install every theorem-list argument for one invocation,
      then insert the remaining facts before running [body].  The optional

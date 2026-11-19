@@ -307,9 +307,9 @@ fun reconcile_distinct tyi (cs as CS {decls, wrappers, index, distinct}) =
                 (fn (key', _) => key <> key') distinct}
   end
 
-fun catch_up_distinct cs =
+fun catch_up_distinct ctxt cs =
   List.foldl (fn (tyi, acc) => reconcile_distinct tyi acc)
-    cs (TypeBase.elts ())
+    cs (TypeBase.elts_of ctxt)
 
 fun distinct_rule_names (CS {distinct, ...}) =
   map (#name o #source o #2) (Redblackmap.listItems distinct)
@@ -720,8 +720,17 @@ fun drop_illformed fname name cs =
   (HOL_WARNING "clasetLib" fname
      ("Dropping ill-formed persistent rule " ^ name); cs)
 
-fun apply_add_delta fname {name, spec} cs =
-  case load_delta (ADD {name = name, spec = spec}) of
+(* A delta with the theorem an addition names already looked up.  A
+   delta is looked up where it is recorded or its theory loads, and
+   applied, possibly much later, when the claset is wanted -- often in a
+   proof, which must read nothing but the context it is given. *)
+datatype rdelta = RADD of looked_up | RRM of string
+
+fun look_up_delta (ADD addition) = RADD (look_up addition)
+  | look_up_delta (RM name) = RRM name
+
+fun apply_add_delta fname addition cs =
+  case take_looked_up addition of
       NONE => cs
     | SOME (name', spec', th) =>
         let val pname = persistent_name name' in
@@ -729,26 +738,27 @@ fun apply_add_delta fname {name, spec} cs =
           handle HOL_ERR _ => drop_illformed fname pname cs
         end
 
-fun apply_cdelta (ADD args) cs = apply_add_delta "apply_cdelta" args cs
-  | apply_cdelta (RM name) cs = remove_rule name cs
+fun apply_rdelta (RADD addition) cs =
+      apply_add_delta "apply_cdelta" addition cs
+  | apply_rdelta (RRM name) cs = remove_rule name cs
 
 (* Values reconstructed for an ancestry always contain their complete set of
    persistent declarations, so they need no delayed replay. *)
 fun apply_delta delta (cs, owned, _) =
-  let val cs' = apply_cdelta delta cs
+  let val cs' = apply_rdelta (look_up_delta delta) cs
   in (cs', live_owned cs' owned, Ready) end
 
 (* Add all declarations before rebuilding the nets.  Theory loading uses this
    once for a delta batch, rather than extending a net for each declaration. *)
-fun update_decls (ADD {name, spec}) decls =
-      (case load_delta (ADD {name = name, spec = spec}) of
+fun update_decls (RADD addition) decls =
+      (case take_looked_up addition of
            NONE => decls
          | SOME (name', spec', th) =>
              let val pname = persistent_name name' in
                #2 (extend_decl (make_rule_decl spec' (pname, th)) decls)
                handle HOL_ERR _ => drop_illformed "update_decls" pname decls
              end)
-  | update_decls (RM name) decls = #2 (remove_decl name decls)
+  | update_decls (RRM name) decls = #2 (remove_decl name decls)
 
 fun rebuild_claset decls (CS {wrappers, distinct, ...}) =
   CS {decls = decls, wrappers = wrappers, distinct = distinct,
@@ -756,12 +766,12 @@ fun rebuild_claset decls (CS {wrappers, distinct, ...}) =
         List.foldl (fn (decl, index) => add_decl decl index)
           empty_index (dest_decls decls)}
 
-fun is_removal (RM _) = true
-  | is_removal (ADD _) = false
+fun is_removal (RRM _) = true
+  | is_removal (RADD _) = false
 
-fun apply_add_batch (ADD args, cs) =
-      apply_add_delta "update_decls" args cs
-  | apply_add_batch (RM _, _) =
+fun apply_add_batch (RADD addition, cs) =
+      apply_add_delta "update_decls" addition cs
+  | apply_add_batch (RRM _, _) =
       raise Fail "batch_apply: unexpected removal in ADD-only batch"
 
 fun batch_apply deltas (cs as CS {decls, ...}) =
@@ -769,7 +779,7 @@ fun batch_apply deltas (cs as CS {decls, ...}) =
     rebuild_claset
       (List.foldl (fn (delta, acc) => update_decls delta acc) decls deltas)
       (List.foldl
-        (fn (RM name, acc) => remove_rule name acc | (_, acc) => acc)
+        (fn (RRM name, acc) => remove_rule name acc | (_, acc) => acc)
         cs deltas)
   else
     List.foldl apply_add_batch cs deltas
@@ -870,27 +880,27 @@ fun apply_tyinfo_rules rules cs =
     (fn (rule, acc) => add_tyinfo_rule rule acc)
     cs rules
 
-fun collect_typebase_rules contributions =
+fun collect_typebase_rules ctxt contributions =
   let
     fun collect (tyi, rev_rules) =
       List.revAppend (rules_for_tyinfo contributions tyi, rev_rules)
   in
-    List.rev (List.foldl collect [] (TypeBase.elts ()))
+    List.rev (List.foldl collect [] (TypeBase.elts_of ctxt))
   end
 
-fun catch_up_typebase cs =
-  catch_up_distinct (#1
+fun catch_up_typebase ctxt cs =
+  catch_up_distinct ctxt (#1
     (apply_tyinfo_rules
-      (collect_typebase_rules (!tyinfo_contributions)) (cs, [])))
+      (collect_typebase_rules ctxt (!tyinfo_contributions)) (cs, [])))
 
-fun reconcile_typebase contributions state =
+fun reconcile_typebase ctxt contributions state =
   let
     val (state', remaining) =
       reconcile_owned (fn _ => true)
-        (collect_typebase_rules contributions) state
+        (collect_typebase_rules ctxt contributions) state
   in
     let val (cs, owned) = apply_tyinfo_rules remaining state'
-    in (catch_up_distinct cs, owned) end
+    in (catch_up_distinct ctxt cs, owned) end
   end
 
 fun reconcile_tyinfo contributions tyi state =
@@ -905,26 +915,26 @@ fun reconcile_tyinfo contributions tyi state =
     in (reconcile_distinct tyi cs, owned) end
   end
 
-fun replay_pending typebase_rules [] (cs, owned, caught_up) =
+fun replay_pending ctxt typebase_rules [] (cs, owned, caught_up) =
       if caught_up then (cs, owned)
       else
         let val (cs', owned') = apply_tyinfo_rules typebase_rules (cs, owned)
-        in (catch_up_distinct cs', owned') end
-  | replay_pending typebase_rules (update :: updates)
+        in (catch_up_distinct ctxt cs', owned') end
+  | replay_pending ctxt typebase_rules (update :: updates)
       (cs, owned, caught_up) =
       (case update of
            CatchUpTypeBase catchup =>
              let
                val (cs', owned') =
-                 reconcile_typebase catchup (cs, owned)
+                 reconcile_typebase ctxt catchup (cs, owned)
              in
-               replay_pending typebase_rules updates
+               replay_pending ctxt typebase_rules updates
                  (cs', owned', true)
              end
          | Modify f =>
              let val cs' = f cs
              in
-               replay_pending typebase_rules updates
+               replay_pending ctxt typebase_rules updates
                  (cs', live_owned cs' owned, false)
              end
          | UpdateTypeInfo {contributions, tyi} =>
@@ -932,17 +942,17 @@ fun replay_pending typebase_rules [] (cs, owned, caught_up) =
                val (cs', owned') =
                  reconcile_tyinfo contributions tyi (cs, owned)
              in
-               replay_pending typebase_rules updates
+               replay_pending ctxt typebase_rules updates
                  (cs', owned', true)
              end)
 
-fun init_state (state as (_, _, Ready)) = state
-  | init_state (cs, owned, Pending pending) =
+fun init_state_of _ (state as (_, _, Ready)) = state
+  | init_state_of ctxt (cs, owned, Pending pending) =
     let
       val typebase_rules =
-        collect_typebase_rules (!tyinfo_contributions)
+        collect_typebase_rules ctxt (!tyinfo_contributions)
       val (cs', owned') =
-        replay_pending typebase_rules (List.rev pending)
+        replay_pending ctxt typebase_rules (List.rev pending)
           (cs, owned, false)
     in
       (cs', owned', Ready)
@@ -954,11 +964,15 @@ fun modify f (cs, owned, Ready) =
   | modify f (cs, owned, Pending pending) =
       (cs, owned, Pending (Modify f :: pending))
 
-fun apply_to_global delta = modify (apply_cdelta delta)
+fun apply_to_global delta =
+  let val looked_up = look_up_delta delta
+  in modify (apply_rdelta looked_up) end
 
 (* Loading invokes this once for all a theory's deltas.  In particular, an
    unforced global state retains the complete batch for one lazy replay. *)
-fun batch_finaliser _ deltas = modify (batch_apply deltas)
+fun batch_finaliser _ deltas =
+  let val looked_up = map look_up_delta deltas
+  in modify (batch_apply looked_up) end
 
 val adresult : (cdelta, cstate) AncestryData.fullresult =
   AncestryData.fullmake {
@@ -973,9 +987,27 @@ val adresult : (cdelta, cstate) AncestryData.fullresult =
 
 fun update_claset f = #update_global_value adresult (modify f)
 
-fun the_claset () =
-  (#update_global_value adresult init_state;
-   #1 (#get_global_value adresult ()))
+(* The claset of the context given.  A state still pending is caught up
+   in that context, reading its TypeBase (the theorems its deltas name
+   were looked up when they were recorded).  The result is recorded, so
+   that the replay is done once, unless the global state has moved on
+   meanwhile, in which case the record is left to the state that moved
+   it. *)
+fun the_claset_of ctxt =
+  case #get_global_value_of adresult ctxt of
+      (cs, _, Ready) => cs
+    | state =>
+        let
+          val state' = init_state_of ctxt state
+        in
+          #update_global_value adresult
+            (fn current =>
+               if Portable.pointer_eq (current, state) then state'
+               else current);
+          #1 state'
+        end
+
+fun the_claset () = the_claset_of (Context.snapshot ())
 
 fun temp_add_rule spec named_th = update_claset (add_rule spec named_th)
 
@@ -1006,7 +1038,9 @@ val augment_claset = update_claset
 
 fun request_typebase_catchup contributions
       (cs, owned, Ready) =
-      let val (cs', owned') = reconcile_typebase contributions (cs, owned)
+      let
+        val (cs', owned') =
+          reconcile_typebase (Context.snapshot ()) contributions (cs, owned)
       in (cs', owned', Ready) end
   | request_typebase_catchup contributions
       (cs, owned, Pending pending) =
@@ -1161,9 +1195,11 @@ fun persistent_claset_of_theory thy = Option.map #1 (#DB adresult thy)
 (* Preserve the historical effective view by catching the persistent state up
    with the caller's current TypeBase, just as [the_claset] does. *)
 fun claset_of_theory thy =
-  Option.map catch_up_typebase (persistent_claset_of_theory thy)
+  Option.map (catch_up_typebase (Context.snapshot ()))
+    (persistent_claset_of_theory thy)
 fun merge_clasets thys =
-  Option.map (catch_up_typebase o #1) (#merge adresult thys)
+  Option.map (catch_up_typebase (Context.snapshot ()) o #1)
+    (#merge adresult thys)
 fun with_claset cs =
   AncestryData.with_temp_value adresult (cs, [], Ready)
 
@@ -1903,7 +1939,8 @@ type 'a invocation_simpset =
   {base : 'a,
    extend :
      {iff_prefix : string, simp_rules : thm list, iff_rules : thm list,
-      claset : claset, simpset : 'a} -> claset * 'a}
+      claset : claset, simpset : 'a, context : Context.t} ->
+     claset * 'a}
 
 (* The environment is scoped to the tactic application, where the goal and
    its fixed parameters are known.  Views are demanded by the consumer. *)
@@ -1911,7 +1948,7 @@ fun with_invocation_fact_env_raw create_environment
     {iff_prefix,extra_markers}
     body base_cs simpset =
   markerLib.ABBRS_THEN
-    (fn theorems => fn goal =>
+    (fn theorems => fn goal => fn ctxt =>
       (let
         val (classical_cs, invocation_ss, simp_controls, leftovers) =
           case simpset of
@@ -1926,7 +1963,8 @@ fun with_invocation_fact_env_raw create_environment
                   val (extended_cs, extended_ss) =
                     extend
                       {iff_prefix=iff_prefix, simp_rules=simp_rules,
-                       iff_rules=iff_rules, claset=base_cs, simpset=base}
+                       iff_rules=iff_rules, claset=base_cs, simpset=base,
+                       context=ctxt}
                   val (cs, facts) =
                     process_claset_tags rest extended_cs
                 in
@@ -1937,6 +1975,7 @@ fun with_invocation_fact_env_raw create_environment
         val environment = create_environment goal facts
       in
         body invocation_cs invocation_ss simp_controls environment goal
+          ctxt
       end))
 
 fun with_invocation_fact_env_using insert create_environment charge

@@ -44,8 +44,13 @@ sig
   type script
   type grounded_script
 
-  (* Trace messages are lazy because rendering a search node is expensive. *)
-  val trace : int -> (unit -> string) -> unit
+  (* classical.trace.  The engines are given its level, which the tactics
+     read from their context: [trace verbosity level message] reports when
+     level <= verbosity.  Messages are lazy because rendering a search node
+     is expensive. *)
+  val trace_flag : HOLFlags.flag
+  val trace_level_of : Context.t -> int
+  val trace : int -> int -> (unit -> string) -> unit
 
   datatype replay_failure =
     ReplayFailure of

@@ -22,13 +22,14 @@ val add_blast_selims =
 
 fun no_extra_markers theorems cs = (cs, theorems)
 
-fun invoke tactic =
+(* The claset is the one of the context the tactic is run in. *)
+fun invoke tactic theorems goal ctxt =
   clasetLib.with_invocation_fact_env
     {iff_prefix="", extra_markers=no_extra_markers,
      consumer=clasetLib.TableauFacts}
     (fn cs => fn _ => fn _ => fn _ => tactic cs)
-    (clasetLib.the_claset ())
-    (NONE : unit clasetLib.invocation_simpset option)
+    (clasetLib.the_claset_of ctxt)
+    (NONE : unit clasetLib.invocation_simpset option) theorems goal ctxt
 
 fun add_time elapsed accumulated =
   accumulated := Time.+ (!accumulated, elapsed)
@@ -126,7 +127,7 @@ fun run_depths base_cs initial_depth next_depth goal ctxt =
        Keep the summary absent in the quiet path so it allocates and updates
        none of the expanded per-run/cumulative statistic refs. *)
     val summary =
-      if HOLFlags.current_trace "blast.trace" >= 2 then
+      if blastRule.trace_level_of ctxt >= 2 then
         SOME (new_run_statistics ())
       else NONE
 
@@ -148,11 +149,12 @@ fun run_depths base_cs initial_depth next_depth goal ctxt =
           let
             val result =
               case summary of
-                  NONE => blastSearch.searchGoal cs depth goal accept
+                  NONE =>
+                    blastSearch.searchGoal_in ctxt cs depth goal accept
                 | SOME statistics =>
                     let
                       val report =
-                        blastSearch.searchGoalWithStats
+                        blastSearch.searchGoalWithStats_in ctxt
                           cs depth goal accept
                       val _ =
                         add_statistics statistics (#statistics report)
@@ -198,7 +200,7 @@ fun CS_BLAST_DEPTH_BUDGETED budget base_cs depth goal ctxt =
           SOME tactic_result => tactic_result
         | NONE => raise blastSearch.PROOF_FAILED
   in
-    blastSearch.searchGoalBudgeted budget cs depth goal accept
+    blastSearch.searchGoalBudgeted_in ctxt budget cs depth goal accept
   end
 
 fun CS_BLAST_DEPTH_RESUMABLE budget base_cs depth goal ctxt =
@@ -209,7 +211,7 @@ fun CS_BLAST_DEPTH_RESUMABLE budget base_cs depth goal ctxt =
           SOME tactic_result => tactic_result
         | NONE => raise blastSearch.PROOF_FAILED
   in
-    blastSearch.searchGoalResumable budget cs depth goal accept
+    blastSearch.searchGoalResumable_in ctxt budget cs depth goal accept
   end
 
 fun next_through limit depth =
@@ -235,7 +237,8 @@ fun tryIt depth theorems goal =
     val answer = ref (NONE : try_result option)
     fun inspect cs prepared_goal ctxt =
       (answer := SOME
-         (blastSearch.debugGoal (add_blast_selims cs) depth prepared_goal);
+         (blastSearch.debugGoal_in ctxt (add_blast_selims cs) depth
+            prepared_goal);
        Tactical.ALL_TAC prepared_goal ctxt)
     val _ = invoke inspect theorems goal (Context.snapshot())
   in

@@ -19,11 +19,17 @@ fun prove (term, tactic) =
       ([], validation) => validation []
     | _ => raise ERR "prove" "load-time proof left goals"
 
-val _ = HOLFlags.create_trace ({group = "clasimp", name = "trace"},
-                               {initial = 0, max = 3})
+val {flag = trace_flag, ...} =
+    HOLFlags.create_trace ({group = "clasimp", name = "trace"},
+                           {initial = 0, max = 3})
 
-fun trace level message =
-  if level <= HOLFlags.current_trace "clasimp.trace" then
+(* The tactics read the clasimp.trace level from their context and hand
+   it on: [trace verbosity level message] reports when [level] is at most
+   [verbosity]. *)
+fun trace_level_of ctxt = HOLFlags.get_flagC ctxt trace_flag
+
+fun trace verbosity level message =
+  if level <= verbosity then
     Feedback.HOL_MESG ("Clasimp: " ^ message ())
   else ()
 
@@ -716,10 +722,13 @@ fun abstraction_policy charge ss arguments =
       (positions_of_sources sources) supplied
   in position_policy charge positions end
 
-(* A simpset with its static ORDER and LINARITH decision procedures
-   removed, and which of the two it carried. *)
+(* A simpset with its static ORDER and LINARITH decision procedures and
+   its context-free arithmetic solver removed, and which of the three it
+   carried.  The solver is looked for on its own: a simpset can carry it
+   without the fragment, as aesop's does. *)
 type decision_base =
-  {stripped : simpLib.simpset, order : bool, linarith : bool}
+  {stripped : simpLib.simpset, order : bool, linarith : bool,
+   solver : bool}
 
 (* Prepare once for the whole source inventory. No rule is selected by
    goal relevance or size. Opaque reducers conservatively defeat the
@@ -751,6 +760,25 @@ fun rename_view_variables theorem =
       (fn {redex,residue} => {redex=residue,residue=redex}) replacements
   in (Thm.INST replacements theorem,Term.subst inverse) end
 
+fun frag_present ss =
+  let val names = List.mapPartial simpLib.frag_name (simpLib.ssfrags_of ss)
+  in fn name => List.exists (fn other => other = name) names end
+
+fun remove_present_frags names ss =
+  simpLib.remove_ssfrags_preserving_controls
+    (List.filter (frag_present ss) names) ss
+  handle Conv.UNCHANGED => ss
+
+(* LHS views are derived once for a simpset and kept with it, so what
+   derives them is a function of the simpset alone.  The linear-arithmetic
+   procedures are not: they consult the [arith] facts of the context they
+   run in, which here would be the context of whichever proof first wanted
+   the table.  Views are therefore derived without them -- an invocation
+   runs them on its goal with its own context. *)
+fun view_derivation_simpset ss =
+  remove_present_frags ["LINARITH"] ss
+  |> simpLib.remove_solver "lin_arith"
+
 fun prepare_lhs_view_derivation_with_positions caller_charge ss positions =
   let
     exception DerivationLimit
@@ -773,7 +801,9 @@ fun prepare_lhs_view_derivation_with_positions caller_charge ss positions =
          caller_charge ()
            handle e => (callback_failure := SOME e; raise e))
     val policy = position_policy charge positions
-    val prepared = simpLib.prepare_child_first_observed remember policy ss
+    val prepared =
+      simpLib.prepare_child_first_observed remember policy
+        (view_derivation_simpset ss)
     fun candidate theorem =
       let
         val specialised = Drule.SPEC_ALL theorem
@@ -872,21 +902,15 @@ fun derive_lhs_views charge ss =
 (* Decision-fragment replay must retain consumed native rewrite controls. *)
 fun strip_decisions ss =
   let
-    val names = List.mapPartial simpLib.frag_name (simpLib.ssfrags_of ss)
-    fun present name = List.exists (fn other => other = name) names
-    val order = present "ORDER"
-    val linarith = present "LINARITH"
-    val removed =
-      simpLib.remove_ssfrags_preserving_controls
-        (List.filter present ["ORDER", "LINARITH"]) ss
-      handle Conv.UNCHANGED => ss
-    val stripped =
-      if linarith then
-        (simpLib.remove_solver "lin_arith" removed
-         handle Conv.UNCHANGED => removed)
-      else removed
+    val present = frag_present ss
+    val removed = remove_present_frags ["ORDER", "LINARITH"] ss
+    (* remove_solver gives back the simpset it was given when that has no
+       solver of the name, so a change means the solver was there *)
+    val stripped = simpLib.remove_solver "lin_arith" removed
   in
-    {stripped = stripped, order = order, linarith = linarith}
+    {stripped = stripped,
+     order = present "ORDER", linarith = present "LINARITH",
+     solver = not (Portable.pointer_eq (stripped, removed))}
   end
 
 fun supplied_view_associations entries = List.mapPartial
@@ -1189,8 +1213,8 @@ fun add_supplied_views (SuppliedViewBinding {entries,suspended,...}) ss =
                                 (simpLib.rewrite_views views))
   end
 
-fun trace_suspended_converses sources = List.app
-  (fn source => trace 1 (fn () =>
+fun trace_suspended_converses verbosity sources = List.app
+  (fn source => trace verbosity 1 (fn () =>
     "suspending ambient converse " ^
     (case simpLib.source_rewrite source of
          (SOME {Thy,Name},_) => Thy ^ "." ^ Name
@@ -1385,7 +1409,6 @@ fun make_supplied_converse_cache () =
         val suspended = case input of NONE => no_sources
           | SOME data => HOLset.addList
               (no_sources,List.concat (map (detect data) rules))
-        val _ = trace_suspended_converses (HOLset.listItems suspended)
         val working = case input of NONE => ambient
           | SOME data => working data suspended
         val effective_positions =
@@ -1557,8 +1580,6 @@ fun make_supplied_view_cache_core () =
                   in entries end
           end
         val entries = List.concat (map one rules)
-        val _ = case prior of SOME _ => ()
-          | NONE => trace_suspended_converses (HOLset.listItems suspended)
       in
         SuppliedViewBinding
           {rules=binding,entries=entries,positions=positions,
@@ -1690,7 +1711,7 @@ fun working_simpset_for (SuppliedViewBinding {table,...}) =
    lifted into the extension engine.  The bounded identity/source memo
    above retains completed tables across changes; the derived value owns
    its lazy working state. *)
-val {get = clasimp_derived, get_of = _} =
+val {get = _, get_of = clasimp_derived_of} =
   BasicProvers.make_simpset_derived_value "clasimpLib.clasimp_ss"
     (fn ss => fn _ =>
        let val full = derive_clasimp_ss (simpExtLib.lift_simpset ss) ()
@@ -1704,11 +1725,14 @@ val {get = clasimp_derived, get_of = _} =
 
 val selected_default = ref (NONE : working_simpset option)
 
-fun clasimp_value () =
-  let val value = clasimp_derived ()
+fun clasimp_value_of ctxt =
+  let val value = clasimp_derived_of ctxt
   in selected_default := SOME (#working value); value end
 
-fun clasimp_ss () = #full (clasimp_value ())
+fun clasimp_value () = clasimp_value_of (Context.snapshot ())
+
+fun clasimp_ss_of ctxt = #full (clasimp_value_of ctxt)
+fun clasimp_ss () = clasimp_ss_of (Context.snapshot ())
 
 fun clasimp_working_simpset () = #working (clasimp_value ())
 
@@ -1767,7 +1791,7 @@ fun charge_normalization budget () =
    Their legacy fragments remain available to standalone simpsets, while
    this copy shares the caller's budget and explicit proof context. *)
 fun budgeted_decisions_of ctxt budget
-      ({stripped, order, linarith} : decision_base) =
+      ({stripped, order, linarith, solver} : decision_base) =
   let
     val with_order =
       if order then
@@ -1779,7 +1803,7 @@ fun budgeted_decisions_of ctxt budget
           (with_order, linarithLib.LINARITH_ext_ss_budgeted ctxt budget)
       else with_order
   in
-    if linarith then
+    if linarith orelse solver then
       simpLib.add_unsafe_solver
         (linarithLib.linarith_solver_budgeted ctxt budget)
         with_linarith
@@ -1828,16 +1852,18 @@ fun prepare_invocation_rules ss arguments =
        originals= #originals data,positions= #positions data}
   in (ambient,rules) end
 
-fun prepare_bound_rules runtime charge ambient rules =
+fun prepare_bound_rules verbosity runtime charge ambient rules =
   let
     val early = bound_converses charge ambient rules
+    val _ =
+      trace_suspended_converses verbosity (supplied_converse_suspended early)
     val working = working_simpset_of ambient
   in make_bound_simplification runtime
        (fn () => working_view_table working) early end
 
-fun prepare_bound_simplification runtime charge ss arguments =
+fun prepare_bound_simplification verbosity runtime charge ss arguments =
   let val (ambient,rules) = prepare_invocation_rules ss arguments
-  in prepare_bound_rules runtime charge ambient rules end
+  in prepare_bound_rules verbosity runtime charge ambient rules end
 
 (* A generic callback can pass its simpset to a CS tactic and discard its
    theorem list. Keep compiled supplied origins and facts scoped to that
@@ -2134,19 +2160,19 @@ fun with_permutation_instances_controlled controls step simp_args =
   (if null controls then Tactical.ASSUM_LIST
    else markerLib.process_taclist_then {arg=controls})
     (fn theorems =>
-       fn goal =>
+       fn goal => fn ctxt =>
          let
            val instances = permutation_instances theorems goal
            val _ =
              if null instances then ()
              else
-               trace 2
+               trace (trace_level_of ctxt) 2
                  (fn () =>
                     "permutation instances: " ^
                     String.concatWith ", "
                       (map (Parse.term_to_string o Thm.concl) instances))
          in
-           step (simp_args @ instances) goal
+           step (simp_args @ instances) goal ctxt
          end)
 
 fun asm_full_simp_with policy ss simp_args =
@@ -2184,7 +2210,7 @@ fun standalone_simp safe ss arguments goal =
   in
     markerLib.ABBRS_THEN (markerLib.LLABEL_RES_THEN
       (fn resolved => fn current => fn ctxt =>
-        let val state = prepare_bound_simplification
+        let val state = prepare_bound_simplification (trace_level_of ctxt)
               (budgeted_decisions ctxt budget) (charge_normalization budget)
               ss resolved
         in
@@ -2829,22 +2855,23 @@ fun declare_undetermined theorem cs =
 
 (* A fact the classical reasoner declines too stays a rewrite: it is then
    no worse off than it was, and the argument is not silently dropped. *)
-fun route_simp_argument (theorem, (cs, rewrites)) =
+fun route_simp_argument verbosity (theorem, (cs, rewrites)) =
   if simp_argument_can_fire theorem then (cs, theorem :: rewrites)
   else
     case Lib.total (declare_undetermined theorem) cs of
         SOME extended =>
-          (trace 1
+          (trace verbosity 1
              (fn () =>
                "no rewrite of " ^ Parse.thm_to_string theorem ^
                " can fire; declaring it as an unsafe destruction rule");
            (extended, rewrites))
       | NONE => (cs, theorem :: rewrites)
 
-fun invocation_declarations iff_prefix simp_rules iff_rules claset =
+fun invocation_declarations verbosity iff_prefix simp_rules iff_rules
+      claset =
   let
     val (routed_claset, rewritable) =
-      List.foldr route_simp_argument (claset, []) simp_rules
+      List.foldr (route_simp_argument verbosity) (claset, []) simp_rules
     val declarations =
       map
         (fn (index, rule) =>
@@ -2857,10 +2884,11 @@ fun invocation_declarations iff_prefix simp_rules iff_rules claset =
   in (invocation_cs,rewritable,List.rev (map #rewrite declarations)) end
 
 fun extend_invocation
-      {iff_prefix,simp_rules,iff_rules,claset,simpset} =
+      {iff_prefix,simp_rules,iff_rules,claset,simpset,context} =
   let
     val (invocation_cs,rewritable,iff_rewrites) =
-      invocation_declarations iff_prefix simp_rules iff_rules claset
+      invocation_declarations (trace_level_of context) iff_prefix
+        simp_rules iff_rules claset
     val simp_ss =
       if null rewritable then simpset
       else simpLib.++ (simpset, simpLib.rewrites rewritable)
@@ -2882,10 +2910,11 @@ datatype invocation_rewrites = InvocationRewrites of
 
 fun extend_bound_invocation
       {iff_prefix,simp_rules,iff_rules,claset,
-       simpset=InvocationRewrites {ambient,supplied}} =
+       simpset=InvocationRewrites {ambient,supplied},context} =
   let
     val (cs,rewritable,iff_rewrites) =
-      invocation_declarations iff_prefix simp_rules iff_rules claset
+      invocation_declarations (trace_level_of context) iff_prefix
+        simp_rules iff_rules claset
   in
     (cs,InvocationRewrites
       {ambient=ambient,supplied=iff_rewrites @ rewritable @ supplied})
@@ -3171,11 +3200,13 @@ fun process_clasimp_bound_args consumer budget runtime body base_cs base_ss =
       case simpset of
           SOME (InvocationRewrites {ambient,supplied}) =>
             markerLib.LLABEL_RES_THEN
-              (fn arguments =>
+              (fn arguments => fn goal => fn ctxt =>
                 let
-                  val bound = prepare_bound_simplification runtime
-                    (charge_normalization budget) ambient arguments
-                in body bound cs environment end)
+                  val bound =
+                    prepare_bound_simplification (trace_level_of ctxt)
+                      runtime (charge_normalization budget) ambient
+                      arguments
+                in body bound cs environment goal ctxt end)
               (controls @ map #theorem
                 (clasetFacts.schematic_views environment) @ supplied)
         | NONE => raise ERR "process_clasimp_bound_args"
@@ -3513,16 +3544,16 @@ fun search_stages limit =
    classical traversal. *)
 fun staged_auto_search {blast, depth} tableau_cs classical_cs =
   let
-    fun report engine bound tactic goal =
+    fun report engine bound tactic goal ctxt =
       let
-        val result = tactic goal
+        val result = tactic goal ctxt
         val suffix =
           if engine = "classical" then
             ", expansions=" ^ Int.toString (clasetSearch.node_count ())
           else
             ", enable 'blast' trace level 2 for expansion statistics"
         val _ =
-          trace 1
+          trace (trace_level_of ctxt) 1
             (fn () =>
               engine ^ " search solved at stage " ^ Int.toString bound ^
               suffix)
@@ -3641,7 +3672,7 @@ fun CS_of_with allocate safe_only body cs ss goal ctxt =
                     val budget = allocate ()
                     val (ambient,rules) = callback_bound_rules ambient rules
                       controls goal ctxt
-                    val state = prepare_bound_rules
+                    val state = prepare_bound_rules (trace_level_of ctxt)
                       (budgeted_decisions ctxt budget)
                       (charge_normalization budget) ambient rules
                   in active := SOME (budget,state); (budget,state) end
@@ -3699,6 +3730,7 @@ fun force_search schedule budget add_simp cs goal ctxt =
   let
     val {best, tableau, depth, blast_depth, classical_depth} =
       schedule
+    val verbosity = trace_level_of ctxt
     val best_budget = searchBudget.child budget (slice_limits best)
     (* Atomic simplification retains its invocation policy and budget;
        yielding engines alone receive the resumable slice budgets. *)
@@ -3743,7 +3775,7 @@ fun force_search schedule budget add_simp cs goal ctxt =
           | classicalLib.BudgetExhausted => forceScheduler.Exhausted
           | classicalLib.BudgetYielded {kind, ...} =>
               (limit kind;
-               trace 1
+               trace verbosity 1
                  (fn () =>
                    "FORCE first-best resumes after a " ^
                    (case kind of
@@ -3787,7 +3819,7 @@ fun force_search schedule budget add_simp cs goal ctxt =
                  forceScheduler.Exhausted)
             | blastSearch.BudgetYielded {kind, resume, ...} =>
                 (limit kind;
-                 trace 1
+                 trace verbosity 1
                    (fn () =>
                      "FORCE tableau depth " ^
                      Int.toString blast_depth ^
@@ -3834,7 +3866,7 @@ fun force_search schedule budget add_simp cs goal ctxt =
                      else forceScheduler.Yielded)
                 | classicalLib.DepthYielded {kind, ...} =>
                     (limit kind;
-                     trace 1
+                     trace verbosity 1
                        (fn () =>
                          "FORCE classical depth " ^
                          Int.toString bound ^
@@ -3994,7 +4026,9 @@ fun public_bound_using_budgeted budget consumer body theorems
     val (goals,validation) =
       process_clasimp_bound_fact_views true consumer budget runtime
         (fn state => fn cs => fn _ => body state cs)
-        (clasetLib.the_claset ()) (clasimp_ss ()) theorems goal ctxt
+        (clasetLib.the_claset_of ctxt)
+        (clasimp_ss_of ctxt)
+        theorems goal ctxt
   in (goals,restore_normalized_target budget target validation) end
 
 fun public_bound_using_with allocate consumer make_body arguments goal ctxt =

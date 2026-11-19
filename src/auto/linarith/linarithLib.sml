@@ -5,15 +5,19 @@ open Abbrev HolKernel Drule
 
 val ERR = mk_HOL_ERR "linarithLib"
 
-(* The budget rides beside the meter for the nested budgeted entries. *)
+(* The budget rides beside the meter for the nested budgeted entries,
+   and the linarith.trace level the search reports at beside both.  The
+   tactics take the level from the context they are applied in. *)
 type work =
-  {meter : searchBudget.charger, budget : searchBudget.budget option}
+  {meter : searchBudget.charger, budget : searchBudget.budget option,
+   verbosity : int}
 
-val free_work : work =
-  {meter = searchBudget.free_charger, budget = NONE}
+fun free_work verbosity : work =
+  {meter = searchBudget.free_charger, budget = NONE, verbosity = verbosity}
 
-fun budget_work budget : work =
-  {meter = searchBudget.charger budget, budget = SOME budget}
+fun budget_work budget verbosity : work =
+  {meter = searchBudget.charger budget, budget = SOME budget,
+   verbosity = verbosity}
 
 fun candidate (work : work) = #candidate (#meter work) ()
 fun application (work : work) = #application (#meter work) ()
@@ -149,9 +153,10 @@ fun full_arguments function arguments =
    diagnostics below. *)
 fun refutation_with work config (assumptions, conclusion) =
   case #budget (work : work) of
-      NONE => linarithReplay.refute config assumptions conclusion
+      NONE =>
+        linarithReplay.refute (#verbosity work) config assumptions conclusion
     | SOME budget =>
-        (case linarithReplay.refute_budgeted budget config
+        (case linarithReplay.refute_budgeted (#verbosity work) budget config
                 assumptions conclusion of
              linarithReplay.RefutationReady tactic => SOME tactic
            | linarithReplay.RefutationExhausted => NONE
@@ -164,15 +169,17 @@ fun refutation_with work config (assumptions, conclusion) =
    split from core because the search below reaches the same dead end
    already knowing the answer is NONE, and re-entering core there would
    spend a second full refutation to be told so again. *)
-fun exhausted function hint (assumptions, conclusion) =
-  (linarithData.trace_terms 2 "preprocessed assumptions" assumptions;
-   linarithData.trace_terms 2 "preprocessed conclusion" [conclusion];
+fun exhausted (work : work) function hint (assumptions, conclusion) =
+  (linarithData.trace_terms (#verbosity work) 2 "preprocessed assumptions"
+     assumptions;
+   linarithData.trace_terms (#verbosity work) 2 "preprocessed conclusion"
+     [conclusion];
    no_proof function hint)
 
 fun core_with work function hint config goal ctxt =
   case refutation_with work config goal of
       SOME tactic => tactic goal ctxt
-    | NONE => exhausted function hint goal
+    | NONE => exhausted work function hint goal
 
 (* Everything the session owns -- the [arith] table here, and the
    registry and the [arith_split] table at the entry below -- is read
@@ -185,18 +192,21 @@ fun core_with work function hint config goal ctxt =
    reported at the tactic than at some later goal.  The per-application
    reads are what the memos above make cheap -- a generation compare,
    not a rebuild. *)
-fun simple_linarith_tac_with work function arguments =
+fun simple_linarith_tac_with make_work function arguments =
   let
     val argument_facts = map (simple_argument function) arguments
   in
     fn goal => fn ctxt =>
-      (normalization work;
-       Tactical.THEN
-        (insert_facts_with work
-           (linarithData.arith_facts () @ argument_facts),
-         fn inner as (_, conclusion) =>
-           core_with work function (unregistered_hint conclusion)
-             linarithData.default_config inner) goal ctxt)
+      let val work = make_work (linarithData.trace_level_of ctxt)
+      in
+        normalization work;
+        Tactical.THEN
+         (insert_facts_with work
+            (linarithData.arith_facts_of ctxt @ argument_facts),
+          fn inner as (_, conclusion) =>
+            core_with work function (unregistered_hint conclusion)
+              linarithData.default_config inner) goal ctxt
+      end
   end
 
 fun SIMPLE_LINARITH_TAC arguments =
@@ -364,12 +374,12 @@ fun nnf_flatten carrier_rule goal ctxt =
        Tactical.TRY opposite_tac) goal ctxt
   end
 
-fun limit_exceeded function limit =
+fun limit_exceeded (work : work) function limit =
   let
     val message =
       "linarith_split_limit exceeded (current value is " ^
       Int.toString limit ^ ")"
-    val _ = linarithData.trace 1 message
+    val _ = linarithData.trace (#verbosity work) 1 message
   in
     raise ERR function message
   end
@@ -385,16 +395,16 @@ fun distinct_thms_with work theorems =
     (fn pair => (candidate work; Term.compare pair))
     Thm.concl theorems
 
+(* Deduplicating reports nothing, so no level is asked for. *)
 fun distinct_thms theorems =
-  distinct_thms_with free_work theorems
+  distinct_thms_with (free_work 0) theorems
 
-fun compute_split_rules extra =
+fun compute_split_rules extra splits =
   let
     val seeds =
       List.concat (map #pre_split (linarithData.all_instances ()))
     val source =
-      distinct_thms
-        (linarithData.arith_split_thms () @ extra @ seeds)
+      distinct_thms (splits @ extra @ seeds)
   in
     (* splitLib.split_forms answers the rules already analysed, so a
        source theorem is walked once here rather than once to ask
@@ -425,12 +435,12 @@ fun compute_split_rules extra =
    where the tactic is applied rather than where it is built. *)
 val cached_split_tac =
   linarithData.memo_with_splits
-    (fn () => splitLib.SPLIT_RULE_TAC (compute_split_rules []))
+    (splitLib.SPLIT_RULE_TAC o compute_split_rules [])
 
 fun split_tactic [] = cached_split_tac
   | split_tactic extra =
       linarithData.memo_with_splits
-        (fn () => splitLib.SPLIT_RULE_TAC (compute_split_rules extra))
+        (splitLib.SPLIT_RULE_TAC o compute_split_rules extra)
 
 fun decomp_atoms tm =
   case linarithDecomp.decomp tm of
@@ -597,7 +607,7 @@ fun augmentation_with work function limit processed assumptions =
           augmentation_round_with work processed known terms
       in
         if null facts then (processed', List.rev added)
-        else if rounds >= limit then limit_exceeded function limit
+        else if rounds >= limit then limit_exceeded work function limit
         else
           let
             val conclusions = List.map Thm.concl facts
@@ -624,13 +634,14 @@ fun consistent_with work config decomposed disjunct =
   in
     case #budget (work : work) of
         NONE =>
-          (case linarithSolve.prove_decomposed config
+          (case linarithSolve.prove_decomposed (#verbosity work) config
                   linarithDecomp.decomp linarithDecomp.is_nonnegative
                   facts boolSyntax.F of
                (_, SOME _) => false
              | (_, NONE) => true)
       | SOME budget =>
-          (case linarithSolve.prove_decomposed_budgeted budget config
+          (case linarithSolve.prove_decomposed_budgeted (#verbosity work)
+                  budget config
                   linarithDecomp.decomp linarithDecomp.is_nonnegative
                   facts boolSyntax.F of
                linarithSolve.CertificateFound _ => false
@@ -927,7 +938,7 @@ fun split_on_demand_with work function config split_tac =
                      (fn split_goal => split_tac split_goal ctxt))
                     (connected_split_goal goal) of
                  SOME split =>
-                   if splits >= limit then limit_exceeded function limit
+                   if splits >= limit then limit_exceeded work function limit
                    else
                      let
                        val continue =
@@ -950,8 +961,8 @@ fun split_on_demand_with work function config split_tac =
         (* decide has already run the refutation on this goal and been
            told NONE, and augmentation has nothing to add, so the leaf
            is exhausted: report it rather than searching it again. *)
-        if null facts then exhausted function hint goal
-        else if augmentations >= limit then limit_exceeded function limit
+        if null facts then exhausted work function hint goal
+        else if augmentations >= limit then limit_exceeded work function limit
         else
           (note_search Augmentation;
            Tactical.THEN
@@ -979,30 +990,33 @@ fun split_on_demand_with work function config split_tac =
 type linarith_config = linarithData.linarith_config
 val default_config = linarithData.default_config
 
-fun cfg_linarith_tac_with work function config arguments =
+fun cfg_linarith_tac_with make_work function config arguments =
   let
     val (argument_facts, argument_splits) =
       full_arguments function arguments
     val split_tac = split_tactic argument_splits
   in
     fn goal => fn ctxt =>
-      (normalization work;
-       Tactical.THEN
-        (insert_facts_with work
-           (linarithData.arith_facts () @ argument_facts),
-         let
-           val search =
-             split_on_demand_with work function config (split_tac ())
-         in
-           fn inner as (_, conclusion) =>
-             Tactical.THEN
-               (Tactic.CCONTR_TAC,
-                Tactical.THEN
-                  (Tactical.TRY opposite_tac,
-                   Tactical.THEN
-                     (filter_relevant,
-                      search (unregistered_hint conclusion)))) inner
-         end) goal ctxt)
+      let val work = make_work (linarithData.trace_level_of ctxt)
+      in
+        normalization work;
+        Tactical.THEN
+         (insert_facts_with work
+            (linarithData.arith_facts_of ctxt @ argument_facts),
+          let
+            val search =
+              split_on_demand_with work function config (split_tac ctxt)
+          in
+            fn inner as (_, conclusion) =>
+              Tactical.THEN
+                (Tactic.CCONTR_TAC,
+                 Tactical.THEN
+                   (Tactical.TRY opposite_tac,
+                    Tactical.THEN
+                      (filter_relevant,
+                       search (unregistered_hint conclusion)))) inner
+          end) goal ctxt
+      end
   end
 
 fun CFG_LINARITH_TAC config arguments =
@@ -1039,12 +1053,12 @@ fun atomized_assumptions premises =
    reached as a tactic. *)
 val forward_search_name = "forward_search"
 
-fun forward_search_with work conclusion =
+fun forward_search_with work ctxt conclusion =
   let
     val _ = normalization work
     val search =
       split_on_demand_with work forward_search_name
-        linarithData.default_config (cached_split_tac ())
+        linarithData.default_config (cached_split_tac ctxt)
   in
     Tactical.THEN
       (Tactic.CCONTR_TAC,
@@ -1071,7 +1085,7 @@ fun forward_prove_with work function ctxt premises conclusion =
   let
     val premise_theorems = atomized_assumptions premises
     val premise_terms = map Thm.concl premise_theorems
-    val search = forward_search_with work conclusion
+    val search = forward_search_with work ctxt conclusion
     val tactic =
       case #budget (work : work) of
           NONE => search
@@ -1095,10 +1109,14 @@ fun forward_prove_with work function ctxt premises conclusion =
   end
 
 fun forward_prove premises conclusion =
-  case forward_prove_with free_work "forward_prove" (Context.snapshot())
-         premises conclusion of
-      SOME theorem => theorem
-    | NONE => decline ""
+  let
+    val ctxt = Context.snapshot ()
+    val work = free_work (linarithData.trace_level_of ctxt)
+  in
+    case forward_prove_with work "forward_prove" ctxt premises conclusion of
+        SOME theorem => theorem
+      | NONE => decline ""
+  end
 
 fun linarith_prove tm =
   let
@@ -1138,7 +1156,7 @@ datatype budget_outcome =
 
 fun LINARITH_PROVE_BUDGETED_IN ctxt budget tm =
   let
-    val work = budget_work budget
+    val work = budget_work budget (linarithData.trace_level_of ctxt)
     val (variables, body) = boolSyntax.strip_forall tm
     val (premises, conclusion) = boolSyntax.strip_imp_only body
   in
@@ -1456,7 +1474,7 @@ fun budgeted_context_prove ctxt budget context tm =
   if not (cache_check tm) then decline ""
   else
     let
-      val work = budget_work budget
+      val work = budget_work budget (linarithData.trace_level_of ctxt)
       val theorem =
         case forward_prove_with work "budgeted_context_prove" ctxt
                (map Thm.concl context) tm of
@@ -1478,7 +1496,7 @@ fun memo_budgeted_with_arith ctxt budget =
   let
     val deferred = ref (NONE : exn option)
     val generation = ref (linarithData.generation ())
-    val facts = ref (linarithData.arith_facts ())
+    val facts = ref (linarithData.arith_facts_of ctxt)
     fun same_thms left right =
       Lib.list_eq (Lib.curry Portable.pointer_eq) left right
     fun conversion context tm =
@@ -1494,7 +1512,7 @@ fun memo_budgeted_with_arith ctxt budget =
       else
         let
           val current_generation = linarithData.generation ()
-          val current_facts = linarithData.arith_facts ()
+          val current_facts = linarithData.arith_facts_of ctxt
           val _ =
             if current_generation = !generation andalso
                same_thms current_facts (!facts)

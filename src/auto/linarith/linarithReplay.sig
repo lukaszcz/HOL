@@ -3,8 +3,10 @@ sig
   type config = linarithData.linarith_config
 
   (* Replays one certificate; the theorem list is what its Asm nodes
-     index. *)
-  val mkthm : Thm.thm list -> linarithSolve.injust -> Thm.thm
+     index.  This, refute and refute_budgeted take first the
+     linarith.trace level to report at; the tactics they return and the
+     forward entries read it from their context. *)
+  val mkthm : int -> Thm.thm list -> linarithSolve.injust -> Thm.thm
 
   (* refute config assumptions conclusion searches for a certificate
      refuting those terms and returns the tactic that replays it, so
@@ -13,7 +15,7 @@ sig
      "no certificate", which for a caller that can still split the goal
      is not yet a failure; a genuine error is raised. *)
   val refute :
-    config -> Term.term list -> Term.term -> Abbrev.tactic option
+    int -> config -> Term.term list -> Term.term -> Abbrev.tactic option
 
   datatype refutation_outcome =
       RefutationReady of Abbrev.tactic
@@ -24,7 +26,7 @@ sig
   (* A ready tactic is a certificate awaiting replay, not a proof.  It
      charges the same budget while reconstructing the justification. *)
   val refute_budgeted :
-    searchBudget.budget -> config -> Term.term list -> Term.term ->
+    int -> searchBudget.budget -> config -> Term.term list -> Term.term ->
     refutation_outcome
 
   val fwd_prove_in :

@@ -115,12 +115,16 @@ datatype cache = Cache of
   {entries : (cache_key, entry list) Redblackmap.dict ref,
    conversions : int ref,
    hits : int ref,
-   next_stamp : int ref}
+   next_stamp : int ref,
+   trace : int}
 
-fun newCache () =
+fun newCache trace =
   Cache
     {entries = ref (Redblackmap.mkDict cache_key_compare),
-     conversions = ref 0, hits = ref 0, next_stamp = ref 0}
+     conversions = ref 0, hits = ref 0, next_stamp = ref 0,
+     trace = trace}
+
+fun cache_trace (Cache {trace, ...}) = trace
 
 fun conversionCount (Cache {conversions, ...}) = !conversions
 fun hitCount (Cache {hits, ...}) = !hits
@@ -133,8 +137,11 @@ fun freshName _ prefix =
   (skolem_names := !skolem_names + 1;
    prefix ^ Int.toString (!skolem_names))
 
-val _ = HOLFlags.create_trace ({group = "blast", name = "trace"},
-                               {initial = 0, max = 7})
+val {flag = trace_flag, ...} =
+    HOLFlags.create_trace ({group = "blast", name = "trace"},
+                           {initial = 0, max = 7})
+
+fun trace_level_of ctxt = HOLFlags.get_flagC ctxt trace_flag
 
 val generic_cache :
   (KernelSig.kernelname, hol_type * hol_type list) Redblackmap.dict ref =
@@ -531,8 +538,8 @@ fun convertIntroMeasured checkpoint cache vars theorem =
 fun convertIntro cache vars theorem =
   convertIntroMeasured (fn () => ()) cache vars theorem
 
-fun weak_warning theorem =
-  if HOLFlags.current_trace "blast.trace" >= 1 then
+fun weak_warning cache theorem =
+  if cache_trace cache >= 1 then
     HOL_WARNING "blastRule" "convertElim"
       ("Ignoring weak elimination rule\n" ^ Parse.thm_to_string theorem)
   else ()
@@ -616,9 +623,9 @@ fun convertElimMeasured checkpoint cache vars theorem =
        hidden_assumptions = mapMeasured checkpoint #2 converted}
     end
   end
-  handle ElimBadPrem => (weak_warning theorem; NONE)
+  handle ElimBadPrem => (weak_warning cache theorem; NONE)
        | ElimBadConcl =>
-           (if HOLFlags.current_trace "blast.trace" >= 1 then
+           (if cache_trace cache >= 1 then
               Feedback.HOL_MESG (bad_conclusion_message theorem)
             else ();
             NONE)

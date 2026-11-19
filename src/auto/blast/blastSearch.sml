@@ -950,8 +950,8 @@ fun branchString ({pairs, lits, vars, lim} : branch) =
   String.concatWith "; " (map levelString pairs) ^ "]}"
 
 (* [branches] is forced only when the trace is printed. *)
-fun traceState depth branches =
-  if HOLFlags.current_trace "blast.trace" >= 3 then
+fun traceState level depth branches =
+  if level >= 3 then
     Feedback.HOL_MESG
       ("Blast trace at depth " ^ Int.toString depth ^ ":\n" ^
        String.concatWith "\n" (map branchString (branches ())))
@@ -995,7 +995,7 @@ val zero_phase_statistics : phase_statistics =
 
 datatype interruption_cleanup = Restore | AbandonOwned
 
-fun runGoal resumable cleanup_policy instrumentation
+fun runGoal trace_level resumable cleanup_policy instrumentation
     claset depth goal cont =
   let
     exception INTERRUPTED
@@ -1004,7 +1004,7 @@ fun runGoal resumable cleanup_policy instrumentation
     val suspended = ref NONE
     val suspended_limit = ref NONE
     val state = newState ()
-    val rule_cache = blastRule.newCache ()
+    val rule_cache = blastRule.newCache trace_level
     val closed = ref 0
     val created = ref 1
     val pruned = ref 0
@@ -1092,7 +1092,8 @@ fun runGoal resumable cleanup_policy instrumentation
                 (!inferences, !maximum_resource_cost, [],
                  zero_phase_statistics)
             in
-              (fn brs => traceState depth (fn () => projectBranches brs),
+              (fn brs =>
+                 traceState trace_level depth (fn () => projectBranches brs),
                inference, ruleInference, result, plainWorkers)
             end
         | On {debug, stop, budget} =>
@@ -1136,9 +1137,11 @@ fun runGoal resumable cleanup_policy instrumentation
                     let val projected = projectBranches brs
                     in
                       fullTrace := projected :: !fullTrace;
-                      traceState depth (fn () => projected)
+                      traceState trace_level depth (fn () => projected)
                     end
-                 else traceState depth (fn () => projectBranches brs))
+                 else
+                   traceState trace_level depth
+                     (fn () => projectBranches brs))
               fun inference () =
                 (charge searchBudget.Application;
                  inferences := !inferences + 1)
@@ -1452,7 +1455,7 @@ fun runGoal resumable cleanup_policy instrumentation
             preserve
               (fn PROOF_FAILED =>
                     SOME (fn () =>
-                      (if HOLFlags.current_trace "blast.trace" >= 1 then
+                      (if trace_level >= 1 then
                          Feedback.HOL_MESG
                            ("PROOF FAILED for depth " ^
                             Int.toString depth)
@@ -1948,17 +1951,22 @@ fun runGoal resumable cleanup_policy instrumentation
               end)
   end
 
-fun searchGoalMeasured {debug, stop} claset depth goal cont =
-  case runGoal false AbandonOwned
+(* The ctxt-taking entry points run at the blast.trace level of the
+   context given; the others at that of the ambient context. *)
+fun searchGoalMeasured_in ctxt {debug, stop} claset depth goal cont =
+  case runGoal (blastRule.trace_level_of ctxt) false AbandonOwned
          (On {debug = debug, stop = stop, budget = NONE})
          claset depth goal cont of
       RunDone report => report
     | RunYielded _ => raise Fail "unbudgeted tableau yielded"
 
-fun searchGoalBudgeted budget claset depth goal cont =
+fun searchGoalMeasured instrumentation =
+  searchGoalMeasured_in (Context.snapshot ()) instrumentation
+
+fun searchGoalBudgeted_in ctxt budget claset depth goal cont =
   let
     val report =
-      runGoal false Restore
+      runGoal (blastRule.trace_level_of ctxt) false Restore
         (On {debug = false, stop = fn () => false,
              budget = SOME budget}) claset depth goal cont
   in
@@ -1973,8 +1981,12 @@ fun searchGoalBudgeted budget claset depth goal cont =
   handle searchBudget.LimitReached (kind, usage) =>
     BudgetLimitReached {kind = kind, usage = usage}
 
-fun searchGoalResumable budget claset depth goal cont =
+fun searchGoalBudgeted budget =
+  searchGoalBudgeted_in (Context.snapshot ()) budget
+
+fun searchGoalResumable_in ctxt budget claset depth goal cont =
   let
+    val trace_level = blastRule.trace_level_of ctxt
     fun once resume =
       let val used = ref false
       in
@@ -1996,7 +2008,7 @@ fun searchGoalResumable budget claset depth goal cont =
              resume = once (fn () => convert (resume ()))}
     fun start () =
       convert
-        (runGoal true Restore
+        (runGoal trace_level true Restore
            (On {debug = false, stop = fn () => false,
                 budget = SOME budget}) claset depth goal cont)
       handle searchBudget.LimitReached (kind, usage) =>
@@ -2007,10 +2019,14 @@ fun searchGoalResumable budget claset depth goal cont =
     start ()
   end
 
-fun searchGoalWithStats claset depth goal cont =
+fun searchGoalResumable budget =
+  searchGoalResumable_in (Context.snapshot ()) budget
+
+fun searchGoalWithStats_in ctxt claset depth goal cont =
   let
     val report =
-      runGoal false Restore Stats claset depth goal cont
+      runGoal (blastRule.trace_level_of ctxt) false Restore Stats
+        claset depth goal cont
   in
     case report of
         RunDone finished =>
@@ -2019,22 +2035,29 @@ fun searchGoalWithStats claset depth goal cont =
       | RunYielded _ => raise Fail "statistics tableau yielded"
   end
 
+fun searchGoalWithStats claset =
+  searchGoalWithStats_in (Context.snapshot ()) claset
+
 (* The production entry point keeps the statistics: the inference and
    resource-cost counters are what the shared work meter reports. *)
-fun searchGoal claset depth goal cont =
-  #result (searchGoalWithStats claset depth goal cont)
+fun searchGoal_in ctxt claset depth goal cont =
+  #result (searchGoalWithStats_in ctxt claset depth goal cont)
+
+fun searchGoal claset = searchGoal_in (Context.snapshot ()) claset
 
 fun tryGoal claset depth goal =
   searchGoal claset depth goal (fn proof => proof)
 
-fun debugGoal claset depth goal =
+fun debugGoal_in ctxt claset depth goal =
   let
     val report =
-      searchGoalMeasured {debug = true, stop = fn () => false}
+      searchGoalMeasured_in ctxt {debug = true, stop = fn () => false}
         claset depth goal (fn proof => proof)
   in
     {fullTrace = #fullTrace report, result = #result report}
   end
+
+fun debugGoal claset = debugGoal_in (Context.snapshot ()) claset
 
 (* This legacy iterative-deepening API has no cooperative timeout: each
    fixed-depth run is bounded only by its resource limit, while the

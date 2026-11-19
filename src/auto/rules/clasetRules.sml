@@ -823,13 +823,19 @@ fun dec_rm sexp =
 fun decode_delta sexp =
   ThyDataSexp.first [dec_add, dec_rm] sexp
 
-fun load_delta (ADD {name, spec}) =
-      (SOME (name, spec, DB.fetch_knm name)
-       handle HOL_ERR _ =>
-         (HOL_WARNING "clasetRules" "load_delta"
-            ("Bad claset add command, dropping theorem " ^
-             KernelSig.name_toString name);
-          NONE))
+datatype looked_up = Found of thname * rulespec * thm | Missing of thname
+
+fun look_up {name, spec} =
+  Found (name, spec, DB.fetch_knm name) handle HOL_ERR _ => Missing name
+
+fun take_looked_up (Found found) = SOME found
+  | take_looked_up (Missing name) =
+      (HOL_WARNING "clasetRules" "load_delta"
+         ("Bad claset add command, dropping theorem " ^
+          KernelSig.name_toString name);
+       NONE)
+
+fun load_delta (ADD addition) = take_looked_up (look_up addition)
   | load_delta (RM _) = NONE
 
 fun uptodate_delta (ADD {name, ...}) =

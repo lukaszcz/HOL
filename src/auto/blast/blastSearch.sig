@@ -96,8 +96,13 @@ sig
   (* Initial formulae all receive md = true, as in blast.ML:1180-1184. *)
   val initBranch : pterm list * int -> branch
 
+  (* Each search runs at a blast.trace level: an entry point ending in
+     _in takes it from the context given, its namesake from the ambient
+     context. *)
   val searchGoal :
     claset -> int -> goal -> (proof -> 'a) -> 'a option
+  val searchGoal_in :
+    Context.t -> claset -> int -> goal -> (proof -> 'a) -> 'a option
   (* This and the measured/debug entry points enable internal
      instrumentation.  The legacy searchGoal, tryGoal and deepenGoal entry
      points do not poll a stop predicate; they do maintain the
@@ -142,6 +147,9 @@ sig
   val searchGoalWithStats :
     claset -> int -> goal -> (proof -> 'a) ->
     {result : 'a option, statistics : statistics}
+  val searchGoalWithStats_in :
+    Context.t -> claset -> int -> goal -> (proof -> 'a) ->
+    {result : 'a option, statistics : statistics}
 
   (* Cooperative fixed-depth search.  stop is polled while translating and
      collecting variables from the initial goal, at every prv entry, and
@@ -182,6 +190,9 @@ sig
   val searchGoalMeasured :
     {debug : bool, stop : unit -> bool} ->
     claset -> int -> goal -> (proof -> 'a) -> 'a measured_result
+  val searchGoalMeasured_in :
+    Context.t -> {debug : bool, stop : unit -> bool} ->
+    claset -> int -> goal -> (proof -> 'a) -> 'a measured_result
   (* General scan checkpoints charge candidate work, while term
      normalization and equality substitution checkpoints charge
      normalization work.  Successful transitions charge applications.
@@ -189,6 +200,9 @@ sig
      failure.  This fixed-depth adapter does not retain a tableau cursor. *)
   val searchGoalBudgeted :
     searchBudget.budget -> claset -> int -> goal ->
+    (proof -> 'a) -> 'a budget_outcome
+  val searchGoalBudgeted_in :
+    Context.t -> searchBudget.budget -> claset -> int -> goal ->
     (proof -> 'a) -> 'a budget_outcome
   (* Retains the tableau's owned trail, rule cache, script, branches and
      backtracking handlers across bounded turns.  A yielded outcome reports
@@ -198,8 +212,12 @@ sig
   val searchGoalResumable :
     searchBudget.budget -> claset -> int -> goal ->
     (proof -> 'a) -> 'a budget_outcome
+  val searchGoalResumable_in :
+    Context.t -> searchBudget.budget -> claset -> int -> goal ->
+    (proof -> 'a) -> 'a budget_outcome
   val tryGoal : claset -> int -> goal -> proof option
   val debugGoal : claset -> int -> goal -> debug_result
+  val debugGoal_in : Context.t -> claset -> int -> goal -> debug_result
 
   (* Bounds 0, 1, ... through !depth_limit, as DEEPEN (1, limit). *)
   val deepenGoal : claset -> goal -> (proof -> 'a) -> 'a option

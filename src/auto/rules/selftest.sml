@@ -2277,6 +2277,38 @@ val _ =
          not (has_named_rule state_temp_name cs_after)
        end)
 
+(* A tactic reads the claset of the context it is applied in, and reading
+   it there consults no other context: not the ambient one, which during a
+   proof may belong to someone else. *)
+val _ =
+  test
+    ("the_claset_of reads the claset of the context given",
+     fn () =>
+       let
+         val name = "claset_context_rule"
+         val saved = Context.snapshot ()
+         val with_rule =
+           Portable.finally (fn () => Context.restore saved)
+             (fn () =>
+                (temp_add_rule state_spec
+                   (name, DISCH ``p /\ q /\ r`` (ASSUME ``p /\ q /\ r``));
+                 Context.snapshot ())) ()
+         val warnings = ref ([] : string list)
+         fun read () =
+           (Context.set_ambient_report_level 2;
+            Lib.with_flag
+              (Feedback.WARNING_outstream,
+               fn s => warnings := s :: !warnings)
+              (Context.in_proof (fn () => the_claset_of with_rule)) ())
+         val cs =
+           Portable.finally (fn () => Context.set_ambient_report_level 1)
+             read ()
+       in
+         has_named_rule name cs andalso
+         not (has_named_rule name (the_claset ())) andalso
+         null (!warnings)
+       end)
+
 val _ =
   test
     ("claset persistent API updates state correctly",
@@ -3371,7 +3403,8 @@ val _ =
          val extended = ref 0
          val called = ref 0
          val observed = ref false
-         fun extend {simp_rules, iff_rules, claset, simpset, iff_prefix} =
+         fun extend {simp_rules, iff_rules, claset, simpset, iff_prefix,
+                     ...} =
            (extended := !extended + 1;
             observed :=
               (ListPair.allEq (fn (a, b) => same_thm a b)

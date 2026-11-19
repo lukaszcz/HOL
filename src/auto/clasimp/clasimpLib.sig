@@ -3,6 +3,10 @@ signature clasimpLib =
 sig
   include Abbrev
 
+  (* clasimp.trace.  The tactics read its level from their context. *)
+  val trace_flag : HOLFlags.flag
+  val trace_level_of : Context.t -> int
+
   (* The safe side-condition solver of the clasimp simpset.  It discharges
      only goals justified without witness instantiation or unsafe search,
      which is what makes it usable in a normalisation phase.  Exported so
@@ -90,10 +94,15 @@ sig
   val working_original : working_simpset -> simpExtLib.simpset
   val working_view_table : working_simpset -> lhs_view_table
   val working_full_simpset : working_simpset -> simpExtLib.simpset
+  (* The simpset stripped of its order and linear-arithmetic procedures,
+     and which of them it had: the fragments, and the lin_arith solver,
+     which a simpset may carry without the fragment *)
   val working_decision_base : working_simpset ->
-    {stripped : simpExtLib.simpset, order : bool, linarith : bool}
+    {stripped : simpExtLib.simpset, order : bool, linarith : bool,
+     solver : bool}
   val working_plain_decision_base : working_simpset ->
-    {stripped : simpExtLib.simpset, order : bool, linarith : bool}
+    {stripped : simpExtLib.simpset, order : bool, linarith : bool,
+     solver : bool}
   (* The default state is owned by the stateful derivation hook. Explicit
      simpsets test the last requested default's identity first, then use
      the same bounded cache without forcing an unused default derivation.
@@ -199,8 +208,10 @@ sig
      Assumption controls recur over each pass's current context. Callers
      resolve goal-dependent abbreviations and label references first;
      the public standalone entry points perform that resolution. *)
+  (* The first argument is the clasimp.trace level at which binding
+     reports the ambient converses it suspends. *)
   val prepare_bound_simplification :
-    (simpExtLib.simpset -> simpExtLib.simpset) -> (unit -> unit) ->
+    int -> (simpExtLib.simpset -> simpExtLib.simpset) -> (unit -> unit) ->
     simpExtLib.simpset -> thm list -> bound_simplification
   val add_simp_wrapper_bound : bool -> bound_simplification -> thm list ->
     clasetLib.claset -> clasetLib.claset
@@ -312,7 +323,8 @@ sig
 
   val extend_invocation :
     {iff_prefix : string, simp_rules : thm list, iff_rules : thm list,
-     claset : clasetLib.claset, simpset : simpExtLib.simpset} ->
+     claset : clasetLib.claset, simpset : simpExtLib.simpset,
+     context : Context.t} ->
     clasetLib.claset * simpExtLib.simpset
 
   (* Shared packaging for theorem-list clasimp tactics. The body receives

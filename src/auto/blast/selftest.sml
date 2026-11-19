@@ -456,7 +456,7 @@ val _ =
            GENL [alpha_x, beta_x]
              (DISCH proposition (ASSUME proposition))
          val converted =
-           blastRule.convertIntro (blastRule.newCache ()) [] theorem
+           blastRule.convertIntro (blastRule.newCache 0) [] theorem
          val pattern = polymorphic_pair (rand (#pattern converted))
          val premise =
            case #premises converted of
@@ -544,7 +544,7 @@ val _ =
     ("rule type variables are shared mutable typargs",
      fn () =>
        let
-         val cache = blastRule.newCache ()
+         val cache = blastRule.newCache 0
          val converted =
            blastRule.convertIntro cache [] boolTheory.EQ_REFL
          val converted_again =
@@ -583,7 +583,7 @@ val _ =
     ("intro conversion goldens cover conjunction disjunction and exists",
      fn () =>
        let
-         val cache = blastRule.newCache ()
+         val cache = blastRule.newCache 0
          val conjunction =
            blastRule.convertIntro cache [] boolTheory.AND_INTRO_THM
          val disjunction =
@@ -610,7 +610,7 @@ val _ =
     ("elim conversion goldens cover conjunction disjunction exists and iff",
      fn () =>
        let
-         val cache = blastRule.newCache ()
+         val cache = blastRule.newCache 0
          val conjunction = blastRule.convertElim cache [] CONJ_ELIM_THM
          val disjunction =
            blastRule.convertElim cache [] boolTheory.OR_ELIM_THM
@@ -688,7 +688,7 @@ val _ =
        let
          fun round convert theorem =
            let
-             val rule = convert (blastRule.newCache ()) [] theorem
+             val rule = convert (blastRule.newCache 0) [] theorem
              val cells = rule_cells rule
              val unassigned =
                List.all (fn variable => !variable = NONE) cells
@@ -716,7 +716,7 @@ val _ =
     ("goal-directed implication and universal pseudo-rules have exact shapes",
      fn () =>
        let
-         val cache = blastRule.newCache ()
+         val cache = blastRule.newCache 0
          val claset = clasetLib.empty_cs
          val p = mk_var ("p", bool)
          val q = mk_var ("q", bool)
@@ -760,14 +760,11 @@ val _ =
            GENL [p, q, r]
              (DISCH p (DISCH q (DISCH r (ASSUME r))))
          val output = ref ([] : string list)
-         val old_trace = HOLFlags.current_trace "blast.trace"
          fun collect text = output := text :: !output
-         val _ = HOLFlags.set_trace "blast.trace" 1
          val converted =
            Lib.with_flag (Feedback.WARNING_outstream, collect)
              (fn () =>
-                blastRule.convertElim (blastRule.newCache ()) [] weak) ()
-         val _ = HOLFlags.set_trace "blast.trace" old_trace
+                blastRule.convertElim (blastRule.newCache 1) [] weak) ()
          val warning = String.concat (rev (!output))
          val message =
            "Ignoring weak elimination rule\n" ^ Parse.thm_to_string weak
@@ -783,7 +780,7 @@ val _ =
     ("too-flexible assertions never query elimination nets",
      fn () =>
        let
-         val cache = blastRule.newCache ()
+         val cache = blastRule.newCache 0
          val variable = Var (ref NONE)
          val negated = Const ({Thy = "bool", Name = "~"}, []) $ variable
          val claset = clasetLib.the_claset ()
@@ -877,7 +874,7 @@ val _ =
          val formula =
            mkGoal (blastRule.fromGoalTerm (mk_imp (p, p)))
          val rules =
-           blastRule.safeRules (blastRule.newCache ()) claset [] formula
+           blastRule.safeRules (blastRule.newCache 0) claset [] formula
        in
          case rules of
              {origin = blastRule.Stored _, ...} ::
@@ -893,7 +890,7 @@ val _ =
     ("cached rule templates survive destructive unification",
      fn () =>
        let
-         val cache = blastRule.newCache ()
+         val cache = blastRule.newCache 0
          val claset = clasetLib.the_claset ()
          val formula =
            mkGoal
@@ -964,7 +961,7 @@ val _ =
     ("cached rules freshen locals but preserve branch dependencies",
      fn () =>
        let
-         val cache = blastRule.newCache ()
+         val cache = blastRule.newCache 0
          val branch = ref NONE
          val alpha = Type.mk_vartype "'cache_a"
          val x = mk_var ("cache_x", alpha)
@@ -1010,8 +1007,8 @@ val _ =
     ("separate rule caches neither reuse conversions nor templates",
      fn () =>
        let
-         val first_cache = blastRule.newCache ()
-         val second_cache = blastRule.newCache ()
+         val first_cache = blastRule.newCache 0
+         val second_cache = blastRule.newCache 0
          val formula =
            mkGoal
              (blastRule.fromGoalTerm
@@ -1068,7 +1065,7 @@ val _ =
     ("bucketed rule cache agrees with the linear cache oracle",
      fn () =>
        let
-         val cache = blastRule.newCache ()
+         val cache = blastRule.newCache 0
          val oracle = ref ([] : reference_cache_entry list)
          val next_marker = ref 0
          val empty = clasetLib.empty_cs
@@ -1145,7 +1142,7 @@ val _ =
     ("cache keeps the newest alpha-equivalent entry",
      fn () =>
        let
-         val cache = blastRule.newCache ()
+         val cache = blastRule.newCache 0
          val left = ref NONE
          val right = ref NONE
          val vars = [left, right]
@@ -1196,7 +1193,7 @@ val _ =
              [("cache_var_head", boolTheory.AND_INTRO_THM)]
              clasetLib.empty_cs
 
-         val newest_cache = blastRule.newCache ()
+         val newest_cache = blastRule.newCache 0
          val newest_var = ref NONE
          val concrete_rules =
            blastRule.safeRules newest_cache cs [newest_var] concrete
@@ -1208,7 +1205,7 @@ val _ =
          val newest_selected =
            blastRule.safeRules newest_cache cs [newest_var] concrete
 
-         val resolved_cache = blastRule.newCache ()
+         val resolved_cache = blastRule.newCache 0
          val resolved_var = ref NONE
          val resolved_stored =
            blastRule.safeRules resolved_cache cs [resolved_var] concrete
@@ -2045,8 +2042,8 @@ val _ =
          val cs =
            clasetLib.add_sintros
              [("andI", boolTheory.AND_INTRO_THM)] clasetLib.empty_cs
-         val ordinary_cache = blastRule.newCache ()
-         val measured_cache = blastRule.newCache ()
+         val ordinary_cache = blastRule.newCache 0
+         val measured_cache = blastRule.newCache 0
          val polls = ref 0
          val candidates = ref 0
          val conversions = ref 0
@@ -2147,8 +2144,8 @@ val _ =
              clasetLib.empty_cs
          val formula =
            blastRule.fromGoalTerm (mk_conj (mk_neg p, q))
-         val ordinary_cache = blastRule.newCache ()
-         val measured_cache = blastRule.newCache ()
+         val ordinary_cache = blastRule.newCache 0
+         val measured_cache = blastRule.newCache 0
          val monitor : blastRule.monitor =
            {checkpoint = fn () => (), candidate = fn () => (),
             conversion = fn () => ()}
@@ -2260,8 +2257,8 @@ val _ =
                {safe, cs, formula, candidates, rule_count,
                 origin_kinds, ...} =
            let
-             val ordinary_cache = blastRule.newCache ()
-             val measured_cache = blastRule.newCache ()
+             val ordinary_cache = blastRule.newCache 0
+             val measured_cache = blastRule.newCache 0
              val polls = ref 0
              val seen_candidates = ref 0
              val seen_conversions = ref 0
@@ -2776,7 +2773,7 @@ val _ =
     ("duplicating elim replay uses REV_DUP_ELIM_RULE only",
      fn () =>
        let
-         val cache = blastRule.newCache ()
+         val cache = blastRule.newCache 0
          val elim = blastRule.convertElim cache [] CONJ_ELIM_THM
          val intro =
            blastRule.convertIntro cache [] boolTheory.AND_INTRO_THM
@@ -3127,7 +3124,7 @@ val _ =
              move 1 initial
            end
 
-         val cache = blastRule.newCache ()
+         val cache = blastRule.newCache 0
          val converted =
            case blastRule.convertElim cache [] theorem of
                SOME rule => rule
@@ -4366,7 +4363,7 @@ val _ =
          val independent = Var g $ Fvar "b"
          val cs = clasetLib.the_claset ()
          fun count rhs =
-           length (blastRule.safeRules (blastRule.newCache ()) cs [f, g]
+           length (blastRule.safeRules (blastRule.newCache 0) cs [f, g]
              (blastTerm.list_comb (equality, [left, rhs])))
          val different_apps = count right
        in
@@ -4788,6 +4785,49 @@ val _ =
          contains "PROOF FAILED" level1 andalso
          contains "Blast stats:" level2 andalso
          contains "Blast trace at depth" level3
+       end)
+
+(* A proof's blast.trace setting is that of the context its tactic is
+   applied in, which here differs from the ambient one both ways. *)
+val _ =
+  test
+    ("blast traces at the level of the context it is applied in",
+     fn () =>
+       let
+         val p = mk_var ("context_trace_p", bool)
+         val q = mk_var ("context_trace_q", bool)
+         val r = mk_var ("context_trace_r", bool)
+         val bad = Drule.ADD_ASSUM r boolTheory.OR_INTRO_THM1
+         val goal = ([p, q], mk_disj (p, q))
+         val rules =
+           [clasetLib.Del "clasetSeed$DISJ_CINTRO_THM",
+            clasetLib.Intro boolTheory.OR_INTRO_THM2,
+            clasetLib.Intro bad]
+         fun messages_at ambient level =
+           let
+             val messages = ref ([] : string list)
+             val ctxt =
+               HOLFlags.set_flagC (blastRule.trace_flag, level)
+                 (Context.snapshot ())
+             fun run () =
+               SelfTestTactical.VALID
+                 (tableauLib.BLAST_DEPTH_TAC 1 rules) goal ctxt
+             val (residues, _) =
+               HOLFlags.with_flags [(blastRule.trace_flag, ambient)]
+                 (Lib.with_flag (Feedback.MESG_outstream,
+                    fn message => messages := message :: !messages)
+                    (Context.in_proof run)) ()
+           in
+             null residues andalso
+             List.exists (String.isSubstring "Blast trace at depth")
+               (!messages) = (level >= 3) andalso
+             List.exists (String.isSubstring "Blast stats:")
+               (!messages) = (level >= 2) andalso
+             List.exists (String.isSubstring "PROOF FAILED")
+               (!messages) = (level >= 1)
+           end
+       in
+         messages_at 0 3 andalso messages_at 3 0
        end)
 
 val _ =
@@ -5466,7 +5506,7 @@ val _ =
                       Const
                         (test_name
                            ("cache-benchmark-" ^ Int.toString index), []))
-               val cache = blastRule.newCache ()
+               val cache = blastRule.newCache 0
                val _ =
                  List.app
                    (fn formula =>
@@ -5595,7 +5635,7 @@ val _ =
                     clasetLib.process_claset_tags
                       [clasetLib.Elim weak] clasetLib.empty_cs
                   val converted =
-                    blastRule.convertElim (blastRule.newCache ())
+                    blastRule.convertElim (blastRule.newCache 1)
                       [] weak
                   val solved =
                     blast_solves

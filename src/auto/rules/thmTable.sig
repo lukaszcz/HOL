@@ -24,6 +24,8 @@ sig
   (* An addition is keyed by the theorem's kernel name, a removal by the
      key it carries. *)
   val apply_delta : delta -> table -> table
+  (* The table of the context given; thms reads the ambient one. *)
+  val thms_of : table data -> Context.t -> Thm.thm list
   val thms : table data -> Thm.thm list
 
   (* Retracts the entry [clasetLib.normalise_rule_name] names, first from

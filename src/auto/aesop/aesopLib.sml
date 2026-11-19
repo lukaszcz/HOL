@@ -204,7 +204,8 @@ fun CS_AESOP_SAFE_TAC config claset simpset =
 fun AESOP_TAC theorems goal ctxt =
   process_args
       (close_raw "AESOP_TAC" default_config)
-      (clasetLib.the_claset ()) (aesopData.aesop_ss ())
+      (clasetLib.the_claset_of ctxt)
+      (aesopData.aesop_ss_of ctxt)
       theorems
     goal ctxt
 
@@ -212,7 +213,8 @@ fun AESOP_SAFE_TAC theorems goal ctxt =
   changed
       (process_safe_args
         (safe_raw "AESOP_SAFE_TAC" default_config)
-        (clasetLib.the_claset ()) (aesopData.aesop_ss ())
+        (clasetLib.the_claset_of ctxt)
+        (aesopData.aesop_ss_of ctxt)
         theorems) goal ctxt
 
 fun augment_aesop {name, phase, tactic} =
