@@ -352,10 +352,19 @@ struct
        not (List.exists (fn (k,_) => b = k) arguments)) (binders @ free),
      target = node target,output = output}
 
+  (* The regime with its native limits read once (the policy contract is
+     consulted a single time per instantiation). *)
+  datatype resolved =
+      Ordinary of W.portfolio
+    | Native of {work : W.portfolio,native : NC.limits}
+  fun resolve (Plain work) = Ordinary work
+    | resolve (Policied {work,contract}) =
+        Native {work = work,native = NC.for_work work contract}
+
   (* Limits and charges of the instantiating owner's Work.  The int regime
      compares plain ints; the policy regime also consults its policy caps and
      debits the IntInf quote itself. *)
-  fun budget (Plain work) =
+  fun budget (Ordinary work) =
       {limit = IntInf.fromInt (W.work_limit work),
        output_cap = IntInf.fromInt (#output_limit (W.semantic_limits work)),
        template_cap =
@@ -364,9 +373,8 @@ struct
        allows_template = fn (_ : IntInf.int) => true,
        allows_quote = fn (_ : IntInf.int) => true,
        debit = fn quote => W.spend work (IntInf.toInt quote)}
-    | budget (Policied {work,contract}) =
-      let val native = NC.for_work work contract
-          val metadata = W.semantic_policy work
+    | budget (Native {work,native}) =
+      let val metadata = W.semantic_policy work
       in {limit = IntInf.fromInt (#type_work_limit native),
           output_cap =
             IntInf.fromInt (#output_limit (#semantic_limits native)),
@@ -389,8 +397,9 @@ struct
       val _ = if !used then raise err "match already consumed" else ()
       val _ = validate ()
       val _ = used := true
+      val resolved = resolve regime
       val {limit,output_cap,template_cap,allows_output,allows_template,
-           allows_quote,debit} = budget regime
+           allows_quote,debit} = budget resolved
       fun find equal key pending = case pending of [] => NONE
         | (k,v)::rest => (A.tick owner;
             if equal (key,k) then SOME v else find equal key rest)
@@ -615,8 +624,8 @@ struct
       val _ = if guard (fn () => Term.aconv actual_left wanted) then () else
         raise err operand
       val guarded_check = fn ty => guard (fn () => check_type ty)
-      val proof = case regime of
-          Plain work =>
+      val proof = case resolved of
+          Ordinary work =>
             let val template_limit = #template_limit (W.semantic_limits work)
                 val imported = guard (fn () => G.import graph traversal
                   template_limit (Thm.concl theorem))
@@ -626,9 +635,8 @@ struct
                  {node = #node opened,theorem = theorem,
                   template_limit = template_limit,
                   check_type = guarded_check}) end
-        | Policied {work,contract} =>
-            let val native = NC.for_work work contract
-                val imported = guard (fn () => G.import_with_policy graph
+        | Native {work,native} =>
+            let val imported = guard (fn () => G.import_with_policy graph
                   traversal (RP.AtMost (IntInf.fromInt (#import_limit native)))
                   (Thm.concl theorem))
                 val opened = guard (fn () => G.record_opened_view_with_policy
