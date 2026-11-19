@@ -7205,7 +7205,10 @@ struct
      receipts remain private until a genuine owning App programme uses
      them. In particular this port never pops remaining or increments
      completed, and cannot publish a hypothesis/Ready payload. *)
-  fun prepare_original_function_child storage caller context =
+  (* The ONE function-child body. Select runs after the common closed
+     check, so every caller's own checks and payments precede the
+     already/memo/issued reuse below. It names the current original. *)
+  fun prepare_function_child storage caller context select =
     let
       val saved = original_import_context_for storage caller context
       val FixedStorage held = storage
@@ -7216,8 +7219,7 @@ struct
       val _ = if !(#stopped saved) orelse !(#denial_complete saved) then
         raise ERR "ordered_function_child" "original programme is closed"
         else ()
-      val original = case !(#remaining saved) of item::_ => item
-        | [] => raise ERR "ordered_function_child" "no current original"
+      val original = select saved meter
       fun issued (candidate:source) rows =
         (R.scope_meter_charge meter 32;
          case rows of [] => false
@@ -7491,6 +7493,11 @@ struct
                 in () end)
       end
     end
+
+  fun prepare_original_function_child storage caller context =
+    prepare_function_child storage caller context (fn saved => fn _ =>
+      case !(#remaining saved) of item::_ => item
+      | [] => raise ERR "ordered_function_child" "no current original")
 
   fun reserve_ordered_boolean_denial meter
       (limits:first_boolean_variable_limits) (used:original_import_usage) =
@@ -8089,301 +8096,19 @@ struct
     in context end
 
   fun prepare_owned_application_function storage caller context birth =
-    let
-      val saved = original_import_context_for storage caller context
-      val FixedStorage held = storage
-      val graph = #graph held
-      val paid = #paid saved
-      val meter = #meter held
-      val _ = R.scope_meter_charge meter 192
-      val _ = if !(#stopped saved) orelse !(#denial_complete saved) then
-        raise ERR "ordered_function_child" "original programme is closed"
-        else ()
-      val retained = owned_application_birth_for storage caller birth
-      val _ = R.scope_meter_charge meter 128
-      val _ = case !(#context retained) of SOME expected =>
-          if Portable.pointer_eq(expected,context) then () else
-            raise ERR "owned_application" "different captured context"
-        | NONE => raise ERR "owned_application" "context is not claimed"
-      val _ = case !(#remaining saved) of item::_ =>
-          if Portable.pointer_eq(item,#original retained) then () else
-            raise ERR "owned_application" "different retained original"
-        | [] => raise ERR "owned_application" "no current original"
-      val original = #function retained
-      fun issued (candidate:source) rows =
-        (R.scope_meter_charge meter 32;
-         case rows of [] => false
-         | OrderedFunctionChild {source,...}::rest =>
-             (#node source= #node candidate andalso
-              Portable.pointer_eq(#original source,#original candidate)
-              andalso Portable.pointer_eq(#bridge source,#bridge candidate))
-             orelse issued candidate rest)
-      fun already rows =
-        (R.scope_meter_charge meter 32;
-         case rows of [] => false
-         | OrderedFunctionChild {source,...}::rest =>
-             Portable.pointer_eq(#original source,original)
-             orelse already rest)
-      fun memo rows =
-        (R.scope_meter_charge meter 32;
-         case rows of [] => NONE
-         | (term,frame,source,_)::rest =>
-             if frame=scope_id caller andalso
-                 Portable.pointer_eq(term,original) then SOME source
-             else memo rest)
-      fun admit amount =
-        let val usage = reserve_ordered_extra_native meter
-              (#limits saved) (!(#usage saved)) amount
-            val _ = R.scope_meter_charge meter 16
-            val _ = #usage saved := usage
-        in R.scope_meter_charge meter amount end
-    in if already (!(#function_children saved)) then () else
+    prepare_function_child storage caller context (fn saved => fn meter =>
       let
-        (* The same authentic fifteen counters are monotone. A failed
-           classifier/type observation retains its actual paid prefix. *)
-        val usage = reserve_ordered_boolean meter (#limits saved)
-          (!(#usage saved))
-        val _ = R.scope_meter_charge meter 16
-        val _ = #usage saved := usage
-        val _ = R.scope_meter_charge meter 74
-        val is_variable = Term.is_var original
-        val is_constant = if is_variable then false
-          else Term.is_const original
-        val _ = if is_variable orelse is_constant then () else
-          raise ERR "ordered_function_child" "current original is not an atom"
-        val actual_type = Term.type_of original
-        val observed = observe_ordered_native_type storage caller context
-          actual_type
-        (* Fixed metadata512 is admitted independently of both the Type
-           forest's actual per-cell128 and the later proof programme.
-           The trusted builtin supplies the complete function UID; its
-           two actual leaves are verified semantically, never by pointer. *)
-        val _ = admit 512
-        val {Ty=negation_type,...} =
-          Term.dest_thy_constid boolSyntax.negation
-        val bool_name = #Tyop(Type.dest_thy_typeid Type.bool)
-        val {Tyop=fun_name,Args,...} =
-          Type.dest_thy_typeid negation_type
-        fun boolean_leaf ty =
-          if Type.is_vartype ty then false else
-            let val {Tyop,Args,...} = Type.dest_thy_typeid ty
-                val {Thy,Name} = KernelSig.name_of_id Tyop
-            in case Args of [] =>
-                String.size Thy=3 andalso String.size Name=4 andalso
-                Tyop=bool_name
-              | _ => false end
-        val _ = case Args of [domain,range] =>
-            if boolean_leaf domain andalso boolean_leaf range then () else
-              raise ERR "ordered_function_child" "different builtin function"
-          | _ => raise ERR "ordered_function_child"
-            "different builtin function"
-        val _ = R.scope_meter_charge meter 96
-        val typed_snapshot = !(#expected saved)
-        val bool_id = case R.scope_lookup_graph_key meter
-            (#types typed_snapshot,R.GraphTypeOperator(bool_name,[])) of
-            SOME id => id
-          | NONE => raise ERR "ordered_function_child" "missing observed Bool"
-        val type_id = case R.scope_lookup_graph_key meter
-            (#types typed_snapshot,
-             R.GraphTypeOperator(fun_name,[bool_id,bool_id])) of
-            SOME id => if id=observed then id else
-              raise ERR "ordered_function_child" "different observed function"
-          | NONE => raise ERR "ordered_function_child"
-            "different observed function"
-        (* Actual raw descriptor and name hashing are distinct from the
-           separately priced native equality/REFL/ALPHA calls below. *)
-        val _ = R.scope_meter_charge meter
-          (if is_variable then 64 else 128)
-        val (ty,key,view,name,bucket) = if is_variable then
-            let
-              val (text,ty) = Term.dest_var original
-              val _ = R.scope_meter_charge meter 32
-              val length = String.size text
-              fun hash i value =
-                (R.scope_meter_charge meter 8;
-                 if i=length then value else
-                   (R.scope_meter_charge meter 16;
-                    hash (i+1) (Word.+(Word.*(value,0w33),
-                      Word.fromInt(Char.ord(String.sub(text,i)))))))
-              val value = hash 0 0w17
-              val _ = R.scope_meter_charge meter 32
-              val bucket = Word.toInt(Word.mod
-                (Word.+(Word.*(0w37,value),value),Word.fromInt 4093))
-            in (ty,R.GraphVariable
-                (scope_id caller,kind_id RigidSource,text,type_id),
-                Variable(RigidSource,original),SOME text,bucket) end
-          else
-            let val {Name,Ty=ty,...} = Term.dest_thy_constid original
-                val value = Word.fromInt(KernelSig.epoch_of Name)
-                val bucket = Word.toInt(Word.mod
-                  (Word.+(Word.*(0w37,value),value),Word.fromInt 4093))
-            in (ty,R.GraphConstant(Name,type_id),Constant Name,NONE,bucket) end
+        val retained = owned_application_birth_for storage caller birth
         val _ = R.scope_meter_charge meter 128
-        val _ = if Portable.pointer_eq(ty,actual_type) then () else
-          raise ERR "ordered_function_child" "different observed native Type"
-        val first = !(#expected saved)
-        val old_bucket = Array.sub(#imports graph,bucket)
-      in case memo old_bucket of SOME source =>
-          if issued source (!(#function_children saved)) then () else
-            raise ERR "ordered_function_child" "foreign cached child Source"
-        | NONE =>
-          (case R.scope_lookup_graph_key meter (#keys first,key) of
-              NONE =>
-                let
-                  (* Fresh typed atom REFL1668: the equality template
-                     still has five input nodes; instantiated polymorphic
-                     scan now has nine nodes and seventeen list cases. *)
-                  val branch = reserve_ordered_extra_native meter
-                    (#limits saved) (!(#usage saved)) 1668
-                  val _ = R.scope_meter_charge meter 16
-                  val _ = #usage saved := branch
-                  val _ = R.scope_meter_charge meter 640
-                  val id = #next first
-                  val node = Node {owner= #owner graph,id=id}
-                  val anchor : source option ref = ref NONE
-                  val fields : entry =
-                    {scope=caller,ty=ty,type_id=type_id,term=original,
-                     view=view,raw=SOME 1,inclusive=SOME 1,source=anchor,
-                     exact_raw=ref UnknownRaw}
-                  val keys = R.scope_put_graph_key meter (#keys first,key,node)
-                  val nodes = R.scope_put_int meter (#nodes first,id,fields)
-                  val reserved = case name of NONE => #reserved first
-                    | SOME text => R.scope_add_string meter (#reserved
-                      first,text)
-                  val revision = #revision first+1
-                  val next : paid_index_snapshot =
-                    {types= #types first,keys=keys,recent= #recent first,
-                     nodes=nodes,scopes= #scopes first,reserved=reserved,
-                     next=id+1,next_scope= #next_scope first,
-                     retirements= #retirements first,revision=revision}
-                  val _ = R.scope_meter_charge meter 256
-                  val _ = paid_index_close graph paid first
-                  val _ = if Portable.pointer_eq
-                      (old_bucket,Array.sub(#imports graph,bucket)) then ()
-                        else
-                    raise ERR "ordered_function_child" "import bucket changed"
-                  val _ = R.scope_meter_charge meter 1668
-                  val theorem = Thm.REFL original
-                  val source : source =
-                    {node=node,original=original,bridge=theorem}
-                  val receipt = OrderedFunctionChild
-                    {source=source,canonical=original,anchor=source,
-                     type_id=type_id}
-                  (* All root/list/receipt stores were funded before REFL.
-                     No native/debit/callback occurs inside own publication. *)
-                  val _ = anchor := SOME source
-                  val _ = #keys paid := keys
-                  val _ = #nodes graph := nodes
-                  val _ = #next graph := id+1
-                  val _ = #reserved graph := reserved
-                  val _ = Array.update(#imports graph,bucket,
-                    (original,scope_id caller,source,
-                     #exact_raw fields)::old_bucket)
-                  val _ = #validation_changes graph := revision
-                  val _ = #expected saved := next
-                  val _ = #function_children saved :=
-                    receipt :: !(#function_children saved)
-                in () end
-            | SOME node =>
-                let
-                  val _ = R.scope_meter_charge meter 256
-                  val Node {owner,id} = node
-                  val _ = if owner= #owner graph then () else
-                    raise ERR "ordered_function_child" "different node owner"
-                  val fields = case R.scope_lookup_int meter (#nodes first,id)
-                    of
-                      SOME fields => fields
-                    | NONE => raise ERR "ordered_function_child" "missing node"
-                  val canonical = #term fields
-                  val _ = if #scope fields=caller andalso
-                      #type_id fields=type_id then () else
-                    raise ERR "ordered_function_child" "different typed node"
-                  val anchor = case !(#source fields) of SOME source => source
-                    | NONE => raise ERR "ordered_function_child"
-                      "missing anchor"
-                  val _ = if #node anchor=node andalso
-                      Portable.pointer_eq(#original anchor,canonical) andalso
-                      issued anchor (!(#function_children saved)) then () else
-                    raise ERR "ordered_function_child" "foreign typed anchor"
-                  val _ = admit 256
-                  fun bytes text = IntInf.fromInt(String.size text)
-                  val (mass,canonical_key,stored_key) =
-                    case (view,#view fields,name) of
-                      (Variable(RigidSource,_),
-                       Variable(RigidSource,retained),SOME raw) =>
-                        if Term.is_var canonical andalso
-                            Portable.pointer_eq(retained,canonical) andalso
-                            Portable.pointer_eq
-                              (Term.type_of canonical,#ty fields) then
-                          let val (text,_) = Term.dest_var canonical
-                              val k = R.GraphVariable
-                                (scope_id caller,kind_id
-                                  RigidSource,text,type_id)
-                          in (bytes raw+bytes text,k,k) end
-                        else raise ERR "ordered_function_child"
-                          "different variable"
-                    | (Constant raw_id,Constant stored_id,NONE) =>
-                        if Term.is_const canonical andalso
-                            Portable.pointer_eq
-                              (Term.type_of canonical,#ty fields) then
-                          let val {Name=canonical_id,...} =
-                                Term.dest_thy_constid canonical
-                              val {Thy=a,Name=b} = KernelSig.name_of_id raw_id
-                              val {Thy=c,Name=d} =
-                                KernelSig.name_of_id canonical_id
-                          in (bytes a+bytes b+bytes c+bytes d,
-                              R.GraphConstant(canonical_id,type_id),
-                              R.GraphConstant(stored_id,type_id)) end
-                        else raise ERR "ordered_function_child"
-                          "different constant"
-                    | _ => raise ERR "ordered_function_child"
-                      "different atom kind"
-                  val _ = if R.scope_compare_graph_key meter
-                        (key,canonical_key)=EQUAL andalso
-                      R.scope_compare_graph_key meter (key,stored_key)=EQUAL
-                    then () else
-                      raise ERR "ordered_function_child"
-                        "different semantic key"
-                  val alpha : IntInf.int = 3801+32*(mass+1)
-                  val _ = admit (alpha+256)
-                  val _ = R.scope_meter_charge meter 640
-                  val revision = #revision first+1
-                  val next : paid_index_snapshot =
-                    {types= #types first,keys= #keys first,recent= #recent
-                      first,
-                     nodes= #nodes first,scopes= #scopes first,
-                     reserved= #reserved first,next= #next first,
-                     next_scope= #next_scope first,
-                     retirements= #retirements first,revision=revision}
-                  val _ = paid_index_close graph paid first
-                  val _ = if Portable.pointer_eq
-                      (old_bucket,Array.sub(#imports graph,bucket)) then ()
-                        else
-                    raise ERR "ordered_function_child" "import bucket changed"
-                  val theorem = Thm.ALPHA original canonical
-                  val (left,right) = Term.dest_eq(Thm.concl theorem)
-                  val _ = if Portable.pointer_eq(left,original) andalso
-                      Portable.pointer_eq(right,canonical) andalso
-                      HOLset.numItems(Thm.hypset theorem)=0 andalso
-                      Tag.isEmpty(Thm.tag theorem) then () else
-                    raise ERR "ordered_function_child"
-                      "different bridge endpoints"
-                  val source : source =
-                    {node=node,original=original,bridge=theorem}
-                  val receipt = OrderedFunctionChild
-                    {source=source,canonical=canonical,anchor=anchor,
-                     type_id=type_id}
-                  val _ = Array.update(#imports graph,bucket,
-                    (original,scope_id caller,source,
-                     #exact_raw fields)::old_bucket)
-                  val _ = #validation_changes graph := revision
-                  val _ = #expected saved := next
-                  val _ = #function_children saved :=
-                    receipt :: !(#function_children saved)
-                in () end)
-      end
-    end
-
+        val _ = case !(#context retained) of SOME expected =>
+            if Portable.pointer_eq(expected,context) then () else
+              raise ERR "owned_application" "different captured context"
+          | NONE => raise ERR "owned_application" "context is not claimed"
+        val _ = case !(#remaining saved) of item::_ =>
+            if Portable.pointer_eq(item,#original retained) then () else
+              raise ERR "owned_application" "different retained original"
+          | [] => raise ERR "owned_application" "no current original"
+      in #function retained end)
 
   (* Consume only the two genuine constructor-captured raw children.
      Functional child proof is private; argument preparation below is a
