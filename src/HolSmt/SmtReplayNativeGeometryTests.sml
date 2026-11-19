@@ -647,10 +647,11 @@ struct
      the successful trace, refusal order, sharing against an unshared tree,
      and one entry against the other. Nothing here is pinned to values from
      an earlier implementation. *)
-  datatype entry = Plain | SelectedEmpty | SelectedConj
+  datatype entry = Plain | SelectedEmpty | SelectedConj | SelectedNeg
   datatype shape = Shared | Tree | ConjVars | OpaqueRoot
   fun entry_name Plain = "plain" | entry_name SelectedEmpty = "sel-empty"
     | entry_name SelectedConj = "sel-conj"
+    | entry_name SelectedNeg = "sel-neg"
   fun shape_name Shared = "shared" | shape_name Tree = "tree"
     | shape_name ConjVars = "conj-vars" | shape_name OpaqueRoot = "opaque-root"
   type receipt = {scans:IntInf.int option,profiles:string list,
@@ -683,6 +684,10 @@ struct
   fun conj_heads g r = G.record_discovery_heads g r
     {heads=[#node (G.import_with_policy g r RP.Uncapped
        boolSyntax.conjunction)],maximum=32,step=fn () => ()}
+  (* A head that matches no constant of the inputs. *)
+  fun neg_heads g r = G.record_discovery_heads g r
+    {heads=[#node (G.import_with_policy g r RP.Uncapped
+       boolSyntax.negation)],maximum=32,step=fn () => ()}
   fun empty_heads g r = G.record_discovery_heads g r
     {heads=[],maximum=32,step=fn () => ()}
   fun refusal action = (ignore (action ());NONE)
@@ -738,6 +743,7 @@ struct
         val heads = case entry of Plain => NONE
           | SelectedEmpty => SOME (empty_heads g r)
           | SelectedConj => SOME (conj_heads g r)
+          | SelectedNeg => SOME (neg_heads g r)
         val run = discovery_with g r node heads maximum scan_limit
         (* A failed or completed run leaves the graph reusable. *)
         val _ = G.discover_partial_with_policy g r
@@ -754,8 +760,6 @@ struct
           let val mid = (lo+hi) div 2
           in if ok mid then search lo mid else search (mid+1) hi end
     in search (1:IntInf.int) (grow 1) end
-  fun is_strict_prefix (a,b) =
-    length a<length b andalso List.take (b,length a)=a
   fun completed label ({outcome=Done receipt,trace}:discovery) =
         (receipt,trace)
     | completed label _ = raise Fail (label ^ ": discovery refused")
@@ -779,7 +783,7 @@ struct
             (RP.AtMost (needed-1))
           val _ = check "one scan less did not refuse at the budget"
             (#outcome less=Refused "discovery scan budget exhausted" andalso
-             is_strict_prefix (#trace less,trace))
+             #trace less=List.take (trace,length trace-1))
           val nonpositive = [(RP.AtMost 0,RP.Uncapped),
                              (RP.Uncapped,RP.AtMost 0)]
           val _ = List.app (fn (max,scan) =>
@@ -790,14 +794,15 @@ struct
         in (receipt,needed) end
       val results = List.map (fn shape => (shape,List.map
         (fn entry => (entry,budget_case shape entry))
-        [Plain,SelectedEmpty,SelectedConj])) [Shared,Tree,ConjVars,OpaqueRoot]
+        [Plain,SelectedEmpty,SelectedConj,SelectedNeg]))
+        [Shared,Tree,ConjVars,OpaqueRoot]
       fun find shape entry = #2 (valOf (List.find (fn (e,_) => e=entry)
         (#2 (valOf (List.find (fn (s,_) => s=shape) results)))))
       (* The shared sub-DAG is visited once; the tree twice. *)
       val _ = List.app (fn entry =>
         require (entry_name entry ^ ": sharing did not reduce the scans")
           (#2 (find Shared entry) < #2 (find Tree entry)))
-        [Plain,SelectedEmpty,SelectedConj]
+        [Plain,SelectedEmpty,SelectedConj,SelectedNeg]
       (* Root changed by a beta redex: heads play no part in the result. *)
       val _ = List.app (fn shape =>
         let val (plain,_) = find shape Plain
@@ -817,14 +822,21 @@ struct
       val _ = expect ConjVars Plain (0,false)
       val _ = expect ConjVars SelectedEmpty (0,false)
       val _ = expect ConjVars SelectedConj (0,true)
+      (* A head matching nothing leaves the result unchanged, but each
+         constant now pays a selection scan; unselected scans (and an empty
+         selection) have no rows to compare and pay none. *)
+      val _ = expect ConjVars SelectedNeg (0,false)
+      val _ = require "selection scan was not paid for an unmatched head"
+        (#2 (find ConjVars Plain) = #2 (find ConjVars SelectedEmpty) andalso
+         #2 (find ConjVars Plain) < #2 (find ConjVars SelectedNeg))
       (* Only the selected scan retains the unchanged opaque root. *)
       val _ = expect OpaqueRoot Plain (0,false)
       val _ = expect OpaqueRoot SelectedEmpty (1,false)
       val _ = expect OpaqueRoot SelectedConj (1,false)
+      val _ = expect OpaqueRoot SelectedNeg (1,false)
     in () end
 
-  (* Selected-head validation precedes the nonpositive-bound refusal; the
-     plain entry has no heads and reports the bound. *)
+  (* Selected-head validation precedes the nonpositive-bound refusal. *)
   fun refusal_order () = shaped_graph Shared (fn (g,r,node) =>
     let
       val foreign_graph = G.new ()
