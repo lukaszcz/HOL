@@ -104,15 +104,14 @@ local
   val unsupported_hyp_removal_diagnostic =
     "HOLSMT_Z3_HYP_REMOVAL_UNSUPPORTED"
 
-  (* Dedicated-theory failures must cross the generic rewrite handlers
-     without inviting arithmetic or unification fallbacks. *)
-  exception FP_REWRITE_ERROR of exn
-  exception BAG_REWRITE_ERROR of exn
-  exception STRING_REWRITE_ERROR of exn
-  exception BV_REWRITE_ERROR of exn
-  exception DEFINITION_REWRITE_ERROR of exn
+  (* A failure wrapped in [REWRITE_BOUNDARY] must cross the generic
+     rewrite handlers without inviting arithmetic or unification fallbacks;
+     [z3_rewrite] unwraps the original payload once, at its end.  Each raise
+     site decides which failures it wraps: dedicated-theory provers and the
+     definition-unification boundary wrap every [HOL_ERR], the others only
+     resource gates. *)
+  exception REWRITE_BOUNDARY of exn
   exception ORDINARY_DEFINITION_UNIFICATION_DECLINE
-  exception ASSERTED_EQUALITY_REWRITE_ERROR of exn
 
   val ALL_DISTINCT_NIL = HolSmtTheory.ALL_DISTINCT_NIL
   val ALL_DISTINCT_CONS = HolSmtTheory.ALL_DISTINCT_CONS
@@ -6699,13 +6698,13 @@ local
   (* Only exhaustion of the documented unification alternatives is an
      ordinary ladder decline.  Any HOL_ERR from theorem construction or an
      unclassified unifier failure must escape the surrounding broad rewrite
-     handlers through [DEFINITION_REWRITE_ERROR]. *)
+     handlers through [REWRITE_BOUNDARY]. *)
   fun definition_unification_boundary action =
     action ()
     handle ORDINARY_DEFINITION_UNIFICATION_DECLINE =>
       raise ERR "z3_rewrite" "proof-local unification declined"
          | Feedback.HOL_ERR holerr =>
-      raise DEFINITION_REWRITE_ERROR (Feedback.HOL_ERR holerr)
+      raise REWRITE_BOUNDARY (Feedback.HOL_ERR holerr)
 
   fun has_arithmetic_operator target =
     SmtResource.contains (fn tm =>
@@ -6754,7 +6753,7 @@ local
     recurse input
     handle Feedback.HOL_ERR holerr =>
       if SmtResource.is_resource_gate holerr then
-        raise BV_REWRITE_ERROR (Feedback.HOL_ERR holerr)
+        raise REWRITE_BOUNDARY (Feedback.HOL_ERR holerr)
       else
         raise Feedback.HOL_ERR holerr
 
@@ -7222,8 +7221,8 @@ local
     (* Once an FP-shaped rewrite enters its dedicated ladder, failure at its
        unsupported rung is terminal.  In particular, generic unification
        must not turn an unsupported FP rewrite into a proof-local definition.
-       FP_REWRITE_ERROR crosses the handlers below and is converted back to a
-       structured HOL_ERR at the function boundary. *)
+       The wrapped failure crosses the handlers below and is converted back to
+       a structured HOL_ERR at the function boundary. *)
     if SmtFpProve.has_fp_theory_term t then
       let
         fun bounded_propositional target =
@@ -7273,7 +7272,7 @@ local
                     (SmtWordGraph.prove_in (#word_context state)) arith_prove
                     eligible_decompositions all_decompositions) t
                   handle Feedback.HOL_ERR holerr =>
-                    raise FP_REWRITE_ERROR (Feedback.HOL_ERR holerr)
+                    raise REWRITE_BOUNDARY (Feedback.HOL_ERR holerr)
                 val definitions = Thm.hyp thm
                 val state =
                   state_define (state_cache_thm state thm) definitions
@@ -7299,7 +7298,7 @@ local
            end
            handle Feedback.HOL_ERR holerr =>
              if SmtResource.is_resource_gate holerr then
-               raise BAG_REWRITE_ERROR (Feedback.HOL_ERR holerr)
+               raise REWRITE_BOUNDARY (Feedback.HOL_ERR holerr)
              else
              (SmtResource.or_else
                 (fn () =>
@@ -7320,7 +7319,7 @@ local
                     (fn target => linear_arithmetic_rewrite_prove target
                       handle Feedback.HOL_ERR holerr =>
                         if SmtResource.is_resource_gate holerr then
-                          raise BV_REWRITE_ERROR (Feedback.HOL_ERR holerr)
+                          raise REWRITE_BOUNDARY (Feedback.HOL_ERR holerr)
                         else raise Feedback.HOL_ERR holerr) t)
                   handle Feedback.HOL_ERR _ =>
                   (* E1(a): simplification decides quantified Boolean
@@ -7384,7 +7383,7 @@ local
 
     handle Feedback.HOL_ERR holerr =>
       if SmtResource.is_resource_gate holerr then
-        raise STRING_REWRITE_ERROR (Feedback.HOL_ERR holerr)
+        raise REWRITE_BOUNDARY (Feedback.HOL_ERR holerr)
       else
 
         (* |- ALL_DISTINCT ... /\ T = ... *)
@@ -7408,7 +7407,7 @@ local
      end
      handle Feedback.HOL_ERR holerr =>
        if SmtResource.is_resource_gate holerr then
-         raise DEFINITION_REWRITE_ERROR (Feedback.HOL_ERR holerr)
+         raise REWRITE_BOUNDARY (Feedback.HOL_ERR holerr)
        else raise Feedback.HOL_ERR holerr)
     handle Feedback.HOL_ERR _ =>
 
@@ -7498,7 +7497,7 @@ local
      end
      handle Feedback.HOL_ERR holerr =>
        if SmtResource.is_resource_gate holerr then
-         raise FP_REWRITE_ERROR (Feedback.HOL_ERR holerr)
+         raise REWRITE_BOUNDARY (Feedback.HOL_ERR holerr)
        else
          raise Feedback.HOL_ERR holerr)
 
@@ -7518,7 +7517,7 @@ local
            pre_bblast_skeleton state t
          handle Feedback.HOL_ERR holerr =>
            if SmtResource.is_resource_gate holerr then
-             raise BV_REWRITE_ERROR (Feedback.HOL_ERR holerr)
+             raise REWRITE_BOUNDARY (Feedback.HOL_ERR holerr)
            else
 
         (* Before arithmetic, use the semantic bridge whenever simp can
@@ -7718,7 +7717,7 @@ local
      end
      handle Feedback.HOL_ERR holerr =>
        if SmtResource.is_resource_gate holerr then
-         raise ASSERTED_EQUALITY_REWRITE_ERROR (Feedback.HOL_ERR holerr)
+         raise REWRITE_BOUNDARY (Feedback.HOL_ERR holerr)
        else raise Feedback.HOL_ERR holerr)
     handle Feedback.HOL_ERR _ =>
 
@@ -7735,12 +7734,7 @@ local
       (fn target =>
         raise unsupported_rewrite (#z3_version state) (!attempts) target) t)
   end
-  handle FP_REWRITE_ERROR error => raise error
-       | BAG_REWRITE_ERROR error => raise error
-       | STRING_REWRITE_ERROR error => raise error
-       | BV_REWRITE_ERROR error => raise error
-       | DEFINITION_REWRITE_ERROR error => raise error
-       | ASSERTED_EQUALITY_REWRITE_ERROR error => raise error
+  handle REWRITE_BOUNDARY error => raise error
 
   (* A Boolean circuit can close before orientation, whose normal form is
      useful for theory rewrites but irrelevant to propositional validity.
@@ -10803,7 +10797,7 @@ in
     with_expected_instantiation_fallback
   fun definition_unification_boundary_for_test action =
     definition_unification_boundary action
-    handle DEFINITION_REWRITE_ERROR error => raise error
+    handle REWRITE_BOUNDARY error => raise error
   fun ordinary_definition_unification_decline_for_test () =
     definition_unification_boundary
       (fn () => raise ORDINARY_DEFINITION_UNIFICATION_DECLINE)
@@ -10993,7 +10987,7 @@ in
   fun recursive_rewrite_outer_for_test site recurse fallback input =
     ((recursive_rewrite_boundary site recurse input
       handle Feedback.HOL_ERR _ => fallback input)
-     handle BV_REWRITE_ERROR error => raise error)
+     handle REWRITE_BOUNDARY error => raise error)
 
   fun skeleton_recursive_rewrite_for_test recurse fallback input =
     recursive_rewrite_outer_for_test
