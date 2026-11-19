@@ -1387,18 +1387,16 @@ struct
               | SOME equation => case R.equality graph equation of
                   SOME (left,right) => prepare equation left right
                 | NONE => NONE end)
-          fun clausal rule =
-            case CPC_SharedReplayPlan.clausal_descriptor rule of
-              SOME descriptor => CPC_SharedReplayPlan.clausal_elim
-                {negated=negated graph,one=one,operands=operands graph,
-                 child_provenance=child_provenance,
-                 negation_provenance=negation_provenance,
-                 one_provenance=one_provenance,pair=pair,
-                 same_constant=same_constant graph,atom=atom,
-                 current=current,negative=negative,positive=positive,
-                 finish=fn(node,provenance)=>current node provenance,
-                 disjoin=disjoin,error=ERR} descriptor handler_text
-            | NONE => raise ERR "discover" "not a clausal elimination"
+          fun clausal rule = CPC_SharedReplayPlan.clausal_elim
+            {negated=negated graph,one=one,operands=operands graph,
+             child_provenance=child_provenance,
+             negation_provenance=negation_provenance,
+             one_provenance=one_provenance,pair=pair,
+             same_constant=same_constant graph,atom=atom,
+             current=current,negative=negative,positive=positive,
+             finish=fn(node,provenance)=>current node provenance,
+             disjoin=disjoin,error=ERR}
+            (CPC_SharedReplayPlan.clausal_descriptor rule) handler_text
           val inferred = case CPC_SharedReplayPlan.simple_boolean_of
               handler of
               SOME CPC_SharedReplayPlan.SimpleAndIntro =>
@@ -1460,7 +1458,8 @@ struct
                    produced_entries=produced_entries,map=List.map,
                    negative=negative,disjoin=disjoin,error=ERR "not_and"}
                 end
-            | SOME rule => clausal rule
+            | SOME (CPC_SharedReplayPlan.SimpleClausal rule) =>
+                clausal rule
             | NONE => (case CPC_SharedReplayPlan.simple_equality_of
                 handler of
               SOME CPC_SharedReplayPlan.SimpleRefl =>

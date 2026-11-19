@@ -663,8 +663,7 @@ struct
                             [Q.GraphIndex index]=>index
                           | _=>raise ERR "discover"
                               "expected one recorded index")
-                        fun clausal rule=case Shared.clausal_descriptor rule of
-                            SOME descriptor=>Shared.clausal_elim
+                        fun clausal rule=Shared.clausal_elim
                               {negated=negated,one=one,
                                operands=actual_operands,child_provenance=child,
                                negation_provenance=negation_provenance,
@@ -675,9 +674,22 @@ struct
                                positive=positive,
                                finish=fn(shape,provenance)=>
                                  shaped shape provenance,
-                               disjoin=disjoin,error=ERR}descriptor handler
-                          | NONE=>raise ERR "prepare"
-                              "private new Boolean family"
+                               disjoin=disjoin,error=ERR}
+                              (Shared.clausal_descriptor rule) handler
+                        (* The fixed invoice of each rule's operand
+                           selection. *)
+                        fun clausal_price rule=case rule of
+                            Shared.NotImpliesElim1=>9
+                          | Shared.NotImpliesElim2=>11
+                          | Shared.ImpliesElim=>8
+                          | Shared.EquivElim1=>7
+                          | Shared.EquivElim2=>7
+                          | Shared.NotEquivElim1=>10
+                          | Shared.NotEquivElim2=>10
+                          | Shared.IteElim1=>11
+                          | Shared.IteElim2=>11
+                          | Shared.NotIteElim1=>12
+                          | Shared.NotIteElim2=>12
                       in case family of
                           Shared.SimpleNotOrElim=>
                             (pay 11;
@@ -855,38 +867,8 @@ struct
                                negative=negative_literal,
                                disjoin=disjoin_entries,error=ERR "not_and"}
                             end
-                        | Shared.SimpleNotImpliesElim1=>
-                            (pay 9;clausal Shared.SimpleNotImpliesElim1)
-
-                        | Shared.SimpleNotImpliesElim2=>
-                            (pay 11;clausal Shared.SimpleNotImpliesElim2)
-
-                        | Shared.SimpleImpliesElim=>
-                            (pay 8;clausal Shared.SimpleImpliesElim)
-
-                        | Shared.SimpleEquivElim1=>
-                            (pay 7;clausal Shared.SimpleEquivElim1)
-
-                        | Shared.SimpleEquivElim2=>
-                            (pay 7;clausal Shared.SimpleEquivElim2)
-
-                        | Shared.SimpleNotEquivElim1=>
-                            (pay 10;clausal Shared.SimpleNotEquivElim1)
-
-                        | Shared.SimpleNotEquivElim2=>
-                            (pay 10;clausal Shared.SimpleNotEquivElim2)
-
-                        | Shared.SimpleIteElim1=>
-                            (pay 11;clausal Shared.SimpleIteElim1)
-
-                        | Shared.SimpleIteElim2=>
-                            (pay 11;clausal Shared.SimpleIteElim2)
-
-                        | Shared.SimpleNotIteElim1=>
-                            (pay 12;clausal Shared.SimpleNotIteElim1)
-
-                        | Shared.SimpleNotIteElim2=>
-                            (pay 12;clausal Shared.SimpleNotIteElim2)
+                        | Shared.SimpleClausal rule=>
+                            (pay(clausal_price rule);clausal rule)
                         | _=>raise ERR "prepare"
                             "private new Boolean family"
                       end

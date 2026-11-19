@@ -38,23 +38,18 @@ struct
   (* Recorded operand and provenance lists have the requested arity. *)
   fun pair_of _ [a,b] = (a,b)
     | pair_of rule _ = raise ERR rule "unexpected operand arity"
+  fun triple_of _ [a,b,c] = (a,b,c)
+    | triple_of rule _ = raise ERR rule "unexpected operand arity"
   structure Q=CPC_ProofParser
   structure P=CPC_Proof
   datatype route = Scoped | Resolved | Converted | Aligned | Simple | Bounded
+  datatype clausal_rule = NotImpliesElim1 | NotImpliesElim2 | ImpliesElim
+    | EquivElim1 | EquivElim2 | NotEquivElim1 | NotEquivElim2
+    | IteElim1 | IteElim2 | NotIteElim1 | NotIteElim2
   datatype simple_boolean = SimpleAndIntro | SimpleAndElim
     | SimpleNotNotElim
     | SimpleNotOrElim
-    | SimpleNotImpliesElim1
-    | SimpleNotImpliesElim2
-    | SimpleImpliesElim
-    | SimpleEquivElim1
-    | SimpleEquivElim2
-    | SimpleNotEquivElim1
-    | SimpleNotEquivElim2
-    | SimpleIteElim1
-    | SimpleIteElim2
-    | SimpleNotIteElim1
-    | SimpleNotIteElim2
+    | SimpleClausal of clausal_rule
     | SimpleNotAnd
   datatype simple_equality = SimpleRefl | SimpleSymm | SimpleTrans
     | SimpleCong | SimpleHoCong | SimpleEqResolve | SimpleContra
@@ -71,17 +66,17 @@ struct
     | P.HAndElim => SimpleBoolean SimpleAndElim
     | P.HNotNotElim => SimpleBoolean SimpleNotNotElim
     | P.HNotOrElim => SimpleBoolean SimpleNotOrElim
-    | P.HNotImpliesElim1 => SimpleBoolean SimpleNotImpliesElim1
-    | P.HNotImpliesElim2 => SimpleBoolean SimpleNotImpliesElim2
-    | P.HImpliesElim => SimpleBoolean SimpleImpliesElim
-    | P.HEquivElim1 => SimpleBoolean SimpleEquivElim1
-    | P.HEquivElim2 => SimpleBoolean SimpleEquivElim2
-    | P.HNotEquivElim1 => SimpleBoolean SimpleNotEquivElim1
-    | P.HNotEquivElim2 => SimpleBoolean SimpleNotEquivElim2
-    | P.HIteElim1 => SimpleBoolean SimpleIteElim1
-    | P.HIteElim2 => SimpleBoolean SimpleIteElim2
-    | P.HNotIteElim1 => SimpleBoolean SimpleNotIteElim1
-    | P.HNotIteElim2 => SimpleBoolean SimpleNotIteElim2
+    | P.HNotImpliesElim1 => SimpleBoolean (SimpleClausal NotImpliesElim1)
+    | P.HNotImpliesElim2 => SimpleBoolean (SimpleClausal NotImpliesElim2)
+    | P.HImpliesElim => SimpleBoolean (SimpleClausal ImpliesElim)
+    | P.HEquivElim1 => SimpleBoolean (SimpleClausal EquivElim1)
+    | P.HEquivElim2 => SimpleBoolean (SimpleClausal EquivElim2)
+    | P.HNotEquivElim1 => SimpleBoolean (SimpleClausal NotEquivElim1)
+    | P.HNotEquivElim2 => SimpleBoolean (SimpleClausal NotEquivElim2)
+    | P.HIteElim1 => SimpleBoolean (SimpleClausal IteElim1)
+    | P.HIteElim2 => SimpleBoolean (SimpleClausal IteElim2)
+    | P.HNotIteElim1 => SimpleBoolean (SimpleClausal NotIteElim1)
+    | P.HNotIteElim2 => SimpleBoolean (SimpleClausal NotIteElim2)
     | P.HNotAnd => SimpleBoolean SimpleNotAnd
     | P.HRefl => SimpleEquality SimpleRefl
     | P.HSymm => SimpleEquality SimpleSymm
@@ -670,130 +665,157 @@ struct
           (index ())
     in current (negate selected)
       (ApplicationProvenance ("not",[provenance])) end
-  datatype clausal_reader = ClausalImplication | ClausalEquivalence
-    | ClausalConditional
-  datatype clausal_operand = ClausalFirst | ClausalSecond | ClausalThird
   datatype clausal_polarity = ClausalPositive | ClausalNegative
-  type clausal_literal = clausal_operand * clausal_polarity
-  datatype clausal_result = ClausalCurrent of clausal_operand
-    | ClausalFinished of clausal_operand
-    | ClausalDisjunction of clausal_literal * clausal_literal
-  type clausal_descriptor =
-    {reader:clausal_reader,strip_negation:bool,reduced_true:bool,
-     result:clausal_result}
+  datatype binary_operand = ClausalLeft | ClausalRight
+  datatype ternary_operand = ClausalCondition | ClausalThen | ClausalElse
+  type 'operand clausal_literal = 'operand * clausal_polarity
+  datatype implication_result = ClausalCurrent of binary_operand
+    | ClausalFinished of binary_operand
+    | ClausalImplied of binary_operand clausal_literal *
+        binary_operand clausal_literal
+  datatype clausal_descriptor =
+      ClausalImplication of {negated:bool,result:implication_result}
+    | ClausalEquivalence of {negated:bool,
+        literals:binary_operand clausal_literal *
+                 binary_operand clausal_literal}
+    | ClausalConditional of {negated:bool,
+        literals:ternary_operand clausal_literal *
+                 ternary_operand clausal_literal}
+  datatype 'item clausal_selection = SelectedCurrent of 'item
+    | SelectedFinished of 'item
+    | SelectedClause of ('item * clausal_polarity) * ('item * clausal_polarity)
   local
-    fun descriptor reader strip_negation reduced_true result =
-      SOME {reader=reader,strip_negation=strip_negation,
-            reduced_true=reduced_true,result=result}
-    val implication = descriptor ClausalImplication
-    val equivalence = descriptor ClausalEquivalence
-    val conditional = descriptor ClausalConditional
-    fun clause first second = ClausalDisjunction (first,second)
-    val first_negative = (ClausalFirst,ClausalNegative)
-    val first_positive = (ClausalFirst,ClausalPositive)
-    val second_negative = (ClausalSecond,ClausalNegative)
-    val second_positive = (ClausalSecond,ClausalPositive)
-    val third_negative = (ClausalThird,ClausalNegative)
-    val third_positive = (ClausalThird,ClausalPositive)
+    val left_negative = (ClausalLeft,ClausalNegative)
+    val left_positive = (ClausalLeft,ClausalPositive)
+    val right_negative = (ClausalRight,ClausalNegative)
+    val right_positive = (ClausalRight,ClausalPositive)
+    val condition_negative = (ClausalCondition,ClausalNegative)
+    val condition_positive = (ClausalCondition,ClausalPositive)
+    val then_positive = (ClausalThen,ClausalPositive)
+    val then_negative = (ClausalThen,ClausalNegative)
+    val else_positive = (ClausalElse,ClausalPositive)
+    val else_negative = (ClausalElse,ClausalNegative)
+    fun implication negated result =
+      ClausalImplication {negated=negated,result=result}
+    fun equivalence negated literals =
+      ClausalEquivalence {negated=negated,literals=literals}
+    fun conditional negated literals =
+      ClausalConditional {negated=negated,literals=literals}
   in
-    fun clausal_descriptor family =
-      case family of
-        SimpleNotImpliesElim1 => implication true false
-          (ClausalCurrent ClausalFirst)
-      | SimpleNotImpliesElim2 => implication true false
-          (ClausalFinished ClausalSecond)
-      | SimpleImpliesElim => implication false false
-          (clause first_negative second_positive)
-      | SimpleEquivElim1 => equivalence false false
-          (clause first_negative second_positive)
-      | SimpleEquivElim2 => equivalence false false
-          (clause first_positive second_negative)
-      | SimpleNotEquivElim1 => equivalence true false
-          (clause first_positive second_positive)
-      | SimpleNotEquivElim2 => equivalence true false
-          (clause first_negative second_negative)
-      | SimpleIteElim1 => conditional false true
-          (clause first_negative second_positive)
-      | SimpleIteElim2 => conditional false true
-          (clause first_positive third_positive)
-      | SimpleNotIteElim1 => conditional true true
-          (clause first_negative second_negative)
-      | SimpleNotIteElim2 => conditional true true
-          (clause first_positive third_negative)
-      | SimpleAndIntro => NONE
-      | SimpleAndElim => NONE
-      | SimpleNotNotElim => NONE
-      | SimpleNotOrElim => NONE
-      | SimpleNotAnd => NONE
+    fun clausal_descriptor rule =
+      case rule of
+        NotImpliesElim1 => implication true (ClausalCurrent ClausalLeft)
+      | NotImpliesElim2 => implication true (ClausalFinished ClausalRight)
+      | ImpliesElim => implication false
+          (ClausalImplied (left_negative,right_positive))
+      | EquivElim1 => equivalence false (left_negative,right_positive)
+      | EquivElim2 => equivalence false (left_positive,right_negative)
+      | NotEquivElim1 => equivalence true (left_positive,right_positive)
+      | NotEquivElim2 => equivalence true (left_negative,right_negative)
+      | IteElim1 => conditional false (condition_negative,then_positive)
+      | IteElim2 => conditional false (condition_positive,else_positive)
+      | NotIteElim1 => conditional true (condition_negative,then_negative)
+      | NotIteElim2 => conditional true (condition_positive,else_negative)
   end
-  local
-    fun operand_at ClausalFirst (item::_) = item
-      | operand_at ClausalSecond (_::item::_) = item
-      | operand_at ClausalThird (_::_::item::_) = item
-      | operand_at _ _ = raise ERR "clausal_literals" "missing operand"
-    fun literals_of result =
-      case result of
-        ClausalCurrent operand => [(operand,ClausalPositive)]
-      | ClausalFinished operand => [(operand,ClausalNegative)]
-      | ClausalDisjunction (first,second) => [first,second]
-  in
-    fun clausal_literals {result,...} {positive,negative} operands =
-      List.map (fn (operand,polarity) =>
-        (case polarity of ClausalPositive => positive
-           | ClausalNegative => negative) (operand_at operand operands))
-        (literals_of result)
-    fun clausal_elim
-        {negated,one,operands,child_provenance,negation_provenance,
-         one_provenance,pair,same_constant,atom,current,negative,positive,
-         finish,disjoin,error}
-        {reader,strip_negation,reduced_true,result} handler =
-      if reduced_true andalso same_constant (one ()) boolSyntax.T then
-        atom (one ()) else
-      let
-        fun exact count items =
-          if List.length items = count then items
-          else raise ERR handler "unexpected operand arity"
-        val source = if strip_negation then
-            (case negated (one ()) of
-               SOME body => body
-             | NONE => raise error handler "expected negation")
-          else one ()
-        val nodes = case reader of
-            ClausalImplication =>
-              exact 2 (operands boolSyntax.implication 2 source)
-          | ClausalEquivalence =>
-              let val (left,right) = pair source in [left,right] end
-          | ClausalConditional =>
-              exact 3 (operands boolSyntax.conditional 3 source)
-        val premise_provenance = one_provenance ()
-        val provenance = if strip_negation then
-            negation_provenance premise_provenance else premise_provenance
-        val provenances = case reader of
-            ClausalImplication => exact 2 (child_provenance "=>" 2 provenance)
-          | ClausalEquivalence =>
-              let val (left,right) = equality_provenance provenance
-              in [left,right] end
-          | ClausalConditional =>
-              exact 3 (child_provenance "ite" 3 provenance)
-        fun operand which = (operand_at which nodes,
-                             operand_at which provenances)
-        fun literal (which,ClausalPositive) =
-              let val (node,provenance) = operand which
-              in positive node provenance end
-          | literal (which,ClausalNegative) =
-              let val (node,provenance) = operand which
-              in negative node provenance end
-      in case result of
-          ClausalCurrent which =>
-            let val (node,provenance) = operand which
-            in current node provenance end
-        | ClausalFinished which => finish (literal (which,ClausalNegative))
-        | ClausalDisjunction (first,second) =>
+  fun clausal_negated (ClausalImplication {negated,...}) = negated
+    | clausal_negated (ClausalEquivalence {negated,...}) = negated
+    | clausal_negated (ClausalConditional {negated,...}) = negated
+  (* The one selection of a descriptor's literals.  Each reader reads its
+     operands, below a negation when its argument says so; the descriptor
+     picks the literals out of what its own reader returned. *)
+  fun clausal_select descriptor {implication,equivalence,conditional} =
+    let
+      fun binary (left,_) ClausalLeft = left
+        | binary (_,right) ClausalRight = right
+      fun ternary (condition,_,_) ClausalCondition = condition
+        | ternary (_,then_item,_) ClausalThen = then_item
+        | ternary (_,_,else_item) ClausalElse = else_item
+      fun pick lookup (operand,polarity) = (lookup operand,polarity)
+    in
+      case descriptor of
+        ClausalImplication {negated,result} =>
+          let val lookup = binary (implication negated)
+          in case result of
+              ClausalCurrent operand => SelectedCurrent (lookup operand)
+            | ClausalFinished operand => SelectedFinished (lookup operand)
+            | ClausalImplied (first,second) =>
+                SelectedClause (pick lookup first,pick lookup second)
+          end
+      | ClausalEquivalence {negated,literals=(first,second)} =>
+          let val lookup = binary (equivalence negated)
+          in SelectedClause (pick lookup first,pick lookup second) end
+      | ClausalConditional {negated,literals=(first,second)} =>
+          let val lookup = ternary (conditional negated)
+          in SelectedClause (pick lookup first,pick lookup second) end
+    end
+  fun clausal_literals descriptor {positive,negative} readers =
+    let
+      fun literal (item,ClausalPositive) = positive item
+        | literal (item,ClausalNegative) = negative item
+    in
+      case clausal_select descriptor readers of
+        SelectedCurrent item => [positive item]
+      | SelectedFinished item => [negative item]
+      | SelectedClause (first,second) =>
+          let val first_literal = literal first
+              val second_literal = literal second
+          in [first_literal,second_literal] end
+    end
+  fun clausal_elim
+      {negated,one,operands,child_provenance,negation_provenance,
+       one_provenance,pair,same_constant,atom,current,negative,positive,
+       finish,disjoin,error}
+      descriptor handler =
+    let
+      val conditional_rule = case descriptor of
+          ClausalConditional _ => true
+        | _ => false
+      (* Premise node (below a negation when [strip]), then its
+         provenance, each read by the reader's own operand functions and
+         zipped into (node,provenance) pairs. *)
+      fun read nodes_of provenances_of zip strip =
+        let
+          val source = if strip then
+              (case negated (one ()) of
+                 SOME body => body
+               | NONE => raise error handler "expected negation")
+            else one ()
+          val nodes = nodes_of source
+          val premise_provenance = one_provenance ()
+          val provenance = if strip then
+              negation_provenance premise_provenance else premise_provenance
+        in zip nodes (provenances_of provenance) end
+      fun zip_pairs (a,b) (c,d) = ((a,c),(b,d))
+      fun zip_triples (a,b,c) (d,e,f) = ((a,d),(b,e),(c,f))
+      val readers =
+        {implication = read
+           (fn source => pair_of handler
+              (operands boolSyntax.implication 2 source))
+           (fn provenance => pair_of handler
+              (child_provenance "=>" 2 provenance)) zip_pairs,
+         equivalence = read pair equality_provenance zip_pairs,
+         conditional = read
+           (fn source => triple_of handler
+              (operands boolSyntax.conditional 3 source))
+           (fn provenance => triple_of handler
+              (child_provenance "ite" 3 provenance)) zip_triples}
+      fun literal ((node,provenance),ClausalPositive) =
+            positive node provenance
+        | literal ((node,provenance),ClausalNegative) =
+            negative node provenance
+    in
+      if conditional_rule andalso same_constant (one ()) boolSyntax.T then
+        atom (one ())
+      else
+        case clausal_select descriptor readers of
+          SelectedCurrent (node,provenance) => current node provenance
+        | SelectedFinished (node,provenance) =>
+            finish (negative node provenance)
+        | SelectedClause (first,second) =>
             let val first_literal = literal first
                 val second_literal = literal second
             in disjoin [first_literal,second_literal] end
-      end
-  end
+    end
   fun and_elim {require_one,node,provenance,selected,current,error}
       premises arguments =
     let val premise=require_one "and_elim" premises

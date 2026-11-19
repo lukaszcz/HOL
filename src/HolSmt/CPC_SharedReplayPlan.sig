@@ -27,20 +27,13 @@ sig
      provenance_at:'provenance list * int -> 'provenance,
      error:string -> exn} ->
     Term.term -> 'node -> 'provenance -> int -> 'node * 'provenance
+  datatype clausal_rule = NotImpliesElim1 | NotImpliesElim2 | ImpliesElim
+    | EquivElim1 | EquivElim2 | NotEquivElim1 | NotEquivElim2
+    | IteElim1 | IteElim2 | NotIteElim1 | NotIteElim2
   datatype simple_boolean = SimpleAndIntro | SimpleAndElim
     | SimpleNotNotElim
     | SimpleNotOrElim
-    | SimpleNotImpliesElim1
-    | SimpleNotImpliesElim2
-    | SimpleImpliesElim
-    | SimpleEquivElim1
-    | SimpleEquivElim2
-    | SimpleNotEquivElim1
-    | SimpleNotEquivElim2
-    | SimpleIteElim1
-    | SimpleIteElim2
-    | SimpleNotIteElim1
-    | SimpleNotIteElim2
+    | SimpleClausal of clausal_rule
     | SimpleNotAnd
   val simple_boolean_of : CPC_Proof.replay_handler -> simple_boolean option
   val conjunction : {visit:unit -> unit,truth:unit -> 'node,
@@ -236,44 +229,54 @@ sig
      current:'output -> CPC_Proof.term_provenance -> 'fact,
      error:string -> string -> exn} -> 'premise list -> 'fact
   (* Operand selection of the eleven clausal-elimination rules
-       ~(a ==> b)  not_implies_elim1 / 2   a (current) / ~b (finished)
-       a ==> b     implies_elim            ~a \/ b
-       a = b       equiv_elim1 / 2         ~a \/ b / a \/ ~b
-       ~(a = b)    not_equiv_elim1 / 2     a \/ b / ~a \/ ~b
-       if c then a else b      ite_elim1 / 2       ~c \/ a / c \/ b
-       ~(if c then a else b)   not_ite_elim1 / 2   ~c \/ ~a / c \/ ~b
-     with operands in source order: First, Second (and Third for the
-     conditional, whose operands are c, a, b).  [reader] selects how the
-     operands and their provenance are read: an implication with its
-     constructor token and exactly two operands, an equation through the
-     relation [pair] and [equality_provenance], a conditional with exactly
-     three operands.  [strip_negation] reads the premise, and its
-     provenance, below a negation.  [reduced_true] returns the premise as
-     an atom, before any operand is inspected, when it has reduced to T. *)
-  datatype clausal_reader = ClausalImplication | ClausalEquivalence
-    | ClausalConditional
-  datatype clausal_operand = ClausalFirst | ClausalSecond | ClausalThird
+       ~(a ==> b)  NotImpliesElim1 / 2   a (current) / ~b (finished)
+       a ==> b     ImpliesElim           ~a \/ b
+       a = b       EquivElim1 / 2        ~a \/ b / a \/ ~b
+       ~(a = b)    NotEquivElim1 / 2     a \/ b / ~a \/ ~b
+       if c then a else b      IteElim1 / 2       ~c \/ a / c \/ b
+       ~(if c then a else b)   NotIteElim1 / 2    ~c \/ ~a / c \/ ~b
+     The descriptor's constructor is the reader of the premise: an
+     implication with its constructor token and exactly two operands, an
+     equation through the relation [pair] and [equality_provenance], or a
+     conditional with exactly three operands.  Each carries [negated] (the
+     premise, and its provenance, are read below a negation) and a result
+     whose operands are named for that reader, so a literal cannot name an
+     operand its reader lacks.  Only a conditional reader returns a premise
+     that has reduced to T as an atom, before any operand is inspected. *)
   datatype clausal_polarity = ClausalPositive | ClausalNegative
-  type clausal_literal = clausal_operand * clausal_polarity
-  datatype clausal_result = ClausalCurrent of clausal_operand
-    | ClausalFinished of clausal_operand
-    | ClausalDisjunction of clausal_literal * clausal_literal
-  type clausal_descriptor =
-    {reader:clausal_reader,strip_negation:bool,reduced_true:bool,
-     result:clausal_result}
-  (* NONE for the Boolean families that are not clausal eliminations. *)
-  val clausal_descriptor : simple_boolean -> clausal_descriptor option
-  (* The literals the descriptor derives, in order, over the operands of its
-     reader (First, Second, Third are the list's first three elements). *)
+  datatype binary_operand = ClausalLeft | ClausalRight
+  datatype ternary_operand = ClausalCondition | ClausalThen | ClausalElse
+  type 'operand clausal_literal = 'operand * clausal_polarity
+  datatype implication_result = ClausalCurrent of binary_operand
+    | ClausalFinished of binary_operand
+    | ClausalImplied of binary_operand clausal_literal *
+        binary_operand clausal_literal
+  datatype clausal_descriptor =
+      ClausalImplication of {negated:bool,result:implication_result}
+    | ClausalEquivalence of {negated:bool,
+        literals:binary_operand clausal_literal *
+                 binary_operand clausal_literal}
+    | ClausalConditional of {negated:bool,
+        literals:ternary_operand clausal_literal *
+                 ternary_operand clausal_literal}
+  val clausal_descriptor : clausal_rule -> clausal_descriptor
+  val clausal_negated : clausal_descriptor -> bool
+  (* The literals the descriptor derives, in order.  The reader of the
+     descriptor's kind is called once with the descriptor's [negated]; it
+     returns the operands in source order. *)
   val clausal_literals : clausal_descriptor ->
-    {positive:'a -> 'b,negative:'a -> 'b} -> 'a list -> 'b list
-  (* Interprets the descriptor over a consumer's callbacks, in this order:
-     [same_constant (one ())] and, when it holds, [atom (one ())] (only for
-     [reduced_true]); [one ()] and [negated] (when stripping); the operand
-     reader; [one_provenance]; [negation_provenance] (when stripping); the
-     provenance reader; the literals in order.  A one-literal result goes
-     to [current] (a positive operand) or [finish] (a [negative] literal);
-     a clause goes to [disjoin].  [handler] names the rule in diagnostics. *)
+    {positive:'a -> 'b,negative:'a -> 'b} ->
+    {implication:bool -> 'a * 'a,equivalence:bool -> 'a * 'a,
+     conditional:bool -> 'a * 'a * 'a} -> 'b list
+  (* Interprets the descriptor over a consumer's callbacks, selecting the
+     literals as [clausal_literals] does, over (node,provenance) pairs.
+     Callback order: for a conditional, [same_constant (one ())] and, when
+     it holds, [atom (one ())]; then [one ()] and [negated] (when
+     stripping); the operand reader; [one_provenance]; [negation_provenance]
+     (when stripping); the provenance reader; the literals in order.  A
+     current result goes to [current]; a finished one is made by [negative]
+     and goes to [finish]; a clause goes to [disjoin].  [handler] names the
+     rule in diagnostics. *)
   val clausal_elim :
     {negated:'node -> 'node option,one:unit -> 'node,
      operands:Term.term -> int -> 'node -> 'node list,
