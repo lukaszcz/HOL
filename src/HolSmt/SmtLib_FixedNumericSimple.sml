@@ -107,6 +107,53 @@ struct
         raise ERR label "foreign expected Work";
       action ())
      handle primary => (W.close expected;raise primary))
+  (* The exact public PURE_ss clause scan of the int begin and of the
+     policy net build: scalar-only patterns, the permutation test, net
+     insertion in foldr order, and the recorded discovery heads. *)
+  fun fixed_net graph root {label,lambda,schematic,free_var,step,pattern,
+      original,maximum} schemas =
+    let
+      fun nonscalar ty = Type.is_vartype ty orelse
+        (case Type.dest_thy_type ty of
+           {Thy="min",Tyop="fun",...} => true | _ => false)
+      fun scan term =
+        (step ();if Term.is_comb term then
+           let val (f,x) = Term.dest_comb term in scan f;scan x end
+         else if Term.is_abs term then raise ERR label lambda
+         else if Term.is_var term then
+           (if nonscalar (Term.type_of term) then raise ERR label schematic
+            else ())
+         else ())
+      fun vperm (l,r) =
+        (step ();case (Term.dest_term l,Term.dest_term r) of
+           (Term.VAR (_,a),Term.VAR (_,b)) => Type.compare (a,b)=EQUAL
+         | (Term.LAMB (_,a),Term.LAMB (_,b)) => vperm (a,b)
+         | (Term.COMB (a,b),Term.COMB (c,d)) =>
+             vperm (a,c) andalso vperm (b,d)
+         | _ => Term.aconv l r)
+      fun row schema =
+        let val {left,right} = pattern schema
+            val _ = scan left
+            val _ = List.app (fn variable =>
+              let val _ = step () val ty = Term.type_of variable
+              in if nonscalar ty then raise ERR label free_var else () end)
+              (Term.free_vars (Thm.concl (original schema)))
+            val perm = vperm (left,right) andalso
+              HOLset.equal (Term.FVL [left] Term.empty_tmset,
+                Term.FVL [right] Term.empty_tmset)
+            val (head,_) = HolKernel.strip_comb left
+            val {Thy,Name,...} = Term.dest_thy_const head
+            val _ = step ()
+            val constant = G.constant graph root head
+        in (schema,left,perm,(Thy,Name),constant) end
+      val rows = List.map row schemas
+      val net = List.foldr (fn ((schema,left,perm,_,_),net) =>
+        (step ();Ho_Net.enter ([],left,(schema,perm)) net))
+        Ho_Net.empty rows
+      val selected = G.record_discovery_heads graph root
+        {heads=List.map (fn (_,_,_,_,node) => node) rows,
+         maximum=maximum,step=step}
+    in (net,List.map (fn (_,_,_,head,_) => head) rows,selected) end
   datatype owner = Owner of
     {work:W.portfolio,graph:G.graph,root:G.scope,sources:S.sources,
      catalogue:K.catalogue,traversal:T.owner,matcher:M.owner,
@@ -838,55 +885,14 @@ struct
                     (W.validate work graph root sources
                        (W.semantic_limits work);
                      K.validate_for work catalogue;W.spend work 1)
-              fun scan term =
-                (step ();if Term.is_comb term then
-                   let val (f,x) = Term.dest_comb term in scan f;scan x end
-                 else if Term.is_abs term then
-                   raise ERR "begin" "fixed left pattern contains a lambda"
-                 else if Term.is_var term then
-                   let val ty = Term.type_of term
-                   in if Type.is_vartype ty orelse
-                       (case Type.dest_thy_type ty of
-                       {Thy="min",Tyop="fun",...} => true | _ => false) then
-                     raise ERR "begin"
-                       "fixed catalogue has a non-scalar schematic"
-                     else () end else ())
-              fun vperm (l,r) =
-                (step ();case (Term.dest_term l,Term.dest_term r) of
-                   (Term.VAR (_,a),Term.VAR (_,b)) => Type.compare (a,b)=EQUAL
-                 | (Term.LAMB (_,a),Term.LAMB (_,b)) => vperm (a,b)
-                 | (Term.COMB (a,b),Term.COMB (c,d)) =>
-                     vperm (a,c) andalso vperm (b,d)
-                 | _ => Term.aconv l r)
-              fun row schema =
-                let val {left,right} = M.pattern_for work schema
-                    val _ = scan left
-                    val _ = List.app (fn variable =>
-                      let val _ = step () val ty = Term.type_of variable
-                      in if Type.is_vartype ty orelse
-                       (case Type.dest_thy_type ty of
-                       {Thy="min",Tyop="fun",...} => true | _ => false) then
-                        raise ERR "begin"
-                          "fixed rule contains non-scalar free var"
-                        else () end)
-                      (Term.free_vars (Thm.concl (M.original schema)))
-                    val perm = vperm (left,right) andalso
-                      HOLset.equal (Term.FVL [left] Term.empty_tmset,
-                        Term.FVL [right] Term.empty_tmset)
-                    val (head,_) = HolKernel.strip_comb left
-                    val {Thy,Name,...} = Term.dest_thy_const head
-                    val _ = step ()
-                    val constant = G.constant graph root head
-                in (schema,left,perm,(Thy,Name),constant) end
-              val rows = List.map row schemas
-              val net = List.foldr (fn ((schema,left,perm,_,_),net) =>
-                (step ();Ho_Net.enter ([],left,(schema,perm)) net))
-                Ho_Net.empty rows
-              val selected = G.record_discovery_heads graph root
-                {heads=List.map (fn (_,_,_,_,node) => node) rows,
-                 maximum=W.work_limit work,step=step}
+              val built = fixed_net graph root
+                {label="begin",lambda="fixed left pattern contains a lambda",
+                 schematic="fixed catalogue has a non-scalar schematic",
+                 free_var="fixed rule contains non-scalar free var",
+                 step=step,pattern=M.pattern_for work,original=M.original,
+                 maximum=W.work_limit work} schemas
               val _ = step ()
-          in (net,List.map (fn (_,_,_,head,_) => head) rows,selected) end)
+          in built end)
         val conditional = Conditional.begin work catalogue
           {check_type=check_type}
     in Owner {work=work,graph=graph,root=root,sources=sources,
@@ -1231,54 +1237,19 @@ struct
            (* Complete geometry/Type discovery precedes the public FVL/net
               operations. It invokes no external policy and no native rule. *)
            val _=List.app preflight(ListPair.zip(schemas,facts))
-           fun scan term=
-             (step();if Term.is_comb term then
-                let val(f,x)=Term.dest_comb term in scan f;scan x end
-              else if Term.is_abs term then raise ERR "policy_simple_net"
-                "fixed left pattern contains a lambda"
-              else if Term.is_var term then
-                let val ty=Term.type_of term
-                in if Type.is_vartype ty orelse
-                    (case Type.dest_thy_type ty of
-                     {Thy="min",Tyop="fun",...}=>true|_=>false)then
-                  raise ERR "policy_simple_net" "non-scalar schematic"
-                  else ()end else ())
-           fun vperm(l,r)=
-             (step();case(Term.dest_term l,Term.dest_term r)of
-                (Term.VAR(_,a),Term.VAR(_,b))=>Type.compare(a,b)=EQUAL
-              | (Term.LAMB(_,a),Term.LAMB(_,b))=>vperm(a,b)
-              | (Term.COMB(a,b),Term.COMB(c,d))=>vperm(a,c)andalso vperm(b,d)
-              | _=>Term.aconv l r)
-           fun row schema=
-             let val{left,right}=M.pattern_with_policy_for work schema
-                 val _=scan left
-                 val _=List.app(fn variable=>
-                   let val _=step()val ty=Term.type_of variable
-                   in if Type.is_vartype ty orelse
-                       (case Type.dest_thy_type ty of
-                        {Thy="min",Tyop="fun",...}=>true|_=>false)then
-                     raise ERR "policy_simple_net" "non-scalar free variable"
-                     else ()end)
-                   (Term.free_vars(Thm.concl(M.original_with_policy schema)))
-                 val perm=vperm(left,right)andalso
-                   HOLset.equal(Term.FVL[left]Term.empty_tmset,
-                     Term.FVL[right]Term.empty_tmset)
-                 val(head,_)=HolKernel.strip_comb left
-                 val{Thy,Name,...}=Term.dest_thy_const head
-                 val _=step()val constant=G.constant graph root head
-             in(schema,left,perm,(Thy,Name),constant)end
-           val rows=List.map row schemas
-           val net=List.foldr(fn((schema,left,perm,_,_),net)=>
-             (step();Ho_Net.enter([],left,(schema,perm))net))Ho_Net.empty rows
-           (* This is a finite bound for this fixed native catalogue scan,
-              taken from its actual caller, not a projection of Work policy. *)
-           val heads=G.record_discovery_heads graph root
-             {heads=List.map(fn(_,_,_,_,node)=>node)rows,
-              maximum= #type_work_limit native,step=step}
+           val(net,names,heads)=fixed_net graph root
+             {label="policy_simple_net",
+              lambda="fixed left pattern contains a lambda",
+              schematic="non-scalar schematic",
+              free_var="non-scalar free variable",step=step,
+              pattern=M.pattern_with_policy_for work,
+              original=M.original_with_policy,
+              (* This is a finite bound for this fixed native catalogue scan,
+                 taken from its actual caller, not a projection of Work
+                 policy. *)
+              maximum= #type_work_limit native}schemas
            val _=valid()
-         in{matcher=matcher,net=net,
-            heads=List.map(fn(_,_,_,head,_)=>head)rows,
-            discovery_heads=heads}end)
+         in{matcher=matcher,net=net,heads=names,discovery_heads=heads}end)
        end)handle primary=>(W.close work;raise primary)
   end
 
