@@ -13345,7 +13345,8 @@ end
 
 (* The plain and boundary process_scope entries share one scope
    decomposition: same theorem, hypotheses and tags for one and for two
-   antecedents, the boundary entry also reporting its provenance. One
+   antecedents and for a False result, the boundary entry also reporting
+   its provenance. One
    antecedent builds no conjunction constructor; two build one. *)
 fun cpc_process_scope_boundary_matches_plain () =
 let
@@ -13361,7 +13362,7 @@ let
      result = {thm = theorem,
                located = {term = Thm.concl theorem, provenance = provenance},
                clause = NONE}}
-  fun check label antecedents incoming expected =
+  fun check_with r label antecedents incoming expected =
     let
       val premise = Thm.ASSUME
         (List.foldr boolSyntax.mk_imp r antecedents)
@@ -13381,9 +13382,16 @@ let
         label ^ ": unexpected boundary provenance")
     end
 in
-  check "one antecedent" [a] (imp_prov (pa, pr))
+  check_with boolSyntax.F "one antecedent, F result" [a]
+    (imp_prov (pa, pr)) (CPC_Proof.ApplicationProvenance ("not", [pa]));
+  check_with boolSyntax.F "two antecedents, F result" [a, b]
+    (imp_prov (pa, imp_prov (pb, pr)))
+    (CPC_Proof.ApplicationProvenance ("not",
+      [CPC_Proof.ConjunctionProvenance
+         (CPC_Proof.ProcessScopeConjunction, [pa, pb])]));
+  check_with r "one antecedent" [a] (imp_prov (pa, pr))
     (imp_prov (pa, body));
-  check "two antecedents" [a, b] (imp_prov (pa, imp_prov (pb, pr)))
+  check_with r "two antecedents" [a, b] (imp_prov (pa, imp_prov (pb, pr)))
     (imp_prov (CPC_Proof.ConjunctionProvenance
                  (CPC_Proof.ProcessScopeConjunction, [pa, pb]), body))
 end
