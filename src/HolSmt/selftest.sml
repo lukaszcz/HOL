@@ -75581,7 +75581,11 @@ in
     in ()end)
 end
 
-local
+functor Z3OwnedFinalizationFixture406Fn(Arg : sig
+  structure Final : Z3_SparseOwnedValueProofReplay
+  val variant : string
+end) =
+struct
   structure G = SmtReplayGraph
   structure S = SmtReplaySource
   structure W = SmtReplayInvocationWork
@@ -75599,8 +75603,7 @@ local
   structure P = SmtReplayOwnedValueProof
   structure NC = SmtReplayNativeContract
   structure Real = SmtReplayValueRealization
-  structure Final = Z3_OwnedValueProofReplay
-  val _ = Z3_OwnedValueProofReplay.prepare_with_policy
+  structure Final = Arg.Final
   val _ = SmtReplayValueRealization.prepare
   structure RP = SmtReplayResourcePolicy
   type env = {graph:G.graph,scope:G.scope,sources:S.sources,work:W.portfolio,
@@ -75612,8 +75615,8 @@ local
      type_work_limit=100000000}
   fun require message yes = if yes then () else raise Fail message
   fun test label action =
-    ((Count.counting_thms true;testutils.tprint label;action ();
-      Count.counting_thms false;testutils.OK ())
+    ((Count.counting_thms true;testutils.tprint (Arg.variant ^ label);
+      action ();Count.counting_thms false;testutils.OK ())
      handle primary=>(Count.counting_thms false;raise primary))
   fun refused action = (action ();false)
     handle Feedback.HOL_ERR _ => true
@@ -75729,7 +75732,7 @@ local
           val data=W.with_step (#work e) (fn()=>
             VP.contents_with_policy_for (#work e) (#query e) held)
           val assertions=graph_assertions e data
-          val prepared=Z3_OwnedValueProofReplay.prepare_with_policy
+          val prepared=Final.prepare_with_policy
             (#work e) (#query e) held
             {assertions=assertions,native_contract= #contract e,
              profiles=[],check_type=callback}
@@ -75767,8 +75770,7 @@ local
             (if n=0 then "true" else "(and " ^ name(n-1) ^
               " " ^ name(n-1) ^ ")") ^ ")) " ^ chain(n+1) ^ ")"
     in "((proof " ^ chain 0 ^ "))"end
-in
-  val _=run_postlude 406 "owned-value-public-goal-finalization-7"(fn()=>
+  fun run()=
     let
       val _=test "Parsed checked MP reaches exact non-atomic public Goal"
         (fn()=>let val final_phase=ref(SOME(Count.thm_count()))
@@ -75914,7 +75916,20 @@ in
                 (exact andalso Count.thm_count()=prior andalso
                  #retired(W.audit_policy(#work expected))andalso
                  not(#retired(W.audit_policy(#work held))))end)end)))
-    in ()end)
+    in ()end
+end
+
+local
+  structure Ordinary = Z3OwnedFinalizationFixture406Fn
+    (struct structure Final = Z3_OwnedValueProofReplay
+            val variant = "" end)
+  structure Sparse = Z3OwnedFinalizationFixture406Fn
+    (struct structure Final = Z3_OwnedValueProofReplay.Sparse
+            val variant = "sparse: " end)
+  val _ = Z3_OwnedValueProofReplay.prepare_with_policy
+in
+  val _=run_postlude 406 "owned-value-public-goal-finalization-7"(fn()=>
+    (Ordinary.run();Sparse.run()))
 end
 local
   structure G = SmtReplayGraph
@@ -79169,7 +79184,11 @@ in
 end
 
 
-local
+functor Z3OwnedBinderFixture416Fn(Arg : sig
+  structure Final : Z3_SparseOwnedValueProofReplay
+  val variant : string
+end) =
+struct
   structure G = SmtReplayGraph
   structure S = SmtReplaySource
   structure W = SmtReplayInvocationWork
@@ -79187,11 +79206,10 @@ local
   structure P = SmtReplayOwnedValueProof
   structure NC = SmtReplayNativeContract
   structure Real = SmtReplayValueRealization
-  structure Final = Z3_OwnedValueProofReplay
+  structure Final = Arg.Final
   structure Binder = SmtReplayOwnedValueBinder
   val _ = SmtReplayOwnedValueBinder.prepare
   val _ = SmtReplayBinderClose.run
-  val _ = Z3_OwnedValueProofReplay.prepare_with_binders_with_policy
   val _ = SmtReplayValueRealization.prepare
   structure RP = SmtReplayResourcePolicy
   type env = {graph:G.graph,scope:G.scope,sources:S.sources,work:W.portfolio,
@@ -79203,8 +79221,8 @@ local
      type_work_limit=100000000}
   fun require message yes = if yes then () else raise Fail message
   fun test label action =
-    ((Count.counting_thms true;testutils.tprint label;action ();
-      Count.counting_thms false;testutils.OK ())
+    ((Count.counting_thms true;testutils.tprint (Arg.variant ^ label);
+      action ();Count.counting_thms false;testutils.OK ())
      handle primary=>(Count.counting_thms false;raise primary))
   fun refused action = (action ();false)
     handle Feedback.HOL_ERR _ => true
@@ -79383,8 +79401,8 @@ local
       (case PV.view(#context data)partial of PV.Application(_,left)=>
         (left,right)|_=>raise Fail "missing equality left")
     | _=>raise Fail "missing actual target equality"
-in
-  val _=run_postlude 416 "owned-value-source-free-scoped-binder-10"(fn()=>
+  (* The tests below that run a Final method. *)
+  fun final_tests()=
     let
       val _=test "Parsed source-free Bind is demanded through Real and Goal"
         (fn()=>fixture [] boolSyntax.T(fn e=>
@@ -79405,6 +79423,44 @@ in
                #dependencies result=[P.Current 0] andalso
                null(Thm.hyp(#theorem result)) andalso
                null(#1(S.original_goal(#sources e))))end)end))
+      val _=test "Unmigrated NNF keeps authentic Scope Needs without callbacks"
+        (fn()=>fixture [] boolSyntax.T(fn e=>
+          let val text=certificate
+                ("(nnf-pos (proof-bind (lambda ((x Bool)) " ^
+                 "(refl (= x x)))) (= (forall ((a Bool)) a) " ^
+                 "(forall ((b Bool)) b)))")
+              val callbacks=ref 0 val prior=Count.thm_count()
+          in using e text(fn _=>callbacks:= !callbacks+1)
+            (fn _=>fn _=>fn result=>
+              let val needed=case result of Final.ReplayNeeds rows=>
+                      List.exists(fn Receiver.ScopedBinding _=>true
+                        |_=>false)rows
+                    | _=>false
+              in require "unmigrated NNF lost its scoped requirement"
+                (needed andalso !callbacks=0 andalso
+                 Count.thm_count()=prior andalso
+                 not(#retired(W.audit_policy(#work e))))end)end))
+      val _=test "Later unsupported Bind prevents an earlier native ABS prefix"
+        (fn()=>fixture [] boolSyntax.T(fn e=>
+          let val other=alias_quant "(symm (refl (= x x)) (= x x))"
+              val first=alias_quant "(refl (= x x))"
+              val text=certificate(shared_target
+                ("(trans " ^ first ^ " " ^ other ^ " p)"))
+              val prior=Count.thm_count() val callbacks=ref 0
+          in using e text(fn _=>callbacks:= !callbacks+1)
+            (fn _=>fn _=>fn result=>
+            let val needed=case result of Final.ReplayNeeds rows=>
+                    List.exists(fn Receiver.BinderAdmission
+                      (Binder.ChildProgramme _)=>true|_=>false)rows
+                  | _=>false
+            in require "native binder prefix preceded a pending child"
+              (needed andalso !callbacks=0 andalso
+               Count.thm_count()=prior andalso
+               not(#retired(W.audit_policy(#work e))))end)end))
+    in ()end
+  (* Tests of the shared Binder programme alone; no Final method. *)
+  fun binder_tests()=
+    let
       val _=test "Non-Boolean binder admits actual REFLEXIVE Eq Type forest"
         (fn()=>fixture [] boolSyntax.T(fn e=>
           inspecting e(certificate int_quant)(fn held=>fn data=>
@@ -79517,41 +79573,20 @@ in
             in require "binder Type Primary was swallowed or delayed"
               (exact andalso Count.thm_count()=prior andalso
                #retired(W.audit_policy(#work e)))end)))
-      val _=test "Unmigrated NNF keeps authentic Scope Needs without callbacks"
-        (fn()=>fixture [] boolSyntax.T(fn e=>
-          let val text=certificate
-                ("(nnf-pos (proof-bind (lambda ((x Bool)) " ^
-                 "(refl (= x x)))) (= (forall ((a Bool)) a) " ^
-                 "(forall ((b Bool)) b)))")
-              val callbacks=ref 0 val prior=Count.thm_count()
-          in using e text(fn _=>callbacks:= !callbacks+1)
-            (fn _=>fn _=>fn result=>
-              let val needed=case result of Final.ReplayNeeds rows=>
-                      List.exists(fn Receiver.ScopedBinding _=>true
-                        |_=>false)rows
-                    | _=>false
-              in require "unmigrated NNF lost its scoped requirement"
-                (needed andalso !callbacks=0 andalso
-                 Count.thm_count()=prior andalso
-                 not(#retired(W.audit_policy(#work e))))end)end))
-      val _=test "Later unsupported Bind prevents an earlier native ABS prefix"
-        (fn()=>fixture [] boolSyntax.T(fn e=>
-          let val other=alias_quant "(symm (refl (= x x)) (= x x))"
-              val first=alias_quant "(refl (= x x))"
-              val text=certificate(shared_target
-                ("(trans " ^ first ^ " " ^ other ^ " p)"))
-              val prior=Count.thm_count() val callbacks=ref 0
-          in using e text(fn _=>callbacks:= !callbacks+1)
-            (fn _=>fn _=>fn result=>
-            let val needed=case result of Final.ReplayNeeds rows=>
-                    List.exists(fn Receiver.BinderAdmission
-                      (Binder.ChildProgramme _)=>true|_=>false)rows
-                  | _=>false
-            in require "native binder prefix preceded a pending child"
-              (needed andalso !callbacks=0 andalso
-               Count.thm_count()=prior andalso
-               not(#retired(W.audit_policy(#work e))))end)end))
-    in ()end)
+    in ()end
+end
+
+local
+  structure Ordinary = Z3OwnedBinderFixture416Fn
+    (struct structure Final = Z3_OwnedValueProofReplay
+            val variant = "" end)
+  structure Sparse = Z3OwnedBinderFixture416Fn
+    (struct structure Final = Z3_OwnedValueProofReplay.Sparse
+            val variant = "sparse: " end)
+  val _ = Z3_OwnedValueProofReplay.prepare_with_binders_with_policy
+in
+  val _=run_postlude 416 "owned-value-source-free-scoped-binder-10"(fn()=>
+    (Ordinary.binder_tests();Ordinary.final_tests();Sparse.final_tests()))
 end
 
 local
