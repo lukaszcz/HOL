@@ -7160,18 +7160,19 @@ local
       val cyclic = List.filter (fn theorem => not (List.exists
           (fn kept => Portable.pointer_eq (kept, theorem)) oriented))
         equalities
-      val mixed =
-        if List.null cyclic then []
-        else [acyclic (oriented @ List.map Thm.SYM cyclic)]
-      fun first theorems [] = attempt theorems
-        | first theorems (next :: rest) =
-            attempt theorems
-            handle Feedback.HOL_ERR holerr =>
-              if SmtResource.is_resource_gate holerr then
-                raise Feedback.HOL_ERR holerr
-              else first next rest
+      (* The mixed attempt only adds a route: whatever it raises, the
+         reversed direction is still tried. *)
+      fun after_oriented () =
+        if List.null cyclic then attempt reversed
+        else
+          attempt (acyclic (oriented @ List.map Thm.SYM cyclic))
+          handle Feedback.HOL_ERR _ => attempt reversed
     in
-      first oriented (mixed @ [reversed])
+      attempt oriented
+      handle Feedback.HOL_ERR holerr =>
+        if SmtResource.is_resource_gate holerr then
+          raise Feedback.HOL_ERR holerr
+        else after_oriented ()
     end
 
     fun z3_rewrite (state, t) =
