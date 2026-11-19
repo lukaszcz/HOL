@@ -618,8 +618,6 @@ struct
          raise ERR "active" "validation state changed during backing pass")
       end)
      handle primary => (W.close work;raise primary))
-  fun revalidate (owner as Owner {validated,...}) =
-    (validated := NONE;active owner)
   fun begin work {portfolio,check_type,native_contract,profiles} =
     let
       val _=NC.validate_for work native_contract
@@ -646,7 +644,6 @@ struct
       | NONE=>raise ERR "begin_preprocessed_with_policy"
           "legacy GP has no original dependency portfolio")
      handle primary=>(W.close work;raise primary))
-  fun pending_heads (Pending {owner,heads,...}) = (active owner;heads)
   fun pending_requests (Pending {owner,requests,...}) =
     (active owner;requests)
   fun pending_selections (Pending {owner,selections,...}) =
@@ -871,22 +868,6 @@ struct
       val {assumptions,goal}=F.processed_nodes_with_policy_for work portfolio
     in loop(List.map(fn node=>(scope,node))(goal::assumptions))
       (empty_thms())[] end)
-
-  fun validate_reuse (Pending
-      {owner=owner as Owner {work,graph,scope,...},originals,resumed,...})
-      (Normalized {owner=held,original,kept,guard,...}) =
-    ((if Portable.pointer_eq (owner,held) then () else
-        raise ERR "validate_reuse" "foreign normalization owner";
-      revalidate owner;
-      if !resumed then raise ERR "validate_reuse" "pending consumed" else ();
-      if List.exists (fn th => Portable.pointer_eq (th,original)) originals
-        then () else raise ERR "validate_reuse" "unrequested original";
-      guard ();
-      case kept of NONE => () | SOME (_,proof) =>
-        P.validate_closed_fact_with_policy graph scope
-          (#template_limit (W.semantic_policy work)) proof;
-      active owner)
-     handle primary => (W.close work;raise primary))
 
   fun validate_reuse_cached (Pending
       {owner=owner as Owner {work,graph,scope,...},originals,resumed,...})
