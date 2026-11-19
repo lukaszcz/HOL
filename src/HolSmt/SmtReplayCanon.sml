@@ -104,14 +104,15 @@ struct
      included: one walk, memoized on physical identity. Past the term
      budget it answers true, so no pass is skipped that was not scanned.
      A binder the pass's own opening would refuse answers true before
-     [trigger] or the walk opens it. *)
+     [trigger] or the walk opens it.  Only the outermost binder is checked
+     ([admitted] below it): its check covers every binder inside. *)
   fun may_trigger trigger root =
     let
       exception Found
       val bucket_count = 4093
       val seen = Array.array (bucket_count, [] : Term.term list)
       val visited = ref 0
-      fun visit term =
+      fun visit admitted term =
         let
           val index = SmtResource.pointer_bucket bucket_count term
           val bucket = Array.sub (seen, index)
@@ -122,16 +123,17 @@ struct
             (Array.update (seen, index, term :: bucket);
              visited := !visited + 1;
              if !visited > SmtResource.max_bv_replay_term_nodes orelse
-                (Term.is_abs term andalso not (scan_may_open
-                   SmtResource.max_bv_replay_term_nodes term)) orelse
-                trigger term then raise Found
+                (not admitted andalso Term.is_abs term andalso
+                 not (scan_may_open SmtResource.max_bv_replay_term_nodes term))
+                orelse trigger term then raise Found
              else if Term.is_comb term then
-               (visit (Term.rator term); visit (Term.rand term))
+               (visit admitted (Term.rator term);
+                visit admitted (Term.rand term))
              else if Term.is_abs term then
-               visit (#2 (SmtReplayImport.dest_abs_preserving_names term))
+               visit true (#2 (SmtReplayImport.dest_abs_preserving_names term))
              else ())
         end
-    in (visit root; false) handle Found => true end
+    in (visit false root; false) handle Found => true end
 
   (* Where ETA_CONV may rewrite: an abstraction whose body applies
      something to the bound variable. Builds no theorem. *)
@@ -808,12 +810,20 @@ struct
      with a negated guard (the polarity pass) or an arithmetic node (the
      polynomial and additive passes).  The scan uses those passes' own
      recognisers and descends into binder bodies; a binder over the
-     scan's budget counts as relevant without being opened.  The primary
-     pass has already admitted the source.  An incomplete scan retains all
-     original passes. *)
+     scan's budget counts as relevant without being opened; when the whole
+     source is within it, so is every binder, and none is checked again.
+     The primary pass has already admitted the source.  An incomplete scan
+     retains all original passes. *)
   fun secondary_rewrite_needed root =
     let
       exception Relevant
+      val checked = ref NONE
+      fun whole () = case !checked of
+          SOME fits => fits
+        | NONE =>
+            let val fits =
+                  scan_may_open SmtResource.max_skeleton_replay_dag_nodes root
+            in checked := SOME fits; fits end
       fun inspect term =
         if is_order term orelse is_dual_order term orelse
            is_arithmetic term orelse
@@ -824,7 +834,8 @@ struct
       fun children term =
         if Term.is_comb term then [Term.rator term,Term.rand term]
         else if Term.is_abs term then
-          if scan_may_open SmtResource.max_skeleton_replay_dag_nodes term
+          if whole () orelse
+             scan_may_open SmtResource.max_skeleton_replay_dag_nodes term
           then [#2 (SmtReplayImport.dest_abs_preserving_names term)]
           else raise Relevant
         else []
