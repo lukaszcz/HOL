@@ -533,6 +533,155 @@ struct
          List.map (fn (_,t) => #1 (Term.dest_var t)) terms=
            List.map #2 (List.rev names)) end)
 
+  (* The three planners walk the same graph. At one cap each entry must
+     agree on success, answer and diagnostic, and the two meters on the paid
+     prefix (even for a refusal). Compared only within this run. *)
+  fun naming_entries () = fixture Ordinary generous
+    (fn {graph=g,scope=s,nodes,...}:env =>
+      let
+        fun answer p = (G.placeholder_plan_cost p,G.placeholder_plan_names p)
+        val expected as (cost,_) = answer
+          (G.plan_placeholders_with_policy g s
+            {nodes=nodes,remaining_work=P.Uncapped})
+        val initial = 7
+        fun ordinary cap = G.plan_placeholders g s
+          {nodes=nodes,remaining_work=IntInf.toInt cap}
+        fun finite cap = G.plan_placeholders_with_policy g s
+          {nodes=nodes,remaining_work=P.AtMost cap}
+        fun metered kind cap =
+          let val m = meter kind (initial+cap) initial
+              val result = Exn.capture (fn () => answer
+                (G.plan_placeholders_with_meter g s m {nodes=nodes})) ()
+          in (result,meter_charge m) end
+        fun same (Exn.Res a,Exn.Res b) = a=expected andalso b=expected
+          | same (Exn.Exn R.Limit,Exn.Exn R.Limit) = true
+          | same (Exn.Exn (Feedback.HOL_ERR a),Exn.Exn (Feedback.HOL_ERR b)) =
+              hol_diagnostic a=hol_diagnostic b
+          | same _ = false
+        fun one cap =
+          let
+            val succeeds = cap>=cost
+            val base = Exn.capture (answer o ordinary) cap
+            val (int_meter,int_paid) = metered IntegerMeter cap
+            val (policy_meter,policy_paid) = metered PolicyMeter cap
+            val _ = require "entries disagree on outcome or diagnostic"
+              (same (base,Exn.capture (answer o finite) cap) andalso
+               same (base,int_meter) andalso same (base,policy_meter) andalso
+               (case base of Exn.Res _ => succeeds | _ => not succeeds))
+            val _ = require "meters disagree on the paid prefix"
+              (int_paid=policy_paid andalso int_paid<=initial+cap andalso
+               (not succeeds orelse int_paid=initial+cost))
+          in int_paid end
+        val prefixes = List.map one [0,1,2,cost div 2,cost-1,cost,cost+1]
+        val _ = require "refusal prefix not below the successful charge"
+          (List.nth (prefixes,4)<initial+cost)
+        (* Wide finite and Uncapped limits cannot project to int. *)
+        val wide = IntInf.fromInt (valOf Int.maxInt)+5
+        fun wide_meter limit =
+          let val m = R.new_scope_meter_with_policy
+                {limit=limit,charged=ref initial}
+          in (answer (G.plan_placeholders_with_meter g s m {nodes=nodes}),
+              meter_charge m) end
+      in require "wide or Uncapped limit changed planning"
+        (answer (G.plan_placeholders g s
+           {nodes=nodes,remaining_work=valOf Int.maxInt})=expected andalso
+         answer (G.plan_placeholders_with_policy g s
+           {nodes=nodes,remaining_work=P.AtMost wide})=expected andalso
+         wide_meter (P.AtMost (wide+initial)) = (expected,initial+cost) andalso
+         wide_meter P.Uncapped = (expected,initial+cost) andalso
+         List.nth (prefixes,5)=initial+cost) end)
+
+  (* The owned function child is reached through the graph's
+     prepare_owned_application_children. Its closed, birth and context
+     refusals must come before the already/memo reuse: the same refusal,
+     with the same diagnostic and paid prefix, whether or not the child was
+     already prepared. Compared within this run on a fresh and a prepared
+     application. *)
+  type owned = {graph:G.graph,root:G.scope,storage:G.fixed_storage,
+                birth:G.owned_application_birth,
+                context:G.original_import_context,
+                meter:R.scope_meter}
+  fun owned_application () : owned =
+    let
+      val n = 100000
+      val cap = P.AtMost (IntInf.fromInt n)
+      val big = P.semantic_from_ints {input_limit=n,output_limit=n,
+                                      template_limit=n}
+      val m = R.new_scope_meter_with_policy {limit=P.Uncapped,charged=ref 0}
+      val limits : G.first_boolean_variable_limits =
+        {construction_limits=P.graph_from_ints
+           {import_limit=n,literal_limit=n,binder_limit=n,
+            recipe_limits={template_limit=n,index_limit=n,
+                           operand_limit=n,token_limit=n}},
+         semantic_limits=big,
+         native_limits={semantic_limits=big,import_limit=cap,
+                        type_work_limit=cap}}
+      val {graph,root,storage,birth,...} =
+        G.new_owned_boolean_application_with_bootstrap_meter m
+          {function=boolSyntax.negation,argument=boolSyntax.F,limits=limits}
+      val context = G.begin_owned_application_import_context
+        storage root birth
+    in {graph=graph,root=root,storage=storage,birth=birth,
+        context=context,meter=m} end
+
+  fun owned_function_child () =
+    let
+      fun prepare ({storage,root,birth,context,meter=m,...} : owned)
+          (storage',birth',context') =
+        let val start = meter_charge m
+            val outcome = Exn.capture (fn () =>
+              G.prepare_owned_application_children
+                (Option.getOpt (storage',storage)) root
+                (Option.getOpt (context',context))
+                (Option.getOpt (birth',birth))) ()
+        in (outcome,meter_charge m-start) end
+      fun refusal (Exn.Exn (Feedback.HOL_ERR e),paid) =
+            SOME (hol_diagnostic e,paid)
+        | refusal _ = NONE
+      fun finish (a : owned) =
+        G.close_scope (#graph a) (#root a)
+      val fresh = owned_application ()
+      val prepared = owned_application ()
+      val other = owned_application ()
+      fun ok (Exn.Res (),paid) = paid
+        | ok (Exn.Exn primary,_) = raise primary
+      val first = ok (prepare prepared (NONE,NONE,NONE))
+      val again = ok (prepare prepared (NONE,NONE,NONE))
+      val _ = require "memoised child preparation did not charge its checks"
+        (again>0 andalso again<first)
+      (* A foreign birth and a foreign context, on each application. *)
+      fun mismatches a =
+        [prepare a (NONE,SOME (#birth other),NONE),
+         prepare a (NONE,NONE,SOME (#context other)),
+         prepare a (SOME (#storage other),NONE,NONE)]
+      val unprepared = List.map refusal (mismatches fresh)
+      val memoised = List.map refusal (mismatches prepared)
+      val _ = require "foreign birth/context/storage was not refused"
+        (List.all Option.isSome unprepared)
+      val _ = require "refusal differs once the function child is memoised"
+        (unprepared=memoised)
+      (* A closed programme refuses although the child is already
+         memoised, after its fixed payment and before any memo walk. *)
+      val {storage,root,birth,context,...} = prepared
+      fun source_then_denial () =
+        (G.complete_owned_application_source storage root context birth;
+         G.complete_owned_application_denial storage root context birth)
+      val _ = require "owned application did not complete"
+        (case Exn.capture source_then_denial () of
+           Exn.Res () => true | Exn.Exn primary => raise primary)
+      val closed = prepare prepared (NONE,NONE,NONE)
+      val _ = require "closed programme reused its memoised child"
+        (case refusal closed of
+           SOME (("SmtReplayGraph","ordered_function_child",
+                  "original programme is closed"),paid) =>
+             paid>0 andalso paid<again
+         | _ => false)
+      val _ = require "closed programme accepted a foreign birth"
+        (refusal (prepare prepared (NONE,SOME (#birth other),NONE))=
+           List.hd memoised)
+      val _ = List.app finish [fresh,prepared,other]
+    in () end
+
   fun naming_rejection mode =
     let
       val (prefix,overhead,cost) = fixture mode generous
@@ -723,6 +872,10 @@ struct
        (fn () => List.app naming modes);
      test "Task50 G standalone/meter exact diagnostics across boundaries"
        naming_diagnostics;
+     test "Task50 G planner entries agree at exact and below-exact caps"
+       naming_entries;
+     test "Task50 G owned function child refuses before memo reuse"
+       owned_function_child;
      test "Task50 W rejected naming keeps G diagnostic and paid prefix"
        (fn () => List.app naming_rejection bounded_modes);
      test "Task50 W planning failure retires even Uncapped"
