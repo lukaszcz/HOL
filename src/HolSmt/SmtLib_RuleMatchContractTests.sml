@@ -115,7 +115,7 @@ struct
             in require "foreign schema was accepted or retired its holder"
               (stopped andalso #retired (W.audit wb) andalso
                not (#retired (W.audit wa))) end)
-        val _ = test "Int matcher: retired owner refuses prepare and instance"
+        val _ = test "Int matcher: retired owner is refused"
           (fn () =>
             let val fixture as (_,_,work,_,_) = setup ample
                 val value = matched fixture division
@@ -224,12 +224,13 @@ struct
             in require "foreign schema was accepted or retired its holder"
               (stopped andalso #retired (W.audit_policy wb) andalso
                not (#retired (W.audit_policy wa))) end)
-        val _ = test "Policy matcher: retired owner refuses prepare and instance"
+        val _ = test "Policy matcher: retired owner is refused"
           (fn () =>
             let val fixture as (_,_,work,_,_) = setup remaining ample
                 val value = matched fixture guarded
                 val _ = W.close work
-                val stopped_prepare = refuses (fn () => prepare fixture guarded)
+                val stopped_prepare = refuses (fn () =>
+                  prepare fixture guarded)
                 val stopped_instance = refuses (fn () =>
                   M.instantiate_with_policy value {check_type = fn _ => ()})
             in require "retired owner still matched or instantiated"
@@ -353,7 +354,7 @@ struct
             in require "bound-only Hyp type was silently instantiated"
               (is_no_match (survey e node) andalso
                not (#retired (W.audit (#work e)))) end)
-        val _ = test "Local matcher: variable under a binder needs higher order"
+        val _ = test "Local matcher: binder capture needs higher order"
           (fn () =>
             let val e = setup big
                   [``!local_ctx_v:num. (local_ctx_k:(num->bool)->bool)
@@ -374,7 +375,7 @@ struct
             in require "foreign schema was accepted or retired its holder"
               (stopped andalso #retired (W.audit (#work b)) andalso
                not (#retired (W.audit (#work a)))) end)
-        val _ = test "Local matcher: retired owner refuses prepare and instance"
+        val _ = test "Local matcher: retired owner is refused"
           (fn () =>
             let val e = setup big equal_hyps equal_goal
                 val value = matched e (goal e)
