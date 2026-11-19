@@ -467,12 +467,6 @@ struct
         (equality (Application (a,x)) (Application (b,x))) (hypotheses p)
         (ApplyArgument (p,x))
     | NONE => raise ERR "apply_argument" "private helper is not equality"
-  fun abstract owner v p =
-    case binary_view owner "min" "=" (statement p) of
-      SOME (a,b) => theorem
-        (equality (Abstraction (v,a)) (Abstraction (v,b))) (hypotheses p)
-        (AbstractEquality (v,p))
-    | NONE => raise ERR "abstract" "private helper is not equality"
   fun beta owner redex = case redex of
       Application (Abstraction (v,b),x) => theorem
         (equality redex (substitute owner v x b)) [] (ContractBeta redex)
@@ -497,7 +491,6 @@ struct
       NONE => [p]
     | SOME _ => flatten_conjunction owner (select owner true p) @
         flatten_conjunction owner (select owner false p)
-  fun conjunct_n owner n p = List.nth (flatten_conjunction owner p,n)
   fun primitive_conditions owner ants p = case ants of [] => p
     | [a] => discharge owner a p
     | a::rest =>
@@ -1892,12 +1885,6 @@ struct
         (equality (Application (a,x)) (Application (b,x))) (hypotheses p)
         (ApplyArgument (p,x))
     | NONE => raise ERR "apply_argument" "private helper is not equality"
-  fun abstract policy_owner v p =
-    case binary_view policy_owner "min" "=" (statement p) of
-      SOME (a,b) => theorem
-        (equality (Abstraction (v,a)) (Abstraction (v,b))) (hypotheses p)
-        (AbstractEquality (v,p))
-    | NONE => raise ERR "abstract" "private helper is not equality"
   fun beta policy_owner redex = case redex of
       Application (Abstraction (v,b),x) => theorem
         (equality redex (substitute policy_owner v x b)) [] (ContractBeta
@@ -1924,8 +1911,6 @@ struct
       NONE => [p]
     | SOME _ => flatten_conjunction policy_owner (select policy_owner true p) @
         flatten_conjunction policy_owner (select policy_owner false p)
-  fun conjunct_n policy_owner n p = List.nth (flatten_conjunction policy_owner
-    p,n)
   fun primitive_conditions policy_owner ants p = case ants of [] => p
     | [a] => discharge policy_owner a p
     | a::rest =>
