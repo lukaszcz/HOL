@@ -27317,6 +27317,14 @@ let
     ``!x:int. smt_macro_cyc_f x = smt_macro_cyc_g x + smt_macro_dep_g x``
   val cyc_g = ``!x:int. smt_macro_cyc_g x = smt_macro_cyc_f x``
   val macro_q = ``!x:int. macro_q x = (0 <= x /\ !y:int. y <= x \/ x < y)``
+  (* a definition conjoined with another fact *)
+  val conjoined = ``(!x:int. macro_f x = x + 5) /\ asserted_guard``
+  (* each call of a doubling macro calls the next one twice *)
+  val double = ``!x:int. macro_d x = x + x``
+  fun nest 0 = ``1:int``
+    | nest n = Term.mk_comb (``macro_d:int->int``, nest (n - 1))
+  val deep = boolSyntax.mk_eq (nest 10, intSyntax.term_of_int
+    (Arbint.fromInt 1024))
 in
   proves_from "macro expansion" [macro, unused, reflexive] [macro] target;
   assert (rejects [macro]
@@ -27348,6 +27356,11 @@ in
     ``~(smt_macro_dep_f 2 = 7) <=> ~(2 + 1 = 7:int)``;
   (* The expanded body is decided atom by atom under its connectives; the
      quantified conjunct is never sent to integer arithmetic. *)
+  proves_from "conjoined macro" [conjoined] [conjoined] target;
+  assert ((ignore (prove [double] deep); false)
+      handle Feedback.HOL_ERR holerr => String.isSubstring
+        "exceeds 256 rewrites" (Feedback.message_of holerr),
+    "an exponential macro expansion was not bounded");
   proves_from "atom-wise macro body" [macro_q] [macro_q]
     ``(macro_q:int->bool) asserted_a =
       (asserted_a >= 0 /\ !y:int. y <= asserted_a \/ asserted_a < y)``

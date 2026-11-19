@@ -6952,15 +6952,15 @@ local
   (* Z3's macro finder, which its auto-configuration turns on for quantified
      problems mixing Int and Real, expands an asserted definition
      !x1 ... xn. f x1 ... xn = t inside a bare rewrite step, without citing
-     the assertion.  A macro rule is such an assertion whose arguments are its
-     distinct bound variables, whose t is free only in them, and whose head f
-     is a symbol the translation leaves uninterpreted and does not occur in
-     t; datatype constructors are native solver symbols, not macros.  Rules
-     are grouped by head and applied one head at a time, callers before the
-     macros their bodies use, so one pass expands nested macros; macros on a
-     cycle of uses are left out, so rules cannot loop, and the rest are
-     kept.  Each comes from ASSUME, so only rules that fire become
-     hypotheses. *)
+     the assertion.  A macro rule is such an assertion, or a conjunct of one,
+     whose arguments are its distinct bound variables, whose t is free only
+     in them, and whose head f is a symbol the translation leaves
+     uninterpreted and does not occur in t; datatype constructors are native
+     solver symbols, not macros.  Rules are grouped by head and applied one
+     head at a time, callers before the macros their bodies use, so one pass
+     expands nested macros; macros on a cycle of uses are left out, so rules
+     cannot loop, and the rest are kept.  Each comes from ASSUME of its
+     assertion, so only assertions whose rules fire become hypotheses. *)
   fun asserted_macro_theorems assertions =
     let
       fun is_macro assertion =
@@ -7006,36 +7006,23 @@ local
             Term.aconv tm head orelse
             (Term.is_const tm andalso Term.is_const head andalso
              Term.same_const tm head))) (#2 (parts th))) group
-      fun callees groups g = List.filter (fn other =>
-          not (Portable.pointer_eq (other, g)) andalso
-          uses g (head_of (hd other))) groups
-      fun on_cycle groups g =
-        let
-          fun reaches _ [] = false
-            | reaches seen (h :: hs) =
-                Portable.pointer_eq (h, g) orelse
-                (if List.exists (fn s => Portable.pointer_eq (s, h)) seen
-                 then reaches seen hs
-                 else reaches (h :: seen) (callees groups h @ hs))
-        in
-          reaches [] (callees groups g)
-        end
-      (* without cycles, some remaining group is always uncalled *)
-      fun order [] = []
-        | order groups =
-            let
-              fun uncalled g = not (List.exists (fn other =>
-                  not (Portable.pointer_eq (other, g)) andalso
-                  uses other (head_of (hd g))) groups)
-              val g = valOf (List.find uncalled groups)
-            in
-              g :: order (List.filter
-                (fn other => not (Portable.pointer_eq (other, g))) groups)
-            end
-      val groups =
-        group (List.map Thm.ASSUME (List.filter is_macro assertions))
+      val rules = List.filter (is_macro o Thm.concl)
+        (List.concat (List.map (Drule.CONJUNCTS o Thm.ASSUME) assertions))
+      val groups = Vector.fromList (group rules)
+      val indices = List.tabulate (Vector.length groups, Lib.I)
+      fun calls (i, j) = i <> j andalso
+        uses (Vector.sub (groups, i)) (head_of (hd (Vector.sub (groups, j))))
+      val graph = List.foldl (fn (i, graph) =>
+        Int_Graph.new_node (i, ()) graph) Int_Graph.empty indices
+      val graph = List.foldl (fn (i, graph) =>
+          List.foldl (fn (j, graph) =>
+            if calls (i, j) then Int_Graph.add_edge (i, j) graph else graph)
+            graph indices)
+        graph indices
     in
-      order (List.filter (not o on_cycle groups) groups)
+      (* components come callers first *)
+      List.mapPartial (fn [i] => SOME (Vector.sub (groups, i)) | _ => NONE)
+        (Int_Graph.strong_conn graph)
     end
 
   (* Substitution is the only use made of the assertions.  Most solve-eqs
@@ -7049,16 +7036,32 @@ local
   fun asserted_equality_substitution_prove admit assertions target =
     let
       val macros = asserted_macro_theorems assertions
-      (* Past its bounds the equality extraction gives up; the macro rules
-         are bounded by the assertions alone, so they still apply. *)
       val equalities = asserted_equality_theorems assertions
-        handle Feedback.HOL_ERR holerr =>
-          if List.null macros then raise Feedback.HOL_ERR holerr else []
       val _ = not (List.null equalities andalso List.null macros) orelse
         raise ERR "asserted_equality_substitution_prove"
           "no structurally derived asserted equality"
-      val macro_conv = Conv.QCONV (Conv.EVERY_CONV
-        (List.map (Conv.QCONV o Rewrite.PURE_REWRITE_CONV) macros))
+      (* A macro may use its argument several times, so nested calls can
+         expand exponentially: bound the rewrites. *)
+      val max_macro_rewrites = 256
+      exception MacroBudget
+      fun macro_conv tm =
+        let
+          val rewrites = ref 0
+          fun rewrite group tm =
+            let
+              val theorem = Conv.FIRST_CONV (List.map Conv.REWR_CONV group) tm
+            in
+              rewrites := !rewrites + 1;
+              if !rewrites <= max_macro_rewrites then theorem
+              else raise MacroBudget
+            end
+        in
+          Conv.QCONV (Conv.EVERY_CONV (List.map
+            (Conv.QCONV o Conv.TOP_DEPTH_CONV o rewrite) macros)) tm
+          handle MacroBudget =>
+            raise ERR "asserted_equality_substitution_prove"
+              "macro expansion exceeds 256 rewrites"
+        end
       fun prove_with rewrite_theorems =
         let
           val equality_step =
@@ -7176,13 +7179,19 @@ local
             "explicit equalities do not occur in target"
       val oriented = equalities
       val reversed = List.map Thm.SYM equalities
+      (* rewriting with the equalities can hide a macro call *)
+      fun macros_alone holerr =
+        if SmtResource.is_resource_gate holerr orelse List.null macros
+        then raise Feedback.HOL_ERR holerr
+        else attempt []
     in
       attempt oriented
       handle Feedback.HOL_ERR holerr =>
         if SmtResource.is_resource_gate holerr orelse
            List.null equalities then
           raise Feedback.HOL_ERR holerr
-        else attempt reversed
+        else (attempt reversed handle Feedback.HOL_ERR holerr =>
+          macros_alone holerr)
     end
 
     fun z3_rewrite (state, t) =
