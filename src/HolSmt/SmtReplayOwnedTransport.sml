@@ -590,7 +590,8 @@ struct
             [G.RawNodes,G.BinderInclusiveNodes]
         fun profile_data () held =
           let val data = G.opaque_profile_data graph traversal held
-          in {raw = IntInf.fromInt (#raw data),inc = IntInf.fromInt (#inc data),
+          in {raw = IntInf.fromInt (#raw data),
+              inc = IntInf.fromInt (#inc data),
               ann = #ann data,ty = #ty data,types = #types data} end
         val (values,types,revalidate) = inventory_worker
           {(* This complete inventory has no user callbacks. Fence it once,
