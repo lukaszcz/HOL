@@ -2,7 +2,10 @@
    ordinary one (prepare_closure_admitted_with_policy) and the profiled one
    (prepare_closure_profiled_admitted_with_policy): policy closures, opaque
    predicates, profiles from a wrong or a retired frame, repeated execution
-   and the native and Work allowances.
+   and the native and Work allowances. It also covers the refusals of the
+   shared policy section: the three goals that are not a num or bag
+   quantifier, output beyond the metadata policy, and the ordinary prover
+   given profiles in a wrong or a retired frame.
 
    Every relation is computed inside one run: a complete run measures the
    charged Work; the allowances are then probed at that exact amount and one
@@ -196,27 +199,40 @@ struct
            val _ = G.close_scope (#graph e) (#body_frame o_)
        in require (#name p ^ " used a profile of a retired frame")
             (denied_in_prepare p e (#profiles o_) calls) end) provers;
-     (* A frame retired between preparation and execution. The ordinary
-        prover refuses the opaque predicate in preparation already. *)
-     List.app (fn p =>
-       let val o_ = opaque true val e = #fixture o_
-           val calls = ref 0 val count = Count.thm_count ()
-       in case #kind p of
-            Ordinary =>
-              require "ordinary prover prepared an opaque predicate"
-                (refuses (fn () => prepare_with p e (#profiles o_) calls)
-                 andalso settled e calls count)
-          | Profiled =>
-              let val execute = prepare_with p e (#profiles o_) calls
-                  val prepared = charged e
-                  val _ = G.close_scope (#graph e) (#body_frame o_)
-                  val count = Count.thm_count ()
-                  val denied = refuses execute
-              in require
-                   "profiled execute used a profile retired after preparation"
-                   (denied andalso retired e andalso
-                    Count.thm_count () = count andalso
-                    charged e >= prepared) end end) provers;
+     (* Retired-frame profiles on a plain closure, the counterpart of the
+        foreign profile in wrong_frame: the ordinary metric never reads
+        them; the profiled one revalidates them while executing. *)
+     let val calls = ref 0
+         fun retired_profiles () =
+           let val o_ = opaque true
+               val _ = G.close_scope (#graph (#fixture o_)) (#body_frame o_)
+           in #profiles o_ end
+         val plain = X.setup ``!n:num. T`` HolSmtTheory.NUM_FORALL_TO_INT
+           native
+         val d = prepare_with ordinary plain (retired_profiles ()) calls ()
+     in require "ordinary prover refused a retired profile it does not read"
+          (#source d = #node plain andalso not (retired plain)) end;
+     let val calls = ref 0
+         val o_ = opaque true
+         val _ = G.close_scope (#graph (#fixture o_)) (#body_frame o_)
+         val plain = X.setup ``!n:num. T`` HolSmtTheory.NUM_FORALL_TO_INT
+           native
+         val denied = refuses (fn () =>
+           (prepare_with profiled plain (#profiles o_) calls) ())
+     in require "profiled prover accepted a retired profile"
+          (denied andalso retired plain) end;
+     (* A frame retired between preparation and execution. Only the
+        profiled prover prepares an opaque predicate. *)
+     let val o_ = opaque true val e = #fixture o_
+         val calls = ref 0
+         val execute = prepare_with profiled e (#profiles o_) calls
+         val prepared = charged e
+         val _ = G.close_scope (#graph e) (#body_frame o_)
+         val count = Count.thm_count ()
+         val denied = refuses execute
+     in require "profiled execute used a profile retired after preparation"
+          (denied andalso retired e andalso Count.thm_count () = count andalso
+           charged e >= prepared) end;
      List.app (fn p =>
        let val e = X.setup ``!n:num. T`` HolSmtTheory.NUM_FORALL_TO_INT
              native
