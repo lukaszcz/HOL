@@ -540,17 +540,28 @@ struct
           0 => (budget,other,other)
         | 1 => (other,budget,other)
         | _ => (other,other,budget)
-      (* Each action returns the constructed node; alias capture is reached
-         by a let-bound alias used under a binder. *)
+      (* B.capture_alias rebuilds the \z node under the new \x binder,
+         through the backend's capture_limit; [capturing] false skips it. *)
+      fun capture capturing _ backend =
+        let val root = B.root backend val ty = intSyntax.int_ty
+            val x = B.variable backend root G.SolverFlexible ("x",ty)
+            val v = B.abstraction backend root ("z","z",ty) (fn f =>
+              B.application backend f
+                (B.application backend f
+                  (B.literal backend f intSyntax.greater_tm,
+                   valOf (B.lookup backend f "z")),x))
+        in B.abstraction backend root ("x","x",ty) (fn child =>
+             if capturing then #1 (B.capture_alias backend child (v,[]))
+             else v) end
+      (* Each action returns the constructed node. *)
       val fixtures =
         [("import",0,fn _ => fn backend => B.source backend
             (B.root backend) big),
          ("literal",1,fn _ => fn backend => B.literal backend
             (B.root backend) big),
          ("binder",2,fn _ => fn backend => parsed backend false "ALL"
-            "(forall ((x Int)) (> x 0))"),
-         ("alias binder",2,fn _ => fn backend => parsed backend false "ALL"
-            "(let ((y (+ 1 2))) (forall ((x Int)) (> x y)))")]
+            "(forall ((x Int)) (> x 0))")
+         ,("capture binder",2,capture true)]
       (* A cheap receipt: the representative term and the solver variables *)
       fun outcome construct action =
         let val graph = G.new () val scope = G.root_scope graph
@@ -589,6 +600,12 @@ struct
              if Term.aconv term term' andalso count = count' then ()
              else raise Fail (text^": receipts differ")
          | _ => raise Fail (text^": receipt presence differs"))
+      val _ = ensure "capture_alias must rebuild the binder under x"
+        (case (#2 (outcome (int_entry (wide,wide,wide)) (capture true)),
+               #2 (outcome (int_entry (wide,wide,wide)) (capture false))) of
+           (SOME (captured,_),SOME (plain,_)) =>
+             not (Term.aconv captured plain)
+         | _ => false)
       val maxint = IntInf.fromInt (valOf Int.maxInt)
       val toowide = RP.AtMost (maxint+1)
       val _ = ensure "an AtMost wider than Int.maxInt must not project"
