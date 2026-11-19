@@ -12,6 +12,278 @@ struct
   structure X = SmtLib_GraphSelectedAuxiliary
   val ERR = Feedback.mk_HOL_ERR "SmtLib_GraphNeededTheorems"
   type request = {head : Term.term,ordinal : int,original : Thm.thm}
+  (* Receipts shared by the int and policy collectors; the owner type is
+     the only thing that differs. *)
+  datatype 'o norm = Normalized of
+    {owner : 'o,original : Thm.thm,
+     kept : (Thm.thm * P.closed_fact) option,guard : unit -> unit,
+     proof_revision : IntInf.int option ref}
+  datatype 'o pend = Pending of
+    {owner : 'o,originals : Thm.thm list,heads : Term.term list,
+     requests : request list,
+     selections : {selection : SmtLib_GraphNumericStock.selection,
+                   ordinal : int} list,
+     resumed : bool ref,continuation : 'o norm list -> 'o outcome}
+  and 'o outcome = Done of GP.validation | Need of 'o pend
+
+  (* ---- Collector walkers shared by both owners. A kit is the owner's
+     retirement check and its one-unit Work charge (each charge guards the
+     owner before and after). The remaining collector pieces (the atom
+     walk, the Type walk, the Source/auxiliary selection and the
+     normalization of a selected law) differ in their int/policy
+     operations and stay with their owner. ---- *)
+  type kit = {active : unit -> unit,spend1 : unit -> unit}
+  fun guarded_by ({active,...} : kit) action =
+    (active ();let val value = action () in active ();value end)
+  fun terms_of (k : kit) th = (#spend1 k ();Thm.concl th :: Thm.hyp th)
+  fun compare_terms (k : kit) (a,b) =
+    (#spend1 k ();guarded_by k (fn () => Term.compare (a,b)))
+  fun compare_thms k (a,b) =
+    List.collate (compare_terms k) (terms_of k a,terms_of k b)
+  fun empty_terms k () = HOLset.empty (compare_terms k)
+  fun empty_thms k () = HOLset.empty (compare_thms k)
+
+  fun select_with (k : kit) {selections,type_walk,select} head =
+    let
+      val _ = type_walk (Term.type_of head)
+      fun find [] = NONE
+        | find ((old,selection)::rest) =
+            (#spend1 k ();if compare_terms k (head,old)=EQUAL then
+               SOME selection else find rest)
+      (* Exact typed atomic head, private to THIS original N owner.
+         The first genuine selector materializes its laws ONCE. Later
+         batches request that SAME retained selection/theorem object;
+         Stage's original-law pointer key is not relaxed. *)
+      val selection = case find (!selections) of SOME held => held
+        | NONE =>
+            let val _ = #spend1 k ()
+                val fresh = guarded_by k (fn () => select head)
+                val _ = #spend1 k ()
+                val _ = selections := (head,fresh) :: !selections
+            in fresh end
+      val data = guarded_by k (fn () =>
+        SmtLib_GraphNumericStock.selection_data selection)
+      val _ = if compare_terms k (head,#head data)=EQUAL then () else
+        raise ERR "selected" "retained typed stock head changed"
+    in selection end
+
+  (* [prepare] attaches the checked laws to the portfolio and validates
+     the result; it is the only owner-specific step. *)
+  fun finish_with (k : kit) prepare accumulated proofs =
+    let
+      val laws = HOLset.listItems accumulated
+      val _ = List.app (fn _ => #spend1 k ()) laws
+      fun find th = case List.find
+          (fn (original,_) => compare_thms k (th,original) = EQUAL) proofs of
+          SOME (_,proof) => proof
+        | NONE => raise ERR "finish"
+            "normalized law lost its checked proof"
+      val checked = List.map find laws
+    in Done (prepare checked) end
+
+  (* What the normalization loop does with one wanted original law that no
+     request is needed for. *)
+  datatype unchanged = Blocked | Dropped | Kept of P.closed_fact
+
+  (* The fixed-point loop over wanted laws. [atoms] finds the stock heads
+     of the roots, [selected] selects a head, [unchanged] disposes of a
+     law that needs no request, [roots_of_added] gives the next roots from
+     the newly added normalized laws and the proofs so far, and [finish]
+     ends the loop. Returns the loop, to be started on the initial roots. *)
+  fun fixed_point (k : kit) owner
+      {atoms,selected,unchanged,roots_of_added,finish} =
+    let
+      val spend1 = #spend1 k
+      fun guarded action = guarded_by k action
+      val empty_thms = empty_thms k
+      fun loop [] accumulated proofs = finish accumulated proofs
+        | loop roots accumulated proofs =
+          let
+            val heads = atoms roots
+            val occurrences = ref ([] : (request *
+              SmtLib_GraphNumericStock.selection) list)
+            fun add (head,wanted) =
+              let val selection = selected head
+                  val laws = #laws (guarded (fn () =>
+                    SmtLib_GraphNumericStock.selection_data selection))
+                  fun retain [] _ = ()
+                    | retain (original :: rest) ordinal =
+                        (spend1 ();occurrences :=
+                           ({head = head,ordinal = ordinal,
+                             original = original},
+                            selection) :: !occurrences;
+                         retain rest (ordinal+1))
+                  val _ = retain laws 0
+              in HOLset.addList (wanted,laws) end
+            val wanted = HOLset.foldl add (empty_thms ()) heads
+            (* Legacy normalizes ALL wanted originals first. Difference is
+               taken against the NORMALIZED set only after that whole fold. *)
+            val todo = HOLset.listItems wanted
+            fun normalize [] next records blocked =
+                  if null blocked then
+                    let val added = HOLset.difference (next,accumulated)
+                        val roots = roots_of_added added records
+                    in loop roots (HOLset.union (accumulated,added))
+                         records end
+                  else
+                    let
+                      val originals = List.rev blocked
+                      val ordered = List.rev (!occurrences)
+                      fun origin th = case List.find
+                          (fn (({original,...} : request),_) =>
+                            (spend1 ();Portable.pointer_eq (th,original)))
+                          ordered of
+                          SOME pair => pair
+                        | NONE => raise ERR "request"
+                            "exact selected stock origin missing"
+                      val origins = List.map origin originals
+                      val requests = List.map #1 origins
+                      val selections = List.map
+                        (fn (({ordinal,...} : request),selection) =>
+                          {ordinal = ordinal,selection = selection}) origins
+                      fun continuation completed =
+                        let
+                          fun find original = case List.find
+                              (fn Normalized
+                                  {owner = held,original = th,...} =>
+                                Portable.pointer_eq (held,owner) andalso
+                                Portable.pointer_eq (original,th)) completed of
+                              SOME value => value
+                            | NONE => raise ERR "resume"
+                                "missing exact requested normalization"
+                          fun insert [] next records =
+                                normalize [] next records []
+                            | insert (original :: rest) next records =
+                                let val Normalized {kept,guard,...} =
+                                      find original
+                                    val _ = spend1 ()
+                                    val _ = guarded guard
+                                in case kept of NONE =>
+                                      insert rest next records
+                                  | SOME (th,proof) => insert rest
+                                      (HOLset.add (next,th))
+                                      ((th,proof) :: records) end
+                        in insert originals next records end
+                    in Need (Pending {owner = owner,originals = originals,
+                      requests = requests,selections = selections,
+                      heads = HOLset.listItems heads,resumed = ref false,
+                      continuation = continuation}) end
+              | normalize (th :: rest) next records blocked =
+                  (spend1 ();case unchanged th of
+                     Blocked => normalize rest next records (th :: blocked)
+                   | Dropped => normalize rest next records blocked
+                   | Kept proof => normalize rest (HOLset.add (next,th))
+                       ((th,proof) :: records) blocked)
+          in normalize todo (empty_thms ()) proofs [] end
+    in loop end
+
+  (* The normalization of one selected law. [mk] receives the guarded
+     Work operations and returns the operations that differ: the int and
+     policy transport/proof calls, the target's size measure, the
+     footprint bound and its message. *)
+  type norm_ops =
+    {describe_conversion : unit -> {source : G.node,target : G.node},
+     describe_law : unit -> {original : Thm.thm,endpoint : G.node,
+       canonical : Thm.thm,law : P.closed_fact},
+     prelude : G.node -> unit -> unit,
+     bounded : IntInf.int -> IntInf.int,open_abs : Term.term -> Term.term,
+     amount_limit : unit -> IntInf.int,footprint_message : string,
+     guard : unit -> unit,
+     record_conversion : (Type.hol_type -> unit) -> unit,
+     endpoints_theorem : unit -> Thm.thm,
+     record : {node : G.node,theorem : Thm.thm,
+       check_type : Type.hol_type -> unit} -> P.closed_fact}
+  fun normalize_with {name,graph,work,active,charge,backing,check_type,
+                      originals,resumed}
+      (mk : {live : unit -> unit,spend : IntInf.int -> unit} -> norm_ops) =
+    let
+      fun live () = (active ();backing ())
+      fun guarded action =
+        (live ();let val value = action () in live ();value end)
+      fun spend (n : IntInf.int) = (live ();charge n;live ())
+      fun policy ty = (live ();check_type ty;live ())
+      val ops = mk {live = live,spend = spend}
+      val (original,target,canonical) = W.with_step work (fn () =>
+        let
+          val _ = live ()
+          val _ = if !resumed then raise ERR name
+            "pending already consumed" else ()
+          (* Expected fields checked before either foreign receipt
+             activates. *)
+          val description = #describe_conversion ops ()
+          val data = #describe_law ops ()
+          val original = #original data
+          val _ = if List.exists (fn th =>
+              (spend 1;Portable.pointer_eq (th,original))) originals then ()
+            else raise ERR name "unrequested selected original"
+          val _ = if #source description = #endpoint data then () else
+            raise ERR name "different selected-law endpoint"
+          val target = #target description
+          val held = #prelude ops target
+          fun tywalk [] count = count
+            | tywalk (ty :: rest) count =
+                (spend 1;
+                 if Type.is_vartype ty then
+                   (spend (IntInf.fromInt
+                      (String.size (Type.dest_vartype ty)));
+                    tywalk rest (#bounded ops (count+1)))
+                 else let val {Thy,Tyop,Args} = Type.dest_thy_type ty
+                          val _ = spend (IntInf.fromInt
+                            (String.size Thy+String.size Tyop))
+                          val _ = List.app (fn _ => spend 1) Args
+                      in tywalk (Args @ rest) (#bounded ops (count+1)) end)
+          fun walk [] raw inclusive annotations = (raw,inclusive,annotations)
+            | walk (current :: rest) raw inclusive annotations =
+                (spend 1;
+                 let val ty = Term.type_of current
+                     val weight = tywalk [ty] (0 : IntInf.int)
+                     val next = #bounded ops (annotations+weight)
+                 in if Term.is_comb current then
+                      let val (f,x) = Term.dest_comb current
+                      in walk (f :: x :: rest) (raw+1) (inclusive+1) next end
+                    else if Term.is_abs current then
+                      let val (domain,_) = Type.dom_rng ty
+                          val binder_weight = tywalk [domain] 0
+                          val body = guarded (fn () => #open_abs ops current)
+                      in walk (body :: rest) (raw+1) (inclusive+2)
+                           (#bounded ops (next+binder_weight)) end
+                    else walk rest (raw+1) (inclusive+1) next end)
+          val (raw,inclusive,ann) = walk [G.representative graph target]
+            (0 : IntInf.int) 0 0
+          (* New EQ_MP, identity P REFL/EQ_MP and outcome comparison syntax.
+             Source/target equality recording is separately debited by D. *)
+          val amount = 5*(raw+inclusive+ann)+15
+          val _ = if amount <= #amount_limit ops () then spend amount
+            else raise ERR name (#footprint_message ops)
+          val _ = held ()
+        in (original,target,#canonical data) end)
+      val _ = #record_conversion ops policy
+      val value = W.with_step work (fn () =>
+        let
+          val _ = #guard ops ()
+          val theorem = guarded (fn () =>
+            Thm.EQ_MP (#endpoints_theorem ops ()) canonical)
+          val _ = if null (Thm.hyp theorem) andalso
+              Portable.pointer_eq (Thm.concl theorem,
+                G.representative graph target) then () else
+            raise ERR name "normalized canonical theorem changed"
+          val proof = guarded (fn () => #record ops
+            {node = target,theorem = theorem,check_type = policy})
+          val term = Thm.concl theorem
+          (* Exact legacy successful-conversion/dest_eq outcome. Non-equality
+             keeps ORIGINAL, even if a remaining forall body was converted.
+             Other exceptions are never swallowed as semantic fallback. *)
+          val kept = if boolSyntax.is_eq term then
+              let val (a,b) = boolSyntax.dest_eq term
+              in if guarded (fn () => Term.aconv a b) then NONE
+                 else SOME (theorem,proof) end
+            else let val data = #describe_law ops ()
+                 in SOME (original,#law data) end
+          val _ = #guard ops ()
+        in {original = original,kept = kept} end)
+    in value end
+    handle primary => (W.close work;raise primary)
+
   datatype owner = Owner of
     {work : W.portfolio,graph : G.graph,scope : G.scope,sources : S.sources,
      portfolio : F.validation,check_type : Type.hol_type -> unit,
@@ -19,17 +291,12 @@ struct
      selections : (Term.term * SmtLib_GraphNumericStock.selection) list ref,
      retained : (unit -> unit) list ref,
      validated : (IntInf.int * (unit -> unit) list) option ref}
-  datatype pending = Pending of
-    {owner : owner,originals : Thm.thm list,heads : Term.term list,
-     requests : request list,
-     selections : {selection : SmtLib_GraphNumericStock.selection,
-                   ordinal : int} list,
-     resumed : bool ref,continuation : normalized list -> result}
-  and normalized = Normalized of
-    {owner : owner,original : Thm.thm,
-     kept : (Thm.thm * P.closed_fact) option,guard : unit -> unit,
-     proof_revision : IntInf.int option ref}
-  and result = Complete of GP.validation | NeedsNormalization of pending
+  type pending = owner pend
+  type normalized = owner norm
+  datatype result = Complete of GP.validation
+    | NeedsNormalization of pending
+  fun lift (Done value) = Complete value
+    | lift (Need pending) = NeedsNormalization pending
 
   fun active (Owner {work,graph,scope,sources,symbols,types,retained,
                     validated,...}) =
@@ -91,23 +358,19 @@ struct
 
   fun collect (owner as Owner
       {work,graph,scope,portfolio,check_type,used,selections,...}) =
-    W.with_step work (fn () =>
+    lift (W.with_step work (fn () =>
     let
       val _ = active owner
       val _ = if !used then raise ERR "collect" "collector already consumed"
         else used := true
       fun spend n = (active owner;W.spend work n;active owner)
-      fun guarded action =
-        (active owner;let val value = action ()
-         in active owner;value end)
+      val k = {active = fn () => active owner,spend1 = fn () => spend 1}
+      fun guarded action = guarded_by k action
       fun policy ty =
         (active owner;check_type ty;active owner)
-      fun terms th = (spend 1;Thm.concl th :: Thm.hyp th)
-      fun compare_terms (a,b) =
-        (spend 1;guarded (fn () => Term.compare (a,b)))
-      fun compare_thms (a,b) = List.collate compare_terms (terms a,terms b)
-      fun empty_terms () = HOLset.empty compare_terms
-      fun empty_thms () = HOLset.empty compare_thms
+      val terms = terms_of k
+      val empty_terms = empty_terms k
+      val empty_thms = empty_thms k
 
       (* Count-body markers replace bound variables only. Constants, types,
          applications and beta recognition cannot depend on marker names.
@@ -119,7 +382,8 @@ struct
              query. The first compound uses a fraction of remaining SAME Work;
              its actual slots are charged before allocation. No cache crosses
              a policy or fixed-point pass, and every bucket hit checks pointer
-             identity. A routing hint can never certify a missing stock head. *)
+             identity. A routing hint can never certify a missing stock
+             head. *)
           val _ = spend 1
           val seen = ref
             (NONE : (Term.term list Array.array) option)
@@ -169,30 +433,8 @@ struct
                          val _ = List.app (fn _ => spend 1) args
                      in walk (args @ rest) end)
         in walk [ty] end
-      fun selected head =
-        let
-          val _ = type_walk (Term.type_of head)
-          fun find [] = NONE
-            | find ((old,selection)::rest) =
-                (spend 1;if compare_terms (head,old)=EQUAL then
-                   SOME selection else find rest)
-          (* Exact typed atomic head, private to THIS original N owner.
-             The first genuine selector materializes its laws ONCE. Later
-             batches request that SAME retained selection/theorem object;
-             Stage's original-law pointer key is not relaxed. *)
-          val selection = case find (!selections) of SOME held => held
-            | NONE =>
-                let val _ = spend 1
-                    val fresh = guarded (fn () =>
-                      SmtLib_GraphNumericStock.select head)
-                    val _ = spend 1
-                    val _ = selections := (head,fresh) :: !selections
-                in fresh end
-          val data = guarded (fn () =>
-            SmtLib_GraphNumericStock.selection_data selection)
-          val _ = if compare_terms (head,#head data)=EQUAL then () else
-            raise ERR "selected" "retained typed stock head changed"
-        in selection end
+      val selected = select_with k {selections = selections,
+        type_walk = type_walk,select = SmtLib_GraphNumericStock.select}
 
       (* A fixed nonnumeric stock recipe, not a supplied normalizer. Every
          NUM transfer rewrite has a num/int/real-typed match position. This
@@ -253,104 +495,24 @@ struct
                check_type = policy})
           in SOME plan end
 
-      fun finish accumulated proofs =
-        let
-          val laws = HOLset.listItems accumulated
-          val _ = List.app (fn _ => spend 1) laws
-          fun find th = case List.find
-              (fn (original,_) => compare_thms (th,original) = EQUAL) proofs of
-              SOME (_,proof) => proof
-            | NONE => raise ERR "finish"
-                "normalized law lost its checked proof"
-          val checked = List.map find laws
-          val result = F.prepend_recorded graph scope portfolio checked
-        in Complete (GP.from_portfolio result) end
-      fun loop [] accumulated proofs = finish accumulated proofs
-        | loop roots accumulated proofs =
-          let
-            val heads = atoms roots
-            val occurrences = ref ([] : (request *
-              SmtLib_GraphNumericStock.selection) list)
-            fun add (head,wanted) =
-              let val selection = selected head
-                  val laws = #laws (guarded (fn () =>
-                    SmtLib_GraphNumericStock.selection_data selection))
-                  fun retain [] _ = ()
-                    | retain (original :: rest) ordinal =
-                        (spend 1;occurrences :=
-                           ({head = head,ordinal = ordinal,original = original},
-                            selection) :: !occurrences;
-                         retain rest (ordinal+1))
-                  val _ = retain laws 0
-              in HOLset.addList (wanted,laws) end
-            val wanted = HOLset.foldl add (empty_thms ()) heads
-            (* Legacy normalizes ALL wanted originals first. Difference is
-               taken against the NORMALIZED set only after that whole fold. *)
-            val todo = HOLset.listItems wanted
-            fun normalize [] next records blocked =
-                  if null blocked then
-                    let val added = HOLset.difference (next,accumulated)
-                        val next_terms = HOLset.foldl
-                          (fn (th,ts) => HOLset.addList (ts,terms th))
-                          (empty_terms ()) added
-                    in loop (HOLset.listItems next_terms)
-                         (HOLset.union (accumulated,added)) records end
-                  else
-                    let
-                      val originals = List.rev blocked
-                      val ordered = List.rev (!occurrences)
-                      fun origin th = case List.find
-                          (fn (({original,...} : request),_) =>
-                            (spend 1;Portable.pointer_eq (th,original)))
-                          ordered of
-                          SOME pair => pair
-                        | NONE => raise ERR "request"
-                            "exact selected stock origin missing"
-                      val origins = List.map origin originals
-                      val requests = List.map #1 origins
-                      val selections = List.map
-                        (fn (({ordinal,...} : request),selection) =>
-                          {ordinal = ordinal,selection = selection}) origins
-                      fun continuation completed =
-                        let
-                          fun find original = case List.find
-                              (fn Normalized {owner = held,original = th,...} =>
-                                Portable.pointer_eq (held,owner) andalso
-                                Portable.pointer_eq (original,th)) completed of
-                              SOME value => value
-                            | NONE => raise ERR "resume"
-                                "missing exact requested normalization"
-                          fun insert [] next records =
-                                normalize [] next records []
-                            | insert (original :: rest) next records =
-                                let val Normalized {kept,guard,...} =
-                                      find original
-                                    val _ = spend 1
-                                    val _ = guarded guard
-                                in case kept of NONE => insert rest next records
-                                  | SOME (th,proof) => insert rest
-                                      (HOLset.add (next,th))
-                                      ((th,proof) :: records) end
-                        in insert originals next records end
-                    in NeedsNormalization (Pending {owner = owner,
-                      originals = originals,
-                      requests = requests,selections = selections,
-                      heads = HOLset.listItems heads,resumed = ref false,
-                      continuation = continuation}) end
-              | normalize (th :: rest) next records blocked =
-                  (spend 1;case unchanged_marker th of
-                     NONE => normalize rest next records (th :: blocked)
-                   | SOME proof =>
-                     let val term = Thm.concl th
-                         val reflexive = if boolSyntax.is_eq term then
-                           let val (a,b) = boolSyntax.dest_eq term
-                           in guarded (fn () => Term.aconv a b) end else false
-                     in if reflexive then normalize rest next records blocked
-                        else normalize rest (HOLset.add (next,th))
-                          ((th,proof) :: records) blocked end)
-          in normalize todo (empty_thms ()) proofs [] end
+      (* Reflexive fixed-law results are dropped; the others are kept. *)
+      fun unchanged th = case unchanged_marker th of NONE => Blocked
+        | SOME proof =>
+            let val term = Thm.concl th
+                val reflexive = if boolSyntax.is_eq term then
+                  let val (a,b) = boolSyntax.dest_eq term
+                  in guarded (fn () => Term.aconv a b) end else false
+            in if reflexive then Dropped else Kept proof end
+      fun roots_of_added added _ =
+        HOLset.listItems (HOLset.foldl
+          (fn (th,ts) => HOLset.addList (ts,terms th)) (empty_terms ()) added)
+      val loop = fixed_point k owner
+        {atoms = atoms,selected = selected,unchanged = unchanged,
+         roots_of_added = roots_of_added,
+         finish = finish_with k (fn checked => GP.from_portfolio
+           (F.prepend_recorded graph scope portfolio checked))}
       val (assumptions,goal) = F.processed_goal portfolio
-    in loop (goal :: assumptions) (empty_thms ()) [] end)
+    in loop (goal :: assumptions) (empty_thms ()) [] end))
 
   fun validate_reuse (Pending
       {owner=owner as Owner {work,graph,scope,...},originals,resumed,...})
@@ -432,7 +594,7 @@ struct
      It does not accept a caller converter, theorem or replacement Source. *)
   fun resume (Pending {owner = owner as Owner {work,retained,...},resumed,
                         continuation,originals,...}) completed =
-    W.with_step work (fn () =>
+    lift (W.with_step work (fn () =>
       let val _ = active owner
           val _ = if !resumed then raise ERR "resume" "pending consumed"
             else resumed := true
@@ -446,7 +608,7 @@ struct
           val guards = List.map (fn Normalized {guard,...} => guard) completed
           val _ = List.app (fn guard => guard ()) guards
           val _ = retained := guards @ !retained
-      in continuation completed end)
+      in continuation completed end))
 
   (* The conversion is genuine SAME Work semantic evidence, not an exact
      NUM/SIMP policy certificate or a credit for its previous construction.
@@ -467,110 +629,59 @@ struct
              backing_validated := SOME revision else
              raise ERR "normalize_result" "backing changed during validation")
         end
-      fun live () = (active owner;backing ())
-      fun guarded action =
-        (live ();let val value = action () in live ();value end)
-      fun spend n = (live ();W.spend work n;live ())
-      val limits = W.semantic_limits work
-      fun policy ty = (live ();check_type ty;live ())
-      val (original,target,canonical) = W.with_step work (fn () =>
-        let
-          val _ = live ()
-          val _ = if !resumed then raise ERR "normalize_result"
-            "pending already consumed" else ()
-          (* Expected fields checked before either foreign receipt activates. *)
-          val description = D.conversion_description_for expected conversion
-          val data = X.describe_for expected law
-          val original = #original data
-          val _ = if List.exists (fn th =>
-              (spend 1;Portable.pointer_eq (th,original))) originals then () else
-            raise ERR "normalize_result" "unrequested selected original"
-          val _ = if #source description = #node (#opened data) then () else
-            raise ERR "normalize_result" "different selected-law endpoint"
-          val target = #target description
-          val _ = List.app (fn (cap,label) => List.app (fn metric =>
-            (spend 1;case G.unfolded_nodes graph metric cap target of
-                SOME n => if n <= cap then () else
-                  raise ERR "normalize_result" label
-              | NONE => raise ERR "normalize_result"
-                  "target needs genuine syntax admission"))
-            [G.RawNodes,G.BinderInclusiveNodes])
-            [(#output_limit limits,"normalized output exceeds original cap"),
-             (#template_limit limits,"normalized law exceeds recording cap")]
-          fun tywalk [] count = count
-            | tywalk (ty :: rest) count =
-                (spend 1;
-                 if Type.is_vartype ty then
-                   (spend (String.size (Type.dest_vartype ty));
-                    tywalk rest (count+1))
-                 else let val {Thy,Tyop,Args} = Type.dest_thy_type ty
-                          val _ = spend (String.size Thy+String.size Tyop)
-                          val _ = List.app (fn _ => spend 1) Args
-                      in tywalk (Args @ rest) (count+1) end)
-          fun walk [] raw inclusive annotations = (raw,inclusive,annotations)
-            | walk (current :: rest) raw inclusive annotations =
-                (spend 1;
-                 let val ty = Term.type_of current
-                     val weight = tywalk [ty] (0 : IntInf.int)
-                 in if Term.is_comb current then
-                      let val (f,x) = Term.dest_comb current
-                      in walk (f :: x :: rest) (raw+1) (inclusive+1)
-                           (annotations+weight) end
-                    else if Term.is_abs current then
-                      let val (domain,_) = Type.dom_rng ty
-                          val binder_weight = tywalk [domain] 0
-                          val body = guarded (fn () => I.count_body current)
-                      in walk (body :: rest) (raw+1) (inclusive+2)
-                           (annotations+weight+binder_weight) end
-                    else walk rest (raw+1) (inclusive+1)
-                      (annotations+weight) end)
-          val (raw,inclusive,ann) = walk [G.representative graph target]
-            (0 : IntInf.int) 0 0
-          (* New EQ_MP, identity P REFL/EQ_MP and outcome comparison syntax.
-             Source/target equality recording is separately debited by D. *)
-          val amount = 5*(raw+inclusive+ann)+15
-          val _ = if amount <= IntInf.fromInt (W.work_limit work) then
-            spend (IntInf.toInt amount) else raise ERR "normalize_result"
-              "normalized proof footprint exceeds original Work"
-        in (original,target,#canonical_theorem data) end)
-      val _ = D.closed_fact conversion {ordinal = ordinal,check_type = policy}
-      val value = W.with_step work (fn () =>
-        let
-          fun guard () =
-            (live ();X.validate_for expected law;
-             ignore (D.conversion_description_for expected conversion))
-          val _ = guard ()
-          val theorem = guarded (fn () =>
-            Thm.EQ_MP (#theorem (D.endpoints conversion)) canonical)
-          val _ = if null (Thm.hyp theorem) andalso
-              Portable.pointer_eq (Thm.concl theorem,
-                G.representative graph target) then () else
-            raise ERR "normalize_result" "normalized canonical theorem changed"
-          val proof = guarded (fn () => P.record_closed graph scope
-            {node = target,theorem = theorem,
-             template_limit = #template_limit limits,check_type = policy})
-          val term = Thm.concl theorem
-          (* Exact legacy successful-conversion/dest_eq outcome. Non-equality
-             keeps ORIGINAL, even if a remaining forall body was converted.
-             Other exceptions are never swallowed as semantic fallback. *)
-          val kept = if boolSyntax.is_eq term then
-              let val (a,b) = boolSyntax.dest_eq term
-              in if guarded (fn () => Term.aconv a b) then NONE
-                 else SOME (theorem,proof) end
-            else let val data = X.describe_for expected law
-                 in SOME (original,#law data) end
-          val _ = guard ()
-        in Normalized {owner = owner,original = original,
-                       kept = kept,guard = backing,
-                       proof_revision = ref NONE} end)
-    in value end
-    handle primary => (let val Owner {work,...} = owner in W.close work end;
-                       raise primary)
+      val {original,kept} = normalize_with
+        {name = "normalize_result",graph = graph,work = work,
+         active = fn () => active owner,
+         charge = fn n => W.spend work (IntInf.toInt n),backing = backing,
+         check_type = check_type,originals = originals,resumed = resumed}
+        (fn {live,spend} =>
+          let
+            val limits = W.semantic_limits work
+            fun prelude target =
+              (List.app (fn (cap,label) => List.app (fn metric =>
+                (spend 1;case G.unfolded_nodes graph metric cap target of
+                    SOME n => if n <= cap then () else
+                      raise ERR "normalize_result" label
+                  | NONE => raise ERR "normalize_result"
+                      "target needs genuine syntax admission"))
+                [G.RawNodes,G.BinderInclusiveNodes])
+                [(#output_limit limits,
+                  "normalized output exceeds original cap"),
+                 (#template_limit limits,
+                  "normalized law exceeds recording cap")];
+               fn () => ())
+          in
+            {describe_conversion = fn () =>
+               let val d = D.conversion_description_for expected conversion
+               in {source = #source d,target = #target d} end,
+             describe_law = fn () =>
+               let val d = X.describe_for expected law
+               in {original = #original d,endpoint = #node (#opened d),
+                   canonical = #canonical_theorem d,law = #law d} end,
+             prelude = prelude,bounded = fn count => count,
+             open_abs = I.count_body,
+             amount_limit = fn () => IntInf.fromInt (W.work_limit work),
+             footprint_message =
+               "normalized proof footprint exceeds original Work",
+             guard = fn () =>
+               (live ();X.validate_for expected law;
+                ignore (D.conversion_description_for expected conversion)),
+             record_conversion = fn check_type => ignore
+               (D.closed_fact conversion
+                {ordinal = ordinal,check_type = check_type}),
+             endpoints_theorem = fn () => #theorem (D.endpoints conversion),
+             record = fn {node,theorem,check_type} =>
+               P.record_closed graph scope
+               {node = node,theorem = theorem,
+                template_limit = #template_limit limits,
+                check_type = check_type}}
+          end)
+    in Normalized {owner = owner,original = original,kept = kept,
+                   guard = backing,proof_revision = ref NONE} end
   structure PolicyNeeded=
   struct
     structure NC=SmtReplayNativeContract
     structure RP=SmtReplayResourcePolicy
-  type request = {head : Term.term,ordinal : int,original : Thm.thm}
   datatype owner = Owner of
     {work : W.portfolio,native:NC.contract,
      profiles:G.policy_opaque_profile list,graph : G.graph,
@@ -580,18 +691,12 @@ struct
      selections : (Term.term * SmtLib_GraphNumericStock.selection) list ref,
      retained : (unit -> unit) list ref,
      validated : (IntInf.int * (unit -> unit) list) option ref}
-  datatype pending = Pending of
-    {owner : owner,originals : Thm.thm list,
-     requests : request list,
-     selections : {selection : SmtLib_GraphNumericStock.selection,
-                   ordinal : int} list,
-     resumed : bool ref,continuation : normalized list -> result}
-  and normalized = Normalized of
-    {owner : owner,original : Thm.thm,
-     kept : (Thm.thm * P.closed_fact) option,guard : unit -> unit,
-     proof_revision : IntInf.int option ref}
-  and result = PolicyComplete of GP.validation
+  type pending = owner pend
+  type normalized = owner norm
+  datatype result = PolicyComplete of GP.validation
     | PolicyNeedsNormalization of pending
+  fun lift (Done value) = PolicyComplete value
+    | lift (Need pending) = PolicyNeedsNormalization pending
 
   fun active (Owner {work,native,graph,scope,sources,symbols,types,retained,
                     validated,...}) =
@@ -652,23 +757,19 @@ struct
   fun collect (owner as Owner
       {work,native,profiles,graph,scope,portfolio,check_type,used,selections,
        retained,validated,...}) =
-    W.with_step work (fn () =>
+    lift (W.with_step work (fn () =>
     let
       val _ = active owner
       val _ = if !used then raise ERR "collect" "collector already consumed"
         else used := true
       fun spend n = (active owner;W.spend_policy work n;active owner)
-      fun guarded action =
-        (active owner;let val value = action ()
-         in active owner;value end)
+      val k = {active = fn () => active owner,spend1 = fn () => spend 1}
+      fun guarded action = guarded_by k action
       fun policy ty =
         (active owner;check_type ty;active owner)
-      fun terms th = (spend 1;Thm.concl th :: Thm.hyp th)
-      fun compare_terms (a,b) =
-        (spend 1;guarded (fn () => Term.compare (a,b)))
-      fun compare_thms (a,b) = List.collate compare_terms (terms a,terms b)
-      fun empty_terms () = HOLset.empty compare_terms
-      fun empty_thms () = HOLset.empty compare_thms
+      val empty_terms = empty_terms k
+      val empty_thms = empty_thms k
+      val compare_thms = compare_thms k
 
       (* Only genuine graph/closure ports are traversed. An opaque leaf
          needs the retained profile from the same actual node; its heads
@@ -742,132 +843,32 @@ struct
                             val _=List.app(fn _=>spend 1)args
                         in walk(args@rest)end))
         in walk[ty]end
-      fun selected head =
-        let
-          val _ = type_walk (Term.type_of head)
-          fun find [] = NONE
-            | find ((old,selection)::rest) =
-                (spend 1;if compare_terms (head,old)=EQUAL then
-                   SOME selection else find rest)
-          (* Exact typed atomic head, private to THIS original N owner.
-             The first genuine selector materializes its laws ONCE. Later
-             batches request that SAME retained selection/theorem object;
-             Stage's original-law pointer key is not relaxed. *)
-          val selection = case find (!selections) of SOME held => held
-            | NONE =>
-                let val _ = spend 1
-                    val fresh = guarded (fn () =>
-                      SmtLib_GraphNumericStock.select_with_policy
-                        work native head)
-                    val _ = spend 1
-                    val _ = selections := (head,fresh) :: !selections
-                in fresh end
-          val data = guarded (fn () =>
-            SmtLib_GraphNumericStock.selection_data selection)
-          val _ = if compare_terms (head,#head data)=EQUAL then () else
-            raise ERR "selected" "retained typed stock head changed"
-        in selection end
+      val selected = select_with k {selections = selections,
+        type_walk = type_walk,
+        select = fn head => SmtLib_GraphNumericStock.select_with_policy
+          work native head}
 
       (* Every selected law is normalized by the genuine numeric pass.
          In particular the fixed Boolean marker is an actual request, not
          a caller-supplied no-op certificate or a skipped auxiliary. *)
-      fun finish accumulated proofs =
-        let
-          val laws = HOLset.listItems accumulated
-          val _ = List.app (fn _ => spend 1) laws
-          fun find th = case List.find
-              (fn (original,_) => compare_thms (th,original) = EQUAL) proofs of
-              SOME (_,proof) => proof
-            | NONE => raise ERR "finish"
-                "normalized law lost its checked proof"
-          val checked = List.map find laws
-          val result = F.prepend_recorded_with_policy work portfolio checked
-        in PolicyComplete (GP.from_portfolio_with_policy work result) end
-      fun loop [] accumulated proofs = finish accumulated proofs
-        | loop roots accumulated proofs =
-          let
-            val heads = atoms roots
-            val occurrences = ref ([] : (request *
-              SmtLib_GraphNumericStock.selection) list)
-            fun add (head,wanted) =
-              let val selection = selected head
-                  val laws = #laws (guarded (fn () =>
-                    SmtLib_GraphNumericStock.selection_data selection))
-                  fun retain [] _ = ()
-                    | retain (original :: rest) ordinal =
-                        (spend 1;occurrences :=
-                           ({head=head,ordinal=ordinal,original=original},
-                            selection) :: !occurrences;
-                         retain rest (ordinal+1))
-                  val _ = retain laws 0
-              in HOLset.addList (wanted,laws) end
-            val wanted = HOLset.foldl add (empty_thms ()) heads
-            (* Legacy normalizes ALL wanted originals first. Difference is
-               taken against the NORMALIZED set only after that whole fold. *)
-            val todo = HOLset.listItems wanted
-            fun normalize [] next records blocked =
-                  if null blocked then
-                    let val added = HOLset.difference (next,accumulated)
-                        val next_terms = HOLset.foldl
-                          (fn (th,ts) => HOLset.add(ts,th))
-                          (empty_thms ()) added
-                    in loop (List.map(fn th=>
-                         let val proof=case List.find(fn(original,_)=>
-                               compare_thms(th,original)=EQUAL)records of
-                               SOME(_,proof)=>proof | NONE=>
-                                 raise ERR "loop" "normalized fact lost"
-                         in (scope,P.closed_node proof)end)
-                           (HOLset.listItems next_terms))
-                         (HOLset.union(accumulated,added))records end
-                  else
-                    let
-                      val originals = List.rev blocked
-                      val ordered = List.rev (!occurrences)
-                      fun origin th = case List.find
-                          (fn (({original,...} : request),_) =>
-                            (spend 1;Portable.pointer_eq (th,original)))
-                          ordered of
-                          SOME pair => pair
-                        | NONE => raise ERR "request"
-                            "exact selected stock origin missing"
-                      val origins = List.map origin originals
-                      val requests = List.map #1 origins
-                      val selections = List.map
-                        (fn (({ordinal,...} : request),selection) =>
-                          {ordinal = ordinal,selection = selection}) origins
-                      fun continuation completed =
-                        let
-                          fun find original = case List.find
-                              (fn Normalized{owner=held,original=th,...}=>
-                                Portable.pointer_eq (held,owner) andalso
-                                Portable.pointer_eq (original,th)) completed of
-                              SOME value => value
-                            | NONE => raise ERR "resume"
-                                "missing exact requested normalization"
-                          fun insert [] next records =
-                                normalize [] next records []
-                            | insert (original :: rest) next records =
-                                let val Normalized {kept,guard,...} =
-                                      find original
-                                    val _ = spend 1
-                                    val _ = guarded guard
-                                in case kept of NONE=>
-                                      insert rest next records
-                                  | SOME (th,proof) => insert rest
-                                      (HOLset.add (next,th))
-                                      ((th,proof) :: records) end
-                        in insert originals next records end
-                    in PolicyNeedsNormalization (Pending {owner = owner,
-                      originals = originals,
-                      requests = requests,selections = selections,
-                      resumed = ref false,
-                      continuation = continuation}) end
-              | normalize(th::rest)next records blocked=
-                  (spend 1;normalize rest next records(th::blocked))
-          in normalize todo (empty_thms ()) proofs [] end
+      fun roots_of_added added records =
+        let val next_terms = HOLset.foldl
+              (fn (th,ts) => HOLset.add(ts,th)) (empty_thms ()) added
+        in List.map(fn th=>
+             let val proof=case List.find(fn(original,_)=>
+                   compare_thms(th,original)=EQUAL)records of
+                   SOME(_,proof)=>proof | NONE=>
+                     raise ERR "loop" "normalized fact lost"
+             in (scope,P.closed_node proof)end)
+               (HOLset.listItems next_terms) end
+      val loop = fixed_point k owner
+        {atoms = atoms,selected = selected,unchanged = fn _ => Blocked,
+         roots_of_added = roots_of_added,
+         finish = finish_with k (fn checked => GP.from_portfolio_with_policy
+           work (F.prepend_recorded_with_policy work portfolio checked))}
       val {assumptions,goal}=F.processed_nodes_with_policy_for work portfolio
     in loop(List.map(fn node=>(scope,node))(goal::assumptions))
-      (empty_thms())[] end)
+      (empty_thms())[] end))
 
   fun validate_reuse_cached (Pending
       {owner=owner as Owner {work,graph,scope,...},originals,resumed,...})
@@ -933,7 +934,7 @@ struct
      It does not accept a caller converter, theorem or replacement Source. *)
   fun resume (Pending {owner = owner as Owner {work,retained,...},resumed,
                         continuation,originals,...}) completed =
-    W.with_step work (fn () =>
+    lift (W.with_step work (fn () =>
       let val _ = active owner
           val _ = if !resumed then raise ERR "resume" "pending consumed"
             else resumed := true
@@ -947,7 +948,7 @@ struct
           val guards = List.map (fn Normalized {guard,...} => guard) completed
           val _ = List.app (fn guard => guard ()) guards
           val _ = retained := guards @ !retained
-      in continuation completed end)
+      in continuation completed end))
 
   (* A selected receipt and its actual owned conversion are mandatory. The
      outcome programme remains the legacy one: reflexive equation drops;
@@ -970,114 +971,69 @@ struct
             val _=X.validate_with_policy_for expected_request law
         in ignore(D.conversion_description_with_policy_for
           expected_request conversion)end
-      fun live()=(active owner;backing())
-      fun guarded action=
-        (live();let val value=action()in live();value end)
-      fun spend n=(live();W.spend_policy work n;live())
-      fun policy ty=(live();check_type ty;live())
-      val native_data=NC.for_work work native
-      val native_limits= #semantic_limits native_data
-      val metadata=W.semantic_policy work
-      val (original,target,canonical)=W.with_step work(fn()=>
-        let
-          val _=live()
-          val _=if !resumed then raise ERR "normalize_result_with_policy"
-              "pending already consumed"else ()
-          val description=D.conversion_description_with_policy_for
-            expected_request conversion
-          val data=X.describe_with_policy_for expected_request law
-          val original= #original data
-          val _=if List.exists(fn th=>(spend 1;
-              Portable.pointer_eq(th,original)))originals then ()else
-            raise ERR "normalize_result_with_policy"
-              "unrequested selected original"
-          val _=if #source description= #node(#opened data)then ()else
-            raise ERR "normalize_result_with_policy"
-              "different selected-law endpoint"
-          val target= #target description
-          val metric=G.prepare_scoped_profiled_metric graph scope
-            {node=target,profiles=profiles}
-          fun held()=ignore(G.profiled_metric_data graph scope metric)
-          val measured=G.profiled_metric_data graph scope metric
-          val _=List.app(fn cap=>if #raw measured<=IntInf.fromInt cap andalso
-              #inc measured<=IntInf.fromInt cap then ()else
-            raise ERR "normalize_result_with_policy"
-              "normalized auxiliary exceeds actual native output/template")
-            [#output_limit native_limits,#template_limit native_limits]
-          (* The real selected auxiliary is fully realized here. Preserve
-             the old repeated annotation walk and its local quote; this is
-             not a bound imposed on the unrelated original Source DAG. *)
-          val ceiling=IntInf.fromInt(#type_work_limit native_data)
-          fun bounded count=if count<=ceiling then count else
-            raise ERR "normalize_result_with_policy"
-              "normalized auxiliary Type programme exceeds native contract"
-          fun tywalk [] count=count
-            | tywalk(ty::rest)count=
-                (spend 1;
-                 if Type.is_vartype ty then
-                   (spend(IntInf.fromInt(String.size(Type.dest_vartype ty)));
-                    tywalk rest(bounded(count+1)))
-                 else let val {Thy,Tyop,Args}=Type.dest_thy_type ty
-                          val _=spend(IntInf.fromInt
-                            (String.size Thy+String.size Tyop))
-                          val _=List.app(fn _=>spend 1)Args
-                      in tywalk(Args@rest)(bounded(count+1))end)
-          fun walk [] raw inclusive ann=(raw,inclusive,ann)
-            | walk(current::rest)raw inclusive ann=
-                (spend 1;
-                 let val ty=Term.type_of current
-                     val weight=tywalk[ty]0
-                     val next=bounded(ann+weight)
-                 in if Term.is_comb current then
-                      let val(f,x)=Term.dest_comb current
-                      in walk(f::x::rest)(raw+1)(inclusive+1)next end
-                    else if Term.is_abs current then
-                      let val(domain,_)=Type.dom_rng ty
-                          val binder_weight=tywalk[domain]0
-                          val body=guarded(fn()=> #2(Term.dest_abs current))
-                      in walk(body::rest)(raw+1)(inclusive+2)
-                        (bounded(next+binder_weight))end
-                    else walk rest(raw+1)(inclusive+1)next end)
-          val(raw,inclusive,ann)=walk[G.representative graph target]0 0 0
-          val amount=5*(raw+inclusive+ann)+15
-          val _=if amount<=ceiling then spend amount else
-            raise ERR "normalize_result_with_policy"
-              "normalized proof footprint exceeds actual native Work"
-          val _=held()
-        in(original,target,#canonical_theorem data)end)
-      val _=D.closed_fact_with_policy_for expected_request conversion
-        {ordinal=ordinal,check_type=policy}
-      val value=W.with_step work(fn()=>
-        let
-          val _=live()
-          val theorem=guarded(fn()=>Thm.EQ_MP
-            (#theorem(D.endpoints_with_policy conversion))canonical)
-          val _=if null(Thm.hyp theorem)andalso Portable.pointer_eq
-              (Thm.concl theorem,G.representative graph target)then ()else
-            raise ERR "normalize_result_with_policy"
-              "normalized canonical theorem changed"
-          val proof=guarded(fn()=>P.record_closed_with_policy_profiles
-            graph scope {node=target,theorem=theorem,
-              template_limit= #template_limit metadata,check_type=policy,
-              profiles=profiles})
-          val term=Thm.concl theorem
-          val kept=if boolSyntax.is_eq term then
-              let val(a,b)=boolSyntax.dest_eq term
-              in if guarded(fn()=>Term.aconv a b)then NONE
-                else SOME(theorem,proof)end
-            else let val data=X.describe_with_policy_for expected_request law
-                 in SOME(original,#law data)end
-          val _=live()
-        in Normalized{owner=owner,original=original,kept=kept,
-          guard=backing,proof_revision=ref NONE}end)
-    in value end
-    handle primary=>(let val Owner{work,...}=owner in W.close work end;
-      raise primary)
+      val {original,kept}=normalize_with
+        {name="normalize_result_with_policy",graph=graph,work=work,
+         active=fn()=>active owner,charge=fn n=>W.spend_policy work n,
+         backing=backing,check_type=check_type,originals=originals,
+         resumed=resumed}
+        (fn{live,spend}=>
+          let
+            val native_data=NC.for_work work native
+            val native_limits= #semantic_limits native_data
+            val metadata=W.semantic_policy work
+            fun prelude target=
+              let val metric=G.prepare_scoped_profiled_metric graph scope
+                    {node=target,profiles=profiles}
+                  fun held()=ignore(G.profiled_metric_data graph scope metric)
+                  val measured=G.profiled_metric_data graph scope metric
+                  val _=List.app(fn cap=>
+                    if #raw measured<=IntInf.fromInt cap andalso
+                       #inc measured<=IntInf.fromInt cap then ()else
+                    raise ERR "normalize_result_with_policy"
+                      ("normalized auxiliary exceeds actual native "^
+                       "output/template"))
+                    [#output_limit native_limits,#template_limit native_limits]
+              in held end
+            (* The real selected auxiliary is fully realized here. Preserve
+               the old repeated annotation walk and its local quote; this is
+               not a bound imposed on the unrelated original Source DAG. *)
+            val ceiling=IntInf.fromInt(#type_work_limit native_data)
+            fun bounded count=if count<=ceiling then count else
+              raise ERR "normalize_result_with_policy"
+                "normalized auxiliary Type programme exceeds native contract"
+          in
+            {describe_conversion=fn()=>
+               let val d=D.conversion_description_with_policy_for
+                     expected_request conversion
+               in {source= #source d,target= #target d}end,
+             describe_law=fn()=>
+               let val d=X.describe_with_policy_for expected_request law
+               in {original= #original d,endpoint= #node(#opened d),
+                   canonical= #canonical_theorem d,law= #law d}end,
+             prelude=prelude,bounded=bounded,
+             open_abs=fn current=> #2(Term.dest_abs current),
+             amount_limit=fn()=>ceiling,
+             footprint_message=
+               "normalized proof footprint exceeds actual native Work",
+             guard=live,
+             record_conversion=fn check_type=>ignore
+               (D.closed_fact_with_policy_for expected_request conversion
+                {ordinal=ordinal,check_type=check_type}),
+             endpoints_theorem=fn()=> #theorem(D.endpoints_with_policy
+               conversion),
+             record=fn{node,theorem,check_type}=>
+               P.record_closed_with_policy_profiles graph scope
+               {node=node,theorem=theorem,
+                template_limit= #template_limit metadata,
+                check_type=check_type,profiles=profiles}}
+          end)
+    in Normalized{owner=owner,original=original,kept=kept,
+      guard=backing,proof_revision=ref NONE}end
   end
   type policy_owner=PolicyNeeded.owner
   type policy_pending=PolicyNeeded.pending
   type policy_normalized=PolicyNeeded.normalized
-  type policy_request=PolicyNeeded.request
+  type policy_request=request
   datatype policy_result=datatype PolicyNeeded.result
   val begin_with_policy=PolicyNeeded.begin
   val begin_preprocessed_with_policy=PolicyNeeded.begin_preprocessed
