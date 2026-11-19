@@ -43,11 +43,17 @@ sig
   val LINARITH_PROVE_BUDGETED_IN :
     Context.t -> searchBudget.budget -> term -> budget_outcome
 
+  (* Name of the merged fragment the LINARITH_ss constructors install. *)
+  val linarith_fragment_name : string
+  (* Name of the solver linarith_solver and its variants carry. *)
+  val linarith_solver_name : string
   val CACHED_LINARITH : thm list -> conv
   val LINARITH_REDUCER : Traverse.reducer
   val LINARITH_ss : simpLib.ssfrag
   val LINARITH_ext_ss : simpExtLib.ssfrag
+  val LINARITH_ext_ss_with : thm list -> simpExtLib.ssfrag
   val linarith_solver : TraverseExt.ssolver
+  val linarith_solver_with_facts : thm list -> TraverseExt.ssolver
   (* These closures charge the owning invocation for arithmetic search and
      replay inside simplification.  The values above are unbudgeted and
      share the process-wide result cache. *)

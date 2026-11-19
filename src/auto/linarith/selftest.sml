@@ -4143,3 +4143,100 @@ val _ =
                          String.isSubstring "(Rewrite.monitoring)" w)
                 (!warnings))
        end)
+
+(* The fact-taking constructors use exactly the facts given, while the
+   context-free ones read the global table each time they run.  The goal
+   needs the nonlinear fact, so it separates the two. *)
+fun ext_closes fragment goal =
+  (linarithLib.clear_linarith_caches ();
+   valid_closes
+     (simpExtLib.FULL_SIMP_TAC
+        (simpExtLib.++ (simpExtLib.empty_ss, fragment)) [])
+     goal)
+  handle Feedback.HOL_ERR _ => false
+
+fun solver_proves (solver : TraverseExt.ssolver) context_thms tm =
+  (ignore
+     (#solve solver
+        {stack = [], ctxt = Context.snapshot (),
+         context_thms = context_thms, recurse = Conv.NO_CONV} tm);
+   true)
+  handle Feedback.HOL_ERR _ => false
+
+val _ =
+  check
+    ("LINARITH_ext_ss_with uses the given facts, not the global table",
+     fn () =>
+       let
+         val goal = ([], nonlinear_closed_goal)
+         val without_fact =
+           ext_closes (linarithLib.LINARITH_ext_ss_with []) goal
+       in
+         not without_fact andalso
+         with_arith_export
+           (fn () =>
+              not (ext_closes (linarithLib.LINARITH_ext_ss_with []) goal)
+              andalso
+              ext_closes
+                (linarithLib.LINARITH_ext_ss_with [nonlinear_closed_fact])
+                goal)
+         andalso
+         ext_closes
+           (linarithLib.LINARITH_ext_ss_with [nonlinear_closed_fact])
+           goal
+       end)
+
+val _ =
+  check
+    ("linarith_solver_with_facts uses the given facts, not the global table",
+     fn () =>
+       let
+         val tm = nonlinear_closed_goal
+         val none = linarithLib.linarith_solver_with_facts []
+         val given =
+           linarithLib.linarith_solver_with_facts [nonlinear_closed_fact]
+         val _ = linarithLib.clear_linarith_caches ()
+       in
+         not (solver_proves none [] tm) andalso
+         with_arith_export
+           (fn () =>
+              (linarithLib.clear_linarith_caches ();
+               not (solver_proves none [] tm)) andalso
+              solver_proves given [] tm) andalso
+         solver_proves given [] tm
+       end)
+
+val _ =
+  check
+    ("the context-free LINARITH_ext_ss and solver read the table per run",
+     fn () =>
+       let
+         val goal = ([], nonlinear_closed_goal)
+         val fragment = linarithLib.LINARITH_ext_ss
+         val solver = linarithLib.linarith_solver
+         val without_fact =
+           ext_closes fragment goal orelse solver_proves solver [] (#2 goal)
+       in
+         not without_fact andalso
+         with_arith_export
+           (fn () =>
+              ext_closes fragment goal andalso
+              (linarithLib.clear_linarith_caches ();
+               solver_proves solver [] (#2 goal))) andalso
+         not (ext_closes fragment goal)
+       end)
+
+val _ =
+  check
+    ("the fact constructors name their fragment and solver as exported",
+     fn () =>
+       linarithLib.linarith_fragment_name = "LINARITH" andalso
+       linarithLib.linarith_solver_name = "lin_arith" andalso
+       simpExtLib.frag_name (linarithLib.LINARITH_ext_ss_with []) =
+         SOME linarithLib.linarith_fragment_name andalso
+       simpExtLib.frag_name linarithLib.LINARITH_ext_ss =
+         SOME linarithLib.linarith_fragment_name andalso
+       #name linarithLib.linarith_solver =
+         linarithLib.linarith_solver_name andalso
+       #name (linarithLib.linarith_solver_with_facts []) =
+         linarithLib.linarith_solver_name)

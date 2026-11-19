@@ -11,17 +11,17 @@ Provides a context-sensitive linear-arithmetic simplifier fragment.
 
 The fragment is named `"LINARITH"` and contains the reducer
 `"LINARITH_DP"`. It proves or disproves applicable atomic arithmetic
-relations using admissible simplifier context theorems and persistent
-`[arith]` facts. Results are held in a context-sensitive cache, which can
-be reset with `linarithLib.clear_linarith_caches ()`.
+relations using admissible simplifier context theorems and the
+[global `[arith]` facts](#linarithData.arith). Results are held in a
+context-sensitive cache, which can be reset with
+`linarithLib.clear_linarith_caches ()`.
 
 `LINARITH_ss` is an `ssfrag`, not a complete `simpset`, and is not
 installed in `srw_ss()`. It uses direct forward arithmetic rather than the
 full tactic's operator-splitting and Boolean preprocessing.
 
-This fragment remains ordinary. For an extension simpset use the distinct
-`linarithLib.LINARITH_ext_ss` recipe before installation; do not promote
-an already compiled ordinary set.
+For an extension simpset use
+[`LINARITH_ext_ss`](#linarithLib.LINARITH_ext_ss).
 
 ### Failure
 
@@ -49,6 +49,7 @@ QED
 [`linarithLib`](#linarithLib),
 [`linarithLib.linarith_solver`](#linarithLib.linarith_solver),
 [`linarithLib.LINARITH_ext_ss`](#linarithLib.LINARITH_ext_ss),
+[`linarithLib.LINARITH_ext_ss_with`](#linarithLib.LINARITH_ext_ss_with),
 [`linarithLib.LINARITH_TAC`](#linarithLib.LINARITH_TAC),
 [`simpLib.++`](#simpLib.++),
 [`simpLib.SSFRAG`](#simpLib.SSFRAG)

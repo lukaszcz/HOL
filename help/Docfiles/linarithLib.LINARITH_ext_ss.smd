@@ -4,7 +4,7 @@
 ``` hol4
 linarithLib.LINARITH_ext_ss : simpExtLib.ssfrag
 linarithLib.LINARITH_ext_ss_budgeted :
-  searchBudget.budget -> simpExtLib.ssfrag
+  Context.t -> searchBudget.budget -> simpExtLib.ssfrag
 ```
 
 ------------------------------------------------------------------------
@@ -12,11 +12,16 @@ linarithLib.LINARITH_ext_ss_budgeted :
 Provides the explicitly tracked linear-arithmetic fragment.
 
 These fragments lift the same ordinary reducer closures used by
-`LINARITH_ss` and `LINARITH_ss_budgeted`. They do not duplicate the
-context collector, arithmetic caches, or budget state. Choose the
-extension fragment before installation into an extension simpset.
-Ordinary `LINARITH_ss` and ordinary reducer/destructor clients remain
-ordinary.
+`LINARITH_ss` and `LINARITH_ss_budgeted`. Choose the extension fragment
+before installation into an extension simpset; ordinary `LINARITH_ss`
+and ordinary reducer/destructor clients remain ordinary. Do not promote
+an already compiled ordinary set.
+
+### Failure
+
+As for [`LINARITH_ss`](#linarithLib.LINARITH_ss), except that the reducer
+of `LINARITH_ext_ss_budgeted` raises `searchBudget.LimitReached` when its
+budget is exhausted.
 
 ### Example
 
@@ -29,5 +34,7 @@ val arithmetic_ss = simpExtLib.++
 ### See also
 
 [`linarithLib.LINARITH_ss`](#linarithLib.LINARITH_ss),
+[`linarithLib.LINARITH_ext_ss_with`](#linarithLib.LINARITH_ext_ss_with),
 [`linarithLib.linarith_solver`](#linarithLib.linarith_solver),
+[`linarithData.arith`](#linarithData.arith),
 [`orderLib.ORDER_ext_ss`](#orderLib.ORDER_ext_ss)

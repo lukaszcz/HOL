@@ -1395,54 +1395,74 @@ fun admissible theorem =
     linarithDecomp.is_relevant conclusion
   end
 
-(* The [arith] table split into literals, and each literal assumed.
-   Both are a pure function of the table, so they are derived once per
-   state of it rather than once per term -- the trade the carrier
-   rewrites and the split tactic above make against the registry, and
-   the one that matters most here, because the reducer below is offered
-   every boolean subterm of a simplification and would otherwise pay a
-   kernel inference per fact for each.
+(* A fact list split into literals, and each literal assumed.  The
+   facts are the only input, so the pair is derived once per fact list
+   rather than once per term -- the trade the carrier rewrites and the
+   split tactic above make against the registry, and the one that
+   matters most here, because the reducer below is offered every boolean
+   subterm of a simplification and would otherwise pay a kernel
+   inference per fact for each. *)
+fun envelope_of_facts facts =
+  let
+    val literals = List.concat (map CONJUNCTS facts)
+  in
+    (literals, map (Thm.ASSUME o Thm.concl) literals)
+  end
 
-   The table's own theorems are the key, compared by pointer: the table
-   is a value behind an Sref, so an entry stays the same object until
-   something replaces it, and a table rebuilt into equal but fresh
-   theorems recomputes rather than answering out of the old one.  That
-   is a key the caller brings and no equality type, so this is
-   keyed_memo rather than one of the generation memos above.
+(* The global [arith] set's envelope, keyed on the facts themselves,
+   compared by pointer: the set is a value behind an Sref, so an entry
+   stays the same object until something replaces it, and a set rebuilt
+   into equal but fresh theorems recomputes rather than answering out of
+   the old one.  That is a key the caller brings and no equality type, so
+   this is keyed_memo rather than one of the generation memos above.
 
-   Assuming the table is also what tells the result cache that the
-   table has moved -- a fact of it is a hypothesis of the context, and
-   context is what RCACHE decides staleness by -- so the memo has to
-   track the table exactly, which is what a key that is the facts
-   themselves does. *)
-val arith_envelope =
-  memoUtil.keyed_memo (Lib.list_eq (Lib.curry Portable.pointer_eq))
-    (fn facts =>
-      let
-        val literals = List.concat (map CONJUNCTS facts)
-      in
-        (literals, map (Thm.ASSUME o Thm.concl) literals)
-      end)
+   Assuming the facts is also what tells the result cache that the set
+   has moved -- a fact of it is a hypothesis of the context, and context
+   is what RCACHE decides staleness by -- so the memo has to track the
+   set exactly, which is what a key that is the facts themselves does.
+   The memo holds one entry: it serves a fact list read from a table
+   (the global set, or a budgeted installation's context set), and
+   alternating sources recompute it.  A constructor's fixed fact list
+   keeps its own envelope (fixed_envelope). *)
+val arith_envelope = memoUtil.keyed_memo
+  (Lib.list_eq (Lib.curry Portable.pointer_eq)) envelope_of_facts
 
-(* Give dynamic [arith] facts assumption-shaped cache identities.  Their
-   original proofs remove those identities from the conversion result,
-   which is the half of the envelope that is per result rather than per
-   table state, and so is the half that stays here.
+(* An envelope source is read when a procedure needs its facts, not
+   before.  The global one reads the table at each use, so a fact
+   declared after a constructor ran is used. *)
+fun global_envelope () = arith_envelope (linarithData.arith_facts ())
 
-   cache_check is the same test the cached procedure opens with, so a
-   term it rejects is declined before the table is read at all.  Asking
+(* A fixed fact list's source: its envelope is built on first use, once
+   per constructed value. *)
+fun fixed_envelope facts =
+  let
+    val cell = ref NONE
+  in
+    fn () =>
+      case !cell of
+          SOME envelope => envelope
+        | NONE =>
+            let val envelope = envelope_of_facts facts
+            in cell := SOME envelope; envelope end
+  end
+
+(* with_envelope envelope prove runs prove on the assumed identities of
+   the envelope's facts, which gives them assumption-shaped cache
+   identities.  Their original proofs remove those identities from the
+   conversion result, which is the half of the envelope that is per
+   result rather than per fact list, and so is the half that stays here. *)
+fun with_envelope (source_facts, assumed) prove =
+  Lib.rev_itlist PROVE_HYP source_facts (prove assumed)
+
+(* cache_check is the same test the cached procedure opens with, so a
+   term it rejects is declined before the source is read at all.  Asking
    it first is what keeps the reducer from carrying the [arith] context
    around every boolean subterm the arithmetic has no row for. *)
-fun cached_with_arith context tm =
+fun cached_with_source source context tm =
   if not (cache_check tm) then decline ""
   else
-    let
-      val (facts, assumed) =
-        arith_envelope (linarithData.arith_facts ())
-      val theorem = cached_prove (context @ assumed) tm
-    in
-      Lib.rev_itlist PROVE_HYP facts theorem
-    end
+    with_envelope (source ())
+      (fn assumed => cached_prove (context @ assumed) tm)
 
 (* The ladder of decide, climbed with a cache question per rung: a
    conversion must answer T or F, so a term the first rung leaves
@@ -1451,19 +1471,19 @@ fun cached_with_arith context tm =
    ~F is a term cache_check declines, so the rung is refused before any
    search is spent on it.  The failure reported is the first rung's, so
    that the hint names the term the caller asked about. *)
-fun cached_linarith context tm =
-  case attempt (cached_with_arith context) tm of
-      SOME equation => equation
-    | NONE =>
-        (case attempt (cached_with_arith context)
-                (boolSyntax.mk_neg tm) of
-             SOME equation => EQF_INTRO (EQT_ELIM equation)
-           | NONE => no_proof "CACHED_LINARITH" (unregistered_hint tm))
-
-fun CACHED_LINARITH context tm =
-  cached_linarith context tm
+fun cached_decide_from source context tm =
+  (case attempt (cached_with_source source context) tm of
+       SOME equation => equation
+     | NONE =>
+         (case attempt (cached_with_source source context)
+                 (boolSyntax.mk_neg tm) of
+              SOME equation => EQF_INTRO (EQT_ELIM equation)
+            | NONE => no_proof "CACHED_LINARITH" (unregistered_hint tm)))
   handle Declined _ =>
     no_proof "CACHED_LINARITH" (unregistered_hint tm)
+
+fun CACHED_LINARITH context tm =
+  cached_decide_from global_envelope context tm
 
 (* An invocation's simplifier cannot use the process-wide result cache as
    its work meter: a cache miss would run an unbudgeted proof.  This
@@ -1516,29 +1536,31 @@ fun memo_budgeted_with_arith ctxt budget =
             if current_generation = !generation then ()
             else (Cache.clear_cache table;
                   generation := current_generation)
-          val (source_facts, assumed) = arith_envelope facts
-          val _ = deferred := NONE
-          val _ =
-            searchBudget.charge budget searchBudget.Candidate
-          val _ =
-            List.app
-              (fn _ =>
-                searchBudget.charge budget searchBudget.Candidate)
-              (context @ assumed)
-          val equation =
-            cached (context @ assumed) tm
-            handle error =>
-              (case !deferred of
-                   SOME original =>
-                     (Cache.clear_cache table; raise original)
-                 | NONE => decline "")
+          fun prove assumed =
+            let
+              val _ = deferred := NONE
+              val _ =
+                searchBudget.charge budget searchBudget.Candidate
+              val _ =
+                List.app
+                  (fn _ =>
+                    searchBudget.charge budget searchBudget.Candidate)
+                  (context @ assumed)
+              val equation =
+                cached (context @ assumed) tm
+                handle error =>
+                  (case !deferred of
+                       SOME original =>
+                         (Cache.clear_cache table; raise original)
+                     | NONE => decline "")
+            in
+              case !deferred of
+                  SOME original =>
+                    (Cache.clear_cache table; raise original)
+                | NONE => EQT_ELIM equation
+            end
         in
-          case !deferred of
-              SOME original =>
-                (Cache.clear_cache table; raise original)
-            | NONE =>
-                Lib.rev_itlist PROVE_HYP source_facts
-                  (EQT_ELIM equation)
+          with_envelope (arith_envelope facts) prove
         end
   in
     ask
@@ -1566,8 +1588,11 @@ fun linarith_reducer conv =
        initial = CTXT []}
   end
 
+val linarith_fragment_name = "LINARITH"
+val linarith_solver_name = "lin_arith"
+
 fun linarith_ss reducer =
-  simpLib.named_merge_ss "LINARITH"
+  simpLib.named_merge_ss linarith_fragment_name
     [simpLib.SSFRAG
        {name = SOME "LINARITH_DP",
         convs = [], rewrs = [], congs = [], filter = NONE,
@@ -1575,7 +1600,7 @@ fun linarith_ss reducer =
 
 (* Lift the existing reducer, retaining its context and cache closures. *)
 fun linarith_ext_ss reducer =
-  simpExtLib.named_merge_ss "LINARITH"
+  simpExtLib.named_merge_ss linarith_fragment_name
     [simpExtLib.SSFRAG
        {name = SOME "LINARITH_DP",
         convs = [], rewrs = [], congs = [], filter = NONE,
@@ -1592,6 +1617,10 @@ val LINARITH_REDUCER = linarith_reducer CACHED_LINARITH
 
 val LINARITH_ss = linarith_ss LINARITH_REDUCER
 val LINARITH_ext_ss = linarith_ext_ss LINARITH_REDUCER
+
+fun LINARITH_ext_ss_with facts =
+  linarith_ext_ss
+    (linarith_reducer (cached_decide_from (fixed_envelope facts)))
 
 fun LINARITH_ext_ss_budgeted ctxt budget =
   linarith_ext_ss (LINARITH_REDUCER_BUDGETED ctxt budget)
@@ -1641,7 +1670,7 @@ fun refutable_context theorems =
   refutable_for_key (linarithData.generation (), theorems)
 
 (* Mirrors Isabelle's solver setup at lin_arith.ML:949.  Arithmetic side
-   conditions share the reducer's cache; cached_with_arith is a
+   conditions share the reducer's cache; cached_with_source is a
    conversion, so EQT_ELIM turns its |- tm = T into the |- tm a solver
    must return, and its HOL_ERR reports an undischarged condition.  Only
    the provability of the condition is asked: a solver has no use for
@@ -1679,21 +1708,27 @@ fun refutable_context theorems =
    every call, since neither the question nor its answer would depend
    on the condition being asked about.  That is a state to report, not
    one to spend a search per side condition rediscovering. *)
-fun linarith_solver_with prove : TraverseExt.ssolver =
-  {name = "lin_arith",
+fun linarith_solver_core prove : TraverseExt.ssolver =
+  {name = linarith_solver_name,
    solve = fn {context_thms, ...} => fn tm =>
      (if cache_check tm then prove context_thms tm
       else if refutable_context context_thms then
         CONTR tm (prove context_thms boolSyntax.F)
-      else raise ERR "lin_arith" "no arithmetic in the context")
-     handle Declined _ => raise ERR "lin_arith" search_failed}
+      else raise ERR linarith_solver_name "no arithmetic in the context")
+     handle Declined _ => raise ERR linarith_solver_name search_failed}
 
-val linarith_solver =
-  linarith_solver_with
-    (fn context => fn tm => EQT_ELIM (cached_with_arith context tm))
+fun linarith_solver_from source =
+  linarith_solver_core
+    (fn context => fn tm =>
+       EQT_ELIM (cached_with_source source context tm))
+
+fun linarith_solver_with_facts facts =
+  linarith_solver_from (fixed_envelope facts)
+
+val linarith_solver = linarith_solver_from global_envelope
 
 fun linarith_solver_budgeted ctxt budget =
-  linarith_solver_with (memo_budgeted_with_arith ctxt budget)
+  linarith_solver_core (memo_budgeted_with_arith ctxt budget)
 
 (* num is registered here, not at the foot of linarithNum the way the
    int, real and rat instances register themselves.  Those live in
