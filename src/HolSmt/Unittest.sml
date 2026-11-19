@@ -38089,6 +38089,8 @@ let
     ("cpc_owned_classification_charges", CPC_OwnedClassificationTests.run),
     ("carrier_root_policy_contract",
      SmtLib_GraphCarrierRootPolicyTests.run),
+    ("carrier_root_int_contract",
+     SmtLib_GraphCarrierRootIntTests.run),
     ("cpc_typed_classification", cpc_typed_classification),
     ("cpc_graph_typed_parser", fn () =>
       (CPC_GraphParserTests.run ();CPC_ConstructorAliasReviewTests.run ())),

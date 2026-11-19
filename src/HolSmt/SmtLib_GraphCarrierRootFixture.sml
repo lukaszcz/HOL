@@ -1,8 +1,10 @@
-(* Test support: live fixtures for the policy provers of
-   SmtLib_GraphCarrierRoot (a goal, its stock carrier law, a native
+(* Test support: live fixtures for the provers of SmtLib_GraphCarrierRoot.
+   For the policy provers: a goal, its stock carrier law, a native
    contract, a focus admission and, for the opaque case, genuine retained
-   profiles). Shared by selftest postludes 279 and 290 and by
-   SmtLib_GraphCarrierRootPolicyTests. *)
+   profiles. For the int prover: the opened views, the canonical closure and
+   the focus admission of a goal with its stock law. Shared by selftest
+   postludes 279 and 290, by SmtLib_GraphCarrierRootPolicyTests and by
+   SmtLib_GraphCarrierRootIntTests. *)
 structure SmtLib_GraphCarrierRootFixture =
 struct
   structure G = SmtReplayGraph
@@ -150,4 +152,40 @@ struct
     let val {fixture,profiles,...}=
           opaque_setup_limited RP.Uncapped body_issued limits
     in (fixture,profiles) end
+
+  (* The int prover. [output] is the semantic output limit and [work_limit]
+     bounds the portfolio, setup included. The goal is the first of two
+     equal assumptions; [original] is its raw node, [view] and
+     [predicate_view] its opened views and [closure] the canonical closure
+     of the view node. A focus admission is made by [int_admission], since
+     making it spends Work. *)
+  type int_fixture = {graph:G.graph,scope:G.scope,sources:S.sources,
+    work:W.portfolio,original:G.node,view:G.source,predicate_view:G.source,
+    law:P.closed_fact,closure:G.closure_child}
+  fun int_setup work_limit output term fixed : int_fixture =
+    let val graph = G.new () val scope = G.root_scope graph
+        val sources = S.new graph scope cap
+          {goal=term,assumptions=[term,term]}
+        val original = hd (S.assumption_nodes sources)
+        val view = G.record_opened_view graph scope cap original
+        val raw_predicate = case G.view graph original of
+            G.Application (_,p) => p
+          | _ => raise Fail "int fixture: not a quantifier"
+        val predicate_view = G.record_opened_view graph scope cap
+          raw_predicate
+        val imported = G.import graph scope cap (Thm.concl fixed)
+        val opened = G.record_opened_view graph scope cap (#node imported)
+        val law = P.record_closed_from_import graph scope
+          {node= #node opened,theorem=fixed,template_limit=cap,
+           check_type=fn _=>()}
+        val work = W.begin graph scope sources
+          {limits={input_limit=cap,output_limit=output,template_limit=cap},
+           work_limit=work_limit}
+    in {graph=graph,scope=scope,sources=sources,work=work,original=original,
+        view=view,predicate_view=predicate_view,law=law,
+        closure=G.closure_root graph scope (#node view)} end
+  fun int_admission (e : int_fixture) =
+    Q.initial (#work e) {occurrence=1,view= #view e}
+  fun int_expected (e : int_fixture) =
+    {graph= #graph e,scope= #scope e,sources= #sources e,work= #work e}
 end
