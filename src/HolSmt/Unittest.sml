@@ -22116,6 +22116,19 @@ let
     (fn _ => (calls := !calls + 1; false)) (shared depth)
   val _ = assert (not found andalso !calls <= 3 * depth,
     "the trigger scan walked shared subterms more than once")
+  (* Under a binder a body of this shape over the raw-size budget (depth
+     21: four million nodes as a tree) makes the scans answer yes at once
+     instead of opening it.  Building the abstraction walks it once. *)
+  val binder = Term.mk_abs (``trigger_bound:bool``, shared 21)
+  val calls = ref 0
+  val timer = Timer.startCPUTimer ()
+  val binder_found = SmtReplayCanon.may_trigger
+    (fn _ => (calls := !calls + 1; false)) binder
+  val binder_relevant = SmtReplayCanon.secondary_rewrite_needed binder
+  val {usr, ...} = Timer.checkCPUTimer timer
+  val _ = assert (binder_found andalso binder_relevant andalso
+      !calls <= 1 andalso Time.< (usr, Time.fromSeconds 5),
+    "a trigger scan opened a binder over its budget")
   fun propose term = if intSyntax.is_geq term then
       SOME SmtReplayCanon.relation_dual_schema_conv else NONE
   fun pass term = SmtReplayCanon.compact_conversion_status

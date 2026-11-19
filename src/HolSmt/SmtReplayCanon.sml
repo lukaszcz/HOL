@@ -87,8 +87,8 @@ struct
   (* Whether [trigger] holds at some subterm of [root], binder bodies
      included: one walk, memoized on physical identity. Past the term
      budget it answers true, so no pass is skipped that was not scanned.
-     A body is opened lazily (count_body), so each node it unfolds is
-     counted before it is built. *)
+     A binder whose raw size is over the budget, which the pass's own
+     opening also refuses, answers true without being opened. *)
   fun may_trigger trigger root =
     let
       exception Found
@@ -110,7 +110,11 @@ struct
              else if Term.is_comb term then
                (visit (Term.rator term); visit (Term.rand term))
              else if Term.is_abs term then
-               visit (SmtReplayImport.count_body term)
+               (case SmtReplayImport.bounded_raw_size
+                    SmtResource.max_bv_replay_term_nodes term of
+                  NONE => raise Found
+                | SOME _ => visit
+                    (#2 (SmtReplayImport.dest_abs_preserving_names term)))
              else ())
         end
     in (visit root; false) handle Found => true end
@@ -779,9 +783,9 @@ struct
 
   (* Only these arithmetic heads and negated conditional guards can change
      the difference normal form, also under a binder, so the scan descends
-     into binder bodies, opened lazily as in may_trigger. The primary pass
-     has already admitted the source. An incomplete scan retains all
-     original passes. *)
+     into binder bodies; a binder over the scan's budget counts as
+     relevant without being opened. The primary pass has already admitted
+     the source. An incomplete scan retains all original passes. *)
   fun secondary_rewrite_needed root =
     let
       exception Relevant
@@ -798,7 +802,12 @@ struct
         else ()
       fun children term =
         if Term.is_comb term then [Term.rator term,Term.rand term]
-        else if Term.is_abs term then [SmtReplayImport.count_body term]
+        else if Term.is_abs term then
+          (case SmtReplayImport.bounded_raw_size
+               SmtResource.max_skeleton_replay_dag_nodes term of
+             NONE => raise Relevant
+           | SOME _ =>
+               [#2 (SmtReplayImport.dest_abs_preserving_names term)])
         else []
       fun scan () =
         let val {complete,...} = SmtResource.bounded_structure_with_children
