@@ -6897,7 +6897,13 @@ local
                  "too many explicit equality components";
              [theorem])
         in
-          if boolSyntax.is_eq conclusion then fact theorem
+          (* A reflexive equation substitutes nothing, and rewriting with
+             it never terminates. *)
+          if boolSyntax.is_eq conclusion andalso
+             Term.aconv (boolSyntax.lhs conclusion)
+               (boolSyntax.rhs conclusion)
+          then []
+          else if boolSyntax.is_eq conclusion then fact theorem
           (* solve-eqs also eliminates an asserted Boolean variable or its
              negation, as the equation p = T or p = F. *)
           else if Term.is_var conclusion then fact (Drule.EQT_INTRO theorem)
@@ -6934,23 +6940,91 @@ local
       facts
     end
 
+  (* Z3's macro finder, which its auto-configuration turns on for quantified
+     problems mixing Int and Real, expands an asserted definition
+     !x1 ... xn. f x1 ... xn = t inside a bare rewrite step, without citing
+     the assertion.  A macro rule is such an assertion whose arguments are its
+     distinct bound variables, whose t is free only in them, and whose head f
+     is not an SMT builtin and does not occur in t.  Rules are grouped by
+     head and applied one head at a time, so two mutually inverse rules
+     cannot loop; each comes from ASSUME, so only rules that fire become
+     hypotheses. *)
+  fun asserted_macro_theorems assertions =
+    let
+      fun is_macro assertion =
+        let
+          val (vars, body) = boolSyntax.strip_forall assertion
+          val (lhs, rhs) = boolSyntax.dest_eq body
+          val (head, args) = boolSyntax.strip_comb lhs
+          fun is_head tm =
+            Term.aconv tm head orelse
+            (Term.is_const tm andalso Term.is_const head andalso
+             Term.same_const tm head)
+        in
+          not (List.null vars) andalso
+          List.length args = List.length vars andalso
+          List.all (fn arg => Lib.op_mem Term.aconv arg vars) args andalso
+          List.length (Lib.op_mk_set Term.aconv args) =
+            List.length args andalso
+          List.all (fn v => Lib.op_mem Term.aconv v args)
+            (Term.free_vars rhs) andalso
+          not (Lib.op_mem Term.aconv head vars) andalso
+          not (Lib.can (HolKernel.find_term is_head) rhs) andalso
+          not (Option.isSome (SmtLib.builtin_encoding lhs))
+        end
+        handle Feedback.HOL_ERR _ => false
+      fun head_of th =
+        #1 (boolSyntax.strip_comb (boolSyntax.lhs
+          (#2 (boolSyntax.strip_forall (Thm.concl th)))))
+      fun group [] = []
+        | group (th :: ths) =
+            let
+              val head = head_of th
+              val (same, rest) = List.partition
+                (fn other => Term.aconv (head_of other) head) ths
+            in
+              (th :: same) :: group rest
+            end
+    in
+      group (List.map Thm.ASSUME (List.filter is_macro assertions))
+    end
+
   (* Substitution is the only use made of the assertions.  Most solve-eqs
      residues become reflexive immediately.  Integer min/max certificates use
      complementary < and <= conditionals; after substitution that narrowly
      admitted linear-conditional residue is sent to the existing arithmetic
      owner, with no assertion context.  A substituted constructor can leave
      a case/destructor redex; that residue goes to the existing datatype
-     owner, again with no assertion context. *)
+     owner, again with no assertion context.  An expanded macro leaves
+     linear integer arithmetic, which goes to the same arithmetic owner. *)
   fun asserted_equality_substitution_prove admit assertions target =
     let
+      val macros = asserted_macro_theorems assertions
+      (* Past its bounds the equality extraction gives up; the macro rules
+         are bounded by the assertions alone, so they still apply. *)
       val equalities = asserted_equality_theorems assertions
-      val _ = not (List.null equalities) orelse
+        handle Feedback.HOL_ERR holerr =>
+          if List.null macros then raise Feedback.HOL_ERR holerr else []
+      val _ = not (List.null equalities andalso List.null macros) orelse
         raise ERR "asserted_equality_substitution_prove"
           "no structurally derived asserted equality"
+      val macro_conv = Conv.QCONV (Conv.EVERY_CONV
+        (List.map (Conv.QCONV o Rewrite.PURE_REWRITE_CONV) macros))
       fun prove_with rewrite_theorems =
         let
-          val substitution = Rewrite.PURE_REWRITE_CONV rewrite_theorems target
+          val equality_step =
+            if List.null rewrite_theorems then Thm.REFL target
+            else Conv.QCONV (Rewrite.PURE_REWRITE_CONV rewrite_theorems)
+              target
+          val macro_step =
+            macro_conv (boolSyntax.rhs (Thm.concl equality_step))
+          val macro_fired =
+            not (Term.aconv (boolSyntax.lhs (Thm.concl macro_step))
+              (boolSyntax.rhs (Thm.concl macro_step)))
+          val substitution = Thm.TRANS equality_step macro_step
           val substituted = boolSyntax.rhs (Thm.concl substitution)
+          val _ = not (Term.aconv target substituted) orelse
+            raise Conv.UNCHANGED
           fun reflexive () =
             let val (left, right) = boolSyntax.dest_eq substituted
             in
@@ -6969,7 +7043,7 @@ local
               val _ = SmtResource.term_nodes_up_to 4096 substituted <= 4096
                 orelse raise ERR "asserted_equality_substitution_prove"
                   "integer conditional residue exceeds 4096 syntax nodes"
-              val _ = not (List.null unique) andalso
+              val _ = (macro_fired orelse not (List.null unique)) andalso
                   List.length unique <= 4 orelse
                 raise ERR "asserted_equality_substitution_prove"
                   "outside bounded integer min/max conditional family"
@@ -7000,7 +7074,8 @@ local
     in
       attempt oriented
       handle Feedback.HOL_ERR holerr =>
-        if SmtResource.is_resource_gate holerr then
+        if SmtResource.is_resource_gate holerr orelse
+           List.null equalities then
           raise Feedback.HOL_ERR holerr
         else attempt reversed
     end

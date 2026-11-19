@@ -27207,6 +27207,41 @@ in
     "non-proof-local equality was admitted as a checked definition")
 end
 
+(* Z3's macro finder expands an asserted definition inside a bare rewrite
+   step; the substitution takes it from the goal's assertions. *)
+fun z3_asserted_macro_substitution_success () =
+let
+  val macro = ``!x:int. macro_f x = x + 5``
+  val unused = ``!x:int. macro_k x = x:int``
+  val target = ``~((macro_f:int->int) 2 = 7) <=> ~(2 + -1 * -5 = 7:int)``
+  fun prove sources goal =
+    Z3_ProofReplay.asserted_equality_substitution_prove_for_test sources goal
+  fun rejects sources goal =
+    (ignore (prove sources goal); false) handle Feedback.HOL_ERR _ => true
+  (* A reflexive assertion is skipped: rewriting with it never ends. *)
+  val reflexive = ``(macro_f:int->int) 3 = macro_f 3``
+  val theorem = prove [macro, unused, reflexive] target
+in
+  assert (Thm.concl theorem ~~ target andalso
+      List.length (Thm.hyp theorem) = 1 andalso
+      Term.aconv (hd (Thm.hyp theorem)) macro,
+    "macro expansion did not prove the rewrite from exactly its definition");
+  assert (rejects [macro]
+      ``~((macro_f:int->int) 2 = 7) <=> ~(2 + 6 = 7:int)``,
+    "macro expansion admitted an unequal residue");
+  assert (rejects [``!x:int. macro_r x = macro_r x + 0``]
+      ``(macro_r:int->int) 1 + 0 = macro_r 1``,
+    "a recursive equation was used as a macro");
+  assert (rejects [``!x:int. -x = x``] ``-(asserted_y:int) = asserted_y``,
+    "an equation for an SMT builtin was used as a macro");
+  (* Rules apply one head at a time, so mutually inverse macros end. *)
+  assert (Thm.concl (prove [``!l:int list. REVERSE l = FRONT l``,
+                            ``!l:int list. FRONT l = REVERSE l``]
+                       ``REVERSE [1:int] = FRONT [1]``) ~~
+                       ``REVERSE [1:int] = FRONT [1]``,
+    "mutually inverse macros did not prove their own equation")
+end
+
 fun z3_asserted_equality_substitution_boundaries () =
 let
   val direct = ``(asserted_x:int) = asserted_y``
@@ -38705,6 +38740,8 @@ let
       z3_closed_definition_normalization_boundaries),
     ("z3_asserted_equality_substitution_boundaries",
       z3_asserted_equality_substitution_boundaries),
+    ("z3_asserted_macro_substitution_success",
+      z3_asserted_macro_substitution_success),
     ("z3_hyp_removal_beta_lookup_success",
       z3_hyp_removal_beta_lookup_success),
     ("z3_hyp_removal_eta_only_lookup_success",

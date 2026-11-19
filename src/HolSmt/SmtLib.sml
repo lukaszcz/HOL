@@ -9289,6 +9289,9 @@ in
   val z3_assertion_roundtrip_conv_with_for_test =
     z3_assertion_roundtrip_conv_with
 
+  (* Z3 replay's macro rules skip definitions of SMT builtins. *)
+  val builtin_encoding = builtin_encoding
+
   (* Kept public for Unittest's outbound-scope audit. *)
   val builtin_encoding_for_test = builtin_encoding
 
