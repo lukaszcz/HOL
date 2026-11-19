@@ -362,37 +362,56 @@ struct
         (identity_active p term_epoch;
          {raw = raw,binder = binder,typed_annotations = annotations})
 
-  fun execute_internal (Plan {producer = p as Producer
-      {graph,scope,original,limit,...},theta,expected,executed,...}) =
+  (* The single-use INST_TYPE execution shared by the int and policy
+     producers.  The caller supplies the error origin and consumed-plan
+     message, the activity check, and the Graph import/open and Proof
+     recording calls (int or policy); the type-count caps use limit. *)
+  fun execute_walk {name,consumed,active,graph,scope,original,limit,theta,
+                    expected,executed,import,record_opened,record_closed} =
     let
-      val _ = active p
-      val _ = if !executed then raise ERR "execute" "instance plan consumed"
+      val _ = active ()
+      val _ = if !executed then raise ERR name consumed
         else executed := true
       val theorem = Thm.INST_TYPE theta (P.closed_original original)
-      val _ = active p
+      val _ = active ()
       (* Retain the whole genuine source bridge, including distinct raw
          occurrences of an alpha-shared binder. Do not discard child bridges.
            *)
-      val imported = G.import graph scope limit (Thm.concl theorem)
-      val _ = active p
-      val opened = G.record_opened_view graph scope limit (#node imported)
-      val _ = active p
+      val imported = import (Thm.concl theorem)
+      val _ = active ()
+      val opened = record_opened (#node imported)
+      val _ = active ()
       val _ = G.validate_opened_view graph scope (#node imported) opened
       val node = #node opened
       val _ = List.app (fn kind =>
         case G.unfolded_nodes graph kind limit node of
           SOME n => if n <= limit then () else
-            raise ERR "execute" "typed result metric exceeds original cap"
-        | NONE => raise ERR "execute" "typed result remains opaque")
+            raise ERR name "typed result metric exceeds original cap"
+        | NONE => raise ERR name "typed result remains opaque")
         [G.RawNodes,G.BinderInclusiveNodes]
       fun admitted ty =
-        (active p;
+        (active ();
          case Redblackmap.peek (expected,ty) of SOME () => ()
-         | NONE => raise ERR "execute" "unplanned typed annotation")
-      val typed = P.record_closed_from_import graph scope
-        {node = node,theorem = theorem,template_limit = limit,
-         check_type = admitted}
-      val _ = active p
+         | NONE => raise ERR name "unplanned typed annotation")
+      val typed = record_closed {node = node,theorem = theorem,
+                                 check_type = admitted}
+      val _ = active ()
+    in typed end
+
+  fun execute_internal (Plan {producer = p as Producer
+      {graph,scope,original,limit,...},theta,expected,executed,...}) =
+    let val typed = execute_walk
+          {name = "execute",consumed = "instance plan consumed",
+           active = fn () => active p,graph = graph,scope = scope,
+           original = original,limit = limit,theta = theta,
+           expected = expected,executed = executed,
+           import = fn term => G.import graph scope limit term,
+           record_opened = fn node =>
+             G.record_opened_view graph scope limit node,
+           record_closed = fn {node,theorem,check_type} =>
+             P.record_closed_from_import graph scope
+               {node = node,theorem = theorem,template_limit = limit,
+                check_type = check_type}}
     in Instance {producer = p,typed = typed,theta = theta,
                  identity_epoch = NONE} end
     | execute_internal (IdentityPlan _) =
@@ -606,44 +625,24 @@ struct
   fun execute_internal (PolicyPlan {policy_producer = p as PolicyProducer
       {graph,scope,original,limit,policy_limit,native_contract,work,...},
        theta,expected,executed,...}) =
-    let
-      val _ = active p
-      val _ = if !executed then raise ERR "execute_with_policy"
-        "policy_instance policy_plan consumed"
-        else executed := true
-      val theorem = Thm.INST_TYPE theta (P.closed_original original)
-      val _ = active p
-      (* Retain the whole genuine source bridge, including distinct raw
-         occurrences of an alpha-shared binder. Do not discard child bridges.
-           *)
-      val imported = G.import_with_policy graph scope
-        (RP.AtMost (IntInf.fromInt (#import_limit
-          (case work of SOME budget=>NC.for_work budget native_contract
-           | NONE=>raise ERR "execute_policy" "unhooked policy instance"))))
-        (Thm.concl theorem)
-      val _ = active p
-      val opened = G.record_opened_view_with_policy graph scope
-        (RP.AtMost (IntInf.fromInt limit)) (#node imported)
-      val _ = active p
-      val _ = G.validate_opened_view graph scope (#node imported) opened
-      val node = #node opened
-      val _ = List.app (fn kind =>
-        case G.unfolded_nodes graph kind limit node of
-          SOME n => if n <= limit then () else
-            raise ERR "execute_with_policy"
-              "typed result metric exceeds original cap"
-        | NONE => raise ERR "execute_with_policy"
-          "typed result remains opaque")
-        [G.RawNodes,G.BinderInclusiveNodes]
-      fun admitted ty =
-        (active p;
-         case Redblackmap.peek (expected,ty) of SOME () => ()
-         | NONE => raise ERR "execute_with_policy"
-           "unplanned typed annotation")
-      val typed = P.record_closed_from_import_with_policy graph scope
-        {node = node,theorem = theorem,template_limit = policy_limit,
-         check_type = admitted}
-      val _ = active p
+    let val typed = execute_walk
+          {name = "execute_with_policy",
+           consumed = "policy_instance policy_plan consumed",
+           active = fn () => active p,graph = graph,scope = scope,
+           original = original,limit = limit,theta = theta,
+           expected = expected,executed = executed,
+           import = fn term => G.import_with_policy graph scope
+             (RP.AtMost (IntInf.fromInt (#import_limit
+               (case work of SOME budget=>NC.for_work budget native_contract
+                | NONE=>raise ERR "execute_policy"
+                    "unhooked policy instance")))) term,
+           record_opened = fn node =>
+             G.record_opened_view_with_policy graph scope
+               (RP.AtMost (IntInf.fromInt limit)) node,
+           record_closed = fn {node,theorem,check_type} =>
+             P.record_closed_from_import_with_policy graph scope
+               {node = node,theorem = theorem,template_limit = policy_limit,
+                check_type = check_type}}
     in PolicyInstance {policy_producer = p,typed = typed,theta = theta,
                  identity_epoch = NONE} end
     | execute_internal (PolicyIdentityPlan _) =
