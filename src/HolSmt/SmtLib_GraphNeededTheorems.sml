@@ -204,15 +204,15 @@ struct
      endpoints_theorem : unit -> Thm.thm,
      record : {node : G.node,theorem : Thm.thm,
        check_type : Type.hol_type -> unit} -> P.closed_fact}
-  fun normalize_with {name,graph,work,active,charge,backing,check_type,
+  fun normalize_with {name,graph,work,kit,backing,check_type,
                       originals,resumed}
       (mk : {live : unit -> unit,spend : IntInf.int -> unit} -> norm_ops) =
     let
-      fun live () = (active ();backing ())
-      val lk = {active = live,charge = charge}
+      fun live () = (#active (kit : kit) ();backing ())
+      val lk = {active = live,charge = #charge kit}
       fun guarded action = guarded_by lk action
       val spend = spend lk
-      fun policy ty = (live ();check_type ty;live ())
+      fun policy ty = guarded (fn () => check_type ty)
       val ops = mk {live = live,spend = spend}
       val (original,target,canonical) = W.with_step work (fn () =>
         let
@@ -333,6 +333,9 @@ struct
      handle primary => (W.close work;raise primary))
   fun revalidate (owner as Owner {validated,...}) =
     (validated := NONE;active owner)
+  fun kit (owner as Owner {work,...}) : kit =
+    {active = fn () => active owner,
+     charge = fn n => W.spend work (IntInf.toInt n)}
   fun begin work {portfolio,check_type} =
     let
       val sources = W.original_sources work
@@ -374,12 +377,10 @@ struct
       val _ = active owner
       val _ = if !used then raise ERR "collect" "collector already consumed"
         else used := true
-      val k = {active = fn () => active owner,
-               charge = fn n => W.spend work (IntInf.toInt n)}
+      val k = kit owner
       val spend = spend k
       fun guarded action = guarded_by k action
-      fun policy ty =
-        (active owner;check_type ty;active owner)
+      fun policy ty = guarded (fn () => check_type ty)
       val terms = terms_of k
       val empty_terms = empty_terms k
       val empty_thms = empty_thms k
@@ -643,8 +644,7 @@ struct
         end
       val {original,kept} = normalize_with
         {name = "normalize_result",graph = graph,work = work,
-         active = fn () => active owner,
-         charge = fn n => W.spend work (IntInf.toInt n),backing = backing,
+         kit = kit owner,backing = backing,
          check_type = check_type,originals = originals,resumed = resumed}
         (fn {live,spend} =>
           let
@@ -735,6 +735,9 @@ struct
          raise ERR "active" "validation state changed during backing pass")
       end)
      handle primary => (W.close work;raise primary))
+  fun kit (owner as Owner {work,...}) : kit =
+    {active = fn () => active owner,
+     charge = fn n => W.spend_policy work n}
   fun begin work {portfolio,check_type,native_contract,profiles} =
     let
       val _=NC.validate_for work native_contract
@@ -774,8 +777,7 @@ struct
       val _ = active owner
       val _ = if !used then raise ERR "collect" "collector already consumed"
         else used := true
-      val k = {active = fn () => active owner,
-               charge = fn n => W.spend_policy work n}
+      val k = kit owner
       val spend = spend k
       fun guarded action = guarded_by k action
       val empty_terms = empty_terms k
@@ -984,9 +986,8 @@ struct
           expected_request conversion)end
       val {original,kept}=normalize_with
         {name="normalize_result_with_policy",graph=graph,work=work,
-         active=fn()=>active owner,charge=fn n=>W.spend_policy work n,
-         backing=backing,check_type=check_type,originals=originals,
-         resumed=resumed}
+         kit=kit owner,backing=backing,check_type=check_type,
+         originals=originals,resumed=resumed}
         (fn{live,...}=>
           let
             val native_data=NC.for_work work native
