@@ -426,8 +426,8 @@ struct
        Arrow (Arrow (old_carrier,bool_shape),bool_shape)),
      Arrow (bool_shape,Arrow (bool_shape,bool_shape))]
 
-  (* Returns [carrier_amount], then puts the proof's extra shapes before
-     those of the expressions in [shapes]. *)
+  (* Computes [carrier_amount], puts the proof's extra shapes before those
+     of the expressions in [shapes], and returns the amount. *)
   fun carrier_total {lhs,rhs,source_size,application,uncontracted,proof,
       old_carrier,shapes} =
     let val amount = carrier_amount {lhs = lhs,rhs = rhs,
