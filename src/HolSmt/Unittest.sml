@@ -19,12 +19,14 @@ fun die s =
 
 fun assert (x, msg) = if x then () else die ("FAIL: " ^ msg)
 
-(* The number of calls Profile has recorded under [name]. *)
-fun profile_count name =
-  case List.find (fn (candidate, _) => candidate = name)
-      (Profile.results ()) of
+(* The number of calls Profile recorded under a name, in a given results
+   list or in the current one. *)
+fun profile_count_in results name =
+  case List.find (fn (candidate, _) => candidate = name) results of
     SOME (_, info) => #n info
   | NONE => 0
+
+fun profile_count name = profile_count_in (Profile.results ()) name
 
 fun check_oracle_tags name thm =
   Library.check_oracle_tags "HolSmtLib" name thm
@@ -16894,10 +16896,6 @@ end
 
 fun cpc_proof_replay_bv_xor_rotation_general_success () =
 let
-  fun profile_count name results =
-    case List.find (fn (candidate, _) => candidate = name) results of
-      SOME (_, info) => #n info
-    | NONE => 0
   fun proof width =
     parse_cpc_proof_string
       ("((declare-const a (_ BitVec " ^ width ^ ")) " ^
@@ -16918,17 +16916,13 @@ let
   val results = Profile.results ()
 in
   assert
-    (profile_count "CPC(rung:word/poly_norm_schematic_bvite_words)_OK"
-       results = 4,
+    (profile_count_in results
+       "CPC(rung:word/poly_norm_schematic_bvite_words)_OK" = 4,
      "CPC XOR rotation family did not consume the checked word route")
 end
 
 fun cpc_proof_replay_bv_poly_norm_word_ring_success () =
 let
-  fun profile_count name results =
-    case List.find (fn (candidate, _) => candidate = name) results of
-      SOME (_, info) => #n info
-    | NONE => 0
   val one = "(_ bv1 256)"
   fun ring_step a b =
     "(step @p1 :rule bv_poly_norm :args ((= (bvmul " ^ one ^
@@ -16959,11 +16953,11 @@ in
      check_oracle_tags "CPC word ring replay" theorem))
     (theorems, expected);
   assert
-    (profile_count "CPC(rung:word/poly_norm_schematic_word_ring)_OK"
-       results = 2,
+    (profile_count_in results
+       "CPC(rung:word/poly_norm_schematic_word_ring)_OK" = 2,
      "CPC word ring family did not use the algebraic route");
   assert
-    (profile_count "E0(word-graph-expand)" results = 0,
+    (profile_count_in results "E0(word-graph-expand)" = 0,
      "CPC word ring family expanded the word graph")
 end
 
@@ -16982,10 +16976,6 @@ end
 
 fun cpc_proof_replay_and_elim_success () =
 let
-  fun profile_count name results =
-    case List.find (fn (candidate, _) => candidate = name) results of
-      SOME (_, info) => #n info
-    | NONE => 0
   fun route_count results = List.foldl
     (fn ((name, info), total) =>
       if String.isPrefix "CPC(and_elim:provenance/" name then
@@ -17010,10 +17000,10 @@ let
         let val route =
           "CPC(and_elim:provenance/" ^ source ^ ")"
         in
-          assert (profile_count route results = calls,
+          assert (profile_count_in results route = calls,
             label ^ " did not consume its exact provenance route " ^
             source ^ ": expected " ^ Int.toString calls ^ ", saw " ^
-            Int.toString (profile_count route results) ^ "; routes: " ^
+            Int.toString (profile_count_in results route) ^ "; routes: " ^
             route_summary results)
         end
       val calls = List.foldl (fn ((_, n), total) => n + total) 0 routes
@@ -17243,7 +17233,7 @@ let
     [("eq_resolve", 1), ("parsed", 1)]
     multiple_cong_text ``(q:bool) /\ r``
   val _ = assert
-    (profile_count "CPC(cong:exact/rewrite)" (Profile.results ()) = 2,
+    (profile_count "CPC(cong:exact/rewrite)" = 2,
     "multiple CONG case did not consume exactly two occurrence rewrites")
   val _ = assert_exact_hypotheses
     "CPC CONG multiple repeated-shape replacements"
@@ -17327,8 +17317,8 @@ let
     [("eq_resolve", 1)] forall_cong_text
     ``!x:bool. (x = u) /\ p /\ (q /\ r)``
   val _ = assert
-    (profile_count "CPC(cong:exact/rewrite)" (Profile.results ()) = 1 andalso
-     profile_count "CPC(cong:binder/forall)" (Profile.results ()) = 1,
+    (profile_count "CPC(cong:exact/rewrite)" = 1 andalso
+     profile_count "CPC(cong:binder/forall)" = 1,
     "forall CONG did not consume exactly one FORALL_EQ occurrence route")
   val _ = assert_exact_hypotheses
     "CPC CONG replacement inside capture-sensitive forall"
@@ -17374,8 +17364,8 @@ let
     [("eq_resolve", 1)] exists_cong_text
     ``?x:bool. (x = u) /\ p /\ (q /\ r)``
   val _ = assert
-    (profile_count "CPC(cong:exact/rewrite)" (Profile.results ()) = 1 andalso
-     profile_count "CPC(cong:binder/exists)" (Profile.results ()) = 1,
+    (profile_count "CPC(cong:exact/rewrite)" = 1 andalso
+     profile_count "CPC(cong:binder/exists)" = 1,
     "exists CONG did not consume exactly one EXISTS_EQ occurrence route")
   val _ = assert_exact_hypotheses
     "CPC CONG replacement inside capture-sensitive exists"
@@ -17434,8 +17424,8 @@ let
     lambda_cong_text
     ``(\x:bool. (x = u) /\ p /\ (q /\ r)) = (\x:bool. u)``
   val _ = assert
-    (profile_count "CPC(cong:exact/rewrite)" (Profile.results ()) = 1 andalso
-     profile_count "CPC(cong:binder/lambda)" (Profile.results ()) = 1,
+    (profile_count "CPC(cong:exact/rewrite)" = 1 andalso
+     profile_count "CPC(cong:binder/lambda)" = 1,
     "lambda CONG did not consume exactly one ABS occurrence route")
   val _ = assert_exact_hypotheses
     "CPC CONG replacement inside capture-sensitive lambda"
@@ -17484,7 +17474,7 @@ let
     "eq_resolve" 1 canonical_cong_text
     ``r:bool``
   val _ = assert
-    (profile_count "CPC(cong:exact/rewrite)" (Profile.results ()) = 1,
+    (profile_count "CPC(cong:exact/rewrite)" = 1,
     "canonical CONG success did not consume its exact occurrence route")
   val _ = Profile.reset_all ()
   val _ = expect_hol_error_contains
@@ -17508,7 +17498,7 @@ let
   val _ = assert (route_count (Profile.results ()) = 0,
     "canonical CONG topology mismatch consumed an and_elim route")
   val _ = assert
-    (profile_count "CPC(cong:exact/rewrite)" (Profile.results ()) = 0,
+    (profile_count "CPC(cong:exact/rewrite)" = 0,
     "canonical CONG topology mismatch consumed an exact occurrence route")
   val root_replacement_text =
     "((declare-const p Bool) (declare-const q Bool) \
@@ -17576,9 +17566,7 @@ let
        ``((p:bool) /\ q /\ r) = (~p /\ (q /\ r))``,
      "omitted canonical trans reconstructed the wrong exact endpoints")
   val _ = assert
-    (profile_count
-       "CPC(rung:canonical_trans/provenance-canonical)_OK"
-       (Profile.results ()) = 1,
+    (profile_count "CPC(rung:canonical_trans/provenance-canonical)_OK" = 1,
      "omitted canonical trans did not consume its provenance terminal")
   val _ = check_oracle_tags
     "CPC omitted canonical trans provenance terminal"
