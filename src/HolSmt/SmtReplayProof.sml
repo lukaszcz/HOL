@@ -10619,7 +10619,8 @@ struct
      caller's payment: it validates the evidence, the frame lifetime and the
      closure children before it spends, so each builder step is paid in the
      order the preparer runs it. The builder keeps the lexical origin
-     geometry and numbers and names the binders in capture order. *)
+     geometry and numbers and names the binders in capture order. It also
+     returns the shared recorder and the instruction interpreter play. *)
   local
   datatype template_variable=TemplateBound of int
     | TemplateFree of Term.term
@@ -10897,8 +10898,10 @@ struct
                     | _=>raise ERR "source_rule_template" "original equality")
               | _=>false end
       (* The Work and size accounting of one recorded local result.  extra
-         prices what a preparer adds per tree: the canonical modes count the
-         type constructors, the others add nothing. *)
+         prices what a preparer adds per tree: the canonical clause with a
+         closing counts the type constructors; the plain rule, the exists
+         argument clause and the canonical clause without a closing add
+         nothing. *)
       fun recorder (quota:IntInf.int) (extra:sr_tree -> IntInf.int)
           cap hypotheses result=
         let val _=if sr_raw result<=cap andalso sr_inc result<=cap then ()
@@ -15265,7 +15268,7 @@ struct
         OriginalPrefixSlot _=>true | ActualSourceSlot _=>false})
 
 
-  (* A private box for the argument clause's core.  Holding the 17-field
+  (* A private box for the argument clause's core.  Holding the clause-core
      record abbreviation directly inside the plan's record is what made the
      datatype printer and the compile of this file expensive; the box is a
      single constructor of its own type, so it cannot be confused with a
@@ -15721,9 +15724,9 @@ struct
       val terminal=SourceTruth
       fun append v w=sce_append tick v w
       val {budget,policies,identifiers,binders,atom,app,capture,bounded,
-        name_binders,head,binary,forall,exists,subst,tneg,typed_equality,
-        quantify,boolean,combine,equality,implication,balanced,
-        original_permutative,recorder,play,...}=
+        name_binders,binary,forall,exists,subst,typed_equality,boolean,
+        combine,equality,implication,balanced,original_permutative,
+        recorder,play,...}=
         #builder ctx
       fun no_abs cap term=
         let fun walk [] count=()
