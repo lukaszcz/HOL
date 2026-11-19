@@ -458,19 +458,22 @@ struct
   fun max_limit ({input_limit,output_limit,template_limit} : W.limits) =
     Int.max (input_limit,Int.max (output_limit,template_limit))
   (* The footprint walk shared by both inventories. A caller supplies the
-     owner-specific operations: [fence] (SOME check wraps every callback in
-     an owner check, NONE leaves the walk unfenced), the paid [spend], the
-     traversal [scope], [begin_root] (the per-root cache check or capture),
-     the opaque-profile lookup and data ([profile_for], [profile_data], read
-     for requester ['r]) and how the requester descends under a binder
-     ([body_requester]). It returns the footprints, the quoted types and
-     [revalidate], which re-walks the retained closure children and then
-     opaque profiles; the caller builds its guard from it. *)
-  fun inventory_worker {fence,work,graph,ceiling,spend,scope,begin_root,
-                      profile_for,profile_data,body_requester,
-                      requester0} roots =
+     owner-specific operations: [fence] (SOME (work,check) runs every
+     callback under the owner check [check], closing [work] on failure;
+     NONE leaves the walk unfenced), [graph], the paid [spend], the traversal
+     [scope], [begin_root] (the per-root cache check or capture), the Work
+     [ceiling] of the footprint arithmetic, the opaque-profile lookup and data
+     ([profile_for], [profile_data], read for a requester ['r]) and how the
+     requester descends under a binder ([body_requester]); [requester0] is
+     the requester a root starts with, from its traversal scope. It returns
+     the footprints, the quoted types and [revalidate], which re-walks the
+     retained closure children and then opaque profiles; the caller builds
+     its guard from it. *)
+  fun inventory_worker {fence,graph,ceiling,spend,scope,begin_root,
+                        profile_for,profile_data,body_requester,
+                        requester0} roots =
     let fun invoke action = case fence of NONE => action ()
-          | SOME check => protected work (fn () =>
+          | SOME (work,check) => protected work (fn () =>
               (check ();let val value = action () val _ = check ()
                         in value end))
         fun plus a b = IntInf.min (ceiling+1,a+b)
@@ -574,9 +577,6 @@ struct
   fun inventory (focus as Focus {traversal,...}) roots =
     let val _ = active focus
         val work = work_of focus
-        (* This complete inventory has no user callbacks. Fence it once,
-           not around every paid type/node/memo operation. The returned
-           guard still checks every retained path at policy boundaries. *)
         val graph = #graph (owner_of focus)
         val maximum = max_limit (#limits (owner_of focus))
         val ceiling = IntInf.fromInt (W.work_limit (work_of focus))
@@ -593,7 +593,10 @@ struct
           in {raw = IntInf.fromInt (#raw data),inc = IntInf.fromInt (#inc data),
               ann = #ann data,ty = #ty data,types = #types data} end
         val (values,types,revalidate) = inventory_worker
-          {fence = NONE,work = work,graph = graph,ceiling = ceiling,
+          {(* This complete inventory has no user callbacks. Fence it once,
+              not around every paid type/node/memo operation. The returned
+              guard still checks every retained path at policy boundaries. *)
+           fence = NONE,graph = graph,ceiling = ceiling,
            spend = fn amount => W.spend work amount,
            scope = fn () => traversal,begin_root = begin_root,
            profile_for = fn () => fn current =>
@@ -1631,7 +1634,7 @@ struct
           in {raw = #raw data,inc = #inc data,ann = #ann data,ty = #ty data,
               types = #types data} end
         val (values,types,revalidate) = inventory_worker
-          {fence = SOME (fn () => active focus),work = work_of focus,
+          {fence = SOME (work_of focus,fn () => active focus),
            graph = graph,ceiling = ceiling,spend = spend focus,
            scope = fn () => scope focus,begin_root = begin_root,
            profile_for = fn requester => fn current =>
