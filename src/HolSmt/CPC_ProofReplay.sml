@@ -4857,17 +4857,17 @@ local
               wordsLib.WORD_ARITH_PROVE target))
         (fn () =>
           SmtResource.or_else
-             (fn () =>
-               profile "CPC(rung:seq/aci_norm)"
-                 (SmtSeqProve.seq_prove_with_admission admit) target)
-             (fn () =>
-               SmtResource.or_else
-                  (fn () =>
-                    profile "CPC(rung:string/aci_norm)"
-                      SmtStringProve.string_rewrite_prove target)
-                  (fn () =>
-                    profile "CPC(rung:word/aci_norm_tautology)"
-                      (tautology "aci_norm") target))))
+            (fn () =>
+              profile "CPC(rung:seq/aci_norm)"
+                (SmtSeqProve.seq_prove_with_admission admit) target)
+            (fn () =>
+              SmtResource.or_else
+                (fn () =>
+                  profile "CPC(rung:string/aci_norm)"
+                    SmtStringProve.string_rewrite_prove target)
+                (fn () =>
+                  profile "CPC(rung:word/aci_norm_tautology)"
+                    (tautology "aci_norm") target))))
     end
 
   fun replay_aci_norm args = replay_aci_norm_admitted
@@ -6573,8 +6573,8 @@ local
       (fn () => replay_flat_nary_cong source prems)
       (fn () =>
         SmtResource.or_else
-           (fn () => replay_boolean_nary_cong source prems)
-           (fn () => replay_direct_nary_cong source prems))
+          (fn () => replay_boolean_nary_cong source prems)
+          (fn () => replay_direct_nary_cong source prems))
 
   and replay_direct_nary_cong source prems =
     let
@@ -6863,12 +6863,12 @@ local
                              xor_graph_tautology bridge_target)
                          (fn () =>
                            SmtResource.or_else
-                              (fn () =>
-                                profile "CPC(rung:trans/XOR_TAUT)"
-                                  xor_tautology bridge_target)
-                              (fn () =>
-                                shared_phase "bridge_aci" (fn () =>
-                                replay_aci_norm [bridge_target]))))
+                             (fn () =>
+                               profile "CPC(rung:trans/XOR_TAUT)"
+                                 xor_tautology bridge_target)
+                             (fn () =>
+                               shared_phase "bridge_aci" (fn () =>
+                               replay_aci_norm [bridge_target]))))
                     val bridge =
                       (SmtResource.or_else
                          (fn () =>
@@ -23416,8 +23416,8 @@ in
                  (fn () => cached_thm state hypothesis)
                  (fn () =>
                    SmtResource.or_else
-                      (fn () => dependency_proof [] hypothesis)
-                      replay_checked))
+                     (fn () => dependency_proof [] hypothesis)
+                     replay_checked))
             end
           fun checked_generalization () =
             let
