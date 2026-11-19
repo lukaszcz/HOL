@@ -12,19 +12,22 @@ struct
   structure X = SmtLib_GraphSelectedAuxiliary
   val ERR = Feedback.mk_HOL_ERR "SmtLib_GraphNeededTheorems"
   type request = {head : Term.term,ordinal : int,original : Thm.thm}
-  (* Receipts shared by the int and policy collectors; the owner type is
-     the only thing that differs. *)
+  (* Receipts shared by the int and policy collectors. The owner type 'o
+     and the owner's own receipt part 'x (what only that owner exposes:
+     the int owner's root stock heads, nothing for the policy owner) are
+     what differ. *)
   datatype 'o norm = Normalized of
     {owner : 'o,original : Thm.thm,
      kept : (Thm.thm * P.closed_fact) option,guard : unit -> unit,
      proof_revision : IntInf.int option ref}
-  datatype 'o pend = Pending of
-    {owner : 'o,originals : Thm.thm list,heads : Term.term list,
+  datatype ('o,'x) pend = Pending of
+    {owner : 'o,originals : Thm.thm list,own : 'x,
      requests : request list,
      selections : {selection : SmtLib_GraphNumericStock.selection,
                    ordinal : int} list,
-     resumed : bool ref,continuation : 'o norm list -> 'o outcome}
-  and 'o outcome = Done of GP.validation | Need of 'o pend
+     resumed : bool ref,
+     continuation : 'o norm list -> ('o,'x) outcome}
+  and ('o,'x) outcome = Done of GP.validation | Need of ('o,'x) pend
 
   (* ---- Collector walkers shared by both owners. A kit is the owner's
      retirement check and its one-unit Work charge (each charge guards the
@@ -88,10 +91,12 @@ struct
   (* The fixed-point loop over wanted laws. [atoms] finds the stock heads
      of the roots, [selected] selects a head, [unchanged] disposes of a
      law that needs no request, [roots_of_added] gives the next roots from
-     the newly added normalized laws and the proofs so far, and [finish]
-     ends the loop. Returns the loop, to be started on the initial roots. *)
+     the newly added normalized laws and the proofs so far, [finish] ends
+     the loop, and [own] makes the owner's own part of a request receipt
+     from the stock heads (only when a request is issued). Returns the
+     loop, to be started on the initial roots. *)
   fun fixed_point (k : kit) owner
-      {atoms,selected,unchanged,roots_of_added,finish} =
+      {atoms,selected,unchanged,roots_of_added,finish,own} =
     let
       val spend1 = #spend1 k
       fun guarded action = guarded_by k action
@@ -166,7 +171,7 @@ struct
                         in insert originals next records end
                     in Need (Pending {owner = owner,originals = originals,
                       requests = requests,selections = selections,
-                      heads = HOLset.listItems heads,resumed = ref false,
+                      own = own heads,resumed = ref false,
                       continuation = continuation}) end
               | normalize (th :: rest) next records blocked =
                   (spend1 ();case unchanged th of
@@ -291,7 +296,7 @@ struct
      selections : (Term.term * SmtLib_GraphNumericStock.selection) list ref,
      retained : (unit -> unit) list ref,
      validated : (IntInf.int * (unit -> unit) list) option ref}
-  type pending = owner pend
+  type pending = (owner,Term.term list) pend
   type normalized = owner norm
   datatype result = Complete of GP.validation
     | NeedsNormalization of pending
@@ -350,7 +355,7 @@ struct
      | NONE => raise ERR "begin_preprocessed"
          "legacy GP has no original dependency portfolio")
     handle primary => (W.close work;raise primary)
-  fun pending_heads (Pending {owner,heads,...}) = (active owner;heads)
+  fun pending_heads (Pending {owner,own,...}) = (active owner;own)
   fun pending_requests (Pending {owner,requests,...}) =
     (active owner;requests)
   fun pending_selections (Pending {owner,selections,...}) =
@@ -508,7 +513,7 @@ struct
           (fn (th,ts) => HOLset.addList (ts,terms th)) (empty_terms ()) added)
       val loop = fixed_point k owner
         {atoms = atoms,selected = selected,unchanged = unchanged,
-         roots_of_added = roots_of_added,
+         roots_of_added = roots_of_added,own = HOLset.listItems,
          finish = finish_with k (fn checked => GP.from_portfolio
            (F.prepend_recorded graph scope portfolio checked))}
       val (assumptions,goal) = F.processed_goal portfolio
@@ -691,7 +696,7 @@ struct
      selections : (Term.term * SmtLib_GraphNumericStock.selection) list ref,
      retained : (unit -> unit) list ref,
      validated : (IntInf.int * (unit -> unit) list) option ref}
-  type pending = owner pend
+  type pending = (owner,unit) pend
   type normalized = owner norm
   datatype result = PolicyComplete of GP.validation
     | PolicyNeedsNormalization of pending
@@ -863,7 +868,7 @@ struct
                (HOLset.listItems next_terms) end
       val loop = fixed_point k owner
         {atoms = atoms,selected = selected,unchanged = fn _ => Blocked,
-         roots_of_added = roots_of_added,
+         roots_of_added = roots_of_added,own = fn _ => (),
          finish = finish_with k (fn checked => GP.from_portfolio_with_policy
            work (F.prepend_recorded_with_policy work portfolio checked))}
       val {assumptions,goal}=F.processed_nodes_with_policy_for work portfolio
