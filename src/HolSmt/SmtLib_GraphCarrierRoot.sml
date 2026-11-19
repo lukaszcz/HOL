@@ -90,12 +90,15 @@ struct
   fun bound origin cap n = if n >= 0 andalso n <= IntInf.fromInt cap
     then () else refuse origin "prospective carrier syntax exceeds cap"
 
-  type kind =
+  (* The outcome of [classify]: which of the four stock carrier laws a
+     quantifier needs (num or bag, forall or exists), with the carrier and,
+     for a bag, its element type. Not the kind of Work. *)
+  type law_choice =
     {universal : bool,carrier : Type.hol_type,
      domain : Type.hol_type option,fixed : Thm.thm}
 
   (* Which carrier law the quantifier needs. *)
-  fun classify {graph,operator,predicate,weight,origin} : kind =
+  fun classify {graph,operator,predicate,weight,origin} : law_choice =
     let
       fun reject message = refuse origin message
       val universal = case G.view graph operator of G.Constant id =>
@@ -128,7 +131,9 @@ struct
         fixed = fixed} end
 
   (* The predicate child must be the predicate; its binder closure is
-     retained for revalidation. *)
+     retained for revalidation. Constructed/rehome closures retain their
+     genuine creation frames. They do NOT acquire a fabricated raw Source
+     origin. This branch permits a later step on a generated BAG guard. *)
   fun predicate_closure {graph,scope,predicate_child,predicate,held,origin} =
     let val _ = if G.closure_child_node graph scope predicate_child =
           predicate then () else refuse origin "different predicate child"
@@ -215,9 +220,12 @@ struct
     else refuse origin "not the exact selected original stock law"
 
   (* The end of the inventory: the sizes of the predicate and of its body
-     and the types met. [active] is the caller's guard. *)
-  fun inventory {graph,scope,charge,weight,held,constants,locate,opaque,
-      active,predicate_child,closure,source,predicate,kind : kind} =
+     and the types met. [active] is the caller's guard. The callback-free
+     original/canonical/type inventory comes FIRST in a preparation; genuine
+     import and recorded opening are separate existing prerequisites. *)
+  fun take_inventory {graph,scope,charge,weight,held,constants,locate,opaque,
+      active,predicate_child,closure,source,predicate,
+      choice : law_choice} =
     let
       val types = ref ([] : Type.hol_type list)
       val visit = size_walk {graph = graph,charge = charge,weight = weight,
@@ -226,8 +234,8 @@ struct
       val (ps,body_size) = predicate_sizes graph visit scope
         predicate_child closure
       val _ = active ()
-    in {source = source,predicate = predicate,carrier = #carrier kind,
-        domain = #domain kind,universal = #universal kind,size = ps,
+    in {source = source,predicate = predicate,carrier = #carrier choice,
+        domain = #domain choice,universal = #universal choice,size = ps,
         body_size = body_size,types = !types} : inventory end
 
   (* The type-variable bindings the stock law is instantiated at. *)
@@ -418,6 +426,17 @@ struct
        Arrow (Arrow (old_carrier,bool_shape),bool_shape)),
      Arrow (bool_shape,Arrow (bool_shape,bool_shape))]
 
+  (* The amount [carrier_amount] gives, after the proof's extra shapes are
+     put before those of the expressions in [shapes] (the amount does not
+     read them, so the order of the two steps is immaterial). *)
+  fun carrier_total {lhs,rhs,source_size,application,uncontracted,proof,
+      old_carrier,shapes} =
+    let val amount = carrier_amount {lhs = lhs,rhs = rhs,
+          source_size = source_size,application = application,
+          uncontracted = uncontracted,proof = proof}
+        val _ = shapes := proof_shapes old_carrier @ !shapes
+    in amount end
+
   fun render_shape active (Actual ty) = ty
     | render_shape active (Arrow (a,b)) =
         let val l = render_shape active a val r = render_shape active b
@@ -425,7 +444,10 @@ struct
             val ty = Type.mk_type ("fun",[l,r])
             val _ = active () in ty end
 
-  (* Every type the plan needs goes through the caller's type policy. *)
+  (* Every type the plan needs goes through the caller's type policy. The
+     preparation hooks SAME Work and its supplied policy only queues
+     admitted types, so no external callback precedes the carrier
+     reservation. *)
   fun issue_types {active,check_type,queued,types,shapes} =
     let fun policy ty = (active ();check_type ty;active ())
         val generated = List.map (render_shape active) (!shapes)
@@ -572,8 +594,6 @@ struct
         (cached cap node G.RawNodes;cached cap node G.BinderInclusiveNodes)
       val queued = ref ([] : Type.hol_type list)
       fun queue ty = (active ();W.spend work 1;queued := ty :: !queued)
-      (* Callback-free original/canonical/type inventory FIRST. Genuine
-         import and recorded opening are separate existing prerequisites. *)
       val initial = W.with_step work (fn () =>
         let
           val _ = active ()
@@ -614,26 +634,21 @@ struct
           val closure = predicate_closure {graph = graph,scope = scope,
             predicate_child = predicate_child,predicate = predicate,
             held = held,origin = "prepare"}
-          (* Constructed/rehome closures retain their genuine creation
-             frames. They do NOT acquire a fabricated raw Source origin.
-             This branch permits a later step on a generated BAG guard. *)
-          val kind = classify {graph = graph,
+          val choice = classify {graph = graph,
             operator = operator,predicate = predicate,weight = weight,
             origin = "prepare"}
           val _ = admit (#template_limit limits) (P.closed_node law)
           val _ = P.validate_closed_fact graph root
             (#template_limit limits) law
-          val _ = stock_law "prepare" law (#fixed kind)
-        in inventory {graph = graph,scope = scope,charge = charge,
+          val _ = stock_law "prepare" law (#fixed choice)
+        in take_inventory {graph = graph,scope = scope,charge = charge,
             weight = weight,held = held,constants = constants,
             locate = fn _ => fn _ => fn node => node,
             opaque = fn _ => fn _ =>
               reject "nested original binder needs genuine opening",
             active = active,predicate_child = predicate_child,
             closure = closure,source = source,predicate = predicate,
-            kind = kind} end)
-      (* H preparation hooks SAME Work. Its supplied policy only queues
-         admitted types: no external callback precedes carrier reservation. *)
+            choice = choice} end)
       val producer = H.begin_original_with_work graph root
         {original = law,template_limit = #template_limit limits,
          check_type = queue,work = work}
@@ -667,10 +682,10 @@ struct
             | NONE => reject "missing canonical source forecast")
             [(G.RawNodes,#raw source_size),
              (G.BinderInclusiveNodes,#binder source_size)]
-          val amount = carrier_amount {lhs = lhs,rhs = rhs,
+          val amount = carrier_total {lhs = lhs,rhs = rhs,
             source_size = source_size,application = application,
-            uncontracted = uncontracted,proof = proof}
-          val _ = shapes := proof_shapes old_carrier @ !shapes
+            uncontracted = uncontracted,proof = proof,
+            old_carrier = old_carrier,shapes = shapes}
           val _ = bound "prepare" (W.work_limit work) amount
           val token = W.reserve work {role = W.LocalCarrier,ordinal = ordinal,
             amount = IntInf.toInt amount}
@@ -888,8 +903,6 @@ struct
            cached metadata cap node G.BinderInclusiveNodes)
         val queued = ref ([] : Type.hol_type list)
         fun queue ty = (charge 1;queued := ty :: !queued)
-        (* Callback-free original/canonical/type inventory FIRST. Genuine
-           import and recorded opening are separate existing prerequisites. *)
         val initial = W.with_step work (fn () =>
           let
             val _ = active ()
@@ -904,25 +917,19 @@ struct
             val closure = predicate_closure {graph = graph,scope = scope,
               predicate_child = predicate_child,predicate = predicate,
               held = held,origin = "prepare_with_policy"}
-            (* Constructed/rehome closures retain their genuine creation
-               frames. They do NOT acquire a fabricated raw Source origin.
-               This branch permits a later step on a generated BAG guard. *)
-            val kind = classify {graph = graph,
+            val choice = classify {graph = graph,
               operator = operator,predicate = predicate,weight = weight,
               origin = "prepare_with_policy"}
             val _ = P.validate_closed_fact_with_policy graph root
               (#template_limit policy_limits) law
             val _ = admit (#template_limit policy_limits)
               (#template_limit limits) (P.closed_node law)
-            val _ = stock_law "prepare_with_policy" law (#fixed kind)
-          in inventory {graph = graph,scope = scope,charge = charge,
+            val _ = stock_law "prepare_with_policy" law (#fixed choice)
+          in take_inventory {graph = graph,scope = scope,charge = charge,
               weight = weight,held = held,constants = constants,
               locate = #locate hooks,opaque = #opaque hooks,active = active,
               predicate_child = predicate_child,closure = closure,
-              source = source,predicate = predicate,kind = kind} end)
-        (* H preparation hooks SAME Work. Its supplied policy only queues
-           admitted types: no external callback precedes carrier
-           reservation. *)
+              source = source,predicate = predicate,choice = choice} end)
         val producer = H.begin_original_with_policy graph root
           {original=law,native_contract=native_contract,
            check_type=queue,work=work}
@@ -949,10 +956,10 @@ struct
             val _=if #raw actual= #raw source_size andalso
                 #inc actual= #binder source_size then () else
               reject "canonical source forecast differs"
-            val amount = carrier_amount {lhs = lhs,rhs = rhs,
+            val amount = carrier_total {lhs = lhs,rhs = rhs,
               source_size = source_size,application = application,
-              uncontracted = uncontracted,proof = proof}
-            val _ = shapes := proof_shapes old_carrier @ !shapes
+              uncontracted = uncontracted,proof = proof,
+              old_carrier = old_carrier,shapes = shapes}
             val _=if amount>0 andalso !native_used+amount<=native_work andalso
                 RP.allows (W.remaining_policy work) amount then () else
               reject "carrier portfolio exceeds native or Work allowance"
