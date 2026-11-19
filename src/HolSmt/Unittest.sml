@@ -22062,6 +22062,367 @@ in
     "resetting the replay memos kept the replay's word schemas")
 end
 
+(* The canonicalisation passes propose their conversion only at a term
+   headed by one of their laws' left-hand heads, so binder bodies without
+   such a term are not opened; one only under a binder still rewrites. *)
+fun replay_canon_proposes_only_at_law_heads_success () =
+let
+  val not_heads =
+    SmtReplayCanon.at_law_heads SmtReplayCanon.not_clauses Conv.ALL_CONV
+  val alias_heads =
+    SmtReplayCanon.at_law_heads SmtReplayCanon.cpc_alias_rewrites
+      Conv.ALL_CONV
+  val _ = assert (Option.isSome (not_heads ``~~(p:bool)``) andalso
+      not (Option.isSome (not_heads ``(p:bool) /\ q``)) andalso
+      Option.isSome (alias_heads ``(x:int) > 0``) andalso
+      not (Option.isSome (alias_heads ``(x:int) <= 0``)),
+    "a canonicalisation pass proposed away from its laws' heads")
+  fun check label conversion (source, expected) =
+    let val theorem = conversion source in
+      assert (Thm.concl theorem ~~ boolSyntax.mk_eq (source, expected) andalso
+          null (Thm.hyp theorem),
+        label ^ " changed its result under a binder");
+      check_oracle_tags label theorem
+    end
+  val unchanged = fn source => (source, source)
+in
+  List.app (check "relation dual" SmtReplayCanon.z3_relation_dual_conv)
+    [(``!x:int. P x ==> x >= 0``, ``!x:int. P x ==> 0 <= x``),
+     unchanged ``!x:int. P x ==> x <= 0``];
+  List.app (check "not clauses" SmtReplayCanon.not_clauses_conv)
+    [(``!x:bool. Q (~~x) /\ x``, ``!x:bool. Q x /\ x``),
+     unchanged ``!x:bool. Q (~x) /\ x``];
+  List.app (check "alias" SmtReplayCanon.cpc_alias_conv)
+    [(``!x:int. P x ==> x > 0``, ``!x:int. P x ==> 0 < x``),
+     unchanged ``!x:int. P x ==> x <= 0``]
+end
+
+(* A canonicalisation pass first scans its input once, memoised on
+   physical identity and binder bodies included, and returns the input
+   unchanged when its rules match nowhere in it. *)
+fun replay_canon_skips_passes_without_triggers_success () =
+let
+  val triggered = ``!x:int. P x ==> x >= 0``
+  val untriggered = ``!x:int. P x ==> x <= 0``
+  val _ = assert (SmtReplayCanon.may_trigger intSyntax.is_geq triggered andalso
+      not (SmtReplayCanon.may_trigger intSyntax.is_geq untriggered),
+    "the trigger scan missed a trigger under a binder or found a false one")
+  fun shared 0 = ``trigger_leaf:bool``
+    | shared n = let val child = shared (n - 1)
+                 in boolSyntax.mk_conj (child, child) end
+  val depth = 40
+  val calls = ref 0
+  val found = SmtReplayCanon.may_trigger
+    (fn _ => (calls := !calls + 1; false)) (shared depth)
+  val _ = assert (not found andalso !calls <= 3 * depth,
+    "the trigger scan walked shared subterms more than once")
+  fun propose term = if intSyntax.is_geq term then
+      SOME SmtReplayCanon.relation_dual_schema_conv else NONE
+  fun pass term = SmtReplayCanon.compact_conversion_status
+    SmtReplayCanon.canonical_schema_patterns true false propose term
+  val (skipped, skipped_changed) = pass untriggered
+  val (rewritten, rewritten_changed) = pass triggered
+  val _ = assert (not skipped_changed andalso
+      Thm.concl skipped ~~ boolSyntax.mk_eq (untriggered, untriggered) andalso
+      rewritten_changed andalso
+      Thm.concl rewritten ~~ ``(!x:int. P x ==> x >= 0) <=>
+                                !x:int. P x ==> 0 <= x``,
+    "a pass without a trigger was not skipped or one with a trigger was")
+  val ground = boolSyntax.mk_forall (``x:int``, intSyntax.mk_leq (``x:int``,
+    Term.list_mk_comb (SmtReplayCanon.smt_ediv_total_tm, [``7i``, ``2i``])))
+  fun check (source, expected) =
+    let val theorem = SmtReplayCanon.cpc_term_canon_conv source in
+      assert (Thm.concl theorem ~~ boolSyntax.mk_eq (source, expected) andalso
+          null (Thm.hyp theorem),
+        "CPC term canonicalisation changed its result under a binder");
+      check_oracle_tags "CPC term canonicalisation" theorem
+    end
+in
+  List.app check
+    [(ground, ``!x:int. x <= 3``),
+     (``!x:int. Q x (\y:int. (f:int -> bool) y)``,
+      ``!x:int. Q x (f:int -> bool)``),
+     (``!x:int. P x /\ R``, ``!x:int. P x /\ R``)]
+end
+
+(* Z3's secondary rewrite pass runs when an arithmetic head or negated
+   guard occurs, also under a binder, and not merely because a binder
+   occurs; without one the result is the primary pass's. *)
+fun z3_secondary_canon_triggers_under_binders_success () =
+let
+  val _ = assert (SmtReplayCanon.secondary_rewrite_needed ``\x:int. x + 1``
+      andalso SmtReplayCanon.secondary_rewrite_needed
+        ``\x:int. \y:int. x < y`` andalso
+      not (SmtReplayCanon.secondary_rewrite_needed ``\x:bool. ~x``),
+    "the secondary pass trigger scan stopped at or fired on a binder")
+  val source = ``(!x:int. x + 1 <= y) <=> (!x:int. 1 + x <= y)``
+  val theorem = SmtReplayCanon.z3_rewrite_canon_conv source
+  val target = boolSyntax.rhs (Thm.concl theorem)
+  val _ = assert (boolSyntax.lhs (Thm.concl theorem) ~~ source andalso
+      null (Thm.hyp theorem) andalso
+      SmtReplayCanon.equality_operands_alpha_equal target,
+    "a trigger only under a binder did not run the secondary pass")
+  val _ = check_oracle_tags "secondary canonicalisation" theorem
+  val plain = ``(!x:bool. ~x) <=> (!x:bool. F)``
+in
+  assert (Thm.concl (SmtReplayCanon.z3_rewrite_canon_conv plain) ~~
+      Thm.concl (SmtReplayCanon.z3_primary_rewrite_canon_conv plain),
+    "a term without a secondary trigger did not keep the primary result")
+end
+
+(* Types of at most 64 nodes compare directly, larger ones through the
+   memo; both give one antisymmetric order that is EQUAL on equal Types. *)
+fun replay_type_order_small_and_large_agree_success () =
+let
+  fun copy ty = if Type.is_vartype ty then ty else
+    let val {Thy, Tyop, Args} = Type.dest_thy_type ty
+    in Type.mk_thy_type {Thy = Thy, Tyop = Tyop, Args = List.map copy Args}
+    end
+  fun mono 0 = Type.bool
+    | mono n = let val ty = mono (n - 1) in Type.--> (ty, ty) end
+  val large = mono 7
+  val small = [Type.bool, ``:word8``, ``:word16``, numSyntax.num,
+    intSyntax.int_ty, Type.alpha, Type.beta, ``:bool -> bool``,
+    ``:num list``, ``:word8 -> word16``]
+  val order = SmtReplayTermBridge.new_type_order ()
+  fun invert LESS = GREATER | invert GREATER = LESS | invert EQUAL = EQUAL
+  fun check (left, right) =
+    let val direct = order (left, right) in
+      assert (order (right, left) = invert direct andalso
+          (direct = EQUAL) = (Type.compare (left, right) = EQUAL) andalso
+          order (copy left, right) = direct andalso
+          order (Type.--> (large, left), Type.--> (copy large, right)) =
+            direct andalso
+          order (Type.--> (left, large), Type.--> (right, copy large)) =
+            direct,
+        "the replay type order is not one antisymmetric order on small " ^
+        "and large Types")
+    end
+in
+  List.app (fn left => List.app (fn right => check (left, right)) small)
+    small
+end
+
+(* A cong under a binder block, or a negation over one, is the binder lift
+   of its premise, tried before the canonicalising fallbacks. *)
+fun cpc_binder_cong_lifts_through_negation_success () =
+let
+  val prefix =
+    "(define @x () (@var \"x\" Bool)) (define @t () (not (not @x))) \
+    \(step @p1 :rule bool-double-not-elim :args (@x))"
+  fun replay steps = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string ("(" ^ prefix ^ steps ^ ")"))
+  val body = replay ""
+  val x = boolSyntax.rhs (Thm.concl body)
+  val lifted = Drule.FORALL_EQ x body
+  fun check label (steps, expected) =
+    let val theorem = replay steps in
+      assert (Thm.concl theorem ~~ Thm.concl expected andalso
+          null (Thm.hyp theorem),
+        "CPC " ^ label ^ " congruence is not the binder lift of its premise");
+      check_oracle_tags ("CPC " ^ label ^ " congruence") theorem
+    end
+in
+  check "binder"
+    (" (step @p2 :rule cong :premises (@p1) \
+     \:args ((forall (@list @x) @t)))", lifted);
+  check "negated binder"
+    (" (step @p2 :rule cong :premises (@p1) \
+     \:args ((not (forall (@list @x) @t))))",
+     Thm.AP_TERM boolSyntax.negation lifted)
+end
+
+(* The canonical TRANS route keeps its orientation order and conclusion
+   when each middle endpoint's normal forms are reused across orientations
+   and equal middles bridge without conversion. *)
+fun cpc_canonical_trans_endpoint_chains_success () =
+let
+  fun check (first, second) =
+    let
+      val proof = parse_cpc_proof_string
+        ("((declare-const x Int) (declare-const p Bool) \
+         \(declare-const q Bool) (assume @a " ^ first ^ ") \
+         \(assume @b " ^ second ^ ") (step @c :rule trans :premises (@a @b)))")
+      val _ = Profile.reset_all ()
+      val theorem = CPC_ProofReplay.replay_root_for_test proof
+    in
+      assert (Thm.concl theorem ~~ ``(p:bool) = q`` andalso
+          List.length (Thm.hyp theorem) = 2,
+        "canonical CPC trans changed its conclusion");
+      assert (profile_call_count
+          "CPC(rung:canonical_trans/provenance-canonical)" = 1,
+        "CPC trans did not take the canonical route");
+      check_oracle_tags "canonical CPC trans" theorem
+    end
+in
+  (* The second needs the first premise's right endpoint again after its
+     first orientation fails. *)
+  List.app check
+    [("(= p (>= x 0))", "(= (<= 0 x) q)"),
+     ("(= p (>= x 0))", "(= q (<= 0 x))")]
+end
+
+(* Checked datatype procedures admit each term object once per call. *)
+fun datatype_procedures_admit_each_term_once_success () =
+let
+  val admitted = ref ([] : Term.term list)
+  fun admit term = admitted := term :: !admitted
+  val target =
+    ``(SOME (f (f (f (x:num)))) = SOME (f (f (f x)))) <=>
+      (f (f (f x)) = f (f (f x)))``
+  val theorem = SmtDatatypeProve.datatype_prove_with_admission admit target
+  fun repeated [] = false
+    | repeated (term :: rest) =
+        List.exists (fn other => Portable.pointer_eq (term, other)) rest
+        orelse repeated rest
+in
+  assert (Thm.concl theorem ~~ target andalso null (Thm.hyp theorem),
+    "datatype proof changed its conclusion");
+  check_oracle_tags "datatype admission" theorem;
+  assert (not (null (!admitted)) andalso not (repeated (!admitted)),
+    "a datatype procedure admitted the same term twice in one call")
+end
+
+(* Binder admission checks the synthesized abstraction Type without
+   interning it; only the atoms' Types get IDs. *)
+fun skeleton_binder_admission_skips_synthesized_type_success () =
+let
+  val admission = SmtSkeletonProve.new_type_admission_context ()
+  val identity = ``\x:bool. x``
+  val nested = ``\x:bool. \y:bool. x``
+  val _ = #admit_abstraction admission "binder-type" identity
+  val _ = #admit_abstraction admission "binder-type" nested
+  val _ = assert (!(#nodes admission) = 1,
+    "binder admission interned a synthesized abstraction Type")
+in
+  assert (#raw_size admission 100 nested =
+      SmtReplayImport.bounded_raw_size 100 nested,
+    "binder admission changed a binder's raw size")
+end
+
+(* The shared term check admits and rejects what new_term_check does,
+   including a binder bounded before it is opened. *)
+fun datatype_shared_term_check_matches_full_check_success () =
+let
+  val limit = 20
+  val full = SmtReplayArithmetic.new_term_check
+    {limit = limit, observe = fn () => ()}
+  val shared = SmtReplayArithmetic.new_shared_term_check limit
+  fun outcome check term = (check term; "admitted")
+    handle Feedback.HOL_ERR error => Feedback.message_of error
+  val part = ``(p:bool) /\ q``
+  val terms = [part, boolSyntax.mk_conj (part, part), ``\x:bool. x /\ y``,
+    ``\x:bool. x /\ x /\ x /\ x /\ x /\ x``,
+    boolSyntax.mk_conj (boolSyntax.mk_conj (part, part),
+      boolSyntax.mk_conj (part, part))]
+  val _ = List.app (fn term =>
+      assert (outcome shared term = outcome full term,
+        "the shared term check disagreed with the full check"))
+    terms
+  val _ = assert (outcome shared (List.nth (terms, 3)) <> "admitted",
+    "the shared term check admitted an oversized binder")
+  val theorem = SmtDatatypeProve.datatype_prove ``!x:num. NONE <> SOME x``
+in
+  assert (Thm.concl theorem ~~ ``!x:num. NONE <> SOME x`` andalso
+      null (Thm.hyp theorem),
+    "datatype proof under a binder changed its conclusion");
+  check_oracle_tags "datatype binder" theorem
+end
+
+(* A nested binder takes its raw size from its built node and its Type ID
+   from its argument IDs. *)
+fun graph_nested_binder_reuses_enclosing_size_success () =
+let
+  val graph = SmtReplayGraph.new ()
+  val scope = SmtReplayGraph.root_scope graph
+  val outer = ``\x:bool. \y:bool. x /\ y``
+  val source = SmtReplayGraph.admit_binder graph scope 100 outer
+  val inner = case SmtReplayGraph.view graph (#node source) of
+      SmtReplayGraph.AdmittedBinder {body, ...} => body
+    | _ => die "FAIL: admitted binder lost its body"
+  fun raw node =
+    SmtReplayGraph.unfolded_nodes graph SmtReplayGraph.RawNodes 100 node
+  val function = SmtReplayGraph.import graph scope 100
+    (Term.mk_var ("nested_binder_function", ``:bool -> bool``))
+in
+  assert (Thm.concl (#bridge source) ~~ boolSyntax.mk_eq (outer, outer) andalso
+      null (Thm.hyp (#bridge source)),
+    "nested binder admission changed its bridge");
+  check_oracle_tags "nested binder admission" (#bridge source);
+  assert (SmtReplayGraph.representative graph inner ~~ ``\y:bool. x /\ y``,
+    "nested binder admission changed the inner binder");
+  assert (raw (#node source) = SmtReplayImport.bounded_raw_size 100 outer
+      andalso raw inner =
+        SmtReplayImport.bounded_raw_size 100 ``\y:bool. x /\ y``,
+    "a nested binder's raw size differs from its walked size");
+  assert (SmtReplayGraph.type_id graph inner =
+      SmtReplayGraph.type_id graph (#node function),
+    "a nested binder's Type ID differs from its Type's")
+end
+
+(* The overload-free grammar is reused while the grammar is unchanged and
+   rebuilt when it changes. *)
+fun term_to_string_follows_grammar_changes_success () =
+let
+  val term = ``(x:int) - y <> z /\ m < (n:num)``
+  val first = Library.term_to_string term
+  val second = Library.term_to_string term
+  val saved = Parse.current_grammars ()
+  val _ = Parse.temp_remove_termtok {term_name = "/\\", tok = "/\\"}
+  val _ = Parse.temp_remove_termtok
+    {term_name = "/\\", tok = UTF8.chr 0x2227}
+  val changed = Library.term_to_string term
+  val _ = Parse.temp_set_grammars saved
+  val restored = Library.term_to_string term
+in
+  assert (String.isSubstring "~(x int_sub y = z)" first andalso
+      second = first andalso restored = first,
+    "term_to_string printed one term two ways under one grammar");
+  assert (changed = "/\\ (~(x int_sub y = z)) (m < n)",
+    "term_to_string kept a grammar after it changed: " ^ changed)
+end
+
+(* term_types visits each distinct subterm once and gives the list the
+   fold over every occurrence gave. *)
+fun datatype_term_types_per_distinct_subterm_success () =
+let
+  fun occurrences term = List.foldl (fn (subterm, types) =>
+      SmtDatatypeProve.type_closure (Term.type_of subterm) types)
+    [] (SmtDatatypeProve.subterms term)
+  fun shared 0 = ``h :: (l:num list) = l``
+    | shared n = let val child = shared (n - 1)
+                 in boolSyntax.mk_conj (child, child) end
+  val _ = List.app (fn term =>
+      assert (SmtDatatypeProve.term_types term = occurrences term,
+        "term_types changed its list of types"))
+    [``\l:num list. (h:num) :: l = h :: l``, shared 4,
+     ``!x:(num # num list) option.
+         x = NONE \/ ?y. x = SOME (y, [y + 1])``]
+  val types = within_mutator_seconds 2 SmtDatatypeProve.term_types
+    (shared 40)
+in
+  assert (List.length types = List.length (occurrences (shared 1)),
+    "term_types changed its types on a shared term")
+end
+
+(* The sequence prover takes a step with APPEND or LENGTH, either alone. *)
+fun seq_concat_length_single_scan_success () =
+let
+  fun check goal =
+    let val theorem = SmtSeqProve.concat_length_prove goal in
+      assert (Thm.concl theorem ~~ goal andalso null (Thm.hyp theorem),
+        "concat/length proof changed its conclusion");
+      check_oracle_tags "concat/length" theorem
+    end
+in
+  List.app check [``APPEND [] (l:int list) = l``,
+    ``LENGTH [a:int; b] = 2``,
+    ``LENGTH (APPEND l1 (l2:int list)) = LENGTH l1 + LENGTH l2``];
+  expect_hol_error_contains "concat/length without either"
+    "not a concat/length shape"
+    (fn () => SmtSeqProve.concat_length_prove ``(l:int list) = l``)
+end
+
 fun cpc_word_aci_literal_identity_success () =
 let
   val bits = String.implode (List.tabulate (128, fn _ => #"1"))
@@ -38638,6 +38999,32 @@ let
       cpc_bvite_words_circuit_first_success),
     ("cpc_word_schemas_shared_per_replay_success",
       cpc_word_schemas_shared_per_replay_success),
+    ("replay_canon_proposes_only_at_law_heads_success",
+      replay_canon_proposes_only_at_law_heads_success),
+    ("replay_canon_skips_passes_without_triggers_success",
+      replay_canon_skips_passes_without_triggers_success),
+    ("z3_secondary_canon_triggers_under_binders_success",
+      z3_secondary_canon_triggers_under_binders_success),
+    ("replay_type_order_small_and_large_agree_success",
+      replay_type_order_small_and_large_agree_success),
+    ("cpc_binder_cong_lifts_through_negation_success",
+      cpc_binder_cong_lifts_through_negation_success),
+    ("cpc_canonical_trans_endpoint_chains_success",
+      cpc_canonical_trans_endpoint_chains_success),
+    ("datatype_procedures_admit_each_term_once_success",
+      datatype_procedures_admit_each_term_once_success),
+    ("skeleton_binder_admission_skips_synthesized_type_success",
+      skeleton_binder_admission_skips_synthesized_type_success),
+    ("datatype_shared_term_check_matches_full_check_success",
+      datatype_shared_term_check_matches_full_check_success),
+    ("graph_nested_binder_reuses_enclosing_size_success",
+      graph_nested_binder_reuses_enclosing_size_success),
+    ("term_to_string_follows_grammar_changes_success",
+      term_to_string_follows_grammar_changes_success),
+    ("datatype_term_types_per_distinct_subterm_success",
+      datatype_term_types_per_distinct_subterm_success),
+    ("seq_concat_length_single_scan_success",
+      seq_concat_length_single_scan_success),
     ("cpc_word_aci_literal_identity_success",
       cpc_word_aci_literal_identity_success),
     ("cpc_quantified_imp_disj_trans_success",
