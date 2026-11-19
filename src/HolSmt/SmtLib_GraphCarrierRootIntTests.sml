@@ -3,9 +3,10 @@
    closure and [prepare_closure_admitted] for a focus admission. It covers
    the four num/bag quantifier carriers, repeated execution, a scope retired
    before execution, the Work allowance at exact and one below, callback
-   exceptions, a foreign Work receipt and the refusals of a goal that does
-   not fit (a quantifier that is neither forall nor exists, a carrier that is
-   neither num nor a bag, a wrong stock law, a negative ordinal and a goal
+   exceptions, a receipt lent to a foreign owner or in a child scope and
+   the refusals of a goal that does not fit (a quantifier that is neither
+   forall nor exists, a carrier that is neither num nor a bag, a wrong
+   stock law, a negative ordinal and a goal
    over the output limit).
 
    Every relation is computed inside one run: a complete run measures the
@@ -24,11 +25,9 @@ struct
   (* Holdep does not register the dependency through the alias X above, so
      the fixture is also used qualified. *)
   val cap = SmtLib_GraphCarrierRootFixture.cap
-  fun require text yes = if yes then () else raise Fail text
-  fun test label action =
-    (testutils.tprint label; action (); testutils.OK ())
-  fun refuses action = (ignore (action ()); false)
-    handle Feedback.HOL_ERR _ => true
+  val require = X.require
+  val test = X.test
+  val refuses = X.refuses
   fun charged (e : X.int_fixture) = #charged (W.audit (#work e))
   fun retired (e : X.int_fixture) = #retired (W.audit (#work e))
 
@@ -83,23 +82,16 @@ struct
   fun setup work_limit output (term,fixed) =
     X.int_setup work_limit output term fixed
 
-  datatype outcome = Refused_in_prepare | Refused_in_execute | Completed
-  type observation =
-    {outcome : outcome,prepared : int,final : int,retired : bool,
-     callbacks : int}
+  datatype outcome = datatype X.outcome
+  val completes = X.completes
   (* One complete pipeline over a fresh goal. *)
-  fun run ({prepare,...} : entry) work_limit row : observation =
+  fun run ({prepare,...} : entry) work_limit row : int X.observation =
     let val e = setup work_limit cap row
-        val calls = ref 0
-        val held = SOME (prepare e 0 (fn _ => calls := !calls + 1) silent)
-          handle Feedback.HOL_ERR _ => NONE
-        val prepared = charged e
-        val outcome = case held of NONE => Refused_in_prepare
-          | SOME execute => (ignore (endpoints e (execute ())); Completed)
-              handle Feedback.HOL_ERR _ => Refused_in_execute
-    in {outcome=outcome,prepared=prepared,final=charged e,
-        retired=retired e,callbacks= !calls} end
-  fun completes (o_ : observation) = #outcome o_ = Completed
+    in X.observe
+         {prepare=fn check =>
+            let val execute = prepare e 0 check silent
+            in fn () => ignore (endpoints e (execute ())) end,
+          charged=fn () => charged e,retired=fn () => retired e} end
 
   (* Conversions: the exact closed endpoints of every carrier. Returns the
      Work charged when the plan was prepared and when it was executed. *)
@@ -184,18 +176,20 @@ struct
       entries
 
   (* A refusal from preparation leaves the owner retired, with no callback.
-     The inventory of the goal precedes the law's preparation, so a refusal
-     from it also makes no theorem ([bare]); the syntax caps are checked
-     after the law is instantiated. *)
+     The inventory of the goal precedes the producer of the law, which makes
+     inferences, so a refusal from the inventory also makes no theorem
+     ([bare]); the number made by a refusal from the syntax caps, which
+     come after the producer, is not asserted. *)
   fun refusal_in_prepare bare (p : entry) ordinal output row message =
     let val e = setup plenty output row
-        val calls = ref 0 val count = Count.thm_count ()
+        val calls = ref 0 val count = X.inferences ()
         val reason = (ignore (#prepare p e ordinal
             (fn _ => calls := !calls + 1) silent); NONE)
           handle Feedback.HOL_ERR err => SOME (Feedback.message_of err)
     in require (#name p ^ " did not refuse with: " ^ message)
-         (reason = SOME message andalso retired e andalso !calls = 0 andalso
-          (not bare orelse Count.thm_count () = count)) end
+         (reason = SOME message andalso
+          X.settled (if bare then X.nothing else fn _ => true)
+            (retired e) calls count) end
   fun refused_goals () =
     List.app (fn (p : entry) =>
       (List.app (fn (term,message) =>
@@ -246,18 +240,27 @@ struct
       in require (#name p ^ " continued after an observer retired a child")
            (denied andalso !calls = 1 andalso retired e) end)) entries
 
-  (* A receipt is lent only to the owner that produced it; a foreign owner
-     is retired by the attempt, the producing one is not. *)
+  (* A receipt is lent only to the owner that produced it, in the scope it
+     was made in; a foreign owner, or the owner in a child scope, is
+     retired by the attempt, the producing one is not. *)
   fun foreign_receipt () =
     List.app (fn (p : entry) =>
-      let val e = setup plenty cap num_forall
+      (let val e = setup plenty cap num_forall
           val conversion = #prepare p e 0 silent silent ()
           val other = setup plenty cap num_forall
           val denied = refuses (fn () =>
             C.validate_for (X.int_expected other) conversion)
       in require (#name p ^ " lent a receipt to a foreign owner")
            (denied andalso retired other andalso not (retired e) andalso
-            #source (C.endpoints conversion) = #source p e) end) entries
+            #source (C.endpoints conversion) = #source p e) end;
+       let val e = setup plenty cap num_forall
+          val conversion = #prepare p e 0 silent silent ()
+          val child = G.new_scope (#graph e) (#scope e) []
+          val denied = refuses (fn () => C.validate_for
+            {graph= #graph e,scope=child,sources= #sources e,
+             work= #work e} conversion)
+      in require (#name p ^ " lent a receipt to a child scope")
+           (denied andalso retired e) end)) entries
 
   fun run_all () = X.counting (fn () =>
     (test "int carriers convert through the three entries" conversions;

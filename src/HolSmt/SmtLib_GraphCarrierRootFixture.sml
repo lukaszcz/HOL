@@ -2,8 +2,9 @@
    For the policy provers: a goal, its stock carrier law, a native
    contract, a focus admission and, for the opaque case, genuine retained
    profiles. For the int prover: the opened views, the canonical closure and
-   the focus admission of a goal with its stock law. Shared by selftest
-   postludes 279 and 290, by SmtLib_GraphCarrierRootPolicyTests and by
+   the focus admission of a goal with its stock law, and the helpers the
+   two test modules share. Shared by selftest postludes 279 and 290, by
+   SmtLib_GraphCarrierRootPolicyTests and by
    SmtLib_GraphCarrierRootIntTests. *)
 structure SmtLib_GraphCarrierRootFixture =
 struct
@@ -25,7 +26,41 @@ struct
   type fixture = {graph:G.graph,scope:G.scope,sources:S.sources,
     work:W.portfolio,native:NC.contract,admission:Q.policy_focus,
     law:P.closed_fact,node:G.node}
-  fun require text yes = if yes then () else raise Fail text
+  fun require text yes = if yes then () else testutils.die text
+  fun test label action =
+    (testutils.tprint label; action (); testutils.OK ())
+  fun refuses action = (ignore (action ()); false)
+    handle Feedback.HOL_ERR _ => true
+
+  (* How a pipeline (a preparation, then the execution of its plan) ended,
+     and what it cost. [callbacks] counts the type callbacks made. *)
+  datatype outcome = Refused_in_prepare | Refused_in_execute | Completed
+  type 'work observation =
+    {outcome : outcome,prepared : 'work,final : 'work,retired : bool,
+     callbacks : int}
+  (* [prepare] is given the type callback; the thunk it returns executes
+     the prepared plan. [charged] and [retired] read the owner's Work. *)
+  fun observe {prepare,charged,retired} : 'work observation =
+    let val calls = ref 0
+        val held = SOME (prepare (fn _ => calls := !calls + 1))
+          handle Feedback.HOL_ERR _ => NONE
+        val prepared = charged ()
+        val outcome = case held of NONE => Refused_in_prepare
+          | SOME execute => (execute (); Completed)
+              handle Feedback.HOL_ERR _ => Refused_in_execute
+    in {outcome=outcome,prepared=prepared,final=charged (),
+        retired=retired (),callbacks= !calls} end
+  fun completes (o_ : 'work observation) = #outcome o_ = Completed
+  fun prepares (o_ : 'work observation) = #outcome o_ <> Refused_in_prepare
+
+  (* The inferences made so far, for a test that counts them (inside
+     [counting]). A refusal is [settled] when it left the owner retired,
+     called no type callback and made a number of inferences, since
+     [count], that [fits]. *)
+  fun inferences () = #total (Count.thm_count ())
+  fun nothing made = made = 0
+  fun settled fits retired calls count =
+    retired andalso !calls = 0 andalso fits (inferences () - count)
   (* The kernel counts inferences (Count.thm_count) only while asked to;
      a test that compares counts runs inside [counting]. *)
   fun counting action =

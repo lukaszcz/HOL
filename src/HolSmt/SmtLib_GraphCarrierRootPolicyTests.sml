@@ -26,11 +26,9 @@ struct
   val native = SmtLib_GraphCarrierRootFixture.native
   structure NC = SmtReplayNativeContract
 
-  fun require text yes = if yes then () else testutils.die text
-  fun test label action =
-    (testutils.tprint label; action (); testutils.OK ())
-  fun refuses action = (ignore (action ()); false)
-    handle Feedback.HOL_ERR _ => true
+  val require = X.require
+  val test = X.test
+  val refuses = X.refuses
   fun charged (e : X.fixture) = #charged (W.audit_policy (#work e))
   fun retired (e : X.fixture) = #retired (W.audit_policy (#work e))
 
@@ -67,25 +65,19 @@ struct
     {semantic_limits= #semantic_limits native,
      import_limit= #import_limit native,type_work_limit=native_work}
 
-  datatype outcome = Refused_in_prepare | Refused_in_execute | Completed
-  type observation =
-    {outcome : outcome,prepared : IntInf.int,final : IntInf.int,
-     retired : bool,callbacks : int}
+  datatype outcome = datatype X.outcome
+  val completes = X.completes
+  val prepares = X.prepares
   (* One complete pipeline over a fresh NUM forall closure. *)
-  fun run ({prepare,...} : prover) work_limit native_work : observation =
+  fun run ({prepare,...} : prover) work_limit native_work
+      : IntInf.int X.observation =
     let val e = X.setup_limited work_limit ``!n:num. T``
           HolSmtTheory.NUM_FORALL_TO_INT (limits native_work)
-        val calls = ref 0
-        val held = SOME (prepare e [] (fn _ => calls := !calls + 1))
-          handle Feedback.HOL_ERR _ => NONE
-        val prepared = charged e
-        val outcome = case held of NONE => Refused_in_prepare
-          | SOME execute => (ignore (execute ()); Completed)
-              handle Feedback.HOL_ERR _ => Refused_in_execute
-    in {outcome=outcome,prepared=prepared,final=charged e,
-        retired=retired e,callbacks= !calls} end
-  fun completes (o_ : observation) = #outcome o_ = Completed
-  fun prepares (o_ : observation) = #outcome o_ <> Refused_in_prepare
+    in X.observe
+         {prepare=fn check =>
+            let val execute = prepare e [] check
+            in fn () => ignore (execute ()) end,
+          charged=fn () => charged e,retired=fn () => retired e} end
 
   (* Least value of a monotone allowance under which [accepts] holds. *)
   fun least accepts hi =
@@ -129,23 +121,24 @@ struct
     native
   fun prepare_with (p : prover) (e : X.fixture) profiles calls =
     #prepare p e profiles (fn _ => calls := !calls + 1)
-  fun settled (e : X.fixture) calls count =
-    (retired e andalso !calls = 0 andalso Count.thm_count () = count)
-  (* A preparation that refuses, leaving the owner retired, with no
-     callback and no theorem made. *)
+  (* A refusal that left the owner retired, with no callback and no
+     theorem made. *)
+  fun untouched (e : X.fixture) calls count =
+    X.settled X.nothing (retired e) calls count
+  (* A preparation that refuses in that way. *)
   fun denied_in_prepare p (e : X.fixture) profiles calls =
-    let val count = Count.thm_count ()
+    let val count = X.inferences ()
     in refuses (fn () => prepare_with p e profiles calls) andalso
-       settled e calls count end
+       untouched e calls count end
 
   fun opaque_predicate () =
     (List.app (fn body_issued =>
        let val o_ = opaque body_issued val e = #fixture o_
-           val calls = ref 0 val count = Count.thm_count ()
+           val calls = ref 0 val count = X.inferences ()
            val denied = refuses (fn () =>
              prepare_with ordinary e (#profiles o_) calls)
        in require "ordinary prover accepted an opaque predicate"
-            (denied andalso settled e calls count) end) [true,false];
+            (denied andalso untouched e calls count) end) [true,false];
      List.app (fn body_issued =>
        let val o_ = opaque body_issued val e = #fixture o_
            val calls = ref 0
@@ -161,10 +154,10 @@ struct
           null (Thm.hyp (#theorem d)) andalso not (retired e)) end)
        [true,false];
      let val o_ = opaque true val e = #fixture o_
-         val calls = ref 0 val count = Count.thm_count ()
+         val calls = ref 0 val count = X.inferences ()
          val denied = refuses (fn () => prepare_with profiled e [] calls)
      in require "profiled prover invented a missing opaque profile"
-          (denied andalso settled e calls count) end)
+          (denied andalso untouched e calls count) end)
 
   (* A profile is genuine only in the frame that issued it. *)
   fun wrong_frame () =
@@ -250,35 +243,34 @@ struct
      the refusal comes from preparation, with the owner retired and no
      callback. [fits] says whether the refusal made an admissible number of
      inferences, counted from just before the preparation. *)
-  fun inferences () = #total (Count.thm_count ())
   fun refusal_in_prepare fits p (e : X.fixture) message =
-    let val calls = ref 0 val count = inferences ()
+    let val calls = ref 0 val count = X.inferences ()
         val reason = (ignore (prepare_with p e [] calls); NONE)
           handle Feedback.HOL_ERR err => SOME (Feedback.message_of err)
     in require (#name p ^ " did not refuse with: " ^ message)
-         (reason = SOME message andalso retired e andalso !calls = 0 andalso
-          fits (inferences () - count)) end
+         (reason = SOME message andalso
+          X.settled fits (retired e) calls count) end
   (* The goals are refused before any theorem is made. *)
-  val refusal_before_theorems = refusal_in_prepare (fn made => made = 0)
   fun refused_goals () =
     List.app (fn p =>
       List.app (fn (term,message) =>
-        refusal_before_theorems p
+        refusal_in_prepare X.nothing p
           (X.setup term HolSmtTheory.NUM_FORALL_TO_INT native) message)
         [(``!b:bool->int. T``,"carrier is neither num nor arbitrary bag"),
          (``?!n:num. T``,"not forall or exists"),
          (``(P:(num->bool)->bool) (\n:num. T)``,"not a constant quantifier")])
       provers
-  (* The output limit is checked once the stock law is instantiated, so
-     the refusal makes some inferences, but fewer than a complete run. *)
+  (* The output limit is refused inside the preparation. The producer of the
+     law makes inferences first (H.begin_original_with_policy), before any
+     instantiation, so the refusal makes some, but no more than a complete
+     preparation does, measured here after the same setup. *)
   fun refused_output_metadata () =
     List.app (fn p =>
-      let val start = inferences ()
-          val e = X.setup ``!n:num. T`` HolSmtTheory.NUM_FORALL_TO_INT native
-          val calls = ref 0
-          val _ = prepare_with p e [] calls ()
-          val whole = inferences () - start
-      in refusal_in_prepare (fn made => made < whole) p
+      let val e = X.setup ``!n:num. T`` HolSmtTheory.NUM_FORALL_TO_INT native
+          val calls = ref 0 val start = X.inferences ()
+          val _ = prepare_with p e [] calls
+          val prepared = X.inferences () - start
+      in refusal_in_prepare (fn made => made <= prepared) p
         (X.setup_policy {input_limit=RP.Uncapped,output_limit=RP.AtMost 1,
            template_limit=RP.Uncapped} RP.Uncapped ``!n:num. T``
            HolSmtTheory.NUM_FORALL_TO_INT native)
