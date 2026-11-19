@@ -330,6 +330,8 @@ val _ = new_constant ("smt_nonfree_nil", ``:'a smt_nonfree``)
 val _ = new_constant
   ("smt_nonfree_cons", ``:'a -> 'a smt_nonfree -> 'a smt_nonfree``)
 val _ = new_constant ("smtlib_uf_logic_foo", ``:int -> int``)
+val _ = new_constant ("smt_macro_dep_f", ``:int -> int``)
+val _ = new_constant ("smt_macro_dep_g", ``:int -> int``)
 val _ = new_constant ("smtlib_array_uf_fun", ``:'a -> 'a``)
 val _ = new_constant
   ("smtlib_fp_uf_pred", ``:('t,'w) smtfp -> ('t,'w) smtfp -> bool``)
@@ -12566,7 +12568,8 @@ in
   assert (Thm.concl theorem ~~
       boolSyntax.mk_neg (boolSyntax.mk_eq (``0:int``, skolem)) andalso
       HOLset.equal (Thm.hypset theorem, Thm.hypset premise),
-    "symm did not flip the disequality from its premise alone")
+    "symm did not flip the disequality from its premise alone");
+  check_oracle_tags "cpc symm disequality" theorem
 end
 
 fun cpc_quant_var_elim_symmetric_guard_replay_success () =
@@ -27242,14 +27245,24 @@ let
     Z3_ProofReplay.asserted_equality_substitution_prove_for_test sources goal
   fun rejects sources goal =
     (ignore (prove sources goal); false) handle Feedback.HOL_ERR _ => true
+  (* proves [goal] from exactly the [used] assertions, with no oracle *)
+  fun proves_from name sources used goal =
+    let val theorem = prove sources goal
+    in
+      assert (Thm.concl theorem ~~ goal andalso
+          List.length (Thm.hyp theorem) = List.length used andalso
+          List.all (fn h => List.exists (Term.aconv h) used)
+            (Thm.hyp theorem),
+        name ^ ": not proved from exactly the macros it expands");
+      check_oracle_tags name theorem
+    end
   (* A reflexive assertion is skipped: rewriting with it never ends. *)
   val reflexive = ``(macro_f:int->int) 3 = macro_f 3``
-  val theorem = prove [macro, unused, reflexive] target
+  val dep_g = ``!x:int. smt_macro_dep_g x = x + 1``
+  val dep_f = ``!x:int. smt_macro_dep_f x = smt_macro_dep_g x``
+  val macro_q = ``!x:int. macro_q x = (0 <= x /\ !y:int. y <= x \/ x < y)``
 in
-  assert (Thm.concl theorem ~~ target andalso
-      List.length (Thm.hyp theorem) = 1 andalso
-      Term.aconv (hd (Thm.hyp theorem)) macro,
-    "macro expansion did not prove the rewrite from exactly its definition");
+  proves_from "macro expansion" [macro, unused, reflexive] [macro] target;
   assert (rejects [macro]
       ``~((macro_f:int->int) 2 = 7) <=> ~(2 + 6 = 7:int)``,
     "macro expansion admitted an unequal residue");
@@ -27258,23 +27271,24 @@ in
     "a recursive equation was used as a macro");
   assert (rejects [``!x:int. -x = x``] ``-(asserted_y:int) = asserted_y``,
     "an equation for an SMT builtin was used as a macro");
-  (* Rules apply one head at a time, so mutually inverse macros end. *)
-  assert (Thm.concl (prove [``!l:int list. REVERSE l = FRONT l``,
-                            ``!l:int list. FRONT l = REVERSE l``]
-                       ``REVERSE [1:int] = FRONT [1]``) ~~
-                       ``REVERSE [1:int] = FRONT [1]``,
-    "mutually inverse macros did not prove their own equation");
+  (* APPEND is the solver's own seq.++, not a macro. *)
+  assert (rejects [``!xs ys:int list. APPEND xs ys = xs``]
+      ``APPEND [1:int] [2] = [1]``,
+    "an equation for a natively encoded operator was used as a macro");
+  (* Mutually inverse macros would rewrite each other forever. *)
+  assert (rejects [``!l:int list. TL l = FRONT l``,
+                   ``!l:int list. FRONT l = TL l``]
+      ``TL [1:int; 2] = FRONT [1; 2]``,
+    "macros that use each other were applied");
+  (* A macro is expanded before the ones its body uses, whatever the
+     order of the assertions. *)
+  proves_from "nested macros" [dep_g, dep_f] [dep_g, dep_f]
+    ``~(smt_macro_dep_f 2 = 7) <=> ~(2 + 1 = 7:int)``;
   (* The expanded body is decided atom by atom under its connectives; the
      quantified conjunct is never sent to integer arithmetic. *)
-  assert (Thm.concl (prove [``!x:int. macro_q x =
-                               (0 <= x /\ !y:int. y <= x \/ x < y)``]
-                       ``(macro_q:int->bool) asserted_a =
-                         (asserted_a >= 0 /\
-                          !y:int. y <= asserted_a \/ asserted_a < y)``) ~~
-                       ``(macro_q:int->bool) asserted_a =
-                         (asserted_a >= 0 /\
-                          !y:int. y <= asserted_a \/ asserted_a < y)``,
-    "an expanded macro body was not decided atom by atom")
+  proves_from "atom-wise macro body" [macro_q] [macro_q]
+    ``(macro_q:int->bool) asserted_a =
+      (asserted_a >= 0 /\ !y:int. y <= asserted_a \/ asserted_a < y)``
 end
 
 fun z3_asserted_equality_substitution_boundaries () =

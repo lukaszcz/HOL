@@ -6945,9 +6945,11 @@ local
      !x1 ... xn. f x1 ... xn = t inside a bare rewrite step, without citing
      the assertion.  A macro rule is such an assertion whose arguments are its
      distinct bound variables, whose t is free only in them, and whose head f
-     is not an SMT builtin and does not occur in t.  Rules are grouped by
-     head and applied one head at a time, so two mutually inverse rules
-     cannot loop; each comes from ASSUME, so only rules that fire become
+     is a symbol the translation leaves uninterpreted and does not occur in
+     t.  Rules are grouped by head and applied one head at a time, callers
+     before the macros their bodies use, so one pass expands nested macros;
+     macros that use each other in a cycle are left out, so rules cannot
+     loop.  Each comes from ASSUME, so only rules that fire become
      hypotheses. *)
   fun asserted_macro_theorems assertions =
     let
@@ -6970,12 +6972,15 @@ local
             (Term.free_vars rhs) andalso
           not (Lib.op_mem Term.aconv head vars) andalso
           not (Lib.can (HolKernel.find_term is_head) rhs) andalso
+          SmtLib.outbound_collection_symbol head andalso
           not (Option.isSome (SmtLib.builtin_encoding lhs))
         end
         handle Feedback.HOL_ERR _ => false
-      fun head_of th =
-        #1 (boolSyntax.strip_comb (boolSyntax.lhs
-          (#2 (boolSyntax.strip_forall (Thm.concl th)))))
+      fun parts th =
+        let val (lhs, rhs) = boolSyntax.dest_eq
+          (#2 (boolSyntax.strip_forall (Thm.concl th)))
+        in (#1 (boolSyntax.strip_comb lhs), rhs) end
+      val head_of = #1 o parts
       fun group [] = []
         | group (th :: ths) =
             let
@@ -6985,8 +6990,26 @@ local
             in
               (th :: same) :: group rest
             end
+      fun uses group head =
+        List.exists (fn th => Lib.can (HolKernel.find_term (fn tm =>
+            Term.aconv tm head orelse
+            (Term.is_const tm andalso Term.is_const head andalso
+             Term.same_const tm head))) (#2 (parts th))) group
+      (* next a group no other remaining group uses; none left: a cycle *)
+      fun order [] = []
+        | order groups =
+            let
+              fun uncalled g = not (List.exists (fn other =>
+                  not (Portable.pointer_eq (other, g)) andalso
+                  uses other (head_of (hd g))) groups)
+            in
+              case List.find uncalled groups of
+                SOME g => g :: order (List.filter
+                  (fn other => not (Portable.pointer_eq (other, g))) groups)
+              | NONE => []
+            end
     in
-      group (List.map Thm.ASSUME (List.filter is_macro assertions))
+      order (group (List.map Thm.ASSUME (List.filter is_macro assertions)))
     end
 
   (* Substitution is the only use made of the assertions.  Most solve-eqs

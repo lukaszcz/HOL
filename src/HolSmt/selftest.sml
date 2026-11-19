@@ -85462,9 +85462,32 @@ val _ = run_postlude 438 "solver-stream-cleanup-8"
 val _ = run_postlude 439 "replay-kernel-boundary-6"
   SmtReplayKernelBoundaryTests.run
 
+(* A definition that mentions no num stays an assumption through the
+   num-to-int transfer and reaches Z3 as a quantified assertion, which
+   Z3's macro finder expands; the checked proof replays that and keeps the
+   definition among its hypotheses. *)
+val _ = run_postlude 440 "held-definition-hypothesis" (fn () =>
+  if not (Z3.is_configured ()) then () else
+  let
+    val f_def = ``!x:int. held_f x = x + 7``
+    val goal = ([f_def], ``(held_f:int->int) 2 = 9``)
+    val _ = testutils.tprint "Z3_TAC proves a goal from a held definition"
+    val thm = Tactical.TAC_PROOF (goal, HolSmtLib.Z3_TAC)
+  in
+    if Thm.concl thm ~~ #2 goal andalso
+       List.all (Term.aconv f_def) (Thm.hyp thm) andalso
+       not (List.null (Thm.hyp thm))
+    then
+      (Library.check_oracle_tags (Option.getOpt (Thm.getCT (), "-"))
+         "held definition" thm;
+       testutils.OK ())
+    else testutils.die ("held definition hypotheses: " ^
+      Hol_pp.thm_to_string thm)
+  end)
+
 val () =
   let
-    val expected = 440
+    val expected = 441
     val selected = length (keep_shard shard_k shard_n
       (List.tabulate (expected, fn index => index)))
     val _ = if !postlude_seen = expected andalso
