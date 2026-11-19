@@ -192,24 +192,19 @@ struct
     context_for expected schema
   fun instance_condition_for expected
       (Instance {matched = value as Match
-        {owner = owner as Owner {graph,...},traversal,...},proof,...}) index =
-    (Shared.condition_of owner "instance_condition_for"
-       {validate_match = fn () => validate_for expected value,
-        validate_fact = fn () => P.validate_closed_fact graph traversal
-          (#template_limit (W.semantic_limits expected)) proof,
-        traversal = traversal,proof = proof,index = index}
-     handle primary => (W.close expected;raise primary))
+        {owner,traversal,...},proof,...}) index =
+    Shared.condition_of owner (Shared.Plain expected) "instance_condition_for"
+      {validate_match = fn () => validate_for expected value,
+       traversal = traversal,proof = proof,index = index}
   fun instance_target_for expected
       (Instance {matched = value as Match
         {target,caller,traversal,...},...}) =
     (validate_for expected value;Shared.target_of target caller traversal)
   fun instance_fact_for expected
-      (Instance {matched = value as Match
-        {owner = Owner {graph,...},traversal,...},proof,...}) =
-    ((validate_for expected value;
-      P.validate_closed_fact graph traversal
-        (#template_limit (W.semantic_limits expected)) proof;proof)
-     handle primary => (W.close expected;raise primary))
+      (Instance {matched = value as Match {owner,traversal,...},proof,...}) =
+    Shared.fact_of owner (Shared.Plain expected)
+      {validate_match = fn () => validate_for expected value,
+       traversal = traversal,proof = proof}
   fun pattern_for expected (Schema
       {owner=owner as Owner {work,rulescope,...},whole,left,right,...}) =
     (Shared.pattern owner "pattern_for"

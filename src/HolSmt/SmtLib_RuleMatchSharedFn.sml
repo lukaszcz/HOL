@@ -88,10 +88,14 @@ sig
      arguments : (SmtReplayGraph.node * Walk.tree) list,
      canonical : canonical} ->
     {theorem : Thm.thm,proof : SmtReplayProof.closed_fact}
-  val condition_of : owner -> string ->
-    {validate_match : unit -> unit,validate_fact : unit -> unit,
-     traversal : SmtReplayGraph.scope,proof : SmtReplayProof.closed_fact,
-     index : int} ->
+  (* The closed fact of an instance after the owner's match validation and
+     the regime's closed-fact validation; any refusal retires the Work. *)
+  val fact_of : owner -> regime ->
+    {validate_match : unit -> unit,traversal : SmtReplayGraph.scope,
+     proof : SmtReplayProof.closed_fact} -> SmtReplayProof.closed_fact
+  val condition_of : owner -> regime -> string ->
+    {validate_match : unit -> unit,traversal : SmtReplayGraph.scope,
+     proof : SmtReplayProof.closed_fact,index : int} ->
     {node : SmtReplayGraph.node,child : SmtReplayGraph.closure_child,
      traversal : SmtReplayGraph.scope}
   val target_of : Walk.tree -> SmtReplayGraph.scope ->
@@ -638,13 +642,29 @@ struct
                   check_type = guarded_check}) end
     in {theorem = theorem,proof = proof} end
 
-  fun condition_of owner caller {validate_match,validate_fact,traversal,proof,
+  fun regime_work (Plain work) = work
+    | regime_work (Policied {work,...}) = work
+
+  (* Closed-fact validation under the template limit of the regime. *)
+  fun validate_proof owner regime traversal proof =
+    let val graph = A.graph owner
+    in case regime of
+         Plain work => P.validate_closed_fact graph traversal
+           (#template_limit (W.semantic_limits work)) proof
+       | Policied {work,...} => P.validate_closed_fact_with_policy graph
+           traversal (#template_limit (W.semantic_policy work)) proof end
+
+  fun fact_of owner regime {validate_match,traversal,proof} =
+    ((validate_match ();validate_proof owner regime traversal proof;proof)
+     handle primary => (W.close (regime_work regime);raise primary))
+
+  fun condition_of owner regime caller {validate_match,traversal,proof,
       index} =
     let val graph = A.graph owner
-    in validate_match ();
+    in (validate_match ();
        if index >= 0 then () else
          raise A.err caller "negative antecedent index";
-       validate_fact ();
+       validate_proof owner regime traversal proof;
        let val imp_id = #Name (Term.dest_thy_constid boolSyntax.implication)
            fun absent () = raise A.err caller "absent condition"
            fun select current left =
@@ -660,7 +680,8 @@ struct
            val node = select (P.closed_node proof) index
            val child = G.closure_root graph traversal node
            val _ = validate_match ()
-       in {node=node,child=child,traversal=traversal} end end
+       in {node=node,child=child,traversal=traversal} end)
+       handle primary => (W.close (regime_work regime);raise primary) end
 
   fun target_of target caller traversal =
     {node = node target,child = #child (data target),

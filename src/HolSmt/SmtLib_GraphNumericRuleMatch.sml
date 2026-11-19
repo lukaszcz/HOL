@@ -153,24 +153,19 @@ struct
       in Instance {matched = value,theorem = theorem,proof = proof} end))
   fun instance_condition_for expected
       (Instance {matched = value as Match
-        {owner = owner as Owner {graph,...},traversal,...},proof,...}) index =
-    (Shared.condition_of owner "instance_condition_for"
-       {validate_match = fn () => validate_for expected value,
-        validate_fact = fn () => P.validate_closed_fact graph traversal
-          (#template_limit (W.semantic_limits expected)) proof,
-        traversal = traversal,proof = proof,index = index}
-     handle primary => (W.close expected;raise primary))
+        {owner,traversal,...},proof,...}) index =
+    Shared.condition_of owner (Shared.Plain expected) "instance_condition_for"
+      {validate_match = fn () => validate_for expected value,
+       traversal = traversal,proof = proof,index = index}
   fun instance_target_for expected
       (Instance {matched = value as Match
         {target,caller,traversal,...},...}) =
     (validate_for expected value;Shared.target_of target caller traversal)
   fun instance_fact_for expected
-      (Instance {matched = value as Match
-        {owner = Owner {graph,...},traversal,...},proof,...}) =
-    ((validate_for expected value;
-      P.validate_closed_fact graph traversal
-        (#template_limit (W.semantic_limits expected)) proof;proof)
-     handle primary => (W.close expected;raise primary))
+      (Instance {matched = value as Match {owner,traversal,...},proof,...}) =
+    Shared.fact_of owner (Shared.Plain expected)
+      {validate_match = fn () => validate_for expected value,
+       traversal = traversal,proof = proof}
   fun pattern_for expected (Schema
       {owner=owner as Owner {work,scope,...},whole,left,right,...}) =
     (Shared.pattern owner "pattern_for"
@@ -367,16 +362,15 @@ struct
              canonical = Shared.Bridge}
       in PolicyInstance {policy_matched = value,theorem = theorem,
         proof = proof} end))
+  fun policy_regime expected (PolicyOwner {native_contract,...}) =
+    Shared.Policied {work = expected,contract = native_contract}
   fun instance_condition_with_policy_for expected
       (PolicyInstance {policy_matched = value as PolicyMatch
-        {policy_owner = policy_owner as PolicyOwner {graph,...},traversal,
-         ...},proof,...}) index =
-    (Shared.condition_of policy_owner "instance_condition_with_policy_for"
-       {validate_match = fn () => validate_with_policy_for expected value,
-        validate_fact = fn () => P.validate_closed_fact_with_policy graph
-          traversal (#template_limit (W.semantic_policy expected)) proof,
-        traversal = traversal,proof = proof,index = index}
-     handle primary => (W.close expected;raise primary))
+        {policy_owner,traversal,...},proof,...}) index =
+    Shared.condition_of policy_owner (policy_regime expected policy_owner)
+      "instance_condition_with_policy_for"
+      {validate_match = fn () => validate_with_policy_for expected value,
+       traversal = traversal,proof = proof,index = index}
   fun instance_target_with_policy_for expected
       (PolicyInstance {policy_matched = value as PolicyMatch
         {target,caller,traversal,...},...}) =
@@ -384,11 +378,10 @@ struct
      Shared.target_of target caller traversal)
   fun instance_fact_with_policy_for expected
       (PolicyInstance {policy_matched = value as PolicyMatch
-        {policy_owner = PolicyOwner {graph,...},traversal,...},proof,...}) =
-    ((validate_with_policy_for expected value;
-      P.validate_closed_fact_with_policy graph traversal
-        (#template_limit (W.semantic_policy expected)) proof;proof)
-     handle primary => (W.close expected;raise primary))
+        {policy_owner,traversal,...},proof,...}) =
+    Shared.fact_of policy_owner (policy_regime expected policy_owner)
+      {validate_match = fn () => validate_with_policy_for expected value,
+       traversal = traversal,proof = proof}
   fun pattern_with_policy_for expected (PolicySchema
       {policy_owner=policy_owner as PolicyOwner {work,scope,...},whole,left,
        right,...}) =
