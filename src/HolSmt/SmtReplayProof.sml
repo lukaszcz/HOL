@@ -10573,18 +10573,26 @@ struct
     | SCEArgumentClause of sce_future_argument
   fun sce_kind_future SCERuleClause=NONE
     | sce_kind_future(SCEArgumentClause future)=SOME future
+  (* The checks every clause guard runs first, in this order: the plan's
+     Work, its evidence, its frame, the caller scope and the closure
+     children.  Each guard adds its own checks after these, inside its own
+     failure wrapper. *)
+  fun sce_clause_base_guard expected work evidence frame graph caller scope
+      children=
+    (if Portable.pointer_eq(expected,work) then () else
+       raise ERR "source_condition_rule" "foreign expected Work";
+     sce_guard expected evidence;
+     let val d=Scope.description_for expected frame
+     in if Portable.pointer_eq(#graph d,graph) andalso #scope d=scope
+         then () else raise ERR "source_condition_rule" "frame changed"
+     end;
+     G.validate_scope graph caller;
+     List.app(fn child=>ignore(G.closure_child_node graph caller child))
+       children)
   fun sce_core_guard expected kind
       ({work,evidence,frame,graph,caller,scope,children,...}:sce_clause_core)=
     sr_fail expected (fn()=>
-      (if Portable.pointer_eq(expected,work) then () else
-         raise ERR "source_condition_rule" "foreign expected Work";
-       sce_guard expected evidence;
-       let val d=Scope.description_for expected frame
-       in if Portable.pointer_eq(#graph d,graph) andalso #scope d=scope
-           then () else raise ERR "source_condition_rule" "frame changed"
-       end;
-       G.validate_scope graph caller;
-       List.app(fn child=>ignore(G.closure_child_node graph caller child))
+      (sce_clause_base_guard expected work evidence frame graph caller scope
          children;
        case kind of SCERuleClause=>()
          | SCEArgumentClause future=>sce_future_guard graph scope future))
@@ -11133,7 +11141,6 @@ struct
       {evidence,frame,caller,steps,terminal,check_type}:sce_clause_core=
     sr_fail expected (fn()=>W.with_step expected (fn()=>
     let
-      val future=sce_kind_future kind
       val ctx=sce_prepare_context expected evidence
         (case kind of
            SCERuleClause=>SCERuleFrame {frame=frame,caller=caller}
@@ -11149,6 +11156,7 @@ struct
       val hyp= #hyp ctx ()
       val rows= #rows ctx ()
       val args= #args ctx ()
+      val future=sce_kind_future kind
       val future_tree=case future of NONE=>NONE
         | SOME(SCEFutureArgument {name,ty,...})=>
             (tick(String.size name+1);
@@ -15689,15 +15697,7 @@ struct
   fun scr_clause_guard expected (SCRClausePlan
       {work,evidence,frame,graph,caller,scope,children,future,closing,...})=
     sr_fail expected (fn()=>
-      (if Portable.pointer_eq(expected,work) then () else
-         raise ERR "source_condition_rule" "foreign expected Work";
-       sce_guard expected evidence;
-       let val d=Scope.description_for expected frame
-       in if Portable.pointer_eq(#graph d,graph) andalso #scope d=scope
-           then () else raise ERR "source_condition_rule" "frame changed"
-       end;
-       G.validate_scope graph caller;
-       List.app(fn child=>ignore(G.closure_child_node graph caller child))
+      (sce_clause_base_guard expected work evidence frame graph caller scope
          children;
        List.app(sce_future_guard graph scope)future;
        case closing of NONE=>() | SOME data=>
