@@ -22304,7 +22304,9 @@ end
    and equal middles bridge without conversion. *)
 fun cpc_canonical_trans_endpoint_chains_success () =
 let
-  fun check (first, second) =
+  val first_hyp = ``(p:bool) = ((x:int) >= 0)``
+  val middle = ``0 <= (x:int)``
+  fun check ((first, second), second_hyp) =
     let
       val proof = parse_cpc_proof_string
         ("((declare-const x Int) (declare-const p Bool) \
@@ -22314,8 +22316,9 @@ let
       val theorem = CPC_ProofReplay.replay_root_for_test proof
     in
       assert (Thm.concl theorem ~~ ``(p:bool) = q`` andalso
-          List.length (Thm.hyp theorem) = 2,
-        "canonical CPC trans changed its conclusion");
+          HOLset.equal (Thm.hypset theorem,
+            HOLset.fromList Term.compare [first_hyp, second_hyp]),
+        "canonical CPC trans changed its conclusion or hypotheses");
       assert (profile_call_count
           "CPC(rung:canonical_trans/provenance-canonical)" = 1,
         "CPC trans did not take the canonical route");
@@ -22325,8 +22328,10 @@ in
   (* The second needs the first premise's right endpoint again after its
      first orientation fails. *)
   List.app check
-    [("(= p (>= x 0))", "(= (<= 0 x) q)"),
-     ("(= p (>= x 0))", "(= q (<= 0 x))")]
+    [(("(= p (>= x 0))", "(= (<= 0 x) q)"),
+      boolSyntax.mk_eq (middle, ``q:bool``)),
+     (("(= p (>= x 0))", "(= q (<= 0 x))"),
+      boolSyntax.mk_eq (``q:bool``, middle))]
 end
 
 (* Checked datatype procedures admit each term object once per call. *)
