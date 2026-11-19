@@ -24,8 +24,9 @@ struct
     work:W.portfolio,native:NC.contract,admission:Q.policy_focus,
     law:P.closed_fact,node:G.node}
   fun require text yes = if yes then () else raise Fail text
-  (* [work_limit] bounds the Work portfolio, setup included. *)
-  fun setup_limited work_limit term fixed limits : fixture =
+  (* [policy] is the Work portfolio's metadata policy and [work_limit]
+     bounds the portfolio, setup included. *)
+  fun setup_policy policy work_limit term fixed limits : fixture =
     let val graph = G.new () val scope = G.root_scope graph
         val sources = S.new_with_policy graph scope RP.Uncapped
           {goal=term,assumptions=[]}
@@ -39,11 +40,12 @@ struct
           {node= #node opened,theorem=fixed,template_limit=RP.Uncapped,
            check_type=fn _=>()}
         val work = W.begin_with_policy graph scope sources
-          {limits=metadata,work_limit=work_limit}
+          {limits=policy,work_limit=work_limit}
         val contract = NC.capture work limits
         val admission = Q.initial_goal_with_policy work {view=SOME view}
     in {graph=graph,scope=scope,sources=sources,work=work,native=contract,
         admission=admission,law=law,node= #node view} end
+  fun setup_limited work_limit = setup_policy metadata work_limit
   fun setup term fixed limits = setup_limited RP.Uncapped term fixed limits
   fun expected (e : fixture) =
     {graph= #graph e,scope= #scope e,sources= #sources e,work= #work e}

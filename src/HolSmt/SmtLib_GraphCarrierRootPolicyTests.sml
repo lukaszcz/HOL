@@ -18,7 +18,8 @@ struct
   structure RP = SmtReplayResourcePolicy
   structure C = SmtLib_GraphCarrierRoot
   structure X = SmtLib_GraphCarrierRootFixture
-  (* A qualified use, which Holdep sees through the alias above. *)
+  (* Holdep does not register the dependency through the alias X above, so
+     the fixture is also used qualified. *)
   val native = SmtLib_GraphCarrierRootFixture.native
   structure NC = SmtReplayNativeContract
 
@@ -127,6 +128,12 @@ struct
     #prepare p e profiles (fn _ => calls := !calls + 1)
   fun settled (e : X.fixture) calls count =
     (retired e andalso !calls = 0 andalso Count.thm_count () = count)
+  (* A preparation that refuses, leaving the owner retired, with no
+     callback and no theorem made. *)
+  fun denied_in_prepare p (e : X.fixture) profiles calls =
+    let val count = Count.thm_count ()
+    in refuses (fn () => prepare_with p e profiles calls) andalso
+       settled e calls count end
 
   fun opaque_predicate () =
     (List.app (fn body_issued =>
@@ -158,12 +165,11 @@ struct
 
   (* A profile is genuine only in the frame that issued it. *)
   fun wrong_frame () =
-    let val o_ = opaque true val e = #fixture o_
-        val calls = ref 0 val count = Count.thm_count ()
-        val denied = refuses (fn () =>
-          prepare_with profiled e (#root_profiles o_) calls)
-    in require "profiled prover took a root profile for a body-issued node"
-         (denied andalso settled e calls count);
+    (List.app (fn p =>
+       let val o_ = opaque true val e = #fixture o_
+           val calls = ref 0
+       in require (#name p ^ " took a root profile for a body-issued node")
+            (denied_in_prepare p e (#root_profiles o_) calls) end) provers;
        (* The ordinary metric never reads the profiles of a closure
           without opaque nodes; the profiled one revalidates them while
           executing. *)
@@ -181,28 +187,36 @@ struct
            val denied = refuses (fn () => (prepare_with profiled foreign
              (#profiles (opaque true)) calls) ())
        in require "profiled prover accepted a profile of another graph"
-            (denied andalso retired foreign) end
-    end
+            (denied andalso retired foreign) end)
 
   fun retired_frame () =
-    (let val o_ = opaque true val e = #fixture o_
-         val calls = ref 0 val count = Count.thm_count ()
-         val _ = G.close_scope (#graph e) (#body_frame o_)
-         val denied = refuses (fn () =>
-           prepare_with profiled e (#profiles o_) calls)
-     in require "profiled prover used a profile of a retired frame"
-          (denied andalso settled e calls count) end;
-     (* A frame retired between preparation and execution. *)
-     let val o_ = opaque true val e = #fixture o_
-         val calls = ref 0
-         val execute = prepare_with profiled e (#profiles o_) calls
-         val prepared = charged e
-         val _ = G.close_scope (#graph e) (#body_frame o_)
-         val count = Count.thm_count ()
-         val denied = refuses execute
-     in require "profiled execute used a profile retired after preparation"
-          (denied andalso retired e andalso Count.thm_count () = count andalso
-           charged e >= prepared) end;
+    (List.app (fn p =>
+       let val o_ = opaque true val e = #fixture o_
+           val calls = ref 0
+           val _ = G.close_scope (#graph e) (#body_frame o_)
+       in require (#name p ^ " used a profile of a retired frame")
+            (denied_in_prepare p e (#profiles o_) calls) end) provers;
+     (* A frame retired between preparation and execution. The ordinary
+        prover refuses the opaque predicate in preparation already. *)
+     List.app (fn p =>
+       let val o_ = opaque true val e = #fixture o_
+           val calls = ref 0 val count = Count.thm_count ()
+       in case #kind p of
+            Ordinary =>
+              require "ordinary prover prepared an opaque predicate"
+                (refuses (fn () => prepare_with p e (#profiles o_) calls)
+                 andalso settled e calls count)
+          | Profiled =>
+              let val execute = prepare_with p e (#profiles o_) calls
+                  val prepared = charged e
+                  val _ = G.close_scope (#graph e) (#body_frame o_)
+                  val count = Count.thm_count ()
+                  val denied = refuses execute
+              in require
+                   "profiled execute used a profile retired after preparation"
+                   (denied andalso retired e andalso
+                    Count.thm_count () = count andalso
+                    charged e >= prepared) end end) provers;
      List.app (fn p =>
        let val e = X.setup ``!n:num. T`` HolSmtTheory.NUM_FORALL_TO_INT
              native
@@ -215,6 +229,32 @@ struct
        in require (#name p ^ " executed in a retired scope")
          (denied andalso retired e andalso Count.thm_count () = count andalso
           charged e >= prepared) end) provers)
+
+  (* Goals and metadata the shared policy section refuses, in both provers:
+     the refusal comes from preparation, with the owner retired, no
+     callback and no theorem made. *)
+  fun refusal_in_prepare p (e : X.fixture) message =
+    let val calls = ref 0 val count = Count.thm_count ()
+        val reason = (ignore (prepare_with p e [] calls); NONE)
+          handle Feedback.HOL_ERR err => SOME (Feedback.message_of err)
+    in require (#name p ^ " did not refuse with: " ^ message)
+         (reason = SOME message andalso settled e calls count) end
+  fun refused_goals () =
+    List.app (fn p =>
+      List.app (fn (term,message) =>
+        refusal_in_prepare p
+          (X.setup term HolSmtTheory.NUM_FORALL_TO_INT native) message)
+        [(``!b:bool->int. T``,"carrier is neither num nor arbitrary bag"),
+         (``?!n:num. T``,"not forall or exists"),
+         (``(P:(num->bool)->bool) (\n:num. T)``,"not a constant quantifier")])
+      provers
+  fun refused_output_metadata () =
+    List.app (fn p =>
+      refusal_in_prepare p
+        (X.setup_policy {input_limit=RP.Uncapped,output_limit=RP.AtMost 1,
+           template_limit=RP.Uncapped} RP.Uncapped ``!n:num. T``
+           HolSmtTheory.NUM_FORALL_TO_INT native)
+        "prospective output exceeds metadata policy") provers
 
   fun repeated_execution () =
     List.app (fn p =>
@@ -295,6 +335,10 @@ struct
        opaque_predicate;
      test "profile from a wrong frame" wrong_frame;
      test "profile from a retired frame" retired_frame;
+     test "goals that are not a num or bag quantifier are refused"
+       refused_goals;
+     test "output beyond the metadata policy is refused"
+       refused_output_metadata;
      test "repeated execution is refused" repeated_execution;
      List.app (fn p =>
        test (#name p ^ " Work allowance at exact and one below")
