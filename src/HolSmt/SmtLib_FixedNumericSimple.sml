@@ -607,6 +607,16 @@ struct
         val value = run d
         val converted = convert d value
     in seal (leaf d converted) end
+  (* The seal of both owners: describe the focus, prepare and execute the
+     closed Core proof, [publish] its generated target (the owner's own
+     backing and capture sequence) and build the closed leaf recipe. *)
+  fun seal_with describe prepare execute publish closed =
+    let val d = describe ()
+        val plan = prepare d
+        val proof = execute plan
+        val target = publish d proof
+        val recipe = closed proof
+    in {target=target,recipe=recipe,proof=proof} end
   exception Inapplicable
   fun outcome_target (result:('f,'p) outcome_of) = #target result
   fun outcome_proof (result:('f,'p) outcome_of) = #proof result
@@ -803,22 +813,24 @@ struct
   fun identity (owner as Owner {graph,...}) focus =
     identity_with graph (fn () => describe owner focus) (action owner focus)
   fun seal (owner as Owner {work,graph,...}) focus recipe =
-    let val d = describe owner focus
-        val plan = Core.prepare_in_scope work
-          {frame= #frame d,conversion=recipe,ordinal=ordinal owner,
-           check_type=policy owner focus}
-        val proof = Core.execute work plan
+    seal_with (fn () => describe owner focus)
+      (fn d => Core.prepare_in_scope work
+        {frame= #frame d,conversion=recipe,ordinal=ordinal owner,
+         check_type=policy owner focus})
+      (fn plan => Core.execute work plan)
+      (fn d => fn proof =>
         (* capture retains the generated admission, whose guard owns this
            EXACT Core receipt and its parent. Do not retain a second guard
            for the same proof beside that authentic dependency chain. *)
-        val target = capture owner (#frame d)
-          (A.generated_compact (expected owner (#scope d))
-            (#admission d) proof)
-        val _ = covered_parent owner focus
-        val closed = action owner focus (fn observe =>
-          C.graph_realized_leaf work
-            {realization=Core.realization_for work proof,observe=observe})
-    in {target=target,recipe=closed,proof=proof} : outcome end
+        let val target = capture owner (#frame d)
+              (A.generated_compact (expected owner (#scope d))
+                (#admission d) proof)
+            val _ = covered_parent owner focus
+        in target end)
+      (fn proof => action owner focus (fn observe =>
+        C.graph_realized_leaf work
+          {realization=Core.realization_for work proof,observe=observe}))
+    : outcome
   fun joined (owner as Owner {work,...}) source
       (left:outcome) (right:outcome) =
     let val d = describe owner source
@@ -1283,28 +1295,29 @@ struct
     open PolicySimpleBase
     fun seal(owner as Owner{work,graph,native_contract,profiles,backing,...})
         focus recipe=
-      let val d=describe owner focus
-          val plan=Core.prepare_in_scope_with_policy work
-            {frame= #frame d,conversion=recipe,ordinal=ordinal owner,
-             native_contract=native_contract,profiles=profiles,
-             check_type=policy owner focus}
-          val proof=Core.execute_with_policy work plan
-          val _=backing:=(fn()=>ignore
-            (Core.conversion_description_with_policy_for work proof))::
-              !backing
-          val wrapper=action owner focus(fn observe=>
-            let val _=observe()
-                val receipt=Core.realization_with_policy_for work proof
-            in P.policy_source_realization_generated_equality_for work receipt
-              {profiles=profiles}end)
-          val target=capture owner(#frame d)
+      seal_with(fn()=>describe owner focus)
+        (fn d=>Core.prepare_in_scope_with_policy work
+          {frame= #frame d,conversion=recipe,ordinal=ordinal owner,
+           native_contract=native_contract,profiles=profiles,
+           check_type=policy owner focus})
+        (fn plan=>Core.execute_with_policy work plan)
+        (fn d=>fn proof=>
+          let val _=backing:=(fn()=>ignore
+                (Core.conversion_description_with_policy_for work proof))::
+                  !backing
+              val wrapper=action owner focus(fn observe=>
+                let val _=observe()
+                    val receipt=Core.realization_with_policy_for work proof
+                in P.policy_source_realization_generated_equality_for work
+                  receipt{profiles=profiles}end)
+          in capture owner(#frame d)
             (A.generated_scoped_with_policy(expected owner(#scope d))
-              (#admission d)wrapper)
-          val closed=action owner focus(fn observe=>
-            C.graph_realized_leaf_with_policy work
-              {realization=Core.realization_with_policy_for work proof,
-               observe=observe})
-      in {target=target,recipe=closed,proof=proof}:outcome end
+              (#admission d)wrapper)end)
+        (fn proof=>action owner focus(fn observe=>
+          C.graph_realized_leaf_with_policy work
+            {realization=Core.realization_with_policy_for work proof,
+             observe=observe}))
+      :outcome
     fun joined(owner as Owner{work,...})source(left:outcome)(right:outcome)=
       let val recipe=action owner source(fn observe=>
             C.graph_realized_sequence_with_policy work
