@@ -89,6 +89,7 @@ REPLAY_DEPS = SmtCheckedGraph Z3_ProofReplay CPC_ProofReplay \
               SmtLib_GraphLawTypeInstance SmtLib_GraphCarrierRoot \
               SmtLib_CarrierLaws SmtLib_CarrierTopDepthFn \
               SmtLib_OwnedCarrierTraversal SmtLib_OwnedCarrierSourceStage \
+              SmtLib_PositiveGoalSourceStageFn \
               SmtLib_OwnedPositiveGoalSourceStage SmtReplayOwnedTransport \
               SmtReplayOwnedCompactApplication \
               SmtReplayOwnedRawCompactApplication SmtReplayFocusAdmission \
@@ -536,6 +537,10 @@ SmtLib_GraphSourcePortfolio.uo: SmtReplaySourcePortfolioAssemblyFn.uo \
   SmtReplayImplicationLawFn.uo
 SmtLib_GraphPreprocess.uo: SmtReplayPreprocessAssemblyFn.uo
 
+# Both positive-goal Source stages apply the shared prefix functor.
+SmtLib_OwnedPositiveGoalSourceStage.uo: SmtLib_PositiveGoalSourceStageFn.uo
+SmtLib_CompactPositiveGoalSourceStage.uo: SmtLib_PositiveGoalSourceStageFn.uo
+
 # Holdep does not retain these alias-only module references.
 SmtReplayOwnedScopedValueSyntax.uo: SmtReplayValueNames.uo
 SmtReplayOwnedScopedValueLift.uo: SmtReplayBinderClose.uo
@@ -576,6 +581,9 @@ SmtReplayValueRealizationFn.uo: SmtReplayOwnedValueSpecialize.uo
 SmtReplayValueRealizationFn.uo: SmtReplayProof.uo
 SmtReplayValueRealizationFn.uo: SmtReplayRuleObservation.uo
 SmtReplayValueRealizationFn.uo: SmtReplaySource.uo
+SmtLib_PositiveGoalSourceStageFn.uo: SmtReplayGraph.uo
+SmtLib_PositiveGoalSourceStageFn.uo: SmtReplayInvocationWork.uo
+SmtLib_PositiveGoalSourceStageFn.uo: SmtReplaySource.uo
 
 # The CPC declared-target receiver uses this alias-only typed worker.
 CPC_OwnedValueNamedReplay.uo: SmtReplayValueAtomPairs.uo
