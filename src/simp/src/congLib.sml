@@ -14,10 +14,11 @@ congLibFn
        val initial = #initial data
        val addcontext = #addcontext data
 
-       fun apply {solver,conv,context,stack,relation as (_, refl)} tm = let
+       fun apply {solver,conv,context,ctxt,stack,
+                  relation as (_, refl)} tm = let
          val eqthm = #apply data
                             {solver=solver,conv=conv,
-                             context=context,stack=stack,
+                             context=context,ctxt=ctxt,stack=stack,
                              relation=relation}
                             tm
          val congThm = refl tm

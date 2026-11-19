@@ -631,4 +631,92 @@ val _ =
                      concl (markerLib.IgnAsm ‘x = _’))]
   end
 
+
+(* The traversal hands its reducers and solvers the context it runs in:
+   the one given to an _IN entry point, and for a context-free entry
+   point the one ambient when the conversion is applied (not built). *)
+val _ =
+  let
+    val slot = Context.Data.new {name = "simp selftest context probe",
+                                 empty = 0, pp = Int.toString}
+    fun value ctxt = Context.Data.get slot ctxt
+    fun in_slot n f = Context.Data.with_slot_value slot n f ()
+    val seen_by_reducer = ref ([] : int list)
+    val seen_by_solver = ref ([] : int list)
+    fun reset () = (seen_by_reducer := []; seen_by_solver := [])
+    val reducer =
+      Traverse.REDUCER
+        {name = NONE, initial = Fail "probe", addcontext = #1,
+         apply = fn {ctxt,...} => fn tm =>
+                    (seen_by_reducer := value ctxt :: !seen_by_reducer;
+                     NO_CONV tm)}
+    val p = mk_var ("probe_p", bool)
+    val f = mk_var ("probe_f", bool)
+    val g = mk_var ("probe_g", bool)
+    val tm = mk_conj (f, g)
+    val solver : TraverseExt.ssolver =
+      {name = "probe solver",
+       solve = fn {ctxt,...} => fn c =>
+                  (seen_by_solver := value ctxt :: !seen_by_solver;
+                   ASSUME c)}
+    val ss = simpLib.++ (boolSimps.bool_ss, simpLib.dproc_ss reducer)
+    val xss =
+      simpExtLib.mk_simpset
+        [simpExtLib.dproc_ss (TraverseExt.lift reducer),
+         simpExtLib.rewrites [ASSUME (mk_imp (p, mk_eq (f, g)))],
+         simpExtLib.solver_ss solver]
+    val xdata = simpExtLib.xtraversedata_for_ss xss
+    val xtm = f
+    fun sees what expected seen =
+      if null seen then die (what ^ ": nothing was applied")
+      else if List.all (fn n => n = expected) seen then ()
+      else die (what ^ ": a reducer or solver saw the wrong context")
+    fun run_reducer what expected conv =
+      (reset (); ignore (QCONV conv tm handle HOL_ERR _ => REFL tm);
+       sees what expected (!seen_by_reducer))
+    val plain =
+      {rewriters = [], dprocs = [reducer], limit = NONE,
+       travrules = Travrules.EQ_tr, relation = boolSyntax.equality}
+    val simp_data = simpLib.traversedata_for_ss ss
+    val explicit = in_slot 7 Context.snapshot
+  in
+    tprint "TRAVERSE_IN: reducers see the context given";
+    in_slot 3 (fn () =>
+      (run_reducer "TRAVERSE_IN" 7 (Traverse.TRAVERSE_IN explicit plain []);
+       OK ()));
+    tprint "TRAVERSE_IN: simplifier traversal data";
+    in_slot 3 (fn () =>
+      (run_reducer "TRAVERSE_IN ss" 7
+         (Traverse.TRAVERSE_IN explicit simp_data []);
+       OK ()));
+    tprint "TRAVERSE: reducers see the context at application";
+    let
+      val conv = in_slot 1 (fn () => Traverse.TRAVERSE plain [])
+    in
+      in_slot 2 (fn () => run_reducer "TRAVERSE" 2 conv);
+      in_slot 5 (fn () => run_reducer "TRAVERSE again" 5 conv);
+      OK ()
+    end;
+    tprint "XTRAVERSE_IN: reducers and solvers see the context given";
+    in_slot 3 (fn () =>
+      (reset ();
+       ignore (QCONV (TraverseExt.XTRAVERSE_IN explicit xdata []) xtm);
+       sees "XTRAVERSE_IN reducer" 7 (!seen_by_reducer);
+       sees "XTRAVERSE_IN solver" 7 (!seen_by_solver);
+       OK ()));
+    tprint "XTRAVERSE: the context at application, not at construction";
+    let
+      val conv = in_slot 1 (fn () => TraverseExt.XTRAVERSE xdata [])
+    in
+      in_slot 2 (fn () =>
+        (reset (); ignore (QCONV conv xtm);
+         sees "XTRAVERSE reducer" 2 (!seen_by_reducer);
+         sees "XTRAVERSE solver" 2 (!seen_by_solver)));
+      in_slot 5 (fn () =>
+        (reset (); ignore (QCONV conv xtm);
+         sees "XTRAVERSE again" 5 (!seen_by_solver)));
+      OK ()
+    end
+  end
+
 val _ = exit_count0 failcount

@@ -20,7 +20,8 @@ type reducer_config_data =
    addcontext : context * thm list -> context,
    apply : {solver : term list -> term -> thm,
             conv : term list -> term -> thm, context : context,
-            stack : term list, cond_depth : int option,
+            ctxt : Context.t, stack : term list,
+            cond_depth : int option,
             term_ord : term * term -> order,
             relation : term * (term -> thm)} -> conv}
 ```

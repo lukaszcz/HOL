@@ -465,7 +465,7 @@ fun force_add (ss as SS sset) f =
      CONVNET
        (net_add_convs net (List.concat (map (convdata mk_rewrs) thms)))
    end
-   fun apply {solver,conv,context,stack,relation} tm = let
+   fun apply {solver,conv,context,ctxt=_,stack,relation} tm = let
      val net = (raise context) handle CONVNET net => net
    in
      tryfind (fn {ci = {conval,...},...} => conval solver stack tm)

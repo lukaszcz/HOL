@@ -363,7 +363,8 @@ fun user_conv_tracing {name,trace=trace_level} =
      mk_comb(Term.inst theta f, x)
    end
 
-   fun apply {solver,conv,context,stack,relation = (relation,_)} t = let
+   fun apply {solver,conv,context,ctxt=_,stack,relation = (relation,_)} t =
+   let
      val _ = can (match_term rel_t) relation orelse
              raise ERR ("mk_reducer.apply", "Wrong relation")
      val n = case context of redExn n => n

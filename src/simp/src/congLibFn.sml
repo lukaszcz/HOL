@@ -221,7 +221,7 @@ val cong_reducer =
         in
           CONVNET (insertThms net thms)
         end
-      fun apply {solver,conv,context,stack,relation} tm =
+      fun apply {solver,conv,context,ctxt=_,stack,relation} tm =
         let
             val net = ((raise context) handle CONVNET net => net)
             val thm = cong_rewrite net relation tm

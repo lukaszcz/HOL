@@ -1701,7 +1701,8 @@ fun pp ss = PP.pp_to_string 200 simpLib.pp_simpset ss
   val order_probe = (``surface_order_x:'a``, ``surface_order_y:'a``)
   val subgoal_probe = ``surface_subgoal_x:'a``
   val prover_ctxt =
-    {stack=[],context_thms=[],recurse=fn tm => REFL tm}
+    {stack=[],ctxt=Context.snapshot (),context_thms=[],
+     recurse=fn tm => REFL tm}
 
   val _ = check "remove_ssfrags preserves all strategy fields"
     (fn () =>
@@ -1829,7 +1830,8 @@ fun pp ss = PP.pp_to_string 200 simpLib.pp_simpset ss
     mk_tactic_solver ("surface context solver",FIRST_ASSUM ACCEPT_TAC)
   val context_result =
     #solve context_tactic_solver
-      {stack=[],context_thms=[context_fact],recurse=fn tm => REFL tm}
+      {stack=[],ctxt=Context.snapshot (),context_thms=[context_fact],
+       recurse=fn tm => REFL tm}
       (concl context_fact)
 
   val _ = check "mk_tactic_solver discharges context theorem assumptions"
@@ -5252,7 +5254,7 @@ val _ = let
     OrdinaryTraverse.REDUCER
       {name=NONE, initial=R6Context,
        addcontext=fn (ctxt,_) => ctxt,
-       apply=fn {solver,conv,context,stack,relation} => action}
+       apply=fn {solver,conv,context,ctxt=_,stack,relation} => action}
   fun failing_factory log tag : Opening.congproc =
     fn _ =>
       (record log ("relation-" ^ tag);

@@ -57,7 +57,8 @@ val _ = let
   val ordinary = Traverse.REDUCER
     {name=SOME "opaque ordinary",initial=Private (token,[]),
      addcontext=collector,
-     apply=fn {solver,conv,context,stack,relation=(rel,refl)} => fn tm =>
+     apply=fn {solver,conv,context,ctxt=_,stack,
+                relation=(rel,refl)} => fn tm =>
        let
          val _ = applications := !applications + 1
          val _ = case context of Private (r,ths) =>
@@ -98,12 +99,14 @@ val _ = let
   val rc = T.reducer_config_data added
   val _ = check "integer record view forwards ordinary apply"
     (same (#apply rd
-      {solver=solver,conv=conv,context= #initial rd,stack=[a,b],
+      {solver=solver,conv=conv,context= #initial rd,ctxt=Context.snapshot (),
+       stack=[a,b],
        relation=(equality,REFL),cond_depth=19,term_ord=fn _ => LESS} a)
       (REFL a))
   val _ = check "option record view forwards ordinary apply"
     (same (#apply rc
-      {solver=solver,conv=conv,context= #initial rc,stack=[a,b],
+      {solver=solver,conv=conv,context= #initial rc,ctxt=Context.snapshot (),
+       stack=[a,b],
        relation=(equality,REFL),cond_depth=NONE,term_ord=fn _ => GREATER} a)
       (REFL a))
   val _ = check "adapter callback counts"
@@ -122,7 +125,8 @@ val _ = let
   val ordinary = Traverse.REDUCER
     {name=NONE,initial=Private (token,[]),
      addcontext=fn (ctxt,_) => ctxt,
-     apply=fn {solver,conv,context,stack,relation=(rel,refl)} => fn tm =>
+     apply=fn {solver,conv,context,ctxt=_,stack,
+                relation=(rel,refl)} => fn tm =>
        (case context of Private (r,[]) =>
           if Portable.pointer_eq (r,token) then ()
           else raise Fail "engine changed lifted payload"
@@ -175,7 +179,7 @@ val _ = let
     val rd = T.reducer_config_data r
   in
     #apply rd {solver=fn _ => ASSUME,conv=fn _ => REFL,
-      context= #initial rd,stack=[],cond_depth=depth,
+      context= #initial rd,ctxt=Context.snapshot (),stack=[],cond_depth=depth,
       term_ord=fn _ => LESS,relation=(equality,REFL)} a
   end
   val _ = check "CONFIG addctxt preserves payload and NONE"

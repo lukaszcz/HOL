@@ -120,7 +120,8 @@ val _ = let
   val context_solver = S.mk_tactic_solver
     ("tactic context",FIRST_ASSUM ACCEPT_TAC)
   val result = #solve context_solver
-    {stack=[],context_thms=[target_th],recurse=REFL} target
+    {stack=[],ctxt=Context.snapshot (),context_thms=[target_th],
+     recurse=REFL} target
 in check "mk_tactic_solver discharges temporary context assumptions"
      (same result target_th) end
 

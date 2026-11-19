@@ -697,7 +697,8 @@ val _ =
            ``?n:num. clasimp_witness_p n /\ clasimp_witness_q n``
          fun prove context_thms =
            clasimpLib.witness_subgoaler
-             {stack = [], context_thms = context_thms,
+             {stack = [], ctxt = Context.snapshot (),
+              context_thms = context_thms,
               recurse = Thm.REFL} condition
          val proved = prove [Thm.ASSUME left, Thm.ASSUME right]
          val missing = prove [Thm.ASSUME left]
@@ -719,7 +720,7 @@ val _ =
        let
          val condition = ``?n:num. witness_budget_p n : bool``
          val context =
-           {stack = [],
+           {stack = [], ctxt = Context.snapshot (),
             context_thms =
               [Thm.ASSUME ``witness_budget_p (3:num) : bool``],
             recurse = Thm.REFL}

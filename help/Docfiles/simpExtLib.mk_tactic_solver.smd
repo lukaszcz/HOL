@@ -27,7 +27,8 @@ Never fails. The solver fails if `tac` fails or leaves subgoals.
 ``` hol4
 >> val em : TraverseExt.ssolver = simpExtLib.mk_tactic_solver
      ("excluded middle", MATCH_ACCEPT_TAC EXCLUDED_MIDDLE);
->> #solve em {stack = [], context_thms = [], recurse = REFL} “q ∨ ¬q”;
+>> #solve em {stack = [], context_thms = [], recurse = REFL,
+            ctxt = Context.snapshot ()} “q ∨ ¬q”;
 ```
 
 ### See also

@@ -1846,7 +1846,7 @@ fun rewrite_context_changes (SS old,SS current) =
 
  fun legacy_rewriter_for_ss_prepared ss prepared = let
    val {initial,addcontext} = rewriter_context_for_ss_prepared ss prepared
-   fun apply {solver,conv,context,stack,relation} tm = let
+   fun apply {solver,conv,context,ctxt=_,stack,relation} tm = let
      val net = (raise context) handle CONVNET net => net
    in
      tryfind (fn {ci = {conval,...},...} => conval solver stack tm)
@@ -1859,7 +1859,8 @@ fun rewrite_context_changes (SS old,SS current) =
  fun configured_rewriter_for_ss_prepared check_abort traversal ss prepared = let
    val {initial,addcontext} = rewriter_context_for_ss_prepared ss prepared
    exception PolicyAbort of exn
-   fun apply {solver,conv,context,stack,cond_depth,term_ord,relation} tm = let
+   fun apply {solver,conv,context,ctxt=_,stack,cond_depth,term_ord,
+              relation} tm = let
      val net = (raise context) handle CONVNET net => net
      val ctxt = {solver=solver, stack=stack, cond_depth=cond_depth,
                  term_ord=term_ord}
@@ -2301,6 +2302,7 @@ fun final_solver_tac traversal xdata (mode : simp_mode) ss
       let
         val prover_ctxt =
           {stack=[], context_thms=reducer_context @ solver_context,
+           ctxt=Context.snapshot (),
            recurse=QCONV
              (simp_conv_with_xdata traversal xdata
                 reducer_context solver_context)}

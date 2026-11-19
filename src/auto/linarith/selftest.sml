@@ -2497,7 +2497,7 @@ fun reducer_conversion theorems tm =
     apply
       {solver = fn _ => Conv.NO_CONV,
        conv = fn _ => Conv.NO_CONV,
-       context = context,
+       context = context, ctxt = Context.snapshot (),
        stack = [],
        relation = (boolSyntax.equality, Thm.REFL)} tm
   end
@@ -2537,7 +2537,8 @@ val _ =
           forward_split_goal andalso
         ((ignore
             (#solve linarithLib.linarith_solver
-               {stack = [], recurse = Conv.NO_CONV,
+               {stack = [], ctxt = Context.snapshot (),
+                recurse = Conv.NO_CONV,
                 context_thms = map Thm.ASSUME forward_split_context}
                forward_split_goal);
           true)
@@ -2626,7 +2627,7 @@ fun private_budget_test body =
               {solver = fn _ => Conv.NO_CONV,
                conv = fn _ => Conv.NO_CONV,
                context = addcontext (initial, assumptions),
-               stack = [],
+               ctxt = Context.snapshot (), stack = [],
                relation = (boolSyntax.equality, Thm.REFL)} tm
           end
       in
@@ -2738,7 +2739,8 @@ val _ =
                        (apply
                           {solver = fn _ => Conv.NO_CONV,
                            conv = fn _ => Conv.NO_CONV,
-                           context = context, stack = [],
+                           context = context, ctxt = Context.snapshot (),
+                           stack = [],
                            relation = (boolSyntax.equality, Thm.REFL)}
                           atom);
                      false)
@@ -2847,7 +2849,7 @@ val _ =
          val {name, solve} = linarithLib.linarith_solver
          val theorem =
            solve
-             {stack = [],
+             {stack = [], ctxt = Context.snapshot (),
               context_thms =
                 [Thm.ASSUME public_x_le_y,
                  Thm.ASSUME public_y_le_z],
@@ -2875,7 +2877,7 @@ val _ =
            not (Term.aconv public_p boolSyntax.F)
          val theorem =
            solve
-             {stack = [],
+             {stack = [], ctxt = Context.snapshot (),
               context_thms = [Thm.ASSUME public_successor_bound],
               recurse = Conv.NO_CONV} public_p
        in
@@ -2967,7 +2969,8 @@ fun envelope_prims named_thms =
     fun call () =
       ignore
         (solve
-          {stack = [], context_thms = context, recurse = Conv.NO_CONV}
+          {stack = [], ctxt = Context.snapshot (),
+           context_thms = context, recurse = Conv.NO_CONV}
           public_x_le_z)
     fun repeat 0 = ()
       | repeat rounds = (call (); repeat (rounds - 1))
@@ -3425,7 +3428,7 @@ fun solver_discharges_public_p () =
     Term.aconv
       (Thm.concl
         (solve
-          {stack = [],
+          {stack = [], ctxt = Context.snapshot (),
            context_thms = [Thm.ASSUME public_successor_bound],
            recurse = Conv.NO_CONV} public_p))
       public_p
@@ -3457,7 +3460,8 @@ fun solver_declines context tm =
   in
     (ignore
        (solve
-         {stack = [], context_thms = context, recurse = Conv.NO_CONV}
+         {stack = [], ctxt = Context.snapshot (),
+          context_thms = context, recurse = Conv.NO_CONV}
          tm);
      false)
     handle Feedback.HOL_ERR _ => true
@@ -3731,7 +3735,8 @@ fun solver_reports_instance_failure () =
     (fn () =>
        ignore
          (#solve linarithLib.linarith_solver
-            {stack = [], context_thms = malformed_cached_context,
+            {stack = [], ctxt = Context.snapshot (),
+             context_thms = malformed_cached_context,
              recurse = Conv.NO_CONV} malformed_cached_goal))
 
 fun with_broken_cache assertion =
@@ -3848,7 +3853,8 @@ val _ =
              (fn () =>
                 ignore
                   (#solve linarithLib.linarith_solver
-                     {stack = [], context_thms = interrupt_context,
+                     {stack = [], ctxt = Context.snapshot (),
+                      context_thms = interrupt_context,
                       recurse = Conv.NO_CONV}
                      interrupt_goal)))])
 
@@ -3971,7 +3977,8 @@ fun solver_verdict context tm =
          (fn () =>
             ignore
               (#solve linarithLib.linarith_solver
-                 {stack = [], context_thms = context,
+                 {stack = [], ctxt = Context.snapshot (),
+                  context_thms = context,
                   recurse = Conv.NO_CONV} tm)) of
       NONE => "proved"
     | SOME error =>

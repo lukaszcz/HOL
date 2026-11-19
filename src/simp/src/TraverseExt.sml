@@ -10,7 +10,7 @@ open HolKernel Drule Conv Abbrev;
      addcontext : context * thm list -> context,
      apply : {solver : term list -> term -> thm,
               conv : term list -> term -> thm, context : context,
-              stack : term list, cond_depth : int option,
+              ctxt : Context.t, stack : term list, cond_depth : int option,
               term_ord : term * term -> order,
               relation : term * (term -> thm)} -> conv}
   type reducer_context_data =
@@ -18,7 +18,7 @@ open HolKernel Drule Conv Abbrev;
      addcontext : context * thm list -> context,
      apply : {solver : term list -> term -> thm,
               conv : term list -> term -> thm, context : context,
-              stack : term list, cond_depth : int,
+              ctxt : Context.t, stack : term list, cond_depth : int,
               term_ord : term * term -> order,
               relation : term * (term -> thm)} -> conv}
   datatype reducer = LIFTED of Traverse.reducer
@@ -34,25 +34,27 @@ open HolKernel Drule Conv Abbrev;
       let val {name,initial,addcontext,apply} = Traverse.dest_reducer r
       in
         {name=name, initial=initial, addcontext=addcontext,
-         apply=fn {solver,conv,context,stack,relation,...} =>
-           apply {solver=solver,conv=conv,context=context,stack=stack,
-                  relation=relation}}
+         apply=fn {solver,conv,context,ctxt,stack,relation,...} =>
+           apply {solver=solver,conv=conv,context=context,ctxt=ctxt,
+                  stack=stack,relation=relation}}
       end
     | reducer_config_data
         (CONTEXT_REDUCER {name,initial,addcontext,apply}) =
       {name=name, initial=initial, addcontext=addcontext,
-       apply=fn {solver,conv,context,stack,relation,cond_depth,term_ord} =>
-         apply {solver=solver,conv=conv,context=context,stack=stack,
-                relation=relation,term_ord=term_ord,
+       apply=fn {solver,conv,context,ctxt,stack,relation,cond_depth,
+                 term_ord} =>
+         apply {solver=solver,conv=conv,context=context,ctxt=ctxt,
+                stack=stack,relation=relation,term_ord=term_ord,
                 cond_depth=case cond_depth of NONE => !Cond_rewr.stack_limit
                                            | SOME n => n}}
   fun reducer_data r =
     let val {name,initial,addcontext,apply} = reducer_config_data r
     in
       {name=name, initial=initial, addcontext=addcontext,
-       apply=fn {solver,conv,context,stack,relation,cond_depth,term_ord} =>
-         apply {solver=solver,conv=conv,context=context,stack=stack,
-                relation=relation,term_ord=term_ord,
+       apply=fn {solver,conv,context,ctxt,stack,relation,cond_depth,
+                 term_ord} =>
+         apply {solver=solver,conv=conv,context=context,ctxt=ctxt,
+                stack=stack,relation=relation,term_ord=term_ord,
                 cond_depth=SOME cond_depth}}
     end
   fun addctxt ths (LIFTED r) = LIFTED (Traverse.addctxt ths r)
@@ -156,15 +158,17 @@ fun core_traversal
     val term_ord = Option.getOpt (term_ord, Cond_rewr.ac_term_ord)
     fun apply (LIFTED r) args = #apply (Traverse.dest_reducer r) args
       | apply (CONTEXT_REDUCER {apply,...})
-              {solver,conv,context,stack,relation} =
-          apply {solver=solver, conv=conv, context=context, stack=stack,
+              {solver,conv,context,ctxt,stack,relation} =
+          apply {solver=solver, conv=conv, context=context, ctxt=ctxt,
+                 stack=stack,
                  cond_depth=(case cond_depth of
                                  NONE => !Cond_rewr.stack_limit
                                | SOME n => n),
                  term_ord=term_ord, relation=relation}
       | apply (CONFIG_REDUCER {apply,...})
-              {solver,conv,context,stack,relation} =
-          apply {solver=solver, conv=conv, context=context, stack=stack,
+              {solver,conv,context,ctxt,stack,relation} =
+          apply {solver=solver, conv=conv, context=context, ctxt=ctxt,
+                 stack=stack,
                  cond_depth=cond_depth, term_ord=term_ord,
                  relation=relation}
   in
@@ -180,7 +184,8 @@ fun core_traversal
  * ---------------------------------------------------------------------*)
 (* The explicit extended entry points refresh supplied reducer contexts
    for every application.  Legacy TRAVERSE retains its construction-time
-   context, including mutable rewrite controls and user callback results. *)
+   reducer context, including mutable rewrite controls and user callback
+   results. *)
 fun GEN_TRAVERSE_WITH_CONTEXT check_abort observer policy root_only xdata =
   TraverseCore.TRAVERSE_WITH_CONTEXT
     {check_abort=check_abort, observer=observer, policy=policy,
@@ -191,20 +196,48 @@ fun GEN_TRAVERSE policy root_only xdata thms =
   GEN_TRAVERSE_WITH_CONTEXT NONE NONE policy root_only xdata
     {reducer_context=thms,solver_context=[]}
 
-val XTRAVERSE = GEN_TRAVERSE ParentFirst false
-val ROOT_REWRITE = GEN_TRAVERSE ParentFirst true
-fun TRAVERSE_WITH_CONTEXT policy =
-  GEN_TRAVERSE_WITH_CONTEXT NONE NONE policy false
-fun CHILD_FIRST_WITH_ABORT check_abort observer policy =
+(* A context-free entry point E takes the context when the conversion is
+   applied to a term; E_IN takes it explicitly. *)
+val at_application = TraverseCore.at_application
+
+fun XTRAVERSE_IN ctxt xdata thms =
+  GEN_TRAVERSE ParentFirst false xdata thms ctxt
+fun XTRAVERSE xdata thms =
+  at_application (GEN_TRAVERSE ParentFirst false xdata thms)
+fun ROOT_REWRITE_IN ctxt xdata thms =
+  GEN_TRAVERSE ParentFirst true xdata thms ctxt
+fun ROOT_REWRITE xdata thms =
+  at_application (GEN_TRAVERSE ParentFirst true xdata thms)
+fun TRAVERSE_WITH_CONTEXT_IN ctxt policy xdata ctxs =
+  GEN_TRAVERSE_WITH_CONTEXT NONE NONE policy false xdata ctxs ctxt
+fun TRAVERSE_WITH_CONTEXT policy xdata ctxs =
+  at_application (GEN_TRAVERSE_WITH_CONTEXT NONE NONE policy false xdata ctxs)
+fun CHILD_FIRST_WITH_ABORT_IN ctxt check_abort observer policy xdata ctxs =
   GEN_TRAVERSE_WITH_CONTEXT (SOME check_abort) observer (ChildFirst policy)
-    false
-fun CHILD_FIRST_WITH_OBSERVER observe policy =
+    false xdata ctxs ctxt
+fun CHILD_FIRST_WITH_ABORT check_abort observer policy xdata ctxs =
+  at_application
+    (GEN_TRAVERSE_WITH_CONTEXT (SOME check_abort) observer
+       (ChildFirst policy) false xdata ctxs)
+fun CHILD_FIRST_WITH_OBSERVER_IN ctxt observe policy xdata ctxs =
   GEN_TRAVERSE_WITH_CONTEXT NONE (SOME observe) (ChildFirst policy) false
-val ROOT_REWRITE_WITH_CONTEXT =
-  GEN_TRAVERSE_WITH_CONTEXT NONE NONE ParentFirst true
+    xdata ctxs ctxt
+fun CHILD_FIRST_WITH_OBSERVER observe policy xdata ctxs =
+  at_application
+    (GEN_TRAVERSE_WITH_CONTEXT NONE (SOME observe) (ChildFirst policy) false
+       xdata ctxs)
+fun ROOT_REWRITE_WITH_CONTEXT_IN ctxt xdata ctxs =
+  GEN_TRAVERSE_WITH_CONTEXT NONE NONE ParentFirst true xdata ctxs ctxt
+fun ROOT_REWRITE_WITH_CONTEXT xdata ctxs =
+  at_application
+    (GEN_TRAVERSE_WITH_CONTEXT NONE NONE ParentFirst true xdata ctxs)
 
 (* Unlike the explicit extended entries, default TRAVERSE collects once
    before returning a reusable conversion and constructs factories eagerly. *)
-fun TRAVERSE data = TraverseCore.TRAVERSE (core_traversal (data,default_config))
+fun TRAVERSE_IN ctxt data thms =
+  TraverseCore.TRAVERSE (core_traversal (data,default_config)) thms ctxt
+fun TRAVERSE data thms =
+  at_application
+    (TraverseCore.TRAVERSE (core_traversal (data,default_config)) thms)
 
 end

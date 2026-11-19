@@ -334,7 +334,8 @@ val _ = let
   val ordinary = Traverse.REDUCER
     {name=SOME "standard recipe opaque",initial=Private (token,[]),
      addcontext=collect,
-     apply=fn {context,solver,conv,stack=actual,relation=(rel,refl)} => fn tm =>
+     apply=fn {context,ctxt=_,solver,conv,stack=actual,
+                relation=(rel,refl)} => fn tm =>
        (applications := !applications + 1;
         check "lift apply preserves payload and collected facts"
           (case context of Private (r,ths) =>
@@ -370,13 +371,15 @@ val _ = let
      else raise Fail "conversion arguments changed")
   val expected = #apply (Traverse.dest_reducer
     (Traverse.addctxt [fact] ordinary))
-    {context=Private (token,[fact]),solver=solver,conv=conv,
-     stack=stack,relation=(equality,REFL)} atom
+    {context=Private (token,[fact]),ctxt=Context.snapshot (),
+     solver=solver,conv=conv,stack=stack,relation=(equality,REFL)} atom
   val got = #apply rd
-    {context= #initial rd,solver=solver,conv=conv,stack=stack,
+    {context= #initial rd,ctxt=Context.snapshot (),solver=solver,
+     conv=conv,stack=stack,
      relation=(equality,REFL),cond_depth=7,term_ord=fn _ => LESS} atom
   val configured = #apply rc
-    {context= #initial rc,solver=solver,conv=conv,stack=stack,
+    {context= #initial rc,ctxt=Context.snapshot (),solver=solver,
+     conv=conv,stack=stack,
      relation=(equality,REFL),cond_depth=NONE,term_ord=fn _ => GREATER} atom
 in check "both lifted views match ordinary complete theorem and callbacks"
      (same (got,expected) andalso same (configured,expected) andalso
