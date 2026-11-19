@@ -5990,9 +5990,6 @@ local
       }
     end
 
-  and typecheck_term context env term_ast =
-    typecheck_term_with_options false context env term_ast
-
   and typecheck_term_with_options elaborate_datatypes context env term_ast =
     let
       val (tydict, tmdict, sigdict) = env
