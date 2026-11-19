@@ -133,7 +133,7 @@ struct
   (* The predicate child must be the predicate; its binder closure is
      retained for revalidation. Constructed/rehome closures retain their
      genuine creation frames. They do NOT acquire a fabricated raw Source
-     origin. This branch permits a later step on a generated BAG guard. *)
+     origin, so a later step on a generated BAG guard is permitted. *)
   fun predicate_closure {graph,scope,predicate_child,predicate,held,origin} =
     let val _ = if G.closure_child_node graph scope predicate_child =
           predicate then () else refuse origin "different predicate child"
@@ -426,9 +426,8 @@ struct
        Arrow (Arrow (old_carrier,bool_shape),bool_shape)),
      Arrow (bool_shape,Arrow (bool_shape,bool_shape))]
 
-  (* The amount [carrier_amount] gives, after the proof's extra shapes are
-     put before those of the expressions in [shapes] (the amount does not
-     read them, so the order of the two steps is immaterial). *)
+  (* Returns [carrier_amount], then puts the proof's extra shapes before
+     those of the expressions in [shapes]. *)
   fun carrier_total {lhs,rhs,source_size,application,uncontracted,proof,
       old_carrier,shapes} =
     let val amount = carrier_amount {lhs = lhs,rhs = rhs,
@@ -445,9 +444,10 @@ struct
             val _ = active () in ty end
 
   (* Every type the plan needs goes through the caller's type policy. The
-     preparation hooks SAME Work and its supplied policy only queues
-     admitted types, so no external callback precedes the carrier
-     reservation. *)
+     law's producer (H.begin_original_with_work or _with_policy) gets
+     the SAME Work and [queue], which only queues admitted types; they
+     reach the caller's [check_type] here, after the carrier reservation,
+     so no external callback precedes it. *)
   fun issue_types {active,check_type,queued,types,shapes} =
     let fun policy ty = (active ();check_type ty;active ())
         val generated = List.map (render_shape active) (!shapes)
