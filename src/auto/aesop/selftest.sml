@@ -141,7 +141,8 @@ val _ =
              val y = ``y:aesop_clash_wide``
            in
              (ignore (aesopRule.claset_rules_with (SOME budget)
-                {claset = claset, mode = clasetUnify.Unify,
+                {ctxt = Context.snapshot (),
+                 claset = claset, mode = clasetUnify.Unify,
                  conclusion = ``p:bool``,
                  assumptions = [boolSyntax.mk_eq (x, y)],
                  qvars = HOLset.fromList Term.compare [x, y],
@@ -292,7 +293,8 @@ val assembly_cs =
 
 val assembled =
   aesopRule.claset_rules
-    {claset = assembly_cs, mode = clasetUnify.Unify,
+    {ctxt = Context.snapshot (),
+     claset = assembly_cs, mode = clasetUnify.Unify,
      conclusion = boolSyntax.T, assumptions = [],
      qvars = HOLset.empty Term.compare, simp_args = []}
 
@@ -324,7 +326,8 @@ val merged_unsafe_order =
           index = SOME (aesopRule.TargetPattern boolSyntax.T)};
        #unsafe
          (aesopRule.claset_rules
-           {claset = assembly_cs, mode = clasetUnify.Unify,
+           {ctxt = Context.snapshot (),
+            claset = assembly_cs, mode = clasetUnify.Unify,
             conclusion = boolSyntax.T, assumptions = [],
             qvars = HOLset.empty Term.compare, simp_args = []})))
     ()
@@ -375,7 +378,8 @@ val elim_dest_cs =
        ("unsafe_dest", dest_theorem)
 val elim_dest_rules =
   aesopRule.claset_rules
-    {claset = elim_dest_cs, mode = clasetUnify.Unify,
+    {ctxt = Context.snapshot (),
+     claset = elim_dest_cs, mode = clasetUnify.Unify,
      conclusion = elim_q, assumptions = [elim_p],
      qvars = HOLset.empty Term.compare, simp_args = []}
 
@@ -639,7 +643,8 @@ val forward_cs =
 
 val forward_assembled =
   aesopRule.claset_rules
-    {claset = forward_cs, mode = clasetUnify.Match,
+    {ctxt = Context.snapshot (),
+     claset = forward_cs, mode = clasetUnify.Match,
      conclusion = forward_target, assumptions = [forward_q],
      qvars = HOLset.empty Term.compare, simp_args = []}
 
@@ -745,7 +750,8 @@ fun with_registered_target f =
 
 fun registered_rules_for conclusion =
   aesopRule.claset_rules
-    {claset = clasetLib.empty_cs, mode = clasetUnify.Match,
+    {ctxt = Context.snapshot (),
+     claset = clasetLib.empty_cs, mode = clasetUnify.Match,
      conclusion = conclusion, assumptions = [],
      qvars = HOLset.empty Term.compare, simp_args = []}
 
@@ -1005,7 +1011,8 @@ val norm_declaration_cs =
           (EQ_MP (SYM norm_4_to_3) (ASSUME norm_state3)))
 val norm_declaration_rules =
   aesopRule.claset_rules
-    {claset = norm_declaration_cs, mode = clasetUnify.Unify,
+    {ctxt = Context.snapshot (),
+     claset = norm_declaration_cs, mode = clasetUnify.Unify,
      conclusion = norm_state4, assumptions = [concl norm_4_to_3],
      qvars = HOLset.empty Term.compare, simp_args = []}
 
@@ -4473,7 +4480,8 @@ val _ =
               normalization = NONE}
          val rules =
            aesopRule.claset_rules_with (SOME budget)
-             {claset = elim_dest_cs, mode = clasetUnify.Match,
+             {ctxt = Context.snapshot (),
+              claset = elim_dest_cs, mode = clasetUnify.Match,
               conclusion = elim_q, assumptions = [elim_p],
               qvars = HOLset.empty Term.compare,
               simpset = simpLib.empty_ss, simp_controls = []}
@@ -4604,3 +4612,65 @@ val _ =
      fn () =>
        surface_registry_before = 0 andalso
        surface_registry_after = surface_registry_before)
+
+(* A [split] rule is read from the context the tactic is applied in, not
+   from the global one.  Context.restore removes the attribute registration
+   together with the rules, so the test leaves nothing behind for others
+   to observe. *)
+val split_scope_before = Context.snapshot ()
+val _ = splitLib.enable_split_attribute ()
+
+val aesop_sw_def =
+  new_definition
+    ("aesop_sw_def",
+     ``aesop_sw (b:bool) (x:num) (y:num) = if b then x else y``)
+
+val aesop_sw_split_thm =
+  Tactical.prove
+    (``!P:num->bool b x y.
+         P (aesop_sw b x y) <=> (b ==> P x) /\ (~b ==> P y)``,
+     Tactical.THEN
+       (Tactical.REPEAT Tactic.GEN_TAC,
+        Tactical.THEN
+          (Rewrite.REWRITE_TAC [aesop_sw_def],
+           Tactical.THEN
+             (boolLib.BOOL_CASES_TAC ``b:bool``,
+              Rewrite.REWRITE_TAC []))))
+
+fun declare_aesop_sw_split name =
+  let val stored = save_thm (name, aesop_sw_split_thm)
+  in
+    ThmAttribute.store_at_attribute
+      {name = name, attrname = "split", args = [], thm = stored}
+  end
+
+val aesop_sw_goal =
+  ``(Q:num->bool) x ==> Q (aesop_sw b x x)``
+
+fun aesop_sw_closed ctxt =
+  null (#1 (SelfTestTactical.VALID (aesopLib.AESOP_TAC [])
+              ([], aesop_sw_goal) ctxt))
+  handle Feedback.HOL_ERR _ => false
+
+val _ = declare_aesop_sw_split "aesop_sw_split"
+val aesop_sw_with_split = Context.snapshot ()
+val _ = splitLib.exclude_split "aesop_sw_split"
+
+val _ =
+  check
+    ("aesop uses a [split] rule declared in the context it runs in",
+     fn () =>
+       null (splitLib.split_thms ()) andalso
+       aesop_sw_closed aesop_sw_with_split)
+
+val aesop_sw_without_split = Context.snapshot ()
+val _ = declare_aesop_sw_split "aesop_sw_split_again"
+
+val _ =
+  check
+    ("aesop ignores a [split] rule declared only in the global context",
+     fn () =>
+       length (splitLib.split_thms ()) = 1 andalso
+       not (aesop_sw_closed aesop_sw_without_split))
+
+val _ = Context.restore split_scope_before

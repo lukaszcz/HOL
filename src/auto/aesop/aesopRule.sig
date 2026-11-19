@@ -105,13 +105,16 @@ sig
   val closers : unit -> rule list
   val safe_rules : safe_scaffold -> rule list
 
-  (* Candidate retrieval is unification-based.  [qvars] identifies the
-     engine metavariables which the invocation permits the index to match.
+  (* [ctxt] is the context of the invocation; the [split] rules of the
+     rule set are its own.  Candidate retrieval is unification-based.
+     [qvars] identifies the engine metavariables which the invocation
+     permits the index to match.
      The unsafe phase holds claset candidates and the registered unsafe
      tactic rules in one order of decreasing success percentage; at equal
      percentage claset candidates precede tactic rules. *)
   val claset_rules :
-    {claset : clasetLib.claset,
+    {ctxt : Context.t,
+     claset : clasetLib.claset,
      mode : clasetUnify.mode,
      conclusion : term,
      assumptions : term list,
@@ -124,7 +127,8 @@ sig
      claset rules charge [budget] when one is given. *)
   val claset_rules_with :
     searchBudget.budget option ->
-    {claset : clasetLib.claset,
+    {ctxt : Context.t,
+     claset : clasetLib.claset,
      mode : clasetUnify.mode,
      conclusion : term,
      assumptions : term list,
