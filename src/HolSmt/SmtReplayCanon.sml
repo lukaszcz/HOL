@@ -84,11 +84,21 @@ struct
      checked equality for this invocation.  Tree-depth conversions revisit
      exponentially many paths through solver-generated shared circuits.
      [orient source] rewrites a node whose input occurrence was [source]. *)
+  (* Whether a scan may open the binder [term]: its raw size is within
+     [limit], counted with the pass's own opening admission. A refused
+     admission means the same as an oversized binder. *)
+  fun scan_may_open limit term =
+    Option.isSome (SmtReplayImport.bounded_raw_size_with_type_check
+        admit_count_type limit term)
+    handle Feedback.HOL_ERR holerr =>
+      if SmtResource.is_resource_gate holerr then false
+      else raise Feedback.HOL_ERR holerr
+
   (* Whether [trigger] holds at some subterm of [root], binder bodies
      included: one walk, memoized on physical identity. Past the term
      budget it answers true, so no pass is skipped that was not scanned.
-     A binder whose raw size is over the budget, which the pass's own
-     opening also refuses, answers true without being opened. *)
+     A binder the pass's own opening would refuse answers true before
+     [trigger] or the walk opens it. *)
   fun may_trigger trigger root =
     let
       exception Found
@@ -106,18 +116,23 @@ struct
             (Array.update (seen, index, term :: bucket);
              visited := !visited + 1;
              if !visited > SmtResource.max_bv_replay_term_nodes orelse
+                (Term.is_abs term andalso not (scan_may_open
+                   SmtResource.max_bv_replay_term_nodes term)) orelse
                 trigger term then raise Found
              else if Term.is_comb term then
                (visit (Term.rator term); visit (Term.rand term))
              else if Term.is_abs term then
-               (case SmtReplayImport.bounded_raw_size
-                    SmtResource.max_bv_replay_term_nodes term of
-                  NONE => raise Found
-                | SOME _ => visit
-                    (#2 (SmtReplayImport.dest_abs_preserving_names term)))
+               visit (#2 (SmtReplayImport.dest_abs_preserving_names term))
              else ())
         end
     in (visit root; false) handle Found => true end
+
+  (* Where ETA_CONV may rewrite: an abstraction whose body applies
+     something to the bound variable. Builds no theorem. *)
+  fun eta_shape term =
+    Term.is_abs term andalso
+    let val (variable,body) = SmtReplayImport.dest_abs_preserving_names term
+    in Term.is_comb body andalso Term.aconv (Term.rand body) variable end
 
   (* A conversion that can only rewrite where [trigger] holds. *)
   fun when_triggered trigger conversion root =
@@ -803,11 +818,9 @@ struct
       fun children term =
         if Term.is_comb term then [Term.rator term,Term.rand term]
         else if Term.is_abs term then
-          (case SmtReplayImport.bounded_raw_size
-               SmtResource.max_skeleton_replay_dag_nodes term of
-             NONE => raise Relevant
-           | SOME _ =>
-               [#2 (SmtReplayImport.dest_abs_preserving_names term)])
+          if scan_may_open SmtResource.max_skeleton_replay_dag_nodes term
+          then [#2 (SmtReplayImport.dest_abs_preserving_names term)]
+          else raise Relevant
         else []
       fun scan () =
         let val {complete,...} = SmtResource.bounded_structure_with_children
@@ -865,8 +878,7 @@ struct
       [cpc_alias_conv,
        when_triggered is_ground_total (dag_rewrite_conv ground_total_conv),
        cpc_alias_conv,
-       when_triggered (Lib.can Drule.ETA_CONV)
-         (dag_orientation_conv Drule.ETA_CONV)]
+       when_triggered eta_shape (dag_orientation_conv Drule.ETA_CONV)]
 
   val cpc_operand_canon_conv =
     compose

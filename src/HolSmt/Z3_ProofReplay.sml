@@ -8598,8 +8598,14 @@ local
           let fun schema () =
                 profile "th_lemma[bv](word-schema)" (schematic false) target
           in if not (wide_word target) then schema () else
-            case profile "th_lemma[bv](wide-skeleton)"
-                   (skeleton_general_attempt state) target of
+            (* The skeleton's own time gates leave the step's budget to
+               the word schema. *)
+            case (profile "th_lemma[bv](wide-skeleton)"
+                    (skeleton_general_attempt state) target
+                  handle Feedback.HOL_ERR holerr =>
+                    if SmtResource.is_resource_gate holerr then
+                      SmtSkeletonDispatch.Declined
+                    else raise Feedback.HOL_ERR holerr) of
               SmtSkeletonDispatch.Proved result =>
                 skeleton_general_success result
             | SmtSkeletonDispatch.Declined => schema () end
