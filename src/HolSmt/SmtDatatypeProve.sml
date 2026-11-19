@@ -1252,6 +1252,40 @@ struct
       (assumptions,conclusion)
   fun datatype_rewrite_thms_with_admission admit t =
     #rewrites (checked_procedures admit) t
+
+  (* The result of normalizing both sides of an equation with the datatype
+     rewrites of the whole equation: no rewrites apply to its types, no
+     side has a datatype redex, or the two checked side normalizations. *)
+  datatype normalization =
+    NoRewrites | NoRedex | Normalized of Thm.thm * Thm.thm
+
+  (* [t] is an equation [l = r].  Admission and resource errors propagate
+     unchanged; a side the checked traversal leaves unchanged is [REFL]. *)
+  fun normalize_equation_with_admission admit t =
+    let
+      val (l, r) = boolSyntax.dest_eq t
+      val thms = datatype_rewrite_thms_with_admission admit t
+      (* Only a target with a datatype redex is normalized: on any other,
+         simp's general normalization would send a target the datatype
+         rewrites cannot touch back through the whole ladder. *)
+      fun reducible side =
+        not (Term.aconv side (boolSyntax.rhs (Thm.concl
+          (Conv.QCONV (Rewrite.PURE_ONCE_REWRITE_CONV thms) side))))
+      fun normalize side =
+        with_checked_rewrites_using admit
+          (fn () => simpLib.++ (bossLib.srw_ss (), simpLib.rewrites thms))
+          (fn _ => raise Conv.UNCHANGED)
+          (fn ss => simpLib.SIMP_CONV ss [] side)
+        handle Conv.UNCHANGED => Thm.REFL side
+    in
+      if List.null thms then NoRewrites
+      else if not (reducible l orelse reducible r) then NoRedex
+      else
+        let
+          val l_thm = normalize l
+          val r_thm = normalize r
+        in Normalized (l_thm, r_thm) end
+    end
   fun datatype_split_terms t =
     #split_terms (checked_procedures (default_admission ())) t
   fun datatype_fragment_admits t =

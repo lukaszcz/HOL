@@ -7556,26 +7556,14 @@ local
     rewrite_profile "datatypes" "rewrite(21a)(datatype-normalize)" (fn () =>
       let
         val _ = #datatype_admit state t
-        val thms = SmtDatatypeProve.datatype_rewrite_thms_with_admission
-          (#datatype_admit state) t
-        val _ = not (List.null thms) orelse
-          raise ERR "z3_rewrite" "no datatype rewrites"
-        (* Only a target with a datatype redex is this rung's: on any other,
-           simp's general normalization would send a target the datatype
-           rewrites cannot touch back through the whole ladder. *)
-        fun reducible side =
-          not (Term.aconv side (boolSyntax.rhs (Thm.concl
-            (Conv.QCONV (Rewrite.PURE_ONCE_REWRITE_CONV thms) side))))
-        val _ = reducible l orelse reducible r orelse
-          raise ERR "z3_rewrite" "no datatype redex"
-        fun normalize side =
-          SmtDatatypeProve.with_checked_rewrites_using (#datatype_admit state)
-            (fn () => simpLib.++ (bossLib.srw_ss (), simpLib.rewrites thms))
-            (fn _ => raise Conv.UNCHANGED)
-            (fn ss => simpLib.SIMP_CONV ss [] side)
-          handle Conv.UNCHANGED => Thm.REFL side
-        val l_thm = normalize l
-        val r_thm = normalize r
+        val (l_thm, r_thm) =
+          case SmtDatatypeProve.normalize_equation_with_admission
+                 (#datatype_admit state) t of
+            SmtDatatypeProve.NoRewrites =>
+              raise ERR "z3_rewrite" "no datatype rewrites"
+          | SmtDatatypeProve.NoRedex =>
+              raise ERR "z3_rewrite" "no datatype redex"
+          | SmtDatatypeProve.Normalized sides => sides
         val (l', r') = (boolSyntax.rhs (Thm.concl l_thm),
                         boolSyntax.rhs (Thm.concl r_thm))
         val _ = not (Term.aconv l l' andalso Term.aconv r r') orelse
