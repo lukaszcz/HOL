@@ -15265,22 +15265,28 @@ struct
         OriginalPrefixSlot _=>true | ActualSourceSlot _=>false})
 
 
+  (* A private box for the argument clause's core.  Holding the 17-field
+     record abbreviation directly inside the plan's record is what made the
+     datatype printer and the compile of this file expensive; the box is a
+     single constructor of its own type, so it cannot be confused with a
+     rule plan. *)
+  datatype sce_clause_box=SCEClauseCore of sce_clause_core
   datatype sce_argument_clause_plan=SCEArgumentClausePlan of
-    {clause:source_condition_rule_plan,future:sce_future_argument}
+    {clause:sce_clause_box,future:sce_future_argument}
   fun sce_argument_clause_guard expected
-      (SCEArgumentClausePlan {clause=SCEClausePlan clause,future})=
+      (SCEArgumentClausePlan {clause=SCEClauseCore clause,future})=
     sce_core_guard expected (SCEArgumentClause future) clause
 
   fun prepare_source_condition_argument_clause expected
       {evidence,frame,caller,steps,terminal,check_type,future}=
     SCEArgumentClausePlan
-      {clause=SCEClausePlan(sce_prepare_clause expected
+      {clause=SCEClauseCore(sce_prepare_clause expected
          (SCEArgumentClause future)
          {evidence=evidence,frame=frame,caller=caller,steps=steps,
           terminal=terminal,check_type=check_type}),
        future=future}
   fun execute_source_condition_argument_clause expected
-      (SCEArgumentClausePlan {clause=SCEClausePlan clause,future})=
+      (SCEArgumentClausePlan {clause=SCEClauseCore clause,future})=
     sce_execute_clause expected (SCEArgumentClause future) clause
 
   datatype source_argument_phase=ArgumentPrepared | ArgumentAdmitting
@@ -15341,7 +15347,7 @@ struct
   fun admit_source_condition_exists_argument expected
       (value as SourceConditionArgumentPlan
         {plan=SCEArgumentClausePlan
-           {clause=SCEClausePlan {types,check_type,...},...},phase,...})=
+           {clause=SCEClauseCore {types,check_type,...},...},phase,...})=
     source_argument_operation expected value(fn()=>
       (source_argument_guard expected value;
        if !phase=ArgumentPrepared then ()else raise ERR
@@ -15357,7 +15363,7 @@ struct
   fun source_condition_argument_ready_for expected
       (SourceConditionArgumentReady(value as SourceConditionArgumentPlan
         {plan=SCEArgumentClausePlan
-           {clause=SCEClausePlan {frame,...},future},phase,...}))=
+           {clause=SCEClauseCore {frame,...},future},phase,...}))=
     source_argument_operation expected value(fn()=>
       (source_argument_guard expected value;
        if !phase=ArgumentAdmitted then ()else raise ERR
@@ -15368,7 +15374,7 @@ struct
       {ready=SourceConditionArgumentReady
          (value as SourceConditionArgumentPlan
            {plan=plan as SCEArgumentClausePlan
-              {clause=SCEClausePlan {frame,graph,...},future},phase,...}),
+              {clause=SCEClauseCore {frame,graph,...},future},phase,...}),
        argument}=
     source_argument_operation expected value(fn()=>
       (source_argument_guard expected value;
