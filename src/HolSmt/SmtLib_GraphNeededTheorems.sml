@@ -32,13 +32,13 @@ struct
   (* ---- Collector pieces shared by both owners. A kit is the owner's
      retirement check and its raw Work charge, as for normalize_with;
      spend (check, charge, check) and its one-unit form spend1 are
-     derived from it once. The
-     walkers, select_with (Source/auxiliary selection), finish_with and
-     fixed_point are shared. Left to each owner are the operations they
-     are instantiated with: the atom walk, the Type walk, the stock
-     selector, the fixed-law disposition, the next-roots step, the
-     finish preparation and the owner's receipt part, plus the collect
-     preamble and the result lift. ---- *)
+     derived from it once. The walkers, select_with (Source/auxiliary
+     selection), finish_with and fixed_point are shared. Left to each
+     owner are the operations they are instantiated with: the atom
+     walk, the Type walk, the stock selector, the fixed-law
+     disposition, the next-roots step, the finish preparation and the
+     owner's receipt part, plus the collect preamble and the result
+     lift. ---- *)
   type kit = {active : unit -> unit,charge : IntInf.int -> unit}
   fun spend ({active,charge} : kit) n = (active ();charge n;active ())
   fun spend1 k () = spend k 1
@@ -209,9 +209,9 @@ struct
       (mk : {live : unit -> unit,spend : IntInf.int -> unit} -> norm_ops) =
     let
       fun live () = (active ();backing ())
-      fun guarded action =
-        (live ();let val value = action () in live ();value end)
-      fun spend (n : IntInf.int) = (live ();charge n;live ())
+      val lk = {active = live,charge = charge}
+      fun guarded action = guarded_by lk action
+      val spend = spend lk
       fun policy ty = (live ();check_type ty;live ())
       val ops = mk {live = live,spend = spend}
       val (original,target,canonical) = W.with_step work (fn () =>
@@ -374,12 +374,9 @@ struct
       val _ = active owner
       val _ = if !used then raise ERR "collect" "collector already consumed"
         else used := true
-      (* Kept as an int spend, not the shared kit one: the hot atoms loop
-         then avoids an IntInf conversion per charge. Same order of checks
-         and charges as spend k. *)
-      fun spend n = (active owner;W.spend work n;active owner)
       val k = {active = fn () => active owner,
                charge = fn n => W.spend work (IntInf.toInt n)}
+      val spend = spend k
       fun guarded action = guarded_by k action
       fun policy ty =
         (active owner;check_type ty;active owner)
@@ -406,7 +403,7 @@ struct
             | NONE =>
                 let val remaining = W.work_limit work - #charged (W.audit work)
                     val slots = Int.max (1,Int.min (4093,remaining div 16))
-                    val _ = spend slots
+                    val _ = spend (IntInf.fromInt slots)
                     val cells = Array.array (slots,[] : Term.term list)
                     val _ = seen := SOME cells
                 in cells end
@@ -497,7 +494,7 @@ struct
               raise ERR "marker" "stock auxiliary has hypotheses"
             (* Quote equality raw/binder incidences before import/opening.
                This does not account private G/P maps or kernel traversals. *)
-            val _ = spend (2 * !inclusive + 3)
+            val _ = spend (IntInf.fromInt (2 * !inclusive + 3))
             val _ = List.app policy (!types)
             val imported = guarded (fn () =>
               G.import graph scope cap (Thm.concl th))
