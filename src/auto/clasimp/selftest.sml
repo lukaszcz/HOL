@@ -6860,3 +6860,79 @@ local
 in
   val _ = Portable.finally (fn () => Context.restore saved) run ()
 end;
+
+(* A proof reads the bottom-up declarations of the context it runs in,
+   whatever the global context declares. *)
+local
+  val saved = Context.snapshot ()
+  fun run () =
+    let
+      val _ = new_theory "bottomUpContextFixture"
+      val wrap_def = new_definition
+        ("bu_wrap_def", ``bu_wrap (n:num) <=> n = 0``)
+      val view_def = new_definition
+        ("bu_view_def", ``bu_view (n:num) <=> n <> 0``)
+      val rule = Tactical.prove
+        (``!n. ~bu_wrap n <=> bu_view n``,
+         Rewrite.REWRITE_TAC [wrap_def, view_def])
+      val pw_def = new_definition ("Pw_def", ``Pw (b:bool) = T``)
+      val pw_rw = Tactical.prove
+        (``!y. Pw (~bu_wrap y) = T``, Rewrite.REWRITE_TAC [pw_def])
+      fun residue ctxt =
+        case BasicProvers.SRW_TAC [] [] ([], ``~bu_wrap x``) ctxt of
+            ([(_, w)], _) => w
+          | _ => ``F``
+      val unfolded = ``bu_view x ==> ~bu_wrap x``
+      fun closes tactic goal ctxt =
+        null (#1 (SelfTestTactical.VALID tactic goal ctxt))
+        handle Feedback.HOL_ERR _ => false
+      fun auto_closes args goal ctxt =
+        closes (clasimpLib.AUTO_TAC args) ([], goal) ctxt
+      val _ = boolLib.save_thm ("bu_rule1[iff_bottom_up]", rule)
+      val with_rule = Context.snapshot ()
+      val _ = clasimpLib.remove_iff_bottom_up "bu_rule1"
+      val without_rule = Context.snapshot ()
+      val _ = boolLib.save_thm ("bu_rule2[iff_bottom_up]", rule)
+      val declared = Context.snapshot ()
+      val _ = clasimpLib.remove_iff_bottom_up "bu_rule2"
+      fun srw_of ctxt = BasicProvers.srw_ss_of ctxt
+      (* The global context declares the rule only while [body] runs. *)
+      fun globally_declared name body =
+        let
+          val _ = boolLib.save_thm (name ^ "[iff_bottom_up]", rule)
+          val result = body ()
+            handle e => (clasimpLib.remove_iff_bottom_up name; raise e)
+          val _ = clasimpLib.remove_iff_bottom_up name
+        in result end
+      fun views_follow () =
+        auto_closes [pw_rw] ``Pw (bu_view x)`` with_rule andalso
+        not (auto_closes [pw_rw] ``Pw (bu_view x)`` without_rule) andalso
+        auto_closes [pw_rw] ``Pw (bu_view x)`` with_rule
+    in
+      check ("the contexts of the bottom-up tests share one srw_ss",
+             fn () =>
+               Portable.pointer_eq (srw_of with_rule, srw_of without_rule)
+               andalso
+               Portable.pointer_eq (srw_of with_rule, srw_of declared));
+      check ("SRW_TAC reads the bottom-up rule of its context, global \
+             \retracted",
+             fn () => aconv (residue with_rule) ``bu_view x``);
+      check ("SRW_TAC ignores the global bottom-up rule its context lacks",
+             fn () =>
+               globally_declared "bu_rule3"
+                 (fn () => aconv (residue without_rule) ``~bu_wrap x``));
+      check ("AUTO_TAC closes with the rule of its context, global \
+             \retracted",
+             fn () => auto_closes [] unfolded with_rule);
+      check ("AUTO_TAC does not use the global rule its context lacks",
+             fn () =>
+               globally_declared "bu_rule4"
+                 (fn () => not (auto_closes [] unfolded without_rule)));
+      check ("rewrite views follow the context, global retracted",
+             views_follow);
+      check ("rewrite views follow the context, global declared",
+             fn () => globally_declared "bu_rule5" views_follow)
+    end
+in
+  val _ = Portable.finally (fn () => Context.restore saved) run ()
+end;
