@@ -2610,7 +2610,8 @@ end
 
 (* Integer literals are int_of_num applied to numerals, but they mention no
    num the transfer has to handle: a goal whose only num is inside them
-   keeps its assumptions out of the num-to-int rewriting. *)
+   keeps its assumptions out of the num-to-int rewriting.  The transfer
+   still normalizes such a goal, splitting its antecedents. *)
 fun int_literal_mentions_no_num_success () =
 let
   val f_def = ``!x:int. f x = x + 7``
@@ -2618,11 +2619,18 @@ let
     assert (SmtLib.goal_mentions_num goal = expected,
       what ^ (if expected then " was not" else " was") ^
       " taken to mention num")
+  val bounded = ``!x:int. 0 <= x /\ x <= 2 ==> x < 3``
+  val ((asl, _), _) = SolverSpec.simplify SmtLib.NUM_TO_INT_TAC
+    ([f_def], bounded)
 in
   mentions "f 2 = 9" false ([f_def], ``(f:int->int) 2 = 9``);
   mentions "f (-2) = 5" false ([f_def], ``(f:int->int) (-2) = 5``);
   mentions "&n = 2" true ([], ``&(n:num) = (2:int)``);
-  mentions "&FACT 3 = 6" true ([], ``&(FACT 3) = (6:int)``)
+  mentions "&FACT 3 = 6" true ([], ``&(FACT 3) = (6:int)``);
+  assert (SmtLib.goal_mentions_num_or_int_literal ([], bounded),
+    "an integer literal was not counted for the transfer's normalization");
+  assert (List.length asl = 3 andalso Lib.op_mem Term.aconv f_def asl,
+    "num transfer did not split an integer-literal goal's antecedents")
 end
 
 (* The num-to-int transfer leaves the assumptions that mention no num as
@@ -27255,7 +27263,18 @@ in
                             ``!l:int list. FRONT l = REVERSE l``]
                        ``REVERSE [1:int] = FRONT [1]``) ~~
                        ``REVERSE [1:int] = FRONT [1]``,
-    "mutually inverse macros did not prove their own equation")
+    "mutually inverse macros did not prove their own equation");
+  (* The expanded body is decided atom by atom under its connectives; the
+     quantified conjunct is never sent to integer arithmetic. *)
+  assert (Thm.concl (prove [``!x:int. macro_q x =
+                               (0 <= x /\ !y:int. y <= x \/ x < y)``]
+                       ``(macro_q:int->bool) asserted_a =
+                         (asserted_a >= 0 /\
+                          !y:int. y <= asserted_a \/ asserted_a < y)``) ~~
+                       ``(macro_q:int->bool) asserted_a =
+                         (asserted_a >= 0 /\
+                          !y:int. y <= asserted_a \/ asserted_a < y)``,
+    "an expanded macro body was not decided atom by atom")
 end
 
 fun z3_asserted_equality_substitution_boundaries () =

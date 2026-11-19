@@ -8721,12 +8721,15 @@ in
 
   (* A closed integer literal such as `2 : int` is `int_of_num` applied to a
      numeral, which the solvers read as an integer constant: it needs no
-     transfer, so the walk skips it. *)
-  fun goal_mentions_num (asms, concl) =
+     transfer, so goal_mentions_num skips it.  goal_mentions_num_or_int_literal
+     counts it, as the transfer's normalization of the goal still helps the
+     solvers' proofs replay. *)
+  fun mentions_num skip_literals (asms, concl) =
   let
     fun mentions [] = false
       | mentions (tm :: tms) =
-          if intSyntax.is_int_literal tm then mentions tms
+          if skip_literals andalso intSyntax.is_int_literal tm then
+            mentions tms
           else
             case Term.dest_term tm of
                 Term.COMB (rator, rand) => mentions (rator :: rand :: tms)
@@ -8736,6 +8739,9 @@ in
   in
     mentions (concl :: asms)
   end
+
+  val goal_mentions_num = mentions_num true
+  val goal_mentions_num_or_int_literal = mentions_num false
 
   (* STRIP_ALL_THEN minus DISJ_CASES_THEN: flattens conjunctions and
      skolemizes existentials but never case-splits, because preprocessing
@@ -8784,7 +8790,9 @@ in
         (List.filter (fn a => not (Lib.op_mem Term.aconv a held)) asl)
         (asl, w)
   in
-    if goal_mentions_num g andalso not (goal_entangles_num_and_word g) then
+    if goal_mentions_num_or_int_literal g andalso
+       not (goal_entangles_num_and_word g)
+    then
       (MAP_EVERY UNDISCH_TAC (Lib.op_mk_set Term.term_eq num_asms) THEN
        SPEC_NUM_FREE_VARS_TAC_EXCEPT exclude THEN
        CONV_TAC NUM_TO_INT_CONV THEN

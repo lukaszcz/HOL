@@ -7025,43 +7025,99 @@ local
           val substituted = boolSyntax.rhs (Thm.concl substitution)
           val _ = not (Term.aconv target substituted) orelse
             raise Conv.UNCHANGED
-          fun reflexive () =
-            let val (left, right) = boolSyntax.dest_eq substituted
+          fun reflexive residue =
+            let val (left, right) = boolSyntax.dest_eq residue
             in
               if Term.aconv left right then Thm.ALPHA left right
               else raise ERR "asserted_equality_substitution_prove"
                 "substituted equality is not reflexive"
             end
-          fun integer_conditional () =
+          fun integer_conditional residue =
             let
               val conditionals = List.filter
-                (Lib.can boolSyntax.dest_cond) (Library.subterms substituted)
+                (Lib.can boolSyntax.dest_cond) (Library.subterms residue)
               fun add (conditional, unique) =
                 if List.exists (Term.aconv conditional) unique then unique
                 else conditional :: unique
               val unique = List.foldl add [] conditionals
-              val _ = SmtResource.term_nodes_up_to 4096 substituted <= 4096
+              val _ = SmtResource.term_nodes_up_to 4096 residue <= 4096
                 orelse raise ERR "asserted_equality_substitution_prove"
                   "integer conditional residue exceeds 4096 syntax nodes"
               val _ = (macro_fired orelse not (List.null unique)) andalso
                   List.length unique <= 4 orelse
                 raise ERR "asserted_equality_substitution_prove"
                   "outside bounded integer min/max conditional family"
-              val _ = List.all
+              (* free_vars misses bound variables: a quantified residue
+                 would send Cooper into quantifier elimination *)
+              val _ = not (Library.has_quantifier residue) andalso List.all
                 (fn variable => Term.type_of variable = intSyntax.int_ty)
-                (Term.free_vars substituted) orelse
+                (Term.free_vars residue) orelse
                 raise ERR "asserted_equality_substitution_prove"
-                  "conditional residue has a non-integer variable"
+                  "conditional residue is quantified or has a non-integer \
+                  \variable"
             in
-              Tactical.TAC_PROOF (([], substituted),
+              Tactical.TAC_PROOF (([], residue),
                 Tactical.REPEAT Tactic.COND_CASES_TAC THEN
                 intLib.ARITH_TAC)
             end
-          val decision = reflexive ()
-            handle Feedback.HOL_ERR _ => integer_conditional ()
+          fun decide residue = reflexive residue
+            handle Feedback.HOL_ERR _ => integer_conditional residue
             handle Feedback.HOL_ERR _ =>
-              SmtDatatypeProve.datatype_prove_with_admission admit
-                substituted
+              SmtDatatypeProve.datatype_prove_with_admission admit residue
+          fun boolean_equality tm =
+            let val (left, _) = boolSyntax.dest_eq tm
+            in Term.type_of left = Type.bool end
+            handle Feedback.HOL_ERR _ => false
+          fun connective tm =
+            boolSyntax.is_neg tm orelse boolSyntax.is_conj tm orelse
+            boolSyntax.is_disj tm orelse boolSyntax.is_imp_only tm orelse
+            boolean_equality tm
+          fun connectives residue =
+            let val (l, r) = boolSyntax.dest_eq residue
+            in connective l andalso connective r end
+          (* An expanded macro body differs from Z3's normal form atom by
+             atom under the same Boolean connectives; deciding each atom
+             alone keeps the arithmetic small. *)
+          fun split residue =
+            let
+              val (l, r) = boolSyntax.dest_eq residue
+              fun congruence () =
+                let
+                  val (left_head, left_args) = boolSyntax.strip_comb l
+                  val (right_head, right_args) = boolSyntax.strip_comb r
+                  val _ = Term.aconv left_head right_head andalso
+                    List.length left_args = List.length right_args orelse
+                    raise ERR "asserted_equality_substitution_prove"
+                      "connectives differ"
+                in
+                  List.foldl (fn ((left, right), theorem) =>
+                      Thm.MK_COMB (theorem,
+                        split (boolSyntax.mk_eq (left, right))))
+                    (Thm.REFL left_head) (ListPair.zip (left_args, right_args))
+                end
+              fun bridged side =
+                Conv.REWR_CONV boolTheory.IMP_DISJ_THM side
+            in
+              if Term.aconv l r then Thm.ALPHA l r
+              else if not (connectives residue) then decide residue
+              else if boolSyntax.is_imp_only l andalso
+                      boolSyntax.is_disj r then
+                let val bridge = bridged l
+                in Thm.TRANS bridge (split (boolSyntax.mk_eq
+                     (boolSyntax.rhs (Thm.concl bridge), r))) end
+              else if boolSyntax.is_disj l andalso
+                      boolSyntax.is_imp_only r then
+                let val bridge = bridged r
+                in Thm.TRANS (split (boolSyntax.mk_eq
+                     (l, boolSyntax.rhs (Thm.concl bridge)))) (Thm.SYM bridge)
+                end
+              else congruence ()
+            end
+          val decision =
+            if connectives substituted then
+              split substituted
+              handle Feedback.HOL_ERR _ => decide substituted
+            else decide substituted
         in
           Thm.EQ_MP (Thm.SYM substitution) decision
         end
