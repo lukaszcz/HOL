@@ -19274,6 +19274,50 @@ in
        "(assert (= (+ x) x))\n(exit)\n")))
 end
 
+fun z3_proof_parser_seq_and_select_success () =
+let
+  val s = Term.mk_var ("s", listSyntax.mk_list_type intSyntax.int_ty)
+  val i = intSyntax.zero_tm
+  val n = intSyntax.term_of_int (Arbint.fromInt 2)
+  val seven = intSyntax.term_of_int (Arbint.fromInt 7)
+  fun rewrite_concl contents =
+    case Redblackmap.peek (Z3_Proof.proof_steps
+        (parse_z3_proof_string "4.15.3" contents), 0) of
+      SOME (Z3_Proof.REWRITE concl) => concl
+    | _ => die "FAIL: proof did not parse to a rewrite"
+  fun reflexive tm = boolSyntax.mk_eq (tm, tm)
+  val x = Term.mk_var ("x", intSyntax.int_ty)
+  val y = Term.mk_var ("y", intSyntax.int_ty)
+  val step = Term.list_mk_abs ([x, y], intSyntax.mk_plus (x, y))
+  fun holsmt_app name args =
+    list_mk_icomb (Term.prim_mk_const {Thy = "HolSmt", Name = name}, args)
+in
+  (* Z3 echoes seq.at and seq.extract as the constants the goal has. *)
+  assert (Term.aconv
+    (rewrite_concl ("((declare-fun s () (Seq Int))\n" ^
+       "(proof (rewrite (= (seq.at s 0) (seq.at s 0)))))"))
+    (reflexive (holsmt_app "smt_seq_at" [s, i])),
+    "seq.at did not parse as smt_seq_at");
+  assert (Term.aconv
+    (rewrite_concl ("((declare-fun s () (Seq Int))\n" ^
+       "(proof (rewrite (= (seq.extract s 0 2) (seq.extract s 0 2)))))"))
+    (reflexive (holsmt_app "smt_seq_extract" [s, i, n])),
+    "seq.extract did not parse as smt_seq_extract");
+  (* A two-argument lambda selected with both indices at once *)
+  assert (Term.aconv
+    (rewrite_concl ("((proof (rewrite (= " ^
+       "(select (lambda ((x Int) (y Int)) (+ x y)) 0 7) (+ 0 7)))))"))
+    (boolSyntax.mk_eq (Term.list_mk_comb (step, [i, seven]),
+       intSyntax.mk_plus (i, seven))),
+    "select with two indices did not parse as two applications");
+  expect_hol_error_contains "select with two indices in a benchmark"
+    "select arity mismatch"
+    (fn () => ignore (parse_smtlib_assertions
+      ("(set-logic QF_AUFLIA)\n" ^
+       "(declare-const a (Array Int (Array Int Int)))\n" ^
+       "(assert (= (select a 0 7) 0))\n(exit)\n")))
+end
+
 fun z3_asserted_membership_diagnostic () =
 let
   val rogue = ``p:bool``
@@ -38586,6 +38630,8 @@ let
       z3_proof_parser_unary_and_or_success),
     ("z3_proof_parser_unary_plus_success",
       z3_proof_parser_unary_plus_success),
+    ("z3_proof_parser_seq_and_select_success",
+      z3_proof_parser_seq_and_select_success),
     ("z3_fpa2bv_proof_dictionary_replay_success",
       z3_fpa2bv_proof_dictionary_replay_success),
     ("z3_fpa2bv_proof_dictionary_strictness",
