@@ -29,18 +29,22 @@ struct
      continuation : 'o norm list -> ('o,'x) outcome}
   and ('o,'x) outcome = Done of GP.validation | Need of ('o,'x) pend
 
-  (* ---- Collector walkers shared by both owners. A kit is the owner's
-     retirement check and its one-unit Work charge (each charge guards the
-     owner before and after). The remaining collector pieces (the atom
-     walk, the Type walk, the Source/auxiliary selection and the
-     normalization of a selected law) differ in their int/policy
-     operations and stay with their owner. ---- *)
-  type kit = {active : unit -> unit,spend1 : unit -> unit}
+  (* ---- Collector pieces shared by both owners. A kit is the owner's
+     retirement check and its raw Work charge, as for normalize_with;
+     spend1 derives the one-unit charge (check, charge, check) once. The
+     walkers, select_with (Source/auxiliary selection), finish_with and
+     fixed_point are shared. Left to each owner are the operations they
+     are instantiated with: the atom walk, the Type walk, the stock
+     selector, the fixed-law disposition, the next-roots step, the
+     finish preparation and the owner's receipt part, plus the collect
+     preamble and the result lift. ---- *)
+  type kit = {active : unit -> unit,charge : IntInf.int -> unit}
+  fun spend1 ({active,charge} : kit) () = (active ();charge 1;active ())
   fun guarded_by ({active,...} : kit) action =
     (active ();let val value = action () in active ();value end)
-  fun terms_of (k : kit) th = (#spend1 k ();Thm.concl th :: Thm.hyp th)
+  fun terms_of (k : kit) th = (spend1 k ();Thm.concl th :: Thm.hyp th)
   fun compare_terms (k : kit) (a,b) =
-    (#spend1 k ();guarded_by k (fn () => Term.compare (a,b)))
+    (spend1 k ();guarded_by k (fn () => Term.compare (a,b)))
   fun compare_thms k (a,b) =
     List.collate (compare_terms k) (terms_of k a,terms_of k b)
   fun empty_terms k () = HOLset.empty (compare_terms k)
@@ -51,7 +55,7 @@ struct
       val _ = type_walk (Term.type_of head)
       fun find [] = NONE
         | find ((old,selection)::rest) =
-            (#spend1 k ();if compare_terms k (head,old)=EQUAL then
+            (spend1 k ();if compare_terms k (head,old)=EQUAL then
                SOME selection else find rest)
       (* Exact typed atomic head, private to THIS original N owner.
          The first genuine selector materializes its laws ONCE. Later
@@ -59,9 +63,9 @@ struct
          Stage's original-law pointer key is not relaxed. *)
       val selection = case find (!selections) of SOME held => held
         | NONE =>
-            let val _ = #spend1 k ()
+            let val _ = spend1 k ()
                 val fresh = guarded_by k (fn () => select head)
-                val _ = #spend1 k ()
+                val _ = spend1 k ()
                 val _ = selections := (head,fresh) :: !selections
             in fresh end
       val data = guarded_by k (fn () =>
@@ -75,7 +79,7 @@ struct
   fun finish_with (k : kit) prepare accumulated proofs =
     let
       val laws = HOLset.listItems accumulated
-      val _ = List.app (fn _ => #spend1 k ()) laws
+      val _ = List.app (fn _ => spend1 k ()) laws
       fun find th = case List.find
           (fn (original,_) => compare_thms k (th,original) = EQUAL) proofs of
           SOME (_,proof) => proof
@@ -98,7 +102,7 @@ struct
   fun fixed_point (k : kit) owner
       {atoms,selected,unchanged,roots_of_added,finish,own} =
     let
-      val spend1 = #spend1 k
+      val spend1 = spend1 k
       fun guarded action = guarded_by k action
       val empty_thms = empty_thms k
       fun loop [] accumulated proofs = finish accumulated proofs
@@ -369,7 +373,8 @@ struct
       val _ = if !used then raise ERR "collect" "collector already consumed"
         else used := true
       fun spend n = (active owner;W.spend work n;active owner)
-      val k = {active = fn () => active owner,spend1 = fn () => spend 1}
+      val k = {active = fn () => active owner,
+               charge = fn n => W.spend work (IntInf.toInt n)}
       fun guarded action = guarded_by k action
       fun policy ty =
         (active owner;check_type ty;active owner)
@@ -760,7 +765,7 @@ struct
     (active owner;selections)
 
   fun collect (owner as Owner
-      {work,native,profiles,graph,scope,portfolio,check_type,used,selections,
+      {work,native,profiles,graph,scope,portfolio,used,selections,
        retained,validated,...}) =
     lift (W.with_step work (fn () =>
     let
@@ -768,10 +773,9 @@ struct
       val _ = if !used then raise ERR "collect" "collector already consumed"
         else used := true
       fun spend n = (active owner;W.spend_policy work n;active owner)
-      val k = {active = fn () => active owner,spend1 = fn () => spend 1}
+      val k = {active = fn () => active owner,
+               charge = fn n => W.spend_policy work n}
       fun guarded action = guarded_by k action
-      fun policy ty =
-        (active owner;check_type ty;active owner)
       val empty_terms = empty_terms k
       val empty_thms = empty_thms k
       val compare_thms = compare_thms k
@@ -981,7 +985,7 @@ struct
          active=fn()=>active owner,charge=fn n=>W.spend_policy work n,
          backing=backing,check_type=check_type,originals=originals,
          resumed=resumed}
-        (fn{live,spend}=>
+        (fn{live,...}=>
           let
             val native_data=NC.for_work work native
             val native_limits= #semantic_limits native_data
