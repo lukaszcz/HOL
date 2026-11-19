@@ -183,8 +183,6 @@ struct
           C.graph_realized_sequence work
             {first= #recipe left,second= #recipe right,observe=observe})
     in seal owner source recipe end
-  fun after source NONE = source
-    | after _ (SOME (value:outcome)) = #target value
   fun join owner source NONE right = right
     | join _ _ left NONE = left
     | join owner source (SOME left) (SOME right) =
@@ -1125,8 +1123,6 @@ struct
             C.graph_realized_sequence_with_policy work
               {first= #recipe left,second= #recipe right,observe=observe})
       in seal owner source recipe end
-    fun after source NONE=source
-      | after _ (SOME(value:outcome))= #target value
     fun join owner source NONE right=right
       | join _ _ left NONE=left
       | join owner source(SOME left)(SOME right)=
