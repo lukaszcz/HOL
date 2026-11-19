@@ -132,8 +132,9 @@ struct
 
   (* The predicate child must be the predicate; its binder closure is
      retained for revalidation. Constructed/rehome closures retain their
-     genuine creation frames. They do NOT acquire a fabricated raw Source
-     origin, so a later step on a generated BAG guard is permitted. *)
+     genuine creation frames. Accepting such a closure directly, without a
+     fabricated Source origin, permits a later step on a generated BAG
+     guard. *)
   fun predicate_closure {graph,scope,predicate_child,predicate,held,origin} =
     let val _ = if G.closure_child_node graph scope predicate_child =
           predicate then () else refuse origin "different predicate child"
@@ -445,7 +446,7 @@ struct
 
   (* Every type the plan needs goes through the caller's type policy. The
      law's producer (H.begin_original_with_work or _with_policy) gets
-     the SAME Work and [queue], which only queues admitted types; they
+     the SAME Work and the caller's [queue], which only queues admitted types; they
      reach the caller's [check_type] here, after the carrier reservation,
      so no external callback precedes it. *)
   fun issue_types {active,check_type,queued,types,shapes} =
