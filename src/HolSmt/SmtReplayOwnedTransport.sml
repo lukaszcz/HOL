@@ -454,6 +454,111 @@ struct
         val target = at_node focus (scope focus) (#target data) [backing]
     in checked (focus,target,theorem,backing) end)
 
+  (* The footprint walk shared by both inventories. A caller supplies the
+     owner-specific operations: [fence] (SOME check wraps every callback in
+     an owner check, NONE leaves the walk unfenced), the paid [spend], the
+     traversal [scope], [begin_root] (the per-root cache check or capture),
+     the opaque-profile lookup and data ([profile_for], [profile_data], read
+     for requester ['r]) and how the requester descends under a binder
+     ([body_requester]). It returns the footprints, the quoted types, the
+     closure children held and the opaque profiles retained, from which the
+     caller builds its own guard. *)
+  fun inventory_with {fence,work,graph,ceiling,spend,scope,begin_root,
+                      profile_for,profile_data,body_requester,
+                      requester0} roots =
+    let fun invoke action = case fence of NONE => action ()
+          | SOME check => protected work (fn () =>
+              (check ();let val value = action () val _ = check ()
+                        in value end))
+        fun plus a b = IntInf.min (ceiling+1,a+b)
+        val types = ref ([] : Type.hol_type list)
+        val held = ref ([] : (G.scope * G.closure_child) list)
+        val opaque = ref []
+        val memo = ref ([] : (G.node * footprint) list)
+        fun weight ty =
+          let fun walk [] n = n
+                | walk (pending::more) n =
+                  (spend 1;case pending of [] => walk more n
+                   | current::rest =>
+                     let val next = plus n 1
+                         val _ = if next <= ceiling then () else
+                           raise ERR "inventory" "type footprint exceeds Work"
+                     in if invoke (fn () => Type.is_vartype current)
+                        then walk (rest::more) next
+                        else walk ((invoke
+                          (fn () => #2 (Type.dest_type current)))::rest::more)
+                          next end)
+          in walk [[ty]] 0 end
+        fun annotation current =
+          let val ty = invoke (fn () => G.type_of graph current)
+              val count = weight ty val _ = spend 1
+              val _ = types := ty :: !types
+          in count end
+        fun lookup current [] = NONE
+          | lookup current ((old,value)::rest) =
+              (spend 1;if current = old then SOME value
+               else lookup current rest)
+        fun visit caller requester child =
+          let val _ = spend 1
+              val current = invoke
+                (fn () => G.closure_child_node graph caller child)
+              val _ = held := (caller,child) :: !held
+          in case lookup current (!memo) of SOME value => value
+           | NONE =>
+            let val kind = invoke (fn () => G.view graph current)
+                val profile = case kind of G.OpaqueRetained =>
+                    profile_for requester current
+                  | _ => NONE
+                val ty = case profile of SOME held =>
+                    #ty (invoke (fn () => profile_data requester held))
+                  | NONE => annotation current
+                val value : footprint = case kind of
+                    G.Application _ =>
+                      let val (f,x) = invoke (fn () =>
+                            G.closure_application_children graph caller child)
+                          val a = visit caller requester f
+                          val b = visit caller requester x
+                      in {raw = plus 1 (plus (#raw a) (#raw b)),
+                          inc = plus 1 (plus (#inc a) (#inc b)),
+                          ann = plus ty (plus (#ann a) (#ann b)),ty = ty}
+                      end
+                  | G.AdmittedBinder _ =>
+                      let val binder = invoke (fn () =>
+                            G.closure_child_binder graph caller child)
+                          val d = invoke (fn () =>
+                            G.binder_closure_data graph caller binder)
+                          val bt = annotation (#binder d)
+                          val b = visit caller
+                            (body_requester requester (#body_frame d))
+                            (invoke (fn () =>
+                              G.binder_closure_body graph caller binder))
+                      in {raw = plus 1 (#raw b),inc = plus 2 (#inc b),
+                          ann = plus ty (plus bt (#ann b)),ty = ty} end
+                  | G.OpaqueRetained => (case profile of NONE =>
+                      raise ERR "inventory"
+                        "unrecorded opaque annotation portfolio"
+                    | SOME held =>
+                      let val data = invoke
+                            (fn () => profile_data requester held)
+                          val _ = spend 1
+                          val _ = opaque := (requester,held) :: !opaque
+                          val _ = List.app (fn ty =>
+                            (spend 1;types := ty :: !types)) (#types data)
+                      in {raw = #raw data,inc = #inc data,
+                          ann = #ann data,ty = #ty data} end)
+                  | _ => {raw = 1,inc = 1,ann = ty,ty = ty}
+                val _ = spend 1
+                val _ = memo := (current,value) :: !memo
+            in value end end
+        fun root current =
+          let val _ = begin_root current
+              val caller = scope ()
+              val requester = requester0 (scope ())
+          in visit caller requester (invoke
+            (fn () => G.closure_root graph (scope ()) current)) end
+        val values = List.map root roots
+    in (values,!types,!held,!opaque) end
+
   (* Full repeated syntax/type footprints; memo shares discovery, never
      occurrence sums. Private closure/map/name costs remain unclosed. *)
   fun inventory (focus as Focus {traversal,...}) roots =
@@ -462,112 +567,38 @@ struct
         (* This complete inventory has no user callbacks. Fence it once,
            not around every paid type/node/memo operation. The returned
            guard still checks every retained path at policy boundaries. *)
-        fun invoke _ action = action ()
-        fun spend _ amount = W.spend work amount
-        fun scope _ = traversal
         val graph = #graph (owner_of focus)
         val limits = #limits (owner_of focus)
         val maximum = Int.max (#input_limit limits,
           Int.max (#output_limit limits,#template_limit limits))
         val ceiling = IntInf.fromInt (W.work_limit (work_of focus))
-        fun plus a b = IntInf.min (ceiling+1,a+b)
-        val types = ref ([] : Type.hol_type list)
-        val held = ref ([] : (G.scope * G.closure_child) list)
-        val opaque = ref ([] : G.opaque_profile list)
-        val memo = ref ([] : (G.node * footprint) list)
-        fun weight ty =
-          let fun walk [] n = n
-                | walk (pending::more) n =
-                  (spend focus 1;case pending of [] => walk more n
-                   | current::rest =>
-                     let val next = plus n 1
-                         val _ = if next <= ceiling then () else
-                           raise ERR "inventory" "type footprint exceeds Work"
-                     in if invoke focus (fn () => Type.is_vartype current)
-                        then walk (rest::more) next
-                        else walk ((invoke focus
-                          (fn () => #2 (Type.dest_type current)))::rest::more)
-                          next end)
-          in walk [[ty]] 0 end
-        fun annotation current =
-          let val ty = invoke focus (fn () => G.type_of graph current)
-              val count = weight ty val _ = spend focus 1
-              val _ = types := ty :: !types
-          in count end
-        fun lookup current [] = NONE
-          | lookup current ((old,value)::rest) =
-              (spend focus 1;if current = old then SOME value
-               else lookup current rest)
-        fun visit caller child =
-          let val _ = spend focus 1
-              val current = invoke focus
-                (fn () => G.closure_child_node graph caller child)
-              val _ = held := (caller,child) :: !held
-          in case lookup current (!memo) of SOME value => value
-           | NONE =>
-            let val kind = invoke focus (fn () => G.view graph current)
-                val profile = case kind of G.OpaqueRetained =>
-                    invoke focus (fn () => G.opaque_profile_for graph
-                      (scope focus) current)
-                  | _ => NONE
-                val ty = case profile of SOME held =>
-                    #ty (invoke focus (fn () => G.opaque_profile_data graph
-                      (scope focus) held))
-                  | NONE => annotation current
-                val value : footprint = case kind of
-                    G.Application _ =>
-                      let val (f,x) = invoke focus (fn () =>
-                            G.closure_application_children graph caller child)
-                          val a = visit caller f val b = visit caller x
-                      in {raw = plus 1 (plus (#raw a) (#raw b)),
-                          inc = plus 1 (plus (#inc a) (#inc b)),
-                          ann = plus ty (plus (#ann a) (#ann b)),ty = ty}
-                      end
-                  | G.AdmittedBinder _ =>
-                      let val binder = invoke focus (fn () =>
-                            G.closure_child_binder graph caller child)
-                          val d = invoke focus (fn () =>
-                            G.binder_closure_data graph caller binder)
-                          val bt = annotation (#binder d)
-                          val b = visit caller (invoke focus (fn () =>
-                            G.binder_closure_body graph caller binder))
-                      in {raw = plus 1 (#raw b),inc = plus 2 (#inc b),
-                          ann = plus ty (plus bt (#ann b)),ty = ty} end
-                  | G.OpaqueRetained => (case profile of NONE =>
-                      raise ERR "inventory"
-                        "unrecorded opaque annotation portfolio"
-                    | SOME held =>
-                      let val data = invoke focus
-                            (fn () => G.opaque_profile_data graph
-                              (scope focus) held)
-                          val _ = spend focus 1
-                          val _ = opaque := held :: !opaque
-                          val _ = List.app (fn ty =>
-                            (spend focus 1;types := ty :: !types)) (#types data)
-                      in {raw = IntInf.fromInt (#raw data),
-                          inc = IntInf.fromInt (#inc data),
-                          ann = #ann data,ty = #ty data} end)
-                  | _ => {raw = 1,inc = 1,ann = ty,ty = ty}
-                val _ = spend focus 1
-                val _ = memo := (current,value) :: !memo
-            in value end end
-        fun root current =
-          let val _ = List.app (fn metric =>
-                (spend focus 1;case invoke focus (fn () =>
-                    G.unfolded_nodes graph metric maximum current) of
-                    SOME count => if count <= maximum then () else
-                      raise ERR "inventory" "cached syntax exceeds caps"
-                  | NONE => raise ERR "inventory" "unknown cached syntax"))
-                [G.RawNodes,G.BinderInclusiveNodes]
-          in visit (scope focus) (invoke focus
-            (fn () => G.closure_root graph (scope focus) current)) end
-        val values = List.map root roots
+        fun begin_root current =
+          List.app (fn metric =>
+            (W.spend work 1;case G.unfolded_nodes graph metric maximum
+                current of
+                SOME count => if count <= maximum then () else
+                  raise ERR "inventory" "cached syntax exceeds caps"
+              | NONE => raise ERR "inventory" "unknown cached syntax"))
+            [G.RawNodes,G.BinderInclusiveNodes]
+        fun profile_data () held =
+          let val data = G.opaque_profile_data graph traversal held
+          in {raw = IntInf.fromInt (#raw data),inc = IntInf.fromInt (#inc data),
+              ann = #ann data,ty = #ty data,types = #types data} end
+        val (values,types,held,opaque) = inventory_with
+          {fence = NONE,work = work,graph = graph,ceiling = ceiling,
+           spend = fn amount => W.spend work amount,
+           scope = fn () => traversal,begin_root = begin_root,
+           profile_for = fn () => fn current =>
+             G.opaque_profile_for graph traversal current,
+           profile_data = profile_data,
+           body_requester = fn requester => fn _ => requester,
+           requester0 = fn _ => ()} roots
         fun guard () =
           (active focus;List.app (fn (caller,child) =>
-            ignore (G.closure_child_node graph caller child)) (!held);
-           List.app (fn profile => ignore (G.opaque_profile_data graph
-             traversal profile)) (!opaque))
-    in (values,!types,guard) end
+            ignore (G.closure_child_node graph caller child)) held;
+           List.app (fn ((),profile) => ignore (G.opaque_profile_data graph
+             traversal profile)) opaque)
+    in (values,types,guard) end
 
   (* Only the internal quoted role changes the node bound. Both paths
      retain the original Work debit; semantic result and checked evidence
@@ -1601,92 +1632,8 @@ struct
           Int.max (#output_limit limits,#template_limit limits))
         val ceiling = IntInf.fromInt (#type_work_limit (#native_data (owner_of
           focus)))
-        fun plus a b = IntInf.min (ceiling+1,a+b)
-        val types = ref ([] : Type.hol_type list)
-        val held = ref ([] : (G.scope * G.closure_child) list)
-        val opaque = ref ([] : (G.scope * G.policy_opaque_profile) list)
-        val memo = ref ([] : (G.node * footprint) list)
-        fun weight ty =
-          let fun walk [] n = n
-                | walk (pending::more) n =
-                  (spend focus 1;case pending of [] => walk more n
-                   | current::rest =>
-                     let val next = plus n 1
-                         val _ = if next <= ceiling then () else
-                           raise ERR "inventory" "type footprint exceeds Work"
-                     in if invoke focus (fn () => Type.is_vartype current)
-                        then walk (rest::more) next
-                        else walk ((invoke focus
-                          (fn () => #2 (Type.dest_type current)))::rest::more)
-                          next end)
-          in walk [[ty]] 0 end
-        fun annotation current =
-          let val ty = invoke focus (fn () => G.type_of graph current)
-              val count = weight ty val _ = spend focus 1
-              val _ = types := ty :: !types
-          in count end
-        fun lookup current [] = NONE
-          | lookup current ((old,value)::rest) =
-              (spend focus 1;if current = old then SOME value
-               else lookup current rest)
-        fun visit caller requester child =
-          let val _ = spend focus 1
-              val current = invoke focus
-                (fn () => G.closure_child_node graph caller child)
-              val _ = held := (caller,child) :: !held
-          in case lookup current (!memo) of SOME value => value
-           | NONE =>
-            let val kind = invoke focus (fn () => G.view graph current)
-                val profile = case kind of G.OpaqueRetained =>
-                    profile_for focus requester current
-                  | _ => NONE
-                val ty = case profile of SOME held =>
-                    #ty (invoke focus (fn () =>
-                      G.opaque_profile_data_with_policy graph
-                      requester held))
-                  | NONE => annotation current
-                val value : footprint = case kind of
-                    G.Application _ =>
-                      let val (f,x) = invoke focus (fn () =>
-                            G.closure_application_children graph caller child)
-                          val a = visit caller requester f
-                          val b = visit caller requester x
-                      in {raw = plus 1 (plus (#raw a) (#raw b)),
-                          inc = plus 1 (plus (#inc a) (#inc b)),
-                          ann = plus ty (plus (#ann a) (#ann b)),ty = ty}
-                      end
-                  | G.AdmittedBinder _ =>
-                      let val binder = invoke focus (fn () =>
-                            G.closure_child_binder graph caller child)
-                          val d = invoke focus (fn () =>
-                            G.binder_closure_data graph caller binder)
-                          val bt = annotation (#binder d)
-                          val b = visit caller (#body_frame d) (invoke focus
-                            (fn () =>
-                            G.binder_closure_body graph caller binder))
-                      in {raw = plus 1 (#raw b),inc = plus 2 (#inc b),
-                          ann = plus ty (plus bt (#ann b)),ty = ty} end
-                  | G.OpaqueRetained => (case profile of NONE =>
-                      raise ERR "inventory"
-                        "unrecorded opaque annotation portfolio"
-                    | SOME held =>
-                      let val data = invoke focus
-                            (fn () => G.opaque_profile_data_with_policy graph
-                              requester held)
-                          val _ = spend focus 1
-                          val _ = opaque := (requester,held) :: !opaque
-                          val _ = List.app (fn ty =>
-                            (spend focus 1;types := ty :: !types)) (#types
-                              data)
-                      in {raw = #raw data,
-                          inc = #inc data,
-                          ann = #ann data,ty = #ty data} end)
-                  | _ => {raw = 1,inc = 1,ann = ty,ty = ty}
-                val _ = spend focus 1
-                val _ = memo := (current,value) :: !memo
-            in value end end
         val captures = ref ([]:G.profiled_metric list)
-        fun root current =
+        fun begin_root current =
           let
             val capture=invoke focus (fn()=>G.prepare_profiled_metric graph
               (scope focus)
@@ -1697,20 +1644,30 @@ struct
             val _=if #raw data<=IntInf.fromInt maximum andalso
                 #inc data<=IntInf.fromInt maximum then () else
               raise ERR "inventory" "cached syntax exceeds caps"
-            val _=captures:=capture:: !captures
-          in visit (scope focus) (scope focus) (invoke focus
-            (fn () => G.closure_root graph (scope focus) current)) end
-        val values = List.map root roots
+          in captures:=capture:: !captures end
+        fun profile_data requester held =
+          let val data = G.opaque_profile_data_with_policy graph requester held
+          in {raw = #raw data,inc = #inc data,ann = #ann data,ty = #ty data,
+              types = #types data} end
+        val (values,types,held,opaque) = inventory_with
+          {fence = SOME (fn () => active focus),work = work_of focus,
+           graph = graph,ceiling = ceiling,spend = spend focus,
+           scope = fn () => scope focus,begin_root = begin_root,
+           profile_for = fn requester => fn current =>
+             profile_for focus requester current,
+           profile_data = profile_data,
+           body_requester = fn _ => fn frame => frame,
+           requester0 = fn frame => frame} roots
         fun guard () =
           (active focus;
            List.app (fn capture=>ignore (G.profiled_metric_data graph
              (scope focus) capture)) (!captures);
            List.app (fn (caller,child) =>
-            ignore (G.closure_child_node graph caller child)) (!held);
+            ignore (G.closure_child_node graph caller child)) held;
            List.app (fn (requester,profile) => ignore
              (G.opaque_profile_data_with_policy graph requester profile))
-             (!opaque))
-    in (values,!types,guard) end
+             opaque)
+    in (values,types,guard) end
 
   (* Only the internal quoted role changes the node bound. Both paths
      retain the original Work debit; semantic result and checked evidence
