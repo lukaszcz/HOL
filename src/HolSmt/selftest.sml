@@ -46735,17 +46735,11 @@ end;
 
 local
   structure G=SmtReplayGraph
-  structure S=SmtReplaySource
   structure W=SmtReplayInvocationWork
-  structure P=SmtReplayProof
-  structure Q=SmtReplayFocusAdmission
-  structure RP=SmtReplayResourcePolicy
-  structure NC=SmtReplayNativeContract
   structure H=SmtLib_GraphLawTypeInstance
   structure C=SmtLib_GraphCarrierRoot
   structure X=SmtLib_GraphCarrierRootFixture
   val cap=SmtLib_GraphCarrierRootFixture.cap
-  val metadata=X.metadata
   val native=X.native
   type fixture=X.fixture
   val setup=X.setup
@@ -48604,22 +48598,14 @@ end
 
 local
   structure G=SmtReplayGraph
-  structure S=SmtReplaySource
   structure W=SmtReplayInvocationWork
-  structure P=SmtReplayProof
-  structure Q=SmtReplayFocusAdmission
-  structure RP=SmtReplayResourcePolicy
-  structure NC=SmtReplayNativeContract
-  structure H=SmtLib_GraphLawTypeInstance
   structure C=SmtLib_GraphCarrierRoot
   structure X=SmtLib_GraphCarrierRootFixture
   val cap=SmtLib_GraphCarrierRootFixture.cap
-  val metadata=X.metadata
   val native=X.native
   type fixture=X.fixture
   val setup=X.setup
   val expected=X.expected
-  val producer=X.producer
   val opaque_setup=X.opaque_setup
   fun prepare(e:fixture) callback=C.prepare_closure_profiled_admitted_with_policy
     {graph= #graph e,scope= #scope e,sources= #sources e,work= #work e,
