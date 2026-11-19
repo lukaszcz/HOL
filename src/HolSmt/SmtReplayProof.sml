@@ -17103,17 +17103,8 @@ struct
          "plan already admitted or consumed";
        phase:=SCAdmitting;
        W.with_step expected(fn()=>
-         let fun guarded operation=
-               (sc_plan_guard expected value;
-                let val answer=operation()
-                in sc_plan_guard expected value;answer end)
-             fun materialize(SRCaptured ty)=guarded(fn()=>ty)
-               | materialize(SRArrow(a,b))=
-                   let val left=materialize a val right=materialize b
-                   in guarded(fn()=>Type.mk_thy_type
-                     {Thy="min",Tyop="fun",Args=[left,right]})end
-             val actual=List.map materialize types
-             val _=List.app(fn ty=>guarded(fn()=>check_type ty))actual
+         let val _=sce_check_policies
+               (fn()=>sc_plan_guard expected value)check_type types
              val _=sc_plan_guard expected value
              val _=phase:=SCAdmitted
          in SCReady value end)))
@@ -18595,17 +18586,8 @@ struct
          "already admitted or consumed";
        phase:=SCAdmitting;
        W.with_step expected(fn()=>
-         let fun guarded action=
-               (source_assertion_guard expected value;
-                let val answer=action()
-                in source_assertion_guard expected value;answer end)
-             fun materialize(SRCaptured ty)=guarded(fn()=>ty)
-               | materialize(SRArrow(a,b))=
-                   let val left=materialize a val right=materialize b
-                   in guarded(fn()=>Type.mk_thy_type
-                     {Thy="min",Tyop="fun",Args=[left,right]})end
-             val actual=List.map materialize types
-             val _=List.app(fn ty=>guarded(fn()=>check_type ty))actual
+         let val _=sce_check_policies
+               (fn()=>source_assertion_guard expected value)check_type types
          in source_assertion_guard expected value end);
        phase:=SCAdmitted;source_assertion_guard expected value;
        SourceAssertionReady value))
