@@ -1537,11 +1537,9 @@ local
                 "congruence strategy does not match certificate conclusion"
         end
       fun fallback_cong () =
-        matches_conclusion sequential_cong
-        handle Feedback.HOL_ERR holerr =>
-          if SmtResource.is_resource_gate holerr then
-            raise Feedback.HOL_ERR holerr
-          else matches_conclusion structural_cong
+        SmtResource.or_else
+          (fn () => matches_conclusion sequential_cong)
+          (fn () => matches_conclusion structural_cong)
     in
       matches_conclusion quantified_cong
       handle Feedback.HOL_ERR _ => matches_conclusion targeted_cong
@@ -4850,28 +4848,26 @@ local
            retain_producer_conclusion template operands target theorem
        | NONE =>
       if reflexive () then Thm.REFL (Lib.fst (boolSyntax.dest_eq target))
-      else (boolean_aci ()
-        handle Feedback.HOL_ERR _ => word_ac ()
-        handle Feedback.HOL_ERR _ =>
-          profile "CPC(rung:word/aci_norm)" wordsLib.WORD_ARITH_PROVE target)
-      handle Feedback.HOL_ERR holerr =>
-        if SmtResource.is_resource_gate holerr then
-          raise Feedback.HOL_ERR holerr
-        else
-          (profile "CPC(rung:seq/aci_norm)"
-             (SmtSeqProve.seq_prove_with_admission admit) target
-           handle Feedback.HOL_ERR holerr =>
-             if SmtResource.is_resource_gate holerr then
-               raise Feedback.HOL_ERR holerr
-             else
-               (profile "CPC(rung:string/aci_norm)"
-                  SmtStringProve.string_rewrite_prove target
-                handle Feedback.HOL_ERR holerr =>
-                  if SmtResource.is_resource_gate holerr then
-                    raise Feedback.HOL_ERR holerr
-                  else
+      else SmtResource.or_else
+        (fn () =>
+          (boolean_aci ()
+          handle Feedback.HOL_ERR _ => word_ac ()
+          handle Feedback.HOL_ERR _ =>
+            profile "CPC(rung:word/aci_norm)"
+              wordsLib.WORD_ARITH_PROVE target))
+        (fn () =>
+          (SmtResource.or_else
+             (fn () =>
+               profile "CPC(rung:seq/aci_norm)"
+                 (SmtSeqProve.seq_prove_with_admission admit) target)
+             (fn () =>
+               (SmtResource.or_else
+                  (fn () =>
+                    profile "CPC(rung:string/aci_norm)"
+                      SmtStringProve.string_rewrite_prove target)
+                  (fn () =>
                     profile "CPC(rung:word/aci_norm_tautology)"
-                      (tautology "aci_norm") target)))
+                      (tautology "aci_norm") target))))))
     end
 
   fun replay_aci_norm args = replay_aci_norm_admitted
@@ -6573,16 +6569,12 @@ local
     in prove plan end
 
   fun replay_nary_cong source prems =
-    replay_flat_nary_cong source prems
-    handle Feedback.HOL_ERR error =>
-      if SmtResource.is_resource_gate error then
-        raise Feedback.HOL_ERR error
-      else
-        (replay_boolean_nary_cong source prems
-         handle Feedback.HOL_ERR error =>
-           if SmtResource.is_resource_gate error then
-             raise Feedback.HOL_ERR error
-           else replay_direct_nary_cong source prems)
+    SmtResource.or_else
+      (fn () => replay_flat_nary_cong source prems)
+      (fn () =>
+        (SmtResource.or_else
+           (fn () => replay_boolean_nary_cong source prems)
+           (fn () => replay_direct_nary_cong source prems)))
 
   and replay_direct_nary_cong source prems =
     let
@@ -6865,34 +6857,32 @@ local
                     val bridge_target = boolSyntax.mk_eq
                       (left_canonical, right_canonical)
                     fun after_word () =
-                      (profile "CPC(rung:trans/XOR_GRAPH)"
-                         xor_graph_tautology bridge_target
-                       handle Feedback.HOL_ERR holerr =>
-                         if SmtResource.is_resource_gate holerr then
-                           raise Feedback.HOL_ERR holerr
-                         else
-                           (profile "CPC(rung:trans/XOR_TAUT)"
-                              xor_tautology bridge_target
-                            handle Feedback.HOL_ERR holerr =>
+                      (SmtResource.or_else
+                         (fn () =>
+                           profile "CPC(rung:trans/XOR_GRAPH)"
+                             xor_graph_tautology bridge_target)
+                         (fn () =>
+                           (SmtResource.or_else
+                              (fn () =>
+                                profile "CPC(rung:trans/XOR_TAUT)"
+                                  xor_tautology bridge_target)
+                              (fn () =>
+                                shared_phase "bridge_aci" (fn () =>
+                                replay_aci_norm [bridge_target])))))
+                    val bridge =
+                      (SmtResource.or_else
+                         (fn () =>
+                           (shared_phase "bridge_word" (fn () =>
+                              prove_word_graph_tautology
+                                "cpc-trans-word" bridge_target)
+                            handle Conv.UNCHANGED => after_word ()
+                             | Feedback.HOL_ERR holerr =>
                               if SmtResource.is_resource_gate holerr then
                                 raise Feedback.HOL_ERR holerr
-                              else shared_phase "bridge_aci" (fn () =>
-                                replay_aci_norm [bridge_target])))
-                    val bridge =
-                      ((shared_phase "bridge_word" (fn () =>
-                          prove_word_graph_tautology
-                            "cpc-trans-word" bridge_target)
-                        handle Conv.UNCHANGED => after_word ()
-                         | Feedback.HOL_ERR holerr =>
-                          if SmtResource.is_resource_gate holerr then
-                            raise Feedback.HOL_ERR holerr
-                          else after_word ())
-                       handle Feedback.HOL_ERR holerr =>
-                         if SmtResource.is_resource_gate holerr then
-                           raise Feedback.HOL_ERR holerr
-                         else
+                              else after_word ()))
+                         (fn () =>
                            profile "CPC(rung:trans/TAUT)"
-                             tautLib.TAUT_PROVE bridge_target)
+                             tautLib.TAUT_PROVE bridge_target))
                   in
                     (Thm.TRANS left_theorem bridge, right_theorem)
                   end
@@ -8281,14 +8271,14 @@ local
           in if Term.aconv term (boolSyntax.rhs (Thm.concl theorem)) then
               raise Conv.UNCHANGED else theorem end
       fun convert term =
-        ((Conv.FIRST_CONV rewrites term
-          handle Conv.UNCHANGED => ground term
-               | Feedback.HOL_ERR error =>
-             if SmtResource.is_resource_gate error then
-               raise Feedback.HOL_ERR error else ground term)
-         handle Feedback.HOL_ERR error =>
-           if SmtResource.is_resource_gate error then
-             raise Feedback.HOL_ERR error else raise Conv.UNCHANGED)
+        (SmtResource.or_else
+           (fn () =>
+             (Conv.FIRST_CONV rewrites term
+              handle Conv.UNCHANGED => ground term
+                   | Feedback.HOL_ERR error =>
+                 if SmtResource.is_resource_gate error then
+                   raise Feedback.HOL_ERR error else ground term))
+           (fn () => raise Conv.UNCHANGED))
     in convert end
 
   fun normalize_fp_word_data sources node_conversion term =
@@ -8554,22 +8544,21 @@ local
         if SmtResource.dag_nodes_up_to 33 term > 32 orelse
            not (List.null (Term.free_vars term)) then NONE
         else
-          (let
-             val sizes = Conv.DEPTH_CONV
-               wordsLib.SIZES_CONV term
-               handle Conv.UNCHANGED => Thm.REFL term
-             val sized = boolSyntax.rhs (Thm.concl sizes)
-             val evaluated = SmtResource.with_bitblast_step_time
-               "cpc-trust-fp-ground-leaf" bossLib.EVAL sized
-               handle Conv.UNCHANGED => Thm.REFL sized
-             val theorem = Thm.TRANS sizes evaluated
-             val residue = boolSyntax.rhs (Thm.concl theorem)
-           in if Term.aconv term residue then NONE
-              else SOME theorem end)
-          handle Feedback.HOL_ERR holerr =>
-            if SmtResource.is_resource_gate holerr then
-              raise Feedback.HOL_ERR holerr
-            else NONE
+          SmtResource.or_else
+            (fn () =>
+              (let
+                 val sizes = Conv.DEPTH_CONV
+                   wordsLib.SIZES_CONV term
+                   handle Conv.UNCHANGED => Thm.REFL term
+                 val sized = boolSyntax.rhs (Thm.concl sizes)
+                 val evaluated = SmtResource.with_bitblast_step_time
+                   "cpc-trust-fp-ground-leaf" bossLib.EVAL sized
+                   handle Conv.UNCHANGED => Thm.REFL sized
+                 val theorem = Thm.TRANS sizes evaluated
+                 val residue = boolSyntax.rhs (Thm.concl theorem)
+               in if Term.aconv term residue then NONE
+                  else SOME theorem end))
+            (fn () => NONE)
       fun projection_index_conversion term =
         let
           val (_, index) = wordsSyntax.dest_index term
@@ -9794,6 +9783,8 @@ local
               irrelevant_zero_rewrite ()
         end
       fun replay_set () =
+        SmtResource.or_else
+          (fn () =>
         let
           val context =
             HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
@@ -9852,12 +9843,11 @@ local
                 end
             end
           fun contextual () =
-            Tactical.TAC_PROOF ((context, target),
-              bossLib.ASM_SIMP_TAC (bossLib.srw_ss ()) [])
-            handle Feedback.HOL_ERR holerr =>
-              if SmtResource.is_resource_gate holerr then
-                raise Feedback.HOL_ERR holerr
-              else card_lower_bound ()
+            SmtResource.or_else
+              (fn () =>
+                Tactical.TAC_PROOF ((context, target),
+                  bossLib.ASM_SIMP_TAC (bossLib.srw_ss ()) []))
+              (fn () => card_lower_bound ())
           val thm = SmtResource.with_resource_step_time "Set" "contextual"
             (fn () =>
               (List.app (SmtResource.check_resource_goal "Set" "contextual")
@@ -9866,12 +9856,8 @@ local
         in
           List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
             thm prems
-        end
-        handle Feedback.HOL_ERR holerr =>
-          if SmtResource.is_resource_gate holerr then
-            raise Feedback.HOL_ERR holerr
-          else
-            SmtArrayProve.array_prove target
+        end)
+          (fn () => SmtArrayProve.array_prove target)
       fun unsupported_set () =
         raise ERR "trust"
           ("unsupported CPC Set step: rule=trust; theory=set; " ^
@@ -9879,23 +9865,23 @@ local
       fun replay_bag () =
         SmtBagProve.bag_prove_with_admission admit arith_prove target
       fun prove_scoped_bag () =
-        let
-          val context =
-            HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
-            List.map Thm.concl prems
-          val thm = SmtBagProve.bag_contextual_prove_with_admission
-            admit context target
-        in
-          List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
-            thm prems
-        end
-        handle Feedback.HOL_ERR holerr =>
-          if SmtResource.is_resource_gate holerr then
-            raise Feedback.HOL_ERR holerr
-          else
+        SmtResource.or_else
+          (fn () =>
+            let
+              val context =
+                HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
+                List.map Thm.concl prems
+              val thm = SmtBagProve.bag_contextual_prove_with_admission
+                admit context target
+            in
+              List.foldl
+                (fn (premise, proved) => Drule.PROVE_HYP premise proved)
+                thm prems
+            end)
+          (fn () =>
             raise ERR "trust"
               ("unsupported CPC Bag step: rule=trust; theory=bag; " ^
-               "conclusion=" ^ Library.term_to_string target)
+               "conclusion=" ^ Library.term_to_string target))
       fun replay_fp () =
         SmtFpProve.fp_prove_with_decompositions_and_arith
           arith_prove [] target
@@ -10665,6 +10651,8 @@ local
                     ([] : (Type.hol_type * Term.term * Term.term *
                             Thm.thm) list)
                   fun word_equality_schema current =
+                    SmtResource.or_else
+                      (fn () =>
                     let
                       val (left, right) = boolSyntax.dest_eq current
                       val ty = equality_operand_type current
@@ -10716,11 +10704,8 @@ local
                       SOME (observed_inst
                         [{redex = left_var, residue = left},
                          {redex = right_var, residue = right}] law)
-                    end
-                    handle Feedback.HOL_ERR holerr =>
-                      if SmtResource.is_resource_gate holerr then
-                        raise Feedback.HOL_ERR holerr
-                      else NONE
+                    end)
+                      (fn () => NONE)
                   exception UncacheableBinder
                   fun native_cache_key current =
                     (SmtResource.dag_nodes_up_to_with_inspector
@@ -11081,13 +11066,11 @@ local
             HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
             List.map Thm.concl prems
           val thm =
-            SmtSeqProve.seq_prove_with_admission admit target
-            handle Feedback.HOL_ERR holerr =>
-              if SmtResource.is_resource_gate holerr then
-                raise Feedback.HOL_ERR holerr
-              else
+            SmtResource.or_else
+              (fn () => SmtSeqProve.seq_prove_with_admission admit target)
+              (fn () =>
                 SmtSeqProve.seq_contextual_prove_with_admission
-                  admit context target
+                  admit context target)
         in
           List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
             thm prems
@@ -14401,23 +14384,22 @@ local
               val destinations =
                 target :: (literals @ pairs literals @ triples literals)
               fun prove_atom theorem =
-                (semantic_taut_reorder theorem
-                 handle Feedback.HOL_ERR holerr =>
-                   if SmtResource.is_resource_gate holerr then
-                     raise Feedback.HOL_ERR holerr
-                   else
-                let
-                  fun try [] = raise ERR "resolution"
-                        "no semantic target clause follows"
-                    | try (destination :: rest) =
-                        (reorder_to_target
-                          (semantic_circuit_atom destination theorem)
-                         handle HolSatLib.SAT_cex _ => try rest
-                              | Feedback.HOL_ERR holerr =>
-                                  if SmtResource.is_resource_gate holerr then
-                                    raise Feedback.HOL_ERR holerr
-                                  else try rest)
-                in try destinations end)
+                (SmtResource.or_else
+                   (fn () => semantic_taut_reorder theorem)
+                   (fn () =>
+                     let
+                       fun try [] = raise ERR "resolution"
+                             "no semantic target clause follows"
+                         | try (destination :: rest) =
+                             (reorder_to_target
+                               (semantic_circuit_atom destination theorem)
+                              handle HolSatLib.SAT_cex _ => try rest
+                                   | Feedback.HOL_ERR holerr =>
+                                     if SmtResource.is_resource_gate
+                                          holerr then
+                                       raise Feedback.HOL_ERR holerr
+                                     else try rest)
+                     in try destinations end))
               fun prove theorem =
                 case clause_pair (Thm.concl theorem) of
                   SOME (left, right) =>
@@ -14606,12 +14588,12 @@ local
                     val active_stops =
                       target_clause_stops @ !remaining_pivot_stops
                     fun strict candidate =
-                      SOME (candidate, strict_resolver active_stops candidate
-                        accumulated next)
-                      handle Feedback.HOL_ERR holerr =>
-                        if SmtResource.is_resource_gate holerr then
-                          raise Feedback.HOL_ERR holerr
-                        else NONE
+                      SmtResource.or_else
+                        (fn () =>
+                          SOME (candidate,
+                            strict_resolver active_stops candidate
+                              accumulated next))
+                        (fn () => NONE)
                     val strict_result =
                       case strict annotated of
                         SOME result => SOME result
@@ -14960,12 +14942,11 @@ local
                   val accumulated_assumption = Thm.ASSUME accumulated
                   val next_assumption = Thm.ASSUME next
                   fun strict candidate =
-                    SOME (resolve_pair_on_structural_strict_hashed []
-                      candidate accumulated_assumption next_assumption)
-                    handle Feedback.HOL_ERR holerr =>
-                      if SmtResource.is_resource_gate holerr then
-                        raise Feedback.HOL_ERR holerr
-                      else NONE
+                    SmtResource.or_else
+                      (fn () =>
+                        SOME (resolve_pair_on_structural_strict_hashed []
+                          candidate accumulated_assumption next_assumption))
+                      (fn () => NONE)
                   val resolved =
                     case strict pivot of
                       SOME theorem => theorem
@@ -15017,17 +14998,16 @@ local
                 if shared_aconv resolved consequent then
                   Thm.DISCH resolved (Thm.ASSUME resolved)
                 else
-                  (let
-                     val theorem = reorder (Thm.ASSUME resolved)
-                   in Thm.DISCH resolved theorem end
-                   handle Feedback.HOL_ERR holerr =>
-                     if SmtResource.is_resource_gate holerr then
-                       raise Feedback.HOL_ERR holerr
-                     else
+                  (SmtResource.or_else
+                     (fn () =>
+                       let
+                         val theorem = reorder (Thm.ASSUME resolved)
+                       in Thm.DISCH resolved theorem end)
+                     (fn () =>
                        SmtResource.with_bitblast_step_time
                          "cpc-resolution-schematic-alignment"
                          HolSatLib.SAT_PROVE
-                         (boolSyntax.mk_imp (resolved, consequent)))
+                         (boolSyntax.mk_imp (resolved, consequent))))
               val alignment_substitutions =
                 substitutions_for [resolved, consequent]
               val concrete_alignment = observed_inst
@@ -15271,12 +15251,11 @@ local
               fun resolve accumulated next pivot =
                 let
                   fun strict candidate =
-                    SOME (resolve_pair_on_structural_strict_hashed []
-                      candidate accumulated next)
-                    handle Feedback.HOL_ERR holerr =>
-                      if SmtResource.is_resource_gate holerr then
-                        raise Feedback.HOL_ERR holerr
-                      else NONE
+                    SmtResource.or_else
+                      (fn () =>
+                        SOME (resolve_pair_on_structural_strict_hashed []
+                          candidate accumulated next))
+                      (fn () => NONE)
                 in
                   case strict pivot of
                     SOME theorem => theorem
@@ -15314,13 +15293,12 @@ local
               instantiated prems end
           fun annotated_then_schematic () =
             let val _ = trace_chain "annotated" in
-              profile "CPC(chain:annotated)" annotated_chain ()
-              handle Feedback.HOL_ERR holerr =>
-                if SmtResource.is_resource_gate holerr then
-                  raise Feedback.HOL_ERR holerr
-                else (trace_chain "schematic";
-                      profile "CPC(chain:schematic)"
-                        schematic_chain_consequence ())
+              SmtResource.or_else
+                (fn () => profile "CPC(chain:annotated)" annotated_chain ())
+                (fn () =>
+                  (trace_chain "schematic";
+                   profile "CPC(chain:schematic)"
+                     schematic_chain_consequence ()))
             end
           fun dynamic_then_annotated () =
             let val _ = trace_chain "dynamic" in
@@ -15338,12 +15316,11 @@ local
             end
           fun annotated_then_dynamic () =
             (trace_chain "annotated";
-             profile "CPC(chain:annotated)"
-               annotated_chain ()
-             handle Feedback.HOL_ERR holerr =>
-               if SmtResource.is_resource_gate holerr then
-                 raise Feedback.HOL_ERR holerr
-               else dynamic_then_annotated ())
+             SmtResource.or_else
+               (fn () =>
+                 profile "CPC(chain:annotated)"
+                   annotated_chain ())
+               (fn () => dynamic_then_annotated ()))
           fun structural_then fallback () =
             (trace_chain "structural schema";
              profile "CPC(chain:structural-schema)"
@@ -15366,17 +15343,17 @@ local
             (* Large explicit pivot chains replay directly; medium chains
                use the pivot schema before the all-premise SAT abstraction.
                Every route constructs a checked theorem. *)
-            (if List.length prems = 2 then annotated_then_dynamic ()
-             else if List.length prems >= 256 then
-               structural_then annotated_then_dynamic ()
-             else if List.length prems >= 128 then
-               structural_then schematic_then_dynamic ()
-             else dynamic_then_annotated ())
-            handle Feedback.HOL_ERR holerr =>
-              if SmtResource.is_resource_gate holerr then
-                raise Feedback.HOL_ERR holerr
-              else (trace_chain "sat";
-                    profile "CPC(chain:sat)" sat_chain_consequence ())) ()
+            SmtResource.or_else
+              (fn () =>
+                (if List.length prems = 2 then annotated_then_dynamic ()
+                 else if List.length prems >= 256 then
+                   structural_then annotated_then_dynamic ()
+                 else if List.length prems >= 128 then
+                   structural_then schematic_then_dynamic ()
+                 else dynamic_then_annotated ()))
+              (fn () =>
+                (trace_chain "sat";
+                 profile "CPC(chain:sat)" sat_chain_consequence ()))) ()
           val _ = trace_chain "initial complete"
           val target_literals = strip_chain_clause target
           fun is_target_literal literal = List.exists
@@ -15550,6 +15527,8 @@ local
               val _ = trace_chain ("deep remaining " ^
                 Int.toString (List.length deep_remaining))
               fun fp_literal_conversion term =
+                SmtResource.or_else
+                  (fn () =>
                 let
                   val negated = Lib.total boolSyntax.dest_neg term
                   val atom = case negated of SOME body => body | NONE => term
@@ -15562,11 +15541,8 @@ local
                   case negated of
                     SOME _ => Conv.RAND_CONV SmtFpGraph.convert_atom term
                   | NONE => SmtFpGraph.convert_atom term
-                end
-                handle Feedback.HOL_ERR holerr =>
-                  if SmtResource.is_resource_gate holerr then
-                    raise Feedback.HOL_ERR holerr
-                  else raise Conv.UNCHANGED
+                end)
+                  (fn () => raise Conv.UNCHANGED)
               fun boolean_negation_conversion term =
                 let
                   val body = boolSyntax.dest_neg term
@@ -15587,11 +15563,9 @@ local
                 in Conv.REWR_CONV theorem term end
               fun checked_conversion source =
                 resolution_profile "deep/leaf-conversion" (fn () =>
-                  SOME (boolean_negation_conversion source
-                    handle Feedback.HOL_ERR holerr =>
-                      if SmtResource.is_resource_gate holerr then
-                        raise Feedback.HOL_ERR holerr
-                      else fp_literal_conversion source)
+                  SOME (SmtResource.or_else
+                    (fn () => boolean_negation_conversion source)
+                    (fn () => fp_literal_conversion source))
                   handle Conv.UNCHANGED => NONE) ()
               fun checked_equivalence source destination =
                 resolution_profile "deep/membership" (fn () =>
@@ -15826,16 +15800,16 @@ local
                           else circuit_alignment rest)
           fun original_alignment () =
             (trace_chain "original alignment";
-             (if List.length prems > 32 then
-                circuit_alignment
-                  [("cleaned", cleaned_result),
-                   ("supported", supported_result),
-                   ("premises", alignment_source)]
-              else semantic_taut_reorder supported_result)
-             handle Feedback.HOL_ERR holerr =>
-               if SmtResource.is_resource_gate holerr then
-                 raise Feedback.HOL_ERR holerr
-               else schematic_reorder cleaned_result
+             SmtResource.or_else
+               (fn () =>
+                 (if List.length prems > 32 then
+                    circuit_alignment
+                      [("cleaned", cleaned_result),
+                       ("supported", supported_result),
+                       ("premises", alignment_source)]
+                  else semantic_taut_reorder supported_result))
+               (fn () =>
+             schematic_reorder cleaned_result
              handle HolSatLib.SAT_cex _ =>
                       reorder_to_target cleaned_result
                   | Feedback.HOL_ERR _ =>
@@ -15847,7 +15821,7 @@ local
                               reorder_to_target cleaned_result)
              handle Feedback.HOL_ERR _ => contextual_target cleaned_result
              handle Feedback.HOL_ERR _ =>
-               tautological_consequences prems target)
+               tautological_consequences prems target))
           fun boolean_dag_later_alignment () =
             let
               fun original_then_combined () =
@@ -16017,11 +15991,9 @@ local
         | _ => raise ERR "resolution" "expected two CPC resolution premises"
       fun tautological_checked target =
         (if List.length prems > 2 then
-           (sat_clause_consequences prems target
-            handle Feedback.HOL_ERR holerr =>
-              if SmtResource.is_resource_gate holerr then
-                raise Feedback.HOL_ERR holerr
-              else tautological_consequences prems target)
+           (SmtResource.or_else
+              (fn () => sat_clause_consequences prems target)
+              (fn () => tautological_consequences prems target))
          else tautological_consequences prems target)
         handle HolSatLib.SAT_cex _ =>
           raise ERR "resolution" "propositional consequence is invalid"
@@ -17196,13 +17168,11 @@ local
             List.map Thm.concl prems
           val thm = profile "CPC(rung:string/seq_contextual)"
             (fn target =>
-              SmtSeqProve.seq_prove_with_admission admit target
-              handle Feedback.HOL_ERR holerr =>
-                if SmtResource.is_resource_gate holerr then
-                  raise Feedback.HOL_ERR holerr
-                else
+              SmtResource.or_else
+                (fn () => SmtSeqProve.seq_prove_with_admission admit target)
+                (fn () =>
                   SmtSeqProve.seq_contextual_prove_with_admission
-                    admit context target) target
+                    admit context target)) target
         in
           List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
             thm prems
@@ -17503,18 +17473,15 @@ local
       val context = List.map Thm.concl prems
       val theorem =
         if SmtSeqProve.has_seq_type target then
-          (SmtSeqProve.seq_prove_with_admission admit target
-           handle Feedback.HOL_ERR holerr =>
-             if SmtResource.is_resource_gate holerr then
-               raise Feedback.HOL_ERR holerr
-             else SmtSeqProve.seq_contextual_prove_with_admission
-               admit context target)
+          (SmtResource.or_else
+             (fn () => SmtSeqProve.seq_prove_with_admission admit target)
+             (fn () =>
+               SmtSeqProve.seq_contextual_prove_with_admission
+               admit context target))
         else
-          (SmtStringProve.string_rewrite_prove target
-           handle Feedback.HOL_ERR holerr =>
-             if SmtResource.is_resource_gate holerr then
-               raise Feedback.HOL_ERR holerr
-             else SmtStringProve.string_contextual_prove context target)
+          (SmtResource.or_else
+             (fn () => SmtStringProve.string_rewrite_prove target)
+             (fn () => SmtStringProve.string_contextual_prove context target))
     in
       List.foldl
         (fn (premise, proved) => Drule.PROVE_HYP premise proved)
@@ -20371,12 +20338,11 @@ local
         end
       fun occurrence_resolution_or_fallback () =
         case profile "CPC(rung:resolution/occurrences)"
-            (fn () => occurrence_resolution_result ()
-              handle Feedback.HOL_ERR holerr =>
-                if SmtResource.is_resource_gate holerr then
-                  raise Feedback.HOL_ERR holerr
-                else (profile_event "CPC(occurrence-decline:conversion)";
-                  NONE)) () of
+            (fn () => SmtResource.or_else
+               (fn () => occurrence_resolution_result ())
+               (fn () =>
+                 (profile_event "CPC(occurrence-decline:conversion)";
+                 NONE))) () of
           SOME result => result
         | NONE =>
             let
@@ -20849,12 +20815,11 @@ local
                              tree_large) measures
                        in
                          if large then
-                           (SOME (trans_phase "shared" (fn () =>
-                              replay_shared_trans_result premise_steps))
-                            handle Feedback.HOL_ERR holerr =>
-                              if SmtResource.is_resource_gate holerr then
-                                raise Feedback.HOL_ERR holerr
-                              else NONE)
+                           (SmtResource.or_else
+                              (fn () =>
+                                SOME (trans_phase "shared" (fn () =>
+                                  replay_shared_trans_result premise_steps)))
+                              (fn () => NONE))
                          else NONE
                        end) of
                        SOME result => result
@@ -20961,20 +20926,19 @@ local
                                   (definitely_no_conjunction_dag o
                                     step_provenance) premise_steps)
                             fun retained () =
-                              let
-                                val exact = replay_exact_cong_result NONE
-                                  source premise_steps
-                              in
-                                if shared_aconv (Thm.concl theorem)
-                                    (Thm.concl (#thm exact)) then
-                                  exact_result
-                                    (#provenance (#located exact)) theorem
-                                else raw
-                              end
-                              handle Feedback.HOL_ERR error =>
-                                if SmtResource.is_resource_gate error then
-                                  raise Feedback.HOL_ERR error
-                                else raw
+                              SmtResource.or_else
+                                (fn () =>
+                                  let
+                                    val exact = replay_exact_cong_result NONE
+                                      source premise_steps
+                                  in
+                                    if shared_aconv (Thm.concl theorem)
+                                        (Thm.concl (#thm exact)) then
+                                      exact_result
+                                        (#provenance (#located exact)) theorem
+                                    else raw
+                                  end)
+                                (fn () => raw)
                           in if keep then retained () else raw end)
                            handle OwnedApplicationDeclined => NONE
                                 | Feedback.HOL_ERR error =>
@@ -20998,23 +20962,24 @@ local
                            "congruence checked operandwise"
                            (replay_nary_cong (#term source) prems)
                        else
-                         (replay_exact_cong_result NONE source premise_steps
-                          handle Feedback.HOL_ERR holerr =>
-                            if SmtResource.is_resource_gate holerr then
-                              raise Feedback.HOL_ERR holerr
-                            else
-                            if #name rule = "nary_cong" then
-                              raw_unavailable_result
-                                "n-Cong n-ary congruence checked directly"
-                                (replay_direct_nary_cong (#term source) prems)
-                            else if #name rule = "cong" andalso
-                                    not (has_binder_shell
-                                      (#provenance source)) then
-                              raw_unavailable_result
-                                "congruence exact provenance unavailable"
-                                (replay_nary_cong (#term source) prems)
-                            else raise ERR "cong"
-                              "exact congruence reconstruction failed")
+                         (SmtResource.or_else
+                            (fn () =>
+                              replay_exact_cong_result NONE source
+                                premise_steps)
+                            (fn () =>
+                              if #name rule = "nary_cong" then
+                                raw_unavailable_result
+                                  "n-Cong n-ary congruence checked directly"
+                                  (replay_direct_nary_cong
+                                     (#term source) prems)
+                              else if #name rule = "cong" andalso
+                                      not (has_binder_shell
+                                        (#provenance source)) then
+                                raw_unavailable_result
+                                  "congruence exact provenance unavailable"
+                                  (replay_nary_cong (#term source) prems)
+                              else raise ERR "cong"
+                                "exact congruence reconstruction failed"))
                      end
                 | _ => unavailable_result
                      "declared congruence uses its exact conclusion"
@@ -21203,11 +21168,9 @@ local
                      "reordering has explicit occurrences" clause
                  | NONE =>
                      let
-                       val theorem = replay_reordering prems args
-                         handle Feedback.HOL_ERR holerr =>
-                           if SmtResource.is_resource_gate holerr then
-                             raise Feedback.HOL_ERR holerr
-                           else canonical_reordering ()
+                       val theorem = SmtResource.or_else
+                         (fn () => replay_reordering prems args)
+                         (fn () => canonical_reordering ())
                      in case located_args of
                          [target] =>
                            if Term.aconv (Thm.concl theorem) (#term target) then
@@ -21930,17 +21893,19 @@ local
                (bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) [],
                 intLib.ARITH_TAC)))
       fun prove_hyp hyp =
-        profile "CPC(remove_extra_hyps:canonical_assumption)"
-          prove_canonical_hyp hyp
-        handle Feedback.HOL_ERR error =>
-          if SmtResource.is_resource_gate error then
-            raise Feedback.HOL_ERR error
-          else profile "CPC(remove_extra_hyps:array_set)"
-            prove_array_set_hyp hyp
-        handle Feedback.HOL_ERR error =>
-          if SmtResource.is_resource_gate error then
-            raise Feedback.HOL_ERR error
-          else profile "CPC(remove_extra_hyps:fp_special_values)"
+        SmtResource.or_else
+          (fn () =>
+            profile "CPC(remove_extra_hyps:canonical_assumption)"
+              prove_canonical_hyp hyp)
+          (fn () =>
+        SmtResource.or_else
+          (fn () =>
+            profile "CPC(remove_extra_hyps:array_set)"
+              prove_array_set_hyp hyp)
+          (fn () =>
+        SmtResource.or_else
+          (fn () =>
+            profile "CPC(remove_extra_hyps:fp_special_values)"
             Tactical.TAC_PROOF
             ((boolSyntax.mk_neg g :: asl, hyp),
              bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
@@ -21953,11 +21918,11 @@ local
                 (* cvc5 expands positive infinity to its FP bit triple. *)
                 smtfloatTheory.smtfp_pinf_bits,
                 (* cvc5 expands negative infinity to its FP bit triple. *)
-                smtfloatTheory.smtfp_ninf_bits])
-        handle Feedback.HOL_ERR error =>
-          if SmtResource.is_resource_gate error then
-            raise Feedback.HOL_ERR error
-          else profile "CPC(remove_extra_hyps:floor_ceiling_neg)"
+                smtfloatTheory.smtfp_ninf_bits]))
+          (fn () =>
+        SmtResource.or_else
+          (fn () =>
+            profile "CPC(remove_extra_hyps:floor_ceiling_neg)"
             Tactical.TAC_PROOF
             ((boolSyntax.mk_neg g :: asl, hyp),
              bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
@@ -21966,21 +21931,20 @@ local
                 intrealTheory.INT_FLOOR_NEG,
                 (* cvc5 pushes real negation through encoded ceiling and
                    exposes the equivalent negated floor. *)
-                intrealTheory.INT_CEILING_NEG])
-        handle Feedback.HOL_ERR error =>
-          if SmtResource.is_resource_gate error then
-            raise Feedback.HOL_ERR error
-          else profile "CPC(remove_extra_hyps:datatype)"
+                intrealTheory.INT_CEILING_NEG]))
+          (fn () =>
+        SmtResource.or_else
+          (fn () =>
+            profile "CPC(remove_extra_hyps:datatype)"
             SmtDatatypeProve.datatype_consequence_prove
-            (boolSyntax.mk_neg g :: asl, hyp)
-        handle Feedback.HOL_ERR error =>
-          if SmtResource.is_resource_gate error then
-            raise Feedback.HOL_ERR error
-          else if Library.contains_conditional hyp then
-            profile "CPC(remove_extra_hyps:conditional_arith)"
-              prove_from_context hyp
-          else raise ERR "remove_extra_hyps"
-            "extra hypothesis is not a conditional arithmetic consequence"
+            (boolSyntax.mk_neg g :: asl, hyp))
+          (fn () =>
+            if Library.contains_conditional hyp then
+              profile "CPC(remove_extra_hyps:conditional_arith)"
+                prove_from_context hyp
+            else raise ERR "remove_extra_hyps"
+              ("extra hypothesis is not a conditional " ^
+               "arithmetic consequence"))))))
       fun remove_hyp (hyp, result) =
         Timeout.apply SmtResource.max_hypothesis_entailment_time
           (fn () => Drule.PROVE_HYP (prove_hyp hyp) result) ()
@@ -23411,11 +23375,9 @@ in
                 end
               fun attempt [] = raise ERR "discharge_later_checked_steps"
                     "no independent cached deferred proof"
-                | attempt (cached :: rest) = close (#thm cached)
-                    handle Feedback.HOL_ERR error =>
-                      if SmtResource.is_resource_gate error then
-                        raise Feedback.HOL_ERR error
-                      else attempt rest
+                | attempt (cached :: rest) = SmtResource.or_else
+                  (fn () => close (#thm cached))
+                  (fn () => attempt rest)
               val proof = attempt candidates
               val _ = dependency_memo := (target, proof) :: !dependency_memo
             in proof end
@@ -23447,16 +23409,12 @@ in
             in if large then
               replay_checked ()
             else
-              (cached_thm state hypothesis
-               handle Feedback.HOL_ERR holerr =>
-                 if SmtResource.is_resource_gate holerr then
-                   raise Feedback.HOL_ERR holerr
-                 else
-                   (dependency_proof [] hypothesis
-                    handle Feedback.HOL_ERR dependency_error =>
-                      if SmtResource.is_resource_gate dependency_error then
-                        raise Feedback.HOL_ERR dependency_error
-                      else replay_checked ()))
+              (SmtResource.or_else
+                 (fn () => cached_thm state hypothesis)
+                 (fn () =>
+                   (SmtResource.or_else
+                      (fn () => dependency_proof [] hypothesis)
+                      (fn () => replay_checked ()))))
             end
           fun checked_generalization () =
             let
@@ -23470,18 +23428,14 @@ in
               body_proof variables
             end
           fun checked_then_generalized () =
-            checked_proof ()
-            handle Feedback.HOL_ERR holerr =>
-              if SmtResource.is_resource_gate holerr then
-                raise Feedback.HOL_ERR holerr
-              else checked_generalization ()
+            SmtResource.or_else
+              (fn () => checked_proof ())
+              (fn () => checked_generalization ())
           val proof =
             if boolSyntax.is_forall hypothesis then
-              (checked_generalization ()
-               handle Feedback.HOL_ERR holerr =>
-                 if SmtResource.is_resource_gate holerr then
-                   raise Feedback.HOL_ERR holerr
-                 else checked_then_generalized ())
+              (SmtResource.or_else
+                 (fn () => checked_generalization ())
+                 (fn () => checked_then_generalized ()))
             else checked_then_generalized ()
           val discharged = prove_exact_hyp proof result
           val _ = trace_checked ("done=" ^ ordinal)
