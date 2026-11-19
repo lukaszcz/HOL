@@ -8753,10 +8753,6 @@ in
         Tactical.FIRST [Tactic.CONTR_TAC th, Tactic.ACCEPT_TAC th,
                         Tactic.ASSUME_TAC th])
 
-  fun NO_SPLIT_STRIP_ASSUMS_TAC g =
-    Tactical.MAP_EVERY (fn _ => Tactical.POP_ASSUM NO_SPLIT_STRIP_ASSUME_TAC)
-      (#1 g) g
-
   (* [tac] on the goal without the assumptions in [held], which come back
      unchanged at the end of every subgoal's assumptions.  [tac] must not
      introduce variables (GEN_TAC, CHOOSE_THEN): one could be free in a
@@ -8784,7 +8780,7 @@ in
     open Tactic Tactical
     val (num_asms, held) =
       List.partition (fn a => goal_mentions_num ([], a)) (#1 g)
-    (* NO_SPLIT_STRIP_ASSUMS_TAC on the assumptions the transfer made *)
+    (* NO_SPLIT_STRIP_ASSUME_TAC on each assumption the transfer made *)
     fun STRIP_TRANSFERRED_TAC (asl, w) =
       MAP_EVERY (fn _ => POP_ASSUM NO_SPLIT_STRIP_ASSUME_TAC)
         (List.filter (fn a => not (Lib.op_mem Term.aconv a held)) asl)
