@@ -20432,20 +20432,29 @@ in
 end
 
 (* Z3 reduces a case of a constructor and reorders the rest in one rewrite:
-   the datatype simp alone and the congruence rungs alone each miss it. *)
-fun z3_rewrite_datatype_normalize_success () =
+   the datatype simp alone and the congruence rungs alone each miss it.  The
+   left side has the redex and the right side only needs reordering. *)
+val datatype_normalize_target =
+  ``(f:bool -> bool)
+      (case SmtTriC ((x:int) = y \/ (z:int) = 0 \/ p) of
+         SmtTriA => F | SmtTriB _ => F | SmtTriC v => v) <=>
+    f (p \/ 0 = z \/ y = x)``
+
+fun datatype_normalize_replay target =
 let
-  val target =
-    ``(f:bool -> bool)
-        (case SmtTriC ((x:int) = y \/ (z:int) = 0 \/ p) of
-           SmtTriA => F | SmtTriB _ => F | SmtTriC v => v) <=>
-      f (p \/ 0 = z \/ y = x)``
   val initial = Z3_Proof.empty_proof "4.15.3"
   val steps = Redblackmap.insert
     (Z3_Proof.proof_steps initial, 0, Z3_Proof.REWRITE target)
   val _ = Profile.reset_all ()
-  val theorem = Z3_ProofReplay.replay_root_for_test
+in
+  Z3_ProofReplay.replay_root_for_test
     (Z3_Proof.update_proof_steps initial steps)
+end
+
+fun z3_rewrite_datatype_normalize_success () =
+let
+  val target = datatype_normalize_target
+  val theorem = datatype_normalize_replay target
 in
   assert (Thm.concl theorem ~~ target andalso List.null (Thm.hyp theorem),
     "Z3 datatype-normalize rewrite did not prove its target");
@@ -20454,24 +20463,86 @@ in
     "Z3 datatype-normalize rewrite was proved by another rung")
 end
 
+(* The redex may be on either side: the same equation with its sides swapped
+   is proved by the same rung, and the helper hands back a normalization of
+   each side of the equation it is given. *)
+fun z3_rewrite_datatype_normalize_one_sided () =
+let
+  val (l, r) = boolSyntax.dest_eq datatype_normalize_target
+  val target = boolSyntax.mk_eq (r, l)
+  val theorem = datatype_normalize_replay target
+  val (l_thm, r_thm) =
+    case SmtDatatypeProve.normalize_equation_with_admission
+           (SmtDatatypeProve.default_admission ()) target of
+      SmtDatatypeProve.Normalized sides => sides
+    | _ => die "FAIL: a redex on the right side was not normalized"
+in
+  assert (Thm.concl theorem ~~ target andalso List.null (Thm.hyp theorem),
+    "Z3 datatype-normalize rewrite did not prove its swapped target");
+  check_oracle_tags "Z3 datatype-normalize swapped rewrite" theorem;
+  assert (profile_call_count "rewrite(21a)(datatype-normalize)_OK" = 1,
+    "Z3 datatype-normalize swapped rewrite was proved by another rung");
+  assert (boolSyntax.lhs (Thm.concl l_thm) ~~ r andalso
+          boolSyntax.lhs (Thm.concl r_thm) ~~ l,
+    "the side normalizations are not of the equation's sides");
+  assert (not (boolSyntax.rhs (Thm.concl r_thm) ~~ l) andalso
+          List.null (Thm.hyp l_thm) andalso List.null (Thm.hyp r_thm),
+    "the side with the redex was not normalized")
+end
+
+(* A target without a datatype redex is declined by the helper as
+   [NoRedex], and the rung then falls through to the later rungs.  Every
+   equation mentions [bool], whose facts are always harvested, so the
+   helper's [NoRewrites] decline is not reachable from an equation. *)
+fun z3_rewrite_datatype_normalize_declines () =
+let
+  val targets = [
+    ``(f:smt_tri -> bool) (SmtTriC ((x:int) = y \/ (z:int) = 0 \/ p)) <=>
+      f (SmtTriC (p \/ 0 = z \/ y = x))``,
+    ``(f:bool -> bool) ((x:int) = y \/ (z:int) = 0 \/ p) <=>
+      f (p \/ 0 = z \/ y = x)``]
+  val admit = SmtDatatypeProve.default_admission ()
+  fun decline target =
+    (case SmtDatatypeProve.normalize_equation_with_admission admit target of
+       SmtDatatypeProve.NoRedex => ()
+     | _ => die "FAIL: a target without a datatype redex was not declined";
+     ignore (datatype_normalize_replay target)
+       handle Feedback.HOL_ERR _ => ();
+     assert (profile_call_count "rewrite(21a)(datatype-normalize)_HOL_ERR" > 0,
+       "Z3 datatype-normalize was not reached");
+     assert (profile_call_count "rewrite(21a)(datatype-normalize)_OK" = 0,
+       "Z3 datatype-normalize accepted a target without a datatype redex"))
+in
+  List.app decline targets
+end
+
 (* Rung 21a normalizes in the checked rewrite traversal: here the exported
    INT_INJ would turn &a = &c into a = c, which this admission refuses. *)
-fun z3_rewrite_datatype_normalize_admission () =
+val datatype_normalize_admission_target =
+  ``(f:bool -> bool)
+      (case SmtTriC (((&a):int) = &c \/ (z:int) = 0 \/ p) of
+         SmtTriA => F | SmtTriB _ => F | SmtTriC v => v) <=>
+    f (p \/ 0 = z \/ ((&c):int) = &a)``
+
+(* An admission that refuses the INT_INJ result with [refusal ()] and counts
+   the refusals. *)
+fun datatype_normalize_refusing refusal =
 let
-  val target =
-    ``(f:bool -> bool)
-        (case SmtTriC (((&a):int) = &c \/ (z:int) = 0 \/ p) of
-           SmtTriA => F | SmtTriB _ => F | SmtTriC v => v) <=>
-      f (p \/ 0 = z \/ ((&c):int) = &a)``
   val refused = [``(a:num) = c``, ``(c:num) = a``]
   val base = SmtDatatypeProve.default_admission ()
   val refusals = ref 0
   fun admit tm =
     if Lib.can (HolKernel.find_term
          (fn t => List.exists (Term.aconv t) refused)) tm
-    then (refusals := !refusals + 1;
-          raise Feedback.mk_HOL_ERR "Unittest" "admit" "refused")
+    then (refusals := !refusals + 1; refusal ())
     else base tm
+in (admit, refusals) end
+
+fun z3_rewrite_datatype_normalize_admission () =
+let
+  val target = datatype_normalize_admission_target
+  val (admit, refusals) = datatype_normalize_refusing (fn () =>
+    raise Feedback.mk_HOL_ERR "Unittest" "admit" "refused")
   val initial = Z3_Proof.empty_proof "4.15.3"
   val steps = Redblackmap.insert
     (Z3_Proof.proof_steps initial, 0, Z3_Proof.REWRITE target)
@@ -20486,6 +20557,39 @@ in
   assert (!refusals > 0, "the admission never saw the INT_INJ result");
   assert (profile_call_count "rewrite(21a)(datatype-normalize)_OK" = 0,
     "Z3 datatype-normalize ran an exported rewrite its admission refuses")
+end
+
+(* A refusal raised inside a local rewrite reaches the helper's caller as
+   the very same error, and a real interrupt there is not caught. *)
+fun z3_rewrite_datatype_normalize_refusal_propagates () =
+let
+  val target = datatype_normalize_admission_target
+  val (admit, refusals) = datatype_normalize_refusing (fn () =>
+    raise Feedback.mk_HOL_ERR "Unittest" "refusal" "local rewrite refused")
+  val _ =
+    (ignore (SmtDatatypeProve.normalize_equation_with_admission admit target);
+     die "FAIL: the helper hid a refusal inside a local rewrite")
+    handle Feedback.HOL_ERR holerr =>
+      assert (Feedback.top_structure_of holerr = "Unittest" andalso
+              Feedback.top_function_of holerr = "refusal" andalso
+              Feedback.message_of holerr = "local rewrite refused",
+        "the helper changed a refusal inside a local rewrite")
+in
+  assert (!refusals > 0, "the admission never saw the INT_INJ result")
+end
+
+fun z3_rewrite_datatype_normalize_interrupt_propagates () =
+let
+  val target = datatype_normalize_admission_target
+  val (admit, refusals) =
+    datatype_normalize_refusing (fn () => raise Interrupt)
+  val interrupted =
+    (ignore (SmtDatatypeProve.normalize_equation_with_admission admit target);
+     false)
+    handle Interrupt => true
+in
+  assert (interrupted, "the helper did not propagate a real interrupt");
+  assert (!refusals > 0, "the admission never saw the INT_INJ result")
 end
 
 fun shared_fastpath_budget_contract () =
@@ -38542,8 +38646,16 @@ let
       cpc_quant_miniscope_or_replay_success),
     ("z3_rewrite_datatype_normalize_success",
       z3_rewrite_datatype_normalize_success),
+    ("z3_rewrite_datatype_normalize_one_sided",
+      z3_rewrite_datatype_normalize_one_sided),
+    ("z3_rewrite_datatype_normalize_declines",
+      z3_rewrite_datatype_normalize_declines),
     ("z3_rewrite_datatype_normalize_admission",
       z3_rewrite_datatype_normalize_admission),
+    ("z3_rewrite_datatype_normalize_refusal_propagates",
+      z3_rewrite_datatype_normalize_refusal_propagates),
+    ("z3_rewrite_datatype_normalize_interrupt_propagates",
+      z3_rewrite_datatype_normalize_interrupt_propagates),
     ("cpc_quant_var_elim_repeated_guard_replay_success",
       cpc_quant_var_elim_repeated_guard_replay_success),
     ("cpc_quant_var_elim_symmetric_guard_replay_success",
