@@ -4460,3 +4460,48 @@ val _ =
       in
         recomputes 0 = 4 andalso recomputes ~3 = 4
       end)
+
+(* The trace level is read from the context it is asked in, not from
+   the global flag. *)
+local
+  val emitted = ref ([] : string list)
+  val tracer =
+    traceUtil.create {group = "traceUtil_test", max = 3,
+                      emit = fn m => emitted := m :: !emitted}
+  fun shown level k =
+    (emitted := [];
+     traceUtil.trace level k (fn () => "message");
+     not (null (!emitted)))
+  fun level_in n =
+    traceUtil.level_of tracer
+      (HOLFlags.set_flagC (traceUtil.flag tracer, n) (Context.snapshot ()))
+  val global = traceUtil.level_of tracer (Context.snapshot ())
+  val levels = [global, level_in 2, level_in 0, traceUtil.silent]
+in
+  val _ = test ("traceUtil reads the level from the given context",
+                fn () =>
+                  not (shown global 1) andalso
+                  shown (level_in 2) 2 andalso
+                  not (shown (level_in 2) 3) andalso
+                  shown (level_in 3) 3 andalso
+                  not (shown (level_in 0) 1))
+  val _ = test ("traceUtil.silent shows nothing and forces nothing",
+                fn () =>
+                  let
+                    val forced = ref false
+                    val _ = emitted := []
+                    val _ = traceUtil.trace traceUtil.silent 0
+                              (fn () => (forced := true; "message"))
+                  in
+                    null (!emitted) andalso not (!forced) andalso
+                    not (traceUtil.enabled traceUtil.silent 1)
+                  end)
+  val _ = test ("traceUtil.enabled agrees with trace",
+                fn () =>
+                  List.all
+                    (fn level =>
+                       List.all (fn k => traceUtil.enabled level k =
+                                         shown level k)
+                                [0, 1, 2, 3])
+                    levels)
+end
