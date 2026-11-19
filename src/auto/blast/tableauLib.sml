@@ -126,7 +126,7 @@ fun run_depths base_cs initial_depth next_depth goal ctxt =
       let
         val reconstruction_started = Time.now ()
         val result =
-          blastReconstruct.reconstructWith_in ctxt cs goal proof
+          blastReconstruct.reconstructWith ctxt cs goal proof
         val elapsed = Time.- (Time.now (), reconstruction_started)
         val _ = add_time elapsed reconstruction_time
       in
@@ -141,11 +141,11 @@ fun run_depths base_cs initial_depth next_depth goal ctxt =
             val result =
               case summary of
                   NONE =>
-                    blastSearch.searchGoal_in ctxt cs depth goal accept
+                    blastSearch.searchGoal ctxt cs depth goal accept
                 | SOME statistics =>
                     let
                       val report =
-                        blastSearch.searchGoalWithStats_in ctxt
+                        blastSearch.searchGoalWithStats ctxt
                           cs depth goal accept
                       val _ =
                         add_statistics statistics (#statistics report)
@@ -187,22 +187,22 @@ fun CS_BLAST_DEPTH_BUDGETED budget base_cs depth goal ctxt =
   let
     val cs = add_blast_selims base_cs
     fun accept proof =
-      case blastReconstruct.reconstructWith_in ctxt cs goal proof of
+      case blastReconstruct.reconstructWith ctxt cs goal proof of
           SOME tactic_result => tactic_result
         | NONE => raise blastSearch.PROOF_FAILED
   in
-    blastSearch.searchGoalBudgeted_in ctxt budget cs depth goal accept
+    blastSearch.searchGoalBudgeted ctxt budget cs depth goal accept
   end
 
 fun CS_BLAST_DEPTH_RESUMABLE budget base_cs depth goal ctxt =
   let
     val cs = add_blast_selims base_cs
     fun accept proof =
-      case blastReconstruct.reconstructWith_in ctxt cs goal proof of
+      case blastReconstruct.reconstructWith ctxt cs goal proof of
           SOME tactic_result => tactic_result
         | NONE => raise blastSearch.PROOF_FAILED
   in
-    blastSearch.searchGoalResumable_in ctxt budget cs depth goal accept
+    blastSearch.searchGoalResumable ctxt budget cs depth goal accept
   end
 
 fun next_through limit depth =
@@ -228,7 +228,7 @@ fun tryIt depth theorems goal =
     val answer = ref (NONE : try_result option)
     fun inspect cs prepared_goal ctxt =
       (answer := SOME
-         (blastSearch.debugGoal_in ctxt (add_blast_selims cs) depth
+         (blastSearch.debugGoal ctxt (add_blast_selims cs) depth
             prepared_goal);
        Tactical.ALL_TAC prepared_goal ctxt)
     val _ = invoke inspect theorems goal (Context.snapshot())

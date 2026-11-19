@@ -1951,19 +1951,16 @@ fun runGoal trace_level resumable cleanup_policy instrumentation
               end)
   end
 
-(* The ctxt-taking entry points run at the blast.trace level of the
-   context given; the others at that of the ambient context. *)
-fun searchGoalMeasured_in ctxt {debug, stop} claset depth goal cont =
+(* Every entry point runs at the blast.trace level of the context
+   given. *)
+fun searchGoalMeasured ctxt {debug, stop} claset depth goal cont =
   case runGoal (blastRule.trace_level_of ctxt) false AbandonOwned
          (On {debug = debug, stop = stop, budget = NONE})
          claset depth goal cont of
       RunDone report => report
     | RunYielded _ => raise Fail "unbudgeted tableau yielded"
 
-fun searchGoalMeasured instrumentation =
-  searchGoalMeasured_in (Context.snapshot ()) instrumentation
-
-fun searchGoalBudgeted_in ctxt budget claset depth goal cont =
+fun searchGoalBudgeted ctxt budget claset depth goal cont =
   let
     val report =
       runGoal (blastRule.trace_level_of ctxt) false Restore
@@ -1981,10 +1978,7 @@ fun searchGoalBudgeted_in ctxt budget claset depth goal cont =
   handle searchBudget.LimitReached (kind, usage) =>
     BudgetLimitReached {kind = kind, usage = usage}
 
-fun searchGoalBudgeted budget =
-  searchGoalBudgeted_in (Context.snapshot ()) budget
-
-fun searchGoalResumable_in ctxt budget claset depth goal cont =
+fun searchGoalResumable ctxt budget claset depth goal cont =
   let
     val trace_level = blastRule.trace_level_of ctxt
     fun once resume =
@@ -2019,10 +2013,7 @@ fun searchGoalResumable_in ctxt budget claset depth goal cont =
     start ()
   end
 
-fun searchGoalResumable budget =
-  searchGoalResumable_in (Context.snapshot ()) budget
-
-fun searchGoalWithStats_in ctxt claset depth goal cont =
+fun searchGoalWithStats ctxt claset depth goal cont =
   let
     val report =
       runGoal (blastRule.trace_level_of ctxt) false Restore Stats
@@ -2035,23 +2026,18 @@ fun searchGoalWithStats_in ctxt claset depth goal cont =
       | RunYielded _ => raise Fail "statistics tableau yielded"
   end
 
-fun searchGoalWithStats claset =
-  searchGoalWithStats_in (Context.snapshot ()) claset
-
 (* The production entry point keeps the statistics: the inference and
    resource-cost counters are what the shared work meter reports. *)
-fun searchGoal_in ctxt claset depth goal cont =
-  #result (searchGoalWithStats_in ctxt claset depth goal cont)
+fun searchGoal ctxt claset depth goal cont =
+  #result (searchGoalWithStats ctxt claset depth goal cont)
 
-fun searchGoal claset = searchGoal_in (Context.snapshot ()) claset
+fun tryGoal ctxt claset depth goal =
+  searchGoal ctxt claset depth goal (fn proof => proof)
 
-fun tryGoal claset depth goal =
-  searchGoal claset depth goal (fn proof => proof)
-
-fun debugGoal_in ctxt claset depth goal =
+fun debugGoal ctxt claset depth goal =
   let
     val report =
-      searchGoalMeasured_in ctxt {debug = true, stop = fn () => false}
+      searchGoalMeasured ctxt {debug = true, stop = fn () => false}
         claset depth goal (fn proof => proof)
   in
     {fullTrace = #fullTrace report, result = #result report}
@@ -2061,13 +2047,13 @@ fun debugGoal_in ctxt claset depth goal =
    fixed-depth run is bounded only by its resource limit, while the
    sequence of runs is capped by depth_limit.  Callers that need
    cooperative interruption use the measured fixed-depth APIs. *)
-fun deepenGoal claset goal cont =
+fun deepenGoal ctxt claset goal cont =
   let
     val limit = !depth_limit
     fun deepen depth =
       if depth > limit then NONE
       else
-        case searchGoal claset depth goal cont of
+        case searchGoal ctxt claset depth goal cont of
             NONE => deepen (depth + 1)
           | result => result
   in

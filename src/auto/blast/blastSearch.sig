@@ -96,12 +96,9 @@ sig
   (* Initial formulae all receive md = true, as in blast.ML:1180-1184. *)
   val initBranch : pterm list * int -> branch
 
-  (* Each search runs at a blast.trace level: an entry point ending in
-     _in takes it from the context given, its namesake from the ambient
-     context. *)
+  (* Each search runs at the blast.trace level of the context it is
+     given. *)
   val searchGoal :
-    claset -> int -> goal -> (proof -> 'a) -> 'a option
-  val searchGoal_in :
     Context.t -> claset -> int -> goal -> (proof -> 'a) -> 'a option
   (* This and the measured/debug entry points enable internal
      instrumentation.  The legacy searchGoal, tryGoal and deepenGoal entry
@@ -145,9 +142,6 @@ sig
      inferences_performed, all phase counters, and values accumulated across
      iterative-deepening runs are not published Isabelle/Blast statistics. *)
   val searchGoalWithStats :
-    claset -> int -> goal -> (proof -> 'a) ->
-    {result : 'a option, statistics : statistics}
-  val searchGoalWithStats_in :
     Context.t -> claset -> int -> goal -> (proof -> 'a) ->
     {result : 'a option, statistics : statistics}
 
@@ -188,7 +182,7 @@ sig
      Ordinary and statistics-only search select the original unmeasured worker
      families and do not construct measured local workers. *)
   val searchGoalMeasured :
-    {debug : bool, stop : unit -> bool} ->
+    Context.t -> {debug : bool, stop : unit -> bool} ->
     claset -> int -> goal -> (proof -> 'a) -> 'a measured_result
   (* General scan checkpoints charge candidate work, while term
      normalization and equality substitution checkpoints charge
@@ -196,9 +190,6 @@ sig
      A limit restores mutable search state and is distinct from exhaustive
      failure.  This fixed-depth adapter does not retain a tableau cursor. *)
   val searchGoalBudgeted :
-    searchBudget.budget -> claset -> int -> goal ->
-    (proof -> 'a) -> 'a budget_outcome
-  val searchGoalBudgeted_in :
     Context.t -> searchBudget.budget -> claset -> int -> goal ->
     (proof -> 'a) -> 'a budget_outcome
   (* Retains the tableau's owned trail, rule cache, script, branches and
@@ -207,16 +198,14 @@ sig
      are reachable through it. The caller extends the same budget before
      invoking its one-shot continuation. *)
   val searchGoalResumable :
-    searchBudget.budget -> claset -> int -> goal ->
-    (proof -> 'a) -> 'a budget_outcome
-  val searchGoalResumable_in :
     Context.t -> searchBudget.budget -> claset -> int -> goal ->
     (proof -> 'a) -> 'a budget_outcome
-  val tryGoal : claset -> int -> goal -> proof option
-  val debugGoal_in : Context.t -> claset -> int -> goal -> debug_result
+  val tryGoal : Context.t -> claset -> int -> goal -> proof option
+  val debugGoal : Context.t -> claset -> int -> goal -> debug_result
 
   (* Bounds 0, 1, ... through !depth_limit, as DEEPEN (1, limit). *)
-  val deepenGoal : claset -> goal -> (proof -> 'a) -> 'a option
+  val deepenGoal :
+    Context.t -> claset -> goal -> (proof -> 'a) -> 'a option
 
   (* Focused observations of the port's search heuristics. *)
   val instantiationPenalty : int -> int

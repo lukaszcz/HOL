@@ -1,6 +1,8 @@
 open HolKernel boolSyntax testutils blastTerm
 open clasetSeedTheory pred_setTheory
 
+fun snap () = Context.snapshot ()
+
 structure SelfTestTactical = Tactical
 structure Tactical =
 struct
@@ -856,7 +858,8 @@ val _ =
          fun branches depth =
            #branches_created
              (#statistics
-                (blastSearch.searchGoalWithStats cs depth goal (fn p => p)))
+                (blastSearch.searchGoalWithStats (snap ())
+                  cs depth goal (fn p => p)))
        in
          branches 5 = 12 andalso branches 8 = 87
        end)
@@ -1234,7 +1237,7 @@ val _ =
          val claset = clasetLib.the_claset ()
          fun run () =
            #statistics
-             (blastSearch.searchGoalWithStats claset 0 goal
+             (blastSearch.searchGoalWithStats (snap ()) claset 0 goal
                 (fn proof => proof))
          val first = run ()
          val second = run ()
@@ -1259,7 +1262,7 @@ val _ =
          val px = mk_comb (p, x)
          val py = mk_comb (p, y)
          val report =
-           blastSearch.searchGoalWithStats clasetLib.empty_cs 0
+           blastSearch.searchGoalWithStats (snap ()) clasetLib.empty_cs 0
              ([mk_eq (x, y), px], py) (fn proof => proof)
          val statistics = #statistics report
        in
@@ -1284,7 +1287,7 @@ val _ =
        let
          val p = mk_var ("instrument_safe_p", bool)
          val report =
-           blastSearch.searchGoalWithStats clasetLib.empty_cs 0
+           blastSearch.searchGoalWithStats (snap ()) clasetLib.empty_cs 0
              ([], mk_imp (p, p)) (fn proof => proof)
          val statistics = #statistics report
        in
@@ -1317,13 +1320,13 @@ val _ =
              {candidates = SOME 10000, applications = SOME 100,
               normalization = SOME 10000}
          val cutoff =
-           blastSearch.searchGoalBudgeted limited clasetLib.empty_cs
+           blastSearch.searchGoalBudgeted (snap ()) limited clasetLib.empty_cs
              0 ([], mk_imp (p, p)) (fn proof => proof)
          val proved =
-           blastSearch.searchGoalBudgeted ample clasetLib.empty_cs
+           blastSearch.searchGoalBudgeted (snap ()) ample clasetLib.empty_cs
              0 ([], mk_imp (p, p)) (fn proof => proof)
          val exhausted =
-           blastSearch.searchGoalBudgeted
+           blastSearch.searchGoalBudgeted (snap ())
              (searchBudget.unbounded ()) clasetLib.empty_cs
              0 ([], p) (fn proof => proof)
        in
@@ -1354,7 +1357,7 @@ val _ =
          val p = mk_var ("budgeted_blast_limit_p", bool)
          val goal = ([], mk_imp (p, p))
          fun run limits =
-           blastSearch.searchGoalBudgeted
+           blastSearch.searchGoalBudgeted (snap ())
              (searchBudget.create limits) clasetLib.empty_cs
              0 goal (fn proof => proof)
          val application =
@@ -1392,11 +1395,11 @@ val _ =
               normalization = SOME 10000}
          val large = searchBudget.unbounded ()
          val first =
-           blastSearch.searchGoalResumable small clasetLib.empty_cs
+           blastSearch.searchGoalResumable (snap ()) small clasetLib.empty_cs
              0 goal (fn proof => proof)
          val before_other = searchBudget.usage small
          val one_shot =
-           blastSearch.searchGoalBudgeted large clasetLib.empty_cs
+           blastSearch.searchGoalBudgeted (snap ()) large clasetLib.empty_cs
              0 ([], mk_imp (q, q)) (fn proof => proof)
          val after_other = searchBudget.usage small
          fun finish 0 _ = NONE
@@ -1437,7 +1440,7 @@ val _ =
            clasetLib.add_sintros
              [("andI", boolTheory.AND_INTRO_THM)] clasetLib.empty_cs
          val report =
-           blastSearch.searchGoalMeasured
+           blastSearch.searchGoalMeasured (snap ())
              {debug = true, stop = fn () => false}
              cs 0 ([], mk_conj (p, q)) (fn proof => proof)
          val statistics = #statistics report
@@ -1464,7 +1467,7 @@ val _ =
            clasetLib.add_intros
              [("exists", EXISTS_INTRO_THM)] clasetLib.empty_cs
          val report =
-           blastSearch.searchGoalWithStats cs 0
+           blastSearch.searchGoalWithStats (snap ()) cs 0
              ([], mk_exists (x, mk_comb (p, x)))
              (fn proof => proof)
          val statistics = #statistics report
@@ -1515,7 +1518,8 @@ val _ =
              val reconstructions = ref 0
              fun stop () = (polls := !polls + 1; true)
              val report =
-               blastSearch.searchGoalMeasured {debug = debug, stop = stop}
+               blastSearch.searchGoalMeasured (snap ())
+                 {debug = debug, stop = stop}
                  clasetLib.empty_cs 3 goal
                  (fn proof =>
                     (reconstructions := !reconstructions + 1; proof))
@@ -1579,7 +1583,7 @@ val _ =
            let
              val reconstructions = ref 0
              val report =
-               blastSearch.searchGoalMeasured
+               blastSearch.searchGoalMeasured (snap ())
                  {debug = debug, stop = fn () => false}
                  cs 0 goal
                  (fn proof =>
@@ -1605,10 +1609,10 @@ val _ =
              [("andI", boolTheory.AND_INTRO_THM)] clasetLib.empty_cs
          fun stop () = (polls := !polls + 1; true)
          val interrupted =
-           blastSearch.searchGoalMeasured {debug = true, stop = stop}
+           blastSearch.searchGoalMeasured (snap ()) {debug = true, stop = stop}
              cs 0 ([], mk_conj (p, q)) (fn proof => proof)
          val completed =
-           blastSearch.searchGoalMeasured
+           blastSearch.searchGoalMeasured (snap ())
              {debug = true, stop = fn () => false}
              cs 0 ([], mk_conj (p, q)) (fn proof => proof)
          val partial = #statistics interrupted
@@ -1638,7 +1642,7 @@ val _ =
          val sentinel = ref 17
          fun raises stop expected =
            (ignore
-              (blastSearch.searchGoalMeasured
+              (blastSearch.searchGoalMeasured (snap ())
                  {debug = false, stop = stop}
                  clasetLib.empty_cs 0 ([], p) (fn proof => proof));
             false)
@@ -1670,7 +1674,7 @@ val _ =
      fn () =>
        let
          val report =
-           blastSearch.searchGoalWithStats clasetLib.empty_cs 0
+           blastSearch.searchGoalWithStats (snap ()) clasetLib.empty_cs 0
              ([boolSyntax.T], boolSyntax.T) (fn proof => proof)
        in
          Option.isSome (#result report) andalso
@@ -1923,13 +1927,13 @@ val _ =
              val stats_attempts = ref 0
              val measured_attempts = ref 0
              val ordinary =
-               blastSearch.searchGoal cs depth goal
+               blastSearch.searchGoal (snap ()) cs depth goal
                  (continuation ordinary_attempts)
              val stats =
-               blastSearch.searchGoalWithStats cs depth goal
+               blastSearch.searchGoalWithStats (snap ()) cs depth goal
                  (continuation stats_attempts)
              val measured =
-               blastSearch.searchGoalMeasured
+               blastSearch.searchGoalMeasured (snap ())
                  {debug = false, stop = fn () => false}
                  cs depth goal (continuation measured_attempts)
            in
@@ -1989,14 +1993,14 @@ val _ =
                     the fresh consequent can independently be false. *)
                  val goal = ([mk_disj (query, witness)], consequent)
                  val stats =
-                   blastSearch.searchGoalWithStats cs 2 goal
+                   blastSearch.searchGoalWithStats (snap ()) cs 2 goal
                      (fn proof => proof)
                  val measured =
-                   blastSearch.searchGoalMeasured
+                   blastSearch.searchGoalMeasured (snap ())
                      {debug = true, stop = fn () => false}
                      cs 2 goal (fn proof => proof)
                  val repeated =
-                   blastSearch.searchGoalMeasured
+                   blastSearch.searchGoalMeasured (snap ())
                      {debug = true, stop = fn () => false}
                      cs 2 goal (fn proof => proof)
                  val measured_stats = #statistics measured
@@ -2349,7 +2353,7 @@ val _ =
          val predicate = mk_var ("phase_exact_ep", bool --> bool)
 
          fun measured cs depth goal =
-           blastSearch.searchGoalMeasured
+           blastSearch.searchGoalMeasured (snap ())
              {debug = false, stop = fn () => false}
              cs depth goal (fn proof => proof)
 
@@ -2420,7 +2424,7 @@ val _ =
              fun stop () =
                (polls := !polls + 1; !polls >= cutoff)
            in
-             blastSearch.searchGoalMeasured
+             blastSearch.searchGoalMeasured (snap ())
                {debug = false, stop = stop} cs depth goal
                (fn proof => proof)
            end
@@ -2499,7 +2503,7 @@ val _ =
          val completed_polls = ref 0
          val completed_continuations = ref 0
          val completed =
-           blastSearch.searchGoalMeasured
+           blastSearch.searchGoalMeasured (snap ())
              {debug = false,
               stop = fn () =>
                 (completed_polls := !completed_polls + 1; false)}
@@ -2515,7 +2519,7 @@ val _ =
              val polls = ref 0
              val continuations = ref 0
              val report =
-               blastSearch.searchGoalMeasured
+               blastSearch.searchGoalMeasured (snap ())
                  {debug = false,
                   stop = fn () =>
                     (polls := !polls + 1; !polls >= cutoff)}
@@ -2582,7 +2586,7 @@ val _ =
                 clasetLib.empty_cs)
          val completed_polls = ref 0
          val completed =
-           blastSearch.searchGoalMeasured
+           blastSearch.searchGoalMeasured (snap ())
              {debug = true,
               stop = fn () =>
                 (completed_polls := !completed_polls + 1; false)}
@@ -2591,7 +2595,7 @@ val _ =
          val interrupted_polls = ref 0
          val continuations = ref 0
          val interrupted =
-           blastSearch.searchGoalMeasured
+           blastSearch.searchGoalMeasured (snap ())
              {debug = true,
               stop = fn () =>
                 (interrupted_polls := !interrupted_polls + 1;
@@ -2647,7 +2651,7 @@ val _ =
              | NONE => false
        in
          (ignore
-            (blastSearch.searchGoalMeasured
+            (blastSearch.searchGoalMeasured (snap ())
                {debug = false, stop = fn () => false}
                cs 1 goal reject);
           false)
@@ -2674,7 +2678,7 @@ val _ =
                 clasetLib.empty_cs)
          val calibration_polls = ref 0
          val calibration =
-           blastSearch.searchGoalMeasured
+           blastSearch.searchGoalMeasured (snap ())
              {debug = true,
               stop = fn () =>
                 (calibration_polls := !calibration_polls + 1; false)}
@@ -2689,7 +2693,8 @@ val _ =
          #completion calibration = blastSearch.Completed andalso
          #remaining_trail_assignments (#statistics calibration) = 1 andalso
          (ignore
-            (blastSearch.searchGoalMeasured {debug = true, stop = stop}
+            (blastSearch.searchGoalMeasured (snap ())
+              {debug = true, stop = stop}
                cs 1 goal
                (fn proof =>
                   (continuations := !continuations + 1; proof)));
@@ -2715,7 +2720,8 @@ val _ =
             if !attempts = 1 then raise blastSearch.PROOF_FAILED
             else proof)
          val report =
-           blastSearch.searchGoalMeasured {debug = false, stop = stop}
+           blastSearch.searchGoalMeasured (snap ())
+             {debug = false, stop = stop}
              clasetLib.empty_cs 0 ([p, p], p) reject
          val statistics = #statistics report
          val coherent =
@@ -2755,7 +2761,7 @@ val _ =
             if !attempts = 1 then raise blastSearch.PROOF_FAILED
             else proof)
          val report =
-           blastSearch.searchGoalWithStats cs 1
+           blastSearch.searchGoalWithStats (snap ()) cs 1
              ([p, q], mk_disj (p, q)) accept
          val statistics = #statistics report
        in
@@ -2817,9 +2823,9 @@ val _ =
          val commutation =
            ([], mk_imp (mk_disj (p, q), mk_disj (q, p)))
        in
-         Option.isSome (blastSearch.tryGoal cs 0 reflexive) andalso
-         Option.isSome (blastSearch.tryGoal cs 0 projection) andalso
-         Option.isSome (blastSearch.tryGoal cs 0 commutation)
+         Option.isSome (blastSearch.tryGoal (snap ()) cs 0 reflexive) andalso
+         Option.isSome (blastSearch.tryGoal (snap ()) cs 0 projection) andalso
+         Option.isSome (blastSearch.tryGoal (snap ()) cs 0 commutation)
        end)
 
 val _ =
@@ -2836,13 +2842,13 @@ val _ =
          val px = mk_comb (pred, x)
          val py = mk_comb (pred, y)
          val cs = clasetLib.the_claset ()
-         val safe = blastSearch.tryGoal cs 0 ([], mk_imp (p, p))
+         val safe = blastSearch.tryGoal (snap ()) cs 0 ([], mk_imp (p, p))
          val subst =
-           blastSearch.tryGoal cs 0 ([mk_eq (x, y), px], py)
+           blastSearch.tryGoal (snap ()) cs 0 ([mk_eq (x, y), px], py)
          val contr =
-           blastSearch.tryGoal cs 0 ([p, mk_neg p], q)
+           blastSearch.tryGoal (snap ()) cs 0 ([p, mk_neg p], q)
          val exists =
-           blastSearch.tryGoal cs 1
+           blastSearch.tryGoal (snap ()) cs 1
              ([], mk_exists (x, mk_eq (x, x)))
          fun scripts (SOME proof) = #script proof
            | scripts NONE = []
@@ -2870,7 +2876,7 @@ val _ =
          val goal = ([p, p], p)
          val views = ref ([] : string list list)
          fun accept proof =
-           case blastReconstruct.reconstruct goal proof of
+           case blastReconstruct.reconstruct (snap ()) goal proof of
                SOME ([], validation) =>
                  (ignore (validation []);
                   views := selector_view proof :: !views;
@@ -2879,7 +2885,7 @@ val _ =
                   else proof)
              | _ => raise blastSearch.PROOF_FAILED
          val result =
-           blastSearch.searchGoal clasetLib.empty_cs 0 goal accept
+           blastSearch.searchGoal (snap ()) clasetLib.empty_cs 0 goal accept
        in
          Option.isSome result andalso
          rev (!views) = [["assume:1"], ["assume:2"]]
@@ -2896,7 +2902,7 @@ val _ =
          val pa = mk_comb (pred, a)
          val goal = ([pa], mk_exists (x, mk_comb (pred, x)))
        in
-         case blastReconstruct.searchGoal
+         case blastReconstruct.searchGoal (snap ())
            (clasetLib.the_claset ()) 1 goal of
              SOME (proof, ([], validation)) =>
                selector_view proof =
@@ -2933,7 +2939,7 @@ val _ =
              (clasetLib.the_claset ())
        in
          (ignore
-            (blastReconstruct.searchGoal
+            (blastReconstruct.searchGoal (snap ())
               cs 20 ([], goal));
           true)
        end)
@@ -2970,7 +2976,7 @@ val _ =
                  ("parked-goal-or", DISJ_CINTRO_THM)]
                 clasetLib.empty_cs)
        in
-         case blastReconstruct.searchGoal cs 5 goal of
+         case blastReconstruct.searchGoal (snap ()) cs 5 goal of
              SOME (_, ([], validation)) => (ignore (validation []); true)
            | _ => false
        end)
@@ -2996,7 +3002,7 @@ val _ =
              (clasetLib.the_claset ())
          val goal = ([p, mk_conj (mk_neg p, q)], r)
        in
-         case blastReconstruct.searchGoal cs 0 goal of
+         case blastReconstruct.searchGoal (snap ()) cs 0 goal of
              SOME (proof, ([], validation)) =>
                (* One hidden antecedent, not two: the rule assumes the
                   negated conclusion itself, so the classical form adds
@@ -3020,7 +3026,7 @@ val _ =
            clasetLib.add_selims [("provenance-and", CONJ_ELIM_THM)]
              clasetLib.empty_cs
        in
-         case blastReconstruct.searchGoal cs 0 goal of
+         case blastReconstruct.searchGoal (snap ()) cs 0 goal of
              SOME (proof, ([], validation)) =>
                selector_view proof = ["safe:2", "assume:2"] andalso
                (ignore (validation []); true)
@@ -3038,7 +3044,7 @@ val _ =
          val goal =
            ([mk_disj (p, q), mk_imp (p, r), mk_imp (q, r)], r)
        in
-         case blastReconstruct.searchGoal
+         case blastReconstruct.searchGoal (snap ())
            (clasetLib.the_claset ()) 0 goal of
              SOME (proof, ([], validation)) =>
                selector_view proof =
@@ -3065,7 +3071,7 @@ val _ =
              [("provenance-all", FORALL_ELIM_THM)]
              clasetLib.empty_cs
        in
-         case blastReconstruct.searchGoal cs 1 goal of
+         case blastReconstruct.searchGoal (snap ()) cs 1 goal of
              SOME (proof, ([], validation)) =>
                selector_view proof =
                  ["unsafe:1:true", "assume:1"] andalso
@@ -3149,10 +3155,10 @@ val _ =
          val proof = proof_at 2
          val invalid_proof = proof_at 4
          val result =
-           blastReconstruct.reconstructWith_in (Context.snapshot ())
+           blastReconstruct.reconstructWith (Context.snapshot ())
              clasetLib.empty_cs goal proof
          val invalid_result =
-           blastReconstruct.reconstructWith_in (Context.snapshot ())
+           blastReconstruct.reconstructWith (Context.snapshot ())
              clasetLib.empty_cs goal invalid_proof
 
          fun prefix_order premise =
@@ -3248,7 +3254,8 @@ val _ =
          val q = mk_var ("provenance_polarity_q", bool)
          val goal = ([p, mk_neg p], q)
        in
-         case blastReconstruct.searchGoal clasetLib.empty_cs 0 goal of
+         case blastReconstruct.searchGoal (snap ())
+           clasetLib.empty_cs 0 goal of
              SOME (proof, ([], validation)) =>
                selector_view proof = ["contr:2:1"] andalso
                (ignore (validation []); true)
@@ -3268,12 +3275,13 @@ val _ =
          fun deepen limit =
            Lib.with_flag (blastSearch.depth_limit, limit)
              (fn () =>
-                blastSearch.deepenGoal cs goal (fn proof => proof)) ()
+                blastSearch.deepenGoal (snap ())
+                  cs goal (fn proof => proof)) ()
        in
          !blastSearch.depth_limit = 20 andalso
-         not (Option.isSome (blastSearch.tryGoal cs 0 goal)) andalso
-         not (Option.isSome (blastSearch.tryGoal cs 1 goal)) andalso
-         (case blastSearch.tryGoal cs 2 goal of
+         not (Option.isSome (blastSearch.tryGoal (snap ()) cs 0 goal)) andalso
+         not (Option.isSome (blastSearch.tryGoal (snap ()) cs 1 goal)) andalso
+         (case blastSearch.tryGoal (snap ()) cs 2 goal of
               SOME proof => #depth proof = 2
             | NONE => false) andalso
          not (Option.isSome (deepen 1)) andalso
@@ -3316,8 +3324,8 @@ val _ =
            | isUnsafe _ = false
        in
          not (Option.isSome
-           (blastSearch.tryGoal cs 1 ([allp, allq], qb))) andalso
-         (case blastSearch.tryGoal cs 2 ([allp, allq], qb) of
+           (blastSearch.tryGoal (snap ()) cs 1 ([allp, allq], qb))) andalso
+         (case blastSearch.tryGoal (snap ()) cs 2 ([allp, allq], qb) of
               SOME proof =>
                 #depth proof = 2 andalso
                 length (List.filter isUnsafe (#script proof)) = 2
@@ -3405,7 +3413,7 @@ val _ =
             if !attempts = 1 then raise blastSearch.PROOF_FAILED
             else proof)
          val result =
-           blastSearch.searchGoal cs 1
+           blastSearch.searchGoal (snap ()) cs 1
              ([p, q], mk_disj (p, q)) accept
        in
          !attempts = 2 andalso Option.isSome result
@@ -3434,7 +3442,7 @@ val _ =
             if !attempts = 1 then raise blastSearch.PROOF_FAILED
             else proof)
          val first =
-           blastSearch.searchGoalResumable small cs 1 goal accept
+           blastSearch.searchGoalResumable (snap ()) small cs 1 goal accept
          fun finish 0 _ = NONE
            | finish turns outcome =
                case outcome of
@@ -3450,7 +3458,8 @@ val _ =
             if !ordinary_attempts = 1 then
               raise blastSearch.PROOF_FAILED
             else proof)
-         val ordinary = blastSearch.searchGoal cs 1 goal ordinary_accept
+         val ordinary = blastSearch.searchGoal (snap ())
+           cs 1 goal ordinary_accept
        in
          (case first of
               blastSearch.BudgetYielded _ => true
@@ -3477,10 +3486,10 @@ val _ =
              {candidates = SOME 10000, applications = SOME 1,
               normalization = SOME 10000}
          val first =
-           blastSearch.searchGoalResumable budget cs 1 goal
+           blastSearch.searchGoalResumable (snap ()) budget cs 1 goal
              (fn proof => proof)
          val other =
-           blastSearch.searchGoal clasetLib.empty_cs 0
+           blastSearch.searchGoal (snap ()) clasetLib.empty_cs 0
              ([], ``resumed_other_p ==> resumed_other_p``)
              (fn proof => proof)
          fun finish 0 _ = NONE
@@ -3493,7 +3502,7 @@ val _ =
                  | blastSearch.BudgetLimitReached _ => NONE
          val resumed = finish 20 first
          val ordinary =
-           blastSearch.searchGoal cs 1 goal (fn proof => proof)
+           blastSearch.searchGoal (snap ()) cs 1 goal (fn proof => proof)
        in
          (case first of
               blastSearch.BudgetYielded
@@ -3521,7 +3530,7 @@ val _ =
            (attempts := !attempts + 1;
             raise blastSearch.PROOF_FAILED)
          val result =
-           blastSearch.searchGoal cs 1
+           blastSearch.searchGoal (snap ()) cs 1
              ([pb], mk_exists (x, mk_comb (pred, x))) reject
        in
          !attempts = 1 andalso not (Option.isSome result)
@@ -3539,14 +3548,14 @@ val _ =
             if !attempts = 1 then raise blastSearch.PROOF_FAILED
             else proof)
          val result =
-           blastSearch.searchGoal (clasetLib.the_claset ()) 0
+           blastSearch.searchGoal (snap ()) (clasetLib.the_claset ()) 0
              ([p, p], p) accept
        in
          !attempts = 2 andalso Option.isSome result
        end)
 
 fun reconstructed cs depth goal =
-  case blastReconstruct.searchGoal cs depth goal of
+  case blastReconstruct.searchGoal (snap ()) cs depth goal of
       SOME (_, ([], validation)) =>
         SOME (validation [])
     | _ => NONE
@@ -3572,7 +3581,7 @@ val _ =
             branches_closed = #branches_closed proof,
             choices_pruned = #choices_pruned proof}
        in
-         case blastSearch.tryGoal clasetLib.empty_cs 0 goal of
+         case blastSearch.tryGoal (snap ()) clasetLib.empty_cs 0 goal of
              SOME (proof : blastSearch.proof) =>
                let
                  val corrupted = corrupt proof
@@ -3580,16 +3589,17 @@ val _ =
                    case #script proof of
                        [blastSearch.CloseAssume {assumption = 2}] => true
                      | _ => false
-                 val original = blastReconstruct.reconstruct goal proof
+                 val original = blastReconstruct.reconstruct (snap ())
+                   goal proof
                  val rejected =
-                   blastReconstruct.reconstruct goal corrupted
+                   blastReconstruct.reconstruct (snap ()) goal corrupted
                  val reentry_attempts = ref 0
                  val reentry_views = ref ([] : string list list)
                  fun reject candidate =
                    let
                      val bad = corrupt candidate
                      val ordinary =
-                       blastReconstruct.reconstruct goal bad
+                       blastReconstruct.reconstruct (snap ()) goal bad
                      val _ = reentry_attempts := !reentry_attempts + 1
                      val _ =
                        reentry_views :=
@@ -3602,7 +3612,8 @@ val _ =
                      raise blastSearch.PROOF_FAILED
                    end
                  val reentered =
-                   blastSearch.searchGoal clasetLib.empty_cs 0 goal reject
+                   blastSearch.searchGoal (snap ())
+                     clasetLib.empty_cs 0 goal reject
                in
                  exact_script andalso
                  (case original of
@@ -3638,16 +3649,17 @@ val _ =
              (x, mk_imp (mk_comb (c, x), mk_comb (g, x)))
          val goal = ([p, structured], mk_conj (p, structured))
          val proof =
-           case blastSearch.tryGoal (clasetLib.the_claset ()) 1 goal of
+           case blastSearch.tryGoal (snap ())
+             (clasetLib.the_claset ()) 1 goal of
                SOME value => value
              | NONE => raise Fail "static-prefix tableau"
        in
          length (#script proof) = 3 andalso
          reconstruction_succeeds
-           (blastReconstruct.reconstructWith_in (Context.snapshot ())
+           (blastReconstruct.reconstructWith (Context.snapshot ())
               clasetLib.empty_cs goal proof) andalso
          reconstruction_succeeds
-           (blastReconstruct.reconstruct goal proof)
+           (blastReconstruct.reconstruct (snap ()) goal proof)
        end)
 
 val _ =
@@ -3675,11 +3687,11 @@ val _ =
          val goal = ([source], target)
          val cs = clasetLib.the_claset ()
          val proof =
-           case blastSearch.tryGoal cs 3 goal of
+           case blastSearch.tryGoal (snap ()) cs 3 goal of
                SOME result => result
              | NONE => raise Fail "quantified reconstruction tableau"
        in
-         case blastReconstruct.reconstructWith_in (Context.snapshot ())
+         case blastReconstruct.reconstructWith (Context.snapshot ())
                 cs goal proof of
              SOME ([], validation) =>
                let val theorem = validation []
@@ -3738,10 +3750,10 @@ val _ =
              (Thm.hypset theorem,
               HOLset.fromList Term.compare (#1 goal))
        in
-         case blastSearch.tryGoal clasetLib.empty_cs 0 goal of
+         case blastSearch.tryGoal (snap ()) clasetLib.empty_cs 0 goal of
              NONE => false
            | SOME proof =>
-               (case blastReconstruct.reconstruct goal proof of
+               (case blastReconstruct.reconstruct (snap ()) goal proof of
                     SOME ([], validation) =>
                       has_step
                         (fn blastSearch.CloseContradiction _ => true
@@ -3810,14 +3822,14 @@ val _ =
            clasetLib.add_selims
              [("andE", CONJ_ELIM_THM)] clasetLib.empty_cs
        in
-         case blastSearch.tryGoal cs 0 goal of
+         case blastSearch.tryGoal (snap ()) cs 0 goal of
              NONE => false
            | SOME proof =>
                has_step
                  (fn blastSearch.SafeRule _ => true
                    | _ => false) proof andalso
                reconstruction_succeeds
-                 (blastReconstruct.reconstructWith_in (Context.snapshot ())
+                 (blastReconstruct.reconstructWith (Context.snapshot ())
                     cs goal proof)
        end)
 
@@ -3835,11 +3847,11 @@ val _ =
              [("timed-v2-reconstruct-andE", CONJ_ELIM_THM)]
              clasetLib.empty_cs
        in
-         case blastSearch.tryGoal cs 0 goal of
+         case blastSearch.tryGoal (snap ()) cs 0 goal of
              NONE => false
            | SOME proof =>
                reconstruction_succeeds
-                 (blastReconstruct.reconstructWith_in (Context.snapshot ())
+                 (blastReconstruct.reconstructWith (Context.snapshot ())
                     cs goal proof)
        end)
 
@@ -3858,7 +3870,7 @@ val _ =
            clasetLib.add_intros
              [("existsI", EXISTS_INTRO_THM)] clasetLib.empty_cs
        in
-         case blastReconstruct.searchGoal cs 1 goal of
+         case blastReconstruct.searchGoal (snap ()) cs 1 goal of
              SOME (proof, ([], validation)) =>
                has_step
                  (fn blastSearch.DeferGoal => true | _ => false)
@@ -3886,7 +3898,7 @@ val _ =
            clasetLib.add_elims
              [("allE", FORALL_ELIM_THM)] clasetLib.empty_cs
        in
-         case blastReconstruct.searchGoal cs 2 goal of
+         case blastReconstruct.searchGoal (snap ()) cs 2 goal of
              SOME (proof, ([], validation)) =>
                has_step
                  (fn blastSearch.UnsafeRule {duplicate = true, ...} =>
@@ -3919,7 +3931,8 @@ val _ =
                   (y, mk_conj (mk_eq (x, y), mk_comb (p, y))))],
             mk_comb (p, c))
        in
-         case blastReconstruct.searchGoal (clasetLib.the_claset ()) 1 goal of
+         case blastReconstruct.searchGoal (snap ())
+           (clasetLib.the_claset ()) 1 goal of
              SOME (proof, ([], validation)) =>
                has_step
                  (fn blastSearch.HypSubst
@@ -3951,7 +3964,7 @@ val _ =
            clasetLib.add_selims
              [("andE", CONJ_ELIM_THM)] clasetLib.empty_cs
        in
-         case blastReconstruct.searchGoal cs 0 goal of
+         case blastReconstruct.searchGoal (snap ()) cs 0 goal of
              SOME (proof, ([], validation)) =>
                has_step
                  (fn blastSearch.HypSubst
@@ -3992,7 +4005,7 @@ val _ =
            clasetLib.add_elims
              [("allE", FORALL_ELIM_THM)] clasetLib.empty_cs
        in
-         Option.isSome (blastSearch.tryGoal cs 2 goal) andalso
+         Option.isSome (blastSearch.tryGoal (snap ()) cs 2 goal) andalso
          Option.isSome (reconstructed cs 2 goal)
        end)
 
@@ -4016,10 +4029,10 @@ val _ =
              (Thm.hypset theorem,
               HOLset.fromList Term.compare (#1 goal))
        in
-         case blastSearch.tryGoal clasetLib.empty_cs 0 goal of
+         case blastSearch.tryGoal (snap ()) clasetLib.empty_cs 0 goal of
              NONE => false
            | SOME proof =>
-               (case blastReconstruct.reconstruct goal proof of
+               (case blastReconstruct.reconstruct (snap ()) goal proof of
                     SOME ([], validation) =>
                       has_step
                         (fn blastSearch.HypSubst _ => true | _ => false)
@@ -4057,7 +4070,7 @@ val _ =
            let
              val _ = attempts := !attempts + 1
            in
-             case blastReconstruct.reconstruct goal proof of
+             case blastReconstruct.reconstruct (snap ()) goal proof of
                  SOME result => (proof, result)
                | NONE => raise blastSearch.PROOF_FAILED
            end
@@ -4065,7 +4078,7 @@ val _ =
          val result =
            Lib.with_flag (Feedback.MESG_outstream,
              fn message => messages := message :: !messages)
-             (fn () => blastSearch.searchGoal cs 1 goal accept) ()
+             (fn () => blastSearch.searchGoal (snap ()) cs 1 goal accept) ()
          val _ = HOLFlags.set_trace "blast.trace" old_trace
          val traced =
            List.exists
@@ -4096,14 +4109,14 @@ val _ =
            clasetLib.add_intros
              [("bad-left", bad)] clasetLib.empty_cs
        in
-         case blastSearch.tryGoal cs 1 goal of
+         case blastSearch.tryGoal (snap ()) cs 1 goal of
              NONE => false
            | SOME proof =>
                not (Option.isSome
-                 (blastReconstruct.reconstructWith_in (Context.snapshot ())
+                 (blastReconstruct.reconstructWith (Context.snapshot ())
                     cs goal proof)) andalso
                not (Option.isSome
-                 (blastReconstruct.searchGoal cs 1 goal))
+                 (blastReconstruct.searchGoal (snap ()) cs 1 goal))
        end)
 
 fun blast_solves tactic goal =
@@ -4153,11 +4166,11 @@ val _ =
              clasetLib.empty_cs
              (clasetLib.iff_rules "dup_order" one_one)
        in
-         (case blastSearch.tryGoal cs 1 goal of
+         (case blastSearch.tryGoal (snap ()) cs 1 goal of
               NONE => false
             | SOME proof =>
                 Option.isSome
-                  (blastReconstruct.reconstructWith_in (Context.snapshot ())
+                  (blastReconstruct.reconstructWith (Context.snapshot ())
                      cs goal proof)) andalso
          blast_solves (tableauLib.CS_BLAST_DEPTH_TAC cs 1) goal
        end)
@@ -4313,10 +4326,10 @@ val _ =
          val ctxt = Context.snapshot ()
          val cs = clasetLib.empty_cs
        in
-         case blastSearch.tryGoal cs 0 goal of
+         case blastSearch.tryGoal (snap ()) cs 0 goal of
              NONE => false
            | SOME proof =>
-               (case blastReconstruct.reconstructWith_in
+               (case blastReconstruct.reconstructWith
                        ctxt cs goal proof of
                     SOME ([], validation) =>
                       Term.aconv (Thm.concl (validation [])) target
@@ -5231,9 +5244,10 @@ val _ =
            let
              val goal = ([], pelletier_problem number)
              val ordinary =
-               blastSearch.searchGoal cs depth goal (fn proof => proof)
+               blastSearch.searchGoal (snap ())
+                 cs depth goal (fn proof => proof)
              val measured =
-               blastSearch.searchGoalMeasured
+               blastSearch.searchGoalMeasured (snap ())
                  {debug = false, stop = fn () => false}
                  cs depth goal (fn proof => proof)
            in
