@@ -411,7 +411,7 @@ local
                     in actual:=SOME theorem;theorem end
         in SmtResource.or_else
           (fn () => bit_law source make)
-          (fn () => make ())
+          make
         end
       val bitblast=SmtBitBlastProve.new_context_with_bit_conversion cached_bit
     in {normalizer=normalizer,sat=sat,projections=projections,
@@ -7252,31 +7252,34 @@ local
       (SmtResource.or_else
          (fn () => (state, bounded_propositional t))
          (fn () =>
-       ((* E1(c): exact FP theorem reuse is a redundant performance cache. *)
-        (state, rewrite_profile "cached-checked-theorems"
-           "rewrite(3)(cache-fp)"
-           (fn target =>
-             Library.require_fastpath "Z3 rewrite FP theorem cache" target
-               (state_exact_cached_thm state) target) t)
-        handle Feedback.HOL_ERR _ =>
-          let
-            val eligible_decompositions =
-              eligible_fp_bit_decompositions state
-            val all_decompositions = fp_bit_decompositions state
-            (* E1(b): checked lowering is the general selected FP rewrite
-               procedure and fails loudly at its unsupported/D4 boundary. *)
-            val thm = rewrite_profile "floating-point"
-              "rewrite(4)(fp)"
-              (SmtFpProve.fp_prove_with_word_prover
-                (SmtWordGraph.prove_in (#word_context state)) arith_prove
-                eligible_decompositions all_decompositions) t
-              handle Feedback.HOL_ERR holerr =>
-                raise FP_REWRITE_ERROR (Feedback.HOL_ERR holerr)
-            val definitions = Thm.hyp thm
-            val state = state_define (state_cache_thm state thm) definitions
-          in
-            (state, thm)
-          end)))
+           ((* E1(c): exact FP theorem reuse is a redundant performance
+               cache. *)
+            (state, rewrite_profile "cached-checked-theorems"
+               "rewrite(3)(cache-fp)"
+               (fn target =>
+                 Library.require_fastpath "Z3 rewrite FP theorem cache" target
+                   (state_exact_cached_thm state) target) t)
+            handle Feedback.HOL_ERR _ =>
+              let
+                val eligible_decompositions =
+                  eligible_fp_bit_decompositions state
+                val all_decompositions = fp_bit_decompositions state
+                (* E1(b): checked lowering is the general selected FP rewrite
+                   procedure and fails loudly at its unsupported/D4
+                   boundary. *)
+                val thm = rewrite_profile "floating-point"
+                  "rewrite(4)(fp)"
+                  (SmtFpProve.fp_prove_with_word_prover
+                    (SmtWordGraph.prove_in (#word_context state)) arith_prove
+                    eligible_decompositions all_decompositions) t
+                  handle Feedback.HOL_ERR holerr =>
+                    raise FP_REWRITE_ERROR (Feedback.HOL_ERR holerr)
+                val definitions = Thm.hyp thm
+                val state =
+                  state_define (state_cache_thm state thm) definitions
+              in
+                (state, thm)
+              end)))
       end
     else
       (* FP has first refusal.  Z3's bag encoding then gets the count-array
@@ -7285,76 +7288,80 @@ local
          ladder. *)
       SmtResource.or_else
         (fn () =>
-      (let
-         (* E1(b): the general Bag prover fails loudly outside its family. *)
-         val thm = rewrite_profile "bags" "rewrite(5)(bag)"
-           (SmtBagProve.bag_prove_with_admission
-             (#datatype_admit state) arith_prove) t
-       in
-         (state_cache_thm state thm, thm)
-       end
-       handle Feedback.HOL_ERR holerr =>
-         if SmtResource.is_resource_gate holerr then
-           raise BAG_REWRITE_ERROR (Feedback.HOL_ERR holerr)
-         else
-         (SmtResource.or_else
-            (fn () =>
-              let
-                (* E1(b): the general Seq prover has an explicit family
-                   gate. *)
-                val thm = rewrite_profile "sequences" "rewrite(6)(seq)"
-                  (SmtSeqProve.seq_prove_with_admission
-                    (#datatype_admit state)) t
-              in
-                (state_cache_thm state thm, thm)
-              end)
-            (fn () =>
-              (* E1(a): canonicalization decides polynomial normal forms. *)
-              (state, rewrite_profile "polynomial-normal-form"
-                "rewrite(7)(poly-normal-form)"
-                (fn target => linear_arithmetic_rewrite_prove target
-                  handle Feedback.HOL_ERR holerr =>
-                    if SmtResource.is_resource_gate holerr then
-                      raise BV_REWRITE_ERROR (Feedback.HOL_ERR holerr)
-                    else raise Feedback.HOL_ERR holerr) t)
-              handle Feedback.HOL_ERR _ =>
-              (* E1(a): simplification decides quantified Boolean normality. *)
-              (state, rewrite_profile "quantified-propositional"
-                "rewrite(8)(quantified-boolean)"
-                quantified_boolean_rewrite_prove t)
-              handle Feedback.HOL_ERR _ =>
-              (* E1(c): rewrite proformas are redundant performance caches. *)
-              (state, rewrite_profile "proforma-fastpaths"
-                "rewrite(9)(proforma)"
-                (fn target =>
-                  Library.require_fastpath "Z3 rewrite proforma" target
-                    Z3_ProformaThms.prove_rewrite target)
-                t)
-              handle Feedback.HOL_ERR _ =>
-              (* Shared application structure is a kernel congruence
-                 obligation even when its result has function type.  Try
-                 that checked decomposition before admitting the equality
-                 as an Array extensionality problem. *)
-              (if is_function_type (Term.type_of l) andalso
-                  Term.is_comb l andalso Term.is_comb r then
-                 (pre_bblast_skeleton_attempted := true;
-                  record_measured_target MeasuredSkeletonCongruence t;
-                  rewrite_profile "boolean/binder-skeleton"
-                    "rewrite(9a)(skeleton-congruence)"
-                    skeleton_congruence ())
-               else raise ERR "z3_rewrite"
-                 "no function-valued application congruence")
-              handle Feedback.HOL_ERR _ =>
-                let
-                (* E1(b): the budgeted array/set procedure covers selected
-                   beta, update, symbolic-index and extensional shapes and
-                   fails loudly outside them or at its D4 boundary. *)
-                val thm = rewrite_profile "arrays/set"
-                  "rewrite(10)(array-set)"
-                  SmtArrayProve.array_prove t
-              in
-                (state_cache_thm state thm, thm)
-              end))))
+          (let
+             (* E1(b): the general Bag prover fails loudly outside its
+                family. *)
+             val thm = rewrite_profile "bags" "rewrite(5)(bag)"
+               (SmtBagProve.bag_prove_with_admission
+                 (#datatype_admit state) arith_prove) t
+           in
+             (state_cache_thm state thm, thm)
+           end
+           handle Feedback.HOL_ERR holerr =>
+             if SmtResource.is_resource_gate holerr then
+               raise BAG_REWRITE_ERROR (Feedback.HOL_ERR holerr)
+             else
+             (SmtResource.or_else
+                (fn () =>
+                  let
+                    (* E1(b): the general Seq prover has an explicit family
+                       gate. *)
+                    val thm = rewrite_profile "sequences" "rewrite(6)(seq)"
+                      (SmtSeqProve.seq_prove_with_admission
+                        (#datatype_admit state)) t
+                  in
+                    (state_cache_thm state thm, thm)
+                  end)
+                (fn () =>
+                  (* E1(a): canonicalization decides polynomial normal
+                     forms. *)
+                  (state, rewrite_profile "polynomial-normal-form"
+                    "rewrite(7)(poly-normal-form)"
+                    (fn target => linear_arithmetic_rewrite_prove target
+                      handle Feedback.HOL_ERR holerr =>
+                        if SmtResource.is_resource_gate holerr then
+                          raise BV_REWRITE_ERROR (Feedback.HOL_ERR holerr)
+                        else raise Feedback.HOL_ERR holerr) t)
+                  handle Feedback.HOL_ERR _ =>
+                  (* E1(a): simplification decides quantified Boolean
+                     normality. *)
+                  (state, rewrite_profile "quantified-propositional"
+                    "rewrite(8)(quantified-boolean)"
+                    quantified_boolean_rewrite_prove t)
+                  handle Feedback.HOL_ERR _ =>
+                  (* E1(c): rewrite proformas are redundant performance
+                     caches. *)
+                  (state, rewrite_profile "proforma-fastpaths"
+                    "rewrite(9)(proforma)"
+                    (fn target =>
+                      Library.require_fastpath "Z3 rewrite proforma" target
+                        Z3_ProformaThms.prove_rewrite target)
+                    t)
+                  handle Feedback.HOL_ERR _ =>
+                  (* Shared application structure is a kernel congruence
+                     obligation even when its result has function type.  Try
+                     that checked decomposition before admitting the equality
+                     as an Array extensionality problem. *)
+                  (if is_function_type (Term.type_of l) andalso
+                      Term.is_comb l andalso Term.is_comb r then
+                     (pre_bblast_skeleton_attempted := true;
+                      record_measured_target MeasuredSkeletonCongruence t;
+                      rewrite_profile "boolean/binder-skeleton"
+                        "rewrite(9a)(skeleton-congruence)"
+                        skeleton_congruence ())
+                   else raise ERR "z3_rewrite"
+                     "no function-valued application congruence")
+                  handle Feedback.HOL_ERR _ =>
+                    let
+                    (* E1(b): the budgeted array/set procedure covers selected
+                       beta, update, symbolic-index and extensional shapes and
+                       fails loudly outside them or at its D4 boundary. *)
+                    val thm = rewrite_profile "arrays/set"
+                      "rewrite(10)(array-set)"
+                      SmtArrayProve.array_prove t
+                  in
+                    (state_cache_thm state thm, thm)
+                  end))))
         (fn () =>
     (* E1(c): theorem reuse is a redundant performance cache. *)
       (state, rewrite_profile "cached-checked-theorems"
@@ -7705,7 +7712,7 @@ local
             (fn () => substitute (#asserted_hyps state))
             (fn () =>
               substitute (HOLset.union (#asserted_hyps state,
-              #allowed_asserted_hyps state)))) ()
+                #allowed_asserted_hyps state)))) ()
      in
        (state_cache_thm state theorem, theorem)
      end
@@ -8603,7 +8610,7 @@ local
            "bv-th-lemma" bv_concat_schema_prove target)
        (fn () =>
          bv_resource_prove_after_admission
-         "bv-th-lemma" bv_th_lemma_prove_raw target))
+           "bv-th-lemma" bv_th_lemma_prove_raw target))
 
   fun bv_th_lemma_basic_branch prove decline fallback target =
     if has_word_atom target then
@@ -8977,7 +8984,7 @@ local
                profile "th_lemma[arith](contextual-char)"
                  (bounded_char_arith "z3-contextual-char"
                    contextual_arith_prove) normalized)
-             (fn () => generic_normalized ()))
+             generic_normalized)
         else
           (SmtResource.or_else
              (fn () =>
@@ -9044,7 +9051,7 @@ local
             in
               (state, Drule.LIST_MP thms theorem)
             end)
-          (fn () => legacy ())
+          legacy
     in
       case skeleton_general_attempt state target of
         SmtSkeletonDispatch.Proved result =>
@@ -9104,7 +9111,7 @@ local
       val thm = SmtResource.or_else
         (fn () =>
           profile "th_lemma[basic](2)(TAUT_PROVE)"
-          (bounded_taut_prove "Skeleton" "z3-basic-taut") t)
+            (bounded_taut_prove "Skeleton" "z3-basic-taut") t)
         (fn () => arith ["boolean"])
     in
       (* cache 'thm' *)
@@ -10221,21 +10228,21 @@ local
       (definition, lhs, rhs, self_dependent, _) =
     SmtResource.or_else
       (fn () =>
-    (if self_dependent andalso
-        wordsSyntax.is_word_type (Term.type_of lhs) then
-       SOME (profile
-         "check_proof(remove_definitions:self-word-identity)"
-         (fn definition =>
-           if Term.is_var rhs andalso rhs ~~ lhs then
-             Thm.REFL lhs
-           else
-             bv_resource_prove "remove-definitions-self-word-identity"
-               (word_decider_attempt
-                 "remove_definitions:self-word-identity"
-                 (HOLFlags.with_bflags
-                    [(blastLib.print_counterexamples, false)]
-                   Library.replay_BBLAST_PROVE)) definition) definition)
-     else NONE))
+        (if self_dependent andalso
+            wordsSyntax.is_word_type (Term.type_of lhs) then
+           SOME (profile
+             "check_proof(remove_definitions:self-word-identity)"
+             (fn definition =>
+               if Term.is_var rhs andalso rhs ~~ lhs then
+                 Thm.REFL lhs
+               else
+                 bv_resource_prove "remove-definitions-self-word-identity"
+                   (word_decider_attempt
+                     "remove_definitions:self-word-identity"
+                     (HOLFlags.with_bflags
+                        [(blastLib.print_counterexamples, false)]
+                       Library.replay_BBLAST_PROVE)) definition) definition)
+         else NONE))
       (fn () => NONE)
 
   fun with_definition_dependency var_set definition consume =
