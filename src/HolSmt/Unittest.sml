@@ -27337,6 +27337,16 @@ let
   val deep = boolSyntax.mk_eq (nest 10, intSyntax.term_of_int
     (Arbint.fromInt 1024))
   val equality = ``(asserted_x:int) = asserted_y``
+  (* a substituted constructor discards a branch full of macro calls *)
+  val sum_source = ``(asserted_s:int + bool) = INR T``
+  val sum_target =
+    ``OUTL (INR (sum_CASE (asserted_s:int + bool)
+         (\x:int. ^(nest 9) = x) (\b:bool. b)) : int + bool) =
+      OUTL (INR T : int + bool)``
+  val real_macro = ``!x:real. macro_rf x = x + 5``
+  val real_target =
+    ``((macro_rf:real->real) asserted_r = asserted_t) <=>
+      (5 + asserted_r = asserted_t)``
   (* more explicit equalities than equality extraction takes *)
   val many_equalities = List.tabulate (65, fn i => boolSyntax.mk_eq
     (Term.mk_var ("asserted_e" ^ Int.toString i, intSyntax.int_ty),
@@ -27375,6 +27385,9 @@ in
   proves_from "conjoined macro" [conjoined] [conjoined] target;
   proves_from "macros past the equality cap" (macro :: many_equalities)
     [macro] target;
+  proves_from "equalities before macros" [double, sum_source] [sum_source]
+    sum_target;
+  proves_from "real macro" [real_macro] [real_macro] real_target;
   (* the equality alone closes it; the macro calls stay unexpanded *)
   proves_from "reflexive before macros" [double, equality] [equality]
     (boolSyntax.mk_eq

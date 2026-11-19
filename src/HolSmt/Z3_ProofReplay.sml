@@ -7072,21 +7072,16 @@ local
             raise ERR "asserted_equality_substitution_prove"
               "macro expansion exceeds 256 rewrites"
         end
-      fun prove_with rewrite_theorems =
+      fun prove_with expand rewrite_theorems =
         let
           val equality_step =
             if List.null rewrite_theorems then Thm.REFL target
             else Conv.QCONV (Rewrite.PURE_REWRITE_CONV rewrite_theorems)
               target
           val equality_result = boolSyntax.rhs (Thm.concl equality_step)
-          (* a residue the equalities already make reflexive needs no
-             macros, and expanding it could only exhaust their budget *)
           val macro_step =
-            if boolSyntax.is_eq equality_result andalso
-               Term.aconv (boolSyntax.lhs equality_result)
-                 (boolSyntax.rhs equality_result)
-            then Thm.REFL equality_result
-            else macro_conv equality_result
+            if expand then macro_conv equality_result
+            else Thm.REFL equality_result
           val macro_fired =
             not (Term.aconv (boolSyntax.lhs (Thm.concl macro_step))
               (boolSyntax.rhs (Thm.concl macro_step)))
@@ -7129,8 +7124,23 @@ local
                 Tactical.REPEAT Tactic.COND_CASES_TAC THEN
                 intLib.ARITH_TAC)
             end
+          (* an expanded real macro leaves linear real arithmetic *)
+          fun real_macro residue =
+            let
+              val _ = macro_fired andalso
+                SmtResource.term_nodes_up_to 4096 residue <= 4096 andalso
+                not (Library.has_quantifier residue) andalso
+                List.all (fn variable =>
+                    Term.type_of variable = realSyntax.real_ty)
+                  (Term.free_vars residue) orelse
+                raise ERR "asserted_equality_substitution_prove"
+                  "not a bounded, unquantified real macro residue"
+            in
+              Tactical.TAC_PROOF (([], residue), RealField.REAL_ARITH_TAC)
+            end
           fun decide residue = reflexive residue
             handle Feedback.HOL_ERR _ => integer_conditional residue
+            handle Feedback.HOL_ERR _ => real_macro residue
             handle Feedback.HOL_ERR _ =>
               SmtDatatypeProve.datatype_prove_with_admission admit residue
           fun boolean_equality tm =
@@ -7190,25 +7200,33 @@ local
         in
           Thm.EQ_MP (Thm.SYM substitution) decision
         end
-      fun attempt rewrite_theorems = prove_with rewrite_theorems
+      fun attempt expand rewrite_theorems =
+        prove_with expand rewrite_theorems
         handle Conv.UNCHANGED =>
           raise ERR "asserted_equality_substitution_prove"
             "explicit equalities do not occur in target"
       val oriented = equalities
       val reversed = List.map Thm.SYM equalities
-      (* rewriting with the equalities can hide a macro call *)
-      fun macros_alone holerr =
-        if SmtResource.is_resource_gate holerr orelse List.null macros
-        then raise Feedback.HOL_ERR holerr
-        else attempt []
+      fun gate holerr =
+        if SmtResource.is_resource_gate holerr
+        then raise Feedback.HOL_ERR holerr else ()
+      fun with_equalities expand =
+        attempt expand oriented
+        handle Feedback.HOL_ERR holerr =>
+          (gate holerr; attempt expand reversed)
     in
-      attempt oriented
-      handle Feedback.HOL_ERR holerr =>
-        if SmtResource.is_resource_gate holerr orelse
-           List.null equalities then
-          raise Feedback.HOL_ERR holerr
-        else (attempt reversed handle Feedback.HOL_ERR holerr =>
-          macros_alone holerr)
+      (* the equalities alone first, as without macros; then with the
+         macros expanded, and with the macros alone, since rewriting with
+         the equalities can hide a macro call *)
+      if List.null macros then with_equalities false
+      else if List.null equalities then attempt true []
+      else
+        with_equalities false
+        handle Feedback.HOL_ERR holerr =>
+          (gate holerr;
+           with_equalities true
+           handle Feedback.HOL_ERR holerr =>
+             (gate holerr; attempt true []))
     end
 
     fun z3_rewrite (state, t) =
