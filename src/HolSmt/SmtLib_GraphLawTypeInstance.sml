@@ -185,33 +185,34 @@ struct
          {original = original,template_limit = template_limit,
           check_type = check_type}))
 
-  fun prepare_internal (p as Producer
-      {graph,scope,limit,variables,annotations,bytes,raw,binder,...})
-      {bindings} =
+  (* The instance preparation shared by the int and policy producers.  The
+     caller supplies what differs: the error origin, the Work-charging spend,
+     the remaining cumulative cap, the activity check and the Type policy. *)
+  fun prepare_walk {name,active,spend,remaining,check,variables,annotations,
+                    bytes,raw,binder} {bindings} =
     let
-      val _ = active p
+      val _ = active ()
       val seen = ref ([] : int list)
       fun seen_index _ [] = false
         | seen_index index (old :: rest) =
-            (spend p 1;old = index orelse seen_index index rest)
+            (spend 1;old = index orelse seen_index index rest)
       fun reserve_product factors =
-        let val Producer {used,...} = p
-            val remaining = limit - !used
+        let val remaining = remaining ()
             fun product [] value = value
               | product (factor :: rest) value =
                   if factor = 0 then 0
                   else if factor < 0 orelse value > remaining div factor
-                  then raise ERR "prepare" "comparison work exceeds cap"
+                  then raise ERR name "comparison work exceeds cap"
                   else product rest (value * factor)
-        in spend p (product factors 1) end
+        in spend (product factors 1) end
       fun rows [] = []
         | rows ((index,residue) :: rest) =
             let
-              val _ = spend p 1 (* BEFORE ordinal/table lookup *)
+              val _ = spend 1 (* BEFORE ordinal/table lookup *)
               val _ = if index >= 0 andalso index < Vector.length variables
                   andalso not (seen_index index (!seen))
-                then () else raise ERR "prepare" "invalid/duplicate domain"
-              val _ = type_walk (spend p) bytes (fn _ => ()) residue
+                then () else raise ERR name "invalid/duplicate domain"
+              val _ = type_walk spend bytes (fn _ => ()) residue
               val _ = seen := index :: !seen
               val redex = Vector.sub (variables,index)
             in {redex = redex,residue = residue} :: rows rest end
@@ -225,18 +226,18 @@ struct
                Type.type_subst over annotations and actual INST_TYPE.
                Domain variables are admitted atomic types; text-byte work
                remains an explicit prerequisite outside this node counter. *)
-            (spend p 3;
+            (spend 3;
              if Type.compare (redex,ty) = EQUAL then SOME residue
              else lookup ty rest)
       fun output ty =
-        let val _ = spend p 5
+        let val _ = spend 5
         in if Type.is_vartype ty then
           (case lookup ty theta of
              NONE =>
                (bytes := !bytes + String.size (Type.dest_vartype ty);1)
            | SOME residue =>
                let val count = ref 0
-                   fun charge n = (spend p (5*n);count := !count+n)
+                   fun charge n = (spend (5*n);count := !count+n)
                    val _ = type_walk charge bytes (fn _ => ()) residue
                in !count end)
         else let val {Thy,Args,...} = Type.dest_thy_typeid ty
@@ -251,20 +252,20 @@ struct
       (* Reserve typed graph and P-recording incidences BEFORE proof work.
          Type instantiation preserves syntax shape under this no-rename
          envelope; binder variable slots are included independently. *)
-      val _ = spend p raw
-      val _ = spend p binder
-      val _ = spend p 1
+      val _ = spend raw
+      val _ = spend binder
+      val _ = spend 1
       val output_types = List.map (Type.type_subst theta) annotations
       (* Table construction occurs before proof and charges EVERY actual
          comparison plus both already admitted type trees. No trusted
          equality or uncharged full-list membership is used afterward. *)
       fun compare (left,right) =
-        (spend p 1;
-         type_walk (spend p) bytes (fn _ => ()) left;
-         type_walk (spend p) bytes (fn _ => ()) right;
+        (spend 1;
+         type_walk spend bytes (fn _ => ()) left;
+         type_walk spend bytes (fn _ => ()) right;
          Type.compare (left,right))
       val charged_table = List.foldl (fn (ty,table) =>
-        (spend p 1;Redblackmap.insert (table,ty,())))
+        (spend 1;Redblackmap.insert (table,ty,())))
         (Redblackmap.mkDict compare) output_types
       val items = Redblackmap.numItems charged_table
       fun ceil_log n =
@@ -281,8 +282,18 @@ struct
       val _ = reserve_product [items,3]
       val expected = Redblackmap.fromOrderedList Type.compare
         (Redblackmap.listItems charged_table)
-      val _ = List.app (policy p) (annotations @ output_types)
-      val _ = active p
+      val _ = List.app check (annotations @ output_types)
+      val _ = active ()
+    in {theta = theta,expected = expected,output_types = output_types} end
+
+  fun prepare_internal (p as Producer
+      {graph,scope,limit,variables,annotations,bytes,raw,binder,used,...})
+      args =
+    let val {theta,expected,output_types} = prepare_walk
+          {name = "prepare",active = fn () => active p,spend = spend p,
+           remaining = fn () => limit - !used,check = policy p,
+           variables = variables,annotations = annotations,bytes = bytes,
+           raw = raw,binder = binder} args
     in Plan {producer = p,theta = theta,expected = expected,
              typed_annotations = output_types,executed = ref false} end
 
@@ -531,105 +542,12 @@ struct
      handle primary=>(W.close work;raise primary))
 
   fun prepare_internal (p as PolicyProducer
-    {graph,scope,limit,model_limit,variables,annotations,bytes,raw,binder,...})
-      {bindings} =
-    let
-      val _ = active p
-      val seen = ref ([] : int list)
-      fun seen_index _ [] = false
-        | seen_index index (old :: rest) =
-            (spend p 1;old = index orelse seen_index index rest)
-      fun reserve_product factors =
-        let val PolicyProducer {used,...} = p
-            val remaining = model_limit - !used
-            fun product [] value = value
-              | product (factor :: rest) value =
-                  if factor = 0 then 0
-                  else if factor < 0 orelse value > remaining div factor
-                  then raise ERR "prepare_with_policy"
-                    "comparison work exceeds cap"
-                  else product rest (value * factor)
-        in spend p (product factors 1) end
-      fun rows [] = []
-        | rows ((index,residue) :: rest) =
-            let
-              val _ = spend p 1 (* BEFORE ordinal/table lookup *)
-              val _ = if index >= 0 andalso index < Vector.length variables
-                  andalso not (seen_index index (!seen))
-                then () else raise ERR "prepare_with_policy"
-                  "invalid/duplicate domain"
-              val _ = type_walk (spend p) bytes (fn _ => ()) residue
-              val _ = seen := index :: !seen
-              val redex = Vector.sub (variables,index)
-            in {redex = redex,residue = residue} :: rows rest end
-      val theta = rows bindings
-      (* Repeated annotations count separately. A returned residue is walked
-         literally, never recursively substituted: self ranges/swaps are
-         valid finite simultaneous instances, not unification cycles. *)
-      fun lookup _ [] = NONE
-        | lookup ty ({redex,residue} :: rest) =
-            (* One forecast search plus TWO reserved kernel searches:
-               Type.type_subst over annotations and actual INST_TYPE.
-               Domain variables are admitted atomic types; text-byte work
-               remains an explicit prerequisite outside this node counter. *)
-            (spend p 3;
-             if Type.compare (redex,ty) = EQUAL then SOME residue
-             else lookup ty rest)
-      fun output ty =
-        let val _ = spend p 5
-        in if Type.is_vartype ty then
-          (case lookup ty theta of
-             NONE =>
-               (bytes := !bytes + String.size (Type.dest_vartype ty);1)
-           | SOME residue =>
-               let val count = ref 0
-                   fun charge n = (spend p (5*n);count := !count+n)
-                   val _ = type_walk charge bytes (fn _ => ()) residue
-               in !count end)
-        else let val {Thy,Args,...} = Type.dest_thy_typeid ty
-                 val _ = bytes := !bytes + String.size Thy
-                 fun children [] size = size
-                   | children (child :: rest) size =
-                       children rest (size + output child)
-             in children Args 1 end
-        end
-      val sizes = List.map output annotations
-      val max_size = List.foldl Int.max 0 sizes
-      (* Reserve typed graph and P-recording incidences BEFORE proof work.
-         Type instantiation preserves syntax shape under this no-rename
-         envelope; binder variable slots are included independently. *)
-      val _ = spend p raw
-      val _ = spend p binder
-      val _ = spend p 1
-      val output_types = List.map (Type.type_subst theta) annotations
-      (* Table construction occurs before proof and charges EVERY actual
-         comparison plus both already admitted type trees. No trusted
-         equality or uncharged full-list membership is used afterward. *)
-      fun compare (left,right) =
-        (spend p 1;
-         type_walk (spend p) bytes (fn _ => ()) left;
-         type_walk (spend p) bytes (fn _ => ()) right;
-         Type.compare (left,right))
-      val charged_table = List.foldl (fn (ty,table) =>
-        (spend p 1;Redblackmap.insert (table,ty,())))
-        (Redblackmap.mkDict compare) output_types
-      val items = Redblackmap.numItems charged_table
-      fun ceil_log n =
-        if n <= 1 then 0 else 1 + ceil_log (n div 2 + n mod 2)
-      (* Okasaki red-black height <= 2*ceil(log2(items+1)); this slightly
-         larger bound avoids overflowing items+1 at the original Int cap.
-         Peek performs ONE key comparison per visited node. *)
-      val height = if items = 0 then 0 else 2 * (ceil_log items + 1)
-      val _ = reserve_product [binder,height]
-      val _ = reserve_product [binder,height,max_size]
-      val _ = reserve_product [binder,height,max_size]
-      (* Copy a known bounded ordered portfolio into a table whose ordinary
-         comparator consumes the already retained lookup reservation. *)
-      val _ = reserve_product [items,3]
-      val expected = Redblackmap.fromOrderedList Type.compare
-        (Redblackmap.listItems charged_table)
-      val _ = List.app (policy p) (annotations @ output_types)
-      val _ = active p
+    {model_limit,variables,annotations,bytes,raw,binder,used,...}) args =
+    let val {theta,expected,output_types} = prepare_walk
+          {name = "prepare_with_policy",active = fn () => active p,
+           spend = spend p,remaining = fn () => model_limit - !used,
+           check = policy p,variables = variables,annotations = annotations,
+           bytes = bytes,raw = raw,binder = binder} args
     in PolicyPlan {policy_producer = p,theta = theta,expected = expected,
              typed_annotations = output_types,executed = ref false} end
 
