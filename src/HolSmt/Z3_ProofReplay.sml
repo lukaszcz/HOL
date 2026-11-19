@@ -7552,7 +7552,10 @@ local
        but not the redexes.  After the datatype admission check on the target,
        normalize each side with srw_ss and the datatype rung's rewrites in
        the checked rewrite traversal, which admits every redex, condition
-       and result, and replay the normalized equality through the ladder. *)
+       and result, and replay the normalized equality through the ladder.
+       Only a target with a datatype redex is normalized: on any other,
+       simp's general normalization would send a target the datatype
+       rewrites cannot touch back through the whole ladder. *)
     rewrite_profile "datatypes" "rewrite(21a)(datatype-normalize)" (fn () =>
       let
         val _ = #datatype_admit state t

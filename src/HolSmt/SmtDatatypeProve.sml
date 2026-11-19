@@ -1254,20 +1254,20 @@ struct
     #rewrites (checked_procedures admit) t
 
   (* The result of normalizing both sides of an equation with the datatype
-     rewrites of the whole equation: no rewrites apply to its types, no
-     side has a datatype redex, or the two checked side normalizations. *)
+     rewrites of the whole equation: no admitted datatype facts for the
+     equation's types, no side has a datatype redex, or the two checked
+     side normalizations. *)
   datatype normalization =
     NoRewrites | NoRedex | Normalized of Thm.thm * Thm.thm
 
-  (* [t] is an equation [l = r].  Admission and resource errors propagate
-     unchanged; a side the checked traversal leaves unchanged is [REFL]. *)
+  (* [t] is an equation [l = r].  The caller admits [t]; this function does
+     not.  Admission and resource errors propagate unchanged; a side the
+     checked traversal leaves unchanged is [REFL].  [NoRedex] is returned
+     unless one of the sides is changed by one pass of the datatype facts. *)
   fun normalize_equation_with_admission admit t =
     let
       val (l, r) = boolSyntax.dest_eq t
       val thms = datatype_rewrite_thms_with_admission admit t
-      (* Only a target with a datatype redex is normalized: on any other,
-         simp's general normalization would send a target the datatype
-         rewrites cannot touch back through the whole ladder. *)
       fun reducible side =
         not (Term.aconv side (boolSyntax.rhs (Thm.concl
           (Conv.QCONV (Rewrite.PURE_ONCE_REWRITE_CONV thms) side))))
