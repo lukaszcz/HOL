@@ -4615,8 +4615,7 @@ val _ =
 
 (* A [split] rule is read from the context the tactic is applied in, not
    from the global one.  Context.restore removes the attribute registration
-   together with the rules, so the test leaves nothing behind for others
-   to observe. *)
+   and the rules; only an inert theory-delta listener remains. *)
 val split_scope_before = Context.snapshot ()
 val _ = splitLib.enable_split_attribute ()
 
@@ -4629,13 +4628,11 @@ val aesop_sw_split_thm =
   Tactical.prove
     (``!P:num->bool b x y.
          P (aesop_sw b x y) <=> (b ==> P x) /\ (~b ==> P y)``,
-     Tactical.THEN
-       (Tactical.REPEAT Tactic.GEN_TAC,
-        Tactical.THEN
-          (Rewrite.REWRITE_TAC [aesop_sw_def],
-           Tactical.THEN
-             (boolLib.BOOL_CASES_TAC ``b:bool``,
-              Rewrite.REWRITE_TAC []))))
+     Tactical.EVERY
+       [Tactical.REPEAT Tactic.GEN_TAC,
+        Rewrite.REWRITE_TAC [aesop_sw_def],
+        boolLib.BOOL_CASES_TAC ``b:bool``,
+        Rewrite.REWRITE_TAC []])
 
 fun declare_aesop_sw_split name =
   let val stored = save_thm (name, aesop_sw_split_thm)
@@ -4652,6 +4649,14 @@ fun aesop_sw_closed ctxt =
               ([], aesop_sw_goal) ctxt))
   handle Feedback.HOL_ERR _ => false
 
+fun aesop_sw_safe_closed ctxt =
+  null (#1 (SelfTestTactical.VALID (aesopLib.AESOP_SAFE_TAC [])
+              ([], aesop_sw_goal) ctxt))
+  handle Feedback.HOL_ERR _ => false
+
+fun has_split_named n =
+  List.exists (String.isSuffix n o #1) (splitLib.named_split_thms ())
+
 val _ = declare_aesop_sw_split "aesop_sw_split"
 val aesop_sw_with_split = Context.snapshot ()
 val _ = splitLib.exclude_split "aesop_sw_split"
@@ -4660,7 +4665,7 @@ val _ =
   check
     ("aesop uses a [split] rule declared in the context it runs in",
      fn () =>
-       null (splitLib.split_thms ()) andalso
+       not (has_split_named "aesop_sw_split") andalso
        aesop_sw_closed aesop_sw_with_split)
 
 val aesop_sw_without_split = Context.snapshot ()
@@ -4670,7 +4675,14 @@ val _ =
   check
     ("aesop ignores a [split] rule declared only in the global context",
      fn () =>
-       length (splitLib.split_thms ()) = 1 andalso
+       has_split_named "aesop_sw_split_again" andalso
        not (aesop_sw_closed aesop_sw_without_split))
+
+val _ =
+  check
+    ("AESOP_SAFE_TAC uses a [split] rule declared in its context",
+     fn () =>
+       aesop_sw_safe_closed aesop_sw_with_split andalso
+       not (aesop_sw_safe_closed aesop_sw_without_split))
 
 val _ = Context.restore split_scope_before

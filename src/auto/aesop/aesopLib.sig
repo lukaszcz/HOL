@@ -18,7 +18,9 @@ sig
   val CS_AESOP_SAFE_TAC :
     aesop_config -> clasetLib.claset -> simpExtLib.simpset -> tactic
 
-  (* A resumable search under an invocation-owned operational budget. *)
+  (* A resumable search under an invocation-owned operational budget.  The
+     session runs in the context current when it is created, including
+     that context's [split] rules. *)
   val CS_AESOP_SESSION :
     searchBudget.budget -> aesop_config ->
     clasetLib.claset -> simpExtLib.simpset -> Abbrev.goal ->

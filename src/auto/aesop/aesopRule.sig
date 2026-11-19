@@ -105,8 +105,8 @@ sig
   val closers : unit -> rule list
   val safe_rules : safe_scaffold -> rule list
 
-  (* [ctxt] is the context of the invocation; the [split] rules of the
-     rule set are its own.  Candidate retrieval is unification-based.
+  (* [ctxt] is the context of the invocation; the rule set's [split]
+     rules are read from it.  Candidate retrieval is unification-based.
      [qvars] identifies the engine metavariables which the invocation
      permits the index to match.
      The unsafe phase holds claset candidates and the registered unsafe
