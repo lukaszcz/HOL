@@ -660,20 +660,22 @@ let
      "val _ = SatProcess.system (\"echo \" ^ pid ^ \" $PPID > ",partial,
      " && mv ",partial," ",pids," && sleep 2\");\n"])
   val _ = TextIO.closeOut out
-  val hol = OS.Path.concat (Globals.HOLDIR,"bin/hol")
+  val hol = Systeml.protect (OS.Path.concat (Globals.HOLDIR,"bin/hol"))
   fun poll tenths ready = ready () orelse
     (tenths > 0 andalso
      (OS.Process.sleep (Time.fromMilliseconds 100); poll (tenths-1) ready))
   fun pid s = Posix.Process.wordToPid (SysWord.fromInt (valOf
     (Int.fromString s)))
   fun signal target s = Posix.Process.kill (target,s)
-  fun alive process =
-    (signal (Posix.Process.K_PROC process) (Posix.Signal.fromWord 0w0);
-     true) handle OS.SysErr _ => false
+  (* An exited supervisor may stay a zombie until its new parent reaps it:
+     only a listed, non-zombie process is alive. *)
+  fun alive process = OS.Process.isSuccess (OS.Process.system
+    ("ps -o stat= -p " ^ process ^ " | grep -qv Z"))
   fun failure () =
     let
+      (* --bare (hol.state0): the default heap is built after HolSat. *)
       val _ = OS.Process.system
-        (hol ^ " run " ^ script ^ " </dev/null >/dev/null 2>&1 &")
+        (hol ^ " run --bare " ^ script ^ " </dev/null >/dev/null 2>&1 &")
       val text = if not (poll 600 (fn () => OS.FileSys.access (pids,[])))
         then "" else
         let val input = TextIO.openIn pids
@@ -684,7 +686,7 @@ let
           let
             val _ = signal (Posix.Process.K_PROC (pid child))
               Posix.Signal.kill
-            val gone = poll 300 (fn () => not (alive (pid supervisor)))
+            val gone = poll 300 (fn () => not (alive supervisor))
           in
             if gone then NONE
             else ((signal (Posix.Process.K_GROUP (pid supervisor))
