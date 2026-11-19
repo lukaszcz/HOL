@@ -54,8 +54,9 @@ struct
   fun begin work catalogue = begin_internal work (Raw catalogue)
   fun begin_canonical work catalogue =
     begin_internal work (Canonical catalogue)
-  structure Walk = SmtLib_RuleMatchTreeFn (struct
+  structure Shared = SmtLib_RuleMatchSharedFn (struct
     type owner = owner
+    datatype terminal = datatype terminal
     fun graph (Owner {graph,...}) = graph
     fun scope (Owner {scope,...}) = scope
     val active = active
@@ -63,8 +64,9 @@ struct
     fun spend (Owner {work,...}) n = W.spend work n
     val err = ERR
   end)
+  structure Walk = Shared.Walk
   open Walk
-  datatype operation = Specialize of G.node | Select of bool | Undisch
+  datatype operation = datatype Shared.operation
   datatype schema = Schema of
     {owner : owner,index : int,rule : Thm.thm,whole : tree,
      binders : G.node list,free : G.node list,conditions : tree list,
@@ -77,9 +79,6 @@ struct
   datatype instance = Instance of
     {matched : matched,theorem : Thm.thm,proof : P.closed_fact}
   datatype result = NoMatch | NeedsHigherOrder | Matched of matched
-  fun same_owner owner other =
-    if Portable.pointer_eq (owner,other) then () else
-      raise ERR "same_owner" "foreign matching owner"
   fun compile (owner as Owner {work,graph,scope,catalogue,phase,...}) =
     protected owner (fn () => W.with_step work (fn () =>
       let val _ = active owner
@@ -89,51 +88,21 @@ struct
           val facts = catalogue_facts catalogue
           val _ = if length originals = length facts then () else
             raise ERR "compile" "fixed catalogue incidence mismatch"
-          fun leaves index rule whole free binders conditions operations
-              value =
-            case unary owner "bool" "!" value of
-              SOME predicate => (case #shape (data predicate) of
-                Lam {binder,body,...} =>
-                  leaves index rule whole free (binders @ [binder]) conditions
-                    (operations @ [Specialize binder]) body
-              | _ => raise ERR "compile" "forall has no genuine lambda")
-            | NONE => (case binary owner "bool" "/\\" value of
-                SOME (l,r) =>
-                  leaves index rule whole free binders conditions
-                    (operations @ [Select true]) l @
-                  leaves index rule whole free binders conditions
-                    (operations @ [Select false]) r
-              | NONE => (case binary owner "min" "==>" value of
-                  SOME (condition,body) => leaves index rule whole free binders
-                    (conditions @ [condition]) (operations @ [Undisch]) body
-                | NONE =>
-                    let val (terminal,left,right) =
-                      case binary owner "min" "=" value of
-                        SOME (l,r) => (Equality,l,SOME r)
-                      | NONE => (case unary owner "bool" "~" value of
-                          SOME p => (Negative,p,NONE)
-                        | NONE => (Positive,value,NONE))
-                    in [Schema {owner = owner,index = index,rule = rule,
-                      whole = whole,binders = binders,free = free,
-                      conditions = conditions,
-                      left = left,right = right,terminal = terminal,
-                      operations = operations}] end))
-          fun loop [] [] _ = []
-            | loop (rule::rest) (fact::more) index =
-              let val _ = tick owner
-                  val n = P.closed_node fact
-                  val _ = P.validate_closed_fact graph scope
-                    (#template_limit (W.semantic_limits work)) fact
-                  val _ = if Portable.pointer_eq
-                    (rule,P.closed_original fact) then () else
-                    raise ERR "compile" "fixed original theorem changed"
-                  val root = G.closure_root graph scope n
-                  val whole = tree owner scope scope root
-              in leaves index rule whole (free_nodes owner whole)
-                [] [] [] whole @
-                loop rest more (index+1) end
-            | loop _ _ _ = raise ERR "compile" "fixed catalogue length"
-      in loop originals facts 0 end))
+          fun schemas index rule whole =
+            let val free = free_nodes owner whole
+            in List.map (fn {binders,conditions,left,right,terminal,
+                  operations} =>
+                Schema {owner = owner,index = index,rule = rule,
+                  whole = whole,binders = binders,free = free,
+                  conditions = conditions,left = left,right = right,
+                  terminal = terminal,operations = operations})
+              (Shared.leaves owner "compile" whole) end
+      in Shared.compile_rules owner {caller = "compile",scope = scope,
+        original_changed = "fixed original theorem changed",
+        length_mismatch = "fixed catalogue length",originals = originals,
+        facts = facts,per_rule = schemas,
+        validate_fact = fn fact => P.validate_closed_fact graph scope
+          (#template_limit (W.semantic_limits work)) fact} end))
   fun original (Schema {owner,rule,...}) = (active owner;rule)
   fun stock_origin (Schema {owner = owner as Owner {catalogue,...},
       index,...}) =
@@ -145,7 +114,7 @@ struct
       {schema = schema as Schema {owner = held,binders,free,left,right,...},
        caller,traversal,target} =
     protected owner (fn () =>
-      (same_owner owner held;
+      (Shared.same_owner "foreign matching owner" owner held;
        W.with_step work (fn () =>
        let val _ = active owner
            val variables = binders @ free
@@ -641,8 +610,9 @@ struct
     policy_catalogue)
   fun begin_canonical_with_policy work policy_catalogue =
     begin_internal work (Canonical policy_catalogue)
-  structure Walk = SmtLib_RuleMatchTreeFn (struct
+  structure Shared = SmtLib_RuleMatchSharedFn (struct
     type owner = policy_owner
+    datatype terminal = datatype terminal
     fun graph (PolicyOwner {graph,...}) = graph
     fun scope (PolicyOwner {scope,...}) = scope
     val active = active
@@ -651,8 +621,9 @@ struct
       W.spend_policy work (IntInf.fromInt n)
     val err = ERR
   end)
+  structure Walk = Shared.Walk
   open Walk
-  datatype operation = Specialize of G.node | Select of bool | Undisch
+  datatype operation = datatype Shared.operation
   datatype policy_schema = PolicySchema of
     {policy_owner : policy_owner,index : int,rule : Thm.thm,whole : tree,
      binders : G.node list,free : G.node list,conditions : tree list,
@@ -667,9 +638,6 @@ struct
     {policy_matched : policy_matched,theorem : Thm.thm,proof : P.closed_fact}
   datatype policy_result = PolicyNoMatch | PolicyNeedsHigherOrder |
     PolicyMatched of policy_matched
-  fun same_owner policy_owner other =
-    if Portable.pointer_eq (policy_owner,other) then () else
-      raise ERR "same_owner" "foreign matching policy_owner"
   fun compile_with_policy (policy_owner as PolicyOwner
     {work,graph,scope,policy_catalogue,phase,...}) =
     protected policy_owner (fn () => W.with_step work (fn () =>
@@ -682,55 +650,22 @@ struct
           val _ = if length originals = length facts then () else
             raise ERR "compile_with_policy"
               "fixed policy_catalogue incidence mismatch"
-          fun leaves index rule whole free binders conditions operations
-              value =
-            case unary policy_owner "bool" "!" value of
-              SOME predicate => (case #shape (data predicate) of
-                Lam {binder,body,...} =>
-                  leaves index rule whole free (binders @ [binder]) conditions
-                    (operations @ [Specialize binder]) body
-              | _ => raise ERR "compile_with_policy"
-                "forall has no genuine lambda")
-            | NONE => (case binary policy_owner "bool" "/\\" value of
-                SOME (l,r) =>
-                  leaves index rule whole free binders conditions
-                    (operations @ [Select true]) l @
-                  leaves index rule whole free binders conditions
-                    (operations @ [Select false]) r
-              | NONE => (case binary policy_owner "min" "==>" value of
-                  SOME (condition,body) => leaves index rule whole free binders
-                    (conditions @ [condition]) (operations @ [Undisch]) body
-                | NONE =>
-                    let val (terminal,left,right) =
-                      case binary policy_owner "min" "=" value of
-                        SOME (l,r) => (Equality,l,SOME r)
-                      | NONE => (case unary policy_owner "bool" "~" value of
-                          SOME p => (Negative,p,NONE)
-                        | NONE => (Positive,value,NONE))
-                    in [PolicySchema {policy_owner = policy_owner,index =
-                      index,rule = rule,
-                      whole = whole,binders = binders,free = free,
-                      conditions = conditions,
-                      left = left,right = right,terminal = terminal,
-                      operations = operations}] end))
-          fun loop [] [] _ = []
-            | loop (rule::rest) (fact::more) index =
-              let val _ = tick policy_owner
-                  val n = P.closed_node fact
-                  val _ = P.validate_closed_fact_with_policy graph scope
-                    (#template_limit (W.semantic_policy work)) fact
-                  val _ = if Portable.pointer_eq
-                    (rule,P.closed_original fact) then () else
-                    raise ERR "compile_with_policy"
-                      "fixed original_with_policy theorem changed"
-                  val root = G.closure_root graph scope n
-                  val whole = tree policy_owner scope scope root
-              in leaves index rule whole (free_nodes policy_owner whole)
-                [] [] [] whole @
-                loop rest more (index+1) end
-            | loop _ _ _ = raise ERR "compile_with_policy"
-              "fixed policy_catalogue length"
-      in loop originals facts 0 end))
+          fun schemas index rule whole =
+            let val free = free_nodes policy_owner whole
+            in List.map (fn {binders,conditions,left,right,terminal,
+                  operations} =>
+                PolicySchema {policy_owner = policy_owner,index = index,
+                  rule = rule,whole = whole,binders = binders,free = free,
+                  conditions = conditions,left = left,right = right,
+                  terminal = terminal,operations = operations})
+              (Shared.leaves policy_owner "compile_with_policy" whole) end
+      in Shared.compile_rules policy_owner
+        {caller = "compile_with_policy",scope = scope,
+         original_changed = "fixed original_with_policy theorem changed",
+         length_mismatch = "fixed policy_catalogue length",
+         originals = originals,facts = facts,per_rule = schemas,
+         validate_fact = fn fact => P.validate_closed_fact_with_policy graph
+           scope (#template_limit (W.semantic_policy work)) fact} end))
   fun original_with_policy (PolicySchema {policy_owner,rule,...}) = (active
     policy_owner;rule)
   fun stock_origin_with_policy (PolicySchema {policy_owner = policy_owner as
@@ -745,7 +680,8 @@ struct
         held,binders,free,left,right,...},
        caller,traversal,target} =
     protected policy_owner (fn () =>
-      (same_owner policy_owner held;
+      (Shared.same_owner "foreign matching policy_owner" policy_owner
+         held;
        W.with_step work (fn () =>
        let val _ = active policy_owner
            val variables = binders @ free

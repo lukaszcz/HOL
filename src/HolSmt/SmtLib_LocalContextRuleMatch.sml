@@ -64,8 +64,9 @@ struct
       symbol_epoch = Term.term_epoch ()}
     end handle primary => (W.close work;raise primary)
   fun begin work catalogue = begin_internal work catalogue
-  structure Walk = SmtLib_RuleMatchTreeFn (struct
+  structure Shared = SmtLib_RuleMatchSharedFn (struct
     type owner = owner
+    datatype terminal = datatype terminal
     fun graph (Owner {graph,...}) = graph
     fun scope (Owner {scope,...}) = scope
     val active = active
@@ -73,8 +74,9 @@ struct
     fun spend (Owner {work,...}) n = W.spend work n
     val err = ERR
   end)
+  structure Walk = Shared.Walk
   open Walk
-  datatype operation = Specialize of G.node | Select of bool | Undisch
+  datatype operation = datatype Shared.operation
   datatype schema = Schema of
     {owner : owner,index : int,rule : Thm.thm,whole : tree,
      binders : G.node list,free : G.node list,
@@ -88,9 +90,6 @@ struct
   datatype instance = Instance of
     {matched : matched,theorem : Thm.thm,proof : P.closed_fact}
   datatype result = NoMatch | NeedsHigherOrder | Matched of matched
-  fun same_owner owner other =
-    if Portable.pointer_eq (owner,other) then () else
-      raise ERR "same_owner" "foreign matching owner"
   fun compile (owner as Owner {work,graph,rulescope,catalogue,phase,...}) =
     protected owner (fn () => W.with_step work (fn () =>
       let val _ = active owner
@@ -101,67 +100,32 @@ struct
           val rows = catalogue_rows work catalogue
           val _ = if length originals = length facts then () else
             raise ERR "compile" "fixed catalogue incidence mismatch"
-          fun leaves index rule whole free rigid_types binders conditions
-              operations
-              value =
-            case unary owner "bool" "!" value of
-              SOME predicate => (case #shape (data predicate) of
-                Lam {binder,body,...} =>
-                  leaves index rule whole free rigid_types
-                    (binders @ [binder]) conditions
-                    (operations @ [Specialize binder]) body
-              | _ => raise ERR "compile" "forall has no genuine lambda")
-            | NONE => (case binary owner "bool" "/\\" value of
-                SOME (l,r) =>
-                  leaves index rule whole free rigid_types binders conditions
-                    (operations @ [Select true]) l @
-                  leaves index rule whole free rigid_types binders conditions
-                    (operations @ [Select false]) r
-              | NONE => (case binary owner "min" "==>" value of
-                  SOME (condition,body) =>
-                    leaves index rule whole free rigid_types binders
-                    (conditions @ [condition]) (operations @ [Undisch]) body
-                | NONE =>
-                    let val (terminal,left,right) =
-                      case binary owner "min" "=" value of
-                        SOME (l,r) => (Equality,l,SOME r)
-                      | NONE => (case unary owner "bool" "~" value of
-                          SOME p => (Negative,p,NONE)
-                        | NONE => (Positive,value,NONE))
-                    in [Schema {owner = owner,index = index,rule = rule,
-                      whole = whole,binders = binders,free = free,
-                      rigid_types=rigid_types,
-                      conditions = conditions,
-                      left = left,right = right,terminal = terminal,
-                      operations = operations}] end))
-          fun loop [] [] _ = []
-            | loop (rule::rest) (fact::more) index =
-              let val _ = tick owner
-                  val n = P.closed_node fact
-                  val _ = P.validate_closed_fact graph rulescope
-                    (#template_limit (W.semantic_limits work)) fact
-                  val _ = if Portable.pointer_eq
-                    (rule,P.closed_original fact) then () else
-                    raise ERR "compile" "fixed original theorem changed"
-                  val root = G.closure_root graph rulescope n
-                  val whole = tree owner rulescope rulescope root
-                  val metadata = Ctx.describe_for work (List.nth (rows,index))
-                  val fixed = #fixed_variables metadata
-                  val free = List.filter (fn node =>
-                    not (List.exists (fn variable => guarded owner (fn () =>
-                      Term.term_eq variable (G.representative graph node)))
-                      fixed)) (free_nodes owner whole)
-                  (* Hyp types, including types of bound-only variables in
-                     the antecedent, are rigid just as in PART_MATCH. *)
-                  val assumption = G.representative graph
-                    (#assumption metadata)
-                  val rigid = guarded owner (fn () =>
-                    Term.type_vars_in_term assumption)
-              in leaves index rule whole free rigid
-                [] [] [] whole @
-                loop rest more (index+1) end
-            | loop _ _ _ = raise ERR "compile" "fixed catalogue length"
-      in loop originals facts 0 end))
+          fun schemas index rule whole =
+            let val metadata = Ctx.describe_for work (List.nth (rows,index))
+                val fixed = #fixed_variables metadata
+                val free = List.filter (fn node =>
+                  not (List.exists (fn variable => guarded owner (fn () =>
+                    Term.term_eq variable (G.representative graph node)))
+                    fixed)) (free_nodes owner whole)
+                (* Hyp types, including types of bound-only variables in
+                   the antecedent, are rigid just as in PART_MATCH. *)
+                val assumption = G.representative graph
+                  (#assumption metadata)
+                val rigid = guarded owner (fn () =>
+                  Term.type_vars_in_term assumption)
+            in List.map (fn {binders,conditions,left,right,terminal,
+                  operations} =>
+                Schema {owner = owner,index = index,rule = rule,
+                  whole = whole,binders = binders,free = free,
+                  rigid_types = rigid,conditions = conditions,left = left,
+                  right = right,terminal = terminal,operations = operations})
+              (Shared.leaves owner "compile" whole) end
+      in Shared.compile_rules owner {caller = "compile",scope = rulescope,
+        original_changed = "fixed original theorem changed",
+        length_mismatch = "fixed catalogue length",originals = originals,
+        facts = facts,per_rule = schemas,
+        validate_fact = fn fact => P.validate_closed_fact graph rulescope
+          (#template_limit (W.semantic_limits work)) fact} end))
   fun original (Schema {owner,rule,...}) = (active owner;rule)
   fun context_for expected (Schema {owner=owner as Owner
       {work,catalogue,...},index,...}) =
@@ -176,7 +140,7 @@ struct
         {owner = held,binders,free,rigid_types,left,right,...},
        caller,traversal,target} =
     protected owner (fn () =>
-      (same_owner owner held;
+      (Shared.same_owner "foreign matching owner" owner held;
        W.with_step work (fn () =>
        let val _ = active owner
            val variables = binders @ free
