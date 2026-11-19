@@ -388,12 +388,7 @@ struct
          with_values (fn _ => fn _ => fn backend =>
            check backend (small backend) bs))) cases
       val _=OK ()
-      val _=tprint "Symbolic bbterm concatenation has the legacy shape"
-      fun concat_depth term=
-        if wordsSyntax.is_word_concat term then
-          let val (high,low)=wordsSyntax.dest_word_concat term
-          in 1+Int.max (concat_depth high,concat_depth low) end
-        else 0
+      val _=tprint "Symbolic bbterm is the legacy concatenation"
       val symbolic=List.map (fn name => Term.mk_var (name,Type.bool))
         ["p","q","r","s","t"]
       fun shape backend interpret=
@@ -402,9 +397,8 @@ struct
             val parse=List.hd (Redblackmap.find (dict,"@bbterm"))
             val values=List.map (B.source backend (B.root backend)) symbolic
             val value=interpret (parse (B.root backend) "@bbterm" [] values)
-        in ensure "graph bbterm concatenation is not balanced"
-             (concat_depth value=
-              concat_depth (SmtLib_Theories.mk_bbterm symbolic))
+        in ensure "graph bbterm differs from the legacy concatenation"
+             (Term.aconv value (SmtLib_Theories.mk_bbterm symbolic))
         end
       val _=with_graph (fn graph => fn backend =>
         shape backend (G.representative graph))

@@ -5698,13 +5698,7 @@ local
           in generalized_theorem end
           fun circuit_path () =
             (profile_event "CPC(bvite_words:circuit)"; legacy ())
-        in
-          (* The circuit path goes first: with the shared word schemas it
-             checks wide words about twice as fast as the compact path (a
-             256-bit mask-and-add goal via cvc5: 18-22 s against 30-32 s).
-             The compact path takes what the circuit path rejects. *)
-          if compact_word_target target then
-            circuit_path () handle Feedback.HOL_ERR _ =>
+          fun compact_path () =
             (profile_event "CPC(bvite_words:compact)";
              SmtWordGraph.prove_with_node_conversion
               (fn term => fp_projection_conversion term
@@ -5716,6 +5710,16 @@ local
               raise ERR "bv_poly_norm" "Boolean circuit is not valid"
                  | HolSatLib.SAT_satisfiable _ =>
               raise ERR "bv_poly_norm" "Boolean circuit is not valid")
+        in
+          (* The circuit path goes first: with the shared word schemas it
+             checks wide words about twice as fast as the compact path (a
+             256-bit mask-and-add goal via cvc5: 18-22 s against 30-32 s).
+             The compact path takes what the circuit path rejects, and a
+             target the word graph leaves unchanged. *)
+          if compact_word_target target then
+            circuit_path ()
+            handle Feedback.HOL_ERR _ => compact_path ()
+                 | Conv.UNCHANGED => compact_path ()
           else circuit_path ()
         end
       fun schematic_bvite () =

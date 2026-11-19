@@ -6953,28 +6953,43 @@ local
          term around it (x = y with f y = f x) or copy one (a = b with
          f b = g (f a) (f a)), which no check of the equations alone sees.
          Such a direction fails after (4096 + target nodes) rewrites per
-         equation, and the other direction is tried.  Each occurrence on
-         an acyclic chain of equations that copy nothing is rewritten at
-         most once per equation, so the bound never stops one. *)
-      val target_nodes = SmtResource.term_nodes_up_to 65536 target
+         equation, counting the target's unfolded tree, and the other
+         direction is tried.  Each occurrence on an acyclic chain of
+         equations that copy nothing is rewritten at most once per
+         equation, so the bound never stops one. *)
+      val target_size = ref (NONE : int option)
+      fun target_nodes () =
+        case !target_size of
+          SOME nodes => nodes
+        | NONE =>
+            let val nodes = SmtResource.tree_nodes target
+            in target_size := SOME nodes; nodes end
       exception Diverged
       fun substitute rewrite_theorems =
         let
           fun atomic theorem =
             let val left = boolSyntax.lhs (Thm.concl theorem)
             in Term.is_var left orelse Term.is_const left end
-          val max_rewrites =
-            (4096 + target_nodes) * List.length rewrite_theorems
+          fun max_rewrites () =
+            let
+              val equations = List.length rewrite_theorems
+              val per_equation =
+                SmtResource.saturated_add 4096 (target_nodes ())
+            in
+              if per_equation > SmtResource.max_metric div equations then
+                SmtResource.max_metric
+              else per_equation * equations
+            end
           val rewrites = ref 0
-          fun counted conversion term =
+          fun counted maximum conversion term =
             let val theorem = conversion term
             in
               rewrites := !rewrites + 1;
-              if !rewrites <= max_rewrites then theorem else raise Diverged
+              if !rewrites <= maximum then theorem else raise Diverged
             end
           val depth =
             if List.all atomic rewrite_theorems then Conv.TOP_DEPTH_CONV
-            else Conv.TOP_DEPTH_CONV o counted
+            else Conv.TOP_DEPTH_CONV o counted (max_rewrites ())
         in
           Rewrite.GEN_REWRITE_CONV depth
             Rewrite.empty_rewrites rewrite_theorems target

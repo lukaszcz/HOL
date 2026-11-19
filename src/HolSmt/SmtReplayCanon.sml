@@ -63,13 +63,19 @@ struct
 
   val ERR = Feedback.mk_HOL_ERR "SmtReplayCanon"
 
-  fun is_ground_total tm =
+  (* Whether tm applies ediv or emod to two arguments: the trigger of the
+     ground-total pass, which reduces children before their parent, so a
+     parent that is not ground yet may become ground. *)
+  fun is_total_application tm =
     let val (head,args) = boolSyntax.strip_comb tm in
       (Term.same_const head smt_ediv_total_tm orelse
        Term.same_const head smt_emod_total_tm) andalso
-      List.length args = 2 andalso
-      (admit_native "canon-ground-total" tm; null (Term.free_vars tm))
+      List.length args = 2
     end
+
+  fun is_ground_total tm =
+    is_total_application tm andalso
+    (admit_native "canon-ground-total" tm; null (Term.free_vars tm))
 
   fun ground_total_conv tm =
     if is_ground_total tm then bossLib.EVAL tm else raise Conv.UNCHANGED
@@ -428,7 +434,7 @@ struct
   fun compact_conversion_status patterns descend revisit propose root =
     (* A pass whose rules match nowhere in [root] needs no graph. *)
     if descend andalso not (may_trigger (Option.isSome o propose) root)
-    then (Thm.REFL root,false)
+    then (checked_refl root,false)
     else
     let
       val graph = G.new ()
@@ -876,7 +882,8 @@ struct
   val cpc_term_canon_conv =
     compose
       [cpc_alias_conv,
-       when_triggered is_ground_total (dag_rewrite_conv ground_total_conv),
+       when_triggered is_total_application
+         (dag_rewrite_conv ground_total_conv),
        cpc_alias_conv,
        when_triggered eta_shape (dag_orientation_conv Drule.ETA_CONV)]
 

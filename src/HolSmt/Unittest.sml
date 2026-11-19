@@ -22016,7 +22016,21 @@ in
   check_oracle_tags "masked word bitblast" theorem;
   assert (profile_call_count "CPC(bvite_words:circuit)" = 1 andalso
       profile_call_count "CPC(bvite_words:compact)" = 0,
-    "a compact word target did not take the circuit path first")
+    "a compact word target did not take the circuit path first");
+  (* A target the word graph leaves unchanged goes to the compact path. *)
+  let
+    val bit = wordsSyntax.mk_index (Term.mk_var ("x", ``:word16``),
+      numSyntax.term_of_int 0)
+    val unchanged = boolSyntax.mk_eq (bit, bit)
+    val _ = Profile.reset_all ()
+    val theorem = CPC_ProofReplay.replay_bv_poly_norm_for_test [unchanged]
+  in
+    assert (Thm.concl theorem ~~ unchanged andalso
+        null (Thm.hyp theorem) andalso
+        profile_call_count "CPC(bvite_words:compact)" = 1,
+      "a target the word graph leaves unchanged lost the compact path");
+    check_oracle_tags "unchanged word target" theorem
+  end
 end
 
 (* Word operator schemas are shared by the normalizations of one replay
@@ -22149,6 +22163,13 @@ let
     "a pass without a trigger was not skipped or one with a trigger was")
   val ground = boolSyntax.mk_forall (``x:int``, intSyntax.mk_leq (``x:int``,
     Term.list_mk_comb (SmtReplayCanon.smt_ediv_total_tm, [``7i``, ``2i``])))
+  (* Nested ground divisions shared as a DAG, over the native admission
+     bound as a tree: the pass reduces each child to a numeral first. *)
+  fun divisions 0 = ``7i``
+    | divisions n = let val child = divisions (n - 1)
+        in Term.list_mk_comb (SmtReplayCanon.smt_ediv_total_tm,
+             [child, child]) end
+  val nested = intSyntax.mk_leq (``x:int``, divisions 21)
   fun check (source, expected) =
     let val theorem = SmtReplayCanon.cpc_term_canon_conv source in
       assert (Thm.concl theorem ~~ boolSyntax.mk_eq (source, expected) andalso
@@ -22161,7 +22182,8 @@ in
     [(ground, ``!x:int. x <= 3``),
      (``!x:int. Q x (\y:int. (f:int -> bool) y)``,
       ``!x:int. Q x (f:int -> bool)``),
-     (``!x:int. P x /\ R``, ``!x:int. P x /\ R``)]
+     (``!x:int. P x /\ R``, ``!x:int. P x /\ R``),
+     (nested, ``x:int <= 1``)]
 end
 
 (* Z3's secondary rewrite pass runs when an arithmetic head or negated
@@ -27777,6 +27799,23 @@ let
     end
   val chains = [chain_case (fn link => link),
     chain_case (fn link => Term.mk_comb (``asserted_f:int -> int``, link))]
+  (* One equation with an application on the left, whose two sides each
+     occur 131072 times in a target shared as a 17-level DAG: the budget
+     counts the target's unfolded tree, not a capped prefix of it. *)
+  val shared_case =
+    let
+      val apply = fn link =>
+        Term.mk_comb (``asserted_f:int -> int``, chain_link link)
+      val source = boolSyntax.mk_eq (apply 0, apply 1)
+      fun doubled term = Portable.funpow 17 (fn sum =>
+        intSyntax.mk_plus (sum, sum)) term
+      val target = boolSyntax.mk_eq (doubled (apply 0), doubled (apply 1))
+    in
+      (source, target,
+       Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+         [source] target)
+    end
+  val chains = shared_case :: chains
 in
   assert (List.all (fn (source, theorem) =>
       Thm.concl theorem ~~ target andalso exact_source source theorem)
