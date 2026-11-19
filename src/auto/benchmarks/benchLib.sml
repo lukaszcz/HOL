@@ -1247,7 +1247,7 @@ fun set_equality_pass simpset goal args =
            (Conv.CHANGED_CONV (Conv.ONCE_DEPTH_CONV take_to_membership)))
   end
 
-fun tactic_for simpset goal Simp args exclusions =
+fun tactic_for _ simpset goal Simp args exclusions =
       let
         val facts = List.mapPartial fact_arg args
         val simps = List.mapPartial simp_arg args
@@ -1259,7 +1259,7 @@ fun tactic_for simpset goal Simp args exclusions =
         Tactical.THEN
           (insert_facts facts, simplify)
       end
-  | tactic_for simpset goal Auto args exclusions =
+  | tactic_for _ simpset goal Auto args exclusions =
       let
         val automatic =
           processed_clasimp simpset
@@ -1284,7 +1284,7 @@ fun tactic_for simpset goal Simp args exclusions =
                   Tactical.ORELSE
                     (predicate_abstraction_tac, automatic))))
       end
-  | tactic_for simpset goal Blast args exclusions =
+  | tactic_for ctxt simpset goal Blast args exclusions =
       let
         (* Isabelle's [blast] has no [iff:] modifier, so an [iff]
            argument here is ambient and reaches the search as the
@@ -1382,7 +1382,7 @@ fun tactic_for simpset goal Simp args exclusions =
             (Conv.THENC
               (Conv.TRY_CONV
                  (Conv.ONCE_DEPTH_CONV set_eq_conv),
-               simpLib.SIMP_CONV simpset
+               simpLib.SIMP_CONV_IN ctxt simpset
                  (rewrites @ simp_controls goal exclusions)))
         val normalise_rule = normalise_with simps
         fun normalised_by rewrites theorem =
@@ -1490,7 +1490,7 @@ fun tactic_for simpset goal Simp args exclusions =
                                     blast_translation_args goal @
                                     controls exclusions))))))))))
       end
-  | tactic_for simpset goal Force args exclusions =
+  | tactic_for _ simpset goal Force args exclusions =
       let
         val prepare =
           Tactical.THEN
@@ -1505,25 +1505,25 @@ fun tactic_for simpset goal Simp args exclusions =
              processed_clasimp simpset clasimpLib.CS_FORCE_TAC
                (all_class_args args @ simp_controls goal exclusions)))
       end
-  | tactic_for simpset goal Fastforce args exclusions =
+  | tactic_for _ simpset goal Fastforce args exclusions =
       with_facts args
         (Tactical.THEN
           (set_equality_pass simpset goal args,
            processed_clasimp simpset clasimpLib.CS_FASTFORCE_TAC
              (all_class_args args @ simp_controls goal exclusions)))
-  | tactic_for _ _ Safe args exclusions =
+  | tactic_for _ _ _ Safe args exclusions =
       with_facts args
         (classicalLib.SAFE_TAC
           (all_classical_args args @ classical_controls exclusions))
-  | tactic_for _ _ Clarify args exclusions =
+  | tactic_for _ _ _ Clarify args exclusions =
       with_facts args
         (classicalLib.CLARIFY_TAC
           (all_classical_args args @ classical_controls exclusions))
-  | tactic_for simpset goal Clarsimp args exclusions =
+  | tactic_for _ simpset goal Clarsimp args exclusions =
       with_facts args
         (processed_clasimp simpset clasimpLib.CS_CLARSIMP_TAC
           (all_class_args args @ simp_controls goal exclusions))
-  | tactic_for simpset goal Aesop args exclusions =
+  | tactic_for _ simpset goal Aesop args exclusions =
       with_facts args
         (processed_clasimp simpset
           (aesopLib.CS_AESOP_TAC aesopLib.default_config)
@@ -1531,9 +1531,9 @@ fun tactic_for simpset goal Simp args exclusions =
   (* Isabelle's metis reads its facts in the normal form its simp leaves
      goals in; the ambient simpset here imposes normal forms the library
      does not state its lemmas in, so the facts enter in both. *)
-  | tactic_for _ _ Metis args _ =
+  | tactic_for _ _ _ Metis args _ =
       clasimpLib.AMBIENT_METIS_TAC (List.mapPartial fact_arg args)
-  | tactic_for _ _ Linarith args _ =
+  | tactic_for _ _ _ Linarith args _ =
       with_facts args
         (linarithLib.LINARITH_TAC
           (all_class_args args))
@@ -1543,28 +1543,28 @@ fun tactic_for simpset goal Simp args exclusions =
    recipe cannot change what it would contain: it is derived from the
    goal and the ambient declarations, and compiling a recipe reads
    both without touching either. *)
-fun compile_recipe simpset entry recipe =
+fun compile_recipe ctxt simpset entry recipe =
   case recipe of
       Invoke (tactic_id, args) =>
         let
           val arguments =
             recipe_args entry (across_correspondence entry args)
         in
-          tactic_for (with_normalised_subjects simpset arguments)
+          tactic_for ctxt (with_normalised_subjects simpset arguments)
             (#goal entry) tactic_id arguments (#excl entry)
         end
     | Then (left, right) =>
         Tactical.THEN1
-          (compile_recipe simpset entry left,
-           compile_recipe simpset entry right)
+          (compile_recipe ctxt simpset entry left,
+           compile_recipe ctxt simpset entry right)
     | AllGoals (left, right) =>
         Tactical.THEN
-          (compile_recipe simpset entry left,
-           compile_recipe simpset entry right)
+          (compile_recipe ctxt simpset entry left,
+           compile_recipe ctxt simpset entry right)
     (* Isabelle's [+] applies its method once and then repeats it, so a
        recipe that never applies fails rather than passing the goal on. *)
     | Repeat inner =>
-        let val step = compile_recipe simpset entry inner
+        let val step = compile_recipe ctxt simpset entry inner
         in Tactical.THEN (step, Tactical.REPEAT step)
         end
 
@@ -1682,17 +1682,20 @@ fun run_goal budget recipe (entry : corpus_goal) =
             " |- ") ^
       Parse.term_to_string conclusion
     fun run () =
-      case Tactical.VALID
-             (Tactical.THEN
-                (fix_parameters,
-                 preserve_target (compile_recipe simpset entry recipe)))
-             ([], #goal entry) (Context.snapshot()) of
-          ([], validation) => (ignore (validation []); true)
-        | (goals, _) =>
-            (residual :=
-               "residual goals: [" ^
-               String.concatWith "; " (map goal_text goals) ^ "]";
-             false)
+      let val ctxt = Context.snapshot ()
+      in
+        case Tactical.VALID
+               (Tactical.THEN
+                  (fix_parameters,
+                   preserve_target (compile_recipe ctxt simpset entry recipe)))
+               ([], #goal entry) ctxt of
+            ([], validation) => (ignore (validation []); true)
+          | (goals, _) =>
+              (residual :=
+                 "residual goals: [" ^
+                 String.concatWith "; " (map goal_text goals) ^ "]";
+               false)
+      end
     val timed_out = ref false
     val solved =
       (case within_budget budget run of

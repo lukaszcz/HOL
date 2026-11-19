@@ -784,7 +784,8 @@ val view_derivation_simpset =
        remove_present_frags ["LINARITH"] ss
        |> simpLib.remove_solver linarith_solver_name)
 
-fun prepare_lhs_view_derivation_with_positions caller_charge ss positions =
+fun prepare_lhs_view_derivation_with_positions ctxt caller_charge ss
+      positions =
   let
     exception DerivationLimit
     datatype candidate_result =
@@ -807,7 +808,7 @@ fun prepare_lhs_view_derivation_with_positions caller_charge ss positions =
            handle e => (callback_failure := SOME e; raise e))
     val policy = position_policy charge positions
     val prepared =
-      simpLib.prepare_child_first_observed remember policy
+      simpLib.prepare_child_first_observed_in ctxt remember policy
         (view_derivation_simpset ss)
     fun candidate theorem =
       let
@@ -885,17 +886,17 @@ fun prepare_lhs_view_derivation_with_positions caller_charge ss positions =
       end
   in one end
 
-fun prepare_lhs_view_derivation caller_charge ss =
-  prepare_lhs_view_derivation_with_positions caller_charge ss
+fun prepare_lhs_view_derivation ctxt caller_charge ss =
+  prepare_lhs_view_derivation_with_positions ctxt caller_charge ss
     (positions_of_sources (#1 (simpLib.rewrite_sources ss [])))
 
 fun derive_lhs_view_entries caller_charge ss =
-  map (prepare_lhs_view_derivation caller_charge ss)
+  map (prepare_lhs_view_derivation (Context.snapshot ()) caller_charge ss)
       (simpLib.rewrite_source_handles ss)
 
 fun derive_lhs_view_entries_with_positions caller_charge ss positions =
-  map (prepare_lhs_view_derivation_with_positions caller_charge ss
-        (HOLset.addList (no_positions,positions)))
+  map (prepare_lhs_view_derivation_with_positions (Context.snapshot ())
+        caller_charge ss (HOLset.addList (no_positions,positions)))
       (simpLib.rewrite_source_handles ss)
 
 fun derive_lhs_views charge ss =
@@ -979,7 +980,8 @@ fun table_indices entries =
   end
 
 (* Opaque reducers can change answers when their primed context changes. *)
-fun update_lhs_view_table_with_positions caller_charge previous ss positions =
+fun update_lhs_view_table_with_positions ctxt caller_charge previous ss
+      positions =
   let
     val sources = simpLib.rewrite_source_handles ss
     val charged = ref 0
@@ -1055,7 +1057,8 @@ fun update_lhs_view_table_with_positions caller_charge previous ss positions =
     val derive =
       if null pending then NONE
       else SOME
-        (prepare_lhs_view_derivation_with_positions charge ss positions)
+        (prepare_lhs_view_derivation_with_positions ctxt charge ss
+           positions)
     fun obtain source =
       if stale source then valOf derive source
       else
@@ -1087,8 +1090,8 @@ fun update_lhs_view_table_with_positions caller_charge previous ss positions =
        plain=Susp.delay (fn () => strip_decisions ss)}
   end
 
-fun update_lhs_view_table caller_charge previous ss =
-  update_lhs_view_table_with_positions caller_charge previous ss
+fun update_lhs_view_table ctxt caller_charge previous ss =
+  update_lhs_view_table_with_positions ctxt caller_charge previous ss
     (positions_of_sources (#1 (simpLib.rewrite_sources ss [])))
 
 (* Bounded memoization is independent of when callers request a table. *)
@@ -1146,7 +1149,8 @@ fun make_lhs_view_cache caller_charge =
           SOME table => table
         | NONE =>
             let
-              val table = update_lhs_view_table caller_charge
+              val table = update_lhs_view_table (Context.snapshot ())
+                caller_charge
                 (previous ss (simpLib.rewrite_source_handles ss)) ss
               val kept = List.take (!tables,Int.min (7,length (!tables)))
             in tables := table::kept; table end
@@ -1444,7 +1448,7 @@ fun make_supplied_view_cache_core () =
       ([] : (int * source_set * abstraction_position HOLset.set *
              lhs_view_table) list)
     (* Supplied rules affect policy, never the ambient reducer inventory. *)
-    fun working_table (ambient as LHSViewTable table) suspended supplied
+    fun working_table ctxt (ambient as LHSViewTable table) suspended supplied
           prepared =
       let
         val already_masked = case prepared of
@@ -1472,8 +1476,9 @@ fun make_supplied_view_cache_core () =
                     #positions table
                   else positions_of_sources
                     (#1 (simpLib.rewrite_sources ss []))
-                val next = update_lhs_view_table_with_positions (fn () => ())
-                  (SOME ambient) ss (HOLset.union (positions,supplied))
+                val next = update_lhs_view_table_with_positions ctxt
+                  (fn () => ()) (SOME ambient) ss
+                  (HOLset.union (positions,supplied))
                 val kept = List.take
                   (!adjusted,Int.min (7,length (!adjusted)))
               in
@@ -1497,7 +1502,7 @@ fun make_supplied_view_cache_core () =
        view= #view old,rejection= #rejection old,footprint= #footprint old,
        abstraction_positions= #abstraction_positions old,
        normalization= #normalization old}
-    fun bind prior caller_charge (ambient as LHSViewTable table)
+    fun bind ctxt prior caller_charge (ambient as LHSViewTable table)
           (binding as SuppliedRuleBinding
             {bundle,positions=supplied_positions,...}) =
       let
@@ -1543,7 +1548,8 @@ fun make_supplied_view_cache_core () =
         val prepared = case prior of NONE => NONE
           | SOME (SuppliedConverseBinding data) => SOME (#working data)
         val effective as LHSViewTable working =
-          working_table ambient suspended supplied_positions prepared
+          working_table ctxt ambient suspended supplied_positions
+            prepared
         val positions = #positions working
         val _ = case prior of NONE => ()
           | SOME (SuppliedConverseBinding data) =>
@@ -1551,7 +1557,7 @@ fun make_supplied_view_cache_core () =
               else raise ERR "make_supplied_view_cache_after"
                 "ambient table has another abstraction policy"
         val derive = Susp.delay (fn () =>
-          prepare_lhs_view_derivation_with_positions charge
+          prepare_lhs_view_derivation_with_positions ctxt charge
             (#simpset working) positions)
         val derived = ref 0
         val memoized = ref 0
@@ -1592,22 +1598,28 @@ fun make_supplied_view_cache_core () =
            normalization= !charged,derived= !derived,memoized= !memoized}
       end
   in
-    {bind=bind NONE,
-     after=fn table => fn early as SuppliedConverseBinding data =>
-       bind (SOME early) (#charge data) table (#rules data)}
+    {bind=fn ctxt => bind ctxt NONE,
+     after=fn ctxt => fn table => fn early as SuppliedConverseBinding data =>
+       bind ctxt (SOME early) (#charge data) table (#rules data)}
   end
 
-fun make_supplied_view_cache () = #bind (make_supplied_view_cache_core ())
+fun make_supplied_view_cache () =
+  let val bind = #bind (make_supplied_view_cache_core ())
+  in fn charge => fn table => fn rules =>
+       bind (Context.snapshot ()) charge table rules
+  end
 fun make_supplied_view_cache_after () =
-  #after (make_supplied_view_cache_core ())
+  let val after = #after (make_supplied_view_cache_core ())
+  in fn table => fn early => after (Context.snapshot ()) table early end
 
 datatype bound_simplification = BoundSimplification of
   {rules : supplied_rule_binding,policy : Traverse.child_first_policy,
    initial : simpLib.simpset,viewed : simpLib.simpset Susp.susp}
 
-val bound_supplied_views = make_supplied_view_cache_after ()
+val bound_supplied_views = #after (make_supplied_view_cache_core ())
 
-fun make_bound_simplification prepare_runtime provide_table early =
+(* The views are derived in the given context, when first wanted. *)
+fun make_bound_simplification_in ctxt prepare_runtime provide_table early =
   let
     val rules as SuppliedRuleBinding {bundle,...} =
       supplied_converse_rules early
@@ -1617,7 +1629,7 @@ fun make_bound_simplification prepare_runtime provide_table early =
       else install_supplied_rules rules prepared
     fun viewed () =
       let
-        val binding = bound_supplied_views (provide_table ()) early
+        val binding = bound_supplied_views ctxt (provide_table ()) early
         val ambient = supplied_view_associations
           (lhs_view_table_entries (supplied_view_table binding))
         val with_ambient = case ambient of [] => initial
@@ -1637,6 +1649,10 @@ fun make_bound_simplification prepare_runtime provide_table early =
        {rules=rules,policy=supplied_converse_policy early,initial=initial,
         viewed=Susp.delay viewed}
   end
+
+fun make_bound_simplification prepare_runtime provide_table early =
+  make_bound_simplification_in (Context.snapshot ()) prepare_runtime
+    provide_table early
 
 fun bound_simplification_simpset viewed (BoundSimplification data) =
   if viewed then Susp.force (#viewed data) else #initial data
@@ -1857,18 +1873,23 @@ fun prepare_invocation_rules ss arguments =
        originals= #originals data,positions= #positions data}
   in (ambient,rules) end
 
-fun prepare_bound_rules verbosity runtime charge ambient rules =
+fun prepare_bound_rules ctxt verbosity runtime charge ambient rules =
   let
     val early = bound_converses charge ambient rules
     val _ =
       trace_suspended_converses verbosity (supplied_converse_suspended early)
     val working = working_simpset_of ambient
-  in make_bound_simplification runtime
+  in make_bound_simplification_in ctxt runtime
        (fn () => working_view_table working) early end
 
-fun prepare_bound_simplification verbosity runtime charge ss arguments =
+fun prepare_bound_simplification_in ctxt verbosity runtime charge ss
+      arguments =
   let val (ambient,rules) = prepare_invocation_rules ss arguments
-  in prepare_bound_rules verbosity runtime charge ambient rules end
+  in prepare_bound_rules ctxt verbosity runtime charge ambient rules end
+
+fun prepare_bound_simplification verbosity runtime charge ss arguments =
+  prepare_bound_simplification_in (Context.snapshot ()) verbosity runtime
+    charge ss arguments
 
 (* A generic callback can pass its simpset to a CS tactic and discard its
    theorem list. Keep compiled supplied origins and facts scoped to that
@@ -2215,7 +2236,8 @@ fun standalone_simp safe ss arguments goal =
   in
     markerLib.ABBRS_THEN (markerLib.LLABEL_RES_THEN
       (fn resolved => fn current => fn ctxt =>
-        let val state = prepare_bound_simplification (trace_level_of ctxt)
+        let val state = prepare_bound_simplification_in ctxt
+              (trace_level_of ctxt)
               (budgeted_decisions ctxt budget) (charge_normalization budget)
               ss resolved
         in
@@ -2936,17 +2958,18 @@ fun finish_rule_normal_form (policy : Traverse.child_first_policy) conversion =
        (#charge policy ();
         Conv.QCONV curry_premises term))
 
-fun rule_normal_form_conv policy ss = finish_rule_normal_form policy
-  (simpLib.SIMP_CONV_CHILD_FIRST policy ss [])
+fun rule_normal_form_conv ctxt policy ss = finish_rule_normal_form policy
+  (simpLib.SIMP_CONV_CHILD_FIRST_IN ctxt policy ss [])
 
-fun bound_rule_normal_form_conv policy ss =
-  let val prepared = simpLib.prepare_child_first policy ss
+fun bound_rule_normal_form_conv ctxt policy ss =
+  let val prepared = simpLib.prepare_child_first_in ctxt policy ss
   in finish_rule_normal_form policy (#normalize prepared []) end
 
 (* Keep the original declaration and add a certified view for the
    simpset's representation. Exclude a rule's own rewrite statement or
    an equivalence of which the rule is one direction. *)
-fun transport_claset_rules_with filter normal_form budget policy ss rules cs =
+fun transport_claset_rules_with filter normal_form ctxt budget policy ss rules
+      cs =
   let
     fun conversion theorem =
       let
@@ -2970,7 +2993,7 @@ fun transport_claset_rules_with filter normal_form budget policy ss rules cs =
               not (aconv (concl rewrite) statement) andalso
               not (own_direction rewrite)) ss
       in
-        normal_form policy without_self
+        normal_form ctxt policy without_self
       end
     fun add ((spec, (_, theorem)), current) =
       let
@@ -3130,7 +3153,7 @@ fun with_claset_transport_from transport budget policy ss candidates cs build
         val relevant =
           transport_candidates budget ss sites candidates
         val extended =
-          transport budget policy ss relevant cs
+          transport ctxt budget policy ss relevant cs
       in
         if length (clasetLib.rules_of extended) =
            length (clasetLib.rules_of cs) then initial_result ()
@@ -3206,9 +3229,9 @@ fun process_clasimp_bound_args consumer budget runtime body base_cs base_ss =
               (fn arguments => fn goal => fn ctxt =>
                 let
                   val bound =
-                    prepare_bound_simplification (trace_level_of ctxt)
-                      runtime (charge_normalization budget) ambient
-                      arguments
+                    prepare_bound_simplification_in ctxt
+                      (trace_level_of ctxt) runtime
+                      (charge_normalization budget) ambient arguments
                 in body bound cs environment goal ctxt end)
               (controls @ map #theorem
                 (clasetFacts.schematic_views environment) @ supplied)
@@ -3230,7 +3253,7 @@ fun add_bound_fact_aliases [] state = state
       end
 
 (* Fact aliases retain compiled origins; normalization cannot spend them. *)
-fun transport_bound_facts viewed
+fun transport_bound_facts ctxt viewed
       (state as BoundSimplification {rules=SuppliedRuleBinding data,
                                     policy,...}) environment =
   case clasetFacts.schematic_views environment of
@@ -3250,7 +3273,7 @@ fun transport_bound_facts viewed
       else (remaining := !remaining - 1; #charge policy ())
     val local_policy =
       {charge=charge,keep_abstraction= #keep_abstraction policy}
-    val prepared = simpLib.prepare_child_first local_policy basis
+    val prepared = simpLib.prepare_child_first_in ctxt local_policy basis
     fun supported original derived = List.all
       (fn assumption => boolSyntax.tmem assumption (hyp original))
       (hyp derived)
@@ -3352,7 +3375,7 @@ fun bound_fact_views viewed consumer budget body base_cs
         fun improve () =
           let
             val (next,transported) =
-              transport_bound_facts viewed bound environment
+              transport_bound_facts ctxt viewed bound environment
             val fact_cs = add_transported_facts consumer budget transported cs
             val candidates = clasetLib.rules_of base_cs @
               clasetLib.invocation_marker_rules cs
@@ -3394,65 +3417,66 @@ fun process_clasimp_args_fact_views consumer budget
     (fn cs => fn simpset => fn controls => fn environment =>
       case simpset of
           SOME ss =>
-            let
-              val views =
-                clasetFacts.schematic_views environment
-              val policy =
-                abstraction_policy (charge_normalization budget) ss
-                  (controls @ map #theorem views)
-              val conversion = rule_normal_form_conv policy ss
-              fun transport (view : clasetFacts.view) =
-                let
-                  val derived =
-                    clasetFacts.transport_view conversion view
-                  val theorem = #theorem derived
-                in
-                  if aconv (concl theorem) (concl (#theorem view)) orelse
-                     aconv (concl theorem) boolSyntax.T then NONE
-                  else SOME derived
-                end
-                handle HOL_ERR _ => NONE
-                     | Conv.UNCHANGED => NONE
-              val transported = List.mapPartial transport views
-              fun implication theorem =
-                boolSyntax.is_imp_only
-                  (concl (Drule.SPEC_ALL theorem))
-              val fact_cs =
-                if consumer <> clasetLib.SearchFacts then cs
-                else
-                  List.foldl
-                    (fn (view, current) =>
-                      if implication (#source view) andalso
-                         implication (#theorem view) then
-                        let
-                          val name =
-                            clasetLib.fresh_rule_name
-                              {prefix = "__clasimp_transport_", from = 0}
-                              current
-                        in
-                          searchBudget.charge budget
-                            searchBudget.Application;
-                          clasetLib.add_derived_rule
-                            {kind = clasetRules.Dest,
-                             safe = false, prio = NONE}
-                            (name, #theorem view) current
-                          handle HOL_ERR _ => current
-                        end
-                      else current)
-                    cs transported
-              val candidates =
-                clasetLib.rules_of base_cs @
-                clasetLib.invocation_marker_rules cs
-              val eligible =
-                if consumer = clasetLib.SafeFacts then
-                  List.filter safe_named_rule candidates
-                else candidates
-              val arguments =
-                controls @ map #theorem (views @ transported)
-            in
-              with_claset_transport budget policy ss eligible fact_cs
-                (fn current => body policy current ss arguments)
-            end
+            (fn goal => fn ctxt =>
+              let
+                val views =
+                  clasetFacts.schematic_views environment
+                val policy =
+                  abstraction_policy (charge_normalization budget) ss
+                    (controls @ map #theorem views)
+                val conversion = rule_normal_form_conv ctxt policy ss
+                fun transport (view : clasetFacts.view) =
+                  let
+                    val derived =
+                      clasetFacts.transport_view conversion view
+                    val theorem = #theorem derived
+                  in
+                    if aconv (concl theorem) (concl (#theorem view)) orelse
+                       aconv (concl theorem) boolSyntax.T then NONE
+                    else SOME derived
+                  end
+                  handle HOL_ERR _ => NONE
+                       | Conv.UNCHANGED => NONE
+                val transported = List.mapPartial transport views
+                fun implication theorem =
+                  boolSyntax.is_imp_only
+                    (concl (Drule.SPEC_ALL theorem))
+                val fact_cs =
+                  if consumer <> clasetLib.SearchFacts then cs
+                  else
+                    List.foldl
+                      (fn (view, current) =>
+                        if implication (#source view) andalso
+                           implication (#theorem view) then
+                          let
+                            val name =
+                              clasetLib.fresh_rule_name
+                                {prefix = "__clasimp_transport_", from = 0}
+                                current
+                          in
+                            searchBudget.charge budget
+                              searchBudget.Application;
+                            clasetLib.add_derived_rule
+                              {kind = clasetRules.Dest,
+                               safe = false, prio = NONE}
+                              (name, #theorem view) current
+                            handle HOL_ERR _ => current
+                          end
+                        else current)
+                      cs transported
+                val candidates =
+                  clasetLib.rules_of base_cs @
+                  clasetLib.invocation_marker_rules cs
+                val eligible =
+                  if consumer = clasetLib.SafeFacts then
+                    List.filter safe_named_rule candidates
+                  else candidates
+                val arguments =
+                  controls @ map #theorem (views @ transported)
+              in
+                with_claset_transport budget policy ss eligible fact_cs
+                  (fn current => body policy current ss arguments) goal ctxt
+              end)
         | NONE =>
             raise ERR "process_clasimp_args_fact_views"
               "simpset was not installed")
@@ -3675,8 +3699,8 @@ fun CS_of_with allocate safe_only body cs ss goal ctxt =
                     val budget = allocate ()
                     val (ambient,rules) = callback_bound_rules ambient rules
                       controls goal ctxt
-                    val state = prepare_bound_rules (trace_level_of ctxt)
-                      (budgeted_decisions ctxt budget)
+                    val state = prepare_bound_rules ctxt
+                      (trace_level_of ctxt) (budgeted_decisions ctxt budget)
                       (charge_normalization budget) ambient rules
                   in active := SOME (budget,state); (budget,state) end
           in bound_fact_views true consumer budget (run budget)
@@ -4102,12 +4126,14 @@ local
          | HOL_ERR _ => NONE
          | Conv.UNCHANGED => NONE
 in
-  fun ambient_forms theorem =
+  fun ambient_forms ctxt theorem =
     let
-      val ss = clasimp_ss ()
+      val ss = clasimp_ss_of ctxt
       val forms =
-        [attempt (simpLib.SIMP_RULE ss []) theorem,
-         attempt (Conv.CONV_RULE (consequent_conv (simpLib.SIMP_CONV ss [])))
+        [attempt (simpLib.SIMP_RULE_IN ctxt ss []) theorem,
+         attempt
+           (Conv.CONV_RULE
+              (consequent_conv (simpLib.SIMP_CONV_IN ctxt ss [])))
            theorem]
       fun add (NONE, kept) = kept
         | add (SOME form, kept) =
@@ -4221,9 +4247,16 @@ in
     end
 end
 
+(* The forms are computed once for each context the tactic runs in. *)
 fun AMBIENT_METIS_TAC theorems =
-  Tactical.THEN
-    (Tactical.TRY LAMBDA_LIFT_TAC,
-     metisLib.METIS_TAC (List.concat (map ambient_forms theorems)))
+  let
+    val forms = memoUtil.keyed_memo (Lib.curry Portable.pointer_eq)
+      (fn ctxt => List.concat (map (ambient_forms ctxt) theorems))
+  in
+    fn goal => fn ctxt =>
+      Tactical.THEN
+        (Tactical.TRY LAMBDA_LIFT_TAC, metisLib.METIS_TAC (forms ctxt))
+        goal ctxt
+  end
 
 end
