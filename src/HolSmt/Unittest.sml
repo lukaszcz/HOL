@@ -38078,6 +38078,7 @@ let
     ("bag_named_obligations", bag_named_obligations),
     ("smt_pointer_table", smt_pointer_table),
     ("public_wrapper_finalization", SmtPublicWrapperTests.run),
+    ("rulematch_shared_contract", SmtLib_RuleMatchContractTests.run),
     ("cpc_compact_selected_dispatch", CPC_CompactReplayTests.run),
     ("cpc_producer_endpoints", CPC_ProducerEndpointTests.run),
     ("cpc_aci_producer", CPC_AciProducerTests.run),
