@@ -3,8 +3,8 @@
    Source terms into one retained tree, name the lexical binders and charge
    Work for it. Every check goes through the exported preparation,
    admission and execution functions and states a relation computed within
-   one run. No value captured from earlier code is pinned. Suite owner
-   registers run in one existing Unittest group. *)
+   one run. No value captured from earlier code is pinned. Unittest
+   registers run as the group source_condition_builder_contract. *)
 structure SmtReplaySourceConditionTests =
 struct
   structure G = SmtReplayGraph

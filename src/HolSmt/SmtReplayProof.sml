@@ -10868,19 +10868,32 @@ struct
        implication=implication, balanced=balanced,
        same_ty=same_ty, original_shape=original_shape} end
   end
-  fun prepare_source_condition_rule expected
-      {evidence,frame,caller,steps,terminal,check_type}=
-    sr_fail expected (fn()=>W.with_step expected (fn()=>
+  (* The preamble shared by the plain rule, the exists-argument clause and
+     the canonical clause preparers. It runs the frame checks in the order
+     the preparers always ran them, in the same single Work step, and builds
+     the per-preparation guard and tick for the builder. A caller that gives
+     no frame or caller takes the evidence frame and its scope; check_caller
+     demands that the caller is the actual frame, right after the foreign
+     frame check. initial, hyp, rows and args are delayed because each
+     preparer pays for them at its own point. *)
+  fun sce_prepare_context expected evidence frame_in caller_in check_caller
+      steps=
     let
       val d=sce_data expected evidence
+      val frame=case frame_in of SOME given=>given | NONE=> #frame d
       val source=Scope.description_for expected (#frame d)
       val actual=Scope.description_for expected frame
       val graph= #graph actual val scope= #scope actual
+      val caller=case caller_in of SOME given=>given | NONE=>scope
       val _=if Portable.pointer_eq(graph,#graph source) andalso
           Portable.pointer_eq(#sources actual,#sources source) andalso
           #root actual= #root source andalso
           G.scope_visible graph scope (#scope source) then () else
         raise ERR "prepare_source_condition_rule" "foreign Source frame"
+      val _=if check_caller then
+          (if caller=scope then ()else raise ERR
+            "prepare_source_argument" "caller must be the actual frame")
+        else ()
       val _=G.validate_scope graph caller
       val children=sce_step_children steps
       val guard=sce_prepare_guard expected evidence frame graph
@@ -10890,23 +10903,42 @@ struct
       val output=IntInf.fromInt(#output_limit limits)
       val template=IntInf.fromInt(#template_limit limits)
       val quota=IntInf.fromInt(W.work_limit expected)
-      fun append v w=sce_append tick v w
-      val {budget,policies,binders,app,bounded,name_binders,head,binary,
-        forall,exists,subst,tneg,typed_equality,quantify,bool,boolean,
-        equality,implication,balanced,same_ty,original_shape,...}=
-        source_condition_builder tick
-      val initial=bounded(#output_limit limits)
+      val builder=source_condition_builder tick
+      val {bounded,...}=builder
+      fun initial()=bounded(#output_limit limits)
         (SOME(sce_lexical_origin_inside expected evidence))(#target d)
-      val hyp=List.map(bounded(#template_limit limits)NONE)(Thm.hyp(#proof d))
-      val rows=List.map(fn(value,_)=>
+      fun hyp()=List.map(bounded(#template_limit limits)NONE)
+        (Thm.hyp(#proof d))
+      fun rows()=List.map(fn(value,_)=>
         bounded(#template_limit limits)NONE value)(#rows d)
-      val args=List.map(fn child=>
+      fun args()=List.map(fn child=>
         let val node=G.closure_child_node graph caller child
             val _=if G.scope_visible graph scope (G.node_scope graph node)
               then () else raise ERR "prepare_source_condition_rule"
                 "argument escapes actual frame"
         in bounded(#output_limit limits)NONE(G.representative graph node) end)
         children
+    in {d=d, frame=frame, graph=graph, scope=scope, caller=caller,
+       children=children, guard=guard, tick=tick, limits=limits,
+       output=output, template=template, quota=quota, builder=builder,
+       initial=initial, hyp=hyp, rows=rows, args=args} end
+  fun prepare_source_condition_rule expected
+      {evidence,frame,caller,steps,terminal,check_type}=
+    sr_fail expected (fn()=>W.with_step expected (fn()=>
+    let
+      val ctx=sce_prepare_context expected evidence (SOME frame)
+        (SOME caller) false steps
+      val {d,graph,scope,children,guard,tick,output,template,quota,...}=
+        ctx
+      fun append v w=sce_append tick v w
+      val {budget,policies,binders,app,bounded,name_binders,head,binary,
+        forall,exists,subst,tneg,typed_equality,quantify,bool,boolean,
+        equality,implication,balanced,same_ty,original_shape,...}=
+        #builder ctx
+      val initial= #initial ctx ()
+      val hyp= #hyp ctx ()
+      val rows= #rows ctx ()
+      val args= #args ctx ()
       val _=List.app name_binders(initial::args)
       val (original,permutative)=
         original_shape steps args initial terminal
@@ -15119,44 +15151,20 @@ struct
       {evidence,frame,caller,steps,terminal,check_type,future}=
     sr_fail expected (fn()=>W.with_step expected (fn()=>
     let
-      val d=sce_data expected evidence
-      val source=Scope.description_for expected (#frame d)
-      val actual=Scope.description_for expected frame
-      val graph= #graph actual val scope= #scope actual
-      val _=if Portable.pointer_eq(graph,#graph source) andalso
-          Portable.pointer_eq(#sources actual,#sources source) andalso
-          #root actual= #root source andalso
-          G.scope_visible graph scope (#scope source) then () else
-        raise ERR "prepare_source_condition_rule" "foreign Source frame"
-      val _=if caller=scope then ()else raise ERR
-        "prepare_source_argument" "caller must be the actual frame"
-      val _=G.validate_scope graph caller
-      val children=sce_step_children steps
-      val guard=sce_prepare_guard expected evidence frame graph
-        caller children
-      fun tick n=(guard();W.spend expected n)
-      val limits=W.semantic_limits expected
-      val output=IntInf.fromInt(#output_limit limits)
-      val template=IntInf.fromInt(#template_limit limits)
-      val quota=IntInf.fromInt(W.work_limit expected)
+      val ctx=sce_prepare_context expected evidence (SOME frame)
+        (SOME caller) true steps
+      val {d,graph,scope,children,guard,tick,output,template,quota,...}=
+        ctx
       fun append v w=sce_append tick v w
       val {budget,policies,identifiers,binders,atom,app,bounded,
         name_binders,head,binary,forall,exists,subst,tneg,typed_equality,
         quantify,bool,boolean,equality,implication,balanced,same_ty,
         original_shape,...}=
-        source_condition_builder tick
-      val initial=bounded(#output_limit limits)
-        (SOME(sce_lexical_origin_inside expected evidence))(#target d)
-      val hyp=List.map(bounded(#template_limit limits)NONE)(Thm.hyp(#proof d))
-      val rows=List.map(fn(value,_)=>
-        bounded(#template_limit limits)NONE value)(#rows d)
-      val args=List.map(fn child=>
-        let val node=G.closure_child_node graph caller child
-            val _=if G.scope_visible graph scope (G.node_scope graph node)
-              then () else raise ERR "prepare_source_condition_rule"
-                "argument escapes actual frame"
-        in bounded(#output_limit limits)NONE(G.representative graph node) end)
-        children
+        #builder ctx
+      val initial= #initial ctx ()
+      val hyp= #hyp ctx ()
+      val rows= #rows ctx ()
+      val args= #args ctx ()
       val future_tree=case future of NONE=>NONE
         | SOME(SCEFutureArgument {name,ty,...})=>
             (tick(String.size name+1);
@@ -16026,34 +16034,18 @@ struct
       {evidence,steps,pending,finish,check_type,future,kind}=
     sr_fail expected (fn()=>W.with_step expected (fn()=>
     let
-      val d=sce_data expected evidence
-      val frame= #frame d val terminal=SourceTruth
-      val source=Scope.description_for expected (#frame d)
-      val actual=Scope.description_for expected frame
-      val graph= #graph actual val scope= #scope actual
-      val caller=scope
-      val _=if Portable.pointer_eq(graph,#graph source) andalso
-          Portable.pointer_eq(#sources actual,#sources source) andalso
-          #root actual= #root source andalso
-          G.scope_visible graph scope (#scope source) then () else
-        raise ERR "prepare_source_condition_rule" "foreign Source frame"
-      val _=if caller=scope then ()else raise ERR
-        "prepare_source_argument" "caller must be the actual frame"
-      val _=G.validate_scope graph caller
-      val children=sce_step_children steps
-      val guard=sce_prepare_guard expected evidence frame graph
-        caller children
-      fun tick n=(guard();W.spend expected n)
-      val limits=W.semantic_limits expected
-      val output=IntInf.fromInt(#output_limit limits)
-      val template=IntInf.fromInt(#template_limit limits)
-      val quota=IntInf.fromInt(W.work_limit expected)
+      val ctx=sce_prepare_context expected evidence NONE NONE
+        true steps
+      val {d,frame,graph,scope,caller,children,guard,tick,limits,output,
+        template,quota,...}=
+        ctx
+      val terminal=SourceTruth
       fun append v w=sce_append tick v w
       val {budget,policies,identifiers,binders,atom,app,capture,bounded,
         name_binders,head,binary,forall,exists,subst,tneg,typed_equality,
         quantify,bool,boolean,combine,equality,implication,balanced,same_ty,
         original_shape,...}=
-        source_condition_builder tick
+        #builder ctx
       fun no_abs cap term=
         let fun walk [] count=()
               | walk(current::rest)count=
@@ -16069,8 +16061,7 @@ struct
       fun mode_initial()=case closing of NONE=>() | SOME data=>
         (scr_conj_shape data;no_abs(#output_limit limits)(#target d))
       val _=mode_initial()
-      val initial=bounded(#output_limit limits)
-        (SOME(sce_lexical_origin_inside expected evidence))(#target d)
+      val initial= #initial ctx ()
       val hyp=case closing of NONE=>
             List.map(bounded(#template_limit limits)NONE)(Thm.hyp(#proof d))
         | SOME _=>
@@ -16090,13 +16081,7 @@ struct
       val rows=case closing of NONE=>List.map(fn(value,_)=>
             bounded(#template_limit limits)NONE value)(#rows d)
         | SOME _=>[]
-      val args=List.map(fn child=>
-        let val node=G.closure_child_node graph caller child
-            val _=if G.scope_visible graph scope (G.node_scope graph node)
-              then () else raise ERR "prepare_source_condition_rule"
-                "argument escapes actual frame"
-        in bounded(#output_limit limits)NONE(G.representative graph node) end)
-        children
+      val args= #args ctx ()
       val future_names=ref([]:string list)
       val future_trees=List.map
         (fn SCEFutureArgument {name,ty,...}=>
