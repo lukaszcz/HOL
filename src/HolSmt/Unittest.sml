@@ -20440,21 +20440,23 @@ val datatype_normalize_target =
          SmtTriA => F | SmtTriB _ => F | SmtTriC v => v) <=>
     f (p \/ 0 = z \/ y = x)``
 
-fun datatype_normalize_replay target =
+fun datatype_normalize_replay replay target =
 let
   val initial = Z3_Proof.empty_proof "4.15.3"
   val steps = Redblackmap.insert
     (Z3_Proof.proof_steps initial, 0, Z3_Proof.REWRITE target)
   val _ = Profile.reset_all ()
 in
-  Z3_ProofReplay.replay_root_for_test
-    (Z3_Proof.update_proof_steps initial steps)
+  replay (Z3_Proof.update_proof_steps initial steps)
 end
+
+val datatype_normalize_test_replay =
+  datatype_normalize_replay Z3_ProofReplay.replay_root_for_test
 
 fun z3_rewrite_datatype_normalize_success () =
 let
   val target = datatype_normalize_target
-  val theorem = datatype_normalize_replay target
+  val theorem = datatype_normalize_test_replay target
 in
   assert (Thm.concl theorem ~~ target andalso List.null (Thm.hyp theorem),
     "Z3 datatype-normalize rewrite did not prove its target");
@@ -20470,7 +20472,7 @@ fun z3_rewrite_datatype_normalize_one_sided () =
 let
   val (l, r) = boolSyntax.dest_eq datatype_normalize_target
   val target = boolSyntax.mk_eq (r, l)
-  val theorem = datatype_normalize_replay target
+  val theorem = datatype_normalize_test_replay target
   val (l_thm, r_thm) =
     case SmtDatatypeProve.normalize_equation_with_admission
            (SmtDatatypeProve.default_admission ()) target of
@@ -20491,9 +20493,7 @@ in
 end
 
 (* A target without a datatype redex is declined by the helper as
-   [NoRedex], and the rung then falls through to the later rungs.  Every
-   equation mentions [bool], whose facts are always harvested, so the
-   helper's [NoRewrites] decline is not reachable from an equation. *)
+   [NoRedex], and the rung then falls through to the later rungs. *)
 fun z3_rewrite_datatype_normalize_declines () =
 let
   val targets = [
@@ -20506,7 +20506,7 @@ let
     (case SmtDatatypeProve.normalize_equation_with_admission admit target of
        SmtDatatypeProve.NoRedex => ()
      | _ => die "FAIL: a target without a datatype redex was not declined";
-     ignore (datatype_normalize_replay target)
+     ignore (datatype_normalize_test_replay target)
        handle Feedback.HOL_ERR _ => ();
      assert (profile_call_count "rewrite(21a)(datatype-normalize)_HOL_ERR" > 0,
        "Z3 datatype-normalize was not reached");
@@ -20514,6 +20514,32 @@ let
        "Z3 datatype-normalize accepted a target without a datatype redex"))
 in
   List.app decline targets
+end
+
+(* The helper's [NoRewrites] decline: a small term-size limit admits the
+   target but leaves no admitted datatype fact for its types, so the helper
+   declines it and the rung falls through to the later rungs. *)
+fun z3_rewrite_datatype_normalize_no_rewrites () =
+let
+  val target = ``(b:bool) = c``
+  fun admission () = SmtReplayArithmetic.new_term_check
+    {limit = 5, observe = fn () => ()}
+  val _ =
+    case SmtDatatypeProve.normalize_equation_with_admission
+           (admission ()) target of
+      SmtDatatypeProve.NoRewrites => ()
+    | _ => die "FAIL: a target without admitted datatype facts was not \
+               \declined as NoRewrites"
+  val _ =
+    ignore (datatype_normalize_replay
+      (Z3_ProofReplay.replay_root_with_definition_occurrences_admitted
+        (admission ()) []) target)
+    handle Feedback.HOL_ERR _ => ()
+in
+  assert (profile_call_count "rewrite(21a)(datatype-normalize)_HOL_ERR" > 0,
+    "Z3 datatype-normalize was not reached");
+  assert (profile_call_count "rewrite(21a)(datatype-normalize)_OK" = 0,
+    "Z3 datatype-normalize accepted a target without datatype facts")
 end
 
 (* Rung 21a normalizes in the checked rewrite traversal: here the exported
@@ -20543,13 +20569,10 @@ let
   val target = datatype_normalize_admission_target
   val (admit, refusals) = datatype_normalize_refusing (fn () =>
     raise Feedback.mk_HOL_ERR "Unittest" "admit" "refused")
-  val initial = Z3_Proof.empty_proof "4.15.3"
-  val steps = Redblackmap.insert
-    (Z3_Proof.proof_steps initial, 0, Z3_Proof.REWRITE target)
-  val _ = Profile.reset_all ()
   val _ =
-    ignore (Z3_ProofReplay.replay_root_with_definition_occurrences_admitted
-      admit [] (Z3_Proof.update_proof_steps initial steps))
+    ignore (datatype_normalize_replay
+      (Z3_ProofReplay.replay_root_with_definition_occurrences_admitted
+        admit []) target)
     handle Feedback.HOL_ERR _ => ()
 in
   assert (profile_call_count "rewrite(21a)(datatype-normalize)_HOL_ERR" > 0,
@@ -38650,6 +38673,8 @@ let
       z3_rewrite_datatype_normalize_one_sided),
     ("z3_rewrite_datatype_normalize_declines",
       z3_rewrite_datatype_normalize_declines),
+    ("z3_rewrite_datatype_normalize_no_rewrites",
+      z3_rewrite_datatype_normalize_no_rewrites),
     ("z3_rewrite_datatype_normalize_admission",
       z3_rewrite_datatype_normalize_admission),
     ("z3_rewrite_datatype_normalize_refusal_propagates",
