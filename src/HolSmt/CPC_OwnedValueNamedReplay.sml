@@ -34,16 +34,7 @@ struct
     | EqualityWithAtomEquations of {rule:string,premises:string list,
         equality_premises:string list,retain_all:bool,
         aliases:(PV.proof_term * PV.proof_term) list}
-  datatype truth_family=DeclaredBoolean | FalseIntro | FalseElim
-    | TrueIntro | TrueElim | ProcessScope
-  fun truth_family equal handler=
-    if equal(handler,"bool")then SOME DeclaredBoolean
-    else if equal(handler,"false_intro")then SOME FalseIntro
-    else if equal(handler,"false_elim")then SOME FalseElim
-    else if equal(handler,"true_intro")then SOME TrueIntro
-    else if equal(handler,"true_elim")then SOME TrueElim
-    else if equal(handler,"process_scope")then SOME ProcessScope
-    else NONE
+  datatype truth_family=datatype Shared.truth_family
   (* Shared CNF discovery has already authenticated which one of the
      four actual XOR clauses was requested. The enum selects only a fixed
      globally valid library law; it grants no theorem or Source port. *)
@@ -100,6 +91,9 @@ struct
              NC.validate_for work native_contract)
           fun pay amount=(guard();W.spend_policy work amount)
           fun tick()=pay 1
+          (* One handler constructor dispatch or comparison costs one unit,
+             paid (through the guard) before the packet is used. *)
+          fun dispatch classify handler=(tick();classify handler)
           fun string_work(left,right)=pay
             (1+IntInf.fromInt(String.size left)+
              IntInf.fromInt(String.size right))
@@ -147,9 +141,7 @@ struct
               val actual=R.lookup_rule(#cvc_version proof)(#name rule)
               fun metadata(row:R.proof_rule)=
                 (pay 4;string_work(#name row,#name rule);
-                 string_work(CPC_Proof.handler_name
-                     (#replay_handler row),
-                   CPC_Proof.handler_name (#replay_handler rule));
+                 tick() (* handler constructors, compared by [row=rule] *);
                  version(#version_support row))
               val _=metadata rule
               val _=case actual of SOME row=>metadata row | NONE=>()
@@ -165,14 +157,11 @@ struct
                 need(ScopeProgramme{id=id,assumption=true})
             | supported(Q.GraphStep{step,pop})=
                 let val _=tick()val _=canonical(#rule step)
-                    val handler= CPC_Proof.handler_name
-                        (#replay_handler (#rule step))
-                    val route=Shared.route{equal=equal,visit=tick,copies=fn n=>
-                      pay(IntInf.fromInt n)}
-                      {pop=pop,handler=handler}
-                    val family=Shared.simple_boolean equal handler
+                    val handler= #replay_handler (#rule step)
+                    val route=dispatch Shared.route_of{pop=pop,handler=handler}
+                    val family=dispatch Shared.simple_boolean_of handler
                     val equality=case family of NONE=>
-                        Shared.simple_equality equal handler
+                        dispatch Shared.simple_equality_of handler
                       | SOME _=>NONE
                 in if route=Shared.Simple andalso
                       (Option.isSome family orelse Option.isSome equality)
@@ -185,7 +174,8 @@ struct
                     (case #conclusion step of SOME _=>()
                       | NONE=>need(RecordedConclusion(#id step)))
                   else if route=Shared.Simple andalso not pop andalso
-                      Option.isSome(truth_family equal handler)then
+                      Option.isSome
+                        (dispatch Shared.truth_family_of handler)then
                     (case #conclusion step of SOME _=>()
                       | NONE=>need(RecordedConclusion(#id step)))
                   else need(RuleProgramme
@@ -484,13 +474,16 @@ struct
                     val _=pay 6
                     val target=case #conclusion step of SOME row=>row
                       | NONE=>raise ERR "prepare" "missing planned conclusion"
-                    val handler=
-                      CPC_Proof.handler_name (#replay_handler (#rule step))
-                    val family=Shared.simple_boolean equal handler
+                    val kind= #replay_handler (#rule step)
+                    (* The error label of the shared plans. *)
+                    val handler=CPC_Proof.handler_name kind
+                    fun is_handler wanted=
+                      dispatch(fn actual=>actual=wanted)kind
+                    val family=dispatch Shared.simple_boolean_of kind
                     fun current node provenance =
                       (pay 2;{node=node,provenance=provenance})
                     val equality=case family of NONE=>
-                        Shared.simple_equality equal handler
+                        dispatch Shared.simple_equality_of kind
                       | SOME _=>NONE
                     fun infer_equality()=
                       let
@@ -978,9 +971,9 @@ struct
                           (map(fn premise=>(tick();Held(#node premise)))
                             premises)
                     | NONE=>(case equality of SOME _=>infer_equality()
-                      | NONE=>if equal(handler,"resolution")orelse
-                          equal(handler,"factoring")orelse
-                          equal(handler,"reordering")then
+                      | NONE=>if dispatch(fn kind=>case kind of
+                          R.HResolution=>true | R.HFactoring=>true
+                        | R.HReordering=>true | _=>false)kind then
                           let
                             val _=pay 1
                             fun infer_structural()=case aliases of
@@ -1148,7 +1141,7 @@ struct
                                     end
                                   val target_literals=clause destination
                                   val clauses=map clause premises
-                                  val _=if equal(handler,"resolution")then
+                                  val _=if is_handler R.HResolution then
                                       let
                                         val explicit=equal
                                           (#name(#rule step),
@@ -1219,8 +1212,7 @@ struct
                                     end
                                 in destination end
                           in infer_structural()end
-                        else if equal
-                          (handler,"cnf")then
+                        else if is_handler R.HCnf then
                           let
                             (* One selected helper closure. No old Boolean
                                path allocates this new-family adapter. *)
@@ -1385,8 +1377,7 @@ struct
                                  provenances=fn entries=>map #2 entries}
                                 literals end
                           in infer_cnf()end
-                        else(case truth_family equal
-                          handler of
+                        else(case dispatch Shared.truth_family_of kind of
                           NONE=>infer_equality()
                         | SOME family=>
                           let val _=pay 1

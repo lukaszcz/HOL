@@ -172,6 +172,10 @@ sig
   val simple_equality : (string * string -> bool) -> string ->
     simple_equality option
   val simple_equality_of : CPC_Proof.replay_handler -> simple_equality option
+  (* The simple handlers that are neither Boolean nor equality rules. *)
+  datatype truth_family = DeclaredBoolean | FalseIntro | FalseElim
+    | TrueIntro | TrueElim | ProcessScope
+  val truth_family_of : CPC_Proof.replay_handler -> truth_family option
   val equality_provenance : CPC_Proof.term_provenance ->
     CPC_Proof.term_provenance * CPC_Proof.term_provenance
   val reflexive : {require_one:string -> 'node list -> 'node,

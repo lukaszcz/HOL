@@ -111,8 +111,11 @@ struct
     else NONE
   (* Typed view of [route]: every registered handler is
      classified exactly once, so a new constructor must pick its family. *)
+  datatype truth_family = DeclaredBoolean | FalseIntro | FalseElim
+    | TrueIntro | TrueElim | ProcessScope
   datatype simple_class = SimpleBoolean of simple_boolean
-    | SimpleEquality of simple_equality | SimpleOther | NotSimple
+    | SimpleEquality of simple_equality | SimpleTruth of truth_family
+    | NotSimple
   fun simple_class handler =
     case handler of
       P.HAndIntro => SimpleBoolean SimpleAndIntro
@@ -138,12 +141,12 @@ struct
     | P.HHoCong => SimpleEquality SimpleHoCong
     | P.HEqResolve => SimpleEquality SimpleEqResolve
     | P.HContra => SimpleEquality SimpleContra
-    | P.HBool => SimpleOther
-    | P.HFalseIntro => SimpleOther
-    | P.HFalseElim => SimpleOther
-    | P.HTrueIntro => SimpleOther
-    | P.HTrueElim => SimpleOther
-    | P.HProcessScope => SimpleOther
+    | P.HBool => SimpleTruth DeclaredBoolean
+    | P.HFalseIntro => SimpleTruth FalseIntro
+    | P.HFalseElim => SimpleTruth FalseElim
+    | P.HTrueIntro => SimpleTruth TrueIntro
+    | P.HTrueElim => SimpleTruth TrueElim
+    | P.HProcessScope => SimpleTruth ProcessScope
     | P.HResolution => NotSimple
     | P.HCnf => NotSimple (* matched before this by [route_of] *)
     | P.HFactoring => NotSimple
@@ -226,6 +229,9 @@ struct
       | _ => NONE
   fun simple_equality_of handler =
     case simple_class handler of SimpleEquality family => SOME family
+      | _ => NONE
+  fun truth_family_of handler =
+    case simple_class handler of SimpleTruth family => SOME family
       | _ => NONE
   (* The handlers whose name starts with "arith" or "int_tight_". *)
   fun arithmetic_handler handler =
