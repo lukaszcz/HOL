@@ -6957,8 +6957,8 @@ local
          equation, counting the target's unfolded tree, and the other
          direction is tried.  Each occurrence on an acyclic chain of
          equations that copy nothing is rewritten at most once per
-         equation, so the bound never stops one.  The last attempt, the
-         equations as given, is always bounded. *)
+         equation, so the bound never stops one.  The last attempts, the
+         equations as given, are always bounded. *)
       val target_size = ref (NONE : int option)
       fun target_nodes () =
         case !target_size of
@@ -7057,8 +7057,8 @@ local
          without that cycle.  The check over-approximates: the rewriter
          fires only the first rule for a left side, and rewrites a compound
          left side before the terms inside it (x = f x with f x = c).  So
-         when it drops an equation, the equations as given are the last
-         attempt. *)
+         when it drops an equation in a direction, the equations as given in
+         that direction are among the last attempts. *)
       fun acyclic theorems =
         let
           val sides = List.map (boolSyntax.dest_eq o Thm.concl) theorems
@@ -7087,28 +7087,35 @@ local
             (not o on_cycle o boolSyntax.dest_eq o Thm.concl) theorems
         end
       val oriented = acyclic equalities
-      val reversed = acyclic (List.map Thm.SYM equalities)
+      val all_reversed = List.map Thm.SYM equalities
+      val reversed = acyclic all_reversed
+      fun dropped kept = List.length kept < List.length equalities
       (* The equations left to right, each cyclic one right to left. *)
       val cyclic = List.filter (fn theorem => not (List.exists
           (fn kept => Portable.pointer_eq (kept, theorem)) oriented))
         equalities
+      val attempts =
+        (fn () => attempt oriented) ::
+        (if List.null cyclic then []
+         else [fn () => attempt (acyclic (oriented @ List.map Thm.SYM cyclic))])
+        @ [fn () => attempt reversed]
+        @ (if dropped oriented then [fn () => attempt_with true equalities]
+           else [])
+        @ (if dropped reversed then
+             [fn () => attempt_with true all_reversed]
+           else [])
       (* Each attempt only adds a route: whatever else it raises, the next
          one is tried.  A resource refusal ends the substitution. *)
-      fun otherwise next holerr =
-        if SmtResource.is_resource_gate holerr then
-          raise Feedback.HOL_ERR holerr
-        else next ()
-      fun after_oriented () =
-        if List.null cyclic then attempt reversed
-        else
-          (attempt (acyclic (oriented @ List.map Thm.SYM cyclic))
-           handle Feedback.HOL_ERR holerr =>
-             otherwise (fn () => attempt reversed) holerr)
-          handle Feedback.HOL_ERR holerr =>
-            otherwise (fn () => attempt_with true equalities) holerr
+      fun first [] =
+            raise ERR "asserted_equality_substitution_prove" "no attempt"
+        | first [last] = last ()
+        | first (next :: rest) =
+            next () handle Feedback.HOL_ERR holerr =>
+              if SmtResource.is_resource_gate holerr then
+                raise Feedback.HOL_ERR holerr
+              else first rest
     in
-      attempt oriented
-      handle Feedback.HOL_ERR holerr => otherwise after_oriented holerr
+      first attempts
     end
 
     fun z3_rewrite (state, t) =

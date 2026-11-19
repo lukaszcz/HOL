@@ -27855,6 +27855,24 @@ let
         [(first, boolSyntax.mk_eq (outer x, outer c)),
          (second, boolSyntax.mk_eq (x, z))]
     end
+  (* The same in the reversed direction: the cycle check drops reversed
+     x = f x (or z = x and x = f z), which the rewriter uses once and
+     then rewrites f x (or z) with a later equation. *)
+  val reversed_preempted_cases =
+    let
+      val (c, u, x) = (chain_link 9, chain_link 10, chain_link 11)
+      val first = boolSyntax.list_mk_conj
+        [boolSyntax.mk_eq (c, u), boolSyntax.mk_eq (apply x, x),
+         boolSyntax.mk_eq (c, apply x)]
+      val (z, b) = (chain_link 12, chain_link 13)
+      val second = boolSyntax.list_mk_conj
+        [boolSyntax.mk_eq (c, z), boolSyntax.mk_eq (x, z),
+         boolSyntax.mk_eq (apply z, b), boolSyntax.mk_eq (apply z, x)]
+    in
+      List.map substitution_case
+        [(first, boolSyntax.mk_eq (outer x, outer c)),
+         (second, boolSyntax.mk_eq (x, apply c))]
+    end
   (* The first rule for x is cyclic and is dropped; the later x = a is
      still used. *)
   val cyclic_first_case =
@@ -27864,7 +27882,7 @@ let
         [boolSyntax.mk_eq (b, a), boolSyntax.mk_eq (x, apply x),
          boolSyntax.mk_eq (x, a)], boolSyntax.mk_eq (outer x, outer a))
     end
-  val chains = preempted_cases @
+  val chains = preempted_cases @ reversed_preempted_cases @
     cyclic_first_case :: shadow_case :: shared_case :: chains
 in
   assert (List.all (fn (source, theorem) =>
