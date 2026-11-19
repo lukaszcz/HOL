@@ -154,6 +154,61 @@ struct
         {heads=List.map (fn (_,_,_,_,node) => node) rows,
          maximum=maximum,step=step}
     in (net,List.map (fn (_,_,_,head,_) => head) rows,selected) end
+  (* The candidate gate of both owners: the constant head of the target
+     spine (one observation per visited node) must be a fixed-net head,
+     else no net lookup runs. [lookup] is the owner's charged net walk. *)
+  fun candidates_with graph action (d:('a,'l) described) heads lookup =
+    let fun head observe child =
+          let val _ = observe ()
+              val n = G.closure_child_node graph (#scope d) child
+          in case G.view graph n of G.Application _ =>
+               head observe (#1 (G.closure_application_children
+                 graph (#scope d) child))
+             | G.Constant id =>
+                 let val {Thy,Name} = KernelSig.name_of_id id
+                 in SOME (Thy,Name) end
+             | _ => NONE end
+    in action (fn observe =>
+      case head observe (#child d) of NONE => []
+      | SOME name => if not (List.exists (fn key => key=name) heads)
+          then [] else lookup observe) end
+  (* The memoised pairwise walk of both owners' same: [leaf] decides two
+     non-application children. Every visited child is recorded in
+     [paths] and revalidated, in order, once the walk is over. *)
+  fun same_tree observe graph scope paths leaf left right =
+    let val memo = ref ([] : (G.node * G.node * bool) list)
+        fun lookup x y [] = NONE
+          | lookup x y ((a,b,v)::rest) =
+              (observe ();if x=a andalso y=b then SOME v
+                else lookup x y rest)
+        fun compare left right =
+          let val _ = observe ()
+              val a = G.closure_child_node graph scope left
+              val b = G.closure_child_node graph scope right
+              val _ = paths := left::right:: !paths
+          in if a=b then true else
+            case lookup a b (!memo) of SOME value => value
+            | NONE =>
+              let val result = if G.type_id graph a<>G.type_id graph b
+                    then false else case (G.view graph a,G.view graph b) of
+                      (G.Application _,G.Application _) =>
+                        let val (f,x) = G.closure_application_children
+                              graph scope left
+                            val (g,y) = G.closure_application_children
+                              graph scope right
+                        in compare f g andalso compare x y end
+                    | (G.Application _,_) => false
+                    | (_,G.Application _) => false
+                    | _ => leaf left right
+                  val _ = observe ()
+                  val _ = memo := (a,b,result):: !memo
+              in result end
+          end
+        val result = compare left right
+        val _ = List.app (fn child =>
+          (observe ();ignore (G.closure_child_node graph scope child)))
+          (!paths)
+    in result end
   datatype owner = Owner of
     {work:W.portfolio,graph:G.graph,root:G.scope,sources:S.sources,
      catalogue:K.catalogue,traversal:T.owner,matcher:M.owner,
@@ -279,20 +334,7 @@ struct
      lookup order, never a reordered head bucket or a caller rule table. *)
   fun candidates (owner as Owner {graph,net,heads,...}) focus =
     let val d = describe owner focus
-        fun head observe child =
-          let val _ = observe ()
-              val n = G.closure_child_node graph (#scope d) child
-          in case G.view graph n of G.Application _ =>
-                head observe (#1 (G.closure_application_children
-                  graph (#scope d) child))
-             | G.Constant id =>
-                 let val {Thy,Name} = KernelSig.name_of_id id
-                 in SOME (Thy,Name) end
-             | _ => NONE end
-    in action owner focus (fn observe =>
-      case head observe (#child d) of NONE => []
-      | SOME name => if not (List.exists (fn key => key=name) heads)
-          then [] else
+    in candidates_with graph (action owner focus) d heads (fn observe =>
         let val _ = List.app (fn metric =>
               case G.unfolded_nodes graph metric (#source_limit d)
                   (#node d) of SOME n => if n<= #source_limit d then () else
@@ -327,12 +369,7 @@ struct
          Term.aconv (G.representative graph (#node l))
            (G.representative graph (#node r)))
       else let val scope = #scope l
-               val memo = ref ([] : (G.node * G.node * bool) list)
                val paths = ref ([] : G.closure_child list)
-               fun lookup x y [] = NONE
-                 | lookup x y ((a,b,v)::rest) =
-                     (observe ();if x=a andalso y=b then SOME v
-                       else lookup x y rest)
                (* A raw opaque child can already have a genuine retained
                   alpha opening. Compare that annotation, never an invented
                   no-op metric or a newly opened comparison operand. The
@@ -380,36 +417,11 @@ struct
                         in annotation end
                     | _ => child
                  end
-               fun compare left right =
-                 let val _ = observe ()
-                     val a = G.closure_child_node graph scope left
-                     val b = G.closure_child_node graph scope right
-                     val _ = paths := left::right:: !paths
-                 in if a=b then true else
-                   case lookup a b (!memo) of SOME value => value
-                   | NONE =>
-                     let val result = if G.type_id graph a<>G.type_id graph b
-                           then false else case (G.view graph a,G.view graph b) of
-                             (G.Application _,G.Application _) =>
-                               let val (f,x) = G.closure_application_children
-                                     graph scope left
-                                   val (g,y) = G.closure_application_children
-                                     graph scope right
-                               in compare f g andalso compare x y end
-                           | (G.Application _,_) => false
-                           | (_,G.Application _) => false
-                           | _ => SmtReplayOwnedAlpha.same_inside work
-                               {caller=scope,traversal=scope,
-                                left=comparison_child left,
-                                right=comparison_child right}
-                         val _ = observe ()
-                         val _ = memo := (a,b,result):: !memo
-                     in result end
-                 end
-               val result = compare (#child l) (#child r)
-               val _ = List.app (fn child =>
-                 (observe ();ignore (G.closure_child_node graph scope child)))
-                 (!paths)
+               val result = same_tree observe graph scope paths
+                 (fn left => fn right =>
+                   SmtReplayOwnedAlpha.same_inside work {caller=scope,
+                     traversal=scope,left=comparison_child left,
+                     right=comparison_child right}) (#child l) (#child r)
                val _ = ignore (describe owner second)
            in result end)
     end
@@ -1434,26 +1446,13 @@ struct
        charged IntInf work; it is not projected onto a finite sentinel. *)
     fun candidates(owner as Owner{graph,work,net,heads,...})focus=
       let val d=describe owner focus
-          fun head observe child=
-            let val _=observe()
-                val node=G.closure_child_node graph(#scope d)child
-            in case G.view graph node of G.Application _=>
-                 head observe(#1(G.closure_application_children
-                   graph(#scope d)child))
-              | G.Constant id=>
-                  let val{Thy,Name}=KernelSig.name_of_id id
-                  in SOME(Thy,Name)end
-              | _=>NONE
-            end
-      in action owner focus(fn observe=>case head observe(#child d)of
-          NONE=>[]
-        | SOME name=>if not(List.exists(fn key=>key=name)heads)then []else
-            let val data=metric owner focus
-                val _=W.spend_policy work(#raw data)
-                val answer=Ho_Net.lookup
-                  (G.representative graph(#node d))net
-                val _=observe()
-            in answer end)
+      in candidates_with graph(action owner focus)d heads(fn observe=>
+          let val data=metric owner focus
+              val _=W.spend_policy work(#raw data)
+              val answer=Ho_Net.lookup
+                (G.representative graph(#node d))net
+              val _=observe()
+          in answer end)
       end
     (* Native equality is reached only after both actual role envelopes
        and repeated annotation incidences have passed the finite contract. *)
@@ -1471,47 +1470,15 @@ struct
            in observe();ignore(describe owner second);answer end)
         else
           let val scope= #scope left
-              val memo=ref([]:(G.node*G.node*bool)list)
-              val held=ref([]:G.closure_child list)
-              fun lookup a b []=NONE
-                | lookup a b((x,y,value)::rest)=
-                    (observe();if a=x andalso b=y then SOME value
-                     else lookup a b rest)
-              fun compare l r=
-                let val _=observe()
-                    val a=G.closure_child_node graph scope l
-                    val b=G.closure_child_node graph scope r
-                    val _=held:=l::r:: !held
-                in if a=b then true else case lookup a b(!memo)of
-                    SOME answer=>answer
-                  | NONE=>
-                    let val answer=if G.type_id graph a<>
-                          G.type_id graph b then false else
-                          case(G.view graph a,G.view graph b)of
-                            (G.Application _,G.Application _)=>
-                              let val(f,x)=G.closure_application_children
-                                    graph scope l
-                                  val(g,y)=G.closure_application_children
-                                    graph scope r
-                              in compare f g andalso compare x y end
-                          | (G.Application _,_)=>false
-                          | (_,G.Application _)=>false
-                          | _=>
-                              SmtReplayOwnedAlpha.same_inside_with_policy
-                                work {caller=scope,traversal=scope,
-                                  left=l,right=r,
-                                  native_contract=native_contract,
-                                  profiles=profiles}
-                        val _=observe()
-                        val _=memo:=(a,b,answer):: !memo
-                    in answer end
-                end
-              val answer=compare(#child left)(#child right)
-              val _=List.app(fn child=>
-                (observe();ignore(G.closure_child_node
-                  graph scope child)))(!held)
+              val result=same_tree observe graph scope
+                (ref([]:G.closure_child list))
+                (fn l=>fn r=>
+                  SmtReplayOwnedAlpha.same_inside_with_policy
+                    work {caller=scope,traversal=scope,left=l,right=r,
+                      native_contract=native_contract,profiles=profiles})
+                (#child left)(#child right)
               val _=ignore(describe owner second)
-          in answer end)
+          in result end)
       end
   end
 
