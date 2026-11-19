@@ -31,7 +31,8 @@ struct
 
   (* ---- Collector pieces shared by both owners. A kit is the owner's
      retirement check and its raw Work charge, as for normalize_with;
-     spend1 derives the one-unit charge (check, charge, check) once. The
+     spend (check, charge, check) and its one-unit form spend1 are
+     derived from it once. The
      walkers, select_with (Source/auxiliary selection), finish_with and
      fixed_point are shared. Left to each owner are the operations they
      are instantiated with: the atom walk, the Type walk, the stock
@@ -39,7 +40,8 @@ struct
      finish preparation and the owner's receipt part, plus the collect
      preamble and the result lift. ---- *)
   type kit = {active : unit -> unit,charge : IntInf.int -> unit}
-  fun spend1 ({active,charge} : kit) () = (active ();charge 1;active ())
+  fun spend ({active,charge} : kit) n = (active ();charge n;active ())
+  fun spend1 k () = spend k 1
   fun guarded_by ({active,...} : kit) action =
     (active ();let val value = action () in active ();value end)
   fun terms_of (k : kit) th = (spend1 k ();Thm.concl th :: Thm.hyp th)
@@ -372,6 +374,9 @@ struct
       val _ = active owner
       val _ = if !used then raise ERR "collect" "collector already consumed"
         else used := true
+      (* Kept as an int spend, not the shared kit one: the hot atoms loop
+         then avoids an IntInf conversion per charge. Same order of checks
+         and charges as spend k. *)
       fun spend n = (active owner;W.spend work n;active owner)
       val k = {active = fn () => active owner,
                charge = fn n => W.spend work (IntInf.toInt n)}
@@ -772,9 +777,9 @@ struct
       val _ = active owner
       val _ = if !used then raise ERR "collect" "collector already consumed"
         else used := true
-      fun spend n = (active owner;W.spend_policy work n;active owner)
       val k = {active = fn () => active owner,
                charge = fn n => W.spend_policy work n}
+      val spend = spend k
       fun guarded action = guarded_by k action
       val empty_terms = empty_terms k
       val empty_thms = empty_thms k
