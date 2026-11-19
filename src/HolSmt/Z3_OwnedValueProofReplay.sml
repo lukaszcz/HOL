@@ -55,6 +55,14 @@ struct
   end
   structure Engine=SmtReplayValueFinalFn(Input)
   open Engine
+  type preparation_function =
+    SmtReplayInvocationWork.portfolio ->
+    SmtLib_GraphPreprocess.graph_query ->
+    Z3_GraphValueProofParser.proof SmtLib_GraphValueProof.packet ->
+    {assertions:SmtLib_GraphParserValue.value list,
+     native_contract:SmtReplayNativeContract.contract,
+     profiles:SmtReplayGraph.policy_opaque_profile list,
+     check_type:Type.hol_type -> unit} -> preparation
   fun prepare_with_policy expected query packet options=
     Engine.prepare Input.Recorded expected query packet options
   fun prepare_with_specialization_with_policy expected query packet options=
@@ -79,6 +87,14 @@ struct
       (structure Input=Input
        structure Realization=SmtReplaySparseValueRealization)
     open Engine
+    type preparation_function =
+      SmtReplayInvocationWork.portfolio ->
+      SmtLib_GraphPreprocess.graph_query ->
+      Z3_GraphValueProofParser.proof SmtLib_GraphValueProof.packet ->
+      {assertions:SmtLib_GraphParserValue.value list,
+       native_contract:SmtReplayNativeContract.contract,
+       profiles:SmtReplayGraph.policy_opaque_profile list,
+       check_type:Type.hol_type -> unit} -> preparation
     fun prepare_with_policy expected query packet options=
       Engine.prepare Input.Recorded expected query packet options
     fun prepare_with_specialization_with_policy expected query packet options=
