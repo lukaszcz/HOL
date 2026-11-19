@@ -7156,12 +7156,22 @@ local
         end
       val oriented = acyclic equalities
       val reversed = acyclic (List.map Thm.SYM equalities)
+      (* The equations left to right, each cyclic one right to left. *)
+      val cyclic = List.filter (fn theorem => not (List.exists
+          (fn kept => Portable.pointer_eq (kept, theorem)) oriented))
+        equalities
+      val mixed =
+        if List.null cyclic then []
+        else [acyclic (oriented @ List.map Thm.SYM cyclic)]
+      fun first theorems [] = attempt theorems
+        | first theorems (next :: rest) =
+            attempt theorems
+            handle Feedback.HOL_ERR holerr =>
+              if SmtResource.is_resource_gate holerr then
+                raise Feedback.HOL_ERR holerr
+              else first next rest
     in
-      attempt oriented
-      handle Feedback.HOL_ERR holerr =>
-        if SmtResource.is_resource_gate holerr then
-          raise Feedback.HOL_ERR holerr
-        else attempt reversed
+      first oriented (mixed @ [reversed])
     end
 
     fun z3_rewrite (state, t) =
