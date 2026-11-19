@@ -24,24 +24,24 @@ struct
     | fixed BagForall = HolSmtTheory.BAG_FORALL_TO_INT
     | fixed BagExists = HolSmtTheory.BAG_EXISTS_TO_INT
 
-  (* Type-tree walker shared by the int, policy and native preparers.
-     Each caller supplies its own tick, plus and bounded, and the two
-     kernel inspections already wrapped in its own guarded call, so
-     every charge, guard and refusal stays that caller's. *)
+  (* Type-tree weight walk used by prepare_with.  The caller's charging
+     (tick), saturating plus, template bound, and the two kernel
+     inspections wrapped in its guarded call are passed in, so every
+     charge and refusal is that of the entry being prepared. *)
   fun type_weight_with {tick,plus,bounded,is_vartype,type_args} ty =
-      let fun walk pending n =
-            (tick ();case pending of [] => n | spine::more =>
-              (tick ();case spine of [] => walk more n
-               | current::rest =>
-                 let val n = plus n 1 val _ = bounded "law Type tree" n
-                     val _ = tick ()
-                 in if is_vartype current then
-                      (tick ();walk (rest::more) n)
-                    else let val args = type_args current
-                      val _ = tick () val _ = tick ()
-                    in walk (args::rest::more) n end end))
-          val _ = tick () val _ = tick ()
-      in walk [[ty]] 0 end
+    let fun walk pending n =
+          (tick ();case pending of [] => n | spine::more =>
+            (tick ();case spine of [] => walk more n
+             | current::rest =>
+               let val n = plus n 1 val _ = bounded "law Type tree" n
+                   val _ = tick ()
+               in if is_vartype current then
+                    (tick ();walk (rest::more) n)
+                  else let val args = type_args current
+                    val _ = tick () val _ = tick ()
+                  in walk (args::rest::more) n end end))
+        val _ = tick () val _ = tick ()
+    in walk [[ty]] 0 end
 
   (* The operations in which the int, policy and native stock-law
      preparers differ: Work charging, the budget and cap comparisons, the

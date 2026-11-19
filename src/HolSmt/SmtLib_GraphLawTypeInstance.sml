@@ -287,8 +287,7 @@ struct
     in {theta = theta,expected = expected,output_types = output_types} end
 
   fun prepare_internal (p as Producer
-      {graph,scope,limit,variables,annotations,bytes,raw,binder,used,...})
-      args =
+      {limit,variables,annotations,bytes,raw,binder,used,...}) args =
     let val {theta,expected,output_types} = prepare_walk
           {name = "prepare",active = fn () => active p,spend = spend p,
            remaining = fn () => limit - !used,check = policy p,
@@ -375,8 +374,8 @@ struct
       val theorem = Thm.INST_TYPE theta (P.closed_original original)
       val _ = active ()
       (* Retain the whole genuine source bridge, including distinct raw
-         occurrences of an alpha-shared binder. Do not discard child bridges.
-           *)
+         occurrences of an alpha-shared binder. Do not discard child
+         bridges. *)
       val imported = import (Thm.concl theorem)
       val _ = active ()
       val opened = record_opened (#node imported)
