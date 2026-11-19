@@ -6025,19 +6025,75 @@ local
   fun replay_bv_poly_norm_eq args =
     tautology "bv_poly_norm_eq" (expect_one_arg "bv_poly_norm_eq" args)
 
-  fun replay_not_implies_elim2 prems =
-    let
-      val premise = expect_one_premise "not_implies_elim2" prems
-      val implication = boolSyntax.dest_neg (Thm.concl premise)
-      val (_, conclusion) = boolSyntax.dest_imp implication
-    in tautological_consequence premise (boolSyntax.mk_neg conclusion) end
+  fun mk_disj_terms [tm] = tm
+    | mk_disj_terms (tm :: rest) = boolSyntax.mk_disj (tm, mk_disj_terms rest)
+    | mk_disj_terms [] = boolSyntax.F
 
-  fun replay_not_implies_elim1 prems =
-    let
-      val premise = expect_one_premise "not_implies_elim1" prems
-      val implication = boolSyntax.dest_neg (Thm.concl premise)
-      val (antecedent, _) = boolSyntax.dest_imp implication
-    in tautological_consequence premise antecedent end
+  (* The clause a clausal-elimination rule derives, from the descriptor
+     CPC_SharedReplayPlan gives its family: operands read from the premise
+     (below a negation when the rule strips one), then the descriptor's
+     literals as a disjunction. *)
+  local
+    structure Plan = CPC_SharedReplayPlan
+    fun descriptor family =
+      case Plan.clausal_descriptor family of
+        SOME described => described
+      | NONE => raise ERR "clausal_elimination"
+          "not a clausal-elimination rule"
+  in
+    fun clausal_operands family premise_term =
+      let
+        val {reader, strip_negation, ...} = descriptor family
+        val body = if strip_negation then boolSyntax.dest_neg premise_term
+          else premise_term
+      in
+        case reader of
+          Plan.ClausalImplication =>
+            let val (antecedent, consequent) = boolSyntax.dest_imp body
+            in [antecedent, consequent] end
+        | Plan.ClausalEquivalence =>
+            let val (left, right) = boolSyntax.dest_eq body
+            in [left, right] end
+        | Plan.ClausalConditional =>
+            let val (condition, then_tm, else_tm) = boolSyntax.dest_cond body
+            in [condition, then_tm, else_tm] end
+      end
+
+    fun clausal_clause family operands =
+      mk_disj_terms (Plan.clausal_literals (descriptor family)
+        {positive = fn tm => tm, negative = boolSyntax.mk_neg} operands)
+
+    (* A premise canonical replay reduced to T is kept by the conditional
+       rules, whose descriptors say so; operands that do not have the
+       expected shape are reported with the premise. *)
+    fun replay_clausal_elimination family name prems =
+      let
+        val {reduced_true, strip_negation, ...} = descriptor family
+        val premise = expect_one_premise name prems
+        val premise_term = Thm.concl premise
+      in
+        if reduced_true andalso Term.aconv premise_term boolSyntax.T
+        then premise
+        else
+          let
+            val operands = clausal_operands family premise_term
+              handle error as Feedback.HOL_ERR _ =>
+                if reduced_true then raise ERR name
+                  ("premise is not a " ^
+                   (if strip_negation then "negated " else "") ^
+                   "conditional: " ^ Library.term_to_string premise_term)
+                else raise error
+          in
+            tautological_consequence premise (clausal_clause family operands)
+          end
+      end
+  end
+
+  fun replay_not_implies_elim1 prems = replay_clausal_elimination
+    CPC_SharedReplayPlan.SimpleNotImpliesElim1 "not_implies_elim1" prems
+
+  fun replay_not_implies_elim2 prems = replay_clausal_elimination
+    CPC_SharedReplayPlan.SimpleNotImpliesElim2 "not_implies_elim2" prems
 
   fun replay_implies_elim prems =
     let
@@ -6085,10 +6141,6 @@ local
               (derive (Thm.ASSUME right))
           end
     in derive premise end
-
-  fun mk_disj_terms [tm] = tm
-    | mk_disj_terms (tm :: rest) = boolSyntax.mk_disj (tm, mk_disj_terms rest)
-    | mk_disj_terms [] = boolSyntax.F
 
   (* The laws are stated over p and q; replay instantiates both at once. *)
   val equivalence_clause_laws =
@@ -7292,25 +7344,20 @@ local
 
   fun replay_cnf name args = #1 (replay_cnf_with_literals name args)
 
-  fun replay_not_equiv_elim which prems =
-    let
-      val premise = expect_one_premise which prems
-      val (left, right) = boolSyntax.dest_eq
-        (boolSyntax.dest_neg (Thm.concl premise))
-      val conclusion =
-        if which = "not_equiv_elim1" then mk_disj_terms [left, right]
-        else mk_disj_terms [boolSyntax.mk_neg left, boolSyntax.mk_neg right]
-    in tautological_consequence premise conclusion end
+  fun replay_not_equiv_elim1 prems = replay_clausal_elimination
+    CPC_SharedReplayPlan.SimpleNotEquivElim1 "not_equiv_elim1" prems
 
-  fun replay_equiv_elim which conclusion prems =
+  fun replay_not_equiv_elim2 prems = replay_clausal_elimination
+    CPC_SharedReplayPlan.SimpleNotEquivElim2 "not_equiv_elim2" prems
+
+  fun replay_equiv_elim family which conclusion prems =
     let
       val premise = expect_one_premise which prems
       fun derived () =
         let
-          val (left, right) = boolSyntax.dest_eq (Thm.concl premise)
-          val target = if which = "equiv_elim1" then
-              boolSyntax.mk_disj (boolSyntax.mk_neg left, right)
-            else boolSyntax.mk_disj (left, boolSyntax.mk_neg right)
+          val operands = clausal_operands family (Thm.concl premise)
+          val (left, right) = (List.nth (operands, 0), List.nth (operands, 1))
+          val target = clausal_clause family operands
           val denied = Thm.ASSUME (boolSyntax.mk_neg target)
           fun contradict clause = Thm.MP (Thm.NOT_ELIM denied) clause
           val contradiction =
@@ -7346,10 +7393,12 @@ local
     end
 
   fun replay_equiv_elim2 conclusion prems =
-    replay_equiv_elim "equiv_elim2" conclusion prems
+    replay_equiv_elim CPC_SharedReplayPlan.SimpleEquivElim2 "equiv_elim2"
+      conclusion prems
 
   fun replay_equiv_elim1 conclusion prems =
-    replay_equiv_elim "equiv_elim1" conclusion prems
+    replay_equiv_elim CPC_SharedReplayPlan.SimpleEquivElim1 "equiv_elim1"
+      conclusion prems
 
   fun arith_prove target =
     profile "CPC(rung:arith/cases)" Library.arith_prove_with_cases target
@@ -11398,62 +11447,19 @@ local
           bossLib.ASM_SIMP_TAC boolSimps.bool_ss []))
     end
 
-  fun replay_ite_elim1 prems =
-    let
-      val premise = expect_one_premise "ite_elim1" prems
-    in
-      if Term.aconv (Thm.concl premise) boolSyntax.T then premise
-      else
-        let
-          val (condition, then_tm, _) =
-            boolSyntax.dest_cond (Thm.concl premise)
-            handle Feedback.HOL_ERR _ => raise ERR "ite_elim1"
-              ("premise is not a conditional: " ^
-               Library.term_to_string (Thm.concl premise))
-        in tautological_consequence premise
-          (mk_disj_terms [boolSyntax.mk_neg condition, then_tm]) end
-    end
+  fun replay_ite_elim1 prems = replay_clausal_elimination
+    CPC_SharedReplayPlan.SimpleIteElim1 "ite_elim1" prems
 
-  fun replay_ite_elim2 prems =
-    let
-      val premise = expect_one_premise "ite_elim2" prems
-    in
-      if Term.aconv (Thm.concl premise) boolSyntax.T then premise
-      else
-        let
-          val (condition, _, else_tm) =
-            boolSyntax.dest_cond (Thm.concl premise)
-            handle Feedback.HOL_ERR _ => raise ERR "ite_elim2"
-              ("premise is not a conditional: " ^
-               Library.term_to_string (Thm.concl premise))
-        in tautological_consequence premise
-          (mk_disj_terms [condition, else_tm]) end
-    end
+  fun replay_ite_elim2 prems = replay_clausal_elimination
+    CPC_SharedReplayPlan.SimpleIteElim2 "ite_elim2" prems
 
   (* cvc5's NOT_ITE_ELIM1/2: from ~(ite C F1 F2), ~C \/ ~F1 and C \/ ~F2.
      A premise canonical replay reduced to T is kept, as for ite_elim. *)
-  fun replay_not_ite_elim name pick prems =
-    let
-      val premise = expect_one_premise name prems
-    in
-      if Term.aconv (Thm.concl premise) boolSyntax.T then premise
-      else
-        let
-          val (condition, then_tm, else_tm) =
-            boolSyntax.dest_cond (boolSyntax.dest_neg (Thm.concl premise))
-            handle Feedback.HOL_ERR _ => raise ERR name
-              ("premise is not a negated conditional: " ^
-               Library.term_to_string (Thm.concl premise))
-        in tautological_consequence premise
-          (mk_disj_terms (pick (condition, then_tm, else_tm))) end
-    end
+  fun replay_not_ite_elim1 prems = replay_clausal_elimination
+    CPC_SharedReplayPlan.SimpleNotIteElim1 "not_ite_elim1" prems
 
-  val replay_not_ite_elim1 = replay_not_ite_elim "not_ite_elim1"
-    (fn (condition, then_tm, _) =>
-       [boolSyntax.mk_neg condition, boolSyntax.mk_neg then_tm])
-
-  val replay_not_ite_elim2 = replay_not_ite_elim "not_ite_elim2"
-    (fn (condition, _, else_tm) => [condition, boolSyntax.mk_neg else_tm])
+  fun replay_not_ite_elim2 prems = replay_clausal_elimination
+    CPC_SharedReplayPlan.SimpleNotIteElim2 "not_ite_elim2" prems
 
   fun replay_scope state prems =
     let
@@ -21111,9 +21117,9 @@ local
                in clause_result "CPC CNF clause has explicit occurrences"
                  (SmtClause.from_literals literals theorem) end
            | HNotEquivElim1 =>
-               opaque (replay_not_equiv_elim "not_equiv_elim1" prems)
+               opaque (replay_not_equiv_elim1 prems)
            | HNotEquivElim2 =>
-               opaque (replay_not_equiv_elim "not_equiv_elim2" prems)
+               opaque (replay_not_equiv_elim2 prems)
            | HEquivElim2 => opaque ( replay_equiv_elim2 conclusion prems)
            | HEquivElim1 => opaque ( replay_equiv_elim1 conclusion prems)
            | HArithRule =>
