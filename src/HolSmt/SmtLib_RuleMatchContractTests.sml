@@ -25,15 +25,23 @@ struct
 
   fun require message yes = if yes then () else testutils.die message
   fun test label action = (testutils.tprint label;action ();testutils.OK ())
-  fun refusal action = (ignore (action ());NONE)
-    handle Feedback.HOL_ERR detail => SOME (Feedback.message_of detail)
-  fun refuses action = Option.isSome (refusal action)
+  fun refuses action = (ignore (action ());false)
+    handle Feedback.HOL_ERR _ => true
 
   (* One complete matcher run: how it ended and what it charged. *)
   datatype outcome = Done of IntInf.int | Refused of string
   fun done (Done _) = true | done _ = false
-  fun refused_with text (Refused message) = message = text
-    | refused_with _ _ = false
+  fun refused_by text (Refused message) = message = text
+    | refused_by _ _ = false
+  fun charged_equal total (Done n) = n = total
+    | charged_equal _ _ = false
+  val max_int = IntInf.fromInt (valOf Int.maxInt)
+  (* A sum of `k + 1` distinct variables of the given type: a large
+     argument for a rule whose pattern variable has that type. *)
+  fun sum make ty prefix k =
+    List.foldl (fn (i,acc) => make (acc,
+      Term.mk_var (prefix ^ Int.toString i,ty)))
+      (Term.mk_var (prefix ^ "0",ty)) (List.tabulate (k,fn i => i+1))
   fun attempt (run : unit -> IntInf.int) =
     Done (run ()) handle Feedback.HOL_ERR detail =>
       Refused (Feedback.message_of detail)
@@ -50,17 +58,18 @@ struct
   local
     val cap = 50000
     val ample = 16000000
-    fun setup budget =
+    fun setup_with output template budget =
       let val graph = G.new () val scope = G.root_scope graph
           val sources = S.new graph scope cap
             {goal = boolSyntax.T,assumptions = []}
           val work = W.begin graph scope sources
-            {limits = {input_limit = 5,output_limit = cap,
-               template_limit = cap},work_limit = budget}
+            {limits = {input_limit = 5,output_limit = output,
+               template_limit = template},work_limit = budget}
           val catalogue = C.execute (C.prepare
             (C.begin work {check_type = fn _ => ()}))
           val owner = M.begin work catalogue
       in (graph,scope,work,owner,M.compile owner) end
+    fun setup budget = setup_with cap cap budget
     fun schema schemas original =
       valOf (List.find (fn s => Portable.pointer_eq (M.original s,original))
         schemas)
@@ -72,17 +81,25 @@ struct
     fun prepare (graph,scope,_,owner,schemas) term =
       M.prepare owner {schema = schema schemas HolSmtTheory.INT_NUM_EDIV,
         caller = scope,traversal = scope,target = query graph scope term}
+    (* The same division whose operands are sums of 9 and 7 variables. *)
+    val large_division =
+      let val n = sum numSyntax.mk_plus numSyntax.num "int_ctx_n" 8
+          val m = sum numSyntax.mk_plus numSyntax.num "int_ctx_m" 6
+      in ``integer$int_of_num ((^n) DIV (^m))`` end
     fun matched fixture term = case prepare fixture term of
         M.Matched value => value
       | _ => raise Fail "fixed integer division did not match"
-    fun run budget () =
-      let val fixture as (_,_,work,_,_) = setup budget
-          val instance = M.instantiate (matched fixture division)
+    fun run_on term output template budget () =
+      let val fixture as (_,_,work,_,_) = setup_with output template budget
+          val instance = M.instantiate (matched fixture term)
             {check_type = fn _ => ()}
           val fact = M.instance_fact_for work instance
       in require "instance fact lost its theorem"
            (null (Thm.hyp (P.closed_original fact)));
          IntInf.fromInt (#charged (W.audit work)) end
+    fun run budget = run_on division cap cap budget
+    fun small_fits output template = done (attempt
+      (run_on division output template ample))
   in
     fun int_tests () =
       let
@@ -106,8 +123,8 @@ struct
                not (#retired (W.audit work))) end)
         val _ = test "Int matcher: foreign schema retires only its owner"
           (fn () =>
-            let val a as (_,_,wa,_,schemas_a) = setup ample
-                val b as (graph,scope,wb,owner,_) = setup ample
+            let val (_,_,wa,_,schemas_a) = setup ample
+                val (graph,scope,wb,owner,_) = setup ample
                 val foreign = schema schemas_a HolSmtTheory.INT_NUM_EDIV
                 val stopped = refuses (fn () => M.prepare owner
                   {schema = foreign,caller = scope,traversal = scope,
@@ -133,9 +150,39 @@ struct
                 val exact = attempt (run (IntInf.toInt total))
                 val short = attempt (run (IntInf.toInt total - 1))
             in require "budget equal to the charge refused"
-                 (case exact of Done n => n = total | _ => false);
-               require "budget below the charge was accepted"
-                 (not (done short)) end)
+                 (charged_equal total exact);
+               require "budget below the charge did not exhaust the Work"
+                 (refused_by "original cumulative work allowance exhausted"
+                    short) end)
+        val _ = test "Int matcher: template limit refuses a large instance"
+          (fn () =>
+            let val template = least cap (fn t => small_fits cap t)
+                val tight = attempt (run_on large_division cap template ample)
+                val tight_small = attempt (run_on division cap template ample)
+                val roomy = attempt (run_on large_division cap cap ample)
+                val below = attempt (run_on division cap (template - 1)
+                  ample)
+            in require "no template limit fits the small instance"
+                 (template > 0 andalso done tight_small);
+               require "template limit below the small instance fits it"
+                 (not (done below));
+               require "large instance passed the tight template limit"
+                 (refused_by "instance exceeds closed-recording template"
+                    tight);
+               require "large instance refused under the ample limits"
+                 (done roomy) end)
+        val _ = test "Int matcher: output limit refuses a large instance"
+          (fn () =>
+            let val output = least cap (fn o' => small_fits o' cap)
+                val tight = attempt (run_on large_division output cap ample)
+                val below = attempt (run_on division (output - 1) cap ample)
+            in require "no output limit fits the small instance"
+                 (output > 0 andalso small_fits output cap);
+               require "output limit below the small instance fits it"
+                 (refused_by "prospective instance exceeds quota" below);
+               require "large instance passed the tight output limit"
+                 (refused_by "prospective instance exceeds quota" tight)
+            end)
       in () end
   end
 
@@ -145,22 +192,26 @@ struct
     val unlimited : RP.semantic_policy =
       {input_limit = RP.Uncapped,output_limit = RP.Uncapped,
        template_limit = RP.Uncapped}
-    fun request allowance : NC.limits =
-      {semantic_limits = {input_limit = 100000,output_limit = 100000,
-         template_limit = 100000},
+    (* The native caller contract: its own output and template caps and
+       its matching allowance; `meta` is the Work's semantic policy. *)
+    fun request output template allowance : NC.limits =
+      {semantic_limits = {input_limit = 100000,output_limit = output,
+         template_limit = template},
        import_limit = 100000,type_work_limit = allowance}
-    fun setup budget allowance =
+    fun setup_with meta output template budget allowance =
       let val graph = G.new () val scope = G.root_scope graph
           val sources = S.new_with_policy graph scope RP.Uncapped
             {goal = boolSyntax.T,assumptions = []}
           val work = W.begin_with_policy graph scope sources
-            {limits = unlimited,work_limit = budget}
-          val native = NC.capture work (request allowance)
+            {limits = meta,work_limit = budget}
+          val native = NC.capture work (request output template allowance)
           val catalogue = C.execute_with_policy (C.prepare_with_policy
             (C.begin_with_policy work
               {native_contract = native,check_type = fn _ => ()}))
           val owner = M.begin_with_policy work catalogue
       in (graph,scope,work,owner,M.compile_with_policy owner) end
+    fun setup budget allowance =
+      setup_with unlimited 100000 100000 budget allowance
     fun schema schemas original =
       valOf (List.find (fn s =>
         Portable.pointer_eq (M.original_with_policy s,original)) schemas)
@@ -178,14 +229,27 @@ struct
     fun matched fixture term = case prepare fixture term of
         M.PolicyMatched value => value
       | _ => raise Fail "fixed guarded cancellation did not match"
-    fun run budget allowance () =
-      let val fixture as (_,_,work,_,_) = setup budget allowance
+    (* The same cancellation whose integer is a sum of `k + 1` variables. *)
+    fun large_guarded k =
+      let val i = sum intSyntax.mk_plus intSyntax.int_ty "pol_ctx_i" k
+      in ``integer$int_of_num (Num (^i))`` end
+    fun run_on term meta output template budget allowance () =
+      let val fixture as (_,_,work,_,_) =
+            setup_with meta output template budget allowance
           val instance = M.instantiate_with_policy
-            (matched fixture guarded) {check_type = fn _ => ()}
+            (matched fixture term) {check_type = fn _ => ()}
           val fact = M.instance_fact_with_policy_for work instance
       in require "policy instance fact lost its theorem"
            (null (Thm.hyp (P.closed_original fact)));
          #charged (W.audit_policy work) end
+    fun run budget allowance =
+      run_on guarded unlimited 100000 100000 budget allowance
+    fun at_most_output n : RP.semantic_policy =
+      {input_limit = RP.Uncapped,output_limit = RP.AtMost n,
+       template_limit = RP.Uncapped}
+    fun at_most_template n : RP.semantic_policy =
+      {input_limit = RP.Uncapped,output_limit = RP.Uncapped,
+       template_limit = RP.AtMost n}
     val ample = 20000000
     val remaining = RP.Uncapped
   in
@@ -214,8 +278,8 @@ struct
                not (#retired (W.audit_policy work))) end)
         val _ = test "Policy matcher: foreign schema retires only its owner"
           (fn () =>
-            let val a as (_,_,wa,_,schemas_a) = setup remaining ample
-                val b as (graph,scope,wb,owner,_) = setup remaining ample
+            let val (_,_,wa,_,schemas_a) = setup remaining ample
+                val (graph,scope,wb,owner,_) = setup remaining ample
                 val foreign =
                   schema schemas_a HolSmtTheory.NUM_TO_INT_GUARDED
                 val stopped = refuses (fn () => M.prepare_with_policy owner
@@ -242,10 +306,22 @@ struct
                 val exact = attempt (run (RP.AtMost total) ample)
                 val short = attempt (run (RP.AtMost (total - 1)) ample)
             in require "budget equal to the charge refused"
-                 (case exact of Done n => n = total | _ => false);
-               require "budget below the charge was accepted"
-                 (not (done short)) end)
-        val _ = test "Policy matcher: native allowance boundary is exact"
+                 (charged_equal total exact);
+               require "budget below the charge was not refused by the Work"
+                 (refused_by "policy_instance portfolio exceeds \
+                   \original_with_policy Work" short orelse
+                  refused_by "original cumulative work allowance exhausted"
+                    short) end)
+        val _ = test "Policy matcher: Work budget above Int.maxInt is exact"
+          (fn () =>
+            let val total = case attempt (run remaining ample) of Done n => n
+                  | Refused m => raise Fail ("ample run refused: " ^ m)
+                val above = attempt (run (RP.AtMost (max_int + total)) ample)
+                val far = attempt (run (RP.AtMost (IntInf.pow (2,70))) ample)
+            in require "budget above Int.maxInt changed the charge"
+                 (charged_equal total above andalso charged_equal total far)
+            end)
+        val _ = test "Policy catalogue: native allowance boundary is exact"
           (fn () =>
             let val total = case attempt (run remaining ample) of Done n => n
                   | Refused m => raise Fail ("ample run refused: " ^ m)
@@ -257,10 +333,75 @@ struct
                 val below = attempt (run remaining (least_allowance - 1))
             in require "tightest native allowance was not found"
                  (least_allowance > 0 andalso done at);
-               require "native allowance one below the boundary was accepted"
-                 (not (done below));
+               require "one below the boundary was not refused"
+                 (refused_by "fixed portfolio exceeds native or Work \
+                   \allowance" below);
                require "tightest allowance changed the Work charge"
-                 (case at of Done n => n = total | _ => false) end)
+                 (charged_equal total at) end)
+        val _ = test "Policy matcher: own ticks exhaust the native allowance"
+          (fn () =>
+            let val tightest = least 100000 (fn a => done (attempt
+                  (run remaining a)))
+                val large = run_on (large_guarded 600) unlimited 100000
+                  100000 remaining
+                val small = attempt (run remaining tightest)
+                val tight = attempt (large tightest)
+                val roomy = attempt (large 100000)
+            in require "the small instance does not fit the tightest allowance"
+                 (tightest > 0 andalso done small);
+               require "large instance was not stopped by the matcher's ticks"
+                 (refused_by "native matching allowance exhausted" tight);
+               require "a larger allowance still stopped the matcher's ticks"
+                 (not (refused_by "native matching allowance exhausted"
+                    roomy)) end)
+        val _ = test "Policy matcher: template caps refuse a large instance"
+          (fn () =>
+            let val large = large_guarded 20
+                fun fits meta template = done (attempt
+                  (run_on guarded meta 100000 template remaining ample))
+                fun large_run meta template =
+                  attempt (run_on large meta 100000 template remaining ample)
+                val native = least 100000 (fn t => fits unlimited t)
+                val semantic = least 100000
+                  (fn t => fits (at_most_template (IntInf.fromInt t)) 100000)
+                val by_native = large_run unlimited native
+                val by_policy = large_run
+                  (at_most_template (IntInf.fromInt semantic)) 100000
+                val roomy = large_run unlimited 100000
+            in require "no native template cap fits the small instance"
+                 (native > 0 andalso fits unlimited native);
+               require "no semantic template cap fits the small instance"
+                 (semantic > 0 andalso fits
+                    (at_most_template (IntInf.fromInt semantic)) 100000);
+               require "large instance passed the tight native template cap"
+                 (refused_by "policy_instance exceeds closed-recording \
+                   \template" by_native);
+               require "large instance passed the tight semantic template cap"
+                 (refused_by "policy_instance exceeds closed-recording \
+                   \template" by_policy);
+               require "large instance refused under the ample caps"
+                 (done roomy) end)
+        val _ = test "Policy matcher: semantic output cap refuses a large one"
+          (fn () =>
+            let val large = large_guarded 20
+                fun fits n = done (attempt (run_on guarded
+                  (at_most_output (IntInf.fromInt n)) 100000 100000 remaining
+                  ample))
+                val output = least 100000 fits
+                val tight = attempt (run_on large
+                  (at_most_output (IntInf.fromInt output)) 100000 100000
+                  remaining ample)
+                val below = attempt (run_on guarded
+                  (at_most_output (IntInf.fromInt (output - 1))) 100000
+                  100000 remaining ample)
+            in require "no semantic output cap fits the small instance"
+                 (output > 0 andalso fits output);
+               require "semantic output cap below the small instance fits it"
+                 (refused_by "prospective policy_instance exceeds quota"
+                    below);
+               require "large instance passed the tight semantic output cap"
+                 (refused_by "prospective policy_instance exceeds quota"
+                    tight) end)
       in () end
   end
 
@@ -393,9 +534,10 @@ struct
                 val exact = attempt (run (IntInf.toInt total))
                 val short = attempt (run (IntInf.toInt total - 1))
             in require "budget equal to the charge refused"
-                 (case exact of Done n => n = total | _ => false);
-               require "budget below the charge was accepted"
-                 (not (done short)) end)
+                 (charged_equal total exact);
+               require "budget below the charge did not exhaust the Work"
+                 (refused_by "original cumulative work allowance exhausted"
+                    short) end)
       in () end
   end
 
