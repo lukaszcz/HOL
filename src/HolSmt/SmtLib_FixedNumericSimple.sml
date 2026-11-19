@@ -265,6 +265,175 @@ struct
                       args (aa,ba) | other => other) | other => other end
            | other => other)
     in compare 0 ([],[]) pair end
+  fun observed live operation =
+    (live ();let val value = operation () in live ();value end)
+  (* The audited projection of an opened selected source, shared by both
+     discover bodies: it pays the exact alpha-equality, primitive
+     projection and annotation Work through [spend], records the
+     projection guard through [add_backing], and returns the cached
+     Types, the source bridge theorem and the target root. *)
+  fun opened_projection graph scope {node,view,target,raw,inc,output,cap,
+      ceiling,spend,live,add_backing} =
+    let
+      val _ = (raw:IntInf.int,inc:IntInf.int)
+      val _ = if 3+2*raw<=IntInf.fromInt output andalso
+          3+2*inc<=IntInf.fromInt output andalso
+          3+2*raw<=IntInf.fromInt cap andalso
+          3+2*inc<=IntInf.fromInt cap then () else
+        raise ERR "discover" "alpha equality exceeds quota"
+      val types = ref ([] : Type.hol_type list)
+      fun inspect operation = observed live operation
+      fun step () = (live ();spend 1;live ())
+      fun weight ty : IntInf.int =
+        (step ();if Type.is_vartype ty then
+           (spend (IntInf.fromInt (String.size (Type.dest_vartype ty)));1)
+         else let val {Thy,Tyop,Args}=Type.dest_thy_type ty
+                  val _ = spend (IntInf.fromInt (String.size Thy)+
+                    IntInf.fromInt (String.size Tyop))
+              in List.foldl (fn (t,n) => n+weight t) 1 Args end)
+      (* Primitive projection provenance belongs to the exact
+         original opaque object, not a fake no-op profile. Its
+         future capture is planned from the genuine rich path.
+         Cached type incidences precede all raw Term getters. *)
+      val rich=inspect
+        (fn () => G.closure_root graph scope target)
+      fun cached_types child =
+        let val _ = step ()
+            val n=inspect (fn () =>
+              G.closure_child_node graph scope child)
+            val ty=inspect (fn () => G.type_of graph n)
+            val own=weight ty val _ = types := ty:: !types
+        in case G.view graph n of G.Application _ =>
+             let val (f,x)=inspect (fn () =>
+                   G.closure_application_children
+                     graph scope child)
+             in own+cached_types f+cached_types x end
+           | G.AdmittedBinder _ =>
+             let val held=inspect (fn () =>
+                   G.closure_child_binder graph scope child)
+                 val data=inspect (fn () =>
+                   G.binder_closure_data graph scope held)
+                 val bt=inspect (fn () =>
+                   G.type_of graph (#binder data))
+                 val bw=weight bt val _ = types := bt:: !types
+                 val body=inspect (fn () =>
+                   G.binder_closure_body graph scope held)
+             in own+bw+cached_types body end
+           | G.OpaqueRetained => raise ERR "discover"
+               "rich projection has no complete type portfolio"
+           | _ => own
+        end
+      val cached_ann=cached_types rich
+      val _ = if cached_ann<=ceiling then spend cached_ann
+        else raise ERR "discover"
+          "projected annotation portfolio exceeds original Work"
+      (* EXACT record_opened_type_projection spend grammar:
+         initial representative=1; App=3+operator;
+         Binder=6+body; Atom=5. collect pays one per actual
+         incoming incidence, skipping descendants on an ID hit. *)
+      fun path_visits child : IntInf.int =
+        let val _ = step ()
+            val n=inspect (fn () =>
+              G.closure_child_node graph scope child)
+        in case G.view graph n of G.Application _ =>
+             3+path_visits (#1 (inspect (fn () =>
+               G.closure_application_children graph scope child)))
+           | G.AdmittedBinder _ =>
+             6+path_visits (inspect (fn () =>
+               G.binder_closure_body graph scope
+                 (G.closure_child_binder graph scope child)))
+           | G.OpaqueRetained => raise ERR "discover"
+               "projection path cannot use an opaque rich node"
+           | _ => 5
+        end
+      val seen=ref ([] : G.node list)
+      fun collected child : IntInf.int =
+        let val _ = step ()
+            val n=inspect (fn () =>
+              G.closure_child_node graph scope child)
+            fun present [] = false
+              | present (held::rest) =
+                  (step ();n=held orelse present rest)
+        in if present (!seen) then 1 else
+          (seen := n:: !seen;
+           case G.view graph n of G.Application _ =>
+             let val (f,x)=inspect (fn () =>
+                   G.closure_application_children
+                     graph scope child)
+             in 1+collected f+collected x end
+           | G.AdmittedBinder _ =>
+             1+collected (inspect (fn () =>
+               G.binder_closure_body graph scope
+                 (G.closure_child_binder graph scope child)))
+           | _ => 1)
+        end
+      (* This scan is rooted at this exact opaque original, so
+         PartialFull's whole ready_root IS its rich annotation.
+         The second rich collect is one hit; old opaque is one. *)
+      val projection_visits=1+path_visits rich+collected rich+2
+      val _ = if projection_visits<=ceiling then spend projection_visits
+        else raise ERR "discover"
+          "primitive projection capture exceeds original Work"
+      val alpha=inspect (fn () => G.carrier_alpha_for
+        graph scope cap {original=node,source=view})
+      val projection=inspect (fn () =>
+        G.record_opened_type_projection graph scope
+          (IntInf.toInt projection_visits) alpha)
+      val actual_visits=inspect (fn () =>
+        G.opened_type_projection_visits graph scope projection)
+      val _ = if IntInf.fromInt actual_visits=projection_visits
+        then () else raise ERR "discover"
+          "actual primitive projection grammar changed"
+      fun projected () =
+        let val data=G.opaque_type_projection_data
+              graph scope projection 0
+        in if #node data=node then () else
+          raise ERR "discover" "projected original changed" end
+      val _ = projected ()
+      val _ = add_backing projected
+      fun measure term :
+          IntInf.int * IntInf.int * IntInf.int =
+        let val _ = step ()
+            val ty=inspect (fn () => Term.type_of term)
+            val ann=weight ty val _ = types := ty:: !types
+        in if Term.is_comb term then
+             let val (f,x)=inspect (fn () => Term.dest_comb term)
+                 val (a,b,c)=measure f val (e,h,j)=measure x
+             in (1+a+e,1+b+h,ann+c+j) end
+           else if Term.is_abs term then
+             let val (v,b)=inspect (fn () => Term.dest_abs term)
+                 val bt=inspect (fn () => Term.type_of v)
+                 val bw=weight bt val _ = types := bt:: !types
+                 val (a,c,e)=measure b
+             in (1+a,2+c,ann+bw+e) end
+           else (1,1,ann)
+        end
+      val proof= #bridge (view:G.source)
+      val (er,ei,ea)=measure (inspect (fn () => Thm.concl proof))
+      val term=inspect (fn () => G.representative graph target)
+      val (tr,ti,ta)=measure term
+      val (tr2,ti2,ta2)=measure term
+      val (eq_partial,_)=inspect
+        (fn () => Term.dest_comb (Thm.concl proof))
+      val (eq_head,_)=inspect (fn () => Term.dest_comb eq_partial)
+      val header_types=List.map (fn t => inspect
+        (fn () => Term.type_of t))
+        [Thm.concl proof,eq_partial,eq_head]
+      val header=List.foldl (fn (ty,n) => n+weight ty) 0
+        header_types
+      val rr=3+tr+tr2 val ri=3+ti+ti2
+      val ra=header+ta+ta2
+      val amount=er+ei+ea+rr+ri+ra
+      val _ = if er=3+2*raw andalso ei=3+2*inc andalso
+          tr=raw andalso ti=inc andalso tr=tr2 andalso
+          ti=ti2 andalso ta=ta2 andalso ea<=ceiling andalso
+          ra<=ceiling andalso amount<=ceiling then () else
+        raise ERR "discover" "alpha metadata/Work mismatch"
+      val _ = spend amount
+      val _ = types := header_types @ !types
+      val target_child=inspect
+        (fn () => G.closure_root graph scope target)
+    in {types=types,proof=proof,target_child=target_child} end
   datatype owner = Owner of
     {work:W.portfolio,graph:G.graph,root:G.scope,sources:S.sources,
      catalogue:K.catalogue,traversal:T.owner,matcher:M.owner,
@@ -675,170 +844,16 @@ struct
                     | NONE => raise ERR "discover" "missing opened profile"
                   val raw = count G.RawNodes
                   val inc = count G.BinderInclusiveNodes
-                  val _ = if 3+2*raw<=IntInf.fromInt output andalso
-                      3+2*inc<=IntInf.fromInt output andalso
-                      3+2*raw<=IntInf.fromInt cap andalso
-                      3+2*inc<=IntInf.fromInt cap then () else
-                    raise ERR "discover" "alpha equality exceeds quota"
-                  val types = ref ([] : Type.hol_type list)
                   fun live () =
                     (ignore (describe owner focus);ignore (data ());
                      G.validate_opened_view graph scope (#node d) view)
-                  fun inspect operation =
-                    (live ();let val value=operation () in live ();value end)
-                  fun step () = (live ();W.spend work 1;live ())
-                  fun weight ty : IntInf.int =
-                    (step ();if Type.is_vartype ty then
-                       (W.spend work (String.size (Type.dest_vartype ty));1)
-                     else let val {Thy,Tyop,Args}=Type.dest_thy_type ty
-                              val _ = W.spend work
-                                (String.size Thy+String.size Tyop)
-                          in List.foldl (fn (t,n) => n+weight t) 1 Args end)
-                  (* Primitive projection provenance belongs to the exact
-                     original opaque object, not a fake no-op profile. Its
-                     future capture is planned from the genuine rich path.
-                     Cached type incidences precede all raw Term getters. *)
-                  val rich=inspect
-                    (fn () => G.closure_root graph scope target)
-                  fun cached_types child =
-                    let val _ = step ()
-                        val n=inspect (fn () =>
-                          G.closure_child_node graph scope child)
-                        val ty=inspect (fn () => G.type_of graph n)
-                        val own=weight ty val _ = types := ty:: !types
-                    in case G.view graph n of G.Application _ =>
-                         let val (f,x)=inspect (fn () =>
-                               G.closure_application_children
-                                 graph scope child)
-                         in own+cached_types f+cached_types x end
-                       | G.AdmittedBinder _ =>
-                         let val held=inspect (fn () =>
-                               G.closure_child_binder graph scope child)
-                             val data=inspect (fn () =>
-                               G.binder_closure_data graph scope held)
-                             val bt=inspect (fn () =>
-                               G.type_of graph (#binder data))
-                             val bw=weight bt val _ = types := bt:: !types
-                             val body=inspect (fn () =>
-                               G.binder_closure_body graph scope held)
-                         in own+bw+cached_types body end
-                       | G.OpaqueRetained => raise ERR "discover"
-                           "rich projection has no complete type portfolio"
-                       | _ => own
-                    end
-                  val cached_ann=cached_types rich
-                  val _ = if cached_ann<=ceiling then
-                      W.spend work (IntInf.toInt cached_ann)
-                    else raise ERR "discover"
-                      "projected annotation portfolio exceeds original Work"
-                  (* EXACT record_opened_type_projection spend grammar:
-                     initial representative=1; App=3+operator;
-                     Binder=6+body; Atom=5. collect pays one per actual
-                     incoming incidence, skipping descendants on an ID hit. *)
-                  fun path_visits child : IntInf.int =
-                    let val _ = step ()
-                        val n=inspect (fn () =>
-                          G.closure_child_node graph scope child)
-                    in case G.view graph n of G.Application _ =>
-                         3+path_visits (#1 (inspect (fn () =>
-                           G.closure_application_children graph scope child)))
-                       | G.AdmittedBinder _ =>
-                         6+path_visits (inspect (fn () =>
-                           G.binder_closure_body graph scope
-                             (G.closure_child_binder graph scope child)))
-                       | G.OpaqueRetained => raise ERR "discover"
-                           "projection path cannot use an opaque rich node"
-                       | _ => 5
-                    end
-                  val seen=ref ([] : G.node list)
-                  fun collected child : IntInf.int =
-                    let val _ = step ()
-                        val n=inspect (fn () =>
-                          G.closure_child_node graph scope child)
-                        fun present [] = false
-                          | present (held::rest) =
-                              (step ();n=held orelse present rest)
-                    in if present (!seen) then 1 else
-                      (seen := n:: !seen;
-                       case G.view graph n of G.Application _ =>
-                         let val (f,x)=inspect (fn () =>
-                               G.closure_application_children
-                                 graph scope child)
-                         in 1+collected f+collected x end
-                       | G.AdmittedBinder _ =>
-                         1+collected (inspect (fn () =>
-                           G.binder_closure_body graph scope
-                             (G.closure_child_binder graph scope child)))
-                       | _ => 1)
-                    end
-                  (* This scan is rooted at this exact opaque original, so
-                     PartialFull's whole ready_root IS its rich annotation.
-                     The second rich collect is one hit; old opaque is one. *)
-                  val projection_visits=1+path_visits rich+collected rich+2
-                  val _ = if projection_visits<=ceiling then
-                      W.spend work (IntInf.toInt projection_visits)
-                    else raise ERR "discover"
-                      "primitive projection capture exceeds original Work"
-                  val alpha=inspect (fn () => G.carrier_alpha_for
-                    graph scope cap {original= #node d,source=view})
-                  val projection=inspect (fn () =>
-                    G.record_opened_type_projection graph scope
-                      (IntInf.toInt projection_visits) alpha)
-                  val actual_visits=inspect (fn () =>
-                    G.opened_type_projection_visits graph scope projection)
-                  val _ = if IntInf.fromInt actual_visits=projection_visits
-                    then () else raise ERR "discover"
-                      "actual primitive projection grammar changed"
-                  fun projected () =
-                    let val data=G.opaque_type_projection_data
-                          graph scope projection 0
-                    in if #node data= #node d then () else
-                      raise ERR "discover" "projected original changed" end
-                  val _ = projected ()
-                  val _ = (case owner of Owner {backing,...} =>
-                    backing := projected :: !backing)
-                  fun measure term :
-                      IntInf.int * IntInf.int * IntInf.int =
-                    let val _ = step ()
-                        val ty=inspect (fn () => Term.type_of term)
-                        val ann=weight ty val _ = types := ty:: !types
-                    in if Term.is_comb term then
-                         let val (f,x)=inspect (fn () => Term.dest_comb term)
-                             val (a,b,c)=measure f val (e,h,j)=measure x
-                         in (1+a+e,1+b+h,ann+c+j) end
-                       else if Term.is_abs term then
-                         let val (v,b)=inspect (fn () => Term.dest_abs term)
-                             val bt=inspect (fn () => Term.type_of v)
-                             val bw=weight bt val _ = types := bt:: !types
-                             val (a,c,e)=measure b
-                         in (1+a,2+c,ann+bw+e) end
-                       else (1,1,ann)
-                    end
-                  val proof= #bridge view
-                  val (er,ei,ea)=measure (inspect (fn () => Thm.concl proof))
-                  val term=inspect (fn () => G.representative graph target)
-                  val (tr,ti,ta)=measure term
-                  val (tr2,ti2,ta2)=measure term
-                  val (eq_partial,_)=inspect
-                    (fn () => Term.dest_comb (Thm.concl proof))
-                  val (eq_head,_)=inspect (fn () => Term.dest_comb eq_partial)
-                  val header_types=List.map (fn t => inspect
-                    (fn () => Term.type_of t))
-                    [Thm.concl proof,eq_partial,eq_head]
-                  val header=List.foldl (fn (ty,n) => n+weight ty) 0
-                    header_types
-                  val rr=3+tr+tr2 val ri=3+ti+ti2
-                  val ra=header+ta+ta2
-                  val amount=er+ei+ea+rr+ri+ra
-                  val _ = if er=3+2*raw andalso ei=3+2*inc andalso
-                      tr=raw andalso ti=inc andalso tr=tr2 andalso
-                      ti=ti2 andalso ta=ta2 andalso ea<=ceiling andalso
-                      ra<=ceiling andalso amount<=ceiling then () else
-                    raise ERR "discover" "alpha metadata/Work mismatch"
-                  val _ = W.spend work (IntInf.toInt amount)
-                  val _ = types := header_types @ !types
-                  val target_child=inspect
-                    (fn () => G.closure_root graph scope target)
+                  fun inspect operation = observed live operation
+                  val {types,proof,target_child} = opened_projection graph
+                    scope {node= #node d,view=view,target=target,raw=raw,
+                      inc=inc,output=output,cap=cap,ceiling=ceiling,
+                      spend=fn n => W.spend work (IntInf.toInt n),live=live,
+                      add_backing=fn guard => (case owner of
+                        Owner {backing,...} => backing := guard :: !backing)}
                   val identity=inspect (fn () =>
                     G.plan_identity_closure_view graph scope cap
                       (* Original/partial guards remain in data/live,
@@ -1588,173 +1603,16 @@ struct
                     end
                   val raw = count G.RawNodes
                   val inc = count G.BinderInclusiveNodes
-                  val _ = if 3+2*raw<=IntInf.fromInt output andalso
-                      3+2*inc<=IntInf.fromInt output andalso
-                      3+2*raw<=IntInf.fromInt cap andalso
-                      3+2*inc<=IntInf.fromInt cap then () else
-                    raise ERR "discover" "alpha equality exceeds quota"
-                  val types = ref ([] : Type.hol_type list)
                   fun live () =
                     (ignore (describe owner focus);ignore (data ());
                      G.validate_opened_view graph scope (#node d) view)
-                  fun inspect operation =
-                    (live ();let val value=operation () in live ();value end)
-                  fun step () = (live ();W.spend_policy work 1;live ())
-                  fun weight ty : IntInf.int =
-                    (step ();if Type.is_vartype ty then
-                       (W.spend_policy work
-                          (IntInf.fromInt
-                            (String.size(Type.dest_vartype ty)));1)
-                     else let val {Thy,Tyop,Args}=Type.dest_thy_type ty
-                              val _ = W.spend_policy work
-                                (IntInf.fromInt(String.size Thy)+
-                                 IntInf.fromInt(String.size Tyop))
-                          in List.foldl (fn (t,n) => n+weight t) 1 Args end)
-                  (* Primitive projection provenance belongs to the exact
-                     original opaque object, not a fake no-op profile. Its
-                     future capture is planned from the genuine rich path.
-                     Cached type incidences precede all raw Term getters. *)
-                  val rich=inspect
-                    (fn () => G.closure_root graph scope target)
-                  fun cached_types child =
-                    let val _ = step ()
-                        val n=inspect (fn () =>
-                          G.closure_child_node graph scope child)
-                        val ty=inspect (fn () => G.type_of graph n)
-                        val own=weight ty val _ = types := ty:: !types
-                    in case G.view graph n of G.Application _ =>
-                         let val (f,x)=inspect (fn () =>
-                               G.closure_application_children
-                                 graph scope child)
-                         in own+cached_types f+cached_types x end
-                       | G.AdmittedBinder _ =>
-                         let val held=inspect (fn () =>
-                               G.closure_child_binder graph scope child)
-                             val data=inspect (fn () =>
-                               G.binder_closure_data graph scope held)
-                             val bt=inspect (fn () =>
-                               G.type_of graph (#binder data))
-                             val bw=weight bt val _ = types := bt:: !types
-                             val body=inspect (fn () =>
-                               G.binder_closure_body graph scope held)
-                         in own+bw+cached_types body end
-                       | G.OpaqueRetained => raise ERR "discover"
-                           "rich projection has no complete type portfolio"
-                       | _ => own
-                    end
-                  val cached_ann=cached_types rich
-                  val _ = if cached_ann<=ceiling then
-                      W.spend_policy work cached_ann
-                    else raise ERR "discover"
-                      "projected annotation portfolio exceeds original Work"
-                  (* EXACT record_opened_type_projection spend grammar:
-                     initial representative=1; App=3+operator;
-                     Binder=6+body; Atom=5. collect pays one per actual
-                     incoming incidence, skipping descendants on an ID hit. *)
-                  fun path_visits child : IntInf.int =
-                    let val _ = step ()
-                        val n=inspect (fn () =>
-                          G.closure_child_node graph scope child)
-                    in case G.view graph n of G.Application _ =>
-                         3+path_visits (#1 (inspect (fn () =>
-                           G.closure_application_children graph scope child)))
-                       | G.AdmittedBinder _ =>
-                         6+path_visits (inspect (fn () =>
-                           G.binder_closure_body graph scope
-                             (G.closure_child_binder graph scope child)))
-                       | G.OpaqueRetained => raise ERR "discover"
-                           "projection path cannot use an opaque rich node"
-                       | _ => 5
-                    end
-                  val seen=ref ([] : G.node list)
-                  fun collected child : IntInf.int =
-                    let val _ = step ()
-                        val n=inspect (fn () =>
-                          G.closure_child_node graph scope child)
-                        fun present [] = false
-                          | present (held::rest) =
-                              (step ();n=held orelse present rest)
-                    in if present (!seen) then 1 else
-                      (seen := n:: !seen;
-                       case G.view graph n of G.Application _ =>
-                         let val (f,x)=inspect (fn () =>
-                               G.closure_application_children
-                                 graph scope child)
-                         in 1+collected f+collected x end
-                       | G.AdmittedBinder _ =>
-                         1+collected (inspect (fn () =>
-                           G.binder_closure_body graph scope
-                             (G.closure_child_binder graph scope child)))
-                       | _ => 1)
-                    end
-                  (* This scan is rooted at this exact opaque original, so
-                     PartialFull's whole ready_root IS its rich annotation.
-                     The second rich collect is one hit; old opaque is one. *)
-                  val projection_visits=1+path_visits rich+collected rich+2
-                  val _ = if projection_visits<=ceiling then
-                      W.spend_policy work projection_visits
-                    else raise ERR "discover"
-                      "primitive projection capture exceeds original Work"
-                  val alpha=inspect (fn () => G.carrier_alpha_for
-                    graph scope cap {original= #node d,source=view})
-                  val projection=inspect (fn () =>
-                    G.record_opened_type_projection graph scope
-                      (IntInf.toInt projection_visits) alpha)
-                  val actual_visits=inspect (fn () =>
-                    G.opened_type_projection_visits graph scope projection)
-                  val _ = if IntInf.fromInt actual_visits=projection_visits
-                    then () else raise ERR "discover"
-                      "actual primitive projection grammar changed"
-                  fun projected () =
-                    let val data=G.opaque_type_projection_data
-                          graph scope projection 0
-                    in if #node data= #node d then () else
-                      raise ERR "discover" "projected original changed" end
-                  val _ = projected ()
-                  val _ = (case owner of Owner {backing,...} =>
-                    backing := projected :: !backing)
-                  fun measure term :
-                      IntInf.int * IntInf.int * IntInf.int =
-                    let val _ = step ()
-                        val ty=inspect (fn () => Term.type_of term)
-                        val ann=weight ty val _ = types := ty:: !types
-                    in if Term.is_comb term then
-                         let val (f,x)=inspect (fn () => Term.dest_comb term)
-                             val (a,b,c)=measure f val (e,h,j)=measure x
-                         in (1+a+e,1+b+h,ann+c+j) end
-                       else if Term.is_abs term then
-                         let val (v,b)=inspect (fn () => Term.dest_abs term)
-                             val bt=inspect (fn () => Term.type_of v)
-                             val bw=weight bt val _ = types := bt:: !types
-                             val (a,c,e)=measure b
-                         in (1+a,2+c,ann+bw+e) end
-                       else (1,1,ann)
-                    end
-                  val proof= #bridge view
-                  val (er,ei,ea)=measure (inspect (fn () => Thm.concl proof))
-                  val term=inspect (fn () => G.representative graph target)
-                  val (tr,ti,ta)=measure term
-                  val (tr2,ti2,ta2)=measure term
-                  val (eq_partial,_)=inspect
-                    (fn () => Term.dest_comb (Thm.concl proof))
-                  val (eq_head,_)=inspect (fn () => Term.dest_comb eq_partial)
-                  val header_types=List.map (fn t => inspect
-                    (fn () => Term.type_of t))
-                    [Thm.concl proof,eq_partial,eq_head]
-                  val header=List.foldl (fn (ty,n) => n+weight ty) 0
-                    header_types
-                  val rr=3+tr+tr2 val ri=3+ti+ti2
-                  val ra=header+ta+ta2
-                  val amount=er+ei+ea+rr+ri+ra
-                  val _ = if er=3+2*raw andalso ei=3+2*inc andalso
-                      tr=raw andalso ti=inc andalso tr=tr2 andalso
-                      ti=ti2 andalso ta=ta2 andalso ea<=ceiling andalso
-                      ra<=ceiling andalso amount<=ceiling then () else
-                    raise ERR "discover" "alpha metadata/Work mismatch"
-                  val _ = W.spend_policy work amount
-                  val _ = types := header_types @ !types
-                  val target_child=inspect
-                    (fn () => G.closure_root graph scope target)
+                  fun inspect operation = observed live operation
+                  val {types,proof,target_child} = opened_projection graph
+                    scope {node= #node d,view=view,target=target,raw=raw,
+                      inc=inc,output=output,cap=cap,ceiling=ceiling,
+                      spend=fn n => W.spend_policy work n,live=live,
+                      add_backing=fn guard => (case owner of
+                        Owner {backing,...} => backing := guard :: !backing)}
                   val identity=inspect (fn () =>
                     G.plan_scoped_identity_closure_view_with_policy graph scope
                       (#template_limit(W.semantic_policy work))
