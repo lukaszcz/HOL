@@ -802,23 +802,23 @@ struct
     let val (left,right) = boolSyntax.dest_eq tm
     in new_term_order () (left,right) = EQUAL end
 
-  (* Only these arithmetic heads and negated conditional guards can change
-     the difference normal form, also under a binder, so the scan descends
-     into binder bodies; a binder over the scan's budget counts as
-     relevant without being opened. The primary pass has already admitted
-     the source. An incomplete scan retains all original passes. *)
+  (* Only a term one of the secondary passes below rewrites can change the
+     difference normal form, also under a binder: an order or its dual
+     (the relation, strict-difference and ite-guard passes), a conditional
+     with a negated guard (the polarity pass) or an arithmetic node (the
+     polynomial and additive passes).  The scan uses those passes' own
+     recognisers and descends into binder bodies; a binder over the
+     scan's budget counts as relevant without being opened.  The primary
+     pass has already admitted the source.  An incomplete scan retains all
+     original passes. *)
   fun secondary_rewrite_needed root =
     let
       exception Relevant
-      val heads = [intSyntax.plus_tm,intSyntax.less_tm,intSyntax.leq_tm,
-        intSyntax.greater_tm,intSyntax.geq_tm,realSyntax.plus_tm,
-        realSyntax.less_tm,realSyntax.leq_tm,realSyntax.greater_tm,
-        realSyntax.geq_tm]
       fun inspect term =
-        if (Term.is_const term andalso
-             List.exists (Term.same_const term) heads) orelse
-            (boolSyntax.is_cond term andalso
-             boolSyntax.is_neg (#1 (boolSyntax.dest_cond term))) then
+        if is_order term orelse is_dual_order term orelse
+           is_arithmetic term orelse
+           (boolSyntax.is_cond term andalso
+            boolSyntax.is_neg (#1 (boolSyntax.dest_cond term))) then
           raise Relevant
         else ()
       fun children term =

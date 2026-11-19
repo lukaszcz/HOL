@@ -22186,8 +22186,8 @@ in
      (nested, ``x:int <= 1``)]
 end
 
-(* Z3's secondary rewrite pass runs when an arithmetic head or negated
-   guard occurs, also under a binder, and not merely because a binder
+(* Z3's secondary rewrite pass runs when a term one of its passes
+   rewrites occurs, also under a binder, and not merely because a binder
    occurs; without one the result is the primary pass's. *)
 fun z3_secondary_canon_triggers_under_binders_success () =
 let
@@ -22205,10 +22205,36 @@ let
     "a trigger only under a binder did not run the secondary pass")
   val _ = check_oracle_tags "secondary canonicalisation" theorem
   val plain = ``(!x:bool. ~x) <=> (!x:bool. F)``
-in
-  assert (Thm.concl (SmtReplayCanon.z3_rewrite_canon_conv plain) ~~
+  val _ = assert (Thm.concl (SmtReplayCanon.z3_rewrite_canon_conv plain) ~~
       Thm.concl (SmtReplayCanon.z3_primary_rewrite_canon_conv plain),
     "a term without a secondary trigger did not keep the primary result")
+  (* Each operator a secondary pass rewrites triggers it under a binder. *)
+  val operators =
+    [``\x:int. P (x + 1):bool``, ``\x:int. P (x - 1):bool``,
+     ``\x:int. P (x * 2):bool``, ``\x:int. P (~x):bool``,
+     ``\x:int. x < y``, ``\x:int. x <= y``, ``\x:int. x > y``,
+     ``\x:int. x >= y``, ``\x:int. ~(x < y)``,
+     ``\x:int. if ~b then x else y``,
+     ``\x:real. Q (x + 1):bool``, ``\x:real. Q (x - 1):bool``,
+     ``\x:real. Q (x * 2):bool``, ``\x:real. Q (~x):bool``,
+     ``\x:real. x < z``, ``\x:real. x <= z``, ``\x:real. x > z``,
+     ``\x:real. x >= z``]
+  val _ = assert (List.all SmtReplayCanon.secondary_rewrite_needed operators,
+    "an operator a secondary pass rewrites did not trigger it")
+  fun closes source =
+    let val theorem = SmtReplayCanon.z3_rewrite_canon_conv source
+    in
+      boolSyntax.lhs (Thm.concl theorem) ~~ source andalso
+      null (Thm.hyp theorem) andalso
+      SmtReplayCanon.equality_operands_alpha_equal
+        (boolSyntax.rhs (Thm.concl theorem))
+    end
+in
+  assert (List.all closes
+      [``(!x:int. P (x * 2):bool) <=> (!x:int. P (2 * x))``,
+       ``(!x:int. P (x - 1):bool) <=> (!x:int. P (-1 + x))``,
+       ``(!x:int. P (~x):bool) <=> (!x:int. P (-1 * x))``],
+    "a rewrite under a binder differing by *, - or negation was not closed")
 end
 
 (* Types of at most 64 nodes compare directly, larger ones through the
