@@ -204,20 +204,25 @@ struct
         val _ = active result
     in result end)
   (* The shared start worker for the two original Source roots. A caller
-     supplies [enter] (run before the owner Source is read), [admit] (limits,
-     validation and original selection, returning a re-check of the
-     retained Source), the one-unit [spend] and the focus constructor
-     [make]. No owner state exists until [make] returns, so a failure
-     anywhere before it leaves nothing live. *)
-  fun start_worker {enter,admit,spend,make,active} work view ordinal
+     supplies [enter] (run before the owner Source is read), [limits] (the
+     limits read once Source, graph and root are known), [validate] (the
+     owner's own Work validation under them), the one-unit [spend] and the
+     focus constructor [make]; [select] picks the original Source and its
+     re-check (see [goal_original] and [assumption_original]). No owner
+     state exists until [make] returns, so a failure anywhere before it
+     leaves nothing live. *)
+  fun start_worker {enter,limits,validate,spend,make,active} work view select
       (unopened,opened_provenance) =
     W.with_step work (fn () =>
     let val pre = enter ()
         val sources = W.original_sources work
         val graph = S.owning_graph sources val root = S.owning_scope sources
-        val (env,original,recheck) = admit pre graph root sources
+        val env = limits pre
+        fun revalidate () = validate env graph root sources
+        val _ = revalidate ()
+        val (original,recheck) = select revalidate sources
         fun registered () =
-          (recheck original;
+          (recheck ();
            case view of NONE => () | SOME opened =>
              G.validate_opened_view graph root (#node original) opened)
         val _ = registered ()
@@ -228,68 +233,63 @@ struct
         val result = make env
           {graph = graph,root = root,sources = sources,original = original,
            opened = opened,current = current,child = root_child,
-           ordinal = ordinal,
            provenance = (case view of NONE => unopened
              | SOME _ => opened_provenance),
            goal_unopened = (case view of NONE => true | SOME _ => false),
            registered = registered}
         val _ = active result
     in result end)
+  (* The positive Goal Source; its re-check revalidates the owner, then
+     requires the very same retained Source. *)
+  fun goal_original revalidate sources =
+    let val original = S.goal_source sources
+        fun recheck () =
+          let val saved = S.goal_source sources
+              val _ = revalidate ()
+          in if #node saved = #node original andalso
+              Portable.pointer_eq (#original saved,#original original)
+              andalso Portable.pointer_eq (#bridge saved,#bridge original)
+            then () else raise ERR "start_goal" "positive Source changed"
+          end
+    in (original,recheck) end
   (* Select the retained original assumption [occurrence] (>= 1), paying
-     one unit through [spend] per inspected slot. *)
-  fun original_assumption spend sources (occurrence : IntInf.int) =
+     one unit through [spend] per inspected slot. Opaque S retains this
+     immutable occurrence portfolio. SAME W/S identity is rechecked; guards
+     do not rerun selection. *)
+  fun assumption_original spend (occurrence : IntInf.int) revalidate sources =
     let val _ = if occurrence >= 1 then () else
           raise ERR "start_assumption" "not an original assumption index"
         fun select [] _ = raise ERR "start_assumption"
               "absent original assumption"
           | select (source::rest) (i : IntInf.int) =
               (spend ();if i = 0 then source else select rest (i-1))
-    in select (S.reconciliation_sources sources) occurrence end
+    in (select (S.reconciliation_sources sources) occurrence,revalidate) end
   (* The same Source-root start for the ordinary (int) limits. *)
-  fun start_source work view admit ordinal provenances =
+  fun start_source work view select ordinal provenances =
     start_worker
-      {enter = fn () => (),admit = admit,spend = fn () => W.spend work 1,
+      {enter = fn () => (),limits = fn () => W.semantic_limits work,
+       validate = fn limits => fn graph => fn root => fn sources =>
+         W.validate work graph root sources limits,
+       spend = fn () => W.spend work 1,
        make = fn limits => fn {graph,root,sources,original,opened,current,
-                               child,ordinal,provenance,goal_unopened,
-                               registered} =>
+                               child,provenance,goal_unopened,registered} =>
          Focus
           {owner = {graph = graph,root = root,sources = sources,work = work,
                     limits = limits,epoch = Type.type_epoch ()},
            traversal = root,caller = root,child = child,node = current,
-           original = original,opened = opened,
-           root_ordinal = IntInf.toInt ordinal,provenance = provenance,
-           goal_unopened = goal_unopened,guards = [registered],
-           validated = ref (~1 : IntInf.int)},
-       active = active} work view ordinal provenances
+           original = original,opened = opened,root_ordinal = ordinal,
+           provenance = provenance,goal_unopened = goal_unopened,
+           guards = [registered],validated = ref (~1 : IntInf.int)},
+       active = active} work view select provenances
   fun start_goal work {view} =
-    start_source work view (fn () => fn graph => fn root => fn sources =>
-      let val limits = W.semantic_limits work
-          val _ = W.validate work graph root sources limits
-          val original = S.goal_source sources
-          fun recheck original =
-            let val saved = S.goal_source sources
-                val _ = W.validate work graph root sources limits
-            in if #node saved = #node original andalso
-                Portable.pointer_eq (#original saved,#original original)
-                andalso Portable.pointer_eq (#bridge saved,#bridge original)
-              then () else raise ERR "start_goal" "positive Source changed"
-            end
-      in (limits,original,recheck) end)
-      ~1 (UnopenedPositiveGoal,OriginalPositiveGoal)
+    start_source work view goal_original ~1
+      (UnopenedPositiveGoal,OriginalPositiveGoal)
   (* The supplied ordinal must name a retained assumption (>=1).
      The option selects genuine opened syntax or explicitly unopened DATA,
      never a caller category/cap override. SAME Work owns the action. *)
   fun start_assumption work {occurrence,view} =
-    start_source work view (fn () => fn graph => fn root => fn sources =>
-      let val limits = W.semantic_limits work
-          val _ = W.validate work graph root sources limits
-          val original = original_assumption (fn () => W.spend work 1)
-            sources (IntInf.fromInt occurrence)
-          (* Opaque S retains this immutable occurrence portfolio. SAME
-             W/S identity is rechecked; guards do not rerun selection. *)
-          fun recheck _ = W.validate work graph root sources limits
-      in (limits,original,recheck) end)
-      (IntInf.fromInt occurrence)
+    start_source work view (assumption_original (fn () => W.spend work 1)
+      (IntInf.fromInt occurrence)) occurrence
       (UnopenedOriginalOccurrence,OriginalOccurrence)
 
   (* A checked selected stock-law receipt is not an ordinary Source slot.
@@ -1474,13 +1474,17 @@ struct
     | _ => GeneratedDescendant
 
   (* The same Source-root start for the native policy limits. *)
-  fun start_source work view native_contract profiles admit ordinal
+  fun start_source work view native_contract profiles select ordinal
       provenances =
     start_worker
-      {enter = fn () => NC.for_work work native_contract,admit = admit,
+      {enter = fn () => NC.for_work work native_contract,
+       limits = fn native =>
+         (#semantic_limits native,W.semantic_policy work,native),
+       validate = fn (_,policy_limits,_) => fn graph => fn root =>
+         fn sources => W.validate_policy work graph root sources policy_limits,
        spend = fn () => W.spend_policy work 1,
        make = fn (limits,policy_limits,native) =>
-         fn {graph,root,sources,original,opened,current,child,ordinal,
+         fn {graph,root,sources,original,opened,current,child,
              provenance,goal_unopened,registered} =>
          Focus
           {owner = {graph = graph,root = root,sources = sources,work = work,
@@ -1492,41 +1496,16 @@ struct
            original = original,opened = opened,root_ordinal = ordinal,
            provenance = provenance,goal_unopened = goal_unopened,
            guards = [registered],validated = ref (~1 : IntInf.int)},
-       active = active} work view ordinal provenances
-  fun policy_env work native =
-    (#semantic_limits native,W.semantic_policy work,native)
+       active = active} work view select provenances
   fun start_goal work {view,native_contract,profiles} =
-    start_source work view native_contract profiles
-      (fn native => fn graph => fn root => fn sources =>
-        let val (limits,policy_limits,native) = policy_env work native
-            val _ = W.validate_policy work graph root sources policy_limits
-            val original = S.goal_source sources
-            fun recheck original =
-              let val saved = S.goal_source sources
-                  val _ = W.validate_policy work graph root sources
-                    policy_limits
-              in if #node saved = #node original andalso
-                  Portable.pointer_eq (#original saved,#original original)
-                  andalso Portable.pointer_eq (#bridge saved,#bridge original)
-                then () else raise ERR "start_goal" "positive Source changed"
-              end
-        in ((limits,policy_limits,native),original,recheck) end)
-      ~1 (UnopenedPositiveGoal,OriginalPositiveGoal)
+    start_source work view native_contract profiles goal_original ~1
+      (UnopenedPositiveGoal,OriginalPositiveGoal)
   (* The supplied ordinal must name a retained assumption (>=1).
      The option selects genuine opened syntax or explicitly unopened DATA,
      never a caller category/cap override. SAME Work owns the action. *)
   fun start_assumption work {occurrence,view,native_contract,profiles} =
     start_source work view native_contract profiles
-      (fn native => fn graph => fn root => fn sources =>
-        let val (limits,policy_limits,native) = policy_env work native
-            val _ = W.validate_policy work graph root sources policy_limits
-            val original = original_assumption
-              (fn () => W.spend_policy work 1) sources occurrence
-            (* Opaque S retains this immutable occurrence portfolio. SAME
-               W/S identity is rechecked; guards do not rerun selection. *)
-            fun recheck _ =
-              W.validate_policy work graph root sources policy_limits
-        in ((limits,policy_limits,native),original,recheck) end)
+      (assumption_original (fn () => W.spend_policy work 1) occurrence)
       occurrence (UnopenedOriginalOccurrence,OriginalOccurrence)
 
   fun application_children (parent as Focus {caller,child,...}) =
