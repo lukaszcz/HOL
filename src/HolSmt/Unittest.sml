@@ -22027,8 +22027,10 @@ let
   val y = Term.mk_var ("schema_y", ``:word8``)
   val target = wordsSyntax.mk_index
     (wordsSyntax.mk_word_add (x, y), numSyntax.term_of_int 7)
+  val theorems = ref ([] : Thm.thm list)
   fun hits () =
-    #memo_hits (#2 (SmtWordGraph.normalize_with_metrics target))
+    let val (theorem, metrics) = SmtWordGraph.normalize_with_metrics target
+    in theorems := theorem :: !theorems; #memo_hits metrics end
   fun replay action = CPC_ProofReplay.with_replay_memos_for_test 0 action
   val before_first = hits ()
   val before_second = hits ()
@@ -22040,7 +22042,15 @@ let
       val () = CPC_ProofReplay.reset_replay_memos_for_test 0
     in (first, nested, after_nested, hits ()) end) ()
   val after = hits ()
+  val cold = List.last (!theorems)
 in
+  (* Every call, cold or with shared schemas, proves the same equation. *)
+  assert (List.all (fn theorem =>
+      boolSyntax.lhs (Thm.concl theorem) ~~ target andalso
+      Thm.concl theorem ~~ Thm.concl cold andalso
+      null (Thm.hyp theorem)) (!theorems),
+    "a shared word schema changed the normalization theorem");
+  List.app (check_oracle_tags "shared word schema") (!theorems);
   assert (before_second = before_first andalso after = before_first,
     "word schemas were shared outside a replay");
   assert (nested = first,
@@ -27310,6 +27320,17 @@ let
   val cycle_theorem =
     Z3_ProofReplay.asserted_equality_substitution_prove_for_test
       [cycle_source] cycle_target
+  (* x = k x is cyclic left to right and w y = y right to left, so only
+     one direction of each, together, closes the target. *)
+  val mixed_source =
+    ``((asserted_x:int) = asserted_k asserted_x) /\
+      (asserted_w (asserted_y:int) = asserted_y)``
+  val mixed_target =
+    ``asserted_p (asserted_k (asserted_x:int)) (asserted_w asserted_y) =
+      asserted_p asserted_x (asserted_y:int):int``
+  val mixed_theorem =
+    Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+      [mixed_source] mixed_target
   (* A rewrite can also create a redex in the term around it, which no
      check of the equations alone sees.  Left to right, a = b and
      f b = f (f a) grow f b without end; right to left they terminate.
@@ -27382,6 +27403,10 @@ in
     "cyclic asserted equalities were not substituted right to left");
   check_oracle_tags "self-referential asserted equality" self_theorem;
   check_oracle_tags "cyclic asserted equalities" cycle_theorem;
+  assert (Thm.concl mixed_theorem ~~ mixed_target andalso
+      exact_source mixed_source mixed_theorem,
+    "a cyclic equation was not reversed beside the others");
+  check_oracle_tags "mixed-direction asserted equalities" mixed_theorem;
   assert (Thm.concl context_theorem ~~ context_target andalso
       exact_source context_source context_theorem andalso
       Thm.concl swap_theorem ~~ swap_target andalso
