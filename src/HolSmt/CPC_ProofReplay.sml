@@ -11598,7 +11598,6 @@ local
     #1 (process_scope_with_record strong_canon args prems
       (fn _ => fn _ => fn _ => ()))
 
-
   (* Fixed owned producer. Record the topology while constructing THIS
      scope result; never recover n-ary grouping from its checked conclusion.
      Every incoming antecedent remains one occurrence, with its original
@@ -11648,7 +11647,6 @@ local
       val (theorem, provenance) =
         process_scope_with_record strong_canon args prems record
     in {theorem = theorem,provenance = provenance} end
-
 
   fun replay_not_and prems =
     let

@@ -4838,7 +4838,7 @@ in
      recipe_parsefn : 'a B.backend ->
        (string -> Term.term list -> Term.term list -> Term.term) ->
        'a P.construction_parse_fn,
-     indexed_limits : SmtReplayResourcePolicy.recipe_policy}
+     installer_limits : SmtReplayResourcePolicy.recipe_policy}
 
   fun install_graph_recipes_with_ops (ops : 'a graph_recipe_ops)
       (terms : 'a SmtLib_GraphFrontend.constructed_session) =
@@ -4870,7 +4870,7 @@ in
       val _ = install_graph_qualifications backend
         (#add_recipe_parser terms) (#add_constructor_parser terms)
         private_symbol
-      val _ = install_graph_indexed backend (#indexed_limits ops) terms
+      val _ = install_graph_indexed backend (#installer_limits ops) terms
       fun admitted term =
         if #admits_raw ops term then term
         else raise ERR "graph_index" "expanded private literal index"
@@ -4963,7 +4963,7 @@ in
          ("bvite", cpc_bvite_parsefn), ("bvsltbv", cpc_bv_parsefn),
          ("bvultbv", cpc_bv_parsefn), ("concat", cpc_bv_parsefn),
          ("@bvsize", cpc_bv_parsefn)]
-      val _ = install_graph_cpc_constructors backend (#indexed_limits ops)
+      val _ = install_graph_cpc_constructors backend (#installer_limits ops)
         terms private_symbol
     in () end
 
@@ -4993,7 +4993,7 @@ in
             | NONE => raise ERR "graph_index" "opaque private index operand"),
          recipe_parsefn = fn backend =>
            SmtLib_GraphTheories.recipe_parsefn backend limits,
-         indexed_limits = SmtReplayResourcePolicy.recipe_from_ints limits}
+         installer_limits = SmtReplayResourcePolicy.recipe_from_ints limits}
         terms
     end
 
@@ -5025,12 +5025,11 @@ in
          value_index = value_index,
          recipe_parsefn = fn backend =>
            SmtLib_GraphTheories.recipe_parsefn_with_policy backend limits,
-         indexed_limits = limits}
+         installer_limits = limits}
         terms
     end
 
   end
-
 
   (* Additive direct-ID frontend. This reads terms for graph proof records;
      script/rule reconstruction still uses the compatibility entry above
