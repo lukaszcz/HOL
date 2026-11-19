@@ -21226,8 +21226,10 @@ local
                  replay_cnf_with_literals (#name rule) args
                in clause_result "CPC CNF clause has explicit occurrences"
                  (SmtClause.from_literals literals theorem) end
-           | HNotEquivElim1 => opaque ( replay_not_equiv_elim "not_equiv_elim1" prems)
-           | HNotEquivElim2 => opaque ( replay_not_equiv_elim "not_equiv_elim2" prems)
+           | HNotEquivElim1 =>
+               opaque (replay_not_equiv_elim "not_equiv_elim1" prems)
+           | HNotEquivElim2 =>
+               opaque (replay_not_equiv_elim "not_equiv_elim2" prems)
            | HEquivElim2 => opaque ( replay_equiv_elim2 conclusion prems)
            | HEquivElim1 => opaque ( replay_equiv_elim1 conclusion prems)
            | HArithRule =>
@@ -21330,7 +21332,8 @@ local
            | HArithMultNeg => opaque ( replay_arith_mult_neg args)
            | HArithMultPos => opaque ( replay_arith_mult_pos args)
            | HArithMultSign => opaque ( replay_arith_mult_sign args)
-           | HArithTrichotomy => opaque ( replay_arith_trichotomy conclusion prems)
+           | HArithTrichotomy =>
+               opaque (replay_arith_trichotomy conclusion prems)
            | HArithReduction =>
                let
                  val (theorem, provenance) = replay_arith_reduction args
@@ -21420,7 +21423,8 @@ local
            | HRareInventory => opaque (
                replay_rare_inventory datatype_admit state (#name rule)
                  prems conclusion located_args)
-           | HSets => opaque ( replay_sets state (#name rule) prems conclusion args)
+           | HSets =>
+               opaque (replay_sets state (#name rule) prems conclusion args)
            | HArraysExt =>
                if List.null args then
                  opaque (require_declared "arrays_ext"
@@ -21466,6 +21470,8 @@ local
                replay_string datatype_admit state (#name rule)
                  prems conclusion args)
            | HArray => unsupported_step step
+           (* Unreachable: scope is replayed above, before the cache
+              (the [handler = HScope] branch). *)
            | HScope => unsupported_step step)) ()
            handle Conv.UNCHANGED =>
              raise ERR "replay_step"
@@ -23980,8 +23986,7 @@ in
             val _=if List.exists(fn old=>(tick();old=command))(!issued)
               then fail "command occurrence already prepared"else ()
             val(step,known)=seek 0[][](#commands(Packet.proof packet))
-            val _=if #replay_handler (#rule step)=HInstantiate
-              then ()else
+            val _=if #replay_handler (#rule step)=HInstantiate then ()else
               fail "fixed specialization handler required"
             val premise=case(#premises step,premises)of
                 ([wanted],[(id,node,edge)])=>
