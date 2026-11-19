@@ -29,8 +29,10 @@ struct
   fun require text yes = if yes then () else testutils.die text
   fun test label action =
     (testutils.tprint label; action (); testutils.OK ())
-  fun refuses action = (ignore (action ()); false)
-    handle Feedback.HOL_ERR _ => true
+  (* The message of the exception [action] raises, if it raises one. *)
+  fun refusal action = (ignore (action ()); NONE)
+    handle Feedback.HOL_ERR err => SOME (Feedback.message_of err)
+  fun refuses action = Option.isSome (refusal action)
 
   (* How a pipeline (a preparation, then the execution of its plan) ended,
      and what it cost. [callbacks] counts the type callbacks made. *)
@@ -59,23 +61,30 @@ struct
      [count], that [fits]. *)
   fun inferences () = #total (Count.thm_count ())
   fun nothing made = made = 0
+  (* Some inferences, but no more than a complete preparation [prepared]. *)
+  fun after_producer prepared made = 0 < made andalso made <= prepared
+  (* A refusal after the producer of the law made its inferences: [complete]
+     runs a complete preparation, after the setup of the refused one, and
+     [refused] is then given the admissible numbers of inferences. *)
+  fun refused_after_producer complete refused =
+    let val start = inferences () val _ = complete ()
+    in refused (after_producer (inferences () - start)) end
   fun settled fits retired calls count =
     retired andalso !calls = 0 andalso fits (inferences () - count)
   (* [action] is refused and stops the pipeline: it raises, leaves the owner
      [retired], makes no inference and keeps the charged prefix, that is,
-     [charged ()] has not fallen below [prefix] ([atleast] compares the two
-     amounts of Work, which are int or IntInf.int). *)
-  fun stopped {action,retired,charged,prefix,atleast} =
+     [charged ()] has not fallen below [prefix]. *)
+  fun stopped {action,retired,charged,prefix} : bool =
     let val count = inferences ()
         val refused = refuses action
     in refused andalso retired () andalso inferences () = count andalso
-       atleast (charged (),prefix) end
+       IntInf.>= (charged (),prefix) end
   (* A plan that was executed once is refused when [execute] runs again. *)
-  fun reissued {name,execute,retired,charged,atleast} =
+  fun reissued {name,execute,retired,charged} =
     let val _ = execute () val done = charged ()
     in require (name ^ " reissued a consumed plan")
          (stopped {action=execute,retired=retired,charged=charged,
-                   prefix=done,atleast=atleast}) end
+                   prefix=done}) end
   (* The kernel counts inferences (Count.thm_count) only while asked to;
      a test that compares counts runs inside [counting]. *)
   fun counting action =

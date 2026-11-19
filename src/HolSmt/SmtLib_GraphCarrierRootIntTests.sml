@@ -28,6 +28,8 @@ struct
   val test = X.test
   val refuses = X.refuses
   fun charged (e : X.int_fixture) = #charged (W.audit (#work e))
+  (* The charged Work as the Fixture's helpers compare it. *)
+  fun wide e = IntInf.fromInt (charged e)
   fun retired (e : X.int_fixture) = #retired (W.audit (#work e))
 
   datatype kind = Opened | Closure | Admitted
@@ -132,8 +134,7 @@ struct
     List.app (fn (p : entry) =>
       let val e = setup plenty cap num_forall
       in X.reissued {name= #name p,execute= #prepare p e 0 silent silent,
-           retired=fn () => retired e,charged=fn () => charged e,
-           atleast=op >=} end)
+           retired=fn () => retired e,charged=fn () => wide e} end)
       entries
 
   fun retired_scope () =
@@ -144,8 +145,8 @@ struct
           val _ = G.close_scope (#graph e) (#scope e)
       in require (#name p ^ " executed in a retired scope")
         (X.stopped {action=execute,retired=fn () => retired e,
-                    charged=fn () => charged e,prefix=prepared,
-                    atleast=op >=}) end)
+                    charged=fn () => wide e,
+                    prefix=IntInf.fromInt prepared}) end)
       entries
 
   (* The Work allowance, at exact and one below. *)
@@ -180,9 +181,8 @@ struct
   fun refusal_in_prepare fits (p : entry) ordinal output row message =
     let val e = setup plenty output row
         val calls = ref 0 val count = X.inferences ()
-        val reason = (ignore (#prepare p e ordinal
-            (fn _ => calls := !calls + 1) silent); NONE)
-          handle Feedback.HOL_ERR err => SOME (Feedback.message_of err)
+        val reason = X.refusal (fn () => #prepare p e ordinal
+            (fn _ => calls := !calls + 1) silent)
     in require (#name p ^ " did not refuse with: " ^ message)
          (reason = SOME message andalso
           X.settled fits (retired e) calls count) end
@@ -209,11 +209,10 @@ struct
   fun refused_output () =
     List.app (fn (p : entry) =>
       let val e = setup plenty cap num_forall
-          val start = X.inferences ()
-          val _ = #prepare p e 0 silent silent
-          val prepared = X.inferences () - start
-      in refusal_in_prepare (fn made => 0 < made andalso made <= prepared)
-           p 0 1 num_forall "prospective carrier syntax exceeds cap" end)
+      in X.refused_after_producer
+           (fn () => ignore (#prepare p e 0 silent silent))
+           (fn fits => refusal_in_prepare fits
+              p 0 1 num_forall "prospective carrier syntax exceeds cap") end)
       entries
 
   (* An exception of a type callback or of the scope observer reaches the
@@ -264,10 +263,9 @@ struct
        let val e = setup plenty cap num_forall
           val conversion = #prepare p e 0 silent silent ()
           val child = G.new_scope (#graph e) (#scope e) []
-          val reason = (ignore (C.validate_for
+          val reason = X.refusal (fn () => C.validate_for
             {graph= #graph e,scope=child,sources= #sources e,
-             work= #work e} conversion); NONE)
-            handle Feedback.HOL_ERR err => SOME (Feedback.message_of err)
+             work= #work e} conversion)
       in require (#name p ^ " lent a receipt to a child scope")
            (reason = SOME "foreign carrier work receipt" andalso
             retired e) end)) entries

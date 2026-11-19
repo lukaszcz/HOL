@@ -223,8 +223,7 @@ struct
          val _ = G.close_scope (#graph e) (#body_frame o_)
      in require "profiled execute used a profile retired after preparation"
           (X.stopped {action=execute,retired=fn () => retired e,
-                      charged=fn () => charged e,prefix=prepared,
-                    atleast=op >=}) end;
+                      charged=fn () => charged e,prefix=prepared}) end;
      List.app (fn p =>
        let val e = X.setup ``!n:num. T`` HolSmtTheory.NUM_FORALL_TO_INT
              native
@@ -234,8 +233,7 @@ struct
            val _ = G.close_scope (#graph e) (#scope e)
        in require (#name p ^ " executed in a retired scope")
          (X.stopped {action=execute,retired=fn () => retired e,
-                     charged=fn () => charged e,prefix=prepared,
-                    atleast=op >=}) end)
+                     charged=fn () => charged e,prefix=prepared}) end)
        provers)
 
   (* Goals and metadata the shared policy section refuses, in both provers:
@@ -244,8 +242,7 @@ struct
      inferences, counted from just before the preparation. *)
   fun refusal_in_prepare fits p (e : X.fixture) message =
     let val calls = ref 0 val count = X.inferences ()
-        val reason = (ignore (prepare_with p e [] calls); NONE)
-          handle Feedback.HOL_ERR err => SOME (Feedback.message_of err)
+        val reason = X.refusal (fn () => prepare_with p e [] calls)
     in require (#name p ^ " did not refuse with: " ^ message)
          (reason = SOME message andalso
           X.settled fits (retired e) calls count) end
@@ -266,14 +263,14 @@ struct
   fun refused_output_metadata () =
     List.app (fn p =>
       let val e = X.setup ``!n:num. T`` HolSmtTheory.NUM_FORALL_TO_INT native
-          val calls = ref 0 val start = X.inferences ()
-          val _ = prepare_with p e [] calls
-          val prepared = X.inferences () - start
-      in refusal_in_prepare (fn made => 0 < made andalso made <= prepared) p
-        (X.setup_policy {input_limit=RP.Uncapped,output_limit=RP.AtMost 1,
-           template_limit=RP.Uncapped} RP.Uncapped ``!n:num. T``
-           HolSmtTheory.NUM_FORALL_TO_INT native)
-        "prospective output exceeds metadata policy" end) provers
+          val calls = ref 0
+          val refused = X.setup_policy {input_limit=RP.Uncapped,
+            output_limit=RP.AtMost 1,template_limit=RP.Uncapped} RP.Uncapped
+            ``!n:num. T`` HolSmtTheory.NUM_FORALL_TO_INT native
+      in X.refused_after_producer
+           (fn () => ignore (prepare_with p e [] calls))
+           (fn fits => refusal_in_prepare fits p refused
+              "prospective output exceeds metadata policy") end) provers
 
   fun repeated_execution () =
     List.app (fn p =>
@@ -281,8 +278,7 @@ struct
             native
           val calls = ref 0
       in X.reissued {name= #name p,execute=prepare_with p e [] calls,
-           retired=fn () => retired e,charged=fn () => charged e,
-           atleast=op >=} end)
+           retired=fn () => retired e,charged=fn () => charged e} end)
       provers
 
   (* The Work allowance, at exact and one below, for the whole pipeline and
