@@ -38010,6 +38010,7 @@ let
     ("cpc_deferred_marker_closure", CPC_DeferredMarkerTests.run),
     ("z3_compact_selected_dispatch", Z3_CompactReplayTests.run),
     ("cpc_clausal_elimination_rows", CPC_ClausalEliminationTests.run),
+    ("cpc_owned_classification_charges", CPC_OwnedClassificationTests.run),
     ("cpc_typed_classification_matches_strings",
       cpc_typed_classification_matches_strings),
     ("cpc_graph_typed_parser", fn () =>
