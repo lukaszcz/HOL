@@ -5,7 +5,6 @@ sig
   val route : {equal:string * string -> bool,visit:unit -> unit,
     copies:int -> unit} ->
     {pop:bool,handler:string} -> route
-  val native_route : {pop:bool,handler:string} -> route
   (* Typed counterparts: the same classification of registered handlers
      (the string forms stay for the metered owned receiver). *)
   val route_of : {pop:bool,handler:CPC_Proof.replay_handler} -> route

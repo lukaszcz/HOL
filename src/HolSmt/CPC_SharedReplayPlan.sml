@@ -65,7 +65,6 @@ struct
             boolean_handlers)) then Simple
       else Bounded
     end
-  val native_route=route {equal=op =,visit=fn()=>(),copies=fn _=>()}
   datatype simple_boolean = SimpleAndIntro | SimpleAndElim
     | SimpleNotNotElim
     | SimpleNotOrElim

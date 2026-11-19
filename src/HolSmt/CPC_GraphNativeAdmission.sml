@@ -76,11 +76,12 @@ struct
         | command (Parser.GraphStep {step,pop}) =
             if pop then raise Defer ScopedCommandAdapter else
             let
-              val name = CPC_Proof.handler_name (#replay_handler (#rule step))
-              val _ = if (name = "trust" orelse name = "refl") andalso
+              val handler = #replay_handler (#rule step)
+              val _ = if (handler = CPC_Proof.HTrust orelse
+                   handler = CPC_Proof.HRefl) andalso
                   not (null (#premises step)) then
                 raise Defer UnsupportedCommand else ()
-              val fact = if name = "trust" then
+              val fact = if handler = CPC_Proof.HTrust then
                   (case #args step of [Parser.GraphTerm value] =>
                     let val target = #node value
                         val _ = declared step target
@@ -95,7 +96,7 @@ struct
                         val _ = obligations := (serial,target) :: !obligations
                     in new_fact {node = target,recipe = recipe} end
                    | _ => raise Defer UnsupportedCommand)
-                else if name = "refl" then
+                else if handler = CPC_Proof.HRefl then
                   (case #args step of [Parser.GraphTerm value] =>
                     let val operand = #node value
                         val target = equality (operand,operand)
@@ -103,7 +104,7 @@ struct
                         val _ = independent := target :: !independent
                     in new_fact {node = target,recipe = Reflexive operand} end
                    | _ => raise Defer UnsupportedCommand)
-                else if name = "symm" then
+                else if handler = CPC_Proof.HSymm then
                   (case (List.map find (#premises step),#args step) of
                      ([premise],[]) =>
                        (case SmtReplayRules.equality graph (node premise) of
@@ -114,7 +115,7 @@ struct
                               recipe = Symmetric premise} end
                         | NONE => raise Defer UnsupportedCommand)
                    | _ => raise Defer UnsupportedCommand)
-                else if name = "and_intro" then
+                else if handler = CPC_Proof.HAndIntro then
                   (case (List.map find (#premises step),#args step) of
                      ([left,right],[]) =>
                        let val operator = G.constant graph scope
@@ -126,7 +127,7 @@ struct
                        in new_fact {node = target,
                          recipe = Conjunction (left,right)} end
                    | _ => raise Defer UnsupportedCommand)
-                else if name = "and_elim" then
+                else if handler = CPC_Proof.HAndElim then
                   (case (List.map find (#premises step),#args step) of
                      ([premise],[Parser.GraphIndex index]) =>
                        if index = 0 orelse index = 1 then
@@ -139,7 +140,7 @@ struct
                           | _ => raise ERR "command" "nonbinary conjunction")
                        else raise Defer UnsupportedCommand
                    | _ => raise Defer UnsupportedCommand)
-                else if name = "contra" then
+                else if handler = CPC_Proof.HContra then
                   let val premises = List.map find (#premises step)
                       fun choose [] = raise ERR "command"
                             "native contra lacks exact opposite facts"
