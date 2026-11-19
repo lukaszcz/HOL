@@ -90,8 +90,12 @@ struct
   fun bound origin cap n = if n >= 0 andalso n <= IntInf.fromInt cap
     then () else refuse origin "prospective carrier syntax exceeds cap"
 
+  type kind =
+    {universal : bool,carrier : Type.hol_type,
+     domain : Type.hol_type option,fixed : Thm.thm}
+
   (* Which carrier law the quantifier needs. *)
-  fun classify {graph,operator,predicate,weight,origin} =
+  fun classify {graph,operator,predicate,weight,origin} : kind =
     let
       fun reject message = refuse origin message
       val universal = case G.view graph operator of G.Constant id =>
@@ -191,6 +195,40 @@ struct
     let val ps = visit scope predicate_child
         val body_size = visit scope (G.binder_closure_body graph scope closure)
     in (ps,body_size) end
+
+  (* What the callback-free inventory of a preparation records. *)
+  type inventory =
+    {source : G.node,predicate : G.node,carrier : Type.hol_type,
+     domain : Type.hol_type option,universal : bool,size : size,
+     body_size : size,types : Type.hol_type list}
+
+  fun check_ordinal origin ordinal =
+    if ordinal >= 0 then () else refuse origin "negative ordinal"
+
+  fun quantifier_application origin graph source =
+    case G.view graph source of G.Application pair => pair
+      | _ => refuse origin "not a quantifier application"
+
+  (* The law must be the stock one [classify] selected. *)
+  fun stock_law origin law fixed =
+    if Portable.pointer_eq (P.closed_original law,fixed) then ()
+    else refuse origin "not the exact selected original stock law"
+
+  (* The end of the inventory: the sizes of the predicate and of its body
+     and the types met. [active] is the caller's guard. *)
+  fun inventory {graph,scope,charge,weight,held,constants,locate,opaque,
+      active,predicate_child,closure,source,predicate,kind : kind} =
+    let
+      val types = ref ([] : Type.hol_type list)
+      val visit = size_walk {graph = graph,charge = charge,weight = weight,
+        held = held,constants = constants,types = types,locate = locate,
+        opaque = opaque}
+      val (ps,body_size) = predicate_sizes graph visit scope
+        predicate_child closure
+      val _ = active ()
+    in {source = source,predicate = predicate,carrier = #carrier kind,
+        domain = #domain kind,universal = #universal kind,size = ps,
+        body_size = body_size,types = !types} : inventory end
 
   (* The type-variable bindings the stock law is instantiated at. *)
   fun law_bindings origin domain variables =
@@ -332,6 +370,46 @@ struct
   fun carrier_amount {lhs,rhs,source_size,application,uncontracted,proof} =
     List.foldl (fn (z : size,n) => n + #raw z + #binder z + #ann z) 0
       (lhs :: rhs :: source_size :: application :: uncontracted :: proof)
+
+  (* The sizes of the generated carrier [target], of the quantifier [left]
+     it replaces and of the proof, once the law's planned [metadata] agrees
+     with the fixed one-P-per-side schema. *)
+  fun carrier_sizes {graph,initial : inventory,
+      metadata : {raw : int,binder : int,
+                  typed_annotations : Type.hol_type list},
+      charge,weight,shape_weight,origin} =
+    let
+      val {target,left,old_carrier} = carrier_exprs
+        {universal = #universal initial,domain = #domain initial,
+         carrier = #carrier initial,predicate = #predicate initial}
+      val shapes = ref ([] : shape list)
+      val size = expr_size {graph = graph,predicate = #predicate initial,
+        existing = #size initial,charge = charge,
+        shape_weight = shape_weight,shapes = shapes}
+      val rhs = size target val lhs = size left
+      val ps = #size initial
+      val pweight = weight (G.type_of graph (#predicate initial))
+      val _ = if schema_agrees weight
+          {raw = #raw metadata,binder = #binder metadata,
+           typed_annotations = #typed_annotations metadata}
+          {ps = ps,pweight = pweight,lhs = lhs,rhs = rhs} then () else
+        refuse origin "fixed one-P-per-side law schema differs"
+      val cw = shape_weight old_carrier
+      val qw = shape_weight (Arrow (Arrow (old_carrier,bool_shape),
+        bool_shape))
+      val sizes = proof_sizes
+        {lhs = lhs,rhs = rhs,ps = ps,body_size = #body_size initial,
+         pweight = pweight,cw = cw,qw = qw}
+    in {target = target,old_carrier = old_carrier,lhs = lhs,rhs = rhs,
+        ps = ps,pweight = pweight,sizes = sizes,shapes = shapes} end
+
+  (* Every size of the generated carrier and of the proof goes through the
+     caller's [check]. *)
+  fun check_outputs check {rhs : size,lhs : size,proof} =
+    (List.app (fn (z : size) => (check (#raw z);check (#binder z)))
+       (rhs :: proof);
+     (* This lhs is constructed by SPEC, not an original input. *)
+     List.app check [#raw lhs,#binder lhs])
 
   (* The shapes the proof builds besides those of the expressions. *)
   fun proof_shapes old_carrier =
@@ -499,13 +577,12 @@ struct
       val initial = W.with_step work (fn () =>
         let
           val _ = active ()
-          val _ = if ordinal >= 0 then () else reject "negative ordinal"
+          val _ = check_ordinal "prepare" ordinal
           val source = case surface of Views {view,...} => #node view
             | Canonical child => G.closure_child_node graph scope child
           val _ = admit source_limit source
-          val (operator,predicate) = case G.view graph source of
-              G.Application pair => pair
-            | _ => reject "not a quantifier application"
+          val (operator,predicate) =
+            quantifier_application "prepare" graph source
           val predicate_child = case surface of Canonical child =>
               #2 (G.closure_application_children graph scope child)
             | Views {predicate_view,...} =>
@@ -540,26 +617,21 @@ struct
           (* Constructed/rehome closures retain their genuine creation
              frames. They do NOT acquire a fabricated raw Source origin.
              This branch permits a later step on a generated BAG guard. *)
-          val {universal,carrier,domain,fixed} = classify {graph = graph,
+          val kind = classify {graph = graph,
             operator = operator,predicate = predicate,weight = weight,
             origin = "prepare"}
           val _ = admit (#template_limit limits) (P.closed_node law)
           val _ = P.validate_closed_fact graph root
             (#template_limit limits) law
-          val _ = if Portable.pointer_eq (P.closed_original law,fixed)
-            then () else reject "not the exact selected original stock law"
-          val types = ref ([] : Type.hol_type list)
-          val visit = size_walk {graph = graph,charge = charge,
-            weight = weight,held = held,constants = constants,types = types,
+          val _ = stock_law "prepare" law (#fixed kind)
+        in inventory {graph = graph,scope = scope,charge = charge,
+            weight = weight,held = held,constants = constants,
             locate = fn _ => fn _ => fn node => node,
             opaque = fn _ => fn _ =>
-              reject "nested original binder needs genuine opening"}
-          val (ps,body_size) = predicate_sizes graph visit scope
-            predicate_child closure
-          val _ = active ()
-        in {source = source,predicate = predicate,carrier = carrier,
-            domain = domain,universal = universal,size = ps,
-            body_size = body_size,types = !types} end)
+              reject "nested original binder needs genuine opening",
+            active = active,predicate_child = predicate_child,
+            closure = closure,source = source,predicate = predicate,
+            kind = kind} end)
       (* H preparation hooks SAME Work. Its supplied policy only queues
          admitted types: no external callback precedes carrier reservation. *)
       val producer = H.begin_original_with_work graph root
@@ -573,41 +645,20 @@ struct
       val result = W.with_step work (fn () =>
         let
           val metadata = H.planned_syntax hplan
-          val {target,left,old_carrier} = carrier_exprs
-            {universal = #universal initial,domain = #domain initial,
-             carrier = #carrier initial,predicate = #predicate initial}
-          val shapes = ref ([] : shape list)
-          val size = expr_size {graph = graph,predicate = #predicate initial,
-            existing = #size initial,charge = charge,
-            shape_weight = shape_weight,shapes = shapes}
-          val rhs = size target val lhs = size left
-          val ps = #size initial
-          val pweight = weight (G.type_of graph (#predicate initial))
-          val _ = if schema_agrees weight
-              {raw = #raw metadata,binder = #binder metadata,
-               typed_annotations = #typed_annotations metadata}
-              {ps = ps,pweight = pweight,lhs = lhs,rhs = rhs} then () else
-            reject "fixed one-P-per-side law schema differs"
-          val cw = shape_weight old_carrier
-          val qw = shape_weight (Arrow (Arrow (old_carrier,bool_shape),
-            bool_shape))
+          val {target,old_carrier,lhs,rhs,sizes,shapes,...} =
+            carrier_sizes {graph = graph,initial = initial,
+              metadata = metadata,charge = charge,weight = weight,
+              shape_weight = shape_weight,origin = "prepare"}
           val {source_size,application,uncontracted,alignment,final,
-               proof = base_proof} = proof_sizes
-            {lhs = lhs,rhs = rhs,ps = ps,body_size = #body_size initial,
-             pweight = pweight,cw = cw,qw = qw}
+               proof = base_proof} = sizes
           (* The Views mode additionally quotes its existing ALPHA-only
              bridge and the outer TRANS. Canonical mode never requests a
              raw view. *)
           val proof = base_proof @
             (case surface of Canonical _ => []
              | Views _ => [alignment,final])
-          val _ = List.app (fn (z : size) =>
-            (bound "prepare" (#output_limit limits) (#raw z);
-             bound "prepare" (#output_limit limits) (#binder z)))
-            (rhs :: proof)
-          (* This lhs is constructed by SPEC, not an original input. *)
-          val _ = List.app (bound "prepare" (#output_limit limits))
-            [#raw lhs,#binder lhs]
+          val _ = check_outputs (bound "prepare" (#output_limit limits))
+            {rhs = rhs,lhs = lhs,proof = proof}
           val _ = List.app (fn (metric,n) =>
             case G.unfolded_nodes graph metric source_limit
                 (#source initial) of
@@ -842,13 +893,12 @@ struct
         val initial = W.with_step work (fn () =>
           let
             val _ = active ()
-            val _ = if ordinal >= 0 then () else reject "negative ordinal"
+            val _ = check_ordinal "prepare_with_policy" ordinal
             val source = case surface of Canonical child =>
               G.closure_child_node graph scope child
             val _ = admit source_policy source_limit source
-            val (operator,predicate) = case G.view graph source of
-                G.Application pair => pair
-              | _ => reject "not a quantifier application"
+            val (operator,predicate) =
+              quantifier_application "prepare_with_policy" graph source
             val predicate_child = case surface of Canonical child =>
                 #2 (G.closure_application_children graph scope child)
             val closure = predicate_closure {graph = graph,scope = scope,
@@ -857,25 +907,19 @@ struct
             (* Constructed/rehome closures retain their genuine creation
                frames. They do NOT acquire a fabricated raw Source origin.
                This branch permits a later step on a generated BAG guard. *)
-            val {universal,carrier,domain,fixed} = classify {graph = graph,
+            val kind = classify {graph = graph,
               operator = operator,predicate = predicate,weight = weight,
               origin = "prepare_with_policy"}
             val _ = P.validate_closed_fact_with_policy graph root
               (#template_limit policy_limits) law
             val _ = admit (#template_limit policy_limits)
               (#template_limit limits) (P.closed_node law)
-            val _ = if Portable.pointer_eq (P.closed_original law,fixed)
-              then () else reject "not the exact selected original stock law"
-            val types = ref ([] : Type.hol_type list)
-            val visit = size_walk {graph = graph,charge = charge,
+            val _ = stock_law "prepare_with_policy" law (#fixed kind)
+          in inventory {graph = graph,scope = scope,charge = charge,
               weight = weight,held = held,constants = constants,
-              types = types,locate = #locate hooks,opaque = #opaque hooks}
-            val (ps,body_size) = predicate_sizes graph visit scope
-              predicate_child closure
-            val _ = active ()
-          in {source = source,predicate = predicate,carrier = carrier,
-              domain = domain,universal = universal,size = ps,
-              body_size = body_size,types = !types} end)
+              locate = #locate hooks,opaque = #opaque hooks,active = active,
+              predicate_child = predicate_child,closure = closure,
+              source = source,predicate = predicate,kind = kind} end)
         (* H preparation hooks SAME Work. Its supplied policy only queues
            admitted types: no external callback precedes carrier
            reservation. *)
@@ -891,44 +935,20 @@ struct
         val result = W.with_step work (fn () =>
           let
             val metadata = H.planned_syntax_with_policy hplan
-            val {target,left,old_carrier} = carrier_exprs
-              {universal = #universal initial,domain = #domain initial,
-               carrier = #carrier initial,predicate = #predicate initial}
-            val shapes = ref ([] : shape list)
-            val size = expr_size {graph = graph,
-              predicate = #predicate initial,existing = #size initial,
-              charge = charge,shape_weight = shape_weight,shapes = shapes}
-            val rhs = size target val lhs = size left
-            val ps = #size initial
-            val pweight = weight (G.type_of graph (#predicate initial))
-            val _ = if schema_agrees weight
-                {raw = #raw metadata,binder = #binder metadata,
-                 typed_annotations = #typed_annotations metadata}
-                {ps = ps,pweight = pweight,lhs = lhs,rhs = rhs} then () else
-              reject "fixed one-P-per-side law schema differs"
-            val cw = shape_weight old_carrier
-            val qw = shape_weight (Arrow (Arrow (old_carrier,bool_shape),
-              bool_shape))
-            val {source_size,application,uncontracted,proof,...} =
-              proof_sizes {lhs = lhs,rhs = rhs,ps = ps,
-                body_size = #body_size initial,pweight = pweight,cw = cw,
-                qw = qw}
+            val {target,old_carrier,lhs,rhs,sizes,shapes,...} =
+              carrier_sizes {graph = graph,initial = initial,
+                metadata = metadata,charge = charge,weight = weight,
+                shape_weight = shape_weight,origin = "prepare_with_policy"}
+            val {source_size,application,uncontracted,proof,...} = sizes
             val bound = bound "prepare_with_policy"
             fun output n=(bound (#output_limit limits) n;
               if RP.allows (#output_limit policy_limits) n then () else
                 reject "prospective output exceeds metadata policy")
-            val _ = List.app (fn (z : size) =>
-              (output (#raw z);output (#binder z))) (rhs :: proof)
-            (* This lhs is constructed by SPEC, not an original input. *)
-            val _ = List.app output
-              [#raw lhs,#binder lhs]
+            val _ = check_outputs output {rhs = rhs,lhs = lhs,proof = proof}
             val actual= #measure_source hooks (#source initial)
             val _=if #raw actual= #raw source_size andalso
                 #inc actual= #binder source_size then () else
               reject "canonical source forecast differs"
-            (* Annotation work is charged independently to SAME Work, not
-               invented as an annotation <= semantic syntax cap rule. Each
-               produced theorem's full repeated annotations are retained. *)
             val amount = carrier_amount {lhs = lhs,rhs = rhs,
               source_size = source_size,application = application,
               uncontracted = uncontracted,proof = proof}
