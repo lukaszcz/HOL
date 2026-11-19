@@ -221,11 +221,10 @@ struct
          val execute = prepare_with profiled e (#profiles o_) calls
          val prepared = charged e
          val _ = G.close_scope (#graph e) (#body_frame o_)
-         val count = Count.thm_count ()
-         val denied = refuses execute
      in require "profiled execute used a profile retired after preparation"
-          (denied andalso retired e andalso Count.thm_count () = count andalso
-           charged e >= prepared) end;
+          (X.stopped {action=execute,retired=fn () => retired e,
+                      charged=fn () => charged e,prefix=prepared,
+                    atleast=op >=}) end;
      List.app (fn p =>
        let val e = X.setup ``!n:num. T`` HolSmtTheory.NUM_FORALL_TO_INT
              native
@@ -233,11 +232,11 @@ struct
            val execute = prepare_with p e [] calls
            val prepared = charged e
            val _ = G.close_scope (#graph e) (#scope e)
-           val count = Count.thm_count ()
-           val denied = refuses execute
        in require (#name p ^ " executed in a retired scope")
-         (denied andalso retired e andalso Count.thm_count () = count andalso
-          charged e >= prepared) end) provers)
+         (X.stopped {action=execute,retired=fn () => retired e,
+                     charged=fn () => charged e,prefix=prepared,
+                    atleast=op >=}) end)
+       provers)
 
   (* Goals and metadata the shared policy section refuses, in both provers:
      the refusal comes from preparation, with the owner retired and no
@@ -270,7 +269,7 @@ struct
           val calls = ref 0 val start = X.inferences ()
           val _ = prepare_with p e [] calls
           val prepared = X.inferences () - start
-      in refusal_in_prepare (fn made => made <= prepared) p
+      in refusal_in_prepare (fn made => 0 < made andalso made <= prepared) p
         (X.setup_policy {input_limit=RP.Uncapped,output_limit=RP.AtMost 1,
            template_limit=RP.Uncapped} RP.Uncapped ``!n:num. T``
            HolSmtTheory.NUM_FORALL_TO_INT native)
@@ -281,13 +280,10 @@ struct
       let val e = X.setup ``!n:num. T`` HolSmtTheory.NUM_FORALL_TO_INT
             native
           val calls = ref 0
-          val execute = prepare_with p e [] calls
-          val _ = execute ()
-          val done = charged e val count = Count.thm_count ()
-          val again = refuses execute
-      in require (#name p ^ " reissued a consumed plan")
-        (again andalso retired e andalso Count.thm_count () = count andalso
-         charged e >= done) end) provers
+      in X.reissued {name= #name p,execute=prepare_with p e [] calls,
+           retired=fn () => retired e,charged=fn () => charged e,
+           atleast=op >=} end)
+      provers
 
   (* The Work allowance, at exact and one below, for the whole pipeline and
      for preparation alone. *)

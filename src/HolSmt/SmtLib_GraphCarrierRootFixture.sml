@@ -61,6 +61,21 @@ struct
   fun nothing made = made = 0
   fun settled fits retired calls count =
     retired andalso !calls = 0 andalso fits (inferences () - count)
+  (* [action] is refused and stops the pipeline: it raises, leaves the owner
+     [retired], makes no inference and keeps the charged prefix, that is,
+     [charged ()] has not fallen below [prefix] ([atleast] compares the two
+     amounts of Work, which are int or IntInf.int). *)
+  fun stopped {action,retired,charged,prefix,atleast} =
+    let val count = inferences ()
+        val refused = refuses action
+    in refused andalso retired () andalso inferences () = count andalso
+       atleast (charged (),prefix) end
+  (* A plan that was executed once is refused when [execute] runs again. *)
+  fun reissued {name,execute,retired,charged,atleast} =
+    let val _ = execute () val done = charged ()
+    in require (name ^ " reissued a consumed plan")
+         (stopped {action=execute,retired=retired,charged=charged,
+                   prefix=done,atleast=atleast}) end
   (* The kernel counts inferences (Count.thm_count) only while asked to;
      a test that compares counts runs inside [counting]. *)
   fun counting action =

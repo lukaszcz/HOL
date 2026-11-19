@@ -1,13 +1,12 @@
 (* Contract of the int prover of SmtLib_GraphCarrierRoot through its three
    entries: [prepare] for an opened view, [prepare_closure] for a canonical
    closure and [prepare_closure_admitted] for a focus admission. It covers
-   the four num/bag quantifier carriers, repeated execution, a scope retired
-   before execution, the Work allowance at exact and one below, callback
-   exceptions, a receipt lent to a foreign owner or in a child scope and
-   the refusals of a goal that does not fit (a quantifier that is neither
-   forall nor exists, a carrier that is neither num nor a bag, a wrong
-   stock law, a negative ordinal and a goal
-   over the output limit).
+   the four num/bag quantifier carriers, repeated execution, a scope
+   retired before execution, the Work allowance at exact and one below,
+   callback exceptions, a receipt lent to a foreign owner or in a child
+   scope and the refusals of a goal that does not fit (a quantifier that is
+   neither forall nor exists, a carrier that is neither num nor a bag, a
+   wrong stock law, a negative ordinal and a goal over the output limit).
 
    Every relation is computed inside one run: a complete run measures the
    charged Work, the allowance is then probed at that exact amount and one
@@ -132,13 +131,10 @@ struct
   fun repeated_execution () =
     List.app (fn (p : entry) =>
       let val e = setup plenty cap num_forall
-          val execute = #prepare p e 0 silent silent
-          val _ = execute ()
-          val done = charged e val count = Count.thm_count ()
-          val again = refuses execute
-      in require (#name p ^ " reissued a consumed plan")
-        (again andalso retired e andalso Count.thm_count () = count andalso
-         charged e >= done) end) entries
+      in X.reissued {name= #name p,execute= #prepare p e 0 silent silent,
+           retired=fn () => retired e,charged=fn () => charged e,
+           atleast=op >=} end)
+      entries
 
   fun retired_scope () =
     List.app (fn (p : entry) =>
@@ -146,11 +142,11 @@ struct
           val execute = #prepare p e 0 silent silent
           val prepared = charged e
           val _ = G.close_scope (#graph e) (#scope e)
-          val count = Count.thm_count ()
-          val denied = refuses execute
       in require (#name p ^ " executed in a retired scope")
-        (denied andalso retired e andalso Count.thm_count () = count andalso
-         charged e >= prepared) end) entries
+        (X.stopped {action=execute,retired=fn () => retired e,
+                    charged=fn () => charged e,prefix=prepared,
+                    atleast=op >=}) end)
+      entries
 
   (* The Work allowance, at exact and one below. *)
   fun work_allowance (p : entry) row =
@@ -177,10 +173,11 @@ struct
 
   (* A refusal from preparation leaves the owner retired, with no callback.
      The inventory of the goal precedes the producer of the law, which makes
-     inferences, so a refusal from the inventory also makes no theorem
-     ([bare]); the number made by a refusal from the syntax caps, which
-     come after the producer, is not asserted. *)
-  fun refusal_in_prepare bare (p : entry) ordinal output row message =
+     inferences, so a refusal from the inventory also makes no theorem; the
+     refusal from the output cap comes after the producer, so it makes some,
+     but no more than a complete preparation does. [fits] says whether the
+     refusal made an admissible number of inferences. *)
+  fun refusal_in_prepare fits (p : entry) ordinal output row message =
     let val e = setup plenty output row
         val calls = ref 0 val count = X.inferences ()
         val reason = (ignore (#prepare p e ordinal
@@ -188,26 +185,35 @@ struct
           handle Feedback.HOL_ERR err => SOME (Feedback.message_of err)
     in require (#name p ^ " did not refuse with: " ^ message)
          (reason = SOME message andalso
-          X.settled (if bare then X.nothing else fn _ => true)
-            (retired e) calls count) end
+          X.settled fits (retired e) calls count) end
   fun refused_goals () =
     List.app (fn (p : entry) =>
       (List.app (fn (term,message) =>
-         refusal_in_prepare true p 0 cap (term,HolSmtTheory.NUM_FORALL_TO_INT)
-           message)
+         refusal_in_prepare X.nothing p 0 cap
+           (term,HolSmtTheory.NUM_FORALL_TO_INT) message)
          [(``!b:bool->int. T``,"carrier is neither num nor arbitrary bag"),
           (``?!n:num. T``,"not forall or exists"),
           (``(P:(num->bool)->bool) (\n:num. T)``,
            "not a constant quantifier")];
-       refusal_in_prepare true p 0 cap
+       refusal_in_prepare X.nothing p 0 cap
          (``!n:num. T``,HolSmtTheory.NUM_EXISTS_TO_INT)
          "not the exact selected original stock law";
-       refusal_in_prepare true p 0 cap
+       refusal_in_prepare X.nothing p 0 cap
          (``!n:num. T``,HolSmtTheory.BAG_FORALL_TO_INT)
          "not the exact selected original stock law";
-       refusal_in_prepare true p ~1 cap num_forall "negative ordinal";
-       refusal_in_prepare false p 0 1 num_forall
-         "prospective carrier syntax exceeds cap"))
+       refusal_in_prepare X.nothing p ~1 cap num_forall "negative ordinal"))
+      entries
+  (* The output cap is refused inside the preparation, after the producer of
+     the law made its inferences: some, but no more than a complete
+     preparation makes, measured here after the same setup. *)
+  fun refused_output () =
+    List.app (fn (p : entry) =>
+      let val e = setup plenty cap num_forall
+          val start = X.inferences ()
+          val _ = #prepare p e 0 silent silent
+          val prepared = X.inferences () - start
+      in refusal_in_prepare (fn made => 0 < made andalso made <= prepared)
+           p 0 1 num_forall "prospective carrier syntax exceeds cap" end)
       entries
 
   (* An exception of a type callback or of the scope observer reaches the
@@ -241,8 +247,10 @@ struct
            (denied andalso !calls = 1 andalso retired e) end)) entries
 
   (* A receipt is lent only to the owner that produced it, in the scope it
-     was made in; a foreign owner, or the owner in a child scope, is
-     retired by the attempt, the producing one is not. *)
+     was made in. A foreign owner is retired by the attempt and the
+     producing one is not. Lent to its producer in a child scope, it is
+     refused as a foreign receipt and the producing owner is the one
+     retired. *)
   fun foreign_receipt () =
     List.app (fn (p : entry) =>
       (let val e = setup plenty cap num_forall
@@ -256,11 +264,13 @@ struct
        let val e = setup plenty cap num_forall
           val conversion = #prepare p e 0 silent silent ()
           val child = G.new_scope (#graph e) (#scope e) []
-          val denied = refuses (fn () => C.validate_for
+          val reason = (ignore (C.validate_for
             {graph= #graph e,scope=child,sources= #sources e,
-             work= #work e} conversion)
+             work= #work e} conversion); NONE)
+            handle Feedback.HOL_ERR err => SOME (Feedback.message_of err)
       in require (#name p ^ " lent a receipt to a child scope")
-           (denied andalso retired e) end)) entries
+           (reason = SOME "foreign carrier work receipt" andalso
+            retired e) end)) entries
 
   fun run_all () = X.counting (fn () =>
     (test "int carriers convert through the three entries" conversions;
@@ -268,7 +278,9 @@ struct
      test "int execution in a retired scope is refused" retired_scope;
      test "int Work allowance at exact and one below" allowances;
      test "int goals that do not fit are refused" refused_goals;
+     test "int output cap is refused after the producer" refused_output;
      test "int callback exceptions stop the plan" callback_exceptions;
-     test "int receipt is refused to a foreign owner" foreign_receipt))
+     test "int receipt is refused to a foreign owner or at a child scope"
+       foreign_receipt))
   val run = run_all
 end
