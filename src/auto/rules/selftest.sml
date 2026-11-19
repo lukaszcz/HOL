@@ -871,8 +871,16 @@ val _ =
                SOME (ADD (Found (name', spec', _))) =>
                  name = name' andalso same_spec spec spec'
              | _ => false
+         val missing_name = {Thy = "bool", Name = "no_such_theorem_c2"}
+         fun missing_round_trip spec =
+           case decode_delta
+                  (encode_delta (ADD (Missing (missing_name, spec)))) of
+               SOME (ADD (Missing (name', spec'))) =>
+                 name' = missing_name andalso same_spec spec spec'
+             | _ => false
        in
          List.all round_trip specs andalso
+         List.all missing_round_trip specs andalso
          (case decode_delta (encode_delta (RM "gone")) of
              SOME (RM "gone") => true
            | _ => false)

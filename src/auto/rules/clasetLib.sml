@@ -990,10 +990,10 @@ val caught_up =
 
 (* The claset of the context given.  A state still pending is caught up
    in that context, reading its TypeBase (the theorems its deltas name
-   were looked up when they were recorded).  The result is recorded, so
-   that the replay is done once, unless the global state has moved on
-   meanwhile, in which case the record is left to the state that moved
-   it. *)
+   were looked up when they were decoded or recorded).  The result is
+   recorded, so that the replay is done once, unless the global state has
+   moved on meanwhile, in which case the record is left to the state that
+   moved it. *)
 fun the_claset_of ctxt =
   case #get_global_value_of adresult ctxt of
       (cs, _, Ready) => cs
