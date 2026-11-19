@@ -186,6 +186,34 @@ fun with_arith_fact operation =
           result
         end
 
+(* The [arith] set a tactic reads is that of the context it is applied in,
+   not the ambient one.  [ctxt_with_fact] is a snapshot that has the
+   probe fact and [ctxt_without_fact] one that lacks it; the tactic is run
+   with its context given explicitly, while the ambient set has the fact
+   (second group) or lacks it (first group). *)
+val ctxt_without_fact = Context.snapshot ()
+val ctxt_with_fact =
+  let val captured = ref ctxt_without_fact
+  in ignore (with_arith_fact
+               (fn () => (captured := Context.snapshot (); true)));
+     !captured
+  end
+
+fun closes_in ctxt tactic goal =
+  null (#1 (Tactical.VALID tactic goal ctxt))
+  handle Feedback.HOL_ERR _ => false
+
+fun follows_arith_context tactic_in goal =
+  let
+    fun closes ctxt = closes_in ctxt (tactic_in ctxt) goal
+    val ambient_without =
+      closes ctxt_with_fact andalso not (closes ctxt_without_fact)
+    val ambient_with =
+      with_arith_fact
+        (fn () => closes ctxt_with_fact andalso
+                  not (closes ctxt_without_fact))
+  in ambient_without andalso ambient_with end
+
 fun selftest_level () =
   case Option.mapPartial Int.fromString
          (OS.Process.getEnv "HOLSELFTESTLEVEL") of

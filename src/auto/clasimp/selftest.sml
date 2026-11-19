@@ -2879,47 +2879,21 @@ val _ =
            valid_closes auto_linarith_tactic auto_arith_fact_goal) andalso
        tactic_fails auto_linarith_tactic auto_arith_fact_goal)
 
-(* The [arith] set a tactic reads is that of the context it is applied in,
-   not the ambient one.  [ctxt_with_fact] is a snapshot that has the
-   probe fact and [ctxt_without_fact] one that lacks it; each tactic is run
-   with its context given explicitly, while the ambient set has the fact
-   (second group) or lacks it (first group). *)
-val ctxt_without_fact = Context.snapshot ()
-val ctxt_with_fact =
-  let val captured = ref ctxt_without_fact
-  in ignore (with_arith_fact
-               (fn () => (captured := Context.snapshot (); true)));
-     !captured
-  end
-
-fun closes_in ctxt tactic goal =
-  null (#1 (SelfTestTactical.VALID tactic goal ctxt))
-  handle Feedback.HOL_ERR _ => false
-
 fun unbudgeted_in ctxt =
   simpExtLib.ASM_SIMP_TAC (clasimpLib.clasimp_ss_of ctxt)
     [auto_linarith_rewrite]
 
-fun follows_context tactic_in =
-  let
-    fun closes ctxt = closes_in ctxt (tactic_in ctxt) auto_arith_fact_goal
-    val ambient_without =
-      closes ctxt_with_fact andalso not (closes ctxt_without_fact)
-    val ambient_with =
-      with_arith_fact
-        (fn () => closes ctxt_with_fact andalso
-                  not (closes ctxt_without_fact))
-  in ambient_without andalso ambient_with end
-
 val _ =
   check
     ("the unbudgeted clasimp simpset reads the [arith] set of its context",
-     fn () => follows_context unbudgeted_in)
+     fn () => follows_arith_context unbudgeted_in
+                 auto_arith_fact_goal)
 
 val _ =
   check
     ("AUTO_TAC reads the [arith] set of its context",
-     fn () => follows_context (fn _ => auto_linarith_tactic))
+     fn () => follows_arith_context (fn _ => auto_linarith_tactic)
+                 auto_arith_fact_goal)
 
 (* A proof's clasimp.trace setting is that of the context its tactic is
    applied in, which here differs from the ambient one both ways.  Only

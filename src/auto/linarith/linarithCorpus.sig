@@ -85,6 +85,12 @@ sig
      nothing is left behind afterwards. *)
   val with_arith_fact : (unit -> bool) -> bool
 
+  (* Whether tactic closes goal in the given context, never raising. *)
+  val closes_in : Context.t -> tactic -> goal -> bool
+
+  (* Whether a tactic built from a context reads that context's [arith]. *)
+  val follows_arith_context : (Context.t -> tactic) -> goal -> bool
+
   (* check_numbering {suite, numbering} goals checks that goals uses
      exactly the numbers in numbering, once each, and that the two
      numberings above still stand in their documented relation. *)

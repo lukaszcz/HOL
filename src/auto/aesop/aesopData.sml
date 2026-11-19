@@ -22,10 +22,8 @@ fun aesop_simp_rewrites_of ctxt =
   #get_global_value_of aesop_simp_data ctxt
 
 (* Start from the lifted srw_ss, NOT clasimp_ss: aesop leaves splitting
-   to search.  Replacing rather than appending unsafe solvers is
-   essential: a solver installed in the base must not precede aesop's
-   choice during safe normalisation's side-condition traversal.  The
-   unsafe solver is set per context, in aesop_derived_of below. *)
+   to search.  The unsafe solver is set per context, in aesop_derived_of
+   below. *)
 fun aesop_base ss =
   simpExtLib.lift_simpset ss
   |> clasimpLib.weaken_cond_congruence
@@ -36,10 +34,15 @@ fun aesop_base ss =
 (* The simpset is a function of srw_ss, the aesop_simp rewrites and the
    [arith] facts.  The srw_ss state keys the stored value through the
    derived-value mechanism, independently of clasimp's derivation, so
-   restoring a context restores the exact simpset.  The rewrites, compared
-   by identity (an immutable value a context owns), and the facts,
-   compared element-wise by identity, key a single-entry memo inside it.
-   Linarith is aesop's only unsafe solver. *)
+   restoring a context that changes srw_ss restores the exact simpset.
+   The rewrites, compared by identity (an immutable value a context
+   owns), and the facts, compared element-wise by identity, key a
+   single-entry memo inside it: a window that changes only [arith] or
+   [aesop_simp] replaces the entry, and an equal but new simpset is built
+   after the restore.  Linarith is aesop's only unsafe solver, and
+   set_unsafe_solvers replaces rather than appends: a solver installed in
+   the base must not precede aesop's choice during safe normalisation's
+   side-condition traversal. *)
 val {get = _, get_of = aesop_derived_of} =
   BasicProvers.make_simpset_derived_value
     "aesopData.aesop_ss"
