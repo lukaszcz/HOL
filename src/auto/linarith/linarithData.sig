@@ -229,16 +229,13 @@ sig
   val default_config : linarith_config
 
   (* The "linarith.trace" trace.  The tactics read its level from their
-     context, and the helpers take it first: [trace verbosity level
-     message] reports when level <= verbosity.  They render nothing
-     unless the level asks for it; tracing is that same test, for a
-     caller that has to build its message itself. *)
-  val trace_flag : HOLFlags.flag
-  val trace_level_of : Context.t -> int
-  val tracing : int -> int -> bool
-  val trace : int -> int -> string -> unit
-  val trace_thm : int -> int -> string -> thm -> unit
-  val trace_terms : int -> int -> string -> term list -> unit
+     context with traceUtil.level_of, and the helpers take that level
+     first, then the threshold.  They render nothing unless the level
+     asks for it. *)
+  val tracer : traceUtil.tracer
+  val trace_thm : traceUtil.level -> int -> string -> thm -> unit
+  val trace_terms :
+    traceUtil.level -> int -> string -> term list -> unit
   val trace_items :
-    int -> int -> string -> ('a -> string) -> 'a list -> unit
+    traceUtil.level -> int -> string -> ('a -> string) -> 'a list -> unit
 end

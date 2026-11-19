@@ -397,35 +397,24 @@ type linarith_config = {neq_limit : int, split_limit : int}
 
 val default_config : linarith_config = {neq_limit = 9, split_limit = 9}
 
-val {flag = trace_flag, ...} =
-    HOLFlags.create_trace ({group = "linarith", name = "trace"},
-                           {initial = 0, max = 3})
-
-fun trace_level_of ctxt = HOLFlags.get_flagC ctxt trace_flag
-
-fun tracing verbosity level = verbosity >= level
+val tracer =
+  traceUtil.create {group = "linarith", max = 3,
+                    emit = fn message => print ("linarith: " ^ message ^ "\n")}
 
 (* Rendering a theorem or a term list costs more than the test that
-   decides whether anyone will read it, so every helper asks first.  A
-   caller that has to build its message itself asks with tracing. *)
-fun trace verbosity level message =
-  if tracing verbosity level then print ("linarith: " ^ message ^ "\n")
-  else ()
+   decides whether anyone will read it, so the message is a thunk. *)
+fun trace_thm level threshold label theorem =
+  traceUtil.trace level threshold
+    (fn () => label ^ "\n" ^ Parse.thm_to_string theorem)
 
-fun trace_thm verbosity level label theorem =
-  if tracing verbosity level then
-    trace verbosity level (label ^ "\n" ^ Parse.thm_to_string theorem)
-  else ()
-
-fun trace_items verbosity level label render items =
-  if tracing verbosity level then
-    trace verbosity level
-      (label ^
+fun trace_items level threshold label render items =
+  traceUtil.trace level threshold
+    (fn () =>
+       label ^
        (if null items then " <none>"
         else "\n" ^ String.concatWith "\n" (map render items)))
-  else ()
 
-fun trace_terms verbosity level label terms =
-  trace_items verbosity level label Parse.term_to_string terms
+fun trace_terms level threshold label terms =
+  trace_items level threshold label Parse.term_to_string terms
 
 end

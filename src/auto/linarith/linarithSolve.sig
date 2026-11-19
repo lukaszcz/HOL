@@ -46,7 +46,7 @@ sig
      the cases are generated, and the caller must reproduce that case
      split. *)
   val prove :
-    int -> linarith_config -> (Term.term -> decomp option) ->
+    traceUtil.level -> linarith_config -> (Term.term -> decomp option) ->
     (Term.term -> bool) -> Term.term list -> Term.term ->
     bool * injust list option
 
@@ -55,7 +55,7 @@ sig
      decomposes that set once and calls this directly; the negated
      conclusion is still decomposed per call, since it varies. *)
   val prove_decomposed :
-    int -> linarith_config -> (Term.term -> decomp option) ->
+    traceUtil.level -> linarith_config -> (Term.term -> decomp option) ->
     (Term.term -> bool) -> (Term.term * decomp option) list ->
     Term.term -> bool * injust list option
 
@@ -71,11 +71,11 @@ sig
      normalization admits decomposition and row construction.  These
      are certificate-search outcomes, not yet kernel proof outcomes. *)
   val prove_budgeted :
-    int -> searchBudget.budget -> linarith_config ->
+    traceUtil.level -> searchBudget.budget -> linarith_config ->
     (Term.term -> decomp option) -> (Term.term -> bool) ->
     Term.term list -> Term.term -> budget_outcome
   val prove_decomposed_budgeted :
-    int -> searchBudget.budget -> linarith_config ->
+    traceUtil.level -> searchBudget.budget -> linarith_config ->
     (Term.term -> decomp option) -> (Term.term -> bool) ->
     (Term.term * decomp option) list -> Term.term -> budget_outcome
 end

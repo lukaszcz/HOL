@@ -10,14 +10,14 @@ val ERR = mk_HOL_ERR "linarithLib"
    tactics take the level from the context they are applied in. *)
 type work =
   {meter : searchBudget.charger, budget : searchBudget.budget option,
-   verbosity : int}
+   level : traceUtil.level}
 
-fun free_work verbosity : work =
-  {meter = searchBudget.free_charger, budget = NONE, verbosity = verbosity}
+fun free_work level : work =
+  {meter = searchBudget.free_charger, budget = NONE, level = level}
 
-fun budget_work budget verbosity : work =
+fun budget_work budget level : work =
   {meter = searchBudget.charger budget, budget = SOME budget,
-   verbosity = verbosity}
+   level = level}
 
 fun candidate (work : work) = #candidate (#meter work) ()
 fun application (work : work) = #application (#meter work) ()
@@ -154,9 +154,9 @@ fun full_arguments function arguments =
 fun refutation_with work config (assumptions, conclusion) =
   case #budget (work : work) of
       NONE =>
-        linarithReplay.refute (#verbosity work) config assumptions conclusion
+        linarithReplay.refute (#level work) config assumptions conclusion
     | SOME budget =>
-        (case linarithReplay.refute_budgeted (#verbosity work) budget config
+        (case linarithReplay.refute_budgeted (#level work) budget config
                 assumptions conclusion of
              linarithReplay.RefutationReady tactic => SOME tactic
            | linarithReplay.RefutationExhausted => NONE
@@ -170,9 +170,9 @@ fun refutation_with work config (assumptions, conclusion) =
    already knowing the answer is NONE, and re-entering core there would
    spend a second full refutation to be told so again. *)
 fun exhausted (work : work) function hint (assumptions, conclusion) =
-  (linarithData.trace_terms (#verbosity work) 2 "preprocessed assumptions"
+  (linarithData.trace_terms (#level work) 2 "preprocessed assumptions"
      assumptions;
-   linarithData.trace_terms (#verbosity work) 2 "preprocessed conclusion"
+   linarithData.trace_terms (#level work) 2 "preprocessed conclusion"
      [conclusion];
    no_proof function hint)
 
@@ -197,7 +197,7 @@ fun simple_linarith_tac_with make_work function arguments =
     val argument_facts = map (simple_argument function) arguments
   in
     fn goal => fn ctxt =>
-      let val work = make_work (linarithData.trace_level_of ctxt)
+      let val work = make_work (traceUtil.level_of linarithData.tracer ctxt)
       in
         normalization work;
         Tactical.THEN
@@ -379,7 +379,7 @@ fun limit_exceeded (work : work) function limit =
     val message =
       "linarith_split_limit exceeded (current value is " ^
       Int.toString limit ^ ")"
-    val _ = linarithData.trace (#verbosity work) 1 message
+    val _ = traceUtil.trace (#level work) 1 (fn () => message)
   in
     raise ERR function message
   end
@@ -397,7 +397,7 @@ fun distinct_thms_with work theorems =
 
 (* Deduplicating reports nothing, so no level is asked for. *)
 fun distinct_thms theorems =
-  distinct_thms_with (free_work 0) theorems
+  distinct_thms_with (free_work traceUtil.silent) theorems
 
 fun compute_split_rules extra splits =
   let
@@ -634,13 +634,13 @@ fun consistent_with work config decomposed disjunct =
   in
     case #budget (work : work) of
         NONE =>
-          (case linarithSolve.prove_decomposed (#verbosity work) config
+          (case linarithSolve.prove_decomposed (#level work) config
                   linarithDecomp.decomp linarithDecomp.is_nonnegative
                   facts boolSyntax.F of
                (_, SOME _) => false
              | (_, NONE) => true)
       | SOME budget =>
-          (case linarithSolve.prove_decomposed_budgeted (#verbosity work)
+          (case linarithSolve.prove_decomposed_budgeted (#level work)
                   budget config
                   linarithDecomp.decomp linarithDecomp.is_nonnegative
                   facts boolSyntax.F of
@@ -997,7 +997,7 @@ fun cfg_linarith_tac_with make_work function config arguments =
     val split_tac = split_tactic argument_splits
   in
     fn goal => fn ctxt =>
-      let val work = make_work (linarithData.trace_level_of ctxt)
+      let val work = make_work (traceUtil.level_of linarithData.tracer ctxt)
       in
         normalization work;
         Tactical.THEN
@@ -1111,7 +1111,7 @@ fun forward_prove_with work function ctxt premises conclusion =
 fun forward_prove premises conclusion =
   let
     val ctxt = Context.snapshot ()
-    val work = free_work (linarithData.trace_level_of ctxt)
+    val work = free_work (traceUtil.level_of linarithData.tracer ctxt)
   in
     case forward_prove_with work "forward_prove" ctxt premises conclusion of
         SOME theorem => theorem
@@ -1156,7 +1156,7 @@ datatype budget_outcome =
 
 fun LINARITH_PROVE_BUDGETED_IN ctxt budget tm =
   let
-    val work = budget_work budget (linarithData.trace_level_of ctxt)
+    val work = budget_work budget (traceUtil.level_of linarithData.tracer ctxt)
     val (variables, body) = boolSyntax.strip_forall tm
     val (premises, conclusion) = boolSyntax.strip_imp_only body
   in
@@ -1494,7 +1494,8 @@ fun budgeted_context_prove ctxt budget context tm =
   if not (cache_check tm) then decline ""
   else
     let
-      val work = budget_work budget (linarithData.trace_level_of ctxt)
+      val work =
+        budget_work budget (traceUtil.level_of linarithData.tracer ctxt)
       val theorem =
         case forward_prove_with work "budgeted_context_prove" ctxt
                (map Thm.concl context) tm of

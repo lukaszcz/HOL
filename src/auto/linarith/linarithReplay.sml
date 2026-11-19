@@ -256,16 +256,16 @@ fun try_add theorem others = Lib.get_first (add_direct theorem) others
 fun try_add_pairs theorems others =
   Lib.get_first (fn theorem => try_add theorem others) theorems
 
-fun add_failure verbosity theorem1 theorem2 =
+fun add_failure level theorem1 theorem2 =
   let
-    val _ = linarithData.trace_thm verbosity 1 "failed add, left:" theorem1
+    val _ = linarithData.trace_thm level 1 "failed add, left:" theorem1
     val _ =
-      linarithData.trace_thm verbosity 1 "failed add, right:" theorem2
+      linarithData.trace_thm level 1 "failed add, right:" theorem2
   in
     raise ERR "mkthm" "Linear arithmetic: failed to add thms"
   end
 
-fun add_thms verbosity theorem1 theorem2 =
+fun add_thms level theorem1 theorem2 =
   case add_direct theorem1 theorem2 of
       SOME theorem => theorem
     | NONE =>
@@ -273,14 +273,14 @@ fun add_thms verbosity theorem1 theorem2 =
                 (conversion_closure theorem1)
                 (conversion_closure theorem2) of
              SOME theorem => theorem
-           | NONE => add_failure verbosity theorem1 theorem2)
+           | NONE => add_failure level theorem1 theorem2)
 
 (* The multiplier is a Fourier--Motzkin coefficient -- a product of lcms
    -- so it is unbounded, and n - 1 additions is too many.  Double
    instead, adding one copy back on a set bit: O(log n) additions.  The
    intermediate sums come out balanced rather than right-nested, but
    normalize_sides is what the caller reads, and that is unchanged. *)
-fun mult_by_add verbosity n theorem =
+fun mult_by_add level n theorem =
   if Arbint.< (n, Arbint.one) then
     raise ERR "mult_by_add" "non-positive inequality multiplier"
   else
@@ -292,10 +292,10 @@ fun mult_by_add verbosity n theorem =
           let
             val (half, bit) = Arbint.divmod (i, Arbint.two)
             val halved = multiple half
-            val doubled = add_thms verbosity halved halved
+            val doubled = add_thms level halved halved
           in
             if bit = Arbint.zero then doubled
-            else add_thms verbosity theorem doubled
+            else add_thms level theorem doubled
           end
     in
       multiple n
@@ -412,7 +412,7 @@ fun apply_mult_rule instance literal theorem implications =
              | NONE => raise ERR "apply_mult_rule" "rule does not match")
   end
 
-fun mult_positive verbosity instance n theorem =
+fun mult_positive level instance n theorem =
   let
     val literal = #mk_lit (#dest instance) (Arbrat.fromAInt n)
   in
@@ -420,7 +420,7 @@ fun mult_positive verbosity instance n theorem =
            (apply_mult_rule instance literal theorem)
            (#mult_mono (linarithData.instance_implications instance)) of
         SOME result => result
-      | NONE => mult_by_add verbosity n theorem
+      | NONE => mult_by_add level n theorem
   end
 
 (* Renormalize the two sides of a relation, which sit one level deeper
@@ -435,7 +435,7 @@ fun normalize_sides instance theorem =
    the way to a refutation kept the shape t * 2 * 3, which cancellation
    cannot match against the t * 6 on the other side, and replay ended at
    a true relation instead of at falsity. *)
-fun mult_thm verbosity n theorem =
+fun mult_thm level n theorem =
   let
     val instance = instance_of_thm theorem
     val equality = boolSyntax.is_eq (relation_body (Thm.concl theorem))
@@ -454,7 +454,7 @@ fun mult_thm verbosity n theorem =
         end
       else if negative then
         raise ERR "mult_thm" "negative multiplier on an inequality"
-      else mult_positive verbosity instance n theorem
+      else mult_positive level instance n theorem
   in
     normalize_sides instance scaled
   end
@@ -488,7 +488,7 @@ fun normalize_final theorem =
 fun implications_of theorem =
   linarithData.instance_implications (instance_of_thm theorem)
 
-fun mkthm_with charge verbosity assumptions justification =
+fun mkthm_with charge level assumptions justification =
   let
     (* A certificate names the same assumption at many of its leaves,
        so the list is indexed once here rather than walked per leaf. *)
@@ -526,9 +526,9 @@ fun mkthm_with charge verbosity assumptions justification =
           in
             required_match "finish NotLeDD on" (#lessD imps) less
           end
-      | decode (Multiplied (n, why)) = mult_thm verbosity n (one why)
+      | decode (Multiplied (n, why)) = mult_thm level n (one why)
       | decode (Added (left, right)) =
-          normalize_added (add_thms verbosity (one left) (one right))
+          normalize_added (add_thms level (one left) (one right))
     (* Apply the rules the justification's own carrier supplies.  Only
        a discrete carrier supplies the lessD LessD and NotLeDD ask for,
        and those justifications never arise for a dense one, whose
@@ -547,15 +547,15 @@ fun mkthm_with charge verbosity assumptions justification =
        normalize_final (one justification)
        handle FalseReached theorem => theorem)
     val _ =
-      linarithData.trace_thm verbosity 2 "replayed certificate:" theorem
+      linarithData.trace_thm level 2 "replayed certificate:" theorem
   in
     if Term.aconv (Thm.concl theorem) boolSyntax.F then theorem
     else
       let
         val _ =
-          linarithData.trace_items verbosity 1 "Assumptions:"
+          linarithData.trace_items level 1 "Assumptions:"
             Parse.thm_to_string assumptions
-        val _ = linarithData.trace_thm verbosity 1 "Proved:" theorem
+        val _ = linarithData.trace_thm level 1 "Proved:" theorem
         val message =
           "Linear arithmetic should have refuted the assumptions but " ^
           "failed to."
@@ -565,8 +565,8 @@ fun mkthm_with charge verbosity assumptions justification =
       end
   end
 
-fun mkthm verbosity assumptions justification =
-  mkthm_with (fn () => ()) verbosity assumptions justification
+fun mkthm level assumptions justification =
+  mkthm_with (fn () => ()) level assumptions justification
 
 (* Both replay paths use this operation to select neqE from the instance
    belonging to the disequality's carrier.  REL_NEQ is the only encoding
@@ -698,7 +698,7 @@ fun justification_tac_with charge justification
     raise ERR "justification_tac" "goal is not false"
   else
     Tactic.ACCEPT_TAC
-      (mkthm_with charge (linarithData.trace_level_of ctxt)
+      (mkthm_with charge (traceUtil.level_of linarithData.tracer ctxt)
         (List.map Thm.ASSUME assumptions) justification)
       (assumptions, goal) ctxt
 
@@ -718,10 +718,10 @@ fun refute_tac_with charge split_neq justifications =
 fun refute_tac split_neq justifications =
   refute_tac_with (fn () => ()) split_neq justifications
 
-fun refute verbosity config assumptions conclusion =
+fun refute level config assumptions conclusion =
   let
     val (split_neq, result) =
-      linarithSolve.prove verbosity config linarithDecomp.decomp
+      linarithSolve.prove level config linarithDecomp.decomp
         linarithDecomp.is_nonnegative assumptions conclusion
   in
     Option.map (refute_tac split_neq) result
@@ -733,12 +733,12 @@ datatype refutation_outcome =
   | RefutationLimitReached of
       {kind : searchBudget.kind, usage : searchBudget.usage}
 
-fun refute_budgeted verbosity budget config assumptions conclusion =
+fun refute_budgeted level budget config assumptions conclusion =
   let
     fun charge () =
       searchBudget.charge budget searchBudget.Normalization
   in
-    case linarithSolve.prove_budgeted verbosity budget config
+    case linarithSolve.prove_budgeted level budget config
            linarithDecomp.decomp linarithDecomp.is_nonnegative
            assumptions conclusion of
         linarithSolve.CertificateFound
@@ -757,10 +757,10 @@ fun refute_budgeted verbosity budget config assumptions conclusion =
    in the order the search's disequality elimination generated it. *)
 fun fwd_prove_in ctxt config theorems conclusion =
   let
-    val verbosity = linarithData.trace_level_of ctxt
+    val level = traceUtil.level_of linarithData.tracer ctxt
     val hypotheses = List.map Thm.concl theorems
     val tactic =
-      case refute verbosity config hypotheses conclusion of
+      case refute level config hypotheses conclusion of
           SOME tactic => tactic
         | NONE =>
             raise ERR "fwd_prove_in" "linear arithmetic found no proof"
@@ -769,7 +769,7 @@ fun fwd_prove_in ctxt config theorems conclusion =
       if null goals then ()
       else raise ERR "fwd_prove_in" "replay left a subgoal open"
     val theorem = Lib.rev_itlist PROVE_HYP theorems (validation [])
-    val _ = linarithData.trace_thm verbosity 2 "forward proof:" theorem
+    val _ = linarithData.trace_thm level 2 "forward proof:" theorem
   in
     theorem
   end
@@ -786,8 +786,8 @@ fun fwd_prove_budgeted_in ctxt budget config theorems conclusion =
     fun charge () =
       searchBudget.charge budget searchBudget.Normalization
   in
-    case refute_budgeted (linarithData.trace_level_of ctxt) budget config
-           hypotheses conclusion of
+    case refute_budgeted (traceUtil.level_of linarithData.tracer ctxt) budget
+           config hypotheses conclusion of
         RefutationExhausted => ReplayExhausted
       | RefutationLimitReached {kind, usage} =>
           ReplayLimitReached {kind = kind, usage = usage}
