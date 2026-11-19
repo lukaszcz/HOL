@@ -454,15 +454,18 @@ struct
         val target = at_node focus (scope focus) (#target data) [backing]
     in checked (focus,target,theorem,backing) end)
 
+  (* The largest of the three semantic scalar limits. *)
+  fun max_limit ({input_limit,output_limit,template_limit} : W.limits) =
+    Int.max (input_limit,Int.max (output_limit,template_limit))
   (* The footprint walk shared by both inventories. A caller supplies the
      owner-specific operations: [fence] (SOME check wraps every callback in
      an owner check, NONE leaves the walk unfenced), the paid [spend], the
      traversal [scope], [begin_root] (the per-root cache check or capture),
      the opaque-profile lookup and data ([profile_for], [profile_data], read
      for requester ['r]) and how the requester descends under a binder
-     ([body_requester]). It returns the footprints, the quoted types, the
-     closure children held and the opaque profiles retained, from which the
-     caller builds its own guard. *)
+     ([body_requester]). It returns the footprints, the quoted types and
+     [revalidate], which re-walks the retained closure children and then
+     opaque profiles; the caller builds its guard from it. *)
   fun inventory_worker {fence,work,graph,ceiling,spend,scope,begin_root,
                       profile_for,profile_data,body_requester,
                       requester0} roots =
@@ -557,7 +560,14 @@ struct
           in visit caller requester (invoke
             (fn () => G.closure_root graph (scope ()) current)) end
         val values = List.map root roots
-    in (values,!types,!held,!opaque) end
+        (* Re-walk every retained closure child, then every retained opaque
+           profile, with the same direct (unfenced) calls as the walk. *)
+        fun revalidate () =
+          (List.app (fn (caller,child) =>
+             ignore (G.closure_child_node graph caller child)) (!held);
+           List.app (fn (requester,profile) =>
+             ignore (profile_data requester profile)) (!opaque))
+    in (values,!types,revalidate) end
 
   (* Full repeated syntax/type footprints; memo shares discovery, never
      occurrence sums. Private closure/map/name costs remain unclosed. *)
@@ -568,9 +578,7 @@ struct
            not around every paid type/node/memo operation. The returned
            guard still checks every retained path at policy boundaries. *)
         val graph = #graph (owner_of focus)
-        val limits = #limits (owner_of focus)
-        val maximum = Int.max (#input_limit limits,
-          Int.max (#output_limit limits,#template_limit limits))
+        val maximum = max_limit (#limits (owner_of focus))
         val ceiling = IntInf.fromInt (W.work_limit (work_of focus))
         fun begin_root current =
           List.app (fn metric =>
@@ -584,7 +592,7 @@ struct
           let val data = G.opaque_profile_data graph traversal held
           in {raw = IntInf.fromInt (#raw data),inc = IntInf.fromInt (#inc data),
               ann = #ann data,ty = #ty data,types = #types data} end
-        val (values,types,held,opaque) = inventory_worker
+        val (values,types,revalidate) = inventory_worker
           {fence = NONE,work = work,graph = graph,ceiling = ceiling,
            spend = fn amount => W.spend work amount,
            scope = fn () => traversal,begin_root = begin_root,
@@ -593,11 +601,7 @@ struct
            profile_data = profile_data,
            body_requester = fn requester => fn _ => requester,
            requester0 = fn _ => ()} roots
-        fun guard () =
-          (active focus;List.app (fn (caller,child) =>
-            ignore (G.closure_child_node graph caller child)) held;
-           List.app (fn ((),profile) => ignore (G.opaque_profile_data graph
-             traversal profile)) opaque)
+        fun guard () = (active focus;revalidate ())
     in (values,types,guard) end
 
   (* Only the internal quoted role changes the node bound. Both paths
@@ -1606,9 +1610,7 @@ struct
 
   fun inventory focus roots =
     let val graph = #graph (owner_of focus)
-        val limits = #limits (owner_of focus)
-        val maximum = Int.max (#input_limit limits,
-          Int.max (#output_limit limits,#template_limit limits))
+        val maximum = max_limit (#limits (owner_of focus))
         val ceiling = IntInf.fromInt (#type_work_limit (#native_data (owner_of
           focus)))
         val captures = ref ([]:G.profiled_metric list)
@@ -1628,7 +1630,7 @@ struct
           let val data = G.opaque_profile_data_with_policy graph requester held
           in {raw = #raw data,inc = #inc data,ann = #ann data,ty = #ty data,
               types = #types data} end
-        val (values,types,held,opaque) = inventory_worker
+        val (values,types,revalidate) = inventory_worker
           {fence = SOME (fn () => active focus),work = work_of focus,
            graph = graph,ceiling = ceiling,spend = spend focus,
            scope = fn () => scope focus,begin_root = begin_root,
@@ -1641,11 +1643,7 @@ struct
           (active focus;
            List.app (fn capture=>ignore (G.profiled_metric_data graph
              (scope focus) capture)) (!captures);
-           List.app (fn (caller,child) =>
-            ignore (G.closure_child_node graph caller child)) held;
-           List.app (fn (requester,profile) => ignore
-             (G.opaque_profile_data_with_policy graph requester profile))
-             opaque)
+           revalidate ())
     in (values,types,guard) end
 
   (* Only the internal quoted role changes the node bound. Both paths
