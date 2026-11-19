@@ -167,16 +167,18 @@ val _ =
    MESON intact. *)
 local
   val plain = Context.snapshot ()
-  val g = “(p:'a # 'b = (x,y)) ==> (FST p = x)”
-  fun attempt c tac =
-    (tac ([], g) c; true) handle Feedback.HOL_ERR _ => false
+  val g = “(x:'a = I y) ==> (x = y)”
+  fun attempt tac =
+    (tac ([], g) (Context.snapshot ()); true)
+    handle Feedback.HOL_ERR _ => false
 in
-  val _ = tprint "PROVE_TAC [FST] while FST is an ambient implicit rewrite"
+  val _ = tprint "PROVE_TAC [I_THM] while I_THM is an ambient implicit rewrite"
   val _ = let
-    val _ = Rewrite.add_implicit_rewrites [pairTheory.FST]
-    val r = attempt (Context.snapshot ())
-                    (BasicProvers.PROVE_TAC [pairTheory.FST])
-    val _ = Context.restore plain
+    val r = Portable.finally (fn () => Context.restore plain)
+              (fn () =>
+                 (Rewrite.add_implicit_rewrites [combinTheory.I_THM];
+                  attempt (BasicProvers.PROVE_TAC [combinTheory.I_THM])))
+              ()
   in
     if r then OK () else die "PROVE_TAC lost the lemma"
   end
