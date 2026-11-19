@@ -4476,7 +4476,10 @@ local
     traceUtil.level_of tracer
       (HOLFlags.set_flagC (traceUtil.flag tracer, n) (Context.snapshot ()))
   val global = traceUtil.level_of tracer (Context.snapshot ())
-  val levels = [global, level_in 2, level_in 0, traceUtil.silent]
+  (* A level whose context says n while the global flag says 3. *)
+  fun level_under_global n =
+    HOLFlags.with_flags [(traceUtil.flag tracer, 3)] (fn () => level_in n) ()
+  val levels = [global, level_in 2, level_in 3, traceUtil.silent]
 in
   val _ = test ("traceUtil reads the level from the given context",
                 fn () =>
@@ -4485,6 +4488,15 @@ in
                   not (shown (level_in 2) 3) andalso
                   shown (level_in 3) 3 andalso
                   not (shown (level_in 0) 1))
+  val _ = test ("traceUtil ignores a higher global flag",
+                fn () =>
+                  let
+                    val off = level_under_global 0
+                    val one = level_under_global 1
+                  in
+                    not (shown off 1) andalso not (shown off 3) andalso
+                    shown one 1 andalso not (shown one 2)
+                  end)
   val _ = test ("traceUtil.silent shows nothing and forces nothing",
                 fn () =>
                   let
