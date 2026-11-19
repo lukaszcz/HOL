@@ -43,6 +43,12 @@ sig
       Bridge
       (* The owner proves its own provenance (the thunk raises otherwise). *)
     | Provenance of (unit -> unit)
+  (* The text of every refusal `instantiate` raises, spelt by its owner. *)
+  type words =
+    {fname : string,quota : string,template : string,portfolio : string,
+     collapsed : string,operand : string}
+  (* The wording of the matchers over the ordinary Work. *)
+  val plain_words : words
   val same_owner : string -> Walk.walk_owner -> Walk.walk_owner -> unit
   val leaves : owner -> string -> Walk.tree -> leaf list
   (* Metered walk over a rule list: `per_rule` turns the closure tree of the
@@ -79,7 +85,7 @@ sig
      missing_arguments : SmtReplayGraph.node list,
      target : SmtReplayGraph.node,output : Walk.profile option}
   val instantiate : owner -> regime ->
-    {validate : unit -> unit,used : bool ref,
+    {words : words,validate : unit -> unit,used : bool ref,
      check_type : Type.hol_type -> unit,whole : Walk.tree,rule : Thm.thm,
      free : SmtReplayGraph.node list,operations : operation list,
      terminal : terminal,left : Walk.tree,right : Walk.tree option,
@@ -135,6 +141,15 @@ struct
         {target : tree,types : (Type.hol_type * Type.hol_type) list,
          arguments : (G.node * tree) list,output : profile option}
   datatype canonical = Bridge | Provenance of (unit -> unit)
+  type words =
+    {fname : string,quota : string,template : string,portfolio : string,
+     collapsed : string,operand : string}
+  val plain_words =
+      {fname = "instantiate",quota = "prospective instance exceeds quota",
+       template = "instance exceeds closed-recording template",
+       portfolio = "instance portfolio exceeds original Work",
+       collapsed = "type instance collapses free domains",
+       operand = "proved instance differs from matched operand"}
   exception Mismatch
   exception CapturesBinder
 
@@ -338,22 +353,6 @@ struct
        not (List.exists (fn (k,_) => b = k) arguments)) (binders @ free),
      target = node target,output = output}
 
-  (* The owner's own spelling of every refusal raised below. *)
-  fun words (Plain _) =
-      {fname = "instantiate",quota = "prospective instance exceeds quota",
-       template = "instance exceeds closed-recording template",
-       portfolio = "instance portfolio exceeds original Work",
-       collapsed = "type instance collapses free domains",
-       operand = "proved instance differs from matched operand"}
-    | words (Policied _) =
-      {fname = "instantiate_with_policy",
-       quota = "prospective policy_instance exceeds quota",
-       template = "policy_instance exceeds closed-recording template",
-       portfolio =
-         "policy_instance portfolio exceeds original_with_policy Work",
-       collapsed = "type policy_instance collapses free domains",
-       operand = "proved policy_instance differs from policy_matched operand"}
-
   (* Limits and charges of the instantiating owner's Work.  The int regime
      compares plain ints; the policy regime also consults its policy caps and
      debits the IntInf quote itself. *)
@@ -380,12 +379,12 @@ struct
             RP.allows (W.remaining_policy work) quote,
           debit = fn quote => W.spend_policy work quote} end
 
-  fun instantiate owner regime {validate,used,check_type,whole,rule,free,
-      operations,terminal,left,right,target,traversal,types,arguments,
+  fun instantiate owner regime {words,validate,used,check_type,whole,rule,
+      free,operations,terminal,left,right,target,traversal,types,arguments,
       canonical} =
     let
       val graph = A.graph owner val scope = A.scope owner
-      val {fname,quota,template,portfolio,collapsed,operand} = words regime
+      val {fname,quota,template,portfolio,collapsed,operand} = words
       val err = A.err fname
       val _ = A.active owner
       val _ = if !used then raise err "match already consumed" else ()

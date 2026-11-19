@@ -145,7 +145,8 @@ struct
       types,arguments,traversal,target,used,...}) {check_type} =
     protected owner (fn () => W.with_step work (fn () =>
       let val {theorem,proof} = Shared.instantiate owner (Shared.Plain work)
-            {validate = fn () => validate_for work value,used = used,
+            {words = Shared.plain_words,
+             validate = fn () => validate_for work value,used = used,
              check_type = check_type,whole = whole,rule = rule,free = free,
              operations = operations,terminal = terminal,left = left,
              right = right,target = target,traversal = traversal,
@@ -346,6 +347,13 @@ struct
       arguments = arguments,target = target,output = output} end
   (* This derives a closed CONDITIONAL instance. The literal first-order
      route does not claim Cond_rewr's orientation/condition solver policy. *)
+  val policy_words =
+    {fname = "instantiate_with_policy",
+     quota = "prospective policy_instance exceeds quota",
+     template = "policy_instance exceeds closed-recording template",
+     portfolio = "policy_instance portfolio exceeds original_with_policy Work",
+     collapsed = "type policy_instance collapses free domains",
+     operand = "proved policy_instance differs from policy_matched operand"}
   fun instantiate_with_policy (value as PolicyMatch {policy_owner =
     policy_owner as PolicyOwner {work,native_contract,...},
       policy_schema = PolicySchema
@@ -354,7 +362,8 @@ struct
     protected policy_owner (fn () => W.with_step work (fn () =>
       let val {theorem,proof} = Shared.instantiate policy_owner
             (Shared.Policied {work = work,contract = native_contract})
-            {validate = fn () => validate_with_policy_for work value,
+            {words = policy_words,
+             validate = fn () => validate_with_policy_for work value,
              used = used,check_type = check_type,whole = whole,rule = rule,
              free = free,operations = operations,terminal = terminal,
              left = left,right = right,target = target,

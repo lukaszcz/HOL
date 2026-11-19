@@ -181,7 +181,8 @@ struct
                 raise ERR "instantiate" "context rule provenance changed"
             end)
           val {theorem,proof} = Shared.instantiate owner (Shared.Plain work)
-            {validate = fn () => validate_for work value,used = used,
+            {words = Shared.plain_words,
+             validate = fn () => validate_for work value,used = used,
              check_type = check_type,whole = whole,rule = rule,free = free,
              operations = operations,terminal = terminal,left = left,
              right = right,target = target,traversal = traversal,
