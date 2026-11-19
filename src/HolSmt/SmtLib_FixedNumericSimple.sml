@@ -98,6 +98,15 @@ struct
     let val d = describe ()
     in action (fn observe => C.graph_identity graph (#scope d)
       {observe=observe} (#node d)) end
+  fun join_with joined source left right = case (left,right) of
+      (NONE,_) => right
+    | (_,NONE) => left
+    | (SOME l,SOME r) => SOME (joined source l r)
+  fun expect_work label expected work action =
+    ((if Portable.pointer_eq (work,expected) then () else
+        raise ERR label "foreign expected Work";
+      action ())
+     handle primary => (W.close expected;raise primary))
   datatype owner = Owner of
     {work:W.portfolio,graph:G.graph,root:G.scope,sources:S.sources,
      catalogue:K.catalogue,traversal:T.owner,matcher:M.owner,
@@ -217,10 +226,8 @@ struct
           C.graph_realized_sequence work
             {first= #recipe left,second= #recipe right,observe=observe})
     in seal owner source recipe end
-  fun join owner source NONE right = right
-    | join _ _ left NONE = left
-    | join owner source (SOME left) (SOME right) =
-        SOME (joined owner source left right)
+  fun join owner source left right =
+    join_with (joined owner) source left right
   (* Exact public PURE_ss discrimination net: foldr insertion and its
      lookup order, never a reordered head bucket or a caller rule table. *)
   fun candidates (owner as Owner {graph,net,heads,...}) focus =
@@ -919,19 +926,13 @@ struct
   fun execute_changed plan = execute_internal false plan
   fun core_for expected
       (Result {owner=owner as Owner {work,...},source,proof}) =
-    ((if Portable.pointer_eq (work,expected) then () else
-        raise ERR "core_for" "foreign expected Work";
-      ignore (describe owner source);
-      ignore (Core.conversion_description_for expected proof);proof)
-     handle primary => (W.close expected;raise primary))
+    expect_work "core_for" expected work (fn () =>
+      (ignore (describe owner source);
+       ignore (Core.conversion_description_for expected proof);proof))
   fun validate_for expected (owner as Owner {work,...}) =
-    ((if Portable.pointer_eq (work,expected) then revalidate owner else
-        raise ERR "validate_for" "foreign expected Work")
-     handle primary => (W.close expected;raise primary))
+    expect_work "validate_for" expected work (fn () => revalidate owner)
   fun validate_cached_for expected (owner as Owner {work,...}) =
-    ((if Portable.pointer_eq (work,expected) then active owner else
-        raise ERR "validate_cached_for" "foreign expected Work")
-     handle primary => (W.close expected;raise primary))
+    expect_work "validate_cached_for" expected work (fn () => active owner)
   fun normalize_aux (owner as Owner {work,traversal,...}) target =
     protect owner (fn () =>
       let val held = T.aux_target_for work traversal target
@@ -1131,26 +1132,17 @@ struct
             C.graph_realized_sequence_with_policy work
               {first= #recipe left,second= #recipe right,observe=observe})
       in seal owner source recipe end
-    fun join owner source NONE right=right
-      | join _ _ left NONE=left
-      | join owner source(SOME left)(SOME right)=
-          SOME(joined owner source left right)
+    fun join owner source left right=join_with(joined owner)source left right
     fun core_for expected
         (Result{owner=owner as Owner{work,...},source,proof})=
-      ((if Portable.pointer_eq(work,expected)then ()else
-          raise ERR "policy_simple" "foreign expected Work";
-        ignore(describe owner source);
-        ignore(Core.conversion_description_with_policy_for expected proof);
-        proof)
-       handle primary=>(W.close expected;raise primary))
+      expect_work "policy_simple" expected work(fn()=>
+        (ignore(describe owner source);
+         ignore(Core.conversion_description_with_policy_for expected proof);
+         proof))
     fun validate_for expected(owner as Owner{work,...})=
-      ((if Portable.pointer_eq(work,expected)then revalidate owner else
-          raise ERR "policy_simple" "foreign expected Work")
-       handle primary=>(W.close expected;raise primary))
+      expect_work "policy_simple" expected work(fn()=>revalidate owner)
     fun validate_cached_for expected(owner as Owner{work,...})=
-      ((if Portable.pointer_eq(work,expected)then active owner else
-          raise ERR "policy_simple" "foreign expected Work")
-       handle primary=>(W.close expected;raise primary))
+      expect_work "policy_simple" expected work(fn()=>active owner)
   end
 
   (* Exact fixed PURE_ss rule order. All native syntax/type inspection here
