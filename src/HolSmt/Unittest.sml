@@ -20492,12 +20492,15 @@ in
     "the side with the redex was not normalized")
 end
 
-(* The rung ran (it raised its decline) and proved nothing. *)
+(* The rung ran and raised its decline (so it did not succeed), and the
+   replay then fell through to the next rung, equality-congruence. *)
 fun assert_21a_declined what =
   (assert (profile_call_count "rewrite(21a)(datatype-normalize)_HOL_ERR" > 0,
      "Z3 datatype-normalize was not reached");
    assert (profile_call_count "rewrite(21a)(datatype-normalize)_OK" = 0,
-     "Z3 datatype-normalize accepted " ^ what))
+     "Z3 datatype-normalize accepted " ^ what);
+   assert (profile_call_count "rewrite(22)(equality-congruence)" > 0,
+     "the replay did not fall through to the rung after datatype-normalize"))
 
 (* A target without a datatype redex is declined by the helper as
    [NoRedex], and the rung then falls through to the later rungs. *)
@@ -20524,8 +20527,9 @@ end
    target but leaves no admitted datatype fact for its types, so the helper
    declines it and the rung falls through to the later rungs.  The target is
    admitted at this limit, so the rung's decline is the helper's and not a
-   refusal at its first step; the target is no theorem, so the rung never
-   proves it and the last check only shows the fall-through. *)
+   refusal at its first step.  The target is no theorem, so the replay fails
+   after the rung; the final checks show that the rung was reached, did not
+   succeed, and that the replay went on to the next rung. *)
 fun z3_rewrite_datatype_normalize_no_rewrites () =
 let
   val target = ``(b:bool) = c``
@@ -20580,11 +20584,8 @@ let
         admit []) target)
     handle Feedback.HOL_ERR _ => ()
 in
-  assert (profile_call_count "rewrite(21a)(datatype-normalize)_HOL_ERR" > 0,
-    "Z3 datatype-normalize was not reached");
   assert (!refusals > 0, "the admission never saw the INT_INJ result");
-  assert (profile_call_count "rewrite(21a)(datatype-normalize)_OK" = 0,
-    "Z3 datatype-normalize ran an exported rewrite its admission refuses")
+  assert_21a_declined "an exported rewrite its admission refuses"
 end
 
 (* A refusal raised inside a local rewrite reaches the helper's caller as
