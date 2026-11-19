@@ -1,3 +1,45 @@
+(* Private adapter: binds the seven documented mode selections once, over
+   any engine whose mode type is the Input.mode below.  Each wrapper only
+   forwards its mode; Engine.prepare stays internal. *)
+functor Z3OwnedPreparationWrappersFn(Arg:sig
+  structure Input:sig
+    datatype mode=Recorded | Specialized | Raw | Retained | Binders
+      | QuantifiedBinders
+      | OwnedProgrammes
+  end
+  structure Engine:SmtReplayValueFinal
+    where type mode=Input.mode
+    and type proof=Z3_GraphValueProofParser.proof
+    and type requirement=Z3_OwnedValueNamedReplay.requirement
+end)=
+struct
+  type preparation_function =
+    SmtReplayInvocationWork.portfolio ->
+    SmtLib_GraphPreprocess.graph_query ->
+    Z3_GraphValueProofParser.proof SmtLib_GraphValueProof.packet ->
+    {assertions:SmtLib_GraphParserValue.value list,
+     native_contract:SmtReplayNativeContract.contract,
+     profiles:SmtReplayGraph.policy_opaque_profile list,
+     check_type:Type.hol_type -> unit} -> Arg.Engine.preparation
+  fun prepare_with_policy expected query packet options=
+    Arg.Engine.prepare Arg.Input.Recorded expected query packet options
+  fun prepare_with_specialization_with_policy expected query packet options=
+    Arg.Engine.prepare Arg.Input.Specialized expected query packet options
+  fun prepare_with_raw_resolution_with_policy expected query packet options=
+    Arg.Engine.prepare Arg.Input.Raw expected query packet options
+  fun prepare_with_binders_with_policy expected query packet options=
+    Arg.Engine.prepare Arg.Input.Binders expected query packet options
+  fun prepare_with_quantified_binders_with_policy
+      expected query packet options=
+    Arg.Engine.prepare Arg.Input.QuantifiedBinders expected query packet
+      options
+  fun prepare_with_retained_specialization_with_policy
+      expected query packet options=
+    Arg.Engine.prepare Arg.Input.Retained expected query packet options
+  fun prepare_with_owned_programmes_with_policy expected query packet options=
+    Arg.Engine.prepare Arg.Input.OwnedProgrammes expected query packet options
+end
+
 (* Same owned finalization programme, with actual Z3 registry modes. *)
 structure Z3_OwnedValueProofReplay :> Z3_OwnedValueProofReplay =
 struct
@@ -55,30 +97,9 @@ struct
   end
   structure Engine=SmtReplayValueFinalFn(Input)
   open Engine
-  type preparation_function =
-    SmtReplayInvocationWork.portfolio ->
-    SmtLib_GraphPreprocess.graph_query ->
-    Z3_GraphValueProofParser.proof SmtLib_GraphValueProof.packet ->
-    {assertions:SmtLib_GraphParserValue.value list,
-     native_contract:SmtReplayNativeContract.contract,
-     profiles:SmtReplayGraph.policy_opaque_profile list,
-     check_type:Type.hol_type -> unit} -> preparation
-  fun prepare_with_policy expected query packet options=
-    Engine.prepare Input.Recorded expected query packet options
-  fun prepare_with_specialization_with_policy expected query packet options=
-    Engine.prepare Input.Specialized expected query packet options
-  fun prepare_with_raw_resolution_with_policy expected query packet options=
-    Engine.prepare Input.Raw expected query packet options
-  fun prepare_with_binders_with_policy expected query packet options=
-    Engine.prepare Input.Binders expected query packet options
-  fun prepare_with_quantified_binders_with_policy
-      expected query packet options=
-    Engine.prepare Input.QuantifiedBinders expected query packet options
-  fun prepare_with_retained_specialization_with_policy
-      expected query packet options=
-    Engine.prepare Input.Retained expected query packet options
-  fun prepare_with_owned_programmes_with_policy expected query packet options=
-    Engine.prepare Input.OwnedProgrammes expected query packet options
+  structure Wrappers=Z3OwnedPreparationWrappersFn
+    (structure Input=Input structure Engine=Engine)
+  open Wrappers
   (* Static opt-in instance; exactly the same private Input and
      complete Final worker, with authentic sparse Source closure. *)
   structure Sparse :> Z3_SparseOwnedValueProofReplay =
@@ -87,30 +108,8 @@ struct
       (structure Input=Input
        structure Realization=SmtReplaySparseValueRealization)
     open Engine
-    type preparation_function =
-      SmtReplayInvocationWork.portfolio ->
-      SmtLib_GraphPreprocess.graph_query ->
-      Z3_GraphValueProofParser.proof SmtLib_GraphValueProof.packet ->
-      {assertions:SmtLib_GraphParserValue.value list,
-       native_contract:SmtReplayNativeContract.contract,
-       profiles:SmtReplayGraph.policy_opaque_profile list,
-       check_type:Type.hol_type -> unit} -> preparation
-    fun prepare_with_policy expected query packet options=
-      Engine.prepare Input.Recorded expected query packet options
-    fun prepare_with_specialization_with_policy expected query packet options=
-      Engine.prepare Input.Specialized expected query packet options
-    fun prepare_with_raw_resolution_with_policy expected query packet options=
-      Engine.prepare Input.Raw expected query packet options
-    fun prepare_with_binders_with_policy expected query packet options=
-      Engine.prepare Input.Binders expected query packet options
-    fun prepare_with_quantified_binders_with_policy
-        expected query packet options=
-      Engine.prepare Input.QuantifiedBinders expected query packet options
-    fun prepare_with_retained_specialization_with_policy
-        expected query packet options=
-      Engine.prepare Input.Retained expected query packet options
-    fun prepare_with_owned_programmes_with_policy
-        expected query packet options=
-      Engine.prepare Input.OwnedProgrammes expected query packet options
+    structure Wrappers=Z3OwnedPreparationWrappersFn
+      (structure Input=Input structure Engine=Engine)
+    open Wrappers
   end
 end
