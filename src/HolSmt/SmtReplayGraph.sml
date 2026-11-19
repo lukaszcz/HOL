@@ -5519,7 +5519,6 @@ struct
         {ceiling = remaining_work,used = ref (2 : IntInf.int)}) 0 nodes
     else raise ERR "plan_placeholders" "remaining Work cannot create meter"
 
-
   (* SAME-meter counterpart of the genuine placeholder programme. The
      ordinary planners above retain their exact standalone accounting and
      diagnostics. Only this route uses already-paid R plans; their costs
@@ -5531,7 +5530,6 @@ struct
       val _ = R.scope_meter_charge meter 2 handle R.Limit =>
         raise ERR "plan_placeholders" "remaining Work cannot create meter"
     in plan_placeholders_walk g caller (MeterAccount meter) initial nodes end
-
 
   (* Only authentic policy discovery profiles can fill an opaque leaf.
      The private selection closure never accepts a caller scalar/guard. *)
@@ -7204,10 +7202,11 @@ struct
   (* A typed child is not an admitted Boolean original occurrence. These
      receipts remain private until a genuine owning App programme uses
      them. In particular this port never pops remaining or increments
-     completed, and cannot publish a hypothesis/Ready payload. *)
-  (* The ONE function-child body. Select runs after the common closed
-     check, so every caller's own checks and payments precede the
-     already/memo/issued reuse below. It names the current original. *)
+     completed, and cannot publish a hypothesis/Ready payload.
+     The ONE body is shared by both entries. Select runs after the common
+     closed check and before the already/memo/issued reuse below: it
+     authenticates its caller's current original and returns the function
+     term to prepare. *)
   fun prepare_function_child storage caller context select =
     let
       val saved = original_import_context_for storage caller context
