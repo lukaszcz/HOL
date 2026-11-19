@@ -1,40 +1,20 @@
-(* Work and refusals of the owned Value receiver's rule classification.
-
-   The receiver classifies every step (pop, resolution, CNF, alignment,
-   simple Boolean/equality, truth family, bounded) while it plans and
-   while it replays, paying through its packet/contract guard. One case
-   per route class runs through both paths on a live packet, a stale
-   packet and a tight-budget packet. The checks are relations inside one
-   run: exact vs one-short budgets, a stale packet vs a live one. No
-   charge is pinned (they depend on the heap); the before/after
-   identity of charges and outcomes is shown out of tree through
-   [observe], which prints full lines. *)
+(* The owned Value receiver classifies every rule (pop, resolution, CNF,
+   alignment, simple Boolean/equality, truth family, bounded) while it
+   prepares, and pays for that through its packet/contract guard. One
+   case per route class runs through preparation and replay on a live
+   packet, a stale packet and a tight-budget packet. The checks are
+   relations inside one run (an exact budget reproduces the live
+   outcome, charge and callback trace; one unit less is refused with a
+   trace that is a prefix of the live one; a stale packet is refused
+   before any step completes); no charge is pinned. *)
 structure CPC_OwnedClassificationTests =
 struct
   open HolKernel boolLib
-  structure G = SmtReplayGraph
-  structure S = SmtReplaySource
   structure W = SmtReplayInvocationWork
-  structure V = SmtLib_GraphSourcePortfolio
-  structure GP = SmtLib_GraphPreprocess
-  structure T = SmtLib_GraphTranslation
-  structure MD = SmtLib_GraphDeclarationMetadata
-  structure F = SmtLib_GraphFrontend
-  structure PV = SmtLib_GraphParserValue
   structure VP = SmtLib_GraphValueProof
-  structure C = CPC_ProofParser
-  structure CV = CPC_GraphValueProofParser
-  structure NC = SmtReplayNativeContract
-  structure RP = SmtReplayResourcePolicy
   structure Receiver = CPC_OwnedValueNamedReplay
 
   fun require message yes = if yes then () else raise Fail message
-
-  val cap = RP.AtMost 1000000000
-  val native:NC.limits =
-    {semantic_limits={input_limit=1000000,output_limit=1000000,
-       template_limit=1000000},import_limit=1000000,
-     type_work_limit=100000000}
 
   val p = mk_var("cpc_cls_p",bool)
   val q = mk_var("cpc_cls_q",bool)
@@ -45,104 +25,10 @@ struct
   val neg = mk_neg val disj = mk_disj val imp = mk_imp
   val eq = mk_eq val app = mk_comb
 
-  type env = {graph:G.graph,scope:G.scope,sources:S.sources,
-    work:W.portfolio,query:GP.graph_query,
-    metadata:MD.metadata,contract:NC.contract}
-
-  (* [budget] bounds the whole portfolio, setup included. *)
-  fun fixture budget assumptions action =
-    let
-      val limit = case budget of NONE => cap | SOME n => RP.AtMost n
-      val graph = G.new () val scope = G.root_scope graph
-      val sources = S.new graph scope 10000
-        {assumptions=assumptions,goal=goal}
-      val work = W.begin_with_policy graph scope sources
-        {limits={input_limit=cap,output_limit=cap,template_limit=cap},
-         work_limit=limit}
-      fun run () =
-        let
-          val contract = NC.capture work native
-          val {assumptions,denied} = V.originals_with_policy work
-          val validation = V.validate_portfolio_with_policy work
-            {assumptions=assumptions,
-             goal= #node (S.goal_source sources),denied=denied}
-          val query = GP.prepare_query_with_policy work
-            (GP.from_portfolio_with_policy work validation)
-          fun open_view caller node = ignore
-            (G.record_opened_view_with_policy graph caller
-              (RP.AtMost 10000) node)
-          val metadata = T.with_outbound_query_analysis_with_policy work
-            query open_view (fn context =>
-            SmtLib.outbound_with_backend_context
-              {sequence_emission=false,set_backend=SmtLib.Z3Set,
-               bag_backend=SmtLib.Z3ArrayBag,
-               has_set_terms=false,has_bag_terms=false} (fn backend =>
-              let
-                val operations =
-                  SmtLib_GraphCarrierOperations.make_with_datatypes context
-                    {sequence_emission=false}
-                    {term_to_string=fn _ => raise Fail "unexpected formatter"}
-                val emission = SmtLib_GraphDispatcher.emit context
-                  {operations=operations,regime=SmtLib.FirstOrder,
-                   apply_operator=SmtLib.ApplyUnderscore,prefix="cpc_cls_",
-                   roots=ListPair.zip
-                     (List.tabulate (length (#assumptions context)+2,Lib.I),
-                      #goal context :: #assumptions context @
-                        [#denied context])}
-              in MD.freeze context
-                {graph=graph,scope=scope,regime=SmtLib.FirstOrder,
-                 backend=backend,operations=operations,emission=emission}
-              end))
-        in action ({graph=graph,scope=scope,sources=sources,work=work,
-          query=query,metadata=metadata,contract=contract}:env) end
-      val outcome = Exn.capture run ()
-      val cleanup = Exn.capture (fn () =>
-        (W.close work;G.close_scope graph scope)) ()
-    in case outcome of Exn.Exn primary => raise primary
-      | Exn.Res result => (Exn.release cleanup;result) end
-
-  fun options (e:env):F.value_options =
-    {graph= #graph e,scope= #scope e,logic="ALL",sources=bindings,
-     sorts=Redblackmap.mkDict String.compare,binder_lists=[],
-     import_limit=cap,literal_limit=cap,binder_limit=RP.AtMost 1,
-     recipe_limits={template_limit=cap,index_limit=cap,
-       operand_limit=cap,token_limit=cap},
-     special=fn _ => fn _ => NONE,ascribed=fn _ => fn _ => fn _ => NONE}
-  fun input text =
-    let val index = ref 0 in fn () =>
-      if !index = String.size text then NONE else
-        let val result = String.sub (text,!index)
-        in index := !index+1;SOME result end end
-  fun packet (e:env) text =
-    CV.create_packet_with_policy_from_input (#work e) (#query e)
-      (options e) (#metadata e) "1.3.4" (input text)
-
-  (* The query's assertions: the packet's own ASSUME value where it has
-     one, else a copy of the query node (e.g. the denied goal). *)
-  fun assertions (e:env) (data:CV.proof VP.contents) =
-    let
-      val current = GP.query_nodes_with_policy_for (#work e) (#query e)
-      val asserted = List.mapPartial (fn C.GraphAssume (_,term) =>
-          SOME (#node term) | _ => NONE) (#commands (#proof data))
-      val context = #context data
-      fun copy node =
-        case G.view (#graph e) node of
-          G.Variable _ => PV.graph_leaf context (#scope e) node
-        | G.Constant _ => PV.graph_leaf context (#scope e) node
-        | G.Application (left,right) =>
-            PV.application context (#scope e) (copy left,copy right)
-        | _ => raise Fail "fixture Source needs a binder programme"
-      fun actual node =
-        case List.find (fn value =>
-            case PV.corresponds_to_graph_with_policy context
-                (#graph e) (#scope e) {value=value,node=node} of
-              PV.Corresponding => true | _ => false) asserted of
-          SOME value => value
-        | NONE => copy node
-    in W.with_step (#work e) (fn () =>
-      List.map actual (#assumptions current @ [#denied current])) end
-
   datatype path = Plan | Replay
+  (* The packet is open, closed right ahead of the path, or (Plan only)
+     closed by the first type-check callback, in the middle of planning. *)
+  datatype packet_state = Open | Closed | ClosedByCallback
   type observation =
     {before:IntInf.int,charged:IntInf.int,outcome:string,steps:int,
      trace:string list}
@@ -150,27 +36,31 @@ struct
   (* One path of one case. [before] is the Work charged ahead of the
      path (packet, setup and, for Replay, planning); [charged] is what
      the path itself charged. [trace] lists the type-check callbacks
-     and each completed step's theorem, in order. With [stale] the
-     packet is closed right ahead of the path. A [budget] bounds the
+     and each completed step's theorem, in order. With [state] the
+     packet is closed ahead of or during the path. A [budget] bounds the
      whole portfolio. *)
-  fun observe {assumptions,text} path budget stale : observation =
+  fun observe {assumptions,text} path budget state : observation =
     let
       val total = ref 0 : IntInf.int ref
       val mark = ref 0 : IntInf.int ref
       val outcome = ref "refused: before the path" and steps = ref 0
       val trace = ref ([]:string list)
-      fun run (e:env) =
+      val callbacks = ref 0
+      fun run (e:CPC_OwnedValueTestFixture.env) =
         let
           fun charged () = #charged (W.audit_policy (#work e))
           val _ = total := charged ()
-          val held = packet e text
+          val held = CPC_OwnedValueTestFixture.packet bindings e text
           val data = W.with_step (#work e) (fn () =>
             VP.contents_with_policy_for (#work e) (#query e) held)
-          val values = assertions e data
+          val values = CPC_OwnedValueTestFixture.asserted_values e data
           fun plan () = Receiver.prepare_with_policy (#work e) (#query e)
             held {assertions=values,native_contract= #contract e,
                   check_type=fn ty =>
-                    trace := ("type " ^ type_to_string ty) :: !trace}
+                    (trace := ("type " ^ type_to_string ty) :: !trace;
+                     if state = ClosedByCallback andalso !callbacks = 0
+                     then VP.close held else ();
+                     callbacks := !callbacks + 1)}
           fun refused detail = "refused: " ^ Feedback.message_of detail
           fun replay invocation =
             let
@@ -189,11 +79,12 @@ struct
                      term_to_string (concl theorem) ^ " / " ^
                      Int.toString (length (hyp theorem))) :: !trace end
             in
-              (if stale then VP.close held else ();
+              (if state = Closed then VP.close held else ();
                List.app receipt (next []);outcome := "replayed")
               handle Feedback.HOL_ERR detail => outcome := refused detail
             end
-          val _ = if stale andalso path = Plan then VP.close held else ()
+          val _ = if state = Closed andalso path = Plan
+            then VP.close held else ()
           val _ = mark := charged ()
           val prepared = Exn.capture plan ()
           val invocation = case prepared of
@@ -214,7 +105,9 @@ struct
                 handle Feedback.HOL_ERR _ => ())
             | NONE => (VP.close held handle Feedback.HOL_ERR _ => ())
         in () end
-      val setup = Exn.capture (fn () => fixture budget assumptions run) ()
+      val setup = Exn.capture (fn () =>
+        CPC_OwnedValueTestFixture.fixture
+          {budget=budget,retain=true,prefix="cpc_cls_"} assumptions goal run) ()
       val _ = case setup of Exn.Exn (Feedback.HOL_ERR detail) =>
           outcome := "refused: " ^ Feedback.message_of detail
         | Exn.Exn other => raise other
@@ -290,9 +183,9 @@ struct
       val name = label ^ (case path of Plan => " plan" | Replay => " replay")
       val spec = {assumptions= #assumptions c,text= #text c}
       val exact = #before live + #charged live
-      val same = observe spec path (SOME exact) false
-      val short = observe spec path (SOME (exact-1)) false
-      val stale = observe spec path NONE true
+      val same = observe spec path (SOME exact) Open
+      val short = observe spec path (SOME (exact-1)) Open
+      val stale = observe spec path NONE Closed
     in
       require (name ^ ": live path charged nothing") (#charged live > 0);
       require (name ^ ": an exact budget changed the outcome or charge")
@@ -310,11 +203,16 @@ struct
   fun check_case (c:case_) =
     let
       val spec = {assumptions= #assumptions c,text= #text c}
-      val plan = observe spec Plan NONE false
+      val plan = observe spec Plan NONE Open
       val _ = require (#label c ^ ": planning outcome " ^ #outcome plan)
         (#outcome plan = #expected c)
       val _ = check_path (#label c) c Plan plan
-      val replay = observe spec Replay NONE false
+      (* Closing the packet inside the first callback must be noticed by
+         the next paid step: preparation is refused, not completed. *)
+      val _ = if null (#trace plan) then () else
+        require (#label c ^ ": a packet closed mid-planning was used")
+          (is_refusal (observe spec Plan NONE ClosedByCallback))
+      val replay = observe spec Replay NONE Open
     in
       if #expected c = "prepared" then
         (require (#label c ^ ": replay outcome " ^ #outcome replay)
