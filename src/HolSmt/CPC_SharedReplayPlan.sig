@@ -260,8 +260,8 @@ sig
         literals:ternary_operand clausal_literal *
                  ternary_operand clausal_literal}
   val clausal_descriptor : clausal_rule -> clausal_descriptor
-  (* The handler of each clausal rule: the inverse of the clausal rows
-     of [simple_class]. *)
+  (* The handler of each clausal rule: the inverse of
+     [simple_boolean_of] on its [SimpleClausal] results. *)
   val clausal_handler : clausal_rule -> CPC_Proof.replay_handler
   (* Whether a premise that has reduced to T is kept as it is, before any
      operand is read (the conditional rules).  [clausal_elim] decides this
