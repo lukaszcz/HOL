@@ -1051,8 +1051,7 @@ struct
           val finished = invoke (fn () => Thm.TRANS specialized finish)
           val contracted_result = invoke (fn () =>
             Thm.TRANS reversed finished)
-          val joined = invoke (fn () => Thm.TRANS alignment contracted_result)
-          val theorem = joined
+          val theorem = invoke (fn () => Thm.TRANS alignment contracted_result)
           val (a,b) = boolSyntax.dest_eq (Thm.concl theorem)
           val (oracles,_) = Tag.dest_tag (Thm.tag theorem)
           val _ = if Portable.pointer_eq
@@ -1605,8 +1604,7 @@ struct
           val finished = invoke (fn () => Thm.TRANS specialized finish)
           val contracted_result = invoke (fn () =>
             Thm.TRANS reversed finished)
-          val joined = invoke (fn () => Thm.TRANS alignment contracted_result)
-          val theorem = joined
+          val theorem = invoke (fn () => Thm.TRANS alignment contracted_result)
           val (a,b) = boolSyntax.dest_eq (Thm.concl theorem)
           val (oracles,_) = Tag.dest_tag (Thm.tag theorem)
           val _ = if Portable.pointer_eq
