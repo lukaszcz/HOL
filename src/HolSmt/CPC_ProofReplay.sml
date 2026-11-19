@@ -11485,7 +11485,14 @@ local
       (state, thm)
     end
 
-  fun replay_process_scope strong_canon args prems =
+  (* One scope decomposition and theorem assembly for both entries.
+     `record` is the entries' provenance hook.  It runs once the scope has
+     been decomposed and its conjunction built, BEFORE any kernel
+     application or canonicalization, and receives the premise theorem,
+     the decomposed antecedents and the scope result.  Its value is
+     returned with the theorem.  A failing hook refuses the scope at that
+     point.  A single antecedent introduces no conjunction. *)
+  fun process_scope_with_record strong_canon args prems record =
     let
       val process_scope_timer =
         if OS.Process.getEnv "HOL4_CPC_REPLAY_SHAPE" = SOME "1" then
@@ -11523,6 +11530,7 @@ local
         dest_scope (Thm.concl premise) []
       val _ = process_scope_mark "dest"
       val conjunction = mk_conj antecedents
+      val recorded = record premise antecedents scope_result
       val target = if Term.aconv scope_result boolSyntax.F then
         boolSyntax.mk_neg conjunction
       else boolSyntax.mk_imp (conjunction, scope_result)
@@ -11582,9 +11590,14 @@ local
         if Term.aconv scope_result boolSyntax.F then Thm.NOT_INTRO discharged
         else discharged
     in
-      if Term.aconv (Thm.concl result) target then result
+      if Term.aconv (Thm.concl result) target then (result, recorded)
       else raise ERR "process_scope" "direct scope normalization shape mismatch"
     end
+
+  fun replay_process_scope strong_canon args prems =
+    #1 (process_scope_with_record strong_canon args prems
+      (fn _ => fn _ => fn _ => ()))
+
 
   (* Fixed owned producer. Record the topology while constructing THIS
      scope result; never recover n-ary grouping from its checked conclusion.
@@ -11595,136 +11608,46 @@ local
     let
       val args = List.map (#term : located_term -> Term.term) located_args
       val prems = List.map step_theorem premise_steps
-      val process_scope_timer =
-        if OS.Process.getEnv "HOL4_CPC_REPLAY_SHAPE" = SOME "1" then
-          SOME (Timer.startRealTimer ()) else NONE
-      fun process_scope_mark phase = case process_scope_timer of NONE => ()
-        | SOME timer =>
-            if OS.Process.getEnv "HOL4_CPC_REPLAY_SHAPE" = SOME "1" then
-              Feedback.HOL_MESG
-                ("CPCPROCESSSCOPE phase=" ^ phase ^ " time=" ^
-                 Time.toString (Timer.checkRealTimer timer))
-            else ()
-      val premise = expect_one_premise "process_scope" prems
-      (* The CPC printer records the original body conclusion as its sole
-         argument.  Stop uncurrying at that exact term: the body itself may
-         be an implication, which is not an additional scoped assumption. *)
-      val scope_result = case args of [tm] => tm
-        | _ => raise ERR "process_scope" "expected one CPC :args term"
-      fun dest_scope tm acc =
-        if shared_aconv tm scope_result then (List.rev acc, NONE)
-        else if boolSyntax.is_imp_only tm andalso
-                not (boolSyntax.is_imp_only scope_result) then
-          let val (antecedent, consequent) = boolSyntax.dest_imp tm
-          in dest_scope consequent (antecedent :: acc) end
-        else if shared_aconv
-          (canonical_term tm) (canonical_term scope_result)
-        then (List.rev acc, SOME tm)
-        else if boolSyntax.is_imp_only tm then
-          let val (antecedent, consequent) = boolSyntax.dest_imp tm
-          in dest_scope consequent (antecedent :: acc) end
-        else (List.rev acc, SOME tm)
-      fun mk_conj [tm] = tm
-        | mk_conj (tm :: rest) = boolSyntax.mk_conj (tm, mk_conj rest)
-        | mk_conj [] = raise ERR "process_scope" "empty scope implication"
-      val (antecedents, normalized_result) =
-        dest_scope (Thm.concl premise) []
-      val _ = process_scope_mark "dest"
-      val conjunction = mk_conj antecedents
-      val incoming = case premise_steps of [premise] =>
-          step_provenance premise
-        | _ => raise ERR "process_scope" "expected actual premise record"
-      fun child_provenance provenance = case provenance of
-          ApplicationProvenance ("=>",[left,right]) => (left,right)
-        | _ => if definitely_no_conjunction provenance then
-            (AtomicProvenance,AtomicProvenance)
-          else (UnavailableProvenance
-            "actual scope antecedent has no retained child boundary",
-            UnavailableProvenance
-            "actual scope consequent has no retained child boundary")
-      fun record [] _ _ = []
-        | record (antecedent::rest) term provenance =
-            let val (left,right) = boolSyntax.dest_imp term
-                val _ = if shared_aconv left antecedent then () else
-                  raise ERR "process_scope"
-                    "actual scope antecedent differs from constructor recipe"
-                val (left_provenance,right_provenance) =
-                  child_provenance provenance
-            in left_provenance :: record rest right right_provenance end
-      val children = record antecedents (Thm.concl premise) incoming
-      val conjunction_provenance = case children of [one] => one
-        | [] => raise ERR "process_scope" "empty scope topology"
-        | _ => ConjunctionProvenance (ProcessScopeConjunction,children)
-      val body_provenance = case located_args of [body] => #provenance body
-        | _ => raise ERR "process_scope" "expected actual body argument"
-      val produced_provenance =
-        if Term.aconv scope_result boolSyntax.F then
-          ApplicationProvenance ("not",[conjunction_provenance])
-        else ApplicationProvenance
-          ("=>",[conjunction_provenance,body_provenance])
-      val target = if Term.aconv scope_result boolSyntax.F then
-        boolSyntax.mk_neg conjunction
-      else boolSyntax.mk_imp (conjunction, scope_result)
-      val conjunction_thm = Thm.ASSUME conjunction
-      fun conjunct_theorems expected theorem =
-        case expected of
-          [] => raise ERR "process_scope" "empty conjunction proof"
-        | [_] => [theorem]
-        | _ :: rest =>
-            Thm.CONJUNCT1 theorem ::
-            conjunct_theorems rest (Thm.CONJUNCT2 theorem)
-      val antecedent_theorems =
-        conjunct_theorems antecedents conjunction_thm
-      val applied = List.foldl
-        (fn (antecedent, implication) => Thm.MP implication antecedent)
-        premise antecedent_theorems
-      val _ = process_scope_mark "apply"
-      val normalized = case normalized_result of
-          NONE => applied
-        | SOME tm =>
-            let
-              fun bridge canon =
-                let
-                  val tm_norm = canon tm
-                  val result_norm = canon scope_result
-                in Thm.TRANS tm_norm (Thm.SYM result_norm) end
-              fun arithmetic_bridge () =
-                let
-                  val tm_norm = SmtReplayCanon.cpc_canon_conv tm
-                  val result_norm =
-                    SmtReplayCanon.cpc_canon_conv scope_result
-                  val normalized_tm = boolSyntax.rhs (Thm.concl tm_norm)
-                  val normalized_result =
-                    boolSyntax.rhs (Thm.concl result_norm)
-                  val middle = arith_prove
-                    (boolSyntax.mk_eq (normalized_tm, normalized_result))
-                in
-                  Thm.TRANS tm_norm
-                    (Thm.TRANS middle (Thm.SYM result_norm))
-                end
-              val bridge =
-                bridge SmtReplayCanon.cpc_canon_conv
-                handle Feedback.HOL_ERR _ =>
-                  (arithmetic_bridge ()
-                   handle Feedback.HOL_ERR _ =>
-                     (bridge strong_canon
-                      handle Feedback.HOL_ERR holerr =>
-                        raise ERR "process_scope"
-                          ("scope result canonicalization failed; local=" ^
-                           Library.term_to_string tm ^ "; expected=" ^
-                           Library.term_to_string scope_result ^ "; " ^
-                           Feedback.message_of holerr)))
-            in Thm.EQ_MP bridge applied end
-      val _ = process_scope_mark "normalize"
-      val discharged = Thm.DISCH conjunction normalized
-      val result =
-        if Term.aconv scope_result boolSyntax.F then Thm.NOT_INTRO discharged
-        else discharged
-    in
-      if Term.aconv (Thm.concl result) target then
-        {theorem = result,provenance = produced_provenance}
-      else raise ERR "process_scope" "direct scope normalization shape mismatch"
-    end
+      fun record premise antecedents scope_result =
+        let
+          val incoming = case premise_steps of [premise] =>
+              step_provenance premise
+            | _ => raise ERR "process_scope" "expected actual premise record"
+          fun child_provenance provenance = case provenance of
+              ApplicationProvenance ("=>",[left,right]) => (left,right)
+            | _ => if definitely_no_conjunction provenance then
+                (AtomicProvenance,AtomicProvenance)
+              else (UnavailableProvenance
+                "actual scope antecedent has no retained child boundary",
+                UnavailableProvenance
+                "actual scope consequent has no retained child boundary")
+          fun record_children [] _ _ = []
+            | record_children (antecedent::rest) term provenance =
+                let val (left,right) = boolSyntax.dest_imp term
+                    val _ = if shared_aconv left antecedent then () else
+                      raise ERR "process_scope"
+                        ("actual scope antecedent differs from " ^
+                         "constructor recipe")
+                    val (left_provenance,right_provenance) =
+                      child_provenance provenance
+                in left_provenance :: record_children rest right
+                  right_provenance end
+          val children = record_children antecedents (Thm.concl premise)
+            incoming
+          val conjunction_provenance = case children of [one] => one
+            | [] => raise ERR "process_scope" "empty scope topology"
+            | _ => ConjunctionProvenance (ProcessScopeConjunction,children)
+          val body_provenance = case located_args of [body] => #provenance body
+            | _ => raise ERR "process_scope" "expected actual body argument"
+        in
+          if Term.aconv scope_result boolSyntax.F then
+            ApplicationProvenance ("not",[conjunction_provenance])
+          else ApplicationProvenance
+            ("=>",[conjunction_provenance,body_provenance])
+        end
+      val (theorem, provenance) =
+        process_scope_with_record strong_canon args prems record
+    in {theorem = theorem,provenance = provenance} end
 
 
   fun replay_not_and prems =
