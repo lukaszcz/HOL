@@ -350,13 +350,12 @@ struct
         node descriptor arity guard frame name arguments)
       frame name indices arguments
 
-  (* The operations in which the int and the exact-policy session
-     builders differ: the recipe-limit type and its checks, recipe
-     selection, ascription, the sourced parser's index-literal limit, the
-     identity that decides a binder alias and the guard that
-     replace_source_parser runs. The last two receive the entry's
-     same_identity and guard_observation callbacks. Each entry passes the
-     operations it uses. *)
+  local
+  (* The limit and recipe operations in which the int and the exact-policy
+     session builders differ: recipe selection, the recipe parser,
+     ascription, the sourced parser's index-literal limit, the token and
+     operand admission checks and the sourced parser itself. Each entry
+     passes the operations it uses. *)
   type ('a,'limits,'index_limit) session_ops =
     {select : 'a B.backend -> 'limits ->
        (R.entry -> 'a P.construction_parse_fn option) ->
@@ -372,8 +371,6 @@ struct
      token_admits : 'limits -> string -> bool,
      operands_admit : 'limits -> 'a list -> 'a P.construction_index list ->
        bool,
-     same_alias : ('a * 'a -> bool) -> 'a * 'a -> bool,
-     guard_replace : ((unit -> unit) -> unit) -> (unit -> unit) -> unit,
      parse_sourced : ('a,'index_limit) P.generic_construction_cfg ->
        (string -> string -> string option) -> (unit -> string) ->
        Type.hol_type P.dict * 'a P.construction_dict ->
@@ -386,13 +383,31 @@ struct
      special : 'a B.backend -> R.entry -> 'a P.construction_parse_fn option,
      ascribed : 'a B.backend -> 'a B.frame -> 'a constructed_ascription ->
        'a option}
+  (* The callbacks the entries supply. The int and the policy builders
+     differed in three places that are preserved on purpose, since each
+     is observable: the identity that decides a binder alias (the int path
+     compared node ids, the policy path compared with same_identity), the
+     guard that replace_source_parser runs (the int path validated the
+     root frame, the policy path ran guard_observation) and the scope
+     recorded for a private symbol (the int path reused the scope it had
+     already computed; the policy path asked private_label, which
+     re-reads the owner's scope and so is metered again). *)
+  type 'a session_callbacks =
+    {identity : 'a -> int, same_identity : 'a * 'a -> bool,
+     same_alias : 'a * 'a -> bool,
+     guard_private : G.scope -> 'a -> unit,
+     guard_observation : (unit -> unit) -> unit,
+     guard_replace : (unit -> unit) -> unit,
+     private_scope : 'a B.frame -> G.scope, source_scope : 'a -> G.scope,
+     private_label : 'a B.frame -> 'a B.frame -> G.scope -> G.scope}
+
   (* One grammar for the int sessions, the policy graph sessions and the
      typed parser values. *)
   fun create_session_for_backend
       (ops : ('a,'limits,'index_limit) session_ops)
       (options : ('a,'limits) session_core) backend
-      {identity,same_identity,guard_private,guard_observation,private_scope,
-       source_scope,private_label}
+      {identity,same_identity,same_alias,guard_private,guard_observation,
+       guard_replace,private_scope,source_scope,private_label}
       source_declarations
       initialise_extra {solver,version,policy,reserved_names} get_token
       : 'a constructed_session =
@@ -400,8 +415,6 @@ struct
       val graph = #graph options
       val scope = #scope options
       val limits = #recipe_limits options
-      val same_alias = #same_alias ops same_identity
-      val guard_replace = #guard_replace ops guard_observation
       val root = B.root backend
       val private_count = ref 0
       val private_bindings = ref ([] : 'a constructed_private_binding list)
@@ -454,7 +467,7 @@ struct
               val node = B.fresh_solver_variable backend owner
                 (kind ^ "#" ^ Int.toString serial, hol_type)
               val _ = private_bindings :=
-                {scope = private_label frame owner,
+                {scope = private_label frame owner scope,
                  marker = node, kind = kind,
                  source = retained_source ()} :: !private_bindings
               val _ = if stable then private_symbols :=
@@ -978,7 +991,6 @@ struct
     in context root scope dictionary_ref variables_ref sorts_ref
       binder_lists_ref lists_ref proof_terms proof_sorts aliases_ref end
 
-
   val int_session_ops =
     {select = R.select_with,
      recipe_parsefn = R.recipe_parsefn,
@@ -989,9 +1001,6 @@ struct
      operands_admit = fn (limits : R.limits) => fn arguments => fn indices =>
        List.length arguments <= #operand_limit limits andalso
        List.length indices <= #operand_limit limits,
-     same_alias = fn _ => fn (left,right) =>
-       G.node_id left = G.node_id right,
-     guard_replace = fn _ => fn check => check (),
      parse_sourced = P.parse_term_sourced_with_backend_and_indices}
   val policy_session_ops =
     {select = R.select_with_policy,
@@ -1007,8 +1016,6 @@ struct
            (policy_frontend_length arguments) andalso
          SmtReplayResourcePolicy.allows (#operand_limit limits)
            (policy_frontend_length indices),
-     same_alias = fn same_identity => same_identity,
-     guard_replace = fn guard_observation => guard_observation,
      parse_sourced = P.parse_term_sourced_with_policy_and_indices}
 
   (* The graph sessions' scope guard, identity, scope and label callbacks. *)
@@ -1024,6 +1031,7 @@ struct
      source_scope = G.node_scope graph,
      private_label = fn _ => fn owner => valOf (B.frame_scope backend owner)}
 
+  in
   fun create_session_aux (options : options) source_declarations
       description get_token : session =
     let
@@ -1033,12 +1041,23 @@ struct
          import_limit = #import_limit options,
          literal_limit = #literal_limit options,
          binder_limit = #binder_limit options}
+      val graph_callbacks = graph_session_callbacks graph backend
     in create_session_for_backend int_session_ops
       {graph = graph, scope = #scope options, logic = #logic options,
        sorts = #sorts options, binder_lists = #binder_lists options,
        recipe_limits = #recipe_limits options, special = #special options,
        ascribed = #ascribed options}
-      backend (graph_session_callbacks graph backend) source_declarations
+      backend
+      {identity = #identity graph_callbacks,
+       same_identity = #same_identity graph_callbacks,
+       same_alias = fn (left,right) => G.node_id left = G.node_id right,
+       guard_private = #guard_private graph_callbacks,
+       guard_observation = #guard_observation graph_callbacks,
+       guard_replace = fn check => check (),
+       private_scope = #private_scope graph_callbacks,
+       source_scope = #source_scope graph_callbacks,
+       private_label = fn _ => fn _ => fn scope => scope}
+      source_declarations
       (fn {dictionary,variables,...} => (dictionary,variables))
       description get_token end
 
@@ -1060,7 +1079,9 @@ struct
      Native admission remains in its original initializer below; the value
      initializer consumes every durable Mapping declaration. *)
   fun create_policy_session_for_backend
-      (options : 'a constructed_policy_options) backend callbacks
+      (options : 'a constructed_policy_options) backend
+      {identity,same_identity,guard_private,guard_observation,private_scope,
+       source_scope,private_label}
       source_declarations initialise_extra description get_token
       : 'a constructed_session =
     create_session_for_backend policy_session_ops
@@ -1069,8 +1090,15 @@ struct
        binder_lists = #binder_lists options,
        recipe_limits = #recipe_limits options, special = #special options,
        ascribed = #ascribed options}
-      backend callbacks source_declarations initialise_extra
-      description get_token
+      backend
+      {identity = identity, same_identity = same_identity,
+       same_alias = same_identity, guard_private = guard_private,
+       guard_observation = fn check => ignore (guard_observation check),
+       guard_replace = fn check => ignore (guard_observation check),
+       private_scope = private_scope, source_scope = source_scope,
+       private_label = fn frame => fn owner => fn _ =>
+         private_label frame owner}
+      source_declarations initialise_extra description get_token
 
   fun create_policy_session_aux_with_graph_declarations
       (options:policy_options) source_declarations graph_declarations
@@ -1141,6 +1169,8 @@ struct
     in create_policy_session_for_backend options backend
       (graph_session_callbacks graph backend)
       source_declarations initialise_extra description get_token end
+
+  end (* hidden session builder *)
 
   (* Preserve the existing raw declaration route and evaluation order. *)
   fun create_policy_session_aux options declarations =

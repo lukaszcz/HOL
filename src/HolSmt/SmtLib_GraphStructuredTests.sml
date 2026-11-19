@@ -1819,9 +1819,6 @@ struct
          (List.nth (budgets,0) < List.nth (budgets,2));
        List.app (policy_only_limits "cvc5") texts end
 
-  (* Proof-parser construction, not source AST typechecking or prover
-     migration. Large controls never use bounded native comparisons;
-     declared datatypes have a separate focused fixture. *)
   (* The ordinary and the exact-policy graph sessions run one script:
      a declaration, a private symbol, and a constructor use that is just
      inside and just outside the operand budget.  Both observe the same
@@ -1844,9 +1841,11 @@ struct
           ("(session_script_f"^String.concat
             (List.tabulate (count,fn _ => " true"))^")")))
         val limit = #operand_limit limits
-        fun variable_name node = case G.view graph node of
-            G.Variable (_,lexical) => #1 (Term.dest_var lexical)
-          | _ => raise Fail "session script: not a variable"
+        fun variable_name node =
+          case List.find (fn {node=other,...} => other=node)
+              ((#solver_variables reader) ()) of
+            SOME {lexical,...} => #1 (Term.dest_var lexical)
+          | NONE => raise Fail "session script: not a solver variable"
       in
         {declarations=List.map (fn {lexical,...} =>
            Term.dest_var lexical) ((#solver_variables reader) ()),
@@ -1854,6 +1853,7 @@ struct
          labels=List.map (fn {scope,marker,kind,...} =>
            (G.scope_id scope,kind,variable_name marker))
            ((#private_bindings reader) ()),
+         marker_name=variable_name marker,
          stable=(again=marker),
          exact_budget=failure (fn () => call limit),
          over_budget=failure (fn () => call (limit+1))}
@@ -1864,7 +1864,8 @@ struct
       ensure "session script: declarations in order"
         (#declarations ordinary = #declarations exact andalso
          List.map #1 (#declarations ordinary) =
-           ["session_script_d","session_script_k#0"]);
+           ["session_script_d",#marker_name ordinary] andalso
+         #marker_name ordinary = #marker_name exact);
       ensure "session script: declared name is in the namespace"
         (List.exists (fn name => String.isSuffix "session_script_d" name)
            (#namespace ordinary));
@@ -1872,7 +1873,7 @@ struct
         (#namespace ordinary= #namespace exact);
       ensure "session script: private labels agree"
         (#labels ordinary= #labels exact andalso
-         List.length (#labels ordinary)=1);
+         List.map #3 (#labels ordinary) = [#marker_name ordinary]);
       ensure "session script: private symbol is stable"
         (#stable ordinary andalso #stable exact);
       ensure "session script: exact budget accepted"
@@ -1887,6 +1888,9 @@ struct
          | NONE => false)
     end
 
+  (* Proof-parser construction, not source AST typechecking or prover
+     migration. Large controls never use bounded native comparisons;
+     declared datatypes have a separate focused fixture. *)
   fun run () =
     let
       fun group (label,solver,texts) =
