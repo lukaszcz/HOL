@@ -24,6 +24,80 @@ struct
   val _ = SmtReplayGraph.discover_compact_selected_partial
   val _ = SmtReplayGraph.record_opened_type_projection
   val ERR = Feedback.mk_HOL_ERR "SmtLib_FixedNumericSimple"
+  (* Workers shared by the int owner below and the PolicySimple* owner.
+     Each takes the operations that differ (Work payer, int or policy
+     receipt calls, labels) as arguments, so a caller keeps its own
+     calls, order and diagnostics. *)
+  type ('a,'l) described = {node:G.node,child:G.closure_child,scope:G.scope,
+    frame:F.receipt,admission:'a,source_limit:'l,category:A.category}
+  fun retire_owner work dead = (dead := true;W.close work)
+  fun protect_with close owner action = action () handle primary =>
+    (close owner;raise primary)
+  fun guard_app work action rows = case rows of
+      [] => W.spend_guard_policy work 1
+    | row::rest =>
+        (W.spend_guard_policy work 1;action row;guard_app work action rest)
+  (* The cache-hit protocol of both owners' active: entry checks, then a
+     backing pass only when the validated revision/list pair is stale. *)
+  fun active_with {graph,root,validated,backing}
+      {entry,refresh,unchanged,changed} =
+    let val _ = entry ()
+        val revision = G.validation_revision graph root
+        val rows = !backing
+        val hit = case !validated of SOME (old,held) =>
+            old=revision andalso Portable.pointer_eq (held,rows)
+          | NONE => false
+    in if hit then () else
+      (refresh rows;
+       if unchanged () andalso
+           G.validation_revision graph root=revision andalso
+           Portable.pointer_eq (rows,!backing) then
+         validated := SOME (revision,rows) else changed ())
+    end
+  fun revalidate_with active fence validated =
+    (fence := !fence+1;validated := NONE;active ())
+  fun describe_with label {active,graph,root,scope,fence,described,frame,
+      lower} =
+    let val _ = active () val _ = G.validate_scope graph scope
+        val revision = G.validation_revision graph root
+        val generation = !fence
+        fun full () =
+          let val (held_graph,held_root,held_scope) = frame ()
+              val _ = if Portable.pointer_eq (held_graph,graph) andalso
+                  held_root=root andalso held_scope=scope then () else
+                raise ERR label "foreign actual frame"
+              val answer = lower ()
+              val _ = active ()
+              val _ = if G.validation_revision graph root=revision andalso
+                  !fence=generation then () else
+                raise ERR label "validation state changed"
+              val _ = described := SOME (revision,generation,answer)
+          in answer end
+    in case !described of SOME (old,held,answer) =>
+         if old=revision andalso held=generation then answer else full ()
+       | NONE => full () end
+  fun capture_with {work,frames,backing,frame,guard,make,describe} =
+    let fun present [] = (W.spend_guard_policy work 1;false)
+          | present (held::rest) =
+              (W.spend_guard_policy work 1;
+               Portable.pointer_eq (held,frame) orelse present rest)
+        val _ = if present (!frames) then () else frames := frame :: !frames
+        val focus = make ()
+        val _ = ignore (describe focus)
+        val _ = backing := guard :: !backing
+    in focus end
+  fun action_with work describe_focus spend operation =
+    W.with_step work (fn () =>
+      let fun observe () = (describe_focus ();spend ())
+          val answer = operation observe
+          val _ = describe_focus ()
+      in answer end)
+  fun checked_type active describe_focus check_type ty =
+    (active ();describe_focus ();check_type ty;active ();describe_focus ())
+  fun identity_with graph (describe:unit -> ('x,'y) described) action =
+    let val d = describe ()
+    in action (fn observe => C.graph_identity graph (#scope d)
+      {observe=observe} (#node d)) end
   datatype owner = Owner of
     {work:W.portfolio,graph:G.graph,root:G.scope,sources:S.sources,
      catalogue:K.catalogue,traversal:T.owner,matcher:M.owner,
@@ -36,8 +110,7 @@ struct
      frames:F.receipt list ref,
      validated:(IntInf.int * (unit -> unit) list) option ref,
      fence:IntInf.int ref}
-  type description = {node:G.node,child:G.closure_child,scope:G.scope,
-    frame:F.receipt,admission:A.focus,source_limit:int,category:A.category}
+  type description = (A.focus,int) described
   datatype focus = Focus of
     {admission:A.focus,frame:F.receipt,scope:G.scope,
      described:(IntInf.int * IntInf.int * description) option ref,
@@ -48,89 +121,56 @@ struct
   type memo_entry = {node:G.node,scope:G.scope,category:A.category,limit:int,
     stack:(G.node * G.scope) list,result:outcome option}
   exception Inapplicable
-  fun close (Owner {work,dead,...}) = (dead := true;W.close work)
-  fun protect owner action = action () handle primary =>
-    (close owner;raise primary)
-  fun guard_app work action rows = case rows of
-      [] => W.spend_guard_policy work 1
-    | row::rest =>
-        (W.spend_guard_policy work 1;action row;guard_app work action rest)
+  fun close (Owner {work,dead,...}) = retire_owner work dead
+  fun protect owner action = protect_with close owner action
   fun active (Owner {work,graph,root,sources,catalogue,traversal,
                     symbols,stack_limit,dead,backing,discovery_heads,
                     validated,frames,...}) =
-    let
-      val _ = if !dead then raise ERR "active" "numeric owner retired" else ()
-      val _ = W.validate work graph root sources (W.semantic_limits work)
-      val _ = if Term.term_epoch () = symbols then () else
-        raise ERR "active" "constant retirement epoch changed"
-      val _ = if !Cond_rewr.stack_limit=stack_limit then () else
-        raise ERR "active" "fixed conditional stack policy changed"
-      (* A lexical zero-binder frame may retire without any G mutation.
-         Its authentic private lifetime is checked on EVERY cache hit. *)
-      val _ = guard_app work (F.validate_lifetime_for work) (!frames)
-      val revision = G.validation_revision graph root
-      val rows = !backing
-      val hit = case !validated of SOME (old,held) =>
-          old=revision andalso Portable.pointer_eq (held,rows)
-        | NONE => false
-    in if hit then () else
-      (T.revalidate_for work traversal;K.validate_for work catalogue;
-       G.validate_discovery_heads graph root discovery_heads;
-       guard_app work (fn guard => guard ()) rows;
-       W.validate work graph root sources (W.semantic_limits work);
-       if Term.term_epoch () = symbols andalso
-           !Cond_rewr.stack_limit=stack_limit andalso
-           G.validation_revision graph root=revision andalso
-           Portable.pointer_eq (rows,!backing) then
-         validated := SOME (revision,rows) else
-         raise ERR "active" "validation state changed during backing pass")
-    end
+    active_with {graph=graph,root=root,validated=validated,backing=backing}
+     {entry=fn () =>
+        let
+          val _ = if !dead then raise ERR "active" "numeric owner retired"
+            else ()
+          val _ = W.validate work graph root sources (W.semantic_limits work)
+          val _ = if Term.term_epoch () = symbols then () else
+            raise ERR "active" "constant retirement epoch changed"
+          val _ = if !Cond_rewr.stack_limit=stack_limit then () else
+            raise ERR "active" "fixed conditional stack policy changed"
+          (* A lexical zero-binder frame may retire without any G mutation.
+             Its authentic private lifetime is checked on EVERY cache hit. *)
+          val _ = guard_app work (F.validate_lifetime_for work) (!frames)
+        in () end,
+      refresh=fn rows =>
+        (T.revalidate_for work traversal;K.validate_for work catalogue;
+         G.validate_discovery_heads graph root discovery_heads;
+         guard_app work (fn guard => guard ()) rows;
+         W.validate work graph root sources (W.semantic_limits work)),
+      unchanged=fn () => Term.term_epoch () = symbols andalso
+        !Cond_rewr.stack_limit=stack_limit,
+      changed=fn () => raise ERR "active"
+        "validation state changed during backing pass"}
   fun revalidate (owner as Owner {validated,fence,...}) =
-    (fence := !fence+1;validated := NONE;active owner)
+    revalidate_with (fn () => active owner) fence validated
   fun expected (Owner {graph,sources,work,...}) scope =
     {graph=graph,scope=scope,sources=sources,work=work}
   fun describe (owner as Owner {work,graph,root,fence,...})
       (Focus {admission,frame,scope,described,...}) : description =
-    let val _ = active owner val _ = G.validate_scope graph scope
-        val revision=G.validation_revision graph root val generation= !fence
-        fun full () =
-          let val data = F.description_for work frame
-              val _ = if Portable.pointer_eq (#graph data,graph) andalso
-                  #root data=root andalso #scope data=scope then () else
-                raise ERR "describe" "foreign actual frame"
-              val lower = A.describe_for (expected owner scope) admission
-              val answer = {node= #node lower,child= #child lower,
-                scope=scope,frame=frame,admission=admission,
-                source_limit= #source_limit lower,category= #category lower}
-                : description
-              val _ = active owner
-              val _ = if G.validation_revision graph root=revision andalso
-                  !fence=generation then () else
-                raise ERR "describe" "validation state changed"
-              val _ = described := SOME (revision,generation,answer)
-          in answer end
-    in case !described of SOME (old,held,answer) =>
-         if old=revision andalso held=generation then answer else full ()
-       | NONE => full () end
+    describe_with "describe" {active=fn () => active owner,graph=graph,
+      root=root,scope=scope,fence=fence,described=described,
+      frame=fn () => let val data = F.description_for work frame
+        in (#graph data,#root data,#scope data) end,
+      lower=fn () =>
+        let val lower = A.describe_for (expected owner scope) admission
+        in {node= #node lower,child= #child lower,scope=scope,frame=frame,
+            admission=admission,source_limit= #source_limit lower,
+            category= #category lower} : description end}
   fun capture (owner as Owner {work,backing,frames,...}) frame admission =
-    let val scope = #scope (F.description_for
-          (case owner of Owner {work,...} => work) frame)
-        fun present [] = (W.spend_guard_policy work 1;false)
-          | present (held::rest) =
-              (W.spend_guard_policy work 1;
-               Portable.pointer_eq (held,frame) orelse present rest)
-        val _ = if present (!frames) then () else
-          frames := frame :: !frames
+    let val scope = #scope (F.description_for work frame)
         fun guard () = A.validate_for (expected owner scope) admission
-        val focus = Focus {admission=admission,frame=frame,scope=scope,
-          described=ref NONE,backing_guard=guard}
-        val _ = ignore (describe owner focus)
-        val _ = backing := guard :: !backing
-    in focus end
-  (* A.generated_compact retains and validates its exact parent focus.
-     Once that child is registered, its parent's separate owner-list entry
-     is redundant, not a new dependency. Prune only that private closure;
-     no node equality or cached validation result authorizes this step. *)
+    in capture_with {work=work,frames=frames,backing=backing,frame=frame,
+        guard=guard,describe=describe owner,
+        make=fn () => Focus {admission=admission,frame=frame,scope=scope,
+          described=ref NONE,backing_guard=guard}} end
   fun covered_parent (Owner {work,backing,...})
       (Focus {backing_guard,...}) =
     let fun retain [] = (W.spend_guard_policy work 1;[])
@@ -140,12 +180,8 @@ struct
                else guard :: retain rest)
     in backing := retain (!backing) end
   fun action (owner as Owner {work,...}) focus operation =
-    W.with_step work (fn () =>
-      let fun observe () =
-            (ignore (describe owner focus);W.spend work 1)
-          val answer = operation observe
-          val _ = ignore (describe owner focus)
-      in answer end)
+    action_with work (fn () => ignore (describe owner focus))
+      (fn () => W.spend work 1) operation
   fun ordinal (owner as Owner {work,traversal,...}) =
     (active owner;T.validate_for work traversal;
      T.normalization_ordinal traversal)
@@ -153,12 +189,10 @@ struct
     (* active checks original owner/epochs/stack/private Scope lifetimes on
        every call, and forces backing geometry on a genuine G revision or
        retained-list change. Every policy is still invoked in order. *)
-    (active owner;ignore (describe owner focus);check_type ty;
-     active owner;ignore (describe owner focus))
+    checked_type (fn () => active owner)
+      (fn () => ignore (describe owner focus)) check_type ty
   fun identity (owner as Owner {graph,...}) focus =
-    let val d = describe owner focus
-    in action owner focus (fn observe => C.graph_identity graph (#scope d)
-      {observe=observe} (#node d)) end
+    identity_with graph (fn () => describe owner focus) (action owner focus)
   fun seal (owner as Owner {work,graph,...}) focus recipe =
     let val d = describe owner focus
         val plan = Core.prepare_in_scope work
@@ -958,9 +992,7 @@ struct
        frames:F.receipt list ref,
        validated:(IntInf.int * (unit -> unit) list) option ref,
        fence:IntInf.int ref}
-    type description={node:G.node,child:G.closure_child,scope:G.scope,
-      frame:F.receipt,admission:A.policy_focus,source_limit:RP.limit,
-      category:A.category}
+    type description=(A.policy_focus,RP.limit)described
     datatype focus=Focus of
       {admission:A.policy_focus,frame:F.receipt,scope:G.scope,
        described:(IntInf.int * IntInf.int * description) option ref}
@@ -972,103 +1004,79 @@ struct
     type memo_entry={node:G.node,scope:G.scope,category:A.category,
       limit:RP.limit,stack:(G.node * G.scope) list,result:outcome option}
     exception Inapplicable
-    fun close(Owner{work,dead,...})=(dead:=true;W.close work)
-    fun protect owner action=action()handle primary=>
-      (close owner;raise primary)
+    fun close(Owner{work,dead,...})=retire_owner work dead
+    fun protect owner action=protect_with close owner action
     fun active(Owner{work,graph,root,sources,catalogue,traversal,
         native_contract,symbols,epoch,stack_limit,dead,backing,
         discovery_heads,validated,frames,...})=
-      let
-        val _=if !dead then raise ERR "policy_simple" "numeric owner retired"
-          else ()
-        val _=NC.validate_for work native_contract
-        val _=W.validate_policy work graph root sources(W.semantic_policy work)
-        val _=if Term.term_epoch()=symbols andalso Type.type_epoch()=epoch
-          then ()else raise ERR "policy_simple" "native epoch changed"
-        val _=if !Cond_rewr.stack_limit=stack_limit then ()else
-          raise ERR "policy_simple" "fixed conditional stack policy changed"
-        val _=guard_app work(F.validate_lifetime_with_policy_for work)(!frames)
-        val revision=G.validation_revision graph root
-        val rows= !backing
-        val hit=case !validated of SOME(old,held)=>
-            old=revision andalso Portable.pointer_eq(held,rows)
-          | NONE=>false
-      in if hit then ()else
-        (T.validate_carrier_with_policy_for work traversal;
-         K.validate_with_policy_for work catalogue;
-         if Portable.pointer_eq(K.native_contract_for work catalogue,
-             native_contract)andalso
-             Portable.pointer_eq(T.native_contract_carrier_with_policy_for
-               work traversal,native_contract)then ()else
-           raise ERR "policy_simple" "different actual catalogue contract";
-         G.validate_discovery_heads graph root discovery_heads;
-         guard_app work(fn guard=>guard())rows;
-         W.validate_policy work graph root sources(W.semantic_policy work);
-         if Term.term_epoch()=symbols andalso Type.type_epoch()=epoch andalso
-             !Cond_rewr.stack_limit=stack_limit andalso
-             G.validation_revision graph root=revision andalso
-             Portable.pointer_eq(rows,!backing)then
-           validated:=SOME(revision,rows)else
-           raise ERR "policy_simple" "validation state changed during backing")
-      end
+      active_with{graph=graph,root=root,validated=validated,backing=backing}
+       {entry=fn()=>
+          let
+            val _=if !dead then raise ERR "policy_simple"
+                "numeric owner retired" else ()
+            val _=NC.validate_for work native_contract
+            val _=W.validate_policy work graph root sources
+              (W.semantic_policy work)
+            val _=if Term.term_epoch()=symbols andalso
+                Type.type_epoch()=epoch then ()else
+              raise ERR "policy_simple" "native epoch changed"
+            val _=if !Cond_rewr.stack_limit=stack_limit then ()else
+              raise ERR "policy_simple"
+                "fixed conditional stack policy changed"
+            val _=guard_app work(F.validate_lifetime_with_policy_for work)
+              (!frames)
+          in()end,
+        refresh=fn rows=>
+          (T.validate_carrier_with_policy_for work traversal;
+           K.validate_with_policy_for work catalogue;
+           if Portable.pointer_eq(K.native_contract_for work catalogue,
+               native_contract)andalso
+               Portable.pointer_eq(T.native_contract_carrier_with_policy_for
+                 work traversal,native_contract)then ()else
+             raise ERR "policy_simple" "different actual catalogue contract";
+           G.validate_discovery_heads graph root discovery_heads;
+           guard_app work(fn guard=>guard())rows;
+           W.validate_policy work graph root sources(W.semantic_policy work)),
+        unchanged=fn()=>Term.term_epoch()=symbols andalso
+          Type.type_epoch()=epoch andalso !Cond_rewr.stack_limit=stack_limit,
+        changed=fn()=>raise ERR "policy_simple"
+          "validation state changed during backing"}
     fun revalidate(owner as Owner{validated,fence,...})=
-      (fence:= !fence+1;validated:=NONE;active owner)
+      revalidate_with(fn()=>active owner)fence validated
     fun expected(Owner{graph,sources,work,...})scope=
       {graph=graph,scope=scope,sources=sources,work=work}
     fun describe(owner as Owner{work,graph,root,fence,...})
         (Focus{admission,frame,scope,described}):description=
-      let val _=active owner val _=G.validate_scope graph scope
-          val revision=G.validation_revision graph root
-          val generation= !fence
-          fun full()=
-            let val data=F.description_with_policy_for work frame
-                val _=if Portable.pointer_eq(#graph data,graph)andalso
-                    #root data=root andalso #scope data=scope then ()else
-                  raise ERR "policy_simple" "foreign actual frame"
-                val lower=A.describe_with_policy_for
-                  (expected owner scope)admission
-                val answer={node= #node lower,child= #child lower,scope=scope,
-                  frame=frame,admission=admission,
-                  source_limit= #source_limit lower,category= #category lower}
-                  :description
-                val _=active owner
-                val _=if G.validation_revision graph root=revision andalso
-                    !fence=generation then ()else
-                  raise ERR "policy_simple" "validation state changed"
-                val _=described:=SOME(revision,generation,answer)
-            in answer end
-      in case !described of SOME(old,held,answer)=>
-           if old=revision andalso held=generation then answer else full()
-         | NONE=>full()end
+      describe_with "policy_simple" {active=fn()=>active owner,graph=graph,
+        root=root,scope=scope,fence=fence,described=described,
+        frame=fn()=>let val data=F.description_with_policy_for work frame
+          in(#graph data,#root data,#scope data)end,
+        lower=fn()=>
+          let val lower=A.describe_with_policy_for
+                (expected owner scope)admission
+          in{node= #node lower,child= #child lower,scope=scope,
+             frame=frame,admission=admission,
+             source_limit= #source_limit lower,category= #category lower}
+               :description end}
     fun capture(owner as Owner{work,backing,frames,...})frame admission=
       let val scope= #scope(F.description_with_policy_for work frame)
-          fun present []=(W.spend_guard_policy work 1;false)
-            | present(held::rest)=
-                (W.spend_guard_policy work 1;
-                 Portable.pointer_eq(held,frame)orelse present rest)
-          val _=if present(!frames)then ()else frames:=frame:: !frames
-          val focus=Focus{admission=admission,frame=frame,scope=scope,
-            described=ref NONE}
-          val _=ignore(describe owner focus)
-          val _=backing:=(fn()=>A.validate_with_policy_for
-            (expected owner scope)admission):: !backing
-      in focus end
+      in capture_with{work=work,frames=frames,backing=backing,frame=frame,
+          guard=fn()=>A.validate_with_policy_for
+            (expected owner scope)admission,
+          describe=describe owner,
+          make=fn()=>Focus{admission=admission,frame=frame,scope=scope,
+            described=ref NONE}}end
     fun action(owner as Owner{work,...})focus operation=
-      W.with_step work(fn()=>
-        let fun observe()=(ignore(describe owner focus);W.spend_policy work 1)
-            val answer=operation observe
-            val _=ignore(describe owner focus)
-        in answer end)
+      action_with work(fn()=>ignore(describe owner focus))
+        (fn()=>W.spend_policy work 1)operation
     fun ordinal(owner as Owner{work,traversal,...})=
       (active owner;T.validate_carrier_with_policy_for work traversal;
        T.carrier_normalization_ordinal_with_policy_for work traversal)
     fun policy(owner as Owner{check_type,...})focus ty=
-      (active owner;ignore(describe owner focus);check_type ty;
-       active owner;ignore(describe owner focus))
+      checked_type(fn()=>active owner)
+        (fn()=>ignore(describe owner focus))check_type ty
     fun identity(owner as Owner{graph,...})focus=
-      let val d=describe owner focus
-      in action owner focus(fn observe=>C.graph_identity graph(#scope d)
-        {observe=observe}(#node d))end
+      identity_with graph(fn()=>describe owner focus)(action owner focus)
     fun metric(owner as Owner{graph,profiles,backing,...})focus=
       let val d=describe owner focus
           val capture=G.prepare_scoped_profiled_metric graph(#scope d)
