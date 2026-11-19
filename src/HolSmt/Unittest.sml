@@ -27756,6 +27756,27 @@ let
   val nest_theorem =
     Z3_ProofReplay.asserted_equality_substitution_prove_for_test
       [nest_source] nest_target
+  (* An acyclic chain of 32 equations whose ends each occur 300 times takes
+     32 rewrites per occurrence in either direction: with variables on the
+     left it is rewritten to its end, as before any bound; with
+     applications on the left, within the bound for 32 equations. *)
+  fun chain_link i =
+    Term.mk_var ("asserted_c" ^ Int.toString i, intSyntax.int_ty)
+  fun chain_case wrap =
+    let
+      val source = boolSyntax.list_mk_conj (List.tabulate (32, fn i =>
+        boolSyntax.mk_eq (wrap (chain_link i), wrap (chain_link (i + 1)))))
+      fun repeated term = List.foldl (fn (_, sum) =>
+        intSyntax.mk_plus (sum, term)) term (List.tabulate (299, fn i => i))
+      val target = boolSyntax.mk_eq
+        (repeated (wrap (chain_link 0)), repeated (wrap (chain_link 32)))
+    in
+      (source, target,
+       Z3_ProofReplay.asserted_equality_substitution_prove_for_test
+         [source] target)
+    end
+  val chains = [chain_case (fn link => link),
+    chain_case (fn link => Term.mk_comb (``asserted_f:int -> int``, link))]
 in
   assert (List.all (fn (source, theorem) =>
       Thm.concl theorem ~~ target andalso exact_source source theorem)
@@ -27800,7 +27821,13 @@ in
       exact_source nest_source nest_theorem,
     "asserted equality substitution was not bounded by its rewrites");
   check_oracle_tags "copying asserted equalities" copy_theorem;
-  check_oracle_tags "nested asserted equality" nest_theorem
+  check_oracle_tags "nested asserted equality" nest_theorem;
+  assert (List.all (fn (source, target, theorem) =>
+      Thm.concl theorem ~~ target andalso exact_source source theorem)
+      chains,
+    "a long acyclic chain of asserted equalities was not substituted");
+  List.app (fn (_, _, theorem) =>
+      check_oracle_tags "chained asserted equalities" theorem) chains
 end
 
 fun z3_hyp_removal_beta_lookup_success () =

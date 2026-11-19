@@ -253,7 +253,11 @@ Bugs fixed
     correct steps no longer fail to normalize.  Datatype exhaustiveness in
     replay stops after 256 case splits per attempt instead of searching
     without limit.  `Z3_TAC` replays rewrites that reduce a datatype redex
-    and reorder the rest in one step.
+    and reorder the rest in one step.  `Z3_TAC` no longer overflows the
+    stack on an asserted equation whose left side occurs in its own right
+    side, such as `x = (x && m) || (x && ~m)`.  `CVC_TAC` checks goals
+    about commuting function updates and set difference again, and checks
+    some 256-bit word goals with adders and masks that used to time out.
 
 -   `HolSmt` now gives Z3 4.14.1 full tested support.  Z3 4.14.* queries in
     the seven affected array-bearing inferred logics are widened to `ALL` at

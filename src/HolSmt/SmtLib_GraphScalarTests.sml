@@ -388,6 +388,29 @@ struct
          with_values (fn _ => fn _ => fn backend =>
            check backend (small backend) bs))) cases
       val _=OK ()
+      val _=tprint "Symbolic bbterm concatenation has the legacy shape"
+      fun concat_depth term=
+        if wordsSyntax.is_word_concat term then
+          let val (high,low)=wordsSyntax.dest_word_concat term
+          in 1+Int.max (concat_depth high,concat_depth low) end
+        else 0
+      val symbolic=List.map (fn name => Term.mk_var (name,Type.bool))
+        ["p","q","r","s","t"]
+      fun shape backend interpret=
+        let val (_,dict)= #dictionaries (R.select backend limits
+              {logic="QF_BV",solver=SOME "cvc5"})
+            val parse=List.hd (Redblackmap.find (dict,"@bbterm"))
+            val values=List.map (B.source backend (B.root backend)) symbolic
+            val value=interpret (parse (B.root backend) "@bbterm" [] values)
+        in ensure "graph bbterm concatenation is not balanced"
+             (concat_depth value=
+              concat_depth (SmtLib_Theories.mk_bbterm symbolic))
+        end
+      val _=with_graph (fn graph => fn backend =>
+        shape backend (G.representative graph))
+      val _=with_values (fn _ => fn _ => fn backend =>
+        shape backend (small backend))
+      val _=OK ()
       val _=tprint "Constructor slices do not relax atomic graph leaves"
       val _=with_values (fn graph => fn context => fn backend =>
         let val term=numSyntax.mk_numeral (Arbnum.fromInt 5)

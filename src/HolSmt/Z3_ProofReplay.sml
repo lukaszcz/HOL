@@ -7049,17 +7049,24 @@ local
       val _ = not (List.null equalities) orelse
         raise ERR "asserted_equality_substitution_prove"
           "no structurally derived asserted equality"
-      (* Rewriting to a fixpoint, counting rewrites.  A rewrite can create
-         a redex in the term around it (x = y with f y = f x) or copy one
-         (a = b with f b = g (f a) (f a)), which no check of the equations
-         alone sees.  Such a direction fails after max_rewrites rewrites,
-         about one per target node plus a margin for chains, and the other
-         direction is tried. *)
-      val max_rewrites =
-        4096 + SmtResource.term_nodes_up_to 65536 target
+      (* Rewriting to a fixpoint.  With a variable or constant on every
+         left side, the cycle check below is exact and rewriting ends, so
+         it is not bounded.  Otherwise a rewrite can create a redex in the
+         term around it (x = y with f y = f x) or copy one (a = b with
+         f b = g (f a) (f a)), which no check of the equations alone sees.
+         Such a direction fails after (4096 + target nodes) rewrites per
+         equation, and the other direction is tried.  Each occurrence on
+         an acyclic chain of equations that copy nothing is rewritten at
+         most once per equation, so the bound never stops one. *)
+      val target_nodes = SmtResource.term_nodes_up_to 65536 target
       exception Diverged
       fun substitute rewrite_theorems =
         let
+          fun atomic theorem =
+            let val left = boolSyntax.lhs (Thm.concl theorem)
+            in Term.is_var left orelse Term.is_const left end
+          val max_rewrites =
+            (4096 + target_nodes) * List.length rewrite_theorems
           val rewrites = ref 0
           fun counted conversion term =
             let val theorem = conversion term
@@ -7067,8 +7074,11 @@ local
               rewrites := !rewrites + 1;
               if !rewrites <= max_rewrites then theorem else raise Diverged
             end
+          val depth =
+            if List.all atomic rewrite_theorems then Conv.TOP_DEPTH_CONV
+            else Conv.TOP_DEPTH_CONV o counted
         in
-          Rewrite.GEN_REWRITE_CONV (Conv.TOP_DEPTH_CONV o counted)
+          Rewrite.GEN_REWRITE_CONV depth
             Rewrite.empty_rewrites rewrite_theorems target
           handle Diverged =>
             raise ERR "asserted_equality_substitution_prove"
