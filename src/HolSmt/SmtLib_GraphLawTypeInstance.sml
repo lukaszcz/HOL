@@ -313,29 +313,41 @@ struct
       ((case work of NONE => () | SOME budget => W.close budget);
        raise primary)
 
-  fun prepare_identity_internal (p as Producer
-      {original,variables,annotations,bytes,check_type,...}) =
+  (* The empty-variable identity preparation shared by the int and policy
+     producers.  The caller supplies the error origin, the activity and
+     identity guards, the Work-charging spend and the Type policy. *)
+  fun identity_walk {name,active,identity_guard,spend,variables,annotations,
+                     bytes,original,check_type} =
     let
-      val _ = active p
+      val _ = active ()
       val _ = if Vector.length variables = 0 then () else
-        raise ERR "prepare_identity" "original law has type variables"
+        raise ERR name "original law has type variables"
       val epoch = Term.term_epoch ()
-      fun guard () = identity_active p epoch
+      fun guard () = identity_guard epoch
       (* Borrow the original list. Pay each retained policy-list incidence
          and actual type node BEFORE inspecting it or invoking policies. *)
       fun quote [] = ()
         | quote (ty :: rest) =
-            (guard ();spend p 1;
-             type_walk (spend p) bytes (fn _ => ()) ty;
+            (guard ();spend 1;
+             type_walk spend bytes (fn _ => ()) ty;
              guard ();quote rest)
       val _ = quote annotations
-      val _ = spend p 2 (* Plan and retained identity-result records. *)
+      val _ = spend 2 (* Plan and retained identity-result records. *)
       val _ = if Term.uptodate_term (Thm.concl (P.closed_original original))
-        then () else raise ERR "prepare_identity" "retired original law"
+        then () else raise ERR name "retired original law"
       val _ = guard ()
       fun checked ty = (guard ();check_type ty;guard ())
       val _ = List.app checked annotations
       val _ = guard ()
+    in epoch end
+
+  fun prepare_identity_internal (p as Producer
+      {original,variables,annotations,bytes,check_type,...}) =
+    let val epoch = identity_walk
+          {name = "prepare_identity",active = fn () => active p,
+           identity_guard = identity_active p,spend = spend p,
+           variables = variables,annotations = annotations,bytes = bytes,
+           original = original,check_type = check_type}
     in IdentityPlan {producer = p,term_epoch = epoch,
                      executed = ref false} end
 
@@ -569,29 +581,11 @@ struct
 
   fun prepare_identity_internal (p as PolicyProducer
       {original,variables,annotations,bytes,check_type,...}) =
-    let
-      val _ = active p
-      val _ = if Vector.length variables = 0 then () else
-        raise ERR "prepare_identity_with_policy"
-          "original law has type variables"
-      val epoch = Term.term_epoch ()
-      fun guard () = identity_active p epoch
-      (* Borrow the original list. Pay each retained policy-list incidence
-         and actual type node BEFORE inspecting it or invoking policies. *)
-      fun quote [] = ()
-        | quote (ty :: rest) =
-            (guard ();spend p 1;
-             type_walk (spend p) bytes (fn _ => ()) ty;
-             guard ();quote rest)
-      val _ = quote annotations
-      val _ = spend p 2 (* PolicyPlan and retained identity-result records. *)
-      val _ = if Term.uptodate_term (Thm.concl (P.closed_original original))
-        then () else raise ERR "prepare_identity_with_policy"
-          "retired original law"
-      val _ = guard ()
-      fun checked ty = (guard ();check_type ty;guard ())
-      val _ = List.app checked annotations
-      val _ = guard ()
+    let val epoch = identity_walk
+          {name = "prepare_identity_with_policy",active = fn () => active p,
+           identity_guard = identity_active p,spend = spend p,
+           variables = variables,annotations = annotations,bytes = bytes,
+           original = original,check_type = check_type}
     in PolicyIdentityPlan {policy_producer = p,term_epoch = epoch,
                      executed = ref false} end
 
