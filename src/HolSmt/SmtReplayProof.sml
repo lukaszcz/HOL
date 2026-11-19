@@ -10862,8 +10862,8 @@ struct
     in {budget=budget, policies=policies, identifiers=identifiers,
        binders=binders, atom=atom, app=app, capture=capture, bounded=bounded,
        name_binders=name_binders, head=head, binary=binary, forall=forall,
-       exists=exists, subst=subst, timp=timp, tneg=tneg,
-       typed_equality=typed_equality, quantify=quantify, bool=bool,
+       exists=exists, subst=subst, tneg=tneg,
+       typed_equality=typed_equality, quantify=quantify,
        boolean=boolean, combine=combine, equality=equality,
        implication=implication, balanced=balanced,
        original_permutative=original_permutative} end
@@ -10901,7 +10901,7 @@ struct
       val _=case frames of SCEArgumentFrame _=>
           (if caller=scope then ()else raise ERR
             "prepare_source_argument" "caller must be the actual frame")
-        | _=>()
+        | SCERuleFrame _=>() | SCEEvidenceFrame=>()
       val _=G.validate_scope graph caller
       val children=sce_step_children steps
       val guard=sce_prepare_guard expected evidence frame graph
