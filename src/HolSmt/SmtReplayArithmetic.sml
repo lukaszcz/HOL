@@ -158,8 +158,9 @@ struct
           Array.update (array,index,
             (term,size) :: List.take (bucket,Int.min (7,length bucket)))
         end
-      (* The raw size of [term] if it is at most [budget]. *)
-      fun size budget term =
+      (* The raw size of [term] if it is at most [budget].  Under a binder
+         already bounded ([bounded]), every term is within the budget. *)
+      fun size bounded budget term =
         if budget < 1 then raise Exceeds
         else case recorded term of
           SOME n => if n <= budget then n else raise Exceeds
@@ -168,25 +169,32 @@ struct
              if Term.is_comb term then
                let
                  val (operator,operand) = Term.dest_comb term
-                 val m = size (budget - 1) operator
-                 val n = 1 + m + size (budget - 1 - m) operand
+                 val m = size bounded (budget - 1) operator
+                 val n = 1 + m + size bounded (budget - 1 - m) operand
                in record term n;n end
              else if Term.is_abs term then
-               (* Opening walks the whole body: bound it first. *)
-               (case SmtReplayImport.bounded_raw_size_with_type_check_observed
-                   {check_type=check_type,observe=fn () => (),limit=budget}
-                   term of
-                  NONE => raise Exceeds
-                | SOME _ =>
-                    let val (variable,body) =
-                          SmtReplayImport.dest_abs_preserving_names term
-                    in
-                      check_type (Term.type_of variable);
-                      1 + size (budget - 1) body
-                    end)
+               let
+                 fun open_body () =
+                   let val (variable,body) =
+                         SmtReplayImport.dest_abs_preserving_names term
+                   in
+                     check_type (Term.type_of variable);
+                     1 + size true (budget - 1) body
+                   end
+               in
+                 (* Opening walks the whole body: bound the outermost binder
+                    first, once, so nested binders aren't walked again. *)
+                 if bounded then open_body ()
+                 else case
+                     SmtReplayImport.bounded_raw_size_with_type_check_observed
+                       {check_type=check_type,observe=fn () => (),
+                        limit=budget} term of
+                   NONE => raise Exceeds
+                 | SOME _ => open_body ()
+               end
              else 1)
     in
-      fn term => ignore (size limit term)
+      fn term => ignore (size false limit term)
         handle Exceeds => full term | Feedback.HOL_ERR _ => full term
     end
 

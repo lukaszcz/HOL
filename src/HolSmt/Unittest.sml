@@ -22381,13 +22381,18 @@ let
   val terms = [part, boolSyntax.mk_conj (part, part), ``\x:bool. x /\ y``,
     ``\x:bool. x /\ x /\ x /\ x /\ x /\ x``,
     boolSyntax.mk_conj (boolSyntax.mk_conj (part, part),
-      boolSyntax.mk_conj (part, part))]
+      boolSyntax.mk_conj (part, part)),
+    ``\x:bool. \y:bool. \z:bool. x /\ y /\ z``,
+    ``\x:bool. \y:bool. x /\ y /\ x /\ y /\ x /\ y /\ x``]
   val _ = List.app (fn term =>
       assert (outcome shared term = outcome full term,
         "the shared term check disagreed with the full check"))
     terms
   val _ = assert (outcome shared (List.nth (terms, 3)) <> "admitted",
     "the shared term check admitted an oversized binder")
+  val _ = assert (outcome shared (List.nth (terms, 5)) = "admitted" andalso
+      outcome shared (List.nth (terms, 6)) <> "admitted",
+    "the shared term check misjudged nested binders")
   val theorem = SmtDatatypeProve.datatype_prove ``!x:num. NONE <> SOME x``
 in
   assert (Thm.concl theorem ~~ ``!x:num. NONE <> SOME x`` andalso
