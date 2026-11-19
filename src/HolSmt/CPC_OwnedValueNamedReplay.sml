@@ -663,6 +663,21 @@ struct
                             [Q.GraphIndex index]=>index
                           | _=>raise ERR "discover"
                               "expected one recorded index")
+                        fun clausal rule=case Shared.clausal_descriptor rule of
+                            SOME descriptor=>Shared.clausal_elim
+                              {negated=negated,one=one,
+                               operands=actual_operands,child_provenance=child,
+                               negation_provenance=negation_provenance,
+                               one_provenance=one_provenance,pair=pair,
+                               same_constant=same_constant,
+                               atom=fn node=>current node R.AtomicProvenance,
+                               current=current,negative=negative,
+                               positive=positive,
+                               finish=fn(shape,provenance)=>
+                                 shaped shape provenance,
+                               disjoin=disjoin,error=ERR}descriptor handler
+                          | NONE=>raise ERR "prepare"
+                              "private new Boolean family"
                       in case family of
                           Shared.SimpleNotOrElim=>
                             (pay 11;
@@ -841,105 +856,37 @@ struct
                                disjoin=disjoin_entries,error=ERR "not_and"}
                             end
                         | Shared.SimpleNotImpliesElim1=>
-                            (pay 9;
-                             Shared.not_implies_elim1
-                            {negated=negated,one=one,operands=actual_operands,
-                             child_provenance=child,
-                             negation_provenance=negation_provenance,
-                             one_provenance=one_provenance,
-                             current=current,error=ERR}handler)
+                            (pay 9;clausal Shared.SimpleNotImpliesElim1)
 
                         | Shared.SimpleNotImpliesElim2=>
-                            (pay 11;
-                             Shared.not_implies_elim2
-                            {negated=negated,one=one,operands=actual_operands,
-                             child_provenance=child,
-                             negation_provenance=negation_provenance,
-                             one_provenance=one_provenance,negative=negative,
-                             finish=fn(shape,provenance)=>
-                               shaped shape provenance,error=ERR}handler)
+                            (pay 11;clausal Shared.SimpleNotImpliesElim2)
 
                         | Shared.SimpleImpliesElim=>
-                            (pay 8;
-                             Shared.implies_elim
-                            {operands=actual_operands,one=one,
-                             child_provenance=child,
-                             one_provenance=one_provenance,negative=negative,
-                             positive=positive,disjoin=disjoin})
+                            (pay 8;clausal Shared.SimpleImpliesElim)
 
                         | Shared.SimpleEquivElim1=>
-                            (pay 7;
-                             Shared.equiv_elim1
-                            {one=one,pair=pair,one_provenance=one_provenance,
-                             negative=negative,positive=positive,
-                             disjoin=disjoin})
+                            (pay 7;clausal Shared.SimpleEquivElim1)
 
                         | Shared.SimpleEquivElim2=>
-                            (pay 7;
-                             Shared.equiv_elim2
-                            {one=one,pair=pair,one_provenance=one_provenance,
-                             negative=negative,positive=positive,
-                             disjoin=disjoin})
+                            (pay 7;clausal Shared.SimpleEquivElim2)
 
                         | Shared.SimpleNotEquivElim1=>
-                            (pay 10;
-                             Shared.not_equiv_elim1
-                            {one=one,pair=pair,one_provenance=one_provenance,
-                             negative=negative,positive=positive,
-                             disjoin=disjoin,negated=negated,
-                             negation_provenance=negation_provenance,
-                             error=ERR}handler)
+                            (pay 10;clausal Shared.SimpleNotEquivElim1)
 
                         | Shared.SimpleNotEquivElim2=>
-                            (pay 10;
-                             Shared.not_equiv_elim2
-                            {one=one,pair=pair,one_provenance=one_provenance,
-                             negative=negative,positive=positive,
-                             disjoin=disjoin,negated=negated,
-                             negation_provenance=negation_provenance,
-                             error=ERR}handler)
+                            (pay 10;clausal Shared.SimpleNotEquivElim2)
 
                         | Shared.SimpleIteElim1=>
-                            (pay 11;
-                             Shared.ite_elim1
-                            {same_constant=same_constant,one=one,
-                             atom=fn node=>current node R.AtomicProvenance,
-                             operands=actual_operands,child_provenance=child,
-                             one_provenance=one_provenance,negative=negative,
-                             positive=positive,disjoin=disjoin})
+                            (pay 11;clausal Shared.SimpleIteElim1)
 
                         | Shared.SimpleIteElim2=>
-                            (pay 11;
-                             Shared.ite_elim2
-                            {same_constant=same_constant,one=one,
-                             atom=fn node=>current node R.AtomicProvenance,
-                             operands=actual_operands,child_provenance=child,
-                             one_provenance=one_provenance,negative=negative,
-                             positive=positive,disjoin=disjoin})
+                            (pay 11;clausal Shared.SimpleIteElim2)
 
                         | Shared.SimpleNotIteElim1=>
-                            (pay 12;
-                             Shared.not_ite_elim1
-                            {same_constant=same_constant,one=one,
-                             atom=fn node=>current node R.AtomicProvenance,
-                             negated=negated,operands=actual_operands,
-                             child_provenance=child,
-                             one_provenance=one_provenance,
-                             negation_provenance=negation_provenance,
-                             negative=negative,disjoin=disjoin,
-                             error=ERR}handler)
+                            (pay 12;clausal Shared.SimpleNotIteElim1)
 
                         | Shared.SimpleNotIteElim2=>
-                            (pay 12;
-                             Shared.not_ite_elim2
-                            {same_constant=same_constant,one=one,
-                             atom=fn node=>current node R.AtomicProvenance,
-                             negated=negated,operands=actual_operands,
-                             child_provenance=child,
-                             one_provenance=one_provenance,
-                             negation_provenance=negation_provenance,
-                             negative=negative,positive=positive,
-                             disjoin=disjoin,error=ERR}handler)
+                            (pay 12;clausal Shared.SimpleNotIteElim2)
                         | _=>raise ERR "prepare"
                             "private new Boolean family"
                       end

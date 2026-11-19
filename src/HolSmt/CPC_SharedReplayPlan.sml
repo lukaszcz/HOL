@@ -38,8 +38,6 @@ struct
   (* Recorded operand and provenance lists have the requested arity. *)
   fun pair_of _ [a,b] = (a,b)
     | pair_of rule _ = raise ERR rule "unexpected operand arity"
-  fun triple_of _ [a,b,c] = (a,b,c)
-    | triple_of rule _ = raise ERR rule "unexpected operand arity"
   structure Q=CPC_ProofParser
   structure P=CPC_Proof
   datatype route = Scoped | Resolved | Converted | Aligned | Simple | Bounded
@@ -672,127 +670,130 @@ struct
           (index ())
     in current (negate selected)
       (ApplicationProvenance ("not",[provenance])) end
-  fun not_implies_elim1
-      {negated,one,operands,child_provenance,negation_provenance,
-       one_provenance,current,error} handler =
-    let val implication = case negated (one ()) of
-            SOME body => body
-          | NONE => raise error handler "expected negation"
-        val (left,_) = pair_of handler
-          (operands boolSyntax.implication 2 implication)
-        val (left_prov,_) = pair_of handler (child_provenance "=>" 2
-          (negation_provenance (one_provenance ())))
-    in current left left_prov end
-  fun not_implies_elim2
-      {negated,one,operands,child_provenance,negation_provenance,
-       one_provenance,negative,finish,error} handler =
-    let val implication = case negated (one ()) of
-            SOME body => body
-          | NONE => raise error handler "expected negation"
-        val (_,right) = pair_of handler
-          (operands boolSyntax.implication 2 implication)
-        val (_,right_prov) = pair_of handler (child_provenance "=>" 2
-          (negation_provenance (one_provenance ())))
-        val (node,provenance) = negative right right_prov
-    in finish (node,provenance) end
-  fun implies_elim
-      {operands,one,child_provenance,one_provenance,negative,positive,
-       disjoin} =
-    let val (left,right) = pair_of "implies_elim"
-          (operands boolSyntax.implication 2 (one ()))
-        val (left_prov,right_prov) = pair_of "implies_elim"
-          (child_provenance "=>" 2 (one_provenance ()))
-    in disjoin [negative left left_prov,
-                positive right right_prov] end
-  fun equiv_elim1
-      {one,pair,one_provenance,negative,positive,disjoin} =
-    let val (left,right) = pair (one ())
-        val (left_prov,right_prov) =
-          equality_provenance (one_provenance ())
-    in disjoin [negative left left_prov,
-                positive right right_prov] end
-  fun equiv_elim2
-      {one,pair,one_provenance,negative,positive,disjoin} =
-    let val (left,right) = pair (one ())
-        val (left_prov,right_prov) =
-          equality_provenance (one_provenance ())
-    in disjoin [positive left left_prov,
-                negative right right_prov] end
-  fun not_equiv_elim1
-      {negated,one,pair,one_provenance,negation_provenance,negative,positive,
-       disjoin,error} handler =
-    let val equation = case negated (one ()) of
-            SOME body => body
-          | NONE => raise error handler "expected negation"
-        val (left,right) = pair equation
-        val (left_prov,right_prov) = equality_provenance
-          (negation_provenance (one_provenance ()))
-    in disjoin [positive left left_prov,
-                positive right right_prov] end
-  fun not_equiv_elim2
-      {negated,one,pair,one_provenance,negation_provenance,negative,positive,
-       disjoin,error} handler =
-    let val equation = case negated (one ()) of
-            SOME body => body
-          | NONE => raise error handler "expected negation"
-        val (left,right) = pair equation
-        val (left_prov,right_prov) = equality_provenance
-          (negation_provenance (one_provenance ()))
-    in disjoin [negative left left_prov,
-                negative right right_prov] end
-  fun ite_elim1
-      {same_constant,one,atom,operands,child_provenance,one_provenance,
-       negative,positive,disjoin} =
-    if same_constant (one ()) boolSyntax.T then
-      atom (one ()) else
-    let val (condition,yes,_) = triple_of "ite_elim1"
-          (operands boolSyntax.conditional 3 (one ()))
-        val (condition_prov,yes_prov,_) = triple_of "ite_elim1"
-          (child_provenance "ite" 3 (one_provenance ()))
-    in disjoin [negative condition condition_prov,
-                positive yes yes_prov] end
-  fun ite_elim2
-      {same_constant,one,atom,operands,child_provenance,one_provenance,
-       negative,positive,disjoin} =
-    if same_constant (one ()) boolSyntax.T then
-      atom (one ()) else
-    let val (condition,_,no) = triple_of "ite_elim2"
-          (operands boolSyntax.conditional 3 (one ()))
-        val (condition_prov,_,no_prov) = triple_of "ite_elim2"
-          (child_provenance "ite" 3 (one_provenance ()))
-    in disjoin [positive condition condition_prov,
-                positive no no_prov] end
-  fun not_ite_elim1
-      {same_constant,one,atom,negated,operands,child_provenance,
-       one_provenance,negation_provenance,negative,disjoin,error} handler =
-    if same_constant (one ()) boolSyntax.T then
-      atom (one ()) else
-    let val conditional = case negated (one ()) of
-            SOME body => body
-          | NONE => raise error handler "expected negation"
-        val (condition,yes,_) = triple_of handler
-          (operands boolSyntax.conditional 3 conditional)
-        val (condition_prov,yes_prov,_) = triple_of handler
-          (child_provenance "ite" 3
-             (negation_provenance (one_provenance ())))
-    in disjoin [negative condition condition_prov,
-                negative yes yes_prov] end
-  fun not_ite_elim2
-      {same_constant,one,atom,negated,operands,child_provenance,
-       one_provenance,negation_provenance,negative,positive,disjoin,error}
-      handler =
-    if same_constant (one ()) boolSyntax.T then
-      atom (one ()) else
-    let val conditional = case negated (one ()) of
-            SOME body => body
-          | NONE => raise error handler "expected negation"
-        val (condition,_,no) = triple_of handler
-          (operands boolSyntax.conditional 3 conditional)
-        val (condition_prov,_,no_prov) = triple_of handler
-          (child_provenance "ite" 3
-             (negation_provenance (one_provenance ())))
-    in disjoin [positive condition condition_prov,
-                negative no no_prov] end
+  datatype clausal_reader = ClausalImplication | ClausalEquivalence
+    | ClausalConditional
+  datatype clausal_operand = ClausalFirst | ClausalSecond | ClausalThird
+  datatype clausal_polarity = ClausalPositive | ClausalNegative
+  type clausal_literal = clausal_operand * clausal_polarity
+  datatype clausal_result = ClausalCurrent of clausal_operand
+    | ClausalFinished of clausal_operand
+    | ClausalDisjunction of clausal_literal * clausal_literal
+  type clausal_descriptor =
+    {reader:clausal_reader,strip_negation:bool,reduced_true:bool,
+     result:clausal_result}
+  local
+    fun descriptor reader strip_negation reduced_true result =
+      SOME {reader=reader,strip_negation=strip_negation,
+            reduced_true=reduced_true,result=result}
+    val implication = descriptor ClausalImplication
+    val equivalence = descriptor ClausalEquivalence
+    val conditional = descriptor ClausalConditional
+    fun clause first second = ClausalDisjunction (first,second)
+    val first_negative = (ClausalFirst,ClausalNegative)
+    val first_positive = (ClausalFirst,ClausalPositive)
+    val second_negative = (ClausalSecond,ClausalNegative)
+    val second_positive = (ClausalSecond,ClausalPositive)
+    val third_negative = (ClausalThird,ClausalNegative)
+    val third_positive = (ClausalThird,ClausalPositive)
+  in
+    fun clausal_descriptor family =
+      case family of
+        SimpleNotImpliesElim1 => implication true false
+          (ClausalCurrent ClausalFirst)
+      | SimpleNotImpliesElim2 => implication true false
+          (ClausalFinished ClausalSecond)
+      | SimpleImpliesElim => implication false false
+          (clause first_negative second_positive)
+      | SimpleEquivElim1 => equivalence false false
+          (clause first_negative second_positive)
+      | SimpleEquivElim2 => equivalence false false
+          (clause first_positive second_negative)
+      | SimpleNotEquivElim1 => equivalence true false
+          (clause first_positive second_positive)
+      | SimpleNotEquivElim2 => equivalence true false
+          (clause first_negative second_negative)
+      | SimpleIteElim1 => conditional false true
+          (clause first_negative second_positive)
+      | SimpleIteElim2 => conditional false true
+          (clause first_positive third_positive)
+      | SimpleNotIteElim1 => conditional true true
+          (clause first_negative second_negative)
+      | SimpleNotIteElim2 => conditional true true
+          (clause first_positive third_negative)
+      | SimpleAndIntro => NONE
+      | SimpleAndElim => NONE
+      | SimpleNotNotElim => NONE
+      | SimpleNotOrElim => NONE
+      | SimpleNotAnd => NONE
+  end
+  local
+    fun operand_at ClausalFirst (item::_) = item
+      | operand_at ClausalSecond (_::item::_) = item
+      | operand_at ClausalThird (_::_::item::_) = item
+      | operand_at _ _ = raise ERR "clausal_literals" "missing operand"
+    fun literals_of result =
+      case result of
+        ClausalCurrent operand => [(operand,ClausalPositive)]
+      | ClausalFinished operand => [(operand,ClausalNegative)]
+      | ClausalDisjunction (first,second) => [first,second]
+  in
+    fun clausal_literals {result,...} {positive,negative} operands =
+      List.map (fn (operand,polarity) =>
+        (case polarity of ClausalPositive => positive
+           | ClausalNegative => negative) (operand_at operand operands))
+        (literals_of result)
+    fun clausal_elim
+        {negated,one,operands,child_provenance,negation_provenance,
+         one_provenance,pair,same_constant,atom,current,negative,positive,
+         finish,disjoin,error}
+        {reader,strip_negation,reduced_true,result} handler =
+      if reduced_true andalso same_constant (one ()) boolSyntax.T then
+        atom (one ()) else
+      let
+        fun exact count items =
+          if List.length items = count then items
+          else raise ERR handler "unexpected operand arity"
+        val source = if strip_negation then
+            (case negated (one ()) of
+               SOME body => body
+             | NONE => raise error handler "expected negation")
+          else one ()
+        val nodes = case reader of
+            ClausalImplication =>
+              exact 2 (operands boolSyntax.implication 2 source)
+          | ClausalEquivalence =>
+              let val (left,right) = pair source in [left,right] end
+          | ClausalConditional =>
+              exact 3 (operands boolSyntax.conditional 3 source)
+        val premise_provenance = one_provenance ()
+        val provenance = if strip_negation then
+            negation_provenance premise_provenance else premise_provenance
+        val provenances = case reader of
+            ClausalImplication => exact 2 (child_provenance "=>" 2 provenance)
+          | ClausalEquivalence =>
+              let val (left,right) = equality_provenance provenance
+              in [left,right] end
+          | ClausalConditional =>
+              exact 3 (child_provenance "ite" 3 provenance)
+        fun operand which = (operand_at which nodes,
+                             operand_at which provenances)
+        fun literal (which,ClausalPositive) =
+              let val (node,provenance) = operand which
+              in positive node provenance end
+          | literal (which,ClausalNegative) =
+              let val (node,provenance) = operand which
+              in negative node provenance end
+      in case result of
+          ClausalCurrent which =>
+            let val (node,provenance) = operand which
+            in current node provenance end
+        | ClausalFinished which => finish (literal (which,ClausalNegative))
+        | ClausalDisjunction (first,second) =>
+            let val first_literal = literal first
+                val second_literal = literal second
+            in disjoin [first_literal,second_literal] end
+      end
+  end
   fun and_elim {require_one,node,provenance,selected,current,error}
       premises arguments =
     let val premise=require_one "and_elim" premises
