@@ -99,25 +99,14 @@ structure CVC = struct
   fun is_sat_file path =
     SolverSpec.with_input_file path is_sat_stream
 
-  fun get_nonempty_env name =
-    case OS.Process.getEnv name of
-      SOME file => if file = "" then NONE else SOME file
-    | NONE => NONE
-
-  fun command_available name =
-    OS.Process.isSuccess
-      (SatProcess.system ("command -v " ^ name ^ " >/dev/null 2>&1"))
-    handle exn =>
-      if SolverSpec.terminal_capture_exception exn then raise exn else false
-
   fun configured_executable () =
-    case get_nonempty_env "HOL4_CVC_EXECUTABLE" of
+    case SolverSpec.get_nonempty_env "HOL4_CVC_EXECUTABLE" of
       SOME file => SOME file
     | NONE =>
-        (case get_nonempty_env "CVC5" of
+        (case SolverSpec.get_nonempty_env "CVC5" of
           SOME file => SOME file
         | NONE =>
-            if command_available "cvc5" then SOME "cvc5" else NONE)
+            if SolverSpec.command_available "cvc5" then SOME "cvc5" else NONE)
 
   fun is_configured () = Option.isSome (configured_executable ());
 
@@ -209,7 +198,7 @@ structure CVC = struct
      query and its corresponding native proof without changing normal solver
      operation. *)
   fun cpc_capture cmd_stem key stage source =
-    case get_nonempty_env "HOL4_CVC_CPC_CAPTURE_DIR" of
+    case SolverSpec.get_nonempty_env "HOL4_CVC_CPC_CAPTURE_DIR" of
       NONE => ()
     | SOME directory =>
         let
@@ -385,9 +374,7 @@ structure CVC = struct
               (quiet_replay
                 (replay (SmtLib.translation_definitions translation)))
               (finite_hyps @ As, g, proof)
-          val trace_replay =
-            OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" = SOME "1" orelse
-            OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE" = SOME "full"
+          val trace_replay = CPC_ProofReplay.cpc_trace_on ()
           val thm =
             if trace_replay then replay_checked ()
             else quiet replay_checked
@@ -442,14 +429,13 @@ structure CVC = struct
         let val (status,start) = is_sat_stream_with_consumed input
         in case status of SolverSpec.UNSAT NONE =>
           let
-            val trace = OS.Process.getEnv "HOL4_CPC_REPLAY_TRACE"
             fun replay () =
               SmtResource.with_proof_size_gate "cvc5-cpc-proof-text"
                 outfile start input (fn stream =>
                   quiet_replay (fn () => SmtCheckedGraph.cvc limits translation
                     (version_string ()) (finite_hyps @ As,g) stream) ())
             val theorem =
-              (if trace = SOME "1" orelse trace = SOME "full"
+              (if CPC_ProofReplay.cpc_trace_on ()
                then replay () else quiet replay)
               handle SmtCheckedGraph.ParseFailure error =>
                   classify "proof parse" error
@@ -815,7 +801,7 @@ structure CVC = struct
          ((OS.FileSys.remove target handle _ => ());raise primary) end
 
   fun bounded_cpc_capture cmd_stem key stage source =
-    case get_nonempty_env "HOL4_CVC_CPC_CAPTURE_DIR" of
+    case SolverSpec.get_nonempty_env "HOL4_CVC_CPC_CAPTURE_DIR" of
       NONE => ()
     | SOME directory =>
         let

@@ -117,26 +117,13 @@ struct
     end
   fun contains literal clause = Option.isSome (find literal clause)
 
-  val clause_tactic = Tactical.THEN
-    (Tactical.REPEAT Tactic.GEN_TAC, tautLib.TAUT_TAC)
-  val swap = Library.prove
-    (``!(a:bool) b. (a \/ b) = (b \/ a)``, clause_tactic)
-  val move = Library.prove
-    (``!(a:bool) p b. (a \/ (p \/ b)) = (p \/ (a \/ b))``,
-     clause_tactic)
-  val associate = Library.prove
-    (``!(a:bool) b c. ((a \/ b) \/ c) = (a \/ (b \/ c))``,
-     clause_tactic)
-  val right_false = Library.prove
-    (``!(a:bool). (a \/ F) = a``, clause_tactic)
-  val left_false = Library.prove
-    (``!(a:bool). (F \/ a) = a``, clause_tactic)
-  val positive_resolution = Library.prove
-    (``!(p:bool) a b. (p \/ a) ==> (~p \/ b) ==> (a \/ b)``,
-     clause_tactic)
-  val negative_resolution = Library.prove
-    (``!(p:bool) a b. (~p \/ a) ==> (p \/ b) ==> (a \/ b)``,
-     clause_tactic)
+  val swap = boolTheory.DISJ_COMM
+  val move = HolSmtTheory.clause_move
+  val associate = HolSmtTheory.clause_associate
+  val right_false = cooperTheory.F_or_r
+  val left_false = cooperTheory.F_or_l
+  val positive_resolution = HolSmtTheory.clause_positive_resolution
+  val negative_resolution = HolSmtTheory.clause_negative_resolution
 
   (* Move exactly the indexed occurrence.  Each recursive step uses a small
      general equality; it never reinterprets a literal's internal syntax. *)

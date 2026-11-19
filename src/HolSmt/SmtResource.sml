@@ -274,14 +274,7 @@ struct
       end handle exn =>
         if terminal_diagnostic_exception exn then raise exn else ()
 
-  fun last_e0_message_count_for_test () = !last_e0_message_count
-
-  fun last_e0_profile_names_for_test () = !last_e0_profile_names
-
   fun last_e0_replay_snapshot_for_test () = !last_e0_replay_snapshot
-
-  fun last_e0_replay_snapshot_count_for_test () =
-    !last_e0_replay_snapshot_count
 
   fun exhaust_e0_message_quota_for_test () =
     case !current_e0_invocation of
@@ -289,7 +282,6 @@ struct
     | SOME {messages, ...} => messages := max_e0_messages
 
   val diagnostic_prefix = "resource-gated: fp-bitblast; "
-  val feature_prefix = "resource-gate:FloatingPoint:"
 
   fun resource_diagnostic_prefix category =
     if category = "FloatingPoint" then diagnostic_prefix
@@ -339,9 +331,6 @@ struct
 
   fun proof_size_diagnostic case_id observed =
     proof_size_diagnostic_for "FloatingPoint" case_id observed
-
-  fun step_time_diagnostic case_id =
-    step_time_diagnostic_for "FloatingPoint" case_id
 
   fun term_size_diagnostic case_id observed =
     term_size_diagnostic_for "FloatingPoint" case_id observed

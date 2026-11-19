@@ -1161,9 +1161,7 @@ struct
     | ExactPolicyRecipe of
         {syntax : syntax,holes : Type.hol_type vector,
          result : Type.hol_type,size : IntInf.int}
-  fun recipe_policy_int_limit SmtReplayResourcePolicy.Uncapped = NONE
-    | recipe_policy_int_limit (SmtReplayResourcePolicy.AtMost limit) =
-        (SOME (IntInf.toInt limit) handle Overflow => NONE)
+  val recipe_policy_int_limit = SmtReplayResourcePolicy.to_int_limit
   fun recipe_type_with_policy (FinitePolicyRecipe recipe) =
         recipe_type recipe
     | recipe_type_with_policy (ExactPolicyRecipe {result,...}) = result

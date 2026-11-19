@@ -3940,6 +3940,17 @@ Proof
   metis_tac [realTheory.REAL_LT_REFL]
 QED
 
+Theorem smtfp_eq_components:
+  !x y : ('t,'w) smtfp.
+    smtfp_eq x y <=>
+    (~smtfp_is_nan x /\ ~smtfp_is_nan y) /\
+    (x = y \/ smtfp_is_zero x /\ smtfp_is_zero y)
+Proof
+  simp [smtfp_eq_def, float_equal_components, smtfp_is_nan_def,
+        smtfp_is_zero_def] >>
+  metis_tac []
+QED
+
 Theorem smtfp_eq_bits:
   smtfp_eq (smtfp_bits s e m : ('t,'w) smtfp)
     (smtfp_bits s' e' m') <=>

@@ -251,13 +251,16 @@ Bugs fixed
     goals.  `CVC_TAC` replays cvc5 1.3's `not_ite_elim1` and
     `not_ite_elim2` steps, and replays `quant-miniscope-or` structurally, so
     correct steps no longer fail to normalize.  Datatype exhaustiveness in
-    replay stops after 256 case splits per attempt instead of searching
-    without limit.  `Z3_TAC` replays rewrites that reduce a datatype redex
-    and reorder the rest in one step.  `Z3_TAC` no longer overflows the
-    stack on an asserted equation whose left side occurs in its own right
-    side, such as `x = (x && m) || (x && ~m)`.  `CVC_TAC` checks goals
-    about commuting function updates and set difference again, and checks
-    some 256-bit word goals with adders and masks that used to time out.
+    replay stops after at most 256 case splits per attempt, fewer on large
+    goals, instead of searching without limit.  `Z3_TAC` replays rewrites
+    that reduce a datatype redex and reorder the rest in one step, no
+    longer case-splits large rewrite steps while normalizing their
+    arithmetic, and skips its datatype and integer-product METIS steps
+    on targets over 1000 nodes.  `Z3_TAC` no longer overflows the stack on
+    an asserted equation whose left side occurs in its own right side, such
+    as `x = (x && m) || (x && ~m)`.  `CVC_TAC` checks goals about commuting
+    function updates and set difference again, and checks some 256-bit word
+    goals with adders and masks that used to time out.
 
 -   `HolSmt` now gives Z3 4.14.1 full tested support.  Z3 4.14.* queries in
     the seven affected array-bearing inferred logics are widened to `ALL` at
@@ -361,6 +364,14 @@ Bugs fixed
 -   The scratch files of the SML-inspection tools (`smlOpen`, `smlExecScripts`, `smlRedirect`, and so TacticToe) went by default to one directory per user, `$XDG_CACHE_HOME/hol4/scratch`, so two HOL builds run at once by the same user overwrote each other's files there, and one could fail with `OpenStruct` while building the documentation.
     Unless `HOL4_SCRATCH` names a directory, each process now uses a subdirectory of its own there, which is removed when the process exits.
     When `HOL4_TACTICTOE_CACHE` is set, those subdirectories go under its `tmp/scratch` directory, as was intended; before, that setting was ignored whenever `XDG_CACHE_HOME` or `HOME` was set.
+
+-   An interrupt arriving while `with_flag`, `genwith_flag`, `finally` or `HOLFlags.with_traces` was putting things back could cut the restore short and leave the flag or trace changed.
+    With `Timeout.apply`, a tactic that returned just before its deadline could leave a slow restore half done.
+    The restores (and the matching ones in `Context.with_context`, `Context.in_proof` and `Context.Data.with_slot_value`) now run with interrupts deferred, on the new `Portable.bracket`; an interrupt that arrives meanwhile is delivered once the restore is done.
+
+-   The arithmetic decision procedure (`ARITH_CONV`, `ARITH_ss`) and `congLib` caught `Interrupt` in their catch-all failure handlers.
+    Under `Timeout.apply`, whose timer interrupts once, the interrupt became an ordinary `HOL_ERR`, or the search carried on past the deadline.
+    The handlers now catch only the exceptions they expect (mostly `HOL_ERR`), so `Interrupt` passes through.
 
 New theories
 ------------

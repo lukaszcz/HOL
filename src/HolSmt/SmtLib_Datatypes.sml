@@ -289,9 +289,6 @@ struct
   fun lookup_smt kind names smt =
     assoc_smt smt (entries kind names)
 
-  fun lookup_hol kind names hol =
-    assoc_hol hol (entries kind names)
-
   fun allocate_type_names group =
     let
       fun alloc ((name, _), (avoid, names)) =
@@ -487,9 +484,6 @@ struct
     in
       result
     end
-
-  fun not_implemented function detail =
-    raise ERR function ("datatype elaboration not implemented: " ^ detail)
 
   fun define_datatype_group (group : datatype_group) =
     let val key = group_key group

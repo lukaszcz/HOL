@@ -80,7 +80,7 @@ end
 fun rshift w = Word.toInt((op Word.>>) (Word.fromInt w,Word.fromInt 1))
 
 (* parse resolution chain *)
-fun getIntBranch_using next id h =
+fun getIntBranch next id h =
     let
         fun loop acc len =
             let val v = (next ())-1
@@ -93,13 +93,10 @@ fun getIntBranch_using next id h =
         val res = loop [] 0
      in res  end
 
-fun getIntBranch fin id h =
-    getIntBranch_using (fn () => sat_getint fin) id h
-
 (* parse and resolve a chain : assumes all dependencies already calculated *)
 (* the var component of the first pair is a dummy value ~1 *)
-fun addBranch_using next consume lfn cl sva tc id =
-    let val (br,brl) = getIntBranch_using next id (id-(rshift tc))
+fun addBranch next consume lfn cl sva tc id =
+    let val (br,brl) = getIntBranch next id (id-(rshift tc))
         val _ = if brl <= 1 then () else
           (count "derived-clauses" 1; count "resolution-edges" (brl - 1))
         val res = if brl=1 (*(tl br = []) *)
@@ -113,20 +110,14 @@ fun addBranch_using next consume lfn cl sva tc id =
                       List.app (fn (_,ci) => consume ci) br; true) (* resolve *)
     in res end
 
-fun addBranch lfn cl sva fin tc id =
-    addBranch_using (fn () => sat_getint fin) (fn _ => ())
-      lfn cl sva tc id
-
 (* Parse a root clause. Final result is int list of literals *)
-fun getIntRoot_using next idx =
+fun getIntRoot next idx =
     let
         fun loop idx' acc =
             let val v = next ()
             in if v=0 then idx::(rev acc) else loop (idx'+v) ((idx'+v)::acc) end
         val res = loop idx []
      in res  end
-
-fun getIntRoot fin idx = getIntRoot_using (fn () => sat_getint fin) idx
 
 (* Parse a root clause and add it to the sr stack
    This advances the file read pointer
@@ -138,10 +129,10 @@ fun getIntRoot fin idx = getIntRoot_using (fn () => sat_getint fin) idx
    So this is faster (time and space) than building the clause term from the
    proof log.
 *)
-fun addClause_using next lfn roots cl sva vc clauseth lit1 id =
+fun addClause next lfn roots cl sva vc clauseth lit1 id =
     let val orc = (rshift lit1)-1
           (*-1 because right now orc's in proof log start at 1*)
-        val l = getIntRoot_using next (next ())
+        val l = getIntRoot next (next ())
         val _ = if not (sat_profile ()) then () else
           (count "root-clauses" 1;
            count "root-literal-occurrences" (List.length l))
@@ -154,66 +145,29 @@ fun addClause_using next lfn roots cl sva vc clauseth lit1 id =
          | _ => prepareRootClause lfn roots orc clauseth cl id
     end
 
-fun addClause lfn roots cl sva vc clauseth fin lit1 id =
-    addClause_using (fn () => sat_getint fin) lfn roots cl sva vc clauseth
-                    lit1 id
-
 (* SML equivalent of  C-style eval of v&1=0 *)
 fun isRoot v =
     Word.compare(Word.andb(Word.fromInt v,Word.fromInt 1),(Word.fromInt 0)) =
     EQUAL
 
-fun readTrace_using next ended consume advance
-                    lfn roots cl sva vc clauseth id =
+fun readTrace next ended consume advance
+              lfn roots cl sva vc clauseth id =
     if ended () then id
     else
       let val tmp = next ()
-          fun continue id = readTrace_using next ended consume advance
-                              lfn roots cl sva vc clauseth id
+          fun continue id = readTrace next ended consume advance
+                          lfn roots cl sva vc clauseth id
       in
         if isRoot tmp then
-          (addClause_using next lfn roots cl sva vc clauseth tmp id;
+          (addClause next lfn roots cl sva vc clauseth tmp id;
            advance id; continue (id+1))
-        else if addBranch_using next (consume id)
+        else if addBranch next (consume id)
                   lfn cl sva tmp id then
           (advance id; continue (id+1))
         else continue id
       end
 
-(* Preserve the public streaming reader and its caller-owned clause cache. *)
-fun readTrace lfn roots cl sva vc clauseth fin id =
-    readTrace_using (fn () => sat_getint fin)
-      (fn () => BinIO.endOfStream fin) (fn _ => fn _ => ()) (fn _ => ())
-      lfn roots cl sva vc clauseth id
-
 exception Trivial
-
-(*build the clause/chain list *)
-fun parseTrace_using reader make_roots cl sva nr fname solver vc clauseth
-                     lfn proof =
-    let
-        val path = if isSome proof then valOf proof
-                   else fname^"."^(getSolverName solver)^".proof"
-        val fin = sat_fileopen path
-        (* Open first: a missing certificate must select the old fallback
-           without constructing an unused compact root context. *)
-        val result = Exn.capture (fn () =>
-          let val roots = make_roots ()
-          in (reader path lfn roots cl sva vc clauseth fin 0, roots) end) ()
-        val _ = case result of
-            Exn.Res _ => sat_fileclose fin
-          | Exn.Exn _ => (sat_fileclose fin handle _ => ())
-     in SOME (Exn.release result) end
-handle e as Io _ => if dimacsTools.is_terminal e then raise e else NONE
-
-fun parseTrace_with_roots make_roots cl sva nr fname solver vc clauseth lfn
-                          proof =
-    parseTrace_using (fn _ => readTrace) make_roots cl sva nr fname solver
-                     vc clauseth lfn proof
-
-fun parseTrace roots cl sva nr fname solver vc clauseth lfn proof =
-    Option.map #1 (parseTrace_with_roots (fn () => roots) cl sva nr fname
-                    solver vc clauseth lfn proof)
 
 local
 
@@ -266,10 +220,8 @@ fun count_uses path =
             else if branch id (id-rshift tag) then loop (id+1)
             else loop id
           end
-      val result = Exn.capture loop 0
-      val _ = case result of Exn.Res _ => sat_fileclose fin
-            | Exn.Exn _ => (sat_fileclose fin handle _ => ())
-    in SOME (Exn.release result) end
+    in SOME (dimacsTools.with_cleanup (fn () => sat_fileclose fin) loop 0)
+    end
     (* Metadata supplies hints only. Replay the original stream after a
        failed prepass, preserving an earlier checked replay exception. *)
     handle error =>
@@ -298,8 +250,24 @@ fun read_live_trace path lfn roots cl sva vc clauseth fin id =
              the driver's result at EOF, including after deletion records. *)
           fun advance current = if current = 0 then ()
                                 else release (current-1)
-    in readTrace_using next ended consume advance
+    in readTrace next ended consume advance
          lfn roots cl sva vc clauseth id end
+
+(*build the clause/chain list *)
+fun parseTrace make_roots cl sva fname solver vc clauseth lfn proof =
+    let
+        val path = if isSome proof then valOf proof
+                   else fname^"."^(getSolverName solver)^".proof"
+        val fin = sat_fileopen path
+        (* Open first: a missing certificate must select the old fallback
+           without constructing an unused compact root context. *)
+        fun read () =
+          let val roots = make_roots ()
+          in (read_live_trace path lfn roots cl sva vc clauseth fin 0, roots)
+          end
+     in SOME (dimacsTools.with_cleanup (fn () => sat_fileclose fin) read ())
+     end
+handle e as Io _ => if dimacsTools.is_terminal e then raise e else NONE
 
 in
 
@@ -314,12 +282,8 @@ fun replayProof sva nr fname solver vc clauseth lfn proof =
     let val _ = (minisatResolve.counter:=0)
         val cl = Dynarray.array((Array.length clauseth) * 2,TRUTH)
         (* One environment check per replay, not per message. *)
-        val tracing = OS.Process.getEnv "HOL4_SAT_TRACE" = SOME "1"
-        fun trace message =
-          if tracing then
-            (Feedback.HOL_MESG ("HOL SAT: " ^ message);
-             TextIO.flushOut TextIO.stdOut)
-          else ()
+        val sat_trace = sat_tracer ()
+        fun trace message = sat_trace (fn () => message)
         fun make_roots () =
           if RBM.numItems lfn = 0 then
             {conjunction = T, projections = Termtab.empty}
@@ -331,8 +295,7 @@ fun replayProof sva nr fname solver vc clauseth lfn proof =
             in roots end
         val _ = trace "resolution trace start"
     in case profile_stage "replay-trace"
-        (parseTrace_using read_live_trace make_roots cl sva nr fname solver vc
-           clauseth lfn) proof of
+        (parseTrace make_roots cl sva fname solver vc clauseth lfn) proof of
            SOME (id, roots) =>
              let val _ = trace "resolution trace done"
                  val result = profile_stage "replay-finish"

@@ -96,10 +96,6 @@ struct
   fun new_context arith_prove =
     context_with_word_conversion arith_prove SmtWordGraph.normalize
 
-  fun new_context_with_word_node_conversion arith_prove node_conversion =
-    context_with_word_conversion arith_prove
-      (SmtWordGraph.normalize_with_node_conversion node_conversion)
-
   val procedure_names = SmtSkeletonProve.procedure_names
 
   fun distinct strings =

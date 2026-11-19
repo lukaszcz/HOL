@@ -351,13 +351,6 @@ struct
      Discharge the resulting Boolean graph by checked CNF/SAT replay. *)
   val tier2_word_graph_prove = SmtWordGraph.prove
 
-  fun check_word_circuit_goal case_id t =
-    if SmtResource.term_nodes_up_to 257 t > 256 then
-      SmtResource.check_dag_size_for "FloatingPoint" case_id
-        (SmtResource.dag_nodes_up_to
-          SmtResource.max_skeleton_replay_dag_nodes t)
-    else SmtResource.check_bitblast_goal case_id t
-
   fun word_circuit_prove_with word_prover t =
     if Term.aconv t boolSyntax.T then boolTheory.TRUTH
     else if SmtResource.term_nodes_up_to 257 t > 256 then
@@ -448,8 +441,6 @@ struct
            (SmtResource.dag_nodes_up_to SmtResource.max_bv_replay_term_nodes t);
          definition_bitblast_uncapped_with word_prover definitions t)) t
 
-  val definition_bitblast_uncapped =
-    definition_bitblast_uncapped_with tier2_word_graph_prove
   val definition_bitblast_prove =
     definition_bitblast_prove_with tier2_word_graph_prove
 
@@ -716,15 +707,10 @@ struct
         (symbolic_arithmetic_uncapped_with word_prover allow_direct_mul) t
     end
 
-  val symbolic_arithmetic_uncapped =
-    symbolic_arithmetic_uncapped_with tier2_word_graph_prove
   val symbolic_arithmetic_prove_mode =
     symbolic_arithmetic_prove_mode_with tier2_word_graph_prove
 
   val symbolic_arithmetic_prove = symbolic_arithmetic_prove_mode true
-
-  val symbolic_arithmetic_replay_prove =
-    symbolic_arithmetic_prove_mode false
 
   val symbolic_arithmetic_preflight_case_id =
     "symbolic-arithmetic-cost"
@@ -841,11 +827,6 @@ struct
           (to_real_arith_prove arith_prove)) t (fn () =>
       later ()))))
     end
-
-  fun fp_prove_with_context arith_prove eligible_decompositions
-      all_decompositions =
-    fp_prove_with_context_mode symbolic_arithmetic_replay_prove arith_prove
-      eligible_decompositions all_decompositions
 
   fun fp_prove_with_word_prover word_prover arith_prove
       eligible_decompositions all_decompositions =

@@ -25,14 +25,8 @@ struct
 
   fun recipe _ = Recipe
   fun word_support _ = Recipe
-  fun finite_policy ({template_limit,index_limit,operand_limit,token_limit}
-      : limits) : SmtReplayResourcePolicy.recipe_policy =
-    {template_limit=SmtReplayResourcePolicy.AtMost
-       (IntInf.fromInt template_limit),
-     index_limit=SmtReplayResourcePolicy.AtMost (IntInf.fromInt index_limit),
-     operand_limit=SmtReplayResourcePolicy.AtMost
-       (IntInf.fromInt operand_limit),
-     token_limit=SmtReplayResourcePolicy.AtMost (IntInf.fromInt token_limit)}
+  fun finite_policy (limits : limits) : SmtReplayResourcePolicy.recipe_policy =
+    SmtReplayResourcePolicy.recipe_from_ints limits
 
   (* Literal indices retain source LET/binder syntax independently of the
      semantic value. Only admitted small operands reach ordinary callbacks;

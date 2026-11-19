@@ -686,12 +686,6 @@ in
     type_is_native_datatype_sort ty orelse
     type_is_typebase_datatype ty
 
-  fun term_mentions_datatype_sort tm =
-    term_type_contains type_is_datatype_sort tm
-
-  (* The elements of ALL_DISTINCT over a list literal, the SMT-LIB [distinct]
-     encoding; NONE for every other term, including ALL_DISTINCT over a
-     non-literal list, which is an ordinary application. *)
   fun distinct_literal_elements tm =
     Option.map Lib.fst
       (Lib.total (listSyntax.dest_list o listSyntax.dest_all_distinct) tm)

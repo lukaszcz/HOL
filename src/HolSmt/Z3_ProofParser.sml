@@ -268,15 +268,6 @@ local
             empty))
       end
 
-  fun dest_named_app thy name tm =
-    let
-      val (head, args) = boolSyntax.strip_comb tm
-      val {Thy, Name, ...} = Term.dest_thy_const head
-    in
-      if Thy = thy andalso Name = name then SOME args else NONE
-    end
-    handle Feedback.HOL_ERR _ => NONE
-
   fun z3_natural tm =
     numSyntax.mk_numeral (Arbint.toNat (intSyntax.int_of_term tm))
 

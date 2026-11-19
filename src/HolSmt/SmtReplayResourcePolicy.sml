@@ -28,6 +28,8 @@ struct
      literal_limit = from_int literal_limit,
      binder_limit = from_int binder_limit,
      recipe_limits = recipe_from_ints recipe_limits}
+  fun to_int_limit Uncapped = NONE
+    | to_int_limit (AtMost n) = (SOME (IntInf.toInt n) handle Overflow => NONE)
 
   fun positive Uncapped = true
     | positive (AtMost n) = n > 0

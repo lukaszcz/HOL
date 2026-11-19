@@ -12,6 +12,27 @@ struct
   val metis_limit : mlibMeter.limit = {time = SOME 1.0, infs = SOME 5000}
   fun with_metis_limit f = Lib.with_flag (metisTools.limit, metis_limit) f
 
+  (* metis_limit meters METIS's proof search, not its clausification, which
+     is exponential in the nesting of conditionals and case expressions.  A
+     replay rung gives METIS only targets up to this many nodes; the bound
+     is above every target METIS proves in HolSmt's tests and examples. *)
+  val metis_max_target_nodes = 1000
+  fun metis_admits t =
+    SmtResource.term_nodes_up_to metis_max_target_nodes t <=
+      metis_max_target_nodes
+
+  (* The total cap on one exhaustiveness proof attempt's datatype case
+     splits (see datatype_split_fixpoint_tac).  Every split simplifies its
+     branches of the goal again, so the cap shrinks with the initial
+     target's size: 256 splits up to 256-node targets, 65536 div the
+     target's nodes beyond. *)
+  val max_exhaustiveness_splits = 256
+  val max_exhaustiveness_split_nodes = 65536
+  fun exhaustiveness_split_cap t =
+    Int.min (max_exhaustiveness_splits,
+      Int.max (1, max_exhaustiveness_split_nodes div
+        SmtResource.term_nodes_up_to max_exhaustiveness_split_nodes t))
+
   fun unsupported t =
     raise ERR "datatype_prove"
       ("unsupported th-lemma shape: theory=datatype; checked replay is only " ^
@@ -964,11 +985,6 @@ struct
 
   fun datatype_simp_prove t = datatype_simp_with_fallback true t
 
-  fun datatype_nchotomy_thms t =
-    List.filter fitting (List.mapPartial
-      (fn ty => Lib.total TypeBase.nchotomy_of ty)
-      (List.filter (fn ty => ty <> Type.bool) (datatype_types t)))
-
   fun constructor_headed tm =
     let
       val (head, _) = boolSyntax.strip_comb tm
@@ -1000,18 +1016,6 @@ struct
     in
       Listsort.sort compare_term_size
         (List.foldl add_tm [] (List.filter datatype_term (subterms t)))
-    end
-
-  fun datatype_free_terms t =
-    let
-      fun datatype_term tm =
-        let val ty = Term.type_of tm
-        in ty <> Type.bool andalso has_constructors ty end
-      fun add_tm (tm, acc) =
-        if List.exists (fn tm' => Term.aconv tm' tm) acc then acc
-        else tm :: acc
-    in
-      List.foldl add_tm [] (List.filter datatype_term (Term.free_vars t))
     end
 
   fun nchotomy_for_term tm =
@@ -1069,9 +1073,7 @@ struct
              (conclusion :: assumptions) end
     in List.app branch (constructors_of (Term.type_of term)) end
 
-  val max_exhaustiveness_splits = 256
-
-  fun datatype_split_fixpoint_tac ss thms splits budget goal =
+  fun datatype_split_fixpoint_tac ss thms cap splits budget goal =
     (admit_goal goal;
      Tactical.THEN
       (bossLib.FULL_SIMP_TAC ss thms,
@@ -1082,9 +1084,9 @@ struct
            case split_terms_of_goal simplified of
              [] => Tactical.ALL_TAC simplified
            | split_term :: _ =>
-               if !splits >= max_exhaustiveness_splits then
+               if !splits >= cap then
                  raise ERR "exhaustiveness_prove"
-                   ("more than " ^ Int.toString max_exhaustiveness_splits ^
+                   ("more than " ^ Int.toString cap ^
                     " datatype case splits")
                else
                (splits := !splits + 1;
@@ -1093,7 +1095,7 @@ struct
                  (profile "datatype(split)"
                     Tactic.FULL_STRUCT_CASES_TAC
                     (nchotomy_for_term split_term),
-                  datatype_split_fixpoint_tac ss thms splits (budget - 1))
+                  datatype_split_fixpoint_tac ss thms cap splits (budget - 1))
                  simplified))) goal)
 
   fun exhaustiveness_with_fallback fallback t =
@@ -1101,14 +1103,16 @@ struct
       val _ = admit t
       val thms = datatype_rewrite_thms t
       val budget = List.length (datatype_split_terms t)
+      val cap = exhaustiveness_split_cap t
     in
       if budget = 0 then unsupported t
       (* Retry simplification, never an entire split search: each branch
          must retain its original initial-subterm split budget. *)
       else if fallback then with_exported_rewrites (fn ss =>
-        Tactical.prove (t,datatype_split_fixpoint_tac ss thms (ref 0) budget))
+        Tactical.prove (t,datatype_split_fixpoint_tac ss thms cap (ref 0)
+          budget))
       else Tactical.prove (t,
-        datatype_split_fixpoint_tac numLib.std_ss thms (ref 0) budget)
+        datatype_split_fixpoint_tac numLib.std_ss thms cap (ref 0) budget)
     end
 
   fun exhaustiveness_prove t = exhaustiveness_with_fallback true t
@@ -1145,6 +1149,7 @@ struct
       else if List.exists (fn th => Term.aconv (Thm.concl th) t)
         acyclic_thms then Lib.first (fn th => Term.aconv (Thm.concl th) t)
         acyclic_thms
+      else if not (metis_admits t) then unsupported t
       else with_metis_limit (fn () =>
         metisLib.METIS_PROVE (acyclic_thms @ thms) t) ()
     end
@@ -1153,7 +1158,7 @@ struct
     let val _ = admit t
         val thms = datatype_rewrite_thms t
     in
-      if List.null thms then unsupported t
+      if List.null thms orelse not (metis_admits t) then unsupported t
       else with_metis_limit (fn () => metisLib.METIS_PROVE thms t) ()
     end
 

@@ -52,20 +52,11 @@ fun isSuccess s = Process.isSuccess s
 *)
 
 (* Optional coarse benchmark observations of the actual secondary solver.
-   Default NONE creates no timers and leaves the old command path literal. *)
-type solver_statistics =
-  {external_calls : int,internal_calls : int,
-   external_wall : Time.time,external_child_user : Time.time,
-   external_child_system : Time.time,internal_wall : Time.time,
-   internal_user : Time.time,internal_system : Time.time}
+   Default NONE leaves the old command path literal. *)
+type solver_statistics = {external_calls : int,internal_calls : int}
 local
-type solver_meter =
-  {external_calls : int ref,internal_calls : int ref,
-   external_wall : Time.time ref,external_child_user : Time.time ref,
-   external_child_system : Time.time ref,internal_wall : Time.time ref,
-   internal_user : Time.time ref,internal_system : Time.time ref}
+type solver_meter = {external_calls : int ref,internal_calls : int ref}
 val solver_meter : solver_meter option ref = ref NONE
-fun add_solver_time cell elapsed = cell := Time.+ (!cell,elapsed)
 in
 fun with_solver_statistics action =
   let
@@ -73,62 +64,21 @@ fun with_solver_statistics action =
       raise Feedback.mk_HOL_ERR "satTools" "with_solver_statistics"
         "observation reentry"
     val fields : solver_meter =
-      {external_calls = ref 0,internal_calls = ref 0,
-       external_wall = ref Time.zeroTime,
-       external_child_user = ref Time.zeroTime,
-       external_child_system = ref Time.zeroTime,
-       internal_wall = ref Time.zeroTime,internal_user = ref Time.zeroTime,
-       internal_system = ref Time.zeroTime}
+      {external_calls = ref 0,internal_calls = ref 0}
     val _ = solver_meter := SOME fields
     val result = Exn.capture action ()
     val _ = solver_meter := NONE
     val observed : solver_statistics =
       {external_calls = !(#external_calls fields),
-       internal_calls = !(#internal_calls fields),
-       external_wall = !(#external_wall fields),
-       external_child_user = !(#external_child_user fields),
-       external_child_system = !(#external_child_system fields),
-       internal_wall = !(#internal_wall fields),
-       internal_user = !(#internal_user fields),
-       internal_system = !(#internal_system fields)}
+       internal_calls = !(#internal_calls fields)}
   in (Exn.release result,observed) end
-fun sat_sysl command = case !solver_meter of
-    NONE => SatProcess.system command
-  | SOME fields =>
-      let
-        val _ = #external_calls fields := !(#external_calls fields) + 1
-        val wall = Timer.startRealTimer ()
-        val child_times_before = Posix.ProcEnv.times ()
-        val result = Exn.capture SatProcess.system command
-        val measured = Exn.capture (fn () =>
-          let val after = Posix.ProcEnv.times ()
-          in add_solver_time (#external_wall fields)
-                (Timer.checkRealTimer wall);
-             add_solver_time (#external_child_user fields)
-                (Time.- (#cutime after,#cutime child_times_before));
-             add_solver_time (#external_child_system fields)
-                (Time.- (#cstime after,#cstime child_times_before)) end) ()
-      in case result of Exn.Exn _ => Exn.release result
-         | Exn.Res value => (Exn.release measured;value) end
-fun observed_internal_solver action = case !solver_meter of
-    NONE => action ()
-  | SOME fields =>
-      let
-        val _ = #internal_calls fields := !(#internal_calls fields) + 1
-        val wall = Timer.startRealTimer ()
-        val cpu = Timer.startCPUTimer ()
-        val result = Exn.capture action ()
-        val measured = Exn.capture (fn () =>
-          let val {nongc,gc} = Timer.checkCPUTimes cpu
-          in add_solver_time (#internal_wall fields)
-                (Timer.checkRealTimer wall);
-             add_solver_time (#internal_user fields)
-                (Time.+ (#usr nongc,#usr gc));
-             add_solver_time (#internal_system fields)
-                (Time.+ (#sys nongc,#sys gc)) end) ()
-      in case result of Exn.Exn _ => Exn.release result
-         | Exn.Res value => (Exn.release measured;value) end
-
+fun count_call field =
+    case !solver_meter of NONE => ()
+       | SOME fields => let val r = field fields in r := !r + 1 end
+fun sat_sysl command =
+    (count_call #external_calls; SatProcess.system command)
+fun observed_internal_solver action =
+    (count_call #internal_calls; action ())
 end
 
 fun invokeSat sat_solver tm vc nr svm sva infile =

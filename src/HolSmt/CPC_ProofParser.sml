@@ -2568,16 +2568,6 @@ local
       loop 0 []
     end
 
-  fun datatype_binding_names tokens =
-    let
-      fun bindings ("(" :: name :: _ :: ")" :: rest) acc =
-            bindings rest (name :: acc)
-        | bindings (")" :: _) acc = List.rev acc
-        | bindings _ _ = []
-    in
-      case tokens of "(" :: rest => bindings rest [] | _ => []
-    end
-
   type term_declaration = {
     key: string,
     name: string,
@@ -4077,6 +4067,13 @@ in
     is_cpc_fp_private_marker_observed
   val cpc_fp_private_unbound_markers = cpc_fp_private_unbound_markers
 
+  (* Proof-command syntax: never available as a source or proof symbol. *)
+  val cpc_command_syntax_names =
+    ["_", "!", "as", "let", "forall", "exists", "lambda", "match", "par",
+     "declare-const", "declare-fun", "declare-sort", "declare-datatype",
+     "declare-datatypes", "define", "assume", "assume-push", "step",
+     "step-pop"]
+
   fun parse_stream_with_version (dicts : dicts) version instream : proof =
     let
       (* Resolve once, here: everything downstream -- rule lookup, gating and
@@ -4106,13 +4103,8 @@ in
           SmtLib_Theories.CVC5_Seq.tmdict)
       val baseline = HOLset.union
         (keys (#1 baseline_dicts), keys (#2 baseline_dicts))
-      val syntax_names =
-        ["_", "!", "as", "let", "forall", "exists", "lambda",
-         "match", "par", "declare-const", "declare-fun",
-         "declare-sort", "declare-datatype", "declare-datatypes",
-         "define", "assume", "assume-push", "step", "step-pop"]
       val _ = cpc_reserved_symbols := HOLset.addList
-        (baseline, syntax_names)
+        (baseline, cpc_command_syntax_names)
       fun source_keys dictionary = HOLset.filter
         (fn key => not (set_member (!cpc_reserved_symbols) key))
         (keys dictionary)
@@ -4864,12 +4856,8 @@ in
         (#add_recipe_parser terms) (#add_constructor_parser terms)
         private_symbol
       val limits = #recipe_limits options
-      fun finite n = SmtReplayResourcePolicy.AtMost (IntInf.fromInt n)
-      val _ = install_graph_indexed backend
-        {template_limit=finite (#template_limit limits),
-         index_limit=finite (#index_limit limits),
-         operand_limit=finite (#operand_limit limits),
-         token_limit=finite (#token_limit limits)} terms
+      val policy_limits = SmtReplayResourcePolicy.recipe_from_ints limits
+      val _ = install_graph_indexed backend policy_limits terms
       val width_limit = #index_limit limits
       fun admitted term =
         case SmtReplayImport.bounded_raw_size width_limit term of
@@ -4970,11 +4958,8 @@ in
          ("bvite", cpc_bvite_parsefn), ("bvsltbv", cpc_bv_parsefn),
          ("bvultbv", cpc_bv_parsefn), ("concat", cpc_bv_parsefn),
          ("@bvsize", cpc_bv_parsefn)]
-      val _ = install_graph_cpc_constructors backend
-        {template_limit=finite (#template_limit limits),
-         index_limit=finite (#index_limit limits),
-         operand_limit=finite (#operand_limit limits),
-         token_limit=finite (#token_limit limits)} terms private_symbol
+      val _ = install_graph_cpc_constructors backend policy_limits terms
+        private_symbol
     in () end
 
   (* Additive direct-ID frontend. This reads terms for graph proof records;
@@ -4982,22 +4967,22 @@ in
      until its specialized graph adapters and certificate gates pass. *)
   type graph_located_term = SmtLib_GraphFrontend.term
   type graph_step = proof_rule SmtLib_GraphFrontend.step
-  fun graph_term_reader_with_version options version instream =
+  fun graph_policy_description version =
     let
-      val version = resolve_version version
       val baseline = with_cpc_literals
         (SmtLib_Logics.parsedicts_of_logic "ALL")
       val reserved_names = Redblackmap.foldl
         (fn (key, _, keys) => key :: keys)
         (Redblackmap.foldl (fn (key, _, keys) => key :: keys)
-          ["_", "!", "as", "let", "forall", "exists", "lambda", "match",
-           "par", "declare-const", "declare-fun", "declare-sort",
-           "declare-datatype", "declare-datatypes", "define",
-           "assume", "assume-push", "step", "step-pop"] (#1 baseline))
-        (#2 baseline)
+          cpc_command_syntax_names (#1 baseline)) (#2 baseline)
+    in {solver="cvc5",version=version,policy=F.CPC,
+      reserved_names=reserved_names} end
+
+  fun graph_term_reader_with_version options version instream =
+    let
+      val version = resolve_version version
       val terms = SmtLib_GraphFrontend.create_session options
-        {solver = "cvc5", version = version,
-         policy = SmtLib_GraphFrontend.CPC, reserved_names = reserved_names}
+        (graph_policy_description version)
         (SmtLib_Parser.make_cpc_proof_stream_tokenizer instream)
       val _ = install_graph_recipes options terms
       val _ = (#add_literal_parser terms)
@@ -5497,603 +5482,8 @@ in
           (!definitions,symbol_key name,binding (#occurrence term))
     in {locate=locate,define=define} end
 
-  fun graph_command_reader_with_factory make_session
-      (options : SmtLib_GraphFrontend.options)
-      (declaration_dicts : dicts) requested_version instream
-      : graph_command_reader =
-    let
-      val version = resolve_version requested_version
-      val baseline = with_cpc_literals
-        (SmtLib_Logics.parsedicts_of_logic "ALL")
-      val syntax_names =
-        ["_", "!", "as", "let", "forall", "exists", "lambda", "match",
-         "par", "declare-const", "declare-fun", "declare-sort",
-         "declare-datatype", "declare-datatypes", "define", "assume",
-         "assume-push", "step", "step-pop"]
-      val reserved_names = Redblackmap.foldl
-        (fn (key, _, keys) => key :: keys)
-        (Redblackmap.foldl (fn (key, _, keys) => key :: keys)
-          syntax_names (#1 baseline)) (#2 baseline)
-      val token = P.make_cpc_proof_stream_tokenizer instream
-      val terms = make_session options
-        {solver = "cvc5", version = version, policy = F.CPC,
-         reserved_names = reserved_names} token
-      val _ = install_graph_recipes options terms
-      val indexed = cpc_indexed_identifier (fn name =>
-        let val namespace = (#namespace terms) () in
-          set_member (#proof_terms namespace) name orelse
-          set_member (#source_terms namespace) name orelse
-          Option.isSome (Redblackmap.peek (#2 declaration_dicts, name))
-        end)
-      val (graph_read_definition_list, define_list) = graph_definition_lists
-        indexed (#lookup_list terms) (#symbol_key terms) (#define_list terms)
-      val _ = (#add_literal_parser terms)
-        (fn token => cpc_literal_parsefn token [] [])
-      val locations = graph_locations (#backend (#reader terms))
-        (#symbol_key terms)
-      val known = ref (HOLset.empty String.compare)
-      val snapshots = ref ([] : string HOLset.set list)
-      val seen = ref
-        (Redblackmap.mkDict String.compare :
-          (string, string list) Redblackmap.dict)
-      val pending = ref (NONE : (string * string) option)
-      val ended = ref false
-      val _ = Library.expect_token "(" (token ())
-      fun error message = raise ERR "graph_commands" message
-      fun tokens raw action =
-        let val remaining = ref (raw_tokens raw)
-            fun next () = case !remaining of
-                first :: rest => (remaining := rest; first)
-              | [] => error "buffered term ended unexpectedly"
-            val result = action next
-            val _ = if null (!remaining) then () else
-              error "buffered term has trailing syntax"
-        in result end
-      fun sort raw = graph_parse_sort (#backend (#reader terms)) tokens
-        (#parse_sort terms) (#sort_dictionary terms) raw
-      fun graph_application raw = case raw of
-          RawList (RawAtom "_" :: RawAtom name :: indices) =>
-            if name = "BitVec" orelse name = "FloatingPoint" then
-              let
-                val arity = if name = "BitVec" then 1 else 2
-                val _ = if List.length indices = arity then () else
-                  error ("malformed CPC indexed sort marker " ^ name)
-                (* These are actual indexed sort markers, not the CPC
-                   higher-order application form. The installed marker
-                   recipe admits every literal/value index and its width
-                   before constructing the authoritative HOL type. *)
-              in RawList (RawAtom "_" :: RawAtom name ::
-                List.map graph_application indices) end
-            else if indexed name then raw
-            else RawList (RawAtom "@" ::
-              List.map graph_application (RawAtom name :: indices))
-        | RawList (RawAtom "_" :: arguments) =>
-            RawList (RawAtom "@" :: List.map graph_application arguments)
-        | RawList ((head as RawList (RawAtom "_" :: _)) :: arguments) =>
-            RawList (head :: List.map graph_application arguments)
-        | RawList entries => RawList (List.map graph_application entries)
-        | RawAtom _ => raw
-      fun parse raw : graph_located_term = (#locate locations) (
-        case raw of
-          RawList [RawAtom "@var", RawAtom name, ty] =>
-            (#private_variable terms) (cpc_var_name name, sort ty)
-        | _ => tokens (graph_application (normalize_cpc_testers indexed raw))
-            (#parse_from terms))
-      fun raw_list context raw = case raw of RawList entries => entries
-        | _ => error (context ^ " must be parenthesized")
-      fun atom context raw = case raw of RawAtom text => text
-        | _ => error (context ^ " must be atomic")
-      fun id text = cpc_id_key "graph_commands" "command ID" text
-      fun fresh name = ensure_fresh_id "graph_commands" name known
-      fun add name = known := HOLset.add (!known, name)
-      fun close name = case !snapshots of
-          previous :: rest => (known := previous; snapshots := rest; add name)
-        | [] => error ("step-pop without assume-push in CPC step " ^ name)
-      fun declarations kind =
-        let val name = token ()
-            val domain = if kind = "declare-fun" then
-                List.map sort (raw_list "function domain"
-                  (read_raw_term token))
-              else []
-            val range = sort (read_raw_term token)
-            val _ = Library.expect_token ")" (token ())
-        in (#declare terms) (name, boolSyntax.list_mk_fun (domain, range)) end
-      fun datatype_declaration kind =
-        let
-          val namespace = (#namespace terms) ()
-          val symbol_key = #symbol_key terms
-          fun binding raw = case raw of
-              RawList [RawAtom name, RawAtom arity] =>
-                let val (key, text) = datatype_symbol_using symbol_key
-                      "declare-datatypes" "datatype sort" name
-                in (key, text, datatype_arity "declare-datatypes" text arity)
-                end
-            | _ => error "malformed datatype binding"
-          val declarations = if kind = "declare-datatype" then
-              let
-                val name = token ()
-                val (key, text) = datatype_symbol_using symbol_key
-                  kind "datatype sort" name
-                val body = read_raw_term token
-                val arity = case body of
-                    RawList [RawAtom "par", RawList params, RawList _] =>
-                      List.length params
-                  | _ => 0
-              in [parse_datatype_body_using symbol_key
-                kind key text arity body] end
-            else
-              let val bindings = List.map binding
-                    (raw_list "datatype bindings" (read_raw_term token))
-                  val bodies = raw_list "datatype bodies"
-                    (read_raw_term token)
-                  val _ = if List.length bindings = List.length bodies then
-                    () else error "datatype binding/body count mismatch"
-              in ListPair.mapEq (fn ((key, name, arity), body) =>
-                parse_datatype_body_using symbol_key kind key name arity body)
-                (bindings, bodies) end
-          val _ = Library.expect_token ")" (token ())
-        in validate_datatype_declarations_using namespace
-          (ref ((#sort_dictionary terms) (), #2 declaration_dicts))
-          declarations end
-      fun define_term pair =
-        ((#define terms) pair;(#define locations) pair)
-      fun define () =
-        let
-          val name = graph_definition_name ((#namespace terms) ())
-            (#2 declaration_dicts) (#symbol_key terms) (token ())
-          val start = token ()
-          val first = if start = "(" then
-              (Library.expect_token ")" (token ()); token ()) else start
-          fun ordinary prefix =
-            let
-              val raw = read_raw_term
-                (Library.undo_look_ahead prefix token)
-              val _ = Library.expect_token ")" (token ())
-            in case raw of
-                RawList [RawAtom "@var", RawAtom variable, ty] =>
-                  ignore ((#define_variable terms)
-                    (name, cpc_var_name variable, sort ty))
-              | RawList [RawAtom "@purify", payload] =>
-                  define_term (name, parse payload)
-              | _ => define_term (name, parse raw)
-            end
-        in
-          if first = "@list" then
-            (skip_sexp token; (#define_opaque terms) name)
-          else if first = "(" then
-            let val head = token () in
-              if head = "@list" then
-                let
-                  val entries = graph_read_definition_list token
-                    (#parse_from terms) (#parse_sort terms)
-                    (#private_variable terms) (#locate locations)
-                  val _ = define_list (name, entries)
-                in Library.expect_token ")" (token ()) end
-              else ordinary [first, head]
-            end
-          else ordinary [first]
-        end
-      val argument = graph_object_argument parse parse (#lookup_list terms)
-      fun index raw =
-        let val text = atom "CPC index" raw
-        in case Int.fromString text of
-            SOME index => if index >= 0 then GraphIndex index else
-              error "negative CPC index"
-          | NONE => error "non-numeral CPC index" end
-      fun rule_arguments name rule_name (rule : proof_rule) raws =
-        if #replay_handler rule = "and_elim" orelse
-           #replay_handler rule = "not_or_elim" then
-          (case raws of [raw] => [index raw]
-           | _ => error "elimination rule expects one index")
-        else if #name rule = "cnf_and_pos" orelse
-                #name rule = "cnf_or_neg" then
-          (case raws of [object, number] =>
-              [GraphTerm (parse object), index number]
-           | _ => error "CNF rule expects an object and index")
-        else if #name rule = "resolution" then
-          (case raws of polarity :: pivot :: hints =>
-              GraphTerm (parse polarity) :: GraphTerm (parse pivot) ::
-                List.map GraphHint hints
-           | [] => []
-           | _ => error "resolution requires polarity and pivot")
-        else if #replay_handler rule = "resolution" then
-          (case raws of [] => []
-           | target :: rest => GraphTerm (parse target) ::
-               List.map argument rest)
-        else if #replay_handler rule = "exists_elim" orelse
-                #replay_handler rule = "quant_rewrite" then
-          List.map argument raws
-        else if #replay_handler rule = "rare_inventory" orelse
-                #name rule = "arith-mod-over-mod" orelse
-                #name rule = "arith-mod-over-mod-mult" then
-          List.map (graph_structured_argument (#backend (#reader terms))
-            name rule_name parse (#lookup_list terms)) raws
-        else graph_validate_set_sort_metadata
-          (#backend (#reader terms)) name rule_name
-          (graph_step_arguments (#backend (#reader terms)) name rule_name
-            parse sort (#lookup_list terms) raws)
-      fun step kind =
-        let
-          val consumed = ref ([] : string list)
-          fun next () = let val text = token () in
-            consumed := text :: !consumed; text end
-          val name = id (next ())
-          val _ = fresh name
-          val first = next ()
-          val conclusion = if first = ":rule" then NONE else
-            SOME (read_raw_term (Library.undo_look_ahead [first] next))
-          val _ = if first = ":rule" then () else
-            Library.expect_token ":rule" (next ())
-          val rule_name = next ()
-          val rule = case lookup_rule version rule_name of
-              SOME rule => rule
-            | NONE => raise ERR "graph_step"
-                (registry_lookup_failure version rule_name)
-          (* Supported conclusions precede all attributes. Unsupported
-             inventory entries must remain entirely syntax-only. *)
-          val eager = not (Option.isSome
-            (rare_unsupported_diagnostic rule_name))
-          val parsed_conclusion = if eager then
-              SOME (Option.map parse conclusion) else NONE
-          val parsed_args = ref NONE
-          fun attrs saw_premises saw_args premises args =
-            case next () of
-              ")" => (premises, args)
-            | ":premises" =>
-                if saw_premises then error "duplicate :premises" else
-                  let val premises = List.map
-                        (cpc_id_key "graph_step" "premise ID" o
-                          atom "premise ID")
-                        (graph_premise_list (read_raw_term next))
-                      val _ = List.app
-                        (require_known_premise name known) premises
-                  in attrs true saw_args premises args end
-            | ":args" => if saw_args then error "duplicate :args" else
-                let
-                  val raws =
-                    if eager andalso (graph_ordinary_rule_arguments rule
-                        orelse graph_structured_rule_arguments rule) then
-                      let
-                        val backend = #backend (#reader terms)
-                        val (raws, args) =
-                          if graph_structured_rule_arguments rule then
-                            graph_read_structured_step_arguments next backend
-                              name rule_name parse (#lookup_list terms)
-                          else graph_read_step_arguments next
-                            (graph_step_argument_at backend name rule_name
-                              parse sort (#lookup_list terms))
-                        val _ = parsed_args := SOME
-                          (graph_validate_set_sort_metadata backend name
-                            rule_name args)
-                      in raws end
-                    else
-                      let
-                        val raws = raw_list "arguments" (read_raw_term next)
-                        val _ = if eager then parsed_args :=
-                          SOME (rule_arguments name rule_name rule raws)
-                          else ()
-                      in raws end
-                in attrs saw_premises true premises raws end
-            | attribute => error ("unknown CPC step attribute " ^ attribute)
-          val (premises, args) = attrs false false [] []
-          val _ = register_command_signature seen kind name
-            (List.rev (!consumed))
-          val _ = if kind = "step-pop" then close name else add name
-        in case rare_unsupported_diagnostic rule_name of
-            SOME diagnostic =>
-              let fun raw_error detail = raise ERR "parse_step"
-                    ("malformed raw term in unsupported CPC step " ^ name ^
-                     ": " ^ detail)
-                  val _ = Option.app (validate_raw_term raw_error) conclusion
-                  val _ = List.app (validate_raw_term raw_error) args
-                  val _ = if Option.isSome (!pending) then () else
-                    pending := SOME (rule_name, diagnostic)
-              in NONE end
-          | NONE => SOME (GraphStep
-              {step = {id = name, rule = rule, premises = premises,
-                 conclusion = (case parsed_conclusion of
-                     SOME result => result
-                   | NONE => Option.map parse conclusion),
-                 args = (case !parsed_args of SOME result => result
-                   | NONE => rule_arguments name rule_name rule args),
-                 raw_conclusion = conclusion, raw_args = args},
-               pop = kind = "step-pop"})
-        end
-      fun finish () =
-        let val _ = if null (!snapshots) then () else
-              error "unclosed assume-push scope at end of CPC proof wrapper"
-            val trailing = SOME (token ()) handle P.CPCProofEOF => NONE
-            val _ = case trailing of NONE => () | SOME text =>
-              error ("second CPC proof wrapper or trailing token '" ^
-                P.proof_symbol_text text ^ "'")
-            val _ = ended := true
-        in case !pending of NONE => NONE
-          | SOME (rule, diagnostic) => raise ERR rule diagnostic end
-      fun next () = if !ended then NONE else
-        case token () of
-          ")" => finish ()
-        | "(" =>
-            (case token () of
-               "declare-const" => (declarations "declare-const"; next ())
-             | "declare-fun" => (declarations "declare-fun"; next ())
-             | "declare-sort" =>
-                 let val name = token ()
-                     val arity = datatype_arity "declare-sort" name (token ())
-                     val _ = Library.expect_token ")" (token ())
-                 in (#declare_sort terms) (name, arity); next () end
-             | "declare-datatype" =>
-                 (datatype_declaration "declare-datatype"; next ())
-             | "declare-datatypes" =>
-                 (datatype_declaration "declare-datatypes"; next ())
-             | "define" => (define (); next ())
-             | "assume" => assumption false
-             | "assume-push" => assumption true
-             | "step" => (case step "step" of
-                 NONE => next () | command => command)
-             | "step-pop" => (case step "step-pop" of
-                 NONE => next () | command => command)
-             | command => error ("unknown CPC construct " ^ command))
-        | text => error ("unexpected CPC token '" ^
-            P.proof_symbol_text text ^ "'")
-      and assumption push =
-        let val name = id (token ())
-            val _ = fresh name
-            val value = parse (read_raw_term token)
-            val _ = Library.expect_token ")" (token ())
-            val _ = if push then snapshots := !known :: !snapshots else ()
-            val _ = add name
-        in SOME (if push then GraphAssumePush (name, value)
-          else GraphAssume (name, value)) end
-      fun checked_next () = next () handle P.CPCProofEOF =>
-        raise ERR "parse_stream_with_version"
-          "unexpected end of CPC proof wrapper"
-    in {next = checked_next, terms = terms, cvc_version = version} end
-
-  fun graph_command_reader_with_version options declaration_dicts version input =
-    graph_command_reader_with_factory F.create_session
-      options declaration_dicts version input
-
-  fun graph_configured_command_reader_with_version
-      (configured : F.configured_options) declaration_dicts version input =
-    graph_command_reader_with_factory
-      (fn _ => F.create_configured_session configured)
-      (#base configured) declaration_dicts version input
-
-  fun packet requested_version (reader : graph_command_reader)
-      : graph_proof SmtLib_GraphProof.packet =
-    let
-        fun commands acc = case (#next reader) () of
-            NONE => List.rev acc | SOME command => commands (command :: acc)
-        val proof = {commands = commands [], cvc_version = #cvc_version reader}
-    in SmtLib_GraphProof.new
-      {reader = #reader (#terms reader), proof = proof,
-       requested_version = requested_version, close = fn () => ()} end
-
-  fun parse_graph_packet_with_version options declaration_dicts version input =
-    let val reader = graph_command_reader_with_version
-          options declaration_dicts version input
-    in packet version reader end
-
-  fun parse_graph_configured_packet_with_version configured declaration_dicts
-      version input =
-    packet version (graph_configured_command_reader_with_version
-      configured declaration_dicts version input)
-
-  fun parse_graph_translation_packet_with_version options translation
-      version input =
-    let
-      val configured = SmtLib_GraphTranslation.configured_options
-        options translation
-      val make_session = fn _ =>
-        SmtLib_GraphTranslation.create_session options translation
-      val dicts = SmtLib.parser_dicts_for_solver_translation "cvc5" translation
-    in packet version (graph_command_reader_with_factory make_session
-      (#base configured) dicts version input) end
-
-  fun parse_graph_stream_with_version options declaration_dicts version input
-      : graph_proof =
-    SmtLib_GraphProof.proof
-      (parse_graph_packet_with_version options declaration_dicts version input)
-
-  fun policy_reader_length values =
-    let fun count [] (n:IntInf.int) = n
-          | count (_::rest) n = count rest (n+1)
-    in count values 0 end
-  fun policy_reader_width SmtReplayResourcePolicy.Uncapped _ = true
-    | policy_reader_width (SmtReplayResourcePolicy.AtMost cap) value =
-        cap >= 0 andalso Arbnum.<=
-          (value,Arbnum.fromString (IntInf.toString cap))
-  fun install_graph_recipes_with_policy_for_backend value_index
-      (options:'a F.constructed_policy_options)
-      (terms:'a F.constructed_session) =
-    let
-      fun bounded_distinct token indices arguments =
-        let val count = policy_reader_length arguments
-            val limit = #template_limit (#recipe_limits options)
-            (* Regex distinct builds pairwise relations. Admit its quadratic
-               schematic work before invoking the authoritative builder. *)
-            val regex = case arguments of first :: _ =>
-                cpc_type_eq (Term.type_of first, cpc_reglan_ty)
-              | [] => false
-            val _ = if regex andalso count > 0 andalso
-                not (SmtReplayResourcePolicy.allows limit (count * count * 16)) then
-              raise ERR "graph_distinct" "distinct schema exceeds contract"
-            else ()
-        in cpc_distinct_parsefn token indices arguments end
-      val entries =
-        [("=", cpc_equality_parsefn), ("distinct", bounded_distinct),
-         ("str.++", cpc_concat_parsefn "smtstr_concat"),
-         ("re.++", cpc_concat_parsefn "reglan_concat"),
-         ("re.union", cpc_concat_parsefn "reglan_union"),
-         ("re.inter", cpc_concat_parsefn "reglan_inter"),
-         ("to_int", cpc_intreal_parsefn), ("to_real", cpc_intreal_parsefn),
-         ("int.pow2", cpc_intreal_parsefn)]
-      val totals = List.map (fn name => (name, cpc_arith_total_parsefn))
-        ["div_total", "mod_total", "/_total", "@int_div_by_zero",
-         "@mod_by_zero", "@div_by_zero", "**_total"]
-      val backend = #backend (#reader terms)
-      val private_symbol = graph_private_allocator terms
-      val _ = install_graph_qualifications backend
-        (#add_recipe_parser terms) (#add_constructor_parser terms)
-        private_symbol
-      val limits = #recipe_limits options
-      val _ = install_graph_indexed backend limits terms
-      val width_limit = #index_limit limits
-      fun admitted term =
-        case SmtReplayImport.raw_size_with_policy width_limit term of
-          SOME _ => term
-        | NONE => raise ERR "graph_index" "expanded private literal index"
-      fun natural term =
-        let val value = numeral_of_term "graph private index" (admitted term)
-        in if policy_reader_width width_limit value then value else
-          raise ERR "graph_index" "private numeric index exceeds contract" end
-      fun index (P.SourceIndex (node,_)) = index (P.ValueIndex (node,"("))
-        | index (P.LexicalIndex pair) = index (P.ValueIndex pair)
-        | index (P.LiteralIndex term) = natural term
-        | index (P.ValueIndex (node, _)) = value_index natural node
-        | index _ = raise ERR "graph_index" "nonliteral private index"
-      fun marker frame token indices args =
-        let
-          val ty = case (token, indices, args) of
-              ("Int", [], []) => intSyntax.int_ty
-            | ("BitVec", [bits], []) =>
-                wordsSyntax.mk_word_type (fcpLib.index_type (index bits))
-            | ("FloatingPoint", [eb, sb], []) =>
-                SmtLib_Theories.smtfp_type (index eb, index sb)
-            | ("->", [], _ :: _ :: _) =>
-                let val (domains, range) = Lib.front_last args in
-                  boolSyntax.list_mk_fun
-                    (List.map (B.type_of backend) domains,
-                     B.type_of backend range) end
-            | _ => raise ERR "cpc_sort_marker_parsefn"
-                ("malformed CPC sort marker " ^ token)
-        in graph_private_atom backend frame (private_symbol frame
-          {kind = "@cpc." ^ token, hol_type = ty,
-           source = NONE, stable = true}) end
-      fun private_fp frame token indices args =
-        if not (null indices) then raise ERR "cpc_fp_private_parsefn"
-          "unexpected indices"
-        else case args of
-            [sort_marker] => graph_private_atom backend frame
-              (private_symbol frame
-                {kind = token, hol_type = B.type_of
-                   backend sort_marker, source = NONE, stable = false})
-          | [sort_marker, source] => graph_private_atom backend frame
-              (private_symbol frame
-                {kind = token, hol_type = B.type_of
-                   backend sort_marker, source = SOME source, stable = true})
-          | _ => raise ERR "cpc_fp_private_parsefn"
-              (token ^ " expects a sort marker and at most one " ^
-               "floating-point operand")
-      fun private_total frame token indices args =
-        if not (null indices) orelse null args then
-          raise ERR "cpc_fp_total_parsefn" "malformed private FP operator"
-        else
-          let val types = List.map (B.type_of backend) args
-              val ty = boolSyntax.list_mk_fun (types, hd types)
-              val head = private_symbol frame
-                {kind = token, hol_type = ty, source = NONE, stable = true}
-              val originals = case B.constructor_sources backend of
-                  SOME {arguments,...} => arguments
-                | NONE => List.map (B.source_syntax backend frame) args
-              val source = List.foldl (fn (arg,head) =>
-                C.application (head,arg))
-                (C.private_atom (graph_private_descriptor backend head))
-                originals
-              val _ = B.note_constructor_source backend source
-          in List.foldl (fn (arg, head) =>
-            B.application backend frame (head, arg))
-            (graph_private_reference backend frame head) args end
-      fun arithmetic frame token indices args =
-        if null indices andalso null args andalso
-            List.exists (Lib.equal token)
-              ["@int_div_by_zero", "@mod_by_zero", "@div_by_zero"] then
-          graph_private_atom backend frame (private_symbol frame
-            {kind = token, hol_type = if token = "@div_by_zero"
-               then realSyntax.real_ty else intSyntax.int_ty,
-             source = NONE, stable = true})
-        else SmtLib_GraphTheories.recipe_parsefn_with_policy backend limits
-          cpc_arith_total_parsefn frame token indices args
-      val _ = List.app (#add_recipe_parser terms) entries
-      val _ = List.app (fn (name, _) =>
-        (#add_constructor_parser terms) (name, arithmetic)) totals
-      val _ = List.app (fn name =>
-        (#add_constructor_parser terms) (name, marker))
-        ["Int", "BitVec", "FloatingPoint", "->"]
-      val _ = List.app (fn name =>
-        (#add_constructor_parser terms) (name, private_fp))
-        ["@fp.SIGN", "@fp.EXPONENT", "@fp.SIGNIFICAND", "@fp.ZERO",
-         "@fp.NAN", "@fp.INF"]
-      val _ = List.app (fn name =>
-        (#add_constructor_parser terms) (name, private_total))
-        ["fp.max_total", "fp.min_total"]
-      val _ = List.app (#add_recipe_parser terms)
-        [("@fp.RMBITBLAST", cpc_fp_rounding_parsefn),
-         ("bvite", cpc_bvite_parsefn), ("bvsltbv", cpc_bv_parsefn),
-         ("bvultbv", cpc_bv_parsefn), ("concat", cpc_bv_parsefn),
-         ("@bvsize", cpc_bv_parsefn)]
-      val _ = install_graph_cpc_constructors backend limits terms
-        private_symbol
-    in () end
-
-
-  fun install_graph_recipes_with_policy
-      (options:F.policy_options) (terms:F.session) =
-    let val graph = #graph options
-        val width_limit = #index_limit (#recipe_limits options)
-        fun value_index natural node =
-          case G.unfolded_nodes_with_policy graph
-              G.RawNodes width_limit node of
-              SOME size =>
-                if SmtReplayResourcePolicy.allows width_limit size then
-                  natural (G.representative graph node)
-                else raise ERR "graph_index" "expanded private index operand"
-            | NONE => raise ERR "graph_index" "opaque private index operand"
-    in install_graph_recipes_with_policy_for_backend value_index options terms
-    end
-
-  fun graph_term_reader_with_version_with_policy options version instream =
-    let
-      val version = resolve_version version
-      val baseline = with_cpc_literals
-        (SmtLib_Logics.parsedicts_of_logic "ALL")
-      val reserved_names = Redblackmap.foldl
-        (fn (key, _, keys) => key :: keys)
-        (Redblackmap.foldl (fn (key, _, keys) => key :: keys)
-          ["_", "!", "as", "let", "forall", "exists", "lambda", "match",
-           "par", "declare-const", "declare-fun", "declare-sort",
-           "declare-datatype", "declare-datatypes", "define",
-           "assume", "assume-push", "step", "step-pop"] (#1 baseline))
-        (#2 baseline)
-      val terms = SmtLib_GraphFrontend.create_session_with_policy options
-        {solver = "cvc5", version = version,
-         policy = SmtLib_GraphFrontend.CPC, reserved_names = reserved_names}
-        (SmtLib_Parser.make_cpc_proof_stream_tokenizer instream)
-      val _ = install_graph_recipes_with_policy options terms
-      val _ = (#add_literal_parser terms)
-        (fn token => cpc_literal_parsefn token [] [])
-    in #reader terms end
-  fun graph_term_reader_with_policy options instream =
-    graph_term_reader_with_version_with_policy options unknown_cvc_version instream
-
-  fun graph_policy_description version =
-    let
-      val baseline = with_cpc_literals
-        (SmtLib_Logics.parsedicts_of_logic "ALL")
-      val syntax_names =
-        ["_", "!", "as", "let", "forall", "exists", "lambda", "match",
-         "par", "declare-const", "declare-fun", "declare-sort",
-         "declare-datatype", "declare-datatypes", "define", "assume",
-         "assume-push", "step", "step-pop"]
-      val reserved_names = Redblackmap.foldl
-        (fn (key, _, keys) => key :: keys)
-        (Redblackmap.foldl (fn (key, _, keys) => key :: keys)
-          syntax_names (#1 baseline)) (#2 baseline)
-    in {solver="cvc5",version=version,policy=F.CPC,
-      reserved_names=reserved_names} end
-
   fun graph_command_reader_for_backend_with_policy
-      install_recipes make_session (options:'a F.constructed_policy_options)
+      install_recipes make_session options
       (declaration_dicts:dicts) requested_version make_token
       : 'a constructed_graph_command_reader =
     let
@@ -6431,6 +5821,231 @@ in
         raise ERR "parse_stream_with_version"
           "unexpected end of CPC proof wrapper"
     in {next = checked_next, terms = terms, cvc_version = version} end
+
+  fun graph_command_reader_with_factory make_session
+      (options : SmtLib_GraphFrontend.options)
+      (declaration_dicts : dicts) requested_version instream
+      : graph_command_reader =
+    graph_command_reader_for_backend_with_policy install_graph_recipes
+      make_session options declaration_dicts requested_version
+      (fn () => P.make_cpc_proof_stream_tokenizer instream)
+
+  fun graph_command_reader_with_version options declaration_dicts version input =
+    graph_command_reader_with_factory F.create_session
+      options declaration_dicts version input
+
+  fun graph_configured_command_reader_with_version
+      (configured : F.configured_options) declaration_dicts version input =
+    graph_command_reader_with_factory
+      (fn _ => F.create_configured_session configured)
+      (#base configured) declaration_dicts version input
+
+  fun packet requested_version (reader : graph_command_reader)
+      : graph_proof SmtLib_GraphProof.packet =
+    let
+        fun commands acc = case (#next reader) () of
+            NONE => List.rev acc | SOME command => commands (command :: acc)
+        val proof = {commands = commands [], cvc_version = #cvc_version reader}
+    in SmtLib_GraphProof.new
+      {reader = #reader (#terms reader), proof = proof,
+       requested_version = requested_version, close = fn () => ()} end
+
+  fun parse_graph_packet_with_version options declaration_dicts version input =
+    let val reader = graph_command_reader_with_version
+          options declaration_dicts version input
+    in packet version reader end
+
+  fun parse_graph_configured_packet_with_version configured declaration_dicts
+      version input =
+    packet version (graph_configured_command_reader_with_version
+      configured declaration_dicts version input)
+
+  fun parse_graph_translation_packet_with_version options translation
+      version input =
+    let
+      val configured = SmtLib_GraphTranslation.configured_options
+        options translation
+      val make_session = fn _ =>
+        SmtLib_GraphTranslation.create_session options translation
+      val dicts = SmtLib.parser_dicts_for_solver_translation "cvc5" translation
+    in packet version (graph_command_reader_with_factory make_session
+      (#base configured) dicts version input) end
+
+  fun parse_graph_stream_with_version options declaration_dicts version input
+      : graph_proof =
+    SmtLib_GraphProof.proof
+      (parse_graph_packet_with_version options declaration_dicts version input)
+
+  fun policy_reader_length values =
+    let fun count [] (n:IntInf.int) = n
+          | count (_::rest) n = count rest (n+1)
+    in count values 0 end
+  fun policy_reader_width SmtReplayResourcePolicy.Uncapped _ = true
+    | policy_reader_width (SmtReplayResourcePolicy.AtMost cap) value =
+        cap >= 0 andalso Arbnum.<=
+          (value,Arbnum.fromString (IntInf.toString cap))
+  fun install_graph_recipes_with_policy_for_backend value_index
+      (options:'a F.constructed_policy_options)
+      (terms:'a F.constructed_session) =
+    let
+      fun bounded_distinct token indices arguments =
+        let val count = policy_reader_length arguments
+            val limit = #template_limit (#recipe_limits options)
+            (* Regex distinct builds pairwise relations. Admit its quadratic
+               schematic work before invoking the authoritative builder. *)
+            val regex = case arguments of first :: _ =>
+                cpc_type_eq (Term.type_of first, cpc_reglan_ty)
+              | [] => false
+            val _ = if regex andalso count > 0 andalso
+                not (SmtReplayResourcePolicy.allows limit (count * count * 16)) then
+              raise ERR "graph_distinct" "distinct schema exceeds contract"
+            else ()
+        in cpc_distinct_parsefn token indices arguments end
+      val entries =
+        [("=", cpc_equality_parsefn), ("distinct", bounded_distinct),
+         ("str.++", cpc_concat_parsefn "smtstr_concat"),
+         ("re.++", cpc_concat_parsefn "reglan_concat"),
+         ("re.union", cpc_concat_parsefn "reglan_union"),
+         ("re.inter", cpc_concat_parsefn "reglan_inter"),
+         ("to_int", cpc_intreal_parsefn), ("to_real", cpc_intreal_parsefn),
+         ("int.pow2", cpc_intreal_parsefn)]
+      val totals = List.map (fn name => (name, cpc_arith_total_parsefn))
+        ["div_total", "mod_total", "/_total", "@int_div_by_zero",
+         "@mod_by_zero", "@div_by_zero", "**_total"]
+      val backend = #backend (#reader terms)
+      val private_symbol = graph_private_allocator terms
+      val _ = install_graph_qualifications backend
+        (#add_recipe_parser terms) (#add_constructor_parser terms)
+        private_symbol
+      val limits = #recipe_limits options
+      val _ = install_graph_indexed backend limits terms
+      val width_limit = #index_limit limits
+      fun admitted term =
+        case SmtReplayImport.raw_size_with_policy width_limit term of
+          SOME _ => term
+        | NONE => raise ERR "graph_index" "expanded private literal index"
+      fun natural term =
+        let val value = numeral_of_term "graph private index" (admitted term)
+        in if policy_reader_width width_limit value then value else
+          raise ERR "graph_index" "private numeric index exceeds contract" end
+      fun index (P.SourceIndex (node,_)) = index (P.ValueIndex (node,"("))
+        | index (P.LexicalIndex pair) = index (P.ValueIndex pair)
+        | index (P.LiteralIndex term) = natural term
+        | index (P.ValueIndex (node, _)) = value_index natural node
+        | index _ = raise ERR "graph_index" "nonliteral private index"
+      fun marker frame token indices args =
+        let
+          val ty = case (token, indices, args) of
+              ("Int", [], []) => intSyntax.int_ty
+            | ("BitVec", [bits], []) =>
+                wordsSyntax.mk_word_type (fcpLib.index_type (index bits))
+            | ("FloatingPoint", [eb, sb], []) =>
+                SmtLib_Theories.smtfp_type (index eb, index sb)
+            | ("->", [], _ :: _ :: _) =>
+                let val (domains, range) = Lib.front_last args in
+                  boolSyntax.list_mk_fun
+                    (List.map (B.type_of backend) domains,
+                     B.type_of backend range) end
+            | _ => raise ERR "cpc_sort_marker_parsefn"
+                ("malformed CPC sort marker " ^ token)
+        in graph_private_atom backend frame (private_symbol frame
+          {kind = "@cpc." ^ token, hol_type = ty,
+           source = NONE, stable = true}) end
+      fun private_fp frame token indices args =
+        if not (null indices) then raise ERR "cpc_fp_private_parsefn"
+          "unexpected indices"
+        else case args of
+            [sort_marker] => graph_private_atom backend frame
+              (private_symbol frame
+                {kind = token, hol_type = B.type_of
+                   backend sort_marker, source = NONE, stable = false})
+          | [sort_marker, source] => graph_private_atom backend frame
+              (private_symbol frame
+                {kind = token, hol_type = B.type_of
+                   backend sort_marker, source = SOME source, stable = true})
+          | _ => raise ERR "cpc_fp_private_parsefn"
+              (token ^ " expects a sort marker and at most one " ^
+               "floating-point operand")
+      fun private_total frame token indices args =
+        if not (null indices) orelse null args then
+          raise ERR "cpc_fp_total_parsefn" "malformed private FP operator"
+        else
+          let val types = List.map (B.type_of backend) args
+              val ty = boolSyntax.list_mk_fun (types, hd types)
+              val head = private_symbol frame
+                {kind = token, hol_type = ty, source = NONE, stable = true}
+              val originals = case B.constructor_sources backend of
+                  SOME {arguments,...} => arguments
+                | NONE => List.map (B.source_syntax backend frame) args
+              val source = List.foldl (fn (arg,head) =>
+                C.application (head,arg))
+                (C.private_atom (graph_private_descriptor backend head))
+                originals
+              val _ = B.note_constructor_source backend source
+          in List.foldl (fn (arg, head) =>
+            B.application backend frame (head, arg))
+            (graph_private_reference backend frame head) args end
+      fun arithmetic frame token indices args =
+        if null indices andalso null args andalso
+            List.exists (Lib.equal token)
+              ["@int_div_by_zero", "@mod_by_zero", "@div_by_zero"] then
+          graph_private_atom backend frame (private_symbol frame
+            {kind = token, hol_type = if token = "@div_by_zero"
+               then realSyntax.real_ty else intSyntax.int_ty,
+             source = NONE, stable = true})
+        else SmtLib_GraphTheories.recipe_parsefn_with_policy backend limits
+          cpc_arith_total_parsefn frame token indices args
+      val _ = List.app (#add_recipe_parser terms) entries
+      val _ = List.app (fn (name, _) =>
+        (#add_constructor_parser terms) (name, arithmetic)) totals
+      val _ = List.app (fn name =>
+        (#add_constructor_parser terms) (name, marker))
+        ["Int", "BitVec", "FloatingPoint", "->"]
+      val _ = List.app (fn name =>
+        (#add_constructor_parser terms) (name, private_fp))
+        ["@fp.SIGN", "@fp.EXPONENT", "@fp.SIGNIFICAND", "@fp.ZERO",
+         "@fp.NAN", "@fp.INF"]
+      val _ = List.app (fn name =>
+        (#add_constructor_parser terms) (name, private_total))
+        ["fp.max_total", "fp.min_total"]
+      val _ = List.app (#add_recipe_parser terms)
+        [("@fp.RMBITBLAST", cpc_fp_rounding_parsefn),
+         ("bvite", cpc_bvite_parsefn), ("bvsltbv", cpc_bv_parsefn),
+         ("bvultbv", cpc_bv_parsefn), ("concat", cpc_bv_parsefn),
+         ("@bvsize", cpc_bv_parsefn)]
+      val _ = install_graph_cpc_constructors backend limits terms
+        private_symbol
+    in () end
+
+
+  fun install_graph_recipes_with_policy
+      (options:F.policy_options) (terms:F.session) =
+    let val graph = #graph options
+        val width_limit = #index_limit (#recipe_limits options)
+        fun value_index natural node =
+          case G.unfolded_nodes_with_policy graph
+              G.RawNodes width_limit node of
+              SOME size =>
+                if SmtReplayResourcePolicy.allows width_limit size then
+                  natural (G.representative graph node)
+                else raise ERR "graph_index" "expanded private index operand"
+            | NONE => raise ERR "graph_index" "opaque private index operand"
+    in install_graph_recipes_with_policy_for_backend value_index options terms
+    end
+
+  fun graph_term_reader_with_version_with_policy options version instream =
+    let
+      val version = resolve_version version
+      val terms = SmtLib_GraphFrontend.create_session_with_policy options
+        (graph_policy_description version)
+        (SmtLib_Parser.make_cpc_proof_stream_tokenizer instream)
+      val _ = install_graph_recipes_with_policy options terms
+      val _ = (#add_literal_parser terms)
+        (fn token => cpc_literal_parsefn token [] [])
+    in #reader terms end
+  fun graph_term_reader_with_policy options instream =
+    graph_term_reader_with_version_with_policy options unknown_cvc_version instream
+
 
 
   fun graph_command_reader_with_factory_with_policy_token_factory

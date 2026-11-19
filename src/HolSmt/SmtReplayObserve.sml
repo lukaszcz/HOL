@@ -58,24 +58,4 @@ struct
   fun retain observation = retained := observation :: !retained
   fun observations () = List.rev (!retained)
   fun clear () = retained := []
-  fun write_metadata prefix (observation : observation) =
-    let
-      val {inputs, elapsed, user, system, gc, outcome, result} = observation
-      val {domain, identifier, premises, terms, scope,
-        definitions, metadata} = inputs
-      val stream = TextIO.openOut (prefix ^ ".txt")
-      fun row (key, value) = TextIO.output (stream,
-        String.toString key ^ "=" ^ String.toString value ^ "\n")
-      val fields =
-        [("domain", domain), ("identifier", identifier),
-         ("outcome", outcome), ("elapsed", Time.toString elapsed),
-         ("user", Time.toString user), ("system", Time.toString system),
-         ("gc", Time.toString gc),
-         ("premises", Int.toString (List.length premises)),
-         ("scope", Int.toString (List.length scope))] @ metadata @
-        Lib.mapi (fn index => fn (name, _, _) =>
-          ("definition-name/" ^ Int.toString index, name)) definitions
-      val written = Exn.capture (List.app row) fields
-      val _ = TextIO.closeOut stream
-    in Exn.release written end
 end

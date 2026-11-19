@@ -36,24 +36,14 @@ structure Z3 = struct
   fun is_sat_file path =
     SolverSpec.with_input_file path is_sat_stream
 
-  fun get_nonempty_env name =
-    case OS.Process.getEnv name of
-      SOME file => if file = "" then NONE else SOME file
-    | NONE => NONE
-
-  fun command_available name =
-    OS.Process.isSuccess
-      (SatProcess.system ("command -v " ^ name ^ " >/dev/null 2>&1"))
-    handle exn =>
-      if SolverSpec.terminal_capture_exception exn then raise exn else false
-
   fun configured_executable () =
-    case get_nonempty_env "HOL4_Z3_EXECUTABLE" of
+    case SolverSpec.get_nonempty_env "HOL4_Z3_EXECUTABLE" of
       SOME file => SOME file
     | NONE =>
-        (case get_nonempty_env "Z3" of
+        (case SolverSpec.get_nonempty_env "Z3" of
           SOME file => SOME file
-        | NONE => if command_available "z3" then SOME "z3" else NONE)
+        | NONE =>
+            if SolverSpec.command_available "z3" then SOME "z3" else NONE)
 
   fun is_configured () = Option.isSome (configured_executable ());
 
@@ -182,7 +172,7 @@ structure Z3 = struct
     end
 
   fun z3_capture_for_invocation () =
-    case get_nonempty_env "HOL4_Z3_PROOF_CAPTURE_DIR" of
+    case SolverSpec.get_nonempty_env "HOL4_Z3_PROOF_CAPTURE_DIR" of
       NONE => NONE
     | SOME directory => SOME (z3_capture_for_directory directory)
 

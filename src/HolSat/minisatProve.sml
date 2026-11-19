@@ -24,18 +24,8 @@ val {get = sat_warn,...} = HOLFlags.create_btrace(
       true
     )
 
-fun profile_stage name action input =
-    if minisatResolve.sat_profile () then
-      Profile.profile_with_exn_name ("HolSat(" ^ name ^ ")") action input
-    else action input
-
-(* One environment check per top-level call; when disabled, messages are
-   never constructed (no per-message RTS call or formatting). *)
-fun sat_tracer () =
-    if OS.Process.getEnv "HOL4_SAT_TRACE" = SOME "1" then
-      (fn message => (Feedback.HOL_MESG ("HOL SAT: " ^ message ());
-                      TextIO.flushOut TextIO.stdOut))
-    else (fn _ => ())
+val profile_stage = minisatResolve.profile_stage
+val sat_tracer = minisatResolve.sat_tracer
 
 fun warn ss =
     if !Globals.interactive andalso sat_warn()
