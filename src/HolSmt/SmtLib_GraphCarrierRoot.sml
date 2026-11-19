@@ -576,12 +576,16 @@ struct
     | Constant of Term.term * shape | Apply of expr * expr * shape
     | Lambda of int * shape * expr
   type size = {raw : IntInf.int,binder : IntInf.int,ann : IntInf.int}
+  type abstract =
+    {graph : G.graph,work : W.portfolio,request : policy_owner,
+     limits : W.limits,guard : unit -> unit} ->
+    G.scope -> {binder : G.node,body : G.node,body_frame : G.scope} -> G.node
   datatype plan = PolicyPlan of
     {request : policy_owner,surface : surface,active : unit -> unit,
      limits : W.limits,
      hplan : H.policy_plan,predicate : G.node,target : expr,
      token : W.entitlement,amount : IntInf.int,used : bool ref,
-     fresh : G.scope list ref,native_used : IntInf.int ref}
+     fresh : G.scope list ref,abstract : abstract}
   datatype conversion = PolicyConversion of
     {request : policy_owner,active : unit -> unit,source : G.node,
      target : G.node,theorem : Thm.thm}
@@ -591,8 +595,9 @@ struct
      locates an opaque node; [measure] sizes a node for the syntax caps and
      [measure_source] the canonical source for the forecast, each retaining
      the evidence that [revalidate] rechecks at every guard; [opaque] sizes
-     a retained opaque node. An abstractor builds a generated binder while
-     executing. *)
+     a retained opaque node. An abstractor, given the preparation's native
+     step counter, builds a generated binder while executing; a plan keeps
+     it as its [abstract] operation. *)
   type counts =
     {node : G.node,raw : IntInf.int,inc : IntInf.int,
      types : Type.hol_type list}
@@ -601,16 +606,14 @@ struct
      locate : G.scope -> G.closure_child -> G.node -> ''locus,
      measure : G.node -> counts,measure_source : G.node -> counts,
      opaque : ''locus ->
-       {node : G.node,weight : IntInf.int,charge : int -> unit,
+       {weight : IntInf.int,charge : int -> unit,
         weigh : Type.hol_type -> IntInf.int,
         types : Type.hol_type list ref} -> size}
   type ''locus metrics =
     {graph : G.graph,scope : G.scope,
      profiles : G.policy_opaque_profile list} -> ''locus metric
-  type abstractor =
-    {graph : G.graph,work : W.portfolio,request : policy_owner,
-     limits : W.limits,native_used : IntInf.int ref,guard : unit -> unit} ->
-    G.scope -> {binder : G.node,body : G.node,body_frame : G.scope} -> G.node
+  type abstractor = IntInf.int ref -> abstract
+  type ''locus prover = {metrics : ''locus metrics,abstractor : abstractor}
 
   fun validate_with_policy_for {graph,scope,sources,work}
       (PolicyConversion {request=held,active,...}) =
@@ -630,7 +633,8 @@ struct
 
   fun reject message = raise ERR "prepare_with_policy" message
 
-  fun pc_prepare_internal (metrics : ''locus metrics) admission surface
+  fun pc_prepare_internal ({metrics,abstractor} : ''locus prover) admission
+      surface
       (request as {graph,scope,sources,work,ordinal,original,law,
        check_type,scope_opened,native_contract,profiles} : policy_owner) =
     let
@@ -801,8 +805,8 @@ struct
                              !constants;
                            {raw = 1,binder = 1,ann = w} : size)
                       | G.OpaqueRetained => #opaque hooks locus
-                          {node = node,weight = w,charge = charge,
-                           weigh = weight,types = types}
+                          {weight = w,charge = charge,weigh = weight,
+                           types = types}
                       | _ => {raw = 1,binder = 1,ann = w} : size
                     val _ = charge 1 val _ = memo := (locus,value) :: !memo
                 in value end
@@ -985,11 +989,11 @@ struct
           limits = limits,
           hplan = hplan,predicate = #predicate initial,target = target,
           token = token,amount = amount,used = ref false,
-          fresh = fresh,native_used = native_used} end)
+          fresh = fresh,abstract = abstractor native_used} end)
     in result end
     handle primary => (W.close work;raise primary)
 
-  fun prepare_admitted metrics
+  fun prepare_admitted prover
       ({graph,scope,sources,work,ordinal,admission,law,native_contract,
         profiles,check_type,scope_opened}:policy_admitted_request) =
     ((NC.validate_for work native_contract;
@@ -999,18 +1003,18 @@ struct
             raise ERR "prepare_policy" "different original Source owner"
           val d=F.describe_with_policy_for
             {graph=graph,scope=scope,sources=sources,work=work} admission
-      in pc_prepare_internal metrics (SOME admission) (Canonical (#child d))
+      in pc_prepare_internal prover (SOME admission) (Canonical (#child d))
         {graph=graph,scope=scope,sources=sources,work=work,
          ordinal=ordinal,original= #node d,law=law,
          native_contract=native_contract,profiles=profiles,
          check_type=check_type,scope_opened=scope_opened} end)
      handle primary=>(W.close work;raise primary))
 
-  fun execute (abstractor : abstractor)
+  fun execute
       (PolicyPlan {request as {graph,scope,sources,work,original,
       scope_opened,...},surface,active,limits,hplan,predicate,target,token,
       amount,
-      used,fresh,native_used}) =
+      used,fresh,abstract}) =
     let
       val root = S.owning_scope sources
       val _ = W.with_step work (fn () =>
@@ -1033,9 +1037,9 @@ struct
           fun opened child =
             (guard ();G.validate_scope graph child;scope_opened child;
              G.validate_scope graph child;guard ())
-          val abstract = abstractor
+          val abstract = abstract
             {graph=graph,work=work,request=request,limits=limits,
-             native_used=native_used,guard=guard}
+             guard=guard}
           fun new_frame parent bindings =
             let val child = G.new_scope graph parent bindings
                 val _ = fresh := child :: !fresh
@@ -1123,7 +1127,8 @@ struct
        opaque = fn _ => fn _ =>
          reject "nested original binder needs genuine opening"}
   val ordinary_abstractor : abstractor =
-    fn {graph,limits,...} => fn caller => fn {binder,body,body_frame} =>
+    fn _ => fn {graph,limits,...} => fn caller =>
+      fn {binder,body,body_frame} =>
       G.recorded_abstraction_with_policy graph caller
         (RP.AtMost (IntInf.fromInt (#output_limit limits)))
         {binder = binder,body = body,body_frame = body_frame}
@@ -1171,11 +1176,11 @@ struct
          locate = fn caller => fn child => fn node =>
            (node,G.closure_child_scope graph caller child),
          measure = measure,measure_source = measure,
-         opaque = fn locus => fn {node = _,weight = w,charge,weigh,types} =>
+         opaque = fn locus => fn {weight = w,charge,weigh,types} =>
            select locus w charge weigh types}
       end
   val profiled_abstractor : abstractor =
-    fn {graph,work,request,limits,native_used,guard} =>
+    fn native_used => fn {graph,work,request,limits,guard} =>
       let
         val native = NC.for_work work (#native_contract request)
         val native_ceiling = IntInf.fromInt (#type_work_limit native)
@@ -1193,19 +1198,23 @@ struct
              binder = binder,body = body,body_frame = body_frame,
              profiles = #profiles request,step = native_step}
       end
+  val ordinary_prover : G.node prover =
+    {metrics = ordinary_metric,abstractor = ordinary_abstractor}
+  val profiled_prover : (G.node * G.scope) prover =
+    {metrics = profiled_metric,abstractor = profiled_abstractor}
   in
   type policy_plan = plan
   type policy_conversion = conversion
   val validate_with_policy_for = validate_with_policy_for
   val endpoints_with_policy_for = endpoints_with_policy_for
   fun prepare_closure_admitted_with_policy request =
-    prepare_admitted ordinary_metric request
-  fun execute_with_policy plan = execute ordinary_abstractor plan
+    prepare_admitted ordinary_prover request
+  val execute_with_policy = execute
   type profiled_policy_plan = plan
   type profiled_policy_conversion = conversion
   fun prepare_closure_profiled_admitted_with_policy request =
-    prepare_admitted profiled_metric request
-  fun execute_profiled_with_policy plan = execute profiled_abstractor plan
+    prepare_admitted profiled_prover request
+  val execute_profiled_with_policy = execute
   val validate_profiled_with_policy_for = validate_with_policy_for
   val endpoints_profiled_with_policy_for = endpoints_with_policy_for
   end
