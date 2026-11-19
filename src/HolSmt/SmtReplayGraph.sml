@@ -3689,25 +3689,75 @@ struct
      or allowance: the future owned P caller must pay the genuine plan cost
      to SAME W before this path. Arithmetic/meter and primitive internals are
      explicit exclusions, as in the selected fixed-table prerequisite. *)
-  datatype placeholder_meter = CountGuard of
-      {ceiling : IntInf.int,used : IntInf.int ref} | PaidGuard
-    | PolicyCountGuard of
-      {ceiling:SmtReplayResourcePolicy.limit,used:IntInf.int ref}
-    | SameMeterGuard of R.scope_meter
+  datatype placeholder_account = CountAccount of
+      {ceiling : IntInf.int,used : IntInf.int ref}
+    | PolicyAccount of
+      {ceiling : SmtReplayResourcePolicy.limit,used : IntInf.int ref}
+    | MeterAccount of R.scope_meter
+  datatype placeholder_meter = PaidGuard | Charged of placeholder_account
   datatype placeholder_requirement = EitherState | PreparedState
-  fun placeholder_event PaidGuard = ()
-    | placeholder_event (SameMeterGuard meter) =
-        (R.scope_meter_charge meter 1 handle R.Limit =>
-          raise ERR "plan_placeholders" "original remaining Work exhausted")
-    | placeholder_event (CountGuard {ceiling,used}) =
-        if !used >= ceiling then
+  fun placeholder_charged (CountAccount {used,...}) = !used
+    | placeholder_charged (PolicyAccount {used,...}) = !used
+    | placeholder_charged (MeterAccount meter) =
+        R.scope_meter_charged_policy meter
+  (* One indivisible debit. A refusal keeps every earlier debit. *)
+  fun placeholder_spend account amount =
+    case account of
+      CountAccount {ceiling,used} =>
+        if amount < 0 orelse amount > ceiling - !used then
           raise ERR "plan_placeholders" "original remaining Work exhausted"
-        else used := !used+1
-
-    | placeholder_event (PolicyCountGuard {ceiling,used}) =
-        if SmtReplayResourcePolicy.allows ceiling (!used+1) then
-          used := !used+1
-        else raise ERR "plan_placeholders" "original remaining Work exhausted"
+        else used := !used+amount
+    | PolicyAccount {ceiling,used} =>
+        if not (SmtReplayResourcePolicy.allows ceiling (!used+amount)) orelse
+            amount < 0 then
+          raise ERR "plan_placeholders" "original remaining Work exhausted"
+        else used := !used+amount
+    | MeterAccount meter =>
+        R.scope_meter_charge meter amount handle R.Limit =>
+          raise ERR "plan_placeholders" "original remaining Work exhausted"
+  (* An R plan is priced and paid in one step. Local accounts quote it
+     against their remaining allowance and then pay its cost; a scope meter
+     pays inside its own planner. *)
+  fun placeholder_plan account {count,policy,meter,cost} =
+    case account of
+      CountAccount {ceiling,used} =>
+        let val plan = count (ceiling - !used)
+            val _ = placeholder_spend account (#work (cost plan))
+        in plan end
+    | PolicyAccount {ceiling,used} =>
+        let val plan = policy (SmtReplayResourcePolicy.remaining ceiling
+              (!used))
+            val _ = placeholder_spend account (#work (cost plan))
+        in plan end
+    | MeterAccount m => meter m
+  fun placeholder_lookup_int account (table,key) = placeholder_plan account
+    {count = fn limit => R.lookup_int (table,key,limit),
+     policy = fn limit => R.lookup_int_with_policy (table,key,limit),
+     meter = fn m => R.scope_plan_lookup_int m (table,key),
+     cost = R.int_lookup_cost}
+  fun placeholder_insert_int account (table,key) = placeholder_plan account
+    {count = fn limit => R.insert_int (table,key,limit),
+     policy = fn limit => R.insert_int_with_policy (table,key,limit),
+     meter = fn m => R.scope_plan_insert_int m (table,key),
+     cost = R.int_insertion_cost}
+  fun placeholder_lookup_string account (set,name) = placeholder_plan account
+    {count = fn limit => R.lookup_string (set,name,limit),
+     policy = fn limit => R.lookup_string_with_policy (set,name,limit),
+     meter = fn m => R.scope_plan_lookup_string m (set,name),
+     cost = R.string_lookup_cost}
+  fun placeholder_insert_string account (set,name) = placeholder_plan account
+    {count = fn limit => R.insert_string (set,name,limit),
+     policy = fn limit => R.insert_string_with_policy (set,name,limit),
+     meter = fn m => R.scope_plan_insert_string m (set,name),
+     cost = R.string_insertion_cost}
+  fun placeholder_insert_int_batch account (table,keys) =
+    placeholder_plan account
+      {count = fn limit => R.insert_int_batch (table,keys,limit),
+       policy = fn limit => R.insert_int_batch_with_policy (table,keys,limit),
+       meter = fn m => R.scope_plan_insert_int_batch m (table,keys),
+       cost = R.int_batch_cost}
+  fun placeholder_event PaidGuard = ()
+    | placeholder_event (Charged account) = placeholder_spend account 1
 
   (* This ONE private program is run during planning and again before every
      validation/mint. The successful prepared/minted paths have the same
@@ -3809,18 +3859,13 @@ struct
   fun placeholder_plan_names (PlaceholderPlan {names,...}) = names
   fun placeholder_plan_bindings (PlaceholderPlan {bindings,...}) = bindings
 
-  fun plan_placeholders (g : graph) caller {nodes,remaining_work} =
+  (* The ONE placeholder planning walk. The entries below differ only in
+     the account that pays for it: a local int or policy ceiling, or the
+     caller's own scope meter. Initial is the account's charge before the
+     two initial conversion/ref events its entry admitted. *)
+  fun plan_placeholders_walk (g : graph) caller account initial nodes =
     let
-      (* Exactly the initial conversion/ref source events are admitted before
-         either exists. This is not a new semantic input/output cutoff. *)
-      val _ = if remaining_work >= 2 then () else
-        raise ERR "plan_placeholders" "remaining Work cannot create meter"
-      val ceiling = IntInf.fromInt remaining_work
-      val used = ref (2 : IntInf.int)
-      fun spend amount =
-        if amount < 0 orelse amount > ceiling - !used then
-          raise ERR "plan_placeholders" "original remaining Work exhausted"
-        else used := !used+amount
+      val spend = placeholder_spend account
       fun tick () = spend 1
       val _ = tick ()
       val original_nodes = !(#nodes g)
@@ -3846,8 +3891,7 @@ struct
       val scope_values = ref ([] : (scope * frame) list)
       fun int_value table key =
         let val _ = tick ()
-            val plan = R.lookup_int (table,key,ceiling - !used)
-            val _ = spend (#work (R.int_lookup_cost plan))
+            val plan = placeholder_lookup_int account (table,key)
             val _ = tick ()
         in R.int_lookup_value (table,plan) end
       fun previous scope pending =
@@ -3896,8 +3940,7 @@ struct
         let val _ = spend 3
             val table = !visited
             val key = node_id node
-            val query = R.lookup_int (table,key,ceiling - !used)
-            val _ = spend (#work (R.int_lookup_cost query))
+            val query = placeholder_lookup_int account (table,key)
             val _ = tick ()
             val values = case R.int_lookup_value (table,query) of
                 NONE => [] | SOME values => values
@@ -3908,8 +3951,7 @@ struct
       fun remember entry node =
         let val _ = spend 3
             val (table,key,values) = entry
-            val insertion = R.insert_int (table,key,ceiling - !used)
-            val _ = spend (#work (R.int_insertion_cost insertion))
+            val insertion = placeholder_insert_int account (table,key)
             (* Actual bucket cons and publication of the finished map;
                R's quote already retains its one-shot finish programme. *)
             val _ = spend 2
@@ -3939,8 +3981,7 @@ struct
             val _ = tick () val _ = tick () val _ = next_name := id+1
             val _ = tick () val staged = !staged_reserved
             val _ = tick ()
-            val plan = R.lookup_string (staged,name,ceiling - !used)
-            val _ = spend (#work (R.string_lookup_cost plan))
+            val plan = placeholder_lookup_string account (staged,name)
             val _ = tick ()
         in if R.string_lookup_value (staged,plan) then choose ()
            else name end
@@ -3971,9 +4012,8 @@ struct
                 val name = choose ()
                 val _ = tick () val staged = !staged_reserved
                 val _ = tick ()
-                val insertion = R.insert_string
-                  (staged,name,ceiling - !used)
-                val _ = spend (#work (R.string_insertion_cost insertion))
+                val insertion = placeholder_insert_string account
+                  (staged,name)
                 val _ = tick ()
                 val next = R.finish_string (staged,insertion)
                 val _ = tick () val _ = staged_reserved := next
@@ -4011,9 +4051,8 @@ struct
       fun reserve_reverse [] = tick ()
         | reserve_reverse (_::rest) = (spend 4;reserve_reverse rest)
       val _ = reserve_reverse (!rows)
-      val batch = R.insert_int_batch
-        (original_placeholders,!keys,ceiling - !used)
-      val _ = spend (#work (R.int_batch_cost batch))
+      val batch = placeholder_insert_int_batch account
+        (original_placeholders,!keys)
       (* The two immutable snapshot constructors and the phase reference
          are charged BEFORE construction. Both positive guard invocations
          share placeholder_guard; failure retirement is separately reserved. *)
@@ -4028,10 +4067,10 @@ struct
          next_name = !next_name}
       val phase = ref NamesPrepared
       val _ = tick () val _ = tick ()
-      val meter = CountGuard {ceiling = ceiling,used = used}
-      val before_guard = !used
-      val _ = placeholder_guard EitherState meter g caller snapshot phase
-      val positive_guard = !used-before_guard
+      val before_guard = placeholder_charged account
+      val _ = placeholder_guard EitherState (Charged account) g caller
+        snapshot phase
+      val positive_guard = placeholder_charged account-before_guard
       (* Mint's same prepared guard plus a possible refusal-retirement write.
          Future independent validation pays guard_work from SAME W. *)
       val guard_work = positive_guard+1
@@ -4045,8 +4084,18 @@ struct
     in PlaceholderPlan
       {snapshot = snapshot,rows = !rows,names = !names,
        bindings = !bindings,batch = batch,
-       work = !used,guard_work = guard_work,phase = phase,
+       work = placeholder_charged account-initial,
+       guard_work = guard_work,phase = phase,
        revision = #validation_changes g} end
+
+  fun plan_placeholders (g : graph) caller {nodes,remaining_work} =
+    (* Exactly the initial conversion/ref source events are admitted before
+       either exists. This is not a new semantic input/output cutoff. *)
+    if remaining_work >= 2 then
+      plan_placeholders_walk g caller (CountAccount
+        {ceiling = IntInf.fromInt remaining_work,used = ref (2 : IntInf.int)})
+        0 nodes
+    else raise ERR "plan_placeholders" "remaining Work cannot create meter"
 
   fun validate_placeholder_plan g caller
       (PlaceholderPlan {snapshot,phase,revision,...}) =
@@ -5465,251 +5514,11 @@ struct
       | NONE => exact_unfolded_nodes_with_policy g metric maximum node
 
   fun plan_placeholders_with_policy (g : graph) caller {nodes,remaining_work} =
-    let
-      (* Exactly the initial conversion/ref source events are admitted before
-         either exists. This is not a new semantic input/output cutoff. *)
-      val _ = if SmtReplayResourcePolicy.allows remaining_work 2 then () else
-        raise ERR "plan_placeholders" "remaining Work cannot create meter"
-      val ceiling = remaining_work
-      val used = ref (2 : IntInf.int)
-      fun spend amount =
-        if not (SmtReplayResourcePolicy.allows ceiling (!used+amount)) orelse
-            amount < 0 then
-          raise ERR "plan_placeholders" "original remaining Work exhausted"
-        else used := !used+amount
-      fun tick () = spend 1
-      val _ = tick ()
-      val original_nodes = !(#nodes g)
-      val _ = tick ()
-      val original_scopes = !(#scopes g)
-      val _ = tick ()
-      val original_reserved = !(#reserved g)
-      val _ = tick ()
-      val original_placeholders = !(#placeholders g)
-      val _ = tick ()
-      val first_name = !(#next_name g)
-      val _ = tick ()
-      val first_node = !(#next g)
-      val _ = tick ()
-      val first_scope = !(#next_scope g)
-      val _ = tick ()
-      val epoch = Type.type_epoch ()
-      val _ = tick ()
-      val symbols = Term.term_epoch ()
-      val _ = tick ()
-      val frames = ref ([] : (scope * bool ref) list)
-      val _ = tick ()
-      val scope_values = ref ([] : (scope * frame) list)
-      fun int_value table key =
-        let val _ = tick ()
-            val plan = R.lookup_int_with_policy
-              (table,key,SmtReplayResourcePolicy.remaining ceiling (!used))
-            val _ = spend (#work (R.int_lookup_cost plan))
-            val _ = tick ()
-        in R.int_lookup_value (table,plan) end
-      fun previous scope pending =
-        (tick ();case pending of [] => NONE
-         | (old,value)::rest =>
-             (tick ();if scope = old then (tick ();SOME value)
-              else previous scope rest))
-      fun scope_value (scope as Scope {owner,id}) =
-        (tick ();
-         if owner <> #owner g then
-           raise ERR "plan_placeholders" "foreign caller/frame"
-         else (tick ();case previous scope (!scope_values) of
-           SOME value => value
-         | NONE =>
-             let val value = case int_value original_scopes id of
-                     SOME value => value
-                   | NONE => raise ERR "plan_placeholders" "unknown frame"
-                 val _ = tick () val _ = tick () val _ = tick ()
-                 val _ = scope_values := (scope,value) :: !scope_values
-                 val _ = tick () val _ = tick () val _ = tick ()
-                 val _ = frames := (scope,#active value) :: !frames
-             in value end))
-      fun alive scope =
-        let val frame = scope_value scope val _ = tick ()
-            val _ = if !(#active frame) then () else
-              raise ERR "plan_placeholders" "retired frame"
-        in tick ();case #parent frame of NONE => () | SOME p => alive p end
-      fun visible scope required =
-        (tick ();if scope = required then true else
-         case #parent (scope_value scope) of NONE => false
-         | SOME parent => visible parent required)
-      val _ = alive caller
-      val _ = tick () val staged_reserved = ref original_reserved
-      val _ = tick () val next_name = ref first_name
-      val _ = tick () val rows = ref ([] : placeholder_row list)
-      val _ = tick () val names = ref ([] : (node * string) list)
-      val _ = tick ()
-      val bindings = ref ([] : (node * string * Type.hol_type) list)
-      val _ = tick () val keys = ref ([] : int list)
-      (* Local to this genuine policy plan and its original meter. Numeric
-         IDs select buckets; only complete graph-owned nodes establish
-         membership. There is no cross-plan cache or Work permission. *)
-      val _ = spend 2
-      val visited = ref (R.empty_int () : node list R.int_map)
-      fun visited_entry node =
-        let val _ = spend 3
-            val table = !visited
-            val key = node_id node
-            val query = R.lookup_int_with_policy
-              (table,key,SmtReplayResourcePolicy.remaining ceiling (!used))
-            val _ = spend (#work (R.int_lookup_cost query))
-            val _ = tick ()
-            val values = case R.int_lookup_value (table,query) of
-                NONE => [] | SOME values => values
-        in (table,key,values) end
-      fun visited_member node pending =
-        (tick ();case pending of [] => false | old::rest =>
-          (tick ();node = old orelse visited_member node rest))
-      fun remember entry node =
-        let val _ = spend 3
-            val (table,key,values) = entry
-            val insertion = R.insert_int_with_policy
-              (table,key,SmtReplayResourcePolicy.remaining ceiling (!used))
-            val _ = spend (#work (R.int_insertion_cost insertion))
-            (* Actual bucket cons and publication of the finished map;
-               R's quote already retains its one-shot finish programme. *)
-            val _ = spend 2
-            val next = R.finish_int (table,insertion,node::values)
-        in visited := next end
-      (* Decimal formatting has a fixed machine-int input. Borrowed source
-         events reserve each digit/cons plus concatenation bytes BEFORE the
-         primitive formatter/concatenator; internal primitive costs remain
-         outside this event model. No arbitrary name-length cutoff exists. *)
-      fun candidate id =
-        let
-          fun digits n = (tick ();if n < 10 then 1 else 1+digits (n div 10))
-          val _ = if id < 0 then
-            raise ERR "plan_placeholders" "negative name counter" else ()
-          val _ = case Int.maxInt of NONE => () | SOME maximum =>
-            if id < maximum then () else
-              raise ERR "plan_placeholders" "name counter cannot advance"
-          val n = digits id
-          val _ = spend (IntInf.fromInt n)
-          val decimal = Int.toString id
-          val _ = spend (IntInf.fromInt (String.size "__smt_replay_"))
-          val _ = spend (IntInf.fromInt n)
-        in "__smt_replay_" ^ decimal end
-      fun choose () =
-        let val _ = tick () val id = !next_name
-            val name = candidate id
-            val _ = tick () val _ = tick () val _ = next_name := id+1
-            val _ = tick () val staged = !staged_reserved
-            val _ = tick ()
-            val plan = R.lookup_string_with_policy
-              (staged,name,
-                   SmtReplayResourcePolicy.remaining ceiling (!used))
-            val _ = spend (#work (R.string_lookup_cost plan))
-            val _ = tick ()
-        in if R.string_lookup_value (staged,plan) then choose ()
-           else name end
-      fun one (node as Node {owner,id}) =
-        let
-          val _ = tick ()
-          val _ = if owner = #owner g then () else
-            raise ERR "plan_placeholders" "foreign node"
-          val fields = case int_value original_nodes id of SOME v => v
-            | NONE => raise ERR "plan_placeholders" "unknown node"
-          val _ = alive (#scope fields)
-          val _ = if visible caller (#scope fields) then () else
-            raise ERR "plan_placeholders" "node outside original caller"
-        in case int_value original_placeholders id of
-            SOME term =>
-              let val _ = tick () val name = #1 (Term.dest_var term)
-                  val _ = tick () val _ = tick ()
-                  val _ = tick () val _ = tick ()
-                  val _ = rows := CachedName (node,term) :: !rows
-                  val _ = tick () val _ = tick () val _ = tick ()
-                  val _ = names := (node,name) :: !names
-                  (* Type read, tuple, cons, write before allocation. *)
-                  val _ = spend 4
-                  val _ = bindings := (node,name,#ty fields) :: !bindings
-              in () end
-          | NONE =>
-              let
-                val name = choose ()
-                val _ = tick () val staged = !staged_reserved
-                val _ = tick ()
-                val insertion = R.insert_string_with_policy
-                  (staged,name,
-                   SmtReplayResourcePolicy.remaining ceiling (!used))
-                val _ = spend (#work (R.string_insertion_cost insertion))
-                val _ = tick ()
-                val next = R.finish_string (staged,insertion)
-                val _ = tick () val _ = staged_reserved := next
-                val _ = tick () val _ = tick ()
-                val _ = tick () val _ = tick ()
-                val _ = rows := NewName (node,name,#ty fields) :: !rows
-                val _ = tick () val _ = tick () val _ = tick ()
-                val _ = names := (node,name) :: !names
-                val _ = spend 4
-                val _ = bindings := (node,name,#ty fields) :: !bindings
-                val _ = tick () val _ = tick () val _ = keys := id :: !keys
-              in () end
-        end
-      fun walk pending =
-        (tick ();case pending of [] => () | node::rest =>
-          let val entry = visited_entry node
-              val _ = spend 3
-              val (_,_,values) = entry
-          in if visited_member node values then
-               raise ERR "plan_placeholders" "duplicate naming node"
-             else (one node;remember entry node;tick ();walk rest)
-          end)
-      val _ = walk nodes
-      (* Actual private row grammar, including cached skip and empty tail.
-         One event precedes each planning inspection; separate events retain
-         the future branch, variable constructor and output-list cons. *)
-      fun reserve_payloads pending =
-        (tick ();tick ();case pending of [] => spend 4
-         | CachedName _::rest =>
-             (spend 5;reserve_payloads rest)
-         | NewName _::rest =>
-             (spend 8;reserve_payloads rest))
-      val _ = reserve_payloads (!rows)
-      (* Exact output reversal: tail visit, cons and branch for each row. *)
-      fun reserve_reverse [] = tick ()
-        | reserve_reverse (_::rest) = (spend 4;reserve_reverse rest)
-      val _ = reserve_reverse (!rows)
-      val batch = R.insert_int_batch_with_policy
-        (original_placeholders,!keys,
-         SmtReplayResourcePolicy.remaining ceiling (!used))
-      val _ = spend (#work (R.int_batch_cost batch))
-      (* The two immutable snapshot constructors and the phase reference
-         are charged BEFORE construction. Both positive guard invocations
-         share placeholder_guard; failure retirement is separately reserved. *)
-      val _ = tick () val _ = tick () val _ = tick ()
-      val snapshot = PlaceholderSnapshot
-        {owner = #owner g,caller = caller,nodes = original_nodes,
-         scopes = original_scopes,reserved = original_reserved,
-         placeholders = original_placeholders,first_name = first_name,
-         first_node = first_node,first_scope = first_scope,
-         epoch = epoch,symbols = symbols,frames = !frames,
-         next_reserved = !staged_reserved,
-         next_name = !next_name}
-      val phase = ref NamesPrepared
-      val _ = tick () val _ = tick ()
-      val meter = PolicyCountGuard {ceiling = ceiling,used = used}
-      val before_guard = !used
-      val _ = placeholder_guard EitherState meter g caller snapshot phase
-      val positive_guard = !used-before_guard
-      (* Mint's same prepared guard plus a possible refusal-retirement write.
-         Future independent validation pays guard_work from SAME W. *)
-      val guard_work = positive_guard+1
-      val _ = spend guard_work
-      (* Future phase retirement, three graph writes, minted wrapper/write;
-         final immutable plan record and wrapper. No future source search. *)
-      val _ = tick () val _ = tick () val _ = tick () val _ = tick ()
-      val _ = tick () val _ = tick () val _ = tick () val _ = tick ()
-      (* Additional retained field and its read. *)
-      val _ = spend 2
-    in PlaceholderPlan
-      {snapshot = snapshot,rows = !rows,names = !names,
-       bindings = !bindings,batch = batch,
-       work = !used,guard_work = guard_work,phase = phase,
-       revision = #validation_changes g} end
+    if SmtReplayResourcePolicy.allows remaining_work 2 then
+      plan_placeholders_walk g caller (PolicyAccount
+        {ceiling = remaining_work,used = ref (2 : IntInf.int)}) 0 nodes
+    else raise ERR "plan_placeholders" "remaining Work cannot create meter"
+
 
   (* SAME-meter counterpart of the genuine placeholder programme. The
      ordinary planners above retain their exact standalone accounting and
@@ -5721,208 +5530,8 @@ struct
       val initial = R.scope_meter_charged_policy meter
       val _ = R.scope_meter_charge meter 2 handle R.Limit =>
         raise ERR "plan_placeholders" "remaining Work cannot create meter"
-      fun spend amount = R.scope_meter_charge meter amount handle R.Limit =>
-        raise ERR "plan_placeholders" "original remaining Work exhausted"
-      fun tick () = spend 1
-      val _ = tick ()
-      val original_nodes = !(#nodes g)
-      val _ = tick ()
-      val original_scopes = !(#scopes g)
-      val _ = tick ()
-      val original_reserved = !(#reserved g)
-      val _ = tick ()
-      val original_placeholders = !(#placeholders g)
-      val _ = tick ()
-      val first_name = !(#next_name g)
-      val _ = tick ()
-      val first_node = !(#next g)
-      val _ = tick ()
-      val first_scope = !(#next_scope g)
-      val _ = tick ()
-      val epoch = Type.type_epoch ()
-      val _ = tick ()
-      val symbols = Term.term_epoch ()
-      val _ = tick ()
-      val frames = ref ([] : (scope * bool ref) list)
-      val _ = tick ()
-      val scope_values = ref ([] : (scope * frame) list)
-      fun int_value table key =
-        let val _ = tick ()
-            val plan = R.scope_plan_lookup_int meter (table,key)
-            val _ = tick ()
-        in R.int_lookup_value (table,plan) end
-      fun previous scope pending =
-        (tick ();case pending of [] => NONE
-         | (old,value)::rest =>
-             (tick ();if scope = old then (tick ();SOME value)
-              else previous scope rest))
-      fun scope_value (scope as Scope {owner,id}) =
-        (tick ();
-         if owner <> #owner g then
-           raise ERR "plan_placeholders" "foreign caller/frame"
-         else (tick ();case previous scope (!scope_values) of
-           SOME value => value
-         | NONE =>
-             let val value = case int_value original_scopes id of
-                     SOME value => value
-                   | NONE => raise ERR "plan_placeholders" "unknown frame"
-                 val _ = tick () val _ = tick () val _ = tick ()
-                 val _ = scope_values := (scope,value) :: !scope_values
-                 val _ = tick () val _ = tick () val _ = tick ()
-                 val _ = frames := (scope,#active value) :: !frames
-             in value end))
-      fun alive scope =
-        let val frame = scope_value scope val _ = tick ()
-            val _ = if !(#active frame) then () else
-              raise ERR "plan_placeholders" "retired frame"
-        in tick ();case #parent frame of NONE => () | SOME p => alive p end
-      fun visible scope required =
-        (tick ();if scope = required then true else
-         case #parent (scope_value scope) of NONE => false
-         | SOME parent => visible parent required)
-      val _ = alive caller
-      val _ = tick () val staged_reserved = ref original_reserved
-      val _ = tick () val next_name = ref first_name
-      val _ = tick () val rows = ref ([] : placeholder_row list)
-      val _ = tick () val names = ref ([] : (node * string) list)
-      val _ = tick ()
-      val bindings = ref ([] : (node * string * Type.hol_type) list)
-      val _ = tick () val keys = ref ([] : int list)
-      val _ = spend 2
-      val visited = ref (R.empty_int () : node list R.int_map)
-      fun visited_entry node =
-        let val _ = spend 3
-            val table = !visited
-            val key = node_id node
-            val query = R.scope_plan_lookup_int meter (table,key)
-            val _ = tick ()
-            val values = case R.int_lookup_value (table,query) of
-                NONE => [] | SOME values => values
-        in (table,key,values) end
-      fun visited_member node pending =
-        (tick ();case pending of [] => false | old::rest =>
-          (tick ();node = old orelse visited_member node rest))
-      fun remember entry node =
-        let val _ = spend 3
-            val (table,key,values) = entry
-            val insertion = R.scope_plan_insert_int meter (table,key)
-            val _ = spend 2
-            val next = R.finish_int (table,insertion,node::values)
-        in visited := next end
-      fun candidate id =
-        let
-          fun digits n = (tick ();if n < 10 then 1 else 1+digits (n div 10))
-          val _ = if id < 0 then
-            raise ERR "plan_placeholders" "negative name counter" else ()
-          val _ = case Int.maxInt of NONE => () | SOME maximum =>
-            if id < maximum then () else
-              raise ERR "plan_placeholders" "name counter cannot advance"
-          val n = digits id
-          val _ = spend (IntInf.fromInt n)
-          val decimal = Int.toString id
-          val _ = spend (IntInf.fromInt (String.size "__smt_replay_"))
-          val _ = spend (IntInf.fromInt n)
-        in "__smt_replay_" ^ decimal end
-      fun choose () =
-        let val _ = tick () val id = !next_name
-            val name = candidate id
-            val _ = tick () val _ = tick () val _ = next_name := id+1
-            val _ = tick () val staged = !staged_reserved
-            val _ = tick ()
-            val plan = R.scope_plan_lookup_string meter (staged,name)
-            val _ = tick ()
-        in if R.string_lookup_value (staged,plan) then choose ()
-           else name end
-      fun one (node as Node {owner,id}) =
-        let
-          val _ = tick ()
-          val _ = if owner = #owner g then () else
-            raise ERR "plan_placeholders" "foreign node"
-          val fields = case int_value original_nodes id of SOME v => v
-            | NONE => raise ERR "plan_placeholders" "unknown node"
-          val _ = alive (#scope fields)
-          val _ = if visible caller (#scope fields) then () else
-            raise ERR "plan_placeholders" "node outside original caller"
-        in case int_value original_placeholders id of
-            SOME term =>
-              let val _ = tick () val name = #1 (Term.dest_var term)
-                  val _ = tick () val _ = tick ()
-                  val _ = tick () val _ = tick ()
-                  val _ = rows := CachedName (node,term) :: !rows
-                  val _ = tick () val _ = tick () val _ = tick ()
-                  val _ = names := (node,name) :: !names
-                  val _ = spend 4
-                  val _ = bindings := (node,name,#ty fields) :: !bindings
-              in () end
-          | NONE =>
-              let
-                val name = choose ()
-                val _ = tick () val staged = !staged_reserved
-                val _ = tick ()
-                val insertion = R.scope_plan_insert_string meter
-                  (staged,name)
-                val _ = tick ()
-                val next = R.finish_string (staged,insertion)
-                val _ = tick () val _ = staged_reserved := next
-                val _ = tick () val _ = tick ()
-                val _ = tick () val _ = tick ()
-                val _ = rows := NewName (node,name,#ty fields) :: !rows
-                val _ = tick () val _ = tick () val _ = tick ()
-                val _ = names := (node,name) :: !names
-                val _ = spend 4
-                val _ = bindings := (node,name,#ty fields) :: !bindings
-                val _ = tick () val _ = tick () val _ = keys := id :: !keys
-              in () end
-        end
-      fun walk pending =
-        (tick ();case pending of [] => () | node::rest =>
-          let val entry = visited_entry node
-              val _ = spend 3
-              val (_,_,values) = entry
-          in if visited_member node values then
-               raise ERR "plan_placeholders" "duplicate naming node"
-             else (one node;remember entry node;tick ();walk rest)
-          end)
-      val _ = walk nodes
-      fun reserve_payloads pending =
-        (tick ();tick ();case pending of [] => spend 4
-         | CachedName _::rest =>
-             (spend 5;reserve_payloads rest)
-         | NewName _::rest =>
-             (spend 8;reserve_payloads rest))
-      val _ = reserve_payloads (!rows)
-      fun reserve_reverse [] = tick ()
-        | reserve_reverse (_::rest) = (spend 4;reserve_reverse rest)
-      val _ = reserve_reverse (!rows)
-      val batch = R.scope_plan_insert_int_batch meter
-        (original_placeholders,!keys)
-      val _ = tick () val _ = tick () val _ = tick ()
-      val snapshot = PlaceholderSnapshot
-        {owner = #owner g,caller = caller,nodes = original_nodes,
-         scopes = original_scopes,reserved = original_reserved,
-         placeholders = original_placeholders,first_name = first_name,
-         first_node = first_node,first_scope = first_scope,
-         epoch = epoch,symbols = symbols,frames = !frames,
-         next_reserved = !staged_reserved,
-         next_name = !next_name}
-      val phase = ref NamesPrepared
-      val _ = tick () val _ = tick ()
-      val guard_meter = SameMeterGuard meter
-      val before_guard = R.scope_meter_charged_policy meter
-      val _ = placeholder_guard EitherState guard_meter g caller
-        snapshot phase
-      val positive_guard = R.scope_meter_charged_policy meter-before_guard
-      val guard_work = positive_guard+1
-      val _ = spend guard_work
-      val _ = tick () val _ = tick () val _ = tick () val _ = tick ()
-      val _ = tick () val _ = tick () val _ = tick () val _ = tick ()
-      val _ = spend 2
-    in PlaceholderPlan
-      {snapshot = snapshot,rows = !rows,names = !names,
-       bindings = !bindings,batch = batch,
-       work = R.scope_meter_charged_policy meter-initial,
-       guard_work = guard_work,phase = phase,
-       revision = #validation_changes g} end
+    in plan_placeholders_walk g caller (MeterAccount meter) initial nodes end
+
 
   (* Only authentic policy discovery profiles can fill an opaque leaf.
      The private selection closure never accepts a caller scalar/guard. *)
