@@ -409,10 +409,9 @@ local
           fun make ()=case !actual of SOME theorem=>theorem
             | NONE=>let val theorem=worker source
                     in actual:=SOME theorem;theorem end
-        in bit_law source make
-          handle Feedback.HOL_ERR detail=>
-            if SmtResource.is_resource_gate detail then
-              raise Feedback.HOL_ERR detail else make ()
+        in SmtResource.or_else
+          (fn () => bit_law source make)
+          (fn () => make ())
         end
       val bitblast=SmtBitBlastProve.new_context_with_bit_conversion cached_bit
     in {normalizer=normalizer,sat=sat,projections=projections,
@@ -1635,12 +1634,9 @@ local
   end
 
   fun nnf_prove (thms, t) =
-    profile "nnf[structural]" nnf_structural_prove (thms, t)
-    handle Feedback.HOL_ERR holerr =>
-      if SmtResource.is_resource_gate holerr then
-        raise Feedback.HOL_ERR holerr
-      else
-        profile "nnf[metis-fallback]" metis_prove (thms, t)
+    SmtResource.or_else
+      (fn () => profile "nnf[structural]" nnf_structural_prove (thms, t))
+      (fn () => profile "nnf[metis-fallback]" metis_prove (thms, t))
 
   val INT_LE_RMUL_EXP = HolSmtTheory.INT_LE_RMUL_EXP
   val INT_LE_LMUL_EXP = HolSmtTheory.INT_LE_LMUL_EXP
@@ -4111,19 +4107,18 @@ local
                 (fn () => (trace_stage "skeleton";
                   skeleton_prove ())) ()
               fun proforma () =
-                (trace_stage "proforma";
-                 Library.require_fastpath "Z3 def-axiom proforma" target
-                  (profile "def-axiom(1c)(proforma)"
-                    (Z3_ProformaThms.prove
-                      Z3_ProformaThms.def_axiom_thms)) target)
-                handle Feedback.HOL_ERR holerr =>
-                  if SmtResource.is_resource_gate holerr then
-                    raise Feedback.HOL_ERR holerr
-                  else
+                SmtResource.or_else
+                  (fn () =>
+                    (trace_stage "proforma";
+                     Library.require_fastpath "Z3 def-axiom proforma" target
+                      (profile "def-axiom(1c)(proforma)"
+                        (Z3_ProformaThms.prove
+                          Z3_ProformaThms.def_axiom_thms)) target))
+                  (fn () =>
                     (profile "def-axiom(1c2)(clause-frontier)"
                       (def_axiom_clause_frontier state
                         max_def_axiom_boolean_spine_nodes) target
-                     handle Feedback.HOL_ERR _ => skeleton ())
+                     handle Feedback.HOL_ERR _ => skeleton ()))
               fun direct () =
                 let
                   fun prove_schema profile_name schema theorem_prove =
@@ -4303,17 +4298,16 @@ local
           val _ = trace_guard "instantiated"
         in instantiated end
       val (left, right) = boolSyntax.dest_disj target
-      val theorem = prove left right
-        handle Feedback.HOL_ERR holerr =>
-          if SmtResource.is_resource_gate holerr then
-            raise Feedback.HOL_ERR holerr
-          else let
+      val theorem = SmtResource.or_else
+        (fn () => prove left right)
+        (fn () =>
+          let
             val symmetric = prove right left
             val schema = Drule.SPEC_ALL boolTheory.DISJ_COMM
             val instance = Drule.INST_TY_TERM
               (Term.match_term (boolSyntax.lhs (Thm.concl schema))
                 (boolSyntax.mk_disj (right,left))) schema
-          in Thm.EQ_MP instance symmetric end
+          in Thm.EQ_MP instance symmetric end)
       val _ = order (Thm.concl theorem,target)=EQUAL orelse
         raise ERR "def_axiom_guarded_conditional"
           "schema endpoint mismatch"
@@ -4671,10 +4665,9 @@ local
             in find (boolSyntax.strip_conj conjunct) end
           fun branch []=(decline (); [])
             | branch (conjunct::rest)=
-                List.map (calculated conjunct) fields
-                handle Feedback.HOL_ERR detail=>
-                  if SmtResource.is_resource_gate detail then
-                    raise Feedback.HOL_ERR detail else branch rest
+                SmtResource.or_else
+                  (fn () => List.map (calculated conjunct) fields)
+                  (fn () => branch rest)
           val calculated_fields=branch (boolSyntax.strip_disj encoded)
           fun id term=case #node_id context term of SOME id=>id
             | NONE=>(decline (); 0)
@@ -4792,11 +4785,10 @@ local
             (SmtResource.profile_phase "z3/fp-packed/atom"
               (if direct_atom then
                  if value_equality then
-                   (fn term => Drule.EQT_INTRO (rewrite_fp_pack_roundtrip term)
-                     handle Feedback.HOL_ERR detail =>
-                       if SmtResource.is_resource_gate detail then
-                         raise Feedback.HOL_ERR detail
-                       else known_atom term)
+                   (fn term => SmtResource.or_else
+                      (fn () =>
+                        Drule.EQT_INTRO (rewrite_fp_pack_roundtrip term))
+                      (fn () => known_atom term))
                  else known_atom
                else SmtFpGraph.lower_atom)) atom
           val word_theorem =
@@ -5253,11 +5245,9 @@ local
                       | NONE => compute term
                     and compute term =
                       let
-                        fun step term = Conv.QCONV scalar term
-                          handle Feedback.HOL_ERR holerr =>
-                            if SmtResource.is_resource_gate holerr then
-                              raise Feedback.HOL_ERR holerr
-                            else Thm.REFL term
+                        fun step term = SmtResource.or_else
+                          (fn () => Conv.QCONV scalar term)
+                          (fn () => Thm.REFL term)
                         val initial=step term
                         val after=boolSyntax.rhs (Thm.concl initial)
                         fun descend () =
@@ -5502,16 +5492,15 @@ local
   fun z3_def_axiom (state : state, t) =
     (* Prove the small gate clause before inspecting its potentially large
        Boolean inputs.  Only the bounded template is specialized. *)
-    (state, profile "def-axiom(0)(clause-frontier)"
-      (SmtResource.with_resource_step_time "Skeleton" "z3-def-axiom"
-        (fn target =>
-          (ignore (admitted_def_axiom_measure (fn _ => ()) target);
-           def_axiom_clause_frontier state
-             max_def_axiom_boolean_spine_nodes target))) t)
-    handle Feedback.HOL_ERR holerr =>
-      if SmtResource.is_resource_gate holerr then
-        raise Feedback.HOL_ERR holerr
-      else
+    SmtResource.or_else
+      (fn () =>
+        (state, profile "def-axiom(0)(clause-frontier)"
+          (SmtResource.with_resource_step_time "Skeleton" "z3-def-axiom"
+            (fn target =>
+              (ignore (admitted_def_axiom_measure (fn _ => ()) target);
+               def_axiom_clause_frontier state
+                 max_def_axiom_boolean_spine_nodes target))) t))
+      (fn () =>
     (* Apply bounded structural definition-clause rules before abstracting
        arbitrary theory atoms into the generic checked-SAT skeleton.  All
        routes share the same admission and step-time gate. *)
@@ -5522,35 +5511,30 @@ local
       if SmtResource.is_resource_gate holerr then
         raise Feedback.HOL_ERR holerr
       else
-    (state, profile "def-axiom(1e)(guarded-conditional)"
-      (SmtResource.with_resource_step_time "Skeleton" "z3-def-axiom"
-        def_axiom_guarded_conditional) t)
-    handle Feedback.HOL_ERR holerr =>
-      if SmtResource.is_resource_gate holerr then
-        raise Feedback.HOL_ERR holerr
-      else
-    (state, def_axiom_word_circuit_route t)
-    handle Feedback.HOL_ERR holerr =>
-      if SmtResource.is_resource_gate holerr then
-        raise Feedback.HOL_ERR holerr
-      else
+    SmtResource.or_else
+      (fn () =>
+        (state, profile "def-axiom(1e)(guarded-conditional)"
+          (SmtResource.with_resource_step_time "Skeleton" "z3-def-axiom"
+            def_axiom_guarded_conditional) t))
+      (fn () =>
+    SmtResource.or_else
+      (fn () => (state, def_axiom_word_circuit_route t))
+      (fn () =>
     (* Array-encoded Set literals appear in Z3's Tseitin clauses as a
        select of the parsed EMPTY/UNIV predicate.  Normalize those recorded
        const-array forms before the propositional def-axiom cases below. *)
-    (state, SmtArrayProve.set_simp_prove t)
-    handle Feedback.HOL_ERR holerr =>
-      if SmtResource.is_resource_gate holerr then
-        raise Feedback.HOL_ERR holerr
-      else
+    SmtResource.or_else
+      (fn () => (state, SmtArrayProve.set_simp_prove t))
+      (fn () =>
     (* or (or ... p ...) (not p) *)
     (* or (or ... (not p) ...) p *)
-    (state, Library.gen_excluded_middle t)
-    handle Feedback.HOL_ERR holerr =>
-      if SmtResource.is_resource_gate holerr then
-        raise Feedback.HOL_ERR holerr
-      else
+    SmtResource.or_else
+      (fn () => (state, Library.gen_excluded_middle t))
+      (fn () =>
     (* ~ALL_DISTINCT [x; y; z] \/ x <> y /\ x <> z /\ y <> z *)
     (* ~(ALL_DISTINCT [x; y; z] /\ T) \/ x <> y /\ x <> z /\ y <> z *)
+    SmtResource.or_else
+      (fn () =>
     let
       val (l, r) = boolSyntax.dest_disj t
       val all_distinct = boolSyntax.dest_neg l
@@ -5567,12 +5551,8 @@ local
         (boolSyntax.rhs (Thm.concl all_distinct_th), r))
     in
       (state, Drule.IMP_ELIM (Lib.fst (Thm.EQ_IMP_RULE l_eq_r)))
-    end
-    handle Feedback.HOL_ERR holerr =>
-      if SmtResource.is_resource_gate holerr then
-        raise Feedback.HOL_ERR holerr
-      else
-      (state, def_axiom_case_split t)
+    end)
+      (fn () => (state, def_axiom_case_split t)))))))
 
   (* Unused binders can occur beneath retained, used binders. *)
   fun z3_elim_unused (state, t) =
@@ -6986,11 +6966,9 @@ local
       val oriented = equalities
       val reversed = List.map Thm.SYM equalities
     in
-      attempt oriented
-      handle Feedback.HOL_ERR holerr =>
-        if SmtResource.is_resource_gate holerr then
-          raise Feedback.HOL_ERR holerr
-        else attempt reversed
+      SmtResource.or_else
+        (fn () => attempt oriented)
+        (fn () => attempt reversed)
     end
 
     fun z3_rewrite (state, t) =
@@ -7271,11 +7249,9 @@ local
                         "rewrite requires floating-point theory semantics"
                 end)) target
       in
-      ((state, bounded_propositional t)
-        handle Feedback.HOL_ERR holerr =>
-          if SmtResource.is_resource_gate holerr then
-            raise Feedback.HOL_ERR holerr
-          else
+      (SmtResource.or_else
+         (fn () => (state, bounded_propositional t))
+         (fn () =>
        ((* E1(c): exact FP theorem reuse is a redundant performance cache. *)
         (state, rewrite_profile "cached-checked-theorems"
            "rewrite(3)(cache-fp)"
@@ -7300,13 +7276,15 @@ local
             val state = state_define (state_cache_thm state thm) definitions
           in
             (state, thm)
-          end))
+          end)))
       end
     else
       (* FP has first refusal.  Z3's bag encoding then gets the count-array
          ladder before generic proformas; its [(_ map +)] terms parse to
          pointwise Int lambdas.  Native Seq follows with its bounded list
          ladder. *)
+      SmtResource.or_else
+        (fn () =>
       (let
          (* E1(b): the general Bag prover fails loudly outside its family. *)
          val thm = rewrite_profile "bags" "rewrite(5)(bag)"
@@ -7319,18 +7297,18 @@ local
          if SmtResource.is_resource_gate holerr then
            raise BAG_REWRITE_ERROR (Feedback.HOL_ERR holerr)
          else
-         (let
-            (* E1(b): the general Seq prover has an explicit family gate. *)
-            val thm = rewrite_profile "sequences" "rewrite(6)(seq)"
-              (SmtSeqProve.seq_prove_with_admission
-                (#datatype_admit state)) t
-          in
-            (state_cache_thm state thm, thm)
-          end
-          handle Feedback.HOL_ERR holerr =>
-            if SmtResource.is_resource_gate holerr then
-              raise Feedback.HOL_ERR holerr
-            else
+         (SmtResource.or_else
+            (fn () =>
+              let
+                (* E1(b): the general Seq prover has an explicit family
+                   gate. *)
+                val thm = rewrite_profile "sequences" "rewrite(6)(seq)"
+                  (SmtSeqProve.seq_prove_with_admission
+                    (#datatype_admit state)) t
+              in
+                (state_cache_thm state thm, thm)
+              end)
+            (fn () =>
               (* E1(a): canonicalization decides polynomial normal forms. *)
               (state, rewrite_profile "polynomial-normal-form"
                 "rewrite(7)(poly-normal-form)"
@@ -7376,13 +7354,9 @@ local
                   SmtArrayProve.array_prove t
               in
                 (state_cache_thm state thm, thm)
-              end))
-
-    handle Feedback.HOL_ERR holerr =>
-    if SmtResource.is_resource_gate holerr then
-      raise Feedback.HOL_ERR holerr
-    else
-      (* E1(c): theorem reuse is a redundant performance cache. *)
+              end))))
+        (fn () =>
+    (* E1(c): theorem reuse is a redundant performance cache. *)
       (state, rewrite_profile "cached-checked-theorems"
         "rewrite(11)(cache)"
         (fn target =>
@@ -7497,19 +7471,20 @@ local
          HOLset.listItems (#definition_hyps state)
        (* E1(a): checked definitions reduce this fragment to BV blasting. *)
        val thm =
-         (rewrite_profile "floating-point/bit-vectors"
-            "rewrite(15)(fp-packed-bits)"
-            (SmtFpProve.definition_bitblast_prove_with
-              (if has_concat_bit then concat_word_prove (#word_context state)
-               else SmtWordGraph.prove_in (#word_context state)) definitions) t
-          handle Feedback.HOL_ERR holerr =>
-            if SmtResource.is_resource_gate holerr then
-              raise Feedback.HOL_ERR holerr
-            else
+         (SmtResource.or_else
+            (fn () =>
+              rewrite_profile "floating-point/bit-vectors"
+                "rewrite(15)(fp-packed-bits)"
+                (SmtFpProve.definition_bitblast_prove_with
+                  (if has_concat_bit then
+                     concat_word_prove (#word_context state)
+                   else SmtWordGraph.prove_in (#word_context state))
+                  definitions) t)
+            (fn () =>
               rewrite_profile "bit-vectors"
                 "rewrite(15a)(conditional-BBLAST)"
                 (bounded_conditional_word_prove "BitVector"
-                  "z3-rewrite-conditional-fp-word") t)
+                  "z3-rewrite-conditional-fp-word") t))
        val state = state_define (state_cache_thm state thm) (Thm.hyp thm)
      in
        (state, thm)
@@ -7726,12 +7701,11 @@ local
            (HOLset.listItems assertions) t
        val theorem = rewrite_profile "asserted-equality-substitution"
          "rewrite(25c)(asserted-equality-substitution)"
-         (fn () => substitute (#asserted_hyps state)
-            handle Feedback.HOL_ERR holerr =>
-              if SmtResource.is_resource_gate holerr then
-                raise Feedback.HOL_ERR holerr
-              else substitute (HOLset.union (#asserted_hyps state,
-                #allowed_asserted_hyps state))) ()
+         (fn () => SmtResource.or_else
+            (fn () => substitute (#asserted_hyps state))
+            (fn () =>
+              substitute (HOLset.union (#asserted_hyps state,
+              #allowed_asserted_hyps state)))) ()
      in
        (state_cache_thm state theorem, theorem)
      end
@@ -7752,7 +7726,7 @@ local
 
     profile "rewrite(26)(unsupported)"
       (fn target =>
-        raise unsupported_rewrite (#z3_version state) (!attempts) target) t
+        raise unsupported_rewrite (#z3_version state) (!attempts) target) t)
   end
   handle FP_REWRITE_ERROR error => raise error
        | BAG_REWRITE_ERROR error => raise error
@@ -7831,11 +7805,9 @@ local
            | SmtFpGraph.Declined _ => NONE of
      SOME theorem => (state, theorem)
    | NONE =>
-  (case SOME (rewrite_fp_sub_boolean_normal_form target)
-      handle Feedback.HOL_ERR holerr =>
-        if SmtResource.is_resource_gate holerr then
-          raise Feedback.HOL_ERR holerr
-        else NONE of
+  (case SmtResource.or_else
+     (fn () => SOME (rewrite_fp_sub_boolean_normal_form target))
+     (fn () => NONE) of
      SOME theorem => (state, theorem)
    | NONE =>
   (case rewrite_pure_boolean_schema state target of
@@ -8625,13 +8597,13 @@ local
 
   fun bv_th_lemma_prove target =
     (require_bv_family "bv-th-lemma" target;
-     bv_resource_prove_after_admission
-       "bv-th-lemma" bv_concat_schema_prove target
-     handle Feedback.HOL_ERR holerr =>
-       if SmtResource.is_resource_gate holerr then
-         raise Feedback.HOL_ERR holerr
-       else bv_resource_prove_after_admission
-         "bv-th-lemma" bv_th_lemma_prove_raw target)
+     SmtResource.or_else
+       (fn () =>
+         bv_resource_prove_after_admission
+           "bv-th-lemma" bv_concat_schema_prove target)
+       (fn () =>
+         bv_resource_prove_after_admission
+         "bv-th-lemma" bv_th_lemma_prove_raw target))
 
   fun bv_th_lemma_basic_branch prove decline fallback target =
     if has_word_atom target then
@@ -8662,11 +8634,9 @@ local
         SmtStringProve.char_word_expansion_domain t
       val normalization =
         if is_character_arithmetic then
-          SmtStringProve.compact_char_word_core t
-          handle Feedback.HOL_ERR holerr =>
-            if SmtResource.is_resource_gate holerr then
-              raise Feedback.HOL_ERR holerr
-            else Thm.REFL t
+          SmtResource.or_else
+            (fn () => SmtStringProve.compact_char_word_core t)
+            (fn () => Thm.REFL t)
         else Thm.REFL t
       val normalized = boolSyntax.rhs (Thm.concl normalization)
         handle Feedback.HOL_ERR _ => raise ERR "z3_th_lemma_arith"
@@ -9002,28 +8972,27 @@ local
         else if List.null
           (HolKernel.find_terms boolSyntax.is_cond normalized)
         then
-          (profile "th_lemma[arith](contextual-char)"
-             (bounded_char_arith "z3-contextual-char"
-               contextual_arith_prove) normalized
-           handle Feedback.HOL_ERR holerr =>
-             if SmtResource.is_resource_gate holerr then
-               raise Feedback.HOL_ERR holerr
-             else generic_normalized ())
+          (SmtResource.or_else
+             (fn () =>
+               profile "th_lemma[arith](contextual-char)"
+                 (bounded_char_arith "z3-contextual-char"
+                   contextual_arith_prove) normalized)
+             (fn () => generic_normalized ()))
         else
-          (profile "th_lemma[arith](conditional-endpoint)"
-             (bounded_char_arith "z3-char-conditional-endpoint"
-               conditional_endpoint_prove) normalized
-           handle Feedback.HOL_ERR holerr =>
-             if SmtResource.is_resource_gate holerr then
-               raise Feedback.HOL_ERR holerr
-             else if is_weighted_clause then
-               (* The weighted proof owns closed-threshold contradiction
-                  clauses.  Letting a rejected member enter generic
-                  arithmetic repeats broad proof search and can hide its
-                  exact shape. *)
-               profile "th_lemma[arith](char-conditionals)"
-                 weighted_char_arith normalized
-             else generic_normalized ())
+          (SmtResource.or_else
+             (fn () =>
+               profile "th_lemma[arith](conditional-endpoint)"
+                 (bounded_char_arith "z3-char-conditional-endpoint"
+                   conditional_endpoint_prove) normalized)
+             (fn () =>
+               if is_weighted_clause then
+                 (* The weighted proof owns closed-threshold contradiction
+                    clauses.  Letting a rejected member enter generic
+                    arithmetic repeats broad proof search and can hide its
+                    exact shape. *)
+                 profile "th_lemma[arith](char-conditionals)"
+                   weighted_char_arith normalized
+               else generic_normalized ()))
       val thm = Thm.EQ_MP (Thm.SYM normalization) normalized_thm
         handle Feedback.HOL_ERR _ => raise ERR "z3_th_lemma_arith"
           ("failed to transport normalized theorem: normalization=" ^
@@ -9036,24 +9005,24 @@ local
 
   val z3_th_lemma_array_generic =
     th_lemma_wrapper D1PerformanceCache "array" (fn (state, t) =>
-    (let
-       (* E1(b): the budgeted array procedure covers selected beta, update,
-          symbolic-index and extensional shapes and fails loudly outside
-          them or at its D4 boundary. *)
-       val thm = profile "th_lemma[array](3)(array_prove)"
-         SmtArrayProve.array_prove t
-     in
-       (* cache 'thm' *)
-       (state_cache_thm state thm, thm)
-     end
-     handle Feedback.HOL_ERR holerr =>
-      if SmtResource.is_resource_gate holerr then
-        raise Feedback.HOL_ERR holerr
-      else
-        raise ERR "z3_th_lemma_array"
-          ("unsupported th-lemma shape: theory=array; checked replay is only " ^
-           "implemented for function-update select/store/extensionality " ^
-           "lemmas; conclusion=" ^ Library.term_to_string t)))
+    (SmtResource.or_else
+       (fn () =>
+         let
+           (* E1(b): the budgeted array procedure covers selected beta, update,
+              symbolic-index and extensional shapes and fails loudly outside
+              them or at its D4 boundary. *)
+           val thm = profile "th_lemma[array](3)(array_prove)"
+             SmtArrayProve.array_prove t
+         in
+           (* cache 'thm' *)
+           (state_cache_thm state thm, thm)
+         end)
+       (fn () =>
+         raise ERR "z3_th_lemma_array"
+           ("unsupported th-lemma shape: theory=array; checked replay is " ^
+            "only implemented for function-update " ^
+            "select/store/extensionality " ^
+            "lemmas; conclusion=" ^ Library.term_to_string t))))
 
   fun th_lemma_target (_, thms, t) =
     boolSyntax.list_mk_imp (List.map Thm.concl thms, t)
@@ -9067,16 +9036,15 @@ local
         else
           z3_th_lemma_arith_generic args
       fun bounded_propositional () =
-        let
-          val theorem = profile "th_lemma[arith](outer-taut)"
-            (bounded_taut_prove "Skeleton" "z3-arith-outer-taut") target
-        in
-          (state, Drule.LIST_MP thms theorem)
-        end
-        handle Feedback.HOL_ERR holerr =>
-          if SmtResource.is_resource_gate holerr then
-            raise Feedback.HOL_ERR holerr
-          else legacy ()
+        SmtResource.or_else
+          (fn () =>
+            let
+              val theorem = profile "th_lemma[arith](outer-taut)"
+                (bounded_taut_prove "Skeleton" "z3-arith-outer-taut") target
+            in
+              (state, Drule.LIST_MP thms theorem)
+            end)
+          (fn () => legacy ())
     in
       case skeleton_general_attempt state target of
         SmtSkeletonDispatch.Proved result =>
@@ -9112,11 +9080,10 @@ local
         if has_array_atom t then
           ((* E1(b): the budgeted selected array/set procedure has a loud
                unsupported/resource boundary. *)
-           profile "th_lemma[basic](5)(array)" SmtArrayProve.array_prove t
-           handle Feedback.HOL_ERR holerr =>
-             if SmtResource.is_resource_gate holerr then
-               raise Feedback.HOL_ERR holerr
-             else metis ("array" :: attempts))
+           SmtResource.or_else
+             (fn () =>
+               profile "th_lemma[basic](5)(array)" SmtArrayProve.array_prove t)
+             (fn () => metis ("array" :: attempts)))
         else metis attempts
 
       fun bv attempts =
@@ -9134,12 +9101,11 @@ local
         else bv attempts
 
       (* E1(a): TAUT_PROVE decides the propositional fragment. *)
-      val thm = profile "th_lemma[basic](2)(TAUT_PROVE)"
-        (bounded_taut_prove "Skeleton" "z3-basic-taut") t
-        handle Feedback.HOL_ERR holerr =>
-          if SmtResource.is_resource_gate holerr then
-            raise Feedback.HOL_ERR holerr
-          else arith ["boolean"]
+      val thm = SmtResource.or_else
+        (fn () =>
+          profile "th_lemma[basic](2)(TAUT_PROVE)"
+          (bounded_taut_prove "Skeleton" "z3-basic-taut") t)
+        (fn () => arith ["boolean"])
     in
       (* cache 'thm' *)
       (state_cache_thm state thm, thm)
@@ -9454,17 +9420,16 @@ local
     let
       val thm =
         (* E1(b): the general Seq procedure gates its supported family. *)
-        profile "th_lemma[seq](2)(seq_prove)"
-          (SmtSeqProve.seq_prove_with_admission (#datatype_admit state)) t
-        handle Feedback.HOL_ERR holerr =>
-          if SmtResource.is_resource_gate holerr then
-            raise Feedback.HOL_ERR holerr
-          else
+        SmtResource.or_else
+          (fn () =>
+            profile "th_lemma[seq](2)(seq_prove)"
+              (SmtSeqProve.seq_prove_with_admission (#datatype_admit state)) t)
+          (fn () =>
             (* E1(b): contextual Seq replay fails loudly at its boundary. *)
             profile "th_lemma[seq](3)(contextual)"
             (SmtSeqProve.seq_contextual_prove_with_admission
               (#datatype_admit state)
-              (HOLset.listItems (#asserted_hyps state))) t
+              (HOLset.listItems (#asserted_hyps state))) t)
     in
       (state_cache_thm state thm, thm)
     end)
@@ -9511,11 +9476,9 @@ local
       | NONE => if SmtSeqProve.has_seq_type target then
         z3_th_lemma_native_seq args
       else
-        case (SOME (SmtStringProve.replay_parametric_seq_prove target)
-              handle Feedback.HOL_ERR holerr =>
-                if SmtResource.is_resource_gate holerr then
-                  raise Feedback.HOL_ERR holerr
-                else NONE) of
+        case (SmtResource.or_else
+          (fn () => SOME (SmtStringProve.replay_parametric_seq_prove target))
+          (fn () => NONE)) of
           SOME theorem => (state, Drule.LIST_MP thms theorem)
         | NONE => string_route ()
     end
@@ -10256,6 +10219,8 @@ local
 
   fun prove_self_word_identity
       (definition, lhs, rhs, self_dependent, _) =
+    SmtResource.or_else
+      (fn () =>
     (if self_dependent andalso
         wordsSyntax.is_word_type (Term.type_of lhs) then
        SOME (profile
@@ -10270,11 +10235,8 @@ local
                  (HOLFlags.with_bflags
                     [(blastLib.print_counterexamples, false)]
                    Library.replay_BBLAST_PROVE)) definition) definition)
-     else NONE)
-    handle Feedback.HOL_ERR holerr =>
-      if SmtResource.is_resource_gate holerr then
-        raise Feedback.HOL_ERR holerr
-      else NONE
+     else NONE))
+      (fn () => NONE)
 
   fun with_definition_dependency var_set definition consume =
     let
