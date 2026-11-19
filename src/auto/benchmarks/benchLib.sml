@@ -738,13 +738,15 @@ val benchmark_safe_solver =
    [clasimpLib] drops because it and the equation normalisation that
    respells a trailing cons are each other's reverse, and the pair
    loops. *)
-fun clean_simpset goal =
+fun clean_simpset ctxt goal =
   simpLib.filter_rewrites
     (fn (_, theorem) => not (theorem_is_goal goal theorem))
-    (clasimpLib.clasimp_ss ())
+    (clasimpLib.clasimp_ss_of ctxt)
   |> simpLib.set_cond_depth clasimpLib.cond_depth
   |> simpLib.set_safe_solvers [benchmark_safe_solver]
-  |> simpLib.add_unsafe_solver linarithLib.linarith_solver
+  |> simpLib.add_unsafe_solver
+       (linarithLib.linarith_solver_with_facts
+          (linarithData.arith_facts_of ctxt))
   |> simpLib.set_subgoaler clasimpLib.witness_subgoaler
 
 fun preserve_target tactic (original as (_, target)) ctxt =
@@ -1673,7 +1675,8 @@ val fix_parameters = Tactical.REPEAT Tactic.GEN_TAC
    the clock starts. *)
 fun run_goal budget recipe (entry : corpus_goal) =
   let
-    val simpset = clean_simpset (#goal entry)
+    val ctxt = Context.snapshot ()
+    val simpset = clean_simpset ctxt (#goal entry)
     val started = Time.now ()
     val residual = ref "tactic returned residual goals or failed"
     fun goal_text (assumptions, conclusion) =
@@ -1682,8 +1685,6 @@ fun run_goal budget recipe (entry : corpus_goal) =
             " |- ") ^
       Parse.term_to_string conclusion
     fun run () =
-      let val ctxt = Context.snapshot ()
-      in
         case Tactical.VALID
                (Tactical.THEN
                   (fix_parameters,
@@ -1695,7 +1696,6 @@ fun run_goal budget recipe (entry : corpus_goal) =
                  "residual goals: [" ^
                  String.concatWith "; " (map goal_text goals) ^ "]";
                false)
-      end
     val timed_out = ref false
     val solved =
       (case within_budget budget run of

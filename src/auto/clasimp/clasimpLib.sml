@@ -513,7 +513,7 @@ val cond_depth = 40
    the safe solvers, so a simpset with a normalisation phase to protect
    (aesop) names the decision procedures it wants rather than inheriting
    from here. *)
-fun derive_clasimp_ss ss _ =
+fun derive_clasimp_ss ss facts =
   ss
   |> weaken_cond_congruence
   |> simpLib.set_cond_depth cond_depth
@@ -596,7 +596,7 @@ fun derive_clasimp_ss ss _ =
      fast_nat_arith_simproc anyway".  The layer carried only that half,
      so an unfolded interval left a linear fact about num -- an atom in
      the goal rather than the condition of a rewrite -- standing. *)
-  |> (fn ss' => simpLib.++ (ss', linarithLib.LINARITH_ext_ss))
+  |> (fn ss' => simpLib.++ (ss', linarithLib.LINARITH_ext_ss_with facts))
   (* The other half of that layer.  HOL4's own arithmetic simproc
      fragment normalises a linear term as well as deciding an atom --
      [std_ss ++ numSimps.ARITH_DP_ss] answers [LENGTH l - 1 - n] with
@@ -609,7 +609,8 @@ fun derive_clasimp_ss ss _ =
      argument for it. *)
   |> (fn ss' => simpLib.++ (ss', simpExtLib.lift_ssfrag numSimps.ARITH_AC_ss))
   |> simpLib.set_safe_solvers [safe_solver]
-  |> simpLib.add_unsafe_solver linarithLib.linarith_solver
+  |> simpLib.add_unsafe_solver
+       (linarithLib.linarith_solver_with_facts facts)
   |> simpLib.set_subgoaler witness_subgoaler
 
 (* Generic abstraction arguments are keyed by constant identity and arity. *)
@@ -764,8 +765,6 @@ fun frag_present ss =
   let val names = simpLib.ssfrag_names_of ss
   in fn name => Lib.mem name names end
 
-val linarith_solver_name = #name linarithLib.linarith_solver
-
 fun remove_present_frags names ss =
   simpLib.remove_ssfrags_preserving_controls
     (List.filter (frag_present ss) names) ss
@@ -817,8 +816,8 @@ fun same_bottom_up_key ((a, b), (a', b')) =
 val view_derivation_simpset =
   memoUtil.keyed_memo (Lib.curry Portable.pointer_eq)
     (fn ss =>
-       remove_present_frags ["LINARITH"] ss
-       |> simpLib.remove_solver linarith_solver_name)
+       remove_present_frags [linarithLib.linarith_fragment_name] ss
+       |> simpLib.remove_solver linarithLib.linarith_solver_name)
 
 fun prepare_lhs_view_derivation_with_positions ctxt caller_charge ss
       positions =
@@ -945,13 +944,16 @@ fun derive_lhs_views charge ss =
 fun strip_decisions ss =
   let
     val present = frag_present ss
-    val removed = remove_present_frags ["ORDER", "LINARITH"] ss
+    val removed =
+      remove_present_frags ["ORDER", linarithLib.linarith_fragment_name] ss
     (* remove_solver gives back the simpset it was given when that has no
        solver of the name, so a change means the solver was there *)
-    val stripped = simpLib.remove_solver linarith_solver_name removed
+    val stripped =
+      simpLib.remove_solver linarithLib.linarith_solver_name removed
   in
     {stripped = stripped,
-     order = present "ORDER", linarith = present "LINARITH",
+     order = present "ORDER",
+     linarith = present linarithLib.linarith_fragment_name,
      solver = not (Portable.pointer_eq (stripped, removed))}
   end
 
@@ -1811,22 +1813,35 @@ fun owned_working_simpset ss =
       (fn (_, ctxt) => cached_working_simpset ctxt ss)
   in fn ctxt => state (bottom_up_key_of ctxt, ctxt) end
 
+(* The derived value is a function of the context's [arith] facts: one
+   derivation per distinct (srw_ss, facts) pair.  The srw_ss state keys the
+   stored memo through the derived-value mechanism; the facts, compared by
+   pointer, key the memo inside it. *)
+fun same_facts facts facts' =
+  length facts = length facts' andalso
+  ListPair.all Portable.pointer_eq (facts, facts')
+
+fun derive_clasimp_value ss facts =
+  let val full = derive_clasimp_ss ss facts
+  in {full = full,
+      positions = positions_of_sources
+        (#1 (simpLib.rewrite_sources full [])),
+      working = owned_working_simpset full}
+  end
+
 val {get = _, get_of = clasimp_derived_of} =
   BasicProvers.make_simpset_derived_value "clasimpLib.clasimp_ss"
     (fn ss => fn _ =>
-       let val full = derive_clasimp_ss (simpExtLib.lift_simpset ss) ()
-       in {full = full,
-           positions = positions_of_sources
-             (#1 (simpLib.rewrite_sources full [])),
-           working = owned_working_simpset full}
-       end)
-    {full = simpLib.empty_ss, positions = no_positions,
-     working = owned_working_simpset simpLib.empty_ss}
+       memoUtil.keyed_memo same_facts
+         (derive_clasimp_value (simpExtLib.lift_simpset ss)))
+    (fn _ => {full = simpLib.empty_ss, positions = no_positions,
+              working = owned_working_simpset simpLib.empty_ss})
 
 val selected_default = ref (NONE : working_simpset option)
 
 fun clasimp_value_of ctxt =
-  let val value = clasimp_derived_of ctxt
+  let val value =
+        clasimp_derived_of ctxt (linarithData.arith_facts_of ctxt)
   in selected_default := SOME (#working value ctxt); value end
 
 fun clasimp_value () = clasimp_value_of (Context.snapshot ())

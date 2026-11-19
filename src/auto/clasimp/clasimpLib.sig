@@ -41,6 +41,10 @@ sig
 
   val clasimp_ss : unit -> simpExtLib.simpset
 
+  (* The simpset of that context's srw_ss and [arith] set; clasimp_ss ()
+     is it at the ambient context. *)
+  val clasimp_ss_of : Context.t -> simpExtLib.simpset
+
   (* From-scratch certified LHS-view candidates, for derivation and its
      exactness/performance checks. Each triple retains its original
      source and name. This does not install views or alter rewrite
