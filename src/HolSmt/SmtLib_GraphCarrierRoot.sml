@@ -564,8 +564,7 @@ struct
      law : P.closed_fact,check_type : Type.hol_type -> unit,
      scope_opened : G.scope -> unit,native_contract:NC.contract,
      profiles:G.policy_opaque_profile list}
-  datatype surface = Views of {view : G.source,predicate_view : G.source}
-    | Canonical of G.closure_child
+  datatype surface = Canonical of G.closure_child
   datatype shape = Actual of Type.hol_type | Arrow of shape * shape
   datatype expr = Existing of G.node | Variable of int * shape
     | Constant of Term.term * shape | Apply of expr * expr * shape
@@ -581,7 +580,6 @@ struct
     {request : policy_owner,active : unit -> unit,source : G.node,
      target : G.node,theorem : Thm.thm}
 
-  fun pc_validate (PolicyConversion {active,...}) = active ()
   fun validate_with_policy_for {graph,scope,sources,work}
       (PolicyConversion {request=held,active,...}) =
     ((if Portable.pointer_eq (work,#work held) andalso
@@ -634,9 +632,7 @@ struct
            in if #node d = original andalso
                #source_limit d = source_policy then () else
              raise ERR "active" "different admitted carrier profile" end);
-         (case surface of Views {view,...} =>
-            G.validate_opened_view graph scope original view
-          | Canonical child =>
+         (case surface of Canonical child =>
             if G.closure_child_node graph scope child = original then ()
             else raise ERR "active" "different canonical root handle");
          if Type.type_epoch () = epoch then () else
@@ -683,40 +679,14 @@ struct
         let
           val _ = active ()
           val _ = if ordinal >= 0 then () else reject "negative ordinal"
-          val source = case surface of Views {view,...} => #node view
-            | Canonical child => G.closure_child_node graph scope child
+          val source = case surface of Canonical child =>
+            G.closure_child_node graph scope child
           val _ = admit source_policy source_limit source
           val (operator,predicate) = case G.view graph source of
               G.Application pair => pair
             | _ => reject "not a quantifier application"
           val predicate_child = case surface of Canonical child =>
               #2 (G.closure_application_children graph scope child)
-            | Views {predicate_view,...} =>
-              let val raw_predicate = case G.view graph original of
-                      G.Application (_,p) => p
-                    | _ => reject "original root is not a quantifier"
-                  val _ = G.validate_opened_view graph scope raw_predicate
-                    predicate_view
-                  val _ = if #node predicate_view = predicate then () else
-                    reject "different original predicate occurrence/view"
-                  val closure = G.binder_closure graph scope predicate
-                  val d = G.binder_closure_data graph scope closure
-                  val _ = case G.view graph raw_predicate of
-                      G.OpaqueRetained =>
-                        let val origin = G.opened_binder_origin graph scope
-                              raw_predicate predicate_view
-                            val admission =
-                              G.binder_origin_data graph scope origin
-                        in if #node admission = predicate andalso
-                            #body_frame d = #body_frame admission andalso
-                            #body d = #node (#body admission) then () else
-                          reject "different genuine predicate body frame"
-                        end
-                    | G.AdmittedBinder _ =>
-                        if raw_predicate = predicate then () else
-                          reject "constructed predicate was not exact"
-                    | _ => reject "not a recorded predicate abstraction"
-              in G.closure_root graph scope predicate end
           val _ = if G.closure_child_node graph scope predicate_child =
               predicate then () else reject "different predicate child"
           val closure = G.closure_child_binder graph scope predicate_child
@@ -933,13 +903,9 @@ struct
           val finish = equality 1 rhs rhs
           val specialized = equality 1 lhs rhs
           val final = equality 1 source_size rhs
-          (* SYM(AP_TERM), and three inner TRANS results. The Views
-             mode additionally quotes its existing ALPHA-only bridge and
-             the outer TRANS. Canonical mode never requests a raw view. *)
+          (* SYM(AP_TERM), and three inner TRANS results. *)
           val proof = [specialized,beta,abs,ap_term,alignment,finish,
-            ap_term,specialized,final,final] @
-            (case surface of Canonical _ => []
-             | Views _ => [alignment,final])
+            ap_term,specialized,final,final]
           fun bound cap n = if n >= 0 andalso n <= IntInf.fromInt cap
             then () else reject "prospective carrier syntax exceeds cap"
           fun output n=(bound (#output_limit limits) n;
@@ -1077,8 +1043,7 @@ struct
           val left_bridge = invoke (fn () => Thm.AP_TERM q abs_bridge)
           val (_,contracted) = boolSyntax.dest_eq (Thm.concl left_bridge)
           val alignment = invoke (fn () => Thm.ALPHA
-            (G.representative graph (case surface of
-              Views {view,...} => #node view | Canonical _ => original))
+            (G.representative graph original)
             contracted)
           val finish = invoke (fn () => Thm.ALPHA right
             (G.representative graph candidate))
@@ -1087,9 +1052,7 @@ struct
           val contracted_result = invoke (fn () =>
             Thm.TRANS reversed finished)
           val joined = invoke (fn () => Thm.TRANS alignment contracted_result)
-          val theorem = case surface of Canonical _ => joined
-            | Views {view,...} => invoke (fn () =>
-                Thm.TRANS (#bridge view) joined)
+          val theorem = joined
           val (a,b) = boolSyntax.dest_eq (Thm.concl theorem)
           val (oracles,_) = Tag.dest_tag (Thm.tag theorem)
           val _ = if Portable.pointer_eq
@@ -1117,8 +1080,7 @@ struct
      law : P.closed_fact,check_type : Type.hol_type -> unit,
      scope_opened : G.scope -> unit,native_contract:NC.contract,
      profiles:G.policy_opaque_profile list}
-  datatype surface = Views of {view : G.source,predicate_view : G.source}
-    | Canonical of G.closure_child
+  datatype surface = Canonical of G.closure_child
   datatype shape = Actual of Type.hol_type | Arrow of shape * shape
   datatype expr = Existing of G.node | Variable of int * shape
     | Constant of Term.term * shape | Apply of expr * expr * shape
@@ -1134,7 +1096,6 @@ struct
     {request : policy_owner,active : unit -> unit,source : G.node,
      target : G.node,theorem : Thm.thm}
 
-  fun pc_validate (PolicyConversion {active,...}) = active ()
   fun validate_with_policy_for {graph,scope,sources,work}
       (PolicyConversion {request=held,active,...}) =
     ((if Portable.pointer_eq (work,#work held) andalso
@@ -1189,9 +1150,7 @@ struct
            in if #node d = original andalso
                #source_limit d = source_policy then () else
              raise ERR "active" "different admitted carrier profile" end);
-         (case surface of Views {view,...} =>
-            G.validate_opened_view graph scope original view
-          | Canonical child =>
+         (case surface of Canonical child =>
             if G.closure_child_node graph scope child = original then ()
             else raise ERR "active" "different canonical root handle");
          if Type.type_epoch () = epoch then () else
@@ -1245,40 +1204,14 @@ struct
         let
           val _ = active ()
           val _ = if ordinal >= 0 then () else reject "negative ordinal"
-          val source = case surface of Views {view,...} => #node view
-            | Canonical child => G.closure_child_node graph scope child
+          val source = case surface of Canonical child =>
+            G.closure_child_node graph scope child
           val _ = admit source_policy source_limit source
           val (operator,predicate) = case G.view graph source of
               G.Application pair => pair
             | _ => reject "not a quantifier application"
           val predicate_child = case surface of Canonical child =>
               #2 (G.closure_application_children graph scope child)
-            | Views {predicate_view,...} =>
-              let val raw_predicate = case G.view graph original of
-                      G.Application (_,p) => p
-                    | _ => reject "original root is not a quantifier"
-                  val _ = G.validate_opened_view graph scope raw_predicate
-                    predicate_view
-                  val _ = if #node predicate_view = predicate then () else
-                    reject "different original predicate occurrence/view"
-                  val closure = G.binder_closure graph scope predicate
-                  val d = G.binder_closure_data graph scope closure
-                  val _ = case G.view graph raw_predicate of
-                      G.OpaqueRetained =>
-                        let val origin = G.opened_binder_origin graph scope
-                              raw_predicate predicate_view
-                            val admission =
-                              G.binder_origin_data graph scope origin
-                        in if #node admission = predicate andalso
-                            #body_frame d = #body_frame admission andalso
-                            #body d = #node (#body admission) then () else
-                          reject "different genuine predicate body frame"
-                        end
-                    | G.AdmittedBinder _ =>
-                        if raw_predicate = predicate then () else
-                          reject "constructed predicate was not exact"
-                    | _ => reject "not a recorded predicate abstraction"
-              in G.closure_root graph scope predicate end
           val _ = if G.closure_child_node graph scope predicate_child =
               predicate then () else reject "different predicate child"
           val closure = G.closure_child_binder graph scope predicate_child
@@ -1513,13 +1446,9 @@ struct
           val finish = equality 1 rhs rhs
           val specialized = equality 1 lhs rhs
           val final = equality 1 source_size rhs
-          (* SYM(AP_TERM), and three inner TRANS results. The Views
-             mode additionally quotes its existing ALPHA-only bridge and
-             the outer TRANS. Canonical mode never requests a raw view. *)
+          (* SYM(AP_TERM), and three inner TRANS results. *)
           val proof = [specialized,beta,abs,ap_term,alignment,finish,
-            ap_term,specialized,final,final] @
-            (case surface of Canonical _ => []
-             | Views _ => [alignment,final])
+            ap_term,specialized,final,final]
           fun bound cap n = if n >= 0 andalso n <= IntInf.fromInt cap
             then () else reject "prospective carrier syntax exceeds cap"
           fun output n=(bound (#output_limit limits) n;
@@ -1668,8 +1597,7 @@ struct
           val left_bridge = invoke (fn () => Thm.AP_TERM q abs_bridge)
           val (_,contracted) = boolSyntax.dest_eq (Thm.concl left_bridge)
           val alignment = invoke (fn () => Thm.ALPHA
-            (G.representative graph (case surface of
-              Views {view,...} => #node view | Canonical _ => original))
+            (G.representative graph original)
             contracted)
           val finish = invoke (fn () => Thm.ALPHA right
             (G.representative graph candidate))
@@ -1678,9 +1606,7 @@ struct
           val contracted_result = invoke (fn () =>
             Thm.TRANS reversed finished)
           val joined = invoke (fn () => Thm.TRANS alignment contracted_result)
-          val theorem = case surface of Canonical _ => joined
-            | Views {view,...} => invoke (fn () =>
-                Thm.TRANS (#bridge view) joined)
+          val theorem = joined
           val (a,b) = boolSyntax.dest_eq (Thm.concl theorem)
           val (oracles,_) = Tag.dest_tag (Thm.tag theorem)
           val _ = if Portable.pointer_eq
