@@ -49,7 +49,7 @@ sig
      collapsed : string,operand : string}
   (* The wording of the matchers over the ordinary Work. *)
   val plain_words : words
-  val same_owner : string -> Walk.walk_owner -> Walk.walk_owner -> unit
+  val same_owner : string -> owner -> owner -> unit
   val leaves : owner -> string -> Walk.tree -> leaf list
   (* Metered walk over a rule list: `per_rule` turns the closure tree of the
      index-th rule into the owner's schemas. *)
@@ -66,7 +66,6 @@ sig
      traversal : SmtReplayGraph.scope,
      target : SmtReplayGraph.closure_child,
      admit_target : Walk.tree -> unit} -> found
-  val retained : owner -> SmtReplayGraph.scope -> Walk.tree -> unit
   val validate_match : owner -> string ->
     {known : bool,rulescope : SmtReplayGraph.scope,whole : Walk.tree,
      caller : SmtReplayGraph.scope,traversal : SmtReplayGraph.scope,
