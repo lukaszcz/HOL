@@ -272,10 +272,9 @@ struct
      projection and annotation Work through [spend], records the
      projection guard through [add_backing], and returns the cached
      Types, the source bridge theorem and the target root. *)
-  fun opened_projection graph scope {node,view,target,raw,inc,output,cap,
-      ceiling,spend,live,add_backing} =
+  fun opened_projection graph scope {node,view,target,raw:IntInf.int,
+      inc:IntInf.int,output,cap,ceiling,spend,live,add_backing} =
     let
-      val _ = (raw:IntInf.int,inc:IntInf.int)
       val _ = if 3+2*raw<=IntInf.fromInt output andalso
           3+2*inc<=IntInf.fromInt output andalso
           3+2*raw<=IntInf.fromInt cap andalso
@@ -546,7 +545,8 @@ struct
                 | SOME result => SOME (lift focus result) end
           | G.OpaqueRetained =>
               (case discover focus of NONE => NONE | SOME prefix =>
-                join focus (SOME prefix) (simplify memo stack (#target prefix)))
+                join focus (SOME prefix)
+                  (simplify memo stack (#target prefix)))
           | _ => NONE
         end
     in simplify (ref []) [] source end
@@ -665,6 +665,10 @@ struct
         guard=guard,describe=describe owner,
         make=fn () => Focus {admission=admission,frame=frame,scope=scope,
           described=ref NONE,backing_guard=guard}} end
+  (* A.generated_compact retains and validates its exact parent focus.
+     Once that child is registered, its parent's separate owner-list entry
+     is redundant, not a new dependency. Prune only that private closure;
+     no node equality or cached validation result authorizes this step. *)
   fun covered_parent (Owner {work,backing,...})
       (Focus {backing_guard,...}) =
     let fun retain [] = (W.spend_guard_policy work 1;[])
@@ -960,8 +964,7 @@ struct
       let val leaf=action owner focus (fn observe =>
             C.graph_leaf graph scope {conversion=conversion,
               template_limit=cap,observe=observe})
-          val prefix=seal owner focus leaf
-      in SOME prefix end
+      in SOME (seal owner focus leaf) end
     end
   (* Concrete proof adapters below retain their SAME-owned receipts. *)
   fun lift owner focus (result:outcome) =
