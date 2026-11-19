@@ -118,7 +118,7 @@ struct
     | TermInstance of (syntax * syntax) list * proof
     | EqualModusPonens of proof * proof
     | ApplyFunction of syntax * proof | ApplyArgument of proof * syntax
-    | AbstractEquality of syntax * proof | ContractBeta of syntax
+    | ContractBeta of syntax
     | ChooseWitness of syntax * proof * proof
     | NegationEliminate of proof
     | SpecializeAll of syntax list * proof
@@ -868,7 +868,7 @@ struct
     | Generalize (_,p) => [p] | TypeInstance (_,p) => [p]
     | TermInstance (_,p) => [p]
     | EqualModusPonens (a,b) => [a,b] | ApplyFunction (_,p) => [p]
-    | ApplyArgument (p,_) => [p] | AbstractEquality (_,p) => [p]
+    | ApplyArgument (p,_) => [p]
     | ContractBeta _ => []
     | ChooseWitness (_,a,b) => [a,b]
     | NegationEliminate p => [p]
@@ -966,8 +966,6 @@ struct
         Thm.AP_TERM (materialize owner f) (replay owner memo p))
     | ApplyArgument (p,x) => invoke owner (fn () =>
         Thm.AP_THM (replay owner memo p) (materialize owner x))
-    | AbstractEquality (v,p) => invoke owner (fn () =>
-        Thm.ABS (materialize owner v) (replay owner memo p))
     | ContractBeta redex => invoke owner (fn () =>
         Thm.BETA_CONV (materialize owner redex))
     | ChooseWitness (v,a,b) => invoke owner (fn () =>
@@ -1211,7 +1209,6 @@ struct
               | EqualModusPonens (a,b) => binary 6 a b
               | ApplyFunction (_,p) => unary 7 p
               | ApplyArgument (p,_) => unary 8 p
-              | AbstractEquality (_,p) => unary 9 p
               | ContractBeta _ => leaf 10
               | ChooseWitness (_,a,b) => binary 11 a b
               | NegationEliminate p => unary 12 p
@@ -1294,7 +1291,6 @@ struct
                 (fn (a,b) => (admit a;admit b)) bindings
             | ApplyFunction (f,_) => admit f
             | ApplyArgument (_,x) => admit x
-            | AbstractEquality (v,_) => admit v
             | ContractBeta redex => admit redex
             | ChooseWitness (v,_,_) => admit v
             | ExistsIntroduction (ant,v,_) => (admit ant;admit v)
@@ -1519,7 +1515,7 @@ struct
     | TermInstance of (syntax * syntax) list * proof
     | EqualModusPonens of proof * proof
     | ApplyFunction of syntax * proof | ApplyArgument of proof * syntax
-    | AbstractEquality of syntax * proof | ContractBeta of syntax
+    | ContractBeta of syntax
     | ChooseWitness of syntax * proof * proof
     | NegationEliminate of proof
     | SpecializeAll of syntax list * proof
@@ -2322,7 +2318,7 @@ struct
     | Generalize (_,p) => [p] | TypeInstance (_,p) => [p]
     | TermInstance (_,p) => [p]
     | EqualModusPonens (a,b) => [a,b] | ApplyFunction (_,p) => [p]
-    | ApplyArgument (p,_) => [p] | AbstractEquality (_,p) => [p]
+    | ApplyArgument (p,_) => [p]
     | ContractBeta _ => []
     | ChooseWitness (_,a,b) => [a,b]
     | NegationEliminate p => [p]
@@ -2423,8 +2419,6 @@ struct
         Thm.AP_TERM (materialize policy_owner f) (replay policy_owner memo p))
     | ApplyArgument (p,x) => invoke policy_owner (fn () =>
         Thm.AP_THM (replay policy_owner memo p) (materialize policy_owner x))
-    | AbstractEquality (v,p) => invoke policy_owner (fn () =>
-        Thm.ABS (materialize policy_owner v) (replay policy_owner memo p))
     | ContractBeta redex => invoke policy_owner (fn () =>
         Thm.BETA_CONV (materialize policy_owner redex))
     | ChooseWitness (v,a,b) => invoke policy_owner (fn () =>
@@ -2534,7 +2528,6 @@ struct
                 (fn (a,b) => (admit a;admit b)) bindings
             | ApplyFunction (f,_) => admit f
             | ApplyArgument (_,x) => admit x
-            | AbstractEquality (v,_) => admit v
             | ContractBeta redex => admit redex
             | ChooseWitness (v,_,_) => admit v
             | ExistsIntroduction (ant,v,_) => (admit ant;admit v)
