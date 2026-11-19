@@ -587,6 +587,13 @@ struct
               active ();
               ignore (aux_target ()))) end
     end
+  (* The owned-Lambda lift of both owners: run the body's lambda plan,
+     convert its value, build the leaf, then seal it. *)
+  fun lift_with describe run convert leaf seal =
+    let val d = describe ()
+        val value = run d
+        val converted = convert d value
+    in seal (leaf d converted) end
   datatype owner = Owner of
     {work:W.portfolio,graph:G.graph,root:G.scope,sources:S.sources,
      catalogue:K.catalogue,traversal:T.owner,matcher:M.owner,
@@ -959,18 +966,17 @@ struct
   (* Concrete proof adapters below retain their SAME-owned receipts. *)
   fun lift owner focus (result:outcome) =
     let val Owner {work,conditional,graph,...} = owner
-        val d = describe owner focus
-        val plan = Lambda.prepare_admitted work
-          {frame= #frame d,admission= #admission d,body= #proof result,
-           ordinal=ordinal owner,check_type=policy owner focus}
-        val value = Lambda.execute work plan
-        val converted = Conditional.lambda_conversion_for work conditional
-          {frame= #frame d,result=value}
-        val leaf = action owner focus (fn observe =>
-          C.graph_leaf graph (#scope d)
-            {conversion=converted,template_limit= #template_limit
-              (W.semantic_limits work),observe=observe})
-    in seal owner focus leaf end
+    in lift_with (fn () => describe owner focus)
+      (fn d => Lambda.execute work (Lambda.prepare_admitted work
+        {frame= #frame d,admission= #admission d,body= #proof result,
+         ordinal=ordinal owner,check_type=policy owner focus}))
+      (fn d => fn value => Conditional.lambda_conversion_for work conditional
+        {frame= #frame d,result=value})
+      (fn d => fn converted => action owner focus (fn observe =>
+        C.graph_leaf graph (#scope d)
+          {conversion=converted,template_limit= #template_limit
+            (W.semantic_limits work),observe=observe}))
+      (seal owner focus) end
   fun normalize owner source =
     let val Owner {work,graph,...} = owner
     in normalize_with {work=work,graph=graph,spend=fn () => W.spend work 1,
@@ -1880,18 +1886,18 @@ struct
     open PolicySimpleProof
     fun lift(owner as Owner
         {work,conditional,native_contract,profiles,...})focus(result:outcome)=
-      let val d=describe owner focus
-          val plan=Lambda.prepare_admitted_with_policy work
+      lift_with(fn()=>describe owner focus)
+        (fn d=>Lambda.execute_with_policy work
+          (Lambda.prepare_admitted_with_policy work
             {frame= #frame d,admission= #admission d,body= #proof result,
              ordinal=ordinal owner,native_contract=native_contract,
-             profiles=profiles,check_type=policy owner focus}
-          val value=Lambda.execute_with_policy work plan
-          val converted=Conditional.lambda_conversion_with_policy_for
-            work conditional {frame= #frame d,result=value}
-          val leaf=action owner focus(fn observe=>
-            C.graph_leaf_with_policy work
-              {frame= #frame d,conversion=converted,observe=observe})
-      in seal owner focus leaf end
+             profiles=profiles,check_type=policy owner focus}))
+        (fn d=>fn value=>Conditional.lambda_conversion_with_policy_for
+          work conditional {frame= #frame d,result=value})
+        (fn d=>fn converted=>action owner focus(fn observe=>
+          C.graph_leaf_with_policy work
+            {frame= #frame d,conversion=converted,observe=observe}))
+        (seal owner focus)
   end
 
   type policy_owner=PolicySimpleBase.owner
