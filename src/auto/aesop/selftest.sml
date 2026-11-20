@@ -236,6 +236,9 @@ fun engine_step_succeeds rule goal =
   case #apply (rule : aesopRule.rule) of
       aesopRule.EngineStep step =>
         not (seq.null (step (clasetGoal.from_goal goal, 1)))
+    | aesopRule.ContextualStep make_step =>
+        not (seq.null
+          (make_step (Context.snapshot ()) (clasetGoal.from_goal goal, 1)))
     | _ => false
 
 val _ =
@@ -360,6 +363,14 @@ fun first_engine_record rule goal =
         (case seq.cases (step (clasetGoal.from_goal goal, 1)) of
              SOME ((record, _), _) => SOME record
            | NONE => NONE)
+    | aesopRule.ContextualStep make_step =>
+        (case
+           seq.cases
+             (make_step (Context.snapshot ())
+                (clasetGoal.from_goal goal, 1))
+         of
+             SOME ((record, _), _) => SOME record
+           | NONE => NONE)
     | _ => NONE
 
 val elim_p = Term.mk_var ("aesop_elim_p", Type.bool)
@@ -479,6 +490,14 @@ fun first_engine_result rule goal =
   case #apply (rule : aesopRule.rule) of
       aesopRule.EngineStep step =>
         (case seq.cases (step (clasetGoal.from_goal goal, 1)) of
+             SOME (result, _) => SOME result
+           | NONE => NONE)
+    | aesopRule.ContextualStep make_step =>
+        (case
+           seq.cases
+             (make_step (Context.snapshot ())
+                (clasetGoal.from_goal goal, 1))
+         of
              SOME (result, _) => SOME result
            | NONE => NONE)
     | _ => NONE
@@ -2176,7 +2195,7 @@ val _ =
 fun duplicate_search_step input =
   case
     seq.cases
-      ((clasetStep.rule_step
+      ((clasetStep.rule_step traceUtil.silent
          {theorem = boolTheory.TRUTH, elim = false,
           mode = clasetUnify.Match}) input)
   of
@@ -2187,12 +2206,14 @@ val search_multi_rule : aesopRule.rule =
   {name = "multi-step", phase = aesopRule.RSafe,
    apply =
      aesopRule.MultiStep
-       [clasetStep.rule_step
-          {theorem = boolTheory.TRUTH, elim = false,
-           mode = clasetUnify.Match},
-        clasetStep.rule_step
-          {theorem = boolTheory.TRUTH, elim = false,
-           mode = clasetUnify.Match}],
+       [fn _ =>
+          clasetStep.rule_step traceUtil.silent
+            {theorem = boolTheory.TRUTH, elim = false,
+             mode = clasetUnify.Match},
+        fn _ =>
+          clasetStep.rule_step traceUtil.silent
+            {theorem = boolTheory.TRUTH, elim = false,
+             mode = clasetUnify.Match}],
    once = false}
 val search_alternative_rule : aesopRule.rule =
   {name = "alternatives", phase = aesopRule.RSafe,
@@ -2850,7 +2871,7 @@ val _ =
 fun triple_search_step input =
   case
     seq.cases
-      ((clasetStep.rule_step
+      ((clasetStep.rule_step traceUtil.silent
          {theorem = boolTheory.TRUTH, elim = false,
           mode = clasetUnify.Match}) input)
   of
@@ -4157,7 +4178,7 @@ fun counted_alternative_rule budget phase : aesopRule.rule =
         val result =
           Option.map #1
             (seq.cases
-              ((clasetStep.rule_step
+              ((clasetStep.rule_step traceUtil.silent
                  {theorem = boolTheory.TRUTH, elim = false,
                   mode = clasetUnify.Match}) input))
         val first = ref true
@@ -4492,10 +4513,11 @@ val _ =
              (aesopRule.safe_rules (#safe rules))
        in
          case selected of
-             [{apply = aesopRule.EngineStep step, ...}] =>
+             [{apply = aesopRule.ContextualStep make_step, ...}] =>
                let
                  val cursor =
-                   step (clasetGoal.from_goal ([elim_p], elim_q), 1)
+                   make_step (Context.snapshot ())
+                     (clasetGoal.from_goal ([elim_p], elim_q), 1)
                  val stopped =
                    ((ignore (seq.cases cursor); false)
                     handle searchBudget.LimitReached
@@ -4686,3 +4708,54 @@ val _ =
        not (aesop_sw_safe_closed aesop_sw_without_split))
 
 val _ = Context.restore split_scope_before
+
+val aesop_skip_R_def =
+  new_definition
+    ("aesop_skip_R_def", ``aesop_skip_R (x:'a) (y:'a) <=> (x = y)``)
+val aesop_skip_R_trans =
+  Tactical.prove
+    (``!x:'a y z. aesop_skip_R x y /\ aesop_skip_R y z ==>
+                  aesop_skip_R x z``,
+     Tactical.THEN
+       (Tactical.THEN
+         (Rewrite.REWRITE_TAC [aesop_skip_R_def],
+          Tactical.REPEAT Tactic.STRIP_TAC),
+        Rewrite.ASM_REWRITE_TAC []))
+
+(* The messages emitted while forcing the supplied Match rule on
+   R a c, and whether it yielded any result, at an aesop.trace level. *)
+fun skip_trace_at level =
+  let
+    val ctxt =
+      HOLFlags.set_flagC (traceUtil.flag aesopData.tracer, level)
+        (Context.snapshot ())
+    val rule =
+      aesopRule.apply_rule
+        {name = "skip-trans", phase = aesopRule.RSafe,
+         theorem = aesop_skip_R_trans, mode = clasetUnify.Match}
+    val node =
+      clasetGoal.from_goal
+        ([], ``aesop_skip_R (a:'a) (c:'a)``)
+    val notices = ref ([] : string list)
+    val results =
+      Lib.with_flag
+        (Feedback.MESG_outstream, fn m => notices := m :: !notices)
+        (fn () =>
+          seq.take 1 (aesopTree.rule_results_in ctxt rule node)) ()
+  in
+    (rev (!notices), null results)
+  end
+
+val _ =
+  check
+    ("aesop supplied Match rules trace a refusal at aesop.trace 1",
+     fn () =>
+       skip_trace_at 1 =
+         (["<<HOL message: Aesop: skipping safe rule with unfixed \
+           \premise variables>>\n"],
+          true))
+
+val _ =
+  check
+    ("aesop supplied Match rules refuse silently at aesop.trace 0",
+     fn () => skip_trace_at 0 = ([], true))

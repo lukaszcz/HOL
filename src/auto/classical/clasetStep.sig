@@ -54,13 +54,16 @@ sig
     node -> (goalpos * step_record * node) list
 
   (* Wrapper-free application of one supplied rule through the ordinary
-     child policy.  Each sequence result is one application alternative. *)
+     child policy.  Each sequence result is one application alternative.
+     In Match mode a rule that would leave premise variables unfixed is
+     refused; the refusal is traced at the given level, at threshold 1. *)
   val rule_step :
+    traceUtil.level ->
     {theorem : thm, elim : bool, mode : clasetUnify.mode} -> step
   (* Charge before each introduction or elimination-major attempt.  The
      lazy sequence keeps the unexamined attempt on a budget cutoff. *)
   val rule_step_budgeted :
-    searchBudget.budget ->
+    traceUtil.level -> searchBudget.budget ->
     {theorem : thm, elim : bool, mode : clasetUnify.mode} -> step
 
   (* Engine-native forward application.  The first [immediate] premises are

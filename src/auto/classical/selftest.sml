@@ -3683,7 +3683,7 @@ val _ =
            exact_rule_api_variants cs specification selected input
          val standard =
            drain_exact
-             (clasetStep.rule_step
+             (clasetStep.rule_step traceUtil.silent
                {theorem = theorem, elim = false,
                 mode = clasetUnify.Match} (input ()))
          val (ordinary_children, ordinary_validation) =
@@ -3725,7 +3725,7 @@ val _ =
 
          fun standard theorem elim goal =
            drain_exact
-             (clasetStep.rule_step
+             (clasetStep.rule_step traceUtil.silent
                {theorem = theorem, elim = elim,
                 mode = clasetUnify.Unify}
                (clasetGoal.from_goal goal, 1))

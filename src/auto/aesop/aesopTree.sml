@@ -347,9 +347,13 @@ fun rule_results_in ctxt ({apply, ...} : rule) node =
         seq.delay (fn () => engine_results (make_step ctxt) node)
     | aesopRule.RenderedTactic tactic =>
         rendered_results ctxt tactic node
-    | aesopRule.MultiStep steps =>
+    | aesopRule.MultiStep make_steps =>
         seq.flatten
-          (seq.fromList (map (fn step => engine_results step node) steps))
+          (seq.fromList
+            (map
+              (fn make_step =>
+                seq.delay (fn () => engine_results (make_step ctxt) node))
+              make_steps))
 
 fun unique_rule_result_in ctxt rule node =
   case seq.take 2 (rule_results_in ctxt rule node) of

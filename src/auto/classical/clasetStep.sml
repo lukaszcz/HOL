@@ -628,15 +628,17 @@ fun minor_prefixes policy is_elim premises =
         let val minors = if is_elim then tl premises else premises
         in SOME (map clasetReplay.exact_prefix_descriptor minors) end
 
-(* A Match step that would leave premise variables unfixed is refused.
-   The safe cascades, which run in a context, note the refusal at its
-   classical.trace level.  Unify steps never refuse; rules supplied without
-   a context, as aesop's are, note nothing, as the forward path does.
-   The level is read only when a refusal is noted, off the cascade's
-   path. *)
+(* A Match step that would leave premise variables unfixed is refused, and
+   the refusal is noted at the trace level given.  The safe cascades, which
+   run in a context, read classical.trace only when a refusal is noted, off
+   the cascade's path.  Rules supplied by aesop note it at aesop.trace.
+   Unify steps and the forward path never refuse and note nothing. *)
+fun refusal_message () = "skipping safe rule with unfixed premise variables"
+
+fun level_note level () = traceUtil.trace level 1 refusal_message
+
 fun skip_note ctxt () =
-  traceUtil.trace (traceUtil.level_of clasetReplay.tracer ctxt) 1
-    (fn () => "skipping safe rule with unfixed premise variables")
+  level_note (traceUtil.level_of clasetReplay.tracer ctxt) ()
 
 fun no_note () = ()
 
@@ -1931,15 +1933,16 @@ fun direct_step results (node, pos) =
 val blast_assumption_step = direct_step unifying_assumption_results
 val blast_contradiction_step =
   direct_step unifying_contradiction_results
-fun rule_step {theorem, elim, mode} =
+fun rule_step level {theorem, elim, mode} =
   direct_step
-    (supplied_rule_results_with (fn () => ()) no_note
+    (supplied_rule_results_with (fn () => ()) (level_note level)
       AllMajors FullPrefixes mode
       clasetLib.empty_cs {theorem = theorem, elim = elim})
-fun rule_step_budgeted budget {theorem, elim, mode} =
+fun rule_step_budgeted level budget {theorem, elim, mode} =
   direct_step
     (supplied_rule_results_with
-      (fn () => searchBudget.charge budget searchBudget.Candidate) no_note
+      (fn () => searchBudget.charge budget searchBudget.Candidate)
+      (level_note level)
       AllMajors FullPrefixes mode
       clasetLib.empty_cs {theorem = theorem, elim = elim})
 fun forward_rule_step_with charge {theorem, immediate, mode} =

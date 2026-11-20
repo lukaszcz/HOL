@@ -12,7 +12,7 @@ datatype rphase =
     EngineStep of clasetStep.step
   | ContextualStep of Context.t -> clasetStep.step
   | RenderedTactic of NTactical.ntactic
-  | MultiStep of clasetStep.step list
+  | MultiStep of (Context.t -> clasetStep.step) list
 
 datatype tactic_index =
     TargetPattern of term
@@ -51,12 +51,17 @@ fun phase_of_spec ({kind, safe, prio} : clasetRules.rulespec) =
       (checked_percent "phase_of_spec"
         (Option.getOpt (prio, default_percent)))
 
+(* A supplied rule's refusals are traced at the aesop.trace level of the
+   context the step runs in. *)
+fun aesop_level ctxt = traceUtil.level_of aesopData.tracer ctxt
+
 fun apply_rule {name, phase, theorem, mode} : rule =
   {name = name, phase = phase,
    apply =
-     EngineStep
-       (clasetStep.rule_step
-         {theorem = theorem, elim = false, mode = mode}),
+     ContextualStep
+       (fn ctxt =>
+         clasetStep.rule_step (aesop_level ctxt)
+           {theorem = theorem, elim = false, mode = mode}),
    once = false}
 
 fun constructors_rule_with phase function_name
@@ -68,8 +73,8 @@ fun constructors_rule_with phase function_name
      apply =
        MultiStep
          (map
-           (fn theorem =>
-             clasetStep.rule_step
+           (fn theorem => fn ctxt =>
+             clasetStep.rule_step (aesop_level ctxt)
                {theorem = theorem, elim = false, mode = mode})
            theorems),
      once = false}
@@ -146,10 +151,11 @@ fun gated_engine_step patterns step (node, pos) =
 fun cases_rule {name, phase, theorem, patterns, mode} : rule =
   {name = name, phase = phase,
    apply =
-     EngineStep
-       (gated_engine_step patterns
-         (clasetStep.rule_step
-           {theorem = theorem, elim = true, mode = mode})),
+     ContextualStep
+       (fn ctxt =>
+         gated_engine_step patterns
+           (clasetStep.rule_step (aesop_level ctxt)
+             {theorem = theorem, elim = true, mode = mode})),
    once = false}
 
 fun goal_matches_index NONE _ = true
@@ -442,10 +448,14 @@ fun declaration_rule budget mode
       in
         {name = name, phase = phase_of_spec spec,
          apply =
-           EngineStep
-             (metered_step clasetStep.rule_step
-                clasetStep.rule_step_budgeted budget
-                {theorem = source, elim = elim, mode = mode}),
+           ContextualStep
+             (fn ctxt =>
+               let val level = aesop_level ctxt
+               in
+                 metered_step (clasetStep.rule_step level)
+                   (clasetStep.rule_step_budgeted level) budget
+                   {theorem = source, elim = elim, mode = mode}
+               end),
          once = false}
       end
   end

@@ -13,7 +13,7 @@ sig
       EngineStep of clasetStep.step
     | ContextualStep of Context.t -> clasetStep.step
     | RenderedTactic of NTactical.ntactic
-    | MultiStep of clasetStep.step list
+    | MultiStep of (Context.t -> clasetStep.step) list
 
   type rule =
     {name : string, phase : rphase, apply : rapply, once : bool}
