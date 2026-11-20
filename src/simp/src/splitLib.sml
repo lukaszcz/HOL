@@ -214,31 +214,6 @@ fun const_key c =
   in KernelSig.name_toString {Thy=Thy,Name=Name}
   end
 
-fun applied_arities tms =
-  let
-    fun visit (tm,acc) =
-      if is_abs tm then visit (body tm,acc)
-      else
-        let
-          val (head,args) = strip_comb tm
-          val acc = List.foldl visit acc args
-          val n = length args
-        in
-          if is_const head then
-            let val key = const_key head
-            in
-              case Binarymap.peek (acc,key) of
-                  SOME old =>
-                    if old >= n then acc else Binarymap.insert (acc,key,n)
-                | NONE => Binarymap.insert (acc,key,n)
-            end
-          else if is_abs head then visit (head,acc)
-          else acc
-        end
-  in
-    List.foldl visit (Binarymap.mkDict String.compare) tms
-  end
-
 (* The registered case constants, indexed by name.  [order] is the
    constant's position in [TypeBase.elts], retained so that the groups
    below can be handed back in the order a walk over the TypeBase leaves
@@ -288,31 +263,32 @@ fun case_const_index_of () =
 (* This deliberately does not use [TypeBase.is_case].  That predicate
    delegates to Pmatch's stricter and substantially more expensive case
    recognition.  Splitting only needs a saturated application of the
-   registered case constant, which the maximum-arity table identifies in
-   one walk over the goal and assumptions.  The looper is offered a goal
-   on every simplification round, so the constants the goal does contain
-   are looked up in the index rather than the whole TypeBase walked.  The
-   derived rules themselves use [type_split_cache], so with
-   [case_const_index] these are the only datatype-split caches. *)
+   registered case constant. Count arguments along each application spine
+   and collect matching types in their TypeBase order. The looper can do
+   this on each simplification round without recording unrelated constants. *)
 fun goal_split_rule_groups terms =
   let
-    val arities = applied_arities terms
     val index = case_const_index_of ()
-    fun saturated (key,n,found) =
-      let
-        fun keep (entry : case_const, found) =
-          if n >= #arity entry then (#order entry, #ty entry) :: found
-          else found
-      in
-        List.foldl keep found (Symtab.lookup_list index key)
-      end
-    val matched = Binarymap.foldl saturated [] arities
-    fun earlier (i1,_) (i2,_) = (i1 : int) <= i2
-    fun group ((_,ty),result) =
+    fun collect arity ({order,ty,arity=min_arity} : case_const, found) =
+      if arity < min_arity orelse Option.isSome (Binarymap.peek (found,order))
+      then found
+      else Binarymap.insert (found,order,ty)
+    fun visit tm arity found =
+      if is_comb tm then
+        let val (f,x) = dest_comb tm
+        in visit f (arity + 1) (visit x 0 found) end
+      else if is_abs tm then visit (body tm) 0 found
+      else if is_const tm then
+        List.foldl (collect arity) found
+          (Symtab.lookup_list index (const_key tm))
+      else found
+    val matched = List.foldl (fn (tm,found) => visit tm 0 found)
+                    (Binarymap.mkDict Int.compare) terms
+    fun group (_,ty,result) =
       (ty, type_split_rules ty) :: result
       handle HOL_ERR _ => result
   in
-    List.foldl group [] (sort earlier matched)
+    Binarymap.foldl group [] matched
   end
 
 fun goal_split_rules terms =
@@ -326,11 +302,6 @@ fun same_type_shape (ty1, ty2) =
 fun same_key (h1,h2) =
   same_const h1 h2 andalso same_type_shape (type_of h1, type_of h2)
 
-fun head_key head =
-  let val {Thy,Name,...} = dest_thy_const head
-  in persistent_name {Thy=Thy, Name=Name}
-  end
-
 fun insert_rule (rule : split_rule) (cmap : cmap) =
   let
     val head = #head rule
@@ -339,7 +310,7 @@ fun insert_rule (rule : split_rule) (cmap : cmap) =
           if same_key (head, key) then (key, rule :: rules) :: rest
           else (key, rules) :: insert rest
   in
-    Symtab.map_default (head_key head, []) insert cmap
+    Symtab.map_default (const_key head, []) insert cmap
   end
 
 fun index_rules rules =
@@ -371,7 +342,7 @@ type split_pack =
    visit : int}
 
 fun fold_candidates cmap head collect packs =
-  case Symtab.lookup_list cmap (head_key head) of
+  case Symtab.lookup_list cmap (const_key head) of
       [] => packs
     | entries =>
         let
@@ -436,8 +407,8 @@ fun scan cmap tm =
       end
 
     (* At equal depth, preorder visits argument paths in lexicographic
-       order. Rules at the same node keep the same visit index. Restore
-       the input order to sort so ties are resolved as before. *)
+       order. Index each successful pack, including multiple rules at one
+       node, so sorting preserves their collection order on ties. *)
     fun walk depth steps (binders : binder_info list) node packs =
       if is_abs node then
         let
@@ -455,7 +426,7 @@ fun scan cmap tm =
           val (head, args) = strip_comb node
           val arity = length args
           fun collect (rule, acc) =
-            case mk_pack depth packs binders node head args arity rule of
+            case mk_pack depth acc binders node head args arity rule of
                 SOME pack => pack :: acc
               | NONE => acc
           val here =
@@ -475,11 +446,13 @@ fun scan cmap tm =
     List.rev (walk 0 [] [] tm [])
   end
 
-fun pack_le (p1 : split_pack) (p2 : split_pack) =
-  #binders p1 < #binders p2 orelse
-  (#binders p1 = #binders p2 andalso
-   (#depth p1 < #depth p2 orelse
-    (#depth p1 = #depth p2 andalso #visit p1 <= #visit p2)))
+fun pack_compare (p1 : split_pack, p2 : split_pack) =
+  case Int.compare (#binders p1, #binders p2) of
+      EQUAL =>
+        (case Int.compare (#depth p1, #depth p2) of
+             EQUAL => Int.compare (#visit p1, #visit p2)
+           | order => order)
+    | order => order
 
 fun fresh_parts th =
   let
@@ -521,7 +494,7 @@ fun first_success packs tm =
 fun split_conv cmap tm =
   let
     val packs = if Symtab.is_empty cmap then []
-                else sort pack_le (scan cmap tm)
+                else Listsort.sort pack_compare (scan cmap tm)
     (* Isabelle tries only the first sorted pack.  Trying later packs
        when instantiation fails avoids one rejected rule shadowing an
        otherwise applicable rule, while retaining one split per call. *)
@@ -550,9 +523,10 @@ fun clean_asm_eq th =
 
 fun asm_eq cmap asm =
   let
-    val packs = sort pack_le (scan cmap (mk_neg asm))
+    val negated = mk_neg asm
+    val packs = Listsort.sort pack_compare (scan cmap negated)
   in
-    clean_asm_eq (first_success packs (mk_neg asm))
+    clean_asm_eq (first_success packs negated)
   end
 
 fun split_asm_tac cmap =
@@ -562,7 +536,7 @@ fun split_asm_tac cmap =
                                        acc entries) cmap []
     fun indexed_head head =
       List.exists (fn (key_head,_) => same_const key_head head)
-        (Symtab.lookup_list cmap (head_key head))
+        (Symtab.lookup_list cmap (const_key head))
     (* A short list avoids constructing a key string at each constant. *)
     val has_head =
       if length heads <= 8 then

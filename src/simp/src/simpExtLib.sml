@@ -467,7 +467,8 @@ fun frag_rewrites ssf = map (#2 o #item) (#rewrs (D ssf))
 
 fun add_named_rwt nth ssfrag = ssf_upd_rewrs (cons (apfst SOME nth)) ssfrag
 
-val merge_names = simpCommon.merge_names
+val merge_names = simpCommon.merge_names_by frag_name
+val merge_filters = simpCommon.merge_filters_by (#filter o D)
 
 (*---------------------------------------------------------------------------*)
 (* Possibly need to suppress duplicates in the merge?                        *)
@@ -475,10 +476,10 @@ val merge_names = simpCommon.merge_names
 
 fun merge_ss (s:ssfrag list) =
   SSFRAG_CON
-    { name     = merge_names (map (#name o D) s),
+    { name     = merge_names s,
       convs    = flatten (map (#convs o D) s),
       rewrs    = map (source_slot o #item) (flatten (map (#rewrs o D) s)),
-      filter   = simpCommon.merge_filters (map (#filter o D) s),
+      filter   = merge_filters s,
       ac       = map (source_slot o #item) (flatten (map (#ac o D) s)),
       views    = flatten (map (#views o D) s),
       dprocs   = flatten (map (#dprocs o D) s),
@@ -854,12 +855,132 @@ fun update_looper (looper,[]) = [looper]
       then looper::rest
       else entry::update_looper(looper,rest)
 
+local
+  (* Only ordinary loopers can be added by a fragment. An installed split
+     looper keeps its slot even if its name is also in the batch. *)
+  fun indexed_update batch installed =
+    let
+      (* First occurrence determines the position, last the entry. *)
+      fun remember (entry,(first,pending)) =
+        let
+          val name = #name (looper_data entry)
+          val first = if Symtab.defined pending name then first
+                      else name::first
+        in (first,Symtab.update (name,entry) pending) end
+      val (first,pending) = List.foldl remember ([],Symtab.empty) batch
+      fun append pending (name,entries) =
+        case Symtab.lookup pending name of
+            SOME entry => entry::entries
+          | NONE => entries
+      fun merge pending installed =
+        if Symtab.is_empty pending then installed
+        else case installed of
+            [] => List.foldl (append pending) [] first
+          | (entry as LooperEntry {kind=OrdinaryLooper,name,...})::rest =>
+              (case Symtab.lookup pending name of
+                  NONE => entry::merge pending rest
+                | SOME replacement =>
+                    replacement::merge (Symtab.delete_safe name pending) rest)
+          | entry::rest => entry::merge pending rest
+    in merge pending installed end
+
+  fun long_batch 0 _ = true
+    | long_batch _ [] = false
+    | long_batch n (_::rest) = long_batch (n - 1) rest
+
+  fun group_updates batch installed =
+    let
+      (* Replacing the same ID leaves its first position intact. Grouping a
+         short list once avoids walking the installed list for each repeat. *)
+      fun collect [] grouped = List.foldl update_looper installed grouped
+        | collect (looper::rest) grouped =
+            case update_looper (looper,grouped) of
+                grouped as _::_::_::_::_::_ =>
+                  indexed_update (grouped @ rest) installed
+              | grouped => collect rest grouped
+    in collect batch [] end
+in
+  fun update_loopers [] installed = installed
+    | update_loopers [looper] installed = update_looper (looper,installed)
+    | update_loopers batch installed =
+        if long_batch 65 batch then group_updates batch installed
+        else List.foldl update_looper installed batch
+end
+
 fun add_solver (solver : TraverseExt.ssolver,
                 solvers : TraverseExt.ssolver list) =
   if List.exists (fn {name,...} => name = #name solver) solvers then solvers
   else solvers @ [solver]
 
-fun dedup_solvers solvers = List.foldl add_solver [] solvers
+fun add_solvers [] solvers = solvers
+  | add_solvers [solver] solvers = add_solver (solver,solvers)
+  | add_solvers [first,second] solvers =
+      add_solver (second,add_solver (first,solvers))
+  | add_solvers batch solvers =
+      let
+        fun add_indexed added batch =
+          let
+            fun collect (solver as {name,...} : TraverseExt.ssolver,
+                         acc as (names,added)) =
+              if Symtab.defined names name then acc
+              else (Symtab.insert_set name names,solver::added)
+            val initial = List.foldl
+              (fn (solver,names) => Symtab.insert_set (#name solver) names)
+              Symtab.empty added
+            val (names,added) = List.foldl collect (initial,added) batch
+            (* Index only incoming names. A duplicate-only batch can finish
+               as soon as it has found those names in the existing list. *)
+            fun remove_installed [] pending = pending
+              | remove_installed (({name,...} : TraverseExt.ssolver)::rest)
+                                 pending =
+                  if Symtab.is_empty pending then pending
+                  else remove_installed rest (Symtab.remove_set name pending)
+            val pending = remove_installed solvers names
+          in
+            if Symtab.is_empty pending then solvers
+            else if Portable.pointer_eq (names,pending) then
+              solvers @ List.rev added
+            else solvers @ List.rev
+              (List.filter (Symtab.defined pending o #name) added)
+          end
+        fun finish added =
+          if null solvers then List.rev added
+          else
+            let
+              fun collect (solver as {name,...} : TraverseExt.ssolver, new) =
+                if List.exists (fn s => #name s = name) solvers then new
+                else solver::new
+            in
+              case List.foldl collect [] added of
+                  [] => solvers
+                | new => solvers @ new
+            end
+        (* A small set of distinct names is cheap to scan, even when
+           repeated throughout a long batch. *)
+        fun gather [] _ added = finish added
+          | gather (batch as (solver as {name,...} : TraverseExt.ssolver)::rest)
+                   room added =
+              if List.exists (fn s => #name s = name) added then
+                gather rest room added
+              else if room = 0 then add_indexed added batch
+              else gather rest (room - 1) (solver::added)
+        fun short _ [] = true
+          | short 0 _ = false
+          | short n (_::rest) = short (n - 1) rest
+        fun skip_installed
+              (batch as (solver : TraverseExt.ssolver)::rest)
+              ((installed : TraverseExt.ssolver)::more) =
+              if #name solver = #name installed then skip_installed rest more
+              else batch
+          | skip_installed batch _ = batch
+      in
+        case skip_installed batch solvers of
+            [] => solvers
+          | [solver] => add_solver (solver,solvers)
+          | rest => gather rest (if short 64 rest then 64 else 8) []
+      end
+
+fun dedup_solvers solvers = add_solvers solvers []
 
 fun strategy_of (SS s) = #strategy s
 fun has_looper_id id ss =
@@ -1261,16 +1382,22 @@ fun mk_tactic_solver (name,tac) =
 
  fun compile_native_named event slot component named =
    let
-     fun convert (conjunct,rw) =
-       case mk_rewr_convdata rw of
-           NONE => NONE
-         | SOME (cd as {source=SOME rewrite,bound,...}) =>
-             SOME (cd,RewriteSource
-               {origin={event=event,slot=slot,component=component,
-                        conjunct=conjunct},rewrite=rewrite,bound=bound})
-         | SOME _ => NONE
+     fun compile _ [] acc = List.rev acc
+       | compile conjunct (rw::rest) acc =
+           let val next = conjunct + 1
+           in
+             case mk_rewr_convdata rw of
+                 SOME (cd as {source=SOME rewrite,bound,...}) =>
+                   let
+                     val origin = {event=event, slot=slot, component=component,
+                                   conjunct=conjunct}
+                     val source = RewriteSource
+                       {origin=origin, rewrite=rewrite, bound=bound}
+                   in compile next rest ((cd,source)::acc) end
+               | _ => compile next rest acc
+           end
    in
-     List.mapPartial I (numbered convert named)
+     compile 1 named []
    end
 
  fun compile_native event mk_rewrs slot component item =
@@ -1347,7 +1474,10 @@ fun mk_tactic_solver (name,tac) =
         {parts=parts,rules=List.concat (map #rules data),
          context=List.concat (map #context data)} end
 
- fun add_frag_native native_override suspended rebind event (ss, f) =
+ datatype view_sources = BundleSources | AvailableSources
+
+ fun add_frag_native view_sources native_override suspended rebind event
+       (ss, f) =
    if is_excluded ss f then ss
    else let
    (* Do not destructure/rebox a prohibited addition's input: the no-op
@@ -1377,44 +1507,61 @@ fun mk_tactic_solver (name,tac) =
    val native = case rebind of NONE => retained | SOME bind => bind retained
    val new_sources = map #2 native
    val native_sources = new_sources @ #native_sources sset
-   fun compile_view find_source (entry as (source,view,cached)) =
-     case find_source source of
+   fun bind_view NONE compiled = compiled
+     | bind_view (bound as SOME (pair as (counter,declared))) compiled =
+         case compiled of
+             SOME (data as
+                {bound=SOME (r,n),thypart,cd,legacy,source,prepared}) =>
+               if not (Portable.pointer_eq (r,counter)) then
+                 SOME (rebind_convdata data pair)
+               else if n = declared then compiled
+               else SOME {thypart=thypart,cd=cd,legacy=legacy,source=source,
+                          prepared=prepared,bound=bound}
+           | SOME data => SOME (rebind_convdata data pair)
+           | NONE => NONE
+   fun compile_view (source,view,cached)
+         (RewriteSource {rewrite=(nm,_),bound,...}) =
+     let
+       val compiled = case cached of
+           NONE =>
+             let val control =
+                   case bound of NONE => UNBOUNDED | SOME (r,_) => BOUNDED r
+             in mk_rewr_convdata (nm,(view,control)) end
+         | SOME data => data
+       (* A fresh matcher may see a partially spent counter. Retain the
+          source's declaration so a later reset replenishes it fully. *)
+       val compiled = bind_view bound compiled
+     in (compiled,(source,view,SOME compiled)) end
+   fun retain_view find (entry as (source,_,_)) =
+     case find source of
          NONE => (NONE,entry)
-       | SOME (RewriteSource {rewrite=(nm,_),bound,...}) =>
-           let
-             val control =
-               case bound of NONE => UNBOUNDED | SOME (r,_) => BOUNDED r
-             val compiled = case cached of
-                 NONE => mk_rewr_convdata (nm,(view,control))
-               | SOME data => Option.map
-                   (fn data => case bound of
-                       NONE => data
-                     | SOME pair =>
-                         if case #bound data of SOME (r,_) =>
-                              Portable.pointer_eq (r,#1 pair)
-                            | NONE => false
-                         then data else rebind_convdata data pair) data
-             val compiled = Option.map
-               (fn {thypart,cd,legacy,source,prepared,...} =>
-                   {thypart=thypart,cd=cd,legacy=legacy,
-                    source=source,prepared=prepared,bound=bound}) compiled
-           in (compiled,(source,view,SOME compiled)) end
+       | SOME current => compile_view entry current
    val compiled_views =
      if null views then []
-     else if isSome native_override andalso use_full_source_index views then
-       let
-         (* Bundle installation accepts only views of its own sources.
-            Avoid indexing ambient sources unless a local match is missing
-            and another source at the same origin might match. *)
-         val own = source_finder new_sources #1 views
-         val ambient =
-           Susp.delay (fn () => source_finder (#native_sources sset) #1 views)
-         fun find source =
-           case own source of
-               NONE => Susp.force ambient source
-             | found => found
-       in map (compile_view find) views end
-     else map (compile_view (source_finder native_sources #1 views)) views
+     else case view_sources of
+         BundleSources =>
+           let
+             val find = source_finder new_sources #1 views
+             fun own_view (entry as (source,_,_)) =
+               case find source of
+                   NONE => NONE
+                 | SOME current => SOME (compile_view entry current)
+           in List.mapPartial own_view views
+           end
+       | AvailableSources =>
+           if isSome native_override andalso use_full_source_index views then
+             let
+               (* Replay also considers ambient sources when a view's
+                  own source is missing or has changed. *)
+               val own = source_finder new_sources #1 views
+               val ambient = Susp.delay
+                 (fn () => source_finder (#native_sources sset) #1 views)
+               fun find source =
+                 case own source of
+                     NONE => Susp.force ambient source
+                   | found => found
+             in map (retain_view find) views end
+           else map (retain_view (source_finder native_sources #1 views)) views
    val newconvdata = convs @ map #1 native @
      List.mapPartial #1 compiled_views
    val net = net_add_convs initial_net newconvdata
@@ -1470,11 +1617,9 @@ fun mk_tactic_solver (name,tac) =
    val relations = sset_rels @ relrels
    val strategy =
      #strategy sset
-       |> upd_loopers (fn ls => List.foldl update_looper ls (#loopers ssf))
-       |> upd_unsafe_solvers
-            (fn ss => List.foldl add_solver ss (#unsafe_solvers ssf))
-       |> upd_safe_solvers
-            (fn ss => List.foldl add_solver ss (#safe_solvers ssf))
+       |> upd_loopers (update_loopers (#loopers ssf))
+       |> upd_unsafe_solvers (add_solvers (#unsafe_solvers ssf))
+       |> upd_safe_solvers (add_solvers (#safe_solvers ssf))
  in
    let
      val history = ADDFRAG
@@ -1498,7 +1643,7 @@ fun mk_tactic_solver (name,tac) =
  end
 
  fun add_frag event args =
-   add_frag_native NONE [] NONE event args
+   add_frag_native AvailableSources NONE [] NONE event args
 
  fun op++ (ss,fragment) =
    if is_excluded ss fragment then ss
@@ -1520,16 +1665,10 @@ fun mk_tactic_solver (name,tac) =
          val name = valOf (frag_name fragment)
          val excluded = Binaryset.delete (#excluded data,name)
            handle NotFound => #excluded data
-         val owned =
-           case group_items views_by_event event of
-               [] => []
-             | candidates =>
-                 let val find =
-                       source_finder (map #2 (#rules native)) #1 candidates
-                 in List.filter (isSome o find o #1) candidates end
          val fragment =
-           setfrag_views (map (fn (s,th) => (s,th,NONE)) owned) fragment
-       in add_frag_native (SOME native) [] NONE event
+           setfrag_views (map (fn (s,th) => (s,th,NONE))
+             (group_items views_by_event event)) fragment
+       in add_frag_native BundleSources (SOME native) [] NONE event
             (SS {mk_rewrs = #mk_rewrs data, history = #history data,
                  initial_net = #initial_net data,
                  rewrite_sources = #rewrite_sources data,
@@ -1599,7 +1738,9 @@ fun build_from_history_with rebind h0 =
                   val native = case rebind of
                       NONE => Option.map freshen_prepared_native cached
                     | SOME _ => cached
-                in add_frag_native native suspended rebind event (ss,sf) end
+                in add_frag_native AvailableSources native suspended rebind
+                     event (ss,sf)
+                end
             | DELETE_EVENT excls =>
                 delete_exclusions (map replay_exclusion excls) ss
             | ADDWEAKENER wd => add_weakener wd ss
@@ -1971,33 +2112,34 @@ fun rewrite_context_changes (old_ss as SS old,current_ss as SS current) =
 
  fun source_thms (prepared : prepared_rewrites) = map #1 prepared
 
- fun prepared_convdata mk_rewrs (prepared : prepared_rewrites) =
-   let
-     val rwts0 = flatten (map mk_rewrs prepared)
-     val rwts =
-       map (fn th =>
-               (SOME {Thy = "", Name = "rewrite: prepared context"}, th))
-           rwts0
-   in
-     List.mapPartial mk_rewr_convdata rwts
-   end
+ fun context_convdata _ _ [] = []
+   | context_convdata name mk_rewrs (prepared : prepared_rewrites) =
+     let
+       (* Finish the rewrite makers before constructing any conversions. *)
+       val groups = map mk_rewrs prepared
+       val rule_name = SOME {Thy = "", Name = name}
+       fun compile (rw,acc) =
+         case mk_rewr_convdata (rule_name,rw) of
+             SOME data => data::acc
+           | NONE => acc
+     in
+       List.rev (List.foldl (fn (rules,acc) => List.foldl compile acc rules)
+                            [] groups)
+     end
 
  (* Both extension projections use this setup once. Collectors
     continue compiling facts at their original consumption stage. *)
  fun rewriter_context_for_ss_prepared
        (SS{mk_rewrs,initial_net,...}) prepared = let
    val prepared_net =
-     net_add_convs initial_net (prepared_convdata mk_rewrs prepared)
+     net_add_convs initial_net
+       (context_convdata "rewrite: prepared context" mk_rewrs prepared)
    fun addcontext (context,thms) = let
      val net = (raise context) handle CONVNET net => net
      val cthms = map dest_tagged_rewrite thms
-     val new_rwts0 = flatten (map mk_rewrs cthms)
-     val new_rwts =
-         map (fn th => (SOME {Thy = "", Name = "rewrite: from context"}, th))
-             new_rwts0
+     val data = context_convdata "rewrite: from context" mk_rewrs cthms
    in
-     CONVNET
-       (net_add_convs net (List.mapPartial mk_rewr_convdata new_rwts))
+     CONVNET (net_add_convs net data)
    end
    in {initial=CONVNET prepared_net,addcontext=addcontext} end;
 
@@ -2055,10 +2197,10 @@ fun rewrite_context_changes (old_ss as SS old,current_ss as SS current) =
        (ss as (SS ssdata)) (prepared : prepared_rewrites)
        : TraverseExt.traverse_data =
    let
+     val existing_dprocs = #dprocs ssdata
      val dprocs =
-       if null prepared then #dprocs ssdata
-       else
-         map (TraverseExt.addctxt (source_thms prepared)) (#dprocs ssdata)
+       if null existing_dprocs orelse null prepared then existing_dprocs
+       else map (TraverseExt.addctxt (source_thms prepared)) existing_dprocs
    in
       {rewriters=[configured_rewriter_for_ss_prepared
                     check_abort traversal ss prepared],
@@ -2439,6 +2581,15 @@ fun simp_conv_with_xdata traversal xdata reducer_context solver_context =
   TRY_CONV
     (SIMP_QCONV_WITH_XDATA traversal xdata reducer_context solver_context)
 
+fun first_tactic enabled apply entries =
+  let
+    fun first [] g ctxt = NO_TAC g ctxt
+      | first (entry::rest) g ctxt =
+          if enabled entry then
+            (apply entry g ctxt handle HOL_ERR _ => first rest g ctxt)
+          else first rest g ctxt
+  in first entries end
+
 fun final_solver_tac traversal xdata (mode : simp_mode) ss
       reducer_context solver_context =
   let
@@ -2455,7 +2606,7 @@ fun final_solver_tac traversal xdata (mode : simp_mode) ss
       end
   in
     if null solvers then NO_TAC
-    else
+    else fn g => fn ctxt =>
       let
         val prover_ctxt =
           {stack=[], context_thms=reducer_context @ solver_context,
@@ -2463,7 +2614,7 @@ fun final_solver_tac traversal xdata (mode : simp_mode) ss
              (simp_conv_with_xdata traversal xdata
                 reducer_context solver_context)}
       in
-        FIRST (map (solve_with prover_ctxt) solvers)
+        first_tactic (K true) (solve_with prover_ctxt) solvers g ctxt
       end
   end
 
@@ -2475,11 +2626,12 @@ fun looper_tac ss =
     fun enabled (LooperEntry {kind=OrdinaryLooper,...}) = true
       | enabled entry =
           not (Binaryset.member (#excl_loopers s,looper_display entry))
+    (* An UNCHANGED raised before context application declines this looper. *)
     fun apply (LooperEntry {apply,...}) g =
       apply ss g
       handle Conv.UNCHANGED => NO_TAC g
   in
-    FIRST (map apply (List.filter enabled (#loopers s)))
+    first_tactic enabled apply (#loopers s)
   end
 
 fun bounded_looper rounds tac g =

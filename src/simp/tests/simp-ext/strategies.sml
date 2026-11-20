@@ -219,6 +219,52 @@ val _ = List.app (fn mode => let
     [goal] []
 in () end) [safe,unsafe]
 
+val _ = List.app (fn mode => let
+  val label = if #safe mode then "safe" else "unsafe"
+  val set = if #safe mode then S.set_safe_solvers else S.set_unsafe_solvers
+  val frag = if #safe mode then S.safe_solver_ss else S.solver_ss
+  val seen = ref ([] : string list)
+  fun solver name tag : E.ssolver =
+    {name=name,solve=fn _ => fn _ => (seen := tag :: !seen; reject ())}
+  fun duplicate ({name,...} : E.ssolver) = solver name ("duplicate: " ^ name)
+  val installed = solver "shared" "installed"
+  val incoming = solver "shared" "incoming"
+  val first = solver "first" "first"
+  val names = List.tabulate (80,fn i => "batch " ^ Int.toString i)
+  val fillers = map (fn name => solver name name) names
+  val batch = first :: fillers @ [duplicate first,incoming]
+  val base = set [installed] S.empty_ss
+  val appended = S.++ (base,S.merge_ss (map frag batch))
+  val retained = installed :: first :: fillers
+  fun duplicates solver =
+    S.merge_ss (List.tabulate (32,fn _ => frag (duplicate solver)))
+  val unchanged = S.++ (appended,duplicates installed)
+  val unchanged_late = S.++ (unchanged,duplicates (List.last fillers))
+  val unchanged_bulk = S.++ (unchanged_late,
+    S.merge_ss (map (frag o duplicate) retained))
+  val unchanged_reordered = S.++ (unchanged_bulk,
+    S.merge_ss (map (frag o duplicate) (List.rev retained)))
+  val dropped = S.name_ss "discarded" S.empty_ssfrag
+  val replay =
+    S.remove_ssfrags ["discarded"] (S.++ (unchanged_reordered,dropped))
+  fun run suffix ss tags =
+    (seen := [];
+     ignore (runtac (noasms mode ss) goal);
+     check (label ^ " batch " ^ suffix) (List.rev (!seen) = tags))
+  fun solvers ss = #solvers (#2 (S.xtraversedata_for_ss ss))
+  val _ = run "setter order" (set batch base) ("first" :: names @ ["incoming"])
+  val _ = run "fragment order" appended ("installed" :: "first" :: names)
+  val _ = run "replay order" replay ("installed" :: "first" :: names)
+in
+  if #safe mode then ()
+  else check "bulk add preserves solver and duplicate-only list identity"
+    (ListPair.allEq Portable.pointer_eq (retained,solvers appended) andalso
+     Portable.pointer_eq (solvers appended,solvers unchanged) andalso
+     Portable.pointer_eq (solvers unchanged,solvers unchanged_late) andalso
+     Portable.pointer_eq (solvers unchanged_late,solvers unchanged_bulk) andalso
+     Portable.pointer_eq (solvers unchanged_bulk,solvers unchanged_reordered))
+end) [safe,unsafe]
+
 (* Live NONE versus explicit depth on saved conversions AND saved tactics.
    Open fixtures compare every hypothesis in the recursive kernel proof. *)
 val _ = let
@@ -350,6 +396,25 @@ val _ = let
     |> S.limit 1
 in tactic "looper UNCHANGED permits the next candidate"
      (noasms unsafe skipped) g [(asl,p),(asl,mk_conj (q,r))] end
+
+val _ = let
+  val seen = ref ([] : string list)
+  fun note tag _ _ = (seen := tag :: !seen; reject ())
+  val base = S.empty_ss
+    |> S.add_looper ("existing",note "original")
+    |> S.add_looper ("untouched",note "untouched")
+  val distinct = List.tabulate (128,fn i => "extra " ^ Int.toString i)
+  val batch = S.merge_ss (map (fn (id,tag) => S.looper_ss (id,note tag))
+    ([("a","early a"), ("existing","early replacement"), ("b","b")] @
+     map (fn name => (name,name)) distinct @
+     [("new","early new"), ("a","last a"), ("c","c"),
+      ("existing","last replacement"), ("new","last new")]))
+  val _ = tactic "merged loopers allow all callbacks to decline"
+    (noasms unsafe (S.++ (base,batch))) goal [goal]
+in check "merged loopers retain first positions and final callbacks"
+     (List.rev (!seen) = ["last replacement","untouched","last a","b"] @
+                        distinct @ ["last new","c"])
+end
 
 (* Foreign exceptions preserve payload identity, unlike normal HOL_ERR
    candidate rejection. Invalid final proofs must not be accepted. *)

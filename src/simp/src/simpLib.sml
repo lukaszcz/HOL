@@ -167,7 +167,8 @@ fun frag_rewrites ssf = map #2 (#rewrs (D ssf))
 
 fun add_named_rwt nth ssfrag = ssf_upd_rewrs (cons (apfst SOME nth)) ssfrag
 
-val merge_names = simpCommon.merge_names
+val merge_names = simpCommon.merge_names_by frag_name
+val merge_filters = simpCommon.merge_filters_by (#filter o D)
 
 (*---------------------------------------------------------------------------*)
 (* Possibly need to suppress duplicates in the merge?                        *)
@@ -175,10 +176,10 @@ val merge_names = simpCommon.merge_names
 
 fun merge_ss (s:ssfrag list) =
   SSFRAG_CON
-    { name     = merge_names (map (#name o D) s),
+    { name     = merge_names s,
       convs    = flatten (map (#convs o D) s),
       rewrs    = flatten (map (#rewrs o D) s),
-      filter   = simpCommon.merge_filters (map (#filter o D) s),
+      filter   = merge_filters s,
       ac       = flatten (map (#ac o D) s),
       dprocs   = flatten (map (#dprocs o D) s),
       congs    = flatten (map (#congs o D) s),
@@ -246,21 +247,22 @@ fun ssupd_net f (SS{mk_rewrs,history,initial_net,dprocs,travrules,limit,
 
 fun optprint NONE = "NONE"
   | optprint (SOME s) = "SOME "^s
-fun filter_net_by_names nms net =
+fun filter_net_by_patterns pats net =
     let
-      val pats = map simpCommon.munge_simpset_name nms
-      val matcher = ref NONE
-      fun prepare thy name =
-          let val matches = simpCommon.prepare_entry_name_match pats
-          in matcher := SOME matches; matches thy name end
-      (* Prepare the prefixes only when a second entry can reuse them. *)
+      val matches = simpCommon.prepare_entry_name_match pats
       fun retained ({thypart,ci}:net_conv_info) =
-          case !matcher of
-              NONE =>
-                (matcher := SOME prepare;
-                 not (simpCommon.entry_name_match (thypart,#name ci) pats))
-            | SOME matches => not (matches thypart (#name ci))
+          not (matches thypart (#name ci))
     in Ho_Net.vfilter retained net end
+
+fun filter_net_by_names [name] net =
+    let val pat = simpCommon.munge_simpset_name name
+    in
+      if Portable.pointer_eq (net,Ho_Net.empty) then
+        Ho_Net.vfilter (K true) net
+      else filter_net_by_patterns [pat] net
+    end
+  | filter_net_by_names nms net =
+    filter_net_by_patterns (map simpCommon.munge_simpset_name nms) net
 
 fun dphas_name_from nms (REDUCER {name = SOME n,...}) = Lib.mem n nms
   | dphas_name_from _ _ = false
@@ -585,7 +587,9 @@ fun process_tags ss thl =
          null frags andalso null exclfrags
       then (ss, rst)
       else
-        let val base = remove_ssfrags exclfrags ss handle Conv.UNCHANGED => ss
+        let val base =
+                if null exclfrags then ss
+                else remove_ssfrags exclfrags ss handle Conv.UNCHANGED => ss
             val cong_ac =
                 SSFRAG_CON{name=SOME"Cong and/or AC", relsimps = [],
                            ac=acs, congs=congs,
