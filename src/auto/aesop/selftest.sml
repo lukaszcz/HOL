@@ -4722,17 +4722,14 @@ val aesop_skip_R_trans =
           Tactical.REPEAT Tactic.STRIP_TAC),
         Rewrite.ASM_REWRITE_TAC []))
 
-(* The messages emitted while forcing the supplied Match rule on
-   R a c, and whether it yielded any result, at an aesop.trace level. *)
-fun skip_trace_at level =
+(* The messages emitted while forcing a supplied Match rule on
+   aesop_skip_R a c, and the number of results it yielded, at an
+   aesop.trace level. *)
+fun skip_trace_of rule level =
   let
     val ctxt =
       HOLFlags.set_flagC (traceUtil.flag aesopData.tracer, level)
         (Context.snapshot ())
-    val rule =
-      aesopRule.apply_rule
-        {name = "skip-trans", phase = aesopRule.RSafe,
-         theorem = aesop_skip_R_trans, mode = clasetUnify.Match}
     val node =
       clasetGoal.from_goal
         ([], ``aesop_skip_R (a:'a) (c:'a)``)
@@ -4743,19 +4740,51 @@ fun skip_trace_at level =
         (fn () =>
           seq.take 1 (aesopTree.rule_results_in ctxt rule node)) ()
   in
-    (rev (!notices), null results)
+    (rev (!notices), length results)
   end
 
-val _ =
+val skip_trans_rule =
+  aesopRule.apply_rule
+    {name = "skip-trans", phase = aesopRule.RSafe,
+     theorem = aesop_skip_R_trans, mode = clasetUnify.Match}
+
+val skip_trans_multi_rule =
+  aesopRule.constructors_rule
+    {name = "skip-trans-multi", theorems = [aesop_skip_R_trans],
+     percent = NONE, mode = clasetUnify.Match}
+
+val skip_message =
+  "<<HOL message: Aesop: skipping safe rule with unfixed \
+  \premise variables>>\n"
+
+fun skip_check (name, rule, level, expected) =
   check
-    ("aesop supplied Match rules trace a refusal at aesop.trace 1",
+    (name,
      fn () =>
-       skip_trace_at 1 =
-         (["<<HOL message: Aesop: skipping safe rule with unfixed \
-           \premise variables>>\n"],
-          true))
+       let val (notices, count) = skip_trace_of rule level
+       in
+         (notices = expected andalso count = 0) orelse
+         (die ("captured messages [" ^ String.concatWith "|" notices ^
+               "], " ^ Int.toString count ^ " results");
+          false)
+       end)
 
 val _ =
-  check
+  skip_check
+    ("aesop supplied Match rules trace a refusal at aesop.trace 1",
+     skip_trans_rule, 1, [skip_message])
+
+val _ =
+  skip_check
     ("aesop supplied Match rules refuse silently at aesop.trace 0",
-     fn () => skip_trace_at 0 = ([], true))
+     skip_trans_rule, 0, [])
+
+val _ =
+  skip_check
+    ("aesop constructors rules trace a refusal at aesop.trace 1",
+     skip_trans_multi_rule, 1, [skip_message])
+
+val _ =
+  skip_check
+    ("aesop constructors rules refuse silently at aesop.trace 0",
+     skip_trans_multi_rule, 0, [])

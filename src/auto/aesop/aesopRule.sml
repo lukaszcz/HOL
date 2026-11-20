@@ -154,8 +154,9 @@ fun cases_rule {name, phase, theorem, patterns, mode} : rule =
      ContextualStep
        (fn ctxt =>
          gated_engine_step patterns
-           (clasetStep.rule_step (aesop_level ctxt)
-             {theorem = theorem, elim = true, mode = mode})),
+           (fn input =>
+             clasetStep.rule_step (aesop_level ctxt)
+               {theorem = theorem, elim = true, mode = mode} input)),
    once = false}
 
 fun goal_matches_index NONE _ = true

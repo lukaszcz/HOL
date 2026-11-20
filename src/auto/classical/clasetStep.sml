@@ -632,7 +632,8 @@ fun minor_prefixes policy is_elim premises =
    the refusal is noted at the trace level given.  The safe cascades, which
    run in a context, read classical.trace only when a refusal is noted, off
    the cascade's path.  Rules supplied by aesop note it at aesop.trace.
-   Unify steps and the forward path never refuse and note nothing. *)
+   Unify steps never refuse; the forward path refuses silently, noting
+   nothing. *)
 fun refusal_message () = "skipping safe rule with unfixed premise variables"
 
 fun level_note level () = traceUtil.trace level 1 refusal_message
@@ -800,7 +801,7 @@ fun try_forward charge mode {source, form} immediate node pos
     fun build (positions, matched_store) =
       let
         val (final_store, normalized_rule) =
-          settle_rule mode (#core fresh) (#metas fresh) asl (fn () => ())
+          settle_rule mode (#core fresh) (#metas fresh) asl no_note
             residual_terms matched_store
         val (normalized_premises, _) =
           strip_imp_only (concl normalized_rule)
