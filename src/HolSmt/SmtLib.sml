@@ -8721,10 +8721,12 @@ in
 
   (* A closed integer literal such as `2 : int` is `int_of_num` applied to a
      numeral, which the solvers read as an integer constant: it needs no
-     transfer, so goal_mentions_num skips it.  goal_mentions_num_or_int_literal
-     counts it, as the transfer's normalization of the goal still helps the
-     solvers' proofs replay. *)
-  fun mentions_num skip_literals (asms, concl) =
+     transfer, so goal_mentions_num skips it.  It counts every other atom
+     whose type mentions num, also one the transfer has no rule for, such as
+     ORD.  goal_mentions_num_or_int_literal counts integer literals, as the
+     transfer's normalization of the goal still helps the solvers' proofs
+     replay, and only the atoms the transfer rewrites. *)
+  fun mentions_num skip_literals counts (asms, concl) =
   let
     fun mentions [] = false
       | mentions (tm :: tms) =
@@ -8734,14 +8736,16 @@ in
             case Term.dest_term tm of
                 Term.COMB (rator, rand) => mentions (rator :: rand :: tms)
               | Term.LAMB (bvar, body) =>
-                  atom_needs_num_transfer bvar orelse mentions (body :: tms)
-              | _ => atom_needs_num_transfer tm orelse mentions tms
+                  counts bvar orelse mentions (body :: tms)
+              | _ => counts tm orelse mentions tms
   in
     mentions (concl :: asms)
   end
 
-  val goal_mentions_num = mentions_num true
-  val goal_mentions_num_or_int_literal = mentions_num false
+  val goal_mentions_num =
+    mentions_num true (type_mentions_num o Term.type_of)
+  val goal_mentions_num_or_int_literal =
+    mentions_num false atom_needs_num_transfer
 
   (* STRIP_ALL_THEN minus DISJ_CASES_THEN: flattens conjunctions and
      skolemizes existentials but never case-splits, because preprocessing

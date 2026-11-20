@@ -2650,9 +2650,15 @@ let
   val proof_goal = ([``(n:num) <= 1``, held], #2 goal)
   val thm = Tactical.TAC_PROOF (proof_goal,
     Tactical.THEN (SmtLib.NUM_TO_INT_TAC, intLib.ARITH_TAC))
+  (* a num the transfer has no rule for still makes an assumption num *)
+  val ord_c = ``ORD c = 65``
+  val ((ord_asl, _), _) = SolverSpec.simplify SmtLib.NUM_TO_INT_TAC
+    ([ord_c], ``ORD c + 1 = 66``)
 in
   assert (List.all (fn a => Lib.op_mem Term.aconv a asl) [held, f_def],
     "num transfer changed an assumption that mentions no num");
+  assert (not (Lib.op_mem Term.aconv ord_c ord_asl),
+    "num transfer held back an assumption over an unlisted num function");
   assert_concl_alpha ("num transfer keeping assumptions", thm,
     #2 proof_goal);
   assert (List.all (fn h => Lib.op_mem Term.aconv h (#1 proof_goal))
