@@ -462,12 +462,18 @@ fun insert_meta store (m, metas) =
       else metas
   | NONE => metas
 
+fun collect_metas store tm =
+  Redblackmap.listItems (List.foldl (insert_meta store)
+    (Redblackmap.mkDict string_compare) (free_vars tm))
+  |> map #2
+
+fun metas_of_normalized store tm =
+  if Redblackmap.numItems (#metas store) = 0 then []
+  else collect_metas store tm
+
 fun metas_of store tm =
   if Redblackmap.numItems (#metas store) = 0 then []
-  else
-    Redblackmap.listItems (List.foldl (insert_meta store)
-      (Redblackmap.mkDict string_compare) (free_vars (norm store tm)))
-    |> map #2
+  else collect_metas store (norm store tm)
 
 fun same_var left right = aconv left right
 
@@ -654,6 +660,15 @@ fun ground_terms store =
   end
 
 fun ground store = ground_terms (ground_types store)
+
+fun term_residue (store : store) meta =
+  Option.mapPartial (fn name => Redblackmap.peek (#tm_bindings store, name))
+    (meta_name meta)
+
+fun type_residue (store : store) meta =
+  Option.map (#2 : tymeta * hol_type -> hol_type)
+    (Option.mapPartial (fn name => Redblackmap.peek (#ty_bindings store, name))
+      (tymeta_name meta))
 
 fun bindings store =
   let

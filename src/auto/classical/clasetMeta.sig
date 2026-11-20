@@ -26,6 +26,7 @@ sig
   val norm : store -> term -> term
   val norm_type : store -> hol_type -> hol_type
   val metas_of : store -> term -> meta list
+  val metas_of_normalized : store -> term -> meta list
   val is_meta : term -> bool
   (* A metavariable is identified by its name alone.  Its type is refined as
      the type metavariables inside it are bound, so one metavariable has
@@ -46,6 +47,9 @@ sig
   val bindings : store ->
                  {terms : (meta * term) list,
                   types : (tymeta * hol_type) list}
+  (* Direct residues retain dependencies on metavariables bound later. *)
+  val term_residue : store -> meta -> term option
+  val type_residue : store -> tymeta -> hol_type option
   (* [new_bindings old new] returns the metavariables bound in [new]
      whose names had no binding in [old]. *)
   val new_bindings : store -> store -> {terms : meta list, types : tymeta list}

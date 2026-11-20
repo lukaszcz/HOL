@@ -4008,6 +4008,10 @@ val _ =
                hygiene_supported_fact)))) andalso
          not (Option.isSome
            (clasetFacts.match_view fixed (pattern fixed) (concl other)))
+         andalso
+         (case clasetFacts.match_view fixed (pattern fixed) (concl shared) of
+              SOME view => Term.aconv (concl (#theorem view)) (concl shared)
+            | NONE => false)
        end)
 
 (* An invocation's facts are routed: a citation that is an implication

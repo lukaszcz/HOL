@@ -260,12 +260,28 @@ fun controls exclusions =
         map clasetLib.Del (claset_names name) @ [rewrite_exclusion name])
       exclusions)
 
-fun beta_eta_normalise term =
-  boolSyntax.rhs
-    (Thm.concl
-      (Conv.QCONV
-        (Conv.REDEPTH_CONV
-          (Conv.ORELSEC (Thm.BETA_CONV, Drule.ETA_CONV))) term))
+local
+  (* An eta-shaped binder can still fail the conversion's freshness
+     check. Keep the original proof conversion for any candidate. *)
+  fun has_beta_eta_candidate term =
+    case Term.dest_term term of
+        COMB (operator, operand) =>
+          Term.is_abs operator orelse has_beta_eta_candidate operator
+          orelse has_beta_eta_candidate operand
+      | LAMB (binder, body) =>
+          (Term.is_comb body andalso Term.aconv binder (Term.rand body))
+          orelse has_beta_eta_candidate body
+      | _ => false
+in
+  fun beta_eta_normalise term =
+    if has_beta_eta_candidate term then
+      boolSyntax.rhs
+        (Thm.concl
+          (Conv.QCONV
+            (Conv.REDEPTH_CONV
+              (Conv.ORELSEC (Thm.BETA_CONV, Drule.ETA_CONV))) term))
+    else term
+end
 
 fun strip_truth_equivalence term =
   let
@@ -384,6 +400,15 @@ fun statement_normal_form term =
    means the plain syntactic comparison, which is what this was. *)
 val definitional_context : thm list ref = ref []
 
+fun memoized_unfolding definitions =
+  memoUtil.keyed_memo
+    (fn previous => fn implicit => Portable.pointer_eq (previous, implicit))
+    (fn implicit =>
+      Conv.QCONV (Rewrite.GEN_REWRITE_CONV Conv.ONCE_DEPTH_CONV
+        implicit definitions))
+
+val definitional_conversion = ref (memoized_unfolding [])
+
 (* The names the context defines.  A term mentioning none of them
    unfolds to itself, and the comparison below is called once per
    ambient rule per goal, so recognising that case by a constant scan is
@@ -407,6 +432,7 @@ val goal_comparison : (term * (term -> bool)) option ref = ref NONE
 
 fun set_definitional_context theorems =
   (goal_comparison := NONE;
+   definitional_conversion := memoized_unfolding theorems;
    definitional_context := theorems;
    definitional_heads :=
      HOLset.addList
@@ -433,21 +459,19 @@ val unfolding_passes = 5
 
 fun unfold term =
   let
+    val conversion = (!definitional_conversion) (Rewrite.implicit_rewrites ())
     fun pass current 0 = current
       | pass current fuel =
           let
-            val next =
-              boolSyntax.rhs (Thm.concl
-                (Conv.QCONV
-                  (Rewrite.ONCE_REWRITE_CONV (!definitional_context))
-                  current))
+            val next = boolSyntax.rhs (Thm.concl (conversion current))
           in
             if Term.aconv next current then current
             else pass next (fuel - 1)
           end
   in
-    pass term unfolding_passes handle HOL_ERR _ => term
+    pass term unfolding_passes
   end
+  handle HOL_ERR _ => term
 
 fun unfolded term =
   if List.null (!definitional_context) orelse

@@ -87,9 +87,6 @@ fun DEPTH_FIRST level satisfied expand initial =
 val same_meta = clasetMeta.same_meta
 val same_tymeta = clasetMeta.same_tymeta
 
-val member_meta = Lib.op_mem same_meta
-val member_tymeta = Lib.op_mem same_tymeta
-
 fun add_meta (meta, metas) = Lib.op_insert same_meta meta metas
 fun add_tymeta (meta, metas) = Lib.op_insert same_tymeta meta metas
 
@@ -138,45 +135,39 @@ val marked_types = clasetGoal.marked_types
 fun dependency_closure store goals =
   let
     val all_terms = List.concat (map goal_terms goals)
-    val bindings = clasetMeta.bindings store
-    val initial_terms = marked_terms all_terms
-    val initial_types = marked_types all_terms
+    (* Follow raw residues so the closure includes intermediate bindings. *)
+    fun follow_terms [] seen types = (seen, types)
+      | follow_terms (meta :: rest) seen types =
+          if HOLset.member (seen, meta) then follow_terms rest seen types
+          else
+            let val seen' = HOLset.add (seen, meta)
+            in
+              case clasetMeta.term_residue store meta of
+                  NONE => follow_terms rest seen' types
+                | SOME residue =>
+                    follow_terms (marked_terms [residue] @ rest) seen'
+                      (marked_types [residue] @ types)
+            end
 
-    fun term_dependencies known_terms known_types =
-      let
-        fun add ((redex, residue), (terms, types)) =
-          if member_meta redex known_terms then
-            (union_metas (marked_terms [residue]) terms,
-             union_tymetas (marked_types [residue]) types)
-          else (terms, types)
-      in
-        List.foldl add (known_terms, known_types) (#terms bindings)
-      end
+    fun follow_types [] seen = seen
+      | follow_types (meta :: rest) seen =
+          if HOLset.member (seen, meta) then follow_types rest seen
+          else
+            let val seen' = HOLset.add (seen, meta)
+            in
+              case clasetMeta.type_residue store meta of
+                  NONE => follow_types rest seen'
+                | SOME residue =>
+                    follow_types
+                      (List.filter clasetMeta.is_tymeta (type_vars residue) @
+                       rest) seen'
+            end
 
-    fun type_dependencies known_types =
-      let
-        fun add ((redex, residue), types) =
-          if member_tymeta redex known_types then
-            union_tymetas
-              (List.filter clasetMeta.is_tymeta (type_vars residue))
-              types
-          else types
-      in
-        List.foldl add known_types (#types bindings)
-      end
-
-    fun close (terms, types) =
-      let
-        val (terms', types') = term_dependencies terms types
-        val types'' = type_dependencies types'
-      in
-        if length terms' = length terms andalso
-           length types'' = length types
-        then (terms', types'')
-        else close (terms', types'')
-      end
+    val (terms, types) =
+      follow_terms (marked_terms all_terms)
+        (HOLset.empty clasetMeta.meta_compare) (marked_types all_terms)
   in
-    close (initial_terms, initial_types)
+    (terms, follow_types types (HOLset.empty Type.compare))
   end
 
 fun mark_clashes visible
@@ -185,8 +176,9 @@ fun mark_clashes visible
   else
     let val (visible_terms, visible_types) = Portable.HOLSusp.force visible
     in
-      List.exists (fn meta => member_meta meta visible_terms) terms orelse
-      List.exists (fn meta => member_tymeta meta visible_types) types
+      List.exists (fn meta => HOLset.member (visible_terms, meta)) terms
+      orelse
+      List.exists (fn meta => HOLset.member (visible_types, meta)) types
     end
 
 type frame = {source : node option, states : node seq.seq}

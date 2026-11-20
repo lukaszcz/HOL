@@ -433,6 +433,11 @@ fun declaration_site name =
       SOME (_, where_) => where_
     | NONE => benchIsabelleAmbient.location name
 
+val argument_sites =
+  map (fn argument =>
+    (argument, benchIsabelleAmbient.parse_location
+      (declaration_site (benchLib.argument_name argument)))) arguments
+
 (* Isabelle's ambient context is theory-ordered: a goal reads what its
    own theory has declared above it and what its ancestors declare, not
    what the library declares somewhere.  This is the cut, and it is the
@@ -440,12 +445,15 @@ fun declaration_site name =
    which is mined provenance and not anything about the goal's
    statement, so the context still cannot be tuned against one goal. *)
 fun arguments_at goal =
-  List.filter
-    (fn argument =>
-      benchIsabelleAmbient.in_scope
-        {declared = declaration_site (benchLib.argument_name argument),
-         goal = goal})
-    arguments
+  let
+    val site = benchIsabelleAmbient.parse_location goal
+  in
+    List.mapPartial
+      (fn (argument, declared) =>
+        if benchIsabelleAmbient.in_scope_at {declared = declared, goal = site}
+        then SOME argument else NONE)
+      argument_sites
+  end
 
 (* A definition unfolds one constant; a characterisation relates
    several.  [define_new_type_bijections] yields a single theorem whose

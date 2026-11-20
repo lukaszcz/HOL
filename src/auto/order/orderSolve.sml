@@ -110,6 +110,61 @@ fun settle target path (ReachedList reached_nodes) =
   | settle target path (ReachedIndex table) =
       ReachedIndex (Termtab.update (target, path) table)
 
+(* A scan can use a newly reached node at later edges in the same round.
+   Earlier edges must wait for the next round. Schedule just the edges
+   that can relax, in the same (round, original position) order, so that
+   a node still gets the same first path. Edges from a source reached
+   in the initial scans are eligible from round zero. *)
+fun indexed_rounds work relax edges known source =
+  let
+    val empty =
+      Redblackmap.mkDict (Lib.pair_compare (Int.compare, Int.compare))
+    fun schedule round (index, edge) pending =
+      Redblackmap.insert (pending, (round, index), edge)
+    fun index_edges ((position, edge : edge), (outgoing, pending)) =
+      let
+        val from = #source edge
+        val indexed = (position, edge)
+        val old = Option.getOpt (Termtab.lookup outgoing from, [])
+        val outgoing' = Termtab.update (from, indexed :: old) outgoing
+        val pending' =
+          if (aconv from source orelse
+              Option.isSome (reached work known from)) andalso
+             not (aconv (#target edge) source orelse
+                  Option.isSome (reached work known (#target edge)))
+          then schedule 0 indexed pending
+          else pending
+      in
+        (outgoing', pending')
+      end
+    val (outgoing, pending) =
+      List.foldl index_edges (Termtab.empty, empty) (Lib.enumerate 0 edges)
+    fun run known pending =
+      case Redblackmap.firsti pending of
+          NONE => known
+        | SOME (key as (round, last), edge) =>
+            let
+              val (rest, _) = Redblackmap.remove (pending, key)
+              val (known', changed) = relax (edge, (known, false))
+              val next =
+                if changed then
+                  let
+                    val entries =
+                      Option.getOpt (Termtab.lookup outgoing (#target edge), [])
+                    fun add (entry as (position, _), pending) =
+                      schedule (if position > last then round else round + 1)
+                        entry pending
+                  in
+                    List.foldl add rest entries
+                  end
+                else rest
+            in
+              run known' next
+            end
+  in
+    run known pending
+  end
+
 (* Everything the source reaches, one path per node. A node is settled
    the first time it is reached. Ordinary calls construct proofs only
    along the paths a caller actually needs. *)
@@ -154,15 +209,20 @@ fun reachable work transitive edges source =
                   | NONE => (known, changed)))
           (* A changing round settles a new target from the finite
              edge list. *)
-          fun rounds reached =
+          fun rounds left reached =
             let
               val (reached', changed) =
                 List.foldl relax (reached, false) edges
             in
-              if changed then rounds reached' else reached'
+              if not changed then reached'
+              else if left = 1 then
+                indexed_rounds work relax edges reached' source
+              else rounds (if left = 0 then 0 else left - 1) reached'
             end
         in
-          rounds empty
+          (* Small or forward chains often finish before an index pays
+             for itself. Metered searches keep the complete scans. *)
+          rounds (if Option.isSome (#max_nodes work) then 2 else 0) empty
         end
 
 fun reach_from work transitive edges =

@@ -79,6 +79,11 @@ sig
   val declaring_theories : string list
   val ancestry : (string * string list) list
 
+  type source_location
+  val parse_location : string -> source_location
+  val in_scope_at : {declared : source_location, goal : source_location} ->
+                    bool
+
   (* Whether a declaration at [declared] was in scope at [goal], both
      written "src/HOL/<theory>.thy:<line>".  Within one theory that is
      the line order; across two it is the import order.  Raises on a

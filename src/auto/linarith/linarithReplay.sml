@@ -603,31 +603,33 @@ fun extract_split theorem =
    tactics than goals, and the arity mismatch is what the user then
    sees.  So neqE not applying to an assumption that passed the test is
    an ill-formed instance, and is reported as one here. *)
-fun split_assumption discrete_only theorem =
+fun split_assumption discrete_only assumption =
   (* An assumption whose carrier replay cannot even name is one decomp
      answers NONE for, so reading the instance first costs nothing and
      spares the traversal.  It is only a short circuit: everything the
      answer depends on is below. *)
-  case Lib.total instance_of_thm theorem of
+  case Lib.total instance_of_term assumption of
       NONE => NONE
     | SOME instance =>
-        if not (is_disequality (Thm.concl theorem)) then NONE
+        if not (is_disequality assumption) then NONE
         else if discrete_only andalso
                 not (Option.isSome (#discrete instance))
         then NONE
         else
-          (case
-             match_implications
-               (#neqE (linarithData.instance_implications instance))
-               theorem
-           of
-               SOME implication => SOME (extract_split implication)
-             | NONE =>
-                 raise ERR "split_assumption"
-                   ("the neqE of the linarith instance for " ^
-                    Parse.type_to_string (#ty instance) ^
-                    " does not apply to\n" ^
-                    Parse.thm_to_string theorem))
+          let
+            val theorem = Thm.ASSUME assumption
+          in
+            case match_implications
+                   (#neqE (linarithData.instance_implications instance))
+                   theorem of
+                SOME implication => SOME (extract_split implication)
+              | NONE =>
+                  raise ERR "split_assumption"
+                    ("the neqE of the linarith instance for " ^
+                     Parse.type_to_string (#ty instance) ^
+                     " does not apply to\n" ^
+                     Parse.thm_to_string theorem)
+          end
 
 fun finish_forward conclusion negated false_theorem =
   if boolSyntax.is_neg conclusion then
@@ -637,17 +639,16 @@ fun finish_forward conclusion negated false_theorem =
 fun find_split discrete_only assumptions =
   let
     fun find _ [] = NONE
-      | find prefix (theorem :: rest) =
-          case split_assumption discrete_only theorem of
-              SOME split => SOME (List.rev prefix, rest, split)
-            | NONE => find (theorem :: prefix) rest
+      | find prefix (assumption :: rest) =
+          case split_assumption discrete_only assumption of
+              SOME split => SOME (List.revAppend (prefix, rest), split)
+            | NONE => find (assumption :: prefix) rest
   in
-    find [] (List.map Thm.ASSUME assumptions)
+    find [] assumptions
   end
 
-fun neq_elim_step (prefix, suffix, Split (split, left, right)) =
+fun neq_elim_step (common, Split (split, left, right)) =
   let
-    val common = List.map Thm.concl (prefix @ suffix)
     val goals =
       [(common @ [left], boolSyntax.F),
        (common @ [right], boolSyntax.F)]

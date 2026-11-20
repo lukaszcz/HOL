@@ -68,6 +68,33 @@ fun long_budget limits = searchBudget.create limits
 
 val _ =
   check
+    ("reverse-chain reachability keeps the original first proof path",
+     fn () =>
+       let
+         fun fact left right = Thm.ASSUME (long_order_edge left right)
+         val prefix = List.rev (List.tabulate (40, fn i => fact i (i + 1)))
+         val earlier = [fact 40 42, fact 42 43]
+         val later = [fact 40 41, fact 41 43]
+         val axiom = Thm.ASSUME long_order_axiom
+         val facts = (axiom :: earlier) @ prefix @ later
+         val target = long_order_edge 0 43
+         val ordinary = orderSolve.prove_with facts target
+         fun same_hypotheses theorem =
+           Lib.list_eq Term.aconv (Thm.hyp ordinary) (Thm.hyp theorem)
+       in
+         Term.aconv (Thm.concl ordinary) target andalso
+         List.all
+           (fn fact =>
+             List.exists (Term.aconv (Thm.concl fact)) (Thm.hyp ordinary))
+           later andalso
+         (case orderSolve.prove_with_budget
+                 (searchBudget.unbounded ()) facts target of
+              orderSolve.OrderProved metered => same_hypotheses metered
+            | _ => false)
+       end)
+
+val _ =
+  check
     ("a budgeted invocation proves beyond the unbudgeted graph cap",
      fn () =>
        case orderSolve.prove_with_budget

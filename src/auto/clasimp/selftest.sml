@@ -2558,6 +2558,38 @@ val _ =
 
 val _ =
   check
+    ("rule transport follows a reverse-ordered chain of rewrite heads",
+     fn () =>
+       let
+         val x = ``x:bool``
+         fun define name =
+           new_definition
+             (name ^ "_def",
+              boolSyntax.mk_eq
+                (mk_comb (mk_var (name, ``:bool -> bool``), x), boolSyntax.T))
+         val definitions = List.tabulate
+           (10, fn i => define ("transport_chain_" ^ Int.toString i))
+         val terms =
+           map (boolSyntax.lhs o snd o boolSyntax.strip_forall o concl)
+             definitions
+         fun proof term =
+           Tactical.prove (boolSyntax.mk_forall (x, term),
+                           Rewrite.REWRITE_TAC definitions)
+         val bridges =
+           ListPair.map (proof o boolSyntax.mk_eq)
+             (terms, tl terms)
+         val cs = clasetLib.add_sintros
+           [("chain_intro", proof (hd terms))] clasetLib.empty_cs
+         val base = clasimpLib.clasimp_ss ()
+         val ss = simpLib.++ (base, simpLib.rewrites bridges)
+         val goal = ([], List.last terms)
+         val auto = clasimpLib.CS_AUTO_TAC {blast = 4, depth = 2} cs
+       in
+         tactic_fails (auto base) goal andalso valid_closes (auto ss) goal
+       end)
+
+val _ =
+  check
     ("contextual FORCE uses a persistent rule's certified view",
      fn () =>
        let

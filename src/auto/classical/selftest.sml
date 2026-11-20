@@ -6140,17 +6140,21 @@ val _ =
 
 val _ =
   test
-    ("D25 retains alternatives that bind a sibling metavariable",
+    ("D25 retains alternatives that bind an indirect sibling metavariable",
      fn () =>
        let
          val (tymeta, type_store) =
            clasetMeta.new_tymeta clasetMeta.empty
          val (outer, fresh_store) =
            clasetMeta.new_meta {allow = [], ty = tymeta} type_store
+         val (middle, fresh_store) =
+           clasetMeta.new_meta {allow = [], ty = tymeta} fresh_store
          val (shared, unbound_store) =
            clasetMeta.new_meta {allow = [], ty = tymeta} fresh_store
          val chained_store =
-           the_store (clasetMeta.bind (outer, shared) unbound_store)
+           the_store (clasetMeta.bind (outer, middle) unbound_store)
+         val chained_store =
+           the_store (clasetMeta.bind (middle, shared) chained_store)
          val store0 =
            the_store (clasetMeta.bind_ty (tymeta, bool_ty) chained_store)
          val true_store =
@@ -6163,7 +6167,7 @@ val _ =
               {params = [], asl = [], w = outer}]
              store0
          fun child store =
-           search_node [{params = [], asl = [], w = outer}] store
+           clasetGoal.replace_goal root {pos = 1, children = [], store = store}
          val expansions = ref 0
          fun expand node =
            (expansions := !expansions + 1;
@@ -6180,6 +6184,43 @@ val _ =
              expand root)
        in
          length results = 1 andalso !expansions = 3
+       end)
+
+val _ =
+  test
+    ("D25 follows type dependencies inside term binding residues",
+     fn () =>
+       let
+         val (outer_ty, store) = clasetMeta.new_tymeta clasetMeta.empty
+         val (middle_ty, store) = clasetMeta.new_tymeta store
+         val (inner_ty, store) = clasetMeta.new_tymeta store
+         val (sibling, store) = bool_meta [] store
+         val arb = boolSyntax.mk_arb outer_ty
+         val store = the_store
+           (clasetMeta.bind (sibling, boolSyntax.mk_eq (arb, arb)) store)
+         val store = the_store
+           (clasetMeta.bind_ty (outer_ty, middle_ty) store)
+         val store = the_store
+           (clasetMeta.bind_ty (middle_ty, inner_ty) store)
+         val root = search_node
+           [{params = [], asl = [], w = boolSyntax.T},
+            {params = [], asl = [], w = sibling}] store
+         fun child ty =
+           clasetGoal.replace_goal root
+             {pos = 1, children = [],
+              store = the_store (clasetMeta.bind_ty (inner_ty, ty) store)}
+         fun expand node =
+           case clasetGoal.goals node of
+               [_, _] => seq.fromList [child alpha, child bool_ty]
+             | [_] =>
+                 if Term.type_of (boolSyntax.lhs
+                      (#2 (clasetGoal.render node 1))) = bool_ty
+                 then seq.result (search_solved (clasetGoal.store node))
+                 else seq.empty
+             | _ => seq.empty
+       in
+         length (search_results (clasetSearch.DEPTH_SOLVE traceUtil.silent
+           expand root)) = 1
        end)
 
 val _ =

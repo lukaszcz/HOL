@@ -391,25 +391,26 @@ fun ruleMajor function rule formula assumptions =
            provenanceError function
              "an introduction rule selected an assumption formula")
 
-fun childAssumptions function rule duplicate formula assumptions
-      new_entries =
+fun childAssumptions function rule duplicate formula assumptions =
   let
-    val introduced = rev new_entries
+    val inherited =
+      if not (ruleIsElim rule) then assumptions
+      else
+        case trackedToken formula of
+            NONE =>
+              provenanceError function
+                "an elimination rule selected a goal formula"
+          | SOME token =>
+              if duplicate then
+                let
+                  val retained = lookupToken function token assumptions
+                  val remaining = deleteToken function token assumptions
+                in
+                  remaining @ [retained]
+                end
+              else deleteToken function token assumptions
   in
-    if not (ruleIsElim rule) then introduced @ assumptions
-    else
-      case trackedToken formula of
-          NONE =>
-            provenanceError function
-              "an elimination rule selected a goal formula"
-        | SOME token =>
-            let
-              val retained = lookupToken function token assumptions
-              val remaining = deleteToken function token assumptions
-              val base = introduced @ remaining
-            in
-              if duplicate then base @ [retained] else base
-            end
+    fn introduced => List.revAppend (introduced, inherited)
   end
 
 fun sameVarsWith checkpoint ([], []) = true
@@ -1497,14 +1498,12 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
               val rules = safeRulesFor vars (trackedTerm formula)
               val rule_count = lengthAt mark rules
 
-              fun child rule (vars', lim') (premise, hidden) =
+              fun child assumptionsFor (vars', lim') (premise, hidden) =
                 let
                   val (tracked, introduced) =
                     premiseChild mark (premise, hidden)
                   val joined = joinMdAt mark md tracked
-                  val child_assumptions =
-                    childAssumptions safeChildOrigin rule false
-                      formula assumptions introduced
+                  val child_assumptions = assumptionsFor introduced
                 in
                   if existsGoalAt mark premise then
                     {pairs =
@@ -1589,9 +1588,12 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
                         (rollbackAt mark; raise NEWBRANCHES)
                       else
                         let
+                          val assumptionsFor =
+                            childAssumptions safeChildOrigin variant false
+                              formula assumptions
                           val children =
                             premiseBranches variant
-                              (child variant (vars', limit)) brs prems'
+                              (child assumptionsFor (vars', limit)) brs prems'
                           val count = lengthAt mark prems'
                         in
                           noteRuleInference limit;
@@ -1796,7 +1798,7 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
               val rule_count = lengthAt mark rules
               val branches = lengthAt mark brs0
 
-              fun child (rule, vars', pattern, duplicate, lim')
+              fun child (assumptionsFor, vars', pattern, duplicate, lim')
                     (premise, hidden) =
                 let
                   val _ = checkpointAt mark
@@ -1813,9 +1815,7 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
                     if recursivePremiseAt mark pattern premise then
                       [(safe', unsafe')]
                     else [(safe', []), ([], unsafe')]
-                  val child_assumptions =
-                    childAssumptions unsafeChildOrigin rule duplicate
-                      formula assumptions introduced
+                  val child_assumptions = assumptionsFor introduced
                 in
                   {pairs = pairs', lits = lits',
                    vars = vars', lim = lim',
@@ -1851,10 +1851,19 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
                     else
                       let
                         val children =
-                          premiseBranches rule
-                            (child
-                               (rule, new_vars, pattern, duplicate, lim'))
-                            brs prems
+                          if null prems then brs
+                          else
+                            let
+                              val assumptionsFor =
+                                childAssumptions unsafeChildOrigin rule
+                                  duplicate formula assumptions
+                            in
+                              premiseBranches rule
+                                (child
+                                   (assumptionsFor, new_vars, pattern,
+                                    duplicate, lim'))
+                                brs prems
+                            end
                         val count = lengthAt mark prems
                       in
                         noteRuleInference lim';

@@ -118,13 +118,14 @@ fun group_with meter atoms =
         fun place [] = [(relation, [(name, theorem)])]
           | place ((r, entries) :: rest) =
               if (candidate meter; aconv r relation) then
-                (r, entries @ [(name, theorem)]) :: rest
+                (r, (name, theorem) :: entries) :: rest
               else (r, entries) :: place rest
       in
         place groups
       end
   in
-    List.foldl add [] atoms
+    List.map (fn (relation, entries) => (relation, List.rev entries))
+      (List.foldl add [] atoms)
   end
 
 fun lookup_with meter entries name =

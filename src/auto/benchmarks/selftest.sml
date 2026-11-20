@@ -1474,6 +1474,39 @@ val _ =
 
 val _ =
   check
+    ("definition unfolding refreshes explicit and implicit rewrites",
+     fn () =>
+       without_definitions
+         (fn () =>
+           let
+             val wrapped = ``source_lexord R (xs:'a list) ys``
+             val unwrapped = ``LLEX R (xs:'a list) ys``
+             val input = boolSyntax.mk_conj (wrapped, boolSyntax.T)
+             val plain = boolSyntax.mk_conj (unwrapped, boolSyntax.T)
+             val saved = Rewrite.implicit_rewrites ()
+             fun check_unfolding () =
+               let
+                 val _ = benchLib.set_definitional_context
+                   [parityTranslationTheory.source_lexord_def]
+                 val _ = Rewrite.set_implicit_rewrites Rewrite.empty_rewrites
+                 val pure = Term.aconv (benchLib.unfolded input) plain
+                 val _ = Rewrite.set_implicit_rewrites Rewrite.bool_rewrites
+                 val with_implicit =
+                   Term.aconv (benchLib.unfolded input) unwrapped andalso
+                   Term.aconv (benchLib.unfolded plain) plain
+                 val _ = benchLib.set_definitional_context [Thm.REFL wrapped]
+               in
+                 pure andalso with_implicit andalso
+                 Term.aconv (benchLib.unfolded input) wrapped
+               end
+             val result = check_unfolding () handle exn =>
+               (Rewrite.set_implicit_rewrites saved; raise exn)
+           in
+             Rewrite.set_implicit_rewrites saved; result
+           end))
+
+val _ =
+  check
     ("A1 leaves an ambient rule about the same constant alone",
      fn () =>
        not

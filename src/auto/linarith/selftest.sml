@@ -823,18 +823,21 @@ val _ =
          false)
         handle Portable.Interrupt => true))
 
-(* 0 <= x against 1 <= ~x: the two rows add as they stand to 1 <= 0. *)
+(* Opposite coefficients of equal magnitude add directly to 1 <= 0. *)
 val _ =
   check
-    ("FM derives the expected unit-coefficient certificate",
+    ("FM adds rows directly for equal pivot magnitudes",
      fn () =>
-       case fm_refute
-              [SOME (fm_le (no_atoms, fm_rat 0)
-                       (fm_scaled_x 1, fm_rat 0)),
-               SOME (fm_le (no_atoms, fm_rat 1)
-                       (fm_scaled_x ~1, fm_rat 0))] of
-           SOME (Added (Asm 0, Asm 1)) => true
-         | _ => false)
+       List.all
+         (fn coefficient =>
+           case fm_refute
+                  [SOME (fm_le (no_atoms, fm_rat 0)
+                           (fm_scaled_x coefficient, fm_rat 0)),
+                   SOME (fm_le (no_atoms, fm_rat 1)
+                           (fm_scaled_x (~coefficient), fm_rat 0))] of
+               SOME (Added (Asm 0, Asm 1)) => true
+             | _ => false)
+         [1, 2])
 
 (* 0 <= 2x against 1 <= ~3x: eliminating x scales each row up to the
    two coefficients' lcm, and both multipliers reach the certificate,

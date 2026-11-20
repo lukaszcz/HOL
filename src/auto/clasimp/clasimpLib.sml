@@ -2299,24 +2299,23 @@ local
       map (fn (term, n) => (term, !n)) entries
     end
 
-  fun discharge theorems matched =
+  fun discharge find_condition matched =
     let
       val (conditions, _) = boolSyntax.strip_imp (Thm.concl matched)
       fun step (condition, theorem) =
-        case List.find (fn fact => aconv (Thm.concl fact) condition)
-               theorems of
+        case find_condition condition of
             SOME fact => Thm.MP theorem fact
           | NONE => raise ERR "permutation_instances" "condition not assumed"
     in
       List.foldl step matched conditions
     end
 
-  fun instance theorems specialised (redex, occurrences) =
+  fun instance find_condition specialised (redex, occurrences) =
     let
       val matched =
         Drule.PART_MATCH (boolSyntax.lhs o snd o boolSyntax.strip_imp)
           specialised redex
-      val rewrite = discharge theorems matched
+      val rewrite = discharge find_condition matched
       val (left, right) = boolSyntax.dest_eq (Thm.concl rewrite)
     in
       if HOLset.equal (Thm.hypset matched, Thm.hypset specialised) andalso
@@ -2330,6 +2329,41 @@ local
 in
   fun permutation_instances theorems (assumptions, conclusion) =
     let
+      (* Goals with few distinct conditions need only the lookup results.
+         After repeated misses, index the available proofs once. *)
+      val recent_conditions = ref (Redblackmap.mkDict Term.compare)
+      val condition_index = ref NONE
+      fun find_condition condition =
+        case !condition_index of
+            SOME index => Redblackmap.peek (index, condition)
+          | NONE =>
+              case Redblackmap.peek (!recent_conditions, condition) of
+                  SOME result => result
+                | NONE =>
+                    if Redblackmap.numItems (!recent_conditions) < 16 then
+                      let
+                        val result =
+                          List.find
+                            (fn fact => aconv (Thm.concl fact) condition)
+                            theorems
+                      in
+                        recent_conditions :=
+                          Redblackmap.insert
+                            (!recent_conditions, condition, result);
+                        result
+                      end
+                    else
+                      let
+                        (* The first proof wins when conclusions coincide. *)
+                        val index =
+                          List.foldr
+                            (fn (fact, table) =>
+                              Redblackmap.insert (table, Thm.concl fact, fact))
+                            (Redblackmap.mkDict Term.compare) theorems
+                      in
+                        condition_index := SOME index;
+                        Redblackmap.peek (index, condition)
+                      end
       val redex_cache = ref (Redblackmap.mkDict Term.compare)
       fun goal_redexes head =
         case Redblackmap.peek (!redex_cache, head) of
@@ -2345,7 +2379,7 @@ in
         case permutative_equation theorem of
             NONE => []
           | SOME (specialised, head) =>
-              List.mapPartial (instance theorems specialised)
+              List.mapPartial (instance find_condition specialised)
                 (goal_redexes head)
     in
       List.concat (map instances theorems)
@@ -3208,8 +3242,8 @@ fun transport_candidates budget ss goals candidates =
     (* A constant is keyed by name alone, as [same_const] compares. *)
     fun key head =
       let val {Thy, Name, ...} = dest_thy_const head in (Thy, Name) end
-    val no_heads =
-      HOLset.empty (Lib.pair_compare (String.compare, String.compare))
+    val head_compare = Lib.pair_compare (String.compare, String.compare)
+    val no_heads = HOLset.empty head_compare
     fun collect term heads =
       if boolSyntax.is_forall term then
         collect (snd (boolSyntax.dest_forall term)) heads
@@ -3269,7 +3303,7 @@ fun transport_candidates budget ss goals candidates =
       List.foldl (fn (term, found) => collect term found)
         (collect target heads) assumptions
     val goal_heads = List.foldl collect_goal no_heads goals
-    fun grow heads =
+    fun sweep heads =
       let
         fun add ((left, right), (found, changed)) =
           let
@@ -3281,11 +3315,44 @@ fun transport_candidates budget ss goals candidates =
             else if HOLset.member (found, right) then join left
             else (found, changed)
           end
-        val (next, changed) = List.foldl add (heads, false) bridges
       in
-        if changed then grow next else heads
+        List.foldl add (heads, false) bridges
       end
-    val relevant = grow goal_heads
+    fun indexed_growth heads =
+      let
+        fun link from target adjacency =
+          let val neighbors = getOpt (Redblackmap.peek (adjacency, from), [])
+          in Redblackmap.insert (adjacency, from, target :: neighbors) end
+        fun connect ((left, right), adjacency) =
+          if left = right orelse
+             (HOLset.member (heads, left) andalso HOLset.member (heads, right))
+          then adjacency
+          else link left right (link right left adjacency)
+        val adjacency =
+          List.foldl connect (Redblackmap.mkDict head_compare) bridges
+        fun discover (head, result as (seen, pending)) =
+          if HOLset.member (seen, head) then result
+          else (HOLset.add (seen, head), head :: pending)
+        fun visit [] seen = seen
+          | visit (head :: rest) seen =
+              case Redblackmap.peek (adjacency, head) of
+                  NONE => visit rest seen
+                | SOME neighbors =>
+                    let
+                      val (seen', pending) =
+                        List.foldl discover (seen, rest) neighbors
+                    in visit pending seen' end
+      in
+        visit (HOLset.listItems heads) heads
+      end
+    (* Sweep small closures without building an index of unrelated heads. *)
+    fun grow passes heads =
+      case sweep heads of
+          (heads, false) => heads
+        | (heads, true) =>
+            if passes = 1 then indexed_growth heads
+            else grow (passes - 1) heads
+    val relevant = grow 8 goal_heads
     fun related (_, (_, theorem)) =
       let
         val _ = searchBudget.charge budget searchBudget.Candidate

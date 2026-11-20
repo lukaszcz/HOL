@@ -295,36 +295,36 @@ val ancestry =
      ("src/HOL/ex/Set_Theory.thy", after_everything)]
   end
 
-fun split_location function where_ =
+type source_location = string * int
+
+fun parse_location where_ =
   case String.fields (fn c => c = #":") where_ of
       [file, line] =>
         (case Int.fromString line of
              SOME value => (file, value)
            | NONE =>
-               raise Feedback.mk_HOL_ERR "benchIsabelleAmbient" function
+               raise Feedback.mk_HOL_ERR "benchIsabelleAmbient" "in_scope"
                  ("no line number in " ^ where_))
     | _ =>
-        raise Feedback.mk_HOL_ERR "benchIsabelleAmbient" function
+        raise Feedback.mk_HOL_ERR "benchIsabelleAmbient" "in_scope"
           ("not an Isabelle source location: " ^ where_)
 
+fun in_scope_at {declared = (declared_file, declared_line),
+                 goal = (goal_file, goal_line)} =
+  if declared_file = goal_file then declared_line < goal_line
+  else if not (List.exists (fn file => file = declared_file) declaring_theories)
+  then
+    raise Feedback.mk_HOL_ERR "benchIsabelleAmbient" "in_scope"
+      ("no mined theory order for the declaring " ^ declared_file)
+  else
+    case List.find (fn (file, _) => file = goal_file) ancestry of
+        SOME (_, ancestors) =>
+          List.exists (fn file => file = declared_file) ancestors
+      | NONE =>
+          raise Feedback.mk_HOL_ERR "benchIsabelleAmbient" "in_scope"
+            ("no mined ancestry for " ^ goal_file)
+
 fun in_scope {declared, goal} =
-  let
-    val (declared_file, declared_line) = split_location "in_scope" declared
-    val (goal_file, goal_line) = split_location "in_scope" goal
-  in
-    if declared_file = goal_file then declared_line < goal_line
-    else if not (List.exists (fn file => file = declared_file)
-                   declaring_theories)
-    then
-      raise Feedback.mk_HOL_ERR "benchIsabelleAmbient" "in_scope"
-        ("no mined theory order for the declaring " ^ declared_file)
-    else
-      case List.find (fn (file, _) => file = goal_file) ancestry of
-          SOME (_, ancestors) =>
-            List.exists (fn file => file = declared_file) ancestors
-        | NONE =>
-            raise Feedback.mk_HOL_ERR "benchIsabelleAmbient" "in_scope"
-              ("no mined ancestry for " ^ goal_file)
-  end
+  in_scope_at {declared = parse_location declared, goal = parse_location goal}
 
 end

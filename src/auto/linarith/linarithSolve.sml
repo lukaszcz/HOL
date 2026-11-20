@@ -113,9 +113,13 @@ fun elim_var_with work
       (ineq1 as Lineq (_, ty1, _, _), c1)
       (ineq2 as Lineq (_, ty2, _, _), c2) =
   let
-    val m = Arbint.lcm (Arbint.abs c1, Arbint.abs c2)
-    val m1 = Arbint.div (m, Arbint.abs c1)
-    val m2 = Arbint.div (m, Arbint.abs c2)
+    val a1 = Arbint.abs c1
+    val a2 = Arbint.abs c2
+    val (m1, m2) =
+      if ai_eq a1 a2 andalso not (ai_zero a1) then (one, one)
+      else
+        let val m = Arbint.lcm (a1, a2)
+        in (Arbint.div (m, a1), Arbint.div (m, a2)) end
     val (n1, n2) =
       if ai_neg c1 = ai_neg c2 then
         if ty1 = Eq then (Arbint.~ m1, m2)
@@ -212,37 +216,38 @@ fun partition_pivot_with work v rows =
   end
 
 (* One pass tallies the sign counts of every column; the pivot is the
-   column with the smallest nonzero product, favouring earlier columns. *)
-fun tally_with work (c, (pos, neg)) =
-  (candidate work;
-   if ai_pos c then (pos + 1, neg)
-  else if ai_neg c then (pos, neg + 1)
-  else (pos, neg))
-
+   column with the smallest nonzero product, favouring earlier columns.
+   Reuse the counters across rows and charge in row-then-column order. *)
 fun choose_blowup_with work [] = NONE
   | choose_blowup_with work (first :: rest) =
       let
-        fun tally pair = tally_with work pair
-        val counts =
-          List.foldl
-            (fn (row, acc) =>
-                ListPair.mapEq tally (row, acc))
-            (List.map (fn c => tally (c, (0, 0))) first) rest
+        fun initial c =
+          (candidate work;
+           if ai_pos c then (ref 1, ref 0)
+           else if ai_neg c then (ref 0, ref 1)
+           else (ref 0, ref 0))
+        val counts = List.map initial first
+        fun tally (c, (pos, neg)) =
+          (candidate work;
+           if ai_pos c then pos := !pos + 1
+           else if ai_neg c then neg := !neg + 1
+           else ())
+        val _ = List.app (fn row => ListPair.appEq tally (row, counts)) rest
         fun pick _ [] best = best
           | pick i ((pos, neg) :: more) best =
-              let
-                val _ = candidate work
-                val blow = pos * neg
-                val best' =
-                  if blow = 0 then best
-                  else
-                    case best of
-                        NONE => SOME (blow, i)
-                      | SOME (old, _) =>
-                          if blow < old then SOME (blow, i) else best
-              in
-                pick (i + 1) more best'
-              end
+            let
+              val _ = candidate work
+              val blow = !pos * !neg
+              val best' =
+                if blow = 0 then best
+                else
+                  case best of
+                      NONE => SOME (blow, i)
+                    | SOME (old, _) =>
+                        if blow < old then SOME (blow, i) else best
+            in
+              pick (i + 1) more best'
+            end
       in
         pick 0 counts NONE
       end

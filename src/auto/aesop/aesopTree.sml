@@ -132,27 +132,24 @@ fun empty_dependencies () =
   {terms = HOLset.empty clasetMeta.meta_compare,
    types = HOLset.empty Type.compare}
 
-fun type_dependencies store terms =
-  let
-    fun from_term (tm, types) =
-      HOLset.addList
-        (types,
-         List.filter clasetMeta.is_tymeta
-           (type_vars_in_term (clasetMeta.norm store tm)))
-  in
-    List.foldl from_term (HOLset.empty Type.compare) terms
-  end
-
 (* [clasetMeta.norm] follows both term and type bindings transitively.
    Taking free metavariables after that walk therefore caches precisely the
    unassigned dependency frontier of the goal. *)
 fun dependencies_of store ({params, asl, w} : cgoal) =
   let
-    val formulas = asl @ [w]
-    val terms =
-      HOLset.fromList clasetMeta.meta_compare
-        (List.concat (map (clasetMeta.metas_of store) formulas))
-    val formula_types = type_dependencies store formulas
+    fun formula (tm, {terms, types} : dependencies) =
+      let val normalized = clasetMeta.norm store tm
+      in
+        {terms =
+           HOLset.addList
+             (terms, clasetMeta.metas_of_normalized store normalized),
+         types =
+           HOLset.addList
+             (types, List.filter clasetMeta.is_tymeta
+                       (type_vars_in_term normalized))}
+      end
+    val {terms, types = formula_types} =
+      formula (w, List.foldl formula (empty_dependencies ()) asl)
     fun parameter_type (parameter, types) =
       HOLset.addList
         (types,
@@ -463,23 +460,29 @@ fun compatible_copy_supports tree goals =
    paths.  Sticking stays conservative: a stuck member may yet be discharged
    by a copy the search is still working on. *)
 fun derive_cluster tree ({goals, ...} : cluster) =
-  let
-    val states = map (#state o goal tree) goals
-  in
-    if List.all (fn state => state = Proved) states andalso
-       compatible_copy_supports tree goals
-    then Proved
-    else if List.all (fn state => state = Stuck) states then Stuck
-    else Unknown
-  end
+  case goals of
+      [] => Proved
+    | id :: rest =>
+        let
+          val state = #state (goal tree id)
+        in
+          if state <> Unknown andalso
+             List.all (fn id => #state (goal tree id) = state) rest andalso
+             (state = Stuck orelse compatible_copy_supports tree goals)
+          then state
+          else Unknown
+        end
 
 fun derive_rapp tree ({clusters, ...} : rapp) =
   let
-    val states = map (#state o cluster tree) clusters
+    fun scan state [] = state
+      | scan state (id :: rest) =
+          case #state (cluster tree id) of
+              Proved => scan state rest
+            | Stuck => Stuck
+            | Unknown => scan Unknown rest
   in
-    if List.all (fn state => state = Proved) states then Proved
-    else if Lib.mem Stuck states then Stuck
-    else Unknown
+    scan Proved clusters
   end
 
 (* A copy carries the very obligation of its original under a store that
@@ -796,46 +799,44 @@ fun copying_sources_on_path tree parent_id relevant_assigned
       dependencies_union relevant_assigned dropped
     val not_created =
       dependencies_difference copying ancestor_created
-    val creating_path =
-      List.filter
-        (fn (_, rid) =>
-          dependencies_overlap copying (#created (rapp tree rid)))
-        path
     val bounded_path =
       if dependencies_empty copying then []
       else if not (dependencies_empty not_created) then path
       else
-        case List.rev creating_path of
-            [] => path
-          | (_, topmost) :: _ =>
-              take_through_rapp topmost path
+        let
+          fun creator ((_, rid), topmost) =
+            if dependencies_overlap copying (#created (rapp tree rid))
+            then SOME rid
+            else topmost
+        in
+          case List.foldl creator NONE path of
+              NONE => path
+            | SOME topmost => take_through_rapp topmost path
+        end
     val path_originals =
-      map (fn (id, _) => original_goal tree id) bounded_path
+      List.foldl
+        (fn ((id, _), origins) => HOLset.add (origins, original_goal tree id))
+        (HOLset.empty Int.compare) bounded_path
 
-    fun is_path_origin id =
-      Lib.mem id path_originals
-
-    fun sibling_sources (path_goal, parent_rapp) =
-      List.filter
-        (fn id =>
-          id <> path_goal andalso
-          dependencies_overlap copying (#deps (goal tree id)))
-        (rapp_goals tree parent_rapp)
-
-    fun add_source (id, (seen, sources)) =
-      let val original = original_goal tree id
-      in
-        (* Canonical origins both skip copies of path goals and collapse
-           multiple candidates copied from the same goal. *)
-        if is_path_origin original orelse
-           Lib.mem original seen
-        then (seen, sources)
-        else (original :: seen, id :: sources)
-      end
+    fun add_source path_goal (id, result as (seen, sources)) =
+      if id = path_goal orelse
+         not (dependencies_overlap copying (#deps (goal tree id)))
+      then result
+      else
+        let val original = original_goal tree id
+        in
+          (* Canonical origins both skip copies of path goals and collapse
+             multiple candidates copied from the same goal. *)
+          if HOLset.member (seen, original) then result
+          else (HOLset.add (seen, original), id :: sources)
+        end
 
     val (_, reversed_sources) =
-      List.foldl add_source ([], [])
-        (List.concat (map sibling_sources bounded_path))
+      List.foldl
+        (fn ((path_goal, parent_rapp), result) =>
+          List.foldl (add_source path_goal) result
+            (rapp_goals tree parent_rapp))
+        (path_originals, []) bounded_path
   in
     List.rev reversed_sources
   end

@@ -8,6 +8,7 @@ type fact =
    original : thm,
    hypotheses : term list,
    fixed_terms : term list,
+   fixed_term_set : term HOLset.set Portable.HOLSusp.susp,
    fixed_types : hol_type list,
    loose_terms : term list,
    loose_types : hol_type list,
@@ -55,7 +56,10 @@ fun create_with_charge _ _ [] = []
             (type_vars_in_term (Thm.concl original)) fixed_types
       in
         {id = id, original = original, hypotheses = hypotheses,
-         fixed_terms = fixed_terms, fixed_types = fixed_types,
+         fixed_terms = fixed_terms,
+         fixed_term_set = Portable.HOLSusp.delay
+           (fn () => HOLset.fromList Term.compare fixed_terms),
+         fixed_types = fixed_types,
          loose_terms = loose_terms, loose_types = loose_types,
          charge = charge,
          schematic = ref NONE}
@@ -133,7 +137,7 @@ fun match_view (entry : fact) pattern site =
     val substitution =
       Term.match_terml
         (#fixed_types entry)
-        (HOLset.fromList Term.compare (#fixed_terms entry))
+        (Portable.HOLSusp.force (#fixed_term_set entry))
         pattern site
     val instance = Drule.INST_TY_TERM substitution theorem
   in
