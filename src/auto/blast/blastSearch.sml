@@ -1324,6 +1324,12 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
     fun lengthAt mark values =
       lengthMeasured (fn () => checkpointAt mark) values
 
+    (* Measured search still polls while visiting each pending branch. *)
+    val branchCountAt =
+      case instrumentation of
+          Stats => (fn _ => fn count => fn _ => count)
+        | On _ => (fn mark => fn _ => fn branches => lengthAt mark branches)
+
     val prepared =
       SOME (initialFormulasOf goal)
       handle INTERRUPTED => NONE
@@ -1469,7 +1475,7 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
          assumptions = assumptions'}
       end
 
-    fun prv (tacs, trace, choices, brs) =
+    fun prv (tacs, trace, choices, open_count, brs) =
       let
         val entry_mark = if resumable then trailSize state else 0
       in
@@ -1491,7 +1497,7 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
             let
               exception PRV
               val mark = trailSize state
-              val branches = lengthAt mark brs0
+              val branches = branchCountAt mark open_count brs0
               val next_vars = remainingVars brs
               val formula =
                 withTrackedTerm (normAt mark (trackedTerm formula)) formula
@@ -1582,7 +1588,8 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
                              (pruned := before_prune;
                               raise searchBudget.LimitReached work));
                           closed := !closed + 1;
-                          prv (tacs', remember brs0 trace, choices'', brs)
+                          prv (tacs', remember brs0 trace, choices'',
+                               branches - 1, brs)
                         end
                       else if limit < 0 then
                         (rollbackAt mark; raise NEWBRANCHES)
@@ -1598,7 +1605,8 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
                         in
                           noteRuleInference limit;
                           created := !created + count - 1;
-                          prv (tacs', remember brs0 trace, choices', children)
+                          prv (tacs', remember brs0 trace, choices',
+                               branches + count - 1, children)
                         end
                     end
 
@@ -1632,6 +1640,7 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
                   if contraposing then
                     prv
                       (DeferGoal :: tacs, remember brs0 trace, choices,
+                       open_count,
                        contraposedBranch mark
                          {lits = lits, levels = (safe, unsafe) :: pairs,
                           restore = restore, vars = vars, lim = lim,
@@ -1681,7 +1690,7 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
                                 (fn () =>
                                   prv
                                     (step :: tacs, remember brs0 trace,
-                                     choices', brs))
+                                     choices', branches - 1, brs))
                             end
                     end
 
@@ -1731,7 +1740,7 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
                           (HypSubst
                              {equality = equality, changed = changed,
                               side = side} :: tacs,
-                           remember brs0 trace, choices,
+                           remember brs0 trace, choices, open_count,
                            substituted :: brs)
                       end)
 
@@ -1739,7 +1748,7 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
                 case unsafeRulesFor vars (trackedTerm formula) of
                     [] =>
                       prv
-                        (tacs, remember brs0 trace, choices,
+                        (tacs, remember brs0 trace, choices, open_count,
                          {pairs = (safe, unsafe) :: pairs,
                           lits = addTrackedLitAt mark (formula, lits),
                           vars = vars, lim = lim,
@@ -1761,7 +1770,7 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
                         prv
                           ((if goal_formula then DeferGoal :: tacs
                             else tacs),
-                           remember brs0 trace, choices,
+                           remember brs0 trace, choices, open_count,
                            {pairs =
                               (safe,
                                appendUnsafeAt mark unsafe
@@ -1781,7 +1790,7 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
               val merged = mergeUnsafe unsafe unsafe'
             in
               prv
-                (tacs, trace, choices,
+                (tacs, trace, choices, open_count,
                  {pairs = (safe, merged) :: pairs,
                   lits = lits, vars = vars, lim = lim,
                   assumptions = assumptions} :: brs)
@@ -1796,7 +1805,7 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
                 withTrackedTerm (normAt mark (trackedTerm formula)) formula
               val rules = unsafeRulesFor vars (trackedTerm formula)
               val rule_count = lengthAt mark rules
-              val branches = lengthAt mark brs0
+              val branches = branchCountAt mark open_count brs0
 
               fun child (assumptionsFor, vars', pattern, duplicate, lim')
                     (premise, hidden) =
@@ -1872,12 +1881,14 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
                         prv
                           (step :: tacs, remember brs0 trace,
                            Choice (mark, branches, PRV) :: choices,
+                           branches + count - 1,
                            children)
                       end
                 in
                   if contraposing then
                     prv
                       (DeferGoal :: tacs, remember brs0 trace, choices,
+                       open_count,
                        contraposedBranch mark
                          {lits = lits, levels = [],
                           restore = fn _ => [([], (formula, md) :: unsafe)],
@@ -1905,7 +1916,7 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
                   (fn NEWBRANCHES =>
                         SOME (fn () =>
                           prv
-                            (tacs, remember brs0 trace, choices,
+                            (tacs, remember brs0 trace, choices, open_count,
                              {pairs = [([], unsafe)],
                               lits = formula :: lits,
                               vars = vars, lim = lim,
@@ -1919,7 +1930,7 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
           (clearTo state entry_mark;
            suspended_limit := SOME (kind, usage);
            suspended :=
-             SOME (fn () => prv (tacs, trace, choices, brs));
+             SOME (fn () => prv (tacs, trace, choices, open_count, brs));
            raise YIELDED)
         else raise searchBudget.LimitReached (kind, usage)
       end
@@ -1976,7 +1987,7 @@ fun runGoal trace_level {keep_history, resumable} cleanup_policy instrumentation
               let val initial = initialBranchOf (formulas, depth)
               in
                 prv
-                  ([], [], [Choice (trailSize state, 1, PROVE)],
+                  ([], [], [Choice (trailSize state, 1, PROVE)], 1,
                    [initial])
               end)
   end

@@ -1007,13 +1007,24 @@ fun replace_norm norm deps (goal : goal) : goal =
   upd_goal goal (Fld #norm norm) (Fld #deps deps) $$
 
 fun set_normalised id {records, cgoal, store} tree =
-  refresh_goal id
-    (case #norm (goal tree id) of NormProved _ => true | _ => false)
-    (map_goal id
-      (replace_norm
-        (Normalised {records = records, cgoal = cgoal, store = store})
-        (dependencies_of store cgoal))
-      tree)
+  let
+    val current = goal tree id
+    val was_proved =
+      case #norm current of NormProved _ => true | _ => false
+    val deps =
+      if not was_proved andalso
+         Portable.pointer_eq (cgoal, active_cgoal current) andalso
+         Portable.pointer_eq (store, active_store current)
+      then #deps current
+      else dependencies_of store cgoal
+  in
+    refresh_goal id was_proved
+      (map_goal id
+        (replace_norm
+          (Normalised {records = records, cgoal = cgoal, store = store})
+          deps)
+        tree)
+  end
 
 fun set_norm_proved id {records, store} tree =
   refresh_goal id true

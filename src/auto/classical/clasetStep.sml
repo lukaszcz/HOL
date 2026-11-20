@@ -2191,15 +2191,21 @@ fun safe_steps_at_in ctxt cs node pos =
 
 fun safe_saturation_with steps cs node =
   let
-    fun first_goal pos current =
-      if pos > length (clasetGoal.goals current) then NONE
-      else
-        case steps cs current pos of
-            NONE => first_goal (pos + 1) current
-          | result => result
+    fun first_goal current =
+      let
+        val count = length (clasetGoal.goals current)
+        fun inspect pos =
+          if pos > count then NONE
+          else
+            case steps cs current pos of
+                NONE => inspect (pos + 1)
+              | result => result
+      in
+        inspect 1
+      end
 
     fun saturate transitions current =
-      case first_goal 1 current of
+      case first_goal current of
           NONE => List.rev transitions
         | SOME (more, next) =>
             saturate (List.revAppend (more, transitions)) next

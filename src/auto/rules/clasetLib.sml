@@ -68,18 +68,19 @@ val empty_cs =
 
 fun rule_brl kind th = (is_elim kind, th)
 
-fun indexed_brl is_elim tag th =
+fun indexed_brl is_elim index th =
   let
     val kind = if is_elim then Elim else Intro
     val form = canonical_form_of kind th
     val pat = rule_index_of kind form
+    val tag = {weight = subgoals_of_form is_elim form, index = index}
   in
     ({pat = pat, patvars = #patvars form}, (tag, (is_elim, th)))
   end
 
-fun insert_brl is_elim tag th (inet, enet) =
+fun insert_brl is_elim index th (inet, enet) =
   let
-    val entry = indexed_brl is_elim tag th
+    val entry = indexed_brl is_elim index th
   in
     if is_elim then (inet, clasetNet.insert entry enet)
     else (clasetNet.insert entry inet, enet)
@@ -88,33 +89,25 @@ fun insert_brl is_elim tag th (inet, enet) =
 fun insert_rl kind index (rl : rl) netpair =
   let
     val (th, swapped) = rl
-    val is_elim' = is_elim kind
-    val tag = {weight = subgoals_of (is_elim', th),
-               index = 2 * index + 1}
-    val netpair' = insert_brl is_elim' tag th netpair
+    val netpair' = insert_brl (is_elim kind) (2 * index + 1) th netpair
   in
     case swapped of
         NONE => netpair'
-      | SOME th' =>
-          let
-            val tag' = {weight = subgoals_of (true, th'),
-                        index = 2 * index}
-          in
-            insert_brl true tag' th' netpair'
-          end
+      | SOME th' => insert_brl true (2 * index) th' netpair'
   end
 
-fun delete_tagged_rule index netpair =
+fun delete_rl kind index ((_, swapped) : rl) (inet, enet) =
   let
-    fun keep ({index = index', ...}, _) = index <> index'
+    val swapped_index = 2 * index
+    val main_index = swapped_index + 1
+    fun keep ({index = index', ...}, _) =
+      index' <> swapped_index andalso index' <> main_index
+    val elim = is_elim kind
   in
-    (clasetNet.vfilter keep (#1 netpair),
-     clasetNet.vfilter keep (#2 netpair))
+    (if elim then inet else clasetNet.vfilter keep inet,
+     if elim orelse Option.isSome swapped then clasetNet.vfilter keep enet
+     else enet)
   end
-
-fun delete_rl index netpair =
-  delete_tagged_rule (2 * index + 1)
-    (delete_tagged_rule (2 * index) netpair)
 
 (* Norm rules are not indexed: the normalisation phase takes the whole list
    (see [norm_rules]), so an entry here would be retrieved, ordered and
@@ -143,8 +136,10 @@ fun delete_aesop_decl (decl : decl)
     fun keep ({tag = {index = index', ...}, ...} : aentry) =
       index <> index'
   in
-    {target = clasetNet.vfilter keep target,
-     hyp = clasetNet.vfilter keep hyp}
+    if #kind (#spec decl) = Intro then
+      {target = clasetNet.vfilter keep target, hyp = hyp}
+    else
+      {target = target, hyp = clasetNet.vfilter keep hyp}
   end
 
 (* Norm rules never enter the four classical netpairs, so the claset keeps
@@ -163,58 +158,48 @@ fun insert_norm_decl (decl : decl) decls =
     insert decls
   end
 
-fun add_decl (decl : decl)
-  {safe0, safep, unsafe, dup, aesop_index, norm_decls} =
+fun delete_norm_decl (decl : decl) decls =
   let
-    val {spec, tag = {index, ...}, info, ...} = decl
+    val index = #index (#tag decl)
+  in
+    List.filter (fn (other : decl) => #index (#tag other) <> index) decls
+  end
+
+(* Use the weight recorded at declaration time for safe rule routing. *)
+fun update_decl update_rl update_aesop update_norm (decl : decl)
+  ({safe0, safep, unsafe, dup, aesop_index, norm_decls} : cs_index) =
+  let
+    val {spec, tag = {weight, index}, info, ...} = decl
     val kind = #kind spec
   in
     if kind = Norm then
       {safe0 = safe0, safep = safep, unsafe = unsafe, dup = dup,
-       aesop_index = aesop_index,
-       norm_decls = insert_norm_decl decl norm_decls}
+       aesop_index = aesop_index, norm_decls = update_norm decl norm_decls}
     else
       let
-        val aesop_index = insert_aesop_decl decl aesop_index
+        val aesop_index = update_aesop decl aesop_index
       in
         if kind = Forward then
           {safe0 = safe0, safep = safep, unsafe = unsafe, dup = dup,
            aesop_index = aesop_index, norm_decls = norm_decls}
-        else if #safe spec then
-          (case safe_class_of spec info of
-              SOME Safe0 =>
-                {safe0 = insert_rl kind index (#rl info) safe0,
-                 safep = safep, unsafe = unsafe, dup = dup,
-                 aesop_index = aesop_index, norm_decls = norm_decls}
-            | SOME SafeP =>
-                {safe0 = safe0,
-                 safep = insert_rl kind index (#rl info) safep,
-                 unsafe = unsafe, dup = dup,
-                 aesop_index = aesop_index, norm_decls = norm_decls}
-            | NONE => raise Fail "safe rule has no safe classification")
-        else
+        else if not (#safe spec) then
           {safe0 = safe0, safep = safep,
-           unsafe = insert_rl kind index (#rl info) unsafe,
-           dup = insert_rl kind index (#dup_rl info) dup,
+           unsafe = update_rl kind index (#rl info) unsafe,
+           dup = update_rl kind index (#dup_rl info) dup,
            aesop_index = aesop_index, norm_decls = norm_decls}
+        else if weight = 0 then
+          {safe0 = update_rl kind index (#rl info) safe0, safep = safep,
+           unsafe = unsafe, dup = dup, aesop_index = aesop_index,
+           norm_decls = norm_decls}
+        else
+          {safe0 = safe0, safep = update_rl kind index (#rl info) safep,
+           unsafe = unsafe, dup = dup, aesop_index = aesop_index,
+           norm_decls = norm_decls}
       end
   end
 
-(* A declaration is retracted by its tag index, which is unique across the
-   claset, so every component is filtered without consulting the kind. *)
-fun delete_decl (decl : decl)
-  ({safe0, safep, unsafe, dup, aesop_index, norm_decls} : cs_index) =
-  let
-    val {index, ...} = #tag decl
-    fun keep ({tag = {index = index', ...}, ...} : decl) = index <> index'
-  in
-    {safe0 = delete_rl index safe0,
-     safep = delete_rl index safep,
-     unsafe = delete_rl index unsafe,
-     dup = delete_rl index dup,
-     aesop_index = delete_aesop_decl decl aesop_index,
-     norm_decls = List.filter keep norm_decls}
-  end
+val add_decl = update_decl insert_rl insert_aesop_decl insert_norm_decl
+val delete_decl = update_decl delete_rl delete_aesop_decl delete_norm_decl
 
 fun make_rule_decl spec (name, th) =
   let
@@ -1410,20 +1395,19 @@ fun invocation_marker_rules cs =
 (* The first "<prefix><n>" with n at least [from] that no declaration
    already uses.  Invocation-scoped rules are named this way so that a
    marker argument can never collide with a user declaration. *)
-fun fresh_rule_name {prefix, from} (CS {decls, ...}) =
+fun fresh_rule_name_indexed {prefix, from} (CS {decls, ...}) =
   let
     fun find index =
       let val name = prefix ^ Int.toString index
       in
         if clasetRules.decl_name_member decls name then find (index + 1)
-        else name
+        else (name, index)
       end
   in
     find from
   end
 
-fun marker_name cs =
-  fresh_rule_name {prefix = marker_prefix, from = 0} cs
+fun fresh_rule_name options cs = #1 (fresh_rule_name_indexed options cs)
 
 fun classical_rule ({kind=clasetRules.Intro,...} : rulespec) = true
   | classical_rule {kind=clasetRules.Elim,...} = true
@@ -1432,21 +1416,29 @@ fun classical_rule ({kind=clasetRules.Intro,...} : rulespec) = true
 
 fun process_claset_tags thms cs =
   let
-    fun add spec th cs = add_rule spec (marker_name cs, th) cs
-
-    fun process (cs, rest) [] = (cs, List.rev rest)
-      | process (cs, rest) (th :: ths) =
+    fun process (cs, rest, _) [] = (cs, List.rev rest)
+      | process (cs, rest, from) (th :: ths) =
           case marker_of th of
               SOME {spec=SOME spec,payload=Theorem rule,...} =>
                 if classical_rule spec then
-                  process (add spec rule cs, rest) ths
+                  let
+                    val (name, index) = fresh_rule_name_indexed
+                      {prefix = marker_prefix, from = from} cs
+                  in
+                    process (add_rule spec (name, rule) cs, rest, index) ths
+                  end
                 else
-                  process (cs, th :: rest) ths
+                  process (cs, th :: rest, from) ths
             | SOME {payload=DeleteName name,...} =>
-                process (remove_rule name cs, rest) ths
-            | _ => process (cs, th :: rest) ths
+                let
+                  val next =
+                    if String.isPrefix marker_prefix name then 0 else from
+                in
+                  process (remove_rule name cs, rest, next) ths
+                end
+            | _ => process (cs, th :: rest, from) ths
   in
-    process (cs, []) thms
+    process (cs, [], 0) thms
   end
 
 type simp_arg_split =
@@ -1965,53 +1957,38 @@ datatype fact_consumer = SafeFacts | SearchFacts | TableauFacts
 fun declare_invocation_facts_with_charge charge
     consumer environment cs =
   let
-    fun step (entry, (cs, assumed)) =
+    fun step (entry, (cs, assumed, from)) =
       let
         val _ = charge searchBudget.Candidate
         val fact = #theorem (clasetFacts.literal_view entry)
+        fun install spec view keep_assumption =
+          let
+            val (name, index) = fresh_rule_name_indexed
+              {prefix = invocation_fact_prefix, from = from} cs
+            val theorem = #theorem (view : clasetFacts.view)
+          in
+            case Lib.total (add_derived_rule spec (name, theorem)) cs of
+                SOME extended =>
+                  (charge searchBudget.Application;
+                   (extended, keep_assumption, index))
+              | NONE => (cs, fact :: assumed, index)
+          end
       in
         case
           if consumer <> SafeFacts then
             clasetFacts.implication_rule_view entry
           else NONE
         of
-            SOME view =>
-              let
-                val name =
-                  fresh_rule_name
-                    {prefix = invocation_fact_prefix, from = 0} cs
-              in
-                case Lib.total
-                       (add_derived_rule invocation_fact_spec
-                         (name, #theorem view)) cs of
-                    SOME extended =>
-                      (charge searchBudget.Application;
-                       (extended, assumed))
-                  | NONE => (cs, fact :: assumed)
-              end
+            SOME view => install invocation_fact_spec view assumed
           | NONE =>
               if consumer = TableauFacts andalso
                  clasetFacts.has_schematic_types entry then
-                let
-                  val name =
-                    fresh_rule_name
-                      {prefix = invocation_fact_prefix, from = 0} cs
-                  val theorem =
-                    #theorem (clasetFacts.schematic_view entry)
-                  val extended =
-                    Lib.total
-                      (add_derived_rule sintro_spec (name, theorem)) cs
-                in
-                  case extended of
-                      SOME installed =>
-                        (charge searchBudget.Application;
-                         (installed, fact :: assumed))
-                    | NONE => (cs, fact :: assumed)
-                end
-              else (cs, fact :: assumed)
+                install sintro_spec (clasetFacts.schematic_view entry)
+                  (fact :: assumed)
+              else (cs, fact :: assumed, from)
       end
-    val (declared_cs, reversed) =
-      List.foldl step (cs, []) (clasetFacts.facts environment)
+    val (declared_cs, reversed, _) =
+      List.foldl step (cs, [], 0) (clasetFacts.facts environment)
   in
     (declared_cs, List.rev reversed)
   end

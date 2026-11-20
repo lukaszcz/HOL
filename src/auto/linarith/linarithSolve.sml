@@ -115,11 +115,12 @@ fun elim_var_with work
   let
     val a1 = Arbint.abs c1
     val a2 = Arbint.abs c2
+    (* Both pivot coefficients are nonzero. LCM(a1,a2)/a1 = a2/GCD(a1,a2). *)
     val (m1, m2) =
-      if ai_eq a1 a2 andalso not (ai_zero a1) then (one, one)
+      if ai_eq a1 a2 then (one, one)
       else
-        let val m = Arbint.lcm (a1, a2)
-        in (Arbint.div (m, a1), Arbint.div (m, a2)) end
+        let val gcd = Arbint.gcd (a1, a2)
+        in (Arbint.div (a2, gcd), Arbint.div (a1, gcd)) end
     val (n1, n2) =
       if ai_neg c1 = ai_neg c2 then
         if ty1 = Eq then (Arbint.~ m1, m2)
@@ -304,19 +305,12 @@ fun trace (work : work) message = traceUtil.trace (#level work) 2 message
 (* SOME just is a refutation of the rows; NONE is elimination run to a
    system with no eliminable column left, which is the rows failing to
    refute rather than the search giving up early. *)
-fun elim_with work ineqs =
+fun elim_with (work : work) ineqs =
   let
     val (triv, nontriv) =
       List.partition
         (fn row => (candidate work; is_trivial_with work row)) ineqs
-  in
-    if not (List.null triv) then
-      (case List.find
-              (fn row => (candidate work; is_contradictory row)) triv of
-           SOME (Lineq (_, _, _, just)) => SOME just
-         | NONE => elim_with work nontriv)
-    else if List.null nontriv then NONE
-    else
+    fun pivot () =
       let
         val (eqs, noneqs) =
           List.partition
@@ -349,7 +343,7 @@ fun elim_with work ineqs =
                   | SOME (_, v) =>
                       let
                         val (independent, dependent) =
-                          partition_pivot_with work v ineqs
+                          partition_pivot_with work v nontriv
                         val (pos, neg) =
                           List.partition
                             (fn (_, c) => (candidate work; ai_pos c))
@@ -362,6 +356,15 @@ fun elim_with work ineqs =
                       end
               end
       end
+  in
+    case List.find (fn row => (candidate work; is_contradictory row)) triv of
+        SOME (Lineq (_, _, _, just)) => SOME just
+      | NONE =>
+        (* The metered path retains the original classification charges. *)
+        if #metered work andalso not (List.null triv) then
+          elim_with work nontriv
+        else if List.null nontriv then NONE
+        else pivot ()
   end
 
 fun scale m rat =
@@ -522,8 +525,11 @@ fun swap_less (Decomp {lhs, lhs_const, rhs, rhs_const,
    (fast_lin_arith.ML:574-629). *)
 fun fold_neq_pass_with work discrete_only visit state items =
   let
-    fun pass reversed state [] = visit (List.rev reversed) state
-      | pass reversed state ((item as (tm, decoded)) :: rest) =
+    (* Chosen branches are appended after the unprocessed premises. *)
+    fun pass reversed state [] [] = visit (List.rev reversed) state
+      | pass reversed state [] queued =
+          pass reversed state (List.rev queued) []
+      | pass reversed state ((item as (tm, decoded)) :: rest) queued =
           (candidate work;
            case decoded of
                SOME decomp =>
@@ -531,17 +537,17 @@ fun fold_neq_pass_with work discrete_only visit state items =
                     (not discrete_only orelse is_discrete decomp)
                  then
                    (application work;
-                    case pass reversed state
-                           (rest @ [(tm, SOME (less_decomp decomp))]) of
+                    case pass reversed state rest
+                           ((tm, SOME (less_decomp decomp)) :: queued) of
                         NONE => NONE
                       | SOME next =>
                           (application work;
-                           pass reversed next
-                             (rest @ [(tm, SOME (swap_less decomp))])))
-                 else pass (item :: reversed) state rest
-             | NONE => pass (item :: reversed) state rest)
+                           pass reversed next rest
+                             ((tm, SOME (swap_less decomp)) :: queued)))
+                 else pass (item :: reversed) state rest queued
+             | NONE => pass (item :: reversed) state rest queued)
   in
-    pass [] state items
+    pass [] state items []
   end
 
 fun elim_neq_with work items =
@@ -667,7 +673,9 @@ fun prove_decomposed_with work
           fun neq (_, SOME decomp) =
                 (candidate work; is_neq decomp)
             | neq (_, NONE) = (candidate work; false)
-          val neq_count = List.length (List.filter neq items)
+          val neq_count =
+            List.foldl (fn (item, count) =>
+              if neq item then count + 1 else count) 0 items
           val split_neq = neq_count <= neq_limit
         in
           (split_neq,

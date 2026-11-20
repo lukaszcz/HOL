@@ -461,10 +461,17 @@ fun declaration_rule budget mode
       end
   end
 
-fun safe_class wanted ({spec, info, ...} : candidate) =
-  #safe spec andalso
-  ordinary_kind (#kind spec) andalso
-  clasetRules.safe_class_of spec info = SOME wanted
+fun safe_classes candidates =
+  let
+    fun add (candidate as {spec, info, ...} : candidate, (safe0, safep)) =
+      case clasetRules.safe_class_of spec info of
+          SOME clasetRules.Safe0 => (candidate :: safe0, safep)
+        | SOME clasetRules.SafeP => (safe0, candidate :: safep)
+        | NONE => (safe0, safep)
+    val (safe0, safep) = List.foldl add ([], []) candidates
+  in
+    (List.rev safe0, List.rev safep)
+  end
 
 fun unsafe_declaration ({spec, ...} : candidate) =
   (ordinary_kind (#kind spec) orelse
@@ -501,12 +508,9 @@ fun claset_rules_core
   let
     val candidates =
       candidate_declarations budget claset conclusion assumptions qvars
-    val safe0 =
-      map (declaration_rule budget mode)
-        (List.filter (safe_class clasetRules.Safe0) candidates)
-    val safep =
-      map (declaration_rule budget mode)
-        (List.filter (safe_class clasetRules.SafeP) candidates)
+    val (safe0_candidates, safep_candidates) = safe_classes candidates
+    val safe0 = map (declaration_rule budget mode) safe0_candidates
+    val safep = map (declaration_rule budget mode) safep_candidates
     val forwards =
       map (declaration_rule budget mode)
         (List.filter safe_forward_declaration candidates)

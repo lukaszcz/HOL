@@ -336,11 +336,19 @@ fun nth1 origin values pos =
     List.nth (values, pos - 1)
     handle Subscript => error origin "position out of range"
 
-fun delete_nth origin values pos =
-  let
-    val _ = nth1 origin values pos
-  in
-    List.take (values, pos - 1) @ List.drop (values, pos)
-  end
+fun splice_nth origin values pos replacements =
+  if pos < 1 then error origin "positions are one-based"
+  else
+    let
+      fun splice _ [] _ = error origin "position out of range"
+        | splice 1 (_ :: tail) prefix =
+            List.revAppend (prefix, replacements @ tail)
+        | splice n (value :: tail) prefix =
+            splice (n - 1) tail (value :: prefix)
+    in
+      splice pos values []
+    end
+
+fun delete_nth origin values pos = splice_nth origin values pos []
 
 end

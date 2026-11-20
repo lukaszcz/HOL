@@ -4072,6 +4072,37 @@ val _ =
 
 val _ =
   test
+    ("invocation facts use the first free names across existing gaps",
+     fn () =>
+       let
+         val prefix = "__invocation_fact_"
+         val spec = {kind = clasetRules.Intro, safe = true, prio = NONE}
+         val base = add_derived_rule spec (prefix ^ "0", boolTheory.TRUTH)
+           (add_derived_rule spec (prefix ^ "2", boolTheory.TRUTH) empty_cs)
+         val installed = ref ([] : string list)
+         val tactic =
+           with_invocation_args
+             {iff_prefix = "__selftest_invocation_iff_",
+              extra_markers = no_extra_markers}
+             (fn cs => fn _ => fn _ =>
+               (installed := List.mapPartial
+                  (fn ({kind = clasetRules.Dest, ...}, (name, _)) => SOME name
+                    | _ => NONE) (rules_of cs);
+                Tactical.ALL_TAC))
+             base NONE
+             [invocation_implication, boolTheory.TRUTH,
+              invocation_implication, invocation_implication]
+         val (residual, _) =
+           tactic ([], boolSyntax.T) (Context.snapshot ())
+       in
+         !installed = map (fn suffix => prefix ^ suffix) ["4", "3", "1"]
+         andalso
+         (case residual of [([truth], _)] => aconv truth boolSyntax.T
+                          | _ => false)
+       end)
+
+val _ =
+  test
     ("a supplied implication is not assumed as well",
      fn () => List.null (invocation_assumptions [invocation_implication]))
 

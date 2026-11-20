@@ -380,7 +380,13 @@ fun predecessor_normalise term =
     | _ => term
 
 fun statement_symmetry_normal_form term =
-  symmetry_normalise (rename_free (predecessor_normalise term))
+  let
+    val term =
+      if Term.free_in predecessor term then predecessor_normalise term
+      else term
+  in
+    symmetry_normalise (rename_free term)
+  end
 
 fun statement_normal_form term =
   statement_symmetry_normal_form (beta_eta_normalise term)
@@ -1724,17 +1730,14 @@ val fix_parameters = Tactical.REPEAT Tactic.GEN_TAC
 
 (* What is timed, and what the budget is spent on, is the tactic.
    Preparing the goal's simpset is neither: it asks the circularity
-   guard about every ambient rewrite, which costs a tenth of a second
-   a goal -- more than the shortest bucket the cost table reports, so
-   with it inside no recipe that builds a simpset could be measured
-   below that at all.  It depends on the goal and the ambient
-   declarations and on nothing the proof does, so it is done before
-   the clock starts. *)
-fun run_goal budget recipe (entry : corpus_goal) =
+   guard about every ambient rewrite. It depends on the goal and the
+   ambient declarations and is done before the clock starts. *)
+fun run_goal_with_timing {now, prepare} budget recipe
+      (entry : corpus_goal) =
   let
     val ctxt = Context.snapshot ()
-    val simpset = clean_simpset ctxt (#goal entry)
-    val started = Time.now ()
+    val simpset = prepare (fn () => clean_simpset ctxt (#goal entry))
+    val started = now ()
     val residual = ref "tactic returned residual goals or failed"
     fun goal_text (assumptions, conclusion) =
       (if null assumptions then ""
@@ -1769,7 +1772,7 @@ fun run_goal budget recipe (entry : corpus_goal) =
                raise ERR "run_goal"
                  (recipe_name recipe ^ " on " ^ #id entry ^ ": " ^
                   Feedback.exn_to_string exn)
-    val elapsed = Time.- (Time.now (), started)
+    val elapsed = Time.- (now (), started)
   in
     if !timed_out orelse not (Time.< (elapsed, budget)) then TIMEOUT
     else if solved then SOLVED elapsed
@@ -1777,6 +1780,9 @@ fun run_goal budget recipe (entry : corpus_goal) =
   end
   handle Portable.Interrupt => raise Portable.Interrupt
        | exn => FAILED (Feedback.exn_to_string exn)
+
+val run_goal =
+  run_goal_with_timing {now = Time.now, prepare = fn build => build ()}
 
 fun id_set ids = HOLset.fromList String.compare ids
 

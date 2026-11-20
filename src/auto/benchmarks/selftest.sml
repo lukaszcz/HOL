@@ -108,29 +108,30 @@ val _ =
          (benchLib.run_goal (Time.fromSeconds 5)
             (benchLib.Invoke (benchLib.Simp, [])) solved_goal))
 
-(* Preparing a goal's simpset asks the circularity guard about every
-   ambient rewrite, and that is the harness reading its own
-   declarations, not the tactic proving anything.  It was inside the
-   region [run_goal] times, where it cost more than a solve of this
-   goal does and more than the shortest bucket the cost table reports.
-   The check does not name a time: it takes the whole call's wall
-   clock, which pays for the preparation either way, and asks that the
-   time [run_goal] reports be a fraction of it.  Reported and total
-   coincide when the preparation is timed too. *)
+(* On the fake clock, simpset preparation alone exceeds the budget.
+   The real tactic runs with the normal timeout and reports one tick. *)
 val _ =
   check
     ("the time reported for a goal is not the time spent preparing it",
      fn () =>
        let
-         val started = Time.now ()
+         val clock = ref Time.zeroTime
+         val tick = Time.fromSeconds 1
+         fun now () =
+           let val reading = !clock
+           in clock := Time.+ (reading, tick); reading end
+         fun prepare build =
+           let val simpset = build ()
+           in clock := Time.+ (!clock, Time.fromSeconds 10); simpset end
          val outcome =
-           benchLib.run_goal (Time.fromSeconds 5)
+           benchLib.run_goal_with_timing {now = now, prepare = prepare}
+             (Time.fromSeconds 5)
              (benchLib.Invoke (benchLib.Simp, [])) solved_goal
-         val total = Time.- (Time.now (), started)
        in
          case outcome of
              benchLib.SOLVED reported =>
-               Time.< (Time.+ (reported, reported), total)
+               Time.compare (reported, tick) = EQUAL andalso
+               Time.compare (!clock, Time.fromSeconds 12) = EQUAL
            | _ => false
        end)
 
@@ -1711,6 +1712,24 @@ val _ =
                [translation_fact] subset_goal,
              guard_entry "unit-a4-shared-two" "by auto"
                [translation_fact] length_reverse_goal]))
+
+val _ =
+  check
+    ("A4 orders lemmas by last use and lists distinct goals by first use",
+     fn () =>
+       let
+         val other = "parityTranslation$source_gadget_iff"
+         val other_fact = benchLib.FactAdd
+           {name = other, theorem = boolTheory.TRUTH}
+         fun entry id facts = guard_entry id "by blast" facts subset_goal
+       in
+         benchGuards.translation_uses
+           [entry "first" [translation_fact, other_fact],
+            entry "second" [translation_fact],
+            entry "first" [translation_fact]] =
+         [("parityTranslation$source_widget_iff", ["first", "second"]),
+          (other, ["first"])]
+       end)
 
 val alias_audit = benchGuards.alias_findings ()
 

@@ -232,16 +232,8 @@ fun stands_on_unknown node pos =
 fun delete_nth function_name pos values =
   clasetNorm.delete_nth ("clasetGoal", function_name) values pos
 
-(* A splice is the deletion at [pos] with the replacements dropped into
-   the vacated slot, so the one-based bounds checking (and hence the
-   errors reported for a bad position) has a single implementation. *)
-fun splice1 function_name values pos replacements =
-  let
-    val remaining = delete_nth function_name pos values
-  in
-    List.take (remaining, pos - 1) @ replacements @
-    List.drop (remaining, pos - 1)
-  end
+fun splice1 function_name =
+  clasetNorm.splice_nth ("clasetGoal", function_name)
 
 fun child_paths parent count =
   if count = 1 then [parent]

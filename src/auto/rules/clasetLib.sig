@@ -182,6 +182,9 @@ sig
      -- those coming from marker arguments -- this way, so that such a rule
      can never collide with a user declaration. *)
   val fresh_rule_name : {prefix : string, from : int} -> claset -> string
+  (* In an insertion-only batch, reuse the returned suffix as [from]. *)
+  val fresh_rule_name_indexed :
+    {prefix : string, from : int} -> claset -> string * int
 
   type simp_arg_split =
     {simp_rules : thm list,

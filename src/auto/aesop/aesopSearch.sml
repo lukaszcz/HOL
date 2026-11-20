@@ -69,16 +69,13 @@ fun cgoal_string ({params, asl, w} : cgoal) =
     parameters ^ "[" ^ assumptions ^ "] ?- " ^ Parse.term_to_string w
   end
 
-fun trace_goal level label tree id =
-  let val goal = aesopTree.goal tree id
-  in
-    traceUtil.trace level 3
-      (fn () =>
-        label ^ " goal " ^ Int.toString id ^
-        ", level=" ^ Int.toString (#level goal) ^
-        ", priority=" ^ Real.toString (#prio goal) ^ ": " ^
-        cgoal_string (aesopTree.active_cgoal goal))
-  end
+fun trace_goal level label (goal : aesopTree.goal) =
+  traceUtil.trace level 3
+    (fn () =>
+      label ^ " goal " ^ Int.toString (#id goal) ^
+      ", level=" ^ Int.toString (#level goal) ^
+      ", priority=" ^ Real.toString (#prio goal) ^ ": " ^
+      cgoal_string (aesopTree.active_cgoal goal))
 
 fun application_data ({name, phase, ...} : aesopRule.rule)
       (records, next) : aesopTree.rapp_data =
@@ -419,7 +416,7 @@ fun next_safe_with ctxt level include_irrelevant pop_goal
           val initial_goal = aesopTree.goal remaining id
           val _ = traceUtil.trace level 2
             (fn () => "expanding goal " ^ Int.toString id)
-          val _ = trace_goal level "candidate" remaining id
+          val _ = trace_goal level "candidate" initial_goal
         in
           if #level initial_goal >= max_depth then
             DepthLimit {goal = id, tree = remaining}

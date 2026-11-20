@@ -199,6 +199,12 @@ sig
   (* Runs the thunk under a budget that preempts it, NONE on expiry. *)
   val within_budget : Time.time -> (unit -> 'a) -> 'a option
   val run_goal : Time.time -> method_recipe -> corpus_goal -> outcome
+  (* Uses the same execution and timeout path as run_goal with a
+     supplied clock and wrapper around simpset preparation. *)
+  val run_goal_with_timing :
+    {now : unit -> Time.time,
+     prepare : (unit -> simpExtLib.simpset) -> simpExtLib.simpset} ->
+    Time.time -> method_recipe -> corpus_goal -> outcome
 
   val assert_accounting : {
     family : string,

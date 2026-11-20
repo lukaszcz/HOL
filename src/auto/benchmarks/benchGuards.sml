@@ -31,11 +31,8 @@ fun goal_constants goal =
 (* A recipe with more than one component -- [Then] or [AllGoals] --
    repeats its common arguments in each, so the raw argument list names
    one theorem several times. *)
-fun distinct_by_name [] = []
-  | distinct_by_name (({name, theorem} : benchLib.named_thm) :: rest) =
-      {name = name, theorem = theorem} ::
-      distinct_by_name
-        (List.filter (fn other => #name other <> name) rest)
+val distinct_by_name =
+  listUtil.distinct_by String.compare (#name : benchLib.named_thm -> string)
 
 fun supplied_theorems (entry : benchLib.corpus_goal) =
   distinct_by_name
@@ -337,9 +334,7 @@ fun defines_goal_constant goal ({theorem, ...} : benchLib.named_thm) =
         (find_terms is_const (Thm.concl theorem)))
   end
 
-fun distinct [] = []
-  | distinct (item :: rest) =
-      item :: distinct (List.filter (not o equal item) rest)
+val distinct = listUtil.distinct_by String.compare I
 
 fun provenance_violations (entry : benchLib.corpus_goal) =
   distinct
@@ -420,11 +415,6 @@ fun search_work_findings budget goals =
 (* A4 -- single-use translation lemmas                                 *)
 (* ------------------------------------------------------------------ *)
 
-fun add_use ((name, id), table) =
-  case List.partition (fn (key, _) => key = name) table of
-      ([], _) => (name, [id]) :: table
-    | ((_, ids) :: _, rest) => (name, ids @ [id]) :: rest
-
 fun translation_uses goals =
   let
     val pairs =
@@ -438,16 +428,28 @@ fun translation_uses goals =
                   | SOME _ => SOME (#name named, #id entry))
               (supplied_theorems entry))
           goals)
+    (* Report names in reverse last-use order and IDs in first-use order. *)
+    fun add_use ((name, id), (names, uses)) =
+      case Symtab.lookup uses name of
+          NONE => (name :: names, Symtab.update (name, [id]) uses)
+        | SOME ids => (names, Symtab.update (name, id :: ids) uses)
+    val (names, uses) = List.foldr add_use ([], Symtab.empty) pairs
   in
-    map (fn (name, ids) => (name, distinct ids))
-      (List.foldl add_use [] pairs)
+    List.foldl
+      (fn (name, groups) =>
+        (name, distinct (valOf (Symtab.lookup uses name))) :: groups)
+      [] names
   end
 
 fun single_use_findings goals =
   let
     val uses = translation_uses goals
-    fun entry_of id =
-      List.find (fn (item : benchLib.corpus_goal) => #id item = id) goals
+    val by_id =
+      List.foldr
+        (fn (entry : benchLib.corpus_goal, entries) =>
+          Symtab.update (#id entry, entry) entries)
+        Symtab.empty goals
+    fun entry_of id = Symtab.lookup by_id id
   in
     List.mapPartial
       (fn (name, ids) =>

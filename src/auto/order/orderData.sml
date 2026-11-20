@@ -65,9 +65,12 @@ fun dest_strict relation tm =
 (* Discovering the contexts a goal supplies                            *)
 (* ------------------------------------------------------------------ *)
 
-val order_definitions =
-  [PreOrder, Order, WeakOrder, StrongOrder,
-   LinearOrder, StrongLinearOrder, WeakLinearOrder]
+val expand_order_axioms =
+  PURE_REWRITE_RULE
+    [PreOrder, Order, WeakOrder, StrongOrder,
+     LinearOrder, StrongLinearOrder, WeakLinearOrder]
+
+val expand_weak_order = PURE_REWRITE_RULE [WeakOrder]
 
 val axiom_names =
   ["reflexive", "irreflexive", "transitive", "antisymmetric",
@@ -99,12 +102,11 @@ fun dest_axiom theorem =
 
 fun axioms_of_with meter theorems =
   let
-    val expand = PURE_REWRITE_RULE order_definitions
     fun atoms theorem =
       (normalization meter;
        List.mapPartial
          (fn atom => (candidate meter; dest_axiom atom))
-         (conjuncts_with meter (expand theorem)))
+         (conjuncts_with meter (expand_order_axioms theorem)))
   in
     List.concat (List.map atoms theorems)
   end
@@ -176,7 +178,7 @@ fun strict_context_with meter relation entries irreflexive transitive =
     val closure_atoms =
       List.mapPartial
         (fn atom => (candidate meter; dest_axiom atom))
-        (conjuncts_with meter (PURE_REWRITE_RULE [WeakOrder] weak))
+        (conjuncts_with meter (expand_weak_order weak))
     val closure_entries = List.map (fn (n, _, th) => (n, th)) closure_atoms
     val trichotomous_entries =
       case lookup_with meter entries "trichotomous" of

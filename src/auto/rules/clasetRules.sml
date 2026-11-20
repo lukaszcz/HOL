@@ -600,13 +600,12 @@ fun ext_info ({kind, safe, ...} : rulespec) th =
 
 datatype safe_class = Safe0 | SafeP
 
+fun subgoals_of_form is_elim ({prems, ...} : canonical) =
+  if is_elim then length prems - 1 else length prems
+
 fun subgoals_of (is_elim, th) =
-  let
-    val kind = if is_elim then Elim else Intro
-    val n = length (rule_premises_of kind th)
-  in
-    if is_elim then n - 1 else n
-  end
+  subgoals_of_form is_elim
+    (canonical_form_of (if is_elim then Elim else Intro) th)
 
 fun safe_class_of ({kind, safe, ...} : rulespec) ({rl, ...} : info) =
   if kind = Forward orelse kind = Norm orelse not safe then NONE
@@ -750,7 +749,7 @@ fun extend_decl_gen {derived} (decl : decl)
       if derived then ()
       else HOL_WARNING "clasetRules" "extend_decl" message
   in
-    if (duplicate decl old andalso not derived) orelse
+    if (not derived andalso duplicate decl old) orelse
        Option.isSome (Symtab.lookup byname (#name decl))
     then
       (warn ("Ignoring duplicate " ^ rule_description (#spec decl));
@@ -758,8 +757,9 @@ fun extend_decl_gen {derived} (decl : decl)
     else
       let
         val _ =
-          if List.exists (fn old => not (same_kind (#spec decl) (#spec old)))
-                         old
+          if not derived andalso
+             List.exists (fn old => not (same_kind (#spec decl) (#spec old)))
+               old
           then warn ("Rule already declared as a different " ^
                      rule_description (#spec (hd old)))
           else ()

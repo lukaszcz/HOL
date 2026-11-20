@@ -17,19 +17,21 @@ fun count_cause cause shortfalls =
    assigned-tactic count.  Counted here instead are the goals the
    battery tactic closed and the assigned tactic did not: the goals
    where the choice of tactic, not HOL4, is what the corpus measured. *)
-fun battery_count tactic_id gated battery =
+fun battery_counts assigned battery =
   let
-    fun assigned_solved id =
-      case List.find (fn (item, _) => item = id) gated of
-          SOME (_, outcome) => benchLib.outcome_solved outcome
-        | NONE => false
+    fun count ((id, tactic_id, outcome), totals as (auto, blast, aesop)) =
+      if benchLib.outcome_solved outcome then
+        case Symtab.lookup assigned id of
+            SOME (true, _) => totals
+          | _ =>
+              case tactic_id of
+                  benchLib.Auto => (auto + 1, blast, aesop)
+                | benchLib.Blast => (auto, blast + 1, aesop)
+                | benchLib.Aesop => (auto, blast, aesop + 1)
+                | _ => totals
+      else totals
   in
-    length
-      (List.filter
-        (fn (id, item, outcome) =>
-          item = tactic_id andalso benchLib.outcome_solved outcome andalso
-          not (assigned_solved id))
-        battery)
+    List.foldl count (0, 0, 0) battery
   end
 
 type family = {
@@ -98,21 +100,13 @@ fun solved_milliseconds outcomes =
       | _ => NONE)
     outcomes
 
-fun insert value [] = [value]
-  | insert value (head :: rest) =
-      if value <= head then value :: head :: rest
-      else head :: insert value rest
-
-fun sorted values = List.foldl (fn (value, seen) => insert value seen) []
-                      values
-
 fun median [] = 0
   | median values =
-      let val ordered = sorted values
+      let val ordered = Listsort.sort Int.compare values
       in List.nth (ordered, length ordered div 2) end
 
 fun largest [] = 0
-  | largest values = List.last (sorted values)
+  | largest (value :: values) = List.foldl Int.max value values
 
 fun within lower upper values =
   length (List.filter (fn value => lower <= value andalso value < upper)
@@ -124,20 +118,40 @@ fun seconds milliseconds =
 (* Search work for the goals that solved.  A goal that failed did work
    too, but reporting it would mix "this took a lot of search" with
    "this searched the whole space and found nothing". *)
-fun solved_work ({gated, work, ...} : measured_family) =
+fun solved_work assigned work =
   List.mapPartial
     (fn (id, item) =>
-      if List.exists
-           (fn (other, outcome) =>
-             other = id andalso benchLib.outcome_solved outcome)
-           gated
-      then SOME (searchWork.total item)
-      else NONE)
+      case Symtab.lookup assigned id of
+          SOME (_, true) => SOME (searchWork.total item)
+        | _ => NONE)
     work
 
-fun cost_row (row as {name, gated, ...} : measured_family) =
+fun assigned_outcomes gated =
   let
-    val times = solved_milliseconds gated
+    (* Battery counts consult the first outcome for an ID. Work samples
+       include an ID if any of its outcomes solved. *)
+    fun index ((id, outcome), assigned) =
+      let
+        val first = benchLib.outcome_solved outcome
+        val any = first orelse
+          (case Symtab.lookup assigned id of SOME (_, true) => true
+                                             | _ => false)
+      in
+        Symtab.update (id, (first, any)) assigned
+      end
+  in
+    List.foldr index Symtab.empty gated
+  end
+
+fun samples ({name, gated, work, battery, ...} : measured_family) =
+  let val assigned = assigned_outcomes gated
+  in
+    ((name, solved_milliseconds gated, solved_work assigned work),
+     (name, battery_counts assigned battery))
+  end
+
+fun cost_row (name, times, work) =
+  let
     fun number value = Int.toString value
   in
     "| " ^ name ^ " | " ^ number (length times) ^ " | " ^
@@ -146,8 +160,8 @@ fun cost_row (row as {name, gated, ...} : measured_family) =
     number (within 1000 10000 times) ^ " | " ^
     number (within 10000 1000000000 times) ^ " | " ^
     seconds (largest times) ^ " | " ^
-    number (median (solved_work row)) ^ " | " ^
-    number (largest (solved_work row)) ^ " |\n"
+    number (median work) ^ " | " ^
+    number (largest work) ^ " |\n"
   end
 
 fun primary_row
@@ -173,15 +187,12 @@ fun accounting_row
     number under ^ " |\n"
   end
 
-fun observation_row
-      ({name, gated, battery, ...} : measured_family) =
+fun observation_row (name, (auto, blast, aesop)) =
   let
     fun number value = Int.toString value
   in
     "| " ^ name ^ " | " ^
-    number (battery_count benchLib.Auto gated battery) ^ " | " ^
-    number (battery_count benchLib.Blast gated battery) ^ " | " ^
-    number (battery_count benchLib.Aesop gated battery) ^ " |\n"
+    number auto ^ " | " ^ number blast ^ " | " ^ number aesop ^ " |\n"
   end
 
 fun total_size rows =
@@ -206,18 +217,11 @@ fun total_cause cause rows =
       count_cause cause shortfalls + total)
     0 rows
 
-fun all_times rows =
-  List.concat
-    (map (fn ({gated, ...} : measured_family) => solved_milliseconds gated)
-      rows)
-
-fun all_work rows = List.concat (map solved_work rows)
-
-fun total_battery tactic_id rows =
+fun total_battery observations =
   List.foldl
-    (fn ({gated, battery, ...} : measured_family, total) =>
-      battery_count tactic_id gated battery + total)
-    0 rows
+    (fn ((_, (auto, blast, aesop)), (autos, blasts, aesops)) =>
+      (auto + autos, blast + blasts, aesop + aesops))
+    (0, 0, 0) observations
 
 (* A goal whose Isabelle method names a fact that translates onto the
    goal's own HOL4 statement is measured without that fact.  Naming
@@ -348,6 +352,10 @@ fun without_measurement text = without_date (without_costs text)
 fun render () =
   let
     val rows = map measure_family families
+    val (costs, observations) = ListPair.unzip (map samples rows)
+    val times = List.concat (map #2 costs)
+    val work = List.concat (map #3 costs)
+    val (auto, blast, aesop) = total_battery observations
     fun number value = Int.toString value
     val executable = number (total_size rows)
     val assigned_solved = number (total_solved rows)
@@ -473,15 +481,15 @@ fun render () =
       "| Family | Solved | < 0.1 s | 0.1-1 s | 1-10 s | > 10 s | ",
       "Slowest | Median search work | Largest search work |\n",
       "|---|---:|---:|---:|---:|---:|---:|---:|---:|\n"] @
-     map cost_row rows @
-     ["| **Total** | **", number (length (all_times rows)), "** | **",
-      number (within 0 100 (all_times rows)), "** | **",
-      number (within 100 1000 (all_times rows)), "** | **",
-      number (within 1000 10000 (all_times rows)), "** | **",
-      number (within 10000 1000000000 (all_times rows)), "** | **",
-      seconds (largest (all_times rows)), "** | **",
-      number (median (all_work rows)), "** | **",
-      number (largest (all_work rows)), "** |\n\n",
+     map cost_row costs @
+     ["| **Total** | **", number (length times), "** | **",
+      number (within 0 100 times), "** | **",
+      number (within 100 1000 times), "** | **",
+      number (within 1000 10000 times), "** | **",
+      number (within 10000 1000000000 times), "** | **",
+      seconds (largest times), "** | **",
+      number (median work), "** | **",
+      number (largest work), "** |\n\n",
       "## Documented results not solved by the assigned tactic\n\n",
       "- **Accepted scope exclusions** are executable goals deliberately ",
       "outside the supported tactic scope, with a recorded reason.\n",
@@ -518,11 +526,10 @@ fun render () =
       "the benchmark selftest passes.\n\n",
       "| Family | `AUTO_TAC` | `BLAST_TAC` | `AESOP_TAC` |\n",
       "|---|---:|---:|---:|\n"] @
-     map observation_row rows @
+     map observation_row observations @
      ["| **Total** | **",
-      number (total_battery benchLib.Auto rows), "** | **",
-      number (total_battery benchLib.Blast rows), "** | **",
-      number (total_battery benchLib.Aesop rows), "** |\n\n",
+      number auto, "** | **", number blast, "** | **",
+      number aesop, "** |\n\n",
       "## Seed-rule safety check\n\n",
       "A rule is classified as **safe** when applying it cannot discard ",
       "a possible proof of the goal. The automated seed-rule check ",

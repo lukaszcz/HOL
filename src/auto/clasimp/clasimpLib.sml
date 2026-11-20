@@ -3067,34 +3067,33 @@ fun simp_argument_can_fire theorem =
 
 (* The declaration takes the rule the bound was attached to: a bound counts
    rewrite applications, and there are none to count here. *)
-fun declare_undetermined theorem cs =
+fun declare_undetermined theorem cs from =
   let
     val rule = #1 (BoundedRewrites.dest_tagged_rewrite theorem)
-    val name =
-      clasetLib.fresh_rule_name
-        {prefix = "__clasimp_undetermined_arg_", from = 0} cs
+    val (name, index) = clasetLib.fresh_rule_name_indexed
+      {prefix = "__clasimp_undetermined_arg_", from = from} cs
   in
-    clasetLib.add_derived_rule undetermined_dest_spec (name, rule) cs
+    (clasetLib.add_derived_rule undetermined_dest_spec (name, rule) cs, index)
   end
 
 (* A fact the classical reasoner declines too stays a rewrite: it is then
    no worse off than it was, and the argument is not silently dropped. *)
-fun route_simp_argument level (theorem, (cs, rewrites)) =
-  if simp_argument_can_fire theorem then (cs, theorem :: rewrites)
+fun route_simp_argument level (theorem, (cs, rewrites, from)) =
+  if simp_argument_can_fire theorem then (cs, theorem :: rewrites, from)
   else
-    case Lib.total (declare_undetermined theorem) cs of
-        SOME extended =>
+    case Lib.total (declare_undetermined theorem cs) from of
+        SOME (extended, index) =>
           (traceUtil.trace level 1
              (fn () =>
                "no rewrite of " ^ Parse.thm_to_string theorem ^
                " can fire; declaring it as an unsafe destruction rule");
-           (extended, rewrites))
-      | NONE => (cs, theorem :: rewrites)
+           (extended, rewrites, index))
+      | NONE => (cs, theorem :: rewrites, from)
 
 fun invocation_declarations level iff_prefix simp_rules iff_rules claset =
   let
-    val (routed_claset, rewritable) =
-      List.foldr (route_simp_argument level) (claset, []) simp_rules
+    val (routed_claset, rewritable, _) =
+      List.foldr (route_simp_argument level) (claset, [], 0) simp_rules
     val declarations =
       map
         (fn (index, rule) =>
@@ -3161,6 +3160,10 @@ fun bound_rule_normal_form_conv ctxt policy ss =
   let val prepared = simpLib.prepare_child_first_in ctxt policy ss
   in finish_rule_normal_form policy (#normalize prepared []) end
 
+fun transport_name cs from =
+  clasetLib.fresh_rule_name_indexed
+    {prefix = "__clasimp_transport_", from = from} cs
+
 (* Keep the original declaration and add a certified view for the
    simpset's representation. Exclude a rule's own rewrite statement or
    an equivalence of which the rule is one direction. *)
@@ -3191,7 +3194,7 @@ fun transport_claset_rules_with filter normal_form ctxt budget policy ss rules
       in
         normal_form ctxt policy without_self
       end
-    fun add ((spec, (_, theorem)), added) =
+    fun add ((spec, (_, theorem)), state as (added, from)) =
       let
         val _ = searchBudget.charge budget searchBudget.Candidate
         val derived = Conv.CONV_RULE (conversion theorem) theorem
@@ -3206,25 +3209,23 @@ fun transport_claset_rules_with filter normal_form ctxt budget policy ss rules
         if aconv (concl derived) (concl theorem) orelse
            aconv (concl derived) boolSyntax.T orelse
            not (role_preserved ()) orelse
-           not (support_preserved ()) then added
+           not (support_preserved ()) then state
         else
           let
             val current = Option.getOpt (added, cs)
-            val name =
-              clasetLib.fresh_rule_name
-                {prefix = "__clasimp_transport_", from = 0}
-                current
+            val (name, index) = transport_name current from
           in
             searchBudget.charge budget searchBudget.Application;
             (* The fresh name makes admission independent of whether an
                earlier declaration has the same conclusion. *)
-            SOME (clasetLib.add_derived_rule spec (name, derived) current)
+            (SOME (clasetLib.add_derived_rule spec (name, derived) current),
+             index)
           end
       end
-      handle HOL_ERR _ => added
-           | Conv.UNCHANGED => added
+      handle HOL_ERR _ => state
+           | Conv.UNCHANGED => state
   in
-    List.foldl add NONE rules
+    #1 (List.foldl add (NONE, 0) rules)
   end
 
 val transport_claset_rules = transport_claset_rules_with
@@ -3575,19 +3576,20 @@ fun add_transported_facts consumer budget transported cs =
   let
     fun implication theorem =
       boolSyntax.is_imp_only (concl (Drule.SPEC_ALL theorem))
-    fun add (view : clasetFacts.view,current) =
+    fun add (view : clasetFacts.view, state as (current, from)) =
       if implication (#source view) andalso implication (#theorem view) then
         let
-          val name = clasetLib.fresh_rule_name
-            {prefix="__clasimp_transport_",from=0} current
+          val (name, index) = transport_name current from
           val _ = searchBudget.charge budget searchBudget.Application
-        in clasetLib.add_derived_rule
+        in
+          (clasetLib.add_derived_rule
              {kind=clasetRules.Dest,safe=false,prio=NONE}
-             (name,#theorem view) current end
-        handle HOL_ERR _ => current
-      else current
+             (name,#theorem view) current, index)
+        end
+        handle HOL_ERR _ => state
+      else state
   in if consumer <> clasetLib.SearchFacts then cs
-     else List.foldl add cs transported end
+     else #1 (List.foldl add (cs, 0) transported) end
 
 fun bound_fact_views viewed consumer budget body base_cs
       bound cs environment goal ctxt =
@@ -3672,26 +3674,23 @@ fun process_clasimp_args_fact_views consumer budget
                 val fact_cs =
                   if consumer <> clasetLib.SearchFacts then cs
                   else
-                    List.foldl
-                      (fn (view, current) =>
+                    #1 (List.foldl
+                      (fn (view, state as (current, from)) =>
                         if implication (#source view) andalso
                            implication (#theorem view) then
                           let
-                            val name =
-                              clasetLib.fresh_rule_name
-                                {prefix = "__clasimp_transport_", from = 0}
-                                current
+                            val (name, index) = transport_name current from
                           in
                             searchBudget.charge budget
                               searchBudget.Application;
-                            clasetLib.add_derived_rule
-                              {kind = clasetRules.Dest,
-                               safe = false, prio = NONE}
-                              (name, #theorem view) current
-                            handle HOL_ERR _ => current
+                            (clasetLib.add_derived_rule
+                               {kind = clasetRules.Dest,
+                                safe = false, prio = NONE}
+                               (name, #theorem view) current, index)
+                            handle HOL_ERR _ => state
                           end
-                        else current)
-                      cs transported
+                        else state)
+                      (cs, 0) transported)
                 val candidates =
                   clasetLib.rules_of base_cs @
                   clasetLib.invocation_marker_rules cs

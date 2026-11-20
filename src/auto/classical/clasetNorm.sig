@@ -42,5 +42,6 @@ sig
   val split_imp_prefix :
     origin -> int -> term -> term list * term
   val nth1 : origin -> 'a list -> int -> 'a
+  val splice_nth : origin -> 'a list -> int -> 'a list -> 'a list
   val delete_nth : origin -> 'a list -> int -> 'a list
 end

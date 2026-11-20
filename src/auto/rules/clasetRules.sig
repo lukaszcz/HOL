@@ -66,6 +66,7 @@ sig
   val ext_info : rulespec -> thm -> info
 
   datatype safe_class = Safe0 | SafeP
+  val subgoals_of_form : bool -> canonical -> int
   val subgoals_of : brl -> int
   val safe_class_of : rulespec -> info -> safe_class option
 
