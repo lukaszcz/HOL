@@ -557,8 +557,7 @@ local
       (fn () => if cpc_eof then raise CPCProofEOF
         else raise ERR "make_proof_tokenizer_from_input" "end of stream")
 
-  fun make_proof_stream_tokenizer_with_policy preserve_quoted cpc_eof
-      z3_quoted_escapes token_byte_gate instream =
+  fun make_stream_input instream =
   let
     val chunk = ref ""
     val index = ref 0
@@ -576,10 +575,12 @@ local
              index := 1;
              SOME (String.sub (next, 0)))
         end
-  in
+  in input end
+
+  fun make_proof_stream_tokenizer_with_policy preserve_quoted cpc_eof
+      z3_quoted_escapes token_byte_gate instream =
     make_proof_tokenizer_from_input preserve_quoted cpc_eof
-      z3_quoted_escapes token_byte_gate input
-  end
+      z3_quoted_escapes token_byte_gate (make_stream_input instream)
 
   val make_proof_stream_tokenizer =
     make_proof_stream_tokenizer_with_policy false false false NONE
@@ -1531,13 +1532,10 @@ local
     parse_script_tokens (make_located_tokenizer text)
 
   fun parse_script_file path =
-  let
-    val instream = TextIO.openIn path
-    val text = TextIO.inputAll instream
-    val _ = TextIO.closeIn instream
-  in
-    parse_script_string text
-  end
+    Portable.bracket (fn () => TextIO.openIn path) TextIO.closeIn
+      (fn instream => parse_script_tokens
+        (make_tokenizer_from_input true false false NONE
+          (make_stream_input instream)))
 
   (***************************************************************************)
   (* parsing of types/terms                                                  *)
@@ -7789,12 +7787,8 @@ in
               NONE => ""
             | SOME logic => " with " ^ logic ^ " dictionaries"))
       else ()
-    val instream = TextIO.openIn path
-    val text = TextIO.inputAll instream
-    val _ = TextIO.closeIn instream
-    val result = typecheck_script_string_with_options options text
   in
-    result
+    typecheck_script_with_options options (parse_script_file path)
   end
 
   fun parse_file_state (path : string) : command_state_snapshot =

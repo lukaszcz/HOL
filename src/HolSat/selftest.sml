@@ -510,6 +510,32 @@ local
           NONE => false
         | SOME th => checked (mk_neg source) (NOT_INTRO (DISCH source th))
       end))
+  val _ = control "compact resolution projects an odd number of roots"
+    (fn () => with_trace ([2,0,2,0,4,1,0,6,3,0,7,2,2,4,1,0]) (fn _ =>
+      let
+        val x = mk_var ("sat_left", bool)
+        val y = mk_var ("sat_right", bool)
+        val left = ``p /\ q``
+        val right = ``r:bool``
+        val source = list_mk_conj [mk_disj (left, right), mk_neg left,
+                                  mk_neg right]
+        val clauses = Array.fromList (ListPair.zip
+          ([mk_disj (x, y), mk_neg x, mk_neg y], CONJUNCTS (ASSUME source)))
+        val lfn = Redblackmap.insert (Redblackmap.insert
+          (Redblackmap.mkDict Term.var_compare, x, left), y, right)
+        val sva = Array.fromList [T, x, y]
+        val _ = minisatResolve.reset_replay_counts ()
+        val result = HOLFlags.with_bflags
+          [(minisatResolve.sat_profile_flag, true)]
+          (minisatParse.replayProof sva 3 "unused" minisatp 2 clauses lfn)
+          (SOME trace)
+      in case result of
+          NONE => false
+        | SOME th =>
+            checked (mk_neg source) (NOT_INTRO (DISCH source th)) andalso
+            List.exists (fn entry => entry = ("root-literal-occurrences", 4))
+              (minisatResolve.get_replay_counts ())
+      end))
   val _ = control "proof-only file input checks the file endpoint"
     (fn () =>
       let

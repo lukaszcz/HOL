@@ -39,43 +39,47 @@ fun l2hh (h0::h1::t) = (h0,h1,t)
   | l2hh _ = raise Match
 
 (*+1 because minisat var numbers start at 0,SatLib at 1*)
+fun trace_variable sva n =
+    Array.sub (sva,n+1)
+    handle Subscript => failwith("mk_sat_var"^(int_to_string (n+1))^"\n")
+
 fun mk_sat_var lfn sva n =
-    let val rv = Array.sub(sva,n+1)
-        handle Subscript => failwith("mk_sat_var"^(int_to_string (n+1))^"\n")
+    let val rv = trace_variable sva n
     in rbapply lfn rv handle NotFound => rv end
 
-fun mk_resolution_var lfn sva n =
-    if RBM.numItems lfn = 0 then mk_sat_var lfn sva n
-    else Array.sub(sva,n+1)
-      handle Subscript =>
-        failwith("mk_sat_var"^(int_to_string (n+1))^"\n")
+fun mk_resolution_var _ sva n = trace_variable sva n
 
 type root_context =
   {conjunction : term,
-   projections : thm Termtab.table}
+   projections : thm array}
 
-fun balanced_conjunction [] = T
-  | balanced_conjunction [term] = term
-  | balanced_conjunction terms =
-      let val half = List.length terms div 2 in
-        mk_conj
-          (balanced_conjunction (List.take (terms, half)),
-           balanced_conjunction (List.drop (terms, half)))
-      end
+fun balanced_array empty leaf join clauses =
+    let
+      fun build start count =
+          if count = 1 then leaf (Array.sub (clauses, start))
+          else
+            let val half = count div 2 in
+              join (build start half, build (start + half) (count - half))
+            end
+      val count = Array.length clauses
+    in if count = 0 then empty else build 0 count end
 
 fun root_context clauseth =
     let
-      val roots = Array.foldr
-        (fn ((root, _), result) => root :: result) [] clauseth
-      val conjunction = balanced_conjunction roots
-      fun collect term theorem table =
-        if is_conj term then
-          let val (left, right) = dest_conj term in
-            collect right (CONJUNCT2 theorem)
-              (collect left (CONJUNCT1 theorem) table)
-          end
-        else Termtab.update (term, theorem) table
-      val projections = collect conjunction (ASSUME conjunction) Termtab.empty
+      val conjunction = balanced_array T fst mk_conj clauseth
+      val count = Array.length clauseth
+      val projections = Array.array (count, TRUTH)
+      (* The proof log indexes the original clauses. Follow the same splits
+         as balanced_array to store their projections in that order. *)
+      fun collect start count theorem =
+          if count = 1 then Array.update (projections, start, theorem)
+          else
+            let val half = count div 2 in
+              collect start half (CONJUNCT1 theorem);
+              collect (start + half) (count - half) (CONJUNCT2 theorem)
+            end
+      val _ = if count = 0 then ()
+              else collect 0 count (ASSUME conjunction)
     in {conjunction = conjunction, projections = projections} end
 
 local
@@ -120,10 +124,7 @@ fun dualise lfn ({projections, ...} : root_context) orc clauseth ci =
               in dualise' th2 end
             else
               let
-                  val root =
-                    case Termtab.lookup projections t1 of
-                      SOME theorem => theorem
-                    | NONE => failwith "dualise: missing root projection"
+                  val root = Array.sub (projections, orc)
                   val th2 = MP (INST [A|->t1] AND_INV_IMP2) root
                   (* All compact clauses are projections of one balanced CNF
                      assumption.  Resolution therefore carries one shared
@@ -149,19 +150,10 @@ fun finish_resolution ({conjunction, ...} : root_context) lfn clauseth th =
         val instantiated = profile_stage "replay-finish/instantiate"
           (INST insts) discharged
         val _ = trace "instantiate done"
-        val roots = Array.foldr
-          (fn ((_, theorem), result) => theorem :: result) [] clauseth
         val _ = trace "premise start"
-        fun balanced_theorems [] = TRUTH
-          | balanced_theorems [theorem] = theorem
-          | balanced_theorems theorems =
-              let val half = List.length theorems div 2 in
-                CONJ
-                  (balanced_theorems (List.take (theorems, half)))
-                  (balanced_theorems (List.drop (theorems, half)))
-              end
         val premise = profile_stage "replay-finish/premises"
-          balanced_theorems roots
+          (balanced_array TRUTH snd (fn (left, right) => CONJ left right))
+          clauseth
         val _ = trace "premise done"
         val result = profile_stage "replay-finish/apply"
           (MP instantiated) premise

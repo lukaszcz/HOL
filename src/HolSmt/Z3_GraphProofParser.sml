@@ -32,18 +32,22 @@ struct
     | compare_id (Anonymous left, Anonymous right) = Int.compare (left, right)
     | compare_id (Named _, Anonymous _) = LESS
     | compare_id (Anonymous _, Named _) = GREATER
-  fun read tokens = case tokens () of
-      "(" =>
-        let fun entries acc = case tokens () of
-              ")" => List (List.rev acc)
-            | token => entries
-                (read (Library.undo_look_ahead [token] tokens) :: acc)
-        in entries [] end
-    | ")" => raise ERR "read" "unexpected closing delimiter"
-    | token => Atom token
-  fun token_list (Atom token) = [token]
-    | token_list (List entries) =
-        "(" :: List.concat (List.map token_list entries) @ [")"]
+  fun read tokens =
+    let
+      fun read_token "(" =
+            let fun entries acc = case tokens () of
+                  ")" => List (List.rev acc)
+                | token => entries (read_token token :: acc)
+            in entries [] end
+        | read_token ")" = raise ERR "read" "unexpected closing delimiter"
+        | read_token token = Atom token
+    in read_token (tokens ()) end
+  fun token_list raw =
+    let
+      fun collect (Atom token, acc) = token :: acc
+        | collect (List entries, acc) =
+            ")" :: List.foldl collect ("(" :: acc) entries
+    in List.rev (collect (raw, [])) end
   fun buffered raw action =
     let val pending = ref (token_list raw)
         fun next () = case !pending of

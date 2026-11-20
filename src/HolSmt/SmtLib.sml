@@ -1413,9 +1413,8 @@ local
 
   (* HOL represents a set as an ordinary predicate, so the outbound boundary
      records set *terms*, rather than treating every `a -> bool` as a Set.
-     The context is installed for one translation only (see
-     goal_to_SmtLib_aux).  It lets cvc5 print its finite-set sort without
-     changing the representation of unrelated predicates. *)
+     The context is installed for one translation only. It lets cvc5 print
+     its finite-set sort without changing unrelated predicate sorts. *)
   datatype set_backend = Z3Set | CVC5NativeSet | CVC5ArraySet
 
   val current_set_backend = ref Z3Set
@@ -2031,21 +2030,26 @@ local
         is_native_set_head head orelse is_native_bag_head head)
     end
 
-  fun query_collection_closure roots =
+  fun query_subterms roots = List.concat (List.map Library.subterms roots)
+
+  fun query_collection_closure roots inventory =
     let
-      val inventory = List.concat (List.map Library.subterms roots)
       val closure : Term.term SmtLib_CollectionMarkers.closure_operations =
         {compare=Term.compare,share_symbol=collection_symbol,
          let_body=fn term => #2 (dest_carrier_let term)}
-      fun close operations collect = SmtLib_CollectionMarkers.close
-        operations closure (fn Feedback.HOL_ERR _ => true | _ => false)
-        inventory (List.foldl (fn (term,acc) => collect term acc) [] roots)
+      fun close operations collect =
+        case List.foldl (fn (term,acc) => collect term acc) [] roots of
+          [] => ([],[])
+        | seeds => SmtLib_CollectionMarkers.close
+            operations closure (fn Feedback.HOL_ERR _ => true | _ => false)
+            (Susp.force inventory) seeds
       val sets = close set_marker_operations collect_native_set_terms
       val bags = close bag_marker_operations collect_native_bag_terms
     in (sets,bags) end
 
   fun collect_query_collection_markers roots =
-    let val ((sets,_),(bags,_)) = query_collection_closure roots
+    let val inventory = Susp.delay (fn () => query_subterms roots)
+        val ((sets,_),(bags,_)) = query_collection_closure roots inventory
     in {sets=sets,bags=bags} end
 
   (* One grammar serves the ordinary emitter and authenticated graph
@@ -2397,14 +2401,11 @@ local
      selects the Seq model.  This keeps unrelated recursive-list datatype
      goals on their existing encoding while refusing partial TAKE/DROP/EL
      terms that have no direct Seq counterpart. *)
-  fun native_sequence_goal (assumptions, conclusion) =
+  fun native_sequence_subterms subterms =
     let
-      val terms = conclusion :: assumptions
-      val subterms = List.concat (List.map Library.subterms terms)
       val totalized =
         List.filter (#totalized term_sequence_eligibility) subterms
-      val totalized_subterms =
-        List.concat (List.map Library.subterms totalized)
+      val totalized_subterms = query_subterms totalized
       fun is_totalized_part tm =
         List.exists (fn part => Term.aconv tm part) totalized_subterms
       val supported =
@@ -6586,22 +6587,23 @@ local
 
   fun goal_to_SmtLib_aux_inner request apply_operator
       (policy : logic_selection_policy) target emit_sequences
-      (goal as (original_ts, t)) : translation * string list =
+      inventory (goal as (original_ts, t)) : translation * string list =
   let
     val _ = current_native_sequence_emission := emit_sequences
     val _ = current_generated_forall_emissions := 0
     val _ = emitted_term_sorts := []
     val _ = emitted_datatypes := []
+    val roots = t :: original_ts
     val ((set_terms,set_parameters),(bag_terms,bag_parameters)) =
-      query_collection_closure (t :: original_ts)
+      query_collection_closure roots inventory
     (* Num retains its HOL-num sort in opaque positions, including beneath
        an uninterpreted integer coercion. *)
     val raw_num_terms = SmtLib_RawNumAnalysis.collect
-      raw_num_operations bag_terms (t :: original_ts)
+      raw_num_operations bag_terms roots
     (* A symbol has one fixed SMT domain sort.  A collection argument is
        ambiguous only if that same function position is also used as an
        ordinary array argument. *)
-    val subterms = List.concat (List.map Library.subterms (t :: original_ts))
+    val subterms = Susp.force inventory
     val collection_operations :
         Term.term SmtLib_CollectionApplicationAnalysis.operations =
       {same = fn (left, right) => Term.aconv left right,
@@ -6626,7 +6628,7 @@ local
     (* Keep lexical binder context separate from the supplied inventory. *)
     fun bound_collection_application collection_terms =
       SmtLib_CollectionApplicationAnalysis.has_bound_application
-        collection_operations collection_terms (t :: original_ts)
+        collection_operations collection_terms roots
     val {set_backend=backend,bag_backend} =
       (#select term_backend_selection) target
         {goal=goal,sets=set_terms,bags=bag_terms,
@@ -6645,39 +6647,41 @@ local
       set_parameters @ bag_parameters @
       computed_set_applications @ computed_bag_applications
     val _ = current_bag_helpers := []
-    (* FINITE hypotheses are the evidence selecting cvc5's finite Set/Bag
-       models; once selected they are semantic facts of those models and must
-       not be serialized as unsupported HOL predicates. *)
-    val finite_sets = List.mapPartial finite_set_hypothesis original_ts
-    val finite_bags = List.mapPartial finite_bag_hypothesis original_ts
-    (* In cvc5's native finite collection models, finiteness evidence is a
-       semantic fact, including beneath Boolean connectives. *)
-    fun replace_finite tm =
-      case finite_set_hypothesis tm of
-        SOME set =>
-          if backend = CVC5NativeSet andalso finite_set_term finite_sets set
-          then boolSyntax.T else descend tm
-      | NONE =>
-          (case finite_bag_hypothesis tm of
-             SOME bag =>
-               if bag_backend = CVC5NativeBag andalso
-                  finite_bag_term finite_bags bag then boolSyntax.T
-               else descend tm
-           | NONE => descend tm)
-    and descend tm =
-      if Term.is_comb tm then
-        let val (rator, rand) = Term.dest_comb tm
-        in Term.mk_comb (replace_finite rator, replace_finite rand) end
-      else if Term.is_abs tm then
-        let val (var, body) = Term.dest_abs tm
-        in Term.mk_abs (var, replace_finite body) end
-      else tm
-    val ts = List.map replace_finite (List.filter (fn tm =>
-      not (backend = CVC5NativeSet andalso
-           Option.isSome (finite_set_hypothesis tm)) andalso
-      not (bag_backend = CVC5NativeBag andalso
-           Option.isSome (finite_bag_hypothesis tm))) original_ts)
-    val t = replace_finite t
+    (* Finiteness is a semantic fact of cvc5's native finite collection
+       models, including beneath Boolean connectives. *)
+    val (ts, t) =
+      if backend = CVC5NativeSet orelse bag_backend = CVC5NativeBag then
+        let
+          val finite_sets = List.mapPartial finite_set_hypothesis original_ts
+          val finite_bags = List.mapPartial finite_bag_hypothesis original_ts
+          fun replace_finite tm =
+            case finite_set_hypothesis tm of
+              SOME set =>
+                if backend = CVC5NativeSet andalso
+                  finite_set_term finite_sets set then boolSyntax.T
+                else descend tm
+            | NONE =>
+                (case finite_bag_hypothesis tm of
+                   SOME bag =>
+                     if bag_backend = CVC5NativeBag andalso
+                       finite_bag_term finite_bags bag then boolSyntax.T
+                     else descend tm
+                 | NONE => descend tm)
+          and descend tm =
+            if Term.is_comb tm then
+              let val (rator, rand) = Term.dest_comb tm
+              in Term.mk_comb (replace_finite rator, replace_finite rand) end
+            else if Term.is_abs tm then
+              let val (var, body) = Term.dest_abs tm
+              in Term.mk_abs (var, replace_finite body) end
+            else tm
+          val assumptions = List.filter (fn tm =>
+            not (backend = CVC5NativeSet andalso
+                 Option.isSome (finite_set_hypothesis tm)) andalso
+            not (bag_backend = CVC5NativeBag andalso
+                 Option.isSome (finite_bag_hypothesis tm))) original_ts
+        in (List.map replace_finite assumptions, replace_finite t) end
+      else (original_ts, t)
     val (regime, regime_reason) = select_regime request (ts, t)
     val tydict = Redblackmap.mkDict Type.compare
     val tmdict = Redblackmap.mkDict
@@ -6841,12 +6845,6 @@ local
                (emitted_datatype_records dictionary declarations))}
         val _ = active := false
       in Exn.release outcome end)
-
-  fun goal_to_SmtLib_aux request apply_operator policy target
-      emit_sequences goal =
-    with_saved_translation_context (fn () =>
-      goal_to_SmtLib_aux_inner request apply_operator policy target
-        (emit_sequences andalso native_sequence_goal goal) goal)
 
   fun num_binder_to_int_once_conv tm =
   let
@@ -8437,23 +8435,24 @@ in
       visit (HOLset.empty Term.compare) (conclusion :: assumptions)
     end
 
-  fun goal_to_SmtLib_translation_gen
-      ({request, apply_operator, policy, get_proof, target} : smtlib_emit_options)
-      goal =
-    let
-      val _ = reject_reglan_hol_equalities goal
-      val tail = outbound_query_tail string_output_operations get_proof
-    in
-      Lib.apsnd (fn xs => xs @ tail)
-        (goal_to_SmtLib_aux request apply_operator policy target
-           true goal)
-    end
-
-  fun goal_to_SmtLib_gen opts goal =
-    Lib.apfst translation_dicts
-      (goal_to_SmtLib_translation_gen opts goal)
-
   local
+
+    fun translate_with_preflight preflight
+        ({request, apply_operator, policy, get_proof, target}
+          : smtlib_emit_options) (goal as (asms, concl)) =
+      let
+        val inventory = Susp.delay (fn () => query_subterms (concl :: asms))
+        val sequence_emission = Susp.delay
+          (fn () => native_sequence_subterms (Susp.force inventory))
+        val _ = preflight sequence_emission
+        val _ = reject_reglan_hol_equalities goal
+        val tail = outbound_query_tail string_output_operations get_proof
+      in
+        Lib.apsnd (fn xs => xs @ tail)
+          (with_saved_translation_context (fn () =>
+             goal_to_SmtLib_aux_inner request apply_operator policy target
+               (Susp.force sequence_emission) inventory goal))
+      end
 
     (* Generic callers emit for the automatic Standard27 regime, with the `_`
        apply spelling used by our parser and corpus, no logic override and no
@@ -8499,20 +8498,26 @@ in
 
   in
 
+    fun goal_to_SmtLib_translation_gen opts goal =
+      translate_with_preflight (fn _ => ()) opts goal
+
+    fun goal_to_SmtLib_gen opts goal =
+      Lib.apfst translation_dicts (goal_to_SmtLib_translation_gen opts goal)
+
     (* A solver boundary that pins every emission dimension.  It takes a
        dialect rather than a full regime request: overriding the regime and
        asking for a proof are not combinations any boundary needs. *)
     fun goal_to_SmtLib_translation_for_solver
         {policy, dialect, apply_operator, get_proof, target} goal =
       let
-        val _ =
+        fun preflight sequence_emission =
           case target of
             NONE => ()
           | SOME solver_target =>
               check_goal_operator_availability_for_sequence
-                (native_sequence_goal goal) solver_target goal
+                (Susp.force sequence_emission) solver_target goal
       in
-        goal_to_SmtLib_translation_gen
+        translate_with_preflight preflight
           (emit_options [with_request (AutomaticRegime dialect),
                          with_apply_operator apply_operator,
                          with_policy policy, with_get_proof get_proof,

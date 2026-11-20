@@ -67,14 +67,27 @@ struct
     balanced_equivalences_using SmtReplayRuleObservation.REFL
       SmtReplayRuleObservation.MK_COMB proofs
 
-  fun balanced_conjunction [] = boolTheory.TRUTH
-    | balanced_conjunction [theorem] = theorem
-    | balanced_conjunction theorems =
-        let val half = List.length theorems div 2 in
-          SmtReplayRuleObservation.CONJ
-            (balanced_conjunction (List.take (theorems, half)))
-            (balanced_conjunction (List.drop (theorems, half)))
-        end
+  local
+    fun balanced_using empty combine [] = empty
+      | balanced_using _ _ [leaf] = leaf
+      | balanced_using _ combine leaves =
+          let
+            fun build count input =
+              if count = 1 then (hd input, tl input)
+              else
+                let
+                  val half = count div 2
+                  val (left, remaining) = build half input
+                  val (right, remaining) = build (count - half) remaining
+                in (combine (left, right), remaining) end
+          in #1 (build (List.length leaves) leaves) end
+  in
+    val balanced_conjunction_term =
+      balanced_using boolSyntax.T boolSyntax.mk_conj
+    val balanced_conjunction =
+      balanced_using boolTheory.TRUTH
+        (fn (left, right) => SmtReplayRuleObservation.CONJ left right)
+  end
 
   (* Prove [cnf ==> output] without asking HolSat to re-clausify the graph.
      SAT means this abstraction cannot discharge the obligation; no model

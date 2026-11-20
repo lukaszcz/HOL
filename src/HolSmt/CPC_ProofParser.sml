@@ -202,26 +202,22 @@ local
       (string, term_provenance) Redblackmap.dict)
 
   (* HOL represents a flat source forall block and the corresponding nested
-     source foralls by the same term.  Record every parsed source occurrence
-     by alpha-equivalent semantic term, retaining every distinct immediate
-     block size.  A term with more than one size is deliberately ambiguous:
-     the term-only parameterized-skolem callback must then fail closed. *)
+     source foralls by the same term. Index by alpha equivalence and retain
+     the first occurrence. A second distinct immediate block size makes the
+     term ambiguous to the term-only parameterized-skolem callback. *)
   val cpc_forall_blocks = ref
-    ([] : (Term.term * int list) list)
-
-  fun add_distinct_int value values =
-    if List.exists (Lib.equal value) values then values else value :: values
+    (Redblackmap.mkDict Term.compare :
+      (Term.term, Term.term * int option) Redblackmap.dict)
 
   fun record_forall_block (term, size) =
-    let
-      fun record [] = [(term, [size])]
-        | record ((candidate, sizes) :: rest) =
-            if Term.aconv candidate term then
-              (candidate, add_distinct_int size sizes) :: rest
-            else (candidate, sizes) :: record rest
-    in
-      cpc_forall_blocks := record (!cpc_forall_blocks)
-    end
+    case Redblackmap.peek (!cpc_forall_blocks, term) of
+      NONE => cpc_forall_blocks := Redblackmap.insert
+        (!cpc_forall_blocks, term, (term, SOME size))
+    | SOME (_, NONE) => ()
+    | SOME (candidate, SOME previous) =>
+        if size = previous then () else
+          cpc_forall_blocks := Redblackmap.insert
+            (!cpc_forall_blocks, candidate, (candidate, NONE))
 
   fun record_cpc_binder_block (name, size, term) =
     if name = "forall" then record_forall_block (term, size) else ()
@@ -1256,19 +1252,12 @@ local
         "malformed @array_deq_diff application"
 
   fun immediate_forall_block where_ quantified =
-    let
-      fun lookup [] = cpc_skolem_error where_
-            "source FORALL binder-block metadata is unavailable"
-        | lookup ((candidate, sizes) :: rest) =
-            if Term.aconv candidate quantified then
-              (case sizes of
-                 [size] => (candidate, size)
-               | _ => cpc_skolem_error where_
-                   "source FORALL binder-block metadata is ambiguous")
-            else lookup rest
-    in
-      lookup (!cpc_forall_blocks)
-    end
+    case Redblackmap.peek (!cpc_forall_blocks, quantified) of
+      SOME (candidate, SOME size) => (candidate, size)
+    | SOME (_, NONE) => cpc_skolem_error where_
+        "source FORALL binder-block metadata is ambiguous"
+    | NONE => cpc_skolem_error where_
+        "source FORALL binder-block metadata is unavailable"
 
   fun cpc_quantifiers_skolemize_parsefn token indices args =
     case (token, indices,
@@ -1982,26 +1971,24 @@ local
     | RawAtom _ => raw
 
   fun read_raw_term get_token =
-    case get_token () of
-      "(" =>
-        let
-          fun entries acc =
-            case get_token () of
-              ")" => RawList (List.rev acc)
-            | token => entries
-                (read_raw_term
-                  (Library.undo_look_ahead [token] get_token) :: acc)
-        in
-          entries []
-        end
-    | ")" => raise ERR "read_raw_term" "unexpected closing parenthesis"
-    | token => RawAtom token
+    let
+      fun read "(" =
+            let
+              fun entries acc =
+                case get_token () of
+                  ")" => RawList (List.rev acc)
+                | token => entries (read token :: acc)
+            in entries [] end
+        | read ")" = raise ERR "read_raw_term" "unexpected closing parenthesis"
+        | read token = RawAtom token
+    in read (get_token ()) end
 
   fun raw_tokens raw =
-    case raw of
-      RawAtom token => [token]
-    | RawList entries =>
-        "(" :: List.concat (List.map raw_tokens entries) @ [")"]
+    let
+      fun collect (RawAtom token, acc) = token :: acc
+        | collect (RawList entries, acc) =
+            ")" :: List.foldl collect ("(" :: acc) entries
+    in List.rev (collect (raw, [])) end
 
   (* Shared syntax-only validation; no term elaboration or mutable
      parser dictionaries enter this check. *)
@@ -4093,7 +4080,7 @@ in
       val _ = cpc_term_provenances := Redblackmap.mkDict String.compare
       val _ = cpc_term_intern :=
         Array.array (term_intern_bucket_count, [])
-      val _ = cpc_forall_blocks := []
+      val _ = cpc_forall_blocks := Redblackmap.mkDict Term.compare
       fun keys dictionary = Redblackmap.foldl
         (fn (key, _, set) => HOLset.add (set, key))
         (HOLset.empty String.compare) dictionary

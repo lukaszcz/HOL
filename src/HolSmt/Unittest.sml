@@ -2762,6 +2762,15 @@ fun expect_hol_error_contains label expected f =
 
 fun script_ast_locations_success () =
 let
+  val prefix = "(echo \"a"
+  val padding = String.implode
+    (List.tabulate (65535 - String.size prefix - 2, fn _ => #" "))
+  (* Put the two quotes of one escaped quote in different input chunks. *)
+  val boundary = ";" ^ padding ^ "\n" ^ prefix ^ "\"\"b\")\n"
+  val _ = with_temp_file boundary (fn path =>
+    assert (SmtLib_Parser.parse_script_file path =
+            SmtLib_Parser.parse_script_string boundary,
+      "file parser changed token text or locations at an input boundary"))
   val script =
     SmtLib_Parser.parse_script_string
       "(set-logic QF_UF)\n(assert true)\n"
