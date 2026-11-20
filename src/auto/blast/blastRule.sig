@@ -21,16 +21,15 @@ sig
      hidden_assumptions : int option list}
 
   (* blast.trace.  A search is given its level, which the tactics read
-     from their context. *)
-  val trace_flag : HOLFlags.flag
-  val trace_level_of : Context.t -> int
+     from their context with traceUtil.level_of. *)
+  val tracer : traceUtil.tracer
 
   (* A cache belongs to one tableau search.  Cached rule templates are
      instantiated freshly on retrieval because their variables are mutable.
      It is made with the search's blast.trace level, at which conversion
      reports the elimination rules it drops. *)
   type cache
-  val newCache : int -> cache
+  val newCache : traceUtil.level -> cache
   val conversionCount : cache -> int
   val hitCount : cache -> int
 

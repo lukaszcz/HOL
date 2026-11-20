@@ -118,7 +118,8 @@ fun run_depths base_cs initial_depth next_depth goal ctxt =
        Keep the summary absent in the quiet path so it allocates and updates
        none of the expanded per-run/cumulative statistic refs. *)
     val summary =
-      if blastRule.trace_level_of ctxt >= 2 then
+      if traceUtil.enabled
+           (traceUtil.level_of blastRule.tracer ctxt) 2 then
         SOME (new_run_statistics ())
       else NONE
 

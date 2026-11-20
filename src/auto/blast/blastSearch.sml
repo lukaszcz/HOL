@@ -951,11 +951,10 @@ fun branchString ({pairs, lits, vars, lim} : branch) =
 
 (* [branches] is forced only when the trace is printed. *)
 fun traceState level depth branches =
-  if level >= 3 then
-    Feedback.HOL_MESG
-      ("Blast trace at depth " ^ Int.toString depth ^ ":\n" ^
+  traceUtil.trace level 3
+    (fn () =>
+       "Blast trace at depth " ^ Int.toString depth ^ ":\n" ^
        String.concatWith "\n" (map branchString (branches ())))
-  else ()
 
 datatype instrumentation =
     Stats
@@ -1455,11 +1454,10 @@ fun runGoal trace_level resumable cleanup_policy instrumentation
             preserve
               (fn PROOF_FAILED =>
                     SOME (fn () =>
-                      (if trace_level >= 1 then
-                         Feedback.HOL_MESG
-                           ("PROOF FAILED for depth " ^
-                            Int.toString depth)
-                       else ();
+                      (traceUtil.trace trace_level 1
+                         (fn () =>
+                            "PROOF FAILED for depth " ^
+                            Int.toString depth);
                        backtrack choices))
                 | _ => NONE)
               (fn () => cont (proofOf (tacs, trace)))
@@ -1954,7 +1952,7 @@ fun runGoal trace_level resumable cleanup_policy instrumentation
 (* Every entry point runs at the blast.trace level of the context
    given. *)
 fun searchGoalMeasured ctxt {debug, stop} claset depth goal cont =
-  case runGoal (blastRule.trace_level_of ctxt) false AbandonOwned
+  case runGoal (traceUtil.level_of blastRule.tracer ctxt) false AbandonOwned
          (On {debug = debug, stop = stop, budget = NONE})
          claset depth goal cont of
       RunDone report => report
@@ -1963,7 +1961,7 @@ fun searchGoalMeasured ctxt {debug, stop} claset depth goal cont =
 fun searchGoalBudgeted ctxt budget claset depth goal cont =
   let
     val report =
-      runGoal (blastRule.trace_level_of ctxt) false Restore
+      runGoal (traceUtil.level_of blastRule.tracer ctxt) false Restore
         (On {debug = false, stop = fn () => false,
              budget = SOME budget}) claset depth goal cont
   in
@@ -1980,7 +1978,7 @@ fun searchGoalBudgeted ctxt budget claset depth goal cont =
 
 fun searchGoalResumable ctxt budget claset depth goal cont =
   let
-    val trace_level = blastRule.trace_level_of ctxt
+    val trace_level = traceUtil.level_of blastRule.tracer ctxt
     fun once resume =
       let val used = ref false
       in
@@ -2016,7 +2014,7 @@ fun searchGoalResumable ctxt budget claset depth goal cont =
 fun searchGoalWithStats ctxt claset depth goal cont =
   let
     val report =
-      runGoal (blastRule.trace_level_of ctxt) false Restore Stats
+      runGoal (traceUtil.level_of blastRule.tracer ctxt) false Restore Stats
         claset depth goal cont
   in
     case report of

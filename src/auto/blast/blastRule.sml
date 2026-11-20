@@ -116,15 +116,15 @@ datatype cache = Cache of
    conversions : int ref,
    hits : int ref,
    next_stamp : int ref,
-   trace : int}
+   level : traceUtil.level}
 
-fun newCache trace =
+fun newCache level =
   Cache
     {entries = ref (Redblackmap.mkDict cache_key_compare),
      conversions = ref 0, hits = ref 0, next_stamp = ref 0,
-     trace = trace}
+     level = level}
 
-fun cache_trace (Cache {trace, ...}) = trace
+fun cache_level (Cache {level, ...}) = level
 
 fun conversionCount (Cache {conversions, ...}) = !conversions
 fun hitCount (Cache {hits, ...}) = !hits
@@ -137,11 +137,8 @@ fun freshName _ prefix =
   (skolem_names := !skolem_names + 1;
    prefix ^ Int.toString (!skolem_names))
 
-val {flag = trace_flag, ...} =
-    HOLFlags.create_trace ({group = "blast", name = "trace"},
-                           {initial = 0, max = 7})
-
-fun trace_level_of ctxt = HOLFlags.get_flagC ctxt trace_flag
+val tracer =
+    traceUtil.create {group = "blast", max = 7, emit = Feedback.HOL_MESG}
 
 val generic_cache :
   (KernelSig.kernelname, hol_type * hol_type list) Redblackmap.dict ref =
@@ -539,7 +536,7 @@ fun convertIntro cache vars theorem =
   convertIntroMeasured (fn () => ()) cache vars theorem
 
 fun weak_warning cache theorem =
-  if cache_trace cache >= 1 then
+  if traceUtil.enabled (cache_level cache) 1 then
     HOL_WARNING "blastRule" "convertElim"
       ("Ignoring weak elimination rule\n" ^ Parse.thm_to_string theorem)
   else ()
@@ -625,9 +622,8 @@ fun convertElimMeasured checkpoint cache vars theorem =
   end
   handle ElimBadPrem => (weak_warning cache theorem; NONE)
        | ElimBadConcl =>
-           (if cache_trace cache >= 1 then
-              Feedback.HOL_MESG (bad_conclusion_message theorem)
-            else ();
+           (traceUtil.trace (cache_level cache) 1
+              (fn () => bad_conclusion_message theorem);
             NONE)
 
 fun convertElim cache vars theorem =
