@@ -1456,8 +1456,7 @@ fun runGoal trace_level resumable cleanup_policy instrumentation
                     SOME (fn () =>
                       (traceUtil.trace trace_level 1
                          (fn () =>
-                            "PROOF FAILED for depth " ^
-                            Int.toString depth);
+                            "PROOF FAILED for depth " ^ Int.toString depth);
                        backtrack choices))
                 | _ => NONE)
               (fn () => cont (proofOf (tacs, trace)))

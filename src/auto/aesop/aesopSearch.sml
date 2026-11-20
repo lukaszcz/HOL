@@ -56,9 +56,6 @@ val postponed_percent = 90
 fun charge NONE _ = ()
   | charge (SOME budget) kind = searchBudget.charge budget kind
 
-(* The trace level is read from the context the search runs in, so
-   trace_tac sets it for a proof and the search reads no ambient flag. *)
-
 fun cgoal_string ({params, asl, w} : cgoal) =
   let
     val parameters =
@@ -848,6 +845,9 @@ fun search_core_with ctxt budget
     raise ERR "search" "max_depth must not be negative"
   else
     let
+      (* The trace level is read from the context the search runs in, so
+         trace_tac sets it for a proof and the search reads no ambient
+         flag. *)
       val level = traceUtil.level_of aesopData.tracer ctxt
       (* [initial], not [tree]: the report is deliberately the safe-only
          frontier of the original goal, unpolluted by unsafe rapps and
