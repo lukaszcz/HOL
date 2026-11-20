@@ -294,25 +294,14 @@ struct
 
       (* Expand a bounded curried Boolean operator using constructor
          projections. Operands remain compact names throughout this proof. *)
-      val operator_proofs = ref (Redblackmap.mkDict Int.compare)
-      fun operator_proof node =
-        case Redblackmap.peek (!operator_proofs, G.node_id node) of
-          SOME proof => proof
-        | NONE =>
-            let
-              val proof = P.constructor block node
-              val _ = operator_proofs := Redblackmap.insert
-                (!operator_proofs, G.node_id node, proof)
-            in proof end
-      val definitions = List.map operator_proof gates
+      val definitions = List.map (P.constructor block) gates
       val equivalence = profile "cnf" (fn () =>
         SmtCircuitSat.balanced_equivalences (List.map
           (SmtCircuitSat.definition_cnf o Thm.concl o P.theorem block)
           definitions))
       val definition_cnf = boolSyntax.rhs (Thm.concl equivalence)
-      val fact_conjunction = boolSyntax.lhs (Thm.concl
-        (SmtCircuitSat.balanced_equivalences (List.map
-          ((rule1 SmtReplayRuleObservation.REFL) o P.name block o #1) premises)))
+      val fact_conjunction = SmtCircuitSat.balanced_conjunction_term
+        (List.map (P.name block o #1) premises)
       val cnf = if List.null facts then definition_cnf
         else boolSyntax.mk_conj (definition_cnf,fact_conjunction)
       val implication = profile "sat" (fn () =>

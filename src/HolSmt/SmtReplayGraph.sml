@@ -2445,7 +2445,7 @@ struct
   (* The partial record is private. No caller boolean, theorem or Source
      triple can manufacture PartialRetained or replace its captured guard. *)
   fun validate_partial_recipe g scope recipe =
-    let val completed = ref ([] : partial_recipe list)
+    let val completed = ref (Redblackmap.mkDict Int.compare)
         (* Every incoming row is checked before exact-object memoization.
            The scope is this one call's actual original discovery scope. *)
         fun visit current =
@@ -2485,11 +2485,14 @@ struct
                      | _ => false)
               val _ = if valid then () else raise ERR "partial_view"
                 "partial recipe constructors changed"
-          in if List.exists (fn old => Portable.pointer_eq (current,old))
-              (!completed) then () else
+              val key = node_id original
+              val held = Option.getOpt (Redblackmap.peek (!completed,key),[])
+          in if List.exists (fn old => Portable.pointer_eq (current,old)) held
+             then () else
             ((case current of PartialApplication (_,_,left,right) =>
                 (visit left;visit right) | _ => ());
-             completed := current :: !completed)
+             completed := Redblackmap.update (!completed,key,
+               fn rows => current :: Option.getOpt (rows,[])))
           end
     in visit recipe end
   fun validate_partial (g : graph) scope
