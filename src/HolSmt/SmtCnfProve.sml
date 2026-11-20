@@ -16,8 +16,7 @@ datatype plan = Conflict of int | Force of int * int * plan
 fun refute clauses_input =
  let
   val _=if Array.length clauses_input<=2048 then () else decline "clauses"
-  val clauseth=Array.tabulate (Array.length clauses_input,
-    fn i=>(Array.sub (clauses_input,i),()))
+  val source_clauses=Array.vector clauses_input
   val variables=ref (Redblackmap.mkDict Term.compare)
   val reverse=ref (Redblackmap.mkDict Int.compare)
   fun primitive term =
@@ -37,19 +36,19 @@ fun refute clauses_input =
                val _=variables:=Redblackmap.insert (!variables,term,id)
                val _=reverse:=Redblackmap.insert (!reverse,id,term)
            in id end
-  fun literal term = if boolSyntax.is_neg term then
-    ~(variable (boolSyntax.dest_neg term)) else variable term
+  fun signed_id id term = if boolSyntax.is_neg term then
+    ~(id (boolSyntax.dest_neg term)) else id term
   val literal_count=ref 0
-  val clauses=Array.tabulate (Array.length clauseth,fn i=>
+  val clauses=Array.tabulate (Vector.length source_clauses,fn i=>
     let
-      val clause= #1 (Array.sub (clauseth,i))
+      val clause=Vector.sub (source_clauses,i)
       val _=if SmtResource.term_nodes_up_to 8193 clause<=8192 then ()
         else decline "clause-size"
       val literals=if Term.term_eq clause boolSyntax.F then []
         else boolSyntax.strip_disj clause
       val _=literal_count:= !literal_count+length literals
       val _=if !literal_count<=8192 then () else decline "literals"
-    in List.map literal literals end)
+    in List.map (signed_id variable) literals end)
   val true_id=variable boolSyntax.T
   val false_id=variable boolSyntax.F
   val work=ref 0
@@ -119,8 +118,8 @@ fun refute clauses_input =
       if Array.sub (values,n)=0 then NONE else SOME
        (v |-> (if Array.sub (values,n)= ~1 then boolSyntax.F
                else boolSyntax.T))) bindings
-    val source_nodes=Array.foldl (fn ((clause,_),n)=>
-      n+SmtResource.term_nodes_up_to 4097 clause) 0 clauseth
+    val source_nodes=Vector.foldl (fn (clause,n)=>
+      n+SmtResource.term_nodes_up_to 4097 clause) 0 source_clauses
     val _=if source_nodes*length assignments<=200000 then ()
       else decline "model-witness"
     val schemas=ref []
@@ -139,8 +138,8 @@ fun refute clauses_input =
         then () else raise Fail "native SAT model validation"
       val _=Library.check_oracle_tags "SmtCnfProve" "model" law
      in law end
-    val proofs=Array.foldr (fn ((clause,_),rest)=>check clause::rest)
-      [] clauseth
+    val proofs=Vector.foldr (fn (clause,rest)=>check clause::rest)
+      [] source_clauses
     fun conjunction []=boolTheory.TRUTH
       | conjunction [law]=law
       | conjunction laws=let val half=length laws div 2
@@ -207,6 +206,9 @@ fun refute clauses_input =
   val plan=search (assign true_id @ assign (~false_id) @ initial)
   fun term lit=let val atom=Redblackmap.find (!reverse,Int.abs lit)
                in if lit<0 then boolSyntax.mk_neg atom else atom end
+  (* Replay visits only literals already admitted while compiling clauses. *)
+  fun compiled_literal term =
+    signed_id (fn atom => Redblackmap.find (!variables,atom)) term
   fun contradict env literal assumed =
    let val known=Redblackmap.find (env,~literal)
    in if literal<0 then Thm.MP (Thm.NOT_ELIM assumed) known
@@ -220,9 +222,9 @@ fun refute clauses_input =
         in Thm.DISJ_CASES theorem
           (derive env wanted (Thm.ASSUME left))
           (derive env wanted (Thm.ASSUME right)) end
-      else Drule.CONTR wanted (contradict env (literal clause) theorem)
+      else Drule.CONTR wanted (contradict env (compiled_literal clause) theorem)
    end
-  fun clause i=Thm.ASSUME (#1 (Array.sub (clauseth,i)))
+  fun clause i=Thm.ASSUME (Vector.sub (source_clauses,i))
   fun replay env (Conflict i)=derive env boolSyntax.F (clause i)
     | replay env (Force (lit,i,rest))=
        let val theorem=derive env (term lit) (clause i)

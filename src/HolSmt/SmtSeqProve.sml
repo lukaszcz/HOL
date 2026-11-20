@@ -1053,23 +1053,32 @@ struct
       val element_type = valOf (list_element_type whole)
       val empty = listSyntax.mk_list ([], element_type)
       fun segments tm =
-        case Lib.total listSyntax.dest_append tm of
-          SOME (left, right) => segments left @ segments right
-        | NONE =>
-            (case Lib.total listSyntax.dest_list tm of
-               SOME (elements, _) => List.map (fn element =>
-                 listSyntax.mk_list ([element], element_type)) elements
-             | NONE => [tm])
+        let
+          fun collect [] result = List.rev result
+            | collect (piece :: pending) result =
+                case Lib.total listSyntax.dest_append piece of
+                  SOME (left, right) =>
+                    collect (left :: right :: pending) result
+                | NONE =>
+                    case Lib.total listSyntax.dest_list piece of
+                      SOME (elements, _) => collect pending
+                        (List.foldl (fn (element, acc) =>
+                          listSyntax.mk_list ([element], element_type) :: acc)
+                          result elements)
+                    | NONE => collect pending (piece :: result)
+        in
+          collect [tm] []
+        end
       fun append [] = empty
         | append (first :: rest) =
             List.foldl (fn (next, accumulated) =>
               listSyntax.mk_append (accumulated, next)) first rest
       val pieces = segments whole
       val count = List.length pieces
-      fun prove_split (start, finish) =
+      fun prove_split (start, remaining) =
         let
           val prefix = append (List.take (pieces, start))
-          val suffix = append (List.drop (pieces, finish))
+          val suffix = append remaining
         in
           let
             val _ = List.app admit [prefix,suffix]
@@ -1091,29 +1100,56 @@ struct
               (existential,prefix) inner_proof)
           in theorem (Thm.EQ_MP (Thm.SYM conversion) proof) end
         end
-      val boundaries = List.concat (List.tabulate (count + 1, fn start =>
-        List.tabulate (count - start + 1, fn width =>
-          (start, start + width))))
       (* Choose literal/shared segment witnesses before blind search. This
          is discovery only: the selected equality and EXISTS steps above
          still prove the claim. Retain the complete original search when
          segment equality itself needs the checked procedure. *)
       val wanted = segments part
-      fun same ([],[]) = true
-        | same (x::xs,y::ys) = Term.aconv x y andalso same (xs,ys)
-        | same _ = false
-      fun likely (start,finish) = finish-start = length wanted andalso
-        same (List.take (List.drop (pieces,start),finish-start),wanted)
-      val (preferred,others) = List.partition likely boundaries
-      fun search [] = raise ERR "contains_append_witness_prove"
-            "no checked append witness"
-        | search (candidate::rest) = prove_split candidate
-            handle Feedback.HOL_ERR detail =>
-              if SmtResource.is_resource_gate detail then
-                raise Feedback.HOL_ERR detail else search rest
-              | Conv.UNCHANGED => search rest
+      val width = List.length wanted
+      fun after_match rest [] = SOME rest
+        | after_match [] _ = NONE
+        | after_match (x :: xs) (y :: ys) =
+            if Term.aconv x y then after_match xs ys else NONE
+      fun try_split candidate = SOME (prove_split candidate)
+        handle Feedback.HOL_ERR detail =>
+          if SmtResource.is_resource_gate detail then
+            raise Feedback.HOL_ERR detail else NONE
+        | Conv.UNCHANGED => NONE
+      val last_match = count - width
+      fun scan_starts last visit =
+        let
+          fun scan start rest =
+            if start > last then NONE
+            else
+              case visit start rest of
+                SOME result => SOME result
+              | NONE => case rest of
+                  [] => NONE
+                | _ :: more => scan (start + 1) more
+        in scan 0 pieces end
+      fun preferred start rest =
+        case after_match rest wanted of
+          NONE => NONE
+        | SOME remaining => try_split (start, remaining)
+      fun other_splits start rest =
+        let
+          val skip_match = start <= last_match andalso
+            Option.isSome (after_match rest wanted)
+          fun finish distance remaining =
+            case if distance = width andalso skip_match then NONE
+                 else try_split (start, remaining) of
+              SOME result => SOME result
+            | NONE => case remaining of
+                [] => NONE
+              | _ :: more => finish (distance + 1) more
+        in finish 0 rest end
     in
-      search (preferred @ others)
+      case scan_starts last_match preferred of
+        SOME result => result
+      | NONE => case scan_starts count other_splits of
+          SOME result => result
+        | NONE => raise ERR "contains_append_witness_prove"
+            "no checked append witness"
     end
 
   val prefix_suffix_contains_rewrites = list_rewrites @ [

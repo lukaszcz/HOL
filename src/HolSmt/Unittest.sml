@@ -25596,11 +25596,8 @@ let
       assert_no_hyps ("gate CNF conversion", theorem);
       check_oracle_tags "gate CNF conversion" theorem
     end
-  fun check definitions output =
+  fun check_cnf cnf output =
     let
-      val equivalence = SmtCircuitSat.balanced_equivalences
-        (List.map SmtCircuitSat.definition_cnf definitions)
-      val cnf = boolSyntax.rhs (Thm.concl equivalence)
       val theorem = SmtCircuitSat.prove_cnf (cnf, output)
     in
       assert (Term.aconv (Thm.concl theorem)
@@ -25609,6 +25606,11 @@ let
       assert_no_hyps ("checked gate CNF", theorem);
       check_oracle_tags "checked gate CNF" theorem
     end
+  fun check definitions output =
+    let
+      val equivalence = SmtCircuitSat.balanced_equivalences
+        (List.map SmtCircuitSat.definition_cnf definitions)
+    in check_cnf (boolSyntax.rhs (Thm.concl equivalence)) output end
   val true_input = ``circuit_true_input:bool``
   val false_input = ``circuit_false_input:bool``
   val constants =
@@ -25635,6 +25637,9 @@ in
   check [boolSyntax.mk_eq (root, boolSyntax.mk_imp (p, p))] root;
   check constants root;
   check [] boolSyntax.T;
+  check_cnf (boolSyntax.mk_neg boolSyntax.T) boolSyntax.T;
+  check_cnf (boolSyntax.mk_neg boolSyntax.F) boolSyntax.T;
+  check_cnf (boolSyntax.list_mk_conj [p, p, boolSyntax.mk_neg p]) q;
   assert (rejected andalso false_rejected andalso false_gate_rejected,
     "satisfiable gate CNF was accepted as a checked proof")
 end
@@ -38496,6 +38501,14 @@ fun cpc_clause_occurrences_success () =
     val compound = boolSyntax.mk_disj (p, q)
     val _ = resolution compound [r, compound]
       [boolSyntax.mk_neg compound] [r]
+    val wide_left = List.tabulate (64, fn index =>
+      Term.mk_var ("wide_left" ^ Int.toString index, Type.bool))
+    val wide_right = List.tabulate (65, fn index =>
+      Term.mk_var ("wide_right" ^ Int.toString index, Type.bool))
+    val _ = resolution p (wide_left @ [p])
+      (wide_right @ [np, compound]) (wide_left @ wide_right @ [compound])
+    val _ = resolution p (wide_left @ [p, compound])
+      (wide_right @ [np]) (wide_left @ (compound :: wide_right))
     val _ = assert (not (Option.isSome
       (SmtClause.resolve p (clause [compound]) (clause [np]))),
       "resolution flattened a disjunction used as one literal")
@@ -38509,6 +38522,8 @@ fun cpc_clause_occurrences_success () =
       "occurrence alignment accepted an invalid strengthening")
     val _ = check [compound, p]
       (SmtClause.factor (clause [compound, p, compound, p]))
+    val _ = check [compound] (SmtClause.factor
+      (clause (List.tabulate (129, fn _ => compound))))
     val _ = check [q] (SmtClause.resolve_or_weaken p
       (clause [p, r]) (clause [q]))
     val _ = check [] (SmtClause.resolve_or_weaken p
@@ -38520,16 +38535,21 @@ fun cpc_clause_occurrences_success () =
     val _ = assert (not (SmtClause.contains ``(f:num -> bool) (x:num)``
       (clause [``(f:bool -> bool) (x:bool)``])),
       "clause index conflated same names at different types")
+    fun atom index = Term.mk_var ("chain" ^ Int.toString index, Type.bool)
+    fun next_clause index = clause
+      [boolSyntax.mk_neg (atom index), atom (index + 1)]
     fun chain length =
       let
-        fun atom index = Term.mk_var ("chain" ^ Int.toString index, Type.bool)
         fun advance (index, current) = Option.valOf (SmtClause.resolve
-          (atom index) current (clause
-            [boolSyntax.mk_neg (atom index), atom (index + 1)]))
+          (atom index) current (next_clause index))
         val result = List.foldl advance (clause [atom 0])
           (List.tabulate (length, fn index => index))
       in check [atom length] result end
     val _ = List.app chain [1, 17, 257]
+    val _ = check [atom 17] (Option.valOf (SmtClause.resolve_chain
+      {pivots = List.tabulate (17, atom),
+       premises = clause [atom 0] :: List.tabulate (17, next_clause),
+       target = SOME [atom 17]}))
     val _ = case Exn.capture (fn () => SmtClause.from_literals
         [p, q] (Thm.ASSUME p)) () of
         Exn.Exn (HOL_ERR _) => ()

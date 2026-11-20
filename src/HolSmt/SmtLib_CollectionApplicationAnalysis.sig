@@ -24,6 +24,9 @@ sig
   val computed_applications : 'term operations -> 'term list -> 'term list ->
     ('term * int * 'term) list
   val has_mixed_argument : 'term operations -> 'term list -> 'term list -> bool
+  (* Key equality must agree with the supplied term equality. *)
+  val has_mixed_argument_by : 'term operations -> ('key * 'key -> order) ->
+    ('term -> 'key) -> 'term list -> 'term list -> bool
 
   (* Walk ordered roots in their lexical binder context. This is deliberately
      not a context-free visited-node fold: one node can have distinct bound

@@ -58,31 +58,71 @@ struct
     else List.concat
       (List.map (computed_pairs operations collection_terms) subterms)
 
-  fun has_mixed_argument (operations : 'term operations)
-      collection_terms subterms =
+  fun scan_mixed_argument (operations : 'term operations) observe subterms =
     let
-      fun positions function [] _ = []
-        | positions function (argument :: arguments) index =
-            (function,index,argument) ::
-            positions function arguments (index + 1)
-      fun application_positions subterm =
-        let val (function,arguments) = (#strip_comb operations) subterm
-        in if (#is_variable operations) function orelse
-            (#is_constant operations) function then
-            positions function arguments 0
-          else []
-        end
-      val applications =
-        List.concat (List.map application_positions subterms)
+      fun scan_arguments _ _ [] rest = scan_terms rest
+        | scan_arguments record index (argument :: arguments) rest =
+            record (index,argument) orelse
+            scan_arguments record (index + 1) arguments rest
+      and scan_terms [] = false
+        | scan_terms (subterm :: rest) =
+            case (#strip_comb operations) subterm of
+              (_,[]) => scan_terms rest
+            | (function,arguments) =>
+                if (#is_variable operations) function orelse
+                   (#is_constant operations) function then
+                  scan_arguments (observe function) 0 arguments rest
+                else scan_terms rest
     in
-      List.exists (fn (function,index,argument) =>
-        member operations argument collection_terms andalso
-        List.exists (fn (other_function,other_index,other_argument) =>
-          (#same operations) (function,other_function) andalso
-          index = other_index andalso
-          not (member operations other_argument collection_terms))
-          applications) applications
+      scan_terms subterms
     end
+
+  fun has_mixed_argument operations collection_terms subterms =
+    if List.null collection_terms then false
+    else
+      let
+        val positions = ref []
+        fun observe function (index,argument) =
+          let
+            val marked = member operations argument collection_terms
+            val saved = List.find (fn (other,other_index,_) =>
+              index = other_index andalso (#same operations) (function,other))
+              (!positions)
+          in
+            case saved of
+              SOME (_,_,other_marked) => marked <> other_marked
+            | NONE =>
+                (positions := (function,index,marked) :: !positions; false)
+          end
+      in
+        scan_mixed_argument operations observe subterms
+      end
+
+  fun has_mixed_argument_by operations compare key collection_terms subterms =
+    if List.null collection_terms then false
+    else
+      let
+        val marked = Redblackset.addList (Redblackset.empty compare,
+          List.map key collection_terms)
+        val positions = ref (Redblackmap.mkDict (Lib.pair_compare
+          (compare,Int.compare)))
+        fun observe function =
+          let val function_key = key function in
+            fn (index,argument) =>
+              let
+                val position = (function_key,index)
+                val is_marked = Redblackset.member (marked,key argument)
+              in
+                case Redblackmap.peek (!positions,position) of
+                  SOME saved => saved <> is_marked
+                | NONE =>
+                    (positions := Redblackmap.insert
+                      (!positions,position,is_marked); false)
+              end
+          end
+      in
+        scan_mixed_argument operations observe subterms
+      end
 
   fun has_bound_application_with_memo (operations : 'term operations)
       memoize collection_terms roots =

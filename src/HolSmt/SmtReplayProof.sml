@@ -2155,6 +2155,19 @@ struct
   fun needed_source_occurrences (block as Block {source_count,...}) edge =
     List.filter (fn index => index < source_count) (needed_leaves block edge)
 
+  (* Needed source indices are distinct and ascending. Keep the remaining
+     suffix so a sparse selection only walks as far as its last index. *)
+  fun selected_source_occurrences work slots indices =
+    let
+      fun select _ _ [] result = List.rev result
+        | select start slots (index::rest) result =
+            (W.spend work 1;
+             case List.drop (slots,index-start) of
+                 node::tail =>
+                   select (index+1) tail rest ((index,node)::result)
+               | [] => raise Subscript)
+    in select 0 slots indices [] end
+
   fun needed_sources_using (block as Block {graph,...}) edge witness =
     let
       val nodes = Vector.fromList (sources block)
@@ -5321,18 +5334,17 @@ struct
          closed_facts = closed_facts,conversions = conversions,
          template_limit = template_limit}
       val source_edges = List.tabulate (List.length retained,source next)
-      val source_index = List.foldl
-        (fn ((node,index),table) => Redblackmap.insert
-          (table,G.node_id node,index)) (Redblackmap.mkDict Int.compare)
-        (ListPair.zip (retained,List.tabulate (List.length retained,Lib.I)))
+      val edges_by_node = ListPair.foldlEq
+        (fn (node,edge,table) => Redblackmap.insert
+          (table,G.node_id node,edge)) (Redblackmap.mkDict Int.compare)
+        (retained,source_edges)
       val definition_edges = Vector.foldr
         (fn (Definition (node,_),edges) => definition next node :: edges
           | (_,edges) => edges) [] leaves
       fun witness (Source node) =
             if local_source node then
               SmtReplayRuleObservation.ASSUME (name next node)
-            else theorem next (List.nth (source_edges,
-              Redblackmap.find (source_index,G.node_id node)))
+            else theorem next (Redblackmap.find (edges_by_node,G.node_id node))
         | witness (Definition (node,_)) = theorem next (definition next node)
         | witness (ClosedWitness fact) = theorem next (closed next fact)
         | witness (ConversionWitness plan) =
@@ -5532,15 +5544,17 @@ struct
         val law = discharge old context proof
         val _ = if List.null (Thm.hyp law) andalso clean law then () else
           raise ERR "discharge_sources_with_work" "old proof is not closed"
-        val source_edges = List.tabulate (List.length retained,source next)
-        fun retained_index index =
-          let fun count current total = if current = index then total else
-                count (current+1)
-                  (if local_slot current then total else total+1)
-          in count 0 0 end
+        val source_edges = Vector.tabulate (List.length retained,source next)
+        val retained_index = ref 0
         fun witness (index,Source node) =
               if local_slot index then assume next (name next node)
-              else theorem next (List.nth (source_edges,retained_index index))
+              else
+                (* Vector.mapi visits Source occurrences in index order. *)
+                let
+                  val _ = W.spend expected 2
+                  val edge = Vector.sub (source_edges,!retained_index)
+                  val _ = retained_index := !retained_index+1
+                in theorem next edge end
           | witness (_,Definition (node,_)) =
               theorem next (definition next node)
           | witness (_,ClosedWitness fact) = theorem next (closed next fact)
@@ -5973,8 +5987,8 @@ struct
         val source_frame as RetainedSourceFrame
             {original_slots,...} = retained_source_frame_for expected block []
         val needed = needed_source_occurrences block edge
-        val occurrences = List.map (fn index =>
-          (W.spend expected 1;(index,List.nth (original_slots,index)))) needed
+        val occurrences =
+          selected_source_occurrences expected original_slots needed
         val held = table_foldl (fn (_, (node,_),rest) =>
           (W.spend expected 2;G.closure_root graph scope node :: rest)) [] nodes
         val facts = Vector.foldr
@@ -7363,8 +7377,8 @@ struct
         fun discharged slot = List.exists (fn (_,index,_) =>
           (W.spend expected 1;slot = index)) rows
         val needed = List.filter (fn slot => not (discharged slot)) needed
-        val occurrences = List.map (fn index =>
-          (W.spend expected 1;(index,List.nth (original_slots,index)))) needed
+        val occurrences =
+          selected_source_occurrences expected original_slots needed
         val held = table_foldl (fn (_, (node,_),rest) =>
           (W.spend expected 2;G.closure_root graph scope node :: rest)) [] nodes
         val facts = Vector.foldr
@@ -13536,8 +13550,8 @@ struct
         fun discharged slot = List.exists (fn (_,index,_) =>
           (W.spend expected 1;slot = index)) rows
         val needed = List.filter (fn slot => not (discharged slot)) needed
-        val occurrences = List.map (fn index =>
-          (W.spend expected 1;(index,List.nth (original_slots,index)))) needed
+        val occurrences =
+          selected_source_occurrences expected original_slots needed
         val held = table_foldl (fn (_, (node,_),rest) =>
           (W.spend expected 2;G.closure_root graph scope node :: rest))
           [] nodes
@@ -21736,7 +21750,8 @@ struct
      template_limit:RP.limit,epoch:int,symbols:int,original:bool,
      roots:G.node list,sources:G.node list,closed_facts:closed_fact list,
      conversions:closed_conversion list,reachable:G.node list,
-     atoms:G.node list,held:G.closure_child list}
+     atoms:G.node list,held:G.closure_child list,
+     validated_revision:IntInf.int option ref}
   fun pr_frontier_guard expected
       (frontier as PolicyRealizationFrontier {work,...}) =
     ((if Portable.pointer_eq (expected,work) then () else
@@ -21744,7 +21759,7 @@ struct
       let
         val PolicyRealizationFrontier
           {graph,scope,frame,template_limit,epoch,symbols,
-           closed_facts,conversions,held,...}=frontier
+           closed_facts,conversions,held,validated_revision,...}=frontier
         val data=Scope.description_with_policy_for expected frame
         val _=if Portable.pointer_eq (#graph data,graph) andalso
             #scope data=scope andalso
@@ -21760,8 +21775,21 @@ struct
         val _=List.app
           (validate_closed_fact_with_policy graph scope template_limit)
           closed_facts
-      in List.app (fn child=>ignore
-        (G.closure_child_node graph scope child)) held end)
+        fun validate_held () = List.app (fn child => ignore
+          (G.closure_child_node graph scope child)) held
+      in
+        (* The frame, caps and witnesses above are checked on every call.
+           Only the unmetered structural checks depend solely on the
+           graph revision, which advances before registry/scope changes. *)
+        case G.unpriced_validation_revision graph scope of
+          NONE => validate_held ()
+        | SOME revision =>
+            if !validated_revision = SOME revision then () else
+              (validate_held ();
+               validated_revision :=
+                 if G.unpriced_validation_revision graph scope =
+                     SOME revision then SOME revision else NONE)
+      end)
      handle primary=>(W.close expected;raise primary))
   fun realization_frontier_data_with_policy_for expected
       (frontier as PolicyRealizationFrontier {work,...}) =
@@ -21866,7 +21894,7 @@ struct
           epoch = Type.type_epoch (),symbols = Term.term_epoch (),
           roots = roots,sources = sources,closed_facts = closed_facts,
           conversions = conversions,reachable = reachable,atoms = atoms,
-          held = held,original = original}
+          held = held,original = original,validated_revision = ref NONE}
         val _ = pr_frontier_guard work frontier
       in frontier end)
      handle primary => (W.close work;raise primary))

@@ -1226,7 +1226,90 @@ struct
       val _ = (P.with_cpc_shell_scope (fn () => raise ScopeFailure marker) ()
         handle ScopeFailure saved => require "shell scope changed its error"
           (Portable.pointer_eq (marker,saved)))
+      val _ = P.with_cpc_shell_scope (fn () =>
+        let
+          val operator = P.intern_cpc_term boolSyntax.negation
+          val operand = Term.mk_var ("shell_insert_before_child", Type.bool)
+          fun application () = Term.mk_comb (operator, operand)
+          val shallow = P.intern_cpc_shell (application ())
+          val _ = P.with_cpc_shell_scope (fn () =>
+            require "full interning used a parent shell"
+              (not (Portable.pointer_eq
+                (shallow, P.intern_cpc_term (application ()))))) ()
+          val _ = require "full interning replaced the fresh operand"
+            (Portable.pointer_eq (operand, P.intern_cpc_term operand))
+        in
+          require "full interning lost a shell inserted before its operand"
+            (Portable.pointer_eq (shallow, P.intern_cpc_term (application ())))
+        end) ()
+      val _ = P.with_cpc_shell_scope (fn () =>
+        let
+          fun build () =
+            let
+              val leaf = Term.mk_var ("shared_duplicate_leaf", Type.bool)
+              fun double 0 = leaf
+                | double n =
+                    let val child = double (n - 1)
+                    in boolSyntax.mk_conj (child, child) end
+              val shared = double 26
+            in
+              boolSyntax.mk_eq (boolSyntax.mk_disj (shared, leaf),
+                boolSyntax.mk_conj (leaf, shared))
+            end
+          val first = build ()
+          val second = build ()
+          val _ = require "duplicate circuits share their raw root"
+            (not (Portable.pointer_eq (first, second)))
+        in
+          require "duplicate circuits lost their canonical root"
+            (Portable.pointer_eq
+              (P.intern_cpc_term first, P.intern_cpc_term second))
+        end) ()
     in parent () end
+
+  fun checked_post_scope () =
+    let
+      fun parse body =
+        case CPC_Proof.proof_commands (parse_cpc_proof_string
+            ("((assume @p (forall ((x Bool)) " ^ body ^ ")))")) of
+          [CPC_Proof.ASSUME (_, {term, ...})] => term
+        | _ => raise Fail "expected one quantified assumption"
+      fun witness quantified = P.cpc_parameterized_skolem_for_test
+        "@quantifiers_skolemize" [quantified, intSyntax.zero_tm]
+      exception PostFailed
+    in
+      P.with_cpc_checked_post_scope (fn () =>
+        let
+          val formula = parse "x"
+          val operand = Term.mk_var ("checked_post_scope_operand", Type.bool)
+          fun shell () = P.intern_cpc_shell (boolSyntax.mk_neg operand)
+          val parent = shell ()
+          val _ = P.with_cpc_shell_scope (fn () =>
+            let
+              fun active_shell () =
+                P.intern_cpc_shell (boolSyntax.mk_neg parent)
+              val active = active_shell ()
+              fun check fail = P.with_cpc_checked_post_scope (fn () =>
+                let
+                  val _ = ignore (witness (parse "(not x)"))
+                  val _ = require "checked postprocessing used a parent shell"
+                    (not (Portable.pointer_eq (parent, shell ())))
+                in if fail then raise PostFailed else () end) ()
+              fun restored () =
+                (ignore (witness formula);
+                 require "checked postprocessing lost the active shell"
+                   (Portable.pointer_eq (active, active_shell ()));
+                 require "checked postprocessing lost a parent shell"
+                   (Portable.pointer_eq (parent, shell ())))
+            in
+              check false;
+              restored ();
+              (check true; raise Fail "expected checked postprocessing error")
+                handle PostFailed => restored ()
+            end) ()
+        in require "shell scope lost the original checked hint"
+          (Portable.pointer_eq (parent, shell ())) end) ()
+    end
 
   fun source_alpha () =
     let
@@ -1284,6 +1367,8 @@ struct
        assignment_memos;
      test "CPC shell scopes read parents and retire only their own hints"
        shell_scopes;
+     test "CPC checked postprocessing restores nested parser state"
+       checked_post_scope;
      test "CPC source ALPHA preserves checked proof and admission errors"
        source_alpha;
      test "CPC unanchored private component cannot close" unanchored_leak;

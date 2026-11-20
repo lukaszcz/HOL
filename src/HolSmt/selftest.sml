@@ -45650,6 +45650,29 @@ in
        #retired (W.audit_policy w2) andalso
        not (#retired (W.audit_policy w))) end)
 
+  val _=test "Warm policy frontier rejects a retired binder body frame"
+    (fn()=>let
+        val (g,r,_,w)=setup RP.Uncapped RP.Uncapped
+        val binder_frame=G.new_scope g r []
+        val variable=Term.mk_var ("frontier_closure_revision",Type.bool)
+        val binder=G.variable g binder_frame G.Bound variable
+        val body_frame=G.new_scope g binder_frame [(variable,binder)]
+        val body=G.constant g r boolSyntax.T
+        val node=G.recorded_abstraction g r 128
+          {binder=binder,body=body,body_frame=body_frame}
+        val f=frontier w [node] [] []
+        val data=P.realization_frontier_data_with_policy_for w f
+        val _=require "frontier fixture lost its binder root"
+          (#roots data=[node])
+        val _=G.close_scope g body_frame
+        val _=G.validate_scope g r
+        val _=require "binder node did not stay in the live root"
+          (G.node_scope g node=r)
+        val denied=refuses (fn()=>ignore
+          (P.realization_frontier_data_with_policy_for w f))
+    in require "warm frontier accepted a retired binder body frame"
+      (denied andalso #retired (W.audit_policy w)) end)
+
   val _=test "Policy table naming snapshot rejects intervening graph mint"
     (fn()=>let val(g,r,s,w)=setup RP.Uncapped RP.Uncapped
         val f=frontier w [] [] []
@@ -68128,6 +68151,32 @@ in
                    origin="SmtLib" andalso
                    where_="check_goal_operator_availability"
                  | NONE => false) end) () end)
+      val _ = test "RegLan preflight detects a partial equality under a binder"
+        (fn () =>
+          let val regex = ``query_r:smtstring$reglan``
+              val partial = Term.rator (boolSyntax.mk_eq (regex,regex))
+              val predicate = Term.mk_var ("query_regex_predicate",
+                Type.--> (Term.type_of partial,Type.bool))
+              val goal = boolSyntax.mk_forall (regex,
+                Term.mk_comb (predicate,partial))
+              val native = failure (fn () => ignore
+                (SmtLib.goal_to_SmtLib_translation_for_solver
+                  (options NONE) ([],goal)))
+          in owned [] goal (fn e =>
+            let val openings = ref 0
+                fun open_view caller node =
+                  (openings := !openings + 1;opening e caller node)
+                val graph = failure (fn () => ignore
+                  (E.prepare_backend (#work e)
+                    {query= #query e,options=options NONE,
+                     open_opaque=open_view}))
+            in require "RegLan rejection lost its diagnostic or opaque body"
+              (native=graph andalso !openings>0 andalso retired e andalso
+               case graph of SOME (origin,where_,_) =>
+                   origin="SmtLib" andalso
+                   where_="reject_reglan_hol_equalities"
+               | NONE => false) end)
+          end)
       val _ = test "Actual shared70 query streams bounded lexical output"
         (fn () =>
           let fun shared 0 = Term.mk_var ("query_shared_leaf",Type.bool)

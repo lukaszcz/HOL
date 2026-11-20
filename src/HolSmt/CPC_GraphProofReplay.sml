@@ -4401,8 +4401,6 @@ struct
           val edge = SmtResource.profile_phase "cvc/graph-construction"
             (fn () => action (fn () => assemble root)) ()
           val dependency_ids = action (fn () => P.dependencies block edge)
-          val source_occurrences = ListPair.zip (source_nodes,
-            List.tabulate (List.length source_nodes,fn index => index))
           (* Source occurrences have roles, not just proposition IDs. A
              genuine checked local law can itself conclude the obligation;
              using that law is independent proof, not a self-Hyp. Keep the
@@ -4416,11 +4414,29 @@ struct
           val law_start = inventory_count canonical_sources +
             inventory_count local_assumptions
           val law_end = law_start + inventory_count (!law_nodes)
-          val _ = if List.exists (fn (source,index) =>
-              not (law_start <= index andalso index < law_end) andalso
-              List.exists (fn ancestor => ancestor = source) ancestors andalso
-              List.exists (fn dependency => dependency = index) dependency_ids)
-              source_occurrences then raise ERR "obligation"
+          val retains_ancestor = case (ancestors,dependency_ids) of
+              ([],_) => false
+            | (_,[]) => false
+            | _ =>
+                let
+                  val ancestor_ids = Redblackset.addList
+                    (Redblackset.empty Int.compare,
+                     List.map G.node_id ancestors)
+                  (* Dependencies are sorted and can include non-Source
+                     leaves after the Source prefix. *)
+                  fun scan _ [] _ = false
+                    | scan _ _ [] = false
+                    | scan index (source::rest) (ids as dependency::more) =
+                        if index < dependency then scan (index+1) rest ids
+                        else if index > dependency then
+                          scan index (source::rest) more
+                        else
+                          (not (law_start <= index andalso index < law_end)
+                           andalso Redblackset.member
+                             (ancestor_ids,G.node_id source)) orelse
+                          scan (index+1) rest more
+                in scan 0 source_nodes dependency_ids end
+          val _ = if retains_ancestor then raise ERR "obligation"
                 "checked candidate retains its own deferred source" else ()
           val _ = List.app (fn (step,law) => case recipe step of
               Scope {hypothesis,body} =>

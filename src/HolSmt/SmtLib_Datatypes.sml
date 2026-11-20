@@ -262,8 +262,8 @@ struct
   fun mk_constructor_pattern ctor =
     let
       val arg_tys = constructor_args (Term.type_of ctor)
-      val vars = List.tabulate (List.length arg_tys,
-        fn i => Term.mk_var ("x" ^ Int.toString i, List.nth (arg_tys, i)))
+      val vars = Lib.mapi
+        (fn i => fn ty => Term.mk_var ("x" ^ Int.toString i, ty)) arg_tys
     in
       (Term.list_mk_comb (ctor, vars), vars)
     end

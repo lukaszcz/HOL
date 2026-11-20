@@ -186,6 +186,22 @@ local
                 GEN_SAT (fn result => raised primary result andalso
                   dimacsTools.readDimacs input ~~ ``v1:bool``))) ()
       end)
+  val _ = control "Proof-only DIMACS checks the input used for replay"
+    (fn () =>
+      let
+        val input = OS.FileSys.tmpName ()
+        fun run _ (cnf, outfile) =
+          (put cnf "p cnf 1 1\n1 0\n"; put outfile "UNSAT\n"; "exit 0")
+        val backend = solver run NONE
+        val output = input ^ "." ^ getSolverName backend
+        val conf = set_solver backend (set_infile input base_config)
+      in dimacsTools.with_cleanup
+           (fn () => dimacsTools.clean_files [input, output])
+           (fn () =>
+             (put input "p cnf 1 2\n1 0\n-1 0\n";
+              let val th = GEN_SAT_PROVE_ONLY conf
+              in null (hyp th) andalso concl th ~~ ``~(v1 /\ ~v1)`` end)) ()
+      end)
   val _ = control "SAT result/failure paths remove owned solver files"
     (fn () =>
       callback_case NONE "SAT 1 2 0\n" NONE NONE GEN_SAT_PROVE_ONLY
@@ -197,6 +213,10 @@ local
         (fn conf => GEN_SAT (set_flag_is_proved false conf))
         (fn Exn.Res th => concl th ~~ ``~(p /\ q)`` | _ => false) andalso
       callback_case NONE "SAT not-an-integer 0\n" NONE NONE GEN_SAT
+        (fn Exn.Exn (HOL_ERR _) => true | _ => false) andalso
+      callback_case NONE "SAT not-an-integer 0\n" NONE NONE GEN_SAT_PROVE_ONLY
+        (fn Exn.Exn (HOL_ERR _) => true | _ => false) andalso
+      callback_case NONE "SAT 999 -1 0\n" NONE NONE GEN_SAT_PROVE_ONLY
         (fn Exn.Exn (HOL_ERR _) => true | _ => false) andalso
       callback_case NONE "SAT 1 2 0\n" NONE NONE GEN_SAT
         (fn Exn.Exn (SAT_cex _) => true | _ => false) andalso
@@ -536,7 +556,7 @@ local
             List.exists (fn entry => entry = ("root-literal-occurrences", 4))
               (minisatResolve.get_replay_counts ())
       end))
-  val _ = control "proof-only file input checks the file endpoint"
+  val _ = control "proof-only file input with sparse DIMACS numbers"
     (fn () =>
       let
         val input = OS.FileSys.tmpName ()
@@ -545,12 +565,12 @@ local
           in TextIO.output (out, text); TextIO.closeOut out end
         val result = Exn.capture (fn () =>
           let
-            val _ = put "p cnf 1 2\n1 0\n-1 0\n"
+            val _ = put "p cnf 11 2\n11 0\n-11"
             val problem = dimacsTools.readDimacs input
             val conf = set_infile input (internal base_config)
             val _ = checked (mk_neg problem) (GEN_SAT_PROVE_ONLY conf)
               orelse raise Fail "DIMACS endpoint"
-            val _ = put "p cnf 1 1\n1 0\n"
+            val _ = put "p cnf 11 1\n11 0\n"
           in sat_only conf end) ()
         val _ = OS.FileSys.remove input
       in Exn.release result end)
@@ -568,7 +588,7 @@ local
         (fn () => dimacsTools.clean_files
           [input,output,output^".proof",output^".stats"])
         (fn () =>
-          let val _ = put "p cnf 1 2\n1 0\n-1 0\n"
+          let val _ = put "p cnf 11 2\n11 0\n-11 0\n"
               val problem = dimacsTools.readDimacs input
               val conf = set_infile input base_config
               val external =
@@ -577,7 +597,7 @@ local
                   checked (mk_neg problem) (GEN_SAT conf) andalso exists ()
                 else true
               val fallback = model (internal conf) problem andalso exists ()
-              val _ = put "p cnf 1 1\n1 0\n"
+              val _ = put "p cnf 11 1\n11 0\n"
               val sat = dimacsTools.readDimacs input
           in external andalso fallback andalso
              model (internal conf) sat andalso exists () end) ()

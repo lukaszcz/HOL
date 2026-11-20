@@ -342,20 +342,24 @@ fun spawn_system launcher command =
        val _ = List.app close inherited
        val _ = unlock ()
        val _ = restore ()
-       fun read_byte () = Byte.bytesToString
-         (retry (fn () => Posix.IO.readVec (status,1)))
+       fun read_bytes n = Byte.bytesToString
+         (retry (fn () => Posix.IO.readVec (status,n)))
        (* Read only the bounded PID line.  Until it is recorded and the gate
           is opened, killing the direct process and closing start suffices.
           In particular no command can escape cancellation of this read. *)
-       fun read_pid (chars,n) =
-         if n > 20 then raise FastUnavailable
-         else case read_byte () of
-           "\n" => String.implode (rev chars)
-         | "" => raise FastUnavailable
-         | s => if Char.isDigit (String.sub (s,0)) then
-                  read_pid (String.sub (s,0)::chars,n+1)
-                else raise FastUnavailable
-       val pid_text = read_pid ([],0)
+       fun read_pid remaining chars =
+         if remaining = 0 then raise FastUnavailable
+         else
+           case String.explode (read_bytes remaining) of
+             [] => raise FastUnavailable
+           | chunk => scan_pid chunk remaining chars
+       and scan_pid [] remaining chars = read_pid remaining chars
+         | scan_pid (c :: rest) remaining chars =
+             if c = #"\n" then String.implode (rev chars)
+             else if Char.isDigit c then
+               scan_pid rest (remaining - 1) (c :: chars)
+             else raise FastUnavailable
+       val pid_text = read_pid 21 []
        val pid = case Int.fromString pid_text of
            SOME n => if n > 0 then
              Posix.Process.wordToPid (SysWord.fromInt n)
@@ -365,7 +369,7 @@ fun spawn_system launcher command =
        val _ = group := SOME pid
        val _ = restore ()
        val _ = write_all start (Byte.stringToBytes "go\n")
-       val message = read_byte ()
+       val message = read_bytes 1
        val status = if message = "0" then OS.Process.success
                     else OS.Process.failure
        val _ = defer ()

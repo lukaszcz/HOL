@@ -507,6 +507,10 @@ struct
     #validation_changes g := !(#validation_changes g) + 1
   fun validation_revision (g : graph) caller =
     (check_scope g caller;!(#validation_changes g))
+  fun unpriced_validation_revision (g : graph) caller =
+    case #indices g of
+      LegacyIndices _ => SOME (validation_revision g caller)
+    | PaidIndices _ => NONE
   fun scope_retirement_epoch (g : graph) caller =
     (check_scope g caller;!(#scope_retirements g))
   fun close_scope (g : graph) (Scope {owner,id}) =
@@ -4219,13 +4223,14 @@ struct
                 closure_root g scope (#node (partial_source whole))
           | _ => #annotation incoming
         val paths = ref ([] : closure_child list)
-        val seen = ref ([] : node list)
+        val seen = ref (Redblackset.empty Int.compare)
         fun collect child =
           let val _ = guard () val _ = spend ()
               val node = closure_child_node g scope child
               val _ = paths := child :: !paths
-          in if List.exists (fn old => old = node) (!seen) then () else
-            (seen := node :: !seen;
+              val id = node_id node
+          in if Redblackset.member (!seen,id) then () else
+            (seen := Redblackset.add (!seen,id);
              case view g node of Application _ =>
                  let val (a,b) = closure_application_children g scope child
                  in collect a;collect b end

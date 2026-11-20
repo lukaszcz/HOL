@@ -100,6 +100,20 @@ structure SolverSpec = struct
     let val stream = TextIO.openOut path
     in complete_owned (fn () => TextIO.closeOut stream) action stream end
 
+  val copy_buffer_size = 65536
+
+  fun copy_stream input output =
+    let
+      fun copy () =
+        case TextIO.inputN (input, copy_buffer_size) of
+          "" => ()
+        | chunk => (TextIO.output (output, chunk); copy ())
+    in copy () end
+
+  fun copy_file_bounded_memory source target =
+    with_input_file source (fn input =>
+      with_output_file target (copy_stream input))
+
   fun remove_temp path = OS.FileSys.remove path handle SysErr _ => ()
 
   fun with_wall_timeout cmd =

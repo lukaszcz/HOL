@@ -93,6 +93,35 @@ struct
     in require "copy acquisition leaked descriptors"
       (fd_count ()=initial) end)
 
+  fun copy_contents () = temporary (fn source => temporary (fn target =>
+    let
+      fun contents path = SolverSpec.with_input_file path TextIO.inputAll
+      fun check size =
+        let
+          val text = String.implode (List.tabulate (size,fn i =>
+            Char.chr (32 + i mod 95)))
+          val _ = put source text
+          val _ = remove target
+          val _ = CVC.copy_file source target
+          val _ = require "fresh capture contents changed"
+            (contents target = text)
+          val _ = put target "replace this"
+          val _ = CVC.copy_file source target
+          val _ = require "existing capture contents changed"
+            (contents target = text)
+          val _ = CVC.copy_file source source
+          val _ = require "copy to self truncated the capture"
+            (contents source = text)
+          val _ = remove source
+          val missing = Exn.capture (CVC.copy_file source) target
+        in require "source failure changed an existing capture"
+          (case missing of Exn.Exn (IO.Io _) => contents target = text
+                         | _ => false)
+        end
+      val bound = SolverSpec.copy_buffer_size
+    in List.app check [0, bound - 1, bound, bound + 1, 2 * bound + 1]
+    end))
+
   fun legacy_post () = temporary (fn path =>
     let
       val goal = ([],boolSyntax.T)
@@ -259,6 +288,7 @@ struct
     (test "Solver cleanup preserves first exception" precedence;
      test "Solver stream ownership covers second acquisition" acquisition;
      test "Solver capture copy acquisition releases input" copy_acquisition;
+     test "CPC capture preserves copied and existing contents" copy_contents;
      test "Solver failed status/version reads release input" failed_reads;
      test "Legacy checked_post parser failures close and recover" legacy_post;
      test "Solver version ordinary fallbacks unchanged" ordinary_diagnostics;
