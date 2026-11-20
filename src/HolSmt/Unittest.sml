@@ -27824,6 +27824,13 @@ let
     | nest n = Term.mk_comb (``macro_d:int->int``, nest (n - 1))
   val deep = boolSyntax.mk_eq (nest 10, intSyntax.term_of_int
     (Arbint.fromInt 1024))
+  (* one call of the doubling macro on a sum of 700 variables expands to
+     over 4096 syntax nodes *)
+  val wide = List.foldl intSyntax.mk_plus ``asserted_w0:int``
+    (List.tabulate (699, fn i =>
+       Term.mk_var ("asserted_w" ^ Int.toString (i + 1), intSyntax.int_ty)))
+  val wide_call = boolSyntax.mk_eq
+    (Term.mk_comb (``macro_d:int->int``, wide), intSyntax.mk_plus (wide, wide))
   val equality = ``(asserted_x:int) = asserted_y``
   (* a substituted constructor discards a branch full of macro calls *)
   val sum_source = ``(asserted_s:int + bool) = INR T``
@@ -27894,6 +27901,10 @@ in
       handle Feedback.HOL_ERR holerr => String.isSubstring
         "exceeds 256 rewrites" (Feedback.message_of holerr),
     "an exponential macro expansion was not bounded");
+  assert ((ignore (prove [double] wide_call); false)
+      handle Feedback.HOL_ERR holerr => String.isSubstring
+        "a macro expansion exceeds 4096" (Feedback.message_of holerr),
+    "an oversized macro expansion was not bounded");
   proves_from "atom-wise macro body" [macro_q] [macro_q]
     ``(macro_q:int->bool) asserted_a =
       (asserted_a >= 0 /\ !y:int. y <= asserted_a \/ asserted_a < y)``

@@ -7013,26 +7013,32 @@ local
         raise ERR "asserted_equality_substitution_prove"
           "no structurally derived asserted equality"
       (* A macro may use its argument several times, so nested calls can
-         expand exponentially: bound the rewrites. *)
+         expand exponentially: bound the rewrites, and the unfolded size of
+         each expansion before the rewriting walks into it. *)
       val max_macro_rewrites = 256
-      exception MacroBudget
+      val max_macro_nodes = 4096
+      exception MacroBudget of string
       fun macro_conv tm =
         let
           val rewrites = ref 0
           fun rewrite group tm =
             let
               val theorem = Conv.FIRST_CONV (List.map Conv.REWR_CONV group) tm
+              val expansion = boolSyntax.rhs (Thm.concl theorem)
             in
               rewrites := !rewrites + 1;
-              if !rewrites <= max_macro_rewrites then theorem
+              if !rewrites <= max_macro_rewrites then ()
+              else raise MacroBudget "macro expansion exceeds 256 rewrites";
+              if SmtResource.term_nodes_up_to max_macro_nodes expansion <=
+                 max_macro_nodes then theorem
               else raise MacroBudget
+                "a macro expansion exceeds 4096 syntax nodes"
             end
         in
           Conv.QCONV (Conv.EVERY_CONV (List.map
             (Conv.QCONV o Conv.TOP_DEPTH_CONV o rewrite) macros)) tm
-          handle MacroBudget =>
-            raise ERR "asserted_equality_substitution_prove"
-              "macro expansion exceeds 256 rewrites"
+          handle MacroBudget message =>
+            raise ERR "asserted_equality_substitution_prove" message
         end
       fun prove_with expand rewrite_theorems =
         let
