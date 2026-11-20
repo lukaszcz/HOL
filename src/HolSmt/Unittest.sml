@@ -22667,6 +22667,7 @@ let
   fun closes source =
     let val theorem = SmtReplayCanon.z3_rewrite_canon_conv source
     in
+      check_oracle_tags "secondary canonicalisation" theorem;
       boolSyntax.lhs (Thm.concl theorem) ~~ source andalso
       null (Thm.hyp theorem) andalso
       SmtReplayCanon.equality_operands_alpha_equal
@@ -22880,8 +22881,8 @@ in
     "a nested binder's Type ID differs from its Type's")
 end
 
-(* The overload-free grammar is reused while the grammar is unchanged and
-   rebuilt when it changes.  A new constant changes the grammar. *)
+(* The overload-free grammar is reused while the grammar and the constants
+   are unchanged, and rebuilt when either changes. *)
 fun term_to_string_follows_grammar_changes_success () =
 let
   val term = ``(x:int) - y <> z /\ m < (n:num)``
@@ -22894,8 +22895,11 @@ let
   val changed = Library.term_to_string term
   val _ = Parse.temp_set_grammars saved
   val restored = Library.term_to_string term
-  (* Made after the last call, so it is printed with a rebuilt grammar. *)
+  (* Made after the last call, which used the saved grammar.  The new
+     constant replaces the grammar; installing the saved one again brings
+     back the grammar that call cleared, which predates the constant. *)
   val _ = Theory.new_constant ("smt_printer_late_constant", Type.bool)
+  val _ = Parse.temp_set_grammars saved
   val late = Library.term_to_string
     (Term.prim_mk_const {Thy = Theory.current_theory (),
        Name = "smt_printer_late_constant"})

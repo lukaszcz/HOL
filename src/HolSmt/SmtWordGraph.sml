@@ -39,7 +39,8 @@ struct
      proof_schemas : proof_cache,
      frontier_programs : frontier_cache,
      proof_frontier_programs : frontier_cache,
-     schema_entries : int ref, local_law_reuse : bool,
+     schema_entries : int ref, local_schema_entries : int ref,
+     local_law_reuse : bool,
      sat_context : SmtSkeletonProve.sat_context,
      cache_generation : unit ref ref,
      cache_live_check : term -> bool,
@@ -94,6 +95,7 @@ struct
        index = fn term => (refresh_caches (); (!index) term),
        word_schemas = word_schemas, bit_schemas = bit_schemas,
        proof_schemas = proof_schemas, schema_entries = schema_entries,
+       local_schema_entries = schema_entries,
        frontier_programs = frontier_programs,
        proof_frontier_programs = proof_frontier_programs,
        local_law_reuse = local_law_reuse, sat_context = sat_context,
@@ -113,6 +115,7 @@ struct
      entries= #entries context,word_schemas= #word_schemas context,
      bit_schemas= #bit_schemas context,proof_schemas= #proof_schemas context,
      schema_entries= #schema_entries context,
+     local_schema_entries= #local_schema_entries context,
      frontier_programs= #proof_frontier_programs context,
      proof_frontier_programs= #proof_frontier_programs context,
      local_law_reuse= #local_law_reuse context,
@@ -1427,7 +1430,7 @@ struct
         else ref (Redblackmap.mkDict Term.compare)
       val frontier_callbacks = ref (Redblackmap.mkDict Term.compare)
       val frontier_entries = if canonical_frontiers then
-          #schema_entries context else ref 0
+          #local_schema_entries context else ref 0
       val frontier_generation = ref (!(#cache_generation context))
       val frontier_signature = ref (SmtSkeletonProve.cache_signature ())
       fun refresh_frontiers () =
@@ -1964,6 +1967,9 @@ struct
       NONE => ()
     | SOME _ => shared_schemas := SOME (new_context_with_local_laws true)
 
+  (* The word and bit schemas, and their entry count, are the replay's;
+     everything else, the proof schemas and frontier programs with their
+     own count included, stays the call's. *)
   fun schema_sharing_context (fresh : context) : context =
     case !shared_schemas of
       NONE => fresh
@@ -1982,6 +1988,7 @@ struct
          frontier_programs = #frontier_programs fresh,
          proof_frontier_programs = #proof_frontier_programs fresh,
          schema_entries = #schema_entries shared,
+         local_schema_entries = #local_schema_entries fresh,
          local_law_reuse = true, sat_context = #sat_context fresh,
          cache_generation = #cache_generation fresh,
          cache_live_check = #cache_live_check fresh,
@@ -2315,12 +2322,13 @@ struct
                       !(#cache_generation context) orelse
                       not (SmtSkeletonProve.cache_signature_matches
                         signature_witness) orelse
-                      !(#schema_entries context) >= maximum orelse
+                      !(#local_schema_entries context) >= maximum orelse
                       not (#cache_live_check context
                         (Thm.concl theorem)) then () else
                     (#proof_schemas context := Redblackmap.insert
                        (!(#proof_schemas context),template,theorem);
-                     #schema_entries context := !(#schema_entries context)+1)
+                     #local_schema_entries context :=
+                       !(#local_schema_entries context) + 1)
                 in theorem end
           val schema = C.checked_graph_schema graph scope
             {theorem=Drule.EQT_INTRO theorem,holes=List.map #2 (!holes),

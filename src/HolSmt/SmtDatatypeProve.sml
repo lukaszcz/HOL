@@ -309,7 +309,8 @@ struct
   (* Admission/Work/observer failures must not become proof-search misses. *)
   exception AdmissionFailure of exn
   (* Simplification visits the same term objects many times; each one is
-     checked once per invocation. Failures are not cached. A bucket keeps
+     checked once by the procedures built here, which keep their check.
+     Failures are not cached. A bucket keeps
      only its eight latest terms: equal but distinct objects share a
      bucket, and an unbounded list makes each lookup linear. *)
   val admitted_buckets = 4093

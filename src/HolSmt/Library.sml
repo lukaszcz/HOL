@@ -468,18 +468,23 @@ struct
      terms. *)
   (* Clearing the overloads of a large grammar costs more than printing at
      depth 15, and replay failure messages print often, so the cleared
-     grammar is kept while the grammar stays the same. *)
-  val simpler = ref (NONE : (term_grammar.grammar * term_grammar.grammar)
-    option)
+     grammar is kept while the grammar and the number of constants stay
+     the same.  Clearing also overloads every constant on its own name, and
+     a grammar installed again with temp_set_grammars can predate a
+     constant. *)
+  val simpler = ref (NONE : (term_grammar.grammar * int *
+    term_grammar.grammar) option)
   fun term_to_string tm =
   let
     val grammar = Parse.term_grammar ()
+    val constants = List.length (Term.all_consts ())
     val simpler_grammar = case !simpler of
-        SOME (old, cleared) =>
-          if Portable.pointer_eq (old, grammar) then cleared
+        SOME (old, count, cleared) =>
+          if Portable.pointer_eq (old, grammar) andalso count = constants
+          then cleared
           else term_grammar.clear_overloads grammar
       | NONE => term_grammar.clear_overloads grammar
-    val _ = simpler := SOME (grammar, simpler_grammar)
+    val _ = simpler := SOME (grammar, constants, simpler_grammar)
   in
     Lib.with_flag(Globals.max_print_depth, 15)
       (Parse.term_to_string_by_grammar (Parse.type_grammar (), simpler_grammar))
