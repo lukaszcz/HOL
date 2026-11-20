@@ -5392,6 +5392,7 @@ fun working_simpset_fixture () =
           not (Portable.pointer_eq
                  (plain_ss,clasimpLib.clasimp_ss_of arith_ctxt))
         val arith_return =
+          Portable.pointer_eq (plain_state,default_state) andalso
           Portable.pointer_eq
             (plain_ss,clasimpLib.clasimp_ss_of plain_ctxt) andalso
           Portable.pointer_eq
@@ -5426,7 +5427,7 @@ fun working_simpset_fixture () =
              (clasimpLib.working_original state))
         val exact_metadata = List.all oracle
           [state,decision_state,excluded,absent,extended,exhausted_state,
-           once_state,retry_state,default_state,plain_state,arith_state,
+           once_state,retry_state,default_state,arith_state,
            removed]
         val default_restore =
           let val _ = Context.restore saved
